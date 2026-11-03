@@ -1566,3 +1566,19 @@ See ZLIB-THREE-ARCH-QUALIFICATION.md. Package timestamp policies and separate
 DWARF/source lookup remain explicit; this is not full world, bootstrap, foreign
 runtime, installation or publication qualification. Broader libz consumer
 rebuilds remain a full-world gate because CTF tools consume this library.
+
+### 2026-11-03: private zstd library, command and packages on three ABIs
+
+The next selected compression dependency now has genuine original-order regular
+and PIC archives/default CcInfo extraction, private DSO, eleven-source CLI and
+four actual packages per ABI. All 233 compiler contexts/9,937 consumed pairs,
+200 archive members, six linked allocated payloads, nine core links, 57 original
+install records→54 unique records, twelve package comparisons and five declared
+tests pass. RISC-V's original extra runtime C source is retained. Ordinary
+references remain untouched: 206 objects match allocated bytes, while 27
+filename-sensitive objects require separately audited original one-map controls.
+The final ARM64 link correction preserves its original Cortex-A53 policy;
+other architecture branches remain empty. See ZSTD-THREE-ARCH-QUALIFICATION.md.
+Separate DWARF/source lookup, alternate options/upstream suites, package-manager
+installation, full-world/rescue/bootstrap and foreign runtime remain open.
+Cross libmd/liblzma/xz and the larger libarchive stack remain distinct gaps.

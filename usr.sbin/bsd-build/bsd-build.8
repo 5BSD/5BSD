@@ -5608,3 +5608,17 @@ See
 .Pa tools/build/bazel/CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md
 for original artifact/input/install comparisons, explicit filename controls
 and remaining separate DWARF, runtime, full-system and performance gates.
+
+.Pp
+The selected zstd format-5 profiles produce original-order regular and PIC
+archives, the private shared library, command aliases and four package outputs
+on amd64, ARM64 and RISC-V.
+RISC-V retains the original extra runtime source; the source-owned ARM64 link
+policy preserves the Cortex-A53 workaround.
+Existing host artifact tests inspect cross outputs without target execution;
+native API and command tests exercise the selected library safely.
+See
+.Pa tools/build/bazel/ZSTD-THREE-ARCH-QUALIFICATION.md
+for ordinary versus explicit same-source filename-policy Make references,
+archive extraction, installation hardlinks, package timestamp policy and
+remaining separate DWARF, full-world, bootstrap and foreign runtime gates.

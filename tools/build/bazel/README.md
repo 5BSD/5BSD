@@ -48441,3 +48441,17 @@ in maintained Make and native metadata. Twelve actual provider tests pass
 across six profiles, including amd64 regressions. Separate DWARF, runtime,
 full-system and performance gates remain open. See
 [CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md](CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md).
+
+## Private zstd library/CLI/package family on three ABIs (2026-11-03)
+
+Normal amd64, ARM64 and RISC-V profiles now qualify actual libzstd archives,
+DSO, CLI and four selected packages per ABI. All 233 production contexts/9,937
+consumed pairs, 200 archive members, six linked payloads, nine core links,
+57 original install records→54 unique records and twelve packages pass bounded
+checks. Five declared tests pass; four independent native/original CLI aliases
+have matching encoded bytes and selected-library traces. The 27 ordinary
+filename-sensitive object rejections remain distinct from the six independent
+original one-map controls. Original pthread/PIC/directory/ARM linker omissions
+were corrected precisely. Separate DWARF/source lookup and full-world/cross
+runtime/bootstrap gates remain open. See
+[ZSTD-THREE-ARCH-QUALIFICATION.md](ZSTD-THREE-ARCH-QUALIFICATION.md).

@@ -4,10 +4,15 @@ load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
 load("//tools/build/bazel:bsd_pkg_manifest.bzl", "bsd_pkg_manifests")
 load("//tools/build/bazel:bsd_pkg_create.bzl", "bsd_pkg_create")
 
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+bsd_install_manifest(name = "install_manifest",
+    manifests = ["//lib/libzstd:install_manifest", "//usr.bin/zstd:install_manifest"],
+    merge_identical_directories = True, visibility = ["//visibility:public"])
+
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
     name = "install_archive",
-    manifests = ["//lib/libzstd:install_manifest", "//usr.bin/zstd:install_manifest"],
+    manifests = [":install_manifest"],
     mtree_specs = {
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",
@@ -27,7 +32,7 @@ bsd_install_archive(
 # package has no automatic base dependency, matching the maintained generator.
 bsd_pkg_layout(
     name = "package_layout",
-    manifests = ["//lib/libzstd:install_manifest", "//usr.bin/zstd:install_manifest"],
+    manifests = [":install_manifest"],
     packages = ["zstd", "zstd-dbg", "zstd-dev", "zstd-lib"] + select({
         "//tools/build/bazel/config:split_manpages_enabled": ["zstd-man"],
         "//conditions:default": [],

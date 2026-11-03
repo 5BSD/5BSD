@@ -1,39 +1,42 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library", "cc_test", "cc_binary")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _DEFINES = ["XXH_NAMESPACE=ZSTD_", "ZSTD_MULTITHREAD=1", "ZSTD_DISABLE_ASM"]
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-cc_library(
-    name = "common_objects",
-    srcs = ['//sys/contrib/zstd:lib/common/entropy_common.c', '//sys/contrib/zstd:lib/common/error_private.c', '//sys/contrib/zstd:lib/common/fse_decompress.c', '//sys/contrib/zstd:lib/common/threading.c', '//sys/contrib/zstd:lib/common/xxhash.c', '//sys/contrib/zstd:lib/common/zstd_common.c', '//sys/contrib/zstd:lib/compress/fse_compress.c', '//sys/contrib/zstd:lib/compress/huf_compress.c', '//sys/contrib/zstd:lib/compress/zstd_compress.c', '//sys/contrib/zstd:lib/compress/zstd_compress_literals.c', '//sys/contrib/zstd:lib/compress/zstd_compress_sequences.c', '//sys/contrib/zstd:lib/compress/zstd_compress_superblock.c', '//sys/contrib/zstd:lib/compress/zstd_preSplit.c', '//sys/contrib/zstd:lib/compress/zstdmt_compress.c', '//sys/contrib/zstd:lib/decompress/huf_decompress.c', '//sys/contrib/zstd:lib/decompress/zstd_ddict.c', '//sys/contrib/zstd:lib/decompress/zstd_decompress.c', '//sys/contrib/zstd:lib/decompress/zstd_decompress_block.c', '//sys/contrib/zstd:lib/deprecated/zbuff_common.c', '//sys/contrib/zstd:lib/deprecated/zbuff_compress.c', '//sys/contrib/zstd:lib/deprecated/zbuff_decompress.c', '//sys/contrib/zstd:lib/dictBuilder/cover.c', '//sys/contrib/zstd:lib/dictBuilder/divsufsort.c', '//sys/contrib/zstd:lib/dictBuilder/zdict.c', '//sys/contrib/zstd:lib/compress/zstd_fast.c', '//sys/contrib/zstd:lib/compress/zstd_lazy.c', '//sys/contrib/zstd:lib/compress/zstd_ldm.c', '//sys/contrib/zstd:lib/compress/zstd_opt.c', '//sys/contrib/zstd:lib/compress/zstd_double_fast.c', '//sys/contrib/zstd:lib/common/debug.c', '//sys/contrib/zstd:lib/compress/hist.c', '//sys/contrib/zstd:lib/dictBuilder/fastcover.c'],
-    deps = ["//sys/contrib/zstd:headers"],
-    implementation_deps = ["//sys/contrib/zstd:internal_headers"],
-    local_defines = _DEFINES,
-    copts = ["-fvisibility=hidden"],
-    target_compatible_with = _PLATFORM,
-)
-cc_library(
-    name = "pool_objects", srcs = ["//sys/contrib/zstd:lib/common/pool.c"],
-    implementation_deps = ["//sys/contrib/zstd:internal_headers"],
-    local_defines = _DEFINES, copts = ["-fvisibility=default"],
-    linkopts = ["-pthread"],
-    target_compatible_with = _PLATFORM,
-)
-cc_library(
-    name = "zstd", deps = [":common_objects", ":pool_objects"],
-    target_compatible_with = _PLATFORM,
-    visibility = ["//visibility:public"],
-)
-cc_shared_library(
-    name = "zstd_shared", deps = [":zstd"], shared_lib_name = "libprivatezstd.so.5",
-    user_link_flags = ["-Wl,-soname,libprivatezstd.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"],
-)
+_PLATFORM = ["@platforms//os:freebsd"]
+config_setting(name = "target_riscv64", constraint_values = ["@platforms//cpu:riscv64"])
+config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+_SOURCES = ['//sys/contrib/zstd:lib/common/entropy_common.c', '//sys/contrib/zstd:lib/common/error_private.c', '//sys/contrib/zstd:lib/common/fse_decompress.c', '//sys/contrib/zstd:lib/common/pool.c', '//sys/contrib/zstd:lib/common/threading.c', '//sys/contrib/zstd:lib/common/xxhash.c', '//sys/contrib/zstd:lib/common/zstd_common.c', '//sys/contrib/zstd:lib/compress/fse_compress.c', '//sys/contrib/zstd:lib/compress/huf_compress.c', '//sys/contrib/zstd:lib/compress/zstd_compress.c', '//sys/contrib/zstd:lib/compress/zstd_compress_literals.c', '//sys/contrib/zstd:lib/compress/zstd_compress_sequences.c', '//sys/contrib/zstd:lib/compress/zstd_compress_superblock.c', '//sys/contrib/zstd:lib/compress/zstd_preSplit.c', '//sys/contrib/zstd:lib/compress/zstdmt_compress.c', '//sys/contrib/zstd:lib/decompress/huf_decompress.c', '//sys/contrib/zstd:lib/decompress/zstd_ddict.c', '//sys/contrib/zstd:lib/decompress/zstd_decompress.c', '//sys/contrib/zstd:lib/decompress/zstd_decompress_block.c', '//sys/contrib/zstd:lib/deprecated/zbuff_common.c', '//sys/contrib/zstd:lib/deprecated/zbuff_compress.c', '//sys/contrib/zstd:lib/deprecated/zbuff_decompress.c', '//sys/contrib/zstd:lib/dictBuilder/cover.c', '//sys/contrib/zstd:lib/dictBuilder/divsufsort.c', '//sys/contrib/zstd:lib/dictBuilder/zdict.c', '//sys/contrib/zstd:lib/compress/zstd_fast.c', '//sys/contrib/zstd:lib/compress/zstd_lazy.c', '//sys/contrib/zstd:lib/compress/zstd_ldm.c', '//sys/contrib/zstd:lib/compress/zstd_opt.c', '//sys/contrib/zstd:lib/compress/zstd_double_fast.c', '//sys/contrib/zstd:lib/common/debug.c', '//sys/contrib/zstd:lib/compress/hist.c', '//sys/contrib/zstd:lib/dictBuilder/fastcover.c']
+_ORDER = ['entropy_common.o', 'error_private.o', 'fse_decompress.o', 'pool.o', 'threading.o', 'xxhash.o', 'zstd_common.o', 'fse_compress.o', 'huf_compress.o', 'zstd_compress.o', 'zstd_compress_literals.o', 'zstd_compress_sequences.o', 'zstd_compress_superblock.o', 'zstd_preSplit.o', 'zstdmt_compress.o', 'huf_decompress.o', 'zstd_ddict.o', 'zstd_decompress.o', 'zstd_decompress_block.o', 'zbuff_common.o', 'zbuff_compress.o', 'zbuff_decompress.o', 'cover.o', 'divsufsort.o', 'zdict.o', 'zstd_fast.o', 'zstd_lazy.o', 'zstd_ldm.o', 'zstd_opt.o', 'zstd_double_fast.o', 'debug.o', 'hist.o', 'fastcover.o']
+_ORDER = _ORDER + select({":target_riscv64": ["zstd_kfreebsd.o"], "//conditions:default": []})
+_COPTS = ['-pipe', '-fno-common', '-std=gnu17', '-fvisibility=hidden', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Qunused-arguments']
+[
+    cc_library(name = name, srcs = units,
+        deps = ["//sys/contrib/zstd:headers"],
+        implementation_deps = ["//sys/contrib/zstd:internal_headers"],
+        local_defines = _DEFINES, copts = _COPTS + flags,
+        features = ["bsd_small_pic"], linkstatic = True,
+        target_compatible_with = _PLATFORM)
+    for name, units, flags in [
+        ("common_objects", [s for s in _SOURCES if s not in ["//sys/contrib/zstd:lib/common/pool.c", "//sys/contrib/zstd:lib/decompress/huf_decompress.c"]] + select({
+            ":target_riscv64": ["//sys/contrib/zstd:lib/freebsd/zstd_kfreebsd.c"], "//conditions:default": []}), []),
+        ("pool_objects", ["//sys/contrib/zstd:lib/common/pool.c"], ["-fvisibility=default"]),
+        ("huf_objects", ["//sys/contrib/zstd:lib/decompress/huf_decompress.c"], ["-Wno-bitwise-instead-of-logical"]),
+    ]
+]
+_GROUPS = [":common_objects", ":pool_objects", ":huf_objects"]
+bsd_component_archive(name = "static_archive", groups = _GROUPS, object_order = _ORDER)
+bsd_component_archive(name = "pic_archive", groups = _GROUPS, pic = True,
+    object_order = ['entropy_common.pic.o', 'error_private.pic.o', 'fse_decompress.pic.o', 'pool.pic.o', 'threading.pic.o', 'xxhash.pic.o', 'zstd_common.pic.o', 'fse_compress.pic.o', 'huf_compress.pic.o', 'zstd_compress.pic.o', 'zstd_compress_literals.pic.o', 'zstd_compress_sequences.pic.o', 'zstd_compress_superblock.pic.o', 'zstd_preSplit.pic.o', 'zstdmt_compress.pic.o', 'huf_decompress.pic.o', 'zstd_ddict.pic.o', 'zstd_decompress.pic.o', 'zstd_decompress_block.pic.o', 'zbuff_common.pic.o', 'zbuff_compress.pic.o', 'zbuff_decompress.pic.o', 'cover.pic.o', 'divsufsort.pic.o', 'zdict.pic.o', 'zstd_fast.pic.o', 'zstd_lazy.pic.o', 'zstd_ldm.pic.o', 'zstd_opt.pic.o', 'zstd_double_fast.pic.o', 'debug.pic.o', 'hist.pic.o', 'fastcover.pic.o'] + select({":target_riscv64": ["zstd_kfreebsd.pic.o"], "//conditions:default": []}))
+cc_import(name = "archive_link", static_library = ":static_archive", pic_static_library = ":pic_archive")
+cc_library(name = "zstd", deps = [":archive_link", "//sys/contrib/zstd:headers"], linkopts = ["-pthread"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "zstd_shared", deps = [":zstd"], shared_lib_name = "libprivatezstd.so.5",
+    user_link_flags = ["-pthread", "-fstack-protector-strong", "-Wl,-x", "-Wl,-soname,libprivatezstd.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"] +
+        select({":target_aarch64": ["-Wl,--fix-cortex-a53-843419"], "//conditions:default": []}),
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
-load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 load(":installation.bzl", "zstd_library_installation")
-cc_static_library(name = "static_archive", deps = [":common_objects", ":pool_objects"],
-    target_compatible_with = _PLATFORM)
 bsd_debug_split(name = "debug", src = ":zstd_shared", binary_name = "install/libprivatezstd.so.5",
     debug_name = "install/libprivatezstd.so.5.debug", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
     objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
@@ -41,11 +44,21 @@ bsd_strip_binary(name = "stripped", src = ":debug", output = "stripped/libprivat
     strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
 zstd_library_installation(name = "install_manifest")
 
-# Exercise the exported aggregate archive, not a reconstruction of its groups.
-cc_import(name = "archive_link", static_library = ":static_archive")
+# Exercise the default CcInfo archive selection.
 cc_test(name = "roundtrip_static", srcs = ["tests/roundtrip.c"],
-    deps = [":archive_link", "//sys/contrib/zstd:headers"], linkopts = ["-pthread"],
+    deps = [":zstd"], linkstatic = True,
     size = "small", target_compatible_with = _PLATFORM)
 cc_test(name = "roundtrip_shared", srcs = ["tests/roundtrip.c"],
     deps = [":zstd"], dynamic_deps = [":zstd_shared"], features = ["bsd_test_runtime_paths"],
     size = "small", target_compatible_with = _PLATFORM)
+
+cc_binary(name = "static_consumer", srcs = ["tests/static_consumer.c"], deps = [":zstd"],
+    linkstatic = True, target_compatible_with = _PLATFORM)
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_host_artifact_test(name = "archive_contract_test", src = "archive-contract-test.py",
+    data = ["//usr.bin/zstd:zstd", ":static_consumer", ":zstd_shared", ":static_archive", ":pic_archive", "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:bin/llvm-ar"],
+    args = ["--program", "$(location //usr.bin/zstd:zstd)", "--consumer", "$(location :static_consumer)", "--shared", "$(location :zstd_shared)",
+        "--archive", "$(location :static_archive)", "--pic-archive", "$(location :pic_archive)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)", "--machine"] +
+        select({":target_aarch64": ["183"], ":target_riscv64": ["243"], "//conditions:default": ["62"]}),
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:llvm-ar_runtime"], size = "small")

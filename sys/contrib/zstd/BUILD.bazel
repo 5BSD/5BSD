@@ -171,3 +171,6 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_huf_decompress", srcs
 
 # Source-owned FreeBSD standard-header overlay, before generic kernel roots.
 bsd_source_headers(name = "codecs_crypto_kernel_port_headers", hdrs = glob(["lib/freebsd/*.h"]), includes = ["lib/freebsd"], visibility = ["//sys/contrib/zstd:__pkg__"])
+
+# Original RISC-V userland library runtime helpers.
+exports_files(["lib/freebsd/zstd_kfreebsd.c"], visibility = ["//lib/libzstd:__pkg__"])

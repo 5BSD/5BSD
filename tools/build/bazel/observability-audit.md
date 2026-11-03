@@ -10719,3 +10719,16 @@ forced-header policy. No C implementation or probes changed. Live firing,
 audit delivery and enabled/disabled costs remain open. See
 [CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md](CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md)
 and the retained observability-r1.json source/line inventory.
+
+### Private zstd on three userland ABIs (2026-11-03)
+
+The batch changes owner-local build/install/test declarations and a narrow
+original-source export, with no runtime C or instrumentation edits. Actual
+233-context/9,937-input checks and six raw linked allocated comparisons preserve
+the selected original implementation under explicitly recorded same-source
+filename-policy controls. Ordinary filename mismatches are retained, not
+normalized away. Original visibility, pthread, PIC and ARM64 workaround policies
+are explicit. Five declared tests and independent native CLI replays pass, with
+selected-library loader traces; foreign execution, live tracing delivery and
+full framework coverage are not claimed. Separate DWARF/source lookup remains
+open. See ZSTD-THREE-ARCH-QUALIFICATION.md.
