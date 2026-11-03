@@ -1372,3 +1372,23 @@ coverage. Bootstrap, hardware/combined publication, sandboxing, VM/runtime and
 controlled CPU/memory/disk/cache qualification remain required. Make stays
 production/default; BIP stays excluded. This is current compiled parity, not a
 booted installed system or full-goal completion.
+
+## Complete selected amd64 aggregate (2026-11-03)
+
+The [combined request](AMD64-AGGREGATE-MODULES-QUALIFICATION.md) passes the current
+full kernel and all 729 selected amd64 modules with CTF/debug: 2,191 targets and
+3,649 captured output records. All module ELF/debuglink CRCs and producer/install
+payload bindings pass; all component destinations are collision-free. The real
+mac_ntpd compile failure is fixed by reusing its existing precise capability
+header provider; failed build and inspection records remain retained. Default
+component paths and package-pair consistency are not full original installation
+or pkgbase parity. Full aggregate installation/package closure remains next.
+
+Continue actual userland library/program/stand/rescue closure and ARM64/RISC-V
+native architecture coverage. The last maintained cross selections contain 627
+ARM64 and 553 RISC-V leaves; current literal declaration inspection recognizes
+216 and 214 respectively, not successful-build counts. Cross firmware/driver and
+architecture-specific generated inputs remain real work. Bootstrap, hardware/
+publication, debugger source lookup, sandboxing, VM/runtime and controlled CPU/
+memory/disk I/O/cache qualification remain required. Make stays production/default;
+BIP remains excluded. This checkpoint supersedes earlier aggregate-build TODOs.

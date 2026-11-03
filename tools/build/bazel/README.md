@@ -15,8 +15,10 @@ profiles: 261 actual compilers, 68,785 consumed occurrences and 261 selected
 options per profile; complete ordered links, whole-file plain equality and
 CTF/runtime/install/debug-CRC checks pass against fresh original Make. All 729
 selected amd64 leaves now have recognized source producer declarations (691
-generic, 38 firmware). Aggregate module/current kernel builds and full-system
-qualification remain open; declaration counts do not establish completion.
+generic, 38 firmware). The [complete selected aggregate](AMD64-AGGREGATE-MODULES-QUALIFICATION.md)
+now passes with the current kernel: 2,191 selected targets and all 729 module
+ELF/debuglink and captured install-payload bindings. Full installation/pkgbase
+and system qualification remain open; declaration counts alone are insufficient.
 
 The [Linux64 incremental check](LINUX64-INCREMENTAL-QUALIFICATION.md) passes
 original/changed/restored generated-image dependency behavior using the actual
@@ -36,8 +38,9 @@ separate DWARF/source lookup remains open. The earlier helper DSO link correctio
 is recorded in [the prior full-kernel result](FULL-KERNEL-PARITY-QUALIFICATION.md).
 Previously qualified native kernel installation layouts remain recorded in
 [KERNEL-INSTALLATION-QUALIFICATION.md](KERNEL-INSTALLATION-QUALIFICATION.md).
-Next build the aggregate selected modules and close pkgbase/configuration/cross-
-architecture qualification, followed by VM/runtime and performance gates. Full
+The selected amd64 kernel/module aggregate now passes; next close full aggregate
+installation/pkgbase and configuration/cross-architecture qualification, followed
+by VM/runtime and performance gates. Full
 world/stand/rescue and bootstrap/publication remain open; Make stays default.
 
 The package driver now preserves first-class directory layout records, including

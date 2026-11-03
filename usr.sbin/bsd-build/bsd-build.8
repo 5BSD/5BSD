@@ -5445,3 +5445,11 @@ See
 for all-object/runtime/CTF checks, actual input captures and dependency limits.
 Separate DWARF/source lookup, aggregate modules/pkgbase, VM/runtime and measured
 resource/cache qualification remain open.
+.Pp
+The selected amd64 GENERIC kernel and all 729 module leaves now pass one
+aggregate native qualification request with CTF and separate debug enabled.
+All module ELF/debuglink CRCs and captured producer/install payload bindings
+pass; component destinations do not collide.
+This does not establish full original aggregate installation or pkgbase parity,
+ARM64/RISC-V completeness, a booted system or controlled performance results.
+Make remains the production backend.
