@@ -1361,3 +1361,31 @@ bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
         "vm_param.h",
     ],
     includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "_vm_phys.h",
+        "_vm_radix.h",
+        "pmap.h",
+        "swap_pager.h",
+        "uma.h",
+        "uma_align_mask.h",
+        "uma_dbg.h",
+        "uma_int.h",
+        "vm.h",
+        "vm_domainset.h",
+        "vm_dumpset.h",
+        "vm_extern.h",
+        "vm_kern.h",
+        "vm_map.h",
+        "vm_object.h",
+        "vm_page.h",
+        "vm_pageout.h",
+        "vm_pagequeue.h",
+        "vm_pager.h",
+        "vm_param.h",
+        "vm_phys.h",
+        "vm_radix.h",
+        "vnode_pager.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

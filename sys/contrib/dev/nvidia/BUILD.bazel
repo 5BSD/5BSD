@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_uudecode.bzl", "bsd_uudecode")
+
+bsd_uudecode(name = "tegra210_xusb_firmware", src = "tegra210_xusb.bin.uu",
+    output = "tegra210_xusb.fw",
+    decoder = "//usr.bin/bintrans:bintrans", loader = "//libexec/rtld-elf:rtld_binary",
+    runtime_libraries = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    visibility = ["//sys/kern:__pkg__"])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_host_artifact_test(name = "tegra210_firmware_test", src = "check-firmware.py",
+    data = ["tegra210_xusb.bin.uu", ":tegra210_xusb_firmware",
+        "//sys/kern:arm64_generic_tegra210_firmware_object_files"],
+    args = ["--source", "$(location tegra210_xusb.bin.uu)",
+        "--decoded", "$(location :tegra210_xusb_firmware)",
+        "--object", "$(location //sys/kern:arm64_generic_tegra210_firmware_object_files)",
+        "--machine", "183", "--symbol", "tegra210_xusb_fw"])

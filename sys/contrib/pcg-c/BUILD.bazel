@@ -20,3 +20,9 @@ bsd_source_headers(name = "openzfs_kernel_spl_misc_headers", hdrs = ["include/pc
 # Physical prerequisites for native DTrace built-in built-ins.
 bsd_source_headers(name = "dtrace_builtins_kernel_dtrace_headers", hdrs = ["include/pcg_variants.h"],
     visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "include/pcg_variants.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

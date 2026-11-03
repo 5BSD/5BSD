@@ -1593,3 +1593,18 @@ cross_generic_kernel_objects(arch = "riscv", name = "generic_network",
         "//sys/vm:cross_network_builtin_headers",
         "//sys/riscv/conf:network_builtin_options_headers",
     ])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "in.h",
+        "in_kdtrace.h",
+        "in_pcb.h",
+        "ip.h",
+        "ip6.h",
+        "tcp.h",
+        "tcp_fsm.h",
+        "tcp_log_buf.h",
+        "tcp_offload.h",
+        "tcp_var.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

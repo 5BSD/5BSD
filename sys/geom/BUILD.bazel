@@ -177,3 +177,10 @@ bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
         "geom.h",
     ],
     includes = [], visibility = ["//sys/vm:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "geom.h",
+        "geom_disk.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

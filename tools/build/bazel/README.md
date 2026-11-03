@@ -48588,3 +48588,15 @@ generator accounting. See
 [KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md](KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md).
 No generator output rewriting or SDK substitution is used. Full sandbox and
 cross-kernel qualification remain open; Make remains production/default.
+
+### ARM64/RISC-V core source owner (2026-11-03)
+
+Four maintained composite-SDK profiles qualify 421 selected products across
+842 object configurations: exact allocated sections/symbols/relocations,
+421 byte-identical plain objects, 414 exact nonempty CTF payloads and seven
+matching CTF absences. The input ledger separates 103,782 raw exact pairs,
+212 independently reproduced KOBJ provenance pairs, 424 added ARM64 DTS
+headers and two binary firmware input contexts. Six declared tests pass.
+See [CROSS-KERNEL-CORE-QUALIFICATION.md](CROSS-KERNEL-CORE-QUALIFICATION.md).
+Complete kernels, other configurations, debug source packages, boot/runtime,
+world/packages/bootstrap/sandbox/cache and comparative performance remain open.

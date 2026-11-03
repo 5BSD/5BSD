@@ -1980,3 +1980,19 @@ cross_generic_kernel_objects(arch = "riscv", name = "generic_network",
         "//sys/kern:bus_if_headers",
         "//sys/kern:device_if_headers",
     ])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "ethernet.h",
+        "if.h",
+        "if_dl.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "infiniband.h",
+        "radix.h",
+        "route.h",
+        "route/nhop.h",
+        "vnet.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

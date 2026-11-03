@@ -174,3 +174,13 @@ bsd_source_headers(name = "codecs_crypto_kernel_port_headers", hdrs = glob(["lib
 
 # Original RISC-V userland library runtime helpers.
 exports_files(["lib/freebsd/zstd_kfreebsd.c"], visibility = ["//lib/libzstd:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "lib/freebsd/limits.h",
+        "lib/freebsd/stddef.h",
+        "lib/freebsd/zstd_kfreebsd.h",
+        "lib/zstd.h",
+        "lib/zstd_errors.h",
+    ],
+    includes = ["lib/freebsd"], visibility = ["//sys/kern:__pkg__"])

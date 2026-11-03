@@ -119,3 +119,10 @@ amd64_generic_module_objects(name = "crypto_rijndael-api_module", srcs = ["rijnd
 amd64_generic_module_objects(name = "crypto_rijndael-api-fst_module", srcs = ["rijndael-api-fst.c"],
     deps = ["//sys/crypto/rijndael:codecs_crypto_kernel_rijndael-api-fst_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "rijndael-api-fst.h",
+        "rijndael.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

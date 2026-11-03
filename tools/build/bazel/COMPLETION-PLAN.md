@@ -1742,3 +1742,22 @@ device IDs, locales, crunch, boot images and callers) require role classificatio
 and composite qualification; intentional target ABI inspection stays target data. See KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md.
 This does not close complete host sandbox, source/debug, cross-kernel/link,
 world/package/bootstrap/cache/runtime or comparative resource/performance gates.
+
+### 2026-11-03: selected core-owner qualification closed
+
+All 212 ARM64 and 209 RISC-V core-owner products, including layout auxiliaries
+and source-decoded firmware, pass four maintained composite-SDK profiles.
+Independent Make controls establish 842 runtime object matches, 421 byte-exact
+plain objects, 414 exact CTF payloads and seven matching CTF absences. The input
+ledger preserves 103,782 raw exact pairs, 212 independently regenerated KOBJ
+provenance pairs, 424 explicit DTS header additions and two separately checked
+firmware binary inputs. Six declared tests pass; all 212 primary sources and
+existing instrumentation remain unchanged. See CROSS-KERNEL-CORE-QUALIFICATION.md.
+Initial missing MSI/PIC header views and an observer pre/post-CTF mismatch are
+retained with their explicit corrections. The existing frontend contract handles
+these native source targets; no CLI, package or signing interface change occurs.
+Next kernel work includes remaining source/generator owners, ordered full links,
+configuration breadth and execution-runtime helper classification. Source/debug
+packages, bootstrap/sandbox/cache, full world/pkgbase/hardware, boot/runtime and
+comparative CPU/memory/disk I/O/usage remain gates. Make stays production;
+BIP remains excluded.

@@ -119,3 +119,14 @@ bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
         "pmu_dmc620_reg.h",
     ],
     includes = [], visibility = ["//sys/vm:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "hwpmc_arm64.h",
+        "hwpmc_cmn600.h",
+        "hwpmc_dmc620.h",
+        "hwpmc_riscv.h",
+        "pmc_events.h",
+        "pmu_dmc620_reg.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

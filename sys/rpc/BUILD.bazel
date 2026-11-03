@@ -181,3 +181,13 @@ amd64_generic_kernel_objects(name = "generic_rpc_builtins_rpctlssd_xdr", srcs = 
 amd64_generic_kernel_objects(name = "generic_rpc_builtins_rpctlssd_clnt", srcs = ["//sys/rpc:rpctlssd_clnt.c"],
     deps = ["//sys/net:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet6:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:generated_rpc_headers"],
     warning_flags = KERNEL_COMMON_WARNING_FLAGS)
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "auth.h",
+        "clnt_stat.h",
+        "netconfig.h",
+        "types.h",
+        "xdr.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

@@ -114,3 +114,11 @@ amd64_generic_module_objects(name = "zlib_trees_module", srcs = ["trees.c"],
 amd64_generic_module_objects(name = "zlib_zutil_module", srcs = ["zutil.c"],
     deps = ["//sys/contrib/zlib:core_kernel_subr_compressor_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "zconf.h",
+        "zlib.h",
+        "zutil.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])

@@ -5725,3 +5725,12 @@ are recorded explicitly.
 See
 .Pa tools/build/bazel/KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md .
 This correction does not establish full host sandbox or cross-kernel coverage.
+.Pp
+Selected ARM64 and RISC-V core built-ins pass four composite plain/CTF profiles
+and six declared artifact tests, covering 842 original object configurations.
+All 421 plain objects are byte-identical; CTF payloads or absences match.
+The input ledger separately records raw identical inputs, independently
+reproduced KOBJ provenance pairs, added DTS headers and binary firmware inputs.
+See
+.Pa tools/build/bazel/CROSS-KERNEL-CORE-QUALIFICATION.md .
+This cohort does not establish complete kernels or installed-system behavior.

@@ -10825,3 +10825,15 @@ differences are independently controlled and recorded, not rewritten. See
 CROSS-KERNEL-NETWORK-QUALIFICATION.md and the work-root observability.json.
 This is compiled instrumentation preservation, not live probe or audit
 completeness, network runtime, or performance qualification.
+
+### 2026-11-03: cross-kernel core source owner
+
+All 212 physical primary sources match original build hashes. The retained
+work-root observability.json records 1,813 lexical marker lines using
+DTRACE|SDT_|AUDIT_|audit_, including declarations, calls and comments, and lists
+sources without direct markers for semantic follow-up. No runtime C/probe
+changes occur. All 842 object configurations retain original allocated bytes,
+symbols and runtime relocations, with exact CTF payloads or matching absence.
+See CROSS-KERNEL-CORE-QUALIFICATION.md. This preserves compiled instrumentation;
+live tracing/audit delivery, whether particular operations need more coverage,
+and enabled/disabled runtime cost still require qualification.

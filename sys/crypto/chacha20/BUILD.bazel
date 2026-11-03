@@ -45,3 +45,10 @@ amd64_generic_module_objects(name = "crypto_chacha_module", srcs = ["chacha.c"],
 amd64_generic_module_objects(name = "crypto_chacha-sw_module", srcs = ["chacha-sw.c"],
     deps = ["//sys/crypto/chacha20:core_kernel_kern_shutdown_headers", "//sys/opencrypto:opencrypto_kernel_xform_aes_cbc_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+# Physical inputs of ARM64/RISC-V GENERIC core built-ins.
+bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
+        "_chacha.h",
+        "chacha.h",
+    ],
+    includes = [], visibility = ["//sys/kern:__pkg__"])
