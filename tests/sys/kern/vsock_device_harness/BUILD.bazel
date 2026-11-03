@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 # Original harness programs; other harness programs remain migration work.
 _SHARED = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libthr:thr_shared"]

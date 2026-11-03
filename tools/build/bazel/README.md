@@ -1,5 +1,14 @@
 # Bazel qualification
 
+## Repository discovery checkpoint (2026-11-03)
+
+The complete offline native graph query now loads after correcting foreign
+workspace boundaries, an explicit native rules_cc import and a recursive zsh
+symlink. It inventories 97,375 declared rules and 103 Python test rules; these
+are metadata counts, not successful builds or Make completeness. Googletest
+base self-tests and Python child-tool runtime review remain open. See
+[NATIVE-REPOSITORY-INVENTORY.md](NATIVE-REPOSITORY-INVENTORY.md).
+
 ## Storage module checkpoint (2026-11-03)
 
 Twenty-three shared storage module leaves per ARM64/RISC-V architecture and

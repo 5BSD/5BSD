@@ -191,7 +191,7 @@ def _qualify(config, args, state):
     for name,value in receipt['snapshot'].items():
         p=Path(name)
         if p.is_absolute() or '..' in p.parts or digest(sdk/p)!=value:raise ValueError('SDK snapshot changed: '+name)
-    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),Path(userland_sdk.__file__).resolve(),Path(sdk_copy.__file__).resolve(),Path(bsd_toolchain.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock']}
+    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),Path(userland_sdk.__file__).resolve(),Path(sdk_copy.__file__).resolve(),Path(bsd_toolchain.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock',src/'REPO.bazel']}
     out.mkdir(parents=True)
     module = 'module(name="bsd_sdk",version="0.0.0")\nbazel_dep(name="rules_cc",version="0.2.17")\nbazel_dep(name="platforms",version="1.0.0")\n'
     sdk_key = hashlib.sha256(json.dumps(dict(snapshot=receipt['snapshot'], module=module),sort_keys=True).encode()).hexdigest()

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# These are foreign workspace definitions or generated-workspace templates,
+# not packages in the native 5BSD repository. Keep their source files intact.
+ignore_directories([
+    # FIDL uses the explicit @fuchsia_runtime_src source view; retain the
+    # contrib/fuchsia root package that exports its license marker.
+    "contrib/fuchsia/*",
+    # Upstream self-test BUILD files assume Googletest is the workspace root.
+    # Native libraries live in lib/googletest; its Make-selected self-tests
+    # still require native conversion independently of these upstream files.
+    "contrib/googletest/googlemock/test",
+    "contrib/googletest/googletest/test",
+    "contrib/libcbor/examples/bazel",
+    # Inputs to the maintained legacy probe workspace generators.
+    "tools/build/bazel/targets",
+])
