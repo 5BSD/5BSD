@@ -28,7 +28,7 @@ cc_library(name = "driver_headers", deps = [
 ], visibility = ["//sys/dev/virtio:__subpackages__"])
 
 amd64_generic_module_objects(name = "generic_driver", srcs = ["virtio.c", "virtqueue.c"],
-    deps = [":driver_headers", "//sys/vm:kernel_headers"])
+    deps = [":driver_headers", "//sys/dev/virtio/iommu:kernel_headers", "//sys/vm:kernel_headers"])
 
 filegroup(name = "virtio_bus_if_source", srcs = [":virtio_bus_if"], output_group = "source")
 amd64_generic_module_objects(name = "generic_virtio_bus_if", srcs = [":virtio_bus_if_source"],
@@ -48,7 +48,7 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     arch = arch,
     name = "generic_driver",
     srcs = ["virtio.c", "virtqueue.c"],
-    deps = [":driver_headers", "//sys/vm:kernel_headers"],
+    deps = [":driver_headers", "//sys/dev/virtio/iommu:kernel_headers", "//sys/vm:kernel_headers"],
 ) for arch in ["arm64", "riscv"]]
 
 [cross_generic_module_objects(
@@ -86,7 +86,7 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
 
 # Native amd64 GENERIC virtualization built-ins.
 amd64_generic_kernel_objects(name = "generic_virtualization_virtio", srcs = ["virtio.c"],
-    deps = ["//sys/dev/virtio:virtualization_kernel_virtio_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_bus_if_headers"],
+    deps = ["//sys/dev/virtio:virtualization_kernel_virtio_headers", "//sys/dev/virtio/iommu:virtualization_kernel_virtio_iommu_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_bus_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 amd64_generic_kernel_objects(name = "generic_virtualization_virtqueue", srcs = ["virtqueue.c"],
     deps = ["//sys/dev/virtio:virtualization_kernel_virtqueue_headers", "//sys/vm:virtualization_kernel_virtqueue_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_bus_if_headers"],

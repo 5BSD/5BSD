@@ -203,6 +203,7 @@ virtio_supported_transport_features(uint64_t features)
 	mask |= VIRTIO_F_NOTIF_CONFIG_DATA;
 	mask |= VIRTIO_F_RING_RESET;
 	mask |= VIRTIO_F_SUSPEND;
+	mask |= VIRTIO_F_ACCESS_PLATFORM;
 
 	return (features & mask);
 }

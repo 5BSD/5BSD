@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd August 14, 2026
+.Dd November 2, 2026
 .Dt VIRTIO_IOMMU 4
 .Os
 .Sh NAME
@@ -77,8 +77,26 @@ busdma back end whose map and unmap operations call into this driver's request
 queue.
 Those components live in the shared framework and are not provided here, so
 real host translation is not yet wired up.
-The driver exposes a lookup seam that resolves an endpoint identifier to its
-protocol engine, so a future in-tree VIOT and busdma back end can drive real
+The one translation the driver does provide is the identity domain that
+VirtIO devices offering
+.Dv VIRTIO_F_ACCESS_PLATFORM
+need.
+Before the PCI transport accepts that feature it asks each attached
+virtio-iommu to attach the function's requester ID to an identity domain
+with
+.Dv VIRTIO_IOMMU_ATTACH_F_BYPASS
+(which requires the BYPASS_CONFIG feature).
+The device then passes the endpoint's DMA through untranslated, so the
+guest-physical ring and buffer addresses the VirtIO drivers program stay
+valid.
+If no virtio-iommu accepts the endpoint the feature is not negotiated, and a
+device that requires it fails to attach with a message naming the endpoint.
+The virtio-iommu must attach before its endpoints, which holds when it sits
+at a lower PCI slot.
+While an endpoint is attached to a domain the driver refuses to detach.
+The driver registers its protocol engine with the
+.Xr virtio 4
+core, so a future in-tree VIOT and busdma back end can drive real
 translation without changing the protocol core.
 .Pp
 Because a non-translating IOMMU provides a guest no isolation, this guest
@@ -108,7 +126,10 @@ The default value is 0: the driver declines the device and does not attach,
 because it implements the protocol but does not provide transparent
 .Xr busdma 9
 translation for other devices.
-Set it to 1 to exercise the protocol against a virtio-iommu device.
+Set it to 1 to exercise the protocol against a virtio-iommu device and to
+attach
+.Dv VIRTIO_F_ACCESS_PLATFORM
+endpoints behind it through identity domains.
 .El
 .Sh SYSCTL VARIABLES
 The following read-only variables are available as
