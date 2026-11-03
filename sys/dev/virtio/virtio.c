@@ -29,11 +29,13 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/sysctl.h>
 #include <sys/module.h>
 #include <sys/sbuf.h>
 #include <sys/sdt.h>
+#include <sys/sx.h>
 
 #include <machine/bus.h>
 #include <machine/resource.h>
@@ -43,6 +45,7 @@
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtio_config.h>
 #include <dev/virtio/virtqueue.h>
+#include <dev/virtio/iommu/virtio_iommu.h>
 
 #include "virtio_bus_if.h"
 
@@ -218,6 +221,57 @@ virtio_filter_transport_features(uint64_t features)
 {
 
 	return (virtio_supported_transport_features(features));
+}
+
+/*
+ * VirtIO-IOMMU instances register with the core rather than with each other so
+ * the transports can look them up without depending on the loadable driver.
+ * Identity attach sleeps on the instance's request queue, hence the sx lock.
+ */
+static struct sx virtio_iommu_providers_lock;
+static LIST_HEAD(, virtio_iommu_provider) virtio_iommu_providers =
+    LIST_HEAD_INITIALIZER(virtio_iommu_providers);
+SX_SYSINIT(virtio_iommu_providers, &virtio_iommu_providers_lock,
+    "virtio iommu providers");
+
+void
+virtio_iommu_provider_register(struct virtio_iommu_provider *provider)
+{
+
+	sx_xlock(&virtio_iommu_providers_lock);
+	LIST_INSERT_HEAD(&virtio_iommu_providers, provider, link);
+	sx_xunlock(&virtio_iommu_providers_lock);
+}
+
+void
+virtio_iommu_provider_deregister(struct virtio_iommu_provider *provider)
+{
+
+	sx_xlock(&virtio_iommu_providers_lock);
+	LIST_REMOVE(provider, link);
+	sx_xunlock(&virtio_iommu_providers_lock);
+}
+
+/*
+ * Attach a VIRTIO_F_ACCESS_PLATFORM endpoint to an identity domain of whichever
+ * registered instance manages it.  Returns ENXIO when no instance is
+ * registered, otherwise the last instance's error if none accepted it.
+ */
+int
+virtio_iommu_attach_identity(uint32_t endpoint)
+{
+	struct virtio_iommu_provider *provider;
+	int error;
+
+	error = ENXIO;
+	sx_slock(&virtio_iommu_providers_lock);
+	LIST_FOREACH(provider, &virtio_iommu_providers, link) {
+		error = provider->attach_identity(provider->dev, endpoint);
+		if (error == 0)
+			break;
+	}
+	sx_sunlock(&virtio_iommu_providers_lock);
+	return (error);
 }
 
 bool

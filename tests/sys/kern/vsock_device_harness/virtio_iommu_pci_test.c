@@ -21,6 +21,8 @@
 #include <pci_virtio_iommu.c>
 
 /* Expectations below must not silently inherit the DUT's wire constants. */
+#undef	VIRTIO_CONFIG_STATUS_ACK
+#define	VIRTIO_CONFIG_STATUS_ACK	VIRTIO14_STATUS_ACKNOWLEDGE
 #undef	VIRTIO_CONFIG_STATUS_DRIVER_OK
 #define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
 #undef	VIRTIO_CONFIG_S_NEEDS_RESET

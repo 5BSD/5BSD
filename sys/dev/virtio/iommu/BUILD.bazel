@@ -3,7 +3,8 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-cc_library(name = "kernel_headers", hdrs = ['virtio_iommu.h'], strip_include_prefix = "/sys")
+cc_library(name = "kernel_headers", hdrs = ['virtio_iommu.h'], strip_include_prefix = "/sys",
+    visibility = ["//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__"])
 
 amd64_generic_module_objects(srcs = ["virtio_iommu.c"],
     deps = [":kernel_headers", "//sys/dev/virtio:driver_headers"])
@@ -15,3 +16,10 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ["virtio_iommu.c"],
     deps = [":kernel_headers", "//sys/dev/virtio:driver_headers"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisite of the native virtio and virtio_pci_modern built-ins
+# (the core keeps the provider registry; the transport asks it for identity domains).
+bsd_source_headers(name = "virtualization_kernel_virtio_iommu_headers", hdrs = ["virtio_iommu.h"],
+    visibility = ["//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__"])

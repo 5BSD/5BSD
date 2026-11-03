@@ -196,13 +196,16 @@ struct virtio_iommu_fault {
  * for virtio-iommu the VIOT table).  None of that machinery has a
  * machine-independent "register a new provider" entry point that a loadable
  * virtio child driver may call without editing the framework and platform
- * busdma back ends -- which is out of this driver's file scope.
+ * busdma back ends.
  *
- * Rather than fake translation, the driver publishes this provider vtable so a
- * future VIOT/busdma_iommu back end can locate the request-queue protocol
- * engine by endpoint RID and drive real MAP/UNMAP/ATTACH/DETACH against the
- * host.  virtio_iommu_provider_lookup() returns the provider that owns a given
- * endpoint RID, or NULL when no virtio-iommu instance claims it.
+ * Each attached virtio-iommu instance instead registers this vtable with the
+ * virtio core (virtio.c), which outlives the loadable driver.  The PCI
+ * transport calls virtio_iommu_attach_identity() before it accepts
+ * VIRTIO_F_ACCESS_PLATFORM; it succeeds only when an instance has attached the
+ * endpoint RID to an identity (bypass) domain, so the guest-physical addresses
+ * virtqueue(9) hands the device remain valid.  The remaining operations are
+ * left for a future VIOT/busdma_iommu back end that drives real MAP/UNMAP
+ * translation.
  */
 struct virtio_iommu_provider {
 	device_t dev;
@@ -214,9 +217,12 @@ struct virtio_iommu_provider {
 	int	(*unmap)(device_t, uint32_t domain, uint64_t iova_start,
 		    uint64_t iova_end);
 	int	(*probe_endpoint)(device_t, uint32_t endpoint);
+	int	(*attach_identity)(device_t, uint32_t endpoint);
 	LIST_ENTRY(virtio_iommu_provider) link;
 };
 
-struct virtio_iommu_provider *virtio_iommu_provider_lookup(uint32_t endpoint);
+void	virtio_iommu_provider_register(struct virtio_iommu_provider *);
+void	virtio_iommu_provider_deregister(struct virtio_iommu_provider *);
+int	virtio_iommu_attach_identity(uint32_t endpoint);
 
 #endif /* _DEV_VIRTIO_IOMMU_VIRTIO_IOMMU_H_ */
