@@ -11,6 +11,16 @@ RISC-V finishes with 2,050 directories and no query failures. Source review iden
 complete standalone/EFI libraries and EFI loader links as required next work.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
 
+## Standalone Lua architecture checkpoint (2026-11-03)
+
+Native amd64, ARM64 and RISC-V archives each match Make in all 31 members'
+allocated sections, symbol contracts and relocations. ELF machine/ABI checks and
+three host inspection methods pass per architecture. All 93 owned object outputs
+bind to actual compiler/archive actions; full object/debug bytes differ. The
+RISC-V soft-float test exposed and removed an unintended fixture DSO. EFI and
+firmware runtime remain open. See
+[STANDALONE-LUA-CROSS-QUALIFICATION.md](STANDALONE-LUA-CROSS-QUALIFICATION.md).
+
 ## Standalone Lua archive checkpoint (2026-11-03)
 
 The amd64 loader Lua candidate now builds all 31 selected units natively.

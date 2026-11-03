@@ -4,3 +4,5 @@ exports_files(["minidump.h"], visibility = ["//lib/libkvm:__pkg__"])
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
     strip_include_prefix = ".", include_prefix = "machine", visibility = ["//visibility:public"])
+
+filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'param.h', 'setjmp.h'], visibility = ["//stand/liblua:__pkg__"])

@@ -16,3 +16,5 @@ bsd_architecture_headers(
     },
     visibility = ["//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"],
 )
+
+filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'param.h', 'setjmp.h'], visibility = ["//stand/liblua:__pkg__"])

@@ -8,9 +8,11 @@ is the standalone loader interpreter library, with its integer-number Lua ABI,
 mini stdio wrappers and loader modules. It does not reuse the userland Lua
 configuration/header dependency or link a userland Lua/libc implementation.
 
-The current candidate is constrained to FreeBSD/amd64. It is not yet a complete
-EFI-specific variant or a foreign-architecture archive. EFI flags and verifier
-policy must stay separate from BIOS/userboot contexts. No full loader is linked.
+The initial candidate below qualified amd64. The shared declarations now also
+support ARM64 and RISC-V, with independent Make/action/ABI evidence in
+[STANDALONE-LUA-CROSS-QUALIFICATION.md](STANDALONE-LUA-CROSS-QUALIFICATION.md).
+It is not yet a complete EFI-specific variant. EFI flags and verifier policy
+must stay separate from BIOS/userboot contexts. No full loader is linked.
 
 The shared `stand/libsa:standalone_headers` view declares the restricted safe
 header aliases and three intentionally empty xlocale compatibility files from
@@ -106,7 +108,7 @@ normal backend was used for qualification; Make remains production/default.
 
 The observability audit records the standalone/firmware context. No existing
 DTrace/BSM provider was dropped; loader diagnostics and verification failures
-still require firmware runtime tests. Full EFI linking, ARM64/RISC-V support,
+still require firmware runtime tests. Full EFI linking, foreign runtime qualification,
 complete world/kernel/modules/pkgbase, bootstrap/sandbox and comparative CPU,
 memory and disk performance gates remain open. Client-only timing is not a
 whole-process-tree resource benchmark. No host install, upgrade or reboot occurred.

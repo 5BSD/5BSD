@@ -29,7 +29,9 @@ the firmware loader environment; it cannot emit events through the running OS's
 DTrace/audit facilities. The native candidate retains the separate loader
 verification compile path. Firmware diagnostics and verification failure behavior
 must be exercised with the completed loader; no runtime observability closure is
-claimed from archive inspection. Userland Lua is a separate component/context.
+claimed from archive inspection. Userland Lua is a separate component/context. ARM64 and RISC-V archive/ABI
+qualification uses host inspection only and does not add runtime observability
+evidence.
 
 ## Findings and follow-up
 

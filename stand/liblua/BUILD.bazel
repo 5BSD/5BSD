@@ -5,13 +5,24 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
 load(":config.bzl", "loader_lua_paths")
 loader_lua_paths(name = "configured_paths")
-# Initial native candidate: amd64 standalone Lua, not userland liblua.
-bsd_architecture_headers(name = "architecture_headers", headers = {
-    "//sys/amd64/include:standalone_lua_headers": "machine",
-    "//sys/x86/include:standalone_lua_headers": "x86",
+# The loader ABI is separate from ordinary userland on every architecture.
+_COMPAT = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
 })
-_CFLAGS = ['-O2', '-pipe', '-fno-common', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-Istand/libsa/geli', '-ffreestanding', '-Icontrib/lua/src', '-Istand/common', '-Istand/liblua', '-ffreestanding', '-nostdlib', '-DLUA_USE_POSIX', '-fno-stack-protector', '-D__BSD_VISIBLE', '-Istand/include', '-Istand/liblua', '-Icontrib/lua/src', '-Istand/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments'] + ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone",
-    "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"] + select({
+bsd_architecture_headers(name = "architecture_headers", headers = select({
+    "@platforms//cpu:x86_64": {"//sys/amd64/include:standalone_lua_headers": "machine", "//sys/x86/include:standalone_lua_headers": "x86"},
+    "@platforms//cpu:aarch64": {"//sys/arm64/include:standalone_lua_headers": "machine"},
+    "@platforms//cpu:riscv64": {"//sys/riscv/include:standalone_lua_headers": "machine"},
+    "//conditions:default": {},
+}))
+_ARCH_CFLAGS = select({
+    "@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
+    "@platforms//cpu:aarch64": ["-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
+    "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"],
+    "//conditions:default": [],
+})
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-Istand/libsa/geli', '-ffreestanding', '-Icontrib/lua/src', '-Istand/common', '-Istand/liblua', '-ffreestanding', '-nostdlib', '-DLUA_USE_POSIX', '-fno-stack-protector', '-D__BSD_VISIBLE', '-Istand/include', '-Istand/liblua', '-Icontrib/lua/src', '-Istand/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments'] + _ARCH_CFLAGS + select({
     "//tools/build/bazel/config:loader_geli_enabled": ["-DLOADER_GELI_SUPPORT"], "//conditions:default": []}) + select({
     "//tools/build/bazel/config:loader_disk_enabled": ["-DLOADER_DISK_SUPPORT"], "//conditions:default": []})
 _CFLAGS = _CFLAGS + select({
@@ -23,27 +34,30 @@ _DEPS = [":configured_paths", ":architecture_headers", "//stand/libsa:standalone
     "//sys/teken:standalone_lua_headers", "//contrib/pnglite:standalone_lua_headers",
     "//sys/crypto/sha2:standalone_lua_headers"] + select({
     "//tools/build/bazel/config:veriexec_enabled": ["//lib/libsecureboot:standalone_verify_header"], "//conditions:default": []})
-_FEATURES = ["-opt", "-bsd_ssp"]
-cc_library(name = 'core', srcs = ['//contrib/lua/src:lapi.c', '//contrib/lua/src:lcode.c', '//contrib/lua/src:lctype.c', '//contrib/lua/src:ldebug.c', '//contrib/lua/src:ldo.c', '//contrib/lua/src:ldump.c', '//contrib/lua/src:lfunc.c', '//contrib/lua/src:lgc.c', '//contrib/lua/src:llex.c', '//contrib/lua/src:lmem.c', '//contrib/lua/src:lobject.c', '//contrib/lua/src:lopcodes.c', '//contrib/lua/src:lparser.c', '//contrib/lua/src:lstate.c', '//contrib/lua/src:lstring.c', '//contrib/lua/src:ltable.c', '//contrib/lua/src:ltm.c', '//contrib/lua/src:lundump.c', '//contrib/lua/src:lvm.c', '//contrib/lua/src:lzio.c', '//contrib/lua/src:lauxlib.c', '//contrib/lua/src:lbaselib.c', '//contrib/lua/src:lstrlib.c', '//contrib/lua/src:loadlib.c', 'lerrno.c', 'lpager.c', 'lstd.c', 'lutils.c', '//libexec/flua/lfs:lfs.c'], hdrs = ['locale.h', 'lstd.h', 'luaconf.local.h', 'float.h', 'lerrno.h', 'lutils.h', 'math.h', '//libexec/flua/lfs:lfs.h'], copts = _CFLAGS + [], deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-cc_library(name = 'gfx_utils', srcs = ['gfx_utils.c'], hdrs = ['locale.h', 'lstd.h', 'luaconf.local.h', 'float.h', 'lerrno.h', 'lutils.h', 'math.h'], copts = _CFLAGS + ['-Isys/teken', '-Icontrib/pnglite'], deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-cc_library(name = 'lhash', srcs = ['//libexec/flua/libhash:lhash.c'], hdrs = ['locale.h', 'lstd.h', 'luaconf.local.h', 'float.h', 'lerrno.h', 'lutils.h', 'math.h', '//libexec/flua/libhash:lhash.h'], copts = _CFLAGS + ['-Ilibexec/flua/libhash', '-Isys/crypto/sha2'], deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+_FEATURES = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"]
+cc_library(name = 'core', srcs = ['//contrib/lua/src:lapi.c', '//contrib/lua/src:lcode.c', '//contrib/lua/src:lctype.c', '//contrib/lua/src:ldebug.c', '//contrib/lua/src:ldo.c', '//contrib/lua/src:ldump.c', '//contrib/lua/src:lfunc.c', '//contrib/lua/src:lgc.c', '//contrib/lua/src:llex.c', '//contrib/lua/src:lmem.c', '//contrib/lua/src:lobject.c', '//contrib/lua/src:lopcodes.c', '//contrib/lua/src:lparser.c', '//contrib/lua/src:lstate.c', '//contrib/lua/src:lstring.c', '//contrib/lua/src:ltable.c', '//contrib/lua/src:ltm.c', '//contrib/lua/src:lundump.c', '//contrib/lua/src:lvm.c', '//contrib/lua/src:lzio.c', '//contrib/lua/src:lauxlib.c', '//contrib/lua/src:lbaselib.c', '//contrib/lua/src:lstrlib.c', '//contrib/lua/src:loadlib.c', 'lerrno.c', 'lpager.c', 'lstd.c', 'lutils.c', '//libexec/flua/lfs:lfs.c'], hdrs = ['locale.h', 'lstd.h', 'luaconf.local.h', 'float.h', 'lerrno.h', 'lutils.h', 'math.h', '//libexec/flua/lfs:lfs.h'], copts = _CFLAGS + [], deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
+cc_library(name = 'gfx_utils', srcs = ['gfx_utils.c'], hdrs = ['locale.h', 'lstd.h', 'luaconf.local.h', 'float.h', 'lerrno.h', 'lutils.h', 'math.h'], copts = _CFLAGS + ['-Isys/teken', '-Icontrib/pnglite'], deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
+cc_library(name = 'lhash', srcs = ['//libexec/flua/libhash:lhash.c'], hdrs = ['locale.h', 'lstd.h', 'luaconf.local.h', 'float.h', 'lerrno.h', 'lutils.h', 'math.h', '//libexec/flua/libhash:lhash.h'], copts = _CFLAGS + ['-Ilibexec/flua/libhash', '-Isys/crypto/sha2'], deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
 bsd_component_archive(name = "static_archive", groups = [':core', ':gfx_utils', ':lhash'], object_order = ['lapi.o', 'lcode.o', 'lctype.o', 'ldebug.o', 'ldo.o', 'ldump.o', 'lfunc.o', 'lgc.o', 'llex.o', 'lmem.o', 'lobject.o', 'lopcodes.o', 'lparser.o', 'lstate.o', 'lstring.o', 'ltable.o', 'ltm.o', 'lundump.o', 'lvm.o', 'lzio.o', 'lauxlib.o', 'lbaselib.o', 'lstrlib.o', 'loadlib.o', 'lerrno.o', 'lpager.o', 'lstd.o', 'lutils.o', 'gfx_utils.o', 'lfs.o', 'lhash.o'], visibility = ["//visibility:public"])
 
 
 # Compile-time ABI check is outside the installed/internal archive.
 cc_library(name = "configuration_contract", srcs = ["configuration-contract.c"],
     hdrs = ["lstd.h", "luaconf.local.h"], copts = _CFLAGS, deps = _DEPS,
-    features = _FEATURES, testonly = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+    features = _FEATURES, testonly = True, linkstatic = True,
+    target_compatible_with = _COMPAT)
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
 filegroup(name = "inspection_tools", srcs = ["@bsd_sdk//toolchain:archive_inputs",
     "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:llvm-nm_runtime"])
-bsd_python_test(name = "archive_test", src = "archive-test.py",
+bsd_host_artifact_test(name = "archive_test", src = "archive-test.py",
     data = [":static_archive", ":configuration_contract", ":inspection_tools",
         "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
-    args = ["--archive", "$(location :static_archive)",
+    args = ["--machine"] + select({
+        "@platforms//cpu:x86_64": ["62"], "@platforms//cpu:aarch64": ["183"],
+        "@platforms//cpu:riscv64": ["243"], "//conditions:default": ["0"],
+    }) + ["--archive", "$(location :static_archive)",
         "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
         "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)",
         "--tool-inputs", "$(locations :inspection_tools)"],
     visibility = ["//visibility:public"], size = "small",
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    target_compatible_with = _COMPAT)
