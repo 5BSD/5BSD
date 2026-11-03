@@ -878,6 +878,7 @@ virtio_scsi_var=$source_root/sys/dev/virtio/scsi/virtio_scsivar.h
 virtio_console_guest=$source_root/sys/dev/virtio/console/virtio_console.c
 virtio_input_guest=$source_root/sys/dev/virtio/input/virtio_input.c
 virtio_p9_guest=$source_root/sys/dev/virtio/p9fs/virtio_p9fs.c
+virtio_p9_guest_header=$source_root/sys/dev/virtio/p9fs/virtio_p9fs.h
 virtio_net_guest=$source_root/sys/dev/virtio/network/if_vtnet.c
 virtio_net_var=$source_root/sys/dev/virtio/network/if_vtnetvar.h
 vsock_domain_header=$source_root/sys/kern/uipc_vsock.h
@@ -1171,8 +1172,9 @@ grep -Eq '^#define[[:space:]]+VTNET_MAX_QUEUE_PAIRS[[:space:]]+32$' \
 	exit 1
 }
 # TEST-ANCHOR: guest-buffer-policy
-grep -Eq '^#define MAX_SUPPORTED_SGS 20$' "$virtio_p9_guest" &&
-    grep -q 'chan->max_nsegs = MAX_SUPPORTED_SGS' "$virtio_p9_guest" &&
+grep -Eq '^#define VT9P_MAX_NSEGS[[:space:]]+\(2 \* VT9P_BUF_NSEGS\(P9FS_MTU\)\)$' \
+    "$virtio_p9_guest_header" &&
+    grep -q 'chan->max_nsegs = VT9P_MAX_NSEGS' "$virtio_p9_guest" &&
     grep -Eq '^#define VTCON_BULK_BUFSZ 128$' "$virtio_console_guest" &&
     grep -Eq '^#define VTCON_CTRL_BUFSZ 128$' "$virtio_console_guest" &&
     grep -Eq '^#define VIRTIO_MAX_INDIRECT \(\(int\) \(PAGE_SIZE / 16\)\)$' \

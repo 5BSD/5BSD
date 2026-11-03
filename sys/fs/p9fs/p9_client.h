@@ -70,13 +70,16 @@ enum transport_status {
  * Note: Linux allows larger msize values than this.
  */
 #define P9FS_MTU 131072
+/* The smallest msize accepted from the mount options or the server. */
+#define P9FS_MIN_MSIZE 4096
 
 /*
  * Even though we have a 8k buffer, Qemu is typically doing 8168
  * because of a HDR of 24. Use that amount for transfers so that we dont
  * drop anything.
  */
-#define P9FS_IOUNIT (P9FS_MTU - 24)
+#define P9_IOHDRSZ 24
+#define P9FS_IOUNIT (P9FS_MTU - P9_IOHDRSZ)
 #define P9FS_DIRENT_LEN 256
 #define P9_NOTAG 0
 

@@ -60,16 +60,8 @@
 #define VT9P_LOCK_INIT(_sc) mtx_init(VT9P_MTX(_sc), \
     "VIRTIO 9P CHAN lock", NULL, MTX_DEF)
 #define VT9P_LOCK_DESTROY(_sc) mtx_destroy(VT9P_MTX(_sc))
-/*
- * A request and its response are each one P9FS_MTU buffer from p9fs_buf_zone.
- * Those buffers are virtually but not physically contiguous, so each can need
- * one segment per page it touches; sglist_append_boundary() additionally
- * splits the response's first page.  Twenty segments sufficed only while the
- * response buffer happened to be physically contiguous: on a fragmented guest
- * Tversion failed with EFBIG and mount(8) reported "File too large".
- */
-#define VT9P_BUF_SEGS (howmany(P9FS_MTU, PAGE_SIZE) + 1)
-#define MAX_SUPPORTED_SGS (2 * VT9P_BUF_SEGS)
+/* The smallest msize a channel may offer: one page for each buffer. */
+#define VT9P_MIN_NSEGS (2 * VT9P_BUF_NSEGS(PAGE_SIZE))
 static MALLOC_DEFINE(M_P9FS_MNTTAG, "p9fs_mount_tag", "P9fs Mounttag");
 
 struct vt9p_softc {
@@ -85,6 +77,7 @@ struct vt9p_softc {
 	bool failed;
 	struct virtqueue *vt9p_vq;
 	int max_nsegs;
+	u_int max_msize;
 	uint16_t mount_tag_len;
 	char *mount_tag;
 	STAILQ_ENTRY(vt9p_softc) chan_next;
@@ -210,6 +203,34 @@ vt9p_req_wait(struct vt9p_softc *chan, struct p9_req_t *req)
 }
 
 /*
+ * Map the tc buffer (device-readable) and the rc buffer (device-writable) of a
+ * request into sg, one segment per physically contiguous range.  A list of
+ * VT9P_MAX_NSEGS segments always suffices: msize never exceeds P9FS_MTU.
+ */
+int
+vt9p_req_sglist(struct sglist *sg, struct p9_req_t *req, int *readable,
+    int *writable)
+{
+	int error;
+
+	sglist_reset(sg);
+	error = sglist_append(sg, req->tc.sdata, req->tc.size);
+	if (error != 0)
+		return (error);
+	*readable = sg->sg_nseg;
+
+	error = sglist_append_boundary(sg, req->rc.sdata, req->rc.capacity);
+	if (error != 0)
+		return (error);
+	*writable = sg->sg_nseg - *readable;
+	KASSERT(*writable > 0,
+	    ("vt9p: request and response share a descriptor"));
+	if (*writable == 0)
+		return (EFAULT);
+	return (0);
+}
+
+/*
  * Request handler. This is called for every request submitted to the host
  * It basically maps the tc/rc buffers to sg lists and submits the requests
  * into the virtqueue. Since we have implemented a synchronous version, the
@@ -239,34 +260,24 @@ vt9p_request(void *handle, struct p9_req_t *req)
 		return (ENXIO);
 	}
 req_retry:
-	sglist_reset(sg);
 	/* Handle out VirtIO ring buffers */
-	error = sglist_append(sg, req->tc.sdata, req->tc.size);
+	error = vt9p_req_sglist(sg, req, &readable, &writable);
 	if (error != 0) {
 		P9_DEBUG(ERROR, "%s: sglist append failed\n", __func__);
 		VT9P_UNLOCK(chan);
 		return (error);
-	}
-	readable = sg->sg_nseg;
-
-	error = sglist_append_boundary(sg, req->rc.sdata,
-	    req->rc.capacity);
-	if (error != 0) {
-		P9_DEBUG(ERROR, "%s: sglist append failed\n", __func__);
-		VT9P_UNLOCK(chan);
-		return (error);
-	}
-	writable = sg->sg_nseg - readable;
-	KASSERT(writable > 0,
-	    ("vt9p: request and response share a descriptor"));
-	if (writable == 0) {
-		VT9P_UNLOCK(chan);
-		return (EFAULT);
 	}
 
 	error = virtqueue_enqueue(vq, req, sg, readable, writable);
 	if (error != 0) {
-		if (error == ENOSPC) {
+		/*
+		 * ENOSPC: the ring is full.  EMSGSIZE: without indirect
+		 * descriptors the ring has fewer free entries than this
+		 * request has segments; attach limited msize so that it fits
+		 * an empty ring.  Either way wait for completions to free
+		 * entries.
+		 */
+		if (error == ENOSPC || error == EMSGSIZE) {
 			/*
 			 * Condvar for the submit queue. Unlock the chan
 			 * since wakeup needs one.
@@ -362,14 +373,51 @@ vt9p_alloc_virtqueue(struct vt9p_softc *sc)
 {
 	struct vq_alloc_info vq_info;
 	device_t dev;
+	int indir_segs;
 
 	dev = sc->vt9p_dev;
 
-	VQ_ALLOC_INFO_INIT(&vq_info, sc->max_nsegs,
+	/* With indirect descriptors each request takes one ring entry. */
+	indir_segs = 0;
+	if (virtio_with_feature(dev, VIRTIO_RING_F_INDIRECT_DESC))
+		indir_segs = sc->max_nsegs;
+	VQ_ALLOC_INFO_INIT(&vq_info, indir_segs,
 	    vt9p_intr_complete, sc, &sc->vt9p_vq,
 	    "%s request", device_get_nameunit(dev));
 
 	return (virtio_alloc_virtqueues(dev, 1, &vq_info));
+}
+
+/*
+ * Largest message the channel can carry.  Without indirect descriptors every
+ * segment of a request takes its own ring entry, so a queue smaller than
+ * VT9P_MAX_NSEGS limits the msize offered to the 9P client.
+ */
+static int
+vt9p_set_max_msize(struct vt9p_softc *sc)
+{
+	device_t dev;
+	int nsegs, qsize;
+
+	dev = sc->vt9p_dev;
+	nsegs = sc->max_nsegs;
+	sc->max_msize = MIN(P9FS_MTU, VT9P_NSEGS_MSIZE(nsegs));
+	if (virtio_with_feature(dev, VIRTIO_RING_F_INDIRECT_DESC))
+		return (0);
+
+	qsize = virtqueue_size(sc->vt9p_vq);
+	if (qsize < VT9P_MIN_NSEGS) {
+		device_printf(dev, "request queue of %d entries cannot carry "
+		    "a 9P message without indirect descriptors\n", qsize);
+		return (ENXIO);
+	}
+	if (qsize < nsegs) {
+		sc->max_msize = VT9P_NSEGS_MSIZE(qsize);
+		device_printf(dev, "request queue of %d entries without "
+		    "indirect descriptors limits msize to %u\n", qsize,
+		    sc->max_msize);
+	}
+	return (0);
 }
 
 /* Probe for existence of 9P virtio channels */
@@ -459,13 +507,13 @@ vt9p_attach(device_t dev)
 	/* Initialize the condition variable */
 	cv_init(&chan->submit_cv, "Conditional variable for submit queue" );
 	chan->cv_initialized = true;
-	chan->max_nsegs = MAX_SUPPORTED_SGS;
+	chan->max_nsegs = VT9P_MAX_NSEGS;
 	chan->vt9p_sglist = sglist_alloc(chan->max_nsegs, M_WAITOK);
 
 	/* Negotiate the features from the host */
 	virtio_set_feature_desc(dev, virtio_9p_feature_desc);
 	virtio_negotiate_features(dev, VIRTIO_9PNET_F_MOUNT_TAG |
-	    VIRTIO_F_RING_RESET);
+	    VIRTIO_F_RING_RESET | VIRTIO_RING_F_INDIRECT_DESC);
 	error = virtio_finalize_features(dev);
 	if (error != 0)
 		goto out;
@@ -517,6 +565,9 @@ vt9p_attach(device_t dev)
 		P9_DEBUG(ERROR, "%s: Allocating the virtqueue failed \n", __func__);
 		goto out;
 	}
+	error = vt9p_set_max_msize(chan);
+	if (error != 0)
+		goto out;
 	error = virtio_setup_intr(dev, INTR_TYPE_MISC|INTR_MPSAFE);
 	if (error != 0) {
 		P9_DEBUG(ERROR, "%s: Cannot setup virtqueue interrupt\n", __func__);
@@ -619,10 +670,19 @@ vt9p_close(void *handle)
 	mtx_unlock(&global_chan_list_mtx);
 }
 
+static u_int
+vt9p_maxsize(void *handle)
+{
+	struct vt9p_softc *chan = handle;
+
+	return (chan->max_msize);
+}
+
 static struct p9_trans_module vt9p_trans = {
 	.name = "virtio",
 	.create = vt9p_create,
 	.close = vt9p_close,
+	.maxsize = vt9p_maxsize,
 	.request = vt9p_request,
 };
 

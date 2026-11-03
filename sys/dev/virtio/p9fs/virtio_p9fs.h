@@ -36,4 +36,22 @@ struct virtio_9pnet_config {
 	/* non NULL terminated tag name */
 	uint8_t mount_tag[0];
 };
+
+#ifdef _KERNEL
+struct p9_req_t;
+struct sglist;
+
+/*
+ * A request and its response are each one buffer from p9fs_buf_zone.  Those
+ * buffers are virtually but not physically contiguous, so a buffer needs one
+ * segment per page it touches.  The scatter list holds two P9FS_MTU buffers;
+ * a channel whose queue cannot take that many segments offers a smaller msize.
+ */
+#define VT9P_BUF_NSEGS(size)	(howmany((size), PAGE_SIZE) + 1)
+#define VT9P_MAX_NSEGS		(2 * VT9P_BUF_NSEGS(P9FS_MTU))
+#define VT9P_NSEGS_MSIZE(nsegs)	(((nsegs) / 2 - 1) * PAGE_SIZE)
+
+int	vt9p_req_sglist(struct sglist *sg, struct p9_req_t *req,
+	    int *readable, int *writable);
+#endif /* _KERNEL */
 #endif /* __VIRTIO_9P_CONFIG__ */
