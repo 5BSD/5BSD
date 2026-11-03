@@ -571,7 +571,7 @@ void Symbol::checkDuplicate(Ctx &ctx, const Defined &other) const {
                     other.value);
 }
 
-void Symbol::resolve(Ctx &ctx, const CommonSymbol &other) {
+bool Symbol::resolve(Ctx &ctx, const CommonSymbol &other) {
   if (other.visibility() != STV_DEFAULT) {
     uint8_t v = visibility(), ov = other.visibility();
     setVisibility(v == STV_DEFAULT ? ov : std::min(v, ov));
@@ -579,7 +579,7 @@ void Symbol::resolve(Ctx &ctx, const CommonSymbol &other) {
   if (isDefined() && !isWeak()) {
     if (ctx.arg.warnCommon)
       Warn(ctx) << "common " << getName() << " is overridden";
-    return;
+    return false;
   }
 
   if (CommonSymbol *oldSym = dyn_cast<CommonSymbol>(this)) {
@@ -587,10 +587,12 @@ void Symbol::resolve(Ctx &ctx, const CommonSymbol &other) {
       Warn(ctx) << "multiple common of " << getName();
     oldSym->alignment = std::max(oldSym->alignment, other.alignment);
     if (oldSym->size < other.size) {
+      clearInputSymbolOrigin(*this);
       oldSym->file = other.file;
       oldSym->size = other.size;
+      return true;
     }
-    return;
+    return false;
   }
 
   if (auto *s = dyn_cast<SharedSymbol>(this)) {
@@ -605,15 +607,18 @@ void Symbol::resolve(Ctx &ctx, const CommonSymbol &other) {
   } else {
     other.overwrite(*this);
   }
+  return true;
 }
 
-void Symbol::resolve(Ctx &ctx, const Defined &other) {
+bool Symbol::resolve(Ctx &ctx, const Defined &other) {
   if (other.visibility() != STV_DEFAULT) {
     uint8_t v = visibility(), ov = other.visibility();
     setVisibility(v == STV_DEFAULT ? ov : std::min(v, ov));
   }
-  if (shouldReplace(ctx, other))
-    other.overwrite(*this);
+  if (!shouldReplace(ctx, other))
+    return false;
+  other.overwrite(*this);
+  return true;
 }
 
 void Symbol::resolve(Ctx &ctx, const LazySymbol &other) {
@@ -676,6 +681,7 @@ void Symbol::resolve(Ctx &ctx, const SharedSymbol &other) {
 }
 
 void Defined::overwrite(Symbol &sym) const {
+  auto origin = getInputSymbolOrigin(*this);
   if (isa_and_nonnull<SharedFile>(sym.file))
     sym.versionId = VER_NDX_GLOBAL;
   Symbol::overwrite(sym, DefinedKind);
@@ -683,4 +689,5 @@ void Defined::overwrite(Symbol &sym) const {
   s.value = value;
   s.size = size;
   s.section = section;
+  setInputSymbolOrigin(sym, origin);
 }

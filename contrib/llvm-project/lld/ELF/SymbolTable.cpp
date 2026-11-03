@@ -55,6 +55,7 @@ void SymbolTable::wrap(Symbol *sym, Symbol *real, Symbol *wrap) {
   // alias for sym, but that could degrade the user experience of some tools
   // that can print out only one symbol for each location: sym is a preferred
   // name than real, but they might print out real instead.
+  clearInputSymbolOrigin(*real);
   memcpy(static_cast<void *>(real), sym, sizeof(SymbolUnion));
   real->isUsedInRegularObj = false;
 }

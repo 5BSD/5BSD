@@ -117,3 +117,12 @@ bsd_python_test(name = "union_graph_test", src = "union-audit.py",
         "--ctf-library", "$(location //lib/libz:z_shared)"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
     size = "medium", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+# Run the same-file symbol regression with source-built LLD. The compiler only
+# assembles explicitly AMD64 fixtures; it does not supply implicit test inputs.
+bsd_python_test(name = "lld_symbol_origin_test", src = "lld-symbol-origin-test.py",
+    data = ["//usr.bin/clang/lld:ld.lld", "@bsd_sdk//toolchain:bin/clang",
+        "@bsd_sdk//toolchain:clang_runtime"],
+    args = ["--compiler", "$(location @bsd_sdk//toolchain:bin/clang)",
+        "--linker", "$(location //usr.bin/clang/lld:ld.lld)"],
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

@@ -237,6 +237,12 @@ protected:
   std::unique_ptr<DWARFCache> dwarf;
 
 public:
+  // Track exact selected input indices through parsing and symbol copies.
+  // Non-CTF files release this transient map after their postParse. CTF files
+  // retain it through final symtab construction. Each file owns its local map.
+  bool hasCTF = false;
+  std::unique_ptr<llvm::DenseMap<const Symbol *, uint32_t>> symbolIndices;
+
   // Name of source file obtained from STT_FILE, if present.
   StringRef sourceFile;
   uint32_t andFeatures = 0;

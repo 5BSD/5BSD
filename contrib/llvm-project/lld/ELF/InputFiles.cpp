@@ -19,6 +19,7 @@
 #include "lld/Common/DWARF.h"
 #include "llvm/ADT/CachedHashString.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/LTO/LTO.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/IRObjectFile.h"
@@ -538,6 +539,39 @@ uint32_t ObjFile<ELFT>::getSectionIndex(const Elf_Sym &sym) const {
       this);
 }
 
+std::optional<InputSymbolOrigin> elf::getInputSymbolOrigin(const Symbol &sym) {
+  if ((!sym.isDefined() && !sym.isCommon()) || !sym.file ||
+      sym.file->kind() != InputFile::ObjKind)
+    return std::nullopt;
+  auto *file = static_cast<ELFFileBase *>(sym.file);
+  if (!file->symbolIndices)
+    return std::nullopt;
+  auto it = file->symbolIndices->find(&sym);
+  if (it == file->symbolIndices->end())
+    return std::nullopt;
+  return InputSymbolOrigin{file, it->second};
+}
+
+void elf::clearInputSymbolOrigin(Symbol &sym) {
+  if (sym.file && sym.file->kind() == InputFile::ObjKind) {
+    auto *file = static_cast<ELFFileBase *>(sym.file);
+    if (file->symbolIndices)
+      file->symbolIndices->erase(&sym);
+  }
+}
+
+void elf::setInputSymbolOrigin(Symbol &sym,
+                               std::optional<InputSymbolOrigin> origin) {
+  clearInputSymbolOrigin(sym);
+  if (!origin)
+    return;
+  assert(sym.file == origin->file && "input provenance must match defining file");
+  auto &indices = origin->file->symbolIndices;
+  if (!indices)
+    indices = std::make_unique<DenseMap<const Symbol *, uint32_t>>();
+  (*indices)[&sym] = origin->index;
+}
+
 template <class ELFT> void ObjFile<ELFT>::parse(bool ignoreComdats) {
   object::ELFFile<ELFT> obj = this->getObj();
   // Read a section table. justSymbols is usually false.
@@ -552,6 +586,13 @@ template <class ELFT> void ObjFile<ELFT>::parse(bool ignoreComdats) {
   ArrayRef<Elf_Shdr> objSections = getELFShdrs<ELFT>();
   StringRef shstrtab = CHECK2(obj.getSectionStringTable(objSections), this);
   uint64_t size = objSections.size();
+  // Avoid a second section-name walk when there is no CTF name at all.
+  if (shstrtab.contains(".SUNW_ctf"))
+    for (const Elf_Shdr &sec : objSections)
+      if (check(obj.getSectionName(sec, shstrtab)) == ".SUNW_ctf") {
+        hasCTF = true;
+        break;
+      }
   sections.resize(size);
   for (size_t i = 0; i != size; ++i) {
     const Elf_Shdr &sec = objSections[i];
@@ -1149,6 +1190,11 @@ void ObjFile<ELFT>::initializeSymbols(const object::ELFFile<ELFT> &obj) {
 
   // Perform symbol resolution on non-local symbols.
   SmallVector<unsigned, 32> undefineds;
+  // CTF needs every selected input index. Otherwise retain one bit per input
+  // until a same-file collision actually requires an index map. Reconstruct
+  // that map once from recorded resolution decisions, not symbol names/values.
+  bool trackIndices = hasCTF;
+  SmallBitVector selected(trackIndices ? 0 : eSyms.size() - firstGlobal);
   for (size_t i = firstGlobal, end = eSyms.size(); i != end; ++i) {
     const Elf_Sym &eSym = eSyms[i];
     uint32_t secIdx = eSym.st_shndx;
@@ -1165,19 +1211,35 @@ void ObjFile<ELFT>::initializeSymbols(const object::ELFFile<ELFT> &obj) {
 
     Symbol *sym = symbols[i];
     sym->isUsedInRegularObj = true;
+    if (!trackIndices && sym->file == this &&
+        (sym->isDefined() || sym->isCommon())) {
+      for (size_t j = firstGlobal; j != i; ++j)
+        if (selected[j - firstGlobal] && symbols[j]->file == this)
+          setInputSymbolOrigin(*symbols[j],
+                               InputSymbolOrigin{this, uint32_t(j)});
+      trackIndices = true;
+    }
+    auto recordSelection = [&] {
+      if (trackIndices)
+        setInputSymbolOrigin(*sym, InputSymbolOrigin{this, uint32_t(i)});
+      else
+        selected.set(i - firstGlobal);
+    };
     if (LLVM_UNLIKELY(eSym.st_shndx == SHN_COMMON)) {
       if (value == 0 || value >= UINT32_MAX)
         Err(ctx) << this << ": common symbol '" << sym->getName()
                  << "' has invalid alignment: " << value;
       hasCommonSyms = true;
-      sym->resolve(ctx, CommonSymbol{ctx, this, StringRef(), binding, stOther,
-                                     type, value, size});
+      if (sym->resolve(ctx, CommonSymbol{ctx, this, StringRef(), binding, stOther,
+                                         type, value, size}))
+        recordSelection();
       continue;
     }
 
     // Handle global defined symbols. Defined::section will be set in postParse.
-    sym->resolve(ctx, Defined{ctx, this, StringRef(), binding, stOther, type,
-                              value, size, nullptr});
+    if (sym->resolve(ctx, Defined{ctx, this, StringRef(), binding, stOther, type,
+                                  value, size, nullptr}))
+      recordSelection();
   }
 
   // Undefined symbols (excluding those defined relative to non-prevailing
@@ -1240,6 +1302,9 @@ void ObjFile<ELFT>::initSectionsAndLocalSyms(bool ignoreComdats) {
     else
       new (symbols[i]) Defined(ctx, this, name, STB_LOCAL, eSym.st_other, type,
                                eSym.st_value, eSym.st_size, sec);
+    if (hasCTF && symbols[i]->isDefined() &&
+        (type == STT_OBJECT || type == STT_FUNC))
+      setInputSymbolOrigin(*symbols[i], InputSymbolOrigin{this, uint32_t(i)});
     symbols[i]->partition = 1;
     symbols[i]->isUsedInRegularObj = true;
   }
@@ -1286,6 +1351,13 @@ template <class ELFT> void ObjFile<ELFT>::postParse() {
       Err(ctx) << this << ": invalid section index: " << secIdx;
       continue;
     }
+    // File identity alone cannot identify the prevailing entry when .symver
+    // aliases or repeated names in this file share a resolved Symbol slot.
+    if (sym.file == this) {
+      auto origin = getInputSymbolOrigin(sym);
+      if (origin && origin->index != i)
+        continue;
+    }
     InputSectionBase *sec = sections[secIdx];
     if (sec == &InputSection::discarded) {
       if (sym.traced) {
@@ -1310,6 +1382,8 @@ template <class ELFT> void ObjFile<ELFT>::postParse() {
     std::lock_guard<std::mutex> lock(mu);
     ctx.duplicates.push_back({&sym, this, sec, eSym.st_value});
   }
+  if (!hasCTF)
+    symbolIndices.reset();
 }
 
 // The handling of tentative definitions (COMMON symbols) in archives is murky.

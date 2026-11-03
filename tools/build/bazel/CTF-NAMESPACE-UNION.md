@@ -114,3 +114,54 @@ option, config schema, SDK stage/signing, security policy or publication change
 is needed for this foundation. Future linker tool changes require normal
 bootstrap rebuilding, fresh verified SDKs and actual module profiles. Keep Make
 production/default and BIP excluded. No installation or reboot was performed.
+
+## 2026-11-03: selected-definition provenance foundation
+
+LLD now records exact original input symbol indices alongside selected
+symbols, without increasing SymbolUnion. CTF files retain their maps through
+later symbol copies; normal files release transient maps after parsing.
+COMMON conversion, version copies, wrapping and replacement invalidate or
+transfer identities explicitly. This is still not CTF output synthesis.
+
+A no-CTF file records one bit per global input during resolution. Only a
+same-file collision promotes those recorded decisions to an index map, once
+per file. Ordinary files avoid a hash-map entry for every global symbol.
+No name/value/address matching reconstructs a defining index. CTF files track
+all selected indices directly, including eligible local definitions. Parallel
+parsing writes file-owned maps; postParse only queries the selected file's map
+inside its file-identity guard, before releasing a non-CTF map.
+
+The exact index also fixes a demonstrated existing section-selection bug: a
+later losing weak entry in the same file could overwrite the section of the
+winning strong entry while retaining the strong value and size. The regression
+constructs both raw ELF entries explicitly and checks binding, size and actual
+payload in relocatable and shared output, in both entry orders, with and without
+a valid self-contained CTF section. Eight cases pass with the source-owner
+Make-built LLD; the old staged LLD reproduces the wrong-section failure.
+The maintained explicit-input script is tests/ctf/lld-symbol-origin-test.py.
+The source-built Bazel lld_symbol_origin_test target is declared, but its native
+Bazel build/test has NOT yet been run for this checkpoint.
+
+Source-owner build records are under
+/usr/obj/usr/src/bazel-lld-ctf-origins-build-r2-20261103. All 16 CPUs were used;
+source hashes remained frozen, the disk guard was not interrupted and the
+staged linker was unchanged. No installation was performed. Sixteen additional
+baseline/candidate output or failure controls cover weak/strong resolution,
+COMMON, wrapping, versions, GC and ICF. The version control uses the same
+explicit SONAME; an earlier comparison differed because output basenames were
+allowed to become different SONAMEs, not because symbol output differed.
+
+An alternating five-pair 200,000-global-symbol no-CTF relocatable-link diagnostic
+produces identical bytes. Baseline elapsed samples are 0.056–0.062 seconds,
+candidate 0.053–0.055 seconds; reported peak RSS is 80,456–87,648 KiB versus
+75,924–86,408 KiB. Full time(1) reports include block I/O and faults. These short
+host diagnostics are not general performance acceptance. The first all-global
+map implementation increased time/RSS on this workload and was replaced;
+its evidence is retained. The final sparse implementation must still receive
+whole-system CPU, memory, I/O and disk qualification.
+
+Frontend assessment: no new build inputs, flags, security policy, staging or
+publication format. The maintained LLVM source-owner build and native Bazel LLD
+sources select these changes normally. build-bsd.c, signing and SDK helpers do
+not require schema or option changes. Fresh SDK verification and actual module
+qualification remain mandatory after CTF section/link synthesis is complete.

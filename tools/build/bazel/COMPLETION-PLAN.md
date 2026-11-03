@@ -1944,3 +1944,24 @@ qualify refreshed original controls plus real native/foreign module pipelines.
 No module acceptance, complete bootstrap/world/kernel, package/publication or
 performance qualification is claimed. Make stays production/default; BIP stays
 excluded. Keep signed/staged SDKs immutable and refresh through normal helpers.
+
+### 2026-11-03: LLD exact symbol provenance, not final module acceptance
+
+Selected input indices now follow definitions through COMMON conversion,
+version copies, replacement and wrapping, without increasing SymbolUnion.
+No-CTF files use a decision bitset and allocate a transient index map only for
+same-file collisions; CTF files retain exact index maps for later output work.
+The initial all-global map cost time/memory in a 200,000-symbol diagnostic and
+was replaced. Final samples show no regression on that limited workload;
+whole-system performance gates remain open.
+
+The maintained source-owner LLD build passes with frozen sources and no install.
+An existing same-file weak/strong section-selection bug is reproduced by the
+old tool and fixed by the candidate. Eight payload/binding/size regression cases
+and 16 baseline link controls pass. A native Bazel source-built linker test is
+declared but not yet executed. See CTF-NAMESPACE-UNION.md for exact scope.
+
+Next: script-respecting CTF section synthesis, correct final output symbol order,
+output section links and refreshed native/ARM64/RISC-V real module checks.
+No final-link CTF, complete world/kernel or publication acceptance is claimed.
+Make stays default. BIP remains excluded. No host upgrade or reboot authorized.

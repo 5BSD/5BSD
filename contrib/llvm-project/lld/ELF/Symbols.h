@@ -33,6 +33,17 @@ class Undefined;
 class LazySymbol;
 class InputFile;
 
+// Sparse input provenance lives in the owning object file, never in every
+// SymbolUnion. Definition copies preserve it; generated replacements clear it.
+struct InputSymbolOrigin {
+  ELFFileBase *file;
+  uint32_t index;
+};
+std::optional<InputSymbolOrigin> getInputSymbolOrigin(const Symbol &sym);
+void clearInputSymbolOrigin(Symbol &sym);
+void setInputSymbolOrigin(Symbol &sym,
+                          std::optional<InputSymbolOrigin> origin);
+
 // Returns a string representation for a symbol for diagnostics.
 std::string toStr(Ctx &, const Symbol &);
 const ELFSyncStream &operator<<(const ELFSyncStream &, const Symbol *);
@@ -223,8 +234,8 @@ public:
   // a defined symbol, "this" is replaced with the new symbol.
   void mergeProperties(const Symbol &other);
   void resolve(Ctx &, const Undefined &other);
-  void resolve(Ctx &, const CommonSymbol &other);
-  void resolve(Ctx &, const Defined &other);
+  bool resolve(Ctx &, const CommonSymbol &other);
+  bool resolve(Ctx &, const Defined &other);
   void resolve(Ctx &, const LazySymbol &other);
   void resolve(Ctx &, const SharedSymbol &other);
 
@@ -246,6 +257,7 @@ protected:
         archSpecificBit(false) {}
 
   void overwrite(Symbol &sym, Kind k) const {
+    clearInputSymbolOrigin(sym);
     if (sym.traced)
       printTraceSymbol(*this, sym.getName());
     sym.file = file;
@@ -413,10 +425,12 @@ public:
         alignment(alignment), size(size) {
   }
   void overwrite(Symbol &sym) const {
+    auto origin = getInputSymbolOrigin(*this);
     Symbol::overwrite(sym, CommonKind);
     auto &s = static_cast<CommonSymbol &>(sym);
     s.alignment = alignment;
     s.size = size;
+    setInputSymbolOrigin(sym, origin);
   }
 
   static bool classof(const Symbol *s) { return s->isCommon(); }

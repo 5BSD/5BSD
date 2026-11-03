@@ -2525,9 +2525,11 @@ static void replaceCommonSymbols(Ctx &ctx) {
       auto *bss = make<BssSection>(ctx, "COMMON", s->size, s->alignment);
       bss->file = s->file;
       ctx.inputSections.push_back(bss);
+      auto origin = getInputSymbolOrigin(*s);
       Defined(ctx, s->file, StringRef(), s->binding, s->stOther, s->type,
               /*value=*/0, s->size, bss)
           .overwrite(*s);
+      setInputSymbolOrigin(*s, origin);
     }
   }
 }
@@ -2830,6 +2832,7 @@ static void combineVersionedSymbol(Ctx &ctx, Symbol &sym,
       sym2->resolve(ctx, cast<SharedSymbol>(sym));
     }
     // Eliminate foo@v1 from the symbol table.
+    clearInputSymbolOrigin(sym);
     sym.symbolKind = Symbol::PlaceholderKind;
     sym.isUsedInRegularObj = false;
   } else if (auto *sym1 = dyn_cast<Defined>(&sym)) {
@@ -2843,6 +2846,7 @@ static void combineVersionedSymbol(Ctx &ctx, Symbol &sym,
       // beside foo@v1. foo@v1 and foo combining does not apply if they are
       // not defined in the same place.
       map.try_emplace(sym2, &sym);
+      clearInputSymbolOrigin(*sym2);
       sym2->symbolKind = Symbol::PlaceholderKind;
       sym2->isUsedInRegularObj = false;
     }
