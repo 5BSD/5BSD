@@ -17,6 +17,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('src','objtop','profile','output'):
         p.add_argument('--'+name,type=Path,required=True)
+    p.add_argument('--target-arch',choices=['amd64','aarch64','riscv64'],default='amd64')
     p.add_argument('--trust-anchor',type=Path,action='append',default=[])
     p.add_argument('--jobs',type=int,required=True)
     p.add_argument('--make',type=Path,default=Path('/usr/bin/make'))
@@ -36,7 +37,7 @@ def main():
         anchors.append(anchor);bindings[str(anchor)]=digest(anchor)
     if len(set(anchors))!=len(anchors):p.error('duplicate trust anchor')
     extra=['TRUST_ANCHORS='+' '.join(map(str,anchors))] if anchors else []
-    env=BuildEnvironment(src,obj,profile,make)
+    env=BuildEnvironment(src,obj,profile,make,target_architecture=a.target_arch)
     keys=['SUBDIR','LOCAL_DIRS','LOCAL_LIB_DIRS','SUBDIR_OVERRIDE','_prereq_libs','_startup_libs','_prebuild_libs','_generic_libs']
     rows=env.query(['-f','Makefile.inc1',*[v for key in keys for v in ('-v',key)]],component=src,extra=extra).splitlines()
     if len(rows)!=len(keys):raise ValueError('ambiguous world metadata')
@@ -46,7 +47,7 @@ def main():
     with (out/'print-dir.stdout').open('w') as stdout,(out/'print-dir.stderr').open('w') as stderr:
         result=subprocess.run(['/usr/bin/time','-l',*cmd],env=env.env,stdout=stdout,stderr=stderr)
     text=(out/'print-dir.stdout').read_text().splitlines()
-    if not text or text[0]!='Entering world for amd64:amd64':raise ValueError('unexpected buildenv prefix')
+    if not text or text[0]!='Entering world for '+env.assignments['TARGET_ARCH']+':'+env.assignments['TARGET']:raise ValueError('unexpected buildenv prefix')
     directories=[];diagnostics=[]
     for line in text[1:]:
         candidate=Path(line)
@@ -60,7 +61,7 @@ def main():
     env.verify()
     for name,sha in bindings.items():
         if digest(Path(name))!=sha:raise ValueError('inventory input changed: '+name)
-    record={'format':1,'status':'discovered' if result.returncode==0 else 'incomplete',
+    record={'format':1,'target_architecture':a.target_arch,'status':'discovered' if result.returncode==0 else 'incomplete',
             'scope':'configured Make world recursion only; not native build coverage',
             'metadata':dict(zip(keys,rows)),'directories':sorted(set(directories)),
             'duplicate_visits':len(directories)-len(set(directories)),'diagnostics':diagnostics,

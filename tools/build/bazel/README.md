@@ -1,5 +1,13 @@
 # Bazel qualification
 
+## World audit refresh in progress (2026-11-03)
+
+The maintained world audit now checks explicit architecture/profile contexts and
+captures additional test kinds and grouped headers. All three SDK/profile
+preflights and two mismatch-rejection checks pass. The full amd64/ARM64/RISC-V
+audit matrix is running; no refreshed complete coverage count is claimed yet.
+See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
+
 ## Googletest framework checkpoint (2026-11-03)
 
 All four framework candidates now have source-owned archive/header/shared/debug
@@ -413,7 +421,7 @@ CTF/debug installed sections and all 24 install records pass the scoped checks.
 See [cohort evidence](CROSS-FACILITIES-QUALIFICATION.md) for debug differences,
 SDT preservation, build-log overhead and remaining runtime/performance work.
 
-## Current coverage audit and next work order (2026-10-27, refreshed)
+## Historical coverage audit and work order (2026-10-27/30)
 
 The current configured metadata survey covers **2,103 directories with no query
 failures**. The maintained `world-native-survey.py` verifies the recorded input
@@ -476,7 +484,7 @@ Next work order within the unchanged completion contract:
    before choosing Bazel as the production default.
 
 There is still no complete world/kernel/package/image backend. The root package
-currently exports a source file only.
+provides source/header bindings but no complete world aggregate.
 Current evidence: /usr/obj/usr/src/bazel-world-inventory-refresh-20261027 and
 /usr/obj/usr/src/bazel-world-components-refresh-20261027. The latter retains every
 metadata record, source bindings and the reproducible native-package-survey.json

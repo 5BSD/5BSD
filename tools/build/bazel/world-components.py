@@ -15,7 +15,9 @@ from libmd_environment import BuildEnvironment,digest
 
 VARIABLES=tuple(dict.fromkeys((*import_module("component-plan").VARIABLES,
     "ATF_TESTS_C", "ATF_TESTS_CXX", "ATF_TESTS_SH", "PLAIN_TESTS_C",
-    "PLAIN_TESTS_CXX", "PLAIN_TESTS_SH", "TESTS_SUBDIRS", "INTERNALLIB", "LIB_PRIVATE")))
+    "PLAIN_TESTS_CXX", "PLAIN_TESTS_SH", "PLAIN_TESTS_PORCH", "GTESTS",
+    "ATF_TESTS_PYTEST", "TAP_TESTS_C", "TAP_TESTS_CXX", "TAP_TESTS_SH", "TAP_TESTS_PERL",
+    "INCSGROUPS", "TESTS_SUBDIRS", "INTERNALLIB", "LIB_PRIVATE")))
 
 
 def main():
@@ -44,7 +46,10 @@ def main():
     for name in directories:
         p=Path(name)
         if p.is_absolute() or '..' in p.parts or not (src/p).resolve(strict=True).is_relative_to(src):raise ValueError('invalid inventory directory')
-    env=BuildEnvironment(src,obj,profile,Path('/usr/bin/make'))
+    architecture=prior['profile_assignments']['TARGET_ARCH']
+    if data.get('target_architecture',architecture)!=architecture:
+        raise ValueError('inventory architecture differs from recorded profile')
+    env=BuildEnvironment(src,obj,profile,Path('/usr/bin/make'),target_architecture=architecture)
     if env.assignments!=prior['profile_assignments']:raise ValueError('world configuration changed')
     anchors=data['trust_anchors']
     for name in anchors:
@@ -57,15 +62,22 @@ def main():
         def values():
             rows=env.query([v for key in VARIABLES for v in ('-v',key)],component=component,extra=extra).splitlines()
             if len(rows)!=len(VARIABLES):raise ValueError('ambiguous multiline metadata')
-            return dict(zip(VARIABLES,rows))
+            metadata=dict(zip(VARIABLES,rows))
+            groups=metadata['INCSGROUPS'].split()
+            if len(groups)!=len(set(groups)):raise ValueError('duplicate include groups')
+            missing=[name for name in groups if name not in metadata]
+            extra_values=env.query([v for name in missing for v in ('-v',name)],component=component,extra=extra).splitlines() if missing else []
+            if len(extra_values)!=len(missing):raise ValueError('ambiguous grouped header metadata')
+            selected=dict(zip(missing,extra_values))
+            return metadata,{name:metadata.get(name,selected.get(name,'')) for name in groups}
         try:
-            metadata=values();closure={}
-            if (metadata['MACHINE'],metadata['MACHINE_ARCH'])!=('amd64','amd64'):raise ValueError('component target differs from world')
+            metadata,header_groups=values();closure={}
+            if (metadata['MACHINE'],metadata['MACHINE_ARCH'])!=(env.assignments['TARGET'],architecture):raise ValueError('component target differs from world')
             for value in shlex.split(metadata['.MAKE.MAKEFILES']):
                 p=Path(value);p=(p if p.is_absolute() else component/p).resolve(strict=True)
                 if p!=Path('/dev/null'):closure[str(p)]=digest(p)
-            if values()!=metadata:raise ValueError('metadata changed during query')
-            return {'component':name,'status':'queried','metadata':metadata,'make_include_closure':closure}
+            if values()!=(metadata,header_groups):raise ValueError('metadata changed during query')
+            return {'component':name,'status':'queried','metadata':metadata,'header_groups':header_groups,'make_include_closure':closure}
         except (ValueError,OSError) as error:
             return {'component':name,'status':'failed','error':str(error)}
     with (out/'components.jsonl').open('w') as stream:
@@ -78,7 +90,7 @@ def main():
             if name in bindings and bindings[name]!=sha:raise ValueError('inconsistent include input: '+name)
             bindings[name]=sha
     env.verify();verify()
-    summary={'format':1,'status':'incomplete' if failed else 'queried',
+    summary={'format':1,'target_architecture':architecture,'status':'incomplete' if failed else 'queried',
              'scope':'all discovered directory metadata; not native action/build/package coverage',
              'inventory':str(inventory),'directory_count':len(directories),'queried_count':len(records)-len(failed),
              'failed_components':failed,'jobs':args.jobs,'elapsed_seconds':time.monotonic()-start,
