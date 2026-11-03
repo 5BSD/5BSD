@@ -6,3 +6,14 @@ amd64_firmware_module(module = "otusfw_main",
     images = [{"source": "//sys/contrib/dev/otus:otus-main", "encoding": "raw", "filename": "otusfw_main", "spec": "otusfw_main:otusfw_main:1"}],
     license = "", export_all = False,
     extra_objects = [], extra_object_order = [])
+
+load("//tools/build/bazel:bsd_firmware_module.bzl", "bsd_firmware_module")
+
+[bsd_firmware_module(
+    arch = arch,
+    module = "otusfw_main",
+    images = [{'source': '//sys/contrib/dev/otus:otus-main', 'encoding': 'raw', 'filename': 'otusfw_main', 'spec': 'otusfw_main:otusfw_main:1'}],
+    license = "",
+    export_all = False,
+    package = "kernel",
+) for arch in ['arm64', 'riscv']]

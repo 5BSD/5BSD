@@ -6,3 +6,14 @@ amd64_firmware_module(module = "ice_ddp",
     images = [{"source": "//sys/contrib/dev/ice:ice-1.3.41.0.pkg", "encoding": "raw", "filename": "ice-1.3.41.0.pkg", "spec": "ice-1.3.41.0.pkg:ice_ddp:0x01032900"}],
     license = "", export_all = False,
     extra_objects = [], extra_object_order = [])
+
+load("//tools/build/bazel:bsd_firmware_module.bzl", "bsd_firmware_module")
+
+[bsd_firmware_module(
+    arch = arch,
+    module = "ice_ddp",
+    images = [{'source': '//sys/contrib/dev/ice:ice-1.3.41.0.pkg', 'encoding': 'raw', 'filename': 'ice-1.3.41.0.pkg', 'spec': 'ice-1.3.41.0.pkg:ice_ddp:0x01032900'}],
+    license = "",
+    export_all = False,
+    package = "kernel",
+) for arch in ['arm64']]

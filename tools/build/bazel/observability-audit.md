@@ -10597,3 +10597,15 @@ original controls. Separate debug files differ; debugger source lookup remains
 open. No source/probe/audit behavior was changed or executed. Evidence:
 bazel-cross-routing-review-r4-20261103/supplement.json and
 [CROSS-ROUTING-MODULES-QUALIFICATION.md](CROSS-ROUTING-MODULES-QUALIFICATION.md).
+
+### ARM64/RISC-V firmware composition (2026-11-03)
+
+The unchanged firmw.S/fw_stub.awk and 29 architecture-specific generated
+registration C instances have zero bounded SDT/DTrace/CTR/audit marker candidates.
+All 29 plain module bytes and 29 CTF/runtime/debuglink comparisons preserve
+compiled behavior. All 140 actual compiler contexts and 82 explicit binary-input
+bindings pass original controls; no firmware/device/code is executed. Core
+firmware registration/load privilege and audit behavior, live firing and complete
+provider coverage remain unqualified. Existing amd64 module/debug/install bytes
+are unchanged. Evidence: bazel-cross-firmware-review-r1-20261103/supplement.json;
+[CROSS-FIRMWARE-MODULES-QUALIFICATION.md](CROSS-FIRMWARE-MODULES-QUALIFICATION.md).

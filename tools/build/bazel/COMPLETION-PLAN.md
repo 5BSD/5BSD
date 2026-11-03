@@ -1427,3 +1427,20 @@ not ignored. Separate DWARF/source lookup, complete architectures/world/pkgbase,
 bootstrap/publication, VM/runtime and controlled performance/cache/sandbox gates
 remain open. Existing format-5 --arch profiles carry this cohort. Make stays
 production/default; BIP stays excluded.
+
+## ARM64/RISC-V firmware module checkpoint (2026-11-03)
+
+The [shared native firmware pipeline](CROSS-FIRMWARE-MODULES-QUALIFICATION.md)
+now covers seventeen selected ARM64 and twelve RISC-V leaves. Four normal
+build-bsd profiles and all 58 original Make controls pass: 29 whole-file plain
+matches, 29 CTF/runtime/debuglink checks, 87 install records, 140 actual compiler
+contexts/5,108 consumed pairs and 116 ordered links. All 82 embedding instances
+bind exact payload bytes and explicit .incbin input digests; 29 registration and
+20 decode actions bind original sources/specifications. All 38 current amd64
+module/debug/install captures remain byte-identical after the shared refactor.
+No C/assembly/AWK/Make/compiler-policy or security change. Existing format-5
+architecture selection carries the cohort. Separate DWARF/source lookup,
+complete cross/world/pkgbase/bootstrap/hardware/publication, runtime and controlled
+performance/cache/sandbox gates remain open. Userland target/exec SDK separation
+continues independently with fresh receipts after receipt-bound tool changes.
+Make stays production/default; BIP stays excluded.

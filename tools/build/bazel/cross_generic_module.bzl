@@ -17,14 +17,14 @@ _ARCH = {
         headers = [], linkopts = []),
 }
 
-def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name = "generic_module", copts = [], header_overrides = [], warning_flags = None, preinclude_headers = []):
+def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name = "generic_module", copts = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = []):
     policy = _ARCH[arch]
     name = arch + "_" + name
     # Preserve forced compatibility headers before the ordinary opt_global.h input.
     textual_hdrs = preinclude_headers + textual_hdrs
     preinclude_flags = [flag for header in preinclude_headers for flag in ["-include", "$(execpath " + header + ")"]]
     cc_library(name = name + "_objects", srcs = srcs, textual_hdrs = textual_hdrs,
-        additional_compiler_inputs = textual_hdrs,
+        additional_compiler_inputs = textual_hdrs + additional_compiler_inputs,
         deps = header_overrides + ["//sys/" + arch + "/conf:generic_global_headers", "//sys/" + arch + "/include:kernel_headers",
             "//sys/kern:" + arch + "_generic_offset_header", "//sys/kern:vnode_headers",
             "//sys/sys:kernel_headers", "//sys/bsm:kernel_headers"] + policy.headers + deps,
@@ -33,7 +33,7 @@ def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name 
             "-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +
             policy.copts + (KERNEL_WARNING_FLAGS if warning_flags == None else warning_flags) + KERNEL_DEBUG_FLAGS +
             [mapping for source in srcs + textual_hdrs for mapping in module_source_path_maps(source)] + copts,
-        local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
+        local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"] + local_defines,
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + policy.cpu,
             "//tools/build/bazel/kernel_toolchain:kernel"])
     bsd_ctf_library(name = name + "_ctf", library = ":" + name + "_objects",

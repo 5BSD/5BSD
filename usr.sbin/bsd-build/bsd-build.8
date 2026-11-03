@@ -5477,3 +5477,13 @@ See
 .Pa tools/build/bazel/CROSS-ROUTING-MODULES-QUALIFICATION.md
 for actual compiler/input/link evidence and remaining debugger, complete
 architecture, package, runtime and controlled-performance gates.
+.Pp
+The native shared firmware pipeline now also builds seventeen selected ARM64
+and twelve RISC-V module leaves through existing format-5 profiles.
+Original decoded/raw payloads, generated registration C, explicit binary
+compiler inputs, module/debuglink/installation comparisons pass; amd64 captures
+remain byte-identical after the shared refactor.
+See
+.Pa tools/build/bazel/CROSS-FIRMWARE-MODULES-QUALIFICATION.md
+for actual producer/input/link evidence and remaining architecture, debugger,
+package, bootstrap, hardware/runtime and performance gates.

@@ -6,3 +6,14 @@ amd64_firmware_module(module = "t6fw_cfg",
     images = [{"source": "//sys/dev/cxgbe:firmware/t6fw_cfg.txt", "encoding": "raw", "filename": "t6fw_cfg.txt", "spec": "t6fw_cfg.txt:t6fw_cfg:1.0.0.0"}, {"source": "//sys/dev/cxgbe:firmware/t6fw_cfg_fpga.txt", "encoding": "raw", "filename": "t6fw_cfg_fpga.txt", "spec": "t6fw_cfg_fpga.txt:t6fw_cfg_fpga:1.0.0.0"}, {"source": "//sys/dev/cxgbe:firmware/t6fw_cfg_hashfilter.txt", "encoding": "raw", "filename": "t6fw_cfg_hashfilter.txt", "spec": "t6fw_cfg_hashfilter.txt:t6fw_cfg_hashfilter:1.0.0.0"}, {"source": "//sys/dev/cxgbe:firmware/t6fw_cfg_uwire.txt", "encoding": "raw", "filename": "t6fw_cfg_uwire.txt", "spec": "t6fw_cfg_uwire.txt:t6fw_cfg_uwire:1.0.0.0"}, {"source": "//sys/dev/cxgbe:firmware/t6fw-1.27.5.0.bin", "encoding": "raw", "filename": "t6fw-1.27.5.0.bin", "spec": "t6fw-1.27.5.0.bin:t6fw:1.27.5.0"}],
     license = "", export_all = False,
     extra_objects = [], extra_object_order = [])
+
+load("//tools/build/bazel:bsd_firmware_module.bzl", "bsd_firmware_module")
+
+[bsd_firmware_module(
+    arch = arch,
+    module = "t6fw_cfg",
+    images = [{'source': '//sys/dev/cxgbe:firmware/t6fw_cfg.txt', 'encoding': 'raw', 'filename': 't6fw_cfg.txt', 'spec': 't6fw_cfg.txt:t6fw_cfg:1.0.0.0'}, {'source': '//sys/dev/cxgbe:firmware/t6fw_cfg_fpga.txt', 'encoding': 'raw', 'filename': 't6fw_cfg_fpga.txt', 'spec': 't6fw_cfg_fpga.txt:t6fw_cfg_fpga:1.0.0.0'}, {'source': '//sys/dev/cxgbe:firmware/t6fw_cfg_hashfilter.txt', 'encoding': 'raw', 'filename': 't6fw_cfg_hashfilter.txt', 'spec': 't6fw_cfg_hashfilter.txt:t6fw_cfg_hashfilter:1.0.0.0'}, {'source': '//sys/dev/cxgbe:firmware/t6fw_cfg_uwire.txt', 'encoding': 'raw', 'filename': 't6fw_cfg_uwire.txt', 'spec': 't6fw_cfg_uwire.txt:t6fw_cfg_uwire:1.0.0.0'}, {'source': '//sys/dev/cxgbe:firmware/t6fw-1.27.5.0.bin', 'encoding': 'raw', 'filename': 't6fw-1.27.5.0.bin', 'spec': 't6fw-1.27.5.0.bin:t6fw:1.27.5.0'}],
+    license = "",
+    export_all = False,
+    package = "kernel",
+) for arch in ['arm64']]

@@ -6,3 +6,14 @@ amd64_firmware_module(module = "rtwn-rtl8821aufw",
     images = [{"source": "//sys/contrib/dev/rtwn:rtwn-rtl8821aufw.fw.uu", "encoding": "uu", "filename": "rtwn-rtl8821aufw.fw", "spec": "rtwn-rtl8821aufw.fw:rtwn-rtl8821aufw:111"}],
     license = "", export_all = False,
     extra_objects = [], extra_object_order = [])
+
+load("//tools/build/bazel:bsd_firmware_module.bzl", "bsd_firmware_module")
+
+[bsd_firmware_module(
+    arch = arch,
+    module = "rtwn-rtl8821aufw",
+    images = [{'source': '//sys/contrib/dev/rtwn:rtwn-rtl8821aufw.fw.uu', 'encoding': 'uu', 'filename': 'rtwn-rtl8821aufw.fw', 'spec': 'rtwn-rtl8821aufw.fw:rtwn-rtl8821aufw:111'}],
+    license = "",
+    export_all = False,
+    package = "kernel",
+) for arch in ['arm64', 'riscv']]

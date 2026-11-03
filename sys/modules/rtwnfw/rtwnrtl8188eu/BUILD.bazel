@@ -6,3 +6,14 @@ amd64_firmware_module(module = "rtwn-rtl8188eufw",
     images = [{"source": "//sys/contrib/dev/rtwn:rtwn-rtl8188eufw.fw.uu", "encoding": "uu", "filename": "rtwn-rtl8188eufw.fw", "spec": "rtwn-rtl8188eufw.fw:rtwn-rtl8188eufw:111"}],
     license = "", export_all = False,
     extra_objects = [], extra_object_order = [])
+
+load("//tools/build/bazel:bsd_firmware_module.bzl", "bsd_firmware_module")
+
+[bsd_firmware_module(
+    arch = arch,
+    module = "rtwn-rtl8188eufw",
+    images = [{'source': '//sys/contrib/dev/rtwn:rtwn-rtl8188eufw.fw.uu', 'encoding': 'uu', 'filename': 'rtwn-rtl8188eufw.fw', 'spec': 'rtwn-rtl8188eufw.fw:rtwn-rtl8188eufw:111'}],
+    license = "",
+    export_all = False,
+    package = "kernel",
+) for arch in ['arm64', 'riscv']]
