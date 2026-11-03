@@ -4,13 +4,15 @@
  * descriptors, using the actual daemon objects. The children are this
  * test's own pdfork(2) children that only sleep; no tracing program is run.
  *
- * Oracles: success requires every child to be dead and reaped (kill(pid, 0)
- * reports ESRCH) and its ledger entry removed; when any child lacks a
+ * Oracles: success requires every child to have exited (its exit status is
+ * collected; it no longer runs) and its ledger entry removed; when any child lacks a
  * process descriptor no child may be signalled (all remain alive); each
  * injected poll/pdwait/lock/clock fault returns its exact errno.
  */
 #include <sys/procdesc.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 #include <sys/hypertrace.h>
 #include <shared_mutex>
 #include <memory>
@@ -125,10 +127,23 @@ spawn(bool exit_now = false)
 	return (c);
 }
 
+/*
+ * True while the child has not exited. kill(pid, 0) cannot tell: an exited
+ * pdfork(2) child stays a zombie while its process descriptor is open or its
+ * parent's waitpid() reference remains (kernel zombie references); pdwait(2)
+ * collects the status without reaping.
+ */
 static bool
 alive(pid_t pid)
 {
-	return (kill(pid, 0) == 0);
+	int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+	struct kinfo_proc kp;
+	size_t len = sizeof(kp);
+	if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0) {
+		CHECK(errno == ESRCH);
+		return (false);
+	}
+	return (len == sizeof(kp) && kp.ki_stat != SZOMB);
 }
 
 struct fixture {
@@ -157,6 +172,8 @@ struct fixture {
 				int st;
 				(void)__real_pdwait(c.fd, &st, WEXITED, nullptr, nullptr);
 				close(c.fd);
+				/* drop the parent's zombie reference */
+				(void)waitpid(c.pid, &st, 0);
 			}
 		}
 		s.inbounddir = nullptr;
@@ -181,7 +198,7 @@ test_success()
 	CHECK(quiesce_guest_tracing(&f.s, dtraced_io_deadline_after(5000)));
 	CHECK(f.s.cleanup_in_progress.load());
 	for (auto &c : f.children)
-		CHECK(!alive(c.pid) && errno == ESRCH);
+		CHECK(!alive(c.pid));
 	struct stat st;
 	CHECK(fstatat(f.inbound->dirfd, name, &st, 0) != 0 && errno == ENOENT);
 	/* An empty session quiesces trivially. */

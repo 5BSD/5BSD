@@ -1631,6 +1631,21 @@ key_case('keys-in-minion-mode', 'own', 'peer_pub', 1, None, ('-m',))
 
 
 # ---- guest (minion) daemon with a scripted transport ----
+def zombie_children(pid, timeout=5):
+    """PIDs of pid's children that stay zombies for timeout seconds (the
+    daemon's reaper polls; a just-exited child may not be reaped yet)."""
+    end = time.monotonic() + timeout
+    while True:
+        p = subprocess.run(['ps', '-ax', '-o', 'pid=', '-o', 'ppid=',
+                            '-o', 'stat='],
+                           capture_output=True, text=True)
+        found = [f[0] for f in (line.split() for line in p.stdout.splitlines())
+                 if len(f) == 3 and f[1] == str(pid) and f[2].startswith('Z')]
+        if not found or time.monotonic() >= end:
+            return found
+        time.sleep(0.1)
+
+
 def minion(name, identity, cleanup=None, after=None, cleanup_after=None,
            marker=False, busy=0, busy_errno=None, after_on=None, expect_status=0,
            expect_err=None,
@@ -1675,6 +1690,14 @@ def minion(name, identity, cleanup=None, after=None, cleanup_after=None,
                 except Exception:
                     import traceback
                     detail = {'ok': False, 'exception': traceback.format_exc()[-800:]}
+            # Every exited tracing child is reaped: since kernel zombie
+            # references, pdwait(2) alone never reaps, so a daemon that
+            # misses waitpid()/close() leaks one zombie per child.
+            if started and proc.poll() is None:
+                zombies = zombie_children(proc.pid)
+                if zombies:
+                    detail['zombie_children'] = zombies
+                    detail['ok'] = False
             if proc.poll() is None:
                 proc.send_signal(signal.SIGTERM)
         stop_started = time.monotonic()
@@ -1874,12 +1897,20 @@ def derived_sessions_in_guest(root, state):
             return None
 
     installed = lambda: sorted(r[1] for r in dtt_records(root) if r[0] == '4')
+    # DTT_INSTALLED leaves from the inbound thread when launch_program()
+    # returns; the response the program uploaded before that leaves later,
+    # from the outbound directory watcher (process_outbound).  Neither waits
+    # for the other, so wait for the responses themselves.
+    responses = lambda: [s for s in outbound_sources(root)
+                         if s in (sources.get(1), sources.get(2),
+                                  sources.get(4))]
     first, second = base(1), base(2)
     spools = [derived(1, first)]
     wait_until(lambda: installed() == ['921'], 15)
     spools.append(derived(2, second))
     wait_until(lambda: installed() == ['921', '922'], 15)
     d['installed'] = installed()
+    wait_until(lambda: len(responses()) == 4, 15)
     d['idents'].update({'base.2': idents(second), 'derived.1': idents(spools[0]),
                         'derived.2': idents(spools[1])})
     third = base(3)	# its derived program never arrives
@@ -1888,8 +1919,8 @@ def derived_sessions_in_guest(root, state):
     wait_until(lambda: installed() == ['921', '922', '924'], 15)
     d['installed_after_miss'] = installed()
     d['idents']['derived.4'] = idents(spools[2])
-    d['responses'] = [s for s in outbound_sources(root)
-                      if s in (sources[1], sources[2], sources[4])]
+    wait_until(lambda: len(responses()) == 6, 15)
+    d['responses'] = responses()
     d['kill.3'] = inject_line(root, 'kill 4243 42 99 %s' % sources[3])
     wait_until(lambda: len([n for n in os.listdir(state / 'inbound')
                             if n.startswith('.killack.')]) == 1, 15)

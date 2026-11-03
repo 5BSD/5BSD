@@ -246,6 +246,7 @@ extern "C" int __real_socketpair(int, int, int, int *);
 extern "C" int __real_fcntl(int, int, ...);
 static std::mutex dtt_mtx;
 static int dtt_daemon_fd = -1, dtt_driver_fd = -1;
+static std::atomic<int> dtt_drivers{0};	/* driver threads not yet at EOF */
 static std::atomic<bool> dtt_after{false}, dtt_cleanup_after{false};
 static std::atomic<int> dtt_busy{0};
 
@@ -369,8 +370,17 @@ host_db_lookup(const char *tag, dtt_entry_t &r)
 	return (found);
 }
 
+static void dtt_driver_records(int fd);
+
 static void
 dtt_driver(int fd)
+{
+	dtt_driver_records(fd);
+	dtt_drivers.fetch_sub(1);
+}
+
+static void
+dtt_driver_records(int fd)
 {
 	const char *log = getenv("HT_DTT_LOG");
 	const bool answer = env_is("HT_DTT_ANSWER", "1");
@@ -680,7 +690,13 @@ open_transport(int flags)
 	}
 	const char *busy = getenv("HT_DTT_BUSY");
 	dtt_busy.store(busy != nullptr ? atoi(busy) : 0);
-	std::thread(dtt_driver, sv[1]).detach();
+	dtt_drivers.fetch_add(1);
+	try {
+		std::thread(dtt_driver, sv[1]).detach();
+	} catch (...) {
+		dtt_drivers.fetch_sub(1);
+		throw;
+	}
 	if (getenv("HT_DTT_INJECT") != nullptr)
 		std::thread(inject_listener, sv[1]).detach();
 	return (sv[0]);
@@ -1512,7 +1528,17 @@ __wrap_execve(const char *path, char *const argv[], char *const envp[])
 {
 	if (argv != nullptr && argv[0] != nullptr && strcmp(path, argv[0]) == 0 &&
 	    strcmp(path, "/usr/sbin/dtrace") != 0 && path[0] == '/') {
-		/* re-exec of this test daemon */
+		/* re-exec of this test daemon.  A real transport has every
+		 * record the daemon wrote; let the scripted driver read and
+		 * log them before the process ends (bounded). */
+		int daemon_fd;
+		{
+			std::lock_guard lock(dtt_mtx);
+			daemon_fd = dtt_daemon_fd;
+		}
+		if (daemon_fd >= 0 && __real_shutdown(daemon_fd, SHUT_WR) == 0)
+			for (int i = 0; i < 500 && dtt_drivers.load() > 0; i++)
+				usleep(10000);
 		if (__llvm_profile_write_file != nullptr)
 			(void)__llvm_profile_write_file();
 		_exit(73);
