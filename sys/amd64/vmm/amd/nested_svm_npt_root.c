@@ -123,6 +123,12 @@ svm_nested_npt_root_clear(struct svm_nested_npt_root *root)
  * and nCR3 without a flush request.  Clearing on every VMRUN made L2 refault
  * its whole working set after each exit to L1, so the next exit, typically
  * L1's own timer, arrived before L2 made progress.
+ *
+ * Every alias system-wires the L1 page behind it, so L2's working set of L1
+ * memory now stays wired until L1's next flush, ASID or nCR3 change, or a
+ * memory map invalidation, rather than for one VMRUN.  For an L1 started
+ * without -S (memory not wired) that is a lasting increase in wired pages
+ * that the page daemon cannot reclaim while L2 runs.
  */
 int
 svm_nested_npt_root_vmrun(struct svm_nested_npt_root *root, uint32_t asid,

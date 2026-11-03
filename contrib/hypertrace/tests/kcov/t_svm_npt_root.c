@@ -49,11 +49,13 @@ struct model_entry {
 	vm_offset_t start, end;
 	int system_wired;
 	int prot;
+	struct vmspace *vs;	/* the NPT02 holding the alias */
 };
 
-static struct vmspace model_vmspace;
+/* One NPT02 per L1 vCPU; two model L1 vCPUs that share an NPT12. */
+static struct vmspace model_vmspaces[2];
 static struct model_entry model[MODEL_ENTRIES];
-static bool model_allocated;
+static bool model_allocated[nitems(model_vmspaces)];
 static int model_maps;		/* aliases inserted: one per NPT02 fill */
 /* What the NPT12 walk of the next resolve returns. */
 static struct svm_nested_npt_result model_walk;
@@ -62,9 +64,34 @@ static int model_wire_error;	/* KERN_* returned by the next wire */
 static int model_frees;
 
 static bool
-model_overlaps(const struct model_entry *e, vm_offset_t start, vm_offset_t end)
+model_overlaps(const struct model_entry *e, const struct vmspace *vs,
+    vm_offset_t start, vm_offset_t end)
 {
-	return (e->used && e->start < end && start < e->end);
+	return (e->used && e->vs == vs && e->start < end && start < e->end);
+}
+
+/* The model NPT02 whose map this is. */
+static struct vmspace *
+model_space(vm_map_t map)
+{
+	u_int i;
+
+	for (i = 0; i < nitems(model_vmspaces); i++)
+		if (map == &model_vmspaces[i].vm_map)
+			return (&model_vmspaces[i]);
+	KHX_CHECK(false);
+	return (NULL);
+}
+
+/* Aliases in one NPT02. */
+static int
+model_count_in(const struct vmspace *vs)
+{
+	int i, n;
+
+	for (i = n = 0; i < MODEL_ENTRIES; i++)
+		n += model[i].used && model[i].vs == vs;
+	return (n);
 }
 
 static int
@@ -92,8 +119,8 @@ static void
 model_reset(void)
 {
 	memset(model, 0, sizeof(model));
-	memset(&model_vmspace, 0, sizeof(model_vmspace));
-	model_allocated = false;
+	memset(model_vmspaces, 0, sizeof(model_vmspaces));
+	memset(model_allocated, 0, sizeof(model_allocated));
 	model_sleeps = 0;
 	model_wire_error = KERN_SUCCESS;
 	model_frees = 0;
@@ -106,29 +133,39 @@ model_reset(void)
 struct vmspace *
 svm_nested_npt_alloc(vm_offset_t min __unused, vm_offset_t max __unused)
 {
-	KHX_CHECK(!model_allocated);
-	model_allocated = true;
-	return (&model_vmspace);
+	u_int i;
+
+	for (i = 0; i < nitems(model_vmspaces); i++) {
+		if (model_allocated[i])
+			continue;
+		model_allocated[i] = true;
+		return (&model_vmspaces[i]);
+	}
+	KHX_CHECK(false);
+	return (NULL);
 }
 
 void
 svm_npt_free(struct vmspace *vmspace)
 {
-	KHX_CHECK(vmspace == &model_vmspace);
+	struct vmspace *vs;
+
+	vs = model_space(&vmspace->vm_map);
 	/* vmspace_dofree(): vm_map_remove() of the whole map. */
-	(void)vm_map_remove(&vmspace->vm_map, 0, VM_MAXUSER_ADDRESS_LA48);
-	model_allocated = false;
+	(void)vm_map_remove(&vs->vm_map, 0, VM_MAXUSER_ADDRESS_LA48);
+	model_allocated[vs - model_vmspaces] = false;
 	model_frees++;
 }
 
 int
 vm_map_remove(vm_map_t map, vm_offset_t start, vm_offset_t end)
 {
+	struct vmspace *vs;
 	int i;
 
-	KHX_CHECK(map == &model_vmspace.vm_map);
+	vs = model_space(map);
 	for (i = 0; i < MODEL_ENTRIES; i++) {
-		if (!model_overlaps(&model[i], start, end))
+		if (!model_overlaps(&model[i], vs, start, end))
 			continue;
 		if (model[i].system_wired != 0) {
 			/* vm_map_delete(): _vm_map_unlock_and_wait() forever. */
@@ -137,7 +174,7 @@ vm_map_remove(vm_map_t map, vm_offset_t start, vm_offset_t end)
 		}
 	}
 	for (i = 0; i < MODEL_ENTRIES; i++)
-		if (model_overlaps(&model[i], start, end))
+		if (model_overlaps(&model[i], vs, start, end))
 			model[i].used = false;
 	return (KERN_SUCCESS);
 }
@@ -145,16 +182,17 @@ vm_map_remove(vm_map_t map, vm_offset_t start, vm_offset_t end)
 int
 vm_map_unwire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 {
+	struct vmspace *vs;
 	int i;
 
-	KHX_CHECK(map == &model_vmspace.vm_map);
+	vs = model_space(map);
 	KHX_EQ(flags, VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_HOLESOK);
 	for (i = 0; i < MODEL_ENTRIES; i++)
-		if (model_overlaps(&model[i], start, end) &&
+		if (model_overlaps(&model[i], vs, start, end) &&
 		    model[i].system_wired == 0)
 			return (KERN_INVALID_ARGUMENT);
 	for (i = 0; i < MODEL_ENTRIES; i++)
-		if (model_overlaps(&model[i], start, end))
+		if (model_overlaps(&model[i], vs, start, end))
 			model[i].system_wired--;
 	return (KERN_SUCCESS);
 }
@@ -162,14 +200,15 @@ vm_map_unwire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 int
 vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 {
+	struct vmspace *vs;
 	int i;
 
-	KHX_CHECK(map == &model_vmspace.vm_map);
+	vs = model_space(map);
 	KHX_CHECK((flags & VM_MAP_WIRE_USER) == 0);	/* SYSTEM is 0 */
 	if (model_wire_error != KERN_SUCCESS)
 		return (model_wire_error);
 	for (i = 0; i < MODEL_ENTRIES; i++)
-		if (model_overlaps(&model[i], start, end))
+		if (model_overlaps(&model[i], vs, start, end))
 			model[i].system_wired++;
 	return (KERN_SUCCESS);
 }
@@ -179,18 +218,19 @@ vm_gpa_map_alias(struct vcpu *vcpu __unused, struct vmspace *dst,
     vm_paddr_t dst_gpa, vm_paddr_t src_gpa __unused, size_t len,
     int prot, int required_prot __unused, int *effective __unused)
 {
+	struct vmspace *vs;
 	int i;
 
-	KHX_CHECK(dst == &model_vmspace);
+	vs = model_space(&dst->vm_map);
 	for (i = 0; i < MODEL_ENTRIES; i++)
 		/* vm_map_insert() refuses an occupied range. */
-		if (model_overlaps(&model[i], dst_gpa, dst_gpa + len))
+		if (model_overlaps(&model[i], vs, dst_gpa, dst_gpa + len))
 			return (ENOMEM);
 	for (i = 0; i < MODEL_ENTRIES; i++) {
 		if (model[i].used)
 			continue;
 		model[i] = (struct model_entry){ true, dst_gpa,
-		    dst_gpa + len, 0, prot };
+		    dst_gpa + len, 0, prot, vs };
 		model_maps++;
 		return (0);
 	}
@@ -383,7 +423,7 @@ case_unwired_alias_refused(void)
 	root = root_new();
 	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, 0x1000, 0x2000,
 	    RWX, SVM_NESTED_NPT_READ), 0);
-	KHX_EQ(vm_gpa_map_alias(VCPU, &model_vmspace, 0x8000, 0x8000,
+	KHX_EQ(vm_gpa_map_alias(VCPU, &model_vmspaces[0], 0x8000, 0x8000,
 	    PAGE_SIZE, VM_PROT_READ, VM_PROT_READ, NULL), 0);
 	KHX_EQ(svm_nested_npt_root_clear(root), EPROTO);
 	KHX_EQ(model_sleeps, 0);
@@ -527,7 +567,7 @@ case_vmrun_flush_rules(void)
 	/* A refused discard is not mistaken for a kept context. */
 	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(0), L1PAGE(0),
 	    RWX, SVM_NESTED_NPT_READ), 0);
-	KHX_EQ(vm_gpa_map_alias(VCPU, &model_vmspace, L2PAGE(1), L1PAGE(1),
+	KHX_EQ(vm_gpa_map_alias(VCPU, &model_vmspaces[0], L2PAGE(1), L1PAGE(1),
 	    PAGE_SIZE, VM_PROT_READ, VM_PROT_READ, NULL), 0);
 	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
 	    VMCB_TLB_FLUSH_GUEST), EPROTO);
@@ -582,6 +622,110 @@ case_resolve_clean_page_read_only(void)
 	KHX_EQ(model_sleeps, 0);
 }
 
+/*
+ * svm.c turns L1's INVLPGA into svm_nested_npt_root_flush() and an L0
+ * memory-map change into svm_nested_npt_root_clear().  Either must make the
+ * next VMRUN start from an empty NPT02 although L1 resumes L2 with the same
+ * ASID, NP controls and nCR3 and no TLB_CONTROL; the VMRUN after that keeps
+ * NPT02 again.
+ */
+static void
+case_flush_events_clear_next_vmrun(void)
+{
+	struct svm_nested_npt_root *root;
+
+	khx_host_case("INVLPGA and memmap invalidation clear the next VMRUN");
+	root = root_new();
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(0), L1PAGE(0),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+
+	/* INVLPGA exit while L1 runs; L2 resumes in the same context. */
+	svm_nested_npt_root_flush(root);
+	KHX_EQ(model_count(), 1);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count(), 0);
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(1), L1PAGE(1),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count(), 1);
+
+	/*
+	 * Memory-map invalidation at a frozen boundary, then an L2 exit that
+	 * L0 serves before L1's next VMRUN.
+	 */
+	KHX_EQ(svm_nested_npt_root_clear(root), 0);
+	KHX_EQ(model_count(), 0);
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(2), L1PAGE(2),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count(), 0);
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(2), L1PAGE(2),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count(), 1);
+	KHX_EQ(model_sleeps, 0);
+	svm_nested_npt_root_destroy(root);
+	KHX_EQ(model_sleeps, 0);
+}
+
+/*
+ * Two L1 vCPUs run L2 vCPUs on one NPT12 with the same ASID.  Each has its
+ * own NPT02, as each CPU has its own TLB, so a flush by one vCPU (INVLPGA or
+ * TLB_CONTROL) clears only that vCPU's NPT02; the other keeps its aliases
+ * until it flushes itself.
+ */
+static void
+case_shared_npt12_per_vcpu_flush(void)
+{
+	struct svm_nested_npt_root *root[2];
+	int v;
+
+	khx_host_case("two L1 vCPUs sharing an NPT12 clear on their own flush");
+	root[0] = root_new();
+	root[1] = NULL;
+	KHX_EQ(svm_nested_npt_root_create(MAXADDR, &root[1]), 0);
+	KHX_CHECK(root[1] != NULL);
+	for (v = 0; v < 2; v++) {
+		KHX_EQ(svm_nested_npt_root_vmrun(root[v], ASID, NP_ON, NCR3,
+		    VMCB_TLB_FLUSH_NOTHING), 0);
+		KHX_EQ(svm_nested_npt_root_populate(root[v], VCPU, L2PAGE(0),
+		    L1PAGE(0), RWX, SVM_NESTED_NPT_READ), 0);
+		KHX_EQ(svm_nested_npt_root_populate(root[v], VCPU, L2PAGE(1),
+		    L1PAGE(1), RWX, SVM_NESTED_NPT_READ), 0);
+	}
+	KHX_EQ(model_count_in(&model_vmspaces[0]), 2);
+	KHX_EQ(model_count_in(&model_vmspaces[1]), 2);
+
+	/* vCPU 0 executes INVLPGA. */
+	svm_nested_npt_root_flush(root[0]);
+	for (v = 0; v < 2; v++)
+		KHX_EQ(svm_nested_npt_root_vmrun(root[v], ASID, NP_ON, NCR3,
+		    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count_in(&model_vmspaces[0]), 0);
+	KHX_EQ(model_count_in(&model_vmspaces[1]), 2);
+
+	/* vCPU 1 asks for a guest TLB flush in its VMCB12. */
+	KHX_EQ(svm_nested_npt_root_populate(root[0], VCPU, L2PAGE(0),
+	    L1PAGE(0), RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root[0], ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root[1], ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_GUEST), 0);
+	KHX_EQ(model_count_in(&model_vmspaces[0]), 1);
+	KHX_EQ(model_count_in(&model_vmspaces[1]), 0);
+	KHX_EQ(model_sleeps, 0);
+	for (v = 0; v < 2; v++)
+		svm_nested_npt_root_destroy(root[v]);
+	KHX_EQ(model_frees, 2);
+	KHX_EQ(model_sleeps, 0);
+}
+
 int
 khx_test_main(void)
 {
@@ -594,5 +738,7 @@ khx_test_main(void)
 	case_vmrun_keeps_npt02();
 	case_vmrun_flush_rules();
 	case_resolve_clean_page_read_only();
+	case_flush_events_clear_next_vmrun();
+	case_shared_npt12_per_vcpu_flush();
 	return (khx_host_finish("svm_nested_npt_root"));
 }
