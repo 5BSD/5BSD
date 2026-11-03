@@ -59,4 +59,4 @@ test = subprocess.run([str(out / 'ctf-linker-bounds')], env=env,
 (out / 'run.log').write_text(test.stdout + test.stderr)
 if test.returncode:
     raise SystemExit('CTF linker fixture failed; inspect run.log')
-print('PASS: CTF offsets, member preflight, diagnostics, and DIF index bounds')
+print('PASS: CTF offsets, member preflight, diagnostics, DIF index bounds, and allocation failure recovery')

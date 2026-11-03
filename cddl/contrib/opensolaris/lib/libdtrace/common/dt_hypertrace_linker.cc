@@ -965,15 +965,16 @@ HyperTraceLinker::assembleProgram(dtrace_difo_t *difo,
 			return (E_HYPERTRACE_LINKING);
 		}
 
-		uint64_t *otab = difo->dtdo_inttab;
-		difo->dtdo_inttab = (uint64_t *)dt_zalloc(dtp,
+		uint64_t *ntab = (uint64_t *)dt_zalloc(dtp,
 		    sizeof(uint64_t) * inthash_size);
-		if (difo->dtdo_inttab == nullptr) {
+		if (ntab == nullptr) {
 			setErrorMessage("malloc of inttab failed: %s", strerror(errno));
 			return (E_HYPERTRACE_SYS);
 		}
-		free(otab);
-		dt_inttab_write(difo->dtdo_inthash, difo->dtdo_inttab);
+		/* Keep the original table intact if allocation fails. */
+		dt_inttab_write(difo->dtdo_inthash, ntab);
+		free(difo->dtdo_inttab);
+		difo->dtdo_inttab = ntab;
 		difo->dtdo_intlen = inthash_size;
 		/* The table is final: the linker's hash is not kept (nothing
 		 * else frees it). */

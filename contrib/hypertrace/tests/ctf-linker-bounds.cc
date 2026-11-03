@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/types.h>
 #include <assert.h>
+#include <dlfcn.h>
+#include <errno.h>
 #include <stdint.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -23,6 +25,55 @@ extern "C" {
 #define private public
 #include <dt_hypertrace_linker.hh>
 #undef private
+
+/* Interpose the actual shared library allocation, failing only the explicitly
+ * armed call. All other allocations retain the production implementation. */
+static bool fail_next_zalloc;
+extern "C" void *
+dt_zalloc(dtrace_hdl_t *dtp, size_t size)
+{
+	if (fail_next_zalloc) {
+		fail_next_zalloc = false;
+		errno = ENOMEM;
+		dtp->dt_errno = EDT_NOMEM;
+		return (nullptr);
+	}
+	using Alloc = void *(*)(dtrace_hdl_t *, size_t);
+	static auto real_alloc = reinterpret_cast<Alloc>(dlsym(RTLD_NEXT, "dt_zalloc"));
+	assert(real_alloc != nullptr);
+	return (real_alloc(dtp, size));
+}
+
+static void
+test_assemble_allocation_failure(dtrace_hdl_t *dtp)
+{
+	using namespace dtrace;
+	HyperTraceLinker linker(dtp, nullptr);
+	Array<UMap<uint32_t, dtrace_diftype_t>, DIFV_NSCOPES> types;
+	dtrace_difo_t difo{};
+	auto *old = static_cast<uint64_t *>(malloc(sizeof(uint64_t)));
+	assert(old != nullptr);
+	*old = 17;
+	difo.dtdo_inttab = old;
+	difo.dtdo_intlen = 1;
+	difo.dtdo_inthash = dt_inttab_create(dtp);
+	assert(difo.dtdo_inthash != nullptr);
+	assert(dt_inttab_insert(difo.dtdo_inthash, 17, 0) == 0);
+	assert(dt_inttab_insert(difo.dtdo_inthash, 29, 0) == 1);
+	auto *hash = difo.dtdo_inthash;
+	fail_next_zalloc = true;
+	assert(linker.assembleProgram(&difo, types) == E_HYPERTRACE_SYS);
+	assert(!fail_next_zalloc); /* The injected failure was reached. */
+	assert(difo.dtdo_inttab == old && difo.dtdo_intlen == 1);
+	assert(*old == 17 && difo.dtdo_inthash == hash);
+	assert(dt_inttab_size(hash) == 2);
+	/* Retry must publish the complete table and release the hash. ASan also
+	 * checks the ownership changes for double frees and leaked storage. */
+	assert(linker.assembleProgram(&difo, types) == E_HYPERTRACE_NONE);
+	assert(difo.dtdo_intlen == 2 && difo.dtdo_inthash == nullptr);
+	assert(difo.dtdo_inttab[0] == 17 && difo.dtdo_inttab[1] == 29);
+	free(difo.dtdo_inttab);
+}
 
 /* Boundaries must preserve instructions when a USETX relocation is rejected. */
 static void
@@ -233,6 +284,7 @@ main(void)
 	using namespace dtrace;
 	auto *dtp = (dtrace_hdl_t *)calloc(1, sizeof(dtrace_hdl_t));
 	assert(dtp != nullptr);
+	test_assemble_allocation_failure(dtp);
 	test_usetx_preconditions(dtp);
 	test_typecast_symbol_bounds(dtp);
 	test_enum_member_load(dtp);
