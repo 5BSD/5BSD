@@ -1,5 +1,17 @@
 # Native Bazel completion plan
 
+## ARM64/RISC-V input module checkpoint (2026-11-03)
+
+Twenty-six input modules per architecture pass original Make comparison on
+ARM64 and RISC-V: 52 exact plain modules, 52 CTF/runtime/debuglink checks, 120
+actual compilers/13,522 canonical consumed input pairs, 208 ordered links and
+156 original installation records/payload bindings. Four maintained
+provider-test profiles pass, checking required callbacks and deliberate
+localization defects. KOBJ schema provenance comments are the only permitted
+generated-input content differences and remain explicit; standalone
+DWARF/source lookup remains open. See
+[CROSS-INPUT-MODULES-QUALIFICATION.md](CROSS-INPUT-MODULES-QUALIFICATION.md).
+
 ## Open module debug qualification gate
 
 Read [MODULE-DEBUG-QUALIFICATION.md](MODULE-DEBUG-QUALIFICATION.md) before interpreting

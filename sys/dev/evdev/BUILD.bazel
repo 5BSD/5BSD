@@ -79,3 +79,34 @@ amd64_generic_module_objects(name = "uinput_uinput_module", srcs = ["uinput.c"],
 
 bsd_source_headers(name = "linux64_module_context_0", hdrs = ["input-event-codes.h", "input.h", "uinput.h"], includes = [],
     visibility = ["//sys/compat/linux:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+# Target-owned GENERIC input-device module compilation.
+[cross_generic_module_objects(
+    arch = arch,
+    name = "evdev_cdev_module",
+    srcs = ['cdev.c', 'evdev.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/dev/evdev:device_io_kernel_cdev_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "evdev_evdev_mt_module",
+    srcs = ['evdev_mt.c'],
+    deps = ["//sys/dev/evdev:device_io_kernel_cdev_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "evdev_evdev_utils_module",
+    srcs = ['evdev_utils.c'],
+    deps = ["//sys/dev/evdev:device_io_kernel_cdev_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uinput_uinput_module",
+    srcs = ['uinput.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/dev/evdev:device_io_kernel_uinput_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]

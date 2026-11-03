@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "hidwacom", objects = ["//sys/dev/hid:hidwacom_hidwacom_module_object_files"],
     object_order = ["hidwacom.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "hidwacom",
+    objects = ["//sys/dev/hid:" + arch + "_hidwacom_hidwacom_module_object_files"],
+    object_order = ['hidwacom.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

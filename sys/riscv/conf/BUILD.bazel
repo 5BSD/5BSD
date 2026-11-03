@@ -209,3 +209,13 @@ cc_library(name = "generic_opt_sched_header", hdrs = [":opt_sched"],
 # Parser-owned resolved input inventory, distinct from generated build files.
 filegroup(name = "generic_input_manifest", srcs = [":generic_config"],
     output_group = "manifest", visibility = ["//visibility:public"])
+
+# Input-device option contents come from the selected target configuration.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["hid", "kbd", "hkbd"]]
+[cc_library(name = "input_module_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options",
+    visibility = ["//sys/dev/hid:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/usb:__pkg__"])
+ for option in ["hid", "kbd", "hkbd", "evdev", "usb"]]

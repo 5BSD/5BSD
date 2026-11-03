@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "hidmap", objects = ["//sys/dev/hid:hidmap_hidmap_module_object_files"],
     object_order = ["hidmap.o"], export_all = True)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "hidmap",
+    objects = ["//sys/dev/hid:" + arch + "_hidmap_hidmap_module_object_files"],
+    object_order = ['hidmap.o'],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

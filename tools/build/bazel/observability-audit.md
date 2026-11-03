@@ -10609,3 +10609,17 @@ firmware registration/load privilege and audit behavior, live firing and complet
 provider coverage remain unqualified. Existing amd64 module/debug/install bytes
 are unchanged. Evidence: bazel-cross-firmware-review-r1-20261103/supplement.json;
 [CROSS-FIRMWARE-MODULES-QUALIFICATION.md](CROSS-FIRMWARE-MODULES-QUALIFICATION.md).
+
+### ARM64/RISC-V input module expansion (2026-11-03)
+
+The bounded 29-source scan finds 7 marker lines. All 52 plain modules match
+original Make whole bytes; the 52 CTF/runtime comparisons preserve observed
+compiled SDT/provider/probe/tracepoint sections and relocations in 8
+instrumented module variants. Four positive provider and four negative
+localization tests pass across both architectures/modes. No input device is
+exercised. Input ownership, read/write/ioctl/mmap/revoke/grab, injection,
+controller decoding, hotplug and detach/lifetime handling remain runtime
+follow-up work; source scans and compiled equality do not prove live
+probe/audit coverage. Evidence:
+bazel-cross-input-review-r1-20261103/supplement.json and
+[CROSS-INPUT-MODULES-QUALIFICATION.md](CROSS-INPUT-MODULES-QUALIFICATION.md).

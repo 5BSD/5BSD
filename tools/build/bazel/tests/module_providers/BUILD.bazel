@@ -124,3 +124,8 @@ bsd_host_artifact_test(name = "localized_hgame_rejected_test", src = "check.py",
         "--module", "ps4dshock=$(location //sys/modules/hid/ps4dshock:generic_module)",
         "--module", "ps5dsense=$(location //sys/modules/hid/ps5dsense:generic_module)",
         "--module", "xb360gp=$(location //sys/modules/hid/xb360gp:generic_module)"])
+
+load(":cross_input_tests.bzl", "cross_input_provider_tests")
+
+cross_input_provider_tests("arm64", _HID_MODULES)
+cross_input_provider_tests("riscv", _HID_MODULES)

@@ -196,3 +196,175 @@ bsd_source_headers(name = "usb_remaining_module_context_1", hdrs = ["hid.h", "hi
 
 bsd_source_headers(name = "linux64_module_context_0", hdrs = ["hidraw.h"], includes = [],
     visibility = ["//sys/compat/linux:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+# Target-owned GENERIC input-device module compilation.
+[cross_generic_module_objects(
+    arch = arch,
+    name = "appleir_appleir_module",
+    srcs = ['appleir.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "bcm5974_bcm5974_module",
+    srcs = ['bcm5974.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/dev/usb:hid_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hconf_hconf_module",
+    srcs = ['hconf.c'],
+    deps = ["//sys/dev/hid:device_io_kernel_hconf_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hcons_hcons_module",
+    srcs = ['hcons.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hgame_hgame_module",
+    srcs = ['hgame.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hid_hid_module",
+    srcs = ['hid.c'],
+    deps = ["//sys/dev/hid:device_io_kernel_hid_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hid_hid_if_module",
+    srcs = [':hid_if_module_source'],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :hid_if_module_source)=hid_if.c', '-fdebug-prefix-map=$(execpath :hid_if_module_source)=hid_if.c'],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hidbus_hidbus_module",
+    srcs = ['hidbus.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hidmap_hidmap_module",
+    srcs = ['hidmap.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hidquirk_hidquirk_module",
+    srcs = ['hidquirk.c'],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hidraw_hidraw_module",
+    srcs = ['hidraw.c'],
+    deps = ["//sys/dev/hid:hid_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hidwacom_hidwacom_module",
+    srcs = ['hidwacom.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hkbd_hkbd_module",
+    srcs = ['hkbd.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/dev/hid:device_io_kernel_hkbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_hkbd_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hms_hms_module",
+    srcs = ['hms.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hms_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hmt_hmt_module",
+    srcs = ['hmt.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hmt_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hpen_hpen_module",
+    srcs = ['hpen.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_11", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hrfkill_hrfkill_module",
+    srcs = ['hrfkill.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "hsctrl_hsctrl_module",
+    srcs = ['hsctrl.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ietp_ietp_module",
+    srcs = ['ietp.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/iicbus:hid_module_context_0", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ps4dshock_ps4dshock_module",
+    srcs = ['ps4dshock.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ps5dsense_ps5dsense_module",
+    srcs = ['ps5dsense.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "u2f_u2f_module",
+    srcs = ['u2f.c'],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/dev/usb:hid_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_hid_header", "//sys/" + arch + "/conf:input_module_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "vhid_vhid_module",
+    srcs = ['vhid.c'],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:hid_module_context_12", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "xb360gp_xb360gp_module",
+    srcs = ['xb360gp.c'],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_13", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]

@@ -5487,3 +5487,15 @@ See
 .Pa tools/build/bazel/CROSS-FIRMWARE-MODULES-QUALIFICATION.md
 for actual producer/input/link evidence and remaining architecture, debugger,
 package, bootstrap, hardware/runtime and performance gates.
+.Pp
+ARM64 and RISC-V input-module profiles build evdev, uinput, usbhid and the
+selected HID modules using target-derived GENERIC option headers.
+The existing format-5 test list also runs native ELF provider checks against
+these target artifacts, including a negative localized-callback fixture.
+No target module is executed by these tests.
+Original plain module bytes, CTF/runtime/debuglink contracts and installation
+records pass Make comparison for both architectures.
+See
+.Pa tools/build/bazel/CROSS-INPUT-MODULES-QUALIFICATION.md
+for the current original Make comparison status and remaining architecture,
+debugger, runtime and performance gates.

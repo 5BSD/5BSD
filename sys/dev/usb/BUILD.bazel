@@ -928,3 +928,13 @@ bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["usb.h", "us
 
 bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["usb.h", "usb_busdma.h", "usb_core.h", "usb_device.h", "usb_endian.h", "usb_freebsd.h", "usb_transfer.h", "usbdi.h"], includes = [],
     visibility = ["//sys/dev/rtwn:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+# Target-owned GENERIC input-device module compilation.
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usbhid_usbhid_module",
+    srcs = ['input/usbhid.c'],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/dev/usb:device_io_kernel_usbhid_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
