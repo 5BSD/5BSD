@@ -48283,3 +48283,17 @@ consumed source/header pairs pass; six original installation records/payloads
 match. One host artifact test passes seven methods, including format negatives;
 no target image runs. Remaining selected stand products and full world/rescue/
 pkgbase/bootstrap, actual boot and signing/verified-boot gates remain open.
+
+### Native boot2 composition and original directory ownership
+
+The selected amd64-world boot/boot1/boot2 chain now uses source-owned compilation,
+ordered BTX startup/link inputs, native nm/AWK/objcopy and source-built btxld.
+Seven complete images/intermediates/header match original Make bytes; eleven
+actual compiler contexts bind 310 consumed source/header pairs. Corrected btxld
+policy preserves normal and execution configurations. All nine original install
+records retain their distinct bootloader/utilities tags, including explicit
+/boot ownership through the existing typed manifest protocol. Six host artifact
+methods pass; previous legacy archive bytes remain unchanged.
+See [BOOT2-QUALIFICATION.md](BOOT2-QUALIFICATION.md). Separate DWARF/source lookup,
+other boot policies/architectures, full stand/world/rescue/pkgbase/bootstrap and
+actual boot/signing/verified-boot behavior remain open.

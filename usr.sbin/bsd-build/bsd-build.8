@@ -5453,3 +5453,18 @@ pass; component destinations do not collide.
 This does not establish full original aggregate installation or pkgbase parity,
 ARM64/RISC-V completeness, a booted system or controlled performance results.
 Make remains the production backend.
+.Pp
+Source-owned boot2 targets extend the native legacy boot graph under
+.Pa //stand/i386/boot2
+with original BTX startup order, symbol/AWK header generation, source-built
+btxld, image composition and bounded padding.
+.Cm //stand/i386/boot2:install_archive
+preserves original files and explicit directory ownership.
+The shared bsd_install_directory rule uses the existing typed installation
+manifest protocol, including configured destination prefixes.
+.Cm //stand/i386/boot2:boot2_test
+checks declared artifacts as data through the normal format-5 test interface.
+See
+.Pa tools/build/bazel/BOOT2-QUALIFICATION.md
+for original byte/input/install proof, cached-witness provenance and remaining
+DWARF, cross-architecture, bootstrap, full-world and boot/verified-boot gates.

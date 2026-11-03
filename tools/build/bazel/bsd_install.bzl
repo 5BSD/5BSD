@@ -210,3 +210,25 @@ bsd_compress = rule(
         "redirect": attr.label(executable = True, cfg = "exec", mandatory = True),
     },
 )
+
+
+def _install_directory(ctx):
+    metadata = {
+        "destination": _install_destination(ctx.attr.destination, ctx.attr.destination_prefixes),
+        "type": "dir", "owner": ctx.attr.owner, "group": ctx.attr.group,
+        "mode": ctx.attr.mode, "tags": ctx.attr.install_tags, "flags": ctx.attr.flags,
+    }
+    return [BsdInstallFileInfo(source = None, metadata = metadata), DefaultInfo(files = depset())]
+
+bsd_install_directory = rule(
+    implementation = _install_directory,
+    attrs = {
+        "destination": attr.string(mandatory = True),
+        "destination_prefixes": attr.label_list(providers = [BuildSettingInfo]),
+        "owner": attr.string(mandatory = True),
+        "group": attr.string(mandatory = True),
+        "mode": attr.string(mandatory = True),
+        "install_tags": attr.string_list(mandatory = True),
+        "flags": attr.string(),
+    },
+)

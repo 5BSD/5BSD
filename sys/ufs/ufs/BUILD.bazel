@@ -72,3 +72,5 @@ amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ufs_vfsops", srcs =
 amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ufs_vnops", srcs = ["ufs_vnops.c"],
     deps = ["//sys/ddb:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/security/audit:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/security/mac:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/ufs/ffs:filesystems_rpc_kernel_ufs_lookup_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ufs_acl_headers", "//sys/vm:filesystems_rpc_kernel_nfs_clkdtrace_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ffs_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_quota_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_suiddir_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ufs_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = 'boot2_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ['//stand/i386/boot2:__pkg__'])

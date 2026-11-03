@@ -1392,3 +1392,23 @@ architecture-specific generated inputs remain real work. Bootstrap, hardware/
 publication, debugger source lookup, sandboxing, VM/runtime and controlled CPU/
 memory/disk I/O/cache qualification remain required. Make stays production/default;
 BIP remains excluded. This checkpoint supersedes earlier aggregate-build TODOs.
+
+### Boot2 producer closure and directory installation checkpoint (2026-11-03)
+
+Added the actual selected boot/boot1/boot2 chain: seven i386 compile objects,
+ordered internal BTX crt0, original nm/AWK header generation, selected linker/
+objcopy and source-built btxld, size checking/padding/concatenation. Corrected the
+existing btxld target's missing original policy through normal source-owned
+objects/direct program linkage, preserving its public/install/archive labels.
+Eleven actual compiler contexts bind 310 consumed pairs; five ordered links and
+seven complete generated outputs match original policy/bytes. Nine original
+install records preserve file/directory ownership and distinct package tags;
+the missing original /boot record is represented through first-class
+bsd_install_directory using the existing provider/manifest/archive protocol.
+Six host artifact methods pass and previous legacy archive bytes are unchanged.
+Retained source/recipe/cached-action proofs, first rejected tool-policy and
+missing-directory comparisons, and explicit separate DWARF/source lookup/boot
+limits are in [BOOT2-QUALIFICATION.md](BOOT2-QUALIFICATION.md). No final package,
+publication or runtime/boot qualification follows. Continue portable library/
+program closure and proper ARM64/RISC-V target/execution SDK support; this
+architecture-specific BIOS cohort is not cross-world coverage.

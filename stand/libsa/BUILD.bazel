@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+copy_file(name = "safe_aout", src = "//include:a.out.h", out = "safe/a.out.h", allow_symlink = True)
+copy_file(name = "safe_nlist", src = "//include:nlist.h", out = "safe/nlist.h", allow_symlink = True)
+copy_file(name = "safe_stdarg", src = "//sys/sys:stdarg.h", out = "safe/stdarg.h", allow_symlink = True)
+cc_library(name = "boot2_safe_headers", hdrs = [":safe_aout", ":safe_nlist", ":safe_stdarg"], strip_include_prefix = "safe", visibility = ["//stand/i386/boot2:__pkg__"])
+cc_library(name = "boot2_textual_inputs", textual_hdrs = ["ufsread.c"], visibility = ["//stand/i386/boot2:__pkg__"])

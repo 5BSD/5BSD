@@ -193,3 +193,5 @@ exports_files(["bsd_crunchide.bzl"])
 
 # Static-consumer tests use the unchanged maintained DOF reader.
 exports_files(["dtrace-dof-inventory.py"], visibility = ["//lib/libutil/tests:__pkg__"])
+
+exports_files(["bsd_boot_image.bzl", "boot_image.py"], visibility = ["//stand/i386/boot2:__pkg__"])
