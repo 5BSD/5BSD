@@ -217,6 +217,50 @@ ATF_TC_BODY(base_rtctime_round_trip, tc)
 	vrtc_cleanup(src);
 }
 
+/* An idle RTC need not have refreshed its anchor since boot. */
+ATF_TC_WITHOUT_HEAD(save_preserves_elapsed_time);
+ATF_TC_BODY(save_preserves_elapsed_time, tc)
+{
+	struct vrtc *src, *dst;
+	uint8_t buf[256];
+	time_t initial;
+	int mode;
+
+	initial = 1700000000;
+	for (mode = 0; mode < 7; mode++) {
+		src = vrtc_init(NULL);
+		kmock_vrtc = src;
+		ATF_REQUIRE_EQ(0, vrtc_set_time(NULL, initial));
+		if (mode == 1)
+			src->rtcdev.reg_b |= RTCSB_HALT;
+		else if (mode == 2)
+			src->rtcdev.reg_a = 0;
+		else if (mode == 3)
+			src->rtcdev.reg_b |= RTCSB_AINTR;
+		else if (mode == 4)
+			src->rtcdev.reg_b |= RTCSB_UINTR;
+		else if (mode == 5)
+			src->rtcdev.reg_b |= RTCSB_AINTR | RTCSB_UINTR;
+		else if (mode == 6)
+			src->rtcdev.reg_b |= RTCSB_PINTR;
+		kmock_uptime.sec += 48;
+		ATF_REQUIRE_EQ(0, do_snapshot(src, VM_SNAPSHOT_SAVE, buf,
+		    sizeof(buf), NULL));
+		/* Capturing a snapshot must not alter the source's anchor. */
+		ATF_CHECK_EQ(initial, src->base_rtctime);
+		kmock_uptime.sec += 1000;
+		dst = vrtc_init(NULL);
+		kmock_vrtc = dst;
+		ATF_REQUIRE_EQ(0, do_snapshot(dst, VM_SNAPSHOT_RESTORE, buf,
+		    VRTC_RECORD_SIZE, NULL));
+		ATF_CHECK_EQ(initial + (mode == 0 || mode == 6 ? 48 : 0),
+		    dst->base_rtctime);
+		vrtc_cleanup(dst);
+		kmock_vrtc = src;
+		vrtc_cleanup(src);
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(restore_rejects_negative_base_rtctime);
 ATF_TC_BODY(restore_rejects_negative_base_rtctime, tc)
 {
@@ -354,6 +398,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, base_rtctime_round_trip);
+	ATF_TP_ADD_TC(tp, save_preserves_elapsed_time);
 	ATF_TP_ADD_TC(tp, restore_rejects_negative_base_rtctime);
 	ATF_TP_ADD_TC(tp, restore_accepts_broken_sentinel);
 	ATF_TP_ADD_TC(tp, restore_bounds_base_rtctime);

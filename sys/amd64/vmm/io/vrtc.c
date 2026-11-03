@@ -1048,10 +1048,20 @@ static void
 vrtc_snapshot_capture_locked(struct vrtc *vrtc,
     struct vrtc_snapshot_state *state)
 {
+	sbintime_t basetime;
 
 	KASSERT(VRTC_LOCKED(vrtc), ("%s: vrtc not locked", __func__));
 	state->addr = vrtc->addr;
-	state->base_rtctime = vrtc->base_rtctime;
+	/*
+	 * With no alarm/update callout, the anchor can be arbitrarily old.
+	 * Include elapsed time before restore reanchors destination uptime.
+	 * Keep the old anchor when alarm/update processing is enabled: moving
+	 * it without processing the interval would discard pending events.
+	 */
+	if (!aintr_enabled(vrtc) && !uintr_enabled(vrtc))
+		state->base_rtctime = vrtc_curtime(vrtc, &basetime);
+	else
+		state->base_rtctime = vrtc->base_rtctime;
 	memcpy(&state->rtcdev, &vrtc->rtcdev, sizeof(state->rtcdev));
 }
 
