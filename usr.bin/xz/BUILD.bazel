@@ -1,16 +1,38 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
 cc_binary(
     name = "xz", srcs = ['//contrib/xz:src/xz/args.c', '//contrib/xz:src/xz/coder.c', '//contrib/xz:src/xz/file_io.c', '//contrib/xz:src/xz/hardware.c', '//contrib/xz:src/xz/list.c', '//contrib/xz:src/xz/main.c', '//contrib/xz:src/xz/message.c', '//contrib/xz:src/xz/mytime.c', '//contrib/xz:src/xz/options.c', '//contrib/xz:src/xz/sandbox.c', '//contrib/xz:src/xz/signals.c', '//contrib/xz:src/xz/suffix.c', '//contrib/xz:src/xz/util.c', '//contrib/xz:src/common/tuklib_open_stdxxx.c', '//contrib/xz:src/common/tuklib_progname.c', '//contrib/xz:src/common/tuklib_exit.c', '//contrib/xz:src/common/tuklib_cpucores.c', '//contrib/xz:src/common/tuklib_mbstr_width.c', '//contrib/xz:src/common/tuklib_mbstr_fw.c', '//contrib/xz:src/common/tuklib_mbstr_nonprint.c', '//contrib/xz:src/common/tuklib_mbstr_wrap.c'],
-    deps = ["//lib/liblzma:lzma", "//lib/liblzma:configuration", "//contrib/xz:internal_headers"],
+    deps = ["//lib/liblzma:lzma_link", "//lib/liblzma:configuration", "//contrib/xz:cli_headers"],
     dynamic_deps = ["//lib/liblzma:lzma_shared"],
-    local_defines = ["HAVE_CONFIG_H"], copts = ["-fPIE"], linkopts = ["-pie"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    local_defines = ["HAVE_CONFIG_H"], copts = ['-fpie', '-DPIC', '-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Qunused-arguments', '-fPIE'],
+    linkopts = ["-pie", "-fstack-protector-strong", "-gz=zlib"] + select({":target_aarch64": ["-Wl,--fix-cortex-a53-843419"], "//conditions:default": []}),
+    target_compatible_with = ["@platforms//os:freebsd"],
     visibility = ["//visibility:public"],
 )
 
 load("//tools/build/bazel:bsd_command_install.bzl", "bsd_command_installation")
-bsd_command_installation(name = "install_manifest", package = "xz", program = "xz", manual = "//contrib/xz:src/xz/xz.1",
+bsd_command_installation(name = "program_install_manifest", package = "xz", program = "xz", manual = "//contrib/xz:src/xz/xz.1",
     aliases = ['unxz', 'lzma', 'unlzma', 'xzcat', 'lzcat'], manual_aliases = ['unxz', 'lzma', 'unlzma', 'xzcat', 'lzcat'])
 
 filegroup(name = "package_abi", srcs = [":stripped"], visibility = ["//packages/xz:__pkg__"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_manifest")
+bsd_install_directory(name = "debug_usr_dir", destination = "/usr/lib/debug/usr", owner = "root", group = "wheel",
+    mode = "0755", install_tags = ["package=xz", "dbg"])
+bsd_install_directory(name = "debug_bin_dir", destination = "/usr/lib/debug/usr/bin", owner = "root", group = "wheel",
+    mode = "0755", install_tags = ["package=xz", "dbg"])
+bsd_install_manifest(name = "install_manifest", manifests = [":program_install_manifest"],
+    entries = [":debug_usr_dir", ":debug_bin_dir"], visibility = ["//visibility:public"])
+
+# Exercise public source-API/default archive CcInfo with the real command.
+# This test-only variant is distinct from Make's installed dynamic producer.
+cc_binary(
+    name = "xz_static", srcs = ['//contrib/xz:src/xz/args.c', '//contrib/xz:src/xz/coder.c', '//contrib/xz:src/xz/file_io.c', '//contrib/xz:src/xz/hardware.c', '//contrib/xz:src/xz/list.c', '//contrib/xz:src/xz/main.c', '//contrib/xz:src/xz/message.c', '//contrib/xz:src/xz/mytime.c', '//contrib/xz:src/xz/options.c', '//contrib/xz:src/xz/sandbox.c', '//contrib/xz:src/xz/signals.c', '//contrib/xz:src/xz/suffix.c', '//contrib/xz:src/xz/util.c', '//contrib/xz:src/common/tuklib_open_stdxxx.c', '//contrib/xz:src/common/tuklib_progname.c', '//contrib/xz:src/common/tuklib_exit.c', '//contrib/xz:src/common/tuklib_cpucores.c', '//contrib/xz:src/common/tuklib_mbstr_width.c', '//contrib/xz:src/common/tuklib_mbstr_fw.c', '//contrib/xz:src/common/tuklib_mbstr_nonprint.c', '//contrib/xz:src/common/tuklib_mbstr_wrap.c'],
+    deps = ["//lib/liblzma:lzma", "//lib/liblzma:configuration", "//contrib/xz:cli_headers"],
+    linkstatic = True, testonly = True,
+    local_defines = ["HAVE_CONFIG_H"], copts = ['-fpie', '-DPIC', '-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Qunused-arguments', '-fPIE'],
+    linkopts = ["-no-pie", "-fstack-protector-strong", "-gz=zlib"] + select({":target_aarch64": ["-Wl,--fix-cortex-a53-843419"], "//conditions:default": []}),
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//lib/liblzma:__pkg__"],
+)

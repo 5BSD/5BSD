@@ -48524,3 +48524,18 @@ and 119 ordered archive members pass checks, with 55 composite PIC members
 additionally bound to actual compiler inputs. Separate DWARF, remaining owners,
 full cross-kernel links/installations, package/runtime and performance remain
 open. See [CROSS-KERNEL-COMMON-QUALIFICATION.md](CROSS-KERNEL-COMMON-QUALIFICATION.md).
+
+## XZ/liblzma library, commands and packages on three ABIs (2026-11-03)
+
+Default amd64, ARM64 and RISC-V profiles now qualify original-order liblzma
+archives/default CcInfo extraction, DSO, xz/xzdec/lzmainfo and twelve actual
+packages. All 561 production contexts/46,575 consumed pairs, 468 archive members,
+twelve linked ELF payloads, fifteen actual links, 49 component records to 44
+unique installation records per ABI and twelve package comparisons pass against
+untouched originals. Three declared tests and nineteen independent native/original
+runtime comparisons pass. A real static xz variant separately checks public
+source-API extraction (63 contexts/5,079 pairs); installed commands retain SDK
+API header origins. Rejected pthread/header/shared-root policies remain recorded.
+Separate DWARF, foreign runtime, alternate options, full world, package installation
+and publication remain open. See
+[XZ-THREE-ARCH-QUALIFICATION.md](XZ-THREE-ARCH-QUALIFICATION.md).

@@ -10779,3 +10779,16 @@ request and error paths when qualifying live tracing/audit delivery. No C or
 probe edits occur. Actual 282-context/19,054-pair input review preserves source
 identities; CTF/runtime object contracts match original Make. Live firing and
 instrumentation completeness/cost remain open; see CROSS-KERNEL-COMMON-QUALIFICATION.md.
+
+### XZ/liblzma on three ABIs (2026-11-03)
+
+No runtime C or tracing policy changes. Actual production compiler policies,
+header origins and 46,575 consumed-file/digest pairs are retained for 561
+contexts; real static-consumer variants separately bind 63 contexts/5,079 pairs.
+All production linked allocated payloads match untouched originals, and native
+single/two-thread compression and error-path replay matches raw original output.
+These checks establish neither instrumentation completeness nor probe/audit
+delivery or cost. Foreign runtime, separate DWARF/source lookup, full-world
+consumers, bootstrap/cache and measured performance remain open. See
+XZ-THREE-ARCH-QUALIFICATION.md for accepted evidence and rejected candidate
+header/link policies; no filename or diagnostic output is rewritten.

@@ -5663,3 +5663,18 @@ These component checks do not establish complete Bazel cross-kernel builds.
 See
 .Pa tools/build/bazel/CROSS-KERNEL-COMMON-QUALIFICATION.md
 for original Make comparisons and remaining qualification gates.
+.Pp
+Default XZ format-5 profiles qualify original-order liblzma archives, public
+static extraction, the shared library, xz, xzdec and lzmainfo on amd64, ARM64
+and RISC-V, with four actual package outputs per ABI.
+Installed commands preserve original SDK API header origins; a real static xz
+test separately exercises the public source API and ordinary installed archive.
+Declared host artifact tests inspect foreign binaries without executing them.
+Native original comparisons cover aliases, single and two-thread compression,
+LZMA information and truncated-input rejection without output filtering.
+See
+.Pa tools/build/bazel/XZ-THREE-ARCH-QUALIFICATION.md
+for strict compiler, linked ELF, archive, installation and package evidence,
+retained rejected candidates and timestamp policy.
+Separate DWARF, foreign execution, alternate options, full world, package
+installation and publication remain unqualified.

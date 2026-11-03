@@ -1656,3 +1656,21 @@ links/installations and cross-module/pkgbase aggregates. Separate DWARF,
 configuration breadth, bootstrap/sandbox/cache, actual boot/runtime/upgrades
 and CPU/aggregate memory/disk I/O/usage remain gates. Make remains production;
 BIP remains excluded.
+
+### 2026-11-03: XZ/liblzma commands and package family on three ABIs
+
+The libmd prerequisite is now consumed by genuine native liblzma, xz, xzdec and
+lzmainfo producers on all three ABIs. Three normal profiles/captures pass
+561 production contexts/46,575 consumed pairs and 63 real static-command test
+contexts/5,079 pairs, with strict distinct SDK versus public source API origins.
+All twelve production ELF metadata/allocated payloads match untouched originals;
+468 archive members, fifteen actual links/generated outputs, 49-to-44 install
+records per ABI, twelve actual package comparisons and nineteen independent
+native/original runtime comparisons pass. Three declared artifact tests pass.
+The ordinary installed archive is the default CcInfo input. Rejected test-PIE,
+DSO pthread, production header-origin and shared-root dependency policies remain
+retained. See XZ-THREE-ARCH-QUALIFICATION.md. Separate DWARF/source lookup, foreign
+execution, i386/alternate options, full-world/rescue/bootstrap, package solver/
+installation/publication and measured performance remain gates. The earlier
+XZ-pending entries are historical checkpoints; the larger libarchive stack and
+complete selected world still need independent closure.

@@ -17,3 +17,9 @@ exports_files(glob(["src/liblzma/api/**/*.h"]) + ["src/liblzma/liblzma.pc.in"], 
 
 exports_files(["src/xz/xz.1", "src/xzdec/xzdec.c", "src/xzdec/xzdec.1", "src/lzmainfo/lzmainfo.c", "src/lzmainfo/lzmainfo.1"],
     visibility = ["//usr.bin/xz:__pkg__", "//usr.bin/xzdec:__pkg__", "//usr.bin/lzmainfo:__pkg__"])
+
+# Original XZ command recipes add only the private common-header directory;
+# their public lzma API headers come from the selected SDK, as in Make.
+cc_library(name = "cli_headers", hdrs = glob(["src/common/*.h", "src/xz/*.h"]),
+    includes = ["src/common"],
+    visibility = ["//usr.bin/xz:__pkg__", "//usr.bin/xzdec:__pkg__", "//usr.bin/lzmainfo:__pkg__"])
