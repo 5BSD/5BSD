@@ -1,4 +1,4 @@
-# Standalone CTF namespace union foundation
+# CTF namespace union and LLD section integration
 
 ## Why this exists
 
@@ -10,8 +10,10 @@ original object inputs, uses the intermediate ELF symbol table, and replaces
 that intermediate CTF. A valid disjoint union fits this pipeline without a new
 flag, omitted metadata or name-based matching.
 
-LLVM Object CTFSymbolTable::merge now provides that union. It is **not yet
-connected to LLD**. Final ARM64/RISC-V module link failures remain open.
+LLVM Object CTFSymbolTable::merge provides that union and LLD now uses it for
+script-selected sections. Controlled ARM64/RISC-V module pipelines pass the
+strict final CTF/export/debug-split policy. Fresh verified SDK/frontend profiles,
+original controls and target runtime remain open; this is not system acceptance.
 
 ## Contract
 
@@ -94,14 +96,13 @@ removed. This is resource recovery, not a disk-performance benchmark.
 
 ## Remaining integration
 
-LLD must retain exact defining-file/index provenance through symbol resolution,
-COMMON conversion, version aliases, wrapping, discarded sections and final
-symtab sorting. Optional CTF-specific side tables can avoid enlarging every
-linker symbol. The merger must be connected with correct script/section
-placement, sizes and sh_link handling. Qualify real multi-input initial links,
-maintained ctfmerge/export steps and final links against independent refreshed
-original controls on AMD64/ARM64/RISC-V. Do not infer origins from names or final
-addresses, and do not reconstruct origins from already redirected symbol arrays.
+LLD retains exact file/index provenance and connects namespace union,
+script-selected placement, layout sizes, final symtab order and sh_link.
+Controlled complete ARM64/RISC-V module pipeline replays pass. Next refresh tools
+and immutable SDKs through maintained helpers, run actual frontend profiles and
+independent refreshed Make controls on AMD64/ARM64/RISC-V, and qualify resource
+use and footprint. Never infer identities from names, addresses or redirected
+input symbol arrays.
 
 The local libctf v2 width/rounding inconsistency is separate and remains open.
 Parent resolution and broader label semantics remain unsupported by this union.
@@ -197,3 +198,72 @@ module pipeline. Frontend assessment: existing native Bazel API targets and
 source-owner LLVM builds select the API normally. No build-bsd options, signing,
 staging, policy or SDK formats change. No performance or final module acceptance
 is claimed from this test run.
+
+## 2026-11-03: LLD section integration and controlled pipeline qualification
+
+LLD combines CTF after script selection and /DISCARD/, before input-section
+finalization. File-specific rules therefore select the actual inputs. Each
+output namespace is prepared once. Exact definition identities drive opaque
+association rewriting. Dense membership avoids quadratic section replacement;
+links without CTF skip the section-command walk entirely.
+
+Size planning participates in the existing layout/relaxation loop, including
+thunk symbols. Final serialization follows static symtab sorting and emits its
+real sh_link. Stripped shared images link CTF to DYNSYM; stripped static images
+retain a type-only dictionary with zero link. Kernel module tests still require
+SYMTAB; the reader was not relaxed.
+
+Zero-sized section/NOTYPE header labels, including AArch64 mapping symbols,
+anchor to the rewritten header. Other definitions inside CTF, relocations into
+CTF, allocated CTF, incorrect input links and mixed/padded output containers
+fail explicitly. Parent resolution and broader label scopes remain unsupported.
+
+Qualified with source-owner Make-built LLVM/LLD, all 16 CPUs, frozen source
+bindings, disk reserve and no installation. Final build is
+/usr/obj/usr/src/bazel-lld-ctf-section-build-r5-20261103.
+Maintained lld-section-audit.py passes 138 cases: 128 format-pair relocatable/
+shared links, three weak/strong selections with distinct graphs, script input
+selection/discard, malformed linkage/flags/output and two strip-all contracts.
+Graph checks preserve type multiplicities, roots, layouts and edges; only ELF
+section placement/addresses are excluded across links. Maintained
+lld-symbol-origin-test.py passes ten cases, including an actual AArch64 thunk
+added during layout and an explicitly rejected dictionary reference. Its large
+virtual span produces a 133,216-byte file under a child file-size limit.
+
+Complete captured ARM64/RISC-V nullfs pipelines at
+/usr/obj/usr/src/bazel-lld-ctf-section-pipeline-r3-20261103 pass initial links,
+maintained ctfmerge/export, final links and actual debug splitting. Unchanged
+strict full/runtime checks cover 112/114 associations and seven named types in
+each output (14 checks per architecture). Initial and final outputs are also
+read by ctfdump. Retained original action inputs are hashed; explicitly replaced
+inputs are recorded. These are controlled replays, not fresh frontend profiles.
+
+Eight no-CTF link controls match baseline bytes or expected failure. Five
+alternating 200,000-symbol no-CTF pairs produce identical bytes. Baseline elapsed
+samples are 0.056-0.061 seconds and reported RSS 78,804-87,924 KiB; candidate
+0.052-0.056 seconds and 77,116-86,548 KiB. Full time reports retain faults and
+block I/O. These short host samples are not broad performance acceptance.
+
+Footprint remains an open gate: prepared output is currently uncompressed v3,
+so final ordering cannot invalidate layout. Compared to prior broken final-link
+outputs, ARM64 CTF grows 22,904 to 60,665 bytes (full module 250,872 to 288,632);
+RISC-V CTF grows 22,674 to 60,148 (full module 297,248 to 334,720). Compression/
+footprint needs further work and qualification. No namespace merge or dictionary
+compression repeats during relaxation. Do not call this performance acceptance.
+
+Earlier failures remain recorded: a C++ bit-field reference failed compilation
+and was fixed; the first anchor policy rejected AArch64 $d and was corrected.
+A source-graph diagnostic encountered ambiguous local identities and was not
+used as acceptance. Final full/runtime checks use the unchanged strict reader.
+One audit found a stale live original final input; the corrected audit verifies
+retained inputs and records the explicit replacement. The first documentation
+write did not execute because automatic permission review timed out.
+
+Frontend assessment: implementation uses existing LLVM/LLD source owners and
+Bazel component inputs. No compiler flag, frontend option, config/security policy,
+signing or package format changes. Native Bazel lld_symbol_origin_test and
+lld_section_test are declared but have NOT yet executed through Bazel; scripts
+above use the maintained Make-built candidate. Fresh tool/SDK/frontend and
+original-control qualification, AMD64 actual module coverage, target execution,
+complete world/kernel/packages, bootstrap/sandbox/cache and broad performance
+remain open. Make stays default; BIP is excluded. No host install or reboot.

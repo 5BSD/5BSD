@@ -11,15 +11,16 @@ import argparse
 import hashlib
 import json
 import os
+import resource
 from pathlib import Path
 import struct
 import subprocess
 
 
-def read_elf(path):
+def read_elf(path, machine=62):
     data = bytearray(path.read_bytes())
-    if data[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', data, 18)[0] != 62:
-        raise ValueError('fixture requires little-endian AMD64 ELF64')
+    if data[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', data, 18)[0] != machine:
+        raise ValueError('fixture requires little-endian ELF64 of the requested machine')
     offset = struct.unpack_from('<Q', data, 40)[0]
     size, count, string_index = struct.unpack_from('<HHH', data, 58)
     sections = [struct.unpack_from('<IIQQQQIIQQ', data, offset + i * size)
@@ -55,13 +56,17 @@ def main():
     work.mkdir(exist_ok=False, parents=True)
     commands, results = [], []
 
-    def run(command):
-        result = subprocess.run(command, cwd=work, capture_output=True, text=True)
+    def run(command, success=True, max_file_size=None):
+        def bound():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (max_file_size, max_file_size))
+        result = subprocess.run(command, cwd=work, capture_output=True, text=True,
+                                preexec_fn=bound if max_file_size else None)
         commands.append({'argv': command, 'exit': result.returncode,
                          'stdout': result.stdout, 'stderr': result.stderr})
         (work / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
-        if result.returncode:
+        if (result.returncode == 0) != success:
             raise RuntimeError(result.stderr)
+        return result
 
     strong = ('.section .data.strong,"aw"\n.globl chosen\n.type chosen,@object\n'
               'chosen: .quad 2222\n.size chosen,8\n')
@@ -101,6 +106,54 @@ def main():
                 results.append({'strong_first': strong_first, 'with_ctf': with_ctf,
                                 'mode': mode, 'section': names[selected[3]], 'size': selected[5],
                                 'payload': payload, 'sha256': hashlib.sha256(data).hexdigest()})
+    # The linker adds an actual AArch64 long-branch thunk during layout. Its
+    # new local function needs an unknown CTF association before final sorting.
+    # Separate explicit segments keep the large virtual branch distance from
+    # becoming a large file. Bound the child file size as a regression guard.
+    thunk_ctf = struct.pack('<HBB8I', 0xcff1, 3, 0, 0, 0, 0, 0, 0, 8, 8, 1) + bytes(9)
+    source = work / 'thunk.s'
+    source.write_text('.section .text.start,"ax"\n.globl start\n.type start,%function\n'
+        'start: b far\n.size start,.-start\n.section .text.far,"ax"\n'
+        '.globl far\n.type far,%function\nfar: ret\n.size far,.-far\n'
+        '.section .SUNW_ctf,""\n.byte ' + ','.join(map(str, thunk_ctf)) + '\n')
+    layout = work / 'thunk.ld'
+    layout.write_text('PHDRS { first PT_LOAD FLAGS(5); second PT_LOAD FLAGS(5); }\n'
+        'SECTIONS { .text.start 0x10000 : { *(.text.start) } :first\n'
+        '.text.far 0x90000000 : { *(.text.far) } :second\n'
+        '.SUNW_ctf 0 : { *(.SUNW_ctf) } :NONE }\n')
+    obj, output = work / 'thunk.o', work / 'thunk.so'
+    run([compiler, '-target', 'aarch64-unknown-freebsd', '-c', str(source), '-o', str(obj)])
+    run([linker, '-shared', '--no-relax', '-T', str(layout), '-o', str(output), str(obj)],
+        max_file_size=16 * 1024 * 1024)
+    data, sections, names, symbols = read_elf(output, machine=183)
+    functions = [entry for name, pos, entry in symbols
+                 if name and entry[1] & 15 == 2 and entry[3]]
+    assert len(functions) > 2, 'linker did not add a function thunk'
+    assert any('Thunk' in name for name, pos, entry in symbols)
+    section = sections[names.index('.SUNW_ctf')]
+    assert section[6] == names.index('.symtab')
+    payload = data[section[4]:section[4] + section[5]]
+    header = struct.unpack_from('<HBB8I', payload)
+    assert header[:3] == (0xcff1, 3, 0)
+    assert header[6:10] == (0, 0, 4 * len(functions), 4 * len(functions))
+    assert payload[36:] == bytes(4 * len(functions) + 1)
+    assert output.stat().st_size < 1024 * 1024
+    results.append({'case': 'aarch64-layout-thunk', 'functions': len(functions),
+                    'output_bytes': output.stat().st_size})
+
+    # CTF dictionaries are metadata, not addressable program data. Do not
+    # silently translate a relocation into a dictionary whose offsets changed.
+    source = work / 'dictionary-reference.s'
+    reference_ctf = struct.pack('<HBB8I', 0xcff1, 3, 0, 0, 0, 0, 0, 4, 4, 4, 1) + bytes(5)
+    source.write_text('.data\n.globl pointer\n.type pointer,@object\n'
+        'pointer: .quad ctf_header\n.size pointer,8\n.section .SUNW_ctf,""\n'
+        '.globl ctf_header\nctf_header:\n.byte ' + ','.join(map(str, reference_ctf)) + '\n')
+    obj = work / 'dictionary-reference.o'
+    run([compiler, '-target', 'x86_64-unknown-freebsd', '-c', str(source), '-o', str(obj)])
+    rejected = run([linker, '-r', '-o', str(work / 'rejected.o'), str(obj)], success=False)
+    assert 'relocations into a CTF dictionary are unsupported' in rejected.stderr
+    results.append({'case': 'reject-relocation-into-dictionary'})
+
     summary = {'passed': len(results), 'cases': results}
     (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary))

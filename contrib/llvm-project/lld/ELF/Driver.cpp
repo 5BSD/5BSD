@@ -3474,6 +3474,8 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
   {
     llvm::TimeTraceScope timeScope("Merge/finalize input sections");
 
+    combineCTFSections<ELFT>(ctx);
+
     // Migrate InputSectionDescription::sectionBases to sections. This includes
     // merging MergeInputSections into a single MergeSyntheticSection. From this
     // point onwards InputSectionDescription::sections should be used instead of

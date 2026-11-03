@@ -1507,6 +1507,8 @@ template <class ELFT> void Writer<ELFT>::finalizeAddressDependentContent() {
   llvm::TimeTraceScope timeScope("Finalize address dependent content");
   AArch64Err843419Patcher a64p(ctx);
   ARMErr657417Patcher a32p(ctx);
+  for (auto &ctf : ctx.in.ctfSections)
+    ctf->updateAllocSize(ctx);
   ctx.script->assignAddresses();
 
   // .ARM.exidx and SHF_LINK_ORDER do not require precise addresses, but they
@@ -1590,6 +1592,9 @@ template <class ELFT> void Writer<ELFT>::finalizeAddressDependentContent() {
       if (part.memtagGlobalDescriptors)
         changed |= part.memtagGlobalDescriptors->updateAllocSize(ctx);
     }
+
+    for (auto &ctf : ctx.in.ctfSections)
+      changed |= ctf->updateAllocSize(ctx);
 
     std::pair<const OutputSection *, const Defined *> changes =
         ctx.script->assignAddresses();
@@ -2158,6 +2163,8 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     // finalizeAddressDependentContent may have added local symbols to the
     // static symbol table.
     finalizeSynthetic(ctx, ctx.in.symTab.get());
+    for (auto &ctf : ctx.in.ctfSections)
+      finalizeSynthetic(ctx, ctf.get());
     finalizeSynthetic(ctx, ctx.in.debugNames.get());
     finalizeSynthetic(ctx, ctx.in.ppc64LongBranchTarget.get());
     finalizeSynthetic(ctx, ctx.in.armCmseSGSection.get());

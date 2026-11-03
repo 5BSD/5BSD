@@ -34,6 +34,7 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/DebugInfo/DWARF/DWARFAcceleratorTable.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugPubTable.h"
+#include "llvm/Object/CTF.h"
 #include "llvm/Support/DJB.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/LEB128.h"
@@ -2297,6 +2298,252 @@ static uint32_t getSymSectionIndex(Symbol *sym) {
     return os->sectionIndex >= SHN_LORESERVE ? (uint32_t)SHN_XINDEX
                                              : os->sectionIndex;
   return SHN_ABS;
+}
+
+namespace {
+// Prepared once: union the input namespaces, then use opaque association
+// rewriting for layout and final symbol ordering. No type-name lookup selects
+// the winning definition, and no namespace merge is repeated during relaxation.
+class CTFSection final : public SyntheticSection {
+public:
+  using IndexMap = DenseMap<ELFFileBase *, SmallVector<uint32_t, 0>>;
+  CTFSection(Ctx &ctx, CTFSymbolTable table, SmallVector<uint8_t, 0> content,
+             IndexMap indices)
+      : SyntheticSection(ctx, ".SUNW_ctf", SHT_PROGBITS, 0, 4),
+        table(std::move(table)), content(std::move(content)),
+        indices(std::move(indices)) {}
+
+  size_t getSize() const override { return size; }
+  bool updateAllocSize(Ctx &) override {
+    auto symbols = getSymbols();
+    auto planned = table.getUncompressedRewrittenSize(symbols);
+    if (!planned) {
+      Err(ctx) << std::move(planned.takeError());
+      return false;
+    }
+    bool changed = size != *planned;
+    size = *planned;
+    return changed;
+  }
+  void finalizeContents() override {
+    auto symbols = getSymbols();
+    auto rewritten = table.rewrite(symbols, content);
+    if (!rewritten) {
+      Err(ctx) << std::move(rewritten.takeError());
+      return;
+    }
+    if (content.size() != size) {
+      Err(ctx) << ".SUNW_ctf size changed after final symbol ordering";
+      return;
+    }
+    SymbolTableBaseSection *symtab = getSymtab();
+    getParent()->link = symtab ? symtab->getParent()->sectionIndex : 0;
+    if (outSecOff != 0 || getParent()->size != size)
+      Err(ctx) << ".SUNW_ctf must occupy its output section without padding or other data";
+  }
+  void writeTo(uint8_t *buf) override {
+    memcpy(buf, content.data(), content.size());
+  }
+
+private:
+  SymbolTableBaseSection *getSymtab() const {
+    if (ctx.in.symTab && ctx.in.symTab->getParent())
+      return ctx.in.symTab.get();
+    if (ctx.mainPart->dynSymTab && ctx.mainPart->dynSymTab->getParent())
+      return ctx.mainPart->dynSymTab.get();
+    return nullptr;
+  }
+  SmallVector<CTFSymbolTable::Symbol, 0> getSymbols() const {
+    SmallVector<CTFSymbolTable::Symbol, 0> result;
+    SymbolTableBaseSection *symtab = getSymtab();
+    if (!symtab)
+      return result; // A stripped static image retains only its type dictionary.
+    for (const SymbolTableEntry &entry : symtab->getSymbols()) {
+      Symbol *sym = entry.sym;
+      if (!entry.strTabOffset || !sym->isDefined() ||
+          (sym->type != STT_OBJECT && sym->type != STT_FUNC) ||
+          sym->getName() == "_START_" || sym->getName() == "_END_" ||
+          (symtab->type == SHT_DYNSYM && sym->partition != symtab->partition))
+        continue;
+      auto *def = cast<Defined>(sym);
+      if (sym->hasFlag(NEEDS_COPY) ||
+          (!getCommonSec(ctx.arg.relocatable, sym) &&
+           getSymSectionIndex(sym) == SHN_UNDEF) ||
+          (sym->isObject() && !def->section && sym->getVA(ctx) == 0))
+        continue;
+      uint32_t index = CTFSymbolTable::NewSymbol;
+      if (auto origin = getInputSymbolOrigin(*sym)) {
+        auto file = indices.find(origin->file);
+        if (file != indices.end() && origin->index < file->second.size())
+          index = file->second[origin->index];
+      }
+      result.emplace_back(index, uint8_t(sym->type));
+    }
+    return result;
+  }
+  CTFSymbolTable table;
+  SmallVector<uint8_t, 0> content;
+  IndexMap indices;
+  uint64_t size = 0;
+};
+} // namespace
+
+// Run after script input selection, before finalizeInputSections. Replacing
+// inputs at their selected location respects filename patterns and /DISCARD/.
+template <class ELFT> void elf::combineCTFSections(Ctx &ctx) {
+  if (llvm::none_of(ctx.objectFiles,
+                    [](ELFFileBase *file) { return file->hasCTF; }))
+    return;
+  DenseSet<const Symbol *> sectionSymbols;
+  for (SectionCommand *command : ctx.script->sectionCommands) {
+    auto *osd = dyn_cast<OutputDesc>(command);
+    if (!osd)
+      continue;
+    SmallVector<InputSectionBase *, 0> sections;
+    for (SectionCommand *cmd : osd->osec.commands)
+      if (auto *isd = dyn_cast<InputSectionDescription>(cmd))
+        for (InputSectionBase *sec : isd->sectionBases)
+          if (sec->isLive() && sec->name == ".SUNW_ctf")
+            sections.push_back(sec);
+    if (sections.empty())
+      continue;
+
+    SmallVector<CTFSymbolTable, 0> inputs;
+    SmallVector<ArrayRef<uint8_t>, 0> strings;
+    SmallVector<CTFSymbolTable::SymbolReference, 0> references;
+    SmallVector<CTFSymbolTable::Symbol, 0> flatSymbols;
+    CTFSection::IndexMap indices;
+    SmallVector<Defined *, 0> anchors;
+    for (InputSectionBase *sec : sections) {
+      if (sec->kind() != SectionBase::Regular || sec->type != SHT_PROGBITS ||
+          (sec->flags & ~uint64_t(SHF_GROUP)) || sec->relSecIdx) {
+        Err(ctx) << sec << ": unsupported CTF section flags, type or relocations";
+        return;
+      }
+      auto *file = sec->getFile<ELFT>();
+      auto shdrs = file->template getELFShdrs<ELFT>();
+      auto firstSymtab = llvm::find_if(shdrs, [](const auto &shdr) {
+        return shdr.sh_type == SHT_SYMTAB;
+      });
+      if (firstSymtab == shdrs.end() ||
+          (sec->link && sec->link != size_t(firstSymtab - shdrs.begin()))) {
+        Err(ctx) << sec << ": CTF sh_link does not identify its input symbol table";
+        return;
+      }
+      if (indices.count(file)) {
+        Err(ctx) << file << ": multiple CTF dictionaries in one output section";
+        return;
+      }
+      auto fileSections = file->getSections();
+      uint32_t sectionIndex = llvm::find(fileSections, sec) - fileSections.begin();
+      auto eSyms = file->template getELFSyms<ELFT>();
+      auto &mapping = indices[file];
+      mapping.resize(eSyms.size(), CTFSymbolTable::NewSymbol);
+      SmallVector<CTFSymbolTable::Symbol, 0> symbols;
+      for (auto [i, sym] : llvm::enumerate(eSyms)) {
+        uint8_t type = sym.getType();
+        if (sym.st_shndx == sectionIndex) {
+          if ((type != STT_SECTION && type != STT_NOTYPE) ||
+              sym.st_value || sym.st_size) {
+            Err(ctx) << sec << ": symbols defined inside a CTF dictionary are unsupported";
+            return;
+          }
+          Symbol &symbol = file->getSymbol(i);
+          sectionSymbols.insert(&symbol);
+          if (auto *def = dyn_cast<Defined>(&symbol))
+            if (def->section == sec)
+              anchors.push_back(def);
+        }
+        if (!sym.st_name || sym.st_shndx == SHN_UNDEF ||
+            (type != STT_OBJECT && type != STT_FUNC) ||
+            (type == STT_OBJECT && sym.st_shndx == SHN_ABS && !sym.st_value))
+          continue;
+        StringRef name = CHECK2(sym.getName(file->getStringTable()), file);
+        if (name == "_START_" || name == "_END_")
+          continue;
+        if (flatSymbols.size() == CTFSymbolTable::NewSymbol) {
+          Err(ctx) << "too many CTF symbol identities";
+          return;
+        }
+        mapping[i] = flatSymbols.size();
+        symbols.emplace_back(i, type);
+        references.push_back({uint32_t(inputs.size()), uint32_t(i), type});
+        flatSymbols.emplace_back(mapping[i], type);
+      }
+      auto input = CTFSymbolTable::create(sec->contentMaybeDecompress(), symbols);
+      if (!input) {
+        Err(ctx) << sec << ": " << std::move(input.takeError());
+        return;
+      }
+      inputs.push_back(std::move(*input));
+      strings.push_back(arrayRefFromStringRef(file->getStringTable()));
+    }
+    SmallVector<uint8_t, 0> content;
+    if (Error e = CTFSymbolTable::merge(inputs, strings, references,
+                                       ctx.arg.isLE ? llvm::endianness::little
+                                                    : llvm::endianness::big,
+                                       false, content)) {
+      Err(ctx) << osd->osec.name << ": " << std::move(e);
+      return;
+    }
+    auto table = CTFSymbolTable::create(content, flatSymbols);
+    if (!table) {
+      Err(ctx) << std::move(table.takeError());
+      return;
+    }
+    auto synthetic = std::make_unique<CTFSection>(ctx, std::move(*table),
+                                                 std::move(content),
+                                                 std::move(indices));
+    // Preserve zero-sized labels at the start (including architecture data
+    // mapping symbols) as anchors at the rewritten dictionary header.
+    for (Defined *anchor : anchors)
+      anchor->section = synthetic.get();
+    synthetic->parent = &osd->osec;
+    synthetic->partition = sections.front()->partition;
+    DenseSet<InputSectionBase *> members(sections.begin(), sections.end());
+    bool inserted = false;
+    for (SectionCommand *cmd : osd->osec.commands) {
+      auto *isd = dyn_cast<InputSectionDescription>(cmd);
+      if (!isd)
+        continue;
+      SmallVector<InputSectionBase *, 0> replacement;
+      for (InputSectionBase *sec : isd->sectionBases) {
+        if (!members.count(sec)) {
+          replacement.push_back(sec);
+          continue;
+        }
+        if (!inserted) {
+          replacement.push_back(synthetic.get());
+          inserted = true;
+        }
+        sec->markDead();
+      }
+      isd->sectionBases.assign(replacement.begin(), replacement.end());
+    }
+    ctx.inputSections.push_back(synthetic.get());
+    ctx.in.ctfSections.push_back(std::move(synthetic));
+  }
+  // Dictionary offsets are not program addresses. An unused section symbol is
+  // harmless, but translating a reference into a relocated/merged dictionary
+  // would require a different offset contract. Reject it explicitly. Ordinary
+  // CTF files without section symbols avoid this extra relocation walk.
+  if (!sectionSymbols.empty())
+    for (InputSectionBase *sec : ctx.inputSections) {
+      if (!sec->isLive() || !sec->relSecIdx)
+        continue;
+      auto checkReferences = [&](auto relocs) {
+        for (const auto &rel : relocs)
+          if (sectionSymbols.count(&sec->getFile<ELFT>()->getRelocTargetSym(rel)))
+            Err(ctx) << sec << ": relocations into a CTF dictionary are unsupported";
+      };
+      auto relocs = sec->template relsOrRelas<ELFT>();
+      if (relocs.areRelocsCrel())
+        checkReferences(relocs.crels);
+      else if (relocs.areRelocsRel())
+        checkReferences(relocs.rels);
+      else
+        checkReferences(relocs.relas);
+    }
 }
 
 // Write the internal symbol table contents to the output symbol table.
@@ -5034,3 +5281,8 @@ template void elf::createSyntheticSections<ELF32LE>(Ctx &);
 template void elf::createSyntheticSections<ELF32BE>(Ctx &);
 template void elf::createSyntheticSections<ELF64LE>(Ctx &);
 template void elf::createSyntheticSections<ELF64BE>(Ctx &);
+
+template void elf::combineCTFSections<ELF32LE>(Ctx &);
+template void elf::combineCTFSections<ELF32BE>(Ctx &);
+template void elf::combineCTFSections<ELF64LE>(Ctx &);
+template void elf::combineCTFSections<ELF64BE>(Ctx &);

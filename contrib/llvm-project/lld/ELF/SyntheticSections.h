@@ -1454,6 +1454,7 @@ private:
 };
 
 template <class ELFT> void createSyntheticSections(Ctx &);
+template <class ELFT> void combineCTFSections(Ctx &);
 InputSection *createInterpSection(Ctx &);
 MergeInputSection *createCommentSection(Ctx &);
 template <class ELFT> void splitSections(Ctx &);
