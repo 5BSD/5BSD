@@ -152,3 +152,35 @@ preserves duplicate local symbol names as type lists; it does not collapse them.
 Disk guards retain the enforced 16 GiB reserve. The same-leaf measured allocation
 justifies the explicitly recorded 17.75 GiB corrected-profile admission gate;
 no compiler, artifact or test acceptance condition is weakened.
+
+## Existing source fix and stale foreign SDK tools (2026-11-03)
+
+Source/history review recovered the already committed CTF-aware LLVM objcopy
+fix, d7f9be55deb, and its maintained semantic/format regression suite. It retains
+original symbol identities through transformations; the previously rejected
+name-based post-localization merge is not the solution. The pipeline ordering
+must not be redesigned merely to accommodate an obsolete SDK tool.
+
+The explicit unchanged-tool format controls at
+`/usr/obj/usr/src/bazel-cross-module-ctf-sdk-diagnosis-r1-20261103` pass all
+65 checks for the native r4 SDK and fail localization for both foreign r4 SDKs.
+The native SDK selects objcopy cb860873912726be094227e17e54326c990c0ff5a41239173cb24a668e5f7f7d;
+ARM64 selects ccf032820f7a2b10cd26c1f445946a37369462066c7ac554b09fb1751713e1fc;
+RISC-V selects 6b46d4de747038a2fc597d1ce81dff6db556599bf240aa1d800aa9b0641b3253.
+All are unchanged static execution binaries. Their recorded origins are each
+architecture's world/tmp/usr/bin tools; the foreign stages are stale despite
+matching the nominal LLVM version. No SDK or receipt was patched.
+
+Next rebuild foreign cross-tools through maintained targets, create new SDK
+snapshots/receipts, run the existing format/semantic suites on each selected
+tool and rerun the real module profiles. Preserve the failing r4 snapshots.
+Extend maintained qualification selection to cover each SDK's actual tools;
+version strings or native-SDK success cannot establish foreign SDK capability.
+Whole native Bazel toolchain bootstrap remains a separate open requirement.
+
+Storage recovery used OS copy_file_range/ZFS copy-on-write block cloning for
+identical canonical archives in 31 completed private repository caches. Every
+archive hash and verified complete cache identity remains unchanged. It changes
+no source, SDK, tool binary, receipt or artifact. Records are retained in
+bazel-completed-cache-blockclone-r1-20261103 and r2-20261103 under /usr/obj/usr/src.
+This is workspace storage recovery, not a comparative build I/O benchmark.

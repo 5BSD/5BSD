@@ -10849,3 +10849,10 @@ symbol/type lists are retained in the module execution-runtime work root.
 Correct and qualify the transform pipeline, including semantic controls for
 Make and all supported architectures, before closing module instrumentation.
 See KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md. No live probe delivery is claimed.
+
+The follow-up identifies stale foreign SDK tools: the identity-preserving CTF
+objcopy source fix is already committed (d7f9be55deb). The maintained 65-case
+format suite passes on the unchanged native r4 tool and rejects both foreign
+r4 tools on localization. Refresh/qualify the foreign cross-tools and new SDKs;
+keep the old failures. No new probe edits, fuzzy type matching or transform-order
+workaround is required. Actual post-refresh instrumentation remains unqualified.

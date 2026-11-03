@@ -1779,18 +1779,23 @@ ABI inputs; review FIDL and remaining generator families individually. Existing
 frontend/SDK interfaces cover the proposed correction; no new CLI or package
 contract is introduced. The runtime selection fix is qualified only for those selected host actions.
 
-### Immediate kernel gate: preserve CTF across symbol transformations
+### Immediate kernel gate: refresh and qualify foreign bootstrap tools
 
-The new strict composite nullfs review found five ARM64 object/type associations
-become incorrect during export localization, including SDT probe/provider data.
-Before localization all 69 named associations match the original reference;
-installed output retains the five wrong types. Do not count passing builds as
-full module qualification. Keep raw rejections and semantic observations.
-Next isolate localization/link effects with declared input artifacts and an
-independent Make replay; correct the producer/transform ordering or implementation
-where the evidence requires, retaining native Bazel dependencies. Add a semantic
-regression spanning CTF conversion, merge, exports, final shared link and debug
-split for all three architectures and representative export modes. Check the
-Make path too; matching old byte output alone cannot prove type correctness.
+The new strict composite nullfs review caught wrong ARM64 CTF associations,
+including SDT probe/provider data, at export localization. Source/history review
+finds the robust identity-preserving objcopy fix already committed in d7f9be55deb;
+its 65-case maintained format suite exists. Do not reinvent pipeline ordering
+or the previously rejected fuzzy-merge workaround. The unchanged native r4 SDK
+passes all 65 cases; both foreign r4 tools fail the localization case.
+
+Rebuild ARM64/RISC-V cross-tools through maintained _cross-tools targets, with
+all available CPUs and guarded resource budgets. Coordinate world/tmp mutations
+with original-reference controls. Generate fresh SDKs/receipts; retain r4 inputs
+and failures unchanged. Run the existing semantic/format suite for each SDK's
+actual selected tool, then rerun real module/CTF/export/debug/install profiles
+and cache checks. Make source already contains the correct objcopy algorithm;
+foreign staged tools require refresh and behavior qualification. Version strings
+and hashes alone cannot prove the needed capability. Full native Bazel toolchain
+bootstrap and declared regression coverage for every selected SDK remain gates.
 Separate DWARF/source lookup, remaining runtime helper families, whole-system
 production/runtime and comparative performance remain open.
