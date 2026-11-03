@@ -1178,9 +1178,48 @@ pgpl_valid(dt_pgplist_t *pgpl)
 	    (pgpl->vmid == 0 && pgpl->pgp));
 }
 
-static int
-send_kill(int tofd, dtrace_prog_t *pgp)
+/*
+ * A guest program to stop when the session ends: the guest's response names
+ * the tracing process and its VM, the program it responds to names the
+ * source.  The derived program runs in the guest under its parent's source
+ * (dtrace_send_elf_derived()), the one the guest uploaded the linked program
+ * with, so that is the source dtraced revokes and the guest kills.  The
+ * response's own srcident is the derived program's identity, which no
+ * guest process runs under.
+ */
+typedef struct dt_kill {
+	dt_list_t list;
+	dtrace_prog_t *response;
+	uint8_t source_id[16];
+} dt_kill_t;
+
+static dt_kill_t *
+kill_from(const dtrace_prog_t *pgp, dtrace_prog_t *response)
 {
+	dt_kill_t *k;
+
+	if (pgp == NULL || response == NULL) {
+		errno = EINVAL;
+		return (NULL);
+	}
+	k = calloc(1, sizeof(*k));
+	if (k == NULL)
+		return (NULL);
+	k->response = response;
+	if (dtrace_program_source_id(pgp, k->source_id) != 0) {
+		int error = errno;
+
+		free(k);
+		errno = error;
+		return (NULL);
+	}
+	return (k);
+}
+
+static int
+send_kill(int tofd, const dt_kill_t *k)
+{
+	const dtrace_prog_t *pgp;
 	pid_t pid_to_kill;
 	/*
 	 * For a kill message, we have everything we need in the header.
@@ -1197,7 +1236,8 @@ send_kill(int tofd, dtrace_prog_t *pgp)
 
 	memset(&msg, 0, sizeof(msg));
 
-	assert(pgp != NULL);
+	assert(k != NULL && k->response != NULL);
+	pgp = k->response;
 	pid_to_kill = pgp->dp_pid;
 
 	/*
@@ -1214,8 +1254,7 @@ send_kill(int tofd, dtrace_prog_t *pgp)
 	DTRACED_MSG_KILLPID(msg) = pid_to_kill;
 	DTRACED_MSG_KILLVMID(msg) = pgp->dp_vmid;
 	DTRACED_MSG_KILLEPOCH(msg) = pgp->dp_vmepoch;
-	if (dtrace_program_source_id(pgp, msg.kill.source_id) != 0)
-		return (-1);
+	memcpy(msg.kill.source_id, k->source_id, sizeof(msg.kill.source_id));
 
 	return (dtrace_send_message(tofd, &msg, NULL, 0));
 }
@@ -1497,6 +1536,29 @@ dtraced_connection_lost(int error)
 	    error == ENOTCONN);
 }
 
+/*
+ * A derived program that dtraced did not accept is kept and offered again
+ * when the parent delivery is replayed on a new connection.  A refusal that
+ * persists must not spin through reconnects: back off between attempts and
+ * give up after DERIVED_SEND_ATTEMPTS consecutive failures.
+ */
+#define	DERIVED_SEND_ATTEMPTS		6
+#define	DERIVED_SEND_BACKOFF		250000U		/* usec, doubled */
+#define	DERIVED_SEND_BACKOFF_MAX	4000000U
+
+static void
+derived_send_failed(int *failures, int error)
+{
+	useconds_t delay;
+
+	if (++*failures >= DERIVED_SEND_ATTEMPTS)
+		fatal("dtraced did not accept the derived program after %d "
+		    "attempts: %s\n", *failures, strerror(error));
+	delay = DERIVED_SEND_BACKOFF << (*failures - 1);
+	(void)usleep(delay < DERIVED_SEND_BACKOFF_MAX ? delay :
+	    DERIVED_SEND_BACKOFF_MAX);
+}
+
 static int
 reconnect_dtraced(dtd_arg_t *connection, int *rx, int *wx)
 {
@@ -1565,6 +1627,7 @@ listen_dtraced(void *arg)
 	size_t lentowrite;
 	int found;
 	int derived_sent;
+	int derived_failures = 0;
 	ssize_t r;
 	dtraced_hdr_t header;
 	uint8_t ingress_digest[SHA256_DIGEST_LENGTH];
@@ -1731,9 +1794,13 @@ listen_dtraced(void *arg)
 				free(elf_base);
 				elf_base = NULL;
 				dt_bench_destroy(bench);
-				if (replay < 0)
+				if (replay < 0) {
 					fprintf(stderr, "dtrace: failed to replay derived ELF: %s\n",
 					    strerror(replay_error));
+					derived_send_failed(&derived_failures,
+					    replay_error);
+				} else
+					derived_failures = 0;
 				ack_identified_delivery(dtd_arg, &rx_sockfd,
 				    &wx_sockfd, &header, replay < 0 ?
 				    DTRACED_CONSUMER_ACK_FAILURE :
@@ -1841,9 +1908,13 @@ listen_dtraced(void *arg)
 				dt_bench_destroy(bench);
 				close(fd);
 				(void) tmp_unlink(template);
-				if (replay < 0)
+				if (replay < 0) {
 					fprintf(stderr, "dtrace: failed to replay derived ELF: %s\n",
 					    strerror(replay_error));
+					derived_send_failed(&derived_failures,
+					    replay_error);
+				} else
+					derived_failures = 0;
 				ack_identified_delivery(dtd_arg, &rx_sockfd,
 				    &wx_sockfd, &header,
 				    replay < 0 ? 0 : replay == 1 ?
@@ -1918,9 +1989,13 @@ listen_dtraced(void *arg)
 			 * "rcvpgp" @ "ELF parsing - end" -- destroy
 			 */
 			dt_bench_destroy(bench);
-			if (replay < 0)
+			if (replay < 0) {
 				fprintf(stderr, "dtrace: failed to replay derived ELF: %s\n",
 				    strerror(replay_error));
+				derived_send_failed(&derived_failures,
+				    replay_error);
+			} else
+				derived_failures = 0;
 			ack_identified_delivery(dtd_arg, &rx_sockfd,
 			    &wx_sockfd, &header,
 			    replay < 0 ? 0 : replay == 1 ?
@@ -2124,6 +2199,7 @@ listen_dtraced(void *arg)
 						dt_list_append(&g_pgplist, newpgpl);
 					pthread_mutex_unlock(&g_pgplistmtx);
 					dt_bench_destroy(bench);
+					derived_send_failed(&derived_failures, err);
 					if (reconnect_dtraced(dtd_arg, &rx_sockfd,
 					    &wx_sockfd) == 0)
 						continue;
@@ -2133,6 +2209,7 @@ listen_dtraced(void *arg)
 			}
 			/* The identified send received daemon spool acceptance. */
 			derived_sent = header.elf.delivery_id != 0;
+			derived_failures = 0;
 
 			/*
 			 * "rcvpgp" -- snapshot "Virtual program creation - sent to dtraced"
@@ -3126,6 +3203,7 @@ exec_prog(const dtrace_cmd_t *dcp)
 	uint64_t subs = 0;
 	void *verictx, *merge;
 	dtrace_prog_t *resp;
+	dt_kill_t *kp;
 	dt_benchlist_t *be;
 	hypertrace_errmsg_t errmsg;
 
@@ -3352,8 +3430,16 @@ again:
 			pgpl->execution_ok = executed == 0;
 			pthread_cond_broadcast(&g_pgpcond);
 			pthread_mutex_unlock(&g_pgplistmtx);
-			if (pgpl->vmid != 0)
-				dt_list_append(&g_kill_list, resp);
+			/* resp stays on the handle's program list. */
+			if (pgpl->vmid != 0) {
+				kp = kill_from(pgpl->pgp, resp);
+				if (kp == NULL)
+					fprintf(stderr, "dtrace: cannot stop the "
+					    "program in %s at exit: %s\n",
+					    resp->dp_vmname, strerror(errno));
+				else
+					dt_list_append(&g_kill_list, kp);
+			}
 		}
 
 		err = pthread_join(g_dtracedtd, NULL);
@@ -3373,12 +3459,13 @@ again:
 		}
 		g_execution_notice_count = 0;
 
-		for (resp = dt_list_next(&g_kill_list);
-		     resp && !atomic_load(&g_session_stop);
-		     resp = dt_list_next(resp)) {
-			if (send_kill(dtd_arg->wx_sock, resp))
+		while ((kp = dt_list_next(&g_kill_list)) != NULL) {
+			if (!atomic_load(&g_session_stop) &&
+			    send_kill(dtd_arg->wx_sock, kp))
 				fprintf(stderr, "send_kill() failed with: %s\n",
 				    strerror(errno));
+			dt_list_delete(&g_kill_list, kp);
+			free(kp);
 		}
 
 		dt_bench_stop(g_e2ebench);
@@ -3735,10 +3822,48 @@ process_elf(dtrace_cmd_t *dcp)
 	g_elfrun = 1;
 }
 
+/*
+ * The ELF parser acknowledged the program's srcident to dtraced ("DEL
+ * ident"), which then expects the launch report to name it.
+ * hypertrace_link() gives the program a new identity and makes the parsed
+ * one its srcident, so keep the acknowledged srcident for the report.
+ */
+static int
+link_acknowledged(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
+    char acknowledged[DT_PROG_IDENTLEN], hypertrace_errmsg_t errmsg)
+{
+	memcpy(acknowledged, pgp->dp_srcident, DT_PROG_IDENTLEN);
+	return (hypertrace_link(dtp, pgp, errmsg));
+}
+
+/*
+ * A guest uploads the linked program under the source dtraced spooled the
+ * delivery with.  The response to a derived program would otherwise name
+ * the derived program's own lineage, which no KILL or handoff fence on the
+ * delivery's source covers.  A program that is not a spooled delivery
+ * keeps its own lineage.
+ */
+static int
+send_linked(dtrace_prog_t *pgp, int fromfd, int tofd, const char *progpath,
+    int host, int prog_exec)
+{
+	uint8_t source[16];
+	int send_ident;
+
+	if (host)
+		return (dtrace_send_elf(pgp, fromfd, tofd, "inbound", 0));
+	send_ident = prog_exec == DT_PROG_EXEC ? 0 : 1;
+	if (dtrace_spool_source_id(progpath, source) == 0)
+		return (dtrace_send_elf_source(pgp, fromfd, tofd, "outbound",
+		    send_ident, source));
+	return (dtrace_send_elf(pgp, fromfd, tofd, "outbound", send_ident));
+}
+
 static void
 process_elf_hypertrace(dtrace_cmd_t *dcp)
 {
 	char template[MAXPATHLEN];
+	char acknowledged[DT_PROG_IDENTLEN];
 	char *progpath, *hostorguest;
 	int host, prog_exec, i, tmpfd, dtraced_sock, err, installed;
 	int64_t report_deadline;
@@ -3779,7 +3904,8 @@ process_elf_hypertrace(dtrace_cmd_t *dcp)
 		dtrace_dump_ecbs(dcp->dc_prog);
 	}
 
-	if ((err = hypertrace_link(g_dtp, dcp->dc_prog, errmsg)) != 0)
+	if ((err = link_acknowledged(g_dtp, dcp->dc_prog, acknowledged,
+	    errmsg)) != 0)
 		link_failed(dcp->dc_prog, "Failed to apply relocations", err,
 		    errmsg);
 
@@ -3844,9 +3970,8 @@ process_elf_hypertrace(dtrace_cmd_t *dcp)
 	if (lseek(tmpfd, 0, SEEK_SET))
 		fatal("lseek() failed");
 	fprintf(stderr, "dtrace: send_elf(%s)\n", template);
-	if (dtrace_send_elf(dcp->dc_prog, tmpfd, dtraced_sock,
-	    host ? "inbound" : "outbound",
-	    host ? 0 : prog_exec == DT_PROG_EXEC ? 0 : 1))
+	if (send_linked(dcp->dc_prog, tmpfd, dtraced_sock, progpath, host,
+	    prog_exec))
 		fatal("failed to dtrace_send_elf()");
 	if (g_has_idents && getenv("HYPERTRACE_LAUNCH_REPORT") != NULL) {
 		report_deadline = dtraced_io_deadline_after(10000);
@@ -3854,8 +3979,7 @@ process_elf_hypertrace(dtrace_cmd_t *dcp)
 			fatal("failed to set guest report deadline: %s\n",
 			    strerror(errno));
 		if (dtrace_write_launch_result(STDOUT_FILENO, installed,
-		    dcp->dc_prog->dp_srcident, DT_PROG_IDENTLEN,
-		    report_deadline) != 0)
+		    acknowledged, DT_PROG_IDENTLEN, report_deadline) != 0)
 			fatal("failed to report guest installation: %s\n",
 			    strerror(errno));
 	}

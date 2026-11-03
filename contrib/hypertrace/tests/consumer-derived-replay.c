@@ -3,6 +3,8 @@
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <setjmp.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,6 +78,27 @@ tmp_mkstemp(char *path, size_t size, const char *name)
     return (mkstemp(path));
 }
 static int tmp_unlink(const char *path) { return (unlink(path)); }
+static useconds_t slept[8];
+static int sleeps, failures;	/* static: read after longjmp() */
+static char fatal_message[160];
+static jmp_buf fatal_return;
+static int
+test_usleep(useconds_t delay)
+{
+    assert(sleeps < 8);
+    slept[sleeps++] = delay;
+    return (0);
+}
+#define usleep test_usleep
+static void
+fatal(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(fatal_message, sizeof(fatal_message), fmt, ap);
+    va_end(ap);
+    longjmp(fatal_return, 1);
+}
 
 #include "consumer-derived-replay.inc"
 
@@ -159,6 +182,17 @@ main(void)
         digest, 13) == -1 &&
         errno == EIO);
     assert(access(created_path, F_OK) == -1 && errno == ENOENT);
-    puts("PASS: active and completed parent replay exact ELF; distinct uploads and failures do not ACK success");
+    /* A persistent refusal backs off and ends; it does not spin. */
+    assert(dtraced_connection_lost(EPIPE) && !dtraced_connection_lost(EPROTO));
+    if (setjmp(fatal_return) == 0) {
+        for (;;)
+            derived_send_failed(&failures, EPROTO);
+    }
+    assert(failures == 6 && sleeps == 5);
+    assert(slept[0] == 250000 && slept[1] == 500000 && slept[2] == 1000000 &&
+        slept[3] == 2000000 && slept[4] == 4000000);
+    assert(strcmp(fatal_message, "dtraced did not accept the derived "
+        "program after 6 attempts: Protocol error\n") == 0);
+    puts("PASS: active and completed parent replay exact ELF; distinct uploads and failures do not ACK success; a persistent derived refusal gives up after bounded backoff");
     return (0);
 }

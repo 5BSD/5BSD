@@ -56,7 +56,9 @@
  *                          absent) and DTT_STATUS (accepted with replay, or
  *                          unavailable) queries are answered from it
  *   HT_DTT_LOG             file receiving one line per record the guest
- *                          daemon writes to the transport
+ *                          daemon writes to the transport ("kind delivery
+ *                          vmid epoch"; with HT_DTT_LOG_IDS=1, ELF and
+ *                          INSTALLED records add program and source IDs)
  *   HT_DTT_ACK             "1" (with HT_DTT_ANSWER): confirm each guest
  *                          KILL_APPLIED, INSTALLED and UNINSTALLED record
  *                          with the host's HOST_* acknowledgment
@@ -104,6 +106,9 @@
  *                          of executing anything; HT_EXEC_FAKE=report also
  *                          answers dtrace(1)'s launch report as installed
  *                          and runs HT_EXEC_FAKE_HOLD_MS before exiting)
+ *   HT_EXEC_DTRACE         program that a launch of /usr/sbin/dtrace runs
+ *                          instead, with the same arguments and environment
+ *                          plus HT_DTRACE_SOCKET=<HT_ROOT>/sub.sock
  */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -495,9 +500,28 @@ dtt_driver(int fd)
 		if (log != nullptr) {
 			FILE *f = fopen(log, "a");
 			if (f != nullptr) {
-				fprintf(f, "%u %ju %u %ju\n", e.event_kind,
+				fprintf(f, "%u %ju %u %ju", e.event_kind,
 				    (uintmax_t)e.u.cleanup.delivery_id,
 				    e.u.cleanup.vmid, (uintmax_t)e.u.cleanup.epoch);
+				const uint8_t *ids =
+				    e.event_kind == DTT_INSTALLED ?
+				    e.u.installed.program_id :
+				    e.event_kind == DTT_ELF ? e.u.elf.program_id :
+				    nullptr;
+				const uint8_t *source =
+				    e.event_kind == DTT_INSTALLED ?
+				    e.u.installed.source_id :
+				    e.event_kind == DTT_ELF ? e.u.elf.source_id :
+				    nullptr;
+				if (ids != nullptr && env_is("HT_DTT_LOG_IDS", "1")) {
+					fputc(' ', f);
+					for (int i = 0; i < 16; i++)
+						fprintf(f, "%02x", ids[i]);
+					fputc(' ', f);
+					for (int i = 0; i < 16; i++)
+						fprintf(f, "%02x", source[i]);
+				}
+				fputc('\n', f);
 				fclose(f);
 			}
 		}
@@ -1422,6 +1446,29 @@ fake_launch_report(char *const envp[])
 	_exit(0);
 }
 
+extern "C" int __real_execve(const char *, char *const[], char *const[]);
+
+/* HT_EXEC_DTRACE: dtrace(1) as a test program, reaching this daemon. */
+static int
+exec_test_dtrace(const char *program, char *const argv[], char *const envp[])
+{
+	static char socket_env[PATH_MAX];
+	char *environment[8];
+	size_t n = 0;
+	const char *root = getenv("HT_ROOT");
+
+	if (root == nullptr || snprintf(socket_env, sizeof(socket_env),
+	    "HT_DTRACE_SOCKET=%s/sub.sock", root) >= (int)sizeof(socket_env)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	for (; envp != nullptr && envp[n] != nullptr && n < 6; n++)
+		environment[n] = envp[n];
+	environment[n++] = socket_env;
+	environment[n] = nullptr;
+	return (__real_execve(program, argv, environment));
+}
+
 extern "C" int
 __wrap_execve(const char *path, char *const argv[], char *const envp[])
 {
@@ -1432,6 +1479,9 @@ __wrap_execve(const char *path, char *const argv[], char *const envp[])
 			(void)__llvm_profile_write_file();
 		_exit(73);
 	}
+	const char *test_dtrace = getenv("HT_EXEC_DTRACE");
+	if (test_dtrace != nullptr && strcmp(path, "/usr/sbin/dtrace") == 0)
+		return (exec_test_dtrace(test_dtrace, argv, envp));
 	const char *log = getenv("HT_EXEC_LOG");
 	if (log != nullptr) {
 		/* Record the program a launch would run; nothing is executed. */

@@ -2932,10 +2932,20 @@ HyperTraceELFParser::toProgram(dtrace_prog_t *oldpgp)
 		return (makeError(nullptr, E_HYPERTRACE_PROPAGATED));
 	}
 
+	/*
+	 * The compile identifiers name the linked programs whose derived
+	 * programs are still due.  A program compiled on the host (no
+	 * srcident, not marked for execution) is none of them and is linked
+	 * whatever is pending; with identifiers it is acknowledged with no
+	 * identifier, so that dtraced keeps the list.
+	 */
+	ProgramIdentifier noIdentifier = {};
+	bool base = identsAreEqual(eprog->dtep_srcident, noIdentifier) &&
+	    eprog->dtep_exec != DT_PROG_EXEC;
 	bool empty;
 	bool found = findIdentifierInCompileIdentifiers(eprog->dtep_srcident,
 	    empty);
-	if (!found && !empty) {
+	if (!found && !empty && !base) {
 		static char msg[] = "FAIL FAIL";
 		if (dtp->dt_failmsg_needed)
 			write(STDOUT_FILENO, msg, sizeof(msg));
@@ -3006,7 +3016,8 @@ HyperTraceELFParser::toProgram(dtrace_prog_t *oldpgp)
 	elf_end(this->elfPtr);
 	this->elfPtr = nullptr;
 	/* Acknowledge only after the complete program has been accepted. */
-	if (found && (!elfWriteExact(STDOUT_FILENO, msg, sizeof(msg)) ||
+	if ((found || (base && !empty)) &&
+	    (!elfWriteExact(STDOUT_FILENO, msg, sizeof(msg)) ||
 	    !elfWriteExact(STDOUT_FILENO, program->dp_srcident, DT_PROG_IDENTLEN))) {
 		setErrorMessage("program identifier acknowledgement failed: %s",
 		    strerror(errno));

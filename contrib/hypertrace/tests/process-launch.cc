@@ -74,13 +74,16 @@ int main(int argc, char **argv) {
         else {
             put("DEL ident", sizeof("DEL ident"));
             if (mode == "wrong") ids[0].fill('X');
+            /* a base program is acknowledged with no identifier */
+            if (mode == "base" || mode == "baseinstalled") ids[0].fill(0);
             put(ids[0].data(), ids[0].size());
 	    if (mode == "good" || mode == "notinstalled" ||
-	        mode == "badstatus" || mode == "shortstatus") {
+	        mode == "badstatus" || mode == "shortstatus" ||
+	        mode == "base" || mode == "baseinstalled") {
 		dtraced_launch_result_t result{};
 		result.magic = mode == "badstatus" ? 0 :
 		    DTRACED_LAUNCH_MAGIC;
-		result.installed = mode == "good";
+		result.installed = mode == "good" || mode == "baseinstalled";
 		memcpy(result.source_ident, ids[0].data(), ids[0].size());
 		unsigned char result_wire[DTRACED_LAUNCH_WIRE_SIZE];
 		dtraced_wire_encode_launch(result_wire, &result);
@@ -118,21 +121,22 @@ int main(int argc, char **argv) {
     std::array<char, DTRACED_PROGIDENTLEN> a{}, b{};
     a.fill('A'); b.fill('B');
     for (const char *mode : {"good", "notinstalled", "badstatus",
-	"shortstatus", "wrong", "short", "fail"}) {
-        s.identlist = {a, b};
+	"shortstatus", "wrong", "short", "fail", "base", "baseinstalled"}) {
+        s.identlist = {{a, {}}, {b, {}}};
 	bool installed = false;
         bool ok = launch_program(s, mode, false, argv[0], &installed);
+        bool base = strcmp(mode, "base") == 0;
         bool accepted = strcmp(mode, "good") == 0 ||
-	    strcmp(mode, "notinstalled") == 0;
+	    strcmp(mode, "notinstalled") == 0 || base;
 	if (ok != (accepted || strcmp(mode, "fail") == 0))
 	    fprintf(stderr, "launch mode %s returned %d (errno %d)\n",
 	        mode, ok, errno);
         assert(ok == (accepted || strcmp(mode, "fail") == 0));
 	assert(installed == (strcmp(mode, "good") == 0));
         assert(s.pidlist.size() == (accepted ? 1 : 0));
-        assert(s.identlist.size() == (accepted ? 1 : 2));
+        assert(s.identlist.size() == (accepted && !base ? 1 : 2));
         if (accepted) {
-            assert(s.identlist.front() == b);
+            assert(s.identlist.front().ident == (base ? a : b));
             pid_t pid = *s.pidlist.begin();
             assert(pdkill(s.pidfds.at(pid), SIGTERM) == 0);
             int status; assert(pdwait(s.pidfds.at(pid), &status,
@@ -147,7 +151,7 @@ int main(int argc, char **argv) {
     assert(!launch_program(s, "good", false, argv[0],
         &replay_installed, &replay_pid, true) && errno == EAGAIN);
     assert(s.pidlist.empty() && replay_pid == -1);
-    s.identlist = {a, b};
+    s.identlist = {{a, {}}, {b, {}}};
     assert(launch_program(s, "notinstalled", false, argv[0],
         &replay_installed, &replay_pid, true));
     assert(!replay_installed && replay_pid == -1 && s.pidlist.empty());

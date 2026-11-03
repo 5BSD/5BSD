@@ -225,7 +225,16 @@ class state {
 	int nosha;		  /* do we want to checksum? */
 	int kq_hdl = -1;	  /* event loop kqueue */
 
-	std::list<std::array<char, DTRACED_PROGIDENTLEN>> identlist;
+	/*
+	 * A linked program the guest uploaded, listed until the program
+	 * derived from it arrives or a KILL revokes the source it was
+	 * uploaded under.
+	 */
+	struct listed_ident {
+		std::array<char, DTRACED_PROGIDENTLEN> ident;
+		std::array<uint8_t, 16> source_id;
+	};
+	std::list<listed_ident> identlist;
 	std::mutex identlistmtx; /* mutex protecting the ident list */
 	/* Volatile authorization-free context for current daemon deliveries only. */
 	std::mutex deliverymtx;
