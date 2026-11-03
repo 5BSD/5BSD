@@ -82,3 +82,38 @@ cc_test(name = "composition_execution", srcs = ["execute_test.c"],
 
 load(":object_paths.bzl", "ctf_object_path_tests")
 ctf_object_path_tests()
+
+
+# Direct Object API tests use native source-built LLVM components, not an SDK
+# tool binary or a shell wrapper around an existing Make invocation.
+_CTF_OBJECT_DEPS = [
+    "//contrib/llvm-project/llvm/lib/Object:object",
+    "//contrib/llvm-project/llvm/lib:support",
+    "//contrib/llvm-project/llvm/lib/Demangle:demangle",
+    "//lib/libc++:cxx", "//lib/msun:m",
+    "//lib/libz:z", "//lib/libzstd:zstd", "//lib/libexecinfo:execinfo",
+]
+_CTF_API_COPTS = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti"]
+cc_test(name = "symbol_table_api_test", srcs = ["api-audit.cpp"],
+    deps = _CTF_OBJECT_DEPS, copts = _CTF_API_COPTS,
+    linkstatic = True, linkopts = ["-pthread"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_binary(name = "union_driver", srcs = ["union-driver.cpp"],
+    deps = _CTF_OBJECT_DEPS, copts = _CTF_API_COPTS,
+    linkstatic = True, linkopts = ["-pthread"], testonly = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "union_graph_test", src = "union-audit.py",
+    data = [":union_driver", "//tools/build/bazel:ctf_semantics-test.py",
+        "//tools/build/bazel:ctf_semantics.py", "//cddl/usr.bin/ctfdump:ctfdump",
+        "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    args = ["--driver", "$(location :union_driver)",
+        "--fixtures", "$(location //tools/build/bazel:ctf_semantics-test.py)",
+        "--semantic-reader", "$(location //tools/build/bazel:ctf_semantics.py)",
+        "--ctfdump", "$(location //cddl/usr.bin/ctfdump:ctfdump)",
+        "--ctf-library", "$(location //lib/libelf:elf_shared)",
+        "--ctf-library", "$(location //lib/libz:z_shared)"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    size = "medium", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

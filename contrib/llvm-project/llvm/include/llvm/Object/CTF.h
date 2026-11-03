@@ -22,9 +22,10 @@ namespace llvm {
 namespace object {
 
 /// Reorder SUNW CTF symbol associations using original symbol identities.
-/// This owns the container bytes; type, string and label payloads remain opaque.
-/// It does not merge type namespaces or interpret ELF sections. Callers select
-/// the eligible defined symbols in symbol-table order and validate ELF links.
+/// Owns container bytes. Symbol rewriting keeps type/string/label bytes opaque;
+/// namespace union relocates supported self-contained type graphs explicitly.
+/// Callers select eligible defined symbols in symbol-table order, retain exact
+/// input-file/index provenance, and validate ELF section links.
 class CTFSymbolTable {
 public:
   // Original symbol index and ELF STT_OBJECT/STT_FUNC type. Identities are local
@@ -40,6 +41,23 @@ public:
   /// leave Out unchanged. A true result replaces Out with the new container.
   LLVM_ABI Expected<bool> rewrite(ArrayRef<Symbol> OutputSymbols,
                                   SmallVectorImpl<uint8_t> &Out) const;
+
+  struct SymbolReference {
+    uint32_t Input, Index;
+    uint8_t Type;
+  };
+
+  /// Form a disjoint v3 namespace union without name-based type deduplication.
+  /// ExternalStrings is each input ELF string table. Input identities remain
+  /// scoped by input container. Output endianness and compression are explicit.
+  /// Supports self-contained dictionaries with no labels or matching labels
+  /// that cover each entire dictionary. Parents and unrepresentable label
+  /// scopes fail explicitly. On error Out remains unchanged.
+  LLVM_ABI static Error merge(ArrayRef<CTFSymbolTable> Inputs,
+                              ArrayRef<ArrayRef<uint8_t>> ExternalStrings,
+                              ArrayRef<SymbolReference> OutputSymbols,
+                              llvm::endianness OutputEndian, bool Compress,
+                              SmallVectorImpl<uint8_t> &Out);
 
 private:
   struct Entry {

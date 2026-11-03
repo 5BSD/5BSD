@@ -135,3 +135,16 @@ is required. Fresh SDK and real module checks must follow linker correction.
 Final LLD association/link preservation, multi-container type handling and local
 libctf's inconsistent v2 reader remain open. No target runtime or comparative
 CPU/memory/disk performance acceptance is claimed.
+
+
+## Namespace union foundation
+
+CTFSymbolTable now also has an explicit standalone namespace-union API. It is
+separate from opaque single-container symbol rewriting and is not yet connected
+to LLD. The native Bazel symbol_table_api_test and union_graph_test build Object
+and Support from source; the latter uses declared fixtures, reader, ctfdump and
+runtime libraries. See ../../CTF-NAMESPACE-UNION.md for supported contracts,
+1,024-case Make/Bazel serialization parity, normal frontend tests and remaining
+linker work. The earlier statement that the helper was not a namespace merger
+refers to that earlier checkpoint; general parent/label merging and semantic
+type deduplication are still not implemented.

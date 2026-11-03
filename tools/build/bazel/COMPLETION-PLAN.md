@@ -1920,3 +1920,27 @@ and qualify refreshed original controls and actual modules across all three
 architectures. Native Bazel LLVM API/bootstrap qualification is still required;
 these explicit-tool diagnostics do not substitute for it. Full world/kernel,
 packages, runtime and performance gates remain open; Make stays default.
+
+
+### 2026-11-03: qualify disjoint CTF namespace relocation before LLD hooks
+
+LLVM Object can now union self-contained v2/v3 dictionaries into a valid v3
+namespace using exact container/index provenance. It relocates all supported
+record layouts and internal/external string references; preserves cycles,
+duplicate names and root flags; and rejects unrepresentable label/parent cases.
+String interning avoids copying unused ELF strings. All source association refs,
+including discarded symbols, are validated. This is not type deduplication.
+
+Normal build-bsd/Bazel tests now qualify the source-built Object/Support API
+(160 checks), semantic reader (30 methods), and union graph suite (1,024 graphs,
+256 source-built ctfdump controls, 16 negatives and layout/resource controls).
+Make-library and Bazel drivers serialize all 1,024 compared cases identically.
+Source bindings, prior rejected attempts and resource recovery are retained.
+See CTF-NAMESPACE-UNION.md for scope, evidence and normal test labels.
+
+The union is NOT CONNECTED TO LLD yet. Next implement exact selected-definition
+provenance, section/script placement, final symtab ordering and CTF links, then
+qualify refreshed original controls plus real native/foreign module pipelines.
+No module acceptance, complete bootstrap/world/kernel, package/publication or
+performance qualification is claimed. Make stays production/default; BIP stays
+excluded. Keep signed/staged SDKs immutable and refresh through normal helpers.

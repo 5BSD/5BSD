@@ -8,7 +8,7 @@ from pathlib import Path
 from ctf_semantics import Graph, compare, read_elf
 
 
-def fixture(version=3, endian='<', compressed=False, order=None, empty=False, mutation=None):
+def fixture(version=3, endian='<', compressed=False, order=None, empty=False, mutation=None, external_names=False):
     # Declarative ABI fixtures, encoded from sys/sys/ctf.h (not parser output).
     definitions = {
         1: [1, False, 'char', 1, 0x03000008],
@@ -38,7 +38,7 @@ def fixture(version=3, endian='<', compressed=False, order=None, empty=False, mu
         if value not in offsets:
             offsets[value] = len(names)
             names.extend(value.encode() + b'\0')
-        return offsets[value]
+        return offsets[value] | (0x80000000 if external_names and value else 0)
     def pack(fmt, *values):
         return struct.pack(endian + fmt, *values)
     def info(kind, root, count):

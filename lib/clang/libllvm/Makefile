@@ -1107,6 +1107,7 @@ SRCS_MIN+=	Object/COFFImportFile.cpp
 SRCS_MIN+=	Object/COFFModuleDefinition.cpp
 SRCS_MIN+=	Object/COFFObjectFile.cpp
 SRCS_MIN+=	Object/CTF.cpp
+SRCS_MIN+=	Object/CTFMerge.cpp
 SRCS_MIN+=	Object/Decompressor.cpp
 SRCS_MIN+=	Object/ELF.cpp
 SRCS_MIN+=	Object/ELFObjectFile.cpp
