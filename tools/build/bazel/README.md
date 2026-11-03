@@ -8,6 +8,21 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
+## ARM64/RISC-V routing module checkpoint (2026-11-03)
+
+The [four routing/diagnostic modules](CROSS-ROUTING-MODULES-QUALIFICATION.md)
+dummymbuf, fib_dxr and dpdk_lpm4/6 now pass both architectures and plain/CTF-debug
+settings: eight whole-file plain matches, eight CTF/runtime/debuglink comparisons,
+24 original install records, 24 actual module compilers/3,056 consumed pairs and
+32 ordered links. The first real missing ARM64 CK dependency is corrected with
+an explicit original-consumed source-header view; no C/Make/shared-rule/frontend
+policy changes. Original parallel-log interleaving and overridden RISC-V default
+flags are handled with per-object Make metadata and actual compiler-driver proof,
+not ignored. Separate DWARF/source lookup, complete architectures/world/pkgbase,
+bootstrap/publication, VM/runtime and controlled performance/cache/sandbox gates
+remain open. Existing format-5 --arch profiles carry this cohort. Make stays
+production/default; BIP stays excluded.
+
 ## Current module and incremental checkpoint (2026-11-03)
 
 The [ZFS loadable module](ZFS-MODULE-QUALIFICATION.md) now passes both native

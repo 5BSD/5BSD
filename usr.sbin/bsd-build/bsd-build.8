@@ -5468,3 +5468,12 @@ See
 .Pa tools/build/bazel/BOOT2-QUALIFICATION.md
 for original byte/input/install proof, cached-witness provenance and remaining
 DWARF, cross-architecture, bootstrap, full-world and boot/verified-boot gates.
+.Pp
+Native ARM64 and RISC-V64 profiles now also build dummymbuf, fib_dxr,
+dpdk_lpm4 and dpdk_lpm6 using target-derived configuration headers.
+All plain module bytes, CTF/runtime payloads, debuglink CRCs and original
+installation records pass independent Make comparison.
+See
+.Pa tools/build/bazel/CROSS-ROUTING-MODULES-QUALIFICATION.md
+for actual compiler/input/link evidence and remaining debugger, complete
+architecture, package, runtime and controlled-performance gates.

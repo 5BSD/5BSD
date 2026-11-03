@@ -48,7 +48,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__", "//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"] + (["//sys/dev/usb/net:__pkg__"] if option in ["inet", "inet6"] else []))
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__", "//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"] + (["//sys/dev/usb/net:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__"] if option in ["inet", "inet6"] else []))
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 
 # Filesystem module option contents come from the target config tree.

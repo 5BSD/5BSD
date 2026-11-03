@@ -1272,3 +1272,9 @@ exports_files(["include/gcc/ck_pr.h"], visibility = ["//:__pkg__"])
 exports_files(["include/gcc/x86_64/ck_f_pr.h"], visibility = ["//:__pkg__"])
 
 exports_files(["include/gcc/x86_64/ck_pr.h"], visibility = ["//:__pkg__"])
+
+# Physical CK closure consumed by original ARM64/RISC-V routing modules.
+bsd_source_headers(name = "cross_routing_module_headers",
+    hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/aarch64/ck_f_pr.h", "include/gcc/aarch64/ck_pr.h", "include/gcc/aarch64/ck_pr_llsc.h", "include/gcc/ck_cc.h", "include/gcc/ck_f_pr.h", "include/gcc/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__"])

@@ -10585,3 +10585,15 @@ Nine install records and CRC-valid debug splits are qualified; separate DWARF
 source semantics remain open. No image is executed and no disk, boot, probe,
 security or performance behavior is claimed. Details and rejected evidence:
 [BOOT2-QUALIFICATION.md](BOOT2-QUALIFICATION.md).
+
+### ARM64/RISC-V routing module expansion (2026-11-03)
+
+Six unchanged C sources implement dummymbuf, fib_dxr and dpdk_lpm4/6. A bounded
+physical-source SDT/DTrace/CTR/audit scan finds zero marker candidates; no live
+firing or completeness claim. All eight plain modules match original whole-file;
+eight CTF/runtime section and debuglink comparisons preserve compiled behavior.
+24 actual compilers/3,056 canonical consumed pairs and 32 ordered links match
+original controls. Separate debug files differ; debugger source lookup remains
+open. No source/probe/audit behavior was changed or executed. Evidence:
+bazel-cross-routing-review-r4-20261103/supplement.json and
+[CROSS-ROUTING-MODULES-QUALIFICATION.md](CROSS-ROUTING-MODULES-QUALIFICATION.md).
