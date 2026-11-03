@@ -713,6 +713,14 @@ ATF_TC_BODY(capability_policy_from_hardware, tc)
 	    ((UINT32_C(1) << 10) | (UINT32_C(1) << 11)), 0);
 	ATF_CHECK((uint32_t)(capabilities.secondary >> 32) &
 	    (UINT32_C(1) << 1));
+	/* Timer exposure requires saving its residual across L0 exits. */
+	before = capabilities;
+	input.vmexit &= ~(UINT64_C(1) << (32 + 22));
+	ATF_REQUIRE_EQ(vmx_nested_capabilities_build(&input, &capabilities), 0);
+	ATF_CHECK_EQ(capabilities.pinbased & (UINT64_C(1) << (32 + 6)), 0);
+	input.vmexit |= UINT64_C(1) << (32 + 22);
+	ATF_REQUIRE_EQ(vmx_nested_capabilities_build(&input, &capabilities), 0);
+	ATF_CHECK(vmx_nested_capabilities_equal(&capabilities, &before));
 	default_capabilities = capabilities;
 	ATF_REQUIRE_EQ(vmx_nested_capabilities_signature(
 	    &default_capabilities, &default_signature), 0);
@@ -8114,6 +8122,26 @@ ATF_TC_BODY(vmentry_frozen_msr_snapshot, tc)
 	ATF_CHECK_EQ(backend.read_calls, 0);
 	controls.pinbased = 0;
 
+	/* Invalid list placement/count is an early control failure, before guest checks. */
+	for (unsigned int bad = 0; bad < 3; bad++) {
+		controls.entry_msr_load_address = bad == 0 ? 0x6001 :
+		    bad == 1 ? UINT64_MAX - 15 : 0x6000;
+		controls.entry_msr_load_count = bad == 2 ? 4097 : 2;
+		arch.rflags = 0;
+		backend.read_calls = 0;
+		ATF_REQUIRE_EQ(vmx_nested_vmentry_snapshot_validate(&capabilities,
+		    &input, entries, nitems(entries), &count, &result), 0);
+		ATF_CHECK_EQ(result.disposition, VMX_NESTED_VMENTRY_VMFAIL_VALID);
+		ATF_CHECK_EQ(result.stage, VMX_NESTED_VMENTRY_STAGE_CONTROLS);
+		ATF_CHECK_EQ(result.instruction_error, 7);
+		ATF_CHECK_EQ(result.detail, VMX_NESTED_ENTRY_MSR_AREA);
+		ATF_CHECK_EQ(count, 0);
+		ATF_CHECK_EQ(backend.read_calls, 0);
+	}
+	controls.entry_msr_load_address = 0x6000;
+	controls.entry_msr_load_count = 2;
+	arch = guest_arch_state();
+
 	/* A list failure is an Intel late entry failure, not host mutation. */
 	backend.read_calls = 0;
 	policy_state.reject = 0x175;
@@ -11314,6 +11342,68 @@ ATF_TC_BODY(ept_handoff_request_capture, tc)
 	    &hardware, UINT64_C(0x101e), false, NULL), EINVAL);
 }
 
+ATF_TC_WITHOUT_HEAD(ept_clean_leaf_write_tracking);
+ATF_TC_BODY(ept_clean_leaf_write_tracking, tc)
+{
+	struct vmx_nested_ept_handoff_ops ops = {
+		.populate = test_ept_handoff_populate,
+	};
+	struct vmx_nested_ept_handoff_request request;
+	struct vmx_nested_ept_handoff_result result;
+	struct vmx_nested_ept_handoff handoff;
+	struct vmx_nested_ept_memory memory;
+	struct test_ept_handoff_backend backend;
+	struct test_ept_tree tree;
+	uint64_t leaf;
+	unsigned int level, control, access, i;
+
+	(void)tc;
+	/* Clean, already-dirty, and A/D-disabled small and large leaves. */
+	for (level = 1; level <= 3; level++) {
+		for (control = 0; control < 3; control++) {
+			memset(&tree, 0, sizeof(tree));
+			for (i = 4; i > level; i--)
+				test_ept_tree_set(&tree, (5 - i) * 0x1000,
+				    ((6 - i) * 0x1000) | 7);
+			leaf = UINT64_C(0x40000037);
+			if (level != 1)
+				leaf |= UINT64_C(1) << 7;
+			if (control == 1)
+				leaf |= UINT64_C(1) << 9;
+			test_ept_tree_set(&tree, (5 - level) * 0x1000, leaf);
+			memory.load = test_ept_tree_load;
+			memory.compare_exchange = test_ept_tree_compare_exchange;
+			memory.arg = &tree;
+			memset(&request, 0, sizeof(request));
+			request.id.vmcs_generation = 1;
+			request.id.execution_epoch = 1;
+			request.capabilities = entry_capabilities();
+			request.eptp = control == 2 ? 0x101e : 0x105e;
+			request.vmcs02_exit.exit_reason = 48;
+			/* A clean read must leave the subsequent write trapping. */
+			for (access = 1; access <= 2; access++) {
+				request.access = access;
+				request.vmcs02_exit.exit_qualification = access;
+				memset(&backend, 0, sizeof(backend));
+				vmx_nested_ept_handoff_init(&handoff);
+				ATF_REQUIRE_EQ(vmx_nested_ept_handoff_publish(
+				    &handoff, &request), 0);
+				ATF_REQUIRE_EQ(vmx_nested_ept_handoff_handle(
+				    &handoff, &request.id, &memory, &ops, &backend), 0);
+				ATF_REQUIRE_EQ(vmx_nested_ept_handoff_take(
+				    &handoff, &request.id, &result), 0);
+				ATF_CHECK_EQ(backend.calls, 1);
+				ATF_CHECK_EQ(backend.permissions,
+				    control == 0 && access == 1 ? 5 : 7);
+				ATF_CHECK_EQ(result.plan.permissions, backend.permissions);
+				ATF_CHECK_EQ((le64dec(tree.entry[tree.count - 1].value)
+				    & (UINT64_C(1) << 9)) != 0,
+				    control == 1 || (control == 0 && access == 2));
+			}
+		}
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(ept_frozen_handoff);
 ATF_TC_BODY(ept_frozen_handoff, tc)
 {
@@ -11785,7 +11875,7 @@ ATF_TC_BODY(tsc_write_recomposition, tc)
 	 * L1 runs at 2x.  Writing 50000 at host TSC 10000 therefore changes
 	 * L1's offset to 30000.  VMCS12 then applies 0.5x and +250, so the
 	 * effective VMCS02 offset is 15250 and its multiplier remains 1x.
-	 * The timer deadline remains in L1 virtual-TSC ticks.
+	 * The timer retains its budget when its virtual-TSC epoch changes.
 	 */
 	memset(&input, 0, sizeof(input));
 	input.current = (struct vmx_nested_tsc_scale_input) {
@@ -11798,7 +11888,7 @@ ATF_TC_BODY(tsc_write_recomposition, tc)
 		.l2_scaling_enabled = true,
 	};
 	input.timer = (struct vmx_nested_timer_state) {
-		.deadline_ticks = 1600,
+		.deadline_ticks = 694,
 		.remaining = 100,
 		.armed = true,
 	};
@@ -11813,17 +11903,23 @@ ATF_TC_BODY(tsc_write_recomposition, tc)
 	ATF_CHECK_EQ(plan.composed.vmcs02_offset, UINT64_C(15250));
 	ATF_CHECK_EQ(plan.composed.vmcs02_multiplier,
 	    VMX_NESTED_TSC_MULTIPLIER_ONE);
-	ATF_CHECK_EQ(plan.timer.deadline_ticks, UINT64_C(1600));
-	ATF_CHECK_EQ(plan.timer.remaining, 37);
+	ATF_CHECK_EQ(plan.timer.deadline_ticks, UINT64_C(1663));
+	ATF_CHECK_EQ(plan.timer.remaining, 100);
 	ATF_CHECK(plan.timer.armed);
 	ATF_CHECK(!plan.timer.expired);
 
-	/*
-	 * A forward TSC write can cross the unchanged virtual deadline.  The
-	 * resumed hardware timer must then be zero, forcing the architectural
-	 * preemption-timer exit before another L2 instruction executes.
-	 */
-	input.target_tsc = 52000;
+	/* TSC writes in either direction cannot change the countdown budget. */
+	const uint64_t targets[] = { 0, 52000, UINT64_C(1) << 40 };
+	for (size_t i = 0; i < nitems(targets); i++) {
+		input.target_tsc = targets[i];
+		ATF_REQUIRE_EQ(vmx_nested_tsc_write_plan(&input, &plan), 0);
+		ATF_CHECK_EQ(plan.timer.remaining, 100);
+		ATF_CHECK(!plan.timer.expired);
+		ATF_CHECK_EQ(plan.timer.deadline_ticks,
+		    ((targets[i] + 32) >> input.timer_rate) + 100);
+	}
+	/* Actual elapsed ticks still expire the timer before rebasing. */
+	input.timer_host_tsc += 1600;
 	ATF_REQUIRE_EQ(vmx_nested_tsc_write_plan(&input, &plan), 0);
 	ATF_CHECK_EQ(plan.timer.remaining, 0);
 	ATF_CHECK(plan.timer.expired);
@@ -11999,6 +12095,88 @@ ATF_TC_BODY(x86_intinfo_fold, tc)
 	    (UINT64_C(1) << 32), 0, &plan), EINVAL);
 	ATF_CHECK_EQ(memcmp(&plan, &before, sizeof(plan)), 0);
 	ATF_CHECK_EQ(vm_intinfo_plan(0, 0, NULL), EINVAL);
+}
+
+ATF_TC_WITHOUT_HEAD(interrupt_exit_ignores_l2_mask);
+ATF_TC_BODY(interrupt_exit_ignores_l2_mask, tc)
+{
+	struct vmx_nested_event_input input;
+	struct vmx_nested_event_plan plan;
+
+	(void)tc;
+	memset(&input, 0, sizeof(input));
+	input.kind = VMX_NESTED_EVENT_EXTERNAL_INTERRUPT;
+	input.pending = true;
+	input.guest_blocked = true;
+	input.l1_event_exiting = true;
+	input.vector_valid = true;
+	input.vector = 0x51;
+	for (unsigned int window = 0; window < 2; window++) {
+		input.l1_window_exiting = window;
+		for (unsigned int ack = 0; ack < 2; ack++) {
+			input.acknowledge_on_exit = ack;
+			ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+			ATF_CHECK_EQ(plan.action,
+			    VMX_NESTED_EVENT_ACTION_REFLECT_EVENT);
+			ATF_CHECK_EQ(plan.consume_event, ack != 0);
+			ATF_CHECK_EQ(plan.interruption_info_valid, ack != 0);
+			ATF_CHECK(!plan.arm_interrupt_window);
+		}
+	}
+	input.nested_entry_pending = true;
+	ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_DEFER);
+	input.nested_entry_pending = false;
+	input.reinjection_pending = true;
+	ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_DEFER);
+	input.reinjection_pending = false;
+	input.l1_event_exiting = false;
+	ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_WAIT_FOR_WINDOW);
+	input.l1_event_exiting = true;
+	input.pending = false;
+	ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_WAIT_FOR_WINDOW);
+}
+
+ATF_TC_WITHOUT_HEAD(nmi_exit_ignores_virtual_block);
+ATF_TC_BODY(nmi_exit_ignores_virtual_block, tc)
+{
+	struct vmx_nested_event_input input;
+	struct vmx_nested_event_plan plan;
+
+	(void)tc;
+	memset(&input, 0, sizeof(input));
+	input.kind = VMX_NESTED_EVENT_NMI;
+	input.pending = true;
+	input.guest_blocked = true;
+	input.l1_event_exiting = true;
+	input.l1_virtual_nmis = true;
+	for (unsigned int window = 0; window < 2; window++) {
+		input.l1_window_exiting = window;
+		ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+		ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_REFLECT_EVENT);
+		ATF_CHECK(plan.consume_event);
+		ATF_CHECK(plan.block_nmi);
+		ATF_CHECK(plan.interruption_info_valid);
+		ATF_CHECK_EQ(plan.vector, 2);
+		ATF_CHECK(!plan.arm_nmi_window);
+	}
+	/* Without virtual NMIs, bit 3 represents physical NMI blocking. */
+	input.l1_virtual_nmis = false;
+	input.l1_window_exiting = false;
+	ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_WAIT_FOR_WINDOW);
+	/* A blocked injected NMI still waits when L1 has not requested exits. */
+	input.l1_event_exiting = false;
+	ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_WAIT_FOR_WINDOW);
+	input.l1_event_exiting = true;
+	input.l1_virtual_nmis = true;
+	input.reinjection_pending = true;
+	ATF_REQUIRE_EQ(vmx_nested_event_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_EVENT_ACTION_DEFER);
 }
 
 ATF_TC_WITHOUT_HEAD(interrupt_nmi_routing);
@@ -17647,6 +17825,9 @@ ATF_TC_BODY(vmcs02_transactional_runtime_plan, tc)
 	input.l1_virtual_tsc = 3200;
 	ATF_REQUIRE_EQ(vmx_nested_vmcs02_prepare(&input, &plan), 0);
 	ATF_CHECK(plan.image.preemption_timer_enabled);
+	/* L0 must save the residual even when L1 does not request a save. */
+	ATF_CHECK((plan.image.controls.vmexit & (UINT32_C(1) << 22)) != 0);
+	ATF_CHECK_EQ(plan.image.vmcs12_vmexit, controls.vmexit);
 	ATF_CHECK(!plan.image.preemption_timer.armed);
 	ATF_CHECK_EQ(plan.image.preemption_timer.deadline_ticks, 0);
 	ATF_CHECK_EQ(plan.image.preemption_timer.remaining, 50);
@@ -27252,12 +27433,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ept_fault_plan);
 	ATF_TP_ADD_TC(tp, ept_reflection_information);
 	ATF_TP_ADD_TC(tp, ept_handoff_request_capture);
+	ATF_TP_ADD_TC(tp, ept_clean_leaf_write_tracking);
 	ATF_TP_ADD_TC(tp, ept_frozen_handoff);
 	ATF_TP_ADD_TC(tp, preemption_timer_math);
 	ATF_TP_ADD_TC(tp, tsc_offset_composition);
 	ATF_TP_ADD_TC(tp, tsc_write_recomposition);
 	ATF_TP_ADD_TC(tp, nested_tsc_aux_residency);
 	ATF_TP_ADD_TC(tp, x86_intinfo_fold);
+	ATF_TP_ADD_TC(tp, interrupt_exit_ignores_l2_mask);
+	ATF_TP_ADD_TC(tp, nmi_exit_ignores_virtual_block);
 	ATF_TP_ADD_TC(tp, interrupt_nmi_routing);
 	ATF_TP_ADD_TC(tp, nested_entry_event_transaction);
 	ATF_TP_ADD_TC(tp, nested_event_priority);

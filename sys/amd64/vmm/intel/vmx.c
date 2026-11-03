@@ -2143,7 +2143,8 @@ vmx_set_tsc_offset(struct vmx_vcpu *vcpu, uint64_t offset)
  * Architecturally this changes L1's TSC offset.  While guest mode is active,
  * however, VMCS02 must retain VMCS12's L2 offset/scaling composition.  The
  * nested preemption-timer deadline is also expressed in L1 virtual-TSC
- * ticks, so reload its remaining value from the unchanged deadline.
+ * ticks.  Rebase that deadline to the new epoch while preserving the budget
+ * computed using the old offset; a TSC write is not elapsed timer time.
  */
 int
 vmx_nested_write_tsc(struct vmx_vcpu *vcpu, uint64_t value)
@@ -11490,6 +11491,9 @@ vmx_nested_async_event_intel_peek(struct vmx_vcpu *vcpu,
 		input.l1_event_exiting =
 		    (vcpu->nested_vmcs12_snapshot.controls.pinbased &
 		    PINBASED_NMI_EXITING) != 0;
+		input.l1_virtual_nmis =
+		    (vcpu->nested_vmcs12_snapshot.controls.pinbased &
+		    PINBASED_VIRTUAL_NMI) != 0;
 		input.l1_window_exiting =
 		    (vcpu->nested_vmcs12_snapshot.controls.primary &
 		    PROCBASED_NMI_WINDOW_EXITING) != 0;

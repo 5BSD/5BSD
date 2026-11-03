@@ -30,6 +30,7 @@
 #define	NVMX_PRIMARY_TPR_SHADOW		(UINT32_C(1) << 21)
 #define	NVMX_PRIMARY_UNCONDITIONAL_IO	(UINT32_C(1) << 24)
 #define	NVMX_PRIMARY_IO_BITMAPS		(UINT32_C(1) << 25)
+#define	NVMX02_EXIT_SAVE_TIMER		(UINT32_C(1) << 22)
 #define	NVMX02_ENTRY_LOAD_DEBUG		(UINT32_C(1) << 2)
 #define	NVMX02_ENTRY_GUEST_LMA		(UINT32_C(1) << 9)
 #define	NVMX02_ENTRY_LOAD_PAT		(UINT32_C(1) << 14)
@@ -329,8 +330,10 @@ nvmx_vmcs02_prepare(const struct vmx_nested_vmcs02_input *input,
 
 	/*
 	 * A hardware VM exit from L2 returns to L0, not directly to L1.
-	 * Therefore VMCS02 uses VMCS01's exit controls verbatim; VMCS12's
-	 * save/load requests are implemented by the nested-exit transaction.
+	 * Therefore VMCS02 uses VMCS01's host save/load controls; VMCS12's
+	 * requests are implemented by the nested-exit transaction.  L0 also
+	 * saves the running timer's residual on every exit so an L0-owned
+	 * exit or cold continuation cannot restart L1's original quantum.
 	 *
 	 * Conversely, entering L2 must load the already-computed effective
 	 * debug, PAT, and EFER values from the VMCS02 guest-state area.  The
@@ -340,6 +343,8 @@ nvmx_vmcs02_prepare(const struct vmx_nested_vmcs02_input *input,
 	 * derived from that effective EFER, not copied from VMCS01.
 	 */
 	candidate.image.controls.vmexit = input->l0_controls->vmexit;
+	if (timer_enabled)
+		candidate.image.controls.vmexit |= NVMX02_EXIT_SAVE_TIMER;
 	candidate.image.controls.vmentry |= NVMX02_ENTRY_LOAD_DEBUG |
 	    NVMX02_ENTRY_LOAD_PAT | NVMX02_ENTRY_LOAD_EFER;
 	if ((candidate.image.l2_control.efer & NVMX02_EFER_LMA) != 0)
