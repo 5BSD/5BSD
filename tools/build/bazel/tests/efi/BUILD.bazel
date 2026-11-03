@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_boot_image.bzl", "bsd_boot_link")
+load("//tools/build/bazel:bsd_efi_image.bzl", "bsd_efi_image")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+
+[cc_library(name = name + "_compile", srcs = [name + ".c"],
+    copts = ["-ffreestanding", "-fPIC", "-fno-stack-protector", "-fno-asynchronous-unwind-tables"],
+    features = ["-bsd_ssp"], testonly = True) for name in ["fixture", "unresolved"]]
+[bsd_component_object(name = name + "_object", group = ":" + name + "_compile", out = name + ".o", testonly = True)
+ for name in ["fixture", "unresolved"]]
+[bsd_boot_link(name = name, objects = [":" + name + "_object"], script = "fixture.ld",
+    linkopts = ["-shared", "-Bsymbolic", "-z", "notext"], output = name + ".sym", testonly = True)
+ for name in ["fixture", "unresolved"]]
+# The dependencies belong to the host elfcopy process, separately from Python.
+_RUNTIME = ["//lib/libelf:elf_shared", "//lib/libarchive:archive_shared", "//lib/libz:z_shared",
+    "//lib/libbz2:bz2_shared", "//lib/liblzma:lzma_shared", "//lib/libexpat:bsdxml_shared",
+    "//lib/libzstd:zstd_shared", "//lib/libmd:md_shared", "//lib/libthr:thr_shared",
+    "//lib/msun:m_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared",
+    "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] + select({
+    "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []})
+filegroup(name = "elfcopy_runtime", srcs = _RUNTIME, testonly = True)
+_SECTIONS = [".peheader", ".text", ".sdata", ".data", ".dynamic", ".dynsym",
+    ".rel.dyn", ".rela.dyn", ".reloc", ".eh_frame"]
+[bsd_efi_image(name = name, src = ":fixture", output = name + (".bin" if format == "binary" else ".efi"),
+    output_format = format, source_date_epoch = epoch, sections = _SECTIONS,
+    objcopy_runtime = [":elfcopy_runtime"], testonly = True)
+ for name, format, epoch in [("application", "efi-app-x86_64", "1704067200"),
+    ("future_timestamp", "efi-app-x86_64", "2147483649"), ("raw_sections", "binary", "1704067200")]]
+
+bsd_python_test(name = "conversion_test", src = "conversion-test.py",
+    data = [":fixture", ":unresolved", ":application", ":future_timestamp", ":raw_sections",
+        "//tools/build/bazel:efi_image.py", "//usr.bin/elfcopy:elfcopy", ":elfcopy_runtime",
+        "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:bin/llvm-strip",
+        "@bsd_sdk//toolchain:strip_inputs"],
+    args = ["--source", "$(location :fixture)", "--unresolved", "$(location :unresolved)",
+        "--application", "$(location :application)", "--future", "$(location :future_timestamp)",
+        "--raw", "$(location :raw_sections)", "--helper", "$(location //tools/build/bazel:efi_image.py)",
+        "--objcopy", "$(location //usr.bin/elfcopy:elfcopy)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)",
+        "--strip", "$(location @bsd_sdk//toolchain:bin/llvm-strip)",
+        "--strip-inputs", "$(locations @bsd_sdk//toolchain:strip_inputs)",
+        "--objcopy-runtime", "$(locations :elfcopy_runtime)"],
+    size = "small", visibility = ["//visibility:public"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

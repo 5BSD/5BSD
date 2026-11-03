@@ -203,3 +203,5 @@ bsd_python_test(name = "sdk_copy_test", src = "sdk-copy-test.py", data = ["sdk_c
 
 bsd_python_test(name = "program_test_interface_test", src = "program-test-interface-test.py",
     data = [":program_test_runner"], size = "small")
+
+exports_files(["efi_image.py"], visibility = ["//visibility:public"])

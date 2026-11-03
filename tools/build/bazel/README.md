@@ -6,9 +6,18 @@ The maintained world audit now checks explicit architecture/profile contexts and
 captures additional test kinds and grouped headers. All three SDK/profile
 preflights and two mismatch-rejection checks pass. The amd64 metadata survey
 finishes with 2,128 directories and no query failures; these are not successful
-build counts. ARM64/RISC-V audits are still running. Source review identifies
+build counts. ARM64 also finishes with 2,087 directories and no query failures;
+RISC-V is still running. Source review identifies
 complete standalone/EFI libraries and EFI loader links as required next work.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
+
+## EFI conversion prerequisite (2026-11-03)
+
+The native ELF-to-EFI action passes seven mechanism checks through the maintained
+frontend, including original-recipe bytes and stripped dynamic-import rejection.
+Conversion also matches Make's recipe on existing boot1 and Lua loader ELF inputs.
+Those inputs were Make-built; full native EFI libraries and loader builds remain
+open. See [EFI-CONVERSION-QUALIFICATION.md](EFI-CONVERSION-QUALIFICATION.md).
 
 ## Googletest framework checkpoint (2026-11-03)
 

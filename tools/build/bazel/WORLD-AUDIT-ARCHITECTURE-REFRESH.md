@@ -37,8 +37,8 @@ At this checkpoint:
 | Target ABI | Recorded machine | SDK/profile preflight | Full world audit |
 | --- | --- | --- | --- |
 | amd64 | amd64 | passed | complete metadata and package-presence survey: 2,128 directories, no query failures |
-| aarch64 | arm64 | passed | traversal complete: 2,087 directories; component survey running |
-| riscv64 | riscv | passed | queued |
+| aarch64 | arm64 | passed | complete metadata and package-presence survey: 2,087 directories, no query failures |
+| riscv64 | riscv | passed | traversal complete; component survey running |
 
 `sdk-preflight.json` records actual BuildEnvironment construction, compiler and
 profile checks, and Make MACHINE/MACHINE_ARCH queries for all three contexts.
@@ -49,7 +49,7 @@ correctness. No foreign program was executed.
 explicit architecture/profile selection and incompatible inventory/profile
 selection both fail before an output directory is created.
 
-The in-progress amd64 metadata stream captures all 23 selected private gtest
+The completed amd64 metadata survey captures all 23 selected private gtest
 headers, all 15 gmock headers, and the eight gtest self-test selectors. This
 checks the newly added metadata fields against real maintained Makefiles.
 Partial streams are not complete inventories. Final component summaries and
@@ -60,7 +60,8 @@ The refreshed amd64 survey is complete. Its 2,128 directories divide into
 ancestor-only directories, 125 have program metadata and 55 have library
 metadata. These are review leads, not unconverted binary/library counts:
 parents can own implementations, while a local BUILD file can contain only
-source/header bindings. The ARM64 and RISC-V surveys remain incomplete.
+source/header bindings. The ARM64 metadata/package-presence survey is also complete. The RISC-V
+survey remains in progress. These audits do not compile the surveyed products.
 
 `bazel-world-components-amd64-r1-20261103/review.json` records the complete
 amd64 metadata checks and a concrete next dependency review. The generic
