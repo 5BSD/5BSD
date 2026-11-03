@@ -20,6 +20,7 @@ fixture = r'''
 #include <unistd.h>
 #include "ipc.h"
 SET_DECLARE(ipc_cmd_set, struct ipc_command);
+static int ipc_exit_status = -1;
 #define IPC_COMMAND_FOREACH(pvar, set) SET_FOREACH(pvar, set)
 '''
 fixture += source[start:source.index('/* Bind the endpoint before Capsicum', start)]

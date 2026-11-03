@@ -62,6 +62,7 @@ static int vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *x, size_t 
 { (void)ctx; assert(sz == 4096); return fputs("meta", x) < 0 ? EIO : 0; }
 static int vm_save_kern_structs(struct vmctx *ctx, int fd, xo_handle_t *x)
 { (void)ctx; (void)x; return write(fd, "kern", 4) == 4 ? 0 : EIO; }
+static int vm_snapshot_devices_supported(void) { return 0; }
 static int vm_snapshot_devices(int fd, xo_handle_t *x)
 { (void)x; if (device_error) return device_error; return write(fd, "device", 6) == 6 ? 0 : EIO; }
 '''

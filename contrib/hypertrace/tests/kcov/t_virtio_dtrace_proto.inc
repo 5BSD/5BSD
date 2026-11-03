@@ -323,9 +323,11 @@ case_kill(void)
 	KHX_EQ(dread(&acc, &x), 0);
 	KHX_EQ(x.event_kind, DTT_HOST_KILL_APPLIED);
 	KHX_EQ(x.u.kill.pid, 101);
-	/* HOST_KILL_APPLIED does not clear ready: no READY follows. */
+	/* Every non-READY control closes the host gate, including receipts. */
 	step(&acc);
-	KHX_EQ(tx_count(&acc), 0);
+	KHX_EQ(host_recv_events(&acc, ev, 4), 2);
+	KHX_EQ(ev[0], VTDTR_WIRE_EVENT_READY);
+	KHX_EQ(ev[1], VTDTR_WIRE_EVENT_EOF);
 	env_down(&acc);
 }
 
@@ -560,6 +562,8 @@ case_cleanup(void)
 	KHX_EQ(st.flags, 0);
 	host_send(&acc, w(VTDTR_WIRE_EVENT_READY));
 	step(&acc);
+	/* Receipt still needs READY, but must not retransmit the proof. */
+	expect_tx(&acc, VTDTR_WIRE_EVENT_READY, NULL);
 	KHX_EQ(tx_count(&acc), 0);
 	/* A duplicate receipt for the accepted delivery is idempotent. */
 	host_send(&acc, w_cleanup(VTDTR_WIRE_EVENT_HOST_CLEANUP_APPLIED, 5, 50,

@@ -79,6 +79,7 @@ static int preflight(struct restore_state *r, bool fresh) {
 #define hypertrace_private_image_unchanged(...) step(hashes++ ? 10 : 8)
 #define vm_restore_devices_prevalidated(...) step(9)
 #define vm_restore_kern_structs(...) step(11)
+#define vm_restore_acpi(...) ((void)0)
 #define pci_vtdtr_session_discard_paused(...) step(12)
 static int finish(bool commit, bool *released) {
  if (!commit) { aborted++; *released = true; return 0; }

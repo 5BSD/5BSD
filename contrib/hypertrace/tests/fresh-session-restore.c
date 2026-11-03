@@ -53,6 +53,8 @@ static int begin(bool *resolved) { *resolved = true; return step(BEGIN); }
 #define hypertrace_private_image_unchanged(...) step(hashes++ ? HASH_AFTER : HASH_BEFORE)
 #define vm_restore_devices_prevalidated(...) step(DEVICES)
 #define vm_restore_kern_structs(...) step(KERNEL)
+#define vm_restore_vmgenid_renew(...) 0
+#define vm_restore_acpi(...) ((void)0)
 #define pci_vtdtr_session_discard_paused(...) step(DISCARD)
 static int finish(bool commit, bool *done) {
     if (!commit) { aborted++; *done = true; return 0; }
