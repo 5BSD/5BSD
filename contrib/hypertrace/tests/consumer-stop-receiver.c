@@ -34,6 +34,11 @@ static pthread_mutex_t g_pgplistmtx = PTHREAD_MUTEX_INITIALIZER;
 static _Thread_local int t_dtp_depth;
 static atomic_int g_proc_wake;
 static void dtp_lock(void) { pthread_mutex_lock(&g_dtpmtx); t_dtp_depth++; }
+static int dtp_trylock(void) {
+    int error = pthread_mutex_trylock(&g_dtpmtx);
+    if (error == 0) t_dtp_depth++;
+    return error;
+}
 static void dtp_unlock(void) { t_dtp_depth--; pthread_mutex_unlock(&g_dtpmtx); }
 static pthread_cond_t g_pgpcond = PTHREAD_COND_INITIALIZER;
 static atomic_int g_intr, g_stop, g_session_stop, g_output_worker_done = 1;
@@ -158,6 +163,14 @@ static void dtrace_oformat_discard(dtrace_hdl_t *dtp) {
     assert(dtp == &handle && !atomic_load(&g_output_worker_done));
     discard_calls++;
 }
+/* This fixture exercises text output; OTel calls must remain unreachable. */
+static void *g_otel;
+static int g_status;
+#define E_ERROR 1
+static void *dtotel_session_bridge(void *session) { assert(0); return session; }
+static int dtotel_aggregate(void *session) { (void)session; assert(0); return -1; }
+static int dtotel_session_tick(void *session) { (void)session; assert(0); return -1; }
+static void otel_finish(int finish) { (void)finish; assert(g_otel == NULL); }
 #include "consumer-stop-worker.inc"
 
 static int exchange(dtd_arg_t *connection, dtraced_consumer_stop_t *challenge) {
@@ -215,6 +228,7 @@ static void *finish_activity(void *unused) {
     return NULL;
 }
 int main(void) {
+    (void)g_host_workarg;
     dtd_arg_t connection = {0};
     dtraced_consumer_stop_t challenge = {0};
     challenge.token[0] = gate_owner[0] = 1;

@@ -2763,6 +2763,9 @@ typedef struct dtrace_workarg {
 	int print_upon_exit;
 } dtrace_workarg_t;
 
+/* Outlives the asynchronous host consumer worker. */
+static dtrace_workarg_t g_host_workarg;
+
 static void *
 dtc_work(void *_arg)
 {
@@ -2999,7 +3002,7 @@ process_new_pgp(dtrace_prog_t *pgp, dtrace_prog_t *gpgp_resp)
 
 		setup_tracing();
 		atomic_store(&g_output_worker_done, 0);
-		err = pthread_create(&worktd, NULL, dtc_work, NULL);
+		err = pthread_create(&worktd, NULL, dtc_work, &g_host_workarg);
 		if (err != 0) {
 			atomic_store(&g_output_worker_done, 1);
 			if (atomic_fetch_add(&g_intr, 1))
@@ -3857,7 +3860,7 @@ process_elf(dtrace_cmd_t *dcp)
 	    dpi.dpi_matches == 1 ? "" : "s");
 	setup_tracing();
 	dtp_unlock();
-	pthread_create(&g_worktd, NULL, dtc_work, NULL);
+	pthread_create(&g_worktd, NULL, dtc_work, &g_host_workarg);
 	pthread_join(g_worktd, NULL);
 	g_worktd = 0;
 	g_elfrun = 1;
@@ -4565,7 +4568,6 @@ main(int argc, char *argv[])
 	g_ofp = stdout;
 	int done = 0, mode = 0;
 	int err, i, rv, c, new_argc, libxo_specified = 0;
-	int print_upon_exit = 0;
 	char *p, *p2, **v;
 	struct ps_prochandle *P;
 	pid_t pid;
@@ -5063,7 +5065,7 @@ main(int argc, char *argv[])
 				break;
 
 			case 'O':
-				print_upon_exit = 1;
+				g_host_workarg.print_upon_exit = 1;
 				break;
 
 			case 'q':
@@ -5543,8 +5545,7 @@ main(int argc, char *argv[])
 	if (!g_elf)
 		setup_tracing();
 
-	dtrace_workarg_t workarg = { print_upon_exit };
-	(void) dtc_work(&workarg);
+	(void) dtc_work(&g_host_workarg);
 	/* Return holding the handle lock (see dtp_lock()). */
 	dtp_lock();
 	if (g_dtp)

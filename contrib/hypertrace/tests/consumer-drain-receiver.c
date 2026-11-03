@@ -46,6 +46,11 @@ static atomic_int g_intr, g_stop;
 static dtrace_hdl_t handle;
 static dtrace_hdl_t *g_dtp = &handle;
 static FILE *g_ofp;
+/* OTel export is outside this text-drain fixture. */
+static void *g_otel;
+static int dtotel_session_flush(void *session) {
+    (void)session; assert(0); return -1;
+}
 static int gate_open_failure, gate_suspended = 1, drain_failure;
 static uint8_t gate_owner[16];
 static int
