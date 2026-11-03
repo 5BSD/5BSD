@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 cc_library(name = "gmock_main", srcs = ["//contrib/googletest:googlemock/src/gmock_main.cc"],
-    deps = ["//lib/googletest/gmock:gmock"], copts = ["-fPIC", "-nostdinc++", "-pthread"],
-    linkstatic = True, visibility = ["//visibility:public"])
+    deps = ["//lib/googletest/gmock:gmock", "//lib/googletest/gtest:gtest", "//lib/libc++:cxx", "//lib/msun:m"], copts = ["-nostdinc++", "-pthread"],
+    features = ["bsd_small_pic"], linkstatic = True, visibility = ["//visibility:public"])
 
 cc_shared_library(name = "gmock_main_shared", deps = [":gmock_main"],
-    dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared'],
+    dynamic_deps = ['//lib/googletest/gmock:gmock_shared', '//lib/googletest/gtest:gtest_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/msun:m_shared'],
     shared_lib_name = "libprivategmock_main.so.0",
-    user_link_flags = ["-Wl,-soname,libprivategmock_main.so.0"],
+    user_link_flags = ["-Wl,-soname,libprivategmock_main.so.0", "-Wl,-x,--fatal-warnings,--warn-shared-textrel"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+bsd_component_archive(name = "static_archive", groups = [":gmock_main"], visibility = ["//visibility:public"])
+load("//lib/googletest:installation.bzl", "framework_installation")
+framework_installation(component = "gmock_main", headers = {
+})

@@ -1,5 +1,14 @@
 # Bazel qualification
 
+## Googletest framework checkpoint (2026-11-03)
+
+All four framework candidates now have source-owned archive/header/shared/debug
+installation records. Fifty-six framework records and all 38 header payloads
+match independent Make stages; four archive symbol and four shared ELF metadata
+comparisons pass. Forty self-tests ran freshly with the corrected library policy.
+Complete binary/code equivalence and pkgbase archives remain open. See
+[GOOGLETEST-FRAMEWORK-QUALIFICATION.md](GOOGLETEST-FRAMEWORK-QUALIFICATION.md).
+
 ## Googletest self-test checkpoint (2026-11-03)
 
 All 40 Make-selected Googletest/GoogleMock self-test programs now have native

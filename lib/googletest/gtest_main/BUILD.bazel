@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 cc_library(name = "gtest_main", srcs = ["//contrib/googletest:googletest/src/gtest_main.cc"],
-    deps = ["//lib/googletest/gtest:gtest"], copts = ["-fPIC", "-nostdinc++", "-pthread"],
-    linkstatic = True, visibility = ["//visibility:public"])
+    deps = ["//lib/googletest/gtest:gtest", "//lib/libc++:cxx", "//lib/msun:m"], copts = ["-nostdinc++", "-pthread"],
+    features = ["bsd_small_pic"], linkstatic = True, visibility = ["//visibility:public"])
 
 cc_shared_library(name = "gtest_main_shared", deps = [":gtest_main"],
-    dynamic_deps = ['//lib/googletest/gtest:gtest_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared'],
+    dynamic_deps = ['//lib/googletest/gtest:gtest_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/msun:m_shared'],
     shared_lib_name = "libprivategtest_main.so.0",
-    user_link_flags = ["-Wl,-soname,libprivategtest_main.so.0"],
+    user_link_flags = ["-Wl,-soname,libprivategtest_main.so.0", "-Wl,-x,--fatal-warnings,--warn-shared-textrel"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+bsd_component_archive(name = "static_archive", groups = [":gtest_main"], visibility = ["//visibility:public"])
+load("//lib/googletest:installation.bzl", "framework_installation")
+framework_installation(component = "gtest_main", headers = {
+})

@@ -1,12 +1,33 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 cc_library(name = "gmock", srcs = ["//contrib/googletest:googlemock/src/gmock-all.cc"],
-    deps = ["//contrib/googletest:bsd_mock_headers", "//lib/googletest/gtest:gtest"],
+    deps = ["//contrib/googletest:bsd_mock_headers", "//lib/googletest/gtest:gtest", "//lib/libc++:cxx", "//lib/msun:m"],
     implementation_deps = ["//contrib/googletest:bsd_mock_implementation"],
-    copts = ["-fPIC", "-nostdinc++", "-pthread"], linkstatic = True, visibility = ["//visibility:public"])
+    copts = ["-nostdinc++", "-pthread"], features = ["bsd_small_pic"], linkstatic = True, visibility = ["//visibility:public"])
 
 cc_shared_library(name = "gmock_shared", deps = [":gmock"],
-    dynamic_deps = ['//lib/googletest/gtest:gtest_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared'],
+    dynamic_deps = ['//lib/googletest/gtest:gtest_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/msun:m_shared'],
     shared_lib_name = "libprivategmock.so.0",
-    user_link_flags = ["-Wl,-soname,libprivategmock.so.0"],
+    user_link_flags = ["-Wl,-soname,libprivategmock.so.0", "-Wl,-x,--fatal-warnings,--warn-shared-textrel"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+bsd_component_archive(name = "static_archive", groups = [":gmock"], visibility = ["//visibility:public"])
+load("//lib/googletest:installation.bzl", "framework_installation")
+framework_installation(component = "gmock", headers = {
+    'gmock-actions.h': '//contrib/googletest:googlemock/include/gmock/gmock-actions.h',
+    'gmock-cardinalities.h': '//contrib/googletest:googlemock/include/gmock/gmock-cardinalities.h',
+    'gmock-function-mocker.h': '//contrib/googletest:googlemock/include/gmock/gmock-function-mocker.h',
+    'gmock-matchers.h': '//contrib/googletest:googlemock/include/gmock/gmock-matchers.h',
+    'gmock-more-actions.h': '//contrib/googletest:googlemock/include/gmock/gmock-more-actions.h',
+    'gmock-more-matchers.h': '//contrib/googletest:googlemock/include/gmock/gmock-more-matchers.h',
+    'gmock-nice-strict.h': '//contrib/googletest:googlemock/include/gmock/gmock-nice-strict.h',
+    'gmock-spec-builders.h': '//contrib/googletest:googlemock/include/gmock/gmock-spec-builders.h',
+    'gmock.h': '//contrib/googletest:googlemock/include/gmock/gmock.h',
+    'internal/gmock-internal-utils.h': '//contrib/googletest:googlemock/include/gmock/internal/gmock-internal-utils.h',
+    'internal/gmock-port.h': '//contrib/googletest:googlemock/include/gmock/internal/gmock-port.h',
+    'internal/gmock-pp.h': '//contrib/googletest:googlemock/include/gmock/internal/gmock-pp.h',
+    'internal/custom/gmock-generated-actions.h': '//contrib/googletest:googlemock/include/gmock/internal/custom/gmock-generated-actions.h',
+    'internal/custom/gmock-matchers.h': '//contrib/googletest:googlemock/include/gmock/internal/custom/gmock-matchers.h',
+    'internal/custom/gmock-port.h': '//contrib/googletest:googlemock/include/gmock/internal/custom/gmock-port.h',
+})

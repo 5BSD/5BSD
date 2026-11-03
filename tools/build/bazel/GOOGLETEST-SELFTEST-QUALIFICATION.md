@@ -118,3 +118,10 @@ whole-world package aggregation. No production daemon implementation or probe
 changed. Full world/kernel/module/package/bootstrap/sandbox/runtime/performance
 qualification remains open. Make remains production/default; BIP remains out
 of scope.
+
+## Subsequent framework checkpoint
+
+The [framework installation checkpoint](GOOGLETEST-FRAMEWORK-QUALIFICATION.md)
+adds default framework installation records, independent Make metadata/header/
+archive/shared checks and debuglink validation. Full code equivalence, packages,
+debugger source lookup and cross-platform gates remain open.

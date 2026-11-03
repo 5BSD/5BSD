@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["installation.bzl"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+config_setting(name = "test_install_enabled", flag_values = {
+    "//tools/build/bazel/config:tests": "true", "//tools/build/bazel/config:googletest": "true"})
+bsd_install_manifest(name = "install_manifest", merge_identical_directories = True,
+    manifests = ["//lib/googletest/" + component + ":install_manifest"
+        for component in ["gtest", "gmock", "gmock_main", "gtest_main"]] +
+        select({":test_install_enabled": ["//lib/googletest/tests:install_manifest"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

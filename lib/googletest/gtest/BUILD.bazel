@@ -3,17 +3,46 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 cc_library(
     name = "gtest",
     srcs = ["//contrib/googletest:googletest/src/gtest-all.cc"],
-    deps = ["//contrib/googletest:bsd_headers", "//lib/libc++:cxx", "//lib/libregex:regex", "//lib/libthr:thr"],
+    deps = ["//contrib/googletest:bsd_headers", "//lib/libregex:regex", "//lib/libthr:thr", "//lib/libc++:cxx", "//lib/msun:m"],
     implementation_deps = ["//contrib/googletest:bsd_implementation"],
     local_defines = ["GTEST_HAS_POSIX_RE=1", "GTEST_HAS_PTHREAD=1", "GTEST_HAS_STREAM_REDIRECTION=1"],
-    copts = ["-fPIC", "-nostdinc++", "-frtti", "-pthread"],
+    copts = ["-nostdinc++", "-frtti", "-pthread"],
     linkopts = ["-pthread"],
-    linkstatic = True,
+    features = ["bsd_small_pic"], linkstatic = True,
     visibility = ["//visibility:public"],
 )
 
 cc_shared_library(name = "gtest_shared", deps = [":gtest"],
-    dynamic_deps = ['//lib/libregex:regex_shared', '//lib/libthr:thr_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared'],
+    dynamic_deps = ['//lib/libregex:regex_shared', '//lib/libthr:thr_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/msun:m_shared'],
     shared_lib_name = "libprivategtest.so.0",
-    user_link_flags = ["-Wl,-soname,libprivategtest.so.0"],
+    user_link_flags = ["-Wl,-soname,libprivategtest.so.0", "-Wl,-x,--fatal-warnings,--warn-shared-textrel"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+bsd_component_archive(name = "static_archive", groups = [":gtest"], visibility = ["//visibility:public"])
+load("//lib/googletest:installation.bzl", "framework_installation")
+framework_installation(component = "gtest", headers = {
+    'gtest-assertion-result.h': '//contrib/googletest:googletest/include/gtest/gtest-assertion-result.h',
+    'gtest-death-test.h': '//contrib/googletest:googletest/include/gtest/gtest-death-test.h',
+    'gtest-matchers.h': '//contrib/googletest:googletest/include/gtest/gtest-matchers.h',
+    'gtest-message.h': '//contrib/googletest:googletest/include/gtest/gtest-message.h',
+    'gtest-param-test.h': '//contrib/googletest:googletest/include/gtest/gtest-param-test.h',
+    'gtest-printers.h': '//contrib/googletest:googletest/include/gtest/gtest-printers.h',
+    'gtest-spi.h': '//contrib/googletest:googletest/include/gtest/gtest-spi.h',
+    'gtest-test-part.h': '//contrib/googletest:googletest/include/gtest/gtest-test-part.h',
+    'gtest-typed-test.h': '//contrib/googletest:googletest/include/gtest/gtest-typed-test.h',
+    'gtest.h': '//contrib/googletest:googletest/include/gtest/gtest.h',
+    'gtest_pred_impl.h': '//contrib/googletest:googletest/include/gtest/gtest_pred_impl.h',
+    'gtest_prod.h': '//contrib/googletest:googletest/include/gtest/gtest_prod.h',
+    'internal/gtest-death-test-internal.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-death-test-internal.h',
+    'internal/gtest-filepath.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-filepath.h',
+    'internal/gtest-internal.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-internal.h',
+    'internal/gtest-param-util.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-param-util.h',
+    'internal/gtest-port-arch.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-port-arch.h',
+    'internal/gtest-port.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-port.h',
+    'internal/gtest-string.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-string.h',
+    'internal/gtest-type-util.h': '//contrib/googletest:googletest/include/gtest/internal/gtest-type-util.h',
+    'internal/custom/gtest-port.h': '//contrib/googletest:googletest/include/gtest/internal/custom/gtest-port.h',
+    'internal/custom/gtest-printers.h': '//contrib/googletest:googletest/include/gtest/internal/custom/gtest-printers.h',
+    'internal/custom/gtest.h': '//contrib/googletest:googletest/include/gtest/internal/custom/gtest.h',
+})
