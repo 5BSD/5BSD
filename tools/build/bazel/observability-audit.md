@@ -10922,3 +10922,13 @@ or BSM source to omit in these pre-kernel contexts. AMD64 tests execute real
 vendor tree/overlay algorithms, not loader command or firmware callbacks. Actual
 DTB acquisition, command failures, overlays/fixups and boot handoff diagnostics
 remain complete-loader runtime/VM review items.
+
+## Standalone Ficl candidate (2026-11-03)
+
+All fifteen maintained source units, assertions and the generated softword entry
+point are retained. The Make recipe has no DTrace provider or BSM audit source
+for this pre-kernel interpreter. The recipe test checks generation, not execution
+of Forth words or loader commands. Interpreter failures, console behavior,
+verification diagnostics and boot handoff remain runtime review items. Absolute
+versus relative assertion filenames remain an explicitly recorded difference;
+assertions were not disabled to obtain matching comparisons.

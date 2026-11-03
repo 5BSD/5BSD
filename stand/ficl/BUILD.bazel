@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":config.bzl", "ficl_datestamp")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+
+# Empty means undated. Never read the execution host clock for generated source.
+ficl_datestamp(name = "datestamp", build_setting_default = "")
+# Source order is the maintained Make SOFTWORDS order. The AWK program has no
+# per-file state resets, and all six sources end in a newline.
+_SOFTWORDS = ["//stand/ficl/softwords:" + name for name in [
+    "softcore.fr", "jhlocal.fr", "marker.fr", "freebsd.fr", "ficllocal.fr", "ifbrack.fr",
+]]
+bsd_awk_output(name = "softcore_source", script = "//stand/ficl/softwords:softcore.awk",
+    srcs = _SOFTWORDS, variable_settings = {":datestamp": "datestamp"},
+    output = "generated/softcore.c", awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"], visibility = ["//visibility:public"])
+bsd_host_artifact_test(name = "softcore_test", src = "softcore-test.py",
+    data = [":softcore_source", "//stand/ficl/softwords:softcore.awk"] + _SOFTWORDS + [
+        "@bsd_sdk//toolchain:awk", "@bsd_sdk//toolchain:awk_runtime"],
+    args = ["--generated", "$(location :softcore_source)", "--awk", "$(location @bsd_sdk//toolchain:awk)",
+        "--script", "$(location //stand/ficl/softwords:softcore.awk)", "--sources"] +
+        ["$(location " + label + ")" for label in _SOFTWORDS],
+    visibility = ["//visibility:public"], size = "small")
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_COMPAT = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+bsd_architecture_headers(name = "architecture_headers", headers = select({
+    "@platforms//cpu:x86_64": {"//sys/amd64/include:standalone_ficl_headers": "machine", "//sys/x86/include:standalone_ficl_headers": "x86"},
+    "@platforms//cpu:aarch64": {"//sys/arm64/include:standalone_ficl_headers": "machine"},
+    "@platforms//cpu:riscv64": {"//sys/riscv/include:standalone_ficl_headers": "machine"},
+    "//conditions:default": {},
+}))
+_ARCH_CFLAGS = select({
+    "@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
+    "@platforms//cpu:aarch64": ["-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
+    "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"],
+    "//conditions:default": [],
+})
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-Istand/libsa/geli', '-ffreestanding', '-Istand/ficl', '-Istand/common', '-DBF_DICTSIZE=30000', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments'] + _ARCH_CFLAGS + select({
+    "//tools/build/bazel/config:loader_geli_enabled": ["-DLOADER_GELI_SUPPORT"], "//conditions:default": []}) + select({
+    "//tools/build/bazel/config:loader_disk_enabled": ["-DLOADER_DISK_SUPPORT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({
+    "@platforms//cpu:x86_64": ["-Istand/ficl/amd64"],
+    "@platforms//cpu:aarch64": ["-Istand/ficl/aarch64"],
+    "@platforms//cpu:riscv64": ["-Istand/ficl/riscv"], "//conditions:default": [],
+})
+_VERIFY_CFLAGS = select({
+    "//tools/build/bazel/config:veriexec_enabled": ["-DLOADER_VERIEXEC"], "//conditions:default": []}) + select({
+    "//tools/build/bazel/config:loader_veriexec_vectx_enabled": ["-DLOADER_VERIEXEC_VECTX"], "//conditions:default": []}) + select({
+    "//tools/build/bazel/config:loader_veriexec_pass_manifest_enabled": ["-DLOADER_VERIEXEC_PASS_MANIFEST"], "//conditions:default": []})
+_DEPS = [":architecture_headers", "//stand/libsa:standalone_headers",
+    "//stand/common:standalone_ficl_headers", "//sys/sys:standalone_ficl_headers",
+    "//sys/teken:standalone_ficl_headers", "//contrib/pnglite:standalone_ficl_headers"] + select({
+    "//tools/build/bazel/config:veriexec_enabled": ["//lib/libsecureboot:standalone_verify_header"],
+    "//conditions:default": [],
+})
+_SOURCES = ["dict.c", "ficl.c", "fileaccess.c", "float.c", "loader.c", "math64.c",
+    "prefix.c", "search.c", "stack.c", "tools.c", "vm.c", "words.c"]
+_HEADERS = ["ficl.h", "math64.h"] + select({
+    "@platforms//cpu:x86_64": ["amd64/sysdep.h"],
+    "@platforms//cpu:aarch64": ["aarch64/sysdep.h"],
+    "@platforms//cpu:riscv64": ["riscv/sysdep.h"], "//conditions:default": [],
+})
+_FEATURES = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"]
+cc_library(name = "core", srcs = _SOURCES + [":softcore_source"] + select({
+    "@platforms//cpu:x86_64": ["amd64/sysdep.c"],
+    "@platforms//cpu:aarch64": ["aarch64/sysdep.c"],
+    "@platforms//cpu:riscv64": ["riscv/sysdep.c"], "//conditions:default": [],
+}), hdrs = _HEADERS, textual_hdrs = select({"@platforms//cpu:x86_64": ["x86/sysdep.c"], "//conditions:default": []}),
+    copts = _CFLAGS + _VERIFY_CFLAGS, deps = _DEPS, features = _FEATURES,
+    linkstatic = True, target_compatible_with = _COMPAT)
+cc_library(name = "gfx", srcs = ["gfx_loader.c"], hdrs = _HEADERS,
+    copts = _CFLAGS + _VERIFY_CFLAGS + ["-Isys/teken", "-Icontrib/pnglite"],
+    deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
+bsd_component_archive(name = "static_archive", groups = [":core", ":gfx"],
+    object_order = [name[:-2] + ".o" for name in _SOURCES] + ["gfx_loader.o", "sysdep.o", "softcore.o"],
+    visibility = ["//visibility:public"])

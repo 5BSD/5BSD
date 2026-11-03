@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files([
+    "softcore.awk", "softcore.fr", "jhlocal.fr", "marker.fr",
+    "freebsd.fr", "ficllocal.fr", "ifbrack.fr",
+], visibility = ["//stand/ficl:__pkg__"])

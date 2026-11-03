@@ -71,4 +71,4 @@ cc_library(name = "selftest_source", testonly = True,
 
 # Loader clients need verification declarations, not userland crypto dependencies.
 cc_library(name = "standalone_verify_header", hdrs = ["h/verify_file.h"],
-    strip_include_prefix = "h", visibility = ["//stand/liblua:__pkg__", "//stand/efi/libefi:__pkg__", "//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])
+    strip_include_prefix = "h", visibility = ["//stand/ficl:__pkg__", "//stand/liblua:__pkg__", "//stand/efi/libefi:__pkg__", "//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])

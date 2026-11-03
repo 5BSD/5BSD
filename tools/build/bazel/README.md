@@ -11,6 +11,16 @@ RISC-V finishes with 2,050 directories and no query failures. Complete libsa arc
 archive variants are qualified below.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
 
+## Standalone Ficl checkpoint (2026-11-03)
+
+The fifteen-member AMD64 standalone Ficl archive now builds natively, including
+softcore C generated from declared ordered inputs and explicit date metadata.
+The independent original recipe test passes. Raw symbol/order contracts match;
+twelve objects retain assertion filename differences, explained by isolated
+original compiler controls. All fifteen controls match allocated bytes and
+relocations; raw/debug equality and runtime are not claimed. Cross/private EFI
+and loader completion remain open. See [FICL-QUALIFICATION.md](FICL-QUALIFICATION.md).
+
 ## Loader FDT archive checkpoint (2026-11-03)
 
 The common ten-unit and EFI one-unit FDT archives build natively on all three

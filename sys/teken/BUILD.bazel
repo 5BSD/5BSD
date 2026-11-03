@@ -51,3 +51,5 @@ bsd_source_headers(name = "libefi_headers", hdrs = ['teken.h', 'teken_scs.h', 't
 exports_files(["teken.c"], visibility = ["//stand/efi/libefi:__pkg__"])
 
 exports_files(["gensequences", "sequences"], visibility = ["//stand/efi/libefi:__pkg__"])
+
+bsd_source_headers(name = "standalone_ficl_headers", hdrs = ['teken.h'], visibility = ["//stand/ficl:__pkg__"])

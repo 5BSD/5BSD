@@ -11,9 +11,21 @@ def _generate(ctx):
     ctx.actions.write(stdin, ctx.attr.stdin_text)
     args = ctx.actions.args()
     args.add_all(["--stdin", stdin.path, output.path, ctx.executable.awk.path, "-f", ctx.file.script.path])
-    for name, value in sorted(ctx.attr.variables.items()):
+    # -v initializes variables before BEGIN; ordinary assignments below retain
+    # their existing AWK operand semantics for other generators.
+    initial = {}
+    for setting, name in ctx.attr.variable_settings.items():
+        if name in initial or name in ctx.attr.variables:
+            fail("duplicate awk variable: " + name)
+        value = setting[BuildSettingInfo].value
+        if type(value) != "string":
+            fail("awk variable setting must be a string: " + name)
+        initial[name] = value
+    for name, value in sorted(initial.items()) + sorted(ctx.attr.variables.items()):
         if not name or name[0] in "0123456789" or any([c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in name.elems()]):
             fail("invalid awk variable name: " + name)
+        if name in initial:
+            args.add("-v")
         args.add(name + "=" + value)
     operands = list(ctx.attr.arguments)
     if ctx.attr.arguments_setting:
@@ -41,7 +53,8 @@ bsd_awk_output = rule(implementation = _generate, attrs = {
     "script": attr.label(allow_single_file = True, mandatory = True),
     "srcs": attr.label_list(allow_files = True),
     "stdin_text": attr.string(),
-    "variables": attr.string_dict(),
+    "variables": attr.string_dict(doc = "Assignments applied before processing files, after BEGIN."),
+    "variable_settings": attr.label_keyed_string_dict(providers = [BuildSettingInfo], doc = "String build-setting labels mapped to AWK variable names; initialized with -v before BEGIN."),
     "arguments": attr.string_list(doc = "Explicit operands after --, before input files."),
     "arguments_setting": attr.label(providers = [BuildSettingInfo], doc = "Optional space-separated operand string; no shell expansion."),
     "end_of_options": attr.bool(default = False, doc = "Emit -- even without operands, for BEGIN-only generators."),

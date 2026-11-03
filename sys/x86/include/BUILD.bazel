@@ -19,3 +19,5 @@ filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '
 filegroup(name = "libefi_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h'], visibility = ["//stand/efi/libefi:__pkg__"])
 
 filegroup(name = "loader_fdt_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h'], visibility = ["//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])
+
+filegroup(name = "standalone_ficl_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'setjmp.h'], visibility = ["//stand/ficl:__pkg__"])

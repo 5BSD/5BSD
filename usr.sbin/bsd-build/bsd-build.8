@@ -4675,6 +4675,25 @@ Archive and ABI inspection on AMD64, ARM64 and RISC-V executes native tools;
 firmware I/O and complete loader boot require separate qualification.
 See
 .Pa tools/build/bazel/LIBEFI-QUALIFICATION.md .
+.Ss Native standalone Ficl candidate
+The native
+.Li //stand/ficl:static_archive
+selects the maintained fifteen-member standalone Ficl library.
+The AMD64 candidate has original Make comparison evidence; cross and private EFI
+variants, full loader links and firmware execution remain unqualified.
+The format-5
+.Li build-settings
+string
+.Li //stand/ficl:datestamp
+supplies the generated softcore C comment date, default empty (undated).
+No host clock is read.
+Newlines, NUL, comment terminators and backslashes are rejected.
+The metadata value is an explicit input to the AWK producer action.
+.Li //stand/ficl:softcore_test
+compares the generated source with the original ordered concatenation recipe;
+it does not execute the interpreter.
+See
+.Pa tools/build/bazel/FICL-QUALIFICATION.md .
 .Ss Native loader FDT libraries
 The native
 .Li //stand/fdt:static_archive

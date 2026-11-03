@@ -4,3 +4,5 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "standalone_lua_headers", hdrs = ['pnglite.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])
 
 bsd_source_headers(name = "libefi_headers", hdrs = ['pnglite.h'], visibility = ["//stand/efi/libefi:__pkg__"])
+
+bsd_source_headers(name = "standalone_ficl_headers", hdrs = ['pnglite.h'], visibility = ["//stand/ficl:__pkg__"])
