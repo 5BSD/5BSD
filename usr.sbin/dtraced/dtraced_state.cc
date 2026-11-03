@@ -898,8 +898,8 @@ state::accept_new_connection(void)
 	}
 
 	if (setsockopt(connsockfd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on))) {
-		close(connsockfd);
 		ERR("setsockopt() failed: %m");
+		close(connsockfd);
 		return (false);
 	}
 
@@ -909,23 +909,23 @@ state::accept_new_connection(void)
 	dtraced_wire_encode_init(init_wire, &initmsg);
 	if (!socket_transfer(connsockfd, init_wire, sizeof(init_wire), true,
 	    std::chrono::seconds(2))) {
-		close(connsockfd);
 		ERR("send() initmsg to connsockfd failed: %m");
+		close(connsockfd);
 		return (false);
 	}
 
 	if (!socket_transfer(connsockfd, init_wire, sizeof(init_wire), false,
 	    std::chrono::seconds(2))) {
-		close(connsockfd);
 		ERR("recv() get initmsg failed: %m");
+		close(connsockfd);
 		return (false);
 	}
 	dtraced_wire_decode_init(&initmsg, init_wire);
 	if (!valid_initmsg(initmsg)) {
-		close(connsockfd);
 		errno = EPROTO;
 		ERR("refused client hello (kind %d, subscriptions 0x%jx): %m",
 		    (int)initmsg.kind, (uintmax_t)initmsg.subs);
+		close(connsockfd);
 		return (false);
 	}
 	if (this->ctrlmachine == 1 &&
