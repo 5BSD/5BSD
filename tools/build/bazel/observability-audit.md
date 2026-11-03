@@ -10656,3 +10656,18 @@ preserved at the original executable link stage; raw separate debug/source-path
 differences remain open. Four ARM64/six RISC-V local mapping-symbol offsets are
 bound specifically to nonallocated DWARF sections, with raw diffs retained.
 See BZIP2-THREE-ARCH-QUALIFICATION.md for actual witnesses and limitations.
+
+### ARM64/RISC-V USB core/peripheral expansion (2026-11-03)
+
+The bounded 59-source scan records 26 explicit marker lines in cp2112.c,
+usb_dev.c, usb_hub.c and usb_transfer.c; 12 module variants retain exact
+matching compiled SDT/tracepoint sections. Other scanned sources have no
+matching explicit markers; framework/FBT completeness and live probe/audit
+delivery remain open. Artifact provider tests cover actual USB
+controller/storage/GPIO consumer edges. Runtime follow-ups include enumeration,
+interrupts/DMA, transfer cancellation, GPIO/I2C, mass-storage I/O/eject,
+gadget/templates, video/framebuffer, hotplug and suspend/resume/detach
+lifetime. See
+[CROSS-USB-CORE-MODULES-QUALIFICATION.md](CROSS-USB-CORE-MODULES-QUALIFICATION.md)
+and bazel-cross-usb-core-review-r1-20261103/supplement.json. No instrumentation
+source changes or live module loads occur.

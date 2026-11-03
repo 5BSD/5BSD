@@ -5541,3 +5541,15 @@ See
 .Pa tools/build/bazel/BZIP2-THREE-ARCH-QUALIFICATION.md
 for original Make comparisons and the remaining bzip2recover, full package,
 world/bootstrap and independent debugger source-lookup gates.
+.Pp
+ARM64 and RISC-V USB core and peripheral profiles cover another 22 selected
+module leaves per architecture through the existing format-5 kernel inputs.
+Four normal profiles run host artifact checks for controller, storage and GPIO
+consumer bindings to USB core without executing target modules.
+Plain bytes, CTF/runtime/debuglink contracts and installation records pass
+original Make comparison, including the target FDT source and generated OFW
+header prerequisites.
+See
+.Pa tools/build/bazel/CROSS-USB-CORE-MODULES-QUALIFICATION.md
+for evidence and remaining debugger, cross-system, runtime and
+performance gates.

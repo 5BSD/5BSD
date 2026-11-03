@@ -7,7 +7,7 @@ exports_files(['fdt.c', 'fdt_addresses.c', 'fdt_empty_tree.c', 'fdt_overlay.c', 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites consumed by independent MII-family module builds.
-bsd_source_headers(name = "mii_family_headers", hdrs = ["libfdt_env.h"], visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_family_headers", hdrs = ["libfdt_env.h"], visibility = ["//sys/dev/mii:__pkg__", "//sys/dev/usb:__pkg__"])
 
 bsd_source_headers(
     name = "usb_net_if_smsc_headers",

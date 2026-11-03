@@ -67,9 +67,7 @@ bsd_source_headers(
         "uma_align_mask.h",
         "vm.h"
     ],
-    visibility = [
-        "//sys/dev/usb/net:__pkg__"
-    ],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/usb:__pkg__"],
 )
 
 bsd_source_headers(

@@ -33,4 +33,9 @@ SRCS=	cp2112.c
 SRCS+=	opt_bus.h opt_platform.h opt_usb.h
 SRCS+=	device_if.h bus_if.h gpio_if.h iicbus_if.h usb_if.h usbdevs.h
 
+# gpiobusvar.h uses the OFW interface when the target enables FDT.
+.if !empty(OPT_FDT)
+SRCS+=	ofw_bus_if.h
+.endif
+
 .include <bsd.kmod.mk>

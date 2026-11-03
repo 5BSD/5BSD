@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "usb_template", objects = ["//sys/dev/usb:usb_template_usb_template_module_object_files", "//sys/dev/usb:usb_template_usb_template_audio_module_object_files", "//sys/dev/usb:usb_template_usb_template_msc_module_object_files"],
     object_order = ["usb_template.o", "usb_template_audio.o", "usb_template_cdce.o", "usb_template_kbd.o", "usb_template_modem.o", "usb_template_mouse.o", "usb_template_msc.o", "usb_template_mtp.o", "usb_template_phone.o", "usb_template_serialnet.o", "usb_template_midi.o", "usb_template_multi.o", "usb_template_cdceem.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "usb_template",
+    objects = ["//sys/dev/usb:" + arch + "_usb_template_usb_template_module_object_files", "//sys/dev/usb:" + arch + "_usb_template_usb_template_audio_module_object_files", "//sys/dev/usb:" + arch + "_usb_template_usb_template_msc_module_object_files"],
+    object_order = ['usb_template.o', 'usb_template_audio.o', 'usb_template_cdce.o', 'usb_template_kbd.o', 'usb_template_modem.o', 'usb_template_mouse.o', 'usb_template_msc.o', 'usb_template_mtp.o', 'usb_template_phone.o', 'usb_template_serialnet.o', 'usb_template_midi.o', 'usb_template_multi.o', 'usb_template_cdceem.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

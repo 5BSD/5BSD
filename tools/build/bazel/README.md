@@ -48375,3 +48375,15 @@ CRCs pass. Nine declared tests pass; cross cases inspect artifacts on the host.
 The existing host test also rejects actual earlier uncompressed programs.
 Separate DWARF/source lookup, bzip2recover and complete package/world/bootstrap
 remain open. See [BZIP2-THREE-ARCH-QUALIFICATION.md](BZIP2-THREE-ARCH-QUALIFICATION.md).
+
+## ARM64/RISC-V USB core/peripheral checkpoint (2026-11-03)
+
+Twenty-two USB core/controller/storage/peripheral modules on each of
+ARM64/RISC-V pass four normal build-bsd profiles/provider tests and 88 original
+Make controls. All 44 plain modules match whole-file bytes; 44
+CTF/runtime/debuglink comparisons, 240 actual compilers/30,264 canonical
+consumed input pairs, 176 ordered links and 132 original installation
+records/payload bindings pass. Target FDT adds usb_fdt_support.c; a real cp2112
+Make prerequisite omission is corrected in both build descriptions. Separate
+DWARF/source lookup and device/runtime/performance gates remain open. See
+[CROSS-USB-CORE-MODULES-QUALIFICATION.md](CROSS-USB-CORE-MODULES-QUALIFICATION.md).

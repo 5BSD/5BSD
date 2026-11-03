@@ -1142,3 +1142,280 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['input/wsp.c'],
     deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_0", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
 ) for arch in ["arm64", "riscv"]]
+
+# Source-owned ARM64/RISC-V USB core, controller and peripheral module producers.
+[cross_generic_module_objects(
+    arch = arch,
+    name = "cfumass_cfumass_module",
+    srcs = ['storage/cfumass.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/cam:usb_remaining_module_context_0", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:usb_if_headers", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "cp2112_cp2112_module",
+    srcs = ['misc/cp2112.c'],
+    deps = ["//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/usb:usb_remaining_module_context_0", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/" + arch + "/conf:generic_opt_platform_header", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers", "//sys/dev/ofw:storage_module_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/vm:usb_net_uether_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_audio_g_audio_module",
+    srcs = ['gadget/g_audio.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_4", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_keyboard_g_keyboard_module",
+    srcs = ['gadget/g_keyboard.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_5", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_modem_g_modem_module",
+    srcs = ['gadget/g_modem.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_6", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_mouse_g_mouse_module",
+    srcs = ['gadget/g_mouse.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_7", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "i2ctinyusb_i2ctinyusb_module",
+    srcs = ['misc/i2ctinyusb.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_8", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_quirk_usb_quirk_module",
+    srcs = ['quirk/usb_quirk.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_quirk_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_template_usb_template_module",
+    srcs = ['template/usb_template.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_14", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_template_usb_template_audio_module",
+    srcs = ['template/usb_template_audio.c', 'template/usb_template_cdce.c', 'template/usb_template_kbd.c', 'template/usb_template_modem.c', 'template/usb_template_mouse.c', 'template/usb_template_phone.c', 'template/usb_template_serialnet.c', 'template/usb_template_multi.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_15", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_template_usb_template_msc_module",
+    srcs = ['template/usb_template_msc.c', 'template/usb_template_mtp.c', 'template/usb_template_midi.c', 'template/usb_template_cdceem.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_16", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "udbp_udbp_module",
+    srcs = ['misc/udbp.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_24", "//sys/vm:usb_net_usie_headers", "//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_bluetooth_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_kdb_header", "//sys/" + arch + "/conf:generic_opt_netgraph_header", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "udl_udl_module",
+    srcs = ['video/udl.c'],
+    deps = ["//sys/dev/fb:peripheral_devices_kernel_fb_headers", "//sys/dev/videomode:usb_remaining_module_context_0", "//sys/dev/usb:usb_remaining_module_context_25", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/fb:fb_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ugold_ugold_module",
+    srcs = ['misc/ugold.c'],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_29", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uled_uled_module",
+    srcs = ['misc/uled.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_34", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "umass_umass_module",
+    srcs = ['storage/umass.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_umass_headers", "//sys/cam:device_io_kernel_umass_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_cam_header", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "urio_urio_module",
+    srcs = ['storage/urio.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_39", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_if_module",
+    srcs = [':usb_if_module_source'],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/usb:usb_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :usb_if_module_source)=usb_if.c', '-fdebug-prefix-map=$(execpath :usb_if_module_source)=usb_if.c'],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_busdma_module",
+    srcs = ['usb_busdma.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_busdma_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_core_module",
+    srcs = ['usb_core.c', 'usb_error.c', 'usb_lookup.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_debug_module",
+    srcs = ['usb_debug.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_debug_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/ddb:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_dev_module",
+    srcs = ['usb_dev.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_dev_headers", "//sys/vm:mii_family_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_device_module",
+    srcs = ['usb_device.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_device_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/vm:mii_family_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_dynamic_module",
+    srcs = ['usb_dynamic.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_dynamic_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_generic_module",
+    srcs = ['usb_generic.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_generic_headers", "//sys/vm:mii_family_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_handle_request_module",
+    srcs = ['usb_handle_request.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_handle_request_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_hid_module",
+    srcs = ['usb_hid.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_hid_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_hub_module",
+    srcs = ['usb_hub.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_hub_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_mbuf_module",
+    srcs = ['usb_mbuf.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_mbuf_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_msctest_module",
+    srcs = ['usb_msctest.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_msctest_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_parse_module",
+    srcs = ['usb_parse.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_parse_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_pf_module",
+    srcs = ['usb_pf.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:net_kernel_bpf_filter_headers", "//sys/dev/usb:device_io_kernel_usb_pf_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_process_module",
+    srcs = ['usb_process.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_process_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_request_module",
+    srcs = ['usb_request.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_request_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_transfer_module",
+    srcs = ['usb_transfer.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_transfer_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usb_usb_util_module",
+    srcs = ['usb_util.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_util_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "usfs_ustorage_fs_module",
+    srcs = ['storage/ustorage_fs.c'],
+    deps = ["//sys/dev/usb:network_policy_kernel_ng_ubt_rtl_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:usb_if_headers", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uvideo_uvideo_module",
+    srcs = ['video/uvideo.c'],
+    deps = ["//sys/dev/usb:device_io_kernel_uvideo_headers", "//sys/dev/video:device_io_kernel_uvideo_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/dev/usb:device_id_headers", "//sys/dev/video:video_if_headers"],
+) for arch in ["arm64", "riscv"]]
+
+
+# Physical header closure of usb_fdt_support.c, with generated interfaces declared separately.
+bsd_source_headers(name = "usb_fdt_support_headers", hdrs = ['usb.h', 'usb_bus.h', 'usb_busdma.h', 'usb_controller.h', 'usb_core.h', 'usb_device.h', 'usb_endian.h', 'usb_fdt_support.h', 'usb_freebsd.h', 'usb_process.h', 'usb_transfer.h', 'usbdi.h'])
+[cross_generic_module_objects(
+    arch = arch, name = "usb_usb_fdt_support_module",
+    srcs = ["usb_fdt_support.c"],
+    deps = ["//sys/dev/fdt:mii_family_headers", "//sys/dev/ofw:storage_module_headers", "//sys/contrib/libfdt:mii_family_headers", "//sys/vm:usb_net_uether_headers", "//sys/net:usb_net_uether_headers", ":usb_fdt_support_headers", "//sys/dev/usb/net:usb_net_uether_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+) for arch in ["arm64", "riscv"]]

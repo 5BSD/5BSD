@@ -31,9 +31,7 @@ bsd_source_headers(
     hdrs = [
         "usb_ethernet.h"
     ],
-    visibility = [
-        "//sys/dev/usb/net:__pkg__"
-    ],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/usb:__pkg__"],
 )
 
 bsd_source_headers(

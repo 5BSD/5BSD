@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "ohci", objects = ["//sys/dev/usb/controller:ohci_ohci_pci_module_object_files", "//sys/dev/usb/controller:ohci_ohci_module_object_files"],
     object_order = ["ohci_pci.o", "ohci.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ohci",
+    objects = ["//sys/dev/usb/controller:" + arch + "_ohci_ohci_pci_module_object_files", "//sys/dev/usb/controller:" + arch + "_ohci_ohci_module_object_files"],
+    object_order = ['ohci_pci.o', 'ohci.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

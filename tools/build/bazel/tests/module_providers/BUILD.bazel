@@ -174,3 +174,41 @@ _USB_INPUT_MODULES = {
         "--require-edge", "uvisor", "ucom", "ucom_attach",
     ],
 ) for arch in ["arm64", "riscv"]]
+
+# Cross-target USB core and consumers retain their actual global provider edges.
+_USB_CORE_MODULES = {
+    "cfumass": "//sys/modules/usb/cfumass",
+    "cp2112": "//sys/modules/usb/cp2112",
+    "ehci": "//sys/modules/usb/ehci",
+    "g_audio": "//sys/modules/usb/g_audio",
+    "g_keyboard": "//sys/modules/usb/g_keyboard",
+    "g_modem": "//sys/modules/usb/g_modem",
+    "g_mouse": "//sys/modules/usb/g_mouse",
+    "i2ctinyusb": "//sys/modules/usb/i2ctinyusb",
+    "ohci": "//sys/modules/usb/ohci",
+    "usb_quirk": "//sys/modules/usb/quirk",
+    "usb_template": "//sys/modules/usb/template",
+    "udbp": "//sys/modules/usb/udbp",
+    "udl": "//sys/modules/usb/udl",
+    "ugold": "//sys/modules/usb/ugold",
+    "uhci": "//sys/modules/usb/uhci",
+    "uled": "//sys/modules/usb/uled",
+    "umass": "//sys/modules/usb/umass",
+    "urio": "//sys/modules/usb/urio",
+    "usb": "//sys/modules/usb/usb",
+    "usfs": "//sys/modules/usb/usfs",
+    "uvideo": "//sys/modules/usb/uvideo",
+    "xhci": "//sys/modules/usb/xhci",
+}
+[bsd_host_artifact_test(
+    name = arch + "_usb_core_providers_test",
+    src = "check.py",
+    data = [package + ":" + arch + "_generic_module" for package in _USB_CORE_MODULES.values()],
+    args = [arg for name, package in _USB_CORE_MODULES.items()
+            for arg in ["--module", name + "=$(location " + package + ":" + arch + "_generic_module)"]] + [
+        "--require-edge", "ehci", "usb", "usb_bus_mem_alloc_all",
+        "--require-edge", "xhci", "usb", "usb_bus_mem_alloc_all",
+        "--require-edge", "umass", "usb", "usb_get_serial",
+        "--require-edge", "cp2112", "usb", "usbd_req_get_report",
+    ],
+) for arch in ["arm64", "riscv"]]

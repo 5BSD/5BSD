@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "g_mouse", objects = ["//sys/dev/usb:g_mouse_g_mouse_module_object_files"],
     object_order = ["g_mouse.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "g_mouse",
+    objects = ["//sys/dev/usb:" + arch + "_g_mouse_g_mouse_module_object_files"],
+    object_order = ['g_mouse.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

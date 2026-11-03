@@ -6,7 +6,7 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites consumed by independent MII-family module builds.
-bsd_source_headers(name = "mii_family_headers", hdrs = ["fdt_common.h"], visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_family_headers", hdrs = ["fdt_common.h"], visibility = ["//sys/dev/mii:__pkg__", "//sys/dev/usb:__pkg__"])
 
 bsd_source_headers(
     name = "usb_net_if_smsc_headers",

@@ -307,7 +307,7 @@ bsd_source_headers(
         "ifq.h",
         "vnet.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/contrib/ena-com:__pkg__", "//sys/dev/gve:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/qlxgb:__pkg__", "//sys/dev/qlxgbe:__pkg__", "//sys/dev/qlxge:__pkg__"],
+    visibility = ["//sys/contrib/ena-com:__pkg__", "//sys/dev/gve:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/qlxgb:__pkg__", "//sys/dev/qlxgbe:__pkg__", "//sys/dev/qlxge:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/usb:__pkg__"],
 )
 
 bsd_source_headers(

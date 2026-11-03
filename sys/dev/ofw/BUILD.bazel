@@ -6,11 +6,11 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["ofw_bus.h", "ofw_bus_subr.h", "openfirm.h"],
-    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+    visibility = ["//sys/dev/ahci:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/usb:__pkg__"])
 
 filegroup(name = "ofw_bus_if_header_file", srcs = [":ofw_bus_if"], output_group = "header")
 cc_library(name = "ofw_bus_if_headers", hdrs = [":ofw_bus_if_header_file"],
-    strip_include_prefix = "ofw_bus_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/safexcel:__pkg__"])
+    strip_include_prefix = "ofw_bus_if.generated", visibility = ["//sys/dev/ahci:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/safexcel:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vte:__pkg__"])
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
