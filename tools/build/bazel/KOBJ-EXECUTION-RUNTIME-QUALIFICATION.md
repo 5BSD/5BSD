@@ -111,8 +111,44 @@ native execution. This is declaration evidence, not a claim that all candidate
 actions have failed.
 
 An isolated two-helper candidate selects execution-runtime libraries for cross
-module CTF conversion/merge and export processing. It is prepared only. Before
-applying it, run the unchanged nullfs CTF/debug path against a composite SDK,
-retain actual action evidence, then qualify corrected ARM64/RISC-V outputs and
-inputs. Other classified families require their own meaningful action/output
+module CTF conversion/merge and export processing. The unchanged ARM64 nullfs CTF/debug profile reproduced the
+loader architecture rejection in both converter actions; failed actions and
+inputs are retained. The two-helper correction is now applied. Both corrected
+ARM64/RISC-V frontend builds and captures pass, and ten converter/merger/export
+actions bind 74 native ELF tool/library inputs. This proves host runtime
+selection only; complete target artifact qualification remains rejected. Other classified families require their own meaningful action/output
 checks. A global replacement would corrupt intentional target inputs.
+
+## Rejected module CTF metadata (2026-11-03)
+
+The strict nullfs target review rejected the corrected ARM64 module's raw CTF.
+Independent ctfdump observations find all 69 named object/type mappings agree
+with the older original artifact before native export localization. After that
+transformation, five globals have different type associations; installed output
+preserves those wrong associations. SDT probe/provider records, a sysctl record
+and the two exported vnode operation vectors are affected. This is a semantic
+metadata error, not an allowed compression or debug-path difference.
+
+The RISC-V installed mapping agrees with its older Make reference, but earlier
+stage differences and zero type entries mean that raw agreement does not prove
+semantic correctness there. The selected pipeline needs a semantic regression
+that follows actual symbol/type associations through localization, final link
+and debug splitting. Determine whether the maintained Make pipeline and other
+module helpers need the same correction, using independent staged controls.
+Do not rewrite outputs, disable CTF or replace the SDK to hide the difference.
+
+Actual linker inputs are bound to each captured action and frozen SDK receipt;
+the shared execution tree's external SDK alias can switch with another profile
+and must not be used as historical tool identity. The selected ARM64/RISC-V
+linkers and original world linker have distinct byte hashes while all report
+LLD 21.1.8. A causal linker defect is not established by those hashes.
+
+Evidence is retained in
+`/usr/obj/usr/src/bazel-cross-module-execution-runtime-preparation-r1-20261103`:
+unchanged failure, corrected commands/captures, host-runtime-review.json, and
+ctf-symbol-order-diagnosis-r2/diagnosis.json with raw observer output. Initial
+strict artifact review failures remain recorded. The second diagnostic observer
+preserves duplicate local symbol names as type lists; it does not collapse them.
+Disk guards retain the enforced 16 GiB reserve. The same-leaf measured allocation
+justifies the explicitly recorded 17.75 GiB corrected-profile admission gate;
+no compiler, artifact or test acceptance condition is weakened.

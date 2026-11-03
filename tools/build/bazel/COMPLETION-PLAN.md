@@ -1771,8 +1771,26 @@ references. Actual ELF inspection confirms eight foreign SDK/library pairs
 cannot be loaded as native runtime libraries. These are inspected declarations,
 not 148 executed failures or complete label coverage. See
 KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md and its standard-object-root audit ledger.
-Next reproduce the unchanged composite nullfs CTF/export path, then qualify the
-two-helper correction. Preserve target test runtimes, target drti and package
+The unchanged composite nullfs CTF path reproduced two native converter
+failures loading ARM64 libc. The isolated two-helper correction is applied;
+corrected ARM64/RISC-V host runtime selection passes (ten executed actions,
+74 native ELF inputs). Complete target artifact qualification remains rejected. Preserve target test runtimes, target drti and package
 ABI inputs; review FIDL and remaining generator families individually. Existing
 frontend/SDK interfaces cover the proposed correction; no new CLI or package
-contract is introduced. No candidate correction has been applied yet.
+contract is introduced. The runtime selection fix is qualified only for those selected host actions.
+
+### Immediate kernel gate: preserve CTF across symbol transformations
+
+The new strict composite nullfs review found five ARM64 object/type associations
+become incorrect during export localization, including SDT probe/provider data.
+Before localization all 69 named associations match the original reference;
+installed output retains the five wrong types. Do not count passing builds as
+full module qualification. Keep raw rejections and semantic observations.
+Next isolate localization/link effects with declared input artifacts and an
+independent Make replay; correct the producer/transform ordering or implementation
+where the evidence requires, retaining native Bazel dependencies. Add a semantic
+regression spanning CTF conversion, merge, exports, final shared link and debug
+split for all three architectures and representative export modes. Check the
+Make path too; matching old byte output alone cannot prove type correctness.
+Separate DWARF/source lookup, remaining runtime helper families, whole-system
+production/runtime and comparative performance remain open.

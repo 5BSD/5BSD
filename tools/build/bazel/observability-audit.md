@@ -10837,3 +10837,15 @@ symbols and runtime relocations, with exact CTF payloads or matching absence.
 See CROSS-KERNEL-CORE-QUALIFICATION.md. This preserves compiled instrumentation;
 live tracing/audit delivery, whether particular operations need more coverage,
 and enabled/disabled runtime cost still require qualification.
+
+### 2026-11-03: rejected nullfs CTF object/type mappings
+
+Strict composite module review finds five ARM64 CTF object/type associations
+change incorrectly at native export localization. SDT probe/provider and sysctl
+records are among the affected globals. Primary C/probe sources are unchanged;
+this demonstrates why matching code bytes or lexical markers cannot prove
+instrumentation metadata correctness. Raw stage-specific ctfdump output and
+symbol/type lists are retained in the module execution-runtime work root.
+Correct and qualify the transform pipeline, including semantic controls for
+Make and all supported architectures, before closing module instrumentation.
+See KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md. No live probe delivery is claimed.

@@ -43,7 +43,7 @@ def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name 
         ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label",
         enabled = select({"//tools/build/bazel/config:kernel_ctf_enabled": True, "//conditions:default": False}),
         runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
-            "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"])
+            "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"])
     native.filegroup(name = name + "_object_files", srcs = [":" + name + "_ctf"], output_group = "regular_objects",
         visibility = ["//visibility:public"])
 

@@ -5734,3 +5734,13 @@ reproduced KOBJ provenance pairs, added DTS headers and binary firmware inputs.
 See
 .Pa tools/build/bazel/CROSS-KERNEL-CORE-QUALIFICATION.md .
 This cohort does not establish complete kernels or installed-system behavior.
+.Pp
+Cross module CTF conversion, merge and export tools select execution libraries.
+An unchanged composite ARM64 nullfs profile reproduced a native loader failure
+with target libc; ten corrected host actions bind native ELF inputs.
+Strict target artifact review rejects a CTF symbol/type association error
+at ARM64 export localization; full module qualification remains open.
+Target compiler, ABI inspection, DTrace drti and target test runtime inputs
+retain their target identities.
+See
+.Pa tools/build/bazel/KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md .

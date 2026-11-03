@@ -26,7 +26,7 @@ def kernel_module_artifacts(module, objects, emulation, script = None, linkopts 
         ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True,
         merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
         runtime = ["//lib/libelf:elf_shared", "//lib/libz:z_shared", "//cddl/lib/libspl:spl_shared",
-            "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"])
+            "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libthr.so.3"])
     full_name = "generic_localized" if shared else "generic_full"
     if export_all:
         native.alias(name = prefix + full_name, actual = ":" + prefix + "generic_ctf", visibility = ["//visibility:public"])
@@ -36,7 +36,7 @@ def kernel_module_artifacts(module, objects, emulation, script = None, linkopts 
             nm = "@bsd_sdk//toolchain:bin/llvm-nm", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
             tool_inputs = ["@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:objcopy_inputs"],
             redirect = "@bsd_sdk//toolchain:stdout_redirect",
-            libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+            libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"],
             python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
             runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
     if shared:
