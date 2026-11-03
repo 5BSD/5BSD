@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "xz", objects = ["//sys/contrib/xz-embedded:xz_xz_crc32_module_object_files", "//sys/contrib/xz-embedded:xz_xz_dec_lzma2_module_object_files", "//sys/contrib/xz-embedded:xz_xz_dec_stream_module_object_files", "//sys/dev/xz:xz_xz_mod_module_object_files"], object_order = ["xz_crc32.o", "xz_crc64.o", "xz_dec_bcj.o", "xz_dec_lzma2.o", "xz_dec_stream.o", "xz_mod.o"], exports = [], export_all = True, package = "kernel", aliases = [])

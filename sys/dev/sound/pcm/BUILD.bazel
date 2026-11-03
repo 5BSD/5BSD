@@ -10,7 +10,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 [cc_library(name = name + "_headers", hdrs = [":" + name + "_header_file"],
     strip_include_prefix = name + ".generated",
-    visibility = ["//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/virtio/sound:__pkg__"])
+    visibility = ["//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/virtio/sound:__pkg__", "//sys/dev/firewire:__pkg__"])
  for name in ["channel_if", "feeder_if", "mixer_if"]]
 
 cc_library(name = "virtio_snd_headers", hdrs = ["buffer.h", "channel.h", "dsp.h", "feeder.h", "matrix.h", "mixer.h", "sound.h"],
@@ -22,7 +22,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical device I/O prerequisites; identical contexts share providers.
 bsd_source_headers(name = "device_io_kernel_hdaa_headers", hdrs = ["buffer.h", "channel.h", "dsp.h", "feeder.h", "matrix.h", "mixer.h", "sound.h"],
-    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__", "//sys/dev/firewire:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_ac97_headers", hdrs = ["ac97.h", "buffer.h", "channel.h", "dsp.h", "feeder.h", "matrix.h", "mixer.h", "sound.h"],
     visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_channel_headers", hdrs = ["buffer.h", "channel.h", "dsp.h", "feeder.h", "matrix.h", "mixer.h", "sound.h", "vchan.h"],

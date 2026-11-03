@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "cpufreq", objects = ["//sys/dev/cpufreq:cpufreq_ichss_module_object_files", "//sys/x86/cpufreq:cpufreq_est_module_object_files", "//sys/x86/cpufreq:cpufreq_p4tcc_module_object_files", "//sys/x86/cpufreq:cpufreq_powernow_module_object_files", "//sys/x86/cpufreq:cpufreq_hwpstate_amd_module_object_files", "//sys/x86/cpufreq:cpufreq_hwpstate_common_module_object_files", "//sys/x86/cpufreq:cpufreq_hwpstate_intel_module_object_files"], object_order = ["ichss.o", "est.o", "p4tcc.o", "powernow.o", "hwpstate_amd.o", "hwpstate_common.o", "hwpstate_intel.o"], exports = [], export_all = False, package = "kernel", aliases = [])

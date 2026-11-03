@@ -147,3 +147,23 @@ amd64_generic_kernel_objects(name = "generic_lowlevel_uio_machdep", srcs = ["uio
 amd64_generic_kernel_objects(name = "generic_lowlevel_vm_machdep", srcs = ["vm_machdep.c"],
     deps = ["//sys/vm:lowlevel_kernel_vm_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_cpu_header", "//sys/amd64/conf:lowlevel_kernel_opt_isa_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "io_io_module", srcs = ["io.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mem_mem_module", srcs = ["mem.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "efirt_efirt_machdep_module", srcs = ["efirt_machdep.c"],
+    deps = ["//sys/isa:tracing_core_headers", "//sys/vm:lowlevel_kernel_efirt_machdep_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "efirt_efirt_support_module", srcs = ["efirt_support.S"],
+    deps = ["//sys/kern:generic_assym_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-x", "assembler-with-cpp"], local_defines = ["LOCORE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [], convert_ctf = False)

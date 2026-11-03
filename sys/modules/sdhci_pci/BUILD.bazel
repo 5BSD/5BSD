@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "sdhci_pci", objects = ["//sys/dev/sdhci:sdhci_pci_sdhci_pci_module_object_files"], object_order = ["sdhci_pci.o"], exports = [], export_all = False, package = "kernel", aliases = [])

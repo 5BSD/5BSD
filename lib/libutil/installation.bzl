@@ -44,4 +44,6 @@ def util_installation(name):
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libutil.so", target = "../../lib/libutil.so.10",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=runtime", "dev"])
-    bsd_install_manifest(name = name, entries = entries + [":" + name + "_link"], visibility = ["//visibility:public"])
+    bsd_install_manifest(name = name, entries = entries + [":" + name + "_link"],
+        manifests = select({"//tools/build/bazel/config:tests_enabled": ["//lib/libutil/tests:install_manifest"], "//conditions:default": []}),
+        visibility = ["//visibility:public"])

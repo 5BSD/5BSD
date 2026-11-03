@@ -7,7 +7,7 @@ bsd_source_headers(name = "lowlevel_kernel_xen-locore_headers", hdrs = ["xen-os.
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["hvm.h", "hypervisor.h", "xen-os.h"],
-    visibility = ["//sys/x86/x86:__pkg__"])
+    visibility = ["//sys/x86/x86:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__"])
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_compat_headers", hdrs = ["hvm.h", "hypervisor.h", "xen-os.h"],

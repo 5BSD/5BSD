@@ -5,16 +5,20 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 BsdInstallFileInfo = provider(fields = ["source", "metadata"])
 BsdInstallManifestInfo = provider(fields = ["manifest", "payload", "records"])
 
-def _install_file(ctx):
+def _install_destination(destination, settings):
     prefixes = []
-    for setting in ctx.attr.destination_prefixes:
+    for setting in settings:
         value = setting[BuildSettingInfo].value
         if type(value) != "string" or (value and not value.startswith("/")):
             fail("installation prefixes must be absolute directory strings or empty")
         prefixes.append(value.rstrip("/"))
-    destination = "".join(prefixes) + ctx.attr.destination
+    destination = "".join(prefixes) + destination
     if not destination.startswith("/") or ".." in destination.split("/"):
         fail("installation destination must be absolute without traversal")
+    return destination
+
+def _install_file(ctx):
+    destination = _install_destination(ctx.attr.destination, ctx.attr.destination_prefixes)
     metadata = {
         "destination": destination,
         "owner": ctx.attr.owner,
@@ -162,11 +166,10 @@ bsd_kyuafile = rule(
 
 
 def _install_link(ctx):
-    if not ctx.attr.destination.startswith("/") or ".." in ctx.attr.destination.split("/"):
-        fail("installation destination must be absolute without traversal")
+    destination = _install_destination(ctx.attr.destination, ctx.attr.destination_prefixes)
     if ctx.attr.kind == "hardlink" and (not ctx.attr.target.startswith("/") or ".." in ctx.attr.target.split("/")):
         fail("hardlink target must be an installation destination")
-    metadata = {"destination": ctx.attr.destination, "owner": ctx.attr.owner,
+    metadata = {"destination": destination, "owner": ctx.attr.owner,
                 "group": ctx.attr.group, "mode": ctx.attr.mode,
                 "tags": ctx.attr.install_tags, "type": ctx.attr.kind, "link": ctx.attr.target}
     return [BsdInstallFileInfo(source = None, metadata = metadata), DefaultInfo(files = depset())]
@@ -175,6 +178,7 @@ bsd_install_link = rule(
     implementation = _install_link,
     attrs = {
         "destination": attr.string(mandatory = True),
+        "destination_prefixes": attr.label_list(providers = [BuildSettingInfo], doc = "Ordered configured directory prefixes; empty strings are allowed."),
         "target": attr.string(mandatory = True),
         "kind": attr.string(values = ["symlink", "hardlink"], mandatory = True),
         "owner": attr.string(mandatory = True),

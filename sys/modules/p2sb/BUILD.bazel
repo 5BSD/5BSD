@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "p2sb", objects = ["//sys/dev/p2sb:p2sb_p2sb_module_object_files", "//sys/dev/p2sb:p2sb_lewisburg_gpio_module_object_files", "//sys/dev/p2sb:p2sb_lewisburg_gpiocm_module_object_files"], object_order = ["p2sb.o", "lewisburg_gpio.o", "lewisburg_gpiocm.o"], export_all = False, package = "kernel", aliases = [])

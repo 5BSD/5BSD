@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "kern_testfrwk", objects = ["//sys/tests:kern_testfrwk_kern_testfrwk_module_object_files"], object_order = ["kern_testfrwk.o"], exports = [], export_all = False, package = "kernel", aliases = [])

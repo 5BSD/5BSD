@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "qat_c2xxx", objects = ["//sys/dev/qat_c2xxx:qat_c2xxx_qat_module_object_files", "//sys/dev/qat_c2xxx:qat_c2xxx_qat_ae_module_object_files", "//sys/dev/qat_c2xxx:qat_c2xxx_qat_c2xxx_module_object_files", "//sys/dev/qat_c2xxx:qat_c2xxx_qat_hw15_module_object_files"], object_order = ["qat.o", "qat_ae.o", "qat_c2xxx.o", "qat_hw15.o"], exports = [], export_all = False, package = "kernel", aliases = [], ctf_object_paths = [])

@@ -45,9 +45,9 @@ def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name 
     native.filegroup(name = name + "_object_files", srcs = [":" + name + "_ctf"], output_group = "regular_objects",
         visibility = ["//visibility:public"])
 
-def cross_generic_module(arch, module, objects, exports = [], export_all = False, package = "kernel", object_order = []):
+def cross_generic_module(arch, module, objects, exports = [], export_all = False, package = "kernel", object_order = [], aliases = []):
     policy = _ARCH[arch]
     kernel_module_artifacts(module = module, objects = objects, emulation = policy.emulation,
         shared = True, prefix = arch + "_", linkopts = policy.linkopts,
-        exports = exports, export_all = export_all, package = package, object_order = object_order,
+        exports = exports, export_all = export_all, package = package, object_order = object_order, aliases = aliases,
         linker_inputs = ["//tools/build/bazel/kernel_toolchain:link_inputs"])

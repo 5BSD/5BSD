@@ -85,3 +85,92 @@ filegroup(name = "builtin_vmbus_if_source", srcs = [":vmbus_if"], output_group =
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_vmbus_if", srcs = [":builtin_vmbus_if_source"],
     deps = ["//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/hyperv/vmbus:kobj_builtins_kernel_vmbus_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "firewire_hyperv_module_context_0", hdrs = ["hyperv_common_reg.h", "vmbus_reg.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_1", hdrs = ["hyperv_common_reg.h", "hyperv_var.h", "vmbus_var.h", "x86/hyperv_machdep.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_2", hdrs = ["hyperv_common_reg.h", "hyperv_var.h", "x86/hyperv_machdep.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_3", hdrs = ["hyperv_common_reg.h", "hyperv_var.h", "vmbus_brvar.h", "vmbus_chanvar.h", "vmbus_reg.h", "vmbus_var.h", "x86/hyperv_machdep.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_4", hdrs = ["hyperv_common_reg.h", "vmbus_brvar.h", "vmbus_reg.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_5", hdrs = ["hyperv_common_reg.h", "hyperv_var.h", "vmbus_brvar.h", "vmbus_chanvar.h", "vmbus_reg.h", "vmbus_var.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_6", hdrs = ["hyperv_common_reg.h", "hyperv_mmu.h", "hyperv_var.h", "vmbus_reg.h", "vmbus_var.h", "x86/hyperv_machdep.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_7", hdrs = ["hyperv_common_reg.h", "hyperv_var.h", "vmbus_var.h", "x86/hyperv_reg.h"], includes = ["."],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+filegroup(name = "vmbus_if_module_header", srcs = [":vmbus_if"], output_group = "header")
+cc_library(name = "vmbus_if_headers", hdrs = [":vmbus_if_module_header"], strip_include_prefix = "vmbus_if.generated", visibility = ["//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/hyperv:__pkg__"])
+
+filegroup(name = "vmbus_if_module_source", srcs = [":vmbus_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "hv_vmbus_hyperv_module", srcs = ["hyperv.c"],
+    deps = ["//sys/vm:x86_core_kernel_ucode_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_8", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_1", "//sys/dev/pci:virtualization_kernel_hyperv_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_hyperv_busdma_module", srcs = ["hyperv_busdma.c"],
+    deps = ["//sys/dev/hyperv:firewire_hyperv_module_context_9", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_hyperv_machdep_module", srcs = ["amd64/hyperv_machdep.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_xact_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_8", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_module", srcs = ["vmbus.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_x86_headers", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_3", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_10", "//sys/dev/pci:virtualization_kernel_hyperv_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_br_module", srcs = ["vmbus_br.c"],
+    deps = ["//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_4", "//sys/dev/hyperv:firewire_hyperv_module_context_11", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_chan_module", srcs = ["vmbus_chan.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_x86_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_10", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_5", "//sys/dev/pci:virtualization_kernel_hyperv_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_if_module", srcs = [":vmbus_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :vmbus_if_module_source)=vmbus_if.c", "-fdebug-prefix-map=$(execpath :vmbus_if_module_source)=vmbus_if.c"], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_res_module", srcs = ["vmbus_res.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_12", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_xact_module", srcs = ["vmbus_xact.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_xact_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_13", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_vector_module", convert_ctf = False, srcs = ["amd64/vmbus_vector.S"],
+    deps = ["//sys/kern:generic_assym_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["LOCORE"])
+
+amd64_generic_module_objects(name = "hv_vmbus_hyperv_mmu_module", srcs = ["hyperv_mmu.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_x86_headers", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_6", "//sys/dev/hyperv:firewire_hyperv_module_context_11", "//sys/dev/pci:virtualization_kernel_hyperv_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_et_module", srcs = ["vmbus_et.c"],
+    deps = ["//sys/dev/hyperv:firewire_hyperv_module_context_12", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_7", "//sys/vm:virtualization_kernel_vmbus_x86_headers", "//sys/dev/pci:virtualization_kernel_hyperv_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_hyperv_x86_module", srcs = ["x86/hyperv_x86.c"],
+    deps = ["//sys/vm:virtualization_kernel_grant_table_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_8", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_vmbus_vmbus_x86_module", srcs = ["x86/vmbus_x86.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_x86_headers", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_10", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_3", "//sys/dev/pci:virtualization_kernel_hyperv_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

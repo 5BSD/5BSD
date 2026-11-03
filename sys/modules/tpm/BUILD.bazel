@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "tpm", objects = ["//sys/dev/tpm:tpm_tpm_if_module_object_files", "//sys/dev/tpm:tpm_tpm_module_object_files", "//sys/dev/tpm:tpm_tpm_acpi_module_object_files", "//sys/dev/tpm:tpm_tpm20_module_object_files"], object_order = ["tpm_if.o", "tpm.o", "tpm_acpi.o", "tpm_isa.o", "tpm20.o", "tpm_tis_core.o", "tpm_tis_acpi.o", "tpm_crb.o", "tpm_bus.o"], exports = [], export_all = False, package = "kernel", aliases = [])

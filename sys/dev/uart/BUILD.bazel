@@ -81,3 +81,76 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_uart_if", srcs = [":b
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["uart_ppstypes.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "puc_uart_bus_puc_module", srcs = ["uart_bus_puc.c"],
+    deps = ["//sys/dev/puc:peripheral_devices_kernel_uart_bus_puc_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_isa_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:serdev_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+filegroup(name = "uart_if_module_header", srcs = [":uart_if"], output_group = "header")
+cc_library(name = "uart_if_headers", hdrs = [":uart_if_module_header"], strip_include_prefix = "uart_if.generated", visibility = ["//sys/dev/uart:__pkg__"])
+
+filegroup(name = "uart_if_module_source", srcs = [":uart_if"], output_group = "source")
+
+amd64_generic_module_objects(name = "uart_uart_bus_acpi_module", srcs = ["uart_bus_acpi.c"],
+    deps = ["//sys/dev/uart:peripheral_devices_kernel_uart_bus_acpi_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_bus_isa_module", srcs = ["uart_bus_isa.c"],
+    deps = ["//sys/isa:lowlevel_kernel_fpu_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_isa_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_bus_pci_module", srcs = ["uart_bus_pci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_bus_puc_module", srcs = ["uart_bus_puc.c"],
+    deps = ["//sys/dev/puc:peripheral_devices_kernel_uart_bus_puc_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_isa_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:serdev_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_bus_scc_module", srcs = ["uart_bus_scc.c"],
+    deps = ["//sys/dev/scc:system_io_module_context_2", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_isa_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:serdev_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_core_module", srcs = ["uart_core.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/uart:uart_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_cpu_acpi_module", srcs = ["uart_cpu_acpi.c"],
+    deps = ["//sys/dev/pci:x86_core_kernel_legacy_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_cpu_acpi_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_cpu_x86_module", srcs = ["uart_cpu_x86.c"],
+    deps = ["//sys/dev/uart:peripheral_devices_kernel_uart_cpu_x86_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_dbg_module", srcs = ["uart_dbg.c"],
+    deps = ["//sys/gdb:peripheral_devices_kernel_uart_dbg_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_dbg_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_dev_ns8250_module", srcs = ["uart_dev_ns8250.c"],
+    deps = ["//sys/dev/uart:peripheral_devices_kernel_uart_dev_ns8250_headers", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/ic:peripheral_devices_kernel_puc_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:generic_opt_platform_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_uart_header", "//sys/dev/uart:uart_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_dev_quicc_module", srcs = ["uart_dev_quicc.c"],
+    deps = ["//sys/dev/ic:system_io_module_context_2", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/uart:uart_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_dev_z8530_module", srcs = ["uart_dev_z8530.c"],
+    deps = ["//sys/dev/uart:peripheral_devices_kernel_uart_bus_pci_headers", "//sys/dev/ic:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/uart:uart_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_if_module", srcs = [":uart_if_module_source"],
+    deps = ["//sys/dev/uart:peripheral_devices_kernel_uart_bus_isa_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/uart:uart_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :uart_if_module_source)=uart_if.c", "-fdebug-prefix-map=$(execpath :uart_if_module_source)=uart_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_subr_module", srcs = ["uart_subr.c"],
+    deps = ["//sys/dev/uart:peripheral_devices_kernel_uart_dbg_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "uart_uart_tty_module", srcs = ["uart_tty.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/uart:uart_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

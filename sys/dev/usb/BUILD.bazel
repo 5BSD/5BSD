@@ -12,7 +12,7 @@ load("//tools/build/bazel:bsd_usbdevs.bzl", "bsd_usbdevs_header")
 exports_files(["usbdevs"])
 bsd_usbdevs_header(name = "device_ids")
 cc_library(name = "device_id_headers", hdrs = [":device_ids"],
-    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb:__pkg__"])
+    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/otus:__pkg__", "//sys/dev/rtwn:__pkg__"])
 filegroup(name = "usb_if_header_file", srcs = [":usb_if"], output_group = "header")
 cc_library(name = "usb_if_headers", hdrs = [":usb_if_header_file"],
     strip_include_prefix = "usb_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__"])
@@ -364,7 +364,7 @@ bsd_source_headers(name = "device_io_kernel_umass_headers", hdrs = ["quirk/usb_q
 bsd_source_headers(name = "device_io_kernel_usb_busdma_headers", hdrs = ["usb.h", "usb_bus.h", "usb_busdma.h", "usb_controller.h", "usb_core.h", "usb_debug.h", "usb_device.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usb_transfer.h", "usb_util.h", "usbdi.h", "usbdi_util.h"],
     visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_usb_core_headers", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h"],
-    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__", "//sys/dev/rtwn:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_usb_debug_headers", hdrs = ["usb.h", "usb_busdma.h", "usb_core.h", "usb_debug.h", "usb_device.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usb_transfer.h", "usbdi.h"],
     visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_usb_dev_headers", hdrs = ["usb.h", "usb_bus.h", "usb_busdma.h", "usb_controller.h", "usb_core.h", "usb_debug.h", "usb_dev.h", "usb_device.h", "usb_dynamic.h", "usb_endian.h", "usb_freebsd.h", "usb_generic.h", "usb_ioctl.h", "usb_mbuf.h", "usb_process.h", "usb_transfer.h", "usb_util.h", "usbdi.h", "usbdi_util.h"],
@@ -477,7 +477,7 @@ bsd_source_headers(name = "network_policy_kernel_ng_ubt_headers", hdrs = ["usb.h
 bsd_source_headers(name = "network_policy_kernel_ng_ubt_intel_headers", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_ng_ubt_rtl_headers", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h"],
-    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__", "//sys/dev/usb:__pkg__"])
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/otus:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_ubtbcmfw_headers", hdrs = ["usb.h", "usb_debug.h", "usb_dev.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usbdi.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 
@@ -498,7 +498,7 @@ bsd_source_headers(name = "hid_module_context_0", hdrs = ["usb.h", "usb_endian.h
     visibility = ["//sys/dev/hid:__pkg__"])
 
 bsd_source_headers(name = "hid_module_context_1", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h"], includes = [],
-    visibility = ["//sys/dev/hid:__pkg__"])
+    visibility = ["//sys/dev/hid:__pkg__", "//sys/compat/linux:__pkg__"])
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
@@ -922,3 +922,9 @@ amd64_generic_module_objects(name = "wsp_wsp_module", srcs = ["input/wsp.c"],
 amd64_generic_module_objects(name = "if_zyd_if_zyd_module", srcs = ["wlan/if_zyd.c"],
     deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:usb_remaining_module_context_62", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["usb.h", "usb_busdma.h", "usb_core.h", "usb_device.h", "usb_endian.h", "usb_freebsd.h", "usb_transfer.h", "usbdi.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_enic", objects = ["//sys/dev/enic:if_enic_if_enic_module_object_files", "//sys/dev/enic:if_enic_enic_res_module_object_files"], object_order = ["if_enic.o", "enic_txrx.o", "enic_res.o", "vnic_cq.o", "vnic_dev.o", "vnic_intr.o", "vnic_rq.o", "vnic_wq.o"], export_all = False, package = "kernel", aliases = [])

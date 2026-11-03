@@ -32,3 +32,31 @@ amd64_generic_kernel_objects(name = "generic_platform_support_p4tcc", srcs = ["p
 amd64_generic_kernel_objects(name = "generic_platform_support_powernow", srcs = ["powernow.c"],
     deps = ["//sys/vm:platform_support_kernel_xen_common_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_cpufreq_if_headers", "//sys/kern:platform_support_kernel_device_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "cpufreq_est_module", srcs = ["est.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/x86/cpufreq:platform_support_kernel_est_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cpufreq_p4tcc_module", srcs = ["p4tcc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cpufreq_powernow_module", srcs = ["powernow.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cpufreq_hwpstate_amd_module", srcs = ["hwpstate_amd.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/x86/cpufreq:platform_support_kernel_hwpstate_amd_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cpufreq_hwpstate_common_module", srcs = ["hwpstate_common.c"],
+    deps = ["//sys/x86/cpufreq:platform_support_kernel_hwpstate_amd_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cpufreq_hwpstate_intel_module", srcs = ["hwpstate_intel.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/x86/cpufreq:platform_support_kernel_hwpstate_intel_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

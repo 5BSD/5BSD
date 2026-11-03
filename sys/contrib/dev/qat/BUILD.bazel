@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["qat_200xx.bin"], visibility = ["//sys/modules/qatfw/qat_200xx:__pkg__"])
+
+exports_files(["qat_200xx_mmp.bin"], visibility = ["//sys/modules/qatfw/qat_200xx:__pkg__"])
+
+exports_files(["qat_402xx.bin"], visibility = ["//sys/modules/qatfw/qat_4xxx:__pkg__"])
+
+exports_files(["qat_402xx_mmp.bin"], visibility = ["//sys/modules/qatfw/qat_4xxx:__pkg__"])
+
+exports_files(["qat_4xxx.bin"], visibility = ["//sys/modules/qatfw/qat_4xxx:__pkg__"])
+
+exports_files(["qat_4xxx_mmp.bin"], visibility = ["//sys/modules/qatfw/qat_4xxx:__pkg__"])
+
+exports_files(["qat_895xcc.bin"], visibility = ["//sys/modules/qatfw/qat_dh895xcc:__pkg__"])
+
+exports_files(["qat_895xcc_mmp.bin"], visibility = ["//sys/modules/qatfw/qat_dh895xcc:__pkg__"])
+
+exports_files(["qat_c3xxx.bin"], visibility = ["//sys/modules/qatfw/qat_c3xxx:__pkg__"])
+
+exports_files(["qat_c3xxx_mmp.bin"], visibility = ["//sys/modules/qatfw/qat_c3xxx:__pkg__"])
+
+exports_files(["qat_c4xxx.bin"], visibility = ["//sys/modules/qatfw/qat_c4xxx:__pkg__"])
+
+exports_files(["qat_c4xxx_mmp.bin"], visibility = ["//sys/modules/qatfw/qat_c4xxx:__pkg__"])
+
+exports_files(["qat_c62x.bin"], visibility = ["//sys/modules/qatfw/qat_c62x:__pkg__"])
+
+exports_files(["qat_c62x_mmp.bin"], visibility = ["//sys/modules/qatfw/qat_c62x:__pkg__"])

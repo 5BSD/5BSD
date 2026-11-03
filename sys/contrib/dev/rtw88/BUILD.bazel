@@ -1,0 +1,252 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["bf.h", "coex.h", "debug.h", "efuse.h", "fw.h", "hci.h", "led.h", "mac.h", "main.h", "phy.h", "ps.h", "reg.h", "regd.h", "sar.h", "sdio.h", "sec.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["bf.h", "debug.h", "hci.h", "main.h", "reg.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["coex.h", "debug.h", "fw.h", "hci.h", "main.h", "phy.h", "ps.h", "reg.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["coex.h", "debug.h", "fw.h", "hci.h", "main.h", "phy.h", "ps.h", "reg.h", "regd.h", "sec.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["debug.h", "efuse.h", "hci.h", "main.h", "reg.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["coex.h", "debug.h", "fw.h", "hci.h", "mac.h", "main.h", "phy.h", "ps.h", "reg.h", "sec.h", "tx.h", "util.h", "wow.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["debug.h", "fw.h", "hci.h", "mac.h", "main.h", "reg.h", "sdio.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["bf.h", "coex.h", "debug.h", "fw.h", "hci.h", "mac.h", "main.h", "ps.h", "reg.h", "sar.h", "sec.h", "tx.h", "util.h", "wow.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["debug.h", "fw.h", "hci.h", "main.h", "phy.h", "reg.h", "regd.h", "sar.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["coex.h", "debug.h", "fw.h", "hci.h", "mac.h", "main.h", "ps.h", "reg.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "regd.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["debug.h", "fw.h", "hci.h", "main.h", "ps.h", "rx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "sar.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_13", hdrs = ["hci.h", "main.h", "reg.h", "sec.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_14", hdrs = ["debug.h", "fw.h", "hci.h", "main.h", "ps.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_15", hdrs = ["hci.h", "main.h", "reg.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_16", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "reg.h", "rtw8723x.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_17", hdrs = ["coex.h", "debug.h", "hci.h", "mac.h", "main.h", "phy.h", "reg.h", "rtw8703b.h", "rtw8703b_tables.h", "rtw8723x.h", "rx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_18", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "rtw8703b_tables.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_19", hdrs = ["coex.h", "debug.h", "fw.h", "hci.h", "mac.h", "main.h", "phy.h", "reg.h", "rtw8723d.h", "rtw8723d_table.h", "rtw8723x.h", "rx.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_20", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "rtw8723d_table.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_21", hdrs = ["coex.h", "debug.h", "efuse.h", "hci.h", "main.h", "phy.h", "reg.h", "regd.h", "rtw8814a.h", "rtw8814a_table.h", "rtw88xxa.h", "tx.h", "usb.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_22", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "rtw8814a_table.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_23", hdrs = ["bf.h", "coex.h", "debug.h", "fw.h", "hci.h", "mac.h", "main.h", "phy.h", "reg.h", "regd.h", "rtw8821c.h", "rtw8821c_table.h", "rx.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_24", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "rtw8821c_table.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_25", hdrs = ["bf.h", "coex.h", "debug.h", "fw.h", "hci.h", "mac.h", "main.h", "phy.h", "reg.h", "regd.h", "rtw8822b.h", "rtw8822b_table.h", "rx.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_26", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "rtw8822b_table.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_27", hdrs = ["bf.h", "coex.h", "debug.h", "efuse.h", "fw.h", "hci.h", "mac.h", "main.h", "phy.h", "reg.h", "rtw8822c.h", "rtw8822c_table.h", "rx.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_28", hdrs = ["debug.h", "hci.h", "main.h", "phy.h", "rtw8822c.h", "rtw8822c_table.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_29", hdrs = ["debug.h", "fw.h", "hci.h", "mac.h", "main.h", "pci.h", "ps.h", "reg.h", "rx.h", "tx.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_30", hdrs = ["debug.h", "hci.h", "main.h", "pci.h", "phy.h", "reg.h", "rtw8723d.h", "rtw8723x.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_31", hdrs = ["hci.h", "main.h", "pci.h", "rtw8814a.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_32", hdrs = ["hci.h", "main.h", "pci.h", "rtw8821c.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_33", hdrs = ["hci.h", "main.h", "pci.h", "rtw8822b.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_34", hdrs = ["hci.h", "main.h", "pci.h", "rtw8822c.h", "util.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/rtw88:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_rtw88_main_module", srcs = ["main.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_0", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_50"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_bf_module", srcs = ["bf.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_1", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_coex_module", srcs = ["coex.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_2", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_debug_module", srcs = ["debug.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_3", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_efuse_module", srcs = ["efuse.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_4", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_fw_module", srcs = ["fw.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_5", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_mac_module", srcs = ["mac.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_6", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_mac80211_module", srcs = ["mac80211.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_7", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_phy_module", srcs = ["phy.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_8", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_52"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_ps_module", srcs = ["ps.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_9", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_regd_module", srcs = ["regd.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_10", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rx_module", srcs = ["rx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_11", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_sar_module", srcs = ["sar.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_12", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_sec_module", srcs = ["sec.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_13", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_tx_module", srcs = ["tx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_14", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_util_module", srcs = ["util.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_15", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8723x_module", srcs = ["rtw8723x.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_16", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8703b_module", srcs = ["rtw8703b.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_17", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_53"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8703b_tables_module", srcs = ["rtw8703b_tables.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_18", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8723d_module", srcs = ["rtw8723d.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_19", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8723d_table_module", srcs = ["rtw8723d_table.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_20", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8814a_module", srcs = ["rtw8814a.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/usb:final_drivers_module_context_1", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_21", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8814a_table_module", srcs = ["rtw8814a_table.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_22", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8821c_module", srcs = ["rtw8821c.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_23", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8821c_table_module", srcs = ["rtw8821c_table.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_24", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8822b_module", srcs = ["rtw8822b.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_25", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8822b_table_module", srcs = ["rtw8822b_table.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_26", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8822c_module", srcs = ["rtw8822c.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_27", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8822c_table_module", srcs = ["rtw8822c_table.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_28", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_pci_module", srcs = ["pci.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_29", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8723de_module", srcs = ["rtw8723de.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_30", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8814ae_module", srcs = ["rtw8814ae.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_31", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8821ce_module", srcs = ["rtw8821ce.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_32", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8822be_module", srcs = ["rtw8822be.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_33", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_rtw8822ce_module", srcs = ["rtw8822ce.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/contrib/dev/rtw88:final_drivers_module_context_34", "//sys/compat/linuxkpi/common/include:final_drivers_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

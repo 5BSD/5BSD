@@ -29,7 +29,7 @@ amd64_cddl_module_objects(name = "dtaudit_module", srcs = ["audit_dtrace.c"],
 
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_coredump_vnode_headers", hdrs = ["audit.h"],
-    visibility = ["//sys/kern:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/compat/linux:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["audit.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_envfd_headers", hdrs = ["audit.h"],

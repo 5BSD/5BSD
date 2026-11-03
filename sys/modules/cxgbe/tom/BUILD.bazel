@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "t4_tom", objects = ["//sys/dev/cxgbe:t4_tom_t4_connect_module_object_files", "//sys/dev/cxgbe:t4_tom_t4_cpl_io_module_object_files", "//sys/dev/cxgbe:t4_tom_t4_ddp_module_object_files", "//sys/dev/cxgbe:t4_tom_t4_listen_module_object_files", "//sys/dev/cxgbe:t4_tom_t4_tls_module_object_files", "//sys/dev/cxgbe:t4_tom_t4_tom_module_object_files", "//sys/dev/cxgbe:t4_tom_t4_tom_l2t_module_object_files"], object_order = ["t4_connect.o", "t4_cpl_io.o", "t4_ddp.o", "t4_listen.o", "t4_tls.o", "t4_tom.o", "t4_tom_l2t.o"], export_all = True, package = "kernel", aliases = [])

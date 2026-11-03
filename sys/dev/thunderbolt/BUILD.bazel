@@ -2,3 +2,85 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["nhi_reg.h", "nhi_var.h", "router_var.h", "tb_debug.h", "tb_reg.h", "tbcfg_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_1", hdrs = ["hcm_var.h", "nhi_reg.h", "nhi_var.h", "router_var.h", "tb_debug.h", "tb_dev.h", "tb_reg.h", "tb_var.h", "tbcfg_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_2", hdrs = ["nhi_reg.h", "nhi_var.h", "tb_debug.h", "tb_pcib.h", "tb_reg.h", "tbcfg_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_3", hdrs = ["nhi_reg.h", "nhi_var.h", "tb_debug.h", "tb_reg.h", "tb_var.h", "tbcfg_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_4", hdrs = ["nhi_reg.h", "nhi_var.h", "router_var.h", "tb_debug.h", "tb_reg.h", "tb_var.h", "tbcfg_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_5", hdrs = ["hcm_var.h", "nhi_reg.h", "nhi_var.h", "router_var.h", "tb_debug.h", "tb_reg.h", "tb_var.h", "tbcfg_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_6", hdrs = ["nhi_reg.h", "nhi_var.h", "router_var.h", "tb_debug.h", "tb_dev.h", "tb_ioctl.h", "tb_reg.h", "tb_var.h", "tbcfg_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_7", hdrs = ["tb_reg.h"], includes = [],
+    visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+# The module Makefile generates this option independently of GENERIC.
+write_file(name = "module_options", out = "module_options/opt_thunderbolt.h", content = ["#define THUNDERBOLT_DEBUG 1", ""])
+cc_library(name = "module_option_headers", hdrs = [":module_options"], strip_include_prefix = "module_options")
+
+filegroup(name = "tb_if_module_header", srcs = [":tb_if"], output_group = "header")
+cc_library(name = "tb_if_headers", hdrs = [":tb_if_module_header"], strip_include_prefix = "tb_if.generated", visibility = ["//sys/dev/thunderbolt:__pkg__"])
+
+filegroup(name = "tb_if_module_source", srcs = [":tb_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "tb_nhi_pci_module", srcs = ["nhi_pci.c"],
+    deps = ["//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/thunderbolt:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/thunderbolt:module_option_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/thunderbolt:tb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_nhi_module", srcs = ["nhi.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/thunderbolt:system_io_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/thunderbolt:module_option_headers", "//sys/dev/thunderbolt:tb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_tb_pcib_module", srcs = ["tb_pcib.c"],
+    deps = ["//sys/dev/pci:virtualization_kernel_vmbus_pcib_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pci_link_headers", "//sys/dev/thunderbolt:system_io_module_context_2", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/thunderbolt:module_option_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/thunderbolt:tb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_tb_acpi_pcib_module", srcs = ["tb_acpi_pcib.c"],
+    deps = ["//sys/dev/pci:virtualization_kernel_vmbus_pcib_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pci_link_headers", "//sys/dev/thunderbolt:system_io_module_context_2", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/thunderbolt:module_option_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_tb_debug_module", srcs = ["tb_debug.c"],
+    deps = ["//sys/dev/thunderbolt:system_io_module_context_3", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/thunderbolt:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_nhi_wmi_module", srcs = ["nhi_wmi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpi_support:acpi_wmi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/thunderbolt:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_router_module", srcs = ["router.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/thunderbolt:system_io_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/thunderbolt:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_hcm_module", srcs = ["hcm.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/thunderbolt:system_io_module_context_5", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/thunderbolt:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_tb_dev_module", srcs = ["tb_dev.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/thunderbolt:system_io_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/thunderbolt:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tb_tb_if_module", srcs = [":tb_if_module_source"],
+    deps = ["//sys/dev/thunderbolt:system_io_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/thunderbolt:tb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :tb_if_module_source)=tb_if.c", "-fdebug-prefix-map=$(execpath :tb_if_module_source)=tb_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

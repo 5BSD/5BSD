@@ -189,7 +189,10 @@ def _impl(ctx):
     if ctx.attr.python:
         targets.append(ctx.attr.python)
     runfiles = runfiles.merge_all([target[DefaultInfo].default_runfiles for target in targets])
-    return [DefaultInfo(executable = runner, runfiles = runfiles)]
+    providers = [DefaultInfo(executable = runner, runfiles = runfiles)]
+    if ctx.attr.test_environment and not ctx.attr.clean_environment:
+        providers.append(RunEnvironmentInfo(environment = ctx.attr.test_environment))
+    return providers
 
 bsd_kyua_test = rule(
     implementation = _impl,

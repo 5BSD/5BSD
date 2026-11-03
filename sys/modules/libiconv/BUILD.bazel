@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "libiconv", objects = ["//sys/libkern:libiconv_iconv_module_object_files"], object_order = ["iconv.o", "iconv_ucs.o", "iconv_xlat.o", "iconv_xlat16.o", "iconv_converter_if.o"], exports = ["iconv_add", "iconv_open", "iconv_close", "iconv_conv", "iconv_conv_case", "iconv_convchr", "iconv_convchr_case", "iconv_convstr", "iconv_convmem", "iconv_vfs_refcount"], export_all = False, package = "kernel", aliases = [])

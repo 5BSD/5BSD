@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "krping", objects = ["//sys/contrib/rdma/krping:krping_krping_module_object_files", "//sys/contrib/rdma/krping:krping_krping_dev_module_object_files", "//sys/contrib/rdma/krping:krping_getopt_module_object_files", "//sys/compat/linuxkpi/common/src:krping_lkpi_iic_if_module_object_files"], object_order = ["krping.o", "krping_dev.o", "getopt.o", "lkpi_iic_if.o"], export_all = False, package = "kernel", aliases = [])

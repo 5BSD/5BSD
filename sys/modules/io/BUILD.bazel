@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "io", objects = ["//sys/dev/io:io_iodev_module_object_files", "//sys/amd64/amd64:io_io_module_object_files"], object_order = ["iodev.o", "io.o"], exports = [], export_all = False, package = "kernel", aliases = [])

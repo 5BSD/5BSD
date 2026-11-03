@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_firmware_module.bzl", "amd64_firmware_module")
+
+# Original image order, registration specifications and exports.
+amd64_firmware_module(module = "qat_c2xxxfw",
+    images = [{"source": "//sys/contrib/dev/qat_c2xxx:mof_firmware_c2xxx.bin", "encoding": "raw", "filename": "mof_firmware_c2xxx.bin", "spec": "mof_firmware_c2xxx.bin:qat_c2xxxfw:111"}, {"source": "//sys/contrib/dev/qat_c2xxx:mmp_firmware_c2xxx.bin", "encoding": "raw", "filename": "mmp_firmware_c2xxx.bin", "spec": "mmp_firmware_c2xxx.bin:mmp_firmware_c2xxx:111"}],
+    license = "", export_all = False,
+    extra_objects = [], extra_object_order = [])

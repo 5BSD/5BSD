@@ -65,10 +65,17 @@ def _impl(ctx):
         )]),
         feature(name = "supports_pic", enabled = True),
         feature(name = "supports_dynamic_linker", enabled = True),
-        feature(name = "pic", enabled = True, flag_sets = [flag_set(
-            actions = _COMPILE,
-            flag_groups = [flag_group(flags = ["-fPIC", "-DPIC"], expand_if_available = "pic")],
-        )]),
+        # Make SHARED_CFLAGS=-fpic has PIC level 1. Opt in per library;
+        # ordinary objects and existing large-PIC callers keep their flags.
+        feature(name = "bsd_small_pic"),
+        feature(name = "pic", enabled = True, flag_sets = [
+            flag_set(actions = _COMPILE,
+                with_features = [with_feature_set(not_features = ["bsd_small_pic"])],
+                flag_groups = [flag_group(flags = ["-fPIC", "-DPIC"], expand_if_available = "pic")]),
+            flag_set(actions = _COMPILE,
+                with_features = [with_feature_set(features = ["bsd_small_pic"])],
+                flag_groups = [flag_group(flags = ["-fpic", "-DPIC"], expand_if_available = "pic")]),
+        ]),
         # OpenSSL's maintained SHARED_CFLAGS applies only to PIC objects.
         # Targets opt in; ordinary base libraries receive no OpenSSL defines.
         feature(name = "bsd_openssl_pic", flag_sets = [flag_set(

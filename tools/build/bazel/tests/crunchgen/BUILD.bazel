@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("//tools/build/bazel:bsd_crunchgen.bzl", "bsd_crunchgen")
+load(":tests.bzl", "failure_test")
+bsd_crunchgen(name = "fixture_dispatch", executable_name = "mini",
+    emit_stubs = True, programs = ["alpha", "two-name"], object_names = {"alpha": ["alpha.o"], "two-name": ["two.o"]},
+    aliases = {"alpha": ["a"], "two-name": ["["]})
+[filegroup(name = name + "_stub", srcs = [":fixture_dispatch"], output_group = "stub_" + name)
+ for name in ["alpha", "two_name"]]
+[cc_library(name = name + "_entry", srcs = [":" + name + "_stub"],
+            local_defines = ["main=fixture_" + name]) for name in ["alpha", "two_name"]]
+filegroup(name = "fixture_metadata", srcs = [":fixture_dispatch"], output_group = "metadata")
+filegroup(name = "fixture_stubs", srcs = [":fixture_dispatch"], output_group = "stubs")
+cc_binary(name = "mini", srcs = [":fixture_dispatch", "stubs.c"],
+    deps = [":alpha_entry", ":two_name_entry"], linkopts = ["-static"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_python_test(name = "runtime_test", src = "runtime_test.py", data = [":mini", ":fixture_metadata", ":fixture_stubs"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bool_flag(name = "disabled", build_setting_default = False)
+bsd_crunchgen(name = "bad_duplicate", executable_name = "mini", programs = ["alpha", "alpha"], object_names = {"alpha": ["a.o"]}, tags = ["manual"])
+bsd_crunchgen(name = "bad_identifier", executable_name = "mini", programs = ["a.b", "ab"], object_names = {"a.b": ["a.o"], "ab": ["b.o"]}, tags = ["manual"])
+bsd_crunchgen(name = "bad_missing", executable_name = "mini", programs = ["alpha"], object_names = {}, tags = ["manual"])
+bsd_crunchgen(name = "bad_alias", executable_name = "mini", programs = ["alpha", "beta"], object_names = {"alpha": ["a.o"], "beta": ["b.o"]}, aliases = {"alpha": ["x"], "beta": ["x"]}, tags = ["manual"])
+bsd_crunchgen(name = "bad_object", executable_name = "mini", programs = ["alpha"], object_names = {"alpha": ["../a.o"]}, tags = ["manual"])
+bsd_crunchgen(name = "bad_program", executable_name = "mini", programs = ["foo/bar"], object_names = {"foo/bar": ["a.o"]}, tags = ["manual"])
+bsd_crunchgen(name = "bad_setting", executable_name = "mini", programs = ["alpha"], object_names = {"alpha": ["a.o"]}, required_configuration = {":disabled": "true"}, tags = ["manual"])
+bsd_crunchgen(name = "bad_alias_owner", executable_name = "mini", programs = ["alpha"], object_names = {"alpha": ["a.o"]}, aliases = {"beta": ["x"]}, tags = ["manual"])
+bsd_crunchgen(name = "bad_reserved", executable_name = "mini", programs = ["--list"], object_names = {"--list": ["a.o"]}, tags = ["manual"])
+load("//tools/build/bazel:bsd_crunchide.bzl", "bsd_crunchide")
+bsd_crunchide(name = "bad_crunchide_name", input_object = "//bin/echo:rescue_compiler_outputs", program_name = "../echo", keep_symbols = ["main"], tags = ["manual"])
+bsd_crunchide(name = "bad_crunchide_keep", input_object = "//bin/echo:rescue_compiler_outputs", program_name = "echo", keep_symbols = ["main", "main"], tags = ["manual"])
+_FAILURES = {
+    "crunchide_name": [":bad_crunchide_name", "program name must be a canonical basename"],
+    "crunchide_keep": [":bad_crunchide_keep", "keep symbols must be nonempty and unique"],
+    "duplicate": [":bad_duplicate", "programs must be nonempty and unique"],
+    "identifier": [":bad_identifier", "program identifiers must be valid and unique"],
+    "missing": [":bad_missing", "explicit object list for every program"],
+    "alias": [":bad_alias", "duplicate or reserved crunchgen entry"],
+    "object": [":bad_object", "canonical relative .o paths"],
+    "program": [":bad_program", "invalid crunchgen program name"],
+    "setting": [":bad_setting", "catalog configuration mismatch"],
+    "alias_owner": [":bad_alias_owner", "aliases require a declared program"],
+    "reserved": [":bad_reserved", "duplicate or reserved crunchgen entry"],
+}
+[failure_test(name = name + "_test", target_under_test = value[0], expected = value[1]) for name, value in _FAILURES.items()]
+test_suite(name = "tests", tests = [":runtime_test"] + [":" + name + "_test" for name in _FAILURES])

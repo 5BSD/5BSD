@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hwpmc", objects = ["//sys/dev/hwpmc:hwpmc_hwpmc_mod_module_object_files", "//sys/dev/hwpmc:hwpmc_hwpmc_logging_module_object_files", "//sys/dev/hwpmc:hwpmc_hwpmc_soft_module_object_files", "//sys/dev/hwpmc:hwpmc_hwpmc_amd_module_object_files", "//sys/dev/hwpmc:hwpmc_hwpmc_core_module_object_files", "//sys/dev/hwpmc:hwpmc_hwpmc_x86_module_object_files"], object_order = ["hwpmc_mod.o", "hwpmc_logging.o", "hwpmc_soft.o", "hwpmc_amd.o", "hwpmc_core.o", "hwpmc_ibs.o", "hwpmc_intel.o", "hwpmc_perf.o", "hwpmc_rapl.o", "hwpmc_tsc.o", "hwpmc_uncore.o", "hwpmc_x86.o"], exports = [], export_all = False, package = "kernel", aliases = [])

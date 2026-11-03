@@ -24,7 +24,7 @@ bsd_source_headers(name = "device_io_kernel_hms_headers", hdrs = ["hid.h", "hidb
 bsd_source_headers(name = "device_io_kernel_hmt_headers", hdrs = ["hconf.h", "hid.h", "hidbus.h", "hidquirk.h"],
     visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_uaudio_headers", hdrs = ["hid.h"],
-    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__", "//sys/dev/hyperv:__pkg__"])
 
 filegroup(name = "device_io_hid_if_header_file", srcs = [":hid_if"], output_group = "header")
 cc_library(name = "device_io_hid_if_headers", hdrs = [":device_io_hid_if_header_file"], strip_include_prefix = "hid_if.generated", visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
@@ -69,7 +69,7 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_hid_if", srcs = [":bu
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
 filegroup(name = "hid_if_module_header", srcs = [":hid_if"], output_group = "header")
-cc_library(name = "hid_if_headers", hdrs = [":hid_if_module_header"], strip_include_prefix = "hid_if.generated", visibility = ["//sys/dev/atopcase:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__"])
+cc_library(name = "hid_if_headers", hdrs = [":hid_if_module_header"], strip_include_prefix = "hid_if.generated", visibility = ["//sys/dev/atopcase:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/hyperv:__pkg__"])
 
 bsd_source_headers(name = "hid_module_context_0", hdrs = ["hid.h", "hidbus.h"], includes = [],
     visibility = ["//sys/dev/hid:__pkg__"])
@@ -193,3 +193,6 @@ amd64_generic_module_objects(name = "xb360gp_xb360gp_module", srcs = ["xb360gp.c
 
 bsd_source_headers(name = "usb_remaining_module_context_1", hdrs = ["hid.h", "hidrdesc.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["hidraw.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

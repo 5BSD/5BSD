@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_firmware_module.bzl", "amd64_firmware_module")
+
+# Original image order, registration specifications and exports.
+amd64_firmware_module(module = "iwn2030fw",
+    images = [{"source": "//sys/contrib/dev/iwn:iwnwifi-2030-18.168.6.1.fw.uu", "encoding": "uu", "filename": "iwnwifi-2030-18.168.6.1.fw", "spec": "iwnwifi-2030-18.168.6.1.fw:iwn2030fw"}],
+    license = "", export_all = False,
+    extra_objects = [], extra_object_order = [])

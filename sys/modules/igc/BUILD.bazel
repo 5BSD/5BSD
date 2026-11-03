@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_igc", objects = ["//sys/dev/igc:if_igc_if_igc_module_object_files", "//sys/dev/igc:if_igc_igc_api_module_object_files", "//sys/dev/igc:if_igc_igc_base_module_object_files"], object_order = ["if_igc.o", "igc_api.o", "igc_base.o", "igc_i225.o", "igc_mac.o", "igc_nvm.o", "igc_phy.o", "igc_txrx.o"], export_all = False, package = "kernel", aliases = [])

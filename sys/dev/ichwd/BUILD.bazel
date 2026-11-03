@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "platform_families_module_context_0", hdrs = ["ichwd.h"], includes = [],
+    visibility = ["//sys/dev/ichwd:__pkg__", "//sys/dev/intel:__pkg__"])
+
+bsd_source_headers(name = "platform_families_module_context_1", hdrs = ["i6300esbwd.h", "ichwd.h"], includes = [],
+    visibility = ["//sys/dev/ichwd:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ichwd_i6300esbwd_module", srcs = ["i6300esbwd.c"],
+    deps = ["//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/ichwd:platform_families_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ichwd_ichwd_module", srcs = ["ichwd.c"],
+    deps = ["//sys/isa:lowlevel_kernel_fpu_headers", "//sys/dev/pci:platform_families_module_context_3", "//sys/dev/ichwd:platform_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

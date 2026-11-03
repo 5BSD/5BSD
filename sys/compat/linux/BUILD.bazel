@@ -21,8 +21,289 @@ cc_library(name = "fuse_errno_headers", hdrs = ["linux_errno.h"], textual_hdrs =
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["linux.h", "linux_siginfo.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["linux.h", "linux_siginfo.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/amd64/linux:__pkg__", "//sys/compat/linux:__pkg__"])
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_aac_linux_headers", hdrs = ["linux.h", "linux_ioctl.h", "linux_siginfo.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/amd64/sgx:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_1", hdrs = ["linux.h", "linux_ioctl.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux_ioctl.h", "linux_mib.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/lindebugfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_1", hdrs = ["linux.h", "linux_common.h", "linux_emul.h", "linux_mib.h", "linux_misc.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linprocfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linsysfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_3", hdrs = ["linux.h", "linux_common.h"], includes = [],
+    visibility = ["//sys/compat/linsysfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_4", hdrs = ["linux.h", "linux_common.h", "linux_mib.h", "linux_misc.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_5", hdrs = ["linux_mib.h", "linux_misc.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_6", hdrs = ["linux_emul.h", "linux_misc.h", "linux_mmap.h", "linux_persona.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_7", hdrs = ["linux_dtrace.h", "linux_mib.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_8", hdrs = ["linux_emul.h", "linux_mib.h", "linux_misc.h", "linux_persona.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_9", hdrs = ["linux.h", "linux_dtrace.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__", "//sys/amd64/linux:__pkg__", "//sys/x86/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_10", hdrs = ["linux.h", "linux_errno.h", "linux_errno.inc"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_11", hdrs = ["linux.h", "linux_common.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_12", hdrs = ["linux.h", "linux_common.h", "linux_mib.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_13", hdrs = ["linux.h", "linux_aio.h", "linux_common.h", "linux_emul.h", "linux_errno.h", "linux_file.h", "linux_mib.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_14", hdrs = ["linux.h", "linux_common.h", "linux_mib.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_15", hdrs = ["linux_emul.h", "linux_mmap.h"], includes = [],
+    visibility = ["//sys/amd64/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_16", hdrs = ["linux.h", "linux_common.h", "linux_ioctl.h", "linux_siginfo.h"], includes = [],
+    visibility = ["//sys/dev/ntsync:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "linux_common_linux_common_module", srcs = ["linux_common.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/compat/linux:compat_services_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_mib_module", srcs = ["linux_mib.c"],
+    deps = ["//sys/compat/linux:compat_services_module_context_5"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_mmap_module", srcs = ["linux_mmap.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:compat_services_module_context_11", "//sys/compat/linux:compat_services_module_context_6", "//sys/amd64/linux:compat_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_util_module", srcs = ["linux_util.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/compat/linux:compat_services_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_emul_module", srcs = ["linux_emul.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/compat/linux:compat_services_module_context_8", "//sys/amd64/linux:compat_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_dummy_module", srcs = ["linux_dummy.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:compat_services_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_errno_module", srcs = ["linux_errno.c"],
+    deps = ["//sys/compat/linux:compat_services_module_context_10"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_netlink_module", srcs = ["linux_netlink.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:compat_services_module_context_5", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netlink:compat_services_module_context_0", "//sys/compat/linux:compat_services_module_context_11", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_if_module", srcs = ["linux_if.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:compat_services_module_context_6", "//sys/vm:usb_net_usie_headers", "//sys/compat/linux:compat_services_module_context_12"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_aio_module", srcs = ["linux_aio.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:peripheral_devices_kernel_pci_user_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:compat_services_module_context_13"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_module", srcs = ["linux.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/netlink:compat_services_module_context_1", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/compat/linux:compat_services_module_context_14", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "linux64_module_context_1", hdrs = ["linux.h", "linux_elf.c", "linux_elf.h", "linux_emul.h", "linux_mib.h", "linux_misc.h", "linux_siginfo.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_2", hdrs = ["linux.h", "linux_dtrace.h", "linux_emul.h", "linux_event.h", "linux_file.h", "linux_siginfo.h", "linux_signal.h", "linux_time.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_3", hdrs = ["linux.h", "linux_dtrace.h", "linux_emul.h", "linux_file.h", "linux_misc.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_4", hdrs = ["linux.h", "linux_emul.h", "linux_file.h", "linux_fork.h", "linux_futex.h", "linux_mib.h", "linux_misc.h", "linux_pidfd.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_5", hdrs = ["linux.h", "linux_dtrace.h", "linux_emul.h", "linux_futex.h", "linux_misc.h", "linux_siginfo.h", "linux_time.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_6", hdrs = ["linux.h", "linux_misc.h", "linux_siginfo.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_7", hdrs = ["linux.h", "linux_common.h", "linux_file.h", "linux_ioctl.h", "linux_mib.h", "linux_siginfo.h", "linux_socket.h", "linux_time.h", "linux_util.h", "linux_videodev2_compat.h", "linux_videodev_compat.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_8", hdrs = ["linux.h", "linux_ipc.h", "linux_ipc64.h", "linux_siginfo.h", "linux_time.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_9", hdrs = ["linux.h", "linux_emul.h", "linux_fork.h", "linux_misc.h", "linux_mmap.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/amd64/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_10", hdrs = ["linux.h", "linux_common.h", "linux_dtrace.h", "linux_emul.h", "linux_file.h", "linux_mib.h", "linux_misc.h", "linux_mmap.h", "linux_persona.h", "linux_pidfd.h", "linux_siginfo.h", "linux_signal.h", "linux_time.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_11", hdrs = ["linux.h", "linux_emul.h", "linux_ioctl.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_12", hdrs = ["linux.h", "linux_dtrace.h", "linux_misc.h", "linux_pidfd.h", "linux_siginfo.h", "linux_signal.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_13", hdrs = ["linux.h", "linux_dtrace.h", "linux_file.h", "linux_siginfo.h", "linux_signal.h", "linux_signalfd.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_14", hdrs = ["linux.h", "linux_emul.h", "linux_errno.h", "linux_misc.h", "linux_siginfo.h", "linux_signal.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_16", hdrs = ["linux.h", "linux_mmap.h", "linux_siginfo.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_17", hdrs = ["linux.h", "linux_emul.h", "linux_siginfo.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_18", hdrs = ["linux.h", "linux_emul.h", "linux_mib.h", "linux_misc.h", "linux_siginfo.h", "linux_signal.h", "linux_time.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_19", hdrs = ["linux.h", "linux_common.h", "linux_dtrace.h", "linux_emul.h", "linux_file.h", "linux_mib.h", "linux_pidfd.h", "linux_siginfo.h", "linux_socket.h", "linux_time.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_20", hdrs = ["linux.h", "linux_file.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_21", hdrs = ["linux.h", "linux_dtrace.h", "linux_misc.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_22", hdrs = ["linux.h", "linux_elf.h", "linux_emul.h", "linux_fork.h", "linux_ioctl.h", "linux_mib.h", "linux_misc.h", "linux_siginfo.h", "linux_signal.h", "linux_util.h", "linux_vdso.h"], includes = [],
+    visibility = ["//sys/amd64/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_23", hdrs = ["linux.h", "linux_dtrace.h", "linux_misc.h", "linux_siginfo.h", "linux_time.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_24", hdrs = ["linux_vdso.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_25", hdrs = ["linux.h", "linux_siginfo.h", "linux_time.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_26", hdrs = ["linux.h", "linux_emul.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/amd64/linux:__pkg__"])
+
+amd64_generic_module_objects(name = "linux64_linux_elf64_module", srcs = ["linux_elf64.c"],
+    deps = ["//sys/compat/linux:linux64_module_context_1", "//sys/vm:core_kernel_tty_info_headers", "//sys/amd64/linux:linux64_module_context_1"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_event_module", srcs = ["linux_event.c"],
+    deps = ["//sys/vm:core_kernel_tty_info_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_file_module", srcs = ["linux_file.c"],
+    deps = ["//sys/vm:mii_family_headers", "//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_fork_module", srcs = ["linux_fork.c"],
+    deps = ["//sys/vm:core_kernel_tty_info_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_futex_module", srcs = ["linux_futex.c"],
+    deps = ["//sys/vm:vmm_module_context_1", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_5"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_getcwd_module", srcs = ["linux_getcwd.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_6"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_ioctl_module", srcs = ["linux_ioctl.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:mii_family_headers", "//sys/net:linux64_module_context_0", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/evdev:linux64_module_context_0", "//sys/dev/hid:linux64_module_context_0", "//sys/dev/iicbus:kobj_builtins_physical_iicbus_if_headers", "//sys/dev/usb:hid_module_context_1", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_7", "//sys/contrib/v4l:linux64_module_context_0", "//sys/cam:linux64_module_context_0", "//sys/dev/nvme:linux64_module_context_0", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_ipc_module", srcs = ["linux_ipc.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_8"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_misc_module", srcs = ["linux_misc.c"],
+    deps = ["//sys/vm:linux64_module_context_4", "//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_10"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_perf_module", srcs = ["linux_perf.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_11"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_pidfd_module", srcs = ["linux_pidfd.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_12"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_signalfd_module", srcs = ["linux_signalfd.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_13"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_ptrace_module", srcs = ["linux_ptrace.c"],
+    deps = ["//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_14"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_quota_module", srcs = ["linux_quota.c"],
+    deps = ["//sys/vm:mii_family_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:tracing_remaining_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_remap_module", srcs = ["linux_remap.c"],
+    deps = ["//sys/vm:vm_kernel_vm_unix_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_16"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_rseq_module", srcs = ["linux_rseq.c"],
+    deps = ["//sys/compat/linux:linux64_module_context_17", "//sys/amd64/linux:compat_services_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_signal_module", srcs = ["linux_signal.c"],
+    deps = ["//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_18", "//sys/amd64/conf:core_kernel_opt_ktrace_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_socket_module", srcs = ["linux_socket.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:mii_family_headers", "//sys/net:linux64_module_context_1", "//sys/netinet:linux64_module_context_1", "//sys/netinet6:network_services_module_context_1", "//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_19", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_mac_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_stats_module", srcs = ["linux_stats.c"],
+    deps = ["//sys/vm:mii_family_headers", "//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_20", "//sys/amd64/conf:core_kernel_opt_ktrace_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_sysctl_module", srcs = ["linux_sysctl.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_21"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_time_module", srcs = ["linux_time.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_23"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_vdso_module", srcs = ["linux_vdso.c"],
+    deps = ["//sys/vm:vmm_module_context_6", "//sys/compat/linux:linux64_module_context_24"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_timer_module", srcs = ["linux_timer.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_25"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_xattr_module", srcs = ["linux_xattr.c"],
+    deps = ["//sys/vm:mii_family_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:linux64_module_context_20"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_vdso_inc_module", srcs = ["linux_vdso_inc.S"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-Wa,-I,$(BINDIR)/sys/amd64/linux/module_vdso"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [], additional_compiler_inputs = ["//sys/amd64/linux:module_vdso"])
+
+bsd_source_headers(name = "linux_layout_extra_headers", hdrs = ["linux.h", "linux_mib.h", "linux_siginfo.h"], includes = [], visibility = ["//sys/amd64/linux:__pkg__"])
+
+bsd_source_headers(name = "linux_vdso_gtod_vdso_headers", hdrs = ["linux.h", "linux_errno.h", "linux_siginfo.h", "linux_time.h", "linux_vdso_gtod.inc"], includes = [], visibility = ["//sys/amd64/linux:__pkg__"])

@@ -35,7 +35,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_nvpair_headers", hdrs = ["netconfig.h", "types.h", "xdr.h"],
-    visibility = ["//sys/contrib/openzfs:__pkg__"])
+    visibility = ["//sys/contrib/openzfs:__pkg__", "//sys/xdr:__pkg__"])
 
 # Native filesystem/RPC physical prerequisites; identical contexts share providers.
 bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonkrpc_headers", hdrs = ["auth.h", "clnt.h", "clnt_stat.h", "clntrdma.h", "krpc.h", "netconfig.h", "pmap_prot.h", "rpc.h", "rpc_msg.h", "rpcb_clnt.h", "rpcsec_gss.h", "svc.h", "svc_auth.h", "types.h", "xdr.h"],

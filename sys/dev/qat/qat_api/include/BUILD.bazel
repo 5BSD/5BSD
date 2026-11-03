@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["cpa.h", "cpa_types.h", "icp_sal_user.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["cpa.h", "cpa_types.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/qat_comms:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/qat_kernel/src:__pkg__", "//sys/dev/qat/qat_api/qat_utils/src:__pkg__", "//sys/dev/qat/qat_api:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["cpa.h", "cpa_types.h", "icp_buffer_desc.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["cpa.h", "cpa_types.h", "icp_buffer_desc.h", "icp_sal_poll.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["cpa.h", "cpa_types.h", "icp_sal.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["cpa.h", "cpa_types.h", "icp_sal_iommu.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["cpa.h", "cpa_types.h", "icp_sal_versions.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["cpa.h", "cpa_types.h", "icp_buffer_desc.h", "icp_sal_poll.h", "icp_sal_versions.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["cpa.h", "cpa_types.h", "icp_buffer_desc.h", "icp_sal_poll.h", "icp_sal_user.h", "icp_sal_versions.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["cpa.h", "cpa_types.h", "icp_sal_poll.h", "icp_sal_user.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/stubs:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["cpa.h", "cpa_dev.h", "cpa_types.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/device:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["cpa.h", "cpa_types.h", "icp_sal_poll.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/qat_kernel/src:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["cpa.h", "cpa_types.h", "icp_sal_iommu.h", "icp_sal_poll.h", "icp_sal_versions.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/qat_kernel/src:__pkg__"])

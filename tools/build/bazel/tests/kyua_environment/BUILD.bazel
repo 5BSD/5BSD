@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+cc_binary(name = "fixture", srcs = ["fixture.c"], linkopts = ["-static"])
+[bsd_kyua_test(name = name, program = ":fixture", kyua = "@bsd_sdk//toolchain:extra_kyua",
+    test_environment = {"BSD_KYUA_DECLARED_ENV": value, "DTRACE_DOF_INIT_DISABLE": "1"},
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"], size = "small",
+    tags = [] if name == "inherited_environment" else ["manual"])
+ for name, value in [("inherited_environment", "before constructors"), ("wrong_environment", "wrong")]]

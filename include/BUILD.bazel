@@ -8,3 +8,11 @@ cc_library(name = "hesiod_header", hdrs = ["hesiod.h"], strip_include_prefix = "
 cc_library(name = "rpcsec_gss_headers", hdrs = ['_ctype.h', 'ctype.h', 'grp.h', 'gssapi/gssapi.h', 'netconfig.h', 'pwd.h', 'rpc/auth.h', 'rpc/auth_des.h', 'rpc/auth_unix.h', 'rpc/clnt.h', 'rpc/clnt_soc.h', 'rpc/clnt_stat.h', 'rpc/pmap_clnt.h', 'rpc/pmap_prot.h', 'rpc/rpc.h', 'rpc/rpc_msg.h', 'rpc/rpcb_clnt.h', 'rpc/rpcent.h', 'rpc/rpcsec_gss.h', 'rpc/svc.h', 'rpc/svc_auth.h', 'rpc/svc_soc.h', 'rpc/xdr.h', 'runetype.h', 'stdio.h', 'stdlib.h', 'string.h', 'strings.h', 'time.h', 'unistd.h', 'xlocale/_ctype.h', 'xlocale/_string.h', 'xlocale/_strings.h', 'xlocale/_time.h'], visibility = ["//lib/librpcsec_gss:__pkg__"])
 
 cc_library(name = "legacy_gss_headers", hdrs = ["gssapi/gssapi.h"], strip_include_prefix = ".", visibility = ["//lib/libgssapi:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "linux_vdso_gtod_vdso_headers", hdrs = ["limits.h", "stdbool.h", "time.h", "xlocale/_time.h"], includes = ["."], visibility = ["//sys/amd64/linux:__pkg__"])
+
+# Original login_cap_list_test source include root, bounded by consumed headers.
+cc_library(name = "libutil_test_headers", hdrs = ['_ctype.h', 'ctype.h', 'db.h', 'limits.h', 'pwd.h', 'runetype.h', 'stdbool.h', 'stddef.h', 'stdio.h', 'stdlib.h', 'string.h', 'strings.h', 'time.h', 'unistd.h', 'xlocale/_ctype.h', 'xlocale/_string.h', 'xlocale/_strings.h', 'xlocale/_time.h'],
+    visibility = ["//lib/libutil/tests:__pkg__"])

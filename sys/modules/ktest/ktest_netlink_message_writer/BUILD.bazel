@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ktest_netlink_message_writer", objects = ["//sys/netlink:ktest_netlink_message_writer_ktest_netlink_message_writer_module_object_files"], object_order = ["ktest_netlink_message_writer.o"], export_all = False, package = "tests")

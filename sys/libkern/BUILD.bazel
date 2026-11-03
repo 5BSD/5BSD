@@ -70,3 +70,16 @@ filegroup(name = "generic_object_files", srcs = [":generic_common_object_files",
 exports_files(["explicit_bzero.c"], visibility = ["//lib/libc/string:__pkg__"])
 
 exports_files(['crc16.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+filegroup(name = "iconv_converter_if_module_header", srcs = [":iconv_converter_if"], output_group = "header")
+cc_library(name = "iconv_converter_if_headers", hdrs = [":iconv_converter_if_module_header"], strip_include_prefix = "iconv_converter_if.generated", visibility = ["//sys/libkern:__pkg__"])
+
+filegroup(name = "iconv_converter_if_module_source", srcs = [":iconv_converter_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "libiconv_iconv_module", srcs = ["iconv.c", "iconv_ucs.c", "iconv_xlat.c", "iconv_xlat16.c", ":iconv_converter_if_module_source"],
+    deps = ["//sys/libkern:iconv_converter_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :iconv_converter_if_module_source)=iconv_converter_if.c", "-fdebug-prefix-map=$(execpath :iconv_converter_if_module_source)=iconv_converter_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

@@ -9,7 +9,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites for native codec and crypto built-ins.
 bsd_source_headers(name = "codecs_crypto_kernel_random_infra_headers", hdrs = ["randomdev.h"],
-    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__", "//sys/dev/tpm:__pkg__"])
 bsd_source_headers(name = "codecs_crypto_kernel_random_harvestq_headers", hdrs = ["fortuna.h", "hash.h", "random_harvestq.h", "randomdev.h", "uint128.h"],
     visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
 bsd_source_headers(name = "codecs_crypto_kernel_randomdev_headers", hdrs = ["hash.h", "random_harvestq.h", "randomdev.h", "uint128.h"],
@@ -48,3 +48,42 @@ bsd_source_headers(name = "peripheral_devices_kernel_tpm20_headers", hdrs = ["ra
     visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
 bsd_source_headers(name = "peripheral_devices_kernel_vmgenc_acpi_headers", hdrs = ["random_harvestq.h", "randomdev.h"],
     visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_3", hdrs = ["hash.h", "other_algorithm.h", "random_harvestq.h", "randomdev.h", "uint128.h"], includes = [],
+    visibility = ["//sys/dev/random:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "random_fortuna_randomdev_module", srcs = ["randomdev.c"],
+    deps = ["//sys/crypto/rijndael:core_kernel_kern_shutdown_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/dev/random:codecs_crypto_kernel_randomdev_headers", "//sys/crypto/chacha20:codecs_crypto_kernel_random_harvestq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["RANDOM_LOADABLE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "random_fortuna_hash_module", srcs = ["hash.c"],
+    deps = ["//sys/crypto/chacha20:codecs_crypto_kernel_hash_headers", "//sys/crypto/rijndael:core_kernel_kern_shutdown_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/dev/random:codecs_crypto_kernel_hash_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["RANDOM_LOADABLE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "random_fortuna_fortuna_module", srcs = ["fortuna.c"],
+    deps = ["//sys/crypto/chacha20:core_kernel_kern_shutdown_headers", "//sys/crypto/rijndael:core_kernel_kern_shutdown_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/dev/random:codecs_crypto_kernel_random_harvestq_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["RANDOM_LOADABLE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "random_OTHER_randomdev_module", srcs = ["randomdev.c"],
+    deps = ["//sys/crypto/rijndael:core_kernel_kern_shutdown_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/dev/random:codecs_crypto_kernel_randomdev_headers", "//sys/crypto/chacha20:codecs_crypto_kernel_random_harvestq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["RANDOM_LOADABLE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "random_OTHER_hash_module", srcs = ["hash.c"],
+    deps = ["//sys/crypto/chacha20:codecs_crypto_kernel_hash_headers", "//sys/crypto/rijndael:core_kernel_kern_shutdown_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/dev/random:codecs_crypto_kernel_hash_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["RANDOM_LOADABLE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "random_OTHER_other_algorithm_module", srcs = ["other_algorithm.c"],
+    deps = ["//sys/crypto/rijndael:core_kernel_kern_shutdown_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/dev/random:network_services_module_context_3", "//sys/crypto/chacha20:codecs_crypto_kernel_random_harvestq_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["RANDOM_LOADABLE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rdrand_rng_ivy_module", srcs = ["ivy.c"],
+    deps = ["//sys/dev/random:codecs_crypto_kernel_random_infra_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rdseed_rng_rdseed_module", srcs = ["rdseed.c"],
+    deps = ["//sys/dev/random:codecs_crypto_kernel_random_infra_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

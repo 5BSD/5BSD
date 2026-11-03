@@ -10,12 +10,12 @@ cc_library(name = "storage_module_headers", hdrs = ["ofw_bus.h", "ofw_bus_subr.h
 
 filegroup(name = "ofw_bus_if_header_file", srcs = [":ofw_bus_if"], output_group = "header")
 cc_library(name = "ofw_bus_if_headers", hdrs = [":ofw_bus_if_header_file"],
-    strip_include_prefix = "ofw_bus_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/ahci:__pkg__"])
+    strip_include_prefix = "ofw_bus_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/safexcel:__pkg__"])
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical source prerequisites from independent Ethernet module builds.
-bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["ofw_bus.h", "ofw_bus_subr.h", "openfirm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["ofw_bus.h", "ofw_bus_subr.h", "openfirm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/safexcel:__pkg__"])
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["ofw_bus.h", "ofw_bus_subr.h", "openfirm.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__"])
@@ -142,4 +142,4 @@ bsd_source_headers(
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_adlngpio_headers", hdrs = ["openfirm.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__"])

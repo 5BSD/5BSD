@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "firewire_hyperv_module_context_0", hdrs = ["firewire.h", "firewirereg.h", "fwmem.h", "iec13213.h", "iec68113.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_1", hdrs = ["firewire.h", "firewire_phy.h", "firewirereg.h", "fwdma.h", "fwohcireg.h", "fwohcivar.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_2", hdrs = ["firewire.h", "firewirereg.h", "fwdma.h", "fwohcireg.h", "fwohcivar.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_3", hdrs = ["firewire.h", "iec13213.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_4", hdrs = ["firewire.h", "firewirereg.h", "fwdma.h", "fwmem.h", "iec68113.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_5", hdrs = ["firewire.h", "firewirereg.h", "fwmem.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_6", hdrs = ["firewire.h", "firewirereg.h", "fwdma.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_7", hdrs = ["firewire.h", "firewirereg.h", "fw_helpers.h", "fwcam.h", "iec13213.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_8", hdrs = ["firewire.h", "firewirereg.h", "fw_helpers.h", "fwdv.h", "iec13213.h", "iec68113.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_9", hdrs = ["firewire.h", "firewirereg.h", "fw_helpers.h", "fwcam.h", "fwisound.h", "iec13213.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_10", hdrs = ["firewire.h", "firewirereg.h", "fwcam.h", "fwisound.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_11", hdrs = ["firewire.h", "firewirereg.h", "fwdma.h", "iec13213.h", "sbp.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_12", hdrs = ["firewire.h", "firewirereg.h", "fwmem.h", "iec13213.h", "sbp.h"], includes = [],
+    visibility = ["//sys/dev/firewire:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "firewire_firewire_module", srcs = ["firewire.c"],
+    deps = ["//sys/dev/firewire:firewire_hyperv_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "firewire_fwohci_module", srcs = ["fwohci.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/firewire:firewire_hyperv_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "firewire_fwohci_pci_module", srcs = ["fwohci_pci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/firewire:firewire_hyperv_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "firewire_fwcrom_module", srcs = ["fwcrom.c"],
+    deps = ["//sys/dev/firewire:firewire_hyperv_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "firewire_fwdev_module", srcs = ["fwdev.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/firewire:firewire_hyperv_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "firewire_fwmem_module", srcs = ["fwmem.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/firewire:firewire_hyperv_module_context_5", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "firewire_fwdma_module", srcs = ["fwdma.c"],
+    deps = ["//sys/dev/firewire:firewire_hyperv_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "fwcam_fwcam_module", srcs = ["fwcam.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/firewire:firewire_hyperv_module_context_7", "//sys/dev/video:device_io_kernel_uvideo_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/video:video_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "fwdv_fwdv_module", srcs = ["fwdv.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/firewire:firewire_hyperv_module_context_8", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "fwisound_fwisound_module", srcs = ["fwisound.c"],
+    deps = ["//sys/vm:pci_ethernet_headers", "//sys/dev/firewire:firewire_hyperv_module_context_9", "//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "fwisound_fwisound_pcm_module", srcs = ["fwisound_pcm.c"],
+    deps = ["//sys/dev/firewire:firewire_hyperv_module_context_10", "//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "sbp_sbp_module", srcs = ["sbp.c"],
+    deps = ["//sys/cam:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/firewire:firewire_hyperv_module_context_11", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "sbp_targ_sbp_targ_module", srcs = ["sbp_targ.c"],
+    deps = ["//sys/dev/firewire:firewire_hyperv_module_context_12", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+exports_files(["fwcrom.c"], visibility = ["//usr.sbin/fwcontrol:__pkg__"])
+cc_library(name = "userspace_headers", hdrs = ["firewire.h", "iec13213.h", "fwphyreg.h", "iec68113.h"], strip_include_prefix = "/sys", visibility = ["//:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["firewire.h", "firewirereg.h", "iec13213.h"], includes = [],
+    visibility = ["//sys/dev/dcons:__pkg__"])

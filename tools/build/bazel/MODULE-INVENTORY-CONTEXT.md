@@ -49,3 +49,41 @@ native artifacts, installation records, package closure, complete kernel/world
 builds, or VM behavior. Those completion gates remain open in the completion
 plan. Parent Make exports are discovery inputs, not a replacement for explicit
 native Bazel configuration and dependency declarations.
+
+## Early source lookup correction on 2026-11-02
+
+Normal kernel module recursion supplies `SYSDIR` and `MODULE_TIED=yes` from
+`sys/conf/kern.post.mk` before parsing module Makefiles. The standalone inventory
+now supplies the same context: `SYSDIR` comes from the explicit resolved `--src`
+input plus `sys`, and `MODULE_TIED` is enabled for the selected kernel. Report
+format 2 records `system_source_dir` and `module_tied`. Parent export discovery
+continues to carry source-owned option variables without a fixed option list.
+
+This matters for leaves such as dpdk_lpm4, dpdk_lpm6 and fib_dxr, whose early
+`.PATH` directives use `SYSDIR` before including bsd.kmod.mk. The initial direct
+Make controls for the pending network cohort omitted this normal kernel input:
+68 of 74 controls passed and six failed source lookup before compilation. Those
+results are retained under
+`/usr/obj/usr/src/bazel-network-services-module-make-references-r1-20261102`.
+They are rejected controls, not evidence against the module source or accepted
+native artifacts. Fresh controls must use the selected kernel's actual SYSDIR.
+
+The maintained `//tools/build/bazel:module_inventory_test` passes through the
+normal build-bsd bazel-test frontend (11 Python test methods). Its new real BSD
+Make fixture uses a temporary custom source root and checks early `.PATH`
+expansion and the tied-kernel input. No fixture hardcodes the production source
+location. Evidence:
+`/usr/obj/usr/src/bazel-module-inventory-source-context-native-r1-20261102`.
+
+Fresh recursive queries complete without errors and select exactly the same
+(directory, KMOD) pairs as the preceding audit: amd64 729, ARM64 627 and RISC-V64
+553. Local BUILD presence is respectively 628, 504 and 476; presence says nothing
+about whether those rules support the queried architecture. The reports and
+set comparison are under
+`/usr/obj/usr/src/bazel-source-context-module-selection-20261102`.
+
+Frontend review: this changes a read-only engineering inventory and its test,
+not build inputs to the format-5 native qualifier, staging, signing, package
+publication or the CLI. No build-bsd C, backend or manual option change is
+required. Make remains the production/default backend; this query correction
+does not close any full-system, runtime, performance or cross-target build gate.

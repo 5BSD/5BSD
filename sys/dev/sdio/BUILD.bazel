@@ -2,3 +2,31 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["sdio_subr.h", "sdiob.h"], includes = [],
+    visibility = ["//sys/dev/sdio:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "sdio_if_module_header", srcs = [":sdio_if"], output_group = "header")
+cc_library(name = "sdio_if_headers", hdrs = [":sdio_if_module_header"], strip_include_prefix = "sdio_if.generated", visibility = ["//sys/dev/sdio:__pkg__"])
+
+filegroup(name = "sdio_if_module_source", srcs = [":sdio_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "sdio_sdiob_module", srcs = ["sdiob.c"],
+    deps = ["//sys/cam:storage_core_kernel_ata_pmp_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/sdio:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/sdio:sdio_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sdio_sdio_subr_module", srcs = ["sdio_subr.c"],
+    deps = ["//sys/dev/mmc:kobj_builtins_physical_mmcbr_if_headers", "//sys/dev/sdio:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sdio:sdio_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sdio_sdio_if_module", srcs = [":sdio_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sdio:sdio_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :sdio_if_module_source)=sdio_if.c", "-fdebug-prefix-map=$(execpath :sdio_if_module_source)=sdio_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

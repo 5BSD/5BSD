@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_cc", objects = ["//sys/dev/cxgbe:if_cc_if_cc_module_object_files"], object_order = ["if_cc.o"], export_all = False, package = "kernel", aliases = [])

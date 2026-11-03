@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hptnr", objects = ["//sys/dev/hptnr:hptnr_hptnr_os_bsd_module_object_files", "//sys/dev/hptnr:hptnr_hptnr_osm_bsd_module_object_files", "//sys/dev/hptnr:amd64-elf.hptnr_lib.o"], object_order = ["hptnr_os_bsd.o", "hptnr_osm_bsd.o", "hptnr_config.o", "amd64-elf.hptnr_lib.o"], export_all = False, package = "kernel", aliases = [])

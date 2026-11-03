@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "dcons_crom", objects = ["//sys/dev/dcons:dcons_crom_dcons_crom_module_object_files"], object_order = ["dcons_crom.o"], exports = [], export_all = False, package = "kernel", aliases = [])

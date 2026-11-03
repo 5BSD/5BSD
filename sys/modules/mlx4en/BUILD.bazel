@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mlx4en", objects = ["//sys/dev/mlx4/mlx4_en:mlx4en_mlx4_en_cq_module_object_files", "//sys/dev/mlx4/mlx4_en:mlx4en_mlx4_en_main_module_object_files", "//sys/dev/mlx4/mlx4_en:mlx4en_mlx4_en_netdev_module_object_files", "//sys/dev/mlx4/mlx4_en:mlx4en_mlx4_en_port_module_object_files", "//sys/dev/mlx4/mlx4_en:mlx4en_mlx4_en_resources_module_object_files", "//sys/dev/mlx4/mlx4_en:mlx4en_mlx4_en_rx_module_object_files", "//sys/dev/mlx4/mlx4_en:mlx4en_mlx4_en_tx_module_object_files", "//sys/compat/linuxkpi/common/src:mlx4en_lkpi_iic_if_module_object_files"], object_order = ["mlx4_en_cq.o", "mlx4_en_main.o", "mlx4_en_netdev.o", "mlx4_en_port.o", "mlx4_en_resources.o", "mlx4_en_rx.o", "mlx4_en_tx.o", "lkpi_iic_if.o"], export_all = False, package = "kernel", aliases = [])

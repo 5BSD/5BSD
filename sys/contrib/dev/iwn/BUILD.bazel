@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["iwlwifi-100-39.31.5.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn100:__pkg__"])
+
+exports_files(["iwlwifi-1000-39.31.5.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn1000:__pkg__"])
+
+exports_files(["iwlwifi-105-6-18.168.6.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn105:__pkg__"])
+
+exports_files(["iwlwifi-135-6-18.168.6.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn135:__pkg__"])
+
+exports_files(["iwlwifi-2000-18.168.6.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn2000:__pkg__"])
+
+exports_files(["iwlwifi-4965-228.61.2.24.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn4965:__pkg__"])
+
+exports_files(["iwlwifi-5000-8.83.5.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn5000:__pkg__"])
+
+exports_files(["iwlwifi-5150-8.24.2.2.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn5150:__pkg__"])
+
+exports_files(["iwlwifi-6000-9.221.4.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn6000:__pkg__"])
+
+exports_files(["iwlwifi-6000g2a-18.168.6.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn6000g2a:__pkg__"])
+
+exports_files(["iwlwifi-6000g2b-18.168.6.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn6000g2b:__pkg__"])
+
+exports_files(["iwlwifi-6050-41.28.5.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn6050:__pkg__"])
+
+exports_files(["iwnwifi-2030-18.168.6.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn2030:__pkg__"])

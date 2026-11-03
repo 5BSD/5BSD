@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_geneve", objects = ["//sys/net:if_geneve_if_geneve_module_object_files"], object_order = ["if_geneve.o"], export_all = False, package = "kernel", aliases = [])

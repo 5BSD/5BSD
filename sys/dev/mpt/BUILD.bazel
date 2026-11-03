@@ -41,3 +41,31 @@ amd64_generic_kernel_objects(name = "generic_storage_controllers_mpt_user", srcs
 
 # Existing userland header providers retain their target/include namespace.
 exports_files(["mpilib/mpi.h", "mpilib/mpi_cnfg.h", "mpilib/mpi_raid.h", "mpilib/mpi_type.h"], visibility = ["//:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "mpt_mpt_module", srcs = ["mpt.c"],
+    deps = ["//sys/dev/mpt:storage_controllers_kernel_mpt_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mpt_mpt_cam_module", srcs = ["mpt_cam.c"],
+    deps = ["//sys/dev/mpt:storage_controllers_kernel_mpt_cam_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mpt_mpt_debug_module", srcs = ["mpt_debug.c"],
+    deps = ["//sys/dev/mpt:storage_controllers_kernel_mpt_debug_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mpt_mpt_pci_module", srcs = ["mpt_pci.c"],
+    deps = ["//sys/dev/mpt:storage_controllers_kernel_mpt_pci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mpt_mpt_raid_module", srcs = ["mpt_raid.c"],
+    deps = ["//sys/dev/mpt:storage_controllers_kernel_mpt_raid_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mpt_mpt_user_module", srcs = ["mpt_user.c"],
+    deps = ["//sys/dev/mpt:storage_controllers_kernel_mpt_user_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

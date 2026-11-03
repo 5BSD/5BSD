@@ -27,3 +27,19 @@ amd64_generic_kernel_objects(name = "generic_storage_controllers_isp_pci", srcs 
 amd64_generic_kernel_objects(name = "generic_storage_controllers_isp_target", srcs = ["isp_target.c"],
     deps = ["//sys/cam:storage_controllers_kernel_isp_headers", "//sys/dev/isp:storage_controllers_kernel_isp_headers", "//sys/dev/mmc:storage_controllers_kernel_aac_cam_headers", "//sys/dev/nvme:storage_controllers_kernel_aac_cam_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_cam_header", "//sys/amd64/conf:storage_controllers_kernel_opt_ddb_header", "//sys/amd64/conf:storage_controllers_kernel_opt_isp_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "isp_isp_module", srcs = ["isp.c", "isp_library.c", "isp_target.c"],
+    deps = ["//sys/dev/isp:storage_controllers_kernel_isp_headers", "//sys/cam:isci_kernel_isci_io_request_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:storage_controllers_kernel_opt_isp_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isp_isp_freebsd_module", srcs = ["isp_freebsd.c"],
+    deps = ["//sys/dev/isp:storage_controllers_kernel_isp_freebsd_headers", "//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:storage_controllers_kernel_opt_isp_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isp_isp_pci_module", srcs = ["isp_pci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/isp:storage_controllers_kernel_isp_headers", "//sys/cam:isci_kernel_isci_io_request_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:storage_controllers_kernel_opt_isp_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

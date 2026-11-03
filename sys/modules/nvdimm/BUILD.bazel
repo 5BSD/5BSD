@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "nvdimm", objects = ["//sys/dev/nvdimm:nvdimm_nvdimm_module_object_files", "//sys/dev/nvdimm:nvdimm_nvdimm_e820_module_object_files", "//sys/dev/nvdimm:nvdimm_nvdimm_nfit_module_object_files", "//sys/dev/nvdimm:nvdimm_nvdimm_spa_module_object_files"], object_order = ["nvdimm.o", "nvdimm_acpi.o", "nvdimm_e820.o", "nvdimm_nfit.o", "nvdimm_ns.o", "nvdimm_spa.o"], exports = ["nvdimm_spa_dev_init", "nvdimm_spa_dev_fini"], export_all = False, package = "kernel", aliases = [])

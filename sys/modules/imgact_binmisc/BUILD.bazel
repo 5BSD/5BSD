@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "imgact_binmisc", objects = ["//sys/kern:imgact_binmisc_imgact_binmisc_module_object_files"], object_order = ["imgact_binmisc.o"], exports = [], export_all = False, package = "kernel", aliases = [])

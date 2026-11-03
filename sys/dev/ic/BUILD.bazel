@@ -4,7 +4,7 @@ exports_files(["ns16550.h"], visibility = ["//:__pkg__"])
 # x86 core built-in prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "x86_core_kernel_intr_machdep_headers", hdrs = ["i8259.h"],
-    visibility = ["//sys/x86/x86:__pkg__"])
+    visibility = ["//sys/x86/x86:__pkg__", "//sys/amd64/vmm:__pkg__"])
 
 # Physical prerequisites for native peripheral device built-ins.
 bsd_source_headers(name = "peripheral_devices_kernel_puc_pci_headers", hdrs = ["ns16550.h"],
@@ -12,8 +12,14 @@ bsd_source_headers(name = "peripheral_devices_kernel_puc_pci_headers", hdrs = ["
 
 # Physical prerequisites for native platform support built-ins.
 bsd_source_headers(name = "platform_support_kernel_clock_headers", hdrs = ["i8253reg.h"],
-    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/amd64/vmm:__pkg__"])
 bsd_source_headers(name = "platform_support_kernel_isa_dma_headers", hdrs = ["i8237.h"],
     visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
 
 bsd_source_headers(name = "acpi_wakecode_headers", hdrs = ["i8253reg.h"], visibility = ["//sys/amd64/acpica:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["z8530.h"], includes = [],
+    visibility = ["//sys/dev/scc:__pkg__", "//sys/dev/uart:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_2", hdrs = ["quicc.h"], includes = [],
+    visibility = ["//sys/dev/uart:__pkg__"])

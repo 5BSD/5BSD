@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mpi3mr", objects = ["//sys/dev/mpi3mr:mpi3mr_mpi3mr_pci_module_object_files", "//sys/dev/mpi3mr:mpi3mr_mpi3mr_module_object_files", "//sys/dev/mpi3mr:mpi3mr_mpi3mr_cam_module_object_files", "//sys/dev/mpi3mr:mpi3mr_mpi3mr_app_module_object_files"], object_order = ["mpi3mr_pci.o", "mpi3mr.o", "mpi3mr_cam.o", "mpi3mr_app.o"], export_all = False, package = "kernel", aliases = [])

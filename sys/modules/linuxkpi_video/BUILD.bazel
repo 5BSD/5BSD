@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "linuxkpi_video", objects = ["//sys/compat/linuxkpi/common/src:linuxkpi_video_linux_hdmi_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_video_linux_aperture_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_video_linux_cmdline_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_video_linuxkpi_videokmod_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_video_lkpi_iic_if_module_object_files"], object_order = ["linux_hdmi.o", "linux_aperture.o", "linux_cmdline.o", "linuxkpi_videokmod.o", "lkpi_iic_if.o"], exports = [], export_all = True, package = "kernel", aliases = [])

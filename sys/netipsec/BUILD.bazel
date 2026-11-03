@@ -47,7 +47,7 @@ bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["ipsec_supp
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["ipsec.h", "ipsec_offload.h", "key_var.h", "keydb.h", "xform.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_offload_headers", hdrs = ["ipsec.h", "key_var.h", "keydb.h"],
-    visibility = ["//sys/dev/mlx5:__pkg__"])
+    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/netipsec:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_headers", hdrs = ["ipsec.h", "ipsec_offload.h", "key.h", "key_var.h", "keydb.h", "xform.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_rxtx_headers", hdrs = ["ipsec_offload.h", "key_var.h", "keydb.h", "xform.h"],
@@ -84,3 +84,84 @@ amd64_generic_kernel_objects(name = "generic_network_policy_keysock", srcs = ["k
 amd64_generic_kernel_objects(name = "generic_network_policy_subr_ipsec", srcs = ["subr_ipsec.c"],
     deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/crypto:network_policy_kernel_ipsec_pcb_headers", "//sys/crypto/camellia:network_policy_kernel_ipsec_pcb_headers", "//sys/crypto/rijndael:network_policy_kernel_ipsec_pcb_headers", "//sys/crypto/sha2:network_policy_kernel_ipsec_pcb_headers", "//sys/net:network_policy_kernel_subr_ipsec_headers", "//sys/netinet:network_policy_kernel_subr_ipsec_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netipsec:network_policy_kernel_subr_ipsec_headers", "//sys/opencrypto:network_policy_kernel_ipsec_pcb_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet_header", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header", "//sys/amd64/conf:network_policy_kernel_opt_ipsec_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_0", hdrs = ["ipsec.h", "ipsec6.h", "ipsec_support.h", "key_var.h", "keydb.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "tcpmd5_xform_tcp_module", srcs = ["xform_tcp.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/netinet:storage_tcp_ktest_module_context_9", "//sys/net:network_policy_kernel_subr_ipsec_headers", "//sys/netinet6:usb_net_if_ure_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet/cc:network_support_headers", "//sys/netipsec:network_policy_kernel_subr_ipsec_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["ipsec.h", "ipsec6.h", "key.h", "key_var.h", "keydb.h"], includes = [],
+    visibility = ["//sys/net:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_1", hdrs = ["ah_var.h", "esp_var.h", "ipcomp.h", "ipcomp_var.h", "ipsec.h", "ipsec6.h", "ipsec_offload.h", "ipsec_support.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_2", hdrs = ["ah_var.h", "esp.h", "esp_var.h", "ipcomp_var.h", "ipsec.h", "ipsec6.h", "ipsec_offload.h", "ipsec_support.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_4", hdrs = ["ipsec.h", "ipsec6.h", "ipsec_support.h", "key.h", "key_debug.h", "key_var.h", "keydb.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_5", hdrs = ["ah_var.h", "esp.h", "esp_var.h", "ipcomp_var.h", "ipsec.h", "ipsec_offload.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_6", hdrs = ["ah.h", "ah_var.h", "esp.h", "esp_var.h", "ipcomp_var.h", "ipsec.h", "ipsec6.h", "ipsec_offload.h", "ipsec_support.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_7", hdrs = ["ah.h", "ah_var.h", "ipsec.h", "ipsec6.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_8", hdrs = ["ah.h", "ah_var.h", "esp.h", "esp_var.h", "ipsec.h", "ipsec6.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_9", hdrs = ["ipcomp.h", "ipcomp_var.h", "ipsec.h", "ipsec6.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_10", hdrs = ["esp.h", "esp_var.h", "ipsec.h", "ipsec_support.h", "key.h", "key_debug.h", "key_var.h", "keydb.h", "xform.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+amd64_generic_module_objects(name = "ipsec_ipsec_module", srcs = ["ipsec.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_21", "//sys/netinet:network_services_module_context_15", "//sys/netinet6:ipv4_kernel_udp_usrreq_headers", "//sys/netipsec:network_services_module_context_1", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_ipsec_input_module", srcs = ["ipsec_input.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_22", "//sys/netinet:network_services_module_context_16", "//sys/netinet6:ipv4_kernel_udp_usrreq_headers", "//sys/netinet/cc:network_support_headers", "//sys/netipsec:network_services_module_context_2", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_ipsec_mbuf_module", srcs = ["ipsec_mbuf.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_policy_kernel_key_debug_headers", "//sys/netinet:network_policy_kernel_key_debug_headers", "//sys/netinet6:tracing_core_headers", "//sys/netipsec:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_ipsec_mod_module", srcs = ["ipsec_mod.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:network_policy_kernel_ipsec_pcb_headers", "//sys/net:network_policy_kernel_subr_ipsec_headers", "//sys/netinet6:tracing_core_headers", "//sys/netipsec:network_services_module_context_4", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_ipsec_offload_module", srcs = ["ipsec_offload.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_25", "//sys/netinet:network_services_module_context_19", "//sys/netinet6:usb_net_if_ure_headers", "//sys/netinet/cc:network_support_headers", "//sys/netipsec:network_services_module_context_5", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_ipsec_output_module", srcs = ["ipsec_output.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_21", "//sys/netinet:network_services_module_context_20", "//sys/netinet6:network_services_module_context_9", "//sys/netinet/cc:network_support_headers", "//sys/netipsec:network_services_module_context_6", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_sctp_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_xform_ah_module", srcs = ["xform_ah.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_policy_kernel_keysock_headers", "//sys/netinet:network_services_module_context_21", "//sys/netinet6:network_services_module_context_10", "//sys/netipsec:network_services_module_context_7", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_xform_esp_module", srcs = ["xform_esp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_policy_kernel_keysock_headers", "//sys/netinet:network_services_module_context_21", "//sys/netinet6:network_services_module_context_10", "//sys/netipsec:network_services_module_context_8", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_xform_ipcomp_module", srcs = ["xform_ipcomp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:network_services_module_context_22", "//sys/net:network_services_module_context_27", "//sys/netinet6:usb_net_if_ure_headers", "//sys/netipsec:network_services_module_context_9", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipsec_udpencap_module", srcs = ["udpencap.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:network_services_module_context_23", "//sys/net:network_policy_kernel_subr_ipsec_headers", "//sys/netinet6:usb_net_if_ure_headers", "//sys/netipsec:network_services_module_context_10", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

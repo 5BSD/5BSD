@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "nvmft", objects = ["//sys/dev/nvmf:nvmft_ctl_frontend_nvmf_module_object_files", "//sys/dev/nvmf:nvmft_nvmft_controller_module_object_files", "//sys/dev/nvmf:nvmft_nvmft_subr_module_object_files", "//sys/dev/nvmf:nvmft_nvmft_qpair_module_object_files"], object_order = ["ctl_frontend_nvmf.o", "nvmft_controller.o", "nvmft_subr.o", "nvmft_qpair.o"], export_all = False, package = "kernel")

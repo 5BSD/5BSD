@@ -23,7 +23,7 @@
 .\"			   Computer Science Department
 .\"			   University of Maryland at College Park
 .\"
-.Dd January 6, 2017
+.Dd November 2, 2026
 .Dt CRUNCHGEN 1
 .Os
 .Sh NAME
@@ -38,6 +38,7 @@
 .Op Fl p Ar obj-prefix
 .Op Fl c Ar c-file-name
 .Op Fl e Ar exec-file-name
+.Op Fl s Ar stub-directory
 .Ar conf-file
 .Ek
 .Sh DESCRIPTION
@@ -160,6 +161,17 @@ is the content of the
 .Ev MAKEOBJDIRPREFIX
 environment variable, or
 .Pa /usr/obj .
+.It Fl s Ar stub-directory
+Write a C entry stub for each configured program into the existing directory
+.Ar stub-directory .
+Each file is named
+.Pa <program>_stub.c
+and has the same contents as the corresponding stub produced by the generated
+.Pa Makefile .
+The generated dispatcher, cache, and
+.Pa Makefile
+are also written normally.
+This option does not compile or link component programs.
 .It Fl q
 Quiet operation.
 Status messages are suppressed.

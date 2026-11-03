@@ -21,7 +21,8 @@ SRCS=	_secure_path.c cpuset.c expand_number.c flopen.c fparseln.c \
 	realhostname.c stub.c trimdomain.c uucplock.c
 .if ${MK_DTRACE} != "no"
 SRCS+=	logincap_provider.d
-CFLAGS+=	-DWITH_DTRACE
+DTRACE_STATIC_ANCHOR= yes
+CFLAGS+=	-DWITH_DTRACE -DWITH_DTRACE_STATIC_ANCHOR
 .endif
 INCS=	libutil.h login_cap.h mntopts.h
 

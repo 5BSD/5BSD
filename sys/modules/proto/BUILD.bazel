@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "proto", objects = ["//sys/dev/proto:proto_proto_bus_isa_module_object_files", "//sys/dev/proto:proto_proto_bus_pci_module_object_files", "//sys/dev/proto:proto_proto_busdma_module_object_files", "//sys/dev/proto:proto_proto_core_module_object_files"], object_order = ["proto_bus_isa.o", "proto_bus_pci.o", "proto_busdma.o", "proto_core.o"], exports = [], export_all = False, package = "kernel", aliases = [])

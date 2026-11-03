@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "alias_smedia", objects = ["//sys/netinet/libalias:alias_smedia_alias_smedia_module_object_files"], object_order = ["alias_smedia.o"], export_all = False)

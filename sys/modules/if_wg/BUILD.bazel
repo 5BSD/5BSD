@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_wg", objects = ["//sys/dev/wg:if_wg_if_wg_module_object_files", "//sys/dev/wg:if_wg_wg_cookie_module_object_files", "//sys/dev/wg:if_wg_wg_crypto_module_object_files", "//sys/dev/wg:if_wg_wg_noise_module_object_files"], object_order = ["if_wg.o", "wg_cookie.o", "wg_crypto.o", "wg_noise.o"], export_all = False, package = "kernel", aliases = [])

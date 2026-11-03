@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["qla_dbg.h", "qla_def.h", "qla_glbl.h", "qla_hw.h", "qla_inline.h", "qla_os.h", "qla_reg.h", "qla_ver.h"], includes = [],
+    visibility = ["//sys/dev/qlxgb:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_1", hdrs = ["qla_dbg.h", "qla_def.h", "qla_glbl.h", "qla_hw.h", "qla_inline.h", "qla_os.h", "qla_reg.h"], includes = [],
+    visibility = ["//sys/dev/qlxgb:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_2", hdrs = ["qla_def.h", "qla_glbl.h", "qla_hw.h", "qla_inline.h", "qla_ioctl.h", "qla_os.h", "qla_reg.h"], includes = [],
+    visibility = ["//sys/dev/qlxgb:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_qlxgb_qla_os_module", srcs = ["qla_os.c", "qla_dbg.c", "qla_isr.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/qlxgb:network_services_module_context_0", "//sys/vm:usb_net_usie_headers", "//sys/net:usb_net_uether_headers", "//sys/netinet:network_families_module_context_7", "//sys/netinet6:usb_net_umb_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_qlxgb_qla_hw_module", srcs = ["qla_hw.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/qlxgb:network_services_module_context_0", "//sys/vm:usb_net_usie_headers", "//sys/net:network_families_module_context_15", "//sys/netinet:network_families_module_context_7", "//sys/netinet6:usb_net_umb_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_qlxgb_qla_misc_module", srcs = ["qla_misc.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/qlxgb:network_services_module_context_1", "//sys/vm:usb_net_usie_headers", "//sys/net:usb_net_uether_headers", "//sys/netinet:network_families_module_context_7", "//sys/netinet6:usb_net_umb_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_qlxgb_qla_ioctl_module", srcs = ["qla_ioctl.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/qlxgb:network_services_module_context_2", "//sys/vm:usb_net_usie_headers", "//sys/net:usb_net_uether_headers", "//sys/netinet:network_families_module_context_7", "//sys/netinet6:usb_net_umb_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

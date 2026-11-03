@@ -12,7 +12,7 @@ cc_library(name = "libc_embedded", hdrs = ["chacha.c"],
 # Core kernel physical prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["_chacha.h", "chacha.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/crypto/chacha20:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/dev/random:__pkg__"])
 
 # Physical prerequisites for native codec and crypto built-ins.
 bsd_source_headers(name = "codecs_crypto_kernel_chacha_headers", hdrs = ["_chacha.h", "chacha.h"],

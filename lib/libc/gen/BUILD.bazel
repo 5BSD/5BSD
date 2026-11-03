@@ -8,7 +8,7 @@ cc_library(features = LIBC_VARIANT_FEATURES, name = "pw_scan_headers", hdrs = ["
 cc_library(features = LIBC_VARIANT_FEATURES, name = "exterr_catalog_headers", hdrs = ["exterr_cat_filenames.h"],
     strip_include_prefix = ".", visibility = ["//usr.bin/kdump:__pkg__"])
 
-exports_files(["getcap.c"], visibility = ["//usr.bin/cap_mkdb:__pkg__"])
+exports_files(["getcap.c"], visibility = ["//usr.bin/cap_mkdb:__pkg__", "//lib/libutil/tests:__pkg__"])
 
 exports_files(["ldexp.c"], visibility = ["//lib/libc/amd64/gen:__pkg__"])
 

@@ -7,3 +7,11 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "K
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_ichss", srcs = ["ichss.c"],
     deps = ["//sys/dev/pci:peripheral_devices_kernel_ichss_headers", "//sys/kern:peripheral_devices_kernel_bus_if_headers", "//sys/kern:peripheral_devices_kernel_cpufreq_if_headers", "//sys/kern:peripheral_devices_kernel_device_if_headers", "//sys/dev/pci:peripheral_devices_kernel_pci_if_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "cpufreq_ichss_module", srcs = ["ichss.c"],
+    deps = ["//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_mana", objects = ["//sys/dev/mana:if_mana_gdma_main_module_object_files", "//sys/dev/mana:if_mana_mana_sysctl_module_object_files", "//sys/dev/mana:if_mana_shm_channel_module_object_files", "//sys/dev/mana:if_mana_mana_en_module_object_files", "//sys/dev/mana:if_mana_gdma_util_module_object_files"], object_order = ["gdma_main.o", "mana_sysctl.o", "shm_channel.o", "mana_en.o", "gdma_util.o", "hw_channel.o"], export_all = False, package = "kernel", aliases = [])

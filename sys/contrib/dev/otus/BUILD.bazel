@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["otus-init"], visibility = ["//sys/modules/otusfw/otusfw_init:__pkg__"])
+
+exports_files(["otus-main"], visibility = ["//sys/modules/otusfw/otusfw_main:__pkg__"])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "sgx", objects = ["//sys/amd64/sgx:sgx_sgx_module_object_files", "//sys/amd64/sgx:sgx_sgx_support_module_object_files"], object_order = ["sgx.o", "sgx_support.o"], exports = [], export_all = False, package = "kernel", aliases = [], ctf_object_paths = [])

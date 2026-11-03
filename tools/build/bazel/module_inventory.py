@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Audit Make-selected kernel module leaves against native Bazel descriptions."""
 import argparse
+import ast
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
 import shlex
 from pathlib import Path
-import re
 import subprocess
 
 
@@ -60,14 +60,56 @@ def resolve_subdir(modules_root, parent, child):
 
 
 def module_description(src, relative, kmod):
+    """Inventory literal, top-level amd64 producers; do not execute BUILD code.
+
+    Header providers, comments and source exports do not produce a module.
+    This deliberately does not resolve arbitrary Starlark expressions or prove
+    configured target analysis. Unrecognized/computed declarations remain gaps.
+    """
     directory = Path(src) / "sys/modules" / relative
     build_file = directory / "BUILD.bazel"
-    text = build_file.read_text(errors="replace") if build_file.is_file() else ""
+    declarations = []
+    error = ""
+    if build_file.is_file():
+        try:
+            tree = ast.parse(build_file.read_text(), filename=str(build_file))
+        except (SyntaxError, UnicodeError) as failure:
+            tree = ast.Module(body=[], type_ignores=[])
+            error = "BUILD source inventory parse failed: " + str(failure)
+        producers = {}
+        origins = {
+            "//tools/build/bazel:amd64_generic_module.bzl": "amd64_generic_module",
+            "//tools/build/bazel:amd64_firmware_module.bzl": "amd64_firmware_module",
+        }
+        calls = [node.value for node in tree.body if isinstance(node, ast.Expr)
+                 and isinstance(node.value, ast.Call)]
+        for call in calls:
+            if not isinstance(call.func, ast.Name) or call.func.id != "load" or not call.args:
+                continue
+            origin = call.args[0]
+            symbol = origins.get(origin.value) if isinstance(origin, ast.Constant) else None
+            if symbol is None:
+                continue
+            for arg in call.args[1:]:
+                if isinstance(arg, ast.Constant) and arg.value == symbol:
+                    producers[symbol] = symbol
+            for keyword in call.keywords:
+                if isinstance(keyword.value, ast.Constant) and keyword.value.value == symbol:
+                    producers[keyword.arg] = symbol
+        for call in calls:
+            if not isinstance(call.func, ast.Name) or call.func.id not in producers:
+                continue
+            module = next((kw.value for kw in call.keywords if kw.arg == "module"), None)
+            if isinstance(module, ast.Constant) and module.value == kmod:
+                declarations.append({"macro": producers[call.func.id], "module": kmod,
+                                     "line": call.lineno})
     return {
         "dir": relative.as_posix() or ".",
         "kmod": kmod,
         "build_file": build_file.is_file(),
-        "direct_module_macro": bool(re.search(r"\bamd64_generic_module\s*\(", text)),
+        "direct_module_macro": any(row["macro"] == "amd64_generic_module" for row in declarations),
+        "amd64_module_declarations": declarations,
+        "build_inventory_error": error,
     }
 
 
@@ -88,6 +130,9 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
         relative, inherited = item
         command = [
             make, "-C", str(modules_root / relative), "SRCTOP=" + str(src),
+            # kern.post.mk supplies these before module Makefiles are parsed.
+            # Some leaves use SYSDIR in .PATH before including bsd.kmod.mk.
+            "SYSDIR=" + str(src / "sys"), "MODULE_TIED=yes",
             "TARGET=" + target, "TARGET_ARCH=" + target_arch,
             "MACHINE=" + target, "MACHINE_ARCH=" + target_arch,
             "KERNBUILDDIR=" + str(kernel_build_dir), "KERN_OPTS=" + options,
@@ -136,7 +181,10 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
                     errors.append({"dir": relative.as_posix(), "error": str(error)})
                     continue
                 if kmod:
-                    records.append(module_description(src, relative, kmod))
+                    record = module_description(src, relative, kmod)
+                    records.append(record)
+                    if record["build_inventory_error"]:
+                        errors.append({"dir": relative.as_posix(), "error": record["build_inventory_error"]})
                 for child in children:
                     child_path = Path(child)
                     if child_path.is_absolute():
@@ -152,7 +200,7 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
     direct_targets = sum(record["direct_module_macro"] for record in records)
     build_files = sum(record["build_file"] for record in records)
     return {
-        "format": 2,
+        "format": 3,
         "query_jobs": jobs,
         "exported_make_contexts": sorted(contexts, key=lambda row: row["dir"]),
         "status": "complete" if not errors else "incomplete",
@@ -160,12 +208,16 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
         "target": target,
         "target_arch": target_arch,
         "kernel_build_dir": str(kernel_build_dir),
+        "system_source_dir": str(src / "sys"),
+        "module_tied": True,
         "source_config": srconf,
         "make_config": make_conf,
         "source_environment_config": env_conf,
         "module_makefile_directories": len(makefiles),
         "selected_leaf_kmods": len(records),
         "selected_with_build_file": build_files,
+        "selected_with_amd64_module_declaration": sum(bool(row["amd64_module_declarations"]) for row in records),
+        "selected_without_amd64_module_declaration": sum(not row["amd64_module_declarations"] for row in records),
         "selected_with_direct_module_macro": direct_targets,
         "selected_without_direct_module_macro": len(records) - direct_targets,
         "errors": errors,
@@ -198,7 +250,8 @@ def main():
     print(json.dumps({key: report[key] for key in (
         "status", "module_makefile_directories", "selected_leaf_kmods",
         "selected_with_build_file", "selected_with_direct_module_macro",
-        "selected_without_direct_module_macro")}, sort_keys=True))
+        "selected_without_direct_module_macro", "selected_with_amd64_module_declaration",
+        "selected_without_amd64_module_declaration")}, sort_keys=True))
     return 0 if report["status"] == "complete" else 1
 
 

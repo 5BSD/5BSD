@@ -3143,6 +3143,10 @@ exported as headers for every library source or dependent consumer.
 Library public compilation contexts are shared across their source actions.
 
 Declared source aliases use origins shared with maintained Make recipes.
+Byte-preserving aliases may present an original .asm input as .S so rules_cc
+selects preprocessed assembly without rewriting its source.
+Architecture header views may forward declared generated headers; their producer
+remains a dependency of the consuming compilation.
 The native graph preserves alias names for compiler context and declares alias
 outputs explicitly; origins outside the selected source tree are rejected.
 Extra variant-only sources require explicit mappings to configured objects and
@@ -3898,6 +3902,10 @@ Debuglink CRC and native kldxref metadata checks pass. No module loading is impl
 .Pp
 .Dq //sys/modules/nullfs:install_manifest
 records root/wheel ownership, 0444 modes and kernel/debug package tags.
+Declared kernel-module compatibility aliases are relative symbolic links in the
+selected module directory. Installation manifests retain their target, owner,
+group, mode and module package tag; they follow the configured directory without
+embedding /boot/modules in the alias declarations.
 The format-5 settings
 .Dq //tools/build/bazel/config:kernel_directory
 and
@@ -3913,6 +3921,18 @@ when both are disabled, Bazel's opt-mode debug flag is overridden. Their
 defaults are disabled and match the selected Make profile with MK_CTF=no and
 DEBUG_FLAGS unset. Defining DEBUG_FLAGS to an empty value is a different Make
 profile because its definedness affects module stripping. Another Make profile must supply matching values explicitly.
+Individual source groups retain original custom-recipe exceptions: a source
+that Make does not pass through ctfconvert may explicitly skip conversion.
+Such an exception does not enable CTF when kernel_ctf is disabled.
+The RTWN module option header uses the format-5 boolean
+.Dq //tools/build/bazel/config:sourceless_ucode ,
+which defaults to true, matching MK_SOURCELESS_UCODE=yes.
+The false value adds RTWN_WITHOUT_UCODE to the module-owned header;
+the original RTWN_DEBUG definition remains in both cases.
+This header is produced by the module policy rather than inferred from the
+possibly empty GENERIC kernel option header.
+Other firmware selection and nondefault module configurations still require
+separate qualification.
 These settings do not infer arbitrary src.conf configuration. Setting changes
 preserve compiled payloads.
 Package assembly, complete module coverage and runtime qualification
@@ -4635,6 +4655,10 @@ or
 .Fl arch Ar riscv64 .
 The native amd64 SDK supplies execution tools; registered target C++ toolchains
 select the target triple, freestanding ABI and declared source headers.
+Target identity and default freestanding compilation are separate toolchain
+features. Source-owned Linux VDSO groups disable only the freestanding defaults
+and explicitly retain their original hosted/PIC compiler flags and declared
+inputs; ordinary kernel/module groups retain the defaults.
 The host platform remains native, so config and layout-extraction programs
 are built for the host. Target objects are never executed on that host.
 This profile builds artifacts only and rejects runnable test selections.
@@ -5299,3 +5323,94 @@ Unknown aborts and requests with no compatible tests fail qualification.
 See
 .Pa tools/build/bazel/CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md
 for native controls and remaining installed-path limits.
+.Pp
+Native source rules may opt into the default-disabled
+.Cm bsd_small_pic
+toolchain feature when the original Make PIC recipe requires
+.Fl fpic
+rather than
+.Fl fPIC .
+Regular objects remain non-PIC.
+Callers without the feature retain their existing PIC policy.
+The libutil rule uses this feature with its original warning and GNU17 policy.
+Changing the toolchain configuration requires a fresh maintained SDK preparation
+and receipt, carried by ordinary format-5 inputs; historical receipts are not
+rebound.
+The native pic_policy test inspects actual regular/default-PIC/small-PIC object
+values and the separate negative compiler control rejects an incorrect level.
+This source-rule feature introduces no new frontend option.
+It does not establish full libutil archive/provider, installed-library or
+complete rescue parity.
+.Pp
+The bounded native
+.Cm //rescue/rescue:rescue_core
+target combines cat, echo, ed, expr, getfacl, pwd, test and head.
+It preserves the original red and bracket aliases.
+.Cm //rescue/rescue:core_runtime_test
+executes private-file and standard-input integration cases against that static
+executable.
+These targets use ordinary format-5 inputs and declared native sources, parser,
+crunchide transforms, archives and startup objects.
+They do not represent the complete rescue selection.
+They do not install host rescue files.
+.Pp
+The bounded rescue core also includes hostname, ln, mkdir, realpath, rmdir and
+sleep, preserving the original link alias and DTrace provider transformations.
+This selected traced variant requires the existing dtrace build setting.
+The runtime wrapper covers private link and directory operations, read-only
+hostname lookup and bounded sleep inputs.
+Full rescue installation and complete original library parity remain separate.
+.Pp
+The bounded rescue core also includes chflags, chmod, cp, mv and rm, with the
+original unlink alias, ACL definition and DTrace provider transformations.
+Its private-file cases exercise flags, modes, copy, rename and removal.
+The original RESCUE mv definitions still use
+.Pa /rescue/cp
+and
+.Pa /rescue/rm
+for cross-filesystem helper execution.
+Those installed paths require separate qualification.
+.Pp
+The default traced
+.Cm //lib/libutil:static_archive
+target preserves original Make member order and its separate DTrace provider.
+.Cm //lib/libutil:static_archive_contract_test
+inspects that archive using the declared SDK interpreter and independent source
+contract; it executes no target objects.
+Request this test only for the default traced archive composition.
+The experimental section-associated composition remains a separate explicit
+build setting.
+The default traced
+.Cm //lib/libutil/tests:static_consumer_test
+checks two static consumers against declared provider/extraction requirements.
+The number-only consumer excludes unrelated credential code and metadata;
+the address-only consumer retains the logincap provider without invoking
+credential changes.
+Registration is disabled before child startup.
+Request this test only in the default traced composition.
+These bounded controls do not establish arbitrary CcInfo member ordering,
+full DSO payload, installation or complete library parity.
+DTrace host provenance and action-cache hermeticity remain separate gates.
+.Pp
+The default libutil shared target preserves original PIC object order and
+local-symbol discard.
+Its allocated payload matches original Make except independently checked DOF
+path encoding, with original linked probe schema and sites preserved.
+This does not establish whole-file debug, installation or complete library
+parity.
+.Pp
+The libutil installation target includes its twelve original test programs,
+separate debug files and Kyuafile when
+.Pa //tools/build/bazel/config:tests
+is enabled, preserving original test package tags and directory ownership.
+The disabled selection omits that subtree.
+Native Kyua rules honor their existing
+.Va test_environment
+attribute through RunEnvironmentInfo when inheriting the process environment;
+unmentioned variables remain inherited.
+The explicit clean-environment mode keeps its existing behavior.
+These values reach constructors before test startup.
+See
+.Pa tools/build/bazel/LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md
+for original compiler/payload/install comparisons, TAP/ATF execution, the safe
+fork-failure correction and remaining separate DWARF/full-world gates.

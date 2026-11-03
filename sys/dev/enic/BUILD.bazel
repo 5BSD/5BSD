@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["cq_desc.h", "cq_enet_desc.h", "enic.h", "enic_compat.h", "enic_res.h", "rq_enet_desc.h", "vnic_cq.h", "vnic_dev.h", "vnic_devcmd.h", "vnic_enet.h", "vnic_intr.h", "vnic_nic.h", "vnic_resource.h", "vnic_rq.h", "vnic_rss.h", "vnic_stats.h", "vnic_wq.h", "wq_enet_desc.h"], includes = [],
+    visibility = ["//sys/dev/enic:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_enic_if_enic_module", srcs = ["if_enic.c", "enic_txrx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:pci_ethernet_headers", "//sys/net:network_services_module_context_7", "//sys/netinet:peripheral_devices_kernel_if_vmx_headers", "//sys/netinet6:usb_net_if_ure_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/enic:network_services_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_enic_enic_res_module", srcs = ["enic_res.c", "vnic_cq.c", "vnic_dev.c", "vnic_intr.c", "vnic_rq.c", "vnic_wq.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/enic:network_services_module_context_0", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

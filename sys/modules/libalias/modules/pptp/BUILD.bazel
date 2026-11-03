@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "alias_pptp", objects = ["//sys/netinet/libalias:alias_pptp_alias_pptp_module_object_files"], object_order = ["alias_pptp.o"], export_all = False)

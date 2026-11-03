@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mfi", objects = ["//sys/dev/mfi:mfi_mfi_module_object_files", "//sys/dev/mfi:mfi_mfi_pci_module_object_files", "//sys/dev/mfi:mfi_mfi_disk_module_object_files", "//sys/dev/mfi:mfi_mfi_debug_module_object_files", "//sys/dev/mfi:mfi_mfi_tbolt_module_object_files"], object_order = ["mfi.o", "mfi_pci.o", "mfi_disk.o", "mfi_debug.o", "mfi_syspd.o", "mfi_tbolt.o"], export_all = True, package = "kernel")

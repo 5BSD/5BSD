@@ -10180,3 +10180,372 @@ failures. Review access-control/audit paths and firmware provenance/version,
 without logging device data, input reports or packet payload secrets. Actual
 i2ctinyusb duplicate sysinit/metadata was corrected and checked statically in
 both variants; runtime controller attach/error cleanup still needs qualification.
+
+
+### Native rescue dispatcher generation (2026-11-02)
+
+The original crunchgen and generated dispatcher retain exact checked Make code,
+allocated data, non-debug relocations and symbols. Generator actions use declared
+runtime inputs and DTRACE_DOF_INIT_DISABLE=1 before native tool startup. Six
+runtime fixture methods execute only two print/return stubs through the actual
+generated dispatcher, with the same child-startup disable flag. No original rescue
+application, login/credential operation, tracing registration or host install is
+exercised. Future crunched application probe/DOF preservation and full static
+constructor/runtime behavior remain open; see RESCUE-DISPATCH-QUALIFICATION.md.
+
+
+### Remaining FIRMWS module qualification (2026-11-02)
+
+The bounded scan of fourteen LiquidIO C files, firmw.S and fw_stub.awk finds no
+explicit source probe/audit markers. All 38 modules retain original compiled
+probe-section inventories (none present in this cohort). Shared header/subsystem
+instrumentation and runtime firmware lifecycle/driver behavior require separate
+review; prefer shared register/get/put/unregister/error hooks over per-image probes.
+Do not log firmware contents. Live loading, hardware, probes and audit remain
+unqualified. See FIRMWARE-MODULES-QUALIFICATION.md for immutable evidence.
+
+### Rescue direct-stub producer (November 2)
+
+Both original crunchgen actions execute freshly with unusable MAKE, empty PATH
+and DOF initialization disabled before startup. All 103 direct output digests
+match actual original Make stubs. The harmless fixture compiles real generated
+stubs and executes seven methods; nine analysis-test results are cached. Two
+fresh tool compiler records and three digest-bound prior records preserve
+explicit cache provenance and 166 original dependency checks. See
+[producer qualification](CRUNCHGEN-DIRECT-STUBS-QUALIFICATION.md); no real rescue
+application execution or tracing/probe activation is claimed.
+
+
+### ISP and Myricom module qualification (2026-11-02)
+
+A bounded scan of six C files finds no explicit probe/audit markers; eleven
+compiled module section comparisons preserve existing instrumentation payloads.
+This does not cover shared header/subsystem or live instrumentation. Shared
+firmware lifecycle and driver attach/reset/interrupt/rx/tx review remains open.
+Prefer shared lifecycle hooks; do not log firmware contents. See
+CARRAY-FIRMWARE-MODULES-QUALIFICATION.md for scoped evidence.
+
+
+### libalias and NTB module qualification (2026-11-02)
+
+The bounded scan of twenty actual C files and ntb_if.m retains 34 explicit marker
+lines: eight in if_ntb.c, twenty-six in ntb_transport.c. Existing compiled section
+payloads match original Make. KTR-enabled builds/live events and shared subsystem
+instrumentation remain separate gates. Preserve existing KTR transport hooks;
+review libalias helper/protocol/error paths and NTB link/memory-window/doorbell,
+DMA/queue/reset/rx/tx failures for useful shared events without per-packet logs or
+payload disclosure. Remaining scanned files lack explicit markers; that does
+not prove lack of inherited instrumentation. See ALIAS-NTB-MODULES-QUALIFICATION.md.
+
+### Real rescue objects and crunchide build (November 2)
+
+Six fresh native compiler actions bind 391 actual consumed source/header
+occurrences to original Make, using hash-checked copied native dependency files.
+The three real rescue application variants retain child SSP/debug, disable PIE
+and omit their RESCUE-disabled tracing/Casper feature branches. No real rescue
+application executes here. Crunchide original/native raw-layout negative checks
+run only on private copies with DOF initialization disabled before startup; the
+supported ld-r combined-input transformation remains a gate. See
+[build-only evidence](RESCUE-CORE-OBJECTS-QUALIFICATION.md).
+
+
+### FireWire and Hyper-V module qualification (2026-11-02)
+
+The bounded scan of 36 C files, vmbus_vector.S and vmbus_if.m records four explicit
+DTrace marker lines: one net send-pressure event and three storage connect/request
+pressure events. Six modules preserve original compiled SDT tracepoint sections;
+hv_netvsc/hv_storvsc also retain their probe/argument sections. Existing complete
+section/payload comparisons pass. Other scanned files lack explicit markers under
+this scan; inherited subsystem/header instrumentation and live firing remain open.
+Review FireWire bus/reset/isochronous/DMA/errors and VMBus channel/ring/interrupt/
+network/storage lifecycle for useful shared events without per-packet logging or
+payload disclosure. See FIREWIRE-HYPERV-MODULES-QUALIFICATION.md.
+
+
+### NVMe-oF, TCP and kernel-test modules (2026-11-02)
+
+The bounded scan of 27 physical C files records seven explicit DTrace marker
+lines in NVMe-oF disconnect/reconnect/capsule-pressure paths. A separate scan
+retains 72 TCP_LOG_EVENT-family call lines in HPTS/LRO/BBR/RACK/common code. Eight
+modules preserve compiled probe/tracepoint sections against respective original/
+control Make. Other files lack explicit markers under these patterns, not all
+instrumentation. Review lifecycle/error and test-failure reporting with useful
+shared events; avoid per-packet logs or payload/key disclosure. No new probes
+added. 34 compiled ktest registrations are static preservation evidence only;
+live execution, two example-wrapper intentional-failure skips and failure-path
+reporting remain VM gates. See STORAGE-TCP-KTEST-MODULES-QUALIFICATION.md.
+
+
+### IPMI, storage, one-wire, PWM and VMware modules (2026-11-02)
+
+The bounded scan of 41 physical C files and three KOBJ schemas finds no explicit
+DTrace/SDT/CTR/audit marker lines under its recorded patterns. Selected compiled
+modules also have no SDT/DTrace sections in the recorded inventory. That does not
+establish absence of logging or instrumentation in shared subsystems/headers.
+Review IPMI transactions/timeouts, CAM/storage command/recovery/errors, one-wire/
+PWM lifecycle and VMCI datagram/doorbell/queue-pair/VMXNET3 attach/reset/rx/tx for
+useful shared events; avoid per-packet logs or payload/credential disclosure.
+No probes added by this migration. See DEVICE-FAMILIES-MODULES-QUALIFICATION.md.
+
+## Rescue combined-object producers (November 2, 2026)
+
+[Qualification](RESCUE-COMBINED-OBJECTS-QUALIFICATION.md) binds 6 uncached CPP,
+135 consumed inputs, 3 ordered ld-r actions and 3 original crunchide actions.
+DTRACE_DOF_INIT_DISABLE=1 is declared before the execution tool starts; no tracing
+is activated. Source, objects and literal basename-sensitive hidden symbols are
+preserved. Exact allocated/relocation/symbol parity and independently repeated
+whole-file producer controls pass; decoded debug filename/comp_dir differences
+remain explicit. Two new negative tests execute, ten prior results are cached;
+no production rescue runtime or full installation claim.
+
+
+### AXGBE, BNXT, BXE, CXGB and QLNX modules (2026-11-02)
+
+The bounded scan of 76 ordinary C files and one generated interface schema finds
+zero direct DTrace/SDT/CTR/audit-call candidate lines. Compiled if_bxe and if_cxgb
+still contain SDT tracepoint-set and relocation sections through included code;
+these sections agree with original Make. This demonstrates why source-only
+absence is not an instrumentation-absence conclusion. No probes added. Review
+shared driver attach/reset/recovery, queue lifecycle and RDMA completion/error
+observability before adding events; avoid per-packet logging or payload leakage.
+Live events and alternate options remain unqualified. See
+NETWORK-FAMILIES-MODULES-QUALIFICATION.md for retained inventories and exact scope.
+
+## Bounded static rescue runtime (November 2, 2026)
+
+[Actual subset qualification](RESCUE-CORE-PROGRAM-QUALIFICATION.md) proves four
+direct object inputs, three native archives and native startup selection; whole
+binary bytes equal original generated Make with identical library/startup bytes.
+Ten production-application runtime methods execute with LC_ALL=C and DOF init
+disabled before startup. Actual main/expand_number header occurrences86 match
+Make; libutil member runtime code/relocations/symbols match. The first link failed
+on omitted libutil and ran no tests; that evidence is retained. No tracing is
+activated, no full rescue install is claimed, and libutil's existing compiler-
+policy discrepancy remains a distinct follow-up gate.
+
+
+### Intel Ethernet modules (2026-11-02)
+
+The bounded source scan of 99 C files and two KOBJ schemas records twenty
+DTrace/SDT/CTR/audit-call candidate lines, including comments and macros. Four
+compiled modules (if_em, if_ice, if_igc, if_ix) preserve their SDT tracepoint/probe
+sections and relocation payloads against Make. Other modules lack these sections
+in the recorded profile; inherited subsystem events and alternate configurations
+are separate questions. No new probes or live event qualification. Review shared
+attach/reset/recovery, VF lifecycle, firmware error/logging and queue allocation
+paths for useful events without per-packet logging or payload/credential leakage.
+See INTEL-ETHERNET-MODULES-QUALIFICATION.md for evidence and limits.
+
+## Libutil compile-policy correction (November 2, 2026)
+
+No production source/probe changes. All 68 normal/PIC recipes preserve original
+WITH_DTRACE and header bytes; 3,778 original/actual consumed-input occurrences
+match. Make mutates login_class objects during its later DTrace step; two original
+compile-only controls prove native raw allocated sections/relocations exactly,
+without comparing unlike partial-link/provider stages. Native before/after DSO
+and 34 archive-member runtime sections/relocations remain exact; only three DSO
+DWARF sections change. Eleven actual rescue methods run with DOF initialization
+disabled before process startup, including head's real expand_number path.
+Four PIC object checks and an actual compiler negative validate the feature.
+No tracing activated. Full original provider/DOF site/relocation and DSO payload
+parity, installed-library tests, live events and complete rescue remain open.
+See LIBUTIL-COMPILE-POLICY-QUALIFICATION.md for exact evidence and rejected checks.
+
+### Platform, GPIO and watchdog modules (2026-11-02)
+
+The bounded source scan of 35 C files and one KOBJ schema records 0 explicit
+DTrace/SDT/CTR/audit candidate lines, including comments/macros. Compiled section
+inventories are retained against original or explicit filename-policy Make controls;
+0 modules have preserved compiled SDT/DTrace sections. This does not
+establish absence of shared subsystem logging/events or live instrumentation.
+Review GPIO/controller lifecycle, watchdog arm/disarm/expiry, sensor access errors,
+serial attach/detach and firmware-resource failures with shared subsystem hooks;
+avoid excessive polling logs or disclosure of firmware/memory contents. No probes
+added. See PLATFORM-FAMILIES-MODULES-QUALIFICATION.md for exact evidence and limits.
+
+### Storage adapter modules (2026-11-02)
+
+The bounded 260-C-file source scan finds twelve DTrace/SDT/CTR/audit candidate
+lines, including macros/comments, in MPR/MPS allocation/request/free paths. These
+two modules retain compiled probe/tracepoint sections and relocation payloads
+against Make. No new/live probes are qualified. Other source-only absences do not
+establish absence of shared CAM/storage instrumentation. Review command/error/
+recovery, DMA/completion and controller reset/lifecycle with useful shared events;
+avoid per-I/O logs and payload disclosure. Four original binary objects have no
+source scan coverage; they remain explicit vendor objects. See
+STORAGE-ADAPTERS-MODULES-QUALIFICATION.md for scope and retained evidence.
+
+## Eight-program rescue subset (November 2, 2026)
+
+No production C/probe sources changed. Actual RESCUE variants preserve original
+source probe exclusions; normal instrumented programs stay separate. Expr uses
+the actual original no-header Yacc mode, with exact generated body except 38
+producer #line filename fields. All 17 current compiler policies/691 consumed
+occurrences and eight original ordered stub/link/crunchide pipelines are bound
+to actual bytes. Original Make's identical-input whole static ELF matches native,
+including compiled instrumentation contributed by native archives. Twenty-one
+real methods execute private files/stdin and disable DOF initialization before
+each product starts. No live events or complete original-library/rescue/install
+claim. Pwd keeps canonical relative __FILE__ diagnostics; its untouched Make
+mismatch and independent compiler filename-policy control are retained. See
+RESCUE-EIGHT-PROGRAM-QUALIFICATION.md for current/cached evidence and all gates.
+
+### System and I/O modules (2026-11-02)
+
+The bounded 116-C-file/nine-schema scan finds 57 explicit DTrace/SDT/CTR/audit
+candidate lines, including comments/macros, in IOAT/MD/MMC/SDIO/SNP/UART and
+image-activation paths. Seven compiled modules (imgact_binmisc, geom_md, mmc,
+sdio, snp, uart, xdr) retain probe/tracepoint sections and relocation payloads
+against respective Make controls. No new/live probes qualified. Other source
+absences do not establish missing shared-subsystem instrumentation. Review shared
+request/completion/error/recovery, device lifecycle, terminal and image activation
+with useful events; avoid per-I/O logs or payload/credential disclosure. The test
+framework is compiled, not executed. See SYSTEM-IO-MODULES-QUALIFICATION.md.
+
+## Fourteen-program rescue subset (November 2, 2026)
+
+Five added original RESCUE variants retain WITH_COVERAGE_DTRACE, genuine native
+header producers and object/provider transformations; hostname is untraced.
+All six raw/rewritten allocated code and relocation contracts match original
+Make. Complete DOF schemas and actual ET_REL function/patch/relocation sites
+match; only independently verified FNV path keys and their exactly derived
+string/alignment layout differ. No production probe source/checker changes or
+artifact rewriting. Thirty-one actual methods disable DOF initialization before
+product startup; no registration, live event or full rescue claim. See
+RESCUE-FOURTEEN-PROGRAM-QUALIFICATION.md for original/current/cached evidence.
+
+## Network/routing/entropy module cohort (November 2, 2026)
+
+[Qualification](NETWORK-SERVICES-MODULES-QUALIFICATION.md): bounded 186-source scan
+records 160 candidate DTrace/SDT/KTR/audit lines, including comments/macros. All
+22 modules with actual compiled SDT/DTrace sections retain exact original section
+payloads and relocations. No probes were added. This does not establish live
+network events, audit completeness or lack of instrumentation elsewhere; follow
+up in actual VM/runtime qualification. Raw source/section hashes are retained in
+bazel-network-services-modules-review-r1-20261102/observability-review.json.
+
+## Nineteen-program rescue subset (November 2, 2026)
+
+Chflags/chmod/cp/mv/rm preserve original RESCUE and DTrace definitions, actual
+header/object producers and all source probes. Six raw/transformed runtime
+contracts and 398 consumed pairs are audited, with explicit original assertion
+filename controls for chflags/cp. Five complete provider schemas, actual ELF
+relocation/function/NOP sites and all DOF fields match except verified FNV path
+names and their exactly derived string/alignment extents. Cp sites resolve to
+actual utils.o definitions. Forty-three real methods disable DOF initialization
+before startup; no live registration/event or installed mv helper claim. The
+initial cp -n test expectation failure and unchanged accepted ELF remain bound.
+See RESCUE-NINETEEN-PROGRAM-QUALIFICATION.md for source/action/cached proof limits.
+
+## RDMA/InfiniBand/Mellanox modules (November 2, 2026)
+
+[Qualification](RDMA-MODULES-QUALIFICATION.md): bounded 195 physical C/schema-input
+scan records two candidate DTrace/SDT/KTR/audit lines. All four modules with actual
+compiled SDT/DTrace sections preserve exact payloads and relocations. No probes
+were added. Source-line counts include macros/comments; this is not a claim of
+missing instrumentation elsewhere, live probe delivery, audit completeness or
+RDMA/device runtime behavior. Raw bindings and actual section comparisons:
+bazel-rdma-modules-review-r1-20261102/observability-review.json.
+
+## Chelsio modules (November 2, 2026)
+
+[Qualification](CHELSIO-MODULES-QUALIFICATION.md): bounded 50 physical C/schema
+input scan records 448 SDT/DTrace/KTR/audit candidate lines (including comments/
+macros). All four modules with compiled SDT/DTrace sections preserve exact
+payloads and relocations. No probes were added. No hardware/RDMA/TLS/storage
+offload runtime, live events, audit completeness or instrumentation-absence
+claim is established. Raw bindings: bazel-chelsio-modules-review-r1-20261102/
+observability-review.json.
+
+## libutil original static provider (November 2, 2026)
+
+[LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md](LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md)
+records the separate original logincap provider in the default component archive.
+The setusercontext schema/argument mapping and actual ET_REL function/NOP site
+at offset 560 pass the unchanged maintained checker. All nine DOF section
+payloads/descriptors are accounted for with verified FNV path keys and checked
+string/alignment extents. No probes were removed or added; synthetic static
+anchor removal applies to this component archive only. Existing default CcInfo
+provider semantics, activation/registration, event delivery and audit coverage
+remain separate gates. Raw hash bindings and inventories are retained.
+
+## libutil selected static provider (November 2, 2026)
+
+[LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md](LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md)
+corrects original missing-provider and native unrelated-provider extraction using
+the existing retained anchor. Both exact extraction graphs and logincap schema/
+actual relocation/site contracts pass. No probe call was removed or added.
+Four safe consumer methods disable registration before process startup and never
+call credential-changing functions. Historical rescue full-byte equality is
+explicitly rejected for 220 bytes in eleven DOF UTSNAME kernel-version fields;
+all other bytes match. No artifact normalization is used. Broader host provenance,
+action-cache hermeticity, registration and live events remain open. The prior
+archive-only anchor-removal paragraph describes its historical source policy.
+
+## libutil linked DSO payload (November 2, 2026)
+
+[LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md](LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md)
+accounts for every allocated section and all nine DOF sections after correcting
+PIC order. The unchanged reader verifies original logincap schema and actual
+linked function/address/NOP sites. A cross-origin provider/class pair correctly
+fails the strict path-key link; no symbol waiver or artifact normalization.
+No probes changed or ran. Host provenance/cache hermeticity, registration, live
+events and separate debug/source lookup remain open.
+
+## Compatibility/storage/tracing modules (November 2, 2026)
+
+[Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): bounded 125 physical
+C/schema input scan records 149 SDT/DTrace/KTR/audit candidate lines, including
+comments/macros. Seven modules contain compiled SDT/DTrace sections; all payloads
+and relocations match original Make. No probes were added and live firing,
+hardware/service runtime and audit completeness remain unqualified. Raw binding:
+bazel-compat-services-modules-review-r1-20261102/observability-review.json.
+
+### Wireless/crypto/EFI/SGX module cohort (2026-11-02)
+
+The bounded scan of 453 distinct source/schema inputs records sixteen candidate
+SDT/DTrace/KTR/audit lines, including comments/macros. Three compiled modules
+contain SDT/DTrace sections; their payloads and relocations match original Make
+outputs. No probe was added or removed. This does not establish live delivery,
+audit completeness or absence of inherited instrumentation. Evidence:
+bazel-final-drivers-modules-review-r1-20261102/observability-review.json;
+[cohort scope](FINAL-DRIVERS-MODULES-WORK.md).
+
+### OpenSSL crypto kernel module (2026-11-02)
+
+The bounded nineteen-source scan records no direct SDT/DTrace/KTR/audit candidate
+lines under retained patterns, and neither compiled original/native inventory
+has SDT/DTrace sections. This does not establish inherited instrumentation
+absence or audit completeness. No probes were changed. Evidence:
+bazel-ossl-module-review-r1-20261102/observability-review.json;
+[module scope](OSSL-MODULE-QUALIFICATION.md).
+
+### VMM kernel module (2026-11-02)
+
+The bounded 185-source inventory records 109 SDT/DTrace/KTR/audit candidate lines,
+including comments/macros. Compiled original/native VMM SDT/DTrace section
+payloads and relocations match. No probes were changed. Guest execution, live
+event delivery and audit completeness remain unqualified. Evidence:
+bazel-vmm-module-review-r1-20261102/observability-review.json;
+[module/layout/consumer scope](VMM-MODULE-QUALIFICATION.md).
+
+### Linux64 module (2026-11-02)
+
+The bounded 33-source/master scan records 28 SDT/DTrace/KTR/audit candidate lines,
+including comments/macros. Original/native compiled SDT/DTrace sections and
+relocations match. Native generated syscall payloads and VDSO also match their
+originals. No probes are changed; Linuxulator runtime, event delivery and audit
+completeness remain unqualified. Evidence:
+bazel-linux64-module-review-r1-20261102/observability-review.json;
+[module/generated-input scope](LINUX64-MODULE-QUALIFICATION.md).
+
+### libutil original tests and installation (2026-11-03)
+
+The existing default traced libutil composition is preserved. All native test
+processes receive DTRACE_DOF_INIT_DISABLE=1 before constructors through maintained
+ATF/Kyua adapters. The Kyua inherited-mode environment regression observes that
+value at constructor time; its deliberate bad-value TAP result is rejected
+without interpreting zero program exit as success. No probe source or credential
+operation is changed or executed; the flopen signal-failure control wraps kill
+without delivering signals. No live event or cache-hermeticity claim. See
+[original test/install scope](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md).

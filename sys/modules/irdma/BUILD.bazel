@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "irdma", objects = ["//sys/dev/irdma:irdma_icrdma_module_object_files", "//sys/dev/irdma:irdma_fbsd_kcompat_module_object_files", "//sys/dev/irdma:irdma_irdma_hw_module_object_files", "//sys/dev/irdma:irdma_irdma_ctrl_module_object_files", "//sys/dev/irdma:irdma_icrdma_hw_module_object_files", "//sys/dev/irdma:irdma_irdma_puda_module_object_files", "//sys/dev/irdma:irdma_irdma_uda_module_object_files", "//sys/dev/irdma:irdma_irdma_uk_module_object_files"], object_order = ["icrdma.o", "fbsd_kcompat.o", "irdma_hw.o", "irdma_verbs.o", "irdma_utils.o", "irdma_cm.o", "irdma_kcompat.o", "irdma_ctrl.o", "irdma_hmc.o", "icrdma_hw.o", "irdma_pble.o", "irdma_puda.o", "irdma_uda.o", "irdma_uk.o", "irdma_ws.o"], export_all = False, package = "kernel", aliases = [])

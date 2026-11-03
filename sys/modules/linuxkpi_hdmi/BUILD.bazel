@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "linuxkpi_hdmi", objects = ["//sys/compat/linuxkpi/common/src:linuxkpi_hdmi_linux_hdmi_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_hdmi_linuxkpi_hdmikmod_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_hdmi_lkpi_iic_if_module_object_files"], object_order = ["linux_hdmi.o", "linuxkpi_hdmikmod.o", "lkpi_iic_if.o"], exports = [], export_all = True, package = "kernel", aliases = [])

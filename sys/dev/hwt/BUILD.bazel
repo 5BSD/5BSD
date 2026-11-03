@@ -75,3 +75,62 @@ amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_thread", src
 amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_vm", srcs = ["hwt_vm.c"],
     deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_owner_headers", "//sys/vm:monitoring_devices_kernel_hwt_vm_headers"], early_deps = [],
     pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["hwt_backend.h", "hwt_config.h", "hwt_context.h", "hwt_cpu.h", "hwt_record.h", "hwt_thread.h", "hwt_vm.h"], includes = [],
+    visibility = ["//sys/amd64/pt:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "hwt_hwt_module", srcs = ["hwt.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_backend_module", srcs = ["hwt_backend.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_backend_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_config_module", srcs = ["hwt_config.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_config_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_context_module", srcs = ["hwt_context.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_context_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_contexthash_module", srcs = ["hwt_contexthash.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_contexthash_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_cpu_module", srcs = ["hwt_cpu.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_cpu_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_hook_module", srcs = ["hwt_hook.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_hook_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_ioctl_module", srcs = ["hwt_ioctl.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_ioctl_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_owner_module", srcs = ["hwt_owner.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_owner_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_ownerhash_module", srcs = ["hwt_ownerhash.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_ownerhash_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_record_module", srcs = ["hwt_record.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/vm:mii_family_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_config_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_thread_module", srcs = ["hwt_thread.c"],
+    deps = ["//sys/vm:monitoring_devices_kernel_hwt_thread_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_thread_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwt_hwt_vm_module", srcs = ["hwt_vm.c"],
+    deps = ["//sys/vm:monitoring_devices_kernel_hwt_vm_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_owner_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

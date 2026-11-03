@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["ioat.h", "ioat_hw.h", "ioat_internal.h"], includes = [],
+    visibility = ["//sys/dev/ioat:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_1", hdrs = ["ioat.h", "ioat_hw.h", "ioat_internal.h", "ioat_test.h"], includes = [],
+    visibility = ["//sys/dev/ioat:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ioat_ioat_module", srcs = ["ioat.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/dev/ioat:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ioat_ioat_test_module", srcs = ["ioat_test.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/vm:lowlevel_kernel_db_trace_headers", "//sys/dev/ioat:system_io_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

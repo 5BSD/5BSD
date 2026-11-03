@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["videodev.h", "videodev2.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

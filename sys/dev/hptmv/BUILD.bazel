@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["amd64-elf.hptmvraid.o"], visibility = ["//sys/modules/hptmv:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "storage_adapters_module_context_0", hdrs = ["array.h", "atapi.h", "command.h", "global.h", "hptintf.h", "mvOs.h", "mvSata.h", "mvStorageDev.h", "osbsd.h", "raid5n.h", "vdevice.h"], includes = [],
+    visibility = ["//sys/dev/hptmv:__pkg__"])
+
+bsd_source_headers(name = "storage_adapters_module_context_1", hdrs = ["access601.h", "array.h", "atapi.h", "command.h", "global.h", "hptintf.h", "mvOs.h", "mvSata.h", "mvStorageDev.h", "osbsd.h", "raid5n.h", "vdevice.h"], includes = [],
+    visibility = ["//sys/dev/hptmv:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS", "AMD64_KERNEL_FLAGS")
+
+# The original Makefile resets CFLAGS: preserve its unoptimized compilation
+# and its absence of -fno-strict-aliasing through native toolchain features.
+amd64_generic_module_objects(name = "hptmv_mv_module", srcs = ["mv.c"],
+    deps = ["//sys/dev/hptmv:storage_adapters_module_context_0", "//sys/vm:tracing_module_headers", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    features = ["-opt"], kernel_flags = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fno-strict-aliasing"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hptmv_entry_module", srcs = ["entry.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/hptmv:storage_adapters_module_context_1", "//sys/vm:tracing_module_headers", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    features = ["-opt"], kernel_flags = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fno-strict-aliasing"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hptmv_ioctl_module", srcs = ["ioctl.c", "hptproc.c", "gui_lib.c"],
+    deps = ["//sys/dev/hptmv:storage_adapters_module_context_1", "//sys/vm:tracing_module_headers", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    features = ["-opt"], kernel_flags = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fno-strict-aliasing"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "dpdk_lpm6", objects = ["//sys/contrib/dpdk_rte_lpm:dpdk_lpm6_dpdk_lpm6_module_object_files", "//sys/contrib/dpdk_rte_lpm:dpdk_lpm6_rte_lpm6_module_object_files"], object_order = ["dpdk_lpm6.o", "rte_lpm6.o"], export_all = False, package = "kernel", aliases = [])

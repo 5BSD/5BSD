@@ -41,7 +41,8 @@ def _impl(ctx):
             flag_groups = [flag_group(flags = ["-O0"])])]),
         feature(name = "bsd_kernel_target", enabled = True, flag_sets = [
             flag_set(actions = _COMPILE + _LINK,
-                flag_groups = [flag_group(flags = ["--target=" + ctx.attr.target])]),
+                flag_groups = [flag_group(flags = ["--target=" + ctx.attr.target])])]),
+        feature(name = "bsd_kernel_freestanding", enabled = True, flag_sets = [
             flag_set(actions = _COMPILE,
                 flag_groups = [flag_group(flags = ["-nostdinc", "-ffreestanding", "-fdebug-compilation-dir=."])])]),
         # A kernel link must supply its declared scripts/objects. Do not search

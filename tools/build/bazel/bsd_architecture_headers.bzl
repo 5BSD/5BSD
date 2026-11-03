@@ -12,8 +12,6 @@ def _headers(ctx):
         if not directory or directory.startswith("/") or any([p in ["", ".", ".."] for p in directory.split("/")]):
             fail("architecture header directory must be relative without traversal")
         for file in target[DefaultInfo].files.to_list():
-            if not file.is_source:
-                fail("architecture view requires source-owned headers")
             name = directory + "/" + file.basename
             if name in seen:
                 fail("duplicate architecture header view path: " + name)

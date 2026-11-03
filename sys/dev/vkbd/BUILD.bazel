@@ -13,3 +13,11 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "K
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_vkbd", srcs = ["vkbd.c"],
     deps = ["//sys/dev/kbd:peripheral_devices_kernel_kbdmux_headers", "//sys/dev/vkbd:peripheral_devices_kernel_vkbd_headers", "//sys/amd64/conf:peripheral_devices_kernel_opt_kbd_header"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "vkbd_vkbd_module", srcs = ["vkbd.c"],
+    deps = ["//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/dev/vkbd:peripheral_devices_kernel_vkbd_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

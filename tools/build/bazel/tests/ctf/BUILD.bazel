@@ -79,3 +79,6 @@ cc_test(name = "composition_execution", srcs = ["execute_test.c"],
     data = [":composition_merged", "//cddl/usr.bin/ctfdump:ctfdump", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
     args = ["$(rootpath :composition_merged)", "$(rootpath //cddl/usr.bin/ctfdump:ctfdump)",
         "$(rootpath //lib/libelf:elf_shared)", "$(rootpath //lib/libz:z_shared)"], size = "small")
+
+load(":object_paths.bzl", "ctf_object_path_tests")
+ctf_object_path_tests()

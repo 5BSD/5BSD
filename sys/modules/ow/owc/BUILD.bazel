@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "owc", objects = ["//sys/dev/ow:owc_owc_gpiobus_module_object_files"], object_order = ["owc_gpiobus.o"], export_all = True, package = "kernel")

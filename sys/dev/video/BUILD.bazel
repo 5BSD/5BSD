@@ -7,7 +7,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical device I/O prerequisites; identical contexts share providers.
 bsd_source_headers(name = "device_io_kernel_uvideo_headers", hdrs = ["video.h"],
-    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/video:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
@@ -43,4 +43,18 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_video_if", srcs = [":
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
 filegroup(name = "video_if_module_header", srcs = [":video_if"], output_group = "header")
-cc_library(name = "video_if_headers", hdrs = [":video_if_module_header"], strip_include_prefix = "video_if.generated", visibility = ["//sys/dev/usb:__pkg__"])
+cc_library(name = "video_if_headers", hdrs = [":video_if_module_header"], strip_include_prefix = "video_if.generated", visibility = ["//sys/dev/usb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/video:__pkg__"])
+
+filegroup(name = "video_if_module_source", srcs = [":video_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "video_video_module", srcs = ["video.c"],
+    deps = ["//sys/vm:peripheral_devices_kernel_video_headers", "//sys/dev/video:peripheral_devices_kernel_video_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/video:video_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "video_video_if_module", srcs = [":video_if_module_source"],
+    deps = ["//sys/dev/video:device_io_kernel_uvideo_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/video:video_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :video_if_module_source)=video_if.c", "-fdebug-prefix-map=$(execpath :video_if_module_source)=video_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

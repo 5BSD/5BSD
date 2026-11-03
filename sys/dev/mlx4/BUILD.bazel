@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "rdma_module_context_0", hdrs = ["cmd.h", "device.h", "doorbell.h", "driver.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_1", hdrs = ["cmd.h", "cq.h", "device.h", "doorbell.h", "driver.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_2", hdrs = ["cmd.h", "device.h", "doorbell.h", "driver.h", "stats.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_3", hdrs = ["cmd.h", "device.h", "doorbell.h", "driver.h", "qp.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_4", hdrs = ["cmd.h", "device.h", "doorbell.h", "driver.h", "srq.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_5", hdrs = ["cmd.h", "cq.h", "device.h", "doorbell.h", "qp.h", "srq.h", "stats.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_en:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_6", hdrs = ["cmd.h", "cq.h", "device.h", "doorbell.h", "driver.h", "qp.h", "srq.h", "stats.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_en:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_7", hdrs = ["cmd.h", "device.h", "doorbell.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_ib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_8", hdrs = ["device.h", "doorbell.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_ib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_9", hdrs = ["cq.h", "device.h", "doorbell.h", "driver.h", "qp.h", "srq.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_ib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_10", hdrs = ["device.h", "doorbell.h", "qp.h", "srq.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_ib:__pkg__"])

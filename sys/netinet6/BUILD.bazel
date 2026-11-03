@@ -53,7 +53,7 @@ cc_library(name = "storage_module_headers", hdrs = ["in6.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["in6.h"], includes = [],
-    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/usb:__pkg__"])
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/liquidio:__pkg__", "//sys/netinet/libalias:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/netinet:__pkg__", "//sys/netlink:__pkg__", "//sys/tests:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hpt27xx:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/hptmv:__pkg__", "//sys/dev/hptnr:__pkg__", "//sys/dev/hptrr:__pkg__", "//sys/dev/isci:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/ocs_fc:__pkg__", "//sys/dev/pms:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/tws:__pkg__", "//sys/dev/ufshci:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvdimm:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/sdio:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/contrib/ena-com:__pkg__", "//sys/dev/ena:__pkg__", "//sys/dev/gve:__pkg__", "//sys/dev/mana:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/sume:__pkg__", "//sys/dev/wg:__pkg__", "//sys/dev/wtap/plugins:__pkg__", "//sys/dev/wtap/wtap_hal:__pkg__", "//sys/dev/wtap:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/cam:__pkg__", "//sys/compat/linprocfs:__pkg__", "//sys/compat/linux:__pkg__", "//sys/dev/iscsi:__pkg__", "//sys/dev/iwm:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/iwx:__pkg__", "//sys/dev/rtwn:__pkg__"])
 
 # Physical source prerequisites from independent Ethernet module builds.
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["in6.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
@@ -77,7 +77,7 @@ bsd_source_headers(
         "in6.h",
         "in6_var.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__"],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/qlxgb:__pkg__", "//sys/dev/qlxgbe:__pkg__", "//sys/dev/qlxge:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/otus:__pkg__", "//sys/dev/rtwn:__pkg__"],
 )
 
 bsd_source_headers(
@@ -116,9 +116,7 @@ bsd_source_headers(
         "in6.h",
         "ip6_var.h"
     ],
-    visibility = [
-        "//sys/dev/usb/net:__pkg__"
-    ],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/ena:__pkg__", "//sys/dev/enic:__pkg__", "//sys/net:__pkg__", "//sys/netlink:__pkg__"],
 )
 
 # Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
@@ -228,7 +226,7 @@ bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["in6.h", "
 bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_rss.h", "in6_var.h", "ip6_var.h", "scope6_var.h"],
     visibility = ["//sys/netinet:__pkg__"])
 bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
-    visibility = ["//sys/netinet:__pkg__"])
+    visibility = ["//sys/netinet:__pkg__", "//sys/netipsec:__pkg__"])
 
 # IPv6 built-in prerequisites.
 bsd_source_headers(name = "ipv6_kernel_dest6_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
@@ -240,7 +238,7 @@ bsd_source_headers(name = "ipv6_kernel_icmp6_headers", hdrs = ["in6.h", "in6_fib
 bsd_source_headers(name = "ipv6_kernel_in6_headers", hdrs = ["in6.h", "in6_fib.h", "in6_ifattach.h", "in6_pcb.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "mld6_var.h", "nd6.h", "scope6_var.h"],
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_in6_cksum_headers", hdrs = ["in6.h", "scope6_var.h"],
-    visibility = ["//sys/netinet6:__pkg__"])
+    visibility = ["//sys/netinet6:__pkg__", "//sys/netlink:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_in6_fib_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "nd6.h", "scope6_var.h"],
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_in6_fib_algo_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h"],
@@ -266,7 +264,7 @@ bsd_source_headers(name = "ipv6_kernel_in6_src_headers", hdrs = ["in6.h", "in6_f
 bsd_source_headers(name = "ipv6_kernel_ip6_fastfwd_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h", "nd6.h"],
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_ip6_forward_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
-    visibility = ["//sys/netinet6:__pkg__"])
+    visibility = ["//sys/netinet6:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_ip6_id_headers", hdrs = ["in6.h", "ip6_var.h"],
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_ip6_input_headers", hdrs = ["in6.h", "in6_ifattach.h", "in6_rss.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "mld6_var.h", "nd6.h", "scope6_var.h"],
@@ -393,7 +391,7 @@ bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["in6.h"],
 bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["in6.h"],
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["in6.h", "in6_var.h", "nd6.h"],
-    visibility = ["//sys/net:__pkg__"])
+    visibility = ["//sys/net:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/wg:__pkg__", "//sys/contrib/rdma/krping:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/iser:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_en:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__", "//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/compat/lindebugfs:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__", "//sys/contrib/dev/iwlwifi/cfg:__pkg__", "//sys/contrib/dev/iwlwifi/fw:__pkg__", "//sys/contrib/dev/iwlwifi/mld:__pkg__", "//sys/contrib/dev/iwlwifi/mvm:__pkg__", "//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__", "//sys/contrib/dev/iwlwifi/pcie:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__", "//sys/contrib/dev/rtw88:__pkg__", "//sys/contrib/dev/rtw89:__pkg__", "//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/qat_comms:__pkg__", "//sys/dev/qat/qat_api/common/stubs:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/device:__pkg__", "//sys/dev/qat/qat_api/qat_kernel/src:__pkg__", "//sys/dev/qat/qat_api:__pkg__", "//sys/dev/qat/qat_common:__pkg__", "//sys/dev/qat/qat_hw/qat_200xx:__pkg__", "//sys/dev/qat/qat_hw/qat_4xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_4xxxvf:__pkg__", "//sys/dev/qat/qat_hw/qat_c3xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c62x:__pkg__", "//sys/dev/qat/qat_hw/qat_dh895xcc:__pkg__"])
 bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["in6.h", "in6_var.h", "ip6_ecn.h", "ip6_var.h"],
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["in6.h", "in6_var.h"],
@@ -567,7 +565,7 @@ bsd_source_headers(name = "network_policy_kernel_nhop_headers", hdrs = ["in6.h"]
 bsd_source_headers(name = "network_policy_kernel_fib_algo_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_route_ctl_headers", hdrs = ["in6.h", "in6_var.h", "scope6_var.h"],
-    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__", "//sys/dev/cxgbe:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_route_helpers_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_route_rtentry_headers", hdrs = ["in6.h", "scope6_var.h"],
@@ -575,7 +573,7 @@ bsd_source_headers(name = "network_policy_kernel_route_rtentry_headers", hdrs = 
 bsd_source_headers(name = "network_policy_kernel_netlink_sock_diag_headers", hdrs = ["in6.h", "ip6_var.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_neigh_headers", hdrs = ["in6.h", "in6_var.h", "nd6.h", "scope6_var.h"],
-    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_pf_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 
@@ -612,3 +610,55 @@ bsd_source_headers(name = "rpc_builtins_kernel_rpctlscd_xdr_headers", hdrs = ["i
 # Physical prerequisites for native custom-named kernel built-ins.
 bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["in6.h", "in6_pcb.h", "ip6_var.h", "tcp6_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_1", hdrs = ["in6.h", "in6_fib.h", "ip6_var.h"], includes = [],
+    visibility = ["//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/net:__pkg__", "//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_3", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h", "scope6_var.h"], includes = [],
+    visibility = ["//sys/net:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_5", hdrs = ["in6.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "nd6.h", "pim6.h", "pim6_var.h", "scope6_var.h"], includes = [],
+    visibility = ["//sys/netinet6:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_9", hdrs = ["in6.h", "in6_var.h", "ip6_ecn.h", "ip6_var.h", "scope6_var.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_10", hdrs = ["in6.h", "ip6_ecn.h", "ip6_var.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_13", hdrs = ["in6.h", "in6_var.h", "ip6_mroute.h"], includes = [],
+    visibility = ["//sys/dev/oce:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_15", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h", "sctp6_var.h"], includes = [],
+    visibility = ["//sys/netinet6:__pkg__", "//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_16", hdrs = ["in6.h", "in6_var.h", "nd6.h", "scope6_var.h", "send.h"], includes = [],
+    visibility = ["//sys/netinet6:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ip6_mroute_ip6_mroute_module", srcs = ["ip6_mroute.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:ipv6_kernel_raw_ip6_headers", "//sys/netinet:network_services_module_context_12", "//sys/netinet6:network_services_module_context_5", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sctp_sctp6_usrreq_module", srcs = ["sctp6_usrreq.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:network_services_module_context_45", "//sys/vm:usb_net_usie_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:network_services_module_context_15", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_sctp_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "send_send_module", srcs = ["send.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:ipv6_kernel_mld6_headers", "//sys/netinet:network_services_module_context_47", "//sys/netinet6:network_services_module_context_16"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "rdma_module_context_0", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "nd6.h", "scope6_var.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/core:__pkg__", "//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_4", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "nd6.h"], includes = [],
+    visibility = ["//sys/dev/irdma:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_4", hdrs = ["in6.h", "in6_fib.h", "scope6_var.h"], includes = [],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])

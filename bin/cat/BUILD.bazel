@@ -49,3 +49,13 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+# Actual nested rescue/rescue *_make policy: RESCUE, no PIE, ordinary SSP/debug.
+# The global Make libifconfig/libiscsiutil search roots consume no headers here;
+# source-owned physical closure is verified against the original dependency file.
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+cc_library(name = "rescue_objects", srcs = ['cat.c', 'catio_trace.h'],
+    deps = ["//lib/libcapsicum:headers"], local_defines = ["RESCUE"],
+    copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments'], target_compatible_with = _PLATFORM)
+bsd_component_objects(name = "rescue_compiler_outputs", group = ":rescue_objects", pic = False,
+    visibility = ["//visibility:public"])

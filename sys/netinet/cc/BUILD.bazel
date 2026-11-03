@@ -62,7 +62,7 @@ cc_library(name = "packet_filter_headers", hdrs = ["cc.h"], strip_include_prefix
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites consumed by independent network-support module builds.
-bsd_source_headers(name = "network_support_headers", hdrs = ["cc.h"], visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "network_support_headers", hdrs = ["cc.h"], visibility = ["//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/compat/linprocfs:__pkg__"])
 
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["cc.h"],
@@ -136,3 +136,6 @@ amd64_generic_kernel_objects(name = "generic_network_policy_cc_cubic", srcs = ["
 # Physical prerequisites for native custom-named kernel built-ins.
 bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["cc.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["cc.h", "cc_newreno.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])

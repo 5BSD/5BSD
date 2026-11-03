@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_firmware_module.bzl", "amd64_firmware_module")
+
+# Original image order, registration specifications and exports.
+amd64_firmware_module(module = "rtwn-rtl8188eufw",
+    images = [{"source": "//sys/contrib/dev/rtwn:rtwn-rtl8188eufw.fw.uu", "encoding": "uu", "filename": "rtwn-rtl8188eufw.fw", "spec": "rtwn-rtl8188eufw.fw:rtwn-rtl8188eufw:111"}],
+    license = "", export_all = False,
+    extra_objects = [], extra_object_order = [])

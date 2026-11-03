@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "firewire", objects = ["//sys/dev/firewire:firewire_firewire_module_object_files", "//sys/dev/firewire:firewire_fwohci_module_object_files", "//sys/dev/firewire:firewire_fwohci_pci_module_object_files", "//sys/dev/firewire:firewire_fwcrom_module_object_files", "//sys/dev/firewire:firewire_fwdev_module_object_files", "//sys/dev/firewire:firewire_fwmem_module_object_files", "//sys/dev/firewire:firewire_fwdma_module_object_files"], object_order = ["firewire.o", "fwohci.o", "fwohci_pci.o", "fwcrom.o", "fwdev.o", "fwmem.o", "fwdma.o"], export_all = True)

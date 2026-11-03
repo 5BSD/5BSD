@@ -9,7 +9,7 @@ cc_library(name = "packet_filter_headers", hdrs = ["siphash.h"], strip_include_p
 # Core kernel physical prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_uipc_mbuf_headers", hdrs = ["siphash.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/crypto/siphash:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/dev/wg:__pkg__"])
 
 # IPv4 built-in prerequisites.
 bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["siphash.h"],

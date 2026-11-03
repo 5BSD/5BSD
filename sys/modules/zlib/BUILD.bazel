@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "zlib", objects = ["//sys/dev/zlib:zlib_zcalloc_module_object_files", "//sys/dev/zlib:zlib_zlib_mod_module_object_files", "//sys/contrib/zlib:zlib_adler32_module_object_files", "//sys/contrib/zlib:zlib_compress_module_object_files", "//sys/contrib/zlib:zlib_crc32_module_object_files", "//sys/contrib/zlib:zlib_deflate_module_object_files", "//sys/contrib/zlib:zlib_inffast_module_object_files", "//sys/contrib/zlib:zlib_inftrees_module_object_files", "//sys/contrib/zlib:zlib_trees_module_object_files", "//sys/contrib/zlib:zlib_zutil_module_object_files"], object_order = ["zcalloc.o", "zlib_mod.o", "adler32.o", "compress.o", "crc32.o", "deflate.o", "inffast.o", "inflate.o", "inftrees.o", "trees.o", "uncompr.o", "zutil.o"], exports = [], export_all = False, package = "kernel", aliases = [])

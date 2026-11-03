@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mpt", objects = ["//sys/dev/mpt:mpt_mpt_module_object_files", "//sys/dev/mpt:mpt_mpt_cam_module_object_files", "//sys/dev/mpt:mpt_mpt_debug_module_object_files", "//sys/dev/mpt:mpt_mpt_pci_module_object_files", "//sys/dev/mpt:mpt_mpt_raid_module_object_files", "//sys/dev/mpt:mpt_mpt_user_module_object_files"], object_order = ["mpt.o", "mpt_cam.o", "mpt_debug.o", "mpt_pci.o", "mpt_raid.o", "mpt_user.o"], export_all = False, package = "kernel", aliases = [])

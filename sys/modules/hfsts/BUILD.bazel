@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hfsts", objects = ["//sys/dev/intel:hfsts_hfsts_module_object_files", "//sys/dev/intel:hfsts_hfsts_isa_module_object_files"], object_order = ["hfsts.o", "hfsts_isa.o"], export_all = False, package = "kernel", aliases = [])

@@ -2,21 +2,26 @@
 load("//tools/build/bazel:bsd_kernel_module.bzl", "bsd_module_link", "bsd_module_exports")
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_merge")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
 
 
 _KERNEL_CTF = select({"//tools/build/bazel/config:kernel_ctf_enabled": True, "//conditions:default": False})
 
 def kernel_module_artifacts(module, objects, emulation, script = None, linkopts = [], shared = False,
                             prefix = "", exports = [], export_all = False, package = "kernel",
-                            linker_inputs = ["@bsd_sdk//toolchain:link_inputs"], object_order = []):
+                            linker_inputs = ["@bsd_sdk//toolchain:link_inputs"], object_order = [], aliases = [], ctf_object_paths = []):
     """Preserve the maintained link/CTF/export/debug/install stage ordering."""
+    if len(depset(aliases).to_list()) != len(aliases):
+        fail("duplicate module installation alias")
+    for alias in aliases:
+        if not alias or "/" in alias or alias in [".", "..", module + ".ko"]:
+            fail("module installation aliases must be distinct basenames")
     if export_all and exports:
         fail("export_all and an explicit export list are mutually exclusive")
     bsd_module_link(name = prefix + "generic_link", objects = objects, object_order = object_order,
         script = script, emulation = emulation, linkopts = linkopts, output = prefix + "generic/%s.linked" % module,
         linker = "@bsd_sdk//toolchain:bin/ld.lld", linker_inputs = linker_inputs)
-    bsd_ctf_merge(name = prefix + "generic_ctf", linked = ":" + prefix + "generic_link", objects = objects, object_order = object_order,
+    bsd_ctf_merge(name = prefix + "generic_ctf", linked = ":" + prefix + "generic_link", objects = objects, object_order = object_order, object_paths = ctf_object_paths,
         output = prefix + ("generic/%s.kld" if export_all and shared else "generic/%s.ko.full" if export_all else "generic/%s.ctf") % module, enabled = _KERNEL_CTF,
         ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True,
         merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
@@ -52,8 +57,15 @@ def kernel_module_artifacts(module, objects, emulation, script = None, linkopts 
     bsd_install_file(name = prefix + "install_debug", src = ":" + prefix + "generic_debug", destination = "/%s.ko.debug" % module,
         destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory", "//tools/build/bazel/config:kernel_directory"],
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + package, "dbg"])
+    for index, alias in enumerate(aliases):
+        bsd_install_link(name = prefix + "install_alias_" + str(index),
+            destination = "/" + alias,
+            destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
+            target = module + ".ko", kind = "symlink",
+            owner = "root", group = "wheel", mode = "0755",
+            install_tags = ["package=" + package])
     bsd_install_manifest(name = prefix + "install_manifest",
-        entries = [":" + prefix + "install_module"] + select({
+        entries = [":" + prefix + "install_module"] + [":" + prefix + "install_alias_" + str(index) for index in range(len(aliases))] + select({
             "//tools/build/bazel/config:kernel_debug_enabled": [":" + prefix + "install_debug"],
             "//conditions:default": [],
         }), visibility = ["//visibility:public"])

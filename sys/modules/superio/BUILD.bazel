@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "superio", objects = ["//sys/dev/superio:superio_superio_module_object_files"], object_order = ["superio.o"], export_all = True, package = "kernel", aliases = [])

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux_ntsync.h", "ntsync.h", "ntsyncvar.h"], includes = [],
+    visibility = ["//sys/dev/ntsync:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_1", hdrs = ["ntsync.h", "ntsyncvar.h"], includes = [],
+    visibility = ["//sys/dev/ntsync:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "linux_ntsync_linux_ntsync_module", srcs = ["linux_ntsync.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/ntsync:compat_services_module_context_0", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:compat_services_module_context_16"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ntsync_ntsync_module", srcs = ["ntsync.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/ntsync:compat_services_module_context_1"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

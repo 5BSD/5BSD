@@ -16,6 +16,13 @@
 
 #ifdef WITH_DTRACE
 #include <sys/sdt.h>
+#ifdef WITH_DTRACE_STATIC_ANCHOR
+/* Pull separate provider metadata only when this object is selected. */
+extern const unsigned char __bsd_dof_anchor_logincap_provider
+    __attribute__((visibility("hidden")));
+static const void * const logincap_dtrace_anchor __attribute__((used, retain)) =
+    &__bsd_dof_anchor_logincap_provider;
+#endif
 #else
 #define	DTRACE_PROBE4(provider, name, arg1, arg2, arg3, arg4) \
 	do { if (0) { (void)(arg1); (void)(arg2); (void)(arg3); \

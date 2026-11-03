@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["if_iwm_binding.h", "if_iwm_config.h", "if_iwm_debug.h", "if_iwm_fw.h", "if_iwm_led.h", "if_iwm_mac_ctxt.h", "if_iwm_notif_wait.h", "if_iwm_pcie_trans.h", "if_iwm_phy_ctxt.h", "if_iwm_phy_db.h", "if_iwm_power.h", "if_iwm_scan.h", "if_iwm_sf.h", "if_iwm_sta.h", "if_iwm_time_event.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["if_iwm_binding.h", "if_iwm_debug.h", "if_iwm_sf.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["if_iwm_binding.h", "if_iwm_config.h", "if_iwm_debug.h", "if_iwm_pcie_trans.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["if_iwm_debug.h", "if_iwm_phy_db.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["if_iwm_debug.h", "if_iwm_mac_ctxt.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["if_iwm_debug.h", "if_iwm_phy_ctxt.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["if_iwm_debug.h", "if_iwm_notif_wait.h", "if_iwm_pcie_trans.h", "if_iwm_time_event.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["if_iwm_constants.h", "if_iwm_debug.h", "if_iwm_power.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["if_iwm_debug.h", "if_iwm_notif_wait.h", "if_iwm_scan.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["if_iwm_debug.h", "if_iwm_led.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["if_iwm_notif_wait.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["if_iwm_config.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["if_iwm_debug.h", "if_iwm_fw.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_13", hdrs = ["if_iwm_config.h", "if_iwm_constants.h", "if_iwm_debug.h", "if_iwm_mac_ctxt.h", "if_iwm_sta.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_14", hdrs = ["if_iwm_config.h", "if_iwm_debug.h", "if_iwm_sf.h", "if_iwm_util.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_15", hdrs = ["if_iwm_config.h", "if_iwm_debug.h", "if_iwm_pcie_trans.h", "if_iwmreg.h", "if_iwmvar.h"], includes = [],
+    visibility = ["//sys/dev/iwm:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_module", srcs = ["if_iwm.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_binding_module", srcs = ["if_iwm_binding.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_util_module", srcs = ["if_iwm_util.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_phy_db_module", srcs = ["if_iwm_phy_db.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_3", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_mac_ctxt_module", srcs = ["if_iwm_mac_ctxt.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_phy_ctxt_module", srcs = ["if_iwm_phy_ctxt.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_5", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_time_event_module", srcs = ["if_iwm_time_event.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_power_module", srcs = ["if_iwm_power.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_scan_module", srcs = ["if_iwm_scan.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_8", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_led_module", srcs = ["if_iwm_led.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_9", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_notif_wait_module", srcs = ["if_iwm_notif_wait.c"],
+    deps = ["//sys/dev/iwm:final_drivers_module_context_10", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_7000_module", srcs = ["if_iwm_7000.c", "if_iwm_8000.c", "if_iwm_9000.c", "if_iwm_9260.c"],
+    deps = ["//sys/dev/iwm:final_drivers_module_context_11", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_fw_module", srcs = ["if_iwm_fw.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_12", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_sta_module", srcs = ["if_iwm_sta.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_13", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_sf_module", srcs = ["if_iwm_sf.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_14", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwm_if_iwm_pcie_trans_module", srcs = ["if_iwm_pcie_trans.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:final_drivers_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/iwm:final_drivers_module_context_15", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_iwm_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWM_DEBUG"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

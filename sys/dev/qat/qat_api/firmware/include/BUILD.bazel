@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["icp_qat_fw.h", "icp_qat_fw_la.h", "icp_qat_hw.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/qat_comms:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["icp_qat_fw.h", "icp_qat_fw_comp.h", "icp_qat_fw_la.h", "icp_qat_hw.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["icp_qat_fw.h", "icp_qat_fw_comp.h", "icp_qat_fw_la.h", "icp_qat_hw.h", "icp_qat_hw_20_comp.h", "icp_qat_hw_20_comp_defs.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["icp_qat_fw.h", "icp_qat_fw_comp.h", "icp_qat_fw_la.h", "icp_qat_hw.h", "icp_qat_hw_20_comp_defs.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])

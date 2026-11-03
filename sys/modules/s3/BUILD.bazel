@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "s3", objects = ["//sys/dev/fb:s3_s3_pci_module_object_files"], object_order = ["s3_pci.o"], export_all = False, package = "kernel", aliases = [])

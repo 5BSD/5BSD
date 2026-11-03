@@ -27,3 +27,23 @@ amd64_generic_kernel_objects(name = "generic_storage_controllers_tws_services", 
 amd64_generic_kernel_objects(name = "generic_storage_controllers_tws_user", srcs = ["tws_user.c"],
     deps = ["//sys/dev/pci:storage_controllers_kernel_aac_headers", "//sys/dev/tws:storage_controllers_kernel_tws_cam_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "tws_tws_module", srcs = ["tws.c"],
+    deps = ["//sys/dev/tws:storage_controllers_kernel_tws_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_controllers_kernel_tws_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tws_tws_services_module", srcs = ["tws_services.c", "tws_hdm.c"],
+    deps = ["//sys/dev/tws:storage_controllers_kernel_tws_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tws_tws_cam_module", srcs = ["tws_cam.c"],
+    deps = ["//sys/dev/tws:storage_controllers_kernel_tws_cam_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tws_tws_user_module", srcs = ["tws_user.c"],
+    deps = ["//sys/dev/tws:storage_controllers_kernel_tws_cam_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

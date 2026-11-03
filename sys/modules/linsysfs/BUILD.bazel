@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "linsysfs", objects = ["//sys/compat/linsysfs:linsysfs_linsysfs_module_object_files", "//sys/compat/linsysfs:linsysfs_linsysfs_net_module_object_files"], object_order = ["linsysfs.o", "linsysfs_net.o"], exports = [], export_all = False, package = "kernel", aliases = [])

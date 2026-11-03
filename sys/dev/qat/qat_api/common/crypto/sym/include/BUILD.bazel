@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["lac_sym_hash_defs.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_alg_chain.h", "lac_sym_cipher.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_partial.h", "lac_sym_qat.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["lac_sym_key.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_alg_chain.h", "lac_sym_auth_enc.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_qat.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["lac_sym.h", "lac_sym_cipher_defs.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cb.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_alg_chain.h", "lac_sym_cb.h", "lac_sym_cipher.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_partial.h", "lac_sym_qat.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cb.h", "lac_sym_cipher.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_cipher.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_queue.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cipher.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat_cipher.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_alg_chain.h", "lac_sym_auth_enc.h", "lac_sym_cb.h", "lac_sym_cipher.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_cipher.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_queue.h", "lac_sym_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_auth_enc.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_qat_hash.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_13", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cb.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_14", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash.h", "lac_sym_hash_defs.h", "lac_sym_hash_precomputes.h", "lac_sym_key.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_15", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_16", hdrs = ["lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_partial.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_17", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_auth_enc.h", "lac_sym_cipher.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat_cipher.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_18", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_cipher.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_19", hdrs = ["lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash_defs_lookup.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_20", hdrs = ["lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_qat_key.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_21", hdrs = ["lac_session.h", "lac_sym.h", "lac_sym_cipher_defs.h", "lac_sym_hash_defs.h", "lac_sym_key.h", "lac_sym_qat.h", "lac_sym_qat_constants_table.h", "lac_sym_qat_hash.h", "lac_sym_qat_hash_defs_lookup.h", "lac_sym_qat_key.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__"])

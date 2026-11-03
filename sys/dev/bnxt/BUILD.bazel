@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_families_module_context_0", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_1", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_coredump.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_hwrm.h", "bnxt_en/bnxt_ioctl.h", "bnxt_en/bnxt_log.h", "bnxt_en/bnxt_log_data.h", "bnxt_en/bnxt_mgmt.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/bnxt_sysctl.h", "bnxt_en/bnxt_ulp.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_2", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_coredump.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_hwrm.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_3", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_hwrm.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/bnxt_sysctl.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_4", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_coredump.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_hwrm.h", "bnxt_en/bnxt_log.h", "bnxt_en/bnxt_mgmt.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_5", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_hwrm.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_6", hdrs = ["bnxt_en/bnxt_auxbus_compat.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_7", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_hwrm.h", "bnxt_en/bnxt_log.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/bnxt_ulp.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_8", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_log.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_9", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_hwrm.h", "bnxt_en/bnxt_log.h", "bnxt_en/bnxt_log_data.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_10", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_coredump.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/hsi_struct_def.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_11", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/bnxt_ulp.h", "bnxt_en/hsi_struct_def.h", "bnxt_re/bnxt_re-abi.h", "bnxt_re/bnxt_re.h", "bnxt_re/ib_verbs.h", "bnxt_re/qplib_fp.h", "bnxt_re/qplib_rcfw.h", "bnxt_re/qplib_res.h", "bnxt_re/qplib_sp.h", "bnxt_re/qplib_tlv.h", "bnxt_re/stats.h"], includes = ["bnxt_en"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_12", hdrs = ["bnxt_en/hsi_struct_def.h", "bnxt_re/bnxt_re-abi.h", "bnxt_re/ib_verbs.h", "bnxt_re/qplib_fp.h", "bnxt_re/qplib_rcfw.h", "bnxt_re/qplib_res.h", "bnxt_re/qplib_sp.h", "bnxt_re/qplib_tlv.h"], includes = ["bnxt_en"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_13", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/bnxt_ulp.h", "bnxt_en/hsi_struct_def.h", "bnxt_re/bnxt_re-abi.h", "bnxt_re/qplib_rcfw.h", "bnxt_re/qplib_res.h", "bnxt_re/qplib_sp.h", "bnxt_re/qplib_tlv.h"], includes = ["bnxt_en"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_14", hdrs = ["bnxt_en/bnxt.h", "bnxt_en/bnxt_auxbus_compat.h", "bnxt_en/bnxt_dcb.h", "bnxt_en/bnxt_log.h", "bnxt_en/bnxt_sriov.h", "bnxt_en/bnxt_ulp.h", "bnxt_en/hsi_struct_def.h", "bnxt_re/bnxt_re-abi.h", "bnxt_re/bnxt_re.h", "bnxt_re/ib_verbs.h", "bnxt_re/qplib_fp.h", "bnxt_re/qplib_rcfw.h", "bnxt_re/qplib_res.h", "bnxt_re/qplib_sp.h", "bnxt_re/qplib_tlv.h", "bnxt_re/stats.h"], includes = ["bnxt_en"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_txrx_module", srcs = ["bnxt_en/bnxt_txrx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:network_families_module_context_3", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/bnxt:network_families_module_context_0", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_if_bnxt_module", srcs = ["bnxt_en/if_bnxt.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:network_support_headers", "//sys/net:network_families_module_context_4", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/bnxt:network_families_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_2"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_hwrm_module", srcs = ["bnxt_en/bnxt_hwrm.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_3", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/dev/bnxt:network_families_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_sysctl_module", srcs = ["bnxt_en/bnxt_sysctl.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_3", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/bnxt:network_families_module_context_3", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_3"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_mgmt_module", srcs = ["bnxt_en/bnxt_mgmt.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/bnxt:network_families_module_context_4", "//sys/net:network_families_module_context_3", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_dcb_module", srcs = ["bnxt_en/bnxt_dcb.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/bnxt:network_families_module_context_5", "//sys/net:network_families_module_context_3", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_auxbus_compat_module", srcs = ["bnxt_en/bnxt_auxbus_compat.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/bnxt:network_families_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_4"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_sriov_module", srcs = ["bnxt_en/bnxt_sriov.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_6", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/bnxt:network_families_module_context_5", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_2"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_ulp_module", srcs = ["bnxt_en/bnxt_ulp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_6", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/dev/bnxt:network_families_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_5"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_log_module", srcs = ["bnxt_en/bnxt_log.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/bnxt:network_families_module_context_8", "//sys/net:network_families_module_context_3", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_log_data_module", srcs = ["bnxt_en/bnxt_log_data.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/bnxt:network_families_module_context_9", "//sys/net:network_families_module_context_3", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bnxt_bnxt_coredump_module", srcs = ["bnxt_en/bnxt_coredump.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/bnxt:network_families_module_context_10", "//sys/net:network_families_module_context_3", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IFLIB"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "bnxt_re_ib_verbs_module", srcs = ["bnxt_re/ib_verbs.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_7", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/dev/bnxt:network_families_module_context_11", "//sys/ofed/include:network_families_module_context_0", "//sys/compat/linuxkpi/common/include:network_families_module_context_6"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "bnxt_re_qplib_fp_module", srcs = ["bnxt_re/qplib_fp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_8", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/dev/bnxt:network_families_module_context_12", "//sys/ofed/include:network_families_module_context_1", "//sys/compat/linuxkpi/common/include:network_families_module_context_7"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "bnxt_re_qplib_sp_module", srcs = ["bnxt_re/qplib_sp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_6", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/dev/bnxt:network_families_module_context_13", "//sys/ofed/include:mlx_kernel_mlx5_alloc_headers", "//sys/compat/linuxkpi/common/include:network_families_module_context_8"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "bnxt_re_qplib_res_module", srcs = ["bnxt_re/qplib_res.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_9", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/dev/bnxt:network_families_module_context_13", "//sys/ofed/include:mlx_kernel_mlx5_alloc_headers", "//sys/compat/linuxkpi/common/include:network_families_module_context_9"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "bnxt_re_qplib_rcfw_module", srcs = ["bnxt_re/qplib_rcfw.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_7", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/dev/bnxt:network_families_module_context_11", "//sys/ofed/include:network_families_module_context_3", "//sys/compat/linuxkpi/common/include:network_families_module_context_7"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "bnxt_re_stats_module", srcs = ["bnxt_re/stats.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_7", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/dev/bnxt:network_families_module_context_11", "//sys/ofed/include:network_families_module_context_3", "//sys/compat/linuxkpi/common/include:network_families_module_context_7"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "bnxt_re_main_module", srcs = ["bnxt_re/main.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:network_families_module_context_7", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:network_support_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/mlx5:network_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/dev/bnxt:network_families_module_context_14", "//sys/ofed/include:network_families_module_context_4", "//sys/compat/linuxkpi/common/include:network_families_module_context_10"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

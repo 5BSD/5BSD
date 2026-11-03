@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["if_iwx_debug.h", "if_iwxreg.h", "if_iwxvar.h"], includes = [],
+    visibility = ["//sys/dev/iwx:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["if_iwx_debug.h", "if_iwxreg.h"], includes = [],
+    visibility = ["//sys/dev/iwx:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_iwx_if_iwx_module", srcs = ["if_iwx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:final_drivers_module_context_4", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/net80211:wlan_kernel_ieee80211_headers", "//sys/dev/iwx:final_drivers_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWX_DEBUG=1"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwx_if_iwx_debug_module", srcs = ["if_iwx_debug.c"],
+    deps = ["//sys/net:ath_kernel_ah_osdep_headers", "//sys/net80211:final_drivers_module_context_3", "//sys/dev/iwx:final_drivers_module_context_1"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["IWX_DEBUG=1"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

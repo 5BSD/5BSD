@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["alive.h", "cmdhdr.h", "commands.h", "config.h", "dbg-tlv.h", "debug.h", "nvm-reg.h", "paging.h", "phy.h", "power.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/fw:__pkg__", "//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["alive.h", "cmdhdr.h", "dbg-tlv.h", "mac-cfg.h", "mac.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["cmdhdr.h", "dbg-tlv.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/fw:__pkg__", "//sys/contrib/dev/iwlwifi/pcie:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["cmdhdr.h", "commands.h", "config.h", "dbg-tlv.h", "nvm-reg.h", "phy.h", "power.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/pcie:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["cmdhdr.h", "commands.h", "dbg-tlv.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/cfg:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["cmdhdr.h", "commands.h", "dbg-tlv.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/fw:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["alive.h", "cmdhdr.h", "commands.h", "config.h", "datapath.h", "dbg-tlv.h", "debug.h", "nvm-reg.h", "paging.h", "phy.h", "power.h", "rx.h", "system.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/fw:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["cmdhdr.h", "commands.h", "config.h", "dbg-tlv.h", "debug.h", "nvm-reg.h", "paging.h", "phy.h", "power.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/fw:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["alive.h", "cmdhdr.h", "commands.h", "config.h", "dbg-tlv.h", "nvm-reg.h", "phy.h", "power.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/fw:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["mac.h", "rs.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/fw:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["alive.h", "cmdhdr.h", "commands.h", "config.h", "dbg-tlv.h", "debug.h", "nvm-reg.h", "paging.h", "phy.h", "power.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["cmdhdr.h", "commands.h", "datapath.h", "dbg-tlv.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_13", hdrs = ["alive.h", "cmdhdr.h", "commands.h", "config.h", "datapath.h", "dbg-tlv.h", "debug.h", "nvm-reg.h", "paging.h", "phy.h", "power.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_14", hdrs = ["alive.h", "binding.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "filter.h", "led.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "offload.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rfi.h", "rs.h", "rx.h", "scan.h", "sf.h", "sta.h", "stats.h", "system.h", "tdls.h", "time-event.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mvm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_15", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_16", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "sta.h", "time-event.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_17", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "time-event.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_18", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "sta.h", "time-event.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_19", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "filter.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "sta.h", "tdls.h", "time-event.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_20", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "offload.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "time-event.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_21", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "offload.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rfi.h", "rs.h", "rx.h", "scan.h", "stats.h", "time-event.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_22", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "stats.h", "time-event.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_23", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "datapath.h", "dbg-tlv.h", "debug.h", "dhc.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_24", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "time-event.h", "tx.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_25", hdrs = ["alive.h", "cmdhdr.h", "coex.h", "commands.h", "config.h", "context.h", "d3.h", "datapath.h", "dbg-tlv.h", "debug.h", "location.h", "mac-cfg.h", "mac.h", "nvm-reg.h", "offload.h", "paging.h", "phy-ctxt.h", "phy.h", "power.h", "rs.h", "rx.h", "scan.h", "sta.h", "time-event.h", "txq.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__"])
+
+exports_files(["cmdhdr.h", "commands.h", "dbg-tlv.h"], visibility = ["//sys/contrib/dev/iwlwifi:__pkg__"])

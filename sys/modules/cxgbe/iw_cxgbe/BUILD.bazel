@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "iw_cxgbe", objects = ["//sys/dev/cxgbe:iw_cxgbe_cm_module_object_files", "//sys/dev/cxgbe:iw_cxgbe_cq_module_object_files", "//sys/dev/cxgbe:iw_cxgbe_device_module_object_files", "//sys/dev/cxgbe:iw_cxgbe_mem_module_object_files", "//sys/dev/cxgbe:iw_cxgbe_qp_module_object_files", "//sys/compat/linuxkpi/common/src:iw_cxgbe_lkpi_iic_if_module_object_files"], object_order = ["cm.o", "cq.o", "device.o", "ev.o", "id_table.o", "mem.o", "provider.o", "qp.o", "resource.o", "lkpi_iic_if.o"], export_all = False, package = "kernel", aliases = [])

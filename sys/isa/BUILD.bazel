@@ -10,7 +10,7 @@ cc_library(name = "kernel_headers", hdrs = glob(["*.h"]), strip_include_prefix =
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["rtc.h"], includes = [],
-    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/arcmsr:__pkg__"])
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/nvram:__pkg__", "//sys/dev/nvdimm:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/efidev:__pkg__"])
 
 bsd_source_headers(name = "acpi_support_headers", hdrs = ["rtc.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
 
@@ -18,24 +18,24 @@ bsd_source_headers(name = "acpi_support_headers", hdrs = ["rtc.h"], visibility =
 bsd_source_headers(name = "lowlevel_kernel_efirt_machdep_headers", hdrs = ["rtc.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_fpu_headers", hdrs = ["isavar.h", "pnpvar.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/ichwd:__pkg__", "//sys/dev/superio:__pkg__", "//sys/dev/viawd:__pkg__", "//sys/dev/proto:__pkg__", "//sys/dev/uart:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["isareg.h", "rtc.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/amd64/vmm:__pkg__"])
 
 # Native amd64 core consumer of the maintained ISA object interface.
 filegroup(name = "isa_if_header_file", srcs = [":isa_if"], output_group = "header")
 cc_library(name = "isa_if_headers", hdrs = [":isa_if_header_file"], strip_include_prefix = "isa_if.generated",
-    visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/amdsbwd:__pkg__", "//sys/dev/viapm:__pkg__"])
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/amdsbwd:__pkg__", "//sys/dev/viapm:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/ichwd:__pkg__", "//sys/dev/superio:__pkg__", "//sys/dev/viawd:__pkg__", "//sys/dev/proto:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__"])
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["isavar.h", "pnpvar.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_cpu_machdep_headers", hdrs = ["isareg.h"],
-    visibility = ["//sys/x86/x86:__pkg__"])
+    visibility = ["//sys/x86/x86:__pkg__", "//sys/dev/fb:__pkg__", "//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_intr_machdep_headers", hdrs = ["isareg.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_nexus_headers", hdrs = ["isareg.h", "isavar.h", "pnpvar.h"],
-    visibility = ["//sys/x86/x86:__pkg__"])
+    visibility = ["//sys/x86/x86:__pkg__", "//sys/dev/tpm:__pkg__"])
 
 # ACPI core built-in prerequisites.
 bsd_source_headers(name = "acpica_core_kernel_acpi_headers", hdrs = ["isavar.h", "pnpvar.h"],
@@ -120,3 +120,6 @@ filegroup(name = "builtin_isa_if_source", srcs = [":isa_if"], output_group = "so
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_isa_if", srcs = [":builtin_isa_if_source"],
     deps = ["//sys/isa:kobj_builtins_physical_isa_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/isa:kobj_builtins_kernel_isa_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "device_families_module_context_1", hdrs = ["isavar.h", "pnpvar.h", "rtc.h"], includes = [],
+    visibility = ["//sys/dev/ipmi:__pkg__"])

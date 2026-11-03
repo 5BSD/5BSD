@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "efirt", objects = ["//sys/dev/efidev:efirt_efirt_module_object_files", "//sys/amd64/amd64:efirt_efirt_machdep_module_object_files", "//sys/dev/efidev:efirt_efidev_module_object_files", "//sys/dev/efidev:efirt_efirtc_module_object_files", "//sys/amd64/amd64:efirt_efirt_support_module_object_files"], object_order = ["efirt.o", "efirt_machdep.o", "efidev.o", "efirtc.o", "efirt_support.o"], exports = [], export_all = True, package = "kernel", aliases = [], ctf_object_paths = [])

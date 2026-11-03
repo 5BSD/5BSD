@@ -31,7 +31,7 @@ cc_library(name = "packet_filter_headers", hdrs = ["sha256.h", "sha512.h"], stri
 # Core kernel physical prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["sha256.h"],
-    visibility = ["//sys/kern:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/dev/random:__pkg__", "//sys/netinet6:__pkg__", "//sys/netinet:__pkg__"])
 
 # IPv4 built-in prerequisites.
 bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha256.h"],
@@ -43,7 +43,7 @@ bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["sha256.h"
 
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_cbc_mac_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
-    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto:__pkg__"])
+    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/dev/safexcel:__pkg__", "//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/qat_comms:__pkg__", "//sys/dev/qat/qat_api/common/stubs:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/device:__pkg__", "//sys/dev/qat/qat_api/qat_kernel/src:__pkg__", "//sys/dev/qat/qat_api/qat_utils/src:__pkg__", "//sys/dev/qat/qat_api:__pkg__", "//sys/dev/qat_c2xxx:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],

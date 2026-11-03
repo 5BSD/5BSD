@@ -1,7 +1,25 @@
 # Bazel qualification
 
+> Module debug qualification correction: historical module “CTF/debug” parity
+> statements concern stripped module/CTF payloads and valid debuglink CRCs unless
+> explicitly comparing separate debug files. Full DWARF/source lookup parity
+> remains open. See [the direct audit and required gates](MODULE-DEBUG-QUALIFICATION.md).
+
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
+
+## Current module inventory correction and incremental checkpoint (2026-11-03)
+
+The selected amd64 inventory has 729 BUILD files but 728 actual module
+producer declarations (690 generic, 38 firmware). ZFS currently has header
+providers and built-in kernel support, but no loadable module producer; it is
+still required. BUILD presence is not module-target or full-system coverage.
+
+The [Linux64 incremental check](LINUX64-INCREMENTAL-QUALIFICATION.md) passes
+original/changed/restored generated-image dependency behavior using the actual
+committed graph in an isolated object-root source checkout. Both restored files
+match the original whole-file bytes. Whole-system cache/runtime/performance and
+other completion gates remain open; Make stays production/default.
 
 ## Latest kernel checkpoint (2026-11-02)
 
@@ -176,17 +194,42 @@ its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
-**Current module inventory (2026-11-01):** the maintained recursive amd64
-GENERIC audit selects 729 modules, with 244 direct native declarations and
-485 without them. This is source inventory, not a count of qualified builds.
-The newest qualified cohort is documented in
-[USB network qualification](USB-NETWORK-QUALIFICATION.md). Evidence:
-`/usr/obj/usr/src/bazel-fresh-kernel-module-inventory-20261101/amd64.json`.
+**Current module inventory (2026-11-02):** the maintained recursive amd64
+GENERIC audit selects 729 modules; all 729 selected directories now contain local
+BUILD files. Linux64 now passes both native profiles, complete plain-byte parity,
+actual module/helper dependencies, generated syscall/layout/VDSO payloads and
+installation comparisons; see
+[Linux64 qualification](LINUX64-MODULE-QUALIFICATION.md). Changed-image cache
+invalidation, full current kernel/module aggregation and system gates remain
+open. This declaration count is not a complete module/system-build claim.
+VMM passes both original/native module and layout
+profiles (185 module compilers plus two layout compilers per profile), complete
+plain-byte parity, ordered links and installation. The existing bhyve consumer
+also builds after its file-label migration; see
+[VMM qualification](VMM-MODULE-QUALIFICATION.md). Runtime virtualization, separate
+DWARF, other settings/targets and full-system gates remain open.
+The OpenSSL crypto module passes
+both profiles with nineteen actual compiler contexts, complete plain-byte
+parity, CTF/runtime, link-order and install comparisons; see
+[OpenSSL module qualification](OSSL-MODULE-QUALIFICATION.md).
+The preceding eighteen-driver
+cohort passes plain/CTF runtime-artifact, actual-input, ordered-link and install
+comparisons, plus both RTWN microcode settings; see
+[driver qualification and remaining work](FINAL-DRIVERS-MODULES-WORK.md).
+All eighteen plain modules are byte-identical to their original controls.
+Separate DWARF/source lookup, other configurations, runtime and full-system gates
+remain open. Declaration presence is not complete qualified-build coverage.
+The preceding cohort is documented in
+[compatibility/storage/tracing qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md).
+Earlier selection snapshot (628 local BUILD files; four later module cohorts
+add 80 selected leaves and this driver cohort adds eighteen):
+`/usr/obj/usr/src/bazel-source-context-module-selection-20261102`.
 Complete native world/kernel/pkgbase and system qualification remain open.
-The corrected parent-export-aware inventory selects 627 ARM64 and 553 RISC-V64
-modules. These are selection totals, not completed conversions. See
-[module inventory context](MODULE-INVENTORY-CONTEXT.md) for the fix, regression
-checks and review of earlier native module selections.
+The corrected query context selects 627 ARM64 and 553 RISC-V64 modules, with 504
+and 476 local BUILD files respectively in that earlier snapshot. A BUILD file can
+contain only amd64 rules; these presence counts do not establish cross-target conversion or builds.
+See [module inventory context](MODULE-INVENTORY-CONTEXT.md) for source-context
+inputs, regression checks and selection limits.
 
 **Earlier cohort snapshot (2026-11-01; counts below are historical):** the architecture-checked Make inventory counts 729
 selected amd64 GENERIC kernel modules, with 124 direct Bazel module declarations.
@@ -47853,3 +47896,373 @@ registration and .incbin inputs are native and declared. See
 [USB-REMAINING-MODULES-QUALIFICATION.md](USB-REMAINING-MODULES-QUALIFICATION.md).
 Local BUILD presence is 430/729 reviewed selected amd64 leaves, not full
 qualification. Hardware/runtime, other architectures and aggregate gates remain.
+
+
+## Native default rescue C generation (2026-11-02)
+
+The genuine native crunchgen now generates the original 103-program/39-alias
+rescue dispatcher without Make discovery. Its C bytes, compiled dispatcher,
+corrected crunchgen tool policy/objects/program and five installation records
+match independent Make controls. Nine negative analysis tests plus six safe
+fixture runtime methods pass. This is a generator/tool/dispatcher milestone;
+592 application object descriptors are not compiled rescue coverage. See
+[RESCUE-DISPATCH-QUALIFICATION.md](RESCUE-DISPATCH-QUALIFICATION.md) for exact
+configuration, debug-policy and remaining full-rescue gates.
+
+
+### Remaining FIRMWS module qualification (2026-11-02)
+
+The preceding reference-only checkpoint is superseded by the implemented and
+qualified native firmware composition. All 38 remaining selected FIRMWS modules
+now declare their 59 image inputs and original ordered registration/driver links.
+All 111 compiler contexts and 38 links pass actual input reviews. Plain modules
+match 37 untouched Make references and one independently checked LiquidIO
+filename-policy control; CTF/debug payload and all 114 installation records match.
+Four prior USB firmware artifacts remain byte-identical. The six existing provider
+tests pass in each profile; these are not firmware-loading or hardware tests.
+See FIRMWARE-MODULES-QUALIFICATION.md for evidence and configuration limits.
+
+Local BUILD presence is now 468/729 selected amd64 leaves (261 missing), not a
+whole-system qualification percentage. Complete rescue application/static linking,
+remaining module families, ARM64/RISC-V, aggregate pkgbase/hardware/bootstrap,
+publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain open.
+Add maintained automatic parameter-file capture before later build profiles:
+current proof preserves exact hash-verified recovered parameter bytes, not an
+implemented frontend capture guarantee. Make remains production/default; BIP is
+excluded. Existing format-5 build-bsd/backend inputs cover this composition; no
+CLI, signing, staging or publication policy change is needed for this cohort.
+
+### Original rescue entry-stub producer
+
+The ordinary crunchgen now has an optional direct C-stub output mode. All 103
+default rescue stubs equal actual original Make outputs; default dispatcher,
+cache and Makefile bytes are preserved. Native fixture execution uses the real
+generated stubs. [Qualification and remaining application/link gates](CRUNCHGEN-DIRECT-STUBS-QUALIFICATION.md)
+distinguish seven fresh runtime methods from nine reused analysis-test results.
+
+
+### ISP and Myricom module qualification (2026-11-02)
+
+Eleven additional selected amd64 leaves now use native C/module composition:
+six ISP firmware selections, four Myricom firmware modules and its network driver.
+All eleven plain modules are byte-identical to untouched Make outputs; CTF/debug,
+33 installation records, eleven actual compiler contexts/1,008 prerequisites and
+eleven initial links pass. Nine firmware array headers are declared inputs.
+Original runtime C and Makefiles are unchanged. See
+CARRAY-FIRMWARE-MODULES-QUALIFICATION.md for evidence and qualification limits.
+Local BUILD presence is 479/729 selected leaves (250 missing), not a qualified
+whole-system percentage. Six existing provider tests pass in each profile; no
+firmware loading/hardware claim. Cross-architecture, complete world/rescue/pkgbase,
+bootstrap/publication, VM and performance/cache/sandbox gates remain open.
+Existing build-bsd format-5/backend helpers cover this composition without a new
+CLI, helper extension, signing/staging or publication policy. Make remains the
+production/default build. BIP stays excluded.
+
+
+### libalias and NTB module qualification (2026-11-02)
+
+Fifteen more selected amd64 leaves use native C/KOBJ and module helpers: eight
+libalias core/extensions and seven NTB core/hardware/transport/network/tool modules.
+All fifteen plain binaries are byte-identical to untouched Make references;
+CTF/debug, 45 installation records, 21 actual compilers/2,793 prerequisites and
+fifteen initial links pass. Original export policies are retained, including
+libalias/ntb/ntb_transport EXPORT_SYMS=YES. No runtime C or original Makefile change.
+See ALIAS-NTB-MODULES-QUALIFICATION.md for scoped evidence and remaining gates.
+Local BUILD presence is 494/729 selected amd64 leaves (235 missing), not a
+whole-system qualification percentage. Six existing provider tests pass per
+profile; protocol behavior, module loading, hardware, KTR variants and live
+tracing remain open. Whole world/rescue/cross/pkgbase/hardware/bootstrap,
+publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox qualification remain
+required. Existing build-bsd C/format-5/backend helpers cover this composition
+without new CLI, helper extension, signing/staging or publication requirements.
+Make remains production/default. BIP stays excluded.
+
+### First real rescue application object variants
+
+The actual original nested cat/echo/head RESCUE objects and ordinary crunchide
+tool are built and checked against Make, including six exact allocated object
+payloads and 391 consumed input occurrences. Child strong stack protection is
+preserved despite the rescue parent's disabled setting. [Build-only scope and
+remaining relocatable/crunchide/full-rescue gates](RESCUE-CORE-OBJECTS-QUALIFICATION.md).
+
+
+### FireWire and Hyper-V module qualification (2026-11-02)
+
+Twelve additional selected amd64 leaves now use native C/assembly/KOBJ module
+stages. All twelve plain binaries match untouched Make byte-for-byte; exact CTF
+bytes, debug CRCs and 36 installation records pass. Thirty-eight original executed
+compiler contexts/4,853 prerequisites and twelve actual ordered links are bound;
+final CTF-only results reuse prior compilations, with no invented cached spawns.
+The original VMBus custom assembly recipe skips ctfconvert. A per-group boolean
+convert_ctf defaults true and participates in the global kernel setting; false
+preserves that recipe and cannot override global disable. All 22 prior ISP/Myricom
+module artifacts remain byte-identical. The frontend manual records the exception.
+
+Shared FireWire source/header ownership moved into its package with the old root
+header target retained as a native alias. fwcontrol/dconschat are built separately
+with the userland SDK: executable sections match except debug links, manifests/
+manuals are unchanged and debug CRCs validate. Archives/DWARF differ; full byte
+identity is not claimed. Rejected analysis/mixed-toolchain/CTF/archive-equality
+attempts are retained with diagnosis. See FIREWIRE-HYPERV-MODULES-QUALIFICATION.md.
+
+Local BUILD presence is 506/729 selected amd64 leaves (223 missing), not a whole
+system qualification percentage. Original export policies are retained. Six
+existing provider tests pass per module profile; hardware/loading/live probes,
+other options/architectures and complete world/rescue/pkgbase/hardware/bootstrap,
+publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain open.
+During ARM qualification, review/fix the existing Hyper-V Make branch that uses
+SRC instead of SRCS for its architecture sources; current evidence is amd64 only.
+Existing build-bsd C/format-5/backend inputs cover the composition; no new CLI,
+signing/security, staging or publication contract. Make remains production/
+default; BIP is excluded. Automatic parameter capture remains a frontend gate.
+
+
+### NVMe-oF, TCP and kernel-test modules (2026-11-02)
+
+Thirteen more selected amd64 leaves use native C/module stages: four NVMe-oF,
+four TCP and five ktest modules. Twenty-nine compiler contexts/4,803 consumed
+prerequisites and thirteen actual ordered links pass. All thirteen plain modules
+match respective Make references byte-for-byte: eleven untouched originals and
+two independently checked BBR/RACK filename-policy controls. Sixteen original/
+control recipes and 3,218 prerequisites differ only by one source-path-derived
+macro map. Original noncanonical-path differences are retained; no final artifact
+normalization or production source/compiler-policy change. CTF bytes/debug CRCs
+and 39 file installation records pass, including original package=tests for the
+five test modules and package=kernel for the other eight. Export policy retained.
+
+Static registration checks preserve 34 compiled ktest cases, including twenty
+enabled HPTS functional cases, not merely its disabled warning stub. None is
+claimed executed. The example Python wrapper skips two intentional failures;
+matching-guest VM qualification must report skips and explicitly test failure
+reporting. Six existing provider test targets pass per build profile; these do
+not demonstrate protocol/storage/kernel-test runtime behavior. See
+STORAGE-TCP-KTEST-MODULES-QUALIFICATION.md for bounded evidence and open gates.
+
+Local BUILD presence is 519/729 selected amd64 leaves (210 missing), not a whole
+system qualification percentage. ARM64/RISC-V, alternate KERNCONF/options, actual
+loading/ktest/NVMe-oF/TCP/live-probe behavior, complete world/rescue/pkgbase/hardware/
+bootstrap/publication, VM and CPU/memory/disk I/O/cache/sandbox gates remain open.
+Existing build-bsd C/format-5/backend/helper inputs already carry this composition
+and package tags; no new CLI/manual behavior, signing/security, staging or
+publication requirements. Make remains production/default; BIP is excluded.
+
+
+### IPMI, storage, one-wire, PWM and VMware modules (2026-11-02)
+
+Fifteen more selected amd64 leaves now use native C/KOBJ module stages: IPMI and
+its Linux compatibility module; MFI core/Linux/CAM; MRSAS core/Linux; one-wire
+bus/temperature/GPIO controller; PWM bus/controller; VMware PVSCSI/VMCI/VMXNET3.
+Forty-four compiler contexts/5,098 consumed prerequisites and fifteen original
+ordered links pass. All fifteen plain modules match untouched Make byte-for-byte;
+CTF bytes/debug CRCs and 45 file installation records pass. Original export and
+package=kernel policies are retained. No runtime C, Makefile or common helper
+change. Three Linux modules reuse the existing declared machine/../linux header
+view; only dependency edges and narrow visibility extend. Rejected initial
+missing-view compilation is retained; failed spawns are excluded from evidence.
+See DEVICE-FAMILIES-MODULES-QUALIFICATION.md for exact scope and retained proofs.
+
+Local BUILD presence is 534/729 selected amd64 leaves (195 missing), not a whole
+system qualification percentage. Six existing provider test targets pass in each
+profile; they do not establish device/Linux-ioctl/hardware behavior. FDT-enabled
+PWM and other option/architecture variants, actual loading, live probes, complete
+world/rescue/pkgbase/hardware/bootstrap/publication, VM and CPU/memory/disk I/O/
+cache/sandbox qualification remain open. Existing build-bsd C/format-5/backend
+inputs carry these relationships; no new CLI/manual behavior, signing/security,
+staging or publication requirement. Make stays production/default; BIP excluded.
+
+The [rescue combined-object producer qualification](RESCUE-COMBINED-OBJECTS-QUALIFICATION.md)
+adds three genuine stub → ordered ld -r → original crunchide pipelines. All
+runtime sections/relocations/symbols match original Make; identical-input controls
+also reproduce raw/hidden whole files. Debug path differences are explicit. Full
+rescue linking, execution and installation remain open.
+
+
+## Latest network-module checkpoint (2026-11-02)
+
+Nine amd64 network/RDMA leaves now pass native compiler/input/link and artifact/
+installation reviews against eighteen original Make controls. Both profiles bind
+98 actual compilers and 27,502 original and native-consumed dependency occurrences,
+plus nine complete ordered links. Five plain modules match whole-file bytes;
+four differ only in independently reproduced 20-byte build-ID descriptors from
+original local debug compilation, with every other final byte equal. CTF/debug
+sections, CTF payloads, split-debug CRCs and eighteen installation records pass;
+nine plain installation records pass. Six existing provider tests pass per profile.
+See [NETWORK-FAMILIES-MODULES-QUALIFICATION.md](NETWORK-FAMILIES-MODULES-QUALIFICATION.md)
+for the rejected initial strict criterion and exact linker-control evidence.
+
+BUILD presence is 543/729 selected amd64 leaves (186 missing), not qualification
+percentage. Fresh parent-export-aware inventories select 627 ARM64 and 553 RISC-V
+leaves; only 216/214 have recognized cross-module declarations. Older cross
+inventories omitted twelve/ten FDT-selected leaves. Evidence and exact gaps are
+retained under `/usr/obj/usr/src/bazel-current-module-selection-20261102/`.
+The separate real static rescue dispatcher is under qualification; its bounded
+three-application result does not close the full rescue selection. Full world,
+rescue/pkgbase/hardware/bootstrap/publication, alternate options/architectures,
+VM/runtime and CPU/memory/disk I/O/cache/sandbox qualification remain open.
+Existing build-bsd format-5 inputs and maintained rules carry these declarations;
+no new CLI/backend/security/publication policy. Make stays production/default;
+BIP remains excluded.
+
+The [bounded static rescue executable](RESCUE-CORE-PROGRAM-QUALIFICATION.md)
+now runs real cat/echo/head through original dispatch and crunchide objects.
+Main and full ELF equal an original generated-Make control with the same native
+libraries/startup, and ten real runtime methods pass. Existing libutil compile-
+policy correction is a separate next gate; full rescue install remains open.
+
+
+## Latest Intel Ethernet checkpoint (2026-11-02)
+
+Seven more amd64 modules pass two native compiler/input/link and artifact/install
+profiles. Each binds 118 actual uncached compiler actions and 21,775 original and
+native-consumed dependencies; all seven plain modules are whole-file identical
+to Make. CTF/debug sections, CTF payloads, split-debug CRCs and seventeen install
+records pass; ten plain records pass. Three relative aliases follow configured
+kernel directories. The common helper has positive archive and negative prefix
+tests; existing archive and prior network outputs remain exact. Actual Make
+staging also qualifies the empty-alias-package-tag correction and explicit
+package/tag overrides. See
+[INTEL-ETHERNET-MODULES-QUALIFICATION.md](INTEL-ETHERNET-MODULES-QUALIFICATION.md).
+
+Local BUILD presence is 550/729 selected amd64 leaves (179 missing), not whole
+system qualification. ARM64/RISC-V, complete world/rescue/pkgbase/hardware,
+bootstrap/publication, runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. The maintained build-bsd frontend exercises these changes with existing
+format-5 inputs; module rules, tests and manual are updated. Make stays default;
+BIP remains excluded.
+
+The [libutil compiler-policy correction](LIBUTIL-COMPILE-POLICY-QUALIFICATION.md)
+now matches all 68 original normal/small-PIC compile recipes and 3,778 consumed
+file occurrences. A default-disabled small-PIC toolchain feature leaves all 72
+representative default action contracts and keys unchanged. Four PIC checks and
+eleven real rescue runtime methods pass; the rescue ELF remains byte exact.
+Original Make archive/provider order and full DSO payload parity remain open.
+
+## Latest platform-module checkpoint (2026-11-02)
+
+Twenty-four further amd64 platform/GPIO/watchdog modules pass two native
+compiler/input/link and artifact/install profiles: 36 actual compilers and 3,843
+original/native-consumed dependencies per profile, plus 24 ordered links.
+Twenty-two plain modules equal untouched Make whole-file; p2sb/superio equal
+independent canonical-filename Make controls. Original lexical-path discrepancies
+remain recorded. CTF/debug payloads, CRCs and 48 install records pass, alongside
+24 plain records. Six existing provider tests pass per profile; device runtime
+is not qualified. See
+[PLATFORM-FAMILIES-MODULES-QUALIFICATION.md](PLATFORM-FAMILIES-MODULES-QUALIFICATION.md).
+
+BUILD presence is 574/729 selected amd64 leaves (155 missing), not qualification
+percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
+bootstrap/publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. Existing build-bsd format-5 inputs/helpers carry this cohort; no new CLI or
+security/publication policy. Make stays production/default; BIP remains excluded.
+
+## Latest storage-adapter checkpoint (2026-11-02)
+
+Seventeen further amd64 storage module leaves pass native compiler/input/link,
+artifact and installation checks: 260 compiler contexts, 36,990 original/native-
+consumed dependencies and seventeen ordered links per profile. Four original
+vendor ELF objects are explicit hash-bound link inputs. All seventeen plain
+modules match untouched Make whole-file; CTF/debug payloads, CRCs and 34 install
+records pass, plus seventeen plain records. Qualification found and corrected
+hptmv's missing original CFLAGS-reset policy using native feature selection;
+its first artifact remains rejected. Eighty unchanged-default output bindings
+remain exact. See
+[STORAGE-ADAPTERS-MODULES-QUALIFICATION.md](STORAGE-ADAPTERS-MODULES-QUALIFICATION.md).
+
+BUILD presence is 591/729 selected amd64 leaves (138 missing), not qualification
+percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
+bootstrap/publication, runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. Maintained build-bsd format-5 inputs carry this cohort; module helper and
+docs are updated without new CLI/security/publication policy. Make stays default;
+BIP remains excluded.
+
+The [eight-program rescue subset](RESCUE-EIGHT-PROGRAM-QUALIFICATION.md) adds real
+ed/expr/getfacl/pwd/test compilation and original red/[ aliases. All 17 current
+compiler actions/691 consumed occurrences and eight original combined pipelines
+are audited; 21 real runtime methods pass. Original generated Make with identical
+accepted native objects/libraries/startup reproduces the complete ELF byte for
+byte. Pwd's ordinary diagnostic filename difference and its separate Make
+filename-policy control remain explicit. This is not the full 103-program rescue
+selection, complete original-library parity, installation or pkgbase.
+
+## Latest system/I/O module checkpoint (2026-11-02)
+
+Thirty-seven further amd64 module leaves pass compiler/input/link and artifact/
+install checks: 125 actual compiler contexts and 13,134 original / 13,135 native consumed
+dependencies per profile, with the sole extra TPM header alias verified as the
+same physical file and bytes, plus 37 ordered links. Thirty-five plain modules equal
+untouched Make; two equal explicitly documented filename controls. CTF/debug
+payloads/CRCs and 74 install records pass, plus 37 plain records. Explicit iconv/
+nvdimm exports and Thunderbolt's module option header are preserved. Actual
+before/after dconschat archives, including debug payloads, remain byte-identical
+using the unchanged public ABI view with physical package-owned file labels.
+See [SYSTEM-IO-MODULES-QUALIFICATION.md](SYSTEM-IO-MODULES-QUALIFICATION.md).
+
+BUILD presence is 628/729 selected amd64 leaves (101 missing), not qualification
+percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
+bootstrap/publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. Existing build-bsd format-5 inputs/rules carry this cohort; no new CLI or
+security/publication policy. Make stays production/default; BIP remains excluded.
+
+The [fourteen-program rescue subset](RESCUE-FOURTEEN-PROGRAM-QUALIFICATION.md)
+adds hostname, ln/link, mkdir, realpath, rmdir and sleep with their actual original
+RESCUE compiler policies and five retained DTrace provider transformations.
+Six regular objects and 314 consumed input pairs match original Make; complete
+provider schemas, actual relocation/site bindings and path-key DOF encoding are
+audited. Thirty-one runtime methods pass. Original generated Make with identical
+accepted inputs reproduces the complete static ELF byte for byte; full rescue,
+independent library parity and installation/package gates remain open.
+
+The [nineteen-program rescue subset](RESCUE-NINETEEN-PROGRAM-QUALIFICATION.md)
+adds actual chflags/chmod/cp/mv/rm variants and unlink. Six C objects/398 consumed
+pairs, five provider schemas/actual relocated sites/full DOF sections and original
+object order pass; 43 actual runtime methods pass. Two independent original Make
+filename controls retain ordinary assertion-path differences explicitly. Original
+generated Make on identical accepted inputs reproduces the entire static ELF.
+Fixed /rescue/cp and /rescue/rm execution for cross-filesystem mv remains an
+installed-path gate; full rescue/library/install/pkgbase parity remains open.
+
+The [default static libutil consumers](LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md)
+now preserve lazy selection and selected logincap metadata using the original
+retained-anchor mechanism. Two complete extraction graphs match corrected Make;
+68 actual normal/PIC compilers and 3,778 consumed occurrences pass. Nine archive,
+four consumer and 43 rescue methods pass. No credential-changing function runs.
+The 35-member component archive preserves original order and its anchored
+provider; the [earlier archive-only checkpoint](LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md)
+records the historical source policy. Full CcInfo ordering, DSO/install parity
+and DTrace host-provenance/cache hermeticity remain open.
+
+The [libutil DSO payload correction](LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md)
+restores original PIC object order and local-symbol discard. Every allocated
+section now matches original Make except independently verified path-derived
+DOF encoding; all nine DOF sections and actual linked probe sites are accounted
+for. Existing default/experimental compiler, consumer and rescue regressions
+pass with cached test results stated explicitly. Whole/debug/install/library
+and world parity remain open.
+
+## Compatibility/storage/tracing module checkpoint (2026-11-02)
+
+[Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): eighteen leaves,
+130 compiler contexts/26,206 exact original/native consumed occurrences per
+profile, eighteen captured ordered links, all eighteen plain ELFs byte-identical
+to untouched Make and 54 matching installation records across both profiles.
+Seven compiled SDT/DTrace module payloads are preserved. Existing architecture
+view rules preserve the actual machine/../linux header namespace for eight
+consumers without source edits; failed initial attempts remain retained.
+
+Local BUILD presence is 708/729 selected amd64 leaves (21 remain). Full separate
+DWARF/source-resolution qualification is explicitly open, alongside other
+architectures/options, full kernel/world/rescue/pkgbase/bootstrap/publication,
+VM/runtime and performance gates. Make stays production/default; BIP excluded.
+
+## libutil original test/install closure (2026-11-03)
+
+[Qualification](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md): twelve original
+programs, sixteen exact code/allocated/relocation object comparisons, 740 exact
+consumed pairs and twelve exact final allocated ELF payloads against an explicit
+original filename-policy control. All 31 native test rules pass. The complete
+154-record component installation matches original ownership/modes/tags/links,
+including 25 test files and five directories; TESTS-off preserves the remaining
+124 records/payloads. A real fork-failure signal bug is fixed with a safe wrapped
+control. Kyua now honors its existing declared environment in inherited mode;
+the intentional TAP negative fails despite zero program exit. Separate DWARF/
+source lookup, final pkgbase and full world/library parity remain open.

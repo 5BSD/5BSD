@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "puc", objects = ["//sys/dev/puc:puc_puc_module_object_files", "//sys/dev/puc:puc_puc_cfg_module_object_files", "//sys/dev/puc:puc_puc_pci_module_object_files", "//sys/dev/uart:puc_uart_bus_puc_module_object_files", "//sys/kern:puc_serdev_if_module_object_files"], object_order = ["puc.o", "puc_cfg.o", "puc_pci.o", "uart_bus_puc.o", "serdev_if.o"], export_all = False, package = "kernel", aliases = [])

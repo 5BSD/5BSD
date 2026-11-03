@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_mxge", objects = ["//sys/dev/mxge:if_mxge_if_mxge_module_object_files"], object_order = ["if_mxge.o"], export_all = False)

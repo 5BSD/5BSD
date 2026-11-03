@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_firmware_module.bzl", "amd64_firmware_module")
+
+# Original image order, registration specifications and exports.
+amd64_firmware_module(module = "otusfw_main",
+    images = [{"source": "//sys/contrib/dev/otus:otus-main", "encoding": "raw", "filename": "otusfw_main", "spec": "otusfw_main:otusfw_main:1"}],
+    license = "", export_all = False,
+    extra_objects = [], extra_object_order = [])

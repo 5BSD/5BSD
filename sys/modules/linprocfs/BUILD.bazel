@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "linprocfs", objects = ["//sys/compat/linprocfs:linprocfs_linprocfs_module_object_files", "//sys/compat/linprocfs:linprocfs_linprocfs_helpers_module_object_files"], object_order = ["linprocfs.o", "linprocfs_helpers.o"], exports = [], export_all = False, package = "kernel", aliases = [])

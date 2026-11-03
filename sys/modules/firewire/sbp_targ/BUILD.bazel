@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "sbp_targ", objects = ["//sys/dev/firewire:sbp_targ_sbp_targ_module_object_files"], object_order = ["sbp_targ.o"], export_all = False)

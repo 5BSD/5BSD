@@ -11,3 +11,30 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_eventfd_headers", hdrs = ["linu
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 bsd_source_headers(name = "linuxkpi_kernel_linux_page_headers", hdrs = ["linux/bug.h", "linux/mempolicy.h", "linux/percpu-defs.h", "linux/percpu.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_0", hdrs = ["linux/percpu-defs.h", "linux/percpu.h"], includes = ["."],
+    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux/bug.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["linux/bug.h", "linux/init.h", "linux/percpu-defs.h", "linux/percpu.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_3", hdrs = ["linux/bug.h", "linux/mempolicy.h", "linux/percpu-defs.h", "linux/percpu.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_4", hdrs = ["linux/sysfb.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["kunit/visibility.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/iwlwifi/cfg:__pkg__", "//sys/contrib/dev/iwlwifi/fw:__pkg__", "//sys/contrib/dev/iwlwifi/mld:__pkg__", "//sys/contrib/dev/iwlwifi/mvm:__pkg__", "//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__", "//sys/contrib/dev/iwlwifi/pcie:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["kunit/visibility.h", "net/gso.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/iwlwifi/mvm:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["kunit/visibility.h", "linux/rtnetlink.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__", "//sys/contrib/dev/iwlwifi/mvm:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["kunit/visibility.h", "linux/timekeeping.h"], includes = ["."],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__", "//sys/contrib/dev/iwlwifi/mvm:__pkg__"])

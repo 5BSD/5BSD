@@ -75,3 +75,11 @@ amd64_generic_kernel_objects(name = "generic_x86_core_local_apic", srcs = ["loca
 amd64_generic_kernel_objects(name = "generic_x86_core_msi", srcs = ["msi.c"],
     deps = ["//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/x86/iommu:x86_core_kernel_msi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_acpi_header", "//sys/amd64/conf:x86_core_kernel_opt_iommu_header", "//sys/dev/pci:pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "mem_x86_mem_module", srcs = ["x86_mem.c"],
+    deps = ["//sys/vm:lowlevel_kernel_db_trace_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

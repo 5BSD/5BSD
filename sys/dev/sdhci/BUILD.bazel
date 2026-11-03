@@ -40,3 +40,28 @@ filegroup(name = "builtin_sdhci_if_source", srcs = [":sdhci_if"], output_group =
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_sdhci_if", srcs = [":builtin_sdhci_if_source"],
     deps = ["//sys/dev/mmc:kobj_builtins_physical_sdhci_if_headers", "//sys/dev/sdhci:kobj_builtins_physical_sdhci_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/amd64/conf:kobj_builtins_kernel_opt_mmccam_header", "//sys/dev/sdhci:kobj_builtins_kernel_sdhci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+filegroup(name = "sdhci_if_module_header", srcs = [":sdhci_if"], output_group = "header")
+cc_library(name = "sdhci_if_headers", hdrs = [":sdhci_if_module_header"], strip_include_prefix = "sdhci_if.generated", visibility = ["//sys/dev/sdhci:__pkg__"])
+
+filegroup(name = "sdhci_if_module_source", srcs = [":sdhci_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "sdhci_sdhci_module", srcs = ["sdhci.c"],
+    deps = ["//sys/dev/mmc:peripheral_devices_kernel_sdhci_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mmc:mmcbr_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_mmccam_header", "//sys/dev/sdhci:sdhci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sdhci_sdhci_if_module", srcs = [":sdhci_if_module_source"],
+    deps = ["//sys/dev/mmc:peripheral_devices_kernel_sdhci_pci_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:peripheral_devices_kernel_opt_mmccam_header", "//sys/dev/sdhci:sdhci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :sdhci_if_module_source)=sdhci_if.c", "-fdebug-prefix-map=$(execpath :sdhci_if_module_source)=sdhci_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sdhci_acpi_sdhci_acpi_module", srcs = ["sdhci_acpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mmc:mmcbr_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_mmccam_header", "//sys/dev/sdhci:sdhci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sdhci_pci_sdhci_pci_module", srcs = ["sdhci_pci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/mmc:peripheral_devices_kernel_sdhci_pci_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mmc:mmcbr_if_headers", "//sys/amd64/conf:peripheral_devices_kernel_opt_mmccam_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/sdhci:sdhci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

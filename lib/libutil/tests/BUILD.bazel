@@ -1,0 +1,226 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+[cc_binary(
+    name = name,
+    srcs = ["static-consumer.c"],
+    local_defines = defines,
+    deps = ["//lib/libutil:util"],
+    linkopts = ["-static"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name, defines in [
+    ("static_number", []),
+    ("static_context_reference", ["REFERENCE_LOGIN_CONTEXT"]),
+]]
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(
+    name = "static_consumer_test",
+    src = "static-consumer-test.py",
+    data = [":static_number", ":static_context_reference", "//tools/build/bazel:dtrace-dof-inventory.py"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:experimental_dtrace_section_archives_enabled": ["@platforms//:incompatible"],
+        "//tools/build/bazel/config:dtrace_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+# Original bsd.test.mk programs and installation names; test execution is separate.
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_TEST_FLAGS = ['-fpie', '-DPIC', '-pipe', '-fno-common', '-fPIE', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Qunused-arguments']
+_TESTS_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+    "//tools/build/bazel/config:tests_enabled": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+_TAP_PROGRAMS = ['flopen_test', 'grp_test', 'humanize_number_test', 'pidfile_test', 'trimdomain_test', 'trimdomain-nodomain_test']
+_ATF_PROGRAMS = ['cpuset_test', 'expand_number_test', 'forkpty_test', 'getlocalbase_test', 'login_time_error_test', 'login_cap_list_test']
+_PROGRAMS = sorted(_TAP_PROGRAMS + _ATF_PROGRAMS)
+cc_binary(name = 'cpuset_test', srcs = ['cpuset_test.c'],
+    deps = ['//lib/atf/libatf-c:atf_c', '//lib/libutil:util'], dynamic_deps = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'expand_number_test', srcs = ['expand_number_test.c'],
+    deps = ['//lib/atf/libatf-c:atf_c', '//lib/libutil:util'], dynamic_deps = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'flopen_test', srcs = ['flopen_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'flopen_test_qualification', srcs = ['flopen_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie', '-Wl,--disable-new-dtags,-rpath,$ORIGIN'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'forkpty_test', srcs = ['forkpty_test.c'],
+    deps = ['//lib/atf/libatf-c:atf_c', '//lib/libutil:util'], dynamic_deps = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'getlocalbase_test', srcs = ['getlocalbase_test.c'],
+    deps = ['//lib/atf/libatf-c:atf_c', '//lib/libutil:util'], dynamic_deps = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'grp_test', srcs = ['grp_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'grp_test_qualification', srcs = ['grp_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie', '-Wl,--disable-new-dtags,-rpath,$ORIGIN'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'humanize_number_test', srcs = ['humanize_number_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'humanize_number_test_qualification', srcs = ['humanize_number_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie', '-Wl,--disable-new-dtags,-rpath,$ORIGIN'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'login_cap_list_test', srcs = ['login_cap_list_test.c', '//lib/libutil:login_cap.c', '//lib/libc/gen:getcap.c'],
+    deps = ['//lib/atf/libatf-c:atf_c', '//lib/libutil:util', '//include:libutil_test_headers', '//lib/libc/include:libutil_test_headers'], dynamic_deps = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS + ["-Ilib/libutil", "-Iinclude", "-Ilib/libc/include"], linkopts = ['-pie', '-Wl,--wrap=cgetstr', '-Wl,--wrap=free', '-Wl,--wrap=realloc', '-Wl,--wrap=reallocarray'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'login_time_error_test', srcs = ['login_time_error_test.c', '//lib/libutil:login_ok.c', '//lib/libutil:login_times.c'],
+    deps = ['//lib/atf/libatf-c:atf_c', '//lib/libutil:util'], dynamic_deps = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie', '-Wl,--wrap=localtime', '-Wl,--wrap=localtime_r'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'pidfile_test', srcs = ['pidfile_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'pidfile_test_qualification', srcs = ['pidfile_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie', '-Wl,--disable-new-dtags,-rpath,$ORIGIN'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'trimdomain-nodomain_test', srcs = ['trimdomain-nodomain_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'trimdomain-nodomain_test_qualification', srcs = ['trimdomain-nodomain_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie', '-Wl,--disable-new-dtags,-rpath,$ORIGIN'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'trimdomain_test', srcs = ['trimdomain_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie'],
+    target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = 'trimdomain_test_qualification', srcs = ['trimdomain_test.c'],
+    deps = ['//lib/libutil:util'], dynamic_deps = ['//lib/libutil:util_shared'],
+    copts = _TEST_FLAGS, linkopts = ['-pie', '-Wl,--disable-new-dtags,-rpath,$ORIGIN'],
+    target_compatible_with = _TESTS_COMPAT)
+
+_RUNTIME = ["//lib/libutil:util_shared", "//lib/atf/libatf-c:atf_c_shared",
+    "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+[bsd_kyua_test(name = "native_" + name, program = ":" + name + "_qualification", interface = "tap",
+    kyua = "@bsd_sdk//toolchain:extra_kyua",
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {"//lib/libutil:util_shared": "libutil.so.10",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"},
+    target_compatible_with = _TESTS_COMPAT, size = "small") for name in _TAP_PROGRAMS]
+bsd_atf_test(name = 'native_cpuset_test_invalid', interface = "program", body = ":cpuset_test", case_name = 'invalid',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_cpuset_test_invalidchar', interface = "program", body = ":cpuset_test", case_name = 'invalidchar',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_cpuset_test_all', interface = "program", body = ":cpuset_test", case_name = 'all',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_cpuset_test_normalsyntax', interface = "program", body = ":cpuset_test", case_name = 'normalsyntax',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_expand_number_test_expand_number__ok', interface = "program", body = ":expand_number_test", case_name = 'expand_number__ok',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_expand_number_test_expand_number__bad', interface = "program", body = ":expand_number_test", case_name = 'expand_number__bad',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_expand_number_test_expand_unsigned', interface = "program", body = ":expand_number_test", case_name = 'expand_unsigned',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_expand_number_test_expand_generic', interface = "program", body = ":expand_number_test", case_name = 'expand_generic',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_forkpty_test_forkfail', interface = "program", body = ":forkpty_test", case_name = 'forkfail',
+    required_user = 'unprivileged', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_getlocalbase_test_environment', interface = "program", body = ":getlocalbase_test", case_name = 'environment',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_time_error_test_capability_list_failure', interface = "program", body = ":login_time_error_test", case_name = 'capability_list_failure',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_time_error_test_time_expressions', interface = "program", body = ":login_time_error_test", case_name = 'time_expressions',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_time_error_test_clock_conversion_failure', interface = "program", body = ":login_time_error_test", case_name = 'clock_conversion_failure',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_time_error_test_nested_time_conversion', interface = "program", body = ":login_time_error_test", case_name = 'nested_time_conversion',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_time_error_test_complete_time_lists', interface = "program", body = ":login_time_error_test", case_name = 'complete_time_lists',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_time_error_test_host_list_failure', interface = "program", body = ":login_time_error_test", case_name = 'host_list_failure',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_time_error_test_tty_list_failure', interface = "program", body = ":login_time_error_test", case_name = 'tty_list_failure',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_cap_list_test_list_string_ownership', interface = "program", body = ":login_cap_list_test", case_name = 'list_string_ownership',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_cap_list_test_list_copy_failure', interface = "program", body = ":login_cap_list_test", case_name = 'list_copy_failure',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+bsd_atf_test(name = 'native_login_cap_list_test_list_array_failure', interface = "program", body = ":login_cap_list_test", case_name = 'list_array_failure',
+    required_user = '', runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runner = "//tools/build/bazel:atf_runner", target_compatible_with = _TESTS_COMPAT, size = "small")
+test_suite(name = "original_tests", tests = [':native_flopen_test', ':native_grp_test', ':native_humanize_number_test', ':native_pidfile_test', ':native_trimdomain_test', ':native_trimdomain-nodomain_test', ':native_cpuset_test_invalid', ':native_cpuset_test_invalidchar', ':native_cpuset_test_all', ':native_cpuset_test_normalsyntax', ':native_expand_number_test_expand_number__ok', ':native_expand_number_test_expand_number__bad', ':native_expand_number_test_expand_unsigned', ':native_expand_number_test_expand_generic', ':native_forkpty_test_forkfail', ':native_getlocalbase_test_environment', ':native_login_time_error_test_capability_list_failure', ':native_login_time_error_test_time_expressions', ':native_login_time_error_test_clock_conversion_failure', ':native_login_time_error_test_nested_time_conversion', ':native_login_time_error_test_complete_time_lists', ':native_login_time_error_test_host_list_failure', ':native_login_time_error_test_tty_list_failure', ':native_login_cap_list_test_list_string_ownership', ':native_login_cap_list_test_list_copy_failure', ':native_login_cap_list_test_list_array_failure'], visibility = ["//visibility:public"])
+
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _PROGRAMS,
+    interfaces = {name: "tap" if name in _TAP_PROGRAMS else "atf" for name in _PROGRAMS})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libutil/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+[utility_installation(name = "install_" + name, program = name, manual = None,
+    package = "tests", bindir = "/usr/tests/lib/libutil") for name in _PROGRAMS]
+bsd_install_manifest(name = "install_manifest", manifests = [":install_" + name for name in _PROGRAMS],
+    entries = [":install_kyuafile"], visibility = ["//visibility:public"])
+
+# Safe fault injection: the wrapped kill never sends a signal.
+cc_library(name = "flopen_failure_objects", srcs = ["flopen_test.c"],
+    local_defines = ["main=flopen_original_main"], copts = _TEST_FLAGS,
+    deps = ["//lib/libutil:headers"], target_compatible_with = _TESTS_COMPAT)
+cc_binary(name = "flopen_fork_failure", srcs = ["flopen-fork-failure.c"],
+    deps = [":flopen_failure_objects", "//lib/libutil:util"], linkopts = ["-static", "-Wl,--wrap=fork,--wrap=kill"],
+    target_compatible_with = _TESTS_COMPAT)
+bsd_kyua_test(name = "flopen_fork_failure_test", program = ":flopen_fork_failure",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"], target_compatible_with = _TESTS_COMPAT, size = "small")

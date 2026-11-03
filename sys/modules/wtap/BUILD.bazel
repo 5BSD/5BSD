@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "wtap", objects = ["//sys/dev/wtap:wtap_if_wtap_module_module_object_files", "//sys/dev/wtap:wtap_if_wtap_module_object_files", "//sys/dev/wtap:wtap_if_medium_module_object_files", "//sys/dev/wtap/wtap_hal:wtap_hal_module_object_files", "//sys/dev/wtap/plugins:wtap_visibility_module_object_files"], object_order = ["if_wtap_module.o", "if_wtap.o", "if_medium.o", "hal.o", "visibility.o"], export_all = False, package = "kernel", aliases = [])

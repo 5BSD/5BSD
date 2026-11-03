@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "carray_firmware_module_context_0", hdrs = ["if_mxge_var.h", "mcp_gen_header.h", "mxge_mcp.h"], includes = [],
+    visibility = ["//sys/dev/mxge:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_1", hdrs = ["eth_z8e.h"], includes = [],
+    visibility = ["//sys/dev/mxge:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_2", hdrs = ["ethp_z8e.h"], includes = [],
+    visibility = ["//sys/dev/mxge:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_3", hdrs = ["rss_eth_z8e.h"], includes = [],
+    visibility = ["//sys/dev/mxge:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_4", hdrs = ["rss_ethp_z8e.h"], includes = [],
+    visibility = ["//sys/dev/mxge:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_mxge_if_mxge_module", srcs = ["if_mxge.c"],
+    deps = ["//sys/vm:pci_ethernet_headers", "//sys/contrib/zlib:core_kernel_subr_compressor_headers", "//sys/dev/zlib:codecs_crypto_kernel_zcalloc_headers", "//sys/net:usb_net_uether_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:carray_firmware_module_context_0", "//sys/netinet6:usb_net_if_ure_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/mxge:carray_firmware_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mxge_eth_z8e_mxge_eth_z8e_module", srcs = ["mxge_eth_z8e.c"],
+    deps = ["//sys/dev/mxge:carray_firmware_module_context_1"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mxge_ethp_z8e_mxge_ethp_z8e_module", srcs = ["mxge_ethp_z8e.c"],
+    deps = ["//sys/dev/mxge:carray_firmware_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mxge_rss_eth_z8e_mxge_rss_eth_z8e_module", srcs = ["mxge_rss_eth_z8e.c"],
+    deps = ["//sys/dev/mxge:carray_firmware_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mxge_rss_ethp_z8e_mxge_rss_ethp_z8e_module", srcs = ["mxge_rss_ethp_z8e.c"],
+    deps = ["//sys/dev/mxge:carray_firmware_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

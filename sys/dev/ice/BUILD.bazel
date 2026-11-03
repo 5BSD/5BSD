@@ -126,7 +126,7 @@ amd64_generic_kernel_objects(name = "generic_intel_nic_ice_vf_mbx", srcs = ["ice
 # Physical prerequisites for native generated KOBJ interface built-ins.
 bsd_source_headers(name = "kobj_builtins_physical_irdma_if_headers", hdrs = ["ice_rdma.h"],
     includes = ["."],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__", "//sys/dev/irdma:__pkg__"])
 
 filegroup(name = "kobj_builtins_kernel_irdma_di_if_file", srcs = [":irdma_di_if"], output_group = "header")
 cc_library(name = "kobj_builtins_kernel_irdma_di_if_headers", hdrs = [":kobj_builtins_kernel_irdma_di_if_file"], strip_include_prefix = "irdma_di_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
@@ -143,3 +143,121 @@ filegroup(name = "builtin_irdma_di_if_source", srcs = [":irdma_di_if"], output_g
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_irdma_di_if", srcs = [":builtin_irdma_di_if_source"],
     deps = ["//sys/dev/ice:kobj_builtins_physical_irdma_if_headers", "//sys/dev/ice:kobj_builtins_kernel_irdma_di_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "intel_ethernet_module_context_0", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_dcb.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_fault.h", "ice_features.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_flow.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_iflib.h", "ice_iov.h", "ice_lan_tx_rx.h", "ice_lib.h", "ice_nvm.h", "ice_opts.h", "ice_osdep.h", "ice_protocol_type.h", "ice_rdma.h", "ice_rdma_internal.h", "ice_resmgr.h", "ice_rss.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vf_mbx.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_1", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_dcb.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_features.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_flow.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_iflib.h", "ice_lan_tx_rx.h", "ice_lib.h", "ice_nvm.h", "ice_opts.h", "ice_osdep.h", "ice_protocol_type.h", "ice_rdma.h", "ice_rdma_internal.h", "ice_resmgr.h", "ice_rss.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_2", hdrs = ["ice_alloc.h", "ice_osdep.h", "ice_resmgr.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_3", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_dcb.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_flow.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_lan_tx_rx.h", "ice_lib.h", "ice_nvm.h", "ice_opts.h", "ice_osdep.h", "ice_protocol_type.h", "ice_rdma.h", "ice_rdma_internal.h", "ice_resmgr.h", "ice_rss.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_4", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_common_txrx.h", "ice_controlq.h", "ice_dcb.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_features.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_flow.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_iflib.h", "ice_lan_tx_rx.h", "ice_lib.h", "ice_nvm.h", "ice_opts.h", "ice_osdep.h", "ice_protocol_type.h", "ice_rdma.h", "ice_rdma_internal.h", "ice_resmgr.h", "ice_rss.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_5", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_common_sysctls.h", "ice_controlq.h", "ice_dcb.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_drv_info.h", "ice_features.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_flow.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_iflib.h", "ice_iflib_sysctls.h", "ice_iov.h", "ice_lan_tx_rx.h", "ice_lib.h", "ice_nvm.h", "ice_opts.h", "ice_osdep.h", "ice_protocol_type.h", "ice_rdma.h", "ice_rdma_internal.h", "ice_resmgr.h", "ice_rss.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vf_mbx.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_6", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_lan_tx_rx.h", "ice_nvm.h", "ice_osdep.h", "ice_protocol_type.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_8", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_flow.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_lan_tx_rx.h", "ice_nvm.h", "ice_osdep.h", "ice_protocol_type.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_9", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_lan_tx_rx.h", "ice_nvm.h", "ice_osdep.h", "ice_protocol_type.h", "ice_sbq_cmd.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_10", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_dcb.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_lan_tx_rx.h", "ice_nvm.h", "ice_osdep.h", "ice_protocol_type.h", "ice_sbq_cmd.h", "ice_sched.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_11", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_flow.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_lan_tx_rx.h", "ice_nvm.h", "ice_osdep.h", "ice_protocol_type.h", "ice_sbq_cmd.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_12", hdrs = ["ice_adminq_cmd.h", "ice_alloc.h", "ice_bitops.h", "ice_common.h", "ice_controlq.h", "ice_ddp_common.h", "ice_defs.h", "ice_devids.h", "ice_flex_pipe.h", "ice_flex_type.h", "ice_fwlog.h", "ice_hw_autogen.h", "ice_lan_tx_rx.h", "ice_nvm.h", "ice_osdep.h", "ice_protocol_type.h", "ice_sbq_cmd.h", "ice_status.h", "ice_switch.h", "ice_type.h", "ice_vf_mbx.h", "ice_vlan_mode.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ice:__pkg__"])
+
+filegroup(name = "irdma_di_if_module_header", srcs = [":irdma_di_if"], output_group = "header")
+cc_library(name = "irdma_di_if_headers", hdrs = [":irdma_di_if_module_header"], strip_include_prefix = "irdma_di_if.generated", visibility = ["//sys/dev/ice:__pkg__", "//sys/dev/irdma:__pkg__"])
+
+filegroup(name = "irdma_if_module_header", srcs = [":irdma_if"], output_group = "header")
+cc_library(name = "irdma_if_headers", hdrs = [":irdma_if_module_header"], strip_include_prefix = "irdma_if.generated", visibility = ["//sys/dev/ice:__pkg__", "//sys/dev/irdma:__pkg__"])
+
+filegroup(name = "irdma_di_if_module_source", srcs = [":irdma_di_if"], output_group = "source")
+
+filegroup(name = "irdma_if_module_source", srcs = [":irdma_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_ice_ice_lib_module", srcs = ["ice_lib.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_0", "//sys/net:intel_nic_kernel_ice_lib_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_osdep_module", srcs = ["ice_osdep.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_1", "//sys/netinet:tracing_core_headers", "//sys/net:intel_nic_kernel_if_ice_iflib_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_resmgr_module", srcs = ["ice_resmgr.c"],
+    deps = ["//sys/dev/ice:intel_ethernet_module_context_2", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_strings_module", srcs = ["ice_strings.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_3", "//sys/net:intel_nic_kernel_ice_strings_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_iflib_recovery_txrx_module", srcs = ["ice_iflib_recovery_txrx.c", "ice_fw_logging.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_1", "//sys/net:intel_nic_kernel_if_ice_iflib_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_iflib_txrx_module", srcs = ["ice_iflib_txrx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_4", "//sys/net:intel_nic_kernel_if_ice_iflib_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:intel_nic_kernel_ice_iflib_txrx_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_if_ice_iflib_module", srcs = ["if_ice_iflib.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_5", "//sys/net:intel_nic_kernel_if_ice_iflib_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_ddp_common_module", srcs = ["ice_ddp_common.c", "ice_sched.c"],
+    deps = ["//sys/dev/ice:intel_ethernet_module_context_6", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_rdma_module", srcs = ["ice_rdma.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_1", "//sys/net:intel_nic_kernel_if_ice_iflib_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/dev/ice:irdma_di_if_headers", "//sys/dev/ice:irdma_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_irdma_di_if_module", srcs = [":irdma_di_if_module_source"],
+    deps = ["//sys/dev/ice:kobj_builtins_physical_irdma_if_headers", "//sys/dev/ice:irdma_di_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :irdma_di_if_module_source)=irdma_di_if.c", "-fdebug-prefix-map=$(execpath :irdma_di_if_module_source)=irdma_di_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_irdma_if_module", srcs = [":irdma_if_module_source"],
+    deps = ["//sys/dev/ice:kobj_builtins_physical_irdma_if_headers", "//sys/dev/ice:irdma_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :irdma_if_module_source)=irdma_if.c", "-fdebug-prefix-map=$(execpath :irdma_if_module_source)=irdma_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_common_module", srcs = ["ice_common.c"],
+    deps = ["//sys/dev/ice:intel_ethernet_module_context_8", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_controlq_module", srcs = ["ice_controlq.c", "ice_nvm.c", "ice_vlan_mode.c", "ice_fwlog.c"],
+    deps = ["//sys/dev/ice:intel_ethernet_module_context_9", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_dcb_module", srcs = ["ice_dcb.c"],
+    deps = ["//sys/dev/ice:intel_ethernet_module_context_10", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_flex_pipe_module", srcs = ["ice_flex_pipe.c", "ice_flow.c", "ice_switch.c"],
+    deps = ["//sys/dev/ice:intel_ethernet_module_context_11", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_iov_module", srcs = ["ice_iov.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ice:intel_ethernet_module_context_0", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:intel_nic_kernel_ice_iov_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_driver_failpoints_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ice_ice_vf_mbx_module", srcs = ["ice_vf_mbx.c"],
+    deps = ["//sys/dev/ice:intel_ethernet_module_context_12", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

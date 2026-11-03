@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "rdma_module_context_0", hdrs = ["mthca_dev.h", "mthca_doorbell.h", "mthca_provider.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_1", hdrs = ["mthca_cmd.h", "mthca_config_reg.h", "mthca_dev.h", "mthca_doorbell.h", "mthca_memfree.h", "mthca_provider.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_2", hdrs = ["mthca_cmd.h", "mthca_dev.h", "mthca_doorbell.h", "mthca_memfree.h", "mthca_provider.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_3", hdrs = ["mthca_cmd.h", "mthca_config_reg.h", "mthca_dev.h", "mthca_doorbell.h", "mthca_provider.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_4", hdrs = ["mthca_cmd.h", "mthca_dev.h", "mthca_doorbell.h", "mthca_provider.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_5", hdrs = ["mthca_cmd.h", "mthca_config_reg.h", "mthca_dev.h", "mthca_doorbell.h", "mthca_memfree.h", "mthca_profile.h", "mthca_provider.h", "mthca_wqe.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_6", hdrs = ["mthca_cmd.h", "mthca_dev.h", "mthca_doorbell.h", "mthca_profile.h", "mthca_provider.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_7", hdrs = ["mthca_cmd.h", "mthca_dev.h", "mthca_doorbell.h", "mthca_memfree.h", "mthca_provider.h", "mthca_wqe.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_8", hdrs = ["mthca_dev.h", "mthca_doorbell.h", "mthca_memfree.h", "mthca_provider.h"], includes = [],
+    visibility = ["//sys/dev/mthca:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "mthca_mthca_allocator_module", srcs = ["mthca_allocator.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/mthca:rdma_module_context_0", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_av_module", srcs = ["mthca_av.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mthca:rdma_module_context_0", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_39", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_catas_module", srcs = ["mthca_catas.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mthca:rdma_module_context_0", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_cmd_module", srcs = ["mthca_cmd.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/mthca:rdma_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_40", "//sys/compat/linuxkpi/common/include:rdma_module_context_55"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_cq_module", srcs = ["mthca_cq.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mthca:rdma_module_context_2", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_55"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_eq_module", srcs = ["mthca_eq.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/mthca:rdma_module_context_3", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_mad_module", srcs = ["mthca_mad.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mthca:rdma_module_context_4", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_41", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_main_module", srcs = ["mthca_main.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/mthca:rdma_module_context_5", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_mcg_module", srcs = ["mthca_mcg.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/mthca:rdma_module_context_4", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_memfree_module", srcs = ["mthca_memfree.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mthca:rdma_module_context_2", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_mr_module", srcs = ["mthca_mr.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/mthca:rdma_module_context_2", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_pd_module", srcs = ["mthca_pd.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/mthca:rdma_module_context_0", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_profile_module", srcs = ["mthca_profile.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mthca:rdma_module_context_6", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_provider_module", srcs = ["mthca_provider.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/mthca:rdma_module_context_2", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_42", "//sys/compat/linuxkpi/common/include:rdma_module_context_56"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_qp_module", srcs = ["mthca_qp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/mthca:rdma_module_context_7", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_43", "//sys/compat/linuxkpi/common/include:rdma_module_context_57"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_reset_module", srcs = ["mthca_reset.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/mthca:rdma_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_58"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_srq_module", srcs = ["mthca_srq.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/mthca:rdma_module_context_7", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_44", "//sys/compat/linuxkpi/common/include:rdma_module_context_57"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_mthca_uar_module", srcs = ["mthca_uar.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/mthca:rdma_module_context_8", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/ofed/include:rdma_module_context_12", "//sys/compat/linuxkpi/common/include:rdma_module_context_54"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

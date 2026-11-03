@@ -9,7 +9,7 @@ cc_library(name = 'kernel_headers', hdrs = ['evdev.h', 'input.h', 'input-event-c
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "acpi_support_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__"])
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/kbdmux:__pkg__"])
 
 # Only the input ABI headers used by the userland bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ["input-event-codes.h", "input.h"],
@@ -29,7 +29,7 @@ bsd_source_headers(name = "device_io_kernel_uinput_headers", hdrs = ["evdev.h", 
 bsd_source_headers(name = "device_io_kernel_hcons_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"],
     visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_hidquirk_headers", hdrs = ["input-event-codes.h", "input.h"],
-    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/iicbus:__pkg__"])
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/hyperv:__pkg__"])
 bsd_source_headers(name = "device_io_kernel_kbd_headers", hdrs = ["input-event-codes.h"],
     visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
 
@@ -72,3 +72,10 @@ amd64_generic_module_objects(name = "evdev_evdev_mt_module", srcs = ["evdev_mt.c
 amd64_generic_module_objects(name = "evdev_evdev_utils_module", srcs = ["evdev_utils.c"],
     deps = ["//sys/dev/evdev:device_io_kernel_cdev_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uinput_uinput_module", srcs = ["uinput.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/evdev:device_io_kernel_uinput_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["input-event-codes.h", "input.h", "uinput.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

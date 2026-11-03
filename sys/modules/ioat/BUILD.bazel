@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ioat", objects = ["//sys/dev/ioat:ioat_ioat_module_object_files", "//sys/dev/ioat:ioat_ioat_test_module_object_files"], object_order = ["ioat.o", "ioat_test.o"], exports = [], export_all = False, package = "kernel", aliases = [])

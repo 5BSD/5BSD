@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_bxe", objects = ["//sys/dev/bxe:if_bxe_bxe_module_object_files", "//sys/dev/bxe:if_bxe_bxe_stats_module_object_files", "//sys/dev/bxe:if_bxe_bxe_debug_module_object_files", "//sys/dev/bxe:if_bxe_ecore_sp_module_object_files"], object_order = ["bxe.o", "bxe_stats.o", "bxe_debug.o", "bxe_elink.o", "ecore_sp.o", "57710_init_values.o", "57711_init_values.o", "57712_init_values.o"], export_all = False, package = "kernel")

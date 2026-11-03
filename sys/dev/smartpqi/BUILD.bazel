@@ -62,3 +62,15 @@ amd64_generic_kernel_objects(name = "generic_storage_hba_smartpqi_sis", srcs = [
 amd64_generic_kernel_objects(name = "generic_storage_hba_smartpqi_tag", srcs = ["smartpqi_tag.c"],
     deps = ["//sys/dev/smartpqi:storage_hba_kernel_smartpqi_cam_headers", "//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/mmc:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/nvme:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/pci:storage_hba_kernel_ocs_pci_headers", "//sys/net:storage_hba_kernel_ocs_gendump_headers", "//sys/netinet:storage_hba_kernel_ocs_gendump_headers", "//sys/netinet6:storage_hba_kernel_ocs_gendump_headers", "//sys/vm:storage_hba_kernel_smartpqi_cam_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "smartpqi_smartpqi_mem_module", srcs = ["smartpqi_mem.c", "smartpqi_intr.c", "smartpqi_cam.c", "smartpqi_ioctl.c", "smartpqi_misc.c", "smartpqi_sis.c", "smartpqi_init.c", "smartpqi_queue.c", "smartpqi_tag.c", "smartpqi_cmd.c", "smartpqi_request.c", "smartpqi_response.c", "smartpqi_event.c", "smartpqi_helper.c", "smartpqi_discovery.c", "smartpqi_features.c"],
+    deps = ["//sys/dev/smartpqi:storage_hba_kernel_smartpqi_cam_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "smartpqi_smartpqi_main_module", srcs = ["smartpqi_main.c"],
+    deps = ["//sys/dev/smartpqi:storage_hba_kernel_smartpqi_main_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

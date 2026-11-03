@@ -47,3 +47,39 @@ amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_user", srcs
 
 # Existing userland header providers retain their target/include namespace.
 exports_files(["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_init.h", "mpi/mpi2_ioc.h", "mpi/mpi2_raid.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h"], visibility = ["//:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "mps_mps_pci_module", srcs = ["mps_pci.c"],
+    deps = ["//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/mps:storage_controllers_kernel_mps_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mps_mps_module", srcs = ["mps.c"],
+    deps = ["//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/dev/mps:storage_controllers_kernel_mps_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mps_mps_sas_module", srcs = ["mps_sas.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mpr_sas_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-error=unneeded-internal-declaration"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mps_mps_table_module", srcs = ["mps_table.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mps:storage_controllers_kernel_mps_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mps_mps_user_module", srcs = ["mps_user.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mpr_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mps_mps_config_module", srcs = ["mps_config.c"],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_config_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mps_mps_mapping_module", srcs = ["mps_mapping.c"],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_mapping_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-error=sometimes-uninitialized"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mps_mps_sas_lsi_module", srcs = ["mps_sas_lsi.c"],
+    deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_lsi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

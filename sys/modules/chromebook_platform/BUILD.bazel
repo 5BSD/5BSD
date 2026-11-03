@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "chromebook_platform", objects = ["//sys/dev/chromebook_platform:chromebook_platform_chromebook_platform_module_object_files"], object_order = ["chromebook_platform.o"], export_all = False, package = "kernel", aliases = [])

@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["cpa_cy_common.h", "cpa_cy_im.h", "cpa_cy_sym.h", "cpa_cy_sym_dp.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["cpa_cy_common.h", "cpa_cy_sym.h", "cpa_cy_sym_dp.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["cpa_cy_common.h", "cpa_cy_im.h", "cpa_cy_key.h", "cpa_cy_sym.h", "cpa_cy_sym_dp.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["cpa_cy_common.h", "cpa_cy_sym.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/qat_comms:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["cpa_cy_common.h", "cpa_cy_key.h", "cpa_cy_sym.h", "cpa_cy_sym_dp.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["cpa_cy_common.h", "cpa_cy_im.h", "cpa_cy_sym.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["cpa_cy_common.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/qat_kernel/src:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["cpa_cy_common.h", "cpa_cy_im.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/device:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["cpa_cy_common.h", "cpa_cy_dh.h", "cpa_cy_dsa.h", "cpa_cy_ec.h", "cpa_cy_im.h", "cpa_cy_key.h", "cpa_cy_ln.h", "cpa_cy_prime.h", "cpa_cy_rsa.h", "cpa_cy_sym.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["cpa_cy_common.h", "cpa_cy_dh.h", "cpa_cy_dsa.h", "cpa_cy_ec.h", "cpa_cy_ecdh.h", "cpa_cy_ecdsa.h", "cpa_cy_ecsm2.h", "cpa_cy_im.h", "cpa_cy_key.h", "cpa_cy_kpt.h", "cpa_cy_ln.h", "cpa_cy_prime.h", "cpa_cy_rsa.h", "cpa_cy_sym.h", "cpa_cy_sym_dp.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/stubs:__pkg__"])

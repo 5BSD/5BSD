@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "tglhgpio", objects = ["//sys/dev/gpio:tglhgpio_intelgpio_module_object_files", "//sys/dev/gpio:tglhgpio_tglhgpio_module_object_files"], object_order = ["intelgpio.o", "tglhgpio.o"], export_all = False, package = "kernel", aliases = [])

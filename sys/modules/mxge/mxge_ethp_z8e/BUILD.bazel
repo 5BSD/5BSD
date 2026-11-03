@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mxge_ethp_z8e", objects = ["//sys/dev/mxge:mxge_ethp_z8e_mxge_ethp_z8e_module_object_files"], object_order = ["mxge_ethp_z8e.o"], export_all = False)

@@ -6,7 +6,7 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 filegroup(name = "acpi_wmi_if_header_file", srcs = [":acpi_wmi_if"], output_group = "header")
-cc_library(name = "acpi_wmi_if_headers", hdrs = [":acpi_wmi_if_header_file"], strip_include_prefix = "acpi_wmi_if.generated", visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+cc_library(name = "acpi_wmi_if_headers", hdrs = [":acpi_wmi_if_header_file"], strip_include_prefix = "acpi_wmi_if.generated", visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/thunderbolt:__pkg__"])
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")

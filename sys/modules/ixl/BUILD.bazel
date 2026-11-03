@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_ixl", objects = ["//sys/dev/ixl:if_ixl_ixl_pf_main_module_object_files", "//sys/dev/ixl:if_ixl_ixl_pf_qmgr_module_object_files", "//sys/dev/ixl:if_ixl_ixl_txrx_module_object_files", "//sys/dev/ixl:if_ixl_if_ixl_module_object_files", "//sys/dev/ixl:if_ixl_i40e_common_module_object_files", "//sys/dev/ixl:if_ixl_i40e_hmc_module_object_files", "//sys/dev/ixl:if_ixl_i40e_dcb_module_object_files"], object_order = ["ixl_pf_main.o", "ixl_pf_qmgr.o", "ixl_txrx.o", "ixl_pf_i2c.o", "i40e_osdep.o", "if_ixl.o", "ixl_pf_iflib.o", "i40e_common.o", "i40e_nvm.o", "i40e_adminq.o", "i40e_lan_hmc.o", "i40e_hmc.o", "i40e_dcb.o", "ixl_pf_iov.o"], export_all = True, package = "kernel", aliases = [])

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["ice-1.3.41.0.pkg"], visibility = ["//sys/modules/ice_ddp:__pkg__"])
