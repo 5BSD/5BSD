@@ -1318,3 +1318,23 @@ existing Kyua environment attribute now reaches constructors while preserving
 unmentioned inherited environment. Make remains production/default. Continue
 actual world install/package closure; full independent library/debug/source
 lookup, other options/architectures and the broad completion gates above remain.
+
+## ZFS loadable module closure (2026-11-03)
+
+The [native ZFS module](ZFS-MODULE-QUALIFICATION.md) passes two normal build-bsd
+profiles against fresh original Make: 261 actual compiler contexts, 68,785
+consumed input occurrences and 261 selected options each, plus complete ordered
+compiler/CTF/alias-to-link identities. Whole-file plain equality, CTF/runtime
+sections, split-debug CRCs and all installation records pass. The unchanged
+sources preserve all eight compiled SDT sections/relocations. Original module
+policy is separate from built-in kernel objects; no C/Make/shared-rule/frontend-C
+change is introduced. The source declaration inventory is now 729/729 amd64
+leaves (691 generic, 38 firmware). This supersedes the prior ZFS missing-producer
+checkpoint, not the outstanding full-build gates.
+
+Next refresh the current full GENERIC kernel and aggregate selected module
+build; continue the missing stand boot-program/library world closure in parallel
+with userland installation/pkgbase work. ARM64/RISC-V/configuration, world/rescue,
+bootstrap, hardware/combined publication, debugger source lookup, sandboxing,
+VM/runtime and measured CPU/memory/disk/cache qualification remain required.
+Make stays production/default; BIP stays excluded.

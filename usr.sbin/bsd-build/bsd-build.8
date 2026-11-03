@@ -5414,3 +5414,13 @@ See
 .Pa tools/build/bazel/LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md
 for original compiler/payload/install comparisons, TAP/ATF execution, the safe
 fork-failure correction and remaining separate DWARF/full-world gates.
+.Pp
+The existing format-5 target interface also builds the amd64 GENERIC tied ZFS
+loadable module through its native compilation, CTF, link and installation
+rules, preserving module-specific policy separately from built-in objects.
+See
+.Pa tools/build/bazel/ZFS-MODULE-QUALIFICATION.md
+for actual compiler/input/link checks, plain whole-file equality and CTF/install
+comparisons against original Make.
+Separate debugger source lookup, complete current kernel/module aggregation,
+other configurations/architectures and runtime/performance remain unqualified.

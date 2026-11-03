@@ -8,12 +8,15 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
-## Current module inventory correction and incremental checkpoint (2026-11-03)
+## Current module and incremental checkpoint (2026-11-03)
 
-The selected amd64 inventory has 729 BUILD files but 728 actual module
-producer declarations (690 generic, 38 firmware). ZFS currently has header
-providers and built-in kernel support, but no loadable module producer; it is
-still required. BUILD presence is not module-target or full-system coverage.
+The [ZFS loadable module](ZFS-MODULE-QUALIFICATION.md) now passes both native
+profiles: 261 actual compilers, 68,785 consumed occurrences and 261 selected
+options per profile; complete ordered links, whole-file plain equality and
+CTF/runtime/install/debug-CRC checks pass against fresh original Make. All 729
+selected amd64 leaves now have recognized source producer declarations (691
+generic, 38 firmware). Aggregate module/current kernel builds and full-system
+qualification remain open; declaration counts do not establish completion.
 
 The [Linux64 incremental check](LINUX64-INCREMENTAL-QUALIFICATION.md) passes
 original/changed/restored generated-image dependency behavior using the actual

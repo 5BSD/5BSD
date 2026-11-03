@@ -1,8 +1,8 @@
 # ZFS loadable module implementation work (2026-11-03)
 
-## Current state
+## Original gap (now implemented)
 
-The selected amd64 GENERIC ZFS loadable module is still missing a native producer.
+The selected amd64 GENERIC ZFS loadable module originally lacked a native producer.
 Existing sys/modules/zfs BUILD rules provide headers, while sys/contrib/openzfs
 has separate built-in kernel sources. Their compilation policies differ:
 loadable objects require KLD_MODULE/KLD_TIED and WITHOUT_NETDUMP. Reusing built-in
@@ -48,6 +48,7 @@ controls are terminal and passed. This is original-control evidence only.
 - Then refresh the current full kernel and aggregate module build; standalone
   DWARF/source lookup, cross-target, runtime and performance gates remain open.
 
-The module target count stays 728/729 until the missing producer is implemented.
-Declaration presence will still not prove aggregate or runtime qualification.
+The subsequent [native qualification](ZFS-MODULE-QUALIFICATION.md) now passes
+both profiles and closes the missing producer. The refreshed source declaration
+count is 729/729. Aggregate and runtime qualification remain open.
 Make stays production/default; BIP remains excluded.

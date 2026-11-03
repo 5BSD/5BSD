@@ -10549,3 +10549,14 @@ without interpreting zero program exit as success. No probe source or credential
 operation is changed or executed; the flopen signal-failure control wraps kill
 without delivering signals. No live event or cache-hermeticity claim. See
 [original test/install scope](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md).
+
+### ZFS loadable module (2026-11-03)
+
+All 261 unchanged source units (254 C, seven assembly) are native module inputs.
+The bounded scan records 115 instrumentation candidate lines including comments
+and macros. All eight compiled SDT sections/relocations equal original Make;
+the complete plain module also matches whole-file. This preserves observed
+compiled instrumentation, without claiming live delivery or complete audit
+coverage. No C/probe source changes. See
+[ZFS module qualification](ZFS-MODULE-QUALIFICATION.md) and
+bazel-zfs-module-review-r1-20261103/observability-review.json.
