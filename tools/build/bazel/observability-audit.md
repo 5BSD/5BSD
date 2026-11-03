@@ -10913,3 +10913,12 @@ pre-kernel archive. No assertion was disabled to obtain comparison equality;
 relative assertion filenames remain an explicit raw difference. Actual firmware
 I/O, variable failures and diagnostics require completed-loader VM/runtime tests.
 Host artifact tests and filename controls do not close those runtime gates.
+
+## Loader FDT contexts (2026-11-03)
+
+Nine vendor sources, the loader command and EFI platform wrapper retain their
+original inventories and diagnostics. The maintained recipes contain no DTrace
+or BSM source to omit in these pre-kernel contexts. AMD64 tests execute real
+vendor tree/overlay algorithms, not loader command or firmware callbacks. Actual
+DTB acquisition, command failures, overlays/fixups and boot handoff diagnostics
+remain complete-loader runtime/VM review items.

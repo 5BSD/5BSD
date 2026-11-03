@@ -11,6 +11,16 @@ RISC-V finishes with 2,050 directories and no query failures. Complete libsa arc
 archive variants are qualified below.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
 
+## Loader FDT archive checkpoint (2026-11-03)
+
+The common ten-unit and EFI one-unit FDT archives build natively on all three
+supported architectures. All 33 objects match unmodified Make in allocated
+sections, symbols and relocations; debug bytes differ. Eighteen host inspection
+methods pass, and an AMD64 program executes the actual standalone tree/overlay
+algorithms. Immediate unchanged-input reuse passes. Firmware command/fixup/boot
+behavior remains open. See
+[LOADER-FDT-QUALIFICATION.md](LOADER-FDT-QUALIFICATION.md).
+
 ## EFI support archive checkpoint (2026-11-03)
 
 Native libefi builds all 19 selected units on AMD64, ARM64 and RISC-V; an AMD64

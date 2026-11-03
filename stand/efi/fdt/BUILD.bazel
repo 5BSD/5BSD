@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+_COMPAT = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [], "//conditions:default": ["@platforms//:incompatible"]})
+bsd_architecture_headers(name = "architecture_headers", headers = select({
+    "@platforms//cpu:x86_64": {"//sys/amd64/include:loader_fdt_headers": "machine", "//sys/x86/include:loader_fdt_headers": "x86"},
+    "@platforms//cpu:aarch64": {"//sys/arm64/include:loader_fdt_headers": "machine"},
+    "@platforms//cpu:riscv64": {"//sys/riscv/include:loader_fdt_headers": "machine"}, "//conditions:default": {},
+}))
+_ARCH = select({
+    "@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
+    "@platforms//cpu:aarch64": ["-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
+    "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"], "//conditions:default": [],
+})
+_FEATURES = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"]
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Wformat', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-Istand/libsa/geli', '-ffreestanding', '-Ilib/libsecureboot/h', '-Ilib/libsecureboot/h', '-Istand/efi/include', '-Isys/contrib/edk2/Include', '-Istand/fdt', '-Istand/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments'] + _ARCH
+_CFLAGS = _CFLAGS + select({"@platforms//cpu:x86_64": ["-fshort-wchar"], "@platforms//cpu:aarch64": ["-fshort-wchar"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:loader_geli_enabled": ["-DLOADER_GELI_SUPPORT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:loader_disk_enabled": ["-DLOADER_DISK_SUPPORT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:efi_loader_veriexec_enabled": ["-DLOADER_VERIEXEC"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:efi_loader_veriexec_vectx_enabled": ["-DLOADER_VERIEXEC_VECTX"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:efi_loader_veriexec_pass_manifest_enabled": ["-DLOADER_VERIEXEC_PASS_MANIFEST"], "//conditions:default": []})
+_DEPS = ['//stand/common:loader_fdt_headers', '//stand/efi/include:loader_fdt_headers', '//stand/fdt:loader_fdt_headers', '//sys/contrib/edk2/Include:loader_fdt_headers', '//sys/contrib/libfdt:loader_fdt_headers', '//sys/sys:loader_fdt_headers', ':architecture_headers', '//stand/libsa:standalone_headers'] + select({"//tools/build/bazel/config:efi_loader_veriexec_enabled": ["//lib/libsecureboot:standalone_verify_header"], "//conditions:default": []})
+cc_library(name = "platform", srcs = ["efi_fdt.c"], copts = _CFLAGS,
+    deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
+bsd_component_archive(name = "static_archive", groups = [":platform"], object_order = ["efi_fdt.o"], visibility = ["//visibility:public"])
+
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+filegroup(name = "inspection_tools", srcs = ["@bsd_sdk//toolchain:archive_inputs", "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:llvm-nm_runtime"])
+bsd_host_artifact_test(name = "archive_test", src = "archive-test.py",
+    data = [":static_archive", ":inspection_tools", "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    args = ["--machine"] + select({"@platforms//cpu:x86_64": ["62"], "@platforms//cpu:aarch64": ["183"], "@platforms//cpu:riscv64": ["243"], "//conditions:default": ["0"]}) +
+        ["--archive", "$(location :static_archive)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)", "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--tool-inputs", "$(locations :inspection_tools)"],
+    visibility = ["//visibility:public"], size = "small", target_compatible_with = _COMPAT)

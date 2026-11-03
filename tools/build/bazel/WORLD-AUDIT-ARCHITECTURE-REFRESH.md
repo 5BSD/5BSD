@@ -116,3 +116,8 @@ comparison and one independently explained filename-only control per profile.
 Its native header/action/ABI evidence does not establish a completed EFI loader
 or whole-world build. The original snapshot's minimal libefi exports description
 above remains historical.
+
+The later common and EFI FDT libraries are qualified for all three target ABIs in
+LOADER-FDT-QUALIFICATION.md. Their explicit FDT-selected Make references extend
+coverage beyond the audit snapshot's selected profiles; they do not retroactively
+change that snapshot's counts or establish a complete world aggregate.

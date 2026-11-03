@@ -6,3 +6,5 @@ bsd_source_headers(name = 'boot2_headers', hdrs = ['paths.h', 'rbx.h'], visibili
 bsd_source_headers(name = "standalone_lua_headers", hdrs = ['bootstrap.h', 'gfx_fb.h', 'readin.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])
 
 bsd_source_headers(name = "libefi_headers", hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'readin.h'], visibility = ["//stand/efi/libefi:__pkg__"])
+
+bsd_source_headers(name = "loader_fdt_headers", hdrs = ['bootstrap.h', 'readin.h'], visibility = ["//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])

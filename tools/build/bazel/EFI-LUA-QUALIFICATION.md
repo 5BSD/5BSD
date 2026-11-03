@@ -106,3 +106,7 @@ out of scope.
 
 The later libefi candidate is documented in LIBEFI-QUALIFICATION.md, including
 its retained raw assertion-filename differences and independent controls.
+
+The common and EFI FDT archive prerequisites were subsequently qualified in
+LOADER-FDT-QUALIFICATION.md. Their firmware runtime and full-loader gates remain
+separate from archive/host algorithm checks.

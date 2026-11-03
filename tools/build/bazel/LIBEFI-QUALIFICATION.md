@@ -112,3 +112,7 @@ pkgbase/hardware publication remain open. Bootstrap/sandbox, broad runtime and
 comparative CPU/memory/disk performance remain separate gates. Disk reserves are
 safety guards; client-only timing is not a process-tree resource benchmark.
 BIP remains out of scope.
+
+The common and EFI FDT archive prerequisites were subsequently qualified in
+LOADER-FDT-QUALIFICATION.md. Their firmware runtime and full-loader gates remain
+separate from archive/host algorithm checks.

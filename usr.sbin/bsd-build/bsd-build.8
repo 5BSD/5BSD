@@ -4675,6 +4675,21 @@ Archive and ABI inspection on AMD64, ARM64 and RISC-V executes native tools;
 firmware I/O and complete loader boot require separate qualification.
 See
 .Pa tools/build/bazel/LIBEFI-QUALIFICATION.md .
+.Ss Native loader FDT libraries
+The native
+.Li //stand/fdt:static_archive
+and
+.Li //stand/efi/fdt:static_archive
+select distinct common and EFI platform contexts.
+Format-5 archive test targets inspect AMD64, ARM64 and RISC-V artifacts on the
+native execution platform.
+The AMD64-only
+.Li //stand/fdt:runtime_test
+executes the standalone vendor tree/overlay APIs using the declared program runner.
+This does not execute loader commands, firmware callbacks or boot handoff.
+These explicit library targets do not select FDT for a completed world or image.
+See
+.Pa tools/build/bazel/LOADER-FDT-QUALIFICATION.md .
 .Ss Cross-target Bazel kernel artifacts
 Format-5 source graph inputs may select
 .Dq target-kind
