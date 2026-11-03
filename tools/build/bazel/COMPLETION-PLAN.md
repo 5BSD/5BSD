@@ -1965,3 +1965,17 @@ Next: script-respecting CTF section synthesis, correct final output symbol order
 output section links and refreshed native/ARM64/RISC-V real module checks.
 No final-link CTF, complete world/kernel or publication acceptance is claimed.
 Make stays default. BIP remains excluded. No host upgrade or reboot authorized.
+
+### 2026-11-03: exact CTF layout size without dictionary serialization
+
+Added shared size planning with the same identity/overflow validation as symbol
+rewriting. It counts real packed function records, unknown associations and
+alignment without copying/compressing the dictionary. Final order still must be
+used for serialization. Normal frontend/Bazel tests pass: 328 API checks and
+1,024 union graphs actually run; semantic suite is cached. The first two suites
+use native source-built LLVM components. See CTF-NAMESPACE-UNION.md.
+
+Next remains LLD synthetic section placement, participation in layout before
+final offsets, final symbol ordering and sh_link, then refreshed real module
+qualification. Sizing alone does not satisfy any final module/world/kernel gate.
+No frontend configuration or security-policy changes are needed at this step.

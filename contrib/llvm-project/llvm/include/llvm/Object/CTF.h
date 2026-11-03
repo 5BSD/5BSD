@@ -42,6 +42,13 @@ public:
   LLVM_ABI Expected<bool> rewrite(ArrayRef<Symbol> OutputSymbols,
                                   SmallVectorImpl<uint8_t> &Out) const;
 
+  /// Size of a rewritten container without compression, including its header.
+  /// Validate the same output identities as rewrite(), but do not copy payload
+  /// bytes or compress. This allows linkers to plan layout before final symbol
+  /// ordering; callers must still use that final order when serializing.
+  LLVM_ABI Expected<uint64_t>
+  getUncompressedRewrittenSize(ArrayRef<Symbol> OutputSymbols) const;
+
   struct SymbolReference {
     uint32_t Input, Index;
     uint8_t Type;
@@ -72,6 +79,8 @@ private:
   unsigned Width = 0;
   bool Compressed = false;
 
+  Expected<std::pair<uint64_t, uint64_t>>
+  getAssociationEnds(ArrayRef<Symbol> OutputSymbols) const;
   Error parse(ArrayRef<uint8_t> Data, ArrayRef<Symbol> InputSymbols);
   uint32_t read32(ArrayRef<uint8_t> Data, size_t Offset) const;
   uint32_t readID(size_t Offset) const;

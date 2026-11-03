@@ -165,3 +165,35 @@ publication format. The maintained LLVM source-owner build and native Bazel LLD
 sources select these changes normally. build-bsd.c, signing and SDK helpers do
 not require schema or option changes. Fresh SDK verification and actual module
 qualification remain mandatory after CTF section/link synthesis is complete.
+
+## 2026-11-03: CTF size planning for linker layout
+
+The shared owning CTF table now exposes getUncompressedRewrittenSize. It
+validates the same exact output identities as rewrite, counts known packed
+function associations and new unknown associations, preserves the label/type/
+string payload sizes, and includes subsection alignment and the header. It
+does not copy the dictionary or compress it. Rewrite and sizing share identity
+and overflow validation, preventing two independent eligibility contracts.
+The size refers to uncompressed output even when the input was compressed.
+It does not predict the compressed size, which can change with symbol order.
+
+Normal build-bsd/Bazel qualification at
+/usr/obj/usr/src/bazel-ctf-layout-sizing-r1-20261103 passes three suites. The
+expanded API test actually executes 328 checks; the namespace-union graph test
+actually executes 1,024 cases and 256 independent ctfdump controls; the semantic
+reader suite reuses its verified cached pass. Size is checked against serialized
+output in both versions/byte orders/compression modes, with a label prefix,
+known functions of different argument counts, unknown functions, reordered and
+removed symbols, and repeated new-symbol sentinels. Invalid identities/types
+are rejected by both operations. The disk reserve was not interrupted.
+
+LLD integration remains open. Its layout can add thunk symbols before the final
+symtab sort. An eventual CTF synthetic section must participate in that layout
+with an accurate size and serialize against the final symbol order. It must
+also honor script input selection/discard and emit the correct sh_link; adding
+an arbitrary late resize after file offsets are assigned is not acceptable.
+The sizing API is a foundation for that implementation, not proof of a fixed
+module pipeline. Frontend assessment: existing native Bazel API targets and
+source-owner LLVM builds select the API normally. No build-bsd options, signing,
+staging, policy or SDK formats change. No performance or final module acceptance
+is claimed from this test run.

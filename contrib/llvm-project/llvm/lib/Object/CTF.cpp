@@ -120,22 +120,49 @@ Error CTFSymbolTable::parse(ArrayRef<uint8_t> Data,
   return Error::success();
 }
 
-Expected<bool> CTFSymbolTable::rewrite(ArrayRef<Symbol> OutputSymbols,
-                                       SmallVectorImpl<uint8_t> &Out) const {
+Expected<std::pair<uint64_t, uint64_t>>
+CTFSymbolTable::getAssociationEnds(ArrayRef<Symbol> OutputSymbols) const {
   DenseSet<uint64_t> Seen;
+  uint64_t Objects = ObjectOffset, Functions = 0;
   for (auto [Index, Type] : OutputSymbols) {
     if (Type != STT_OBJECT && Type != STT_FUNC)
       return invalid("invalid output symbol type");
-    if (Index == NewSymbol)
-      continue;
-    auto I = Entries.find(Index);
-    if (I == Entries.end())
-      return invalid("unknown output symbol identity");
-    if (I->second.Type != Type)
-      return invalid("output symbol type changed");
-    if (!Seen.insert(Index).second)
-      return invalid("duplicate output symbol identity");
+    uint64_t Length = Width;
+    if (Index != NewSymbol) {
+      auto I = Entries.find(Index);
+      if (I == Entries.end())
+        return invalid("unknown output symbol identity");
+      if (I->second.Type != Type)
+        return invalid("output symbol type changed");
+      if (!Seen.insert(Index).second)
+        return invalid("duplicate output symbol identity");
+      Length = I->second.Length;
+    }
+    (Type == STT_OBJECT ? Objects : Functions) += Length;
+    // Bound every addition, including before applying subsection alignment.
+    if (Objects + Functions > UINT32_MAX)
+      return invalid("rewritten payload is too large");
   }
+  uint64_t NewFunctions = alignTo(Objects, Width);
+  uint64_t NewTypes = alignTo(NewFunctions + Functions, 4);
+  if (NewTypes + (Body.size() - TypeOffset) > UINT32_MAX)
+    return invalid("rewritten payload is too large");
+  return std::make_pair(NewFunctions, NewTypes);
+}
+
+Expected<uint64_t> CTFSymbolTable::getUncompressedRewrittenSize(
+    ArrayRef<Symbol> OutputSymbols) const {
+  auto Ends = getAssociationEnds(OutputSymbols);
+  if (!Ends)
+    return Ends.takeError();
+  return Header.size() + Ends->second + (Body.size() - TypeOffset);
+}
+
+Expected<bool> CTFSymbolTable::rewrite(ArrayRef<Symbol> OutputSymbols,
+                                       SmallVectorImpl<uint8_t> &Out) const {
+  auto Ends = getAssociationEnds(OutputSymbols);
+  if (!Ends)
+    return Ends.takeError();
   SmallVector<uint8_t, 0> Updated(Body.begin(), Body.begin() + ObjectOffset);
   auto Append = [&](unsigned Type) {
     for (auto [Index, Kind] : OutputSymbols) {
@@ -151,10 +178,12 @@ Expected<bool> CTFSymbolTable::rewrite(ArrayRef<Symbol> OutputSymbols,
   };
   Append(STT_OBJECT);
   Updated.resize(alignTo(Updated.size(), Width), 0);
-  uint64_t NewFunctions = Updated.size();
+  assert(Updated.size() == Ends->first);
+  uint64_t NewFunctions = Ends->first;
   Append(STT_FUNC);
   Updated.resize(alignTo(Updated.size(), 4), 0);
-  uint64_t NewTypes = Updated.size();
+  assert(Updated.size() == Ends->second);
+  uint64_t NewTypes = Ends->second;
   Updated.append(Body.begin() + TypeOffset, Body.end());
   uint64_t NewStrings = NewTypes + (read32(Header, 28) - TypeOffset);
   if (Updated.size() > UINT32_MAX || NewStrings > UINT32_MAX)

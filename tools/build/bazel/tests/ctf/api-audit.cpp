@@ -4,6 +4,7 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Compression.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <cstdlib>
 
 using namespace llvm;
@@ -48,6 +49,9 @@ int main() {
         auto Same = Table.rewrite(Input, Out);
         check(Same && !*Same && Out == SmallVector<uint8_t, 0>{0xa5});
         auto Reject = [&](ArrayRef<CTFSymbolTable::Symbol> Symbols) {
+          auto Size = Table.getUncompressedRewrittenSize(Symbols);
+          check(!Size);
+          consumeError(Size.takeError());
           auto Result = Table.rewrite(Symbols, Out);
           check(!Result);
           consumeError(Result.takeError());
@@ -85,6 +89,84 @@ int main() {
         auto Empty = CTFSymbolTable::create(Out, {});
         check(bool(Empty));
         if (!Empty) { consumeError(Empty.takeError()); return 1; }
+      }
+  // Plan section sizes independently of final symbol ordering. Exercise known
+  // packed function records of odd/even lengths and a nonempty label prefix.
+  for (unsigned Version : {2u, 3u})
+    for (auto Endian : {llvm::endianness::little, llvm::endianness::big})
+      for (bool Compressed : {false, true}) {
+        unsigned Width = Version == 2 ? 2 : 4;
+        SmallVector<uint8_t, 0> Data(36, 0), Body(8, 0), Payload;
+        auto Add = [&](uint32_t V) {
+          size_t At = Body.size();
+          Body.resize(At + Width);
+          if (Width == 2)
+            support::endian::write16(Body.data() + At, V, Endian);
+          else
+            support::endian::write32(Body.data() + At, V, Endian);
+        };
+        Add(0); // Object association.
+        for (unsigned Count : {0u, 1u, 2u}) {
+          Add(5u << (Width == 2 ? 11 : 26) | Count);
+          for (unsigned I = 0; I != Count + 1; ++I)
+            Add(0); // Return/argument unknown references.
+        }
+        Add(0); // Unknown function association.
+        while (Body.size() % 4)
+          Body.push_back(0);
+        unsigned TypeOffset = Body.size();
+        Body.push_back(0); // Required empty string.
+        support::endian::write16(Data.data(), 0xcff1, Endian);
+        Data[2] = Version;
+        Data[3] = Compressed;
+        for (auto [At, V] : {std::pair<unsigned, unsigned>{16, 8},
+                            {20, 8 + Width}, {24, TypeOffset},
+                            {28, TypeOffset}, {32, 1}})
+          support::endian::write32(Data.data() + At, V, Endian);
+        if (Compressed)
+          compression::zlib::compress(Body, Payload);
+        else
+          Payload = Body;
+        Data.append(Payload);
+        SmallVector<CTFSymbolTable::Symbol, 0> Input{
+            {10, STT_OBJECT}, {20, STT_FUNC}, {21, STT_FUNC},
+            {22, STT_FUNC}, {23, STT_FUNC}};
+        auto Parsed = CTFSymbolTable::create(Data, Input);
+        check(bool(Parsed));
+        if (!Parsed) { consumeError(Parsed.takeError()); return 1; }
+        SmallVector<CTFSymbolTable::Symbol, 0> Reverse(Input);
+        std::reverse(Reverse.begin(), Reverse.end());
+        for (const auto &Symbols : {
+                 Input, Reverse, SmallVector<CTFSymbolTable::Symbol, 0>{},
+                 SmallVector<CTFSymbolTable::Symbol, 0>{{21, STT_FUNC}},
+                 SmallVector<CTFSymbolTable::Symbol, 0>{
+                     {CTFSymbolTable::NewSymbol, STT_OBJECT}, {22, STT_FUNC},
+                     {CTFSymbolTable::NewSymbol, STT_FUNC},
+                     {CTFSymbolTable::NewSymbol, STT_FUNC}}}) {
+          auto Planned = Parsed->getUncompressedRewrittenSize(Symbols);
+          check(bool(Planned));
+          SmallVector<uint8_t, 0> Out;
+          auto Changed = Parsed->rewrite(Symbols, Out);
+          check(bool(Changed));
+          if (!Planned || !Changed) return 1;
+          ArrayRef<uint8_t> Encoded = *Changed ? ArrayRef<uint8_t>(Out)
+                                              : ArrayRef<uint8_t>(Data);
+          SmallVector<uint8_t, 0> Decoded;
+          if (Compressed) {
+            uint64_t Size = uint64_t(support::endian::read32(Encoded.data() + 28, Endian)) +
+                            support::endian::read32(Encoded.data() + 32, Endian);
+            if (Error E = compression::zlib::decompress(Encoded.drop_front(36), Decoded, Size)) {
+              consumeError(std::move(E));
+              check(false);
+            }
+          } else {
+            Decoded.append(Encoded.begin() + 36, Encoded.end());
+          }
+          check(*Planned == 36 + Decoded.size());
+        }
+        auto A = Parsed->getUncompressedRewrittenSize(Input);
+        auto B = Parsed->getUncompressedRewrittenSize(Reverse);
+        check(A && B && *A == *B);
       }
   outs() << Checks << " CTF API checks passed\n";
 }
