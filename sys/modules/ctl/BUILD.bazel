@@ -2,3 +2,16 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "ctl", objects = ["//sys/cam:ctl_ctl_module_object_files", "//sys/cam:ctl_ctl_backend_module_object_files", "//sys/cam:ctl_ctl_backend_block_module_object_files", "//sys/cam:ctl_ctl_backend_ramdisk_module_object_files", "//sys/cam:ctl_ctl_cmd_table_module_object_files", "//sys/cam:ctl_ctl_frontend_cam_sim_module_object_files", "//sys/cam:ctl_ctl_frontend_ioctl_module_object_files", "//sys/cam:ctl_ctl_ha_module_object_files", "//sys/cam:ctl_ctl_nvme_all_module_object_files", "//sys/cam:ctl_ctl_nvme_cmd_table_module_object_files", "//sys/cam:ctl_ctl_scsi_all_module_object_files", "//sys/cam:ctl_ctl_tpc_module_object_files", "//sys/cam:ctl_ctl_error_module_object_files", "//sys/cam:ctl_ctl_util_module_object_files", "//sys/cam:ctl_scsi_ctl_module_object_files"], object_order = ["ctl.o", "ctl_backend.o", "ctl_backend_block.o", "ctl_backend_ramdisk.o", "ctl_cmd_table.o", "ctl_frontend.o", "ctl_frontend_cam_sim.o", "ctl_frontend_ioctl.o", "ctl_ha.o", "ctl_nvme_all.o", "ctl_nvme_cmd_table.o", "ctl_scsi_all.o", "ctl_tpc.o", "ctl_tpc_local.o", "ctl_error.o", "ctl_util.o", "scsi_ctl.o"], exports = [], export_all = True, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ctl",
+    objects = ["//sys/cam:" + arch + "_ctl_ctl_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_backend_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_backend_block_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_backend_ramdisk_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_cmd_table_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_frontend_cam_sim_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_frontend_ioctl_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_ha_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_nvme_all_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_nvme_cmd_table_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_scsi_all_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_tpc_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_error_module_object_files", "//sys/cam:" + arch + "_ctl_ctl_util_module_object_files", "//sys/cam:" + arch + "_ctl_scsi_ctl_module_object_files"],
+    object_order = ['ctl.o', 'ctl_backend.o', 'ctl_backend_block.o', 'ctl_backend_ramdisk.o', 'ctl_cmd_table.o', 'ctl_frontend.o', 'ctl_frontend_cam_sim.o', 'ctl_frontend_ioctl.o', 'ctl_ha.o', 'ctl_nvme_all.o', 'ctl_nvme_cmd_table.o', 'ctl_scsi_all.o', 'ctl_tpc.o', 'ctl_tpc_local.o', 'ctl_error.o', 'ctl_util.o', 'scsi_ctl.o'],
+    exports = [],
+    package = 'kernel',
+    aliases = [],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

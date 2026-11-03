@@ -2,3 +2,16 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "iscsi", objects = ["//sys/dev/iscsi:iscsi_iscsi_module_object_files", "//sys/dev/iscsi:iscsi_icl_module_object_files", "//sys/dev/iscsi:iscsi_icl_soft_module_object_files", "//sys/dev/iscsi:iscsi_icl_soft_proxy_module_object_files"], object_order = ["iscsi.o", "icl.o", "icl_soft.o", "icl_soft_proxy.o", "icl_conn_if.o"], exports = [], export_all = True, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "iscsi",
+    objects = ["//sys/dev/iscsi:" + arch + "_iscsi_iscsi_module_object_files", "//sys/dev/iscsi:" + arch + "_iscsi_icl_module_object_files", "//sys/dev/iscsi:" + arch + "_iscsi_icl_soft_module_object_files", "//sys/dev/iscsi:" + arch + "_iscsi_icl_soft_proxy_module_object_files"],
+    object_order = ['iscsi.o', 'icl.o', 'icl_soft.o', 'icl_soft_proxy.o', 'icl_conn_if.o'],
+    exports = [],
+    package = 'kernel',
+    aliases = [],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

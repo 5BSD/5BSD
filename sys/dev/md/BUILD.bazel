@@ -15,3 +15,12 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "geom_md_md_module", srcs = ["md.c"],
     deps = ["//sys/vm:peripheral_devices_kernel_md_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/geom:storage_core_kernel_geom_dev_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_geom_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_md_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_rootdevname_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "geom_md_md_module",
+    srcs = ['md.c'],
+    deps = ["//sys/geom:storage_core_kernel_geom_dev_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:peripheral_devices_kernel_md_headers", "//sys/" + arch + "/conf:generic_opt_geom_header", "//sys/" + arch + "/conf:generic_opt_md_header", "//sys/" + arch + "/conf:generic_opt_rootdevname_header"],
+) for arch in ['arm64', 'riscv']]

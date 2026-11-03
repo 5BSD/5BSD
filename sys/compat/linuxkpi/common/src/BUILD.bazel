@@ -522,3 +522,16 @@ amd64_generic_module_objects(name = "if_rtw88_lkpi_iic_if_module", srcs = [":lkp
 amd64_generic_module_objects(name = "if_rtw89_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
     deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "'-DKBUILD_MODNAME=\"rtw89\"'"], local_defines = ["CONFIG_ACPI", "CONFIG_RTW89_DEBUGMSG", "LINUXKPI_VERSION=70000", "LINUXKPI_WANT_LINUX_ACPI"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "iser_lkpi_iic_if_module",
+    srcs = [':lkpi_iic_if_module_source'],
+    deps = ["//sys/compat/linuxkpi/common/include/linux:linuxkpi_kernel_linux_kmod_headers", "//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c', '-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c'],
+    local_defines = ['CONFIG_INFINIBAND_USER_MEM', 'ICL_KERNEL_PROXY', 'INET', 'INET6'],
+    header_overrides = ['//sys/sys:kernel_headers', '//sys/compat/linuxkpi/common/include:network_families_module_context_0'],
+    preinclude_headers = ['//sys/compat/linuxkpi/common/include/linux:kconfig.h'],
+) for arch in ['arm64', 'riscv']]

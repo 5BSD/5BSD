@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "isp", objects = ["//sys/dev/isp:isp_isp_module_object_files", "//sys/dev/isp:isp_isp_freebsd_module_object_files", "//sys/dev/isp:isp_isp_pci_module_object_files"], object_order = ["isp.o", "isp_library.o", "isp_target.o", "isp_freebsd.o", "isp_pci.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "isp",
+    objects = ["//sys/dev/isp:" + arch + "_isp_isp_module_object_files", "//sys/dev/isp:" + arch + "_isp_isp_freebsd_module_object_files", "//sys/dev/isp:" + arch + "_isp_isp_pci_module_object_files"],
+    object_order = ['isp.o', 'isp_library.o', 'isp_target.o', 'isp_freebsd.o', 'isp_pci.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

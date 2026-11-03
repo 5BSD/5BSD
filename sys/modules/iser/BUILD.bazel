@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "iser", objects = ["//sys/dev/iser:iser_icl_iser_module_object_files", "//sys/compat/linuxkpi/common/src:iser_lkpi_iic_if_module_object_files"], object_order = ["icl_iser.o", "iser_initiator.o", "iser_memory.o", "iser_verbs.o", "lkpi_iic_if.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "iser",
+    objects = ["//sys/dev/iser:" + arch + "_iser_icl_iser_module_object_files", "//sys/compat/linuxkpi/common/src:" + arch + "_iser_lkpi_iic_if_module_object_files"],
+    object_order = ['icl_iser.o', 'iser_initiator.o', 'iser_memory.o', 'iser_verbs.o', 'lkpi_iic_if.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

@@ -85,3 +85,82 @@ amd64_generic_module_objects(name = "nvmft_nvmft_qpair_module", srcs = ["control
 
 bsd_source_headers(name = "chelsio_module_context_2", hdrs = ["nvmf_proto.h"], includes = [],
     visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmf_nvmf_module",
+    srcs = ['host/nvmf.c', 'host/nvmf_ctldev.c', 'host/nvmf_qpair.c'],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmf_nvmf_aer_module",
+    srcs = ['host/nvmf_aer.c'],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmf_nvmf_cmd_module",
+    srcs = ['host/nvmf_cmd.c'],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmf_nvmf_ns_module",
+    srcs = ['host/nvmf_ns.c'],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmf_nvmf_sim_module",
+    srcs = ['host/nvmf_sim.c'],
+    deps = ["//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmf_tcp_nvmf_tcp_module",
+    srcs = ['nvmf_tcp.c'],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_2", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:mii_family_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmf_transport_nvmf_transport_module",
+    srcs = ['nvmf_transport.c'],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_3", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmft_ctl_frontend_nvmf_module",
+    srcs = ['controller/ctl_frontend_nvmf.c'],
+    deps = ["//sys/cam:storage_tcp_ktest_module_context_1", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_4", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmft_nvmft_controller_module",
+    srcs = ['controller/nvmft_controller.c'],
+    deps = ["//sys/cam:storage_tcp_ktest_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_4", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmft_nvmft_subr_module",
+    srcs = ['controller/nvmft_subr.c'],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_5", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nvmft_nvmft_qpair_module",
+    srcs = ['controller/nvmft_qpair.c'],
+    deps = ["//sys/cam:storage_tcp_ktest_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_6", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]

@@ -51,3 +51,38 @@ amd64_generic_module_objects(name = "iscsi_icl_soft_module", srcs = ["icl_soft.c
 amd64_generic_module_objects(name = "iscsi_icl_soft_proxy_module", srcs = ["icl_soft_proxy.c"],
     deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/netinet:filesystems_rpc_kernel_clnt_bck_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/iscsi:compat_services_module_context_2"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["ICL_KERNEL_PROXY"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "iscsi_iscsi_module",
+    srcs = ['iscsi.c'],
+    deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/iscsi:compat_services_module_context_1", "//sys/dev/iscsi:icl_conn_if_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:mii_family_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+    local_defines = ['ICL_KERNEL_PROXY'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "iscsi_icl_module",
+    srcs = ['icl.c', ':icl_conn_if_module_source'],
+    deps = ["//sys/dev/iscsi:compat_services_module_context_2", "//sys/dev/iscsi:icl_conn_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :icl_conn_if_module_source)=icl_conn_if.c', '-fdebug-prefix-map=$(execpath :icl_conn_if_module_source)=icl_conn_if.c'],
+    local_defines = ['ICL_KERNEL_PROXY'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "iscsi_icl_soft_module",
+    srcs = ['icl_soft.c'],
+    deps = ["//sys/dev/iscsi:icl_conn_if_headers", "//sys/dev/iscsi:rdma_module_context_0", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:filesystems_rpc_kernel_clnt_bck_headers", "//sys/vm:opencrypto_kernel_criov_headers"],
+    local_defines = ['ICL_KERNEL_PROXY'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "iscsi_icl_soft_proxy_module",
+    srcs = ['icl_soft_proxy.c'],
+    deps = ["//sys/dev/iscsi:compat_services_module_context_2", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:filesystems_rpc_kernel_clnt_bck_headers", "//sys/vm:core_kernel_imgact_shell_headers"],
+    local_defines = ['ICL_KERNEL_PROXY'],
+) for arch in ['arm64', 'riscv']]

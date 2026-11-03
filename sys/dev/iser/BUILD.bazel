@@ -12,3 +12,15 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "iser_icl_iser_module", srcs = ["icl_iser.c", "iser_initiator.c", "iser_memory.c", "iser_verbs.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/iser:rdma_module_context_0", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:rdma_module_context_9", "//sys/net:network_families_module_context_8", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/dev/iscsi:rdma_module_context_0", "//sys/cam:storage_controllers_kernel_mpr_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iscsi:icl_conn_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "ICL_KERNEL_PROXY", "INET", "INET6"], header_overrides = ["//sys/sys:kernel_headers", "//sys/ofed/include:rdma_module_context_24", "//sys/compat/linuxkpi/common/include:rdma_module_context_2"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "iser_icl_iser_module",
+    srcs = ['icl_iser.c', 'iser_initiator.c', 'iser_memory.c', 'iser_verbs.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mpr_headers", "//sys/compat/linuxkpi/common/include/linux:cross_storage_bus_iser_icl_iser_module_headers", "//sys/compat/linuxkpi/common/include:cross_storage_bus_iser_icl_iser_module_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/iscsi:icl_conn_if_headers", "//sys/dev/iscsi:rdma_module_context_0", "//sys/dev/iser:rdma_module_context_0", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/net:network_families_module_context_8", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/netinet:rdma_module_context_9", "//sys/ofed/include/uapi/rdma:cross_storage_bus_iser_icl_iser_module_headers", "//sys/ofed/include:cross_storage_bus_iser_icl_iser_module_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/" + arch + "/conf:generic_opt_cam_header", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    local_defines = ['CONFIG_INFINIBAND_USER_MEM', 'ICL_KERNEL_PROXY', 'INET', 'INET6'],
+    header_overrides = ['//sys/sys:kernel_headers', '//sys/ofed/include:rdma_module_context_24', '//sys/compat/linuxkpi/common/include:rdma_module_context_2'],
+    preinclude_headers = ['//sys/compat/linuxkpi/common/include/linux:kconfig.h'],
+) for arch in ['arm64', 'riscv']]

@@ -2,3 +2,14 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "mrsas_linux", objects = ["//sys/dev/mrsas:mrsas_linux_mrsas_linux_module_object_files"], object_order = ["mrsas_linux.o"], export_all = False, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+cross_generic_module(
+    arch = "arm64",
+    module = "mrsas_linux",
+    objects = ["//sys/dev/mrsas:arm64_mrsas_linux_mrsas_linux_module_object_files"],
+    object_order = ["mrsas_linux.o"],
+    export_all = False,
+    package = "kernel",
+)

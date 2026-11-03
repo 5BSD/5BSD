@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "mpr", objects = ["//sys/dev/mpr:mpr_mpr_pci_module_object_files", "//sys/dev/mpr:mpr_mpr_module_object_files", "//sys/dev/mpr:mpr_mpr_sas_module_object_files", "//sys/dev/mpr:mpr_mpr_table_module_object_files", "//sys/dev/mpr:mpr_mpr_user_module_object_files", "//sys/dev/mpr:mpr_mpr_config_module_object_files", "//sys/dev/mpr:mpr_mpr_mapping_module_object_files", "//sys/dev/mpr:mpr_mpr_sas_lsi_module_object_files"], object_order = ["mpr_pci.o", "mpr.o", "mpr_sas.o", "mpr_table.o", "mpr_user.o", "mpr_config.o", "mpr_mapping.o", "mpr_sas_lsi.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "mpr",
+    objects = ["//sys/dev/mpr:" + arch + "_mpr_mpr_pci_module_object_files", "//sys/dev/mpr:" + arch + "_mpr_mpr_module_object_files", "//sys/dev/mpr:" + arch + "_mpr_mpr_sas_module_object_files", "//sys/dev/mpr:" + arch + "_mpr_mpr_table_module_object_files", "//sys/dev/mpr:" + arch + "_mpr_mpr_user_module_object_files", "//sys/dev/mpr:" + arch + "_mpr_mpr_config_module_object_files", "//sys/dev/mpr:" + arch + "_mpr_mpr_mapping_module_object_files", "//sys/dev/mpr:" + arch + "_mpr_mpr_sas_lsi_module_object_files"],
+    object_order = ['mpr_pci.o', 'mpr.o', 'mpr_sas.o', 'mpr_table.o', 'mpr_user.o', 'mpr_config.o', 'mpr_mapping.o', 'mpr_sas_lsi.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

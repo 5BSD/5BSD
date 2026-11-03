@@ -585,3 +585,6 @@ bsd_source_headers(name = "final_drivers_module_context_60", hdrs = ["//sys/comp
 
 bsd_source_headers(name = "zfs_kernel_module_context_0", hdrs = ["//sys/compat/linuxkpi/common/include/linux:compiler.h", "//sys/compat/linuxkpi/common/include/linux:compiler_attributes.h", "//sys/compat/linuxkpi/common/include/linux:compiler_types.h"], includes = [],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Additional physical prerequisites of the cross-target storage bus consumers.
+bsd_source_headers(name = "cross_storage_bus_iser_icl_iser_module_headers", hdrs = ['asm/atomic-long.h', 'asm/atomic.h', 'asm/atomic64.h', 'asm/barrier.h', 'asm/byteorder.h', 'asm/cpufeature.h', 'asm/pgtable.h', 'asm/processor.h', 'asm/topology.h', 'asm/types.h', 'asm/uaccess.h', 'net/if_inet6.h', 'net/ip.h', 'net/ipv6.h', 'vdso/const.h'], visibility = ['//sys/dev/iser:__pkg__'])

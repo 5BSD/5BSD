@@ -2,3 +2,16 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "cfiscsi", objects = ["//sys/cam:cfiscsi_ctl_frontend_iscsi_module_object_files"], object_order = ["ctl_frontend_iscsi.o"], exports = [], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "cfiscsi",
+    objects = ["//sys/cam:" + arch + "_cfiscsi_ctl_frontend_iscsi_module_object_files"],
+    object_order = ['ctl_frontend_iscsi.o'],
+    exports = [],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

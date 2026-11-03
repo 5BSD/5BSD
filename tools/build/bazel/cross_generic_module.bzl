@@ -23,11 +23,13 @@ def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name 
     # Preserve forced compatibility headers before the ordinary opt_global.h input.
     textual_hdrs = preinclude_headers + textual_hdrs
     preinclude_flags = [flag for header in preinclude_headers for flag in ["-include", "$(execpath " + header + ")"]]
+    # Compatibility overlays precede ordinary headers without duplicating them.
+    headers = ["//sys/" + arch + "/conf:generic_global_headers", "//sys/" + arch + "/include:kernel_headers",
+        "//sys/kern:" + arch + "_generic_offset_header", "//sys/kern:vnode_headers",
+        "//sys/sys:kernel_headers", "//sys/bsm:kernel_headers"] + policy.headers
     cc_library(name = name + "_objects", srcs = srcs, textual_hdrs = textual_hdrs,
         additional_compiler_inputs = textual_hdrs + additional_compiler_inputs,
-        deps = header_overrides + ["//sys/" + arch + "/conf:generic_global_headers", "//sys/" + arch + "/include:kernel_headers",
-            "//sys/kern:" + arch + "_generic_offset_header", "//sys/kern:vnode_headers",
-            "//sys/sys:kernel_headers", "//sys/bsm:kernel_headers"] + policy.headers + deps,
+        deps = header_overrides + [header for header in headers if header not in header_overrides] + deps,
         copts = preinclude_flags + ["-fno-strict-aliasing", "-fno-common", "-include", "opt_global.h", "-fPIC",
             "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer", "-fwrapv", "-fstack-protector-strong", "-std=gnu17",
             "-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +

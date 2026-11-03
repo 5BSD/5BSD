@@ -2,3 +2,14 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "nvmf", objects = ["//sys/dev/nvmf:nvmf_nvmf_module_object_files", "//sys/dev/nvmf:nvmf_nvmf_aer_module_object_files", "//sys/dev/nvmf:nvmf_nvmf_cmd_module_object_files", "//sys/dev/nvmf:nvmf_nvmf_ns_module_object_files", "//sys/dev/nvmf:nvmf_nvmf_sim_module_object_files"], object_order = ["nvmf.o", "nvmf_aer.o", "nvmf_cmd.o", "nvmf_ctldev.o", "nvmf_ns.o", "nvmf_qpair.o", "nvmf_sim.o"], export_all = False, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "nvmf",
+    objects = ["//sys/dev/nvmf:" + arch + "_nvmf_nvmf_module_object_files", "//sys/dev/nvmf:" + arch + "_nvmf_nvmf_aer_module_object_files", "//sys/dev/nvmf:" + arch + "_nvmf_nvmf_cmd_module_object_files", "//sys/dev/nvmf:" + arch + "_nvmf_nvmf_ns_module_object_files", "//sys/dev/nvmf:" + arch + "_nvmf_nvmf_sim_module_object_files"],
+    object_order = ['nvmf.o', 'nvmf_aer.o', 'nvmf_cmd.o', 'nvmf_ctldev.o', 'nvmf_ns.o', 'nvmf_qpair.o', 'nvmf_sim.o'],
+    package = 'kernel',
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

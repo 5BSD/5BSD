@@ -30,3 +30,27 @@ amd64_generic_module_objects(name = "sdio_sdio_subr_module", srcs = ["sdio_subr.
 amd64_generic_module_objects(name = "sdio_sdio_if_module", srcs = [":sdio_if_module_source"],
     deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sdio:sdio_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :sdio_if_module_source)=sdio_if.c", "-fdebug-prefix-map=$(execpath :sdio_if_module_source)=sdio_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sdio_sdiob_module",
+    srcs = ['sdiob.c'],
+    deps = ["//sys/cam:storage_core_kernel_ata_pmp_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/sdio:sdio_if_headers", "//sys/dev/sdio:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sdio_sdio_subr_module",
+    srcs = ['sdio_subr.c'],
+    deps = ["//sys/dev/mmc:kobj_builtins_physical_mmcbr_if_headers", "//sys/dev/sdio:sdio_if_headers", "//sys/dev/sdio:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sdio_sdio_if_module",
+    srcs = [':sdio_if_module_source'],
+    deps = ["//sys/dev/sdio:sdio_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :sdio_if_module_source)=sdio_if.c', '-fdebug-prefix-map=$(execpath :sdio_if_module_source)=sdio_if.c'],
+) for arch in ['arm64', 'riscv']]

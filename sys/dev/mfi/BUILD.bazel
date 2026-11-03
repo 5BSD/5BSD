@@ -66,3 +66,55 @@ amd64_generic_module_objects(name = "mfi_linux_mfi_linux_module", srcs = ["mfi_l
 amd64_generic_module_objects(name = "mfip_mfi_cam_module", srcs = ["mfi_cam.c"],
     deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mfi_mfi_module",
+    srcs = ['mfi.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_mfi_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mfi_mfi_pci_module",
+    srcs = ['mfi_pci.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_mfi_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mfi_mfi_disk_module",
+    srcs = ['mfi_disk.c', 'mfi_syspd.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:acpi_support_headers", "//sys/" + arch + "/conf:generic_opt_mfi_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mfi_mfi_debug_module",
+    srcs = ['mfi_debug.c'],
+    deps = ["//sys/" + arch + "/conf:generic_opt_mfi_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mfi_mfi_tbolt_module",
+    srcs = ['mfi_tbolt.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_mfi_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mfip_mfi_cam_module",
+    srcs = ['mfi_cam.c'],
+    deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header", "//sys/" + arch + "/conf:generic_opt_mfi_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mfi_linux_mfi_linux_module",
+    header_overrides = ["//sys/arm64/include:linux_module_headers"],
+    srcs = ['mfi_linux.c'],
+    deps = ["//sys/arm64/linux:module_headers", "//sys/compat/linux:device_families_module_context_1", "//sys/dev/mfi:device_families_module_context_1", "//sys/vm:core_kernel_imgact_shell_headers"],
+) for arch in ['arm64']]

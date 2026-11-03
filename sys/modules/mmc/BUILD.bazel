@@ -1,4 +1,17 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
-amd64_generic_module(module = "mmc", objects = ["//sys/dev/mmc:mmc_mmc_subr_module_object_files", "//sys/dev/mmc:mmc_mmc_module_object_files"], object_order = ["mmc_subr.o", "mmc.o"], exports = [], export_all = False, package = "kernel", aliases = [])
+amd64_generic_module(module = "mmc", objects = ["//sys/dev/mmc:mmc_mmc_subr_module_object_files", "//sys/dev/mmc:mmc_mmc_module_object_files"], object_order = ["mmc_subr.o", "mmc.o"], exports = [], export_all = True, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "mmc",
+    objects = ["//sys/dev/mmc:" + arch + "_mmc_mmc_subr_module_object_files", "//sys/dev/mmc:" + arch + "_mmc_mmc_module_object_files"],
+    object_order = ['mmc_subr.o', 'mmc.o'],
+    exports = [],
+    package = 'kernel',
+    aliases = [],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

@@ -10732,3 +10732,15 @@ are explicit. Five declared tests and independent native CLI replays pass, with
 selected-library loader traces; foreign execution, live tracing delivery and
 full framework coverage are not claimed. Separate DWARF/source lookup remains
 open. See ZSTD-THREE-ARCH-QUALIFICATION.md.
+
+### Cross-target storage modules (2026-11-03)
+
+The qualified component and family reviews retain 93 physical primary source
+hashes and 65 lexical marker lines
+in bazel-cross-storage-buses-work-r1-20261103/observability-r1.json. Actual shared
+and child compiler reviews bind 56,434 canonical consumed pairs. No runtime C or
+probes changed. The lexical inventory does not establish instrumentation
+completeness or absence elsewhere. Runtime follow-up must exercise CAM command
+errors, timeouts/reset, DMA/interrupts, hot removal, MMC/SDIO and fabric
+reconnection with enabled/disabled tracing costs. Live firing/audit delivery,
+full systems and performance remain open; see CROSS-STORAGE-BUSES-QUALIFICATION.md.

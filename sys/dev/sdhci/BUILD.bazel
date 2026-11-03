@@ -65,3 +65,27 @@ amd64_generic_module_objects(name = "sdhci_acpi_sdhci_acpi_module", srcs = ["sdh
 amd64_generic_module_objects(name = "sdhci_pci_sdhci_pci_module", srcs = ["sdhci_pci.c"],
     deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/mmc:peripheral_devices_kernel_sdhci_pci_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mmc:mmcbr_if_headers", "//sys/amd64/conf:peripheral_devices_kernel_opt_mmccam_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/sdhci:sdhci_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sdhci_sdhci_module",
+    srcs = ['sdhci.c'],
+    deps = ["//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/mmc:mmcbr_if_headers", "//sys/dev/mmc:peripheral_devices_kernel_sdhci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/dev/sdhci:sdhci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header", "//sys/" + arch + "/conf:generic_opt_mmccam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sdhci_sdhci_if_module",
+    srcs = [':sdhci_if_module_source'],
+    deps = ["//sys/dev/mmc:peripheral_devices_kernel_sdhci_pci_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/dev/sdhci:sdhci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_mmccam_header"],
+    copts = ['-fmacro-prefix-map=$(execpath :sdhci_if_module_source)=sdhci_if.c', '-fdebug-prefix-map=$(execpath :sdhci_if_module_source)=sdhci_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sdhci_pci_sdhci_pci_module",
+    srcs = ['sdhci_pci.c'],
+    deps = ["//sys/dev/mmc:mmcbr_if_headers", "//sys/dev/mmc:peripheral_devices_kernel_sdhci_pci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/sdhci:peripheral_devices_kernel_sdhci_headers", "//sys/dev/sdhci:sdhci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_mmccam_header"],
+) for arch in ['arm64', 'riscv']]

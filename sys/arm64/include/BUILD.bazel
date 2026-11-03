@@ -4,3 +4,15 @@ exports_files(["minidump.h"], visibility = ["//lib/libkvm:__pkg__"])
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
     strip_include_prefix = ".", include_prefix = "machine", visibility = ["//visibility:public"])
+
+# Preserve the architecture's real machine/../linux include relationship.
+filegroup(name = "architecture_view_machine_sources", srcs = glob(["*.h"]))
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+bsd_architecture_headers(
+    name = "linux_module_headers",
+    headers = {
+        ":architecture_view_machine_sources": "machine",
+        "//sys/arm64/linux:module_header_sources": "linux",
+    },
+    visibility = ["//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"],
+)

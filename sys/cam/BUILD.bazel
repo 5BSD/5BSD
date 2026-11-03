@@ -362,3 +362,115 @@ amd64_generic_module_objects(name = "ctl_scsi_ctl_module", srcs = ["ctl/scsi_ctl
 
 bsd_source_headers(name = "linux64_module_context_0", hdrs = ["scsi/scsi_sg.h"], includes = [],
     visibility = ["//sys/compat/linux:__pkg__"])
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "cfiscsi_ctl_frontend_iscsi_module",
+    srcs = ['ctl/ctl_frontend_iscsi.c'],
+    deps = ["//sys/cam:compat_services_module_context_0", "//sys/dev/iscsi:compat_services_module_context_0", "//sys/dev/iscsi:icl_conn_if_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:mii_family_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_module",
+    srcs = ['ctl/ctl.c'],
+    deps = ["//sys/cam:compat_services_module_context_1", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_backend_module",
+    srcs = ['ctl/ctl_backend.c', 'ctl/ctl_frontend.c'],
+    deps = ["//sys/cam:compat_services_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_backend_block_module",
+    srcs = ['ctl/ctl_backend_block.c'],
+    deps = ["//sys/cam:compat_services_module_context_3", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/geom:vm_kernel_swap_pager_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_backend_ramdisk_module",
+    srcs = ['ctl/ctl_backend_ramdisk.c'],
+    deps = ["//sys/cam:compat_services_module_context_4", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_cmd_table_module",
+    srcs = ['ctl/ctl_cmd_table.c'],
+    deps = ["//sys/cam:compat_services_module_context_5", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_frontend_cam_sim_module",
+    srcs = ['ctl/ctl_frontend_cam_sim.c'],
+    deps = ["//sys/cam:compat_services_module_context_6", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_frontend_ioctl_module",
+    srcs = ['ctl/ctl_frontend_ioctl.c'],
+    deps = ["//sys/cam:compat_services_module_context_7", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_ha_module",
+    srcs = ['ctl/ctl_ha.c'],
+    deps = ["//sys/cam:compat_services_module_context_7", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:filesystems_rpc_kernel_clnt_bck_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_nvme_all_module",
+    srcs = ['ctl/ctl_nvme_all.c'],
+    deps = ["//sys/cam:compat_services_module_context_8", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_nvme_cmd_table_module",
+    srcs = ['ctl/ctl_nvme_cmd_table.c'],
+    deps = ["//sys/cam:compat_services_module_context_9", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_scsi_all_module",
+    srcs = ['ctl/ctl_scsi_all.c'],
+    deps = ["//sys/cam:compat_services_module_context_10", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_tpc_module",
+    srcs = ['ctl/ctl_tpc.c', 'ctl/ctl_tpc_local.c'],
+    deps = ["//sys/cam:compat_services_module_context_11", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_error_module",
+    srcs = ['ctl/ctl_error.c'],
+    deps = ["//sys/cam:compat_services_module_context_12", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_ctl_util_module",
+    srcs = ['ctl/ctl_util.c'],
+    deps = ["//sys/cam:compat_services_module_context_13", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ctl_scsi_ctl_module",
+    srcs = ['ctl/scsi_ctl.c'],
+    deps = ["//sys/cam:compat_services_module_context_14", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]

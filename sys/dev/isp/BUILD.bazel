@@ -43,3 +43,26 @@ amd64_generic_module_objects(name = "isp_isp_freebsd_module", srcs = ["isp_freeb
 amd64_generic_module_objects(name = "isp_isp_pci_module", srcs = ["isp_pci.c"],
     deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/isp:storage_controllers_kernel_isp_headers", "//sys/cam:isci_kernel_isci_io_request_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:storage_controllers_kernel_opt_isp_header", "//sys/dev/pci:pci_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "isp_isp_module",
+    srcs = ['isp.c', 'isp_library.c', 'isp_target.c'],
+    deps = ["//sys/cam:isci_kernel_isci_io_request_headers", "//sys/dev/isp:storage_controllers_kernel_isp_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header", "//sys/" + arch + "/conf:generic_opt_ddb_header", "//sys/" + arch + "/conf:generic_opt_isp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "isp_isp_freebsd_module",
+    srcs = ['isp_freebsd.c'],
+    deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/isp:storage_controllers_kernel_isp_freebsd_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header", "//sys/" + arch + "/conf:generic_opt_ddb_header", "//sys/" + arch + "/conf:generic_opt_isp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "isp_isp_pci_module",
+    srcs = ['isp_pci.c'],
+    deps = ["//sys/cam:isci_kernel_isci_io_request_headers", "//sys/dev/isp:storage_controllers_kernel_isp_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header", "//sys/" + arch + "/conf:generic_opt_ddb_header", "//sys/" + arch + "/conf:generic_opt_isp_header"],
+) for arch in ['arm64', 'riscv']]

@@ -304,3 +304,18 @@ network_protocol_provider_tests(
     modules = {name: _NETWORK_PROTOCOL_MODULES[name] + ":generic_module" for name in ["tcphpts", "tcp_bbr", "tcp_rack"]},
     hpts_provider = "//sys/modules/tcp/hpts:generic_full",
 )
+
+load(":storage_bus_tests.bzl", "storage_bus_provider_tests")
+
+_STORAGE_BUS_MODULES = {'cfiscsi': '//sys/modules/cfiscsi', 'ctl': '//sys/modules/ctl', 'iscsi': '//sys/modules/iscsi', 'iser': '//sys/modules/iser', 'isp': '//sys/modules/isp', 'geom_md': '//sys/modules/md', 'mfi': '//sys/modules/mfi', 'mfip': '//sys/modules/mfi/mfip', 'mmc': '//sys/modules/mmc', 'mmcsd': '//sys/modules/mmcsd', 'mpr': '//sys/modules/mpr', 'mps': '//sys/modules/mps', 'mpt': '//sys/modules/mpt', 'mrsas': '//sys/modules/mrsas', 'nvmf': '//sys/modules/nvmf/nvmf', 'nvmf_tcp': '//sys/modules/nvmf/nvmf_tcp', 'nvmf_transport': '//sys/modules/nvmf/nvmf_transport', 'nvmft': '//sys/modules/nvmf/nvmft', 'rtsx': '//sys/modules/rtsx', 'sdhci': '//sys/modules/sdhci', 'sdhci_pci': '//sys/modules/sdhci_pci', 'sdio': '//sys/modules/sdio', 'tws': '//sys/modules/tws'}
+[storage_bus_provider_tests(
+    arch = arch,
+    modules = {name: package + ":" + arch + "_generic_module" for name, package in _STORAGE_BUS_MODULES.items()},
+    mmc_provider = "//sys/modules/mmc:" + arch + "_generic_localized",
+) for arch in ["arm64", "riscv"]]
+
+storage_bus_provider_tests(
+    arch = "amd64",
+    modules = {name: _STORAGE_BUS_MODULES[name] + ":generic_module" for name in ["mmc", "mmcsd", "rtsx", "sdhci_pci"]},
+    mmc_provider = "//sys/modules/mmc:generic_full",
+)

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical Linux compatibility ABI prerequisites for ARM64 module consumers.
+bsd_source_headers(
+    name = "module_headers",
+    hdrs = ["linux.h", "linux_proto.h", "linux_syscall.h"],
+    visibility = ["//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"],
+)
+
+filegroup(
+    name = "module_header_sources",
+    srcs = ["linux.h", "linux_proto.h", "linux_syscall.h"],
+    visibility = ["//sys/arm64/include:__pkg__"],
+)

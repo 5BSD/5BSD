@@ -83,3 +83,65 @@ amd64_generic_module_objects(name = "mps_mps_mapping_module", srcs = ["mps_mappi
 amd64_generic_module_objects(name = "mps_mps_sas_lsi_module", srcs = ["mps_sas_lsi.c"],
     deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_lsi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_pci_module",
+    srcs = ['mps_pci.c'],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_pci_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_module",
+    srcs = ['mps.c'],
+    deps = ["//sys/cam:storage_core_kernel_ufshci_headers", "//sys/dev/mps:storage_controllers_kernel_mps_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_WARNING_FLAGS")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_sas_module",
+    srcs = ['mps_sas.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mpr_sas_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+    warning_flags = KERNEL_WARNING_FLAGS + ['-Wno-error=unneeded-internal-declaration'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_table_module",
+    srcs = ['mps_table.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mps:storage_controllers_kernel_mps_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_user_module",
+    srcs = ['mps_user.c'],
+    deps = ["//sys/cam:storage_controllers_kernel_mpr_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_config_module",
+    srcs = ['mps_config.c'],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_config_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_mapping_module",
+    srcs = ['mps_mapping.c'],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_mapping_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_WARNING_FLAGS + ['-Wno-error=sometimes-uninitialized'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mps_mps_sas_lsi_module",
+    srcs = ['mps_sas_lsi.c'],
+    deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_lsi_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
+) for arch in ['arm64', 'riscv']]

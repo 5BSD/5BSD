@@ -12,3 +12,8 @@ exports_files(["ib_user_ioctl_verbs.h", "ib_user_mad.h", "rdma_user_ioctl.h", "r
 exports_files(["ib_user_ioctl_cmds.h"], visibility = ["//sys/ofed/include:__pkg__"])
 
 exports_files(["mlx5_user_ioctl_cmds.h", "mlx5_user_ioctl_verbs.h", "mthca-abi.h"], visibility = ["//sys/ofed/include:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Additional physical prerequisites of the cross-target storage bus consumers.
+bsd_source_headers(name = "cross_storage_bus_iser_icl_iser_module_headers", hdrs = ['ib_user_ioctl_verbs.h', 'ib_user_mad.h', 'ib_user_verbs.h', 'rdma_user_ioctl.h', 'rdma_user_ioctl_cmds.h'], visibility = ['//sys/dev/iser:__pkg__'])

@@ -1,5 +1,32 @@
 # Bazel qualification
 
+## Storage module checkpoint (2026-11-03)
+
+Twenty-three shared storage module leaves per ARM64/RISC-V architecture and
+two ARM64-only Linux compatibility children pass native builds and artifact
+review. The shared components cover 92 plain/CTF variants, 380 compiler
+contexts/55,888 canonical consumed pairs, 184 ordered links and 138 installation
+records. Forty-two of 46 plain artifacts equal untouched Make bytes; four equal
+explicit identical-source filename controls. CTF/runtime contracts retain that
+42/4 distinction. All 46 shared separate DWARF files differ; source/debugger
+qualification remains open.
+
+Complete recursive MFI/MRSAS comparisons cover eight family variants and all
+24 installation records, including the two ARM64 children. The children add
+four compiler contexts/546 consumed pairs and eight ordered links. Family
+records overlap component records; they are not extra installation coverage.
+Original amd64 controls qualify MMC/consumer exports and MRSAS compiler policy.
+Twelve actual positive/negative provider tests pass across six profiles.
+
+The changes preserve real Make compiler options, forced headers, generated
+schemas, exports and child selection. The normal format-5 build-bsd workflow
+uses 16 CPUs and a disk reserve. Its C frontend needs no new command-line option.
+No C implementation or probe changed. Full world/cross kernels, separate DWARF,
+package publication, runtime, bootstrap/sandbox and performance gates remain
+open. Make remains production/default; BIP remains excluded.
+
+See [the storage qualification record](CROSS-STORAGE-BUSES-QUALIFICATION.md).
+
 > Module debug qualification correction: historical module “CTF/debug” parity
 > statements concern stripped module/CTF payloads and valid debuglink CRCs unless
 > explicitly comparing separate debug files. Full DWARF/source lookup parity

@@ -2,3 +2,28 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "mfi", objects = ["//sys/dev/mfi:mfi_mfi_module_object_files", "//sys/dev/mfi:mfi_mfi_pci_module_object_files", "//sys/dev/mfi:mfi_mfi_disk_module_object_files", "//sys/dev/mfi:mfi_mfi_debug_module_object_files", "//sys/dev/mfi:mfi_mfi_tbolt_module_object_files"], object_order = ["mfi.o", "mfi_pci.o", "mfi_disk.o", "mfi_debug.o", "mfi_syspd.o", "mfi_tbolt.o"], export_all = True, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "mfi",
+    objects = ["//sys/dev/mfi:" + arch + "_mfi_mfi_module_object_files", "//sys/dev/mfi:" + arch + "_mfi_mfi_pci_module_object_files", "//sys/dev/mfi:" + arch + "_mfi_mfi_disk_module_object_files", "//sys/dev/mfi:" + arch + "_mfi_mfi_debug_module_object_files", "//sys/dev/mfi:" + arch + "_mfi_mfi_tbolt_module_object_files"],
+    object_order = ['mfi.o', 'mfi_pci.o', 'mfi_disk.o', 'mfi_debug.o', 'mfi_syspd.o', 'mfi_tbolt.o'],
+    package = 'kernel',
+    export_all = True,
+) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+
+bsd_install_manifest(
+    name = "arm64_family_install_manifest",
+    manifests = [':arm64_install_manifest', '//sys/modules/mfi/mfip:arm64_install_manifest', '//sys/modules/mfi/mfi_linux:arm64_install_manifest'],
+    visibility = ["//visibility:public"],
+)
+
+bsd_install_manifest(
+    name = "riscv_family_install_manifest",
+    manifests = [':riscv_install_manifest', '//sys/modules/mfi/mfip:riscv_install_manifest'],
+    visibility = ["//visibility:public"],
+)
