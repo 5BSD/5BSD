@@ -12,3 +12,12 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "pcf_pcf_module", srcs = ["pcf.c"],
     deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/pcf:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "pcf_pcf_module",
+    srcs = ['pcf.c'],
+    deps = ["//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/pcf:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]

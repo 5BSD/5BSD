@@ -33,3 +33,44 @@ amd64_generic_module_objects(name = "pwmbus_pwmbus_if_module", srcs = [":pwmbus_
 amd64_generic_module_objects(name = "pwmc_pwmc_module", srcs = ["pwmc.c"],
     deps = ["//sys/dev/pwm:device_families_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/dev/pwm:pwmbus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "pwmbus_pwmbus_module",
+    srcs = ['pwmbus.c'],
+    deps = ["//sys/dev/pwm:device_families_module_context_0", "//sys/dev/pwm:pwmbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+# Additional physical prerequisites of the cross-target I/O-bus consumers.
+bsd_source_headers(name = "cross_io_bus_pwmbus_ofw_pwm_module_headers", hdrs = ['ofw_pwm.h'], visibility = ['//sys/dev/pwm:__pkg__'])
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "pwmbus_ofw_pwm_module",
+    srcs = ['ofw_pwm.c'],
+    deps = ["//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/pwm:cross_io_bus_pwmbus_ofw_pwm_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_tty_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "pwmbus_ofw_pwmbus_module",
+    srcs = ['ofw_pwmbus.c'],
+    deps = ["//sys/contrib/libfdt:mii_family_headers", "//sys/dev/fdt:mii_family_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/pwm:device_families_module_context_0", "//sys/dev/pwm:pwmbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:cross_io_bus_gpiokeys_gpiokeys_module_headers", "//sys/vm:core_kernel_tty_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "pwmbus_pwmbus_if_module",
+    srcs = [':pwmbus_if_module_source'],
+    deps = ["//sys/dev/pwm:pwmbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :pwmbus_if_module_source)=pwmbus_if.c', '-fdebug-prefix-map=$(execpath :pwmbus_if_module_source)=pwmbus_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "pwmc_pwmc_module",
+    srcs = ['pwmc.c'],
+    deps = ["//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/pwm:device_families_module_context_1", "//sys/dev/pwm:pwmbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_tty_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]

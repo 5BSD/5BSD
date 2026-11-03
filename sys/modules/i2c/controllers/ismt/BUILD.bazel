@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "ismt", objects = ["//sys/dev/ismt:ismt_ismt_module_object_files"],
     object_order = ["ismt.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ismt",
+    objects = ["//sys/dev/ismt:" + arch + "_ismt_ismt_module_object_files"],
+    object_order = ['ismt.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

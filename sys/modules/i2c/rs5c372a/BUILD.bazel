@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "rs5c372a",
+    objects = ["//sys/dev/iicbus:" + arch + "_rs5c372a_rs5c372a_module_object_files"],
+    object_order = ['rs5c372a.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

@@ -1,4 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
-amd64_generic_module(module = "ow", objects = ["//sys/dev/ow:ow_ow_module_object_files", "//sys/dev/ow:ow_own_if_module_object_files", "//sys/dev/ow:ow_owll_if_module_object_files"], object_order = ["ow.o", "own_if.o", "owll_if.o"], export_all = False, package = "kernel")
+amd64_generic_module(module = "ow", objects = ["//sys/dev/ow:ow_ow_module_object_files", "//sys/dev/ow:ow_own_if_module_object_files", "//sys/dev/ow:ow_owll_if_module_object_files"], object_order = ["ow.o", "own_if.o", "owll_if.o"], export_all = True, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ow",
+    objects = ["//sys/dev/ow:" + arch + "_ow_ow_module_object_files", "//sys/dev/ow:" + arch + "_ow_own_if_module_object_files", "//sys/dev/ow:" + arch + "_ow_owll_if_module_object_files"],
+    object_order = ['ow.o', 'own_if.o', 'owll_if.o'],
+    package = 'kernel',
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

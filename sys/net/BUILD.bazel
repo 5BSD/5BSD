@@ -17,7 +17,7 @@ cc_library(name = "route_nhop_headers", hdrs = ["route/nhop.h"], includes = ["..
 cc_library(name = "ppp_defs_headers", hdrs = ["ppp_defs.h"], includes = [".."],
     visibility = ["//sys/netgraph:__pkg__"])
 cc_library(name = "ethernet_headers", hdrs = ["ethernet.h"], includes = [".."],
-    deps = [":network_headers"], visibility = ["//sys/netgraph:__pkg__", "//tests/sys/netgraph:__pkg__"])
+    deps = [":network_headers"], visibility = (["//sys/netgraph:__pkg__", "//tests/sys/netgraph:__pkg__"]) + ['//sys/dev/flash:__pkg__'])
 cc_library(name = "vlan_headers", hdrs = ["if_vlan_var.h"], includes = [".."],
     deps = [":interface_headers"], visibility = ["//sys/netgraph:__pkg__"])
 
@@ -1735,3 +1735,6 @@ bsd_source_headers(name = "linux64_module_context_1", hdrs = ["if.h", "if_dl.h",
     srcs = ["dummymbuf.c"],
     deps = ["//sys/contrib/ck:cross_routing_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_1", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_inet6_header"],
 ) for arch in ["arm64", "riscv"]]
+
+# Additional physical prerequisites of the cross-target I/O-bus consumers.
+bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_module_headers", hdrs = ['ethernet.h', 'if.h'], visibility = (((['//sys/dev/gpio:__pkg__']) + ['//sys/dev/iicbus:__pkg__']) + ['//sys/dev/pwm:__pkg__']) + ['//sys/dev/spibus:__pkg__'])

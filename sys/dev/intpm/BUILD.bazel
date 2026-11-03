@@ -21,3 +21,12 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "intpm_intpm_module", srcs = ["intpm.c"],
     deps = ["//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/intpm:peripheral_devices_kernel_intpm_headers", "//sys/dev/amdsbwd:peripheral_devices_kernel_intpm_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:peripheral_devices_kernel_opt_intpm_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/smbus:smbus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "intpm_intpm_module",
+    srcs = ['intpm.c'],
+    deps = ["//sys/dev/amdsbwd:peripheral_devices_kernel_intpm_headers", "//sys/dev/intpm:peripheral_devices_kernel_intpm_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/smbus:smbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_intpm_header"],
+) for arch in ['arm64', 'riscv']]

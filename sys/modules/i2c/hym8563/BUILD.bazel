@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "hym8563",
+    objects = ["//sys/dev/iicbus:" + arch + "_hym8563_hym8563_module_object_files"],
+    object_order = ['hym8563.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

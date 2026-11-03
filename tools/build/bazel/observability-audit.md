@@ -10683,3 +10683,16 @@ multiblock recovery/CRC negatives against the selected library; independent
 original native recovery also passes. This proves no live probe, audit-delivery,
 foreign runtime or framework tracing completeness. Package timestamps and
 separate DWARF/source lookup remain explicit. See BZIP2-FAMILY-QUALIFICATION.md.
+
+### Cross-target I/O-bus expansion (2026-11-03)
+
+A bounded 77-source scan records eleven explicit marker lines in iiconf.c and
+four matching compiled iicbus probe-section variants. Other sources lack
+matching explicit markers in this scan; framework/FBT completeness, live probes
+and audit delivery remain unqualified. Artifact tests cover actual 1-Wire
+consumer/exporter edges and reproduce the previous localization defect. Runtime
+follow-ups cover GPIO events/permissions, I2C/SMBus arbitration/timeouts,
+RTC/sensors, 1-Wire discovery/CRC/errors, PWM, SPI/flash and
+attach/detach/suspend lifetime. Untouched and filename-controlled Make
+references remain distinct. See
+[CROSS-IO-BUSES-QUALIFICATION.md](CROSS-IO-BUSES-QUALIFICATION.md).

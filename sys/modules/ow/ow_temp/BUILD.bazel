@@ -2,3 +2,14 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "ow_temp", objects = ["//sys/dev/ow:ow_temp_ow_temp_module_object_files"], object_order = ["ow_temp.o"], export_all = False, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ow_temp",
+    objects = ["//sys/dev/ow:" + arch + "_ow_temp_ow_temp_module_object_files"],
+    object_order = ['ow_temp.o'],
+    package = 'kernel',
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

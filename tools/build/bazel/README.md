@@ -48402,3 +48402,15 @@ errors. Epoch-zero versus original stage timestamps and separate DWARF/source
 lookup remain explicit distinctions. Full world/rescue/bootstrap, installed
 package/foreign runtime and publication remain open. See
 [BZIP2-FAMILY-QUALIFICATION.md](BZIP2-FAMILY-QUALIFICATION.md).
+
+## Cross-target I/O-bus checkpoint (2026-11-03)
+
+Sixty-one selected GPIO/I2C/1-Wire/PWM/SPI module leaves per architecture pass
+ARM64/RISC-V Bazel builds and artifact checks. Of 122 plain modules, 110 equal
+untouched Make bytes; 12 equal explicit identical-source canonical-filename
+controls. CTF/runtime checks retain the same 110/12 distinction. The review
+covers 340 actual compilers/34,550 canonical consumed pairs, 488 ordered links
+and 366 install records. A real 1-Wire export defect is fixed in both backends
+and additionally qualified on amd64. All twelve positive/negative provider
+tests pass. Separate DWARF, runtime and performance gates remain open. See
+[CROSS-IO-BUSES-QUALIFICATION.md](CROSS-IO-BUSES-QUALIFICATION.md).

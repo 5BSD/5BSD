@@ -20,3 +20,26 @@ amd64_generic_module_objects(name = "ig4_ig4_iic_module", srcs = ["ig4_iic.c"],
 amd64_generic_module_objects(name = "ig4_ig4_pci_module", srcs = ["ig4_pci.c"],
     deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/ichiic:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/pci:pci_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ig4_ig4_acpi_module",
+    srcs = ['ig4_acpi.c'],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/ichiic:i2c_module_context_0", "//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_acpi_header"],
+) for arch in ['arm64']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ig4_ig4_iic_module",
+    srcs = ['ig4_iic.c'],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/ichiic:i2c_module_context_0", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_acpi_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ig4_ig4_pci_module",
+    srcs = ['ig4_pci.c'],
+    deps = ["//sys/dev/ichiic:i2c_module_context_0", "//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]

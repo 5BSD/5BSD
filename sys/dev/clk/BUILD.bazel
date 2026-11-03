@@ -2,3 +2,13 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Additional physical prerequisites of the cross-target I/O-bus consumers.
+bsd_source_headers(name = "cross_io_bus_hym8563_hym8563_module_headers", hdrs = ['clk.h'], visibility = ['//sys/dev/iicbus:__pkg__'])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "clknode_if_cross_io_bus_header_file", srcs = [":clknode_if"], output_group = "header")
+cc_library(name = "clknode_if_cross_io_bus_headers", hdrs = [":clknode_if_cross_io_bus_header_file"], strip_include_prefix = "clknode_if.generated", visibility = ['//sys/dev/iicbus:__pkg__'])

@@ -40,3 +40,41 @@ amd64_generic_module_objects(name = "spibus_spibus_if_module", srcs = [":spibus_
 amd64_generic_module_objects(name = "spigen_spigen_module", srcs = ["spigen.c"],
     deps = ["//sys/vm:spi_module_context_1", "//sys/dev/spibus:gpio_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/amd64/conf:spi_module_opt_spi_header", "//sys/dev/spibus:spibus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "spibus_spibus_module",
+    srcs = ['spibus.c'],
+    deps = ["//sys/dev/spibus:gpio_module_context_0", "//sys/dev/spibus:spibus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "spibus_ofw_spibus_module",
+    srcs = ['ofw_spibus.c'],
+    deps = ["//sys/contrib/libfdt:mii_family_headers", "//sys/dev/fdt:mii_family_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/spibus:gpio_module_context_0", "//sys/dev/spibus:spibus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:cross_io_bus_gpiokeys_gpiokeys_module_headers", "//sys/vm:core_kernel_tty_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "spibus_acpi_spibus_module",
+    srcs = ['acpi_spibus.c'],
+    deps = ["//sys/contrib/dev/acpica/include:peripheral_devices_kernel_acpi_iicbus_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/spibus:spi_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_acpi_header"],
+) for arch in ['arm64']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "spibus_spibus_if_module",
+    srcs = [':spibus_if_module_source'],
+    deps = ["//sys/dev/spibus:spi_module_context_1", "//sys/dev/spibus:spibus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :spibus_if_module_source)=spibus_if.c', '-fdebug-prefix-map=$(execpath :spibus_if_module_source)=spibus_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "spigen_spigen_module",
+    srcs = ['spigen.c'],
+    deps = ["//sys/dev/ofw:cross_io_bus_spigen_spigen_module_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/spibus:gpio_module_context_0", "//sys/dev/spibus:spibus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:spi_module_context_1", "//sys/" + arch + "/conf:generic_opt_platform_header", "//sys/" + arch + "/conf:generic_opt_spi_header"],
+) for arch in ['arm64', 'riscv']]

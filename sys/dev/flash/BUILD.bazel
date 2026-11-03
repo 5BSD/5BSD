@@ -19,3 +19,19 @@ amd64_generic_module_objects(name = "at45d_at45d_module", srcs = ["at45d.c"],
 amd64_generic_module_objects(name = "mx25l_mx25l_module", srcs = ["mx25l.c"],
     deps = ["//sys/vm:usb_net_usie_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/spibus:spi_module_context_1", "//sys/dev/flash:spi_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/dev/spibus:spibus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "at45d_at45d_module",
+    srcs = ['at45d.c'],
+    deps = ["//sys/contrib/libfdt:mii_family_headers", "//sys/dev/fdt:mii_family_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/spibus:spi_module_context_1", "//sys/dev/spibus:spibus_if_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/net:ethernet_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:core_kernel_tty_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "mx25l_mx25l_module",
+    srcs = ['mx25l.c'],
+    deps = ["//sys/contrib/libfdt:mii_family_headers", "//sys/dev/fdt:mii_family_headers", "//sys/dev/flash:spi_module_context_0", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/spibus:spi_module_context_1", "//sys/dev/spibus:spibus_if_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/net:ethernet_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:core_kernel_tty_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]

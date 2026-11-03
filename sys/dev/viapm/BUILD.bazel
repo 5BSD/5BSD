@@ -7,3 +7,12 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "viapm_viapm_module", srcs = ["viapm.c"],
     deps = ["//sys/isa:platform_support_kernel_isa_common_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbb_if_headers", "//sys/isa:isa_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_isa_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/smbus:smbus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "viapm_viapm_module",
+    srcs = ['viapm.c'],
+    deps = ["//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/iicbus:iicbb_if_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/smbus:smbus_if_headers", "//sys/isa:isa_if_headers", "//sys/isa:platform_support_kernel_isa_common_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_isa_header"],
+) for arch in ['arm64', 'riscv']]

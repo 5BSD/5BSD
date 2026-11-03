@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "gpiobus", objects = ["//sys/dev/gpio:gpiobus_gpiobus_module_object_files", "//sys/dev/gpio:gpiobus_gpioc_module_object_files", "//sys/dev/gpio:gpiobus_gpio_if_module_object_files", "//sys/dev/gpio:gpiobus_gpiobus_if_module_object_files", "//sys/dev/gpio:gpiobus_acpi_gpiobus_module_object_files"],
     object_order = ["gpiobus.o", "gpioc.o", "gpio_if.o", "gpiobus_if.o", "acpi_gpiobus.o"], export_all = True)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "gpiobus",
+    objects = {"arm64": ["//sys/dev/gpio:" + arch + "_gpiobus_gpiobus_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_gpioc_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_gpio_if_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_gpiobus_if_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_ofw_gpiobus_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_acpi_gpiobus_module_object_files"], "riscv": ["//sys/dev/gpio:" + arch + "_gpiobus_gpiobus_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_gpioc_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_gpio_if_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_gpiobus_if_module_object_files", "//sys/dev/gpio:" + arch + "_gpiobus_ofw_gpiobus_module_object_files"]}[arch],
+    object_order = {'arm64': ['gpiobus.o', 'gpioc.o', 'gpio_if.o', 'gpiobus_if.o', 'ofw_gpiobus.o', 'acpi_gpiobus.o'], 'riscv': ['gpiobus.o', 'gpioc.o', 'gpio_if.o', 'gpiobus_if.o', 'ofw_gpiobus.o']}[arch],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

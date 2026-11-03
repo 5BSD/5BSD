@@ -2,3 +2,14 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "pwmc", objects = ["//sys/dev/pwm:pwmc_pwmc_module_object_files"], object_order = ["pwmc.o"], export_all = False, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "pwmc",
+    objects = ["//sys/dev/pwm:" + arch + "_pwmc_pwmc_module_object_files"],
+    object_order = ['pwmc.o'],
+    package = 'kernel',
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

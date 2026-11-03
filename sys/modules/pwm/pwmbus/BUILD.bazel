@@ -2,3 +2,14 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "pwmbus", objects = ["//sys/dev/pwm:pwmbus_pwmbus_module_object_files", "//sys/dev/pwm:pwmbus_pwmbus_if_module_object_files"], object_order = ["pwmbus.o", "pwmbus_if.o"], export_all = True, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "pwmbus",
+    objects = ["//sys/dev/pwm:" + arch + "_pwmbus_pwmbus_module_object_files", "//sys/dev/pwm:" + arch + "_pwmbus_ofw_pwm_module_object_files", "//sys/dev/pwm:" + arch + "_pwmbus_ofw_pwmbus_module_object_files", "//sys/dev/pwm:" + arch + "_pwmbus_pwmbus_if_module_object_files"],
+    object_order = ['pwmbus.o', 'ofw_pwm.o', 'ofw_pwmbus.o', 'pwmbus_if.o'],
+    package = 'kernel',
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

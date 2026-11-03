@@ -9,7 +9,7 @@ cc_library(name = 'kernel_headers', hdrs = ['evdev.h', 'input.h', 'input-event-c
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "acpi_support_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/kbdmux:__pkg__"])
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"], visibility = (["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/kbdmux:__pkg__"]) + ['//sys/dev/gpio:__pkg__'])
 
 # Only the input ABI headers used by the userland bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ["input-event-codes.h", "input.h"],

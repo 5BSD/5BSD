@@ -9,7 +9,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "hardware_module_adlngpio_headers", hdrs = ["gpiobusvar.h", "intel/intelgpio.h"], includes = [],
     visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
 bsd_source_headers(name = "hardware_module_amdgpio_headers", hdrs = ["gpiobusvar.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__"])
+    visibility = (["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__"]) + ['//sys/dev/iicbus/mux:__pkg__'])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
@@ -22,7 +22,7 @@ amd64_generic_module_objects(name = "adlngpio_module", srcs = ["intel/intelgpio.
     deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_adlngpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:hardware_module_acpi_if_headers", "//sys/kern:hardware_module_bus_if_headers", "//sys/kern:hardware_module_device_if_headers", "//sys/dev/gpio:hardware_module_gpio_if_headers", "//sys/amd64/conf:hardware_module_opt_acpi_header", "//sys/amd64/conf:hardware_module_opt_platform_header"])
 
 filegroup(name = "gpio_if_module_header", srcs = [":gpio_if"], output_group = "header")
-cc_library(name = "gpio_if_headers", hdrs = [":gpio_if_module_header"], strip_include_prefix = "gpio_if.generated", visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__"])
+cc_library(name = "gpio_if_headers", hdrs = [":gpio_if_module_header"], strip_include_prefix = "gpio_if.generated", visibility = (["//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__"]) + ['//sys/dev/iicbus/mux:__pkg__'])
 
 bsd_source_headers(name = "gpio_module_context_0", hdrs = ["acpi_gpiobusvar.h", "gpiobusvar.h"], includes = [],
     visibility = ["//sys/dev/gpio:__pkg__"])
@@ -100,3 +100,104 @@ amd64_generic_module_objects(name = "tglhgpio_intelgpio_module", srcs = ["intel/
 amd64_generic_module_objects(name = "tglhgpio_tglhgpio_module", srcs = ["intel/tglhgpio.c"],
     deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_adlngpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:generic_opt_platform_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiobus_gpiobus_module",
+    srcs = ['gpiobus.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:gpio_module_context_1", "//sys/dev/gpio:gpiobus_if_headers", "//sys/dev/ofw:cross_io_bus_gpiobus_gpiobus_module_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiobus_gpioc_module",
+    srcs = ['gpioc.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:gpiobus_if_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:cross_io_bus_gpiobus_gpiobus_module_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiobus_gpio_if_module",
+    srcs = [':gpio_if_module_source'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :gpio_if_module_source)=gpio_if.c', '-fdebug-prefix-map=$(execpath :gpio_if_module_source)=gpio_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiobus_gpiobus_if_module",
+    srcs = [':gpiobus_if_module_source'],
+    deps = ["//sys/dev/gpio:gpiobus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :gpiobus_if_module_source)=gpiobus_if.c', '-fdebug-prefix-map=$(execpath :gpiobus_if_module_source)=gpiobus_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiobus_ofw_gpiobus_module",
+    srcs = ['ofw_gpiobus.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:gpio_module_context_1", "//sys/dev/gpio:gpiobus_if_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_tty_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiobus_acpi_gpiobus_module",
+    srcs = ['acpi_gpiobus.c'],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:gpio_module_context_3", "//sys/dev/gpio:gpiobus_if_headers", "//sys/dev/ofw:cross_io_bus_gpiobus_gpiobus_module_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/" + arch + "/conf:generic_opt_acpi_header", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpioiic_gpioiic_module",
+    srcs = ['gpioiic.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:gpiobus_if_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/iicbus:iicbb_if_headers", "//sys/dev/ofw:cross_io_bus_gpioiic_gpioiic_module_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+# Additional physical prerequisites of the cross-target I/O-bus consumers.
+bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_module_headers", hdrs = ['gpiobusvar.h', 'gpiokeys.h'], visibility = ['//sys/dev/gpio:__pkg__'])
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiokeys_gpiokeys_module",
+    srcs = ['gpiokeys.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/contrib/libfdt:mii_family_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/fdt:mii_family_headers", "//sys/dev/gpio:cross_io_bus_gpiokeys_gpiokeys_module_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:cross_io_bus_gpiokeys_gpiokeys_module_headers", "//sys/vm:core_kernel_tty_headers", "//sys/" + arch + "/conf:generic_opt_evdev_header", "//sys/" + arch + "/conf:generic_opt_kbd_header", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+# Additional physical prerequisites of the cross-target I/O-bus consumers.
+bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_codes_module_headers", hdrs = ['gpiokeys.h'], visibility = ['//sys/dev/gpio:__pkg__'])
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiokeys_gpiokeys_codes_module",
+    srcs = ['gpiokeys_codes.c'],
+    deps = ["//:cross_io_bus_gpiokeys_gpiokeys_codes_module_headers", "//sys/dev/gpio:cross_io_bus_gpiokeys_gpiokeys_codes_module_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpioled_gpioled_fdt_module",
+    srcs = ['gpioled_fdt.c'],
+    deps = ["//sys/contrib/libfdt:mii_family_headers", "//sys/dev/fdt:mii_family_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:gpiobus_if_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/led:acpi_support_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:cross_io_bus_gpiokeys_gpiokeys_module_headers", "//sys/vm:core_kernel_tty_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiopps_gpiopps_module",
+    srcs = ['gpiopps.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_tty_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpiospi_gpiospi_module",
+    srcs = ['gpiospi.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:gpiobus_if_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:cross_io_bus_gpiobus_gpiobus_module_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/spibus:gpio_module_context_0", "//sys/dev/spibus:spibus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/" + arch + "/conf:generic_opt_gpio_header", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "gpioths_gpioths_module",
+    srcs = ['gpioths.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:cross_io_bus_gpioiic_gpioiic_module_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]

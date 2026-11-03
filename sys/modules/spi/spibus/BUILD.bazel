@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "spibus", objects = ["//sys/dev/spibus:spibus_spibus_module_object_files", "//sys/dev/spibus:spibus_acpi_spibus_module_object_files", "//sys/dev/spibus:spibus_spibus_if_module_object_files"],
     object_order = ["spibus.o", "acpi_spibus.o", "spibus_if.o"], export_all = True)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "spibus",
+    objects = {"arm64": ["//sys/dev/spibus:" + arch + "_spibus_spibus_module_object_files", "//sys/dev/spibus:" + arch + "_spibus_ofw_spibus_module_object_files", "//sys/dev/spibus:" + arch + "_spibus_acpi_spibus_module_object_files", "//sys/dev/spibus:" + arch + "_spibus_spibus_if_module_object_files"], "riscv": ["//sys/dev/spibus:" + arch + "_spibus_spibus_module_object_files", "//sys/dev/spibus:" + arch + "_spibus_ofw_spibus_module_object_files", "//sys/dev/spibus:" + arch + "_spibus_spibus_if_module_object_files"]}[arch],
+    object_order = {'arm64': ['spibus.o', 'ofw_spibus.o', 'acpi_spibus.o', 'spibus_if.o'], 'riscv': ['spibus.o', 'ofw_spibus.o', 'spibus_if.o']}[arch],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

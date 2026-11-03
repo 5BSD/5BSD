@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "gpioled", objects = ["//sys/dev/gpio:gpioled_gpioled_module_object_files"],
     object_order = ["gpioled.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "gpioled",
+    objects = ["//sys/dev/gpio:" + arch + "_gpioled_gpioled_fdt_module_object_files"],
+    object_order = ['gpioled_fdt.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

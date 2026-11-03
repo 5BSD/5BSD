@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "gpiopps",
+    objects = ["//sys/dev/gpio:" + arch + "_gpiopps_gpiopps_module_object_files"],
+    object_order = ['gpiopps.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

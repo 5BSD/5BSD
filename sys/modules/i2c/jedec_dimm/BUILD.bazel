@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "jedec_dimm", objects = ["//sys/dev/jedec_dimm:jedec_dimm_jedec_dimm_module_object_files"],
     object_order = ["jedec_dimm.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "jedec_dimm",
+    objects = ["//sys/dev/jedec_dimm:" + arch + "_jedec_dimm_jedec_dimm_module_object_files"],
+    object_order = ['jedec_dimm.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

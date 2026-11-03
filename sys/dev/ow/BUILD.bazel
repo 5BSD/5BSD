@@ -52,3 +52,42 @@ amd64_generic_module_objects(name = "ow_temp_ow_temp_module", srcs = ["ow_temp.c
 amd64_generic_module_objects(name = "owc_owc_gpiobus_module", srcs = ["owc_gpiobus.c"],
     deps = ["//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/ow:device_families_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/dev/ow:owll_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ow_ow_module",
+    srcs = ['ow.c'],
+    deps = ["//sys/dev/ow:device_families_module_context_0", "//sys/dev/ow:owll_if_headers", "//sys/dev/ow:own_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ow_own_if_module",
+    srcs = [':own_if_module_source'],
+    deps = ["//sys/dev/ow:device_families_module_context_1", "//sys/dev/ow:own_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :own_if_module_source)=own_if.c', '-fdebug-prefix-map=$(execpath :own_if_module_source)=own_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ow_owll_if_module",
+    srcs = [':owll_if_module_source'],
+    deps = ["//sys/dev/ow:device_families_module_context_2", "//sys/dev/ow:owll_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :owll_if_module_source)=owll_if.c', '-fdebug-prefix-map=$(execpath :owll_if_module_source)=owll_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ow_temp_ow_temp_module",
+    srcs = ['ow_temp.c'],
+    deps = ["//sys/dev/ow:device_families_module_context_3", "//sys/dev/ow:own_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "owc_owc_gpiobus_module",
+    srcs = ['owc_gpiobus.c'],
+    deps = ["//sys/dev/gpio:gpio_if_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:cross_io_bus_gpioiic_gpioiic_module_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/ow:device_families_module_context_2", "//sys/dev/ow:owll_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
+) for arch in ['arm64', 'riscv']]

@@ -40,7 +40,7 @@ bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_pla
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
-    strip_include_prefix = "generic_options", visibility = ['//sys/dev/alc:__pkg__', '//sys/dev/ale:__pkg__', '//sys/dev/aq:__pkg__', '//sys/dev/backlight:__pkg__', '//sys/dev/bce:__pkg__', '//sys/dev/bge:__pkg__', '//sys/dev/et:__pkg__', '//sys/dev/etherswitch:__pkg__', '//sys/dev/jme:__pkg__', '//sys/dev/mii:__pkg__', '//sys/dev/msk:__pkg__', '//sys/dev/nfe:__pkg__', '//sys/dev/re:__pkg__', '//sys/dev/rge:__pkg__', '//sys/dev/sge:__pkg__', '//sys/dev/usb/net:__pkg__', '//sys/dev/usb:__pkg__', '//sys/dev/vte:__pkg__'])
+    strip_include_prefix = "generic_options", visibility = (['//sys/dev/alc:__pkg__', '//sys/dev/ale:__pkg__', '//sys/dev/aq:__pkg__', '//sys/dev/backlight:__pkg__', '//sys/dev/bce:__pkg__', '//sys/dev/bge:__pkg__', '//sys/dev/et:__pkg__', '//sys/dev/etherswitch:__pkg__', '//sys/dev/jme:__pkg__', '//sys/dev/mii:__pkg__', '//sys/dev/msk:__pkg__', '//sys/dev/nfe:__pkg__', '//sys/dev/re:__pkg__', '//sys/dev/rge:__pkg__', '//sys/dev/sge:__pkg__', '//sys/dev/usb/net:__pkg__', '//sys/dev/usb:__pkg__', '//sys/dev/vte:__pkg__']) + ['//sys/dev/flash:__pkg__', '//sys/dev/gpio:__pkg__', '//sys/dev/iicbus/mux:__pkg__', '//sys/dev/iicbus:__pkg__', '//sys/dev/ow:__pkg__', '//sys/dev/pwm:__pkg__', '//sys/dev/spibus:__pkg__'])
 
 # Source-owned option names; contents, including empty headers, come from config.
 [bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
@@ -48,7 +48,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = (["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"] + (["//sys/dev/usb/net:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__"] if option in ["inet", "inet6"] else [])) + {'cam': ['//sys/dev/usb:__pkg__'], 'inet': ['//sys/dev/usb:__pkg__']}.get(option, []))
+    strip_include_prefix = "generic_options", visibility = ((["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"] + (["//sys/dev/usb/net:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__"] if option in ["inet", "inet6"] else [])) + {'cam': ['//sys/dev/usb:__pkg__'], 'inet': ['//sys/dev/usb:__pkg__']}.get(option, [])) + {'evdev': ['//sys/dev/cyapa:__pkg__', '//sys/dev/gpio:__pkg__']}.get(option, []))
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 
 # Filesystem module option contents come from the target config tree.
@@ -198,7 +198,7 @@ bsd_tree_file(name = "opt_acpi", tree = ":generic_config", member = "opt_acpi.h"
     output = "generic_options/opt_acpi.h", python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_acpi_header", hdrs = [":opt_acpi"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = (["//sys/net:__pkg__"]) + ['//sys/dev/gpio:__pkg__', '//sys/dev/ichiic:__pkg__', '//sys/dev/iicbus:__pkg__', '//sys/dev/spibus:__pkg__'])
 
 bsd_tree_file(name = "opt_sched", tree = ":generic_config", member = "opt_sched.h",
     output = "generic_options/opt_sched.h", python = "@bsd_sdk//toolchain:extra_python",
@@ -228,3 +228,34 @@ filegroup(name = "generic_input_manifest", srcs = [":generic_config"],
 [cc_library(name = "usb_serial_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/usb:__pkg__"])
  for option in ["gdb", "ukbd"]]
+
+bsd_tree_file(name = "opt_gpio", tree = ":generic_config", member = "opt_gpio.h",
+    output = "generic_options/opt_gpio.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "generic_opt_gpio_header", hdrs = [":opt_gpio"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/dev/gpio:__pkg__'])
+
+bsd_tree_file(name = "opt_intpm", tree = ":generic_config", member = "opt_intpm.h",
+    output = "generic_options/opt_intpm.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "generic_opt_intpm_header", hdrs = [":opt_intpm"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/dev/intpm:__pkg__'])
+
+bsd_tree_file(name = "opt_isa", tree = ":generic_config", member = "opt_isa.h",
+    output = "generic_options/opt_isa.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "generic_opt_isa_header", hdrs = [":opt_isa"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/dev/viapm:__pkg__'])
+
+cc_library(name = "generic_opt_kbd_header", hdrs = [":opt_kbd"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/dev/cyapa:__pkg__', '//sys/dev/gpio:__pkg__'])
+
+bsd_tree_file(name = "opt_spi", tree = ":generic_config", member = "opt_spi.h",
+    output = "generic_options/opt_spi.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "generic_opt_spi_header", hdrs = [":opt_spi"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/dev/spibus:__pkg__'])

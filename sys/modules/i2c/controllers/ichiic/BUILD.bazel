@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "ig4", objects = ["//sys/dev/ichiic:ig4_ig4_acpi_module_object_files", "//sys/dev/ichiic:ig4_ig4_iic_module_object_files", "//sys/dev/ichiic:ig4_ig4_pci_module_object_files"],
     object_order = ["ig4_acpi.o", "ig4_iic.o", "ig4_pci.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ig4",
+    objects = {"arm64": ["//sys/dev/ichiic:" + arch + "_ig4_ig4_acpi_module_object_files", "//sys/dev/ichiic:" + arch + "_ig4_ig4_iic_module_object_files", "//sys/dev/ichiic:" + arch + "_ig4_ig4_pci_module_object_files"], "riscv": ["//sys/dev/ichiic:" + arch + "_ig4_ig4_iic_module_object_files", "//sys/dev/ichiic:" + arch + "_ig4_ig4_pci_module_object_files"]}[arch],
+    object_order = {'arm64': ['ig4_acpi.o', 'ig4_iic.o', 'ig4_pci.o'], 'riscv': ['ig4_iic.o', 'ig4_pci.o']}[arch],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

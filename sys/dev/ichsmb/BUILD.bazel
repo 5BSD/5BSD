@@ -28,3 +28,19 @@ amd64_generic_module_objects(name = "ichsmb_ichsmb_module", srcs = ["ichsmb.c"],
 amd64_generic_module_objects(name = "ichsmb_ichsmb_pci_module", srcs = ["ichsmb_pci.c"],
     deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/ichsmb:peripheral_devices_kernel_ichsmb_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/smbus:smbus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ichsmb_ichsmb_module",
+    srcs = ['ichsmb.c'],
+    deps = ["//sys/dev/ichsmb:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/smbus:smbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ichsmb_ichsmb_pci_module",
+    srcs = ['ichsmb_pci.c'],
+    deps = ["//sys/dev/ichsmb:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/dev/smbus:smbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]

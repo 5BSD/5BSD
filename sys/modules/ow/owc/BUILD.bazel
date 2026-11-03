@@ -2,3 +2,14 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "owc", objects = ["//sys/dev/ow:owc_owc_gpiobus_module_object_files"], object_order = ["owc_gpiobus.o"], export_all = True, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "owc",
+    objects = ["//sys/dev/ow:" + arch + "_owc_owc_gpiobus_module_object_files"],
+    object_order = ['owc_gpiobus.o'],
+    package = 'kernel',
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

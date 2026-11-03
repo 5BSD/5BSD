@@ -62,3 +62,27 @@ amd64_generic_module_objects(name = "smbus_smbus_if_module", srcs = [":smbus_if_
 amd64_generic_module_objects(name = "smbus_smbconf_module", srcs = ["smbconf.c", "smbus.c"],
     deps = ["//sys/dev/smbus:peripheral_devices_kernel_smbconf_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/smbus:smbus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "smb_smb_module",
+    srcs = ['smb.c'],
+    deps = ["//sys/dev/smbus:i2c_module_context_3", "//sys/dev/smbus:smbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "smbus_smbus_if_module",
+    srcs = [':smbus_if_module_source'],
+    deps = ["//sys/dev/smbus:smbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ['-fmacro-prefix-map=$(execpath :smbus_if_module_source)=smbus_if.c', '-fdebug-prefix-map=$(execpath :smbus_if_module_source)=smbus_if.c'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "smbus_smbconf_module",
+    srcs = ['smbconf.c', 'smbus.c'],
+    deps = ["//sys/dev/smbus:peripheral_devices_kernel_smbconf_headers", "//sys/dev/smbus:smbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+) for arch in ['arm64', 'riscv']]
