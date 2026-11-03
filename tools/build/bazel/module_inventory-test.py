@@ -194,8 +194,37 @@ class ModuleInventoryTests(unittest.TestCase):
             result = module_description(root, Path("example"), "example")
             self.assertTrue(result["build_file"])
             self.assertFalse(result["direct_module_macro"])
-            (module / "BUILD.bazel").write_text("amd64_generic_module(module = \"example\")\n")
+            (module / "BUILD.bazel").write_text(
+                'load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")\n'
+                'amd64_generic_module(module = "example")\n')
             self.assertTrue(module_description(root, Path("example"), "example")["direct_module_macro"])
+
+    def test_module_inventory_requires_matching_loaded_producer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            module = root / "sys/modules/example"
+            module.mkdir(parents=True)
+            build = module / "BUILD.bazel"
+            build.write_text('# amd64_generic_module(module = "example")\n'
+                             'exports_files(["amd64_firmware_module(module = example)"])\n'
+                             'load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")\n'
+                             'amd64_generic_module(module = "other")\n')
+            result = module_description(root, Path("example"), "example")
+            self.assertTrue(result["build_file"])
+            self.assertEqual(result["amd64_module_declarations"], [])
+            build.write_text('load("//tools/build/bazel:amd64_firmware_module.bzl", fw = "amd64_firmware_module")\n'
+                             'fw(module = "example", images = [])\n')
+            result = module_description(root, Path("example"), "example")
+            self.assertFalse(result["direct_module_macro"])
+            self.assertEqual(result["amd64_module_declarations"],
+                             [{"macro": "amd64_firmware_module", "module": "example", "line": 2}])
+            build.write_text('load("//unrelated:rule.bzl", "amd64_generic_module")\n'
+                             'amd64_generic_module(module = "example")\n')
+            self.assertEqual(module_description(root, Path("example"), "example")["amd64_module_declarations"], [])
+            build.write_text("not valid BUILD !")
+            result = module_description(root, Path("example"), "example")
+            self.assertEqual(result["amd64_module_declarations"], [])
+            self.assertIn("parse failed", result["build_inventory_error"])
 
 
 if __name__ == "__main__":
