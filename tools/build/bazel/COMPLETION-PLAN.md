@@ -1288,11 +1288,18 @@ missing architecture-header declaration and observer -Wa classification failures
 are retained and corrected. Existing format-5/backend workflow and updated manual
 carry the graph without frontend-C inputs; no C/Make source changes are added.
 
-All 729 selected amd64 directories now have declarations. Next close the real
-changed-image ABA rebuild/cache check in isolated object-root qualification
-sources, refresh the complete current GENERIC kernel and aggregate module build,
-and continue original userland install/test/package closure. Cross-target world/
-kernel/modules, other options, complete pkgbase/hardware/publication, bootstrap,
-source/debug lookup, sandboxing, VM/runtime and measured CPU/memory/disk/cache
-gates remain part of the full objective. Make stays production/default; BIP is
-excluded. Directory presence or individual profile parity is not full completion.
+All 729 selected amd64 directories have BUILD files, but inspection of the
+actual top-level declarations finds 690 generic and 38 firmware module producers:
+728/729. ZFS has headers and separate built-in kernel rules, with no loadable
+module producer. Implement and qualify that missing module; directory presence
+must not stand in for module-target coverage.
+
+The [Linux64 original/changed/restored check](LINUX64-INCREMENTAL-QUALIFICATION.md)
+now passes actual generated-image/embedding invalidation and exact original-byte
+restoration in a clean isolated object-root checkout. Next refresh the complete
+current GENERIC kernel and aggregate module build, and continue original userland
+install/test/package closure. Cross-target world/kernel/modules, other options,
+complete pkgbase/hardware/publication, bootstrap, source/debug lookup, sandboxing,
+VM/runtime and measured CPU/memory/disk/cache gates remain part of the full
+objective. Make stays production/default; BIP is excluded. Individual profile
+parity is not full completion.

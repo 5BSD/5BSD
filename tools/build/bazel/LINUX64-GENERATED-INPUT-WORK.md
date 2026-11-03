@@ -74,8 +74,9 @@ The first build found an omitted architecture view member, linux_emul_md.h; its
 failed action is retained. The corrected view covers the original consumed four
 headers: two generated syscall headers and two unchanged source headers. Full
 plain-byte module equality, all five syscall payloads and the complete native
-VDSO image match original Make. This does not close changed-image invalidation,
-separate DWARF, runtime or full-system qualification.
+VDSO image match original Make. The subsequent [original/changed/restored input check](LINUX64-INCREMENTAL-QUALIFICATION.md)
+closes this specific changed-image invalidation gate. Separate DWARF, runtime
+and full-system qualification remain open.
 
 The existing source-alias primitive accepts .asm for byte-preserving .S aliases.
 Architecture views forward declared generated headers as well as source files.
@@ -86,6 +87,6 @@ Normal build-bsd format-5/backend paths carry these targets without new frontend
 inputs; the maintained manual records the source/ABI handling in this change.
 The native BSD VDSO validator has a different ABI/layout contract and is not
 silently weakened for Linux. Original/native Linux image, embedding, declared
-inputs and changed-image invalidation still require qualification. Full
+inputs are qualified by the module and subsequent incremental reviews. Full
 Linuxulator execution, VM/runtime, other targets and performance remain open.
 Make stays production/default; BIP stays excluded.

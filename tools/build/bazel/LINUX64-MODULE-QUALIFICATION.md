@@ -75,14 +75,17 @@ bazel-linux64-module-plain-native-r1-20261102. Original controls are
 bazel-final-module-make-references-r1-20261102 and
 bazel-linux64-helper-dependency-controls-r1-20261102.
 
-Changed-image rebuild/cache invalidation remains to be qualified. The native
+Changed-image original/changed/restored invalidation now passes; see
+[the actual incremental check](LINUX64-INCREMENTAL-QUALIFICATION.md). The native
 BSD VDSO validator has a different ABI/layout contract and was not weakened to
 accept Linux. Separate DWARF/source lookup, actual Linux execution/module loading,
 other settings/targets, full current kernel/module aggregation, world/pkgbase,
 bootstrap, sandboxing, runtime and resource/performance gates remain open.
 
-All 729 selected amd64 directories now have declarations; this is not a complete
-system-build claim. No frontend-C change or new CLI input is needed; the normal
+All 729 selected amd64 directories have BUILD files, but only 728 declare
+module producers (690 generic and 38 firmware). ZFS currently declares headers
+only; its built-in kernel rules do not supply a loadable module. It remains an
+implementation gap. These counts do not establish a complete system build. No frontend-C change or new CLI input is needed; the normal
 backend carries these targets, and its maintained manual describes the source/
 ABI behavior. No C or original Make source changes are introduced. Make stays
 production/default; BIP remains excluded. No host installation, upgrade, module
