@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["selftests.bzl"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+_COMPONENTS = ["gmock_main", "gmock", "gtest_main", "gtest"]
+# Make KYUAFILE=yes selects the maintained auto-discovery file from tests/.
+filegroup(name = "kyuafile", srcs = ["//tests:Kyuafile"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/lib/googletest/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_kyuafile"],
+    manifests = ["//lib/googletest/tests/" + component + ":install_manifest" for component in _COMPONENTS],
+    visibility = ["//visibility:public"])

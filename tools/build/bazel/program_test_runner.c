@@ -22,7 +22,8 @@ main(int argc, char **argv)
     const char *workspace = required("TEST_WORKSPACE");
     const char *program = required("BSD_TEST_PROGRAM");
     const char *runtime = required("BSD_TEST_RUNTIME");
-    char *executable, *libraries;
+    const char *interface = getenv("BSD_TEST_INTERFACE");
+    char *executable, *inner_xml, *libraries;
 
     (void)argc;
     if (root[0] != '/' || strchr(program, '/') != NULL ||
@@ -49,6 +50,20 @@ main(int argc, char **argv)
         err(126, "test environment");
     if (chdir(required("TEST_TMPDIR")) != 0)
         err(126, "TEST_TMPDIR");
+    /* Plain programs own their process-level result. Framework self-tests can
+     * intentionally emit empty or failing inner XML and still succeed. Retain
+     * that report separately; Bazel's standard test setup reports this process.
+     * Other program tests keep their existing native XML reporting contract.
+     */
+    if (interface != NULL && strcmp(interface, "plain") == 0) {
+        if (asprintf(&inner_xml, "%s/program.xml",
+            required("TEST_UNDECLARED_OUTPUTS_DIR")) < 0)
+            err(126, "asprintf");
+        if (setenv("XML_OUTPUT_FILE", inner_xml, 1) != 0)
+            err(126, "XML_OUTPUT_FILE");
+        free(inner_xml);
+    } else if (interface != NULL && strcmp(interface, "native") != 0)
+        errx(126, "invalid BSD_TEST_INTERFACE");
     argv[0] = executable;
     execv(executable, argv);
     err(127, "%s", executable);

@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 cc_library(name = "gmock", srcs = ["//contrib/googletest:googlemock/src/gmock-all.cc"],
     deps = ["//contrib/googletest:bsd_mock_headers", "//lib/googletest/gtest:gtest"],
     implementation_deps = ["//contrib/googletest:bsd_mock_implementation"],
     copts = ["-fPIC", "-nostdinc++", "-pthread"], linkstatic = True, visibility = ["//visibility:public"])
+
+cc_shared_library(name = "gmock_shared", deps = [":gmock"],
+    dynamic_deps = ['//lib/googletest/gtest:gtest_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared'],
+    shared_lib_name = "libprivategmock.so.0",
+    user_link_flags = ["-Wl,-soname,libprivategmock.so.0"],
+    visibility = ["//visibility:public"])

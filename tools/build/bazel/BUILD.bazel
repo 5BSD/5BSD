@@ -200,3 +200,6 @@ exports_files(["bsd_boot_image.bzl", "boot_image.py"], visibility = ["//stand/i3
 
 # Copy offload is optional; source isolation and snapshot bytes are invariant.
 bsd_python_test(name = "sdk_copy_test", src = "sdk-copy-test.py", data = ["sdk_copy.py"])
+
+bsd_python_test(name = "program_test_interface_test", src = "program-test-interface-test.py",
+    data = [":program_test_runner"], size = "small")

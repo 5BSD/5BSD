@@ -1,5 +1,14 @@
 # Bazel qualification
 
+## Googletest self-test checkpoint (2026-11-03)
+
+All 40 Make-selected Googletest/GoogleMock self-test programs now have native
+Bazel declarations and passed fresh amd64 execution. Six reporting controls
+passed; 45 installation entries and Kyuafile registrations were checked against
+Make. Final dependency/install qualification reuses those test results from
+cache. See [GOOGLETEST-SELFTEST-QUALIFICATION.md](GOOGLETEST-SELFTEST-QUALIFICATION.md)
+for evidence and remaining framework/package/platform gates.
+
 ## Program runtime checkpoint (2026-11-03)
 
 Six native utility tests now isolate their program libraries from Python SDK
@@ -14,7 +23,8 @@ The complete offline native graph query now loads after correcting foreign
 workspace boundaries, an explicit native rules_cc import and a recursive zsh
 symlink. It inventories 97,375 declared rules and 103 Python test rules; these
 are metadata counts, not successful builds or Make completeness. Googletest
-base self-tests and Python child-tool runtime review remain open. See
+self-tests subsequently advanced in the checkpoint above; the broader Python
+child-tool runtime review remains open. See
 [NATIVE-REPOSITORY-INVENTORY.md](NATIVE-REPOSITORY-INVENTORY.md).
 
 ## Storage module checkpoint (2026-11-03)

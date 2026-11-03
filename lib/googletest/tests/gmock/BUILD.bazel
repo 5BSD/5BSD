@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/googletest/tests:selftests.bzl", "selftest_installation", "selftest_program")
+
+selftest_program(
+    name = 'gmock_stress_test',
+    srcs = [
+        '//contrib/googletest:googlemock/test/gmock_stress_test.cc',
+    ],
+    component = 'gmock', warnings = [],
+    pthread = True,
+)
+
+test_suite(name = "tests", tests = [':gmock_stress_test_test'], visibility = ["//visibility:public"])
+
+selftest_installation(component = 'gmock', programs = ['gmock_stress_test'])

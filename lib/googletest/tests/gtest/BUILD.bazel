@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/googletest/tests:selftests.bzl", "selftest_installation", "selftest_program")
+
+selftest_program(
+    name = 'gtest_environment_test',
+    srcs = [
+        '//contrib/googletest:googletest/test/gtest_environment_test.cc',
+        '//contrib/googletest:googletest/src/gtest-internal-inl.h',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = False,
+)
+selftest_program(
+    name = 'gtest_no_test_unittest',
+    srcs = [
+        '//contrib/googletest:googletest/test/gtest_no_test_unittest.cc',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = False,
+)
+selftest_program(
+    name = 'googletest-param-test-test',
+    srcs = [
+        '//contrib/googletest:googletest/test/googletest-param-test-test.cc',
+        '//contrib/googletest:googletest/test/googletest-param-test2-test.cc',
+        '//contrib/googletest:googletest/src/gtest-internal-inl.h',
+        '//contrib/googletest:googletest/test/googletest-param-test-test.h',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = False,
+)
+selftest_program(
+    name = 'gtest_premature_exit_test',
+    srcs = [
+        '//contrib/googletest:googletest/test/gtest_premature_exit_test.cc',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = False,
+)
+selftest_program(
+    name = 'gtest_repeat_test',
+    srcs = [
+        '//contrib/googletest:googletest/test/gtest_repeat_test.cc',
+        '//contrib/googletest:googletest/src/gtest-internal-inl.h',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = False,
+)
+selftest_program(
+    name = 'gtest_stress_test',
+    srcs = [
+        '//contrib/googletest:googletest/test/gtest_stress_test.cc',
+        '//contrib/googletest:googletest/src/gtest-internal-inl.h',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = True,
+)
+selftest_program(
+    name = 'gtest_throw_on_failure_ex_test',
+    srcs = [
+        '//contrib/googletest:googletest/test/gtest_throw_on_failure_ex_test.cc',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = False,
+)
+selftest_program(
+    name = 'gtest-unittest-api_test',
+    srcs = [
+        '//contrib/googletest:googletest/test/gtest-unittest-api_test.cc',
+    ],
+    component = 'gtest', warnings = ['-Wno-error=missing-variable-declarations'],
+    pthread = False,
+)
+
+test_suite(name = "tests", tests = [':gtest_environment_test_test', ':gtest_no_test_unittest_test', ':googletest-param-test-test_test', ':gtest_premature_exit_test_test', ':gtest_repeat_test_test', ':gtest_stress_test_test', ':gtest_throw_on_failure_ex_test_test', ':gtest-unittest-api_test_test'], visibility = ["//visibility:public"])
+
+selftest_installation(component = 'gtest', programs = ['gtest_environment_test', 'gtest_no_test_unittest', 'googletest-param-test-test', 'gtest_premature_exit_test', 'gtest_repeat_test', 'gtest_stress_test', 'gtest_throw_on_failure_ex_test', 'gtest-unittest-api_test'])

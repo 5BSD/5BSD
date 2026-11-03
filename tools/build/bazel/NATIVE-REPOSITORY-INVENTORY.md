@@ -19,8 +19,11 @@ the maintained probe workspace generators, rather than native packages.
 
 This does **not** waive Make-selected Googletest self-tests:
 `lib/googletest/tests/{gmock_main,gmock,gtest_main,gtest}` have Make definitions
-and still need native Bazel conversion. Their upstream foreign BUILD files do
-not establish equivalent 5BSD tests. Keep these in the reconciliation backlog.
+and at this checkpoint still needed native Bazel conversion. Their upstream
+foreign BUILD files did not establish equivalent 5BSD tests. The subsequent
+[Googletest self-test checkpoint](GOOGLETEST-SELFTEST-QUALIFICATION.md) adds all
+40 selected native programs and qualifies default amd64 execution and selected
+installation records; framework/package/cross-platform gates remain.
 
 The native harness imports `cc_library` explicitly, as required by current
 Bazel. The recursive zsh symlink is removed; regular documentation and source
