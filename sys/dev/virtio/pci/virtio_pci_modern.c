@@ -87,6 +87,9 @@ struct vtpci_modern_softc {
 	int				 vtpci_access_platform_error;
 	/* The ACCESS_PLATFORM error is current for the attached child. */
 	bool				 vtpci_access_platform_probed;
+	/* The device refused the child for lack of ACCESS_PLATFORM. */
+	bool				 vtpci_access_platform_refused;
+	eventhandler_tag		 vtpci_iommu_registered_tag;
 	/* Set only after this host suspend completed the VirtIO handshake. */
 	bool				 vtpci_host_suspend_handshake;
 
@@ -107,6 +110,7 @@ static int	vtpci_modern_resume(device_t);
 static int	vtpci_modern_shutdown(device_t);
 
 static void	vtpci_modern_driver_added(device_t, driver_t *);
+static void	vtpci_modern_iommu_registered(void *);
 static void	vtpci_modern_child_detached(device_t, device_t);
 static int	vtpci_modern_read_ivar(device_t, device_t, int, uintptr_t *);
 static int	vtpci_modern_write_ivar(device_t, device_t, int, uintptr_t);
@@ -343,6 +347,10 @@ vtpci_modern_attach(device_t dev)
 	if (error)
 		goto fail;
 
+	sc->vtpci_iommu_registered_tag = EVENTHANDLER_REGISTER(
+	    virtio_iommu_registered, vtpci_modern_iommu_registered, sc,
+	    EVENTHANDLER_PRI_ANY);
+
 	vtpci_modern_probe_and_attach_child(sc);
 
 	return (0);
@@ -365,6 +373,12 @@ vtpci_modern_detach(device_t dev)
 	error = vtpci_delete_child(&sc->vtpci_common);
 	if (error)
 		return (error);
+
+	if (sc->vtpci_iommu_registered_tag != NULL) {
+		EVENTHANDLER_DEREGISTER(virtio_iommu_registered,
+		    sc->vtpci_iommu_registered_tag);
+		sc->vtpci_iommu_registered_tag = NULL;
+	}
 
 	vtpci_modern_reset(sc);
 	vtpci_modern_unmap_configs(sc);
@@ -432,16 +446,48 @@ vtpci_modern_driver_added(device_t dev, driver_t *driver)
 	vtpci_modern_probe_and_attach_child(device_get_softc(dev));
 }
 
+/*
+ * A virtio-iommu instance registered.  If the device refused the child
+ * because no instance could give it an identity domain, attach it again now
+ * that one may.
+ */
+static void
+vtpci_modern_iommu_registered(void *arg)
+{
+	struct vtpci_modern_softc *sc;
+
+	sc = arg;
+	bus_topo_assert();
+	if (!sc->vtpci_access_platform_refused)
+		return;
+	sc->vtpci_access_platform_refused = false;
+	vtpci_modern_probe_and_attach_child(sc);
+}
+
 static void
 vtpci_modern_child_detached(device_t dev, device_t child)
 {
 	struct vtpci_modern_softc *sc;
+	int error;
 
 	sc = device_get_softc(dev);
 
 	vtpci_modern_reset(sc);
 	vtpci_child_detached(&sc->vtpci_common);
 	sc->vtpci_device_config_failed = false;
+
+	/*
+	 * The reset stopped the function's DMA, so release its identity
+	 * domain; the virtio-iommu refuses to detach while it holds one.
+	 */
+	if (sc->vtpci_access_platform_probed &&
+	    sc->vtpci_access_platform_error == 0) {
+		error = virtio_iommu_detach_identity(pci_get_rid(dev));
+		if (error != 0)
+			device_printf(dev, "cannot detach endpoint %#x from "
+			    "its identity domain (error %d)\n",
+			    pci_get_rid(dev), error);
+	}
 	sc->vtpci_access_platform_probed = false;
 
 	/* After the reset, retell the host we've noticed this device. */
@@ -510,7 +556,10 @@ vtpci_modern_access_platform_features(struct vtpci_modern_softc *sc)
 	dev = sc->vtpci_dev;
 	/*
 	 * The binding outlives a device reset, and reinit may run with the
-	 * function driver's lock held, so ask only once per child attach.
+	 * function driver's lock held, so ask only once per child attach
+	 * attempt.  A failure is not kept beyond that attempt: child_detached
+	 * forgets it, and a child the device refused for it is attached again
+	 * when a virtio-iommu registers (vtpci_modern_iommu_registered()).
 	 */
 	if (!sc->vtpci_access_platform_probed) {
 		/* VirtIO-IOMMU endpoint IDs are requester IDs of segment 0. */
@@ -695,6 +744,7 @@ vtpci_modern_finalize_features(device_t dev)
 			    "negotiated: no virtio-iommu gave endpoint %#x "
 			    "an identity domain (error %d)\n",
 			    pci_get_rid(dev), sc->vtpci_access_platform_error);
+			sc->vtpci_access_platform_refused = true;
 		}
 		return (ENOTSUP);
 	}

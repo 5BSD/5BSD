@@ -236,6 +236,9 @@ TEST_METADATA.unix_passfd_stream+=	is_exclusive="true"
 ATF_TESTS_C+=	unix_seqpacket_test
 TEST_METADATA.unix_seqpacket_test+=	timeout="15"
 ATF_TESTS_C+=	unix_stream
+# In-kernel test of virtio-iommu identity domains (ktest_virtio_iommu.ko).
+ATF_TESTS_PYTEST+=	virtio_iommu_identity_test.py
+TEST_METADATA.virtio_iommu_identity_test+=	is_exclusive="true"
 ATF_TESTS_C+=	waitpid_nohang
 ATF_TESTS_C+=	pdeathsig
 ATF_TESTS_C+=	sigsys
