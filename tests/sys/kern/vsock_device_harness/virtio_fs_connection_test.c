@@ -408,14 +408,70 @@ ATF_TC_BODY(slow_draining_send_does_not_block_event_loop, tc)
 }
 
 /*
- * The progress deadline replaces the old blocking wait: once it passes, the
- * connection fails, its descriptor closes, and retained requests complete.
+ * A readiness callback that runs after the progress deadline (the event loop
+ * was late) but finds the peer ready is not a stalled peer: the frame moves
+ * and the connection stays up, in both directions.
+ */
+ATF_TC_WITHOUT_HEAD(late_callback_with_ready_peer_does_not_expire);
+ATF_TC_BODY(late_callback_with_ready_peer_does_not_expire, tc)
+{
+	struct partial partial;
+	struct timespec deadline;
+	uint8_t frame[40 + DOC_FUSE_INIT_OUT], sink[256];
+	int error, size;
+
+	partial_setup(&partial);
+	partial_reply(&partial, frame, sizeof(frame));
+	ATF_REQUIRE_EQ(send(partial.sockets[1], frame, 30, 0), 30);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    false), EAGAIN);
+	ATF_REQUIRE_EQ(send(partial.sockets[1], frame + 30, sizeof(frame) - 30,
+	    MSG_EOR), (ssize_t)(sizeof(frame) - 30));
+	do {
+		partial.connection->stream.receive_deadline =
+		    (struct timespec){ 0, 0 };
+		error = virtio_fs_connection_progress(partial.connection,
+		    true, false);
+	} while (error == EAGAIN);
+	ATF_CHECK_EQ(error, 0);
+	ATF_CHECK_EQ(partial.completion.calls, 1);
+	ATF_CHECK(virtio_fs_connection_active(partial.connection));
+	virtio_fs_connection_destroy(partial.connection);
+	ATF_REQUIRE_EQ(close(partial.sockets[1]), 0);
+
+	partial_setup(&partial);
+	size = 64;
+	ATF_REQUIRE_EQ(setsockopt(partial.sockets[1], SOL_SOCKET, SO_RCVBUF,
+	    &size, sizeof(size)), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(partial.connection, false,
+	    true), EAGAIN);
+	while (virtio_fs_connection_deadline(partial.connection, &deadline)) {
+		ATF_REQUIRE(recv(partial.sockets[1], sink, sizeof(sink),
+		    MSG_DONTWAIT) > 0);
+		partial.connection->stream.send_deadline =
+		    (struct timespec){ 0, 0 };
+		error = virtio_fs_connection_progress(partial.connection,
+		    false, true);
+		ATF_REQUIRE_MSG(error == 0 || error == EAGAIN, "error %d",
+		    error);
+	}
+	ATF_CHECK_EQ(virtio_fs_connection_error(partial.connection), 0);
+	ATF_CHECK(virtio_fs_connection_active(partial.connection));
+	virtio_fs_connection_destroy(partial.connection);
+	ATF_REQUIRE_EQ(close(partial.sockets[1]), 0);
+}
+
+/*
+ * The progress deadline replaces the old blocking wait: the deadline timer
+ * calls progress() for both directions, and once the deadline has passed
+ * with the peer still stalled the connection fails, its descriptor closes,
+ * and retained requests complete.
  */
 ATF_TC_WITHOUT_HEAD(stalled_partial_frame_expires);
 ATF_TC_BODY(stalled_partial_frame_expires, tc)
 {
 	struct partial partial;
-	struct timespec deadline, now;
+	struct timespec deadline;
 	uint8_t byte, frame[40 + DOC_FUSE_INIT_OUT];
 
 	partial_setup(&partial);
@@ -425,14 +481,14 @@ ATF_TC_BODY(stalled_partial_frame_expires, tc)
 	    false), EAGAIN);
 	ATF_REQUIRE(virtio_fs_connection_deadline(partial.connection,
 	    &deadline));
-	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &now), 0);
-	ATF_CHECK(timespeccmp(&now, &deadline, <));
-	ATF_CHECK_EQ(virtio_fs_connection_expire(partial.connection, &now), 0);
+	ATF_CHECK_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    true), EAGAIN);
 	ATF_CHECK(virtio_fs_connection_active(partial.connection));
 
-	now = deadline;
-	ATF_CHECK_EQ(virtio_fs_connection_expire(partial.connection, &now),
-	    ETIMEDOUT);
+	partial.connection->stream.receive_deadline =
+	    (struct timespec){ 0, 0 };
+	ATF_CHECK_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    true), ETIMEDOUT);
 	ATF_CHECK_EQ(virtio_fs_connection_error(partial.connection), ETIMEDOUT);
 	ATF_CHECK_EQ(virtio_fs_connection_fd(partial.connection), -1);
 	ATF_CHECK_EQ(partial.completion.calls, 1);
@@ -1170,6 +1226,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, round_trip_and_readiness);
 	ATF_TP_ADD_TC(tp, partial_response_does_not_block_event_loop);
 	ATF_TP_ADD_TC(tp, slow_draining_send_does_not_block_event_loop);
+	ATF_TP_ADD_TC(tp, late_callback_with_ready_peer_does_not_expire);
 	ATF_TP_ADD_TC(tp, stalled_partial_frame_expires);
 	ATF_TP_ADD_TC(tp, protocol_failure_completes_pending);
 	ATF_TP_ADD_TC(tp, connect_path_is_authenticated_and_event_driven);

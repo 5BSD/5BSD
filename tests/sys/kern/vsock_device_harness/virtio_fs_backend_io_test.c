@@ -618,6 +618,94 @@ ATF_TC_BODY(partial_frame_resumes_without_waiting, tc)
 }
 
 /*
+ * A receive that runs after the progress deadline but finds more of the
+ * frame takes it (the header rest, then the payload); one that finds nothing
+ * reports ETIMEDOUT.
+ */
+ATF_TC_WITHOUT_HEAD(late_receive_moves_before_expiring);
+ATF_TC_BODY(late_receive_moves_before_expiring, tc)
+{
+	struct virtio_fs_backend_stream stream;
+	struct virtio_fs_backend_header received, sent;
+	uint8_t frame[40 + 16], output[16];
+	size_t output_len;
+	int error, sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	sent = request_header(16);
+	ATF_REQUIRE_EQ(virtio_fs_backend_header_encode(&sent, frame), 0);
+	memset(frame + 40, 0x3c, 16);
+	virtio_fs_backend_stream_init(&stream);
+
+	ATF_REQUIRE_EQ(send(sockets[0], frame, 20, 0), 20);
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EAGAIN);
+	ATF_REQUIRE_EQ(send(sockets[0], frame + 20, sizeof(frame) - 20,
+	    MSG_EOR), (ssize_t)(sizeof(frame) - 20));
+	do {
+		stream.receive_deadline = (struct timespec){ 0, 0 };
+		error = virtio_fs_backend_stream_receive(&stream, sockets[1],
+		    &received, output, sizeof(output), &output_len);
+	} while (error == EAGAIN);
+	ATF_CHECK_EQ(error, 0);
+	ATF_CHECK_EQ(output_len, 16);
+	ATF_CHECK(memcmp(output, frame + 40, 16) == 0);
+
+	ATF_REQUIRE_EQ(send(sockets[0], frame, 20, 0), 20);
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EAGAIN);
+	ATF_CHECK(virtio_fs_backend_stream_receiving(&stream));
+	stream.receive_deadline = (struct timespec){ 0, 0 };
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), ETIMEDOUT);
+	ATF_CHECK(!virtio_fs_backend_stream_receiving(&stream));
+	virtio_fs_backend_stream_fini(&stream);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/*
+ * A flush that runs after the progress deadline but finds room moves the
+ * tail on; one that finds the peer still full reports ETIMEDOUT.
+ */
+ATF_TC_WITHOUT_HEAD(late_flush_moves_before_expiring);
+ATF_TC_BODY(late_flush_moves_before_expiring, tc)
+{
+	struct virtio_fs_backend_stream stream;
+	struct virtio_fs_backend_header sent;
+	uint8_t payload[4096], sink[4096 + 40];
+	size_t left;
+	int size, sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	size = 64;
+	ATF_REQUIRE_EQ(setsockopt(sockets[1], SOL_SOCKET, SO_RCVBUF, &size,
+	    sizeof(size)), 0);
+	sent = request_header(sizeof(payload));
+	memset(payload, 0xa5, sizeof(payload));
+	virtio_fs_backend_stream_init(&stream);
+	ATF_REQUIRE_EQ(virtio_fs_backend_stream_send(&stream, sockets[0], &sent,
+	    payload), 0);
+	ATF_REQUIRE(virtio_fs_backend_stream_sending(&stream));
+
+	left = stream.send_len - stream.send_done;
+	ATF_REQUIRE(recv(sockets[1], sink, sizeof(sink), MSG_DONTWAIT) > 0);
+	stream.send_deadline = (struct timespec){ 0, 0 };
+	ATF_CHECK_EQ(virtio_fs_backend_stream_flush(&stream, sockets[0]),
+	    EAGAIN);
+	ATF_CHECK(stream.send_len - stream.send_done < left);
+
+	stream.send_deadline = (struct timespec){ 0, 0 };
+	ATF_CHECK_EQ(virtio_fs_backend_stream_flush(&stream, sockets[0]),
+	    ETIMEDOUT);
+	virtio_fs_backend_stream_fini(&stream);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/*
  * Rights attached to a later piece of a frame fail it and are closed.  The
  * kernel would dispose of them silently if the piece were read without a
  * control buffer.
@@ -690,6 +778,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, frames_larger_than_socket_buffer_are_reassembled);
 	ATF_TP_ADD_TC(tp, full_length_without_eor_is_rejected);
 	ATF_TP_ADD_TC(tp, partial_frame_resumes_without_waiting);
+	ATF_TP_ADD_TC(tp, late_receive_moves_before_expiring);
+	ATF_TP_ADD_TC(tp, late_flush_moves_before_expiring);
 	ATF_TP_ADD_TC(tp, descriptors_in_a_continuation_fail_the_frame);
 	return (atf_no_error());
 }

@@ -217,20 +217,6 @@ virtio_fs_backend_client_deadline(
 }
 
 int
-virtio_fs_backend_client_expire(struct virtio_fs_backend_client *client,
-    const struct timespec *now)
-{
-	struct timespec deadline;
-
-	if (client == NULL || now == NULL)
-		return (EINVAL);
-	if (!virtio_fs_backend_client_deadline(client, &deadline) ||
-	    timespeccmp(now, &deadline, <))
-		return (0);
-	return (virtio_fs_backend_client_fail(client, ETIMEDOUT));
-}
-
-int
 virtio_fs_backend_client_progress(struct virtio_fs_backend_client *client,
     bool readable, bool writable)
 {

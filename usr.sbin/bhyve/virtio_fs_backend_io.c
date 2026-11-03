@@ -283,6 +283,14 @@ virtio_fs_backend_stream_sending(const struct virtio_fs_backend_stream *stream)
 	return (stream->send_tail != NULL);
 }
 
+bool
+virtio_fs_backend_stream_receiving(
+    const struct virtio_fs_backend_stream *stream)
+{
+
+	return (stream->receive_done != 0);
+}
+
 /*
  * Report the earliest progress deadline of a partly transferred frame.
  */
@@ -311,8 +319,6 @@ virtio_fs_backend_stream_flush(struct virtio_fs_backend_stream *stream, int fd)
 
 	if (stream->send_tail == NULL)
 		return (0);
-	if (virtio_fs_backend_deadline_passed(&stream->send_deadline))
-		return (ETIMEDOUT);
 	vector.iov_base = stream->send_tail + stream->send_done;
 	vector.iov_len = stream->send_len - stream->send_done;
 	memset(&message, 0, sizeof(message));
@@ -322,8 +328,14 @@ virtio_fs_backend_stream_flush(struct virtio_fs_backend_stream *stream, int fd)
 		sent = sendmsg(fd, &message, MSG_DONTWAIT | MSG_NOSIGNAL |
 		    MSG_EOR);
 	} while (sent < 0 && errno == EINTR);
-	if (sent < 0)
-		return (errno);
+	if (sent < 0) {
+		error = errno;
+		/* Only a peer that took nothing in time has stalled. */
+		if ((error == EAGAIN || error == EWOULDBLOCK) &&
+		    virtio_fs_backend_deadline_passed(&stream->send_deadline))
+			error = ETIMEDOUT;
+		return (error);
+	}
 	stream->send_done += (size_t)sent;
 	if (stream->send_done < stream->send_len) {
 		error = virtio_fs_backend_deadline_set(&stream->send_deadline);
@@ -451,11 +463,6 @@ virtio_fs_backend_stream_receive(struct virtio_fs_backend_stream *stream,
 		message.msg_iov = source;
 		message.msg_iovlen = payload_capacity == 0 ? 1 : 2;
 	} else {
-		if (virtio_fs_backend_deadline_passed(
-		    &stream->receive_deadline)) {
-			error = ETIMEDOUT;
-			goto fail;
-		}
 		/*
 		 * Read exactly the rest of the header, then exactly the payload
 		 * it announces, so a receive never consumes a following frame.
@@ -472,8 +479,14 @@ virtio_fs_backend_stream_receive(struct virtio_fs_backend_stream *stream,
 	} while (received < 0 && errno == EINTR);
 	if (received < 0) {
 		error = errno;
-		if (error == EAGAIN || error == EWOULDBLOCK)
+		if (error != EAGAIN && error != EWOULDBLOCK)
+			goto fail;
+		/* Only a peer that sent nothing in time has stalled. */
+		if (stream->receive_done == 0 ||
+		    !virtio_fs_backend_deadline_passed(
+		    &stream->receive_deadline))
 			return (EAGAIN);
+		error = ETIMEDOUT;
 		goto fail;
 	}
 	if (received == 0) {
