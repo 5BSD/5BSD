@@ -36,10 +36,13 @@ def main():
     work = Path(a.work).resolve() / 'lld-ctf-sections'
     work.mkdir(exist_ok=False, parents=True)
     commands, results = [], []
+    child_environment = dict(os.environ)
+    for name in ('LD_LIBRARY_PATH', 'LD_PRELOAD'):
+        child_environment.pop(name, None)
 
     def run(args, success=True):
         r = subprocess.run([linker] + list(map(str, args)), cwd=work,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=child_environment)
         commands.append({'argv': [linker] + list(map(str, args)), 'exit': r.returncode,
                          'stdout': r.stdout, 'stderr': r.stderr})
         (work / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')

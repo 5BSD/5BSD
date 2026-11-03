@@ -17,6 +17,11 @@ import struct
 import subprocess
 
 
+def digest(path):
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
 def read_elf(path, machine=62):
     data = bytearray(path.read_bytes())
     if data[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', data, 18)[0] != machine:
@@ -46,6 +51,8 @@ def read_elf(path, machine=62):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler', required=True)
+    parser.add_argument('--compiler-runtime', nargs='+', default=[],
+                        help='Declared shared-library inputs for the fixture compiler only')
     parser.add_argument('--linker', required=True)
     parser.add_argument('--work', default=os.environ.get('TEST_TMPDIR'))
     args = parser.parse_args()
@@ -55,13 +62,25 @@ def main():
     work = Path(args.work).resolve() / 'lld-symbol-origin'
     work.mkdir(exist_ok=False, parents=True)
     commands, results = [], []
+    # The Python interpreter's SDK libraries must not override source-built
+    # tools' RUNPATHs. Select each child tool's own declared runtime instead.
+    child_environment = dict(os.environ)
+    for name in ('LD_LIBRARY_PATH', 'LD_PRELOAD'):
+        child_environment.pop(name, None)
+    compiler_environment = dict(child_environment)
+    compiler_runtime = [Path(p).resolve(strict=True) for p in args.compiler_runtime]
+    if compiler_runtime:
+        compiler_environment['LD_LIBRARY_PATH'] = ':'.join(
+            sorted({str(p.parent) for p in compiler_runtime}))
 
     def run(command, success=True, max_file_size=None):
         def bound():
             resource.setrlimit(resource.RLIMIT_FSIZE, (max_file_size, max_file_size))
+        environment = compiler_environment if command[0] == compiler else child_environment
         result = subprocess.run(command, cwd=work, capture_output=True, text=True,
-                                preexec_fn=bound if max_file_size else None)
+                                env=environment, preexec_fn=bound if max_file_size else None)
         commands.append({'argv': command, 'exit': result.returncode,
+                         'library_path': environment.get('LD_LIBRARY_PATH'),
                          'stdout': result.stdout, 'stderr': result.stderr})
         (work / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
         if (result.returncode == 0) != success:
@@ -154,8 +173,13 @@ def main():
     assert 'relocations into a CTF dictionary are unsupported' in rejected.stderr
     results.append({'case': 'reject-relocation-into-dictionary'})
 
-    summary = {'passed': len(results), 'cases': results}
+    summary = {'passed': len(results), 'cases': results,
+               'compiler_runtime_sha256': {str(p): digest(p) for p in compiler_runtime}}
     (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    if os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR'):
+        destination = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'])
+        (destination / 'lld-symbol-origins.json').write_text(json.dumps(summary, indent=2) + '\n')
+        (destination / 'lld-symbol-commands.json').write_text(json.dumps(commands, indent=2) + '\n')
     print(json.dumps(summary))
 
 

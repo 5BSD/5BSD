@@ -2,18 +2,23 @@
 
 ## Current CTF linker checkpoint (2026-11-03)
 
-LLD section integration is implemented. Fresh ARM64 and RISC-V native build tools
-and verified SDKs now pass the NORMAL maintained build-bsd/Bazel nullfs profiles,
-including actually executed strict CTF/export/debug-split tests. These check
-112/114 associations and fourteen named-type checks per architecture. Actual
-link/export/debug actions are bound to each frozen selected SDK in retained
-execution-log reviews. Controlled pipeline and 148 explicit-tool cases also pass.
+LLD section integration is implemented. Fresh verified SDKs now pass normal
+maintained build-bsd/Bazel nullfs profiles on AMD64, ARM64 and RISC-V. The strict
+CTF/export/debug-split tests actually execute (112/112/114 associations and
+fourteen named-type checks per architecture). Prior ARM64/RISC-V action reviews
+are retained; the AMD64 compact action review is pending converter restoration.
 
-The source-built native Bazel LLD executable test targets are still declared,
-not executed. Next qualify the refreshed AMD64 tools/profile, independent
-refreshed Make controls, debugger/runtime behavior and compression/footprint.
-This module checkpoint does not prove complete LLVM/bootstrap, world/kernel,
-packages/publication, sandbox/cache or performance acceptance.
+Native Bazel now builds LLD and passes its 138 section/graph/script cases and
+ten symbol/thunk/reference cases. Its first run exposed an SDK/compiler versus
+source-built LLVM runtime collision in a test. Explicit per-child runtime
+selection fixes that collision; every regression assertion remains intact.
+BEP outputs and both executed tests are retained. Full compact action-input
+review remains pending an exact-version upstream converter rebuild after older
+converter inputs were removed by concurrent cleanup.
+
+Independent refreshed Make controls, debugger/runtime behavior, compression/
+footprint, complete LLVM/bootstrap, world/kernel, packaging/publication,
+sandbox/cache and broad performance acceptance remain open.
 
 Current CTF output is uncompressed v3: tested full modules grow about 37 KiB,
 about 13-15%. Compression/footprint and broad CPU/memory/I/O/disk gates remain

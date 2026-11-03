@@ -12,7 +12,8 @@ flag, omitted metadata or name-based matching.
 
 LLVM Object CTFSymbolTable::merge provides that union and LLD now uses it for
 script-selected sections. ARM64/RISC-V now pass both controlled pipelines and
-normal maintained frontend profiles with fresh verified SDKs. The strict final
+normal maintained frontend profiles with fresh verified SDKs. AMD64 now passes
+its normal profile too; see the latest checkpoint for pending action review. The strict final
 CTF/export/debug-split tests actually run. Independent refreshed original
 controls and target runtime remain open; this is not system acceptance.
 
@@ -99,9 +100,10 @@ removed. This is resource recovery, not a disk-performance benchmark.
 
 LLD retains exact file/index provenance and connects namespace union,
 script-selected placement, layout sizes, final symtab order and sh_link. Fresh
-ARM64/RISC-V source-owner tools, verified SDKs and normal frontend nullfs profiles
-now pass. Next qualify refreshed AMD64 tools/profile, independent refreshed Make
-controls, debugger and runtime behavior, and resource/footprint limits. Never
+AMD64/ARM64/RISC-V source-owner tools, verified SDKs and normal frontend nullfs
+profiles now pass, as do the selected source-built Bazel linker tests. Next
+restore the converter and finish AMD64/native compact action reviews, independent
+refreshed Make controls, debugger/runtime behavior and resource/footprint limits. Never
 infer identities from names, addresses or redirected input symbol arrays.
 
 The local libctf v2 width/rounding inconsistency is separate and remains open.
@@ -324,3 +326,78 @@ blocks and other concurrent work prevent attributing pool-free changes to those
 file removals. Obsolete /var/cache/pkg cleanup was denied by OS permissions;
 installed package versions are unchanged, and pkg clean -y requires root.
 No snapshot, boot environment or running-system package was changed by this work.
+
+## 2026-11-03: AMD64 frontend and source-built Bazel LLD tests
+
+The maintained AMD64 source-owner bootstrap refresh completed with sixteen jobs.
+Inventory checks cover 6,154 target header/library entries. Only the exact two
+native program debug outputs changed; running-system LLD/objcopy hashes and
+qualified source hashes are unchanged. Records are under
+/usr/obj/usr/src/bazel-lld-ctf-bootstrap-amd64-r1-20261103.
+
+A new native SDK, bazel-userland-native-sdk-r5-20261103, passes normal snapshot
+and origin validation. Its LLD and objcopy match the refreshed build-tree tools.
+Preparation r4 failed because concurrent cleanup removed its older tools config.
+Preparation r5 rejected the old SDK's now-stale original linker binding, as it
+should; r6 failed to normalize the readelf symlink before looking up its recorded input
+key in preparation code. All
+three failed records remain. Preparation r7 succeeds using newly declared inputs:
+
+- Two standalone static tools (dtrace and gencat) are selected from retained SDK
+  artifact copies. Each file matches both its recorded original-tool hash and
+  snapshot hash; the old receipt itself matches its retained cross-SDK binding.
+  The old SDK is NOT represented as currently revalidated or used as an SDK
+  composition source. No receipt or verifier is weakened or rewritten.
+- The normal materializer binds the actual selected files into a NEW receipt.
+- A retained canonical repository cache matches the prior 544-entry fingerprint.
+  No distdirs are selected, and downloads remain disabled. The old primary cache
+  and distdirs were removed by other concurrent cleanup.
+
+The normal AMD64 build-bsd profile bazel-lld-ctf-fresh-amd64-r1-20261103 passes.
+Its strict CTF test actually executes, checking machine 62 / ET_REL, 112
+associations, fourteen named-type checks and the exact required exports across
+full/runtime outputs. Its BEP record and declared JSON are retained in the
+corresponding review directory. Its compact action/tool-input review remains
+INCOMPLETE: the old upstream converter and all 189 bound files were also removed.
+The compact log is retained for exact-version converter restoration, not replaced
+by an incomplete decoder or inferred action records.
+
+Native source-built LLD qualification now runs through the same frontend:
+
+- bazel-lld-ctf-native-linker-r1-20261103 builds LLD and its selected LLVM/source
+  dependencies successfully; the 138-case section test passes. The symbol test
+  fails at runtime because the Python runner's inherited library search path
+  exposes the SDK compiler's older libprivatellvm.so.21 ahead of LLD's source-
+  built library. Identical SONAMEs do not establish compatible implementations.
+- The fixture compiler now receives its declared clang_runtime file group via
+  normal Bazel test argument expansion. Only compiler subprocesses receive those
+  library directories. LLD subprocesses remove inherited LD_LIBRARY_PATH and
+  LD_PRELOAD and use their declared binary RUNPATHs. No fixture result or CTF
+  assertion changes; the section test applies the same child-environment hygiene.
+- r2 passes both tests with actual execution: 138 section cases and ten symbol/
+  thunk/reference cases. r3 streams runtime hashes rather than reading entire
+  libraries and re-executes the ten cases; its unchanged section test is cached
+  from r2. Both executed records, declared JSON, compiler runtime hashes and
+  child command environments are retained in
+  bazel-lld-ctf-native-linker-review-r1-20261103.
+
+This qualifies the selected source-built linker tests. Compact action-input
+review, install/debug/package variants, LLVM/bootstrap breadth and full system
+acceptance remain open. The first full native run reports 8,179 action-cache
+hits and 4,236 processes; its wall time is about 1,119 seconds. This is not a fair
+Make performance comparison: backend/runtime/configuration scopes differ, and
+the time report wraps a client of a persistent server rather than aggregating
+compiler/server memory and I/O. Do not use its client RSS as build memory usage.
+
+The exact Bazel 9.3.1 distribution is retained locally. Maintained ports checksum,
+extract and patch targets prepared a new converter source tree at
+bazel-execlog-rebuild-r1-20261103, with distfile SHA-256 checked against current
+ports distinfo and unchanged port inputs. Converter compilation and validation
+are next. Preparation is not converter qualification.
+
+Frontend assessment: format-5 explicit inputs, existing SDK planner/materializer,
+and the normal build-bsd bazel-test command select all work. The test BUILD
+arguments and scripts change together; no C frontend/schema, signing, staging
+policy, packaging or publication change is required. The uncompressed CTF
+footprint gate above remains open. Make stays production/default; BIP is excluded.
+No running-system installation, upgrade, module loading or reboot occurred.
