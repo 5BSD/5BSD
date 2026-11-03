@@ -28,3 +28,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
         "//sys/crypto:intake_headers",
     ],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_core_sources', srcs = ['g_eli_hmac.c', 'pkcs5v2.c', 'g_eli_key.c', 'g_eli_key_cache.c'], visibility = ["//stand/libsa:__pkg__"])

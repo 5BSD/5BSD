@@ -71,3 +71,5 @@ amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_vfsops", src
 amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_vnops", srcs = ["cd9660_vnops.c"],
     deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_vfsops_headers", "//sys/vm:filesystems_rpc_kernel_cd9660_vnops_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['cd9660_rrip.h', 'iso.h'], visibility = ["//stand/libsa:__pkg__"])

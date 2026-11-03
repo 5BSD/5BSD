@@ -95,3 +95,9 @@ cross_generic_kernel_objects(arch = "arm64", name = "generic_common",
 cross_generic_kernel_objects(arch = "riscv", name = "generic_common",
     srcs = ['arc4random_uniform.c', 'asprintf.c', 'bcd.c', 'bsearch.c', 'crc16.c', 'explicit_bzero.c', 'fnmatch.c', 'gsb_crc32.c', 'inet_aton.c', 'inet_ntoa.c', 'inet_ntop.c', 'inet_pton.c', 'jenkins_hash.c', 'murmur3_32.c', 'memcchr.c', 'memchr.c', 'memmem.c', 'qsort.c', 'qsort_r.c', 'random.c', 'scanc.c', 'strcasecmp.c', 'strcasestr.c', 'strcat.c', 'strchr.c', 'strchrnul.c', 'strcpy.c', 'strcspn.c', 'strdup.c', 'strndup.c', 'strlcat.c', 'strlcpy.c', 'strncat.c', 'strncpy.c', 'strnlen.c', 'strnstr.c', 'strrchr.c', 'strsep.c', 'strspn.c', 'strstr.c', 'strtol.c', 'strtoq.c', 'strtoul.c', 'strtouq.c', 'strvalid.c', 'timingsafe_bcmp.c', 'strcmp.c', 'strncmp.c'],
     deps = [":qsort_implementation", "//sys/netinet:address_headers", "//sys/contrib/pcg-c:kernel_headers"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['gsb_crc32.c'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_core_sources', srcs = ['explicit_bzero.c'], visibility = ["//stand/libsa:__pkg__"])

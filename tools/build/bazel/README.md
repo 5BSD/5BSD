@@ -11,6 +11,16 @@ RISC-V finishes with 2,050 directories and no query failures. Complete libsa arc
 archive variants are qualified below.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
 
+## Regular AMD64 libsa checkpoint (2026-11-03)
+
+The 191-member regular standalone archive now builds with native compiler and
+ordered archive actions. Raw order/symbol contracts match Make, and 188 members
+match allocated bytes/relocations directly. Original compiler filename controls
+explain and match the other three. All compiler/archive digests are bound to the
+captured archive; compressed manual bytes and file metadata also match Make.
+Private EFI, foreign/optional inventories, loader/runtime/debug/package and
+performance completion remain open. See [LIBSA-QUALIFICATION.md](LIBSA-QUALIFICATION.md).
+
 ## Standalone and EFI Ficl checkpoint (2026-11-03)
 
 Both fifteen-member Ficl contexts build natively on AMD64, ARM64 and RISC-V.

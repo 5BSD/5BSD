@@ -510,7 +510,6 @@ _IPC_MODULE_DEPS = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"
 
 exports_files(["genoffset.c"], visibility = ["//sys/cddl/dev/dtrace:__pkg__"])
 
-
 load("//tools/build/bazel:bsd_syscall_tables.bzl", "bsd_syscall_tables")
 bsd_syscall_tables(name = "native_syscall_tables", master = "syscalls.master", config = "syscalls.conf",
     outputs = {"systrace_args": "native_syscalls/kern/systrace_args.c",
@@ -1536,3 +1535,5 @@ cc_library(name = "msi_if_headers", hdrs = [":msi_if_header_file"],
 filegroup(name = "pic_if_header_file", srcs = [":pic_if"], output_group = "header")
 cc_library(name = "pic_if_headers", hdrs = [":pic_if_header_file"],
     strip_include_prefix = "pic_if.generated", visibility = ["//visibility:public"])
+
+filegroup(name = 'standalone_sa_core_sources', srcs = ['subr_boot.c'], visibility = ["//stand/libsa:__pkg__"])

@@ -184,3 +184,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "geom_disk.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['geom.h'], visibility = ["//stand/libsa:__pkg__"])

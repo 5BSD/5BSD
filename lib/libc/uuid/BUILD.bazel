@@ -21,3 +21,5 @@ exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
  for name, source in [
     ('libc_manual_uuid.3', 'uuid.3'),
 ]]
+
+filegroup(name = 'standalone_sa_core_sources', srcs = ['uuid_create_nil.c', 'uuid_equal.c', 'uuid_is_nil.c'], visibility = ["//stand/libsa:__pkg__"])

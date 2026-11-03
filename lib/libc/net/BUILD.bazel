@@ -99,3 +99,5 @@ bsd_install_manifest(name = "config_manifest", entries = [":config_" + n for n i
 
 # Original rescue replacement compilation; own source files remain here.
 exports_files(["rcmdsh.c"], visibility = ["//rescue/librescue:__pkg__"])
+
+filegroup(name = 'standalone_sa_core_sources', srcs = ['ntoh.c'], visibility = ["//stand/libsa:__pkg__"])

@@ -10947,3 +10947,13 @@ The AMD64 verifier-disabled variant also passes; its shared archive stays byte
 identical across the EFI toggle. Restoring the setting reproduces the private
 archive bytes, and a separate repeat reuses compiler/archive outputs. These build
 checks do not execute failure diagnostics or establish system-wide cache/perf.
+
+## Regular standalone library candidate (2026-11-03)
+
+The full 191-unit AMD64 regular inventory retains tslog, panic/assert diagnostics,
+network/filesystem I/O, allocator, compression, GELI and ZFS sources. Per-source
+options retain Make's three Rijndael NDEBUG definitions. No additional diagnostic
+or assertion suppression was introduced. No separate DTrace provider or BSM
+userland audit source is selected by this pre-kernel recipe. Actual loader I/O,
+error diagnostics, entropy/verification and boot timing remain runtime/VM review
+items; original object/code comparisons do not close those gates.

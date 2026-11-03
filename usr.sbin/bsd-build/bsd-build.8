@@ -4675,6 +4675,21 @@ Archive and ABI inspection on AMD64, ARM64 and RISC-V executes native tools;
 firmware I/O and complete loader boot require separate qualification.
 See
 .Pa tools/build/bazel/LIBEFI-QUALIFICATION.md .
+.Ss Native standalone library candidate
+The native
+.Li //stand/libsa:static_archive
+selects the 191-member regular AMD64 standalone library candidate.
+Its current inventory requires enabled GELI, ZFS and disk support with global
+verification disabled; other inventories are rejected pending implementation.
+Private EFI and other architecture inventories remain open.
+.Li //stand/libsa:manual_gzip
+and
+.Li //stand/libsa:install_manifest
+materialize the common library manual and its typed installation record.
+Archive/code and selected manual-file comparisons do not establish complete
+loader boot, runtime, debug or package installation qualification.
+See
+.Pa tools/build/bazel/LIBSA-QUALIFICATION.md .
 .Ss Native Ficl interpreter libraries
 The native
 .Li //stand/ficl:static_archive

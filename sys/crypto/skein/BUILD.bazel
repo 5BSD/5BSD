@@ -44,3 +44,9 @@ amd64_generic_module_objects(name = "crypto_skein_block_module", srcs = ["skein_
 amd64_generic_module_objects(name = "crypto_skein_block_asm_module", srcs = ["amd64/skein_block_asm.S"],
     deps = [],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-Wa,--noexecstack"], local_defines = ["ELF", "SKEIN_ASM", "SKEIN_LOOP=0", "SKEIN_USE_ASM=1792"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['skein.h', 'skein_freebsd.h', 'skein_iv.h', 'skein_port.h'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_skein_sources', srcs = ['skein.c'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_skein_block_sources', srcs = ['skein_block.c'], visibility = ["//stand/libsa:__pkg__"])

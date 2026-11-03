@@ -126,3 +126,7 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "rijndael.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['rijndael-api-fst.h', 'rijndael.h', 'rijndael_local.h'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_rijndael_alg_fst_sources', srcs = ['rijndael-alg-fst.c', 'rijndael-api-fst.c', 'rijndael-api.c'], visibility = ["//stand/libsa:__pkg__"])

@@ -93,3 +93,5 @@ rtld_libc_source_exports('lib/libc/stdlib')
 
 # Original rescue replacement compilation; own source files remain here.
 exports_files(["system.c"], visibility = ["//rescue/librescue:__pkg__"])
+
+filegroup(name = 'standalone_sa_core_sources', srcs = ['abs.c', 'strtol.c', 'strtoll.c', 'strtoul.c', 'strtoull.c'], visibility = ["//stand/libsa:__pkg__"])

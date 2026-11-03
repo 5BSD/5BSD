@@ -265,3 +265,9 @@ exports_files(["memcpy.c", "memset.c", "strlcpy.c", "bcopy.c"], visibility = ["/
 
 load("//libexec/rtld-elf:libc_sources.bzl", "rtld_libc_source_exports")
 rtld_libc_source_exports('lib/libc/string')
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bcopy.c', 'memset.c'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_core_sources', srcs = ['bcmp.c', 'bcopy.c', 'bzero.c', 'ffs.c', 'fls.c', 'memccpy.c', 'memchr.c', 'memcmp.c', 'memcpy.c', 'memmove.c', 'memset.c', 'strcat.c', 'strchr.c', 'strchrnul.c', 'strcmp.c', 'strcpy.c', 'stpcpy.c', 'stpncpy.c', 'strcspn.c', 'strlcat.c', 'strlcpy.c', 'strlen.c', 'strncat.c', 'strncmp.c', 'strncpy.c', 'strnlen.c', 'strpbrk.c', 'strrchr.c', 'strsep.c', 'strspn.c', 'strstr.c', 'strtok.c', 'swab.c'], visibility = ["//stand/libsa:__pkg__"])

@@ -21,3 +21,5 @@ filegroup(name = "libefi_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.
 filegroup(name = "loader_fdt_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h'], visibility = ["//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])
 
 filegroup(name = "standalone_ficl_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'setjmp.h'], visibility = ["//stand/ficl:__pkg__"])
+
+filegroup(name = "standalone_sa_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'fpu.h', 'segments.h', 'setjmp.h', 'signal.h', 'specialreg.h', 'ucontext.h', 'x86_var.h'], visibility = ["//stand/libsa:__pkg__"])

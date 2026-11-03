@@ -40,3 +40,38 @@ cc_library(name = "standalone_headers", hdrs = [':standalone_a_out_h', ':standal
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "libefi_headers", hdrs = ['bootp.h', 'iodesc.h', 'net.h', 'netif.h', 'stand.h'], visibility = ["//stand/efi/libefi:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootp.h', 'bootparam.h', 'dosfs.h', 'geli/geliboot.h', 'geli/geliboot_internal.h', 'iodesc.h', 'net.h', 'netif.h', 'nfsv2.h', 'nvstore.h', 'rpc.h', 'rpcv2.h', 'stand.h', 'tftp.h', 'xlocale_private.h', 'zalloc_defs.h', 'zalloc_mem.h', 'zalloc_protos.h'], visibility = ["//stand/libsa:__pkg__"])
+
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load(":library.bzl", "standalone_sa_library")
+# Explicit candidate boundary: other ABIs and optional source inventories must
+# be implemented before they are selectable. Never substitute this inventory.
+_LIBRARY_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+    "//tools/build/bazel/config:loader_geli_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "//tools/build/bazel/config:loader_zfs_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "//tools/build/bazel/config:loader_disk_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "//tools/build/bazel/config:veriexec_enabled": ["@platforms//:incompatible"], "//conditions:default": [],
+})
+bsd_architecture_headers(name = "library_architecture_headers", headers = {
+    "//sys/amd64/include:standalone_sa_arch_headers": "machine",
+    "//sys/x86/include:standalone_sa_arch_headers": "x86",
+})
+standalone_sa_library(name = "static_archive", deps = ['//contrib/bzip2:standalone_sa_headers', '//contrib/llvm-project/compiler-rt/lib/builtins:standalone_sa_headers', '//lib/libc/string:standalone_sa_headers', '//stand/common:standalone_sa_headers', '//stand/libsa/zfs:standalone_sa_headers', '//stand/libsa:standalone_sa_headers', '//sys/bsm:standalone_sa_headers', '//sys/cddl/boot:standalone_sa_headers', '//sys/cddl/contrib/opensolaris/common/lz4:standalone_sa_headers', '//sys/compat/linuxkpi/common/include/linux:standalone_sa_headers', '//sys/contrib/openzfs:standalone_sa_headers', '//sys/contrib/pcg-c:standalone_sa_headers', '//sys/contrib/xz-embedded:standalone_sa_headers', '//sys/contrib/zlib:standalone_sa_headers', '//sys/contrib/zstd:standalone_sa_headers', '//sys/crypto/camellia:standalone_sa_headers', '//sys/crypto/rijndael:standalone_sa_headers', '//sys/crypto/sha2:standalone_sa_headers', '//sys/crypto/skein:standalone_sa_headers', '//sys/crypto:standalone_sa_headers', '//sys/fs/cd9660:standalone_sa_headers', '//sys/geom/eli:standalone_sa_headers', '//sys/geom:standalone_sa_headers', '//sys/libkern:standalone_sa_headers', '//sys/net:standalone_sa_headers', '//sys/netinet6:standalone_sa_headers', '//sys/netinet:standalone_sa_headers', '//sys/opencrypto:standalone_sa_headers', '//sys/sys:standalone_sa_headers', '//sys/ufs/ffs:standalone_sa_headers', '//sys/ufs/ufs:standalone_sa_headers', ':library_architecture_headers', ':standalone_headers'], compatible = _LIBRARY_COMPAT)
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_manifest")
+bsd_compress(name = "manual_gzip", src = "libsa.3", output = "libsa.3.gz",
+    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual", src = ":manual_gzip",
+    destination = "/usr/share/man/man3/libsa.3.gz", owner = "root", group = "wheel",
+    mode = "0444", install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=bootloader-man"],
+        "//conditions:default": ["package=bootloader-dev"],
+    }))
+bsd_install_manifest(name = "install_manifest", entries = [":install_manual"],
+    visibility = ["//visibility:public"])

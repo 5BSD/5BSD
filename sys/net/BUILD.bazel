@@ -1998,3 +1998,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     includes = [], visibility = ["//sys/kern:__pkg__"])
 
 bsd_source_headers(name = "libefi_headers", hdrs = ['ethernet.h', 'if.h'], visibility = ["//stand/efi/libefi:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['ethernet.h', 'if.h', 'if_arp.h'], visibility = ["//stand/libsa:__pkg__"])
