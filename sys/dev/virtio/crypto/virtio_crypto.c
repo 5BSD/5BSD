@@ -90,6 +90,21 @@
 #define	VTCRYPTO_AES_BLOCK		16u
 #define	VTCRYPTO_GCM_IVLEN		12u
 
+/*
+ * Most descriptors one data request takes.  The device configuration has no
+ * segment limit (section 5.9.4) and a device may refuse a chain longer than
+ * it can map, so stay within 32, which bhyve(8) has always accepted.  A
+ * malloc(9) buffer takes one descriptor per page it touches; a request that
+ * would need more uses physically contiguous buffers, one descriptor each.
+ */
+#define	VTCRYPTO_MAX_SEGS		32
+
+/*
+ * Status byte value no device writes: a request the device returns without
+ * writing its status fails instead of reading as VIRTIO_CRYPTO_S_OK.
+ */
+#define	VTCRYPTO_STATUS_UNSET		0xff
+
 /* Control requests are polled; see vtcrypto_ctrl_exec(). */
 #define	VTCRYPTO_CTRL_TIMEOUT		(10 * SBT_1S)
 #define	VTCRYPTO_CTRL_POLL_DELAY_US	10
@@ -115,14 +130,15 @@ struct vtcrypto_dataq {
 	struct virtqueue	*vdq_vq;
 	struct mtx		 vdq_mtx;
 	TAILQ_HEAD(, cryptop)	 vdq_parked;	/* waiting for ring space */
+	struct sglist		*vdq_sg;	/* under vdq_mtx */
 	int			 vdq_id;
 	bool			 vdq_mtx_init;
 };
 
 /*
  * In-flight data request context; the cookie passed to virtqueue_enqueue().
- * The readable and writable wire buffers are each physically contiguous so
- * they occupy a single descriptor.
+ * The readable and writable wire buffers come from vtcrypto_alloc_buffers()
+ * and take one descriptor per physically contiguous run.
  */
 struct vtcrypto_request {
 	struct cryptop	*vcr_crp;
@@ -188,8 +204,9 @@ static void	vtcrypto_dataq_intr(void *);
 static void	vtcrypto_enable_intr(struct vtcrypto_softc *);
 static void	vtcrypto_drain(struct vtcrypto_softc *);
 static void	vtcrypto_free_request(struct vtcrypto_request *);
-static int	vtcrypto_build_request(struct cryptop *,
-		    struct vtcrypto_request **);
+static int	vtcrypto_alloc_buffers(struct vtcrypto_request *, int);
+static int	vtcrypto_build_request(struct vtcrypto_dataq *,
+		    struct cryptop *, struct vtcrypto_request **);
 static int	vtcrypto_enqueue(struct vtcrypto_dataq *,
 		    struct vtcrypto_request *);
 
@@ -364,6 +381,8 @@ vtcrypto_detach(device_t dev)
 		for (i = 0; i < sc->vtc_ndataq; i++) {
 			if (sc->vtc_dataq[i].vdq_mtx_init)
 				mtx_destroy(&sc->vtc_dataq[i].vdq_mtx);
+			if (sc->vtc_dataq[i].vdq_sg != NULL)
+				sglist_free(sc->vtc_dataq[i].vdq_sg);
 		}
 		free(sc->vtc_dataq, M_VTCRYPTO);
 		sc->vtc_dataq = NULL;
@@ -470,6 +489,7 @@ vtcrypto_alloc_virtqueues(struct vtcrypto_softc *sc)
 		    MTX_DEF);
 		dq->vdq_mtx_init = true;
 		TAILQ_INIT(&dq->vdq_parked);
+		dq->vdq_sg = sglist_alloc(VTCRYPTO_MAX_SEGS, M_WAITOK);
 		VQ_ALLOC_INFO_INIT(&info[i], 0, vtcrypto_dataq_intr, dq,
 		    &dq->vdq_vq, "%s data.%d", device_get_nameunit(dev), i);
 	}
@@ -583,6 +603,7 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 {
 	struct sglist *sg;
 	sbintime_t deadline;
+	uint32_t len;
 	int error, rd, wr;
 	uint8_t status;
 
@@ -623,6 +644,11 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 	}
 	wr = sg->sg_nseg - rd;
 
+	/* A reply that leaves the status unwritten fails; see below. */
+	if (is_create)
+		st32(wbuf + VTC_SI_OFF_STATUS, VTCRYPTO_STATUS_UNSET);
+	else
+		wbuf[0] = VTCRYPTO_STATUS_UNSET;
 	error = virtqueue_enqueue(sc->vtc_ctrl_vq, sc, sg, rd, wr);
 	sglist_free(sg);
 	if (error != 0)
@@ -630,7 +656,7 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 	virtqueue_notify(sc->vtc_ctrl_vq);
 
 	deadline = sbinuptime() + VTCRYPTO_CTRL_TIMEOUT;
-	while (virtqueue_dequeue(sc->vtc_ctrl_vq, NULL) == NULL) {
+	while (virtqueue_dequeue(sc->vtc_ctrl_vq, &len) == NULL) {
 		if (sbinuptime() >= deadline) {
 			/*
 			 * The device never returned the descriptor; it still
@@ -647,14 +673,20 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 		DELAY(VTCRYPTO_CTRL_POLL_DELAY_US);
 	}
 
-	if (is_create) {
+	/*
+	 * A device that wrote nothing (used length 0) returned the request
+	 * unprocessed, and a success must have written the whole reply: a
+	 * session id the device did not write may name another session.
+	 */
+	if (is_create)
 		status = (uint8_t)ld32(wbuf + VTC_SI_OFF_STATUS);
-		error = vtcrypto_status_error(status);
-		if (error == 0 && sidp != NULL)
-			*sidp = ld64(wbuf + VTC_SI_OFF_SESSION_ID);
-	} else {
-		error = vtcrypto_status_error(wbuf[0]);
-	}
+	else
+		status = wbuf[0];
+	error = vtcrypto_status_error(status);
+	if (len == 0 || (error == 0 && len != wlen))
+		error = EIO;
+	if (error == 0 && is_create && sidp != NULL)
+		*sidp = ld64(wbuf + VTC_SI_OFF_SESSION_ID);
 
 release:
 	mtx_unlock(&sc->vtc_mtx);
@@ -934,10 +966,13 @@ vtcrypto_freesession(device_t dev, crypto_session_t cses)
 
 /*
  * Complete one finished data request: check the device status byte, copy the
- * output back into the cryptop, and call crypto_done().
+ * output back into the cryptop, and call crypto_done().  A device that wrote
+ * nothing (used length 0) returned the request unprocessed, and a success
+ * must have written the whole output: wbuf is not zeroed.
  */
 static void
-vtcrypto_finish_request(struct vtcrypto_softc *sc, struct vtcrypto_request *vcr)
+vtcrypto_finish_request(struct vtcrypto_softc *sc, struct vtcrypto_request *vcr,
+    uint32_t len)
 {
 	struct cryptop *crp = vcr->vcr_crp;
 	uint8_t status;
@@ -945,6 +980,8 @@ vtcrypto_finish_request(struct vtcrypto_softc *sc, struct vtcrypto_request *vcr)
 
 	status = vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1];
 	error = vtcrypto_status_error(status);
+	if (len == 0 || (error == 0 && len != vcr->vcr_wbuf_len))
+		error = EIO;
 	if (error != 0)
 		goto done;
 
@@ -994,50 +1031,51 @@ vtcrypto_dataq_intr(void *xdq)
 	struct virtqueue *vq = dq->vdq_vq;
 	struct vtcrypto_request *vcr;
 	struct cryptop *crp;
-	TAILQ_HEAD(, cryptop) parked;
+	uint32_t len;
 	int error;
 
-	TAILQ_INIT(&parked);
 	mtx_lock(&dq->vdq_mtx);
 	do {
 		virtqueue_disable_intr(vq);
-		while ((vcr = virtqueue_dequeue(vq, NULL)) != NULL) {
+		while ((vcr = virtqueue_dequeue(vq, &len)) != NULL) {
 			mtx_unlock(&dq->vdq_mtx);
-			vtcrypto_finish_request(sc, vcr);
+			vtcrypto_finish_request(sc, vcr, len);
 			mtx_lock(&dq->vdq_mtx);
 		}
 	} while (virtqueue_enable_intr(vq) != 0);
-	TAILQ_CONCAT(&parked, &dq->vdq_parked, crp_next);
-	mtx_unlock(&dq->vdq_mtx);
 
 	/*
 	 * Descriptors were returned: resubmit the requests parked on this
-	 * queue, oldest first, until the ring is full again.  A request that
-	 * still does not fit is parked again, ahead of any parked meanwhile,
-	 * while the lock shows the ring full of requests whose completion
-	 * runs this handler again.
+	 * queue, oldest first, until the ring is full again.  Each stays at
+	 * the head of vdq_parked while it is built, so vtcrypto_process()
+	 * parks new requests behind it instead of taking the descriptors it
+	 * waits for.  Only this handler removes parked requests (detach
+	 * drains them after tearing the interrupt down).  A request
+	 * that still does not fit stays parked while the lock shows the ring
+	 * full of requests whose completion runs this handler again.
 	 */
-	while ((crp = TAILQ_FIRST(&parked)) != NULL) {
-		TAILQ_REMOVE(&parked, crp, crp_next);
-		error = vtcrypto_build_request(crp, &vcr);
+	while ((crp = TAILQ_FIRST(&dq->vdq_parked)) != NULL) {
+		mtx_unlock(&dq->vdq_mtx);
+		error = vtcrypto_build_request(dq, crp, &vcr);
+		mtx_lock(&dq->vdq_mtx);
+		KASSERT(TAILQ_FIRST(&dq->vdq_parked) == crp,
+		    ("%s: parked request %p lost its place", __func__, crp));
 		if (error == 0) {
-			mtx_lock(&dq->vdq_mtx);
 			error = vtcrypto_enqueue(dq, vcr);
-			if (error == ENOSPC) {
-				TAILQ_INSERT_HEAD(&parked, crp, crp_next);
-				TAILQ_CONCAT(&parked, &dq->vdq_parked, crp_next);
-				TAILQ_CONCAT(&dq->vdq_parked, &parked, crp_next);
-			}
-			mtx_unlock(&dq->vdq_mtx);
-			if (error == 0)
-				continue;
-			vtcrypto_free_request(vcr);
-			if (error == ENOSPC)
-				break;
+			if (error != 0)
+				vtcrypto_free_request(vcr);
 		}
-		crp->crp_etype = error;
-		crypto_done(crp);
+		if (error == ENOSPC)
+			break;
+		TAILQ_REMOVE(&dq->vdq_parked, crp, crp_next);
+		if (error != 0) {
+			mtx_unlock(&dq->vdq_mtx);
+			crp->crp_etype = error;
+			crypto_done(crp);
+			mtx_lock(&dq->vdq_mtx);
+		}
 	}
+	mtx_unlock(&dq->vdq_mtx);
 }
 
 static void
@@ -1049,11 +1087,43 @@ vtcrypto_free_request(struct vtcrypto_request *vcr)
 }
 
 /*
+ * Allocate the readable and writable wire buffers of a data request for a
+ * queue that takes at most maxsegs descriptors per request.  A malloc(9)
+ * buffer takes a descriptor per page it touches, at most one more than its
+ * length in pages; when that could exceed maxsegs, use physically contiguous
+ * buffers, one descriptor each.
+ */
+static int
+vtcrypto_alloc_buffers(struct vtcrypto_request *vcr, int maxsegs)
+{
+
+	if (howmany(vcr->vcr_rbuf_len, PAGE_SIZE) + 1 +
+	    howmany(vcr->vcr_wbuf_len, PAGE_SIZE) + 1 <= (size_t)maxsegs) {
+		vcr->vcr_rbuf = malloc(vcr->vcr_rbuf_len, M_VTCRYPTO,
+		    M_NOWAIT);
+		vcr->vcr_wbuf = malloc(vcr->vcr_wbuf_len, M_VTCRYPTO,
+		    M_NOWAIT);
+	} else {
+		vcr->vcr_rbuf = contigmalloc(vcr->vcr_rbuf_len, M_VTCRYPTO,
+		    M_NOWAIT, 0, ~0UL, PAGE_SIZE, 0);
+		vcr->vcr_wbuf = contigmalloc(vcr->vcr_wbuf_len, M_VTCRYPTO,
+		    M_NOWAIT, 0, ~0UL, PAGE_SIZE, 0);
+	}
+	if (vcr->vcr_rbuf == NULL || vcr->vcr_wbuf == NULL) {
+		free(vcr->vcr_rbuf, M_VTCRYPTO);
+		free(vcr->vcr_wbuf, M_VTCRYPTO);
+		return (ENOMEM);
+	}
+	return (0);
+}
+
+/*
  * Build the readable/writable wire buffers for one data request.  Fields are
  * validated so the host cannot be handed an out-of-range length.
  */
 static int
-vtcrypto_build_request(struct cryptop *crp, struct vtcrypto_request **vcrp)
+vtcrypto_build_request(struct vtcrypto_dataq *dq, struct cryptop *crp,
+    struct vtcrypto_request **vcrp)
 {
 	const struct crypto_session_params *csp;
 	struct vtcrypto_session *s;
@@ -1146,17 +1216,15 @@ vtcrypto_build_request(struct cryptop *crp, struct vtcrypto_request **vcrp)
 
 	vcr->vcr_rbuf_len = rlen;
 	vcr->vcr_wbuf_len = (size_t)dstlen + 1;	/* + 1 status byte */
-	vcr->vcr_rbuf = contigmalloc(rlen, M_VTCRYPTO, M_NOWAIT | M_ZERO,
-	    0, ~0UL, PAGE_SIZE, 0);
-	vcr->vcr_wbuf = contigmalloc(vcr->vcr_wbuf_len, M_VTCRYPTO,
-	    M_NOWAIT | M_ZERO, 0, ~0UL, PAGE_SIZE, 0);
-	if (vcr->vcr_rbuf == NULL || vcr->vcr_wbuf == NULL) {
-		error = ENOMEM;
-		goto fail_bufs;
-	}
+	error = vtcrypto_alloc_buffers(vcr,
+	    MIN(VTCRYPTO_MAX_SEGS, virtqueue_size(dq->vdq_vq)));
+	if (error != 0)
+		goto fail_vcr;
+	vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1] = VTCRYPTO_STATUS_UNSET;
 
-	/* Common op_header. */
+	/* Common op_header; everything after it is filled in below. */
 	hdr = vcr->vcr_rbuf;
+	memset(hdr, 0, VTCRYPTO_DATA_REQ_LEN);
 	st32(hdr + VTC_DATA_OFF_OPCODE, opcode);
 	st64(hdr + VTC_DATA_OFF_SESSION_ID, sid);
 
@@ -1207,9 +1275,6 @@ vtcrypto_build_request(struct cryptop *crp, struct vtcrypto_request **vcrp)
 	*vcrp = vcr;
 	return (0);
 
-fail_bufs:
-	free(vcr->vcr_rbuf, M_VTCRYPTO);
-	free(vcr->vcr_wbuf, M_VTCRYPTO);
 fail_vcr:
 	free(vcr, M_VTCRYPTO);
 fail:
@@ -1217,28 +1282,34 @@ fail:
 }
 
 /*
- * Post a built request on a data queue: one readable and one writable
- * segment.  ENOSPC means the ring is full of in-flight requests.
+ * Post a built request on a data queue: the readable segments, then the
+ * writable ones.  ENOSPC means the ring lacks descriptors for it; the
+ * descriptors in use belong to in-flight requests.
  */
 static int
 vtcrypto_enqueue(struct vtcrypto_dataq *dq, struct vtcrypto_request *vcr)
 {
-	struct sglist_seg segs[4];
-	struct sglist sg;
+	struct sglist *sg;
 	int error, rd;
 
 	mtx_assert(&dq->vdq_mtx, MA_OWNED);
-	sglist_init(&sg, nitems(segs), segs);
-	error = sglist_append(&sg, vcr->vcr_rbuf, vcr->vcr_rbuf_len);
+	sg = dq->vdq_sg;
+	sglist_reset(sg);
+	error = sglist_append(sg, vcr->vcr_rbuf, vcr->vcr_rbuf_len);
 	if (error != 0)
 		return (error);
-	rd = sg.sg_nseg;
-	error = sglist_append(&sg, vcr->vcr_wbuf, vcr->vcr_wbuf_len);
+	rd = sg->sg_nseg;
+	error = sglist_append(sg, vcr->vcr_wbuf, vcr->vcr_wbuf_len);
 	if (error != 0)
 		return (error);
-	error = virtqueue_enqueue(dq->vdq_vq, vcr, &sg, rd, sg.sg_nseg - rd);
+	/* A request larger than the ring would never fit. */
+	if (sg->sg_nseg > virtqueue_size(dq->vdq_vq))
+		return (EFBIG);
+	error = virtqueue_enqueue(dq->vdq_vq, vcr, sg, rd, sg->sg_nseg - rd);
 	if (error == 0)
 		virtqueue_notify(dq->vdq_vq);
+	else if (error == EMSGSIZE)
+		error = ENOSPC;	/* fewer free descriptors than segments */
 	return (error);
 }
 
@@ -1274,7 +1345,7 @@ vtcrypto_process(device_t dev, struct cryptop *crp, int hint __unused)
 	if (!room)
 		return (0);
 
-	error = vtcrypto_build_request(crp, &vcr);
+	error = vtcrypto_build_request(dq, crp, &vcr);
 	if (error != 0)
 		goto fail;
 	mtx_lock(&dq->vdq_mtx);

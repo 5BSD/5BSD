@@ -47,6 +47,7 @@
 
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtqueue.h>
+#include <dev/virtio/iommu/virtio_iommu.h>
 #include <dev/virtio/pci/virtio_pci.h>
 #include <dev/virtio/pci/virtio_pci_modern_var.h>
 #include <dev/virtio/pci/virtio_pci_shmem.h>
@@ -82,6 +83,13 @@ struct vtpci_modern_softc {
 	int				 vtpci_msix_pba_rid;
 	struct resource			*vtpci_msix_pba_res;
 	bool				 vtpci_device_config_failed;
+	/* Why VIRTIO_F_ACCESS_PLATFORM was left unnegotiated, or 0. */
+	int				 vtpci_access_platform_error;
+	/* The ACCESS_PLATFORM error is current for the attached child. */
+	bool				 vtpci_access_platform_probed;
+	/* The device refused the child for lack of ACCESS_PLATFORM. */
+	bool				 vtpci_access_platform_refused;
+	eventhandler_tag		 vtpci_iommu_registered_tag;
 	/* Set only after this host suspend completed the VirtIO handshake. */
 	bool				 vtpci_host_suspend_handshake;
 
@@ -102,6 +110,7 @@ static int	vtpci_modern_resume(device_t);
 static int	vtpci_modern_shutdown(device_t);
 
 static void	vtpci_modern_driver_added(device_t, driver_t *);
+static void	vtpci_modern_iommu_registered(void *);
 static void	vtpci_modern_child_detached(device_t, device_t);
 static int	vtpci_modern_read_ivar(device_t, device_t, int, uintptr_t *);
 static int	vtpci_modern_write_ivar(device_t, device_t, int, uintptr_t);
@@ -120,6 +129,8 @@ static int	vtpci_modern_register_cfg_msix(device_t,
 static int	vtpci_modern_register_vq_msix(device_t, int idx,
 		    struct vtpci_interrupt *);
 
+static uint64_t	vtpci_modern_access_platform_features(
+		    struct vtpci_modern_softc *);
 static uint64_t	vtpci_modern_negotiate_features(device_t, uint64_t);
 static int	vtpci_modern_finalize_features(device_t);
 static bool	vtpci_modern_with_feature(device_t, uint64_t);
@@ -336,6 +347,10 @@ vtpci_modern_attach(device_t dev)
 	if (error)
 		goto fail;
 
+	sc->vtpci_iommu_registered_tag = EVENTHANDLER_REGISTER(
+	    virtio_iommu_registered, vtpci_modern_iommu_registered, sc,
+	    EVENTHANDLER_PRI_ANY);
+
 	vtpci_modern_probe_and_attach_child(sc);
 
 	return (0);
@@ -358,6 +373,12 @@ vtpci_modern_detach(device_t dev)
 	error = vtpci_delete_child(&sc->vtpci_common);
 	if (error)
 		return (error);
+
+	if (sc->vtpci_iommu_registered_tag != NULL) {
+		EVENTHANDLER_DEREGISTER(virtio_iommu_registered,
+		    sc->vtpci_iommu_registered_tag);
+		sc->vtpci_iommu_registered_tag = NULL;
+	}
 
 	vtpci_modern_reset(sc);
 	vtpci_modern_unmap_configs(sc);
@@ -425,16 +446,49 @@ vtpci_modern_driver_added(device_t dev, driver_t *driver)
 	vtpci_modern_probe_and_attach_child(device_get_softc(dev));
 }
 
+/*
+ * A virtio-iommu instance registered.  If the device refused the child
+ * because no instance could give it an identity domain, attach it again now
+ * that one may.
+ */
+static void
+vtpci_modern_iommu_registered(void *arg)
+{
+	struct vtpci_modern_softc *sc;
+
+	sc = arg;
+	bus_topo_assert();
+	if (!sc->vtpci_access_platform_refused)
+		return;
+	sc->vtpci_access_platform_refused = false;
+	vtpci_modern_probe_and_attach_child(sc);
+}
+
 static void
 vtpci_modern_child_detached(device_t dev, device_t child)
 {
 	struct vtpci_modern_softc *sc;
+	int error;
 
 	sc = device_get_softc(dev);
 
 	vtpci_modern_reset(sc);
 	vtpci_child_detached(&sc->vtpci_common);
 	sc->vtpci_device_config_failed = false;
+
+	/*
+	 * The reset stopped the function's DMA, so release its identity
+	 * domain; the virtio-iommu refuses to detach while it holds one.
+	 */
+	if (sc->vtpci_access_platform_probed &&
+	    sc->vtpci_access_platform_error == 0) {
+		error = virtio_iommu_detach_identity(pci_get_rid(dev));
+		if (error != 0)
+			device_printf(dev, "cannot detach endpoint %#x from "
+			    "its identity domain (error %d)\n",
+			    pci_get_rid(dev), error);
+	}
+	sc->vtpci_access_platform_probed = false;
 
 	/* After the reset, retell the host we've noticed this device. */
 	vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_ACK);
@@ -483,6 +537,42 @@ vtpci_modern_write_ivar(device_t dev, device_t child, int index,
 	}
 
 	return (0);
+}
+
+/*
+ * With VIRTIO_F_ACCESS_PLATFORM the device translates every ring and buffer
+ * address it is given through the platform IOMMU.  virtqueue(9) and the
+ * function drivers program guest-physical addresses, so accept the feature
+ * only after a virtio-iommu has attached this function to an identity domain.
+ * Otherwise leave it unnegotiated: a device that does not insist on it keeps
+ * using physical addresses, and vtpci_modern_finalize_features() explains a
+ * device that refuses FEATURES_OK because of it.
+ */
+static uint64_t
+vtpci_modern_access_platform_features(struct vtpci_modern_softc *sc)
+{
+	device_t dev;
+
+	dev = sc->vtpci_dev;
+	/*
+	 * The binding outlives a device reset, and reinit may run with the
+	 * function driver's lock held, so ask only once per child attach
+	 * attempt.  A failure is not kept beyond that attempt: child_detached
+	 * forgets it, and a child the device refused for it is attached again
+	 * when a virtio-iommu registers (vtpci_modern_iommu_registered()).
+	 */
+	if (!sc->vtpci_access_platform_probed) {
+		/* VirtIO-IOMMU endpoint IDs are requester IDs of segment 0. */
+		if (pci_get_domain(dev) != 0)
+			sc->vtpci_access_platform_error = ENXIO;
+		else
+			sc->vtpci_access_platform_error =
+			    virtio_iommu_attach_identity(pci_get_rid(dev));
+		sc->vtpci_access_platform_probed = true;
+	}
+	if (sc->vtpci_access_platform_error != 0)
+		return (0);
+	return (VIRTIO_F_ACCESS_PLATFORM);
 }
 
 static uint64_t
@@ -544,6 +634,9 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 		device_printf(dev, "ignoring RingReset feature with short "
 		    "COMMON_CFG layout\n");
 	}
+
+	if ((host_features & VIRTIO_F_ACCESS_PLATFORM) != 0)
+		child_features |= vtpci_modern_access_platform_features(sc);
 
 	features = vtpci_negotiate_features(&sc->vtpci_common,
 	    child_features, host_features);
@@ -643,6 +736,16 @@ vtpci_modern_finalize_features(device_t dev)
 		    "(host %#jx, written %#jx)\n",
 		    (uintmax_t)sc->vtpci_common.vtpci_host_features,
 		    (uintmax_t)sc->vtpci_common.vtpci_features);
+		if ((sc->vtpci_common.vtpci_host_features &
+		    VIRTIO_F_ACCESS_PLATFORM) != 0 &&
+		    !vtpci_with_feature(&sc->vtpci_common,
+		    VIRTIO_F_ACCESS_PLATFORM)) {
+			device_printf(dev, "VIRTIO_F_ACCESS_PLATFORM not "
+			    "negotiated: no virtio-iommu gave endpoint %#x "
+			    "an identity domain (error %d)\n",
+			    pci_get_rid(dev), sc->vtpci_access_platform_error);
+			sc->vtpci_access_platform_refused = true;
+		}
 		return (ENOTSUP);
 	}
 

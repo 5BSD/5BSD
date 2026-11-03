@@ -78,6 +78,7 @@ SUITES = {
                     '_ZN7dtraced3dir11record_killERKNS_12durable_killERKNSt3__18functionIFbRKNS4_6vectorIS1_NS4_9allocatorIS1_EEEEEEE',
                     '_ZN7dtraced3dir19record_kill_appliedERKNS_12durable_killE',
                     '_ZN7dtraced3dir13revoke_sourceEPKh',
+                    '_ZN7dtraced3dir14source_revokedEPKh',
                     '_ZN7dtraced3dir22write_data_with_sourceEPKhmS2_',
                     '_ZN7dtraced3dir10write_dataEPhm',
                     '_ZN7dtraced3dir22record_cleanup_pendingERKNS_15durable_cleanupE',

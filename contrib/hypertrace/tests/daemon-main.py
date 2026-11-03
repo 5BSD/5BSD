@@ -547,6 +547,80 @@ live('revocation-delivery-and-replay', ['-d', '-D', '@ROOT@/state', '-t', '2'],
      revocation, {'HT_ATTEST': '7:9:guest-a'})
 
 
+def refusals_logged(root, proc):
+    # A refused frame is never silent: the reader logs the client, the
+    # message kind and the check, once a second per check, counting what it
+    # suppressed (a client retrying a refused frame repeated it 64214 times
+    # on the host, unlogged).
+    d = {'acks': []}
+    f = forwarder(root, 'guest-a', subs=1)	# only a consumer revokes
+    time.sleep(0.2)
+    for n in range(3):
+        if n == 2:
+            time.sleep(1.2)
+        frame(f, kill_header(MSG_KILL, 4242, 7, 9, b'\x55'))
+        d['acks'].append(recv_exact(f, 1).hex())
+    f.close()
+    time.sleep(0.2)
+    d['logged'] = [line[line.index('refused'):] for line in
+                   (Path(root) / 'stderr.log').read_text().splitlines()
+                   if 'refused KILL frame' in line]
+    check = 'KILL from a non-consumer or with no target (dtraced_clientrequest.cc:'
+    d['ok'] = (d['acks'] == ['00', '00', '00'] and len(d['logged']) == 2 and
+               all('from guest-a' in line and check in line and
+                   'Protocol error' in line for line in d['logged']) and
+               '(1 more since the last)' in d['logged'][1])
+    return d
+
+
+live('refusals-are-logged', ['-d', '-D', '@ROOT@/state'], refusals_logged,
+     {'HT_ATTEST': '7:9:guest-a'})
+
+
+def refusal_limits(root, proc):
+    # The refusal limiter is bounded and per client: frames of kinds a
+    # client invents share one entry (one line a second, the rest counted),
+    # and a second client's refusal of the same kind and check is still
+    # logged.  Regressions: the limiter was keyed by the raw wire type, so
+    # each invented kind took a new entry for good (and its own line); it
+    # was global, so the noisy client hid the quiet one's refusal.  An
+    # entry whose second has passed is dropped, reporting what it suppressed.
+    d = {}
+
+    def bogus(ident, kind):
+        c = consumer(root, ident=ident)
+        h = bytearray(HEADER)
+        struct.pack_into('<Q', h, 0, kind)
+        frame(c, bytes(h))
+        closed = expect_closed(c)
+        c.close()
+        return closed
+
+    def logged():
+        return [line[line.index('refused'):] for line in
+                (Path(root) / 'stderr.log').read_text().splitlines()
+                if 'refused' in line and 'unknown frame' in line]
+
+    time.sleep(0.2)
+    d['closed'] = [bogus('noisy', 1000 + n) for n in range(5)]
+    d['closed'] += [bogus('quiet', 1000), bogus('quiet', 1001)]
+    time.sleep(1.2)
+    d['closed'].append(bogus('noisy', 2000))
+    time.sleep(0.2)
+    d['logged'] = logged()
+    noisy = [line for line in d['logged'] if 'from noisy' in line]
+    quiet = [line for line in d['logged'] if 'from quiet' in line]
+    d['ok'] = (all(d['closed']) and len(noisy) == 2 and len(quiet) == 2 and
+               all('header fields: Protocol error' in line
+                   for line in d['logged']) and
+               '(4 more since the last)' in noisy[1] and
+               quiet[1].startswith('refused 1 more unknown frames from quiet'))
+    return d
+
+
+live('refusal-limits', ['-d', '-D', '@ROOT@/state'], refusal_limits)
+
+
 def hostile(root, proc):
     detail = {}
     # frame shorter than a header, longer than the limit, undecodable header
@@ -1082,88 +1156,74 @@ live('base-program-routing', ['-d', '-D', '@ROOT@/state', '-t', '2'],
 
 
 def consumer_client():
-    """consumer-elf-path.c on libdtrace's own transport, extracted as
-    library-transport.py does."""
+    """consumer-elf-path.c linked with the libdtrace under test: DTRACE_LIB,
+    default the installed library; point it at the library built from this
+    tree (its headers must match)."""
     root = Path(__file__).resolve().parents[3]
-    lib = root / 'cddl/contrib/opensolaris/lib/libdtrace/common'
-    source = (lib / 'dt_subr.c').read_text()
-    a = source.index('static int\ndtraced_self_procdesc(')
-    b = source.index('\nint\ndtrace_oformat_configure', a)
-    c = source.index('int\ndtrace_program_source_id(', b)
-    d = source.index('\nint\ndtrace_program_compiled_digest(', c)
-    e = source.index('\nstatic int\ndtrace_send_elf_impl(', d)
-    f = source.index('\nvoid\ndtrace_enable_hypertrace', e)
-    (out / 'library-transport.inc').write_text(
-        source[a:b] + source[c:d] + source[e:f])
+    lib = Path(os.environ.get('DTRACE_LIB', '/lib/libdtrace.so.2')).resolve()
     client = out / 'consumer-elf-path'
-    subprocess.run(['cc', '-pthread', '-Wall', '-Wextra', '-Werror',
-                    '-Wno-unknown-pragmas', '-I' + str(out), '-I' + str(lib),
+    # dtrace.c's own steps, as consumer-derived-replay.py takes them
+    source = (root / 'cddl/contrib/opensolaris/cmd/dtrace/dtrace.c').read_text()
+    regions = [('typedef struct dt_kill {', '\nstatic void\nset_snapshot_names('),
+               ('static int\nlink_acknowledged(',
+                '\nstatic void\nprocess_elf_hypertrace(')]
+    (out / 'consumer-elf-path.inc').write_text(''.join(
+        source[source.index(a):source.index(b, source.index(a))]
+        for a, b in regions))
+    subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-Wno-unknown-pragmas',
+                    '-I' + str(out),
+                    '-I' + str(root / 'cddl/contrib/opensolaris/lib/libdtrace/common'),
+                    '-I' + str(root / 'cddl/contrib/opensolaris/cmd/dtrace'),
                     '-I' + str(root / 'usr.sbin/dtraced'),
-                    '-I' + str(root / 'sys'), str(lib / 'dt_list.c'),
+                    '-I' + str(root / 'sys'),
                     str(Path(__file__).with_name('consumer-elf-path.c')),
-                    '-o', str(client), '-lcrypto'], check=True)
+                    lib, '-Wl,-rpath,' + str(lib.parent), '-o', str(client)],
+                   check=True)
     return client
 
 
 import threading
 
 
-def compiled_elf(path, program):
-    """A HyperTrace program as dtrace -E writes it: compiled with
-    libdtrace (DTRACE_LIB, default the installed library) and serialized
-    with dtrace_elf_create(), without the kernel (NODEV | NOSYS)."""
-    import ctypes as C
-    lib = C.CDLL(os.environ.get('DTRACE_LIB', '/lib/libdtrace.so.2'))
-    lib.dtrace_open.argtypes = [C.c_int, C.c_int, C.POINTER(C.c_int)]
-    lib.dtrace_open.restype = C.c_void_p
-    lib.dtrace_enable_hypertrace.argtypes = [C.c_void_p]
-    lib.dtrace_program_strcompile.argtypes = [C.c_void_p, C.c_char_p, C.c_int,
-                                              C.c_uint, C.c_int, C.c_void_p]
-    lib.dtrace_program_strcompile.restype = C.c_void_p
-    lib.dtrace_elf_create.argtypes = [C.c_void_p, C.c_void_p, C.c_int,
-                                      C.c_int, C.c_char_p, C.c_char_p]
-    lib.dtrace_close.argtypes = [C.c_void_p]
-    error = C.c_int()
-    hdl = lib.dtrace_open(3, 3, C.byref(error))	# VERSION 3; NODEV | NOSYS
-    assert hdl, ('dtrace_open', error.value)
-    try:
-        lib.dtrace_enable_hypertrace(hdl)
-        prog = lib.dtrace_program_strcompile(hdl, program, 4, 0x1004, 0, None)
-        assert prog, ('compile', program)	# NAME; NOLIBS | ZDEFS
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            message = C.create_string_buffer(512)
-            assert lib.dtrace_elf_create(hdl, prog, 1, fd, os.fsencode(path),
-                                         message) == 0, message.value
-        finally:
-            os.close(fd)
-    finally:
-        lib.dtrace_close(hdl)
-    return Path(path).read_bytes()
+def guest_link(base, n):
+    """The guest's dtrace -Y: the linked program and its upload's source."""
+    linked = out / ('consumer-elf-path.linked.%d' % n)
+    p = subprocess.run([str(CONSUMER_CLIENT), 'link', str(base), str(linked)],
+                       capture_output=True, text=True, timeout=60)
+    lines = p.stdout.split()
+    if p.returncode != 0 or len(lines) < 1:
+        raise RuntimeError('guest link failed: ' + p.stdout + p.stderr)
+    return linked.read_bytes(), bytes.fromhex(lines[-1])
 
 
 def consumer_elf_path(root, proc):
-    # dtrace -E end to end through the event loop and workers, in dtrace(1)'s
-    # order and with libdtrace's transport: the ELF-only receiver registers
-    # (HPI2), the compiled base program reaches the guest, each linked guest
-    # upload reaches the receiver, and the derived program it sends with
-    # dtrace_send_elf_derived() before its ACK is published to the guest.
-    # Regression: with the default single worker, the delivery to the
-    # receiver held the worker until the ACK, the derived upload found none,
-    # and dtrace -E timed out ("failed to dtrace_send_elf()").  Two queued
+    # dtrace -E end to end through the event loop and workers, with every
+    # program from the libdtrace under test: the ELF-only receiver registers
+    # (HPI2), the compiled base program reaches the guest, the guest links it
+    # as dtrace -Y does (new identity, base as source), each linked upload
+    # reaches the receiver, which derives the guest program from it as
+    # listen_dtraced() does and sends it with dtrace_send_elf_derived()
+    # before its ACK; the derived program is published to the guest.
+    # Regressions: with the default single worker, the delivery to the
+    # receiver held the worker until the ACK and the derived upload timed
+    # out; and the derived program named its own lineage (the linked
+    # program's identity) instead of its parent's source, which dtraced
+    # refused ("failed to dtrace_send_elf(): Protocol error").  Two queued
     # uploads model a glob target; the run uses the daemon's default -t.
+    # At the session's end the KILL for the first guest program names the
+    # derived program's source, the one the guest runs it under (not the
+    # guest response's own lineage).  The guest half continues in
+    # minion-derived-program.
     d = {'steps': []}
-    base = out / 'consumer-elf-path.base'
-    derived = out / 'consumer-elf-path.derived'
-    base_elf = compiled_elf(base, b'syscall::getpid:entry { @htmark1 = count(); }')
-    derived_elf = compiled_elf(derived, b'BEGIN { trace(1); }')
+    work = out / 'consumer-elf-path.work'
+    work.mkdir(exist_ok=True)
     writer = forwarder(root, 'guest-a', session=b'\x42', subs=2)	# ELFWRITE
     reader = forwarder(root, 'guest-a', session=b'\x42', subs=1)	# READDATA
     time.sleep(0.2)
     client = subprocess.Popen([str(CONSUMER_CLIENT),
-                               os.path.join(root, 'sub.sock'), str(base),
-                               str(derived), '2'], stdin=subprocess.PIPE,
-                              stdout=subprocess.PIPE, text=True)
+                               os.path.join(root, 'sub.sock'), str(work), '2'],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              text=True)
 
     def expect(*names):
         for name in names:
@@ -1182,28 +1242,54 @@ def consumer_elf_path(root, proc):
 
     try:
         writer.settimeout(15)
-        d['registered'] = expect('rx', 'registered', 'wx', 'base')
+        d['registered'] = expect('compiled', 'rx', 'registered', 'wx', 'base')
+        if not d['registered']:
+            return {'ok': False, **d}
         hdr, body = delivered(writer)
-        d['base_to_guest'] = body == base_elf
+        d['base_to_guest'] = body is not None and \
+            body == (work / 'base').read_bytes()
+        guest_base = out / 'consumer-elf-path.guest-base'
+        guest_base.write_bytes(body or b'')
         # bhyve acknowledges each delivery as it arrives
         received = []
         guest = threading.Thread(target=lambda: received.extend(
-            delivered(writer)[1] for _ in range(2)), daemon=True)
+            delivered(writer) for _ in range(2)), daemon=True)
         guest.start()
         d['guest_acks'] = []
-        for delivery in (801, 802):
+        d['guest_source'] = []
+        for n, delivery in enumerate((801, 802)):
+            linked, source = guest_link(guest_base, n)
+            d['guest_source'].append(source == hdr[40:56])
             guest_elf_frame(reader, delivery, bytes([delivery & 0xff]),
-                            hdr[40:56], 'guest-a',
-                            b'\x7fELF' + b'LINKED-guest-%d' % delivery * 8)
+                            source, 'guest-a', linked)
             d['guest_acks'].append(recv_exact(reader, 1).hex())
-        d['derived_sent'] = expect('ingress', 'derived', 'acked') and \
-            expect('ingress', 'derived', 'acked')
+        d['derived_sent'] = \
+            expect('ingress', 'parsed', 'vprog', 'derived', 'acked',
+                   'response', 'kill') and \
+            expect('ingress', 'parsed', 'vprog', 'derived', 'acked')
         guest.join(15)
-        d['derived_to_guest'] = [body is not None and
-                                 body.endswith(derived_elf)
-                                 for body in received]
+        d['derived_to_guest'] = [
+            body is not None and (work / ('derived.%d' % n)).exists() and
+            body.endswith((work / ('derived.%d' % n)).read_bytes())
+            for n, (_, body) in enumerate(received)]
+        if received and received[0][1] is not None:
+            DERIVED.update(program=received[0][0][24:40].hex(),
+                           source=received[0][0][40:56].hex(),
+                           elf=work / 'derived.0',
+                           linked=out / 'consumer-elf-path.linked.0')
         time.sleep(0.3)
         d['stats'] = stats(root)
+        # the session ends after both publications
+        client.stdin.write('\n')
+        client.stdin.flush()
+        d['killed'] = expect('killed')
+        # handle_killmsg() journals the KILL under the source it names
+        pid = '%08x' % int((work / 'kill.0').read_text())
+        kills = [n for n in os.listdir(os.path.join(root, 'state', 'outbound'))
+                 if n.startswith('.kill.0007.') and
+                 n[28:36] == pid] if (work / 'kill.0').exists() else []
+        d['kill_source'] = [n[37:] for n in kills]
+        DERIVED['kill_source'] = d['kill_source'][0] if kills else None
     finally:
         client.stdin.close()
         try:
@@ -1214,12 +1300,16 @@ def consumer_elf_path(root, proc):
         writer.close()
         reader.close()
     ok = (d['registered'] and d['base_to_guest'] and
+          d['guest_source'] == [True, True] and
           d['guest_acks'] == ['01', '01'] and d['derived_sent'] and
-          d['derived_to_guest'] == [True, True] and d['stats'] is not None and
+          d['derived_to_guest'] == [True, True] and
+          d['killed'] and d['kill_source'] == [DERIVED.get('source')] and
+          d['stats'] is not None and
           d['stats'][1] == 3 and d['client_status'] == 0)
     return {'ok': ok and proc.poll() is None, **d}
 
 
+DERIVED = {}
 if not ONLY or 'consumer-elf-path' in ONLY:
     CONSUMER_CLIENT = consumer_client()
     live('consumer-elf-path', ['-d', '-D', '@ROOT@/state'],
@@ -1290,11 +1380,12 @@ live('host-ingest-lost-ack-replay', ['-d', '-D', '@ROOT@/state', '-t', '2'],
 def consumer_delivery_isolation(root, proc):
     # A host consumer that never acknowledges a delivery holds the worker
     # sending to it until the 60 s ACK deadline; deliveries to another host
-    # consumer must not queue behind it (the -t workers ran them side by
-    # side).  Two uploads: one delivery worker stuck on the silent consumer
-    # delays the live consumer's second delivery whatever the recipient
-    # order, and a second worker must not take the silent consumer's next
-    # delivery, which would wait on its stream as well.
+    # consumer must not queue behind it, also at the default -t 1 (the
+    # one -t worker used to run them in turn).  Two uploads: one delivery
+    # worker stuck on the silent consumer delays the live consumer's second
+    # delivery whatever the recipient order, and a second worker must not
+    # take the silent consumer's next delivery, which would wait on its
+    # stream as well.
     d = {'live': []}
     elf = b'\x7fELF' + bytes(range(40))
 
@@ -1340,7 +1431,7 @@ def consumer_delivery_isolation(root, proc):
     return {'ok': ok and proc.poll() is None, **d}
 
 
-live('consumer-delivery-isolation', ['-d', '-D', '@ROOT@/state', '-t', '2'],
+live('consumer-delivery-isolation', ['-d', '-D', '@ROOT@/state'],
      consumer_delivery_isolation, {'HT_ATTEST': '7:9:guest-a'})
 
 
@@ -1545,7 +1636,7 @@ def minion(name, identity, cleanup=None, after=None, cleanup_after=None,
            expect_err=None,
            expect_records=None, live_run=True, expect_session=None,
            journals=None, expect_files=None, record_kinds=None, answer=False,
-           body=None, max_stop_seconds=None):
+           body=None, max_stop_seconds=None, extra_env=None):
     with tempfile.TemporaryDirectory(prefix='htd-', dir='/tmp') as root:
         state = Path(root) / 'state'
         state.mkdir(mode=0o700)
@@ -1568,6 +1659,8 @@ def minion(name, identity, cleanup=None, after=None, cleanup_after=None,
                            ('HT_DTT_ANSWER', '1' if answer else None)):
             if value is not None:
                 env[key] = value
+        for key, value in (extra_env or {}).items():
+            env[key] = value.replace('@ROOT@', root)
         proc = subprocess.Popen([str(binary), '-d', '-D', str(state), '-m', '-t', '1'],
                                 env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True)
@@ -1624,6 +1717,280 @@ def minion(name, identity, cleanup=None, after=None, cleanup_after=None,
 
 # identity: flags,vmid,epoch,old_vmid,old_epoch; cleanup: flags,delivery,vmid,epoch,reserved
 minion('minion-clean-start', '0,42,99,0,0', expect_records=[])
+
+
+def wait_until(check, timeout):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if check():
+            return True
+        time.sleep(0.1)
+    return bool(check())
+
+
+def inject_line(root, line):
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(10)
+    try:
+        s.connect(os.path.join(root, 'inject.sock'))
+        s.sendall(line.encode() + b'\n')
+        return s.recv(16).decode().strip()
+    finally:
+        s.close()
+
+
+def dtt_records(root):
+    try:
+        return [line.split() for line in
+                (Path(root) / 'dtt.log').read_text().splitlines()]
+    except OSError:
+        return []
+
+
+def derived_program_in_guest(root, state):
+    # The guest half after dtraced accepted the derived program
+    # (consumer-elf-path): the guest's dtrace -Y has published the linked
+    # program with its identity; the derived program arrives as DTT_ELF
+    # with the IDs the host forwarder sent; launch_program() runs dtrace -Y
+    # (consumer-elf-path on the libdtrace under test with dtrace.c's
+    # link_acknowledged()), which acknowledges the derived program's
+    # srcident, uploads its response and reports the launch; the daemon
+    # records the installation and sends DTT_INSTALLED with the delivery's
+    # IDs; the host's KILL for the source consumer-elf-path's session sent
+    # stops it; the response leaves the guest under the derived spool's
+    # source, so that KILL also fences it: an upload under the source
+    # after the KILL is refused.  Regressions: dtrace -Y reported the
+    # srcident hypertrace_link() gave the program, not the acknowledged
+    # one, and launch_program() refused the report (EPROTO): the tracing
+    # process was killed and no INSTALLED left the guest; the response named
+    # the derived program's own lineage, which no KILL revokes.
+    d = {}
+    p = subprocess.run([str(CONSUMER_CLIENT), 'publish',
+                        os.path.join(root, 'sub.sock'), str(DERIVED['linked'])],
+                       capture_output=True, text=True, timeout=30)
+    d['published'] = p.stdout.split('\n')[:2]
+    d['elf'] = inject_line(root, 'elf 901 42 99 %s %s %s' % (
+        DERIVED['program'], DERIVED['source'], DERIVED['elf']))
+    installed = lambda: [r for r in dtt_records(root) if r[0] == '4']
+    wait_until(lambda: installed(), 15)
+    d['installed'] = installed()
+    # the response leaves the guest under the derived spool's source
+    spool = 'elf.%s.%s' % (DERIVED['program'], DERIVED['source'])
+    wait_until(lambda: len(outbound_sources(root)) == 2, 15)
+    d['response'] = outbound_sources(root)[1:]
+    d['kill'] = inject_line(root, 'kill 4243 42 99 %s' % DERIVED['kill_source'])
+    killack = lambda: [n for n in os.listdir(state / 'inbound')
+                       if n.startswith('.killack.')]
+    wait_until(lambda: killack() and
+               any(r[0] == '5' for r in dtt_records(root)), 15)
+    d['killack'] = [n[-32:] for n in killack()]
+    d['uninstalled'] = [r for r in dtt_records(root) if r[0] == '5']
+    d['upload_after_kill'] = upload_again(root, spool)
+    time.sleep(0.5)
+    d['outbound_after_kill'] = outbound_sources(root)[2:]
+    d['ok'] = (d['published'] == ['parsed ok', 'published ok'] and
+               d['elf'] == 'ok' and
+               [r[1:] for r in d['installed']] ==
+               [['901', '42', '99', DERIVED['program'], DERIVED['source']]] and
+               d['response'] == [DERIVED['source']] and
+               d['killack'] == [DERIVED['source']] and
+               len(d['uninstalled']) == 1 and
+               d['upload_after_kill'] == ['parsed ok', 'uploaded FAIL'] and
+               d['outbound_after_kill'] == [])
+    return d
+
+
+def outbound_sources(root):
+    """The source of each ELF the guest sent to the host, in order (one
+    record per fragment)."""
+    sent = {}
+    for r in dtt_records(root):
+        if r[0] == '1' and len(r) > 5:
+            sent.setdefault(r[4], r[5])
+    return list(sent.values())
+
+
+def upload_again(root, spool):
+    p = subprocess.run([str(CONSUMER_CLIENT), 'upload',
+                        os.path.join(root, 'sub.sock'),
+                        '%s,guest,%s' % (spool, spool.split('.')[2]),
+                        os.path.join(root, 'linked.' + spool)],
+                       capture_output=True, text=True, timeout=30)
+    return [line.split(' ')[0] + ' ' + line.split(' ')[1]
+            for line in p.stdout.split('\n') if line][:2]
+
+
+def derived_sessions_in_guest(root, state):
+    # Sessions overlapping on one guest, all through the real
+    # launch_program() and dtrace -Y (consumer-elf-path as HT_EXEC_DTRACE):
+    # sessions 1 and 2 each deliver a base program; the guest links and
+    # uploads both before either derived program arrives, then both derived
+    # programs are installed and their responses leave under their spools'
+    # sources.  Session 3's derived program never arrives; session 4 still
+    # works.  A KILL for session 3's source drops its listed identifier
+    # (session 5's base launch gets none), and a KILL for session 1 fences
+    # its response.  Regression: with an identifier listed, every base
+    # program was refused by dtrace -Y's parser ("FAIL FAIL") and never
+    # linked, so only the first of overlapping sessions worked, and none
+    # after a guest missed a derived program.
+    d = {'linked': {}, 'idents': {}}
+    work = Path(root) / 'work'
+    work.mkdir()
+    sources = {}
+
+    def base(n):
+        p = subprocess.run([str(CONSUMER_CLIENT), 'compile',
+                            str(work / ('base.%d' % n))],
+                           capture_output=True, text=True, timeout=30)
+        sources[n] = p.stdout.split()[-1]
+        program = '%032x' % (0xb0 + n)
+        spool = 'elf.%s.%s' % (program, sources[n])
+        d['linked'][n] = inject_line(root, 'elf %d 42 99 %s %s %s' % (
+            910 + n, program, sources[n], work / ('base.%d' % n))) == 'ok' and \
+            wait_until(lambda: (Path(root) / ('linked.' + spool)).exists() and
+                       sources[n] in outbound_sources(root), 15)
+        return spool
+
+    def derived(n, spool):
+        program = '%032x' % (0xd0 + n)
+        p = subprocess.run([str(CONSUMER_CLIENT), 'derive',
+                            str(work / ('base.%d' % n)),
+                            os.path.join(root, 'linked.' + spool),
+                            str(work / ('derived.%d' % n))],
+                           capture_output=True, text=True, timeout=30)
+        if p.returncode != 0:
+            d['derive.%d' % n] = p.stdout + p.stderr
+            return None
+        inject_line(root, 'elf %d 42 99 %s %s %s' % (
+            920 + n, program, sources[n], work / ('derived.%d' % n)))
+        return 'elf.%s.%s' % (program, sources[n])
+
+    def idents(spool):
+        if spool is None:
+            return None
+        try:
+            return int((Path(root) / ('idents.' + spool)).read_text())
+        except (OSError, ValueError):
+            return None
+
+    installed = lambda: sorted(r[1] for r in dtt_records(root) if r[0] == '4')
+    first, second = base(1), base(2)
+    spools = [derived(1, first)]
+    wait_until(lambda: installed() == ['921'], 15)
+    spools.append(derived(2, second))
+    wait_until(lambda: installed() == ['921', '922'], 15)
+    d['installed'] = installed()
+    d['idents'].update({'base.2': idents(second), 'derived.1': idents(spools[0]),
+                        'derived.2': idents(spools[1])})
+    third = base(3)	# its derived program never arrives
+    fourth = base(4)
+    spools.append(derived(4, fourth))
+    wait_until(lambda: installed() == ['921', '922', '924'], 15)
+    d['installed_after_miss'] = installed()
+    d['idents']['derived.4'] = idents(spools[2])
+    d['responses'] = [s for s in outbound_sources(root)
+                      if s in (sources[1], sources[2], sources[4])]
+    d['kill.3'] = inject_line(root, 'kill 4243 42 99 %s' % sources[3])
+    wait_until(lambda: len([n for n in os.listdir(state / 'inbound')
+                            if n.startswith('.killack.')]) == 1, 15)
+    fifth = base(5)
+    d['idents']['base.5'] = idents(fifth)
+    d['kill.1'] = inject_line(root, 'kill 4244 42 99 %s' % sources[1])
+    wait_until(lambda: len([n for n in os.listdir(state / 'inbound')
+                            if n.startswith('.killack.')]) == 2, 15)
+    d['upload_after_kill'] = upload_again(root, spools[0]) if spools[0] else None
+    d['ok'] = (d['linked'] == {n: True for n in (1, 2, 3, 4, 5)} and
+               d['installed'] == ['921', '922'] and
+               d['installed_after_miss'] == ['921', '922', '924'] and
+               d['idents'] == {'base.2': 1, 'derived.1': 2, 'derived.2': 1,
+                               'derived.4': 2, 'base.5': 0} and
+               # each base upload and each response under its source
+               d['responses'] == [sources[1], sources[2], sources[1],
+                                  sources[2], sources[4], sources[4]] and
+               d['kill.3'] == 'ok' and d['kill.1'] == 'ok' and
+               d['upload_after_kill'] == ['parsed ok', 'uploaded FAIL'])
+    return d
+
+
+def derived_kill_race_in_guest(root, state):
+    # A KILL lands between a guest upload's revocation check and its
+    # publication (HT_REVOKED_CHECK_HOLD holds the check's answer): the
+    # upload and its listed identifier precede the KILL, which drops the
+    # identifier, so the next base launch gets none.  Regression: the check
+    # ran before identlistmtx was taken; dtt_kill() revoked and dropped the
+    # source's identifiers inside that window, the upload then listed its
+    # identifier under the revoked source and every later launch got it.
+    d = {}
+    work = Path(root) / 'work'
+    work.mkdir()
+    hold = Path(root) / 'revoked-check'
+
+    def base(n):
+        p = subprocess.run([str(CONSUMER_CLIENT), 'compile',
+                            str(work / ('base.%d' % n))],
+                           capture_output=True, text=True, timeout=30)
+        source = p.stdout.split()[-1]
+        program = '%032x' % (0xb0 + n)
+        d['elf.%d' % n] = inject_line(root, 'elf %d 42 99 %s %s %s' % (
+            910 + n, program, source, work / ('base.%d' % n)))
+        return source, 'elf.%s.%s' % (program, source)
+
+    killacks = lambda: [n for n in os.listdir(state / 'inbound')
+                        if n.startswith('.killack.')]
+    hold.write_text('')
+    source, _ = base(1)
+    d['held'] = wait_until(lambda: Path(str(hold) + '.held').exists(), 15)
+    d['kill'] = inject_line(root, 'kill 4243 42 99 %s' % source)
+    # informational: the fixed daemon finishes the KILL only after the
+    # held upload is published
+    d['killed_while_held'] = wait_until(killacks, 1)
+    Path(str(hold) + '.release').write_text('')
+    d['killed'] = wait_until(killacks, 15)
+    _, second = base(2)
+    wait_until(lambda: (Path(root) / ('idents.' + second)).exists(), 15)
+    try:
+        d['idents.base.2'] = int((Path(root) / ('idents.' + second)).read_text())
+    except (OSError, ValueError):
+        d['idents.base.2'] = None
+    d['ok'] = (d['elf.1'] == 'ok' and d['held'] and d['kill'] == 'ok' and
+               d['killed'] and d['elf.2'] == 'ok' and d['idents.base.2'] == 0)
+    return d
+
+
+if (not ONLY or 'minion-derived-program' in ONLY) and DERIVED.get('kill_source'):
+    minion('minion-derived-program', '0,42,99,0,0', answer=True,
+           body=derived_program_in_guest,
+           extra_env={'HT_DTT_ACK': '1', 'HT_PD_BIRTH': '1',
+                      'HT_DTT_CLEANUP': '0,0,0,0,0',
+                      'HT_DTT_INJECT': '@ROOT@/inject.sock',
+                      'HT_DTT_LOG': '@ROOT@/dtt.log', 'HT_DTT_LOG_IDS': '1',
+                      'HT_EXEC_DTRACE': str(CONSUMER_CLIENT)})
+elif not ONLY or 'minion-derived-program' in ONLY:
+    results.append({'case': 'minion-derived-program', 'status': None,
+                    'passed': False, 'records': [],
+                    'detail': {'error': 'consumer-elf-path left no derived '
+                               'program and KILL source'}, 'stderr': ''})
+if not ONLY or 'minion-derived-sessions' in ONLY:
+    if 'CONSUMER_CLIENT' not in globals():
+        CONSUMER_CLIENT = consumer_client()
+    minion('minion-derived-sessions', '0,42,99,0,0', answer=True,
+           body=derived_sessions_in_guest,
+           extra_env={'HT_DTT_ACK': '1', 'HT_PD_BIRTH': '1',
+                      'HT_DTT_CLEANUP': '0,0,0,0,0',
+                      'HT_DTT_INJECT': '@ROOT@/inject.sock',
+                      'HT_DTT_LOG': '@ROOT@/dtt.log', 'HT_DTT_LOG_IDS': '1',
+                      'HT_EXEC_DTRACE': str(CONSUMER_CLIENT)})
+if not ONLY or 'minion-derived-kill-race' in ONLY:
+    if 'CONSUMER_CLIENT' not in globals():
+        CONSUMER_CLIENT = consumer_client()
+    minion('minion-derived-kill-race', '0,42,99,0,0', answer=True,
+           body=derived_kill_race_in_guest,
+           extra_env={'HT_DTT_ACK': '1', 'HT_PD_BIRTH': '1',
+                      'HT_DTT_CLEANUP': '0,0,0,0,0',
+                      'HT_DTT_INJECT': '@ROOT@/inject.sock',
+                      'HT_DTT_LOG': '@ROOT@/dtt.log', 'HT_DTT_LOG_IDS': '1',
+                      'HT_EXEC_DTRACE': str(CONSUMER_CLIENT),
+                      'HT_REVOKED_CHECK_HOLD': '@ROOT@/revoked-check'})
 # Regression: the transport writer waited out its 10 s idle read deadline
 # before noticing shutdown; a guest daemon now exits promptly on SIGTERM.
 minion('minion-prompt-shutdown', '0,42,99,0,0', answer=True,

@@ -83,7 +83,8 @@ static int pci_vtcrypto_debug;
 #define	WPRINTF(msg, ...)	PRINTLN("virtio-crypto: " msg, ##__VA_ARGS__)
 
 #define	VTCRYPTO_RINGSZ			64
-#define	VTCRYPTO_MAXSEG			32
+/* vq_getchain() bounds a chain by the queue size: every chain fits. */
+#define	VTCRYPTO_MAXSEG			VTCRYPTO_RINGSZ
 #define	VTCRYPTO_MAX_DATAQ		8
 #define	VTCRYPTO_MAXQ			(VTCRYPTO_MAX_DATAQ + 1)
 #define	VTCRYPTO_DEFAULT_MAXSESSIONS	64u
@@ -99,6 +100,7 @@ static int pci_vtcrypto_debug;
 #define	VIRTIO_CRYPTO_SERVICE_HASH	1
 #define	VIRTIO_CRYPTO_SERVICE_MAC	2
 #define	VIRTIO_CRYPTO_SERVICE_AEAD	3
+#define	VIRTIO_CRYPTO_SERVICE_AKCIPHER	4	/* not offered */
 
 #define	VIRTIO_CRYPTO_OPCODE(service, op)	(((service) << 8) | (op))
 
@@ -119,6 +121,10 @@ static int pci_vtcrypto_debug;
 	VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AEAD, 0x02)
 #define	VIRTIO_CRYPTO_AEAD_DESTROY_SESSION	\
 	VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AEAD, 0x03)
+#define	VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION	\
+	VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x04)
+#define	VIRTIO_CRYPTO_AKCIPHER_DESTROY_SESSION	\
+	VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x05)
 
 /* Data queue opcodes (section 5.9.7.2). */
 #define	VIRTIO_CRYPTO_CIPHER_ENCRYPT	\
@@ -748,6 +754,65 @@ vtcrypto_destroy(struct pci_vtcrypto_softc *sc, const uint8_t *req,
 	return (VIRTIO_CRYPTO_OK);
 }
 
+/*
+ * Whether the reply to a control opcode is a session_input (le64 session_id,
+ * le32 status) rather than the one-byte inhdr: the create-session opcodes of
+ * every service, including AKCIPHER, which this device does not offer.
+ */
+static bool
+vtcrypto_ctrl_replies_session_input(uint32_t opcode)
+{
+
+	switch (opcode) {
+	case VIRTIO_CRYPTO_CIPHER_CREATE_SESSION:
+	case VIRTIO_CRYPTO_HASH_CREATE_SESSION:
+	case VIRTIO_CRYPTO_MAC_CREATE_SESSION:
+	case VIRTIO_CRYPTO_AEAD_CREATE_SESSION:
+	case VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
+/*
+ * Return a control request without processing it.  When its opcode is
+ * readable, write VIRTIO_CRYPTO_ERR where the reply to that opcode carries the
+ * status: the session_input of a create-session opcode, else the one-byte
+ * inhdr.  The inhdr is defined for the destroy-session opcodes only; for an
+ * opcode the specification does not define it is the device's best guess.
+ */
+static void
+pci_vtcrypto_control_reject(struct vqueue_info *vq, struct vi_req *vireq,
+    const struct iovec *iov, int n)
+{
+	uint8_t input[VTCRYPTO_SESSION_INPUT_LEN];
+	uint8_t opcode[4];
+	const struct iovec *wiov;
+	uint8_t status;
+
+	status = VIRTIO_CRYPTO_ERR;
+	if (n <= VTCRYPTO_MAXSEG && vireq->ordered && vireq->readable >= 1 &&
+	    vireq->writable >= 1 && vireq->readable + vireq->writable == n &&
+	    iov_pull(iov, vireq->readable, 0, opcode, sizeof(opcode))) {
+		wiov = &iov[vireq->readable];
+		if (vtcrypto_ctrl_replies_session_input(ld32(opcode))) {
+			/* session_input: le64 session_id, le32 status, pad. */
+			memset(input, 0, sizeof(input));
+			st32(input + 8, status);
+			if (iov_push(wiov, vireq->writable, 0, input,
+			    sizeof(input))) {
+				vq_relchain_req(vq, vireq, sizeof(input));
+				return;
+			}
+		} else if (iov_push(wiov, vireq->writable, 0, &status, 1)) {
+			vq_relchain_req(vq, vireq, 1);
+			return;
+		}
+	}
+	vq_relchain_req(vq, vireq, 0);
+}
+
 static void
 pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 {
@@ -756,7 +821,7 @@ pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 	uint8_t input[VTCRYPTO_SESSION_INPUT_LEN];
 	struct vi_req vireq;
 	struct iovec *riov, *wiov;
-	uint32_t opcode, service, op;
+	uint32_t opcode, service;
 	uint64_t id;
 	uint8_t status;
 	uint16_t budget;
@@ -773,7 +838,7 @@ pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 		    vireq.readable < 1 || vireq.writable < 1 ||
 		    vireq.readable + vireq.writable != n) {
 			WPRINTF("invalid control descriptor chain");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_control_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		riov = &iov[0];
@@ -783,15 +848,14 @@ pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 
 		if (!iov_pull(riov, rniov, 0, req, sizeof(req))) {
 			WPRINTF("truncated control request");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_control_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		opcode = ld32(req + 0);
 		service = opcode >> 8;
-		op = opcode & 0xff;
 		id = 0;
 		status = VIRTIO_CRYPTO_NOTSUPP;
-		is_create = (op == 0x02);
+		is_create = vtcrypto_ctrl_replies_session_input(opcode);
 
 		pthread_mutex_lock(&sc->vcs_mtx);
 		switch (opcode) {
@@ -814,11 +878,9 @@ pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 		case VIRTIO_CRYPTO_MAC_DESTROY_SESSION:
 		case VIRTIO_CRYPTO_AEAD_DESTROY_SESSION:
 			status = vtcrypto_destroy(sc, req, service);
-			is_create = false;
 			break;
 		default:
 			status = VIRTIO_CRYPTO_NOTSUPP;
-			is_create = false;
 			break;
 		}
 		pthread_mutex_unlock(&sc->vcs_mtx);
@@ -1069,6 +1131,33 @@ out:
 	return (status);
 }
 
+/*
+ * Return a data request without processing it.  When the chain shows where
+ * the status byte is (the final writable byte), write VIRTIO_CRYPTO_ERR
+ * there, so the driver never reads a status the device did not write.
+ */
+static void
+pci_vtcrypto_data_reject(struct vqueue_info *vq, struct vi_req *vireq,
+    const struct iovec *iov, int n)
+{
+	const struct iovec *wiov;
+	size_t wtotal;
+	uint8_t status;
+
+	status = VIRTIO_CRYPTO_ERR;
+	if (n <= VTCRYPTO_MAXSEG && vireq->ordered && vireq->writable >= 1 &&
+	    vireq->readable + vireq->writable == n) {
+		wiov = &iov[vireq->readable];
+		wtotal = iov_total(wiov, vireq->writable);
+		if (wtotal >= 1 &&
+		    iov_push(wiov, vireq->writable, wtotal - 1, &status, 1)) {
+			vq_relchain_req(vq, vireq, 1);
+			return;
+		}
+	}
+	vq_relchain_req(vq, vireq, 0);
+}
+
 static void
 pci_vtcrypto_data(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 {
@@ -1094,7 +1183,7 @@ pci_vtcrypto_data(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 		    vireq.readable < 1 || vireq.writable < 1 ||
 		    vireq.readable + vireq.writable != n) {
 			WPRINTF("invalid data descriptor chain");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_data_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		riov = &iov[0];
@@ -1109,7 +1198,7 @@ pci_vtcrypto_data(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 
 		if (!iov_pull(riov, rniov, 0, hdr, sizeof(hdr))) {
 			WPRINTF("truncated data request");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_data_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		opcode = ld32(hdr + 0);

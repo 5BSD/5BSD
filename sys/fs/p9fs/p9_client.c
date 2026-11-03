@@ -115,6 +115,11 @@ p9_parse_opts(struct mount  *mp, struct p9_client *clnt)
 		    clnt->msize, P9FS_MTU);
 		return (EINVAL);
 	}
+	if (clnt->msize < P9FS_MIN_MSIZE) {
+		vfs_mount_error(mp, "msize %u is less than min allowed %u",
+		    clnt->msize, P9FS_MIN_MSIZE);
+		return (EINVAL);
+	}
 
 	/* Get the default trans callback */
 	clnt->ops = p9_get_trans_by_name(trans);
@@ -162,7 +167,11 @@ p9_get_request(struct p9_client *clnt, int *error)
 	int alloc_msize;
 	uint16_t tag;
 
-	alloc_msize = P9FS_MTU;
+	/*
+	 * The zone holds P9FS_MTU bytes, but no message may exceed msize; the
+	 * transport maps only the capacity of each buffer.
+	 */
+	alloc_msize = clnt->msize;
 
 	req = uma_zalloc(p9fs_req_zone, M_WAITOK | M_ZERO);
 	p9_buffer_alloc(&req->tc, alloc_msize);
@@ -534,7 +543,9 @@ p9_client_version(struct p9_client *c)
 	}
 
 	/* limit the msize .*/
-	if (msize < (int)P9_WIRE_HEADER_SIZE) {
+	if (msize < P9FS_MIN_MSIZE) {
+		P9_DEBUG(ERROR, "%s: server msize %d is too small\n",
+		    __func__, msize);
 		error = EPROTO;
 		goto out;
 	}
@@ -581,6 +592,7 @@ struct p9_client *
 p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 {
 	struct p9_client *clnt;
+	u_int maxsize;
 	bool pools_initialized, transport_acquired, transport_created;
 
 	clnt = malloc(sizeof(struct p9_client), M_P9CLNT, M_WAITOK | M_ZERO);
@@ -618,6 +630,17 @@ p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 		goto out;
 	}
 	transport_created = true;
+
+	/* A transport without a limit carries any message p9fs builds. */
+	if (clnt->ops->maxsize != NULL)
+		maxsize = clnt->ops->maxsize(clnt->handle);
+	else
+		maxsize = P9FS_MTU;
+	if (clnt->msize > maxsize) {
+		printf("p9fs: limiting msize to %u, the maximum supported "
+		    "by transport %s\n", maxsize, clnt->ops->name);
+		clnt->msize = maxsize;
+	}
 	p9_client_connect(clnt);
 
 	*error = p9_client_version(clnt);
@@ -939,8 +962,8 @@ p9_client_readdir(struct p9_fid *fid, char *data, uint64_t offset,
 	rsize = fid->mtu;
 	clnt = fid->clnt;
 
-	if (rsize == 0 || rsize > clnt->msize)
-		rsize = clnt->msize;
+	if (rsize == 0 || rsize > clnt->msize - P9_IOHDRSZ)
+		rsize = clnt->msize - P9_IOHDRSZ;
 
 	if (count < rsize)
 		rsize = count;
@@ -999,8 +1022,8 @@ p9_client_read(struct p9_fid *fid, uint64_t offset, uint32_t count, char *data)
 	P9_DEBUG(PROTO, "TREAD fid %d offset %llu %u\n",
 	    fid->fid, (unsigned long long) offset, count);
 
-	if (!rsize || rsize > clnt->msize)
-		rsize = clnt->msize;
+	if (!rsize || rsize > clnt->msize - P9_IOHDRSZ)
+		rsize = clnt->msize - P9_IOHDRSZ;
 
 	if (count < rsize)
 		rsize = count;
@@ -1074,8 +1097,8 @@ p9_client_write(struct p9_fid *fid, uint64_t offset, uint32_t count, char *data)
 	P9_DEBUG(PROTO, "TWRITE fid %d offset %llu  %u\n",
 	    fid->fid, (unsigned long long) offset, count);
 
-	if (!rsize || rsize > clnt->msize)
-		rsize = clnt->msize;
+	if (!rsize || rsize > clnt->msize - P9_IOHDRSZ)
+		rsize = clnt->msize - P9_IOHDRSZ;
 
 	/* Limit set by Qemu ,8168 */
 	if (count > rsize) {

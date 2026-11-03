@@ -43,6 +43,14 @@ int	virtio_fs_connection_connect_required(const char *, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *, uint32_t, uint32_t,
 	    uint32_t, virtio_fs_queue_complete_cb, void *,
 	    struct virtio_fs_connection **);
+/*
+ * As connect_required(), relative to a directory descriptor opened by
+ * virtio_fs_backend_dir_open(); usable after cap_enter(2).
+ */
+int	virtio_fs_connection_connect_required_at(int, const char *, uid_t,
+	    gid_t, const struct virtio_fs_backend_hello *, uint32_t, uint32_t,
+	    uint32_t, virtio_fs_queue_complete_cb, void *,
+	    struct virtio_fs_connection **);
 int	virtio_fs_connection_adopt(int, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *, uint32_t, uint32_t,
 	    virtio_fs_queue_complete_cb, void *,
@@ -66,15 +74,14 @@ uint32_t virtio_fs_connection_events(struct virtio_fs_connection *);
 /*
  * progress() never waits: a frame that moves in pieces is resumed by later
  * readiness callbacks and progress() returns EAGAIN meanwhile.  deadline()
- * reports when such a frame must next make progress; expire() fails the
- * connection with ETIMEDOUT once "now" (NULL: the current time) has reached
- * it.  progress() checks the deadline itself; a caller that may see no
- * further readiness arms a timer.
+ * reports when such a frame must next make progress.  progress() fails the
+ * connection with ETIMEDOUT only when that frame cannot move at all once the
+ * deadline has passed, so a callback that runs late finds a ready peer
+ * healthy.  A caller that may see no further readiness arms a timer and
+ * calls progress() for both directions when it fires.
  */
 bool	virtio_fs_connection_deadline(const struct virtio_fs_connection *,
 	    struct timespec *);
-int	virtio_fs_connection_expire(struct virtio_fs_connection *,
-	    const struct timespec *);
 int	virtio_fs_connection_progress(struct virtio_fs_connection *,
 	    bool, bool);
 bool	virtio_fs_connection_active(

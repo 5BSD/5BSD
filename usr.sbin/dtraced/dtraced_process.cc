@@ -546,9 +546,20 @@ launch_program(state &s, const std::string &path, bool host,
         if (s.identlist.size() > max_request_bytes / DTRACED_PROGIDENTLEN) {
             errno = E2BIG; return false;
         }
-        identifiers.assign(s.identlist.begin(), s.identlist.end());
+        for (const auto &listed : s.identlist)
+            identifiers.push_back(listed.ident);
     }
+    /* dtrace -Y FILE,guest,SOURCE uploads the linked program under the
+     * source this delivery was spooled with, the one its KILL revokes. */
     std::string input = path + (host ? ",host" : "");
+    if (sourced) {
+        static const char digits[] = "0123456789abcdef";
+        input += ",guest,";
+        for (uint8_t byte : source) {
+            input += digits[byte >> 4];
+            input += digits[byte & 0xf];
+        }
+    }
     bool has_identifiers = !identifiers.empty();
     if (require_report && !has_identifiers) {
         errno = EAGAIN;
@@ -677,9 +688,13 @@ child_error:
             return false;
         if (memcmp(reply, "FAIL FAIL", sizeof(reply)) == 0)
             return true; /* The owned child is stopped and reaped on exit. */
+        /* A program compiled on the host (no srcident) is none of the
+         * listed ones: acknowledged with no identifier, never installed. */
+        const std::array<char, DTRACED_PROGIDENTLEN> no_ident{};
         if (memcmp(reply, "DEL ident", sizeof(reply)) != 0 ||
             dtraced_io_transfer(parent.fd, selected.data(), selected.size(), false, deadline, &transferred) != 0 ||
-            std::find(identifiers.begin(), identifiers.end(), selected) == identifiers.end()) {
+            (selected != no_ident &&
+            std::find(identifiers.begin(), identifiers.end(), selected) == identifiers.end())) {
             errno = EPROTO; return false;
         }
 		dtraced_launch_result_t result{};
@@ -690,7 +705,7 @@ child_error:
 			return false;
 		const uint8_t zero_reserved[sizeof(result.reserved)] = {};
 		if (result.magic != DTRACED_LAUNCH_MAGIC ||
-		    result.installed > 1 ||
+		    result.installed > (selected != no_ident) ||
 		    memcmp(result.reserved, zero_reserved,
 		    sizeof(result.reserved)) != 0 ||
 		    memcmp(result.source_ident, selected.data(),
@@ -743,7 +758,8 @@ child_error:
     }
     if (has_identifiers) {
         std::lock_guard lock(s.identlistmtx);
-        auto found = std::find(s.identlist.begin(), s.identlist.end(), selected);
+        auto found = std::find_if(s.identlist.begin(), s.identlist.end(),
+            [&](const state::listed_ident &listed) { return listed.ident == selected; });
         if (found != s.identlist.end()) s.identlist.erase(found);
     }
     if (installed != nullptr)

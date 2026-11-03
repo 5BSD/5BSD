@@ -22,7 +22,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd May 18, 2026
+.Dd November 3, 2026
 .Dt P9FS 4
 .Os
 .Sh NAME
@@ -71,6 +71,16 @@ like this:
 .Bd -literal -offset indent
 mysharename	/mnt	p9fs	rw	0	0
 .Ed
+.Pp
+The
+.Cm msize
+mount option sets the largest 9P message, from 4096 to the default of
+131072 bytes; the host may lower it further.
+Each message buffer is mapped page by page into the virtio request queue.
+A device that does not offer indirect descriptors and whose queue cannot
+hold two such buffers carries a smaller
+.Cm msize ,
+which the mount uses and reports on the console.
 .Pp
 Using
 .Nm

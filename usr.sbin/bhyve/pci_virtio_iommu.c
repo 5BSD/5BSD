@@ -242,6 +242,14 @@ pci_vtiommu_callback_ready_locked(struct pci_vtiommu_softc *sc,
 	if (atomic_load_explicit(&vs->vs_resetting, memory_order_acquire) ||
 	    (vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
 		return (false);
+	/*
+	 * As vi_pci_notify_queue(): a queue the driver has not enabled has no
+	 * ring to replay.  Latching a deferred kick on it would publish a
+	 * state (notify pending on a disabled queue) which checkpoint save
+	 * rejects; the driver kicks the queue itself once it is enabled.
+	 */
+	if (!vq->vq_enabled || vq_is_resetting(vq))
+		return (false);
 	if (vs->vs_quiescing || vs->vs_suspended ||
 	    vs->vs_checkpoint_paused ||
 	    (vs->vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0) {

@@ -85,6 +85,7 @@ fbsdrun_virtio_msix(void)
 	return (1);
 }
 
+#ifndef VIRTIO_IOMMU_POST_INIT_GUEST_MEMORY
 void *
 paddr_guest2host(struct vmctx *ctx __unused, uintptr_t addr __unused,
     size_t len __unused)
@@ -92,6 +93,7 @@ paddr_guest2host(struct vmctx *ctx __unused, uintptr_t addr __unused,
 
 	return (NULL);
 }
+#endif
 
 /*
  * Model of pci_emul.c's deferred BAR list.  pci_emul_alloc_bar() records
@@ -423,6 +425,7 @@ ATF_TC_BODY(host_topology_post_init_binds_endpoint, tc)
 	    VIRTIO_F_ACCESS_PLATFORM) != 0);
 }
 
+#ifndef VIRTIO_IOMMU_POST_INIT_NO_TP
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -430,3 +433,4 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, host_topology_post_init_binds_endpoint);
 	return (atf_no_error());
 }
+#endif

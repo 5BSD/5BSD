@@ -335,8 +335,10 @@ state::setup_threads(void)
 		this->directory_start_error = 0;
 	}
 	try {
-		this->workers.resize(this->threadpool_size *
-		    (this->ctrlmachine != 0 ? 2 : 1));
+		this->workers.resize(this->threadpool_size +
+		    (this->ctrlmachine != 0 ? std::max<size_t>(
+		    this->threadpool_size, DTRACED_CONSUMER_DELIVERY_WORKERS) :
+		    0));
 		for (size_t i = 0; i < this->threadpool_size; i++)
 			this->workers[i] = std::thread(&state::process_joblist, this);
 		for (size_t i = this->threadpool_size; i < this->workers.size(); i++)
@@ -896,8 +898,8 @@ state::accept_new_connection(void)
 	}
 
 	if (setsockopt(connsockfd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on))) {
-		close(connsockfd);
 		ERR("setsockopt() failed: %m");
+		close(connsockfd);
 		return (false);
 	}
 
@@ -907,23 +909,23 @@ state::accept_new_connection(void)
 	dtraced_wire_encode_init(init_wire, &initmsg);
 	if (!socket_transfer(connsockfd, init_wire, sizeof(init_wire), true,
 	    std::chrono::seconds(2))) {
-		close(connsockfd);
 		ERR("send() initmsg to connsockfd failed: %m");
+		close(connsockfd);
 		return (false);
 	}
 
 	if (!socket_transfer(connsockfd, init_wire, sizeof(init_wire), false,
 	    std::chrono::seconds(2))) {
-		close(connsockfd);
 		ERR("recv() get initmsg failed: %m");
+		close(connsockfd);
 		return (false);
 	}
 	dtraced_wire_decode_init(&initmsg, init_wire);
 	if (!valid_initmsg(initmsg)) {
-		close(connsockfd);
 		errno = EPROTO;
 		ERR("refused client hello (kind %d, subscriptions 0x%jx): %m",
 		    (int)initmsg.kind, (uintmax_t)initmsg.subs);
+		close(connsockfd);
 		return (false);
 	}
 	if (this->ctrlmachine == 1 &&
@@ -2335,10 +2337,11 @@ state::handle_job(job *j)
  * That read needs a worker of its own: on a control machine host consumer
  * deliveries run only on process_consumer_deliveries(), every other job only
  * on process_joblist().  There are as many delivery workers as -t workers,
- * and each consumer has at most one delivery running, so a consumer that
- * does not acknowledge holds one delivery worker and none of its queued
- * deliveries waits on its stream in another.  A minion has no consumer
- * delivery worker.
+ * but at least DTRACED_CONSUMER_DELIVERY_WORKERS so that the default -t 1
+ * does not serialize consumers, and each consumer has at most one delivery
+ * running, so a consumer that does not acknowledge holds one delivery worker
+ * and none of its queued deliveries waits on its stream in another.  A
+ * minion has no consumer delivery worker.
  */
 static bool
 consumer_delivery(int ctrlmachine, const job *j)

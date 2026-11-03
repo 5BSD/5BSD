@@ -74,24 +74,29 @@ virtio_fs_backend_connect_finish(int fd, uid_t expected_uid,
 	    expected_gid));
 }
 
+/*
+ * Resolve a backend socket path to its parent directory and final name.
+ * bhyve opens the directory once, before cap_enter(2), and reconnects with
+ * connectat(2) relative to it after a device reset: capability mode forbids
+ * the absolute-path open() that a path-based reconnect needs.
+ */
 int
-virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
-    gid_t expected_gid, int *result_fd, bool *connecting)
+virtio_fs_backend_dir_open(const char *path, int *dfdp, char **namep)
 {
-	struct sockaddr_un address;
 	char *name, *parent;
 	size_t name_len;
-	int dfd, error, fd;
+	int dfd, error;
 
-	if (result_fd == NULL || connecting == NULL)
+	if (dfdp == NULL || namep == NULL)
 		return (EINVAL);
-	*result_fd = -1;
-	*connecting = false;
+	*dfdp = -1;
+	*namep = NULL;
 	error = virtio_fs_backend_path_split(path, &parent, &name);
 	if (error != 0)
 		return (error);
 	name_len = strlen(name);
-	if (name_len == 0 || name_len >= sizeof(address.sun_path)) {
+	if (name_len == 0 ||
+	    name_len >= sizeof(((struct sockaddr_un *)NULL)->sun_path)) {
 		free(name);
 		free(parent);
 		return (ENAMETOOLONG);
@@ -103,30 +108,45 @@ virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
 		free(name);
 		return (error);
 	}
+	*dfdp = dfd;
+	*namep = name;
+	return (0);
+}
+
+int
+virtio_fs_backend_connect_start_at(int dfd, const char *name,
+    uid_t expected_uid, gid_t expected_gid, int *result_fd, bool *connecting)
+{
+	struct sockaddr_un address;
+	size_t name_len;
+	int error, fd;
+
+	if (result_fd == NULL || connecting == NULL)
+		return (EINVAL);
+	*result_fd = -1;
+	*connecting = false;
+	if (dfd < 0 || name == NULL || strchr(name, '/') != NULL)
+		return (EINVAL);
+	name_len = strlen(name);
+	if (name_len == 0 || name_len >= sizeof(address.sun_path))
+		return (ENAMETOOLONG);
 	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-	if (fd < 0) {
-		error = errno;
-		(void)close(dfd);
-		free(name);
-		return (error);
-	}
+	if (fd < 0)
+		return (errno);
 	memset(&address, 0, sizeof(address));
 	address.sun_family = AF_UNIX;
 	address.sun_len = (uint8_t)(offsetof(struct sockaddr_un, sun_path) +
 	    name_len + 1);
 	memcpy(address.sun_path, name, name_len + 1);
-	free(name);
 	if (connectat(dfd, fd, (struct sockaddr *)&address,
 	    address.sun_len) != 0) {
 		error = errno;
-		(void)close(dfd);
 		if (error != EINPROGRESS) {
 			(void)close(fd);
 			return (error);
 		}
 		*connecting = true;
 	} else {
-		(void)close(dfd);
 		error = virtio_fs_backend_connect_finish(fd, expected_uid,
 		    expected_gid);
 		if (error != 0) {
@@ -136,6 +156,27 @@ virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
 	}
 	*result_fd = fd;
 	return (0);
+}
+
+int
+virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
+    gid_t expected_gid, int *result_fd, bool *connecting)
+{
+	char *name;
+	int dfd, error;
+
+	if (result_fd == NULL || connecting == NULL)
+		return (EINVAL);
+	*result_fd = -1;
+	*connecting = false;
+	error = virtio_fs_backend_dir_open(path, &dfd, &name);
+	if (error != 0)
+		return (error);
+	error = virtio_fs_backend_connect_start_at(dfd, name, expected_uid,
+	    expected_gid, result_fd, connecting);
+	(void)close(dfd);
+	free(name);
+	return (error);
 }
 
 static void
@@ -283,6 +324,14 @@ virtio_fs_backend_stream_sending(const struct virtio_fs_backend_stream *stream)
 	return (stream->send_tail != NULL);
 }
 
+bool
+virtio_fs_backend_stream_receiving(
+    const struct virtio_fs_backend_stream *stream)
+{
+
+	return (stream->receive_done != 0);
+}
+
 /*
  * Report the earliest progress deadline of a partly transferred frame.
  */
@@ -311,8 +360,6 @@ virtio_fs_backend_stream_flush(struct virtio_fs_backend_stream *stream, int fd)
 
 	if (stream->send_tail == NULL)
 		return (0);
-	if (virtio_fs_backend_deadline_passed(&stream->send_deadline))
-		return (ETIMEDOUT);
 	vector.iov_base = stream->send_tail + stream->send_done;
 	vector.iov_len = stream->send_len - stream->send_done;
 	memset(&message, 0, sizeof(message));
@@ -322,8 +369,14 @@ virtio_fs_backend_stream_flush(struct virtio_fs_backend_stream *stream, int fd)
 		sent = sendmsg(fd, &message, MSG_DONTWAIT | MSG_NOSIGNAL |
 		    MSG_EOR);
 	} while (sent < 0 && errno == EINTR);
-	if (sent < 0)
-		return (errno);
+	if (sent < 0) {
+		error = errno;
+		/* Only a peer that took nothing in time has stalled. */
+		if ((error == EAGAIN || error == EWOULDBLOCK) &&
+		    virtio_fs_backend_deadline_passed(&stream->send_deadline))
+			error = ETIMEDOUT;
+		return (error);
+	}
 	stream->send_done += (size_t)sent;
 	if (stream->send_done < stream->send_len) {
 		error = virtio_fs_backend_deadline_set(&stream->send_deadline);
@@ -451,11 +504,6 @@ virtio_fs_backend_stream_receive(struct virtio_fs_backend_stream *stream,
 		message.msg_iov = source;
 		message.msg_iovlen = payload_capacity == 0 ? 1 : 2;
 	} else {
-		if (virtio_fs_backend_deadline_passed(
-		    &stream->receive_deadline)) {
-			error = ETIMEDOUT;
-			goto fail;
-		}
 		/*
 		 * Read exactly the rest of the header, then exactly the payload
 		 * it announces, so a receive never consumes a following frame.
@@ -472,8 +520,14 @@ virtio_fs_backend_stream_receive(struct virtio_fs_backend_stream *stream,
 	} while (received < 0 && errno == EINTR);
 	if (received < 0) {
 		error = errno;
-		if (error == EAGAIN || error == EWOULDBLOCK)
+		if (error != EAGAIN && error != EWOULDBLOCK)
+			goto fail;
+		/* Only a peer that sent nothing in time has stalled. */
+		if (stream->receive_done == 0 ||
+		    !virtio_fs_backend_deadline_passed(
+		    &stream->receive_deadline))
 			return (EAGAIN);
+		error = ETIMEDOUT;
 		goto fail;
 	}
 	if (received == 0) {

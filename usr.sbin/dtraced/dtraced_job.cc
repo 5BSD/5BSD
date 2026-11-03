@@ -51,7 +51,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <algorithm>
+#include <map>
+#include <mutex>
 #include <new>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #include "dtraced_clientrequest.h"
 #include "dtraced_protocol.h"
@@ -1239,6 +1245,152 @@ job::send_info(state &s) try
 	return (false);
 }
 
+static const char *
+msg_kind_name(uint64_t type)
+{
+	static const char *const names[] = {
+		"unknown", "ELF", "KILL", "CLEANUP", "INFO", "INSTALLED",
+		"UNINSTALLED", "STATUS", "INGRESS_STATUS", "KILL_APPLIED",
+		"HANDOFF", "HANDOFF_DELIVERY", "HANDOFF_KILL",
+		"HANDOFF_BIND_DELIVERY", "HANDOFF_BIND_KILL", "STATS",
+		"CONSUMER_EXECUTION", "HANDOFF_CLEANUP", "CLEANUP_APPLIED",
+		"HANDOFF_IMPORT", "CONSUMER_PROGRAM", "CONSUMER_DRAIN",
+		"HANDOFF_RELEASE_IMPORT", "CONSUMER_STOP", "SESSION_STOP",
+		"SESSION_RELEASE", "CONSUMER_STOP_COMMIT"
+	};
+	static_assert(sizeof(names) / sizeof(names[0]) == DTRACED_MSG_LAST + 1,
+	    "a message kind has no name");
+	return (type <= DTRACED_MSG_LAST ? names[type] : names[0]);
+}
+
+/*
+ * A refused frame is answered with status 0 (or the connection is closed)
+ * and the client sees only EPROTO or EINVAL.  Name the client, the message
+ * kind and the check.  A client that retries the same frame would repeat
+ * the line without end, across reconnects: each client (its name and
+ * process), kind and check is logged at most once a second, with the number
+ * of refusals it suppressed, so one noisy client cannot hide another's
+ * refusal.  Every kind a client invents shares one entry, and an entry
+ * whose second has passed is dropped (reporting what it suppressed): the
+ * table holds only the last second's refusals.
+ */
+struct refusal_key {
+	std::string ident;
+	pid_t pid;
+	uint64_t type;
+	int line;
+
+	bool operator<(const refusal_key &other) const
+	{
+		return (std::tie(ident, pid, type, line) <
+		    std::tie(other.ident, other.pid, other.type, other.line));
+	}
+	bool operator==(const refusal_key &other) const
+	{
+		return (std::tie(ident, pid, type, line) ==
+		    std::tie(other.ident, other.pid, other.type, other.line));
+	}
+};
+
+struct refusal_window {
+	int64_t logged;		/* when the last line was logged */
+	uint64_t suppressed;	/* refusals since then */
+	const char *check;
+	int error;
+};
+
+static void
+warn_refusal(const refusal_key &key, const char *check, int error,
+    uint64_t suppressed, bool summary)
+{
+	char where[48] = "", more[64] = "";
+	if (key.line != 0)
+		snprintf(where, sizeof(where), " (dtraced_clientrequest.cc:%d)",
+		    key.line);
+	errno = error;
+	if (summary) {
+		WARN("refused %ju more %s frames from %s (pid %d): %s%s: %m",
+		    (uintmax_t)suppressed, msg_kind_name(key.type),
+		    key.ident.c_str(), (int)key.pid, check, where);
+		return;
+	}
+	if (suppressed != 0)
+		snprintf(more, sizeof(more), " (%ju more since the last)",
+		    (uintmax_t)suppressed);
+	WARN("refused %s frame from %s (pid %d): %s%s: %m%s",
+	    msg_kind_name(key.type), key.ident.c_str(), (int)key.pid, check,
+	    where, more);
+}
+
+static void
+log_refusal(const client_fd &dfd, uint64_t type, const char *check, int line,
+    int error)
+{
+	static std::mutex mtx;
+	static std::map<refusal_key, refusal_window> recent;
+	static int64_t swept;
+
+	try {
+		std::vector<std::pair<refusal_key, refusal_window>> ended;
+		refusal_key key{ dfd.ident, dfd.peer_pid,
+		    type <= DTRACED_MSG_LAST ? type : DTRACED_MSG_LAST + 1,
+		    line };
+		int64_t now = dtraced_io_milliseconds();
+		uint64_t suppressed = 0;
+		bool limited = false;
+
+		try {
+			std::lock_guard lock(mtx);
+			if (now >= 0 && now - swept >= 1000) {
+				for (auto it = recent.begin(); it != recent.end();) {
+					if (now - it->second.logged < 1000 ||
+					    it->first == key) {
+						++it;
+						continue;
+					}
+					if (it->second.suppressed != 0)
+						ended.push_back(*it);
+					it = recent.erase(it);
+				}
+				swept = now;
+			}
+			auto &last = recent[key];
+			if (now >= 0 && last.logged != 0 &&
+			    now - last.logged < 1000) {
+				last.suppressed++;
+				limited = true;
+			} else {
+				suppressed = last.suppressed;
+				last = { now > 0 ? now : 1, 0, check, error };
+			}
+		} catch (const std::bad_alloc &) {
+			/* Log without the limit. */
+		}
+		for (const auto &[from, window] : ended)
+			warn_refusal(from, window.check, window.error,
+			    window.suppressed, true);
+		if (!limited)
+			warn_refusal(key, check, error, suppressed, false);
+	} catch (const std::bad_alloc &) {
+		errno = error;
+		WARN("refused %s frame from %s (pid %d): %s: %m",
+		    msg_kind_name(type), dfd.ident, (int)dfd.peer_pid, check);
+	}
+	errno = error;
+}
+
+/* client_request::handle() failed: the named check, or the handler's error. */
+static void
+log_request_refusal(const client_fd &dfd, uint64_t type,
+    const client_request &cr, int error)
+{
+	int line = 0;
+	const char *check = cr.refusal(&line);
+
+	log_refusal(dfd, type, check != nullptr ? check : "request failed",
+	    check != nullptr ? line : 0, error);
+}
+
 bool
 job::read_data(state &s) try
 {
@@ -1265,7 +1417,8 @@ job::read_data(state &s) try
 	 * (state::dispatch_read()), which is at most an HPI2 body. */
 	if (dfd.elf_only_consumer() && frame_size > DTRACED_MSGHDRSIZE +
 	    DTRACED_CONSUMER_PROGRAM_V2_SIZE) {
-		errno = EPROTO;
+		log_refusal(dfd, DTRACED_MSG_CONSUMER_PROGRAM,
+		    "frame too large for an ELF receiver", 0, EPROTO);
 		return (false);
 	}
 	if (dfd.is_subscribed(DTD_SUB_SOURCE_RELEASE) &&
@@ -1277,9 +1430,13 @@ job::read_data(state &s) try
 	}
 	size_t totalbytes = (size_t)frame_size;
 	unsigned char header_wire[DTRACED_MSGHDRSIZE];
-	if (!dfd.recv(header_wire, sizeof(header_wire), deadline) ||
-	    dtraced_wire_decode_header(&header, header_wire) != 0)
+	if (!dfd.recv(header_wire, sizeof(header_wire), deadline))
 		return (false);
+	if (dtraced_wire_decode_header(&header, header_wire) != 0) {
+		log_refusal(dfd, dtraced_wire_get_u64(header_wire),
+		    "header fields", 0, EPROTO);
+		return (false);
+	}
 	if (dfd.is_subscribed(DTD_SUB_SOURCE_RELEASE) &&
 	    header.msg_type != DTRACED_MSG_HANDOFF) {
 		/* HT-C BEGIN: disabled trace continuity. */
@@ -1289,7 +1446,8 @@ job::read_data(state &s) try
 	}
 	if (dfd.elf_only_consumer() &&
 	    header.msg_type != DTRACED_MSG_CONSUMER_PROGRAM) {
-		errno = EPROTO;
+		log_refusal(dfd, header.msg_type,
+		    "an ELF receiver sends only its program", 0, EPROTO);
 		return (false);
 	}
 	if (header.msg_type == DTRACED_MSG_HANDOFF_IMPORT &&
@@ -1304,12 +1462,12 @@ job::read_data(state &s) try
 	if ((header.msg_type == DTRACED_MSG_SESSION_STOP ||
 	    header.msg_type == DTRACED_MSG_SESSION_RELEASE) &&
 	    frame_size != DTRACED_MSGHDRSIZE + DTRACED_SESSION_STOP_WIRE_SIZE) {
-		errno = EPROTO;
+		log_refusal(dfd, header.msg_type, "frame size", 0, EPROTO);
 		return (false);
 	}
 	if (header.msg_type == DTRACED_MSG_CONSUMER_STOP_COMMIT &&
 	    frame_size != DTRACED_MSGHDRSIZE + DTRACED_CONSUMER_STOP_ACK_WIRE_SIZE) {
-		errno = EPROTO;
+		log_refusal(dfd, header.msg_type, "frame size", 0, EPROTO);
 		return (false);
 	}
 	if (header.msg_type == DTRACED_MSG_HANDOFF_IMPORT &&
@@ -1351,8 +1509,7 @@ job::read_data(state &s) try
 		unsigned char status = cr.handle() ? 1 : 0;
 		error = errno;
 		if (status == 0)
-			WARN("refused HyperTrace program registration from "
-			    "%s: %m", dfd.ident);
+			log_request_refusal(dfd, header.msg_type, cr, error);
 		/* Before the status can reach the client (and before any ELF it
 		 * releases): later inbound bytes are delivery acknowledgments
 		 * for the sending worker, not frames for the event loop. That
@@ -1385,6 +1542,8 @@ job::read_data(state &s) try
 		return (true);
 	}
 	bool accepted = cr.handle();
+	if (!accepted)
+		log_request_refusal(dfd, header.msg_type, cr, errno);
 	int64_t response_deadline = cr.transfer_response() != nullptr ?
 	    dtraced_io_deadline_after(60000) :
 	    (header.msg_type == DTRACED_MSG_SESSION_STOP ||

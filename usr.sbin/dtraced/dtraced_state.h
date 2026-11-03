@@ -54,6 +54,9 @@
 #include "dtraced_release_keys.h"
 #include "dtraced_collector_owner.h"
 
+/* Minimum number of host consumer delivery workers on a control machine. */
+#define DTRACED_CONSUMER_DELIVERY_WORKERS 4
+
 #include <array>
 #include <condition_variable>
 #include <list>
@@ -115,8 +118,9 @@ class state {
 	std::thread basetd;    /* base monitoring thread */
 
 	size_t threadpool_size; /* size of the thread pool (workers) */
-	/* thread pool for the joblist; on a control machine as many more
-	 * workers deliver ELF to host consumers (process_consumer_deliveries()) */
+	/* thread pool for the joblist; on a control machine as many more, but
+	 * at least DTRACED_CONSUMER_DELIVERY_WORKERS, deliver ELF to host
+	 * consumers (process_consumer_deliveries()) */
 	std::vector<std::thread> workers;
 
 	std::thread socktd; /* config socket thread */
@@ -221,7 +225,16 @@ class state {
 	int nosha;		  /* do we want to checksum? */
 	int kq_hdl = -1;	  /* event loop kqueue */
 
-	std::list<std::array<char, DTRACED_PROGIDENTLEN>> identlist;
+	/*
+	 * A linked program the guest uploaded, listed until the program
+	 * derived from it arrives or a KILL revokes the source it was
+	 * uploaded under.
+	 */
+	struct listed_ident {
+		std::array<char, DTRACED_PROGIDENTLEN> ident;
+		std::array<uint8_t, 16> source_id;
+	};
+	std::list<listed_ident> identlist;
 	std::mutex identlistmtx; /* mutex protecting the ident list */
 	/* Volatile authorization-free context for current daemon deliveries only. */
 	std::mutex deliverymtx;

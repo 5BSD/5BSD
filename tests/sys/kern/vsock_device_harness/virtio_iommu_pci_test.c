@@ -21,6 +21,8 @@
 #include <pci_virtio_iommu.c>
 
 /* Expectations below must not silently inherit the DUT's wire constants. */
+#undef	VIRTIO_CONFIG_STATUS_ACK
+#define	VIRTIO_CONFIG_STATUS_ACK	VIRTIO14_STATUS_ACKNOWLEDGE
 #undef	VIRTIO_CONFIG_STATUS_DRIVER_OK
 #define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
 #undef	VIRTIO_CONFIG_S_NEEDS_RESET
@@ -867,8 +869,10 @@ setup_softc(struct pci_vtiommu_softc *sc)
 	atomic_init(&sc->vsc_validation_owner, NULL);
 #endif
 	sc->vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
-	for (unsigned int i = 0; i < nitems(sc->vsc_vq); i++)
+	for (unsigned int i = 0; i < nitems(sc->vsc_vq); i++) {
 		sc->vsc_vq[i].vq_qsize = VTIOMMU_RINGSZ;
+		sc->vsc_vq[i].vq_enabled = 1;
+	}
 	mock_has_descs = 0;
 	mock_getchain_result = 0;
 	mock_getchain_calls = 0;
@@ -993,6 +997,21 @@ ATF_TC_BODY(callback_ready_contract, tc)
 	ATF_CHECK(!pci_vtiommu_callback_ready_locked(&sc,
 	    &sc.vsc_vq[VTIOMMU_EVENTQ]));
 	ATF_CHECK(sc.vsc_vq[VTIOMMU_EVENTQ].vq_notify_pending);
+
+	/*
+	 * A queue the driver has not enabled has no ring to replay; the fence
+	 * must not latch a kick there, which checkpoint save would reject.
+	 */
+	setup_softc(&sc);
+	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_ACK;
+	sc.vsc_vq[VTIOMMU_REQUESTQ].vq_enabled = 0;
+	sc.vsc_vq[VTIOMMU_EVENTQ].vq_enabled = 0;
+	ATF_CHECK(!pci_vtiommu_callback_ready_locked(&sc,
+	    &sc.vsc_vq[VTIOMMU_REQUESTQ]));
+	ATF_CHECK(!pci_vtiommu_callback_ready_locked(&sc,
+	    &sc.vsc_vq[VTIOMMU_EVENTQ]));
+	ATF_CHECK(!sc.vsc_vq[VTIOMMU_REQUESTQ].vq_notify_pending);
+	ATF_CHECK(!sc.vsc_vq[VTIOMMU_EVENTQ].vq_notify_pending);
 }
 
 ATF_TC_WITHOUT_HEAD(device_lifecycle_contract);

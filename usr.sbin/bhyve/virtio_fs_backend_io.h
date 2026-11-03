@@ -41,14 +41,23 @@ struct virtio_fs_backend_stream {
 int	virtio_fs_backend_connect_start(const char *, uid_t, gid_t, int *,
 	    bool *);
 int	virtio_fs_backend_connect_finish(int, uid_t, gid_t);
+/*
+ * dir_open() splits an absolute socket path and opens its parent directory;
+ * connect_start_at() connects to a final name relative to that directory and
+ * works in capability mode (the descriptor needs CAP_CONNECTAT).
+ */
+int	virtio_fs_backend_dir_open(const char *, int *, char **);
+int	virtio_fs_backend_connect_start_at(int, const char *, uid_t, gid_t,
+	    int *, bool *);
 int	virtio_fs_backend_authenticate(int, uid_t, gid_t);
 void	virtio_fs_backend_size_buffers(int, uint32_t);
 
 /*
  * The stream functions never wait.  send() returns EAGAIN without taking the
  * frame while an earlier tail is unsent or the socket is full; flush() and
- * receive() return EAGAIN while a frame is incomplete.  ETIMEDOUT reports an
- * expired progress deadline.
+ * receive() return EAGAIN while a frame is incomplete.  ETIMEDOUT reports a
+ * frame that could not move at all after its progress deadline: a callback
+ * that runs late but finds the peer ready is not a timeout.
  */
 void	virtio_fs_backend_stream_init(struct virtio_fs_backend_stream *);
 void	virtio_fs_backend_stream_fini(struct virtio_fs_backend_stream *);
@@ -58,6 +67,8 @@ int	virtio_fs_backend_stream_flush(struct virtio_fs_backend_stream *, int);
 int	virtio_fs_backend_stream_receive(struct virtio_fs_backend_stream *,
 	    int, struct virtio_fs_backend_header *, void *, size_t, size_t *);
 bool	virtio_fs_backend_stream_sending(
+	    const struct virtio_fs_backend_stream *);
+bool	virtio_fs_backend_stream_receiving(
 	    const struct virtio_fs_backend_stream *);
 bool	virtio_fs_backend_stream_deadline(
 	    const struct virtio_fs_backend_stream *, struct timespec *);

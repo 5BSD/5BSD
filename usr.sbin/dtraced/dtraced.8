@@ -137,8 +137,9 @@ terminal.
 .It Fl t Ar size
 Set the worker count, from 1 through 1024.
 The default is 1.
-An overlord runs as many more workers that only deliver programs to host
-consumers, one delivery per consumer at a time: such a delivery waits for
+An overlord runs as many more workers, but at least four, that only deliver
+programs to host consumers, one delivery per consumer at a time: such a
+delivery waits for
 the consumer to acknowledge it, and
 .Nm dtrace Fl E
 acknowledges only after this daemon has accepted the derived program it

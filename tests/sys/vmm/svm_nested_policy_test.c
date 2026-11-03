@@ -1170,6 +1170,8 @@ ATF_TC_BODY(npt12_translation_and_faults, tc)
 	ATF_CHECK_EQ(result.ad_desired[0], memory.page[0][0] | (1ULL << 5));
 	ATF_CHECK_EQ(result.ad_desired[3],
 	    memory.page[3][pt_index] | (1ULL << 5));
+	/* A read leaves the leaf clean: NPT02 must not alias it writable. */
+	ATF_CHECK(!svm_nested_npt_result_dirty(&result));
 	/* AMD checks a guest page-table read as an NPT user data write. */
 	ATF_REQUIRE_EQ(svm_nested_npt_software_access(true, false,
 	    false, false, &access, &info1), 0);
@@ -1196,9 +1198,15 @@ ATF_TC_BODY(npt12_translation_and_faults, tc)
 	ATF_CHECK_EQ(result.ad_desired[0], memory.page[0][0] | (1ULL << 5));
 	ATF_CHECK_EQ(result.ad_desired[3],
 	    memory.page[3][pt_index] | (1ULL << 5) | (1ULL << 6));
+	ATF_CHECK(svm_nested_npt_result_dirty(&result));
 	ATF_REQUIRE_EQ(svm_nested_npt_commit_ad(&result, &ops), 0);
 	ATF_CHECK_EQ(memory.page[0][0], result.ad_desired[0]);
 	ATF_CHECK_EQ(memory.page[3][pt_index], result.ad_desired[3]);
+	/* Once D is committed, a read walk may alias the page writable. */
+	walk.access = SVM_NESTED_NPT_READ;
+	ATF_REQUIRE_EQ(svm_nested_npt_walk(&walk, &ops, &result), 0);
+	ATF_CHECK(svm_nested_npt_result_dirty(&result));
+	walk.access = SVM_NESTED_NPT_WRITE;
 	/* Even a no-op A/D update must notice that L1 changed the leaf. */
 	ATF_REQUIRE_EQ(svm_nested_npt_walk(&walk, &ops, &result), 0);
 	memory.page[3][pt_index] ^= 1ULL << 1;

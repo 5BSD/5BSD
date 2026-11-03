@@ -28,6 +28,9 @@ struct virtio_fs_backend_client;
 int	virtio_fs_backend_client_connect(const char *, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *,
 	    struct virtio_fs_backend_client **);
+int	virtio_fs_backend_client_connect_at(int, const char *, uid_t, gid_t,
+	    const struct virtio_fs_backend_hello *,
+	    struct virtio_fs_backend_client **);
 int	virtio_fs_backend_client_adopt(int, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *,
 	    struct virtio_fs_backend_client **);
@@ -38,12 +41,10 @@ uint32_t virtio_fs_backend_client_events(
 	    const struct virtio_fs_backend_client *);
 /*
  * deadline() reports when a partly transferred frame must next make
- * progress; expire() fails the client once "now" has reached it.
+ * progress; progress() fails the client when it cannot move by then.
  */
 bool	virtio_fs_backend_client_deadline(
 	    const struct virtio_fs_backend_client *, struct timespec *);
-int	virtio_fs_backend_client_expire(struct virtio_fs_backend_client *,
-	    const struct timespec *);
 int	virtio_fs_backend_client_progress(struct virtio_fs_backend_client *,
 	    bool, bool);
 bool	virtio_fs_backend_client_active(

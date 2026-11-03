@@ -1655,7 +1655,7 @@ done:
 
 static int
 dtrace_send_elf_impl(dtrace_prog_t *pgp, int fromfd, int tofd,
-    const char *location, int send_ident,
+    const char *location, int send_ident, const uint8_t *source_id,
     const dtraced_derived_parent_t *parent)
 {
 	unsigned char *buf;
@@ -1674,7 +1674,18 @@ dtrace_send_elf_impl(dtrace_prog_t *pgp, int fromfd, int tofd,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (pgp != NULL &&
+	/*
+	 * A derived program continues its parent's source lineage.  Its own
+	 * srcident names the guest's linked program (hypertrace_link() gives
+	 * that a new identity), which dtraced knows by no source.
+	 */
+	if (parent != NULL)
+		memcpy(header.elf.source_id, parent->source_id,
+		    sizeof(header.elf.source_id));
+	else if (source_id != NULL)
+		memcpy(header.elf.source_id, source_id,
+		    sizeof(header.elf.source_id));
+	else if (pgp != NULL &&
 	    dtrace_program_source_id(pgp, header.elf.source_id) != 0)
 		return (-1);
 	if (pgp != NULL && pgp->dp_vmid != 0 && strcmp(location, "outbound") == 0) {
@@ -1747,7 +1758,26 @@ dtrace_send_elf(dtrace_prog_t *pgp, int fromfd, int tofd,
     const char *location, int send_ident)
 {
 	return (dtrace_send_elf_impl(pgp, fromfd, tofd, location,
-	    send_ident, NULL));
+	    send_ident, NULL, NULL));
+}
+
+/*
+ * A guest's upload of a program it was delivered continues the source the
+ * delivery was spooled under (dtraced names it to dtrace -Y), not the
+ * lineage of the program's own identity.
+ */
+int
+dtrace_send_elf_source(dtrace_prog_t *pgp, int fromfd, int tofd,
+    const char *location, int send_ident, const uint8_t source_id[16])
+{
+	const uint8_t zero[16] = { 0 };
+
+	if (source_id == NULL || memcmp(source_id, zero, sizeof(zero)) == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (dtrace_send_elf_impl(pgp, fromfd, tofd, location,
+	    send_ident, source_id, NULL));
 }
 
 int
@@ -1755,7 +1785,7 @@ dtrace_send_elf_derived(dtrace_prog_t *pgp, int fromfd, int tofd,
     const dtraced_derived_parent_t *parent)
 {
 	return (dtrace_send_elf_impl(pgp, fromfd, tofd, "outbound", 0,
-	    parent));
+	    NULL, parent));
 }
 
 void

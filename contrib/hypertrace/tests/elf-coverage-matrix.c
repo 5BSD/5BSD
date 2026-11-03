@@ -890,12 +890,15 @@ crafted_identifiers(void *arg)
 }
 
 /* Compile identifiers: a known source identifier is acknowledged on stdout
- * with "DEL ident\0" + identifier; an unknown one fails. */
+ * with "DEL ident\0" + identifier; an unknown one fails.  A base program
+ * (no source identifier, not marked for execution) is none of them: it is
+ * acknowledged with no identifier. */
 static void
 crafted_compile_idents(void *arg)
 {
 	/* 0 found, 1 unknown, 2 ack fails, 3 identifier write fails,
-	 * 4 unknown without a failure message */
+	 * 4 unknown without a failure message, 5 base program,
+	 * 6 no source identifier but marked for execution */
 	int mode = (int)(intptr_t)arg;
 	int pfd[2];
 	if (pipe(pfd) != 0)
@@ -904,15 +907,19 @@ crafted_compile_idents(void *arg)
 	char msg[HYPERTRACE_ERRMSGLEN];
 	int err;
 	dtrace_prog_t *p = compile(h, corpus[0]);
+	if (mode < 5)
+		memset(p->dp_srcident, 0x33, DT_PROG_IDENTLEN);
+	if (mode == 6)
+		p->dp_exec = DT_PROG_EXEC;
 	const char *path = path_of("idents-%d.elf", mode);
 	CHECK(create_file(h, p, path, msg) == 0, "idents create");
 	char idents[2 * DT_PROG_IDENTLEN];
 	memset(idents, 0x11, sizeof(idents));
-	if (mode != 1 && mode != 4)
+	if (mode != 1 && mode != 4 && mode < 5)
 		memcpy(idents + DT_PROG_IDENTLEN, p->dp_srcident,
 		    DT_PROG_IDENTLEN);
 	CHECK(dtrace_compile_idents_set(h, idents, 2) == 0, "idents set");
-	if (mode == 1)
+	if (mode == 1 || mode == 6)
 		dtrace_set_failmsg_needed(h);
 	int saved = dup(STDOUT_FILENO);
 	fflush(stdout);
@@ -928,12 +935,12 @@ crafted_compile_idents(void *arg)
 	char out[2 * DT_PROG_IDENTLEN + 64];
 	fcntl(pfd[0], F_SETFL, O_NONBLOCK);
 	ssize_t n = read(pfd[0], out, sizeof(out));
-	if (mode == 0) {
+	if (mode == 0 || mode == 5) {
 		CHECK(q != NULL && n == 10 + DT_PROG_IDENTLEN &&
 		    memcmp(out, "DEL ident", 10) == 0 &&
 		    memcmp(out + 10, p->dp_srcident, DT_PROG_IDENTLEN) == 0,
 		    "found: q=%p n=%zd %s", (void *)q, n, msg);
-	} else if (mode == 1) {
+	} else if (mode == 1 || mode == 6) {
 		CHECK(q == NULL && err == E_HYPERTRACE_IDENT_NOTFOUND &&
 		    n == 10 && memcmp(out, "FAIL FAIL", 10) == 0,
 		    "unknown: %d %zd", err, n);
@@ -1044,7 +1051,7 @@ scenario_crafted(void)
 	in_child("no-last", crafted_no_last, NULL);
 	in_child("identifiers", crafted_identifiers, NULL);
 	in_child("identifiers-failmsg", crafted_identifiers, (void *)1);
-	for (intptr_t m = 0; m < 5; m++)
+	for (intptr_t m = 0; m < 7; m++)
 		in_child("compile-idents", crafted_compile_idents, (void *)m);
 	in_child("resolver", crafted_resolver, NULL);
 }

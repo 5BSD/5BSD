@@ -278,9 +278,22 @@ dtt_kill(state *s, dtt_entry_t *e)
 	record.epoch = e->u.kill.epoch;
 	memcpy(record.source_id.data(), e->u.kill.source_id, 16);
 	if (s->inbounddir == nullptr ||
-	    !s->inbounddir->record_kill(record) ||
-	    !s->inbounddir->revoke_source(e->u.kill.source_id))
+	    !s->inbounddir->record_kill(record))
 		return (false);
+	{
+		/* A guest upload checks revocation, publishes and lists its
+		 * identifier under identlistmtx (client_request::handle_elfmsg()):
+		 * it precedes both steps or is refused.  No program derived from
+		 * a revoked source may arrive: a linked program still waiting for
+		 * one is not listed for later launches. */
+		std::lock_guard idents(s->identlistmtx);
+		if (!s->inbounddir->revoke_source(e->u.kill.source_id))
+			return (false);
+		s->identlist.remove_if([&](const state::listed_ident &listed) {
+			return memcmp(listed.source_id.data(),
+			    e->u.kill.source_id, listed.source_id.size()) == 0;
+		});
+	}
 	try {
 		state::pending_kill request{e->u.kill.pid, {}};
 		memcpy(request.source_id.data(), e->u.kill.source_id, 16);

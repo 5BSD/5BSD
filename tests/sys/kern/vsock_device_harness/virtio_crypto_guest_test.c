@@ -84,19 +84,74 @@ struct mtx { int held; };
 #define	mtx_unlock(m)		((m)->held--)
 #define	MA_OWNED		0
 #define	mtx_assert(m, w)	ATF_REQUIRE((m)->held > 0)
+#define	KASSERT(e, m)		ATF_REQUIRE(e)
 
 #define	M_NOWAIT		0x1
+#define	M_WAITOK		0x2
 #define	M_ZERO			0x100
 #define	MALLOC_DEFINE(t, s, l)	static const int t = 0
+/*
+ * Page aligned, as malloc(9) items up to PAGE_SIZE never cross a page and
+ * larger ones start on one: the segment counts below are deterministic.
+ */
 static void *
 mock_malloc(size_t sz, int fl)
 {
-	return ((fl & M_ZERO) ? calloc(1, sz) : malloc(sz));
+	void *p;
+
+	p = aligned_alloc(PAGE_SIZE, roundup2(MAX(sz, 1), PAGE_SIZE));
+	if (p != NULL && (fl & M_ZERO) != 0)
+		memset(p, 0, sz);
+	return (p);
 }
 #define	malloc(sz, t, fl)	mock_malloc((sz), (fl))
 #define	mallocarray(n, sz, t, fl) mock_malloc((n) * (sz), (fl))
-#define	contigmalloc(sz, t, fl, lo, hi, al, b) mock_malloc((sz), (fl))
-#define	free(p, t)		(free)(p)
+
+/* contigmalloc(9) buffers are recorded: they take a single segment. */
+#define	MOCK_MAXCONTIG		64
+static struct {
+	char	*p;
+	size_t	 len;
+} g_contig[MOCK_MAXCONTIG];
+static int g_contig_allocs;
+static void *
+mock_contigmalloc(size_t sz, int fl)
+{
+	void *p;
+
+	p = mock_malloc(sz, fl);
+	for (int i = 0; p != NULL && i < MOCK_MAXCONTIG; i++) {
+		if (g_contig[i].p == NULL) {
+			g_contig[i].p = p;
+			g_contig[i].len = sz;
+			g_contig_allocs++;
+			return (p);
+		}
+	}
+	ATF_REQUIRE_MSG(p == NULL, "contigmalloc mock table full");
+	return (p);
+}
+static void
+mock_free(void *p)
+{
+	for (int i = 0; p != NULL && i < MOCK_MAXCONTIG; i++)
+		if (g_contig[i].p == p)
+			g_contig[i].p = NULL;
+	(free)(p);
+}
+/* Length of the physically contiguous run starting at p. */
+static size_t
+mock_seglen(const char *p, size_t len)
+{
+	for (int i = 0; i < MOCK_MAXCONTIG; i++)
+		if (g_contig[i].p != NULL && p >= g_contig[i].p &&
+		    p < g_contig[i].p + g_contig[i].len)
+			return (MIN(len, (size_t)(g_contig[i].p +
+			    g_contig[i].len - p)));
+	return (MIN(len, PAGE_SIZE - ((uintptr_t)p & PAGE_MASK)));
+}
+#define	contigmalloc(sz, t, fl, lo, hi, al, b) mock_contigmalloc((sz), (fl))
+#define	free(p, t)		mock_free(p)
 
 #define	MODULE_VERSION(a, b)	_Static_assert(1, "")
 #define	MODULE_DEPEND(a, b, c, d, e) _Static_assert(1, "")
@@ -127,14 +182,41 @@ sglist_alloc(int n, int fl)
 	sglist_init(sg, n, (struct sglist_seg *)(sg + 1));
 	return (sg);
 }
+#define	sglist_reset(sg)	((sg)->sg_nseg = 0)
+/*
+ * One segment per page touched, as pages are not assumed to be contiguous,
+ * except within a contigmalloc() buffer.
+ */
+static int
+sglist_count(void *buf, size_t len)
+{
+	char *p = buf;
+	size_t n;
+	int nseg;
+
+	for (nseg = 0; len > 0; nseg++) {
+		n = mock_seglen(p, len);
+		p += n;
+		len -= n;
+	}
+	return (nseg);
+}
 static int
 sglist_append(struct sglist *sg, void *buf, size_t len)
 {
-	if (sg->sg_nseg >= sg->sg_maxseg)
-		return (EFBIG);
-	sg->sg_segs[sg->sg_nseg].ss_addr = buf;
-	sg->sg_segs[sg->sg_nseg].ss_len = len;
-	sg->sg_nseg++;
+	char *p = buf;
+	size_t n;
+
+	while (len > 0) {
+		if (sg->sg_nseg >= sg->sg_maxseg)
+			return (EFBIG);
+		n = mock_seglen(p, len);
+		sg->sg_segs[sg->sg_nseg].ss_addr = p;
+		sg->sg_segs[sg->sg_nseg].ss_len = n;
+		sg->sg_nseg++;
+		p += n;
+		len -= n;
+	}
 	return (0);
 }
 #define	sglist_free(sg)		(free)(sg)
@@ -144,9 +226,12 @@ sglist_append(struct sglist *sg, void *buf, size_t len)
 #define	MOCK_MAXREQ		4096
 typedef void virtqueue_intr_t(void *);
 struct virtqueue {
+	int		 size;			/* descriptors in the ring */
 	int		 free_desc;
 	void		*cookie[MOCK_MAXREQ];
 	int		 ndesc[MOCK_MAXREQ];
+	uint32_t	 len[MOCK_MAXREQ];	/* used length */
+	void		*wbuf[MOCK_MAXREQ];	/* first writable segment */
 	int		 head, tail;		/* posted: [head, tail) */
 	int		 used;			/* completed: [head, used) */
 	uint8_t		 last_hdr[72];
@@ -179,28 +264,42 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 {
 	int n = readable + writable;
 
-	/* sys/dev/virtio/virtqueue.c: ENOSPC when the ring lacks descriptors. */
-	if (vq->free_desc < n)
+	/*
+	 * sys/dev/virtio/virtqueue.c: more segments than the ring holds is a
+	 * KASSERT, no free descriptor is ENOSPC, too few free is EMSGSIZE.
+	 */
+	ATF_REQUIRE(n <= vq->size);
+	if (vq->free_desc == 0)
 		return (ENOSPC);
+	if (vq->free_desc < n)
+		return (EMSGSIZE);
 	ATF_REQUIRE(vq->tail < MOCK_MAXREQ);
 	memcpy(vq->last_hdr, sg->sg_segs[0].ss_addr, sizeof(vq->last_hdr));
 	vq->free_desc -= n;
 	vq->cookie[vq->tail] = cookie;
 	vq->ndesc[vq->tail] = n;
+	vq->wbuf[vq->tail] = sg->sg_segs[readable].ss_addr;
 	vq->tail++;
 	return (0);
 }
-#define	virtqueue_notify(vq)		do { } while (0)
+/* The control queue device runs when the driver notifies it. */
+static void (*g_notify_hook)(struct virtqueue *);
+#define	virtqueue_notify(vq) do {					\
+	if (g_notify_hook != NULL)					\
+		g_notify_hook(vq);					\
+} while (0)
 #define	virtqueue_disable_intr(vq)	do { } while (0)
 #define	virtqueue_enable_intr(vq)	(0)
 #define	virtqueue_empty(vq)		((vq)->head == (vq)->tail)
 #define	virtqueue_full(vq)		((vq)->free_desc == 0)
+#define	virtqueue_size(vq)		((vq)->size)
 static void *
 virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
 {
-	(void)len;
 	if (vq->head == vq->used)
 		return (NULL);
+	if (len != NULL)
+		*len = vq->len[vq->head];
 	vq->free_desc += vq->ndesc[vq->head];
 	return (vq->cookie[vq->head++]);
 }
@@ -259,13 +358,21 @@ struct cryptop {
 	int		 crp_aad_length;
 	int		 crp_digest_start;
 	uint8_t		 iv[16];
-	uint8_t		 buf[4096];
 	bool		 done;
 	TAILQ_ENTRY(cryptop) crp_next;
+	uint8_t		 buf[];
 };
 #define	crypto_get_params(s)		(&(s)->csp)
 #define	crypto_get_driver_session(s)	((s)->drv)
-#define	crypto_read_iv(crp, dst)	memcpy((dst), (crp)->iv, 16)
+/* Runs while the driver builds a request, outside its queue lock. */
+static void (*g_build_hook)(struct cryptop *);
+static void
+crypto_read_iv(struct cryptop *crp, void *dst)
+{
+	memcpy(dst, crp->iv, 16);
+	if (g_build_hook != NULL)
+		g_build_hook(crp);
+}
 #define	crypto_copydata(crp, off, len, dst) \
 	memcpy((dst), (crp)->buf + (off), (len))
 #define	crypto_copyback(crp, off, len, src) \
@@ -308,8 +415,16 @@ static struct mock_dev g_dev;
 static struct vtcrypto_softc g_sc;
 static struct vtcrypto_dataq g_dq[2];
 static struct virtqueue g_vq[2];
+static struct sglist_seg g_segs[2][VTCRYPTO_MAX_SEGS];
+static struct sglist g_sg[2];
 static struct vtcrypto_session g_drv;
 static struct mock_session g_ses;
+
+/* Device model knobs; see device_complete(). */
+#define	DEV_OUT			0xa5
+static int g_dev_maxseg;
+static bool g_dev_skip_status;
+static bool g_dev_short;
 
 static void
 fixture_queues(int ndataq)
@@ -318,11 +433,13 @@ fixture_queues(int ndataq)
 	memset(g_dq, 0, sizeof(g_dq));
 	memset(g_vq, 0, sizeof(g_vq));
 	for (int i = 0; i < ndataq; i++) {
-		g_vq[i].free_desc = MOCK_RINGSZ;
+		g_vq[i].size = g_vq[i].free_desc = MOCK_RINGSZ;
 		g_dq[i].vdq_sc = &g_sc;
 		g_dq[i].vdq_vq = &g_vq[i];
 		g_dq[i].vdq_id = i;
 		TAILQ_INIT(&g_dq[i].vdq_parked);
+		sglist_init(&g_sg[i], VTCRYPTO_MAX_SEGS, g_segs[i]);
+		g_dq[i].vdq_sg = &g_sg[i];
 	}
 	g_sc.vtc_dev = &g_dev;
 	g_sc.vtc_cid = 7;
@@ -345,6 +462,12 @@ fixture_queues(int ndataq)
 	g_ses.drv = &g_drv;
 	g_done = g_done_err = g_unblock = g_unblock_what = 0;
 	g_qblocked = false;
+	g_dev_maxseg = MOCK_RINGSZ;
+	g_dev_skip_status = false;
+	g_dev_short = false;
+	g_notify_hook = NULL;
+	g_build_hook = NULL;
+	g_contig_allocs = 0;
 }
 
 static void
@@ -353,38 +476,71 @@ fixture(void)
 	fixture_queues(1);
 }
 
-/* One geli(4) sector: 512-byte AES-CBC. */
+/* An AES-CBC request of len bytes, in a buffer of at least 4 KiB. */
 static struct cryptop *
-sector_crp(bool encrypt)
+data_crp(bool encrypt, int len)
 {
-	struct cryptop *crp = calloc(1, sizeof(*crp));
+	struct cryptop *crp = calloc(1, sizeof(*crp) + MAX(len, 4096));
 
 	ATF_REQUIRE(crp != NULL);
 	crp->crp_session = &g_ses;
 	crp->crp_op = encrypt ? CRYPTO_OP_ENCRYPT : 0;
-	crp->crp_payload_length = 512;
+	crp->crp_payload_length = len;
 	return (crp);
 }
 
+/* One geli(4) sector: 512-byte AES-CBC. */
+static struct cryptop *
+sector_crp(bool encrypt)
+{
+	return (data_crp(encrypt, 512));
+}
+
 /*
- * Device side: complete everything posted on every data queue with status
- * VIRTIO_CRYPTO_S_OK, then deliver each queue's interrupt.  Returns the number
- * of requests completed by the device.
+ * Device side: complete up to n requests posted on data queue q, oldest
+ * first.  The device writes DEV_OUT over the output and status
+ * VIRTIO_CRYPTO_S_OK, and reports the whole writable buffer as used, unless
+ * the chain is longer than g_dev_maxseg: then, as bhyve(8) with its
+ * 32-entry iov did, it returns the chain unprocessed with used length 0.
+ * With g_dev_short, it writes the status and only the first half of the
+ * output, and reports that as used.  Returns the number of requests completed.
+ */
+static int
+device_complete(int q, int n)
+{
+	size_t outlen;
+	int done;
+
+	for (done = 0; done < n && g_vq[q].used < g_vq[q].tail; done++) {
+		int i = g_vq[q].used++;
+		struct vtcrypto_request *vcr = g_vq[q].cookie[i];
+
+		if (g_vq[q].ndesc[i] > g_dev_maxseg) {
+			g_vq[q].len[i] = 0;
+			continue;
+		}
+		outlen = vcr->vcr_wbuf_len - 1;
+		if (g_dev_short)
+			outlen /= 2;
+		memset(vcr->vcr_wbuf, DEV_OUT, outlen);
+		if (!g_dev_skip_status)
+			vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1] = 0;
+		g_vq[q].len[i] = outlen + 1;
+	}
+	return (done);
+}
+
+/*
+ * Complete everything posted on every data queue, then deliver each queue's
+ * interrupt.  Returns the number of requests completed by the device.
  */
 static int
 device_complete_all(void)
 {
 	int n = 0;
 
-	for (int q = 0; q < g_sc.vtc_ndataq; q++) {
-		for (int i = g_vq[q].used; i < g_vq[q].tail; i++) {
-			struct vtcrypto_request *vcr = g_vq[q].cookie[i];
-
-			vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1] = 0;
-			n++;
-		}
-		g_vq[q].used = g_vq[q].tail;
-	}
+	for (int q = 0; q < g_sc.vtc_ndataq; q++)
+		n += device_complete(q, MOCK_MAXREQ);
 	for (int q = 0; q < g_sc.vtc_ndataq; q++)
 		vtcrypto_dataq_intr(&g_dq[q]);
 	return (n);
@@ -524,6 +680,63 @@ ATF_TC_BODY(full_queue_uses_other_queue, tc)
 }
 
 /*
+ * A ring with fewer free descriptors than a request has segments is full
+ * for that request (virtqueue_enqueue() says EMSGSIZE): park it, do not fail
+ * it.  21 requests of 4080 bytes take three descriptors each (a two-page
+ * readable buffer and a one-page writable one) and leave one free.
+ */
+ATF_TC_WITHOUT_HEAD(partial_ring_parks_request);
+ATF_TC_BODY(partial_ring_parks_request, tc)
+{
+	struct cryptop *crp[21];
+	struct cryptop *extra;
+	int i;
+
+	fixture();
+	for (i = 0; i < 21; i++) {
+		crp[i] = sector_crp(true);
+		crp[i]->crp_payload_length = 4080;
+		ATF_REQUIRE_EQ(0, dispatch(crp[i]));
+		ATF_REQUIRE_EQ(3, g_vq[0].ndesc[i]);
+	}
+	ATF_REQUIRE_EQ(1, g_vq[0].free_desc);
+	extra = sector_crp(true);
+	ATF_REQUIRE_EQ(0, dispatch(extra));
+	ATF_REQUIRE_MSG(!extra->done,
+	    "one free descriptor failed the request with error %d",
+	    extra->crp_etype);
+	ATF_REQUIRE_EQ(21, device_complete_all());
+	ATF_REQUIRE(!extra->done);
+	ATF_REQUIRE_EQ(1, device_complete_all());
+	ATF_REQUIRE(extra->done);
+	ATF_REQUIRE_EQ(22, g_done);
+	ATF_REQUIRE_EQ(0, g_done_err);
+	for (i = 0; i < 21; i++)
+		free(crp[i]);
+	free(extra);
+}
+
+/*
+ * A 4 KiB geli(4) sector: the buffers are not physically contiguous, so
+ * each takes a descriptor per page it touches.
+ */
+ATF_TC_WITHOUT_HEAD(page_sector_takes_page_segments);
+ATF_TC_BODY(page_sector_takes_page_segments, tc)
+{
+	struct cryptop *crp;
+
+	fixture();
+	crp = sector_crp(false);
+	crp->crp_payload_length = 4096;
+	ATF_REQUIRE_EQ(0, dispatch(crp));
+	ATF_REQUIRE_EQ(4, g_vq[0].ndesc[0]);
+	ATF_REQUIRE_EQ(1, device_complete_all());
+	ATF_REQUIRE(crp->done);
+	ATF_REQUIRE_EQ(0, crp->crp_etype);
+	free(crp);
+}
+
+/*
  * A 1 MiB geli(4) WRITE and READ is 2048 sector requests; model opencrypto's
  * dispatch (ERESTART holds the request and blocks the driver until
  * crypto_unblock()) and require every request to complete without error.
@@ -597,13 +810,273 @@ ATF_TC_BODY(cipher_data_request_op_type, tc)
 	}
 }
 
+/*
+ * A 64 KiB request in page-sized malloc(9) pieces would take more than 32
+ * descriptors, which a device may refuse (bhyve(8) returned such a chain with
+ * used length 0 and no status).  The request must never complete as a
+ * success without device output: it is posted within 32 descriptors and
+ * gets the device's output.
+ */
+ATF_TC_WITHOUT_HEAD(large_request_fits_device_segments);
+ATF_TC_BODY(large_request_fits_device_segments, tc)
+{
+	struct cryptop *crp;
+	int i;
+
+	fixture();
+	g_dev_maxseg = 32;
+	crp = data_crp(true, 64 * 1024);
+	ATF_REQUIRE_EQ(0, dispatch(crp));
+	ATF_REQUIRE_EQ(1, device_complete_all());
+	ATF_REQUIRE(crp->done);
+	for (i = 0; i < crp->crp_payload_length; i++)
+		if (crp->buf[i] != DEV_OUT)
+			break;
+	ATF_REQUIRE_MSG(crp->crp_etype != 0 || i == crp->crp_payload_length,
+	    "request succeeded without device output at byte %d", i);
+	ATF_REQUIRE_MSG(g_vq[0].ndesc[0] <= 32, "request took %d descriptors",
+	    g_vq[0].ndesc[0]);
+	ATF_REQUIRE_EQ(0, crp->crp_etype);
+	free(crp);
+}
+
+/*
+ * A request the device returns without writing its status fails with EIO:
+ * whether it reports used length 0 or leaves the status byte unwritten.
+ */
+ATF_TC_WITHOUT_HEAD(unwritten_status_fails_request);
+ATF_TC_BODY(unwritten_status_fails_request, tc)
+{
+	struct cryptop *crp;
+
+	for (int skip = 0; skip < 2; skip++) {
+		fixture();
+		if (skip != 0)
+			g_dev_skip_status = true;
+		else
+			g_dev_maxseg = 1;
+		crp = sector_crp(true);
+		ATF_REQUIRE_EQ(0, dispatch(crp));
+		ATF_REQUIRE_EQ(1, device_complete_all());
+		ATF_REQUIRE(crp->done);
+		ATF_REQUIRE_MSG(crp->crp_etype == EIO,
+		    "%s: error %d", skip != 0 ? "status not written" :
+		    "used length 0", crp->crp_etype);
+		free(crp);
+	}
+}
+
+static struct cryptop *g_hook_target, *g_hook_new;
+
+static void
+dispatch_during_build(struct cryptop *crp)
+{
+	struct cryptop *new;
+
+	if (crp != g_hook_target || g_hook_new == NULL)
+		return;
+	new = g_hook_new;
+	g_hook_new = NULL;
+	ATF_REQUIRE_EQ(0, dispatch(new));
+}
+
+/*
+ * The interrupt handler resubmits a parked request outside the queue lock.
+ * A request dispatched meanwhile must queue behind it, not take the
+ * descriptors it waits for: a large parked request could otherwise lose
+ * every round to small new ones.  21 requests of 4080 bytes take three
+ * descriptors each; the parked 28 KiB request takes 16, which five
+ * completions return.
+ */
+ATF_TC_WITHOUT_HEAD(parked_request_keeps_its_place);
+ATF_TC_BODY(parked_request_keeps_its_place, tc)
+{
+	struct cryptop *crp[21];
+	struct cryptop *big, *small;
+	struct vtcrypto_request *vcr;
+	int i, rounds;
+
+	fixture();
+	for (i = 0; i < 21; i++) {
+		crp[i] = data_crp(true, 4080);
+		ATF_REQUIRE_EQ(0, dispatch(crp[i]));
+	}
+	ATF_REQUIRE_EQ(1, g_vq[0].free_desc);
+	big = data_crp(true, 28 * 1024);
+	ATF_REQUIRE_EQ(0, dispatch(big));
+	ATF_REQUIRE(!big->done);
+	ATF_REQUIRE_EQ(21, g_vq[0].tail);
+
+	small = data_crp(true, 4080);
+	g_hook_target = big;
+	g_hook_new = small;
+	g_build_hook = dispatch_during_build;
+	ATF_REQUIRE_EQ(5, device_complete(0, 5));
+	vtcrypto_dataq_intr(&g_dq[0]);
+	ATF_REQUIRE_MSG(g_hook_new == NULL, "parked request was not rebuilt");
+	ATF_REQUIRE_EQ(22, g_vq[0].tail);
+	vcr = g_vq[0].cookie[21];
+	ATF_REQUIRE_MSG(vcr->vcr_crp == big,
+	    "a new request took the parked request's descriptors");
+	ATF_REQUIRE_EQ(16, g_vq[0].ndesc[21]);
+	ATF_REQUIRE(TAILQ_FIRST(&g_dq[0].vdq_parked) == small);
+
+	g_build_hook = NULL;
+	for (rounds = 0; g_done < 23; rounds++) {
+		ATF_REQUIRE_MSG(rounds < 4, "%d of 23 requests completed",
+		    g_done);
+		device_complete_all();
+	}
+	ATF_REQUIRE_EQ(0, g_done_err);
+	for (i = 0; i < 21; i++)
+		free(crp[i]);
+	free(big);
+	free(small);
+}
+
+/*
+ * VIRTIO_CRYPTO_S_OK with a used length short of the writable buffer left
+ * output unwritten, which the driver would copy into the request: the
+ * request fails with EIO instead, and its buffer keeps the input.
+ */
+ATF_TC_WITHOUT_HEAD(short_success_fails_request);
+ATF_TC_BODY(short_success_fails_request, tc)
+{
+	struct cryptop *crp;
+	int i;
+
+	fixture();
+	g_dev_short = true;
+	crp = sector_crp(true);
+	ATF_REQUIRE_EQ(0, dispatch(crp));
+	ATF_REQUIRE_EQ(1, device_complete_all());
+	ATF_REQUIRE(crp->done);
+	ATF_REQUIRE_MSG(crp->crp_etype == EIO, "error %d", crp->crp_etype);
+	for (i = 0; i < crp->crp_payload_length; i++)
+		ATF_REQUIRE_MSG(crp->buf[i] == 0, "byte %d replaced", i);
+	free(crp);
+}
+
+/*
+ * A ring smaller than 32 descriptors bounds a request by its own size: a
+ * 28 KiB request in page-sized pieces (16 descriptors) would never fit an
+ * 8-descriptor ring, so it is posted in contiguous buffers and completes.
+ */
+ATF_TC_WITHOUT_HEAD(small_ring_bounds_request_segments);
+ATF_TC_BODY(small_ring_bounds_request_segments, tc)
+{
+	struct cryptop *crp;
+
+	fixture();
+	g_vq[0].size = g_vq[0].free_desc = 8;
+	crp = data_crp(true, 28 * 1024);
+	ATF_REQUIRE_EQ(0, dispatch(crp));
+	ATF_REQUIRE_EQ(1, device_complete_all());
+	ATF_REQUIRE(crp->done);
+	ATF_REQUIRE_MSG(crp->crp_etype == 0, "error %d", crp->crp_etype);
+	ATF_REQUIRE_EQ(2, g_vq[0].ndesc[0]);
+	free(crp);
+}
+
+/* Control device model knobs; see ctrl_device(). */
+static struct virtqueue g_ctrl_vq;
+static uint32_t g_ctrl_len;
+static bool g_ctrl_write;
+
+/*
+ * Device side of the control queue: complete the posted request with used
+ * length g_ctrl_len.  With g_ctrl_write, first write VIRTIO_CRYPTO_S_OK and,
+ * for a session_input, session id 0x1234; else leave the reply unwritten, as
+ * bhyve(8) returned the control requests it rejected.
+ */
+static void
+ctrl_device(struct virtqueue *vq)
+{
+	uint8_t *wbuf;
+	int i;
+
+	ATF_REQUIRE(vq == &g_ctrl_vq);
+	i = vq->used++;
+	wbuf = vq->wbuf[i];
+	if (g_ctrl_write) {
+		/* op_ctrl_req opcode: CREATE_SESSION is 0x02 in its service. */
+		if ((le32dec(vq->last_hdr) & 0xff) == 0x02) {
+			le64enc(wbuf + 0, 0x1234);
+			le32enc(wbuf + 8, VIRTIO_CRYPTO_S_OK);
+		} else
+			wbuf[0] = VIRTIO_CRYPTO_S_OK;
+	}
+	vq->len[i] = g_ctrl_len;
+}
+
+static void
+fixture_ctrl(void)
+{
+	fixture();
+	memset(&g_ctrl_vq, 0, sizeof(g_ctrl_vq));
+	g_ctrl_vq.size = g_ctrl_vq.free_desc = MOCK_RINGSZ;
+	g_sc.vtc_ctrl_vq = &g_ctrl_vq;
+	g_notify_hook = ctrl_device;
+}
+
+/*
+ * A control request the device returned unwritten (used length 0) or only
+ * partly written fails with EIO and never yields a session: an unwritten
+ * session_input reads as session 0, possibly another session's key.
+ */
+ATF_TC_WITHOUT_HEAD(rejected_control_request_fails);
+ATF_TC_BODY(rejected_control_request_fails, tc)
+{
+	static const struct {
+		uint32_t	len;
+		bool		write;
+		int		create_error;
+		int		destroy_error;
+	} cases[] = {
+		{ 0, false, EIO, EIO },		/* rejected, nothing written */
+		{ 0, true, EIO, EIO },		/* written, used length 0 */
+		{ 12, true, EIO, EIO },		/* session_input cut short */
+		{ 16, true, 0, EIO },		/* full session_input */
+		{ 1, true, EIO, 0 },		/* one-byte inhdr */
+	};
+	uint64_t sid;
+	int error;
+
+	for (size_t i = 0; i < nitems(cases); i++) {
+		fixture_ctrl();
+		g_ctrl_len = cases[i].len;
+		g_ctrl_write = cases[i].write;
+		sid = UINT64_MAX;
+		error = vtcrypto_create_session(&g_sc,
+		    VIRTIO_CRYPTO_SERVICE_CIPHER, &g_ses.csp,
+		    VIRTIO_CRYPTO_OP_ENCRYPT, &sid);
+		ATF_REQUIRE_MSG(error == cases[i].create_error,
+		    "case %zu: create error %d", i, error);
+		ATF_REQUIRE_MSG(sid == (error == 0 ? 0x1234 : UINT64_MAX),
+		    "case %zu: session id %#jx", i, (uintmax_t)sid);
+		error = vtcrypto_destroy_session(&g_sc,
+		    VIRTIO_CRYPTO_SERVICE_CIPHER, 0x1234);
+		ATF_REQUIRE_MSG(error == cases[i].destroy_error,
+		    "case %zu: destroy error %d", i, error);
+		ATF_REQUIRE(!g_sc.vtc_ctrl_broken);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, ring_full_request_completes);
 	ATF_TP_ADD_TC(tp, ring_drained_before_erestart_recorded);
 	ATF_TP_ADD_TC(tp, full_queue_uses_other_queue);
+	ATF_TP_ADD_TC(tp, partial_ring_parks_request);
+	ATF_TP_ADD_TC(tp, page_sector_takes_page_segments);
 	ATF_TP_ADD_TC(tp, geli_1mib_write_burst);
 	ATF_TP_ADD_TC(tp, geli_1mib_read_burst);
 	ATF_TP_ADD_TC(tp, cipher_data_request_op_type);
+	ATF_TP_ADD_TC(tp, large_request_fits_device_segments);
+	ATF_TP_ADD_TC(tp, unwritten_status_fails_request);
+	ATF_TP_ADD_TC(tp, parked_request_keeps_its_place);
+	ATF_TP_ADD_TC(tp, short_success_fails_request);
+	ATF_TP_ADD_TC(tp, small_ring_bounds_request_segments);
+	ATF_TP_ADD_TC(tp, rejected_control_request_fails);
 	return (atf_no_error());
 }

@@ -187,7 +187,7 @@ static struct virtio_consts vt9p_vi_consts = {
 	.vc_suspend =	pci_vt9p_suspend_device,
 	.vc_resume_device = pci_vt9p_resume_device,
 	.vc_hv_caps =	VIRTIO_9P_F_MOUNT_TAG | VIRTIO_F_RING_RESET |
-	    VIRTIO_F_SUSPEND,
+	    VIRTIO_F_SUSPEND | VIRTIO_RING_F_INDIRECT_DESC,
 #ifdef BHYVE_SNAPSHOT
 	.vc_pause =	pci_vt9p_pause,
 	.vc_resume =	pci_vt9p_resume,

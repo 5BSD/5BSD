@@ -4,6 +4,7 @@
 #include <sys/endian.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -65,6 +66,8 @@ static unsigned int connection_set_discard_calls;
 static unsigned int connection_set_reset_complete_calls;
 static unsigned int connection_set_notification_calls;
 static int connection_progress_error;
+static bool connection_progress_readable;
+static bool connection_progress_writable;
 static int connection_control_status_result;
 static int connection_begin_quiesce_result;
 static int connection_begin_thaw_saved_error;
@@ -87,6 +90,9 @@ static const char *cfg_queues;
 static bool cfg_notifications;
 static bool cfg_packed;
 static int connect_required_error;
+static unsigned int dir_open_calls;
+static int connect_at_dfd = -1;
+static char connect_at_name[64];
 static int connection_fd_value = -1;
 static int mevent_added_fd = -1;
 
@@ -312,7 +318,35 @@ vq_endchains(struct vqueue_info *vq __unused, int used_all __unused)
 }
 
 int
-virtio_fs_connection_connect_required(const char *path __unused,
+virtio_fs_backend_dir_open(const char *path, int *dfdp, char **namep)
+{
+	const char *slash;
+	char *parent;
+	int dfd;
+
+	dir_open_calls++;
+	if (path == NULL || path[0] != '/' ||
+	    (slash = strrchr(path, '/'))[1] == '\0')
+		return (EINVAL);
+	parent = slash == path ? strdup("/") :
+	    strndup(path, (size_t)(slash - path));
+	if (parent == NULL)
+		return (ENOMEM);
+	dfd = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	free(parent);
+	if (dfd < 0)
+		return (errno);
+	*namep = strdup(slash + 1);
+	if (*namep == NULL) {
+		(void)close(dfd);
+		return (ENOMEM);
+	}
+	*dfdp = dfd;
+	return (0);
+}
+
+int
+virtio_fs_connection_connect_required_at(int dfd, const char *name,
     uid_t uid __unused, gid_t gid __unused,
     const struct virtio_fs_backend_hello *hello __unused,
     uint32_t queues __unused, uint32_t depth __unused,
@@ -321,13 +355,15 @@ virtio_fs_connection_connect_required(const char *path __unused,
     struct virtio_fs_connection **connection)
 {
 
+	connect_at_dfd = dfd;
+	strlcpy(connect_at_name, name == NULL ? "" : name,
+	    sizeof(connect_at_name));
 	if (connect_required_error != 0)
 		return (connect_required_error);
 	if (connection != NULL)
 		*connection = (struct virtio_fs_connection *)(uintptr_t)1;
 	return (0);
 }
-
 void
 virtio_fs_connection_destroy(
     struct virtio_fs_connection *connection __unused)
@@ -365,9 +401,11 @@ virtio_fs_connection_fd(
 int
 virtio_fs_connection_progress(
     struct virtio_fs_connection *connection __unused,
-    bool readable __unused, bool writable __unused)
+    bool readable, bool writable)
 {
 
+	connection_progress_readable = readable;
+	connection_progress_writable = writable;
 	return (connection_progress_error);
 }
 
@@ -637,7 +675,9 @@ pci_vtfs_test_teardown(struct pci_vtfs_softc *sc)
 	pci_vtfs_checkpoint_state_clear(sc);
 #endif
 	free(sc->vsc_backend_identity);
-	free(sc->vsc_backend_path);
+	if (sc->vsc_backend_dirfd >= 0)
+		(void)close(sc->vsc_backend_dirfd);
+	free(sc->vsc_backend_name);
 	free(sc);
 }
 
@@ -766,6 +806,9 @@ reset_mock_state(void)
 	cfg_notifications = false;
 	cfg_packed = false;
 	connect_required_error = 0;
+	dir_open_calls = 0;
+	connect_at_dfd = -1;
+	connect_at_name[0] = '\0';
 #ifdef BHYVE_SNAPSHOT
 	checkpoint_contract_error = 0;
 	checkpoint_copy_error = 0;
@@ -1967,6 +2010,8 @@ ATF_TC_BODY(event_processes_progress_and_completions, tc)
 	pci_vtfs_event(-1, EVF_READ, &sc);
 	ATF_CHECK(sc.vsc_callbacks_set);
 	ATF_CHECK_EQ(vi_pci_modern_queue_reset_complete_calls, 1U);
+	ATF_CHECK(connection_progress_readable &&
+	    !connection_progress_writable);
 
 	/* A backend progress error requests a reset. */
 	sc.vsc_callbacks_set = false;
@@ -1974,6 +2019,23 @@ ATF_TC_BODY(event_processes_progress_and_completions, tc)
 	needs_reset_calls = 0;
 	pci_vtfs_event(-1, EVF_WRITE, &sc);
 	ATF_CHECK(needs_reset_calls >= 1U);
+	ATF_CHECK(!connection_progress_readable &&
+	    connection_progress_writable);
+
+	/*
+	 * The deadline timer tries both directions; a peer that still cannot
+	 * move (ETIMEDOUT) requests a reset, one that moved does not.
+	 */
+	connection_progress_error = ETIMEDOUT;
+	needs_reset_calls = 0;
+	pci_vtfs_event(-1, EVF_TIMER, &sc);
+	ATF_CHECK(connection_progress_readable &&
+	    connection_progress_writable);
+	ATF_CHECK(needs_reset_calls >= 1U);
+	connection_progress_error = EAGAIN;
+	needs_reset_calls = 0;
+	pci_vtfs_event(-1, EVF_TIMER, &sc);
+	ATF_CHECK_EQ(needs_reset_calls, 0U);
 
 	/* A reconnecting device drops the event immediately. */
 	connection_progress_error = 0;
@@ -2004,8 +2066,9 @@ ATF_TC_BODY(reset_reconnects_backend, tc)
 	sc.vsc_vq = vq;
 	sc.vsc_reset = reset;
 	sc.vsc_notify_pending = notify_pending;
-	sc.vsc_backend_path = strdup("/s");
-	ATF_REQUIRE(sc.vsc_backend_path != NULL);
+	sc.vsc_backend_dirfd = -1;
+	sc.vsc_backend_name = strdup("s");
+	ATF_REQUIRE(sc.vsc_backend_name != NULL);
 	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
 	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
 	sc.vsc_write_event = (struct mevent *)(uintptr_t)2;
@@ -2020,7 +2083,7 @@ ATF_TC_BODY(reset_reconnects_backend, tc)
 	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
 
 	pci_vtfs_disconnect_sync(&sc);
-	free(sc.vsc_backend_path);
+	free(sc.vsc_backend_name);
 	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
 }
 
@@ -2043,8 +2106,9 @@ ATF_TC_BODY(reset_reconnect_failure_sets_needs_reset, tc)
 	sc.vsc_vq = vq;
 	sc.vsc_reset = reset;
 	sc.vsc_notify_pending = notify_pending;
-	sc.vsc_backend_path = strdup("/s");
-	ATF_REQUIRE(sc.vsc_backend_path != NULL);
+	sc.vsc_backend_dirfd = -1;
+	sc.vsc_backend_name = strdup("s");
+	ATF_REQUIRE(sc.vsc_backend_name != NULL);
 	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
 
 	connect_required_error = ECONNREFUSED;
@@ -2056,8 +2120,62 @@ ATF_TC_BODY(reset_reconnect_failure_sets_needs_reset, tc)
 	connect_required_error = 0;
 
 	pci_vtfs_disconnect_sync(&sc);
-	free(sc.vsc_backend_path);
+	free(sc.vsc_backend_name);
 	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+/*
+ * bhyve enters capability mode after device init, so a guest reset must
+ * reconnect relative to the directory opened at init (CAP_CONNECTAT only)
+ * rather than reopen the absolute socket path.  Run the reset in a child in
+ * capability mode.
+ */
+ATF_TC_WITHOUT_HEAD(reset_reconnects_through_init_directory_in_capability_mode);
+ATF_TC_BODY(reset_reconnects_through_init_directory_in_capability_mode, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtfs_softc *sc;
+	cap_rights_t rights;
+	pid_t child;
+	int dfd, status;
+
+	reset_mock_state();
+	memset(&pi, 0, sizeof(pi));
+	cfg_path = "/tmp/vtfs-backend.sock";
+	cfg_tag = "waspnest";
+	ATF_REQUIRE_EQ(pci_vtfs_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	dfd = sc->vsc_backend_dirfd;
+	ATF_REQUIRE(dfd >= 0);
+	ATF_CHECK_EQ(dir_open_calls, 1U);
+	ATF_CHECK_STREQ(sc->vsc_backend_name, "vtfs-backend.sock");
+	ATF_CHECK_EQ(connect_at_dfd, dfd);
+	ATF_CHECK_STREQ(connect_at_name, "vtfs-backend.sock");
+	ATF_REQUIRE_EQ(cap_rights_get(dfd, &rights), 0);
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_CONNECTAT));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_READ));
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		connect_at_dfd = -1;
+		if (cap_enter() != 0)
+			_exit(2);
+		pthread_mutex_lock(&sc->vsc_mtx);
+		pci_vtfs_reset(sc);
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		if (sc->vsc_connection == NULL || connect_at_dfd != dfd ||
+		    strcmp(connect_at_name, "vtfs-backend.sock") != 0 ||
+		    dir_open_calls != 1 || needs_reset_calls != 0)
+			_exit(1);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(waitpid(child, &status, 0), child);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "capability-mode reset did not reconnect through the init "
+	    "directory (status %#x)", status);
+	pci_vtfs_test_teardown(sc);
 }
 
 /*
@@ -2089,8 +2207,9 @@ ATF_TC_BODY(event_descriptor_outlives_failed_connection, tc)
 	sc.vsc_vq = vq;
 	sc.vsc_reset = reset;
 	sc.vsc_notify_pending = notify_pending;
-	sc.vsc_backend_path = strdup("/s");
-	ATF_REQUIRE(sc.vsc_backend_path != NULL);
+	sc.vsc_backend_dirfd = -1;
+	sc.vsc_backend_name = strdup("s");
+	ATF_REQUIRE(sc.vsc_backend_name != NULL);
 	connection_fd_value = sockets[0];
 	mevent_added_fd = -1;
 
@@ -2106,7 +2225,7 @@ ATF_TC_BODY(event_descriptor_outlives_failed_connection, tc)
 	pci_vtfs_disconnect_sync(&sc);
 	ATF_CHECK_EQ(fcntl(registered, F_GETFD), -1);
 	ATF_CHECK_EQ(close(sockets[1]), 0);
-	free(sc.vsc_backend_path);
+	free(sc.vsc_backend_name);
 	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
 }
 
@@ -2576,6 +2695,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, event_processes_progress_and_completions);
 	ATF_TP_ADD_TC(tp, reset_reconnects_backend);
 	ATF_TP_ADD_TC(tp, reset_reconnect_failure_sets_needs_reset);
+	ATF_TP_ADD_TC(tp, reset_reconnects_through_init_directory_in_capability_mode);
 	ATF_TP_ADD_TC(tp, event_descriptor_outlives_failed_connection);
 	ATF_TP_ADD_TC(tp, suspend_and_resume_device_quiesce_backend);
 	ATF_TP_ADD_TC(tp, qreset_pending_and_success);

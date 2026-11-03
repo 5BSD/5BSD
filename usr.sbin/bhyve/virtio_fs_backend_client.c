@@ -147,6 +147,32 @@ virtio_fs_backend_client_connect(const char *path, uid_t expected_uid,
 }
 
 int
+virtio_fs_backend_client_connect_at(int dfd, const char *name,
+    uid_t expected_uid, gid_t expected_gid,
+    const struct virtio_fs_backend_hello *offer,
+    struct virtio_fs_backend_client **result)
+{
+	bool connecting;
+	int error, fd;
+
+	if (result == NULL)
+		return (EINVAL);
+	*result = NULL;
+	error = virtio_fs_backend_client_offer_validate(offer);
+	if (error != 0)
+		return (error);
+	error = virtio_fs_backend_connect_start_at(dfd, name, expected_uid,
+	    expected_gid, &fd, &connecting);
+	if (error != 0)
+		return (error);
+	error = virtio_fs_backend_client_create(fd, connecting, expected_uid,
+	    expected_gid, offer, result);
+	if (error != 0)
+		(void)close(fd);
+	return (error);
+}
+
+int
 virtio_fs_backend_client_adopt(int fd, uid_t expected_uid,
     gid_t expected_gid, const struct virtio_fs_backend_hello *offer,
     struct virtio_fs_backend_client **result)
@@ -214,20 +240,6 @@ virtio_fs_backend_client_deadline(
 	if (client == NULL || client->fd < 0)
 		return (false);
 	return (virtio_fs_backend_stream_deadline(&client->stream, deadline));
-}
-
-int
-virtio_fs_backend_client_expire(struct virtio_fs_backend_client *client,
-    const struct timespec *now)
-{
-	struct timespec deadline;
-
-	if (client == NULL || now == NULL)
-		return (EINVAL);
-	if (!virtio_fs_backend_client_deadline(client, &deadline) ||
-	    timespeccmp(now, &deadline, <))
-		return (0);
-	return (virtio_fs_backend_client_fail(client, ETIMEDOUT));
 }
 
 int

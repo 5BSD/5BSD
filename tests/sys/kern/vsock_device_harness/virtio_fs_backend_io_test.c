@@ -1,11 +1,13 @@
 /*
  * Unix-domain transport tests for the private VFSB protocol.
  */
+#include <sys/capsicum.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -165,6 +167,91 @@ ATF_TC_BODY(backend_connect_supports_long_parent_path, tc)
 	for (i = nitems(directories); i-- > 1;)
 		ATF_REQUIRE_EQ(rmdir(directories[i]), 0);
 	ATF_REQUIRE_EQ(rmdir(root), 0);
+}
+
+/*
+ * bhyve reconnects its virtio-fs backend from capability mode after a guest
+ * reset.  A path-based connect must reopen the socket's parent directory,
+ * which capability mode refuses (ECAPMODE); a connect relative to the
+ * directory opened beforehand, limited to CAP_CONNECTAT, succeeds.
+ */
+ATF_TC_WITHOUT_HEAD(capability_mode_reconnect_uses_directory_descriptor);
+ATF_TC_BODY(capability_mode_reconnect_uses_directory_descriptor, tc)
+{
+	struct sockaddr_un address;
+	struct pollfd pollfd;
+	cap_rights_t rights;
+	char directory[] = "/tmp/vfsb.XXXXXX";
+	char path[sizeof(address.sun_path)];
+	char *name;
+	bool connecting;
+	pid_t child;
+	int accepted, client, dfd, error, listener, status;
+
+	ATF_REQUIRE(mkdtemp(directory) != NULL);
+	ATF_REQUIRE(snprintf(path, sizeof(path), "%s/backend", directory) > 0);
+	listener = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	ATF_REQUIRE(listener >= 0);
+	memset(&address, 0, sizeof(address));
+	address.sun_family = AF_UNIX;
+	ATF_REQUIRE(strlcpy(address.sun_path, path,
+	    sizeof(address.sun_path)) < sizeof(address.sun_path));
+	address.sun_len = (uint8_t)(offsetof(struct sockaddr_un, sun_path) +
+	    strlen(address.sun_path) + 1);
+	ATF_REQUIRE_EQ(bind(listener, (struct sockaddr *)&address,
+	    address.sun_len), 0);
+	ATF_REQUIRE_EQ(listen(listener, 2), 0);
+
+	ATF_REQUIRE_EQ(virtio_fs_backend_dir_open(path, &dfd, &name), 0);
+	ATF_CHECK_STREQ(name, "backend");
+	cap_rights_init(&rights, CAP_CONNECTAT);
+	ATF_REQUIRE_EQ(cap_rights_limit(dfd, &rights), 0);
+	ATF_CHECK_EQ(virtio_fs_backend_connect_start_at(dfd, "a/b", geteuid(),
+	    getegid(), &client, &connecting), EINVAL);
+	ATF_CHECK_EQ(client, -1);
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		if (cap_enter() != 0)
+			_exit(10);
+		/* The reconnect bhyve performed before this fix. */
+		error = virtio_fs_backend_connect_start(path, geteuid(),
+		    getegid(), &client, &connecting);
+		if (error != ECAPMODE)
+			_exit(11);
+		error = virtio_fs_backend_connect_start_at(dfd, name,
+		    geteuid(), getegid(), &client, &connecting);
+		if (error != 0)
+			_exit(12);
+		if (connecting) {
+			pollfd = (struct pollfd) {
+				.fd = client,
+				.events = POLLOUT,
+			};
+			if (poll(&pollfd, 1, 5000) != 1 ||
+			    virtio_fs_backend_connect_finish(client,
+			    geteuid(), getegid()) != 0)
+				_exit(13);
+		}
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(waitpid(child, &status, 0), child);
+	ATF_REQUIRE_MSG(WIFEXITED(status), "status %#x", status);
+	ATF_CHECK_MSG(WEXITSTATUS(status) != 11,
+	    "path-based connect did not fail with ECAPMODE");
+	ATF_CHECK_EQ_MSG(WEXITSTATUS(status), 0,
+	    "capability-mode connect failed at step %d", WEXITSTATUS(status));
+	pollfd = (struct pollfd) { .fd = listener, .events = POLLIN };
+	ATF_REQUIRE_EQ(poll(&pollfd, 1, 0), 1);
+	accepted = accept(listener, NULL, NULL);
+	ATF_REQUIRE(accepted >= 0);
+	ATF_CHECK_EQ(close(accepted), 0);
+	ATF_CHECK_EQ(close(dfd), 0);
+	free(name);
+	ATF_CHECK_EQ(close(listener), 0);
+	ATF_CHECK_EQ(unlink(path), 0);
+	ATF_CHECK_EQ(rmdir(directory), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(peer_authentication);
@@ -618,6 +705,94 @@ ATF_TC_BODY(partial_frame_resumes_without_waiting, tc)
 }
 
 /*
+ * A receive that runs after the progress deadline but finds more of the
+ * frame takes it (the header rest, then the payload); one that finds nothing
+ * reports ETIMEDOUT.
+ */
+ATF_TC_WITHOUT_HEAD(late_receive_moves_before_expiring);
+ATF_TC_BODY(late_receive_moves_before_expiring, tc)
+{
+	struct virtio_fs_backend_stream stream;
+	struct virtio_fs_backend_header received, sent;
+	uint8_t frame[40 + 16], output[16];
+	size_t output_len;
+	int error, sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	sent = request_header(16);
+	ATF_REQUIRE_EQ(virtio_fs_backend_header_encode(&sent, frame), 0);
+	memset(frame + 40, 0x3c, 16);
+	virtio_fs_backend_stream_init(&stream);
+
+	ATF_REQUIRE_EQ(send(sockets[0], frame, 20, 0), 20);
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EAGAIN);
+	ATF_REQUIRE_EQ(send(sockets[0], frame + 20, sizeof(frame) - 20,
+	    MSG_EOR), (ssize_t)(sizeof(frame) - 20));
+	do {
+		stream.receive_deadline = (struct timespec){ 0, 0 };
+		error = virtio_fs_backend_stream_receive(&stream, sockets[1],
+		    &received, output, sizeof(output), &output_len);
+	} while (error == EAGAIN);
+	ATF_CHECK_EQ(error, 0);
+	ATF_CHECK_EQ(output_len, 16);
+	ATF_CHECK(memcmp(output, frame + 40, 16) == 0);
+
+	ATF_REQUIRE_EQ(send(sockets[0], frame, 20, 0), 20);
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EAGAIN);
+	ATF_CHECK(virtio_fs_backend_stream_receiving(&stream));
+	stream.receive_deadline = (struct timespec){ 0, 0 };
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), ETIMEDOUT);
+	ATF_CHECK(!virtio_fs_backend_stream_receiving(&stream));
+	virtio_fs_backend_stream_fini(&stream);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/*
+ * A flush that runs after the progress deadline but finds room moves the
+ * tail on; one that finds the peer still full reports ETIMEDOUT.
+ */
+ATF_TC_WITHOUT_HEAD(late_flush_moves_before_expiring);
+ATF_TC_BODY(late_flush_moves_before_expiring, tc)
+{
+	struct virtio_fs_backend_stream stream;
+	struct virtio_fs_backend_header sent;
+	uint8_t payload[4096], sink[4096 + 40];
+	size_t left;
+	int size, sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	size = 64;
+	ATF_REQUIRE_EQ(setsockopt(sockets[1], SOL_SOCKET, SO_RCVBUF, &size,
+	    sizeof(size)), 0);
+	sent = request_header(sizeof(payload));
+	memset(payload, 0xa5, sizeof(payload));
+	virtio_fs_backend_stream_init(&stream);
+	ATF_REQUIRE_EQ(virtio_fs_backend_stream_send(&stream, sockets[0], &sent,
+	    payload), 0);
+	ATF_REQUIRE(virtio_fs_backend_stream_sending(&stream));
+
+	left = stream.send_len - stream.send_done;
+	ATF_REQUIRE(recv(sockets[1], sink, sizeof(sink), MSG_DONTWAIT) > 0);
+	stream.send_deadline = (struct timespec){ 0, 0 };
+	ATF_CHECK_EQ(virtio_fs_backend_stream_flush(&stream, sockets[0]),
+	    EAGAIN);
+	ATF_CHECK(stream.send_len - stream.send_done < left);
+
+	stream.send_deadline = (struct timespec){ 0, 0 };
+	ATF_CHECK_EQ(virtio_fs_backend_stream_flush(&stream, sockets[0]),
+	    ETIMEDOUT);
+	virtio_fs_backend_stream_fini(&stream);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/*
  * Rights attached to a later piece of a frame fail it and are closed.  The
  * kernel would dispose of them silently if the piece were read without a
  * control buffer.
@@ -680,6 +855,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, api_errors_and_peer_close);
 	ATF_TP_ADD_TC(tp, backend_connect_is_bounded_and_authenticated);
 	ATF_TP_ADD_TC(tp, backend_connect_supports_long_parent_path);
+	ATF_TP_ADD_TC(tp, capability_mode_reconnect_uses_directory_descriptor);
 	ATF_TP_ADD_TC(tp, peer_authentication);
 	ATF_TP_ADD_TC(tp, frame_round_trip_and_nonblocking);
 	ATF_TP_ADD_TC(tp, truncation_and_bad_frames);
@@ -690,6 +866,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, frames_larger_than_socket_buffer_are_reassembled);
 	ATF_TP_ADD_TC(tp, full_length_without_eor_is_rejected);
 	ATF_TP_ADD_TC(tp, partial_frame_resumes_without_waiting);
+	ATF_TP_ADD_TC(tp, late_receive_moves_before_expiring);
+	ATF_TP_ADD_TC(tp, late_flush_moves_before_expiring);
 	ATF_TP_ADD_TC(tp, descriptors_in_a_continuation_fail_the_frame);
 	return (atf_no_error());
 }

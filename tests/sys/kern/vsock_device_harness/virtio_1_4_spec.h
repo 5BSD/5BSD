@@ -489,6 +489,14 @@
 #define	VIRTIO14_NET_MAX_GSO_PACKET_SIZE 65589U
 #define	VIRTIO14_NET_MAX_BASE_RECORD_SIZE \
 	(VIRTIO14_NET_MAX_GSO_PACKET_SIZE + VIRTIO14_NET_MODERN_HDR_SIZE)
+/*
+ * 5BSD-private, not part of VirtIO 1.4: the version-1 packet-ID trailer
+ * appended to the net header after the VIRTIO_NET_CTRL_5BSD (0x80) packet-ID
+ * command.  Transcribed from the private wire contract (hostid 8, msgid 8,
+ * magic 8, pad 8 bytes), independently of sys/dev/virtio/network/
+ * virtio_net_5bsd.h and sys/sys/_mbufid.h, which the tests check against it.
+ */
+#define	VIRTIO14_NET_5BSD_ID_LEN	32U
 
 /* 5.2.6: block request types and status values used by tests. */
 #define	VIRTIO14_BLK_F_BARRIER		(1ULL << 0)

@@ -65,10 +65,15 @@
  * busdma files, which are explicitly out of this driver's file scope, so they
  * are not attempted rather than faked.
  *
- * The seam is left honest and usable: virtio_iommu_provider_lookup() (declared
- * in virtio_iommu.h) resolves an endpoint RID to this driver's protocol engine
- * via the vtable below, so a future in-tree VIOT/busdma_iommu back end can
- * drive real host translation without any change to this file's protocol core.
+ * The one translation this driver does provide is the identity domain that
+ * VIRTIO_F_ACCESS_PLATFORM endpoints need: the virtio core asks every
+ * registered instance (virtio_iommu_attach_identity()) to ATTACH the endpoint
+ * RID with VIRTIO_IOMMU_ATTACH_F_BYPASS before the PCI transport accepts the
+ * feature.  The device then passes that endpoint's DMA through untranslated,
+ * so the guest-physical ring and buffer addresses virtqueue(9) programs stay
+ * valid.  The rest of the vtable is left for a future VIOT/busdma_iommu back
+ * end that drives real MAP/UNMAP translation without any change to this
+ * file's protocol core.
  * ---------------------------------------------------------------------------
  */
 
@@ -234,13 +239,6 @@ static struct virtio_feature_desc vtiommu_feature_desc[] = {
 	{ 0, NULL }
 };
 
-/* Global provider registry for the busdma/VIOT seam. */
-static struct mtx vtiommu_providers_mtx;
-static LIST_HEAD(, virtio_iommu_provider) vtiommu_providers =
-    LIST_HEAD_INITIALIZER(vtiommu_providers);
-MTX_SYSINIT(vtiommu_providers, &vtiommu_providers_mtx, "vtiommu providers",
-    MTX_DEF);
-
 static int	vtiommu_probe(device_t);
 static int	vtiommu_attach(device_t);
 static int	vtiommu_detach(device_t);
@@ -273,6 +271,8 @@ static int	vtiommu_op_map(device_t, uint32_t, uint64_t, uint64_t,
 		    uint64_t, uint32_t);
 static int	vtiommu_op_unmap(device_t, uint32_t, uint64_t, uint64_t);
 static int	vtiommu_op_probe(device_t, uint32_t);
+static int	vtiommu_op_attach_identity(device_t, uint32_t);
+static int	vtiommu_op_detach_identity(device_t, uint32_t);
 
 /* Guest model helpers (require the softc lock). */
 static struct vtiommu_domain *vtiommu_domain_find(struct vtiommu_softc *,
@@ -286,6 +286,7 @@ static struct vtiommu_endpoint *vtiommu_endpoint_find(struct vtiommu_softc *,
 static struct vtiommu_endpoint *vtiommu_endpoint_get(struct vtiommu_softc *,
 		    uint32_t);
 static void	vtiommu_model_reset(struct vtiommu_softc *);
+static bool	vtiommu_endpoints_attached(struct vtiommu_softc *);
 static void	vtiommu_domain_add_map(struct vtiommu_domain *, uint64_t,
 		    uint64_t, uint64_t, uint32_t);
 static void	vtiommu_domain_del_range(struct vtiommu_domain *, uint64_t,
@@ -327,6 +328,8 @@ VIRTIO_SIMPLE_PNPINFO(virtio_iommu, VIRTIO_ID_IOMMU, "VirtIO IOMMU Adapter");
  * exercising the protocol and the in-tree host model, not as a guest DMA
  * isolation facility; that capability lives in the bhyve host-side virtio-iommu
  * model, which presents a functional IOMMU to guests whose OS can consume one.
+ * Opting in also lets VIRTIO_F_ACCESS_PLATFORM endpoints behind the device
+ * attach, through identity (bypass) domains.
  */
 static int vtiommu_enable = 0;
 SYSCTL_NODE(_hw, OID_AUTO, virtio_iommu, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
@@ -335,7 +338,8 @@ SYSCTL_INT(_hw_virtio_iommu, OID_AUTO, enable, CTLFLAG_RDTUN, &vtiommu_enable,
     0,
     "Attach to virtio-iommu devices (default 0). The guest driver implements "
     "the protocol but does not provide busdma(9) translation, so it is "
-    "disabled by default; set to 1 to exercise the protocol.");
+    "disabled by default; set to 1 to exercise the protocol and to attach "
+    "ACCESS_PLATFORM endpoints through identity domains.");
 
 static int
 vtiommu_probe(device_t dev)
@@ -400,17 +404,6 @@ vtiommu_attach(device_t dev)
 	virtqueue_disable_intr(sc->vtiommu_req_vq);
 	virtqueue_disable_intr(sc->vtiommu_event_vq);
 
-	/* Publish the protocol engine to the busdma/VIOT seam. */
-	sc->vtiommu_provider.dev = dev;
-	sc->vtiommu_provider.attach = vtiommu_op_attach;
-	sc->vtiommu_provider.detach = vtiommu_op_detach;
-	sc->vtiommu_provider.map = vtiommu_op_map;
-	sc->vtiommu_provider.unmap = vtiommu_op_unmap;
-	sc->vtiommu_provider.probe_endpoint = vtiommu_op_probe;
-	mtx_lock(&vtiommu_providers_mtx);
-	LIST_INSERT_HEAD(&vtiommu_providers, &sc->vtiommu_provider, link);
-	mtx_unlock(&vtiommu_providers_mtx);
-
 	vtiommu_setup_sysctl(sc);
 
 	if (bootverbose) {
@@ -437,10 +430,21 @@ static int
 vtiommu_detach(device_t dev)
 {
 	struct vtiommu_softc *sc;
+	int last;
 
 	sc = device_get_softc(dev);
 
 	VTIOMMU_LOCK(sc);
+	/*
+	 * Resetting the device detaches every endpoint, and an ACCESS_PLATFORM
+	 * endpoint behind it would then fault on its next DMA.  Keep the device
+	 * while the model still has an endpoint attached to a domain.
+	 */
+	if (device_is_attached(dev) && vtiommu_endpoints_attached(sc)) {
+		VTIOMMU_UNLOCK(sc);
+		device_printf(dev, "endpoints are still attached\n");
+		return (EBUSY);
+	}
 	sc->vtiommu_flags |= VTIOMMU_FLAG_DETACH;
 	/*
 	 * Wake any waiter and gated caller, then wait for an in-flight request to
@@ -454,9 +458,7 @@ vtiommu_detach(device_t dev)
 	VTIOMMU_UNLOCK(sc);
 
 	if (sc->vtiommu_provider.dev != NULL) {
-		mtx_lock(&vtiommu_providers_mtx);
-		LIST_REMOVE(&sc->vtiommu_provider, link);
-		mtx_unlock(&vtiommu_providers_mtx);
+		virtio_iommu_provider_deregister(&sc->vtiommu_provider);
 		sc->vtiommu_provider.dev = NULL;
 	}
 
@@ -475,6 +477,21 @@ vtiommu_detach(device_t dev)
 	virtio_teardown_intr(dev);
 
 	VTIOMMU_LOCK(sc);
+	/*
+	 * The reset retired the standing fault buffers (and a request a
+	 * wedged device never completed); take them off the rings before
+	 * their memory is freed.
+	 */
+	if (sc->vtiommu_event_vq != NULL) {
+		last = 0;
+		while (virtqueue_drain(sc->vtiommu_event_vq, &last) != NULL)
+			;
+	}
+	if (sc->vtiommu_req_vq != NULL) {
+		last = 0;
+		while (virtqueue_drain(sc->vtiommu_req_vq, &last) != NULL)
+			;
+	}
 	vtiommu_model_reset(sc);
 	VTIOMMU_UNLOCK(sc);
 
@@ -512,6 +529,21 @@ vtiommu_attach_completed(device_t dev)
 		return (error);
 	}
 	vtiommu_event_vq_intr(sc);
+
+	/*
+	 * Publish the protocol engine to the virtio core only now: endpoints
+	 * use it to request identity domains, and the request queue must not
+	 * be notified before DRIVER_OK.
+	 */
+	sc->vtiommu_provider.dev = dev;
+	sc->vtiommu_provider.attach = vtiommu_op_attach;
+	sc->vtiommu_provider.detach = vtiommu_op_detach;
+	sc->vtiommu_provider.map = vtiommu_op_map;
+	sc->vtiommu_provider.unmap = vtiommu_op_unmap;
+	sc->vtiommu_provider.probe_endpoint = vtiommu_op_probe;
+	sc->vtiommu_provider.attach_identity = vtiommu_op_attach_identity;
+	sc->vtiommu_provider.detach_identity = vtiommu_op_detach_identity;
+	virtio_iommu_provider_register(&sc->vtiommu_provider);
 	return (0);
 }
 
@@ -931,35 +963,52 @@ vtiommu_op_attach(device_t dev, uint32_t domain, uint32_t endpoint,
 	req.flags = htole32(flags);
 
 	VTIOMMU_LOCK(sc);
+	/*
+	 * Record the endpoint and hold the domain before the request goes out.
+	 * vtiommu_detach() refuses while the model shows an attached endpoint,
+	 * so an attach the model could not account for afterwards would let the
+	 * device be reset under it.  The lock is dropped while the request is in
+	 * flight; the reference keeps the domain from being collected meanwhile.
+	 */
+	ve = vtiommu_endpoint_get(sc, endpoint);
+	vd = vtiommu_domain_get(sc, domain);
+	if (ve == NULL || vd == NULL) {
+		if (vd != NULL)
+			vtiommu_domain_gc(sc, vd);
+		VTIOMMU_UNLOCK(sc);
+		return (ENOMEM);
+	}
+	vd->vd_refs++;
+
 	error = vtiommu_send_request(sc, &req, sizeof(req),
 	    sizeof(struct virtio_iommu_req_tail), &status);
 	if (error == 0)
 		error = vtiommu_status_to_errno(status);
-	if (error != 0) {
-		VTIOMMU_UNLOCK(sc);
-		return (error);
+	/*
+	 * A detach that started while the request was in flight found the
+	 * endpoint unattached and resets the device once the request drains,
+	 * which detaches the endpoint again.  Do not report a binding that is
+	 * about to disappear.
+	 */
+	if (error == 0 && (sc->vtiommu_flags & VTIOMMU_FLAG_DETACH) != 0)
+		error = ENXIO;
+	if (error == 0) {
+		/* Bind the endpoint to the (possibly new) domain. */
+		if (ve->ve_domain != vd) {
+			if (ve->ve_domain != NULL) {
+				ve->ve_domain->vd_refs--;
+				vtiommu_domain_gc(sc, ve->ve_domain);
+			}
+			ve->ve_domain = vd;
+			vd->vd_refs++;
+		}
+		ve->ve_bypass = (flags & VIRTIO_IOMMU_ATTACH_F_BYPASS) != 0;
+		sc->vtiommu_stat_attach++;
 	}
-
-	/* Update the model: bind the endpoint to the (possibly new) domain. */
-	ve = vtiommu_endpoint_get(sc, endpoint);
-	vd = vtiommu_domain_get(sc, domain);
-	if (ve == NULL || vd == NULL) {
-		/* Bookkeeping-only failure; the device state is authoritative. */
-		VTIOMMU_UNLOCK(sc);
-		return (0);
-	}
-	if (ve->ve_domain != NULL && ve->ve_domain != vd) {
-		ve->ve_domain->vd_refs--;
-		vtiommu_domain_gc(sc, ve->ve_domain);
-	}
-	if (ve->ve_domain != vd) {
-		ve->ve_domain = vd;
-		vd->vd_refs++;
-	}
-	ve->ve_bypass = (flags & VIRTIO_IOMMU_ATTACH_F_BYPASS) != 0;
-	sc->vtiommu_stat_attach++;
+	vd->vd_refs--;
+	vtiommu_domain_gc(sc, vd);
 	VTIOMMU_UNLOCK(sc);
-	return (0);
+	return (error);
 }
 
 static int
@@ -998,6 +1047,53 @@ vtiommu_op_detach(device_t dev, uint32_t domain, uint32_t endpoint)
 	sc->vtiommu_stat_detach++;
 	VTIOMMU_UNLOCK(sc);
 	return (0);
+}
+
+/*
+ * Give a VIRTIO_F_ACCESS_PLATFORM endpoint an identity address space.  The
+ * identity domain is the last identifier in the device's domain range, kept
+ * apart from the translated domains a busdma back end would allocate from the
+ * start of the range.  That identifier is reserved: such an allocator must
+ * hand out only [domain_range.start, domain_range.end - 1], so a device whose
+ * range holds a single identifier (start == end) has no room for translated
+ * domains while it serves identity endpoints.  A device that does not manage
+ * the endpoint answers NOENT, so the caller can try the next instance.
+ */
+static int
+vtiommu_op_attach_identity(device_t dev, uint32_t endpoint)
+{
+	struct vtiommu_softc *sc;
+
+	sc = device_get_softc(dev);
+	if ((sc->vtiommu_flags & VTIOMMU_FLAG_BYPASS_CFG) == 0)
+		return (EOPNOTSUPP);
+	return (vtiommu_op_attach(dev, sc->vtiommu_cfg.domain_range.end,
+	    endpoint, VIRTIO_IOMMU_ATTACH_F_BYPASS));
+}
+
+/*
+ * Detach an endpoint that vtiommu_op_attach_identity() attached, once its
+ * function driver no longer uses it.  ENXIO tells the caller this instance
+ * does not hold the endpoint in its identity domain.
+ */
+static int
+vtiommu_op_detach_identity(device_t dev, uint32_t endpoint)
+{
+	struct vtiommu_softc *sc;
+	struct vtiommu_endpoint *ve;
+	uint32_t domain;
+
+	sc = device_get_softc(dev);
+	domain = sc->vtiommu_cfg.domain_range.end;
+	VTIOMMU_LOCK(sc);
+	ve = vtiommu_endpoint_find(sc, endpoint);
+	if (ve == NULL || ve->ve_domain == NULL ||
+	    ve->ve_domain->vd_id != domain || !ve->ve_bypass) {
+		VTIOMMU_UNLOCK(sc);
+		return (ENXIO);
+	}
+	VTIOMMU_UNLOCK(sc);
+	return (vtiommu_op_detach(dev, domain, endpoint));
 }
 
 static int
@@ -1419,31 +1515,17 @@ vtiommu_model_reset(struct vtiommu_softc *sc)
 	}
 }
 
-/*
- * busdma/VIOT seam: resolve an endpoint RID to the virtio-iommu instance whose
- * request queue can program it.  A future VIOT-driven busdma_iommu back end
- * calls this to obtain the provider vtable (see the boundary comment above and
- * struct virtio_iommu_provider in virtio_iommu.h).
- */
-struct virtio_iommu_provider *
-virtio_iommu_provider_lookup(uint32_t endpoint)
+static bool
+vtiommu_endpoints_attached(struct vtiommu_softc *sc)
 {
-	struct virtio_iommu_provider *p, *found;
-	struct vtiommu_softc *sc;
+	struct vtiommu_endpoint *ve;
 
-	found = NULL;
-	mtx_lock(&vtiommu_providers_mtx);
-	LIST_FOREACH(p, &vtiommu_providers, link) {
-		sc = device_get_softc(p->dev);
-		VTIOMMU_LOCK(sc);
-		if (vtiommu_endpoint_find(sc, endpoint) != NULL)
-			found = p;
-		VTIOMMU_UNLOCK(sc);
-		if (found != NULL)
-			break;
+	VTIOMMU_LOCK_ASSERT(sc);
+	LIST_FOREACH(ve, &sc->vtiommu_endpoints, ve_link) {
+		if (ve->ve_domain != NULL)
+			return (true);
 	}
-	mtx_unlock(&vtiommu_providers_mtx);
-	return (found);
+	return (false);
 }
 
 static void
