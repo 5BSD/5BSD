@@ -17,6 +17,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 #include <cstdarg>
 #include <map>
@@ -118,10 +119,23 @@ spawn(uint64_t sec = 1000, uint64_t usec = 5)
 	return (pid);
 }
 
+/*
+ * True while the child has not exited. kill(pid, 0) cannot tell: an exited
+ * pdfork(2) child stays a zombie while its process descriptor is open or its
+ * parent's waitpid() reference remains (kernel zombie references); pdwait(2)
+ * collects the status without reaping.
+ */
 static bool
 alive(pid_t pid)
 {
-	return (kill(pid, 0) == 0);
+	int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+	struct kinfo_proc kp;
+	size_t len = sizeof(kp);
+	if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0) {
+		CHECK(errno == ESRCH);
+		return (false);
+	}
+	return (len == sizeof(kp) && kp.ki_stat != SZOMB);
 }
 
 static void
@@ -133,6 +147,8 @@ reap_all()
 			int st;
 			(void)pdwait(c.pd, &st, WEXITED, nullptr, nullptr);
 			close(c.pd);
+			/* drop the parent's zombie reference */
+			(void)waitpid(pid, &st, 0);
 		}
 	}
 	table.clear();
