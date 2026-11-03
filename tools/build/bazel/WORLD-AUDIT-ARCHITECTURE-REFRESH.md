@@ -99,3 +99,13 @@ or resolve all generated-source/install payloads.
 Complete native world/kernel/modules, pkgbase/hardware publication, cross-platform
 runtime, bootstrap/sandbox/cache and CPU/memory/disk performance qualification
 remain required. Make remains production/default; BIP remains out of scope.
+
+## Later archive progress
+
+After this metadata snapshot, regular and private EFI Lua archive contexts were
+qualified on AMD64, ARM64 and RISC-V. The EFI component now has a source-owner
+alias to a distinct native archive; neither a local BUILD-file count nor this
+alias alone establishes qualification. See EFI-LUA-QUALIFICATION.md for actual
+Make/action/ABI evidence. Complete libsa/libefi/FDT/Forth contexts and final EFI
+loader links remain open. The recorded metadata/package-presence counts above
+remain snapshots, not current converted-product counts.

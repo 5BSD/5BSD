@@ -7,9 +7,19 @@ captures additional test kinds and grouped headers. All three SDK/profile
 preflights and two mismatch-rejection checks pass. The amd64 metadata survey
 finishes with 2,128 directories and no query failures; these are not successful
 build counts. ARM64 also finishes with 2,087 directories and no query failures;
-RISC-V finishes with 2,050 directories and no query failures. Source review identifies
-complete standalone/EFI libraries and EFI loader links as required next work.
+RISC-V finishes with 2,050 directories and no query failures. Complete libsa/libefi archives and EFI loader links remain required; the Lua
+archive variants are qualified below.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
+
+## Private EFI Lua checkpoint (2026-11-03)
+
+Separate EFI Lua instances now qualify on AMD64, ARM64 and RISC-V, with one shared
+source inventory. Verification-on profiles and AMD64 verification-off match
+independent Make in every member's allocated code, symbols and relocations.
+Shared standalone archive bytes remain unchanged on all three architectures.
+The normal frontend passes the typed policy and captures the private alias;
+32 host inspection methods pass. Full loader links/firmware runtime remain open.
+See [EFI-LUA-QUALIFICATION.md](EFI-LUA-QUALIFICATION.md).
 
 ## Standalone Lua architecture checkpoint (2026-11-03)
 

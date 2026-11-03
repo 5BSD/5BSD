@@ -10,6 +10,8 @@ import unittest
 parser = argparse.ArgumentParser()
 for name in ('archive', 'ar', 'nm'):
     parser.add_argument('--' + name, required=True, type=Path)
+parser.add_argument('--verification', required=True, choices=['yes', 'no'])
+parser.add_argument('--verity', required=True, choices=['yes', 'no'])
 parser.add_argument('--machine', required=True, type=int)
 parser.add_argument('--tool-inputs', required=True, nargs='+', type=Path)
 args, remaining = parser.parse_known_args()
@@ -47,6 +49,12 @@ class StandaloneLua(unittest.TestCase):
                 if args.machine == 243:
                     self.assertEqual(struct.unpack_from('<I', data, 48)[0] & 6, 0,
                                      'loader RISC-V ABI must be soft float')
+
+    def test_verification_context_imports(self):
+        undefined = symbols(run(args.nm, '--format=posix', '--undefined-only'))
+        self.assertEqual('verify_required' in undefined, args.verification == 'yes')
+        for name in ['verity_check_source', 'verity_source_verified']:
+            self.assertEqual(name in undefined, args.verity == 'yes', name)
 
     def test_loader_api_and_stdio_isolation(self):
         defined = symbols(run(args.nm, '--format=posix', '--extern-only', '--defined-only'))

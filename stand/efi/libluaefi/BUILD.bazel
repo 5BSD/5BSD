@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Sources remain owned by stand/liblua; this alias selects its private EFI context.
+alias(name = "static_archive", actual = "//stand/liblua:efi_static_archive", visibility = ["//visibility:public"])

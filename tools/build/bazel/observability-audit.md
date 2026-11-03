@@ -10894,3 +10894,12 @@ both actual foreign profiles. This is a real metadata preservation gate, not
 live tracing/audit qualification. Correct exact linker symbol provenance and
 rerun original/native controls; do not disable CTF or waive the test. See
 CROSS-MODULE-CTF-QUALIFICATION.md for precise SDK/profile scope and retained data.
+
+## Private EFI Lua context (2026-11-03)
+
+The same 31 source units now compile in separate regular/private EFI contexts.
+The private policy retains verifier and verified-source imports while captured
+regular archive bytes remain unchanged. Source/provider inventory is shared;
+no existing DTrace/BSM source was omitted. Host artifact/ABI checks establish no
+firmware diagnostic delivery or verification failure behavior. Those remain
+runtime gates for the completed loader.

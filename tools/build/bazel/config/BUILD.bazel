@@ -561,3 +561,10 @@ config_setting(name = "loader_veriexec_pass_manifest_requested", flag_values = {
 selects.config_setting_group(name = "loader_veriexec_pass_manifest_enabled", match_all = [":veriexec_enabled", ":loader_veriexec_pass_manifest_requested"], visibility = ["//visibility:public"])
 
 string_flag(name = "loader_lua_path", build_setting_default = "/boot/lua", visibility = ["//visibility:public"])
+
+# EFI verification is private policy; it does not enable shared BIOS crypto.
+bool_flag(name = "loader_efi_secureboot", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_efi_secureboot_enabled", flag_values = {":loader_efi_secureboot": "true"}, visibility = ["//visibility:public"])
+selects.config_setting_group(name = "efi_loader_veriexec_enabled", match_any = [":veriexec_enabled", ":loader_efi_secureboot_enabled"], visibility = ["//visibility:public"])
+selects.config_setting_group(name = "efi_loader_veriexec_vectx_enabled", match_all = [":efi_loader_veriexec_enabled", ":loader_veriexec_vectx_requested"], visibility = ["//visibility:public"])
+selects.config_setting_group(name = "efi_loader_veriexec_pass_manifest_enabled", match_all = [":efi_loader_veriexec_enabled", ":loader_veriexec_pass_manifest_requested"], visibility = ["//visibility:public"])

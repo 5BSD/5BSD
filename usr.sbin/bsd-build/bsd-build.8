@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 30, 2026
+.Dd November 3, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -4644,6 +4644,22 @@ not a complete installed test package.
 The parent installer target continues to reject tests=true until those
 inventories are also represented natively.
 
+.Ss Native private EFI Lua policy
+The native private EFI Lua archive is selected with
+.Li //stand/efi/libluaefi:static_archive .
+The format-5
+.Li build-settings
+boolean
+.Li //tools/build/bazel/config:loader_efi_secureboot
+selects its private verifier compiler policy and defaults true.
+It leaves the shared standalone Lua compiler policy unchanged.
+The existing global veriexec and loader vector-context/manifest settings also
+apply to the corresponding explicitly selected contexts.
+The regular and private archives share a source inventory and use distinct objects.
+AMD64, ARM64 and RISC-V archive/ABI comparisons use native host artifact tests;
+this setting and these tests do not qualify signed images or verified boot.
+See
+.Pa tools/build/bazel/EFI-LUA-QUALIFICATION.md .
 .Ss Cross-target Bazel kernel artifacts
 Format-5 source graph inputs may select
 .Dq target-kind

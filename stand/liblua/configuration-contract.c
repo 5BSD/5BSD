@@ -13,3 +13,7 @@ _Static_assert(sizeof(((FILE *)0)->verification_path) == sizeof(char *), "loader
 #error "loader RISC-V must not enable floating-point instructions"
 #endif
 #endif
+
+#if defined(LOADER_LUA_EFI) && (defined(__x86_64__) || defined(__aarch64__))
+_Static_assert(sizeof(__WCHAR_TYPE__) == 2, "EFI uses 16-bit wchar on this target");
+#endif
