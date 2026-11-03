@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(['sha256c.c', 'sha512c.c'], visibility = ["//lib/libmd:__pkg__"])
+exports_files(['sha256c.c', 'sha512c.c', 'sha256c_arm64.c', 'sha512c_arm64.c'], visibility = ["//lib/libmd:__pkg__"])
 cc_library(
     name = "headers",
     hdrs = ['sha224.h', 'sha256.h', 'sha384.h', 'sha512.h', 'sha512t.h', 'sha256c_impl.h', 'sha512c_impl.h'],

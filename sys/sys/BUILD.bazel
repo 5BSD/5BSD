@@ -4,7 +4,7 @@ exports_files(["param.h"])
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "md_headers",
-    hdrs = ["md4.h", "md5.h"],
+    hdrs = ["md5.h"],
     strip_include_prefix = "/sys/sys",
     include_prefix = "sys",
     visibility = ["//lib/libmd:__pkg__"],

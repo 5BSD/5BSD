@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load(":generators.bzl", "libmd_highlevel", "libmd_manual")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
-load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 
 load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
 
@@ -220,76 +220,65 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# These compilation groups currently model the maintained amd64 optimized build.
-# Other architectures must receive their own source/flag selections explicitly.
-_AMD64 = ["@platforms//cpu:x86_64", "@platforms//os:freebsd"]
-_C_DEFINES = ["WEAK_REFS", "MD5_ASM", "SHA1_ASM", "SKEIN_ASM", "SKEIN_USE_ASM=1792"]
+# Explicit original architecture and MK_MACHDEP_OPTIMIZATIONS selections.
+_PLATFORM = ["@platforms//os:freebsd"]
+config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+config_setting(name = "optimized_amd64", constraint_values = ["@platforms//cpu:x86_64"],
+    flag_values = {"//tools/build/bazel/config:machdep_optimizations": "true"})
+config_setting(name = "optimized_aarch64", constraint_values = ["@platforms//cpu:aarch64"],
+    flag_values = {"//tools/build/bazel/config:machdep_optimizations": "true"})
+_C_DEFINES = ["WEAK_REFS"] + select({
+    ":optimized_amd64": ["MD5_ASM", "SHA1_ASM", "SKEIN_ASM", "SKEIN_USE_ASM=1792"],
+    ":optimized_aarch64": ["MD5_ASM", "SHA1_ASM", "ARM64_SHA2", "ARM64_SHA512"],
+    "//conditions:default": [],
+})
 _HEADERS = [":headers", "//sys/sys:md_headers", "//sys/crypto/sha2:headers", "//sys/crypto/skein:headers"]
-
-cc_library(
-    name = "headers",
-    hdrs = ["md4.h", "md5.h", "ripemd.h", "sha.h"],
-    strip_include_prefix = "/lib/libmd",
-    deps = ["//sys/sys:md_headers"],
-)
-
-cc_library(
-    name = "common_objects",
-    srcs = [
-        ":highlevel_sources",
-        "//sys/crypto:md4c.c", "//sys/crypto:md5c.c",
+_COPTS = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments']
+cc_library(name = "headers", hdrs = ["md4.h", "md5.h", "ripemd.h", "sha.h"],
+    strip_include_prefix = "/lib/libmd", deps = ["//sys/sys:md_headers"])
+cc_library(name = "common_objects",
+    srcs = [":highlevel_sources", "//sys/crypto:md4c.c", "//sys/crypto:md5c.c",
         "rmd160c.c", "rmd_locl.h", "rmdconst.h", "sha0c.c", "sha1c.c", "sha_locl.h",
-        "//sys/crypto/sha2:sha256c.c", "//sys/crypto/sha2:sha512c.c",
-        "//sys/crypto/skein:skein.c",
-        "amd64/md5dispatch.c", "amd64/sha1dispatch.c",
-    ],
-    local_defines = _C_DEFINES,
-    deps = _HEADERS,
-    target_compatible_with = _AMD64,
-)
-
-cc_library(
-    name = "skein_block_objects",
-    srcs = ["//sys/crypto/skein:skein_block.c"],
-    local_defines = _C_DEFINES + ["SKEIN_LOOP=995"],
-    deps = _HEADERS,
-    target_compatible_with = _AMD64,
-)
-
-cc_library(
-    name = "assembly_objects",
-    srcs = ["amd64/md5block.S", "amd64/sha1block.S", "//sys/crypto/skein:amd64/skein_block_asm.S"],
-    local_defines = ["SKEIN_LOOP=0", "ELF"],
-    copts = ["-Wa,--noexecstack"],
-    deps = _HEADERS,
-    target_compatible_with = _AMD64,
-)
-
-filegroup(
-    name = "compilation",
-    srcs = [":common_objects", ":skein_block_objects", ":assembly_objects"],
-    target_compatible_with = _AMD64,
-    visibility = ["//visibility:public"],
-)
-
-# Aggregate the object groups through rules_cc rather than installing only one
-# cc_library's archive and silently losing its transitive compilation groups.
-cc_static_library(
-    name = "md",
-    deps = [":common_objects", ":skein_block_objects", ":assembly_objects"],
-    target_compatible_with = _AMD64,
-    visibility = ["//visibility:public"],
-)
-
-# Consume the actual aggregate archive in runtime qualification, not a separate
-# reconstruction of its object dependencies.
-cc_import(
-    name = "md_archive",
-    static_library = ":md",
-    deps = _HEADERS,
-    target_compatible_with = _AMD64,
-    visibility = ["//lib/libmd/tests:__pkg__", "//sbin/md5:__pkg__", "//lib/liblzma:__pkg__", "//lib/libarchive:__pkg__"],
-)
+        "//sys/crypto/sha2:sha256c.c", "//sys/crypto/sha2:sha512c.c", "//sys/crypto/skein:skein.c"] + select({
+            ":optimized_amd64": ["amd64/md5dispatch.c", "amd64/sha1dispatch.c"],
+            ":optimized_aarch64": ["aarch64/sha1dispatch.c"], "//conditions:default": []}),
+    local_defines = _C_DEFINES, copts = _COPTS, deps = _HEADERS,
+    features = ["bsd_small_pic"], target_compatible_with = _PLATFORM)
+cc_library(name = "skein_block_objects", srcs = ["//sys/crypto/skein:skein_block.c"],
+    local_defines = _C_DEFINES + ["SKEIN_LOOP=995"], copts = _COPTS, deps = _HEADERS,
+    features = ["bsd_small_pic"], target_compatible_with = _PLATFORM)
+cc_library(name = "assembly_objects", srcs = select({
+    ":optimized_amd64": ["amd64/md5block.S", "amd64/sha1block.S", "//sys/crypto/skein:amd64/skein_block_asm.S"],
+    ":optimized_aarch64": ["aarch64/md5block.S", "aarch64/sha1block.S"], "//conditions:default": []}),
+    local_defines = _C_DEFINES + select({":optimized_amd64": ["SKEIN_LOOP=0", "ELF"], "//conditions:default": []}),
+    copts = _COPTS + ["-fstack-protector-strong"] + select({":optimized_amd64": ["-Wa,--noexecstack"], "//conditions:default": []}),
+    deps = _HEADERS, features = ["bsd_small_pic"], target_compatible_with = _PLATFORM)
+# The selected receipt-bound compiler supports the original aarch64-sha512 feature.
+[
+    cc_library(name = name, srcs = select({":optimized_aarch64": [source], "//conditions:default": []}),
+        local_defines = _C_DEFINES, copts = _COPTS + [isa], deps = _HEADERS,
+        features = ["bsd_small_pic"], target_compatible_with = _PLATFORM)
+    for name, source, isa in [
+        ("arm_sha256_objects", "//sys/crypto/sha2:sha256c_arm64.c", "-march=armv8-a+crypto"),
+        ("arm_sha512_objects", "//sys/crypto/sha2:sha512c_arm64.c", "-march=armv8.2-a+sha3"),
+    ]
+]
+_GROUPS = [":common_objects", ":skein_block_objects"] + select({
+    ":optimized_amd64": [":assembly_objects"],
+    ":optimized_aarch64": [":assembly_objects", ":arm_sha256_objects", ":arm_sha512_objects"],
+    "//conditions:default": [],
+})
+_ORDER = ['md4c.o', 'md5c.o', 'md4hl.o', 'md5hl.o', 'rmd160c.o', 'rmd160hl.o', 'sha0c.o', 'sha0hl.o', 'sha1c.o', 'sha1hl.o', 'sha224hl.o', 'sha256c.o', 'sha256hl.o', 'sha384hl.o', 'sha512c.o', 'sha512hl.o', 'sha512t224hl.o', 'sha512t256hl.o', 'skein.o', 'skein_block.o', 'skein256hl.o', 'skein512hl.o', 'skein1024hl.o'] + select({":optimized_amd64": ['md5block.o', 'md5dispatch.o', 'sha1block.o', 'sha1dispatch.o', 'skein_block_asm.o'], ":optimized_aarch64": ['md5block.o', 'sha1block.o', 'sha1dispatch.o', 'sha256c_arm64.o', 'sha512c_arm64.o'], "//conditions:default": []})
+_PIC_ORDER = ['md4c.pic.o', 'md5c.pic.o', 'md4hl.pic.o', 'md5hl.pic.o', 'rmd160c.pic.o', 'rmd160hl.pic.o', 'sha0c.pic.o', 'sha0hl.pic.o', 'sha1c.pic.o', 'sha1hl.pic.o', 'sha224hl.pic.o', 'sha256c.pic.o', 'sha256hl.pic.o', 'sha384hl.pic.o', 'sha512c.pic.o', 'sha512hl.pic.o', 'sha512t224hl.pic.o', 'sha512t256hl.pic.o', 'skein.pic.o', 'skein_block.pic.o', 'skein256hl.pic.o', 'skein512hl.pic.o', 'skein1024hl.pic.o'] + select({":optimized_amd64": ['md5block.pic.o', 'md5dispatch.pic.o', 'sha1block.pic.o', 'sha1dispatch.pic.o', 'skein_block_asm.pic.o'], ":optimized_aarch64": ['md5block.pic.o', 'sha1block.pic.o', 'sha1dispatch.pic.o', 'sha256c_arm64.pic.o', 'sha512c_arm64.pic.o'], "//conditions:default": []})
+filegroup(name = "compilation", srcs = _GROUPS, target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"])
+bsd_component_archive(name = "md", groups = _GROUPS, object_order = _ORDER,
+    visibility = ["//visibility:public"])
+bsd_component_archive(name = "md_pic_archive", groups = _GROUPS, pic = True,
+    object_order = _PIC_ORDER, visibility = ["//lib/libmd/tests:__pkg__"])
+cc_import(name = "md_archive", static_library = ":md", pic_static_library = ":md_pic_archive", deps = _HEADERS,
+    target_compatible_with = _PLATFORM,
+    visibility = ["//lib/libmd/tests:__pkg__", "//sbin/md5:__pkg__", "//lib/liblzma:__pkg__", "//lib/libarchive:__pkg__"])
 
 bsd_configured_version_map(
     name = "version_map",
@@ -309,8 +298,8 @@ bsd_configured_version_map(
 
 cc_library(
     name = "md_link",
-    deps = [":common_objects", ":skein_block_objects", ":assembly_objects"],
-    target_compatible_with = _AMD64,
+    deps = [":md_archive"],
+    target_compatible_with = _PLATFORM,
     # Public CcInfo interface for the installed base library.
     visibility = ["//visibility:public"],
 )
@@ -321,11 +310,11 @@ cc_shared_library(
     shared_lib_name = "libmd.so.7",
     additional_linker_inputs = [":version_map"],
     user_link_flags = [
-        "-Wl,-soname,libmd.so.7",
+        "-fstack-protector-strong", "-Wl,-x", "-Wl,-soname,libmd.so.7",
         "-Wl,--version-script=$(location :version_map),--no-undefined-version",
         "-Wl,--fatal-warnings,--warn-shared-textrel",
-    ],
-    target_compatible_with = _AMD64,
+    ] + select({":target_aarch64": ["-Wl,--fix-cortex-a53-843419"], "//conditions:default": []}),
+    target_compatible_with = _PLATFORM,
     visibility = ["//visibility:public"],
 )
 

@@ -655,3 +655,17 @@ bsd_compare_test(
 test_suite(name = "stripped_tests", tests = [':md4_stripped_test', ':md5_stripped_test', ':rmd160_stripped_test', ':sha0_stripped_test', ':sha1_stripped_test', ':sha224_stripped_test', ':sha256_stripped_test', ':sha384_stripped_test', ':sha512_stripped_test', ':sha512t224_stripped_test', ':sha512t256_stripped_test', ':skein256_stripped_test', ':skein512_stripped_test', ':skein1024_stripped_test'])
 
 libmd_test_installation(name = "install_manifest", digests = ['md4', 'md5', 'rmd160', 'sha0', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512t224', 'sha512t256', 'skein256', 'skein512', 'skein1024'])
+
+# Host inspection does not execute foreign digest drivers.
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+config_setting(name = "target_riscv64", constraint_values = ["@platforms//cpu:riscv64"])
+bsd_host_artifact_test(name = "archive_contract_test", src = "archive-contract-test.py",
+    data = [":md5driver", "//lib/libmd:md_shared", "//lib/libmd:md", "//lib/libmd:md_pic_archive",
+            "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:bin/llvm-ar"],
+    args = ["--driver", "$(location :md5driver)", "--shared", "$(location //lib/libmd:md_shared)",
+            "--archive", "$(location //lib/libmd:md)", "--pic-archive", "$(location //lib/libmd:md_pic_archive)",
+            "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
+            "--machine"] + select({":target_aarch64": ["183"], ":target_riscv64": ["243"], "//conditions:default": ["62"]}) +
+            ["--optimized"] + select({"//tools/build/bazel/config:machdep_optimizations_enabled": ["true"], "//conditions:default": ["false"]}),
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:llvm-ar_runtime"], size = "small")

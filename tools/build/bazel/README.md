@@ -48495,3 +48495,16 @@ Bazel cross-kernel builds. Format-5 kernel selection now also accepts a matching
 composite SDK with independently bound native execution tools. Seventeen
 settings tests and three real SDK snapshot validations pass; actual composite
 kernel profiles remain pending. See [CROSS-KERNEL-BASELINE.md](CROSS-KERNEL-BASELINE.md).
+
+## Default libmd prerequisite on three ABIs (2026-11-03)
+
+Real architecture-specific libmd sources, explicit original-order regular/PIC
+archives and the default installed-archive CcInfo now pass three normal profiles.
+All 158 production contexts/4,762 consumed pairs, 158 archive member bindings,
+three DSO allocated comparisons, six link contracts and 381 library installation
+records pass. Twenty-eight native digest tests and three host artifact tests
+pass. Untouched references retain twelve filename-sensitive mismatches;
+separate original one-flag controls prove their allocated/relocation parity.
+Portable/bootstrap, foreign runtime, separate DWARF, installed-test producer
+policy and full runtime/tests packages remain open. See
+[LIBMD-THREE-ARCH-QUALIFICATION.md](LIBMD-THREE-ARCH-QUALIFICATION.md).

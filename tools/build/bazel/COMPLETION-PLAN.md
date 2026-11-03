@@ -1623,3 +1623,19 @@ three real SDK snapshot checks. See CROSS-KERNEL-BASELINE.md. No full Bazel
 cross-kernel claim: next implement precise owners, intrinsic-header policies,
 source-derived DTS version, generated inputs and ordered links/installations,
 then compare complete native outputs before module/pkgbase/runtime/performance.
+
+### 2026-11-03: genuine three-ABI libmd prerequisite for XZ
+
+The inherited amd64-only libmd graph now models actual default amd64/ARM64
+optimized and RISC-V portable source selections. Explicit regular/PIC archives
+serve installation, default CcInfo extraction and the DSO. Three normal profiles
+pass 158 compiler contexts/4,762 consumed pairs, 158 archive member bindings,
+three DSO allocated comparisons, six link contracts and 381 library records.
+Twenty-eight genuine native static/shared digest tests and three host archive
+tests pass. Initial SSP/header-origin policy failures are retained and fixed.
+Ordinary references retain twelve filename-sensitive contexts; three separately
+checked original one-map controls prove full allocated/relocation parity without
+rewriting bytes. See LIBMD-THREE-ARCH-QUALIFICATION.md. Nondefault optimization,
+bootstrap, foreign runtime, separate DWARF, recursive installed-test producer
+parity and full runtime/tests packages remain open. The liblzma/XZ four-package
+family is staged privately and still requires its own native qualification.

@@ -10755,3 +10755,15 @@ No probe/source changes are made. Lexical counts do not prove instrumentation
 completeness, absence, live firing or audit delivery. Native cross-kernel
 DTrace generation, runtime tracing and enabled/disabled CPU/memory/I/O costs
 remain qualification gates; see CROSS-KERNEL-BASELINE.md.
+
+### Default libmd prerequisite on three ABIs (2026-11-03)
+
+No runtime digest source or tracing policy changes. Actual regular/PIC compiler
+inputs, per-source optimization/assembly policy and archive extraction are bound
+for 158 contexts/4,762 consumed pairs. Native static/shared digest reference
+checks pass; target ABI/archives are inspected with declared host tools for
+foreign builds. This establishes neither instrumentation completeness nor live
+probe/audit delivery. Whole-system consumer rebuilds, foreign execution,
+separate DWARF/source lookup, cache and performance remain open. See
+LIBMD-THREE-ARCH-QUALIFICATION.md for the ordinary versus explicit original
+filename-control boundary and rejected SSP/header-origin policy evidence.

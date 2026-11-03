@@ -3,7 +3,7 @@
 
 Test installation belongs to the tests package and is declared separately.
 """
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
 
 HEADERS = {'md4.h': 'md4.h', 'md5.h': 'md5.h', 'ripemd.h': 'ripemd.h', 'sha.h': 'sha.h', 'sha224.h': '//sys/crypto/sha2:sha224.h', 'sha256.h': '//sys/crypto/sha2:sha256.h', 'sha384.h': '//sys/crypto/sha2:sha384.h', 'sha512.h': '//sys/crypto/sha2:sha512.h', 'sha512t.h': '//sys/crypto/sha2:sha512t.h', 'skein.h': '//sys/crypto/skein:skein.h', 'skein_port.h': '//sys/crypto/skein:skein_port.h', 'skein_freebsd.h': '//sys/crypto/skein:skein_freebsd.h', 'skein_iv.h': '//sys/crypto/skein:skein_iv.h'}
 MANUALS = ['md4.3', 'md5.3', 'ripemd.3', 'sha.3', 'sha256.3', 'sha512.3', 'skein.3']
@@ -113,7 +113,9 @@ MANUAL_LINKS = [
 ]
 
 def libmd_installation(name):
-    entries = []
+    bsd_install_directory(name = name + "_debug_lib_dir", destination = "/usr/lib/debug/lib",
+        owner = "root", group = "wheel", mode = "0755", install_tags = ["package=runtime", "dbg"])
+    entries = [":" + name + "_debug_lib_dir"]
     native.filegroup(name = name + "_debug_artifact", srcs = [":md_debug"], output_group = "debug_files")
     files = [
         ("archive", ":md", "/usr/lib/libmd.a", ["dev", "package=runtime"]),
