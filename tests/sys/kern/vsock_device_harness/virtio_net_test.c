@@ -2048,7 +2048,7 @@ ATF_TC_BODY(snapshot_restore_failure_is_atomic, tc)
 	    strlen("net-test")) == 0);
 	/* Version 2 predates both packet-ID mode bytes. */
 	packet_flag_offset = 8 + identity_record_size + sizeof(uint64_t) +
-	    sizeof(uint8_t) + sizeof(struct virtio_net_config) +
+	    sizeof(uint8_t) + VIRTIO14_NET_CONFIG_SIZE +
 	    sizeof(uint8_t) + 2 * sizeof(uint32_t);
 	ATF_REQUIRE(used > packet_flag_offset + 1);
 	memcpy(obsolete, image, packet_flag_offset);
@@ -2606,7 +2606,7 @@ ATF_TC_BODY(private_packet_id_snapshot, tc)
 	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
 	g_tagging_supported = true;
 	mode_offset = 8 + 4 + strlen("net-test") + sizeof(uint64_t) +
-	    sizeof(uint8_t) + sizeof(struct virtio_net_config) +
+	    sizeof(uint8_t) + VIRTIO14_NET_CONFIG_SIZE +
 	    sizeof(uint8_t) + 2 * sizeof(uint32_t);
 	ATF_REQUIRE(used > mode_offset);
 	memcpy(invalid_image, image, used);
