@@ -1264,7 +1264,7 @@ ATF_TC_BODY(queue_reset_contract, tc)
 	ATF_CHECK((vt9p_vi_consts.vc_hv_caps & VIRTIO_F_RING_RESET) != 0);
 	ATF_CHECK_EQ(vt9p_vi_consts.vc_hv_caps,
 	    VIRTIO14_9P_F_MOUNT_TAG | VIRTIO14_F_RING_RESET |
-	    VIRTIO14_F_SUSPEND);
+	    VIRTIO14_F_SUSPEND | VIRTIO14_F_RING_INDIRECT_DESC);
 }
 
 ATF_TC_WITHOUT_HEAD(suspend_drains_and_preserves_session);

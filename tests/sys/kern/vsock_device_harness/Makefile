@@ -39,6 +39,7 @@ ATF_TESTS_C+=	smbiostbl_bounds_test
 ATF_TESTS_C+=	net_utils_parse_test
 ATF_TESTS_C+=	virtio_console_test
 ATF_TESTS_C+=	virtio_9p_test
+ATF_TESTS_C+=	virtio_9p_ring_test
 ATF_TESTS_C+=	virtio_block_test
 ATF_TESTS_C+=	virtio_blk_capacity_test
 ATF_TESTS_C+=	block_if_test
@@ -217,6 +218,7 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				smbiostbl_bounds_test.c \
 				net_utils_parse_test.c \
 				virtio_9p_test.c \
+				virtio_9p_ring_test.c \
 				virtio_block_test.c \
 				virtio_blk_capacity_test.c \
 				block_if_test.c \
@@ -597,6 +599,12 @@ CFLAGS.virtio_iommu_post_init_test+= -ffunction-sections -fdata-sections \
 	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
 # virtio.c and virtio_pci_modern.c are included into the test translation unit.
 CWARNFLAGS.virtio_iommu_post_init_test.c+= -Wno-thread-safety-analysis
+# Links the production VirtIO core and the virtio-9p model on the legacy
+# transport; virtio.c and pci_virtio_9p.c are included into the test.
+CFLAGS.virtio_9p_ring_test+= -ffunction-sections -fdata-sections \
+	-DWITHOUT_CAPSICUM -Wno-error=cast-align -I${SRCTOP}/usr.sbin \
+	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/contrib/lib9p -I${SRCTOP}/sys
+CWARNFLAGS.virtio_9p_ring_test.c+= -Wno-thread-safety-analysis
 # The same composition built with BHYVE_SNAPSHOT: checkpoint save of the
 # virtio-iommu model through the production VirtIO core.
 SRCS.virtio_iommu_snapshot_test=	virtio_iommu_snapshot_test.c \
@@ -861,6 +869,7 @@ LIBADD.virtio_gpu_2d_pci_test+=	pthread
 LDFLAGS.virtio_iommu_pci_test+= -Wl,--gc-sections \
 	-Wl,--wrap=calloc -Wl,--wrap=malloc -Wl,--wrap=pthread_mutex_init
 LDFLAGS.virtio_iommu_post_init_test+= -Wl,--gc-sections
+LDFLAGS.virtio_9p_ring_test+= -Wl,--gc-sections
 LDFLAGS.virtio_fs_pci_test+= -Wl,--gc-sections
 LDFLAGS.virtio_mem_test+=	-Wl,--gc-sections \
 	-Wl,--wrap=calloc -Wl,--wrap=malloc -Wl,--wrap=pthread_mutex_init
@@ -917,6 +926,7 @@ LIBADD.virtio_gpu_2d_queue_test+=	pthread
 LIBADD.virtio_iommu_config_test+=	pthread
 LIBADD.virtio_iommu_pci_test+=	pthread
 LIBADD.virtio_iommu_post_init_test+=	pthread
+LIBADD.virtio_9p_ring_test+=	pthread
 LIBADD.virtio_iommu_state_test+=	pthread
 LIBADD.virtio_iommu_request_test+=	pthread
 LIBADD.virtio_iommu_queue_test+=	pthread

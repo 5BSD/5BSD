@@ -107,3 +107,9 @@ cc_library(name = "virtio_fs_connection_test_inputs", hdrs = ["virtio_fs_host.h"
 cc_library(name = "virtio_iommu_post_init_test_inputs", hdrs = ENGINE_HEADERS, textual_hdrs = _IOMMU_POST_INIT_SOURCES,
     include_prefix = "bhyve", strip_include_prefix = ".", deps = [":engine_headers"],
     visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])
+# virtio_9p_ring_test includes the production VirtIO core and the virtio-9p
+# model as "bhyve/<file>.c" (Make: -I usr.sbin -I contrib/lib9p).
+cc_library(name = "virtio_9p_ring_test_inputs", hdrs = ENGINE_HEADERS,
+    textual_hdrs = ["virtio_packed.c", "virtio.c", "pci_virtio_9p.c"],
+    include_prefix = "bhyve", strip_include_prefix = ".", deps = [":engine_headers"],
+    visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])

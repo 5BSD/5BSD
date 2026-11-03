@@ -26,6 +26,18 @@ _IOMMU_POST_INIT_CASES = ["msix_bar_does_not_overlap_modern_bar", "host_topology
  for case in _IOMMU_POST_INIT_CASES]
 test_suite(name = "virtio_iommu_post_init_tests", tests = [":" + case for case in _IOMMU_POST_INIT_CASES],
     visibility = ["//visibility:public"])
+# Make: CFLAGS.virtio_9p_ring_test (-DWITHOUT_CAPSICUM, -I contrib/lib9p), --gc-sections.
+cc_binary(name = "virtio_9p_ring_test", srcs = ["virtio_9p_ring_test.c"],
+    deps = ["//usr.sbin/bhyve:virtio_9p_ring_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC", "-DWITHOUT_CAPSICUM", "-ffunction-sections", "-fdata-sections",
+        "-Wno-error=cast-align", "-Wno-thread-safety-analysis"], linkopts = ["-pie", "-Wl,--gc-sections"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_9P_RING_CASES = ["fragmented_mtu_request_uses_one_ring_entry", "indirect_request_needs_negotiation"]
+[bsd_atf_test(name = "9p_ring_" + case, case_name = case, body = ":virtio_9p_ring_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _9P_RING_CASES]
+test_suite(name = "virtio_9p_ring_tests", tests = [":9p_ring_" + case for case in _9P_RING_CASES],
+    visibility = ["//visibility:public"])
 # Make: SRCS.virtio_iommu_snapshot_test (the post-init composition with BHYVE_SNAPSHOT).
 cc_library(name = "virtio_iommu_post_init_test_textual", textual_hdrs = ["virtio_iommu_post_init_test.c"], includes = ["."])
 cc_binary(name = "virtio_iommu_snapshot_test", srcs = ["virtio_iommu_snapshot_test.c", "virtio_iommu_snapshot_stubs.c"],
