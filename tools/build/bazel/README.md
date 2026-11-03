@@ -48363,3 +48363,15 @@ Make options, GENERIC KERN_OPTS and 64 regular Makefiles are retained alongside
 the explicit empty configuration sentinel. Separate DWARF/source lookup and
 device/runtime/performance gates remain open. See
 [CROSS-USB-INPUT-MODULES-QUALIFICATION.md](CROSS-USB-INPUT-MODULES-QUALIFICATION.md).
+
+## libbz2/bzip2 on three userland ABIs (2026-11-03)
+
+Actual amd64, ARM64 and RISC-V component builds now preserve original library
+regular/PIC archive order and default CcInfo extraction, source compile policy,
+DSO/program loader contracts and executable compressed-DWARF policy. All 45
+production compiler contexts/995 consumed pairs and all six linked allocated
+payloads match original Make; 54 component install records and actual debuglink
+CRCs pass. Nine declared tests pass; cross cases inspect artifacts on the host.
+The existing host test also rejects actual earlier uncompressed programs.
+Separate DWARF/source lookup, bzip2recover and complete package/world/bootstrap
+remain open. See [BZIP2-THREE-ARCH-QUALIFICATION.md](BZIP2-THREE-ARCH-QUALIFICATION.md).

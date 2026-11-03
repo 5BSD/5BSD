@@ -10645,3 +10645,14 @@ detach/lifetime behavior. Framework/FBT coverage and live probe/audit delivery
 remain unqualified. Evidence:
 bazel-cross-usb-input-review-r2-20261103/supplement.json and
 [CROSS-USB-INPUT-MODULES-QUALIFICATION.md](CROSS-USB-INPUT-MODULES-QUALIFICATION.md).
+
+### 2026-11-03 libbz2/bzip2 three-ABI component evidence
+
+Original/native production objects retain exact allocated code/data and runtime
+relocation sections for 45 compiler contexts. Source runtime files are unchanged;
+no tracing payload is rewritten or suppressed. Native sample execution and
+cross host artifact inspection have distinct scopes. Compressed DWARF is now
+preserved at the original executable link stage; raw separate debug/source-path
+differences remain open. Four ARM64/six RISC-V local mapping-symbol offsets are
+bound specifically to nonallocated DWARF sections, with raw diffs retained.
+See BZIP2-THREE-ARCH-QUALIFICATION.md for actual witnesses and limitations.

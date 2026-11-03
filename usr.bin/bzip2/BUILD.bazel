@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_base_install.bzl", "bsd_program_install")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link", "bsd_install_directory")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_fixture.bzl", "bsd_uu_fixture")
@@ -9,7 +9,9 @@ load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
 cc_binary(
     name = "bzip2",
     srcs = ["//contrib/bzip2:bzip2.c"],
-    copts = ["-D_FILE_OFFSET_BITS=64"],
+    copts = ["-fpie", '-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Qunused-arguments', '-fPIE'],
+    local_defines = ["PIC", "_FILE_OFFSET_BITS=64"],
+    linkopts = ["-pie", "-fstack-protector-strong", "-gz=zlib"],
     deps = ["//lib/libbz2:bz2"],
     dynamic_deps = ["//lib/libbz2:bz2_shared"],
     linkstatic = False,
@@ -248,12 +250,32 @@ bsd_install_link(
     }),
 )
 
+# Original bsd.prog.mk debug directory ownership is part of this component.
+bsd_install_directory(name = "debug_usr_dir", destination = "/usr/lib/debug/usr",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bzip2", "dbg"])
+bsd_install_directory(name = "debug_bin_dir", destination = "/usr/lib/debug/usr/bin",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bzip2", "dbg"])
 bsd_program_install(
     name = "install_manifest",
     binary = ":bzip2_install",
     debug = ":bzip2_debug",
     destination = "/usr/bin/bzip2",
     package = "bzip2",
-    extra_entries = [':manual_entry', ':bunzip2_entry', ':bzcat_entry', ':bunzip2_manual_entry', ':bzcat_manual_entry', ':bzip2recover_manual_entry'],
+    extra_entries = [':debug_usr_dir', ':debug_bin_dir', ':manual_entry', ':bunzip2_entry', ':bzcat_entry', ':bunzip2_manual_entry', ':bzcat_manual_entry', ':bzip2recover_manual_entry'],
     visibility = ["//visibility:public"],
 )
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive_bundle", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+                   "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# These two components preserve their own explicit debug-directory contexts.
+bsd_install_archive_set(name = "library_program_install_archives",
+    archives = ["//lib/libbz2:install_archive_bundle", ":install_archive_bundle"],
+    visibility = ["//visibility:public"])

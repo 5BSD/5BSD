@@ -1,22 +1,31 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""bzip2 metadata generation; version is read during execution from bzlib.h."""
+"""Run the original gen-pc.sh and its original header-version sed expression."""
 
 def _pkgconfig(ctx):
     output = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
-    args.add_all(["-B", "-S", ctx.file._generator.path])
-    args.add("--template", ctx.file.template)
-    args.add("--header", ctx.file.header)
-    args.add("--output", output)
+    args.add("-c")
+    args.add('set -eu\nversion=$("$1" -n "$2" "$3")\nshift 3\nexec "$@" "$version"\n')
+    args.add("bzip2-pc")
+    args.add(ctx.executable.sed)
+    args.add("/bzip2\\/libbzip2 version /{s/.*version //;s/ of.*//p;q;}")
+    args.add(ctx.file.header)
+    args.add(ctx.executable.shell)
+    args.add(ctx.file._script)
+    args.add(ctx.file.template)
+    args.add(output)
+    args.add(ctx.executable.sed)
+    args.add(ctx.executable.mv)
+    args.add(ctx.executable.rm)
     for name in ["prefix", "exec_prefix", "libdir", "sharedlibdir", "includedir"]:
-        args.add("--" + name, getattr(ctx.attr, name))
+        args.add(getattr(ctx.attr, name))
     ctx.actions.run(
-        executable = ctx.attr.python[DefaultInfo].files_to_run,
+        executable = ctx.attr.shell[DefaultInfo].files_to_run,
         arguments = [args],
-        inputs = [ctx.file.template, ctx.file.header, ctx.file._generator, ctx.file.python_home],
-        tools = ctx.files.runtime,
+        inputs = [ctx.file.template, ctx.file.header, ctx.file._script],
+        tools = [tool[DefaultInfo].files_to_run for tool in [ctx.attr.sed, ctx.attr.mv, ctx.attr.rm]] + ctx.files.runtime,
         outputs = [output],
-        env = {"PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1", "LC_ALL": "C"},
+        env = {"LC_ALL": "C"},
         use_default_shell_env = False,
         mnemonic = "Bzip2PkgConfig",
     )
@@ -33,9 +42,11 @@ bzip2_pkgconfig = rule(
         "libdir": attr.string(mandatory = True),
         "sharedlibdir": attr.string(mandatory = True),
         "includedir": attr.string(mandatory = True),
-        "python": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
-        "python_home": attr.label(cfg = "exec", allow_single_file = True, mandatory = True),
+        "shell": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
+        "sed": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
+        "mv": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
+        "rm": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
         "runtime": attr.label_list(cfg = "exec", allow_files = True),
-        "_generator": attr.label(default = Label(":gen-pc.py"), allow_single_file = True, cfg = "exec"),
+        "_script": attr.label(default = Label(":gen-pc.sh"), allow_single_file = True, cfg = "exec"),
     },
 )

@@ -1482,3 +1482,20 @@ policy test targets pass (15 settings/18 inventory direct methods; 10 reference
 option methods separately pass). See USERLAND-SDK-QUALIFICATION.md. Actual
 three-architecture bz2/bzip2 component evidence is a separate bounded gate;
 full world/rescue/pkgbase/foreign execution/bootstrap remain incomplete.
+
+### 2026-11-03: genuine libbz2/bzip2 production closure on three ABIs
+
+Normal format-5 amd64/ARM64/RISC-V profiles pass actual production builds,
+source-owned original-order regular/PIC archives and default static CcInfo
+extraction, actual shared/program links and component installation archives.
+All 45 production CPP contexts/995 original-native consumed pairs, 42 archive
+members, nine ordered link sequences, six linked allocated payloads and 54 original
+component installation records pass independent Make comparison. All nine
+declared tests pass without skips/foreign execution. Strict final review caught
+real omitted executable-link -gz=zlib despite green initial tests; final r3
+preserves original compressed DWARF, and the maintained host test rejects all
+three real earlier outputs. Actual debuglink/CRC checks are distinct from open
+separate DWARF/source lookup parity. See BZIP2-THREE-ARCH-QUALIFICATION.md.
+Next real package-family gate is bzip2recover original policy/installation plus
+the existing packages/bzip2 aggregate and real pkgbase outputs on selected ABIs;
+full world/rescue/bootstrap/foreign runtime and publication remain incomplete.

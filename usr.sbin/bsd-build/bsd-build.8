@@ -5530,3 +5530,14 @@ See
 .Pa tools/build/bazel/CROSS-USB-INPUT-MODULES-QUALIFICATION.md
 for compiler/input/link evidence, explicit rejected observers and remaining
 cross-kernel, debugger, device/runtime and measured-performance gates.
+
+.Pp
+The libbz2 and bzip2 format-5 components preserve original regular/PIC archive
+order, default static CcInfo extraction, executable PIE and compressed-DWARF
+link policy on amd64, ARM64 and RISC-V. Component installation archives retain
+original explicit debug directories and package tags. Cross tests inspect ELF
+artifacts using declared native tools and do not execute foreign programs.
+See
+.Pa tools/build/bazel/BZIP2-THREE-ARCH-QUALIFICATION.md
+for original Make comparisons and the remaining bzip2recover, full package,
+world/bootstrap and independent debugger source-lookup gates.

@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 load(":pkgconfig.bzl", "bzip2_pkgconfig")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_install_directory")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary", "cc_import", "cc_shared_library")
 
 cc_library(
-    name = "bz2",
+    name = "objects",
     srcs = [
-        "//contrib/bzip2:blocksort.c",
         "//contrib/bzip2:bzlib.c",
+        "//contrib/bzip2:blocksort.c",
         "//contrib/bzip2:bzlib_private.h",
         "//contrib/bzip2:compress.c",
         "//contrib/bzip2:crctable.c",
@@ -16,10 +16,26 @@ cc_library(
         "//contrib/bzip2:huffman.c",
         "//contrib/bzip2:randtable.c",
     ],
-    hdrs = ["//contrib/bzip2:bzlib.h"],
-    strip_include_prefix = "/contrib/bzip2",
+    deps = [":headers"],
+    copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Qunused-arguments'],
+    features = ["bsd_small_pic"],
+    linkstatic = True,
     visibility = ["//visibility:public"],
 )
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_objects")
+cc_library(name = "headers", hdrs = ["//contrib/bzip2:bzlib.h"],
+    strip_include_prefix = "/contrib/bzip2", visibility = ["//visibility:public"])
+# The installed archive and ordinary CcInfo consumers select the same original
+# seven-member order. PIC has a separate original object variant for the DSO.
+bsd_component_archive(name = "static_archive", groups = [":objects"],
+    object_order = ['bzlib.o', 'blocksort.o', 'compress.o', 'crctable.o', 'decompress.o', 'huffman.o', 'randtable.o'], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":objects"], pic = True,
+    object_order = ['bzlib.pic.o', 'blocksort.pic.o', 'compress.pic.o', 'crctable.pic.o', 'decompress.pic.o', 'huffman.pic.o', 'randtable.pic.o'])
+cc_import(name = "archive_link", static_library = ":static_archive", pic_static_library = ":pic_archive")
+cc_library(name = "bz2", deps = [":headers", ":archive_link"], visibility = ["//visibility:public"])
+bsd_component_objects(name = "regular_objects", group = ":objects", visibility = ["//visibility:public"])
+bsd_component_objects(name = "pic_objects", group = ":objects", pic = True, visibility = ["//visibility:public"])
 
 # The installed BSD ABI has a versioned SONAME. Keep the standard C++ provider
 # graph so consumers select this shared implementation through dynamic_deps.
@@ -27,7 +43,7 @@ cc_shared_library(
     name = "bz2_shared",
     deps = [":bz2"],
     shared_lib_name = "libbz2.so.4",
-    user_link_flags = ["-Wl,-soname,libbz2.so.4"],
+    user_link_flags = ["-fstack-protector-strong", "-Wl,-x", "-Wl,-soname,libbz2.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"],
     visibility = ["//visibility:public"],
 )
 
@@ -60,12 +76,11 @@ bzip2_pkgconfig(
     libdir = "/usr/lib",
     sharedlibdir = "/usr/lib",
     includedir = "/usr/include",
-    python = "@bsd_sdk//toolchain:extra_python",
-    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
-    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed", mv = "@bsd_sdk//toolchain:mv", rm = "@bsd_sdk//toolchain:rm",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:mv_runtime", "@bsd_sdk//toolchain:rm_runtime"],
 )
 
-filegroup(name = "static_archive", srcs = [":bz2"], output_group = "archive")
 filegroup(name = "debug_artifact", srcs = [":bz2_debug"], output_group = "debug_files")
 
 bsd_install_file(
@@ -129,8 +144,40 @@ bsd_install_link(
     install_tags = ["dev", "package=bzip2"],
 )
 
+# Original bsd.lib.mk debug installation owns these directories explicitly.
+bsd_install_directory(name = "debug_usr_dir", destination = "/usr/lib/debug/usr",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bzip2", "dbg"])
+bsd_install_directory(name = "debug_lib_dir", destination = "/usr/lib/debug/usr/lib",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bzip2", "dbg"])
 bsd_install_manifest(
     name = "install_manifest",
-    entries = [":install_archive", ":install_shared", ":install_debug", ":install_header", ":install_pkgconfig", ":install_link"],
+    entries = [":debug_usr_dir", ":debug_lib_dir", ":install_archive", ":install_shared", ":install_debug", ":install_header", ":install_pkgconfig", ":install_link"],
     visibility = ["//visibility:public"],
 )
+
+# Actual default-CcInfo consumer: inspect its ELF/symbols on the host for every
+# target ABI; the qualified target program is never executed by this test.
+cc_binary(name = "static_consumer", srcs = ["static-consumer.c"], deps = [":bz2"],
+    copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Qunused-arguments', '-fPIE'], local_defines = ["PIC"], linkopts = ["-pie"], linkstatic = True,
+    visibility = ["//visibility:public"])
+config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+config_setting(name = "target_riscv64", constraint_values = ["@platforms//cpu:riscv64"])
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_host_artifact_test(name = "archive_contract_test", src = "archive-contract-test.py",
+    data = [":static_consumer", ":bz2_shared", "//usr.bin/bzip2:bzip2", ":static_archive", "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:bin/llvm-ar"],
+    args = ["--consumer", "$(location :static_consumer)", "--shared", "$(location :bz2_shared)",
+            "--program", "$(location //usr.bin/bzip2:bzip2)",
+            "--archive", "$(location :static_archive)", "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)",
+            "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)", "--machine"] +
+        select({":target_aarch64": ["183"], ":target_riscv64": ["243"], "//conditions:default": ["62"]}),
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:llvm-ar_runtime"],
+    size = "small")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive_bundle", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+                   "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
