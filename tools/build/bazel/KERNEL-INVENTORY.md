@@ -114,3 +114,13 @@ See [the current refresh record](CURRENT-KERNEL-REFRESH-WORK.md) for actual
 configuration/hash evidence, the location-bearing inventory observer correction
 and the next full native/Make/aggregate-module checks. This remains inventory
 proof only, with missing generated/custom-source bindings explicit.
+
+## Current compiled refresh (2026-11-03)
+
+The [subsequent full refresh](CURRENT-KERNEL-REFRESH-QUALIFICATION.md) now passes
+all 2,462 object code/allocated/CTF comparisons against a new controlled original
+Make build, plus full/runtime kernel payload/symbol/CTF and debug CRC checks.
+Original dependency coverage is explicitly reconciled, including two independently
+retained earlier helper-source bindings; the initial missing-binding audit is
+preserved. Aggregate modules, standalone DWARF, runtime and full-system gates
+remain open. This supersedes the configuration-only checkpoint above.

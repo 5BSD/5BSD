@@ -24,20 +24,21 @@ committed graph in an isolated object-root source checkout. Both restored files
 match the original whole-file bytes. Whole-system cache/runtime/performance and
 other completion gates remain open; Make stays production/default.
 
-## Latest kernel checkpoint (2026-11-02)
+## Latest kernel checkpoint (2026-11-03)
 
-Complete native amd64 GENERIC now passes controlled full Make parity: all 2,462
-objects match code/allocated data/CTF, and the linked full/runtime kernels match
-55 allocated payloads plus validated build-ID metadata, 96,147 loader symbols
-and merged CTF. The comparison found and fixed the initial helper DSO build-path
-DT_NEEDED defect; old artifacts fail the new test. See
-[FULL-KERNEL-PARITY-QUALIFICATION.md](FULL-KERNEL-PARITY-QUALIFICATION.md).
-Native kernel installation now also matches original Make staging in default,
-alternate and colocated-debug layouts; see
+The [current full GENERIC refresh](CURRENT-KERNEL-REFRESH-QUALIFICATION.md) now
+passes against a fresh independent controlled Make build after the later startup
+source change: all 2,462 objects match code/allocated data/CTF. Full/runtime kernels
+match 55 allocated payloads, validated build-ID metadata, 96,147 loader symbols
+and merged CTF. Native debug tests and the original debug CRC pass. Actual
+ordered inputs, generated bodies and source/dependency coverage are retained;
+separate DWARF/source lookup remains open. The earlier helper DSO link correction
+is recorded in [the prior full-kernel result](FULL-KERNEL-PARITY-QUALIFICATION.md).
+Previously qualified native kernel installation layouts remain recorded in
 [KERNEL-INSTALLATION-QUALIFICATION.md](KERNEL-INSTALLATION-QUALIFICATION.md).
-Next kernel work is pkgbase integration and module/configuration/architecture
-qualification, followed by VM/runtime and performance gates. Full world and
-bootstrap/publication remain open; Make stays production/default.
+Next build the aggregate selected modules and close pkgbase/configuration/cross-
+architecture qualification, followed by VM/runtime and performance gates. Full
+world/stand/rescue and bootstrap/publication remain open; Make stays default.
 
 The package driver now preserves first-class directory layout records, including
 empty directories, alongside optional mtree ownership metadata. Its registered

@@ -5437,3 +5437,11 @@ See
 .Pa tools/build/bazel/LEGACY-BOOT-QUALIFICATION.md
 for original whole-byte/input/install comparisons and explicit remaining boot,
 architecture, bootstrap and signing/verified-boot limits.
+.Pp
+The current full amd64 GENERIC build also passes a fresh controlled original
+Make comparison after the later startup-source change.
+See
+.Pa tools/build/bazel/CURRENT-KERNEL-REFRESH-QUALIFICATION.md
+for all-object/runtime/CTF checks, actual input captures and dependency limits.
+Separate DWARF/source lookup, aggregate modules/pkgbase, VM/runtime and measured
+resource/cache qualification remain open.

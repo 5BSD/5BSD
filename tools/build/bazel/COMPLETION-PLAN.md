@@ -1353,3 +1353,22 @@ toolchain/SDK policy changes. Continue the remaining BIOS/EFI/kboot/library and
 full world/rescue/pkgbase graph, cross/options/bootstrap, boot/runtime and broad
 completion gates above; directory presence or raw equality is not boot/security
 qualification. Make stays production/default.
+
+## Current full GENERIC compiled parity refresh (2026-11-03)
+
+The [new current-source full build](CURRENT-KERNEL-REFRESH-QUALIFICATION.md) passes
+normal build-bsd and fresh controlled original Make. All 2,462 object code,
+allocated metadata/payloads and CTF bytes match. Both full/runtime kernels pass
+56 allocated contracts (55 exact payloads plus validated build-ID note), 96,147
+loader symbols and merged CTF; native debug positive/negative checks and original
+CRC pass. Before/after source bindings and actual original dependency coverage
+are retained, including explicit earlier helper-source hashes supplementing the
+initial failed audit. External Make prerequisites, standalone DWARF/source
+lookup and general cache/toolchain hermeticity are not declared complete.
+
+Next aggregate all 729 amd64 module producers and installation/pkgbase closure;
+continue actual stand/boot2, world/rescue and cross-architecture/configuration
+coverage. Bootstrap, hardware/combined publication, sandboxing, VM/runtime and
+controlled CPU/memory/disk/cache qualification remain required. Make stays
+production/default; BIP stays excluded. This is current compiled parity, not a
+booted installed system or full-goal completion.

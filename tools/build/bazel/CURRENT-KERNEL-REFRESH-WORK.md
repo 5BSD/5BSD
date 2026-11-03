@@ -1,5 +1,9 @@
 # Current full-kernel refresh (2026-11-03)
 
+The subsequent [full-kernel qualification](CURRENT-KERNEL-REFRESH-QUALIFICATION.md)
+now completes the native/Make build and object/runtime comparison steps below.
+Aggregate modules, standalone DWARF and the broader system gates remain open.
+
 The full-system goal requires current compiled evidence. The earlier controlled
 amd64 GENERIC result remains valid for its recorded inputs; it cannot establish
 parity for a subsequently changed source.
@@ -31,7 +35,7 @@ object root. The corrected observer compares ordered object identities, which
 are unchanged, while retaining the raw differing records. The initial report is
 preserved separately; no compiled payloads are normalized or accepted here.
 
-## Next qualification
+## Requirements identified at the inventory checkpoint
 
 - Run the complete native kernel through normal build-bsd format-5 with the
   current qualified staged SDK and explicit source revision.
