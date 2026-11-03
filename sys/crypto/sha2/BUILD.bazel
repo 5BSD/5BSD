@@ -114,3 +114,9 @@ amd64_generic_module_objects(name = "crypto_sha256c_module", srcs = ["sha256c.c"
 amd64_generic_module_objects(name = "crypto_sha512c_module", srcs = ["sha512c.c"],
     deps = ["//sys/crypto/sha2:crypto_module_context_4"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "sha256.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

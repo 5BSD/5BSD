@@ -244,3 +244,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['xform_tcp.c'],
     deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:network_policy_kernel_subr_ipsec_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:usb_net_if_ure_headers", "//sys/netinet:storage_tcp_ktest_module_context_9", "//sys/netipsec:network_policy_kernel_subr_ipsec_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header"],
 ) for arch in ['arm64', 'riscv']]
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "ipsec_support.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

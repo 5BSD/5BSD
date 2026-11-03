@@ -88,3 +88,10 @@ amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_pipe", sr
 amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_vale", srcs = ["netmap_vale.c"],
     deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_netmap_bdg_headers", "//sys/net:monitoring_devices_kernel_netmap_bdg_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
     pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "netmap_kern.h",
+        "netmap_mbq.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

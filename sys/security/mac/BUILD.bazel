@@ -149,3 +149,9 @@ bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
         "mac_framework.h",
     ],
     includes = [], visibility = ["//sys/vm:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "mac_framework.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

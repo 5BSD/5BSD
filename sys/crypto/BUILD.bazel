@@ -397,3 +397,9 @@ cross_generic_kernel_objects(arch = "arm64", name = "generic_armv8_crypto_wrap",
     general_regs_only = False, features = ["-bsd_kernel_no_standard_includes"],
     copts = ["-Wno-error=cast-qual", "-march=armv8-a+crypto"] +
         select({":simd_crypto_optimized": ["-O3"], "//conditions:default": []}))
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "sha1.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

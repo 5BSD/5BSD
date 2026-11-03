@@ -43,3 +43,9 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "K
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_led", srcs = ["led.c"],
     deps = ["//sys/dev/led:peripheral_devices_kernel_led_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "led.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

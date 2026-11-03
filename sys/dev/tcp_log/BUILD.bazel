@@ -17,3 +17,9 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "K
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_tcp_log_dev", srcs = ["tcp_log_dev.c"],
     deps = ["//sys/dev/tcp_log:peripheral_devices_kernel_tcp_log_dev_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "tcp_log_dev.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

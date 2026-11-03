@@ -48564,3 +48564,15 @@ payloads match independently audited original one-map filename-policy controls.
 Separate DWARF/source lookup, complete runtime packages, foreign execution,
 alternate options/bootstrap and full libarchive/libgeom/world remain open. See
 [BSDXML-THREE-ARCH-QUALIFICATION.md](BSDXML-THREE-ARCH-QUALIFICATION.md).
+
+### ARM64/RISC-V network built-ins (2026-11-03)
+
+See [CROSS-KERNEL-NETWORK-QUALIFICATION.md](CROSS-KERNEL-NETWORK-QUALIFICATION.md).
+Four maintained profiles qualify 175 selected network source products across
+350 object configurations: exact allocated sections/symbols/relocations,
+175 whole-byte plain objects and 175 exact CTF payloads. The consumed-input
+ledger distinguishes 54,280 raw exact pairs from 26 independently reproduced
+KOBJ provenance-comment differences. Fourteen original-generator invocations
+establish those controls; cached native outputs have no fresh generator action
+witness. Composite SDK execution, nested owners, complete kernels, debug source
+packages, runtime and performance remain gates. Make remains production/default.

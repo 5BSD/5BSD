@@ -239,3 +239,11 @@ bsd_source_headers(name = "vmx_layout_extra_headers", hdrs = ["vmm_param.h", "vm
 
 # Additional physical prerequisites of the cross-target network protocol consumers.
 bsd_source_headers(name = "cross_network_protocol_if_tuntap_if_tuntap_module_headers", hdrs = ['vmm_snapshot_common.h'], visibility = ['//sys/net:__pkg__'])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "vmm_dirty_log_request.h",
+        "vmm_param.h",
+        "vmm_snapshot_common.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

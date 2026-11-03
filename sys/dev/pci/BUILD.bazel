@@ -319,3 +319,12 @@ cc_library(name = "hardware_module_pci_if_headers", hdrs = [":hardware_module_pc
 
 bsd_source_headers(name = "platform_families_module_context_3", hdrs = ["pci_private.h", "pcivar.h"], includes = [],
     visibility = ["//sys/dev/ichwd:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "pci_iov.h",
+        "pci_private.h",
+        "pcireg.h",
+        "pcivar.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

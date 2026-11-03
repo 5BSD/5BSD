@@ -272,3 +272,22 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['netlink_sysevent.c'],
     deps = ["//sys/net:network_policy_kernel_netlink_domain_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:system_io_module_context_0"],
 ) for arch in ['arm64', 'riscv']]
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "netlink.h",
+        "netlink_bitset.h",
+        "netlink_ctl.h",
+        "netlink_message_parser.h",
+        "netlink_message_writer.h",
+        "netlink_route.h",
+        "netlink_var.h",
+        "route/common.h",
+        "route/ifaddrs.h",
+        "route/interface.h",
+        "route/neigh.h",
+        "route/nexthop.h",
+        "route/route.h",
+        "route/route_var.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

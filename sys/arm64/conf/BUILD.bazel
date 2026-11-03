@@ -330,3 +330,35 @@ _VM_BUILTIN_OPTION_HEADERS = [
  for name in _VM_BUILTIN_OPTION_HEADERS]
 cc_library(name = "vm_builtin_options_headers", hdrs = [":vm_builtin_" + name for name in _VM_BUILTIN_OPTION_HEADERS],
     strip_include_prefix = "vm_builtin_options", visibility = ["//sys/vm:__pkg__"])
+
+# Network options come from the selected target config tree.
+_NETWORK_BUILTIN_OPTION_HEADERS = [
+    "opt_acpi.h",
+    "opt_bootp.h",
+    "opt_bpf.h",
+    "opt_ddb.h",
+    "opt_device_polling.h",
+    "opt_ifmedia.h",
+    "opt_inet.h",
+    "opt_inet6.h",
+    "opt_ipsec.h",
+    "opt_ipstealth.h",
+    "opt_kdb.h",
+    "opt_kern_tls.h",
+    "opt_mbuf_profiling.h",
+    "opt_mbuf_stress_test.h",
+    "opt_mrouting.h",
+    "opt_netgraph.h",
+    "opt_ratelimit.h",
+    "opt_route.h",
+    "opt_rss.h",
+    "opt_sctp.h",
+    "opt_vlan.h",
+]
+[bsd_tree_file(name = "network_builtin_" + name, tree = ":generic_config", member = name,
+    output = "network_builtin_options/" + name, python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for name in _NETWORK_BUILTIN_OPTION_HEADERS]
+cc_library(name = "network_builtin_options_headers", hdrs = [":network_builtin_" + name for name in _NETWORK_BUILTIN_OPTION_HEADERS],
+    strip_include_prefix = "network_builtin_options", visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

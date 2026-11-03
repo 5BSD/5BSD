@@ -1304,3 +1304,24 @@ bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
         "include/gcc/ck_pr.h",
     ],
     includes = ['include'], visibility = ["//sys/vm:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+    ],
+    includes = ['include'], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

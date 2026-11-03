@@ -691,3 +691,18 @@ bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
         "in6.h",
     ],
     includes = [], visibility = ["//sys/vm:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "in6.h",
+        "in6_fib.h",
+        "in6_pcb.h",
+        "in6_rss.h",
+        "in6_var.h",
+        "ip6_ecn.h",
+        "ip6_var.h",
+        "nd6.h",
+        "scope6_var.h",
+        "tcp6_var.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

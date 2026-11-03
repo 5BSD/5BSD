@@ -1706,3 +1706,23 @@ ordered normal/PIC archives and default consumer/provider semantics, preserving
 selected OpenSSL/FIPS/KTLS/DTrace/iconv. Recursive providers/engines, separate
 DWARF/source lookup, foreign execution, full world/bootstrap and pkgbase remain
 gates. Make remains production; BIP remains excluded.
+
+### 2026-11-03: ARM64/RISC-V network built-in cohort
+
+The selected sys/net and sys/netinet lists now qualify 175 products through
+four maintained profiles: 350 runtime object matches, 175 whole-byte plain
+objects and 175 exact CTF payloads. The 54,306-pair input ledger separately
+records 54,280 raw exact pairs and 26 independently reproduced KOBJ header
+path-policy pairs. Existing C/runtime instrumentation is unchanged (89 distinct
+sources, 124 lexical marker lines). See CROSS-KERNEL-NETWORK-QUALIFICATION.md.
+
+Next kernel gates include composite SDK host-tool closure for KOBJ, remaining
+owners and configs, complete source/generator/link closure and boot/runtime.
+The debug source follow-up must replace the private prototype with public
+artifact/provider based archive and mapping outputs, package identity binding,
+and maintained frontend integration. Validate actual primary/inline/generated/
+SDK text after relocation and with execution trees unavailable. ARM64 private
+inline-header lookup succeeded; RISC-V ET_REL debugger relocation is unresolved
+and requires linked-artifact qualification. No debug package completion claimed.
+Full world/pkgbase/hardware publication, bootstrap/sandbox/cache and comparative
+CPU/memory/disk I/O/usage gates remain. Make stays production; BIP is excluded.

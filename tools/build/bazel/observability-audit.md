@@ -10814,3 +10814,14 @@ Native parser tests exercise streaming namespaces, entities and error handling;
 these checks do not establish instrumentation coverage, probe delivery or cost.
 Separate DWARF/source lookup, foreign execution and full-world consumers remain
 open. See BSDXML-THREE-ARCH-QUALIFICATION.md.
+
+### 2026-11-03: cross-kernel network built-ins
+
+The selected 89 physical network C sources retain their hashes and 124 lexical
+DTrace/SDT/audit marker lines. All 350 ARM64/RISC-V plain and CTF/debug object
+configurations preserve original allocated sections, named symbols and runtime
+relocations; all 175 CTF payloads match. The provenance-comment header
+differences are independently controlled and recorded, not rewritten. See
+CROSS-KERNEL-NETWORK-QUALIFICATION.md and the work-root observability.json.
+This is compiled instrumentation preservation, not live probe or audit
+completeness, network runtime, or performance qualification.

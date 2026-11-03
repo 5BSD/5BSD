@@ -139,3 +139,9 @@ bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["cc.
 
 bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["cc.h", "cc_newreno.h"], includes = [],
     visibility = ["//sys/netinet:__pkg__"])
+
+# Physical inputs of ARM64/RISC-V GENERIC network built-ins.
+bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
+        "cc.h",
+    ],
+    includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
