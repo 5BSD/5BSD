@@ -1653,43 +1653,6 @@ done:
 	return (0);
 }
 
-/*
- * dtraced spools a program delivered to the guest as
- * "elf.<program>.<source>" (hex): the source is the one its KILL revokes.
- */
-int
-dtrace_spool_source_id(const char *path, uint8_t id[16])
-{
-	static const char digits[] = "0123456789abcdef";
-	const char *name;
-	uint8_t zero[16] = { 0 };
-	ptrdiff_t high, low;
-	size_t i;
-
-	if (path == NULL || id == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	name = strrchr(path, '/');
-	name = name == NULL ? path : name + 1;
-	if (strlen(name) != 69 || strncmp(name, "elf.", 4) != 0 ||
-	    name[36] != '.' || strspn(name + 4, digits) != 32 ||
-	    strspn(name + 37, digits) != 32) {
-		errno = ENOENT;
-		return (-1);
-	}
-	for (i = 0; i < 16; i++) {
-		high = strchr(digits, name[37 + 2 * i]) - digits;
-		low = strchr(digits, name[38 + 2 * i]) - digits;
-		id[i] = (uint8_t)(high << 4 | low);
-	}
-	if (memcmp(id, zero, sizeof(zero)) == 0) {
-		errno = ENOENT;
-		return (-1);
-	}
-	return (0);
-}
-
 static int
 dtrace_send_elf_impl(dtrace_prog_t *pgp, int fromfd, int tofd,
     const char *location, int send_ident, const uint8_t *source_id,
@@ -1800,8 +1763,8 @@ dtrace_send_elf(dtrace_prog_t *pgp, int fromfd, int tofd,
 
 /*
  * A guest's upload of a program it was delivered continues the source the
- * delivery was spooled under (dtrace_spool_source_id()), not the lineage
- * of the program's own identity.
+ * delivery was spooled under (dtraced names it to dtrace -Y), not the
+ * lineage of the program's own identity.
  */
 int
 dtrace_send_elf_source(dtrace_prog_t *pgp, int fromfd, int tofd,

@@ -877,21 +877,6 @@ client_request::handle_elfmsg(void)
 		    delivery_phase::pending, true))
 			return (false);
 	}
-	/* dtt_kill() revokes a source before it stops the guest's processes:
-	 * nothing leaves the guest under a revoked source.  dtrace -Y uploads a
-	 * derived program's response under the spool's source, its parent's. */
-	if (!this->s.is_control_machine() && loc == "outbound" &&
-	    this->s.inbounddir != nullptr) {
-		const uint8_t zero_id[DTRACED_PROGRAM_ID_LEN] = {};
-		int revoked = memcmp(this->hdr.elf.source_id, zero_id,
-		    sizeof(zero_id)) == 0 ? 0 :
-		    this->s.inbounddir->source_revoked(this->hdr.elf.source_id);
-		if (revoked < 0)
-			return (false);
-		if (revoked > 0)
-			return (REFUSE(ECANCELED, "guest ELF source revoked"));
-	}
-
 	/* Prepare the list node before I/O; commit it after durable publication. */
 	std::list<state::listed_ident> pending_ident;
 	if (!this->s.is_control_machine() &&
@@ -906,8 +891,27 @@ client_request::handle_elfmsg(void)
 
 	/* The directory watcher may launch this file as soon as it appears. */
 	std::unique_lock ident_guard(this->s.identlistmtx, std::defer_lock);
-	if (!pending_ident.empty())
+	bool guest_upload = !this->s.is_control_machine() &&
+	    loc == "outbound" && this->s.inbounddir != nullptr;
+	if (!pending_ident.empty() || guest_upload)
 		ident_guard.lock();
+	/* dtt_kill() revokes a source before it stops the guest's processes:
+	 * nothing leaves the guest under a revoked source.  dtrace -Y uploads a
+	 * derived program's response under the spool's source, its parent's.
+	 * dtt_kill() revokes and drops the source's listed identifiers under
+	 * identlistmtx, held here from this check through publication and the
+	 * splice: the upload and its identifier precede the KILL or are
+	 * refused. */
+	if (guest_upload) {
+		const uint8_t zero_id[DTRACED_PROGRAM_ID_LEN] = {};
+		int revoked = memcmp(this->hdr.elf.source_id, zero_id,
+		    sizeof(zero_id)) == 0 ? 0 :
+		    this->s.inbounddir->source_revoked(this->hdr.elf.source_id);
+		if (revoked < 0)
+			return (false);
+		if (revoked > 0)
+			return (REFUSE(ECANCELED, "guest ELF source revoked"));
+	}
 	DEBUG("write_data(%s, [buf], %zu)", dir->full_path().c_str(), buf_size);
 	const uint8_t zero_id[DTRACED_PROGRAM_ID_LEN] = {};
 	bool identified = (loc == "inbound" || derived_outbound) &&

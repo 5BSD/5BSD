@@ -549,7 +549,17 @@ launch_program(state &s, const std::string &path, bool host,
         for (const auto &listed : s.identlist)
             identifiers.push_back(listed.ident);
     }
+    /* dtrace -Y FILE,guest,SOURCE uploads the linked program under the
+     * source this delivery was spooled with, the one its KILL revokes. */
     std::string input = path + (host ? ",host" : "");
+    if (sourced) {
+        static const char digits[] = "0123456789abcdef";
+        input += ",guest,";
+        for (uint8_t byte : source) {
+            input += digits[byte >> 4];
+            input += digits[byte & 0xf];
+        }
+    }
     bool has_identifiers = !identifiers.empty();
     if (require_report && !has_identifiers) {
         errno = EAGAIN;

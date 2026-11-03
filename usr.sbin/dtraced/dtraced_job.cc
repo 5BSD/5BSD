@@ -54,7 +54,10 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "dtraced_clientrequest.h"
 #include "dtraced_protocol.h"
@@ -1264,42 +1267,115 @@ msg_kind_name(uint64_t type)
  * A refused frame is answered with status 0 (or the connection is closed)
  * and the client sees only EPROTO or EINVAL.  Name the client, the message
  * kind and the check.  A client that retries the same frame would repeat
- * the line without end: each kind and check is logged at most once a second,
- * with the number of refusals it suppressed.
+ * the line without end, across reconnects: each client (its name and
+ * process), kind and check is logged at most once a second, with the number
+ * of refusals it suppressed, so one noisy client cannot hide another's
+ * refusal.  Every kind a client invents shares one entry, and an entry
+ * whose second has passed is dropped (reporting what it suppressed): the
+ * table holds only the last second's refusals.
  */
+struct refusal_key {
+	std::string ident;
+	pid_t pid;
+	uint64_t type;
+	int line;
+
+	bool operator<(const refusal_key &other) const
+	{
+		return (std::tie(ident, pid, type, line) <
+		    std::tie(other.ident, other.pid, other.type, other.line));
+	}
+	bool operator==(const refusal_key &other) const
+	{
+		return (std::tie(ident, pid, type, line) ==
+		    std::tie(other.ident, other.pid, other.type, other.line));
+	}
+};
+
+struct refusal_window {
+	int64_t logged;		/* when the last line was logged */
+	uint64_t suppressed;	/* refusals since then */
+	const char *check;
+	int error;
+};
+
+static void
+warn_refusal(const refusal_key &key, const char *check, int error,
+    uint64_t suppressed, bool summary)
+{
+	char where[48] = "", more[64] = "";
+	if (key.line != 0)
+		snprintf(where, sizeof(where), " (dtraced_clientrequest.cc:%d)",
+		    key.line);
+	errno = error;
+	if (summary) {
+		WARN("refused %ju more %s frames from %s (pid %d): %s%s: %m",
+		    (uintmax_t)suppressed, msg_kind_name(key.type),
+		    key.ident.c_str(), (int)key.pid, check, where);
+		return;
+	}
+	if (suppressed != 0)
+		snprintf(more, sizeof(more), " (%ju more since the last)",
+		    (uintmax_t)suppressed);
+	WARN("refused %s frame from %s (pid %d): %s%s: %m%s",
+	    msg_kind_name(key.type), key.ident.c_str(), (int)key.pid, check,
+	    where, more);
+}
+
 static void
 log_refusal(const client_fd &dfd, uint64_t type, const char *check, int line,
     int error)
 {
 	static std::mutex mtx;
-	static std::map<std::pair<uint64_t, int>,
-	    std::pair<int64_t, uint64_t>> recent;
-	int64_t now = dtraced_io_milliseconds();
-	uint64_t suppressed = 0;
+	static std::map<refusal_key, refusal_window> recent;
+	static int64_t swept;
 
 	try {
-		std::lock_guard lock(mtx);
-		auto &last = recent[{ type, line }];
-		if (now >= 0 && last.first != 0 && now - last.first < 1000) {
-			last.second++;
-			return;
+		std::vector<std::pair<refusal_key, refusal_window>> ended;
+		refusal_key key{ dfd.ident, dfd.peer_pid,
+		    type <= DTRACED_MSG_LAST ? type : DTRACED_MSG_LAST + 1,
+		    line };
+		int64_t now = dtraced_io_milliseconds();
+		uint64_t suppressed = 0;
+		bool limited = false;
+
+		try {
+			std::lock_guard lock(mtx);
+			if (now >= 0 && now - swept >= 1000) {
+				for (auto it = recent.begin(); it != recent.end();) {
+					if (now - it->second.logged < 1000 ||
+					    it->first == key) {
+						++it;
+						continue;
+					}
+					if (it->second.suppressed != 0)
+						ended.push_back(*it);
+					it = recent.erase(it);
+				}
+				swept = now;
+			}
+			auto &last = recent[key];
+			if (now >= 0 && last.logged != 0 &&
+			    now - last.logged < 1000) {
+				last.suppressed++;
+				limited = true;
+			} else {
+				suppressed = last.suppressed;
+				last = { now > 0 ? now : 1, 0, check, error };
+			}
+		} catch (const std::bad_alloc &) {
+			/* Log without the limit. */
 		}
-		suppressed = last.second;
-		last = { now > 0 ? now : 1, 0 };
+		for (const auto &[from, window] : ended)
+			warn_refusal(from, window.check, window.error,
+			    window.suppressed, true);
+		if (!limited)
+			warn_refusal(key, check, error, suppressed, false);
 	} catch (const std::bad_alloc &) {
-		/* Log without the limit. */
+		errno = error;
+		WARN("refused %s frame from %s (pid %d): %s: %m",
+		    msg_kind_name(type), dfd.ident, (int)dfd.peer_pid, check);
 	}
-	char where[48] = "", more[64] = "";
-	if (line != 0)
-		snprintf(where, sizeof(where), " (dtraced_clientrequest.cc:%d)",
-		    line);
-	if (suppressed != 0)
-		snprintf(more, sizeof(more), " (%ju more since the last)",
-		    (uintmax_t)suppressed);
-	errno = error;
-	WARN("refused %s frame from %s (pid %d): %s%s: %m%s",
-	    msg_kind_name(type), dfd.ident, (int)dfd.peer_pid, check, where,
-	    more);
 	errno = error;
 }
 

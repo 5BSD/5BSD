@@ -840,9 +840,20 @@ fault_leave(void)
 		fault_in_request = false;
 }
 
+static thread_local const char *fault_entry_current;	/* innermost entry */
+
 struct fault_entry_scope {
-	fault_entry_scope(const char *entry) { fault_enter(entry); }
-	~fault_entry_scope() { fault_leave(); }
+	const char *outer;
+	fault_entry_scope(const char *entry) : outer(fault_entry_current)
+	{
+		fault_entry_current = entry;
+		fault_enter(entry);
+	}
+	~fault_entry_scope()
+	{
+		fault_leave();
+		fault_entry_current = outer;
+	}
 };
 
 #define FAULT_ENTRY(mangled, entry, ret, proto, args) \
@@ -904,6 +915,33 @@ FAULT_DIR(_ZN7dtraced3dir24queue_recovered_consumerEPNS_9client_fdE, "queue_reco
 FAULT_DIR(_ZN7dtraced3dir24queue_recovered_outboundERKNS_16durable_deliveryEtm, "queue_recovered_outbound")
 FAULT_DIR(_ZN7dtraced3dir25guest_rekey_pair_completeERS0_tmtm, "guest_rekey_pair_complete")
 FAULT_DIR(_ZN7dtraced3dir25checkpoint_collector_exitERKNSt3__15arrayIhLm96EEERNS_24collector_owner_registryE, "checkpoint_collector_exit")
+
+/* HT_REVOKED_CHECK_HOLD=<path>: once <path> exists, the next
+ * dir::source_revoked() answer to a client request is held: the wrapper removes <path>, creates
+ * <path>.held and waits up to 3 s for <path>.release.  A KILL injected
+ * meanwhile lands between a guest upload's revocation check and its
+ * publication (client_request::handle_elfmsg()). */
+extern "C" int __real__ZN7dtraced3dir14source_revokedEPKh(void *,
+    const uint8_t *);
+extern "C" int
+__wrap__ZN7dtraced3dir14source_revokedEPKh(void *self, const uint8_t *source)
+{
+	int revoked = __real__ZN7dtraced3dir14source_revokedEPKh(self, source);
+	const char *hold = getenv("HT_REVOKED_CHECK_HOLD");
+	if (hold == nullptr || fault_entry_current == nullptr ||
+	    strcmp(fault_entry_current, "handle") != 0 || unlink(hold) != 0)
+		return (revoked);
+	int error = errno;
+	std::string held = std::string(hold) + ".held";
+	std::string release = std::string(hold) + ".release";
+	int fd = __real_open(held.c_str(), O_WRONLY | O_CREAT, 0600);
+	if (fd >= 0)
+		close(fd);
+	for (int i = 0; i < 300 && access(release.c_str(), F_OK) != 0; i++)
+		usleep(10000);
+	errno = error;
+	return (revoked);
+}
 FAULT_DIR(_ZN7dtraced3dir32checkpoint_consumer_process_exitERKNS_24durable_consumer_receiptERNS_24collector_owner_registryE, "checkpoint_consumer_process_exit")
 FAULT_DIR(_ZN7dtraced3dir17populate_existingEv, "populate_existing")
 FAULT_DIR(_ZN7dtraced3dir15list_deliveriesERNSt3__16vectorINS_22durable_delivery_stateENS1_9allocatorIS3_EEEE, "list_deliveries")
