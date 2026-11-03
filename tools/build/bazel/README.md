@@ -48508,3 +48508,19 @@ separate original one-flag controls prove their allocated/relocation parity.
 Portable/bootstrap, foreign runtime, separate DWARF, installed-test producer
 policy and full runtime/tests packages remain open. See
 [LIBMD-THREE-ARCH-QUALIFICATION.md](LIBMD-THREE-ARCH-QUALIFICATION.md).
+
+## Native common cross-kernel objects (2026-11-03)
+
+Default GENERIC now has source-owned common built-ins: 46 ARM64/48 RISC-V C
+sources plus the ARM64 crypto wrapper. Six native/composite SDK profiles and
+two final regressions pass ten declared test invocations. All 282 object
+configurations match original allocated/symbol/runtime-relocation contracts;
+141 plain objects are whole-byte equal and 141 raw CTF payloads match. Actual
+CPP review binds 19,054 consumed pairs and explicitly reports 186 source-derived
+DTS-version header inputs. The version number and Clang resource version are
+not duplicated in native metadata. A real composite SDK archiver declaration
+failure is corrected through the public C++ archive API; native libc++ runtime
+and 119 ordered archive members pass checks, with 55 composite PIC members
+additionally bound to actual compiler inputs. Separate DWARF, remaining owners,
+full cross-kernel links/installations, package/runtime and performance remain
+open. See [CROSS-KERNEL-COMMON-QUALIFICATION.md](CROSS-KERNEL-COMMON-QUALIFICATION.md).

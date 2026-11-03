@@ -157,33 +157,35 @@ def _library(ctx):
             objects = [members[name] for name in order]
         objects_by_variant[variant] = objects
         suffix = suffixes[variant]
-        archive = ctx.actions.declare_file((ctx.attr.archive_basename or "lib" + ctx.label.name) + suffix)
+        basename = (ctx.attr.archive_basename or "lib" + ctx.label.name) + suffix
+        if not basename.startswith("lib") or not basename.endswith(".a"):
+            fail("native archive requires the configured lib*.a naming policy")
+        # Let the public C++ API own the action and selected toolchain inputs.
+        # A caller-supplied SDK filegroup can name a different archiver when this
+        # library is built in the execution configuration of a composite SDK.
+        # Each maintained variant already supplies its complete object list
+        # and filename. Disable automatic PIC sibling creation for this archive
+        # action only; compilation keeps the original per-variant PIC policy.
+        archive_features = cc_common.configure_features(ctx = ctx, cc_toolchain = toolchain,
+            requested_features = ctx.features, unsupported_features = ctx.disabled_features + ["supports_pic"])
+        _, archive_outputs = cc_common.create_linking_context_from_compilation_outputs(
+            actions = ctx.actions, name = basename[3:-2],
+            feature_configuration = archive_features, cc_toolchain = toolchain,
+            compilation_outputs = cc_common.create_compilation_outputs(objects = depset(objects)),
+            disallow_dynamic_library = True)
+        archive = archive_outputs.library_to_link.static_library
+        if archive == None or archive.basename != basename:
+            fail("configured archive naming differs from maintained policy: " + basename)
         variables = cc_common.create_link_variables(cc_toolchain = toolchain,
             feature_configuration = features, output_file = archive.path,
             is_using_linker = False, must_keep_debug = True)
         command = cc_common.get_memory_inefficient_command_line(
             feature_configuration = features, action_name = ACTION_NAMES.cpp_link_static_library,
             variables = variables)
-        # The public API has no object-list argument. Append ordered objects
-        # after the configured options/output; reject any unqualified archiver
-        # policy rather than silently discarding it or guessing its syntax.
+        # Preserve the maintained configured archiver policy; object order is
+        # passed through the public compilation-output provider above.
         if ctx.attr.arflags != ["-crsD"] or command != ["rcsD", archive.path]:
             fail("unsupported archive policy: maintained %s, configured %s" % (ctx.attr.arflags, command))
-        args = ctx.actions.args()
-        args.add_all(command)
-        args.add_all(objects)
-        environment = cc_common.get_environment_variables(feature_configuration = features,
-            action_name = ACTION_NAMES.cpp_link_static_library, variables = variables)
-        environment = dict(environment)
-        environment["LC_ALL"] = "C"
-        ctx.actions.run(
-            executable = cc_common.get_tool_for_action(feature_configuration = features,
-                action_name = ACTION_NAMES.cpp_link_static_library),
-            arguments = [args], inputs = depset(objects),
-            tools = ctx.files.archive_inputs, outputs = [archive],
-            mnemonic = "BSDNativeArchive", env = environment,
-            use_default_shell_env = False,
-        )
         archives[variant] = archive
     library = cc_common.create_library_to_link(actions = ctx.actions,
         feature_configuration = features, cc_toolchain = toolchain,
@@ -209,7 +211,6 @@ bsd_library = rule(
         "generated_headers": attr.label_list(allow_files = True),
         "arflags": attr.string_list(mandatory = True),
         "archive_basename": attr.string(),
-        "archive_inputs": attr.label(allow_files = True, cfg = "exec", mandatory = True),
         "variants": attr.string_list(default = ["regular", "pic"]),
         "variant_flags": attr.string_list_dict(),
         "cxx_variant_flags": attr.string_list_dict(),

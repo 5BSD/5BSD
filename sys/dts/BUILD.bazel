@@ -1,2 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["freebsd-compatible.dts"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+
+# Derive the kernel macro from the same source property used by Makefile.arm64.
+bsd_awk_output(name = "linux_dts_version", script = "linux-dts-version.awk",
+    srcs = ["freebsd-compatible.dts"], output = "generated/linux_dts_version.h",
+    awk = "//usr.bin/awk:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"],
+    visibility = ["//sys:__subpackages__"])
+cc_library(name = "linux_dts_version_headers", hdrs = [":linux_dts_version"],
+    strip_include_prefix = "generated", visibility = ["//sys:__subpackages__"])

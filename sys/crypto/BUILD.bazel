@@ -381,3 +381,19 @@ amd64_generic_module_objects(name = "ossl_ossl_aes_gcm_module", srcs = ["openssl
 amd64_generic_module_objects(name = "ossl_ossl_x86_module", srcs = ["openssl/ossl_x86.c"],
     deps = ["//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/crypto:ossl_kernel_module_context_6"], preinclude_headers = [], textual_hdrs = [])
+
+# ARM64 built-in wrapper deliberately permits SIMD and selected target SDK headers.
+load("//tools/build/bazel:cross_generic_kernel.bzl", "cross_generic_kernel_objects")
+bsd_source_headers(name = "armv8_crypto_wrap_headers",
+    hdrs = ["armv8/armv8_crypto.h", "armv8/stdint.h"], includes = ["armv8"])
+bsd_sdk_headers(name = "armv8_crypto_sdk_headers",
+    resource_headers = ["arm_neon.h", "arm_bf16.h", "arm_vector_types.h"],
+    system_headers = ["ssp/ssp.h"])
+cross_generic_kernel_objects(arch = "arm64", name = "generic_armv8_crypto_wrap",
+    srcs = ["armv8/armv8_crypto_wrap.c"],
+    deps = [":armv8_crypto_wrap_headers", ":armv8_crypto_sdk_headers",
+        "//sys/opencrypto:simd_crypto_kernel_aesni_wrap_headers",
+        "//sys/crypto/rijndael:simd_crypto_kernel_aesni_wrap_headers"],
+    general_regs_only = False, features = ["-bsd_kernel_no_standard_includes"],
+    copts = ["-Wno-error=cast-qual", "-march=armv8-a+crypto"] +
+        select({":simd_crypto_optimized": ["-O3"], "//conditions:default": []}))

@@ -23,6 +23,15 @@ def _headers(ctx):
     sysroot = root.split("/usr/lib/clang/")[0]
     system_root = sysroot + "/usr/include"
     files = list(resources)
+    if ctx.attr.resource_headers:
+        files = []
+        for relative in ctx.attr.resource_headers:
+            if relative.startswith("/") or any([p in ["", ".", ".."] for p in relative.split("/")]):
+                fail("SDK resource header must be a normalized relative path")
+            matches = [f for f in resources if f.path == root + "/" + relative]
+            if len(matches) != 1:
+                fail("one declared SDK resource header required: " + relative)
+            files.append(matches[0])
     for relative in ctx.attr.system_headers:
         if relative.startswith("/") or any([p in ["", ".", ".."] for p in relative.split("/")]):
             fail("SDK system header must be a normalized relative path")
@@ -36,5 +45,6 @@ def _headers(ctx):
 
 bsd_sdk_headers = rule(implementation = _headers, attrs = {
     "sdk_files": attr.label(default = "@bsd_sdk//toolchain:compile_inputs", cfg = "exec"),
+    "resource_headers": attr.string_list(doc = "Optional exact compiler resource headers; empty retains the complete resource set."),
     "system_headers": attr.string_list(doc = "Explicit additional headers relative to the selected SDK usr/include."),
 })

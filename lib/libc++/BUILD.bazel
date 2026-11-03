@@ -33,7 +33,6 @@ bsd_library(
         "pic": [source.split("/")[-1][:-4] + ".pic.o" for source in LIBCXX_SOURCES]},
     arflags = ["-crsD"],
     archive_basename = "libc++",
-    archive_inputs = "@bsd_sdk//toolchain:archive_inputs",
     target_compatible_with = _PLATFORM,
 )
 

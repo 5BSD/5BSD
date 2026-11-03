@@ -1639,3 +1639,20 @@ rewriting bytes. See LIBMD-THREE-ARCH-QUALIFICATION.md. Nondefault optimization,
 bootstrap, foreign runtime, separate DWARF, recursive installed-test producer
 parity and full runtime/tests packages remain open. The liblzma/XZ four-package
 family is staged privately and still requires its own native qualification.
+
+### 2026-11-03: native common cross-kernel compilation foundation
+
+Source-owned built-in helpers preserve ARM64/RISC-V policies separately from
+KLD modules. The first 46/48 common sources and ARM64 crypto wrapper pass 282
+object configurations, 19,054 consumed pairs and explicit source-derived DTS
+header checks. All 141 plain objects are byte-equal to matching original plain
+controls; 141 raw CTF payloads and all allocated/symbol/relocation contracts
+match. Eight normal profiles pass ten declared tests. The public C++ archive
+API fixes a genuine composite host-tool declaration defect; libc++ dynamic/static
+runtime and native member-order checks pass. See CROSS-KERNEL-COMMON-QUALIFICATION.md
+and its hash-bound summary. Next expand precise built-in owners and generated
+producers across the full config inventory, then complete ordered cross-kernel
+links/installations and cross-module/pkgbase aggregates. Separate DWARF,
+configuration breadth, bootstrap/sandbox/cache, actual boot/runtime/upgrades
+and CPU/aggregate memory/disk I/O/usage remain gates. Make remains production;
+BIP remains excluded.

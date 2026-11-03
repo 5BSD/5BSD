@@ -16,8 +16,8 @@ filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.ba
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"],
     libraries = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
-        "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libthr.so.3"],
     visibility = ["//visibility:public"],
 ) for name, debug in [("generic_config", False), ("generic_debug_config", True)]]
 

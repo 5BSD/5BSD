@@ -42,9 +42,14 @@ def _impl(ctx):
         feature(name = "bsd_kernel_target", enabled = True, flag_sets = [
             flag_set(actions = _COMPILE + _LINK,
                 flag_groups = [flag_group(flags = ["--target=" + ctx.attr.target])])]),
+        # Target owners using declared SDK intrinsic/system headers can disable
+        # standard-include suppression without changing freestanding semantics.
+        feature(name = "bsd_kernel_no_standard_includes", enabled = True, flag_sets = [
+            flag_set(actions = _COMPILE,
+                flag_groups = [flag_group(flags = ["-nostdinc"])])]),
         feature(name = "bsd_kernel_freestanding", enabled = True, flag_sets = [
             flag_set(actions = _COMPILE,
-                flag_groups = [flag_group(flags = ["-nostdinc", "-ffreestanding", "-fdebug-compilation-dir=."])])]),
+                flag_groups = [flag_group(flags = ["-ffreestanding", "-fdebug-compilation-dir=."])])]),
         # A kernel link must supply its declared scripts/objects. Do not search
         # the host libc or add userland startup objects on a foreign target.
         feature(name = "bsd_kernel_link", enabled = True, flag_sets = [flag_set(

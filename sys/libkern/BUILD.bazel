@@ -83,3 +83,15 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "libiconv_iconv_module", srcs = ["iconv.c", "iconv_ucs.c", "iconv_xlat.c", "iconv_xlat16.c", ":iconv_converter_if_module_source"],
     deps = ["//sys/libkern:iconv_converter_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :iconv_converter_if_module_source)=iconv_converter_if.c", "-fdebug-prefix-map=$(execpath :iconv_converter_if_module_source)=iconv_converter_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:cross_generic_kernel.bzl", "cross_generic_kernel_objects")
+
+# Original arm64 GENERIC common support selection.
+cross_generic_kernel_objects(arch = "arm64", name = "generic_common",
+    srcs = ['arc4random_uniform.c', 'asprintf.c', 'bcd.c', 'bsearch.c', 'crc16.c', 'explicit_bzero.c', 'fnmatch.c', 'gsb_crc32.c', 'inet_aton.c', 'inet_ntoa.c', 'inet_ntop.c', 'inet_pton.c', 'jenkins_hash.c', 'murmur3_32.c', 'memcchr.c', 'memchr.c', 'memmem.c', 'qsort.c', 'qsort_r.c', 'random.c', 'scanc.c', 'strcasecmp.c', 'strcasestr.c', 'strcat.c', 'strchr.c', 'strchrnul.c', 'strcpy.c', 'strcspn.c', 'strdup.c', 'strndup.c', 'strlcat.c', 'strlcpy.c', 'strncat.c', 'strncpy.c', 'strnlen.c', 'strnstr.c', 'strrchr.c', 'strsep.c', 'strspn.c', 'strstr.c', 'strtol.c', 'strtoq.c', 'strtoul.c', 'strtouq.c', 'strvalid.c', 'timingsafe_bcmp.c'],
+    deps = [":qsort_implementation", "//sys/netinet:address_headers", "//sys/contrib/pcg-c:kernel_headers"])
+
+# Original riscv GENERIC common support selection.
+cross_generic_kernel_objects(arch = "riscv", name = "generic_common",
+    srcs = ['arc4random_uniform.c', 'asprintf.c', 'bcd.c', 'bsearch.c', 'crc16.c', 'explicit_bzero.c', 'fnmatch.c', 'gsb_crc32.c', 'inet_aton.c', 'inet_ntoa.c', 'inet_ntop.c', 'inet_pton.c', 'jenkins_hash.c', 'murmur3_32.c', 'memcchr.c', 'memchr.c', 'memmem.c', 'qsort.c', 'qsort_r.c', 'random.c', 'scanc.c', 'strcasecmp.c', 'strcasestr.c', 'strcat.c', 'strchr.c', 'strchrnul.c', 'strcpy.c', 'strcspn.c', 'strdup.c', 'strndup.c', 'strlcat.c', 'strlcpy.c', 'strncat.c', 'strncpy.c', 'strnlen.c', 'strnstr.c', 'strrchr.c', 'strsep.c', 'strspn.c', 'strstr.c', 'strtol.c', 'strtoq.c', 'strtoul.c', 'strtouq.c', 'strvalid.c', 'timingsafe_bcmp.c', 'strcmp.c', 'strncmp.c'],
+    deps = [":qsort_implementation", "//sys/netinet:address_headers", "//sys/contrib/pcg-c:kernel_headers"])

@@ -10767,3 +10767,15 @@ probe/audit delivery. Whole-system consumer rebuilds, foreign execution,
 separate DWARF/source lookup, cache and performance remain open. See
 LIBMD-THREE-ARCH-QUALIFICATION.md for the ordinary versus explicit original
 filename-control boundary and rejected SSP/header-origin policy evidence.
+
+### Native common cross-kernel owners (2026-11-03)
+
+The selected common/crypto cohort retains hashes for 49 physical primary C
+sources in bazel-cross-kernel-common-work-r1-20261103/observability.json. The
+existing lexical observation finds zero DTrace/SDT/audit marker lines in these
+files; that does not prove instrumentation absence or establish a requirement
+for direct probes in each support routine. Review higher-level entropy/crypto
+request and error paths when qualifying live tracing/audit delivery. No C or
+probe edits occur. Actual 282-context/19,054-pair input review preserves source
+identities; CTF/runtime object contracts match original Make. Live firing and
+instrumentation completeness/cost remain open; see CROSS-KERNEL-COMMON-QUALIFICATION.md.

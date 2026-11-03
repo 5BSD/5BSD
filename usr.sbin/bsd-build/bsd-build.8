@@ -5651,3 +5651,15 @@ See
 .Pa tools/build/bazel/LIBMD-THREE-ARCH-QUALIFICATION.md .
 Portable/bootstrap builds, foreign runtime, separate DWARF/source lookup,
 installed-test producer parity and complete runtime/tests packages remain open.
+.Pp
+Format-5 kernel profiles include source-owned ARM64 and RISC-V GENERIC common
+built-in objects, separately from loadable module policy.
+The ARM64 device-tree version macro is generated from its declared source
+property, and crypto intrinsic headers are explicit target SDK inputs.
+Composite SDK generators use native execution libraries.
+The libc++ archive producer uses the public C++ toolchain API to declare its
+selected archiver inputs while preserving explicit object variants.
+These component checks do not establish complete Bazel cross-kernel builds.
+See
+.Pa tools/build/bazel/CROSS-KERNEL-COMMON-QUALIFICATION.md
+for original Make comparisons and remaining qualification gates.
