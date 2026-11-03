@@ -1393,3 +1393,9 @@ bsd_source_headers(name = "linux64_module_context_1", hdrs = ["icmp6.h", "in.h",
     deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:storage_tcp_ktest_module_context_6", "//sys/netinet/cc:storage_tcp_ktest_module_context_1", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet:storage_tcp_ktest_module_context_8", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header", "//sys/" + arch + "/conf:generic_opt_kern_tls_header", "//sys/" + arch + "/conf:generic_opt_ratelimit_header"],
     local_defines = ['MODNAME=tcp_rack', 'STACKNAME=rack'],
 ) for arch in ['arm64', 'riscv']]
+
+# Physical header closure of ARM64/RISC-V GENERIC VM built-ins.
+bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
+        "in.h",
+    ],
+    includes = [], visibility = ["//sys/vm:__pkg__"])

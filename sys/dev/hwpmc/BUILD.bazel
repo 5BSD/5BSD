@@ -109,3 +109,13 @@ amd64_generic_module_objects(name = "hwpmc_hwpmc_core_module", srcs = ["hwpmc_co
 amd64_generic_module_objects(name = "hwpmc_hwpmc_x86_module", srcs = ["hwpmc_x86.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+# Physical header closure of ARM64/RISC-V GENERIC VM built-ins.
+bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
+        "hwpmc_arm64.h",
+        "hwpmc_cmn600.h",
+        "hwpmc_dmc620.h",
+        "pmc_events.h",
+        "pmu_dmc620_reg.h",
+    ],
+    includes = [], visibility = ["//sys/vm:__pkg__"])

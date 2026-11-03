@@ -77,3 +77,9 @@ amd64_generic_kernel_objects(name = "generic_monitoring_devices_audit_dtrace", s
 amd64_generic_kernel_objects(name = "generic_monitoring_devices_audit_ret", srcs = ["audit_ret.c"],
     deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/net:monitoring_devices_kernel_audit_ret_headers", "//sys/netinet:monitoring_devices_kernel_audit_ret_headers", "//sys/netinet6:monitoring_devices_kernel_netmap_freebsd_headers", "//sys/security/audit:monitoring_devices_kernel_audit_dtrace_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
     pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical header closure of ARM64/RISC-V GENERIC VM built-ins.
+bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
+        "audit.h",
+    ],
+    includes = [], visibility = ["//sys/vm:__pkg__"])

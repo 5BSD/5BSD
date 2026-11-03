@@ -1674,3 +1674,17 @@ execution, i386/alternate options, full-world/rescue/bootstrap, package solver/
 installation/publication and measured performance remain gates. The earlier
 XZ-pending entries are historical checkpoints; the larger libarchive stack and
 complete selected world still need independent closure.
+
+### 2026-11-03: ARM64/RISC-V VM built-in cohort
+
+Four maintained profiles and independent Make controls qualify 24 selected VM
+sources per architecture: 96 object configurations/13,740 consumed input pairs,
+48 byte-identical plain objects, 48 exact CTF payloads and exact runtime
+sections/symbols/relocations throughout. Ten options per architecture come from
+the selected config; vnode interfaces remain declared producers. Source hashes
+and 122 existing lexical instrumentation markers are retained. See
+CROSS-KERNEL-VM-QUALIFICATION.md. Full cross-kernel linking, remaining owners,
+configuration breadth, separate DWARF/source lookup, boot/runtime, packages,
+bootstrap/sandbox/cache and comparative performance remain open. The private
+next network candidate is not counted as qualified coverage. Make remains
+production; BIP remains excluded.

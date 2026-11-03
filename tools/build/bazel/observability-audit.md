@@ -10792,3 +10792,13 @@ delivery or cost. Foreign runtime, separate DWARF/source lookup, full-world
 consumers, bootstrap/cache and measured performance remain open. See
 XZ-THREE-ARCH-QUALIFICATION.md for accepted evidence and rejected candidate
 header/link policies; no filename or diagnostic output is rewritten.
+
+### 2026-11-03: cross-kernel VM built-ins
+
+The selected 24 physical VM C sources retain their original hashes and 122
+existing lexical DTrace/SDT/audit marker lines. Across 96 ARM64/RISC-V plain
+and CTF/debug configurations, allocated sections, named symbols and runtime
+relocations match original Make; all 48 CTF payloads match. See
+CROSS-KERNEL-VM-QUALIFICATION.md and the retained work-root observability.json.
+This preserves compiled instrumentation but does not prove complete coverage,
+live probe firing, authorization outcomes or workload/performance behavior.

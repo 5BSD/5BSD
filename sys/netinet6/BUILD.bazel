@@ -685,3 +685,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['send.c'],
     deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:ipv6_kernel_mld6_headers", "//sys/netinet6:network_services_module_context_16", "//sys/netinet:network_services_module_context_47", "//sys/vm:usb_net_usie_headers"],
 ) for arch in ['arm64', 'riscv']]
+
+# Physical header closure of ARM64/RISC-V GENERIC VM built-ins.
+bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
+        "in6.h",
+    ],
+    includes = [], visibility = ["//sys/vm:__pkg__"])

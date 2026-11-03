@@ -171,3 +171,9 @@ filegroup(name = "builtin_g_part_if_source", srcs = [":g_part_if"], output_group
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_g_part_if", srcs = [":builtin_g_part_if_source"],
     deps = ["//sys/geom:kobj_builtins_physical_g_part_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/geom:kobj_builtins_kernel_g_part_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical header closure of ARM64/RISC-V GENERIC VM built-ins.
+bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
+        "geom.h",
+    ],
+    includes = [], visibility = ["//sys/vm:__pkg__"])

@@ -1780,3 +1780,10 @@ bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_module_headers", hdrs 
     srcs = ['if_ipsec.c'],
     deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:network_services_module_context_20", "//sys/netinet6:network_policy_kernel_route_ctl_headers", "//sys/netinet:network_services_module_context_14", "//sys/netipsec:network_services_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header"],
 ) for arch in ['arm64', 'riscv']]
+
+# Physical header closure of ARM64/RISC-V GENERIC VM built-ins.
+bsd_source_headers(name = "cross_vm_builtin_headers", hdrs = [
+        "if.h",
+        "vnet.h",
+    ],
+    includes = [], visibility = ["//sys/vm:__pkg__"])

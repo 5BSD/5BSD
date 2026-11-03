@@ -315,3 +315,24 @@ bsd_tree_file(name = "opt_rootdevname", tree = ":generic_config", member = "opt_
 
 cc_library(name = "generic_opt_rootdevname_header", hdrs = [":opt_rootdevname"],
     strip_include_prefix = "generic_options", visibility = ['//sys/dev/md:__pkg__'])
+
+# VM built-in options are extracted from the selected target config tree.
+_VM_BUILTIN_OPTION_HEADERS = [
+    "opt_capsicum.h",
+    "opt_ddb.h",
+    "opt_hwpmc_hooks.h",
+    "opt_hwt_hooks.h",
+    "opt_kstack_max_pages.h",
+    "opt_kstack_pages.h",
+    "opt_kstack_usage_prof.h",
+    "opt_ktrace.h",
+    "opt_param.h",
+    "opt_vm.h",
+]
+[bsd_tree_file(name = "vm_builtin_" + name, tree = ":generic_config", member = name,
+    output = "vm_builtin_options/" + name, python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for name in _VM_BUILTIN_OPTION_HEADERS]
+cc_library(name = "vm_builtin_options_headers", hdrs = [":vm_builtin_" + name for name in _VM_BUILTIN_OPTION_HEADERS],
+    strip_include_prefix = "vm_builtin_options", visibility = ["//sys/vm:__pkg__"])

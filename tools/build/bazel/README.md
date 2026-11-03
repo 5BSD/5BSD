@@ -48539,3 +48539,15 @@ API header origins. Rejected pthread/header/shared-root policies remain recorded
 Separate DWARF, foreign runtime, alternate options, full world, package installation
 and publication remain open. See
 [XZ-THREE-ARCH-QUALIFICATION.md](XZ-THREE-ARCH-QUALIFICATION.md).
+
+### ARM64/RISC-V VM built-ins (2026-11-03)
+
+See [CROSS-KERNEL-VM-QUALIFICATION.md](CROSS-KERNEL-VM-QUALIFICATION.md).
+The 24 selected VM C sources per architecture pass four maintained profiles:
+96 object configurations preserve allocated sections, symbols and relocations;
+48 plain objects are byte-identical and 48 raw CTF payloads match Make.
+Actual consumed input review covers 13,740 pairs and explicitly reports the
+48 additional source-derived ARM64 DTS header inputs. Option and vnode
+interfaces use declared generators. Full linking, other configs, separate
+DWARF/source lookup, boot/runtime, packages, bootstrap/sandbox/cache and measured
+CPU/memory/disk performance remain gates. Make remains production/default.
