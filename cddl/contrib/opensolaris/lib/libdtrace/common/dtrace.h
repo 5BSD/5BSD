@@ -730,6 +730,9 @@ extern int dtrace_hypertrace_options_update(dtrace_hdl_t *);
 extern int open_dtraced(uint64_t);
 extern int open_dtraced_session(uint64_t, uint8_t[16]);
 extern int dtrace_send_elf(dtrace_prog_t *, int, int, const char *, int);
+extern int dtrace_send_elf_source(dtrace_prog_t *, int, int, const char *,
+    int, const uint8_t[16]);
+extern int dtrace_spool_source_id(const char *, uint8_t[16]);
 struct dtraced_derived_parent;
 extern int dtrace_send_elf_derived(dtrace_prog_t *, int, int,
     const struct dtraced_derived_parent *);

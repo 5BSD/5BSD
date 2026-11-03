@@ -3836,6 +3836,29 @@ link_acknowledged(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
 	return (hypertrace_link(dtp, pgp, errmsg));
 }
 
+/*
+ * A guest uploads the linked program under the source dtraced spooled the
+ * delivery with.  The response to a derived program would otherwise name
+ * the derived program's own lineage, which no KILL or handoff fence on the
+ * delivery's source covers.  A program that is not a spooled delivery
+ * keeps its own lineage.
+ */
+static int
+send_linked(dtrace_prog_t *pgp, int fromfd, int tofd, const char *progpath,
+    int host, int prog_exec)
+{
+	uint8_t source[16];
+	int send_ident;
+
+	if (host)
+		return (dtrace_send_elf(pgp, fromfd, tofd, "inbound", 0));
+	send_ident = prog_exec == DT_PROG_EXEC ? 0 : 1;
+	if (dtrace_spool_source_id(progpath, source) == 0)
+		return (dtrace_send_elf_source(pgp, fromfd, tofd, "outbound",
+		    send_ident, source));
+	return (dtrace_send_elf(pgp, fromfd, tofd, "outbound", send_ident));
+}
+
 static void
 process_elf_hypertrace(dtrace_cmd_t *dcp)
 {
@@ -3947,9 +3970,8 @@ process_elf_hypertrace(dtrace_cmd_t *dcp)
 	if (lseek(tmpfd, 0, SEEK_SET))
 		fatal("lseek() failed");
 	fprintf(stderr, "dtrace: send_elf(%s)\n", template);
-	if (dtrace_send_elf(dcp->dc_prog, tmpfd, dtraced_sock,
-	    host ? "inbound" : "outbound",
-	    host ? 0 : prog_exec == DT_PROG_EXEC ? 0 : 1))
+	if (send_linked(dcp->dc_prog, tmpfd, dtraced_sock, progpath, host,
+	    prog_exec))
 		fatal("failed to dtrace_send_elf()");
 	if (g_has_idents && getenv("HYPERTRACE_LAUNCH_REPORT") != NULL) {
 		report_deadline = dtraced_io_deadline_after(10000);

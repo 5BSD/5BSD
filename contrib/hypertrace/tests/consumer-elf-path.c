@@ -15,14 +15,22 @@
  *	process_elf_hypertrace() for a program it does not run: upload the
  *	linked program to the guest daemon's outbound with its identity, which
  *	the daemon lists for the launch of the program derived from it.
- * usage: consumer-elf-path -q -Y SPOOL -N
+ * usage: consumer-elf-path -q -Y SPOOL [-N]
  *	The guest's dtrace -Y as the guest daemon's launch_program() runs it
- *	(HT_EXEC_DTRACE in daemon-main.cc): read the identifier list, parse
- *	the derived program (the parser acknowledges its srcident), link it
- *	with dtrace.c's link_acknowledged(), upload the response to
- *	HT_DTRACE_SOCKET's outbound and report the launch.  Enabling needs the
- *	device: a program marked for execution is reported installed.  Then
- *	trace until SIGTERM.
+ *	(HT_EXEC_DTRACE in daemon-main.cc): with -N, read the identifier list;
+ *	parse the program (a derived program's srcident is acknowledged, a
+ *	base program is acknowledged with no identifier), link it with
+ *	dtrace.c's link_acknowledged() and upload it to HT_DTRACE_SOCKET's
+ *	outbound with dtrace.c's send_linked(); with -N, report the launch.
+ *	Enabling needs the device: a program marked for execution is reported
+ *	installed and traces until SIGTERM; a base program exits.
+ * usage: consumer-elf-path compile BASE-ELF
+ *	dtrace -E's base program: write it and print its source identity.
+ * usage: consumer-elf-path derive BASE-ELF LINKED-ELF DERIVED-ELF
+ *	listen_dtraced(): the guest program (VM 42, epoch 99) derived from the
+ *	guest's linked upload of BASE-ELF.
+ * usage: consumer-elf-path upload SOCKET SPOOL LINKED-ELF
+ *	The guest's upload of LINKED-ELF for SPOOL again, with send_linked().
  * usage: consumer-elf-path SOCKET OUTDIR COUNT
  *	dtrace -E: compile the program, register it (HPI2) on the ELF receiver,
  *	send the base program (OUTDIR/base) on a READDATA channel, then, as
@@ -186,29 +194,43 @@ publish_linked(const char *linked)
 }
 
 /*
- * process_elf_hypertrace() with -N, as launch_program() runs it.  Its
- * stdout is the daemon's launch channel: diagnostics go to stderr.
+ * process_elf_hypertrace() as launch_program() runs it, with -N while the
+ * daemon lists identifiers.  Its stdout is the daemon's launch channel:
+ * diagnostics go to stderr.  For the driver, the linked program is kept as
+ * <HT_ROOT>/linked.<spool name> and the number of identifiers received as
+ * <HT_ROOT>/idents.<spool name>.
  */
 static int
-run_guest(const char *spool)
+run_guest(const char *spool, int with_idents)
 {
-	char acknowledged[DT_PROG_IDENTLEN], response[PATH_MAX];
+	char acknowledged[DT_PROG_IDENTLEN], linked[PATH_MAX], path[PATH_MAX];
 	const char *daemon = getenv("HT_DTRACE_SOCKET");
+	const char *name = strrchr(spool, '/');
 	unsigned char *idents = NULL;
 	size_t count = 0;
 	dtrace_hdl_t *dtp;
 	dtrace_prog_t *pgp;
-	int fd, sock, err = 0, installed;
+	FILE *f;
+	int fd, sock, err = 0, prog_exec;
 
+	name = name == NULL ? spool : name + 1;
 	if (daemon == NULL ||
 	    strlcpy(sockpath, daemon, sizeof(sockpath)) >= sizeof(sockpath) ||
-	    dtrace_read_identifiers(STDIN_FILENO, &idents, &count,
-	    DT_PROG_IDENTLEN, dtraced_io_deadline_after(10000)) != 0) {
+	    (with_idents && dtrace_read_identifiers(STDIN_FILENO, &idents,
+	    &count, DT_PROG_IDENTLEN, dtraced_io_deadline_after(10000)) != 0)) {
 		fprintf(stderr, "-N: %s\n", strerror(errno));
 		return (1);
 	}
+	snprintf(path, sizeof(path), "%.*s/idents.%s",
+	    (int)(strrchr(daemon, '/') - daemon), daemon, name);
+	snprintf(linked, sizeof(linked), "%.*s/linked.%s",
+	    (int)(strrchr(daemon, '/') - daemon), daemon, name);
+	if ((f = fopen(path, "w")) == NULL || fprintf(f, "%zu\n", count) < 0 ||
+	    fclose(f) != 0)
+		return (1);
 	dtp = open_handle(1);
-	if (dtrace_compile_idents_set(dtp, (char *)idents, count) != 0)
+	if (with_idents &&
+	    dtrace_compile_idents_set(dtp, (char *)idents, count) != 0)
 		return (1);
 	free(idents);
 	fd = open(spool, O_RDONLY);
@@ -219,27 +241,104 @@ run_guest(const char *spool)
 		fprintf(stderr, "parse %s: %s\n", spool, errmsg);
 		return (1);
 	}
+	prog_exec = pgp->dp_exec;
 	if (link_acknowledged(dtp, pgp, acknowledged, errmsg) != 0) {
 		fprintf(stderr, "link: %s\n", errmsg);
 		return (1);
 	}
-	installed = pgp->dp_exec == DT_PROG_EXEC;
 	pgp->dp_pid = getpid();
-	snprintf(response, sizeof(response), "%s.response", spool);
-	fd = write_elf(dtp, pgp, response);
+	fd = write_elf(dtp, pgp, linked);
 	sock = fd < 0 ? -1 : open_dtraced(DTD_SUB_READDATA);
-	if (sock < 0 || dtrace_send_elf(pgp, fd, sock, "outbound", 0) != 0) {
+	if (sock < 0 || send_linked(pgp, fd, sock, spool, 0, prog_exec) != 0) {
 		fprintf(stderr, "upload: %s\n", strerror(errno));
 		return (1);
 	}
 	close(sock);
 	close(fd);
-	(void)unlink(response);
-	if (dtrace_write_launch_result(STDOUT_FILENO, installed, acknowledged,
-	    DT_PROG_IDENTLEN, dtraced_io_deadline_after(10000)) != 0)
+	if (with_idents && dtrace_write_launch_result(STDOUT_FILENO,
+	    prog_exec == DT_PROG_EXEC, acknowledged, DT_PROG_IDENTLEN,
+	    dtraced_io_deadline_after(10000)) != 0)
 		return (1);
+	if (prog_exec != DT_PROG_EXEC)
+		return (0);
 	for (;;)
 		pause();
+}
+
+/*
+ * A guest's upload of the linked program from SPOOL, again: dtraced must
+ * refuse it once a KILL has revoked the spool's source.
+ */
+static int
+upload_again(const char *spool, const char *linked)
+{
+	dtrace_hdl_t *dtp;
+	dtrace_prog_t *pgp = NULL;
+	int fd, sock, err = 0;
+
+	dtp = open_handle(1);
+	fd = open(linked, O_RDONLY);
+	step("parsed", fd < 0 || (pgp = dtrace_elf_parse(dtp, fd, linked, 1,
+	    &err, errmsg, NULL)) == NULL);
+	sock = open_dtraced(DTD_SUB_READDATA);
+	step("uploaded", sock < 0 || lseek(fd, 0, SEEK_SET) != 0 ||
+	    send_linked(pgp, fd, sock, spool, 0, pgp->dp_exec) != 0);
+	close(sock);
+	close(fd);
+	dtrace_close(dtp);
+	return (0);
+}
+
+/* The base program's ELF and the source of its lineage. */
+static int
+compile_base(const char *path)
+{
+	dtrace_hdl_t *dtp;
+	dtrace_prog_t *pgp = NULL;
+	uint8_t source[16];
+	int fd;
+
+	dtp = open_handle(0);
+	step("compiled", (pgp = dtrace_program_strcompile(dtp, PROGRAM,
+	    DTRACE_PROBESPEC_NAME, DTRACE_C_ZDEFS | DTRACE_C_NOLIBS, 0,
+	    NULL)) == NULL);
+	fd = write_elf(dtp, pgp, path);
+	step("written", fd < 0 || dtrace_program_source_id(pgp, source) != 0);
+	close(fd);
+	for (size_t i = 0; i < sizeof(source); i++)
+		printf("%02x", source[i]);
+	printf("\n");
+	dtrace_close(dtp);
+	return (0);
+}
+
+/* listen_dtraced(): the guest program derived from a linked upload. */
+static int
+derive(const char *base, const char *linked, const char *derived)
+{
+	dtrace_hdl_t *dtp;
+	dtrace_prog_t *hostpgp = NULL, *newprog = NULL, *guestpgp = NULL;
+	int fd, err = 0;
+
+	dtp = open_handle(0);
+	fd = open(base, O_RDONLY);
+	step("base", fd < 0 || (hostpgp = dtrace_elf_parse(dtp, fd, base, 0,
+	    &err, errmsg, NULL)) == NULL);
+	close(fd);
+	fd = open(linked, O_RDONLY);
+	step("parsed", fd < 0 || (newprog = dtrace_elf_parse(dtp, fd, linked,
+	    0, &err, errmsg, hostpgp)) == NULL);
+	close(fd);
+	newprog->dp_vmid = 42;
+	newprog->dp_vmepoch = 99;
+	step("vprog", (guestpgp = dtrace_vprog_from(dtp, newprog,
+	    PGP_KIND_HYPERCALLS)) == NULL);
+	guestpgp->dp_exec = DT_PROG_EXEC;
+	fd = write_elf(dtp, guestpgp, derived);
+	step("derived", fd < 0);
+	close(fd);
+	dtrace_close(dtp);
+	return (0);
 }
 
 /*
@@ -303,9 +402,17 @@ main(int argc, char **argv)
 		strlcpy(sockpath, argv[2], sizeof(sockpath));
 		return (publish_linked(argv[3]));
 	}
-	if (argc == 5 && strcmp(argv[1], "-q") == 0 &&
-	    strcmp(argv[2], "-Y") == 0 && strcmp(argv[4], "-N") == 0)
-		return (run_guest(argv[3]));
+	if ((argc == 4 || (argc == 5 && strcmp(argv[4], "-N") == 0)) &&
+	    strcmp(argv[1], "-q") == 0 && strcmp(argv[2], "-Y") == 0)
+		return (run_guest(argv[3], argc == 5));
+	if (argc == 3 && strcmp(argv[1], "compile") == 0)
+		return (compile_base(argv[2]));
+	if (argc == 5 && strcmp(argv[1], "derive") == 0)
+		return (derive(argv[2], argv[3], argv[4]));
+	if (argc == 5 && strcmp(argv[1], "upload") == 0) {
+		strlcpy(sockpath, argv[2], sizeof(sockpath));
+		return (upload_again(argv[3], argv[4]));
+	}
 	if (argc != 4 || (count = atoi(argv[3])) <= 0 ||
 	    strlcpy(sockpath, argv[1], sizeof(sockpath)) >= sizeof(sockpath))
 		return (2);

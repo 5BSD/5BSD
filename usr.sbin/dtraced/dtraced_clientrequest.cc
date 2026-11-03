@@ -877,15 +877,31 @@ client_request::handle_elfmsg(void)
 		    delivery_phase::pending, true))
 			return (false);
 	}
+	/* dtt_kill() revokes a source before it stops the guest's processes:
+	 * nothing leaves the guest under a revoked source.  dtrace -Y uploads a
+	 * derived program's response under the spool's source, its parent's. */
+	if (!this->s.is_control_machine() && loc == "outbound" &&
+	    this->s.inbounddir != nullptr) {
+		const uint8_t zero_id[DTRACED_PROGRAM_ID_LEN] = {};
+		int revoked = memcmp(this->hdr.elf.source_id, zero_id,
+		    sizeof(zero_id)) == 0 ? 0 :
+		    this->s.inbounddir->source_revoked(this->hdr.elf.source_id);
+		if (revoked < 0)
+			return (false);
+		if (revoked > 0)
+			return (REFUSE(ECANCELED, "guest ELF source revoked"));
+	}
 
 	/* Prepare the list node before I/O; commit it after durable publication. */
-	std::list<std::array<char, DTRACED_PROGIDENTLEN>> pending_ident;
+	std::list<state::listed_ident> pending_ident;
 	if (!this->s.is_control_machine() &&
 	    DTRACED_MSG_IDENT_PRESENT(this->hdr)) {
-		std::array<char, DTRACED_PROGIDENTLEN> ident;
+		state::listed_ident listed;
 		std::copy_n(std::begin(DTRACED_MSG_IDENT(this->hdr)),
-		    DTRACED_PROGIDENTLEN, std::begin(ident));
-		pending_ident.push_back(std::move(ident));
+		    DTRACED_PROGIDENTLEN, std::begin(listed.ident));
+		std::copy_n(this->hdr.elf.source_id, listed.source_id.size(),
+		    listed.source_id.begin());
+		pending_ident.push_back(std::move(listed));
 	}
 
 	/* The directory watcher may launch this file as soon as it appears. */

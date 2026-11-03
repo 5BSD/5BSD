@@ -291,6 +291,15 @@ dtt_kill(state *s, dtt_entry_t *e)
 			s->revoked_sources.insert(request.source_id);
 		}
 		{
+			/* No program derived from a revoked source may arrive:
+			 * a linked program still waiting for one is not listed
+			 * for later launches. */
+			std::lock_guard idents(s->identlistmtx);
+			s->identlist.remove_if([&](const state::listed_ident &listed) {
+				return listed.source_id == request.source_id;
+			});
+		}
+		{
 			std::lock_guard deliveries(s->deliverymtx);
 			for (auto &delivery : s->guest_deliveries) {
 				if (delivery.source_id != request.source_id)

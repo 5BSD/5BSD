@@ -1713,10 +1713,13 @@ def derived_program_in_guest(root, state):
     # srcident, uploads its response and reports the launch; the daemon
     # records the installation and sends DTT_INSTALLED with the delivery's
     # IDs; the host's KILL for the source consumer-elf-path's session sent
-    # stops it.  Regression: dtrace -Y reported the srcident
-    # hypertrace_link() gave the program, not the acknowledged one, and
-    # launch_program() refused the report (EPROTO): the tracing process was
-    # killed and no INSTALLED left the guest.
+    # stops it; the response leaves the guest under the derived spool's
+    # source, so that KILL also fences it: an upload under the source
+    # after the KILL is refused.  Regressions: dtrace -Y reported the
+    # srcident hypertrace_link() gave the program, not the acknowledged
+    # one, and launch_program() refused the report (EPROTO): the tracing
+    # process was killed and no INSTALLED left the guest; the response named
+    # the derived program's own lineage, which no KILL revokes.
     d = {}
     p = subprocess.run([str(CONSUMER_CLIENT), 'publish',
                         os.path.join(root, 'sub.sock'), str(DERIVED['linked'])],
@@ -1727,9 +1730,10 @@ def derived_program_in_guest(root, state):
     installed = lambda: [r for r in dtt_records(root) if r[0] == '4']
     wait_until(lambda: installed(), 15)
     d['installed'] = installed()
-    # the response leaves the guest under the derived program's identity
-    d['response'] = [r[5] for r in dtt_records(root)
-                     if r[0] == '1' and r[4] != DERIVED['program']][-1:]
+    # the response leaves the guest under the derived spool's source
+    spool = 'elf.%s.%s' % (DERIVED['program'], DERIVED['source'])
+    wait_until(lambda: len(outbound_sources(root)) == 2, 15)
+    d['response'] = outbound_sources(root)[1:]
     d['kill'] = inject_line(root, 'kill 4243 42 99 %s' % DERIVED['kill_source'])
     killack = lambda: [n for n in os.listdir(state / 'inbound')
                        if n.startswith('.killack.')]
@@ -1737,12 +1741,129 @@ def derived_program_in_guest(root, state):
                any(r[0] == '5' for r in dtt_records(root)), 15)
     d['killack'] = [n[-32:] for n in killack()]
     d['uninstalled'] = [r for r in dtt_records(root) if r[0] == '5']
+    d['upload_after_kill'] = upload_again(root, spool)
+    time.sleep(0.5)
+    d['outbound_after_kill'] = outbound_sources(root)[2:]
     d['ok'] = (d['published'] == ['parsed ok', 'published ok'] and
                d['elf'] == 'ok' and
                [r[1:] for r in d['installed']] ==
                [['901', '42', '99', DERIVED['program'], DERIVED['source']]] and
+               d['response'] == [DERIVED['source']] and
                d['killack'] == [DERIVED['source']] and
-               len(d['uninstalled']) == 1)
+               len(d['uninstalled']) == 1 and
+               d['upload_after_kill'] == ['parsed ok', 'uploaded FAIL'] and
+               d['outbound_after_kill'] == [])
+    return d
+
+
+def outbound_sources(root):
+    """The source of each ELF the guest sent to the host, in order (one
+    record per fragment)."""
+    sent = {}
+    for r in dtt_records(root):
+        if r[0] == '1' and len(r) > 5:
+            sent.setdefault(r[4], r[5])
+    return list(sent.values())
+
+
+def upload_again(root, spool):
+    p = subprocess.run([str(CONSUMER_CLIENT), 'upload',
+                        os.path.join(root, 'sub.sock'), spool,
+                        os.path.join(root, 'linked.' + spool)],
+                       capture_output=True, text=True, timeout=30)
+    return [line.split(' ')[0] + ' ' + line.split(' ')[1]
+            for line in p.stdout.split('\n') if line][:2]
+
+
+def derived_sessions_in_guest(root, state):
+    # Sessions overlapping on one guest, all through the real
+    # launch_program() and dtrace -Y (consumer-elf-path as HT_EXEC_DTRACE):
+    # sessions 1 and 2 each deliver a base program; the guest links and
+    # uploads both before either derived program arrives, then both derived
+    # programs are installed and their responses leave under their spools'
+    # sources.  Session 3's derived program never arrives; session 4 still
+    # works.  A KILL for session 3's source drops its listed identifier
+    # (session 5's base launch gets none), and a KILL for session 1 fences
+    # its response.  Regression: with an identifier listed, every base
+    # program was refused by dtrace -Y's parser ("FAIL FAIL") and never
+    # linked, so only the first of overlapping sessions worked, and none
+    # after a guest missed a derived program.
+    d = {'linked': {}, 'idents': {}}
+    work = Path(root) / 'work'
+    work.mkdir()
+    sources = {}
+
+    def base(n):
+        p = subprocess.run([str(CONSUMER_CLIENT), 'compile',
+                            str(work / ('base.%d' % n))],
+                           capture_output=True, text=True, timeout=30)
+        sources[n] = p.stdout.split()[-1]
+        program = '%032x' % (0xb0 + n)
+        spool = 'elf.%s.%s' % (program, sources[n])
+        d['linked'][n] = inject_line(root, 'elf %d 42 99 %s %s %s' % (
+            910 + n, program, sources[n], work / ('base.%d' % n))) == 'ok' and \
+            wait_until(lambda: (Path(root) / ('linked.' + spool)).exists() and
+                       sources[n] in outbound_sources(root), 15)
+        return spool
+
+    def derived(n, spool):
+        program = '%032x' % (0xd0 + n)
+        p = subprocess.run([str(CONSUMER_CLIENT), 'derive',
+                            str(work / ('base.%d' % n)),
+                            os.path.join(root, 'linked.' + spool),
+                            str(work / ('derived.%d' % n))],
+                           capture_output=True, text=True, timeout=30)
+        if p.returncode != 0:
+            d['derive.%d' % n] = p.stdout + p.stderr
+            return None
+        inject_line(root, 'elf %d 42 99 %s %s %s' % (
+            920 + n, program, sources[n], work / ('derived.%d' % n)))
+        return 'elf.%s.%s' % (program, sources[n])
+
+    def idents(spool):
+        if spool is None:
+            return None
+        try:
+            return int((Path(root) / ('idents.' + spool)).read_text())
+        except (OSError, ValueError):
+            return None
+
+    installed = lambda: sorted(r[1] for r in dtt_records(root) if r[0] == '4')
+    first, second = base(1), base(2)
+    spools = [derived(1, first)]
+    wait_until(lambda: installed() == ['921'], 15)
+    spools.append(derived(2, second))
+    wait_until(lambda: installed() == ['921', '922'], 15)
+    d['installed'] = installed()
+    d['idents'].update({'base.2': idents(second), 'derived.1': idents(spools[0]),
+                        'derived.2': idents(spools[1])})
+    third = base(3)	# its derived program never arrives
+    fourth = base(4)
+    spools.append(derived(4, fourth))
+    wait_until(lambda: installed() == ['921', '922', '924'], 15)
+    d['installed_after_miss'] = installed()
+    d['idents']['derived.4'] = idents(spools[2])
+    d['responses'] = [s for s in outbound_sources(root)
+                      if s in (sources[1], sources[2], sources[4])]
+    d['kill.3'] = inject_line(root, 'kill 4243 42 99 %s' % sources[3])
+    wait_until(lambda: len([n for n in os.listdir(state / 'inbound')
+                            if n.startswith('.killack.')]) == 1, 15)
+    fifth = base(5)
+    d['idents']['base.5'] = idents(fifth)
+    d['kill.1'] = inject_line(root, 'kill 4244 42 99 %s' % sources[1])
+    wait_until(lambda: len([n for n in os.listdir(state / 'inbound')
+                            if n.startswith('.killack.')]) == 2, 15)
+    d['upload_after_kill'] = upload_again(root, spools[0]) if spools[0] else None
+    d['ok'] = (d['linked'] == {n: True for n in (1, 2, 3, 4, 5)} and
+               d['installed'] == ['921', '922'] and
+               d['installed_after_miss'] == ['921', '922', '924'] and
+               d['idents'] == {'base.2': 1, 'derived.1': 2, 'derived.2': 1,
+                               'derived.4': 2, 'base.5': 0} and
+               # each base upload and each response under its source
+               d['responses'] == [sources[1], sources[2], sources[1],
+                                  sources[2], sources[4], sources[4]] and
+               d['kill.3'] == 'ok' and d['kill.1'] == 'ok' and
+               d['upload_after_kill'] == ['parsed ok', 'uploaded FAIL'])
     return d
 
 
@@ -1759,6 +1880,16 @@ elif not ONLY or 'minion-derived-program' in ONLY:
                     'passed': False, 'records': [],
                     'detail': {'error': 'consumer-elf-path left no derived '
                                'program and KILL source'}, 'stderr': ''})
+if not ONLY or 'minion-derived-sessions' in ONLY:
+    if 'CONSUMER_CLIENT' not in globals():
+        CONSUMER_CLIENT = consumer_client()
+    minion('minion-derived-sessions', '0,42,99,0,0', answer=True,
+           body=derived_sessions_in_guest,
+           extra_env={'HT_DTT_ACK': '1', 'HT_PD_BIRTH': '1',
+                      'HT_DTT_CLEANUP': '0,0,0,0,0',
+                      'HT_DTT_INJECT': '@ROOT@/inject.sock',
+                      'HT_DTT_LOG': '@ROOT@/dtt.log', 'HT_DTT_LOG_IDS': '1',
+                      'HT_EXEC_DTRACE': str(CONSUMER_CLIENT)})
 # Regression: the transport writer waited out its 10 s idle read deadline
 # before noticing shutdown; a guest daemon now exits promptly on SIGTERM.
 minion('minion-prompt-shutdown', '0,42,99,0,0', answer=True,
