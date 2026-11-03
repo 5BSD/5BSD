@@ -88,3 +88,50 @@ semantic reader passes the expanded suite; the previous reader rejects valid
 packed v2 records. See CTF-SEMANTIC-CHECK.md and the retained review at
 /usr/obj/usr/src/bazel-ctf-packed-associations-review-r2-20261103. These checks
 exercise an AMD64 container, not foreign execution or the final shared linker.
+
+
+## Shared Object helper and header-only association changes (2026-11-03)
+
+LLVM Object now owns CTFSymbolTable, with ObjCopy retaining ELF selection,
+section-link and allocation checks and the opaque unchanged-order fast path.
+The helper owns its header/body and stores offsets rather than views, preserving
+record identities through moves/copies. It validates input/output IDs and
+symbol types; new output identities use an explicit reserved sentinel. Neither
+errors nor unchanged results modify the caller's output buffer. Labels, types
+and strings remain opaque: this is not a type-namespace merger.
+
+Review found another original ObjCopy defect: replacing an unknown object with
+an unknown function can retain identical zero payload bytes while moving the
+function-section boundary. The unchanged check now includes header offsets.
+The format audit adds eight controls; all fail with the old selected tool and
+pass with the new tool. With --semantic-reader, the suite now has 137 checks.
+Without that option it has 73. The earlier 65/129-check evidence is historical.
+
+api-audit.cpp is an explicit-library native C++ diagnostic, separate from the
+normal Bazel Python suite. It exercises 160 checks over both versions, byte
+orders and compression settings: ownership after moves/copies, unchanged
+output on errors/false, duplicate/reserved/unknown identities, changed symbol
+types, repeated new symbols, removing all associations, and header-only changes.
+Compile it with the selected LLVM include directories and the newly built LLVM,
+zlib and zstd libraries plus the platform execinfo/pthread dependencies. Exact
+compiler/link inputs, command, source snapshots and results are retained at
+/usr/obj/usr/src/bazel-ctf-shared-helper-review-r1-20261103/summary.json.
+This diagnostic is not yet a native Bazel LLVM API test target.
+
+Maintained Make source-owner targets built the ARM64-stage HOST bootstrap
+library and objcopy using 16 jobs, without installation. This is an AMD64 host
+tool, not ARM64 execution. The first extraction attempt failed compilation and
+is retained; the corrected attempt and disk guard pass. Build records are at
+/usr/obj/usr/src/bazel-ctf-shared-helper-build-r2-20261103; the staged tool remains
+unchanged. Actual newly built objcopy passes 137 checks at
+/usr/obj/usr/src/bazel-ctf-shared-helper-format-r1-20261103. No frozen SDK was
+modified. Make and native Bazel Object inventories both include Object/CTF.cpp;
+complete native Bazel LLVM/bootstrap qualification remains open.
+
+Frontend assessment: normal bootstrap rebuilding selects the new source through
+the maintained LLVM Makefile; SDK creation/verification remains through existing
+helpers. No build-bsd option, config schema, stage-signing or publication change
+is required. Fresh SDK and real module checks must follow linker correction.
+Final LLD association/link preservation, multi-container type handling and local
+libctf's inconsistent v2 reader remain open. No target runtime or comparative
+CPU/memory/disk performance acceptance is claimed.

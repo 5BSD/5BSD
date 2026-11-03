@@ -192,6 +192,31 @@ def main():
                         output_body = zlib.decompress(section[36:]) if compressed else section[36:]
                         check(tag + '-' + name, actual == wanted and actual_tail == tail and linked and
                               output_body[:8] == struct.pack(endian + 'II', 1, 3))
+                    # Equal zero bytes can change from object to function
+                    # associations. Their header boundaries must change too.
+                    temporary = args.work / (tag + '-boundary-added.o')
+                    run('--add-symbol=temporary=.data:0,global,object', baseline, temporary)
+                    unknown_table = localization.symbols(temporary)
+                    width = 2 if version == 2 else 4
+                    objects = sum(identity[1] == 1 for _, identity, _ in unknown_table)
+                    functions = len(unknown_table) - objects
+                    fun = objects * width
+                    typ = (fun + functions * width + 3) & ~3
+                    body = bytes(typ) + b'\0'
+                    header = struct.pack(endian + 'HBB8I', 0xcff1, version, int(compressed),
+                                         0, 0, 0, 0, fun, typ, typ, 1)
+                    raw = args.work / (tag + '-boundary.ctf')
+                    raw.write_bytes(header + (zlib.compress(body) if compressed else body))
+                    unknown = args.work / (tag + '-boundary-input.o')
+                    run('--update-section=.SUNW_ctf=' + str(raw), temporary, unknown)
+                    output = args.work / (tag + '-boundary-output.o')
+                    run('--strip-symbol=temporary', '--add-symbol=added=.text:0,global,function', unknown, output)
+                    actual, tail, linked = decode(output)
+                    payload = sections(output)['.SUNW_ctf'][2]
+                    actual_fun = struct.unpack_from(endian + 'I', payload, 20)[0]
+                    check(tag + '-equal-bytes-changed-boundary', actual_fun == fun - width and linked and
+                          tail == b'\0' and len(actual) == len(unknown_table) and
+                          all(record == bytes(width) for record in actual.values()))
         # An unrelated OwnedDataSection must not acquire a .symtab link.
         payload = args.work / 'ordinary-data'; payload.write_bytes(b'ordinary section\0')
         output = args.work / 'ordinary.o'

@@ -1897,3 +1897,26 @@ initial multi-input CTF link/merge handling; full module and system acceptance.
 No linker fix, producer change or completed world/kernel build is claimed.
 No frontend schema or production-default change is required for this checker
 correction. Keep Make production/default and BIP excluded.
+
+
+### 2026-11-03: shared CTF symbol-association foundation
+
+Extracted the ObjCopy container rewriter into LLVM Object CTFSymbolTable so
+linker work can share one owning parser with exact original symbol identities.
+Make and Bazel source ownership are updated. ELF policy and the unchanged opaque
+fast path remain in ObjCopy. No type-graph merger or LLD fix is implemented yet.
+
+Independent review also found and reproduced the old identical-payload/different
+header-boundary bug in all eight format combinations. Fixed the unchanged
+check; the rebuilt native bootstrap tool passes 137 format checks and the
+explicit-library API diagnostic passes 160 checks. Source-owner Make builds,
+source/library/tool bindings, first failed compilation, unchanged staged tool
+and 16 GiB disk reserve are retained. See tests/ctf/LOCALIZATION.md and
+/usr/obj/usr/src/bazel-ctf-shared-helper-review-r1-20261103.
+
+Next: integrate exact input-file/index provenance with final LLD symtab order,
+preserve CTF section links, solve the initial multiple-input-container contract,
+and qualify refreshed original controls and actual modules across all three
+architectures. Native Bazel LLVM API/bootstrap qualification is still required;
+these explicit-tool diagnostics do not substitute for it. Full world/kernel,
+packages, runtime and performance gates remain open; Make stays default.
