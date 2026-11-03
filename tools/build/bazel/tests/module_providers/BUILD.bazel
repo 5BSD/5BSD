@@ -129,3 +129,48 @@ load(":cross_input_tests.bzl", "cross_input_provider_tests")
 
 cross_input_provider_tests("arm64", _HID_MODULES)
 cross_input_provider_tests("riscv", _HID_MODULES)
+
+# Actual USB serial/input target artifacts; external kernel/USB-core providers
+# and live device behavior remain outside this known-provider test.
+_USB_INPUT_MODULES = {
+    "atp": "//sys/modules/usb/atp",
+    "u3g": "//sys/modules/usb/u3g",
+    "uark": "//sys/modules/usb/uark",
+    "ubsa": "//sys/modules/usb/ubsa",
+    "ubser": "//sys/modules/usb/ubser",
+    "uchcom": "//sys/modules/usb/uchcom",
+    "ucom": "//sys/modules/usb/ucom",
+    "ucycom": "//sys/modules/usb/ucycom",
+    "udbc": "//sys/modules/usb/udbc",
+    "uep": "//sys/modules/usb/uep",
+    "ufoma": "//sys/modules/usb/ufoma",
+    "uftdi": "//sys/modules/usb/uftdi",
+    "ugensa": "//sys/modules/usb/ugensa",
+    "uhid": "//sys/modules/usb/uhid",
+    "uhid_snes": "//sys/modules/usb/uhid_snes",
+    "uipaq": "//sys/modules/usb/uipaq",
+    "ukbd": "//sys/modules/usb/ukbd",
+    "ulpt": "//sys/modules/usb/ulpt",
+    "umcs": "//sys/modules/usb/umcs",
+    "umct": "//sys/modules/usb/umct",
+    "umodem": "//sys/modules/usb/umodem",
+    "umoscom": "//sys/modules/usb/umoscom",
+    "ums": "//sys/modules/usb/ums",
+    "uplcom": "//sys/modules/usb/uplcom",
+    "uslcom": "//sys/modules/usb/uslcom",
+    "uvisor": "//sys/modules/usb/uvisor",
+    "uvscom": "//sys/modules/usb/uvscom",
+    "wmt": "//sys/modules/usb/wmt",
+    "wsp": "//sys/modules/usb/wsp",
+}
+[bsd_host_artifact_test(
+    name = arch + "_usb_input_providers_test",
+    src = "check.py",
+    data = [package + ":" + arch + "_generic_module" for package in _USB_INPUT_MODULES.values()],
+    args = [arg for name, package in _USB_INPUT_MODULES.items()
+            for arg in ["--module", name + "=$(location " + package + ":" + arch + "_generic_module)"]] + [
+        "--require-edge", "u3g", "ucom", "ucom_attach",
+        "--require-edge", "uftdi", "ucom", "ucom_attach",
+        "--require-edge", "uvisor", "ucom", "ucom_attach",
+    ],
+) for arch in ["arm64", "riscv"]]

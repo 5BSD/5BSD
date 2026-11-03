@@ -5519,3 +5519,14 @@ The compiler/sysroot floor remains Make-built; these profiles do not establish
 full world bootstrap, target runtime, package publication or boot behavior.
 See
 .Pa tools/build/bazel/USERLAND-SDK-QUALIFICATION.md .
+.Pp
+ARM64 and RISC-V USB serial/input profiles extend native module coverage to
+another 29 selected leaves per architecture.
+Four normal format-5 profiles run host artifact checks for USB serial provider
+bindings without executing target modules.
+All plain module bytes, CTF/runtime/debuglink and original installation records
+pass Make comparison with actual parent-exported options and source Make rules.
+See
+.Pa tools/build/bazel/CROSS-USB-INPUT-MODULES-QUALIFICATION.md
+for compiler/input/link evidence, explicit rejected observers and remaining
+cross-kernel, debugger, device/runtime and measured-performance gates.

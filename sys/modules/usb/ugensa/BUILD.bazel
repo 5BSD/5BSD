@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "ugensa", objects = ["//sys/dev/usb:ugensa_ugensa_module_object_files"],
     object_order = ["ugensa.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ugensa",
+    objects = ["//sys/dev/usb:" + arch + "_ugensa_ugensa_module_object_files"],
+    object_order = ['ugensa.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

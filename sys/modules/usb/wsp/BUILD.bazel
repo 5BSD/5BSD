@@ -4,3 +4,13 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 # Original export policy and complete link order.
 amd64_generic_module(module = "wsp", objects = ["//sys/dev/usb:wsp_wsp_module_object_files"],
     object_order = ["wsp.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "wsp",
+    objects = ["//sys/dev/usb:" + arch + "_wsp_wsp_module_object_files"],
+    object_order = ['wsp.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

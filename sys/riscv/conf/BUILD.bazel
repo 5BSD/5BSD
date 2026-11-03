@@ -219,3 +219,12 @@ filegroup(name = "generic_input_manifest", srcs = [":generic_config"],
     strip_include_prefix = "generic_options",
     visibility = ["//sys/dev/hid:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/usb:__pkg__"])
  for option in ["hid", "kbd", "hkbd", "evdev", "usb"]]
+
+# USB serial debugger and keyboard options come from the selected target config.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["gdb", "ukbd"]]
+[cc_library(name = "usb_serial_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/usb:__pkg__"])
+ for option in ["gdb", "ukbd"]]

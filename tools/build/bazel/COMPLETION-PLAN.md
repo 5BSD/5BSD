@@ -1,5 +1,17 @@
 # Native Bazel completion plan
 
+## ARM64/RISC-V USB serial/input checkpoint (2026-11-03)
+
+Twenty-nine USB serial/input module leaves on each of ARM64/RISC-V pass four
+normal build-bsd profiles/provider tests and 116 original Make controls. All 58
+plain module bytes match; 58 CTF/runtime/debuglink comparisons, 116 actual
+compilers/15,232 canonical consumed input pairs, 232 ordered links and 174
+original installation records/payload bindings pass. Actual parent-exported
+Make options, GENERIC KERN_OPTS and 64 regular Makefiles are retained alongside
+the explicit empty configuration sentinel. Separate DWARF/source lookup and
+device/runtime/performance gates remain open. See
+[CROSS-USB-INPUT-MODULES-QUALIFICATION.md](CROSS-USB-INPUT-MODULES-QUALIFICATION.md).
+
 ## ARM64/RISC-V input module checkpoint (2026-11-03)
 
 Twenty-six input modules per architecture pass original Make comparison on

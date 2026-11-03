@@ -938,3 +938,207 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['input/usbhid.c'],
     deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/dev/usb:device_io_kernel_usbhid_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header"],
 ) for arch in ["arm64", "riscv"]]
+
+# Cross-target USB serial and input module producers.
+[cross_generic_module_objects(
+    arch = arch,
+    name = "atp_atp_module",
+    srcs = ['input/atp.c'],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "u3g_u3g_module",
+    srcs = ['serial/u3g.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_17", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uark_uark_module",
+    srcs = ['serial/uark.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_19", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ubsa_ubsa_module",
+    srcs = ['serial/ubsa.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ubser_ubser_module",
+    srcs = ['serial/ubser.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uchcom_uchcom_module",
+    srcs = ['serial/uchcom.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ucom_usb_serial_module",
+    srcs = ['serial/usb_serial.c'],
+    deps = ["//sys/dev/uart:usb_remaining_module_context_0", "//sys/dev/usb:usb_remaining_module_context_22", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/gdb:peripheral_devices_kernel_uart_dbg_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:usb_serial_opt_gdb_header", "//sys/" + arch + "/conf:input_module_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ucycom_ucycom_module",
+    srcs = ['serial/ucycom.c'],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_19", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "udbc_udbc_module",
+    srcs = ['serial/udbc.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_23", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uep_uep_module",
+    srcs = ['input/uep.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_0", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ufoma_ufoma_module",
+    srcs = ['serial/ufoma.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_26", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uftdi_uftdi_module",
+    srcs = ['serial/uftdi.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_27", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ugensa_ugensa_module",
+    srcs = ['serial/ugensa.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_28", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uhid_snes_uhid_snes_module",
+    srcs = ['input/uhid_snes.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_32", "//sys/dev/hid:usb_remaining_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uhid_uhid_module",
+    srcs = ['input/uhid.c'],
+    deps = ["//sys/dev/hid:usb_remaining_module_context_1", "//sys/dev/usb:usb_remaining_module_context_31", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uipaq_uipaq_module",
+    srcs = ['serial/uipaq.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_26", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ukbd_ukbd_module",
+    srcs = ['input/ukbd.c'],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_ukbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:usb_serial_opt_ukbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ulpt_ulpt_module",
+    srcs = ['serial/ulpt.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_29", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "umcs_umcs_module",
+    srcs = ['serial/umcs.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_36", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "umct_umct_module",
+    srcs = ['serial/umct.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "umodem_umodem_module",
+    srcs = ['serial/umodem.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_37", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:usb_if_headers", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "umoscom_umoscom_module",
+    srcs = ['serial/umoscom.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ums_ums_module",
+    srcs = ['input/ums.c'],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_ukbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uplcom_uplcom_module",
+    srcs = ['serial/uplcom.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_26", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uslcom_uslcom_module",
+    srcs = ['serial/uslcom.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_60", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uvisor_uvisor_module",
+    srcs = ['serial/uvisor.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "uvscom_uvscom_module",
+    srcs = ['serial/uvscom.c'],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "wmt_wmt_module",
+    srcs = ['input/wmt.c'],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_ukbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "wsp_wsp_module",
+    srcs = ['input/wsp.c'],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_0", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+) for arch in ["arm64", "riscv"]]

@@ -10631,3 +10631,17 @@ reject stale/foreign execution inputs. No runtime instrumentation or source
 code is rewritten by SDK preparation. The actual cross component action and
 loader proofs remain distinct from foreign runtime tracing, complete world
 bootstrap and host-provenance hermeticity. See USERLAND-SDK-QUALIFICATION.md.
+
+### ARM64/RISC-V USB serial/input expansion (2026-11-03)
+
+The bounded 29-source scan finds zero explicit SDT/DTrace/CTR/audit marker
+lines or matching compiled probe sections in this cohort. All 58 plain modules
+match Make whole-file and all 58 CTF/runtime checks preserve observed compiled
+artifacts. Four actual known-provider tests resolve USB serial callbacks
+through ucom; no target module/device is executed. Keep runtime follow-ups for
+tty/open/read/write/ioctl/modem ownership, transfer cancellation/flush,
+keyboard/mouse/touchpad event delivery, suspend/resume, hotplug and
+detach/lifetime behavior. Framework/FBT coverage and live probe/audit delivery
+remain unqualified. Evidence:
+bazel-cross-usb-input-review-r2-20261103/supplement.json and
+[CROSS-USB-INPUT-MODULES-QUALIFICATION.md](CROSS-USB-INPUT-MODULES-QUALIFICATION.md).
