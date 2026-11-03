@@ -21,9 +21,9 @@ bsd_source_headers(name = "device_io_kernel_teken_headers", hdrs = ["teken.h", "
     visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
 
 load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
-bsd_awk_output(name = "state_header", script = "gensequences", srcs = ["sequences"], output = "generated/teken_state.h",
+bsd_awk_output(name = "state_header", script = "gensequences", srcs = ["sequences"], output = "generated/teken_state.h", visibility = ["//visibility:public"],
     awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
-cc_library(name = "device_io_state_headers", hdrs = [":state_header"], strip_include_prefix = "generated")
+cc_library(name = "device_io_state_headers", hdrs = [":state_header"], strip_include_prefix = "generated", visibility = ["//stand/efi/libefi:__pkg__"])
 
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 
@@ -45,3 +45,9 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     includes = [], visibility = ["//sys/kern:__pkg__"])
 
 bsd_source_headers(name = "standalone_lua_headers", hdrs = ['teken.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])
+
+bsd_source_headers(name = "libefi_headers", hdrs = ['teken.h', 'teken_scs.h', 'teken_subr.h', 'teken_subr_compat.h', 'teken_wcwidth.h'], visibility = ["//stand/efi/libefi:__pkg__"])
+
+exports_files(["teken.c"], visibility = ["//stand/efi/libefi:__pkg__"])
+
+exports_files(["gensequences", "sequences"], visibility = ["//stand/efi/libefi:__pkg__"])

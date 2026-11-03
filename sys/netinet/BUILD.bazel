@@ -1608,3 +1608,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "tcp_var.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+bsd_source_headers(name = "libefi_headers", hdrs = ['in.h', 'in_systm.h'], visibility = ["//stand/efi/libefi:__pkg__"])

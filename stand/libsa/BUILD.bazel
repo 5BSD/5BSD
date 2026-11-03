@@ -37,3 +37,6 @@ write_file(name = 'standalone_xlocale__time_h', out = 'standalone/xlocale/_time.
 write_file(name = 'standalone_xlocale__strings_h', out = 'standalone/xlocale/_strings.h', content = [], newline = "unix")
 write_file(name = 'standalone_xlocale__string_h', out = 'standalone/xlocale/_string.h', content = [], newline = "unix")
 cc_library(name = "standalone_headers", hdrs = [':standalone_a_out_h', ':standalone_assert_h', ':standalone_elf_h', ':standalone_limits_h', ':standalone_nlist_h', ':standalone_setjmp_h', ':standalone_stddef_h', ':standalone_stdbool_h', ':standalone_string_h', ':standalone_strings_h', ':standalone_time_h', ':standalone_uuid_h', ':standalone_arpa_inet_h', ':standalone_arpa_tftp_h', ':standalone_ssp_ssp_h', ':standalone_stdarg_h', ':standalone_errno_h', ':standalone_stdint_h', ':standalone_ctype_h', ':standalone_fcntl_h', ':standalone_signal_h', ':standalone_stdio_h', ':standalone_stdlib_h', ':standalone_unistd_h', ':standalone_xlocale__time_h', ':standalone_xlocale__strings_h', ':standalone_xlocale__string_h', 'stand.h'], includes = ["standalone", "."], visibility = ["//stand:__subpackages__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "libefi_headers", hdrs = ['bootp.h', 'iodesc.h', 'net.h', 'netif.h', 'stand.h'], visibility = ["//stand/efi/libefi:__pkg__"])

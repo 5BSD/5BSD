@@ -101,8 +101,9 @@ frontend, security policy, staging/signing/publication or manual interface chang
 Make remains production/default. No installation, upgrade, reboot or VM run was
 performed for this archive qualification.
 
-EFI-specific flags/verifier contexts, IA32 variants, complete standalone archives,
-full EFI loader links and firmware execution remain open. The shared source
+The private 64-bit EFI Lua contexts were subsequently qualified in
+EFI-LUA-QUALIFICATION.md. IA32 variants, remaining standalone archives, full EFI
+loader links and firmware execution remain open. The shared source
 observability review still applies; these host inspections establish neither
 probe delivery nor loader diagnostics at runtime. Complete world/kernel/modules,
 pkgbase/hardware publication, bootstrap/sandbox/cache configurations and CPU,

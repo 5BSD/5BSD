@@ -7,9 +7,19 @@ captures additional test kinds and grouped headers. All three SDK/profile
 preflights and two mismatch-rejection checks pass. The amd64 metadata survey
 finishes with 2,128 directories and no query failures; these are not successful
 build counts. ARM64 also finishes with 2,087 directories and no query failures;
-RISC-V finishes with 2,050 directories and no query failures. Complete libsa/libefi archives and EFI loader links remain required; the Lua
+RISC-V finishes with 2,050 directories and no query failures. Complete libsa archives and EFI loader links remain required; libefi and Lua
 archive variants are qualified below.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
+
+## EFI support archive checkpoint (2026-11-03)
+
+Native libefi builds all 19 selected units on AMD64, ARM64 and RISC-V; an AMD64
+ZFS-disabled profile also passes. Sixteen host inspection methods cover archive,
+ABI, option and terminal-header contracts. Unmodified Make comparisons match
+18/19 members in allocated bytes/relocations; Teken's assertion filename strings
+differ. Independent filename-only controls explain that retained difference;
+production artifacts remain untouched. Full firmware/debug/runtime gates stay
+open. See [LIBEFI-QUALIFICATION.md](LIBEFI-QUALIFICATION.md).
 
 ## Private EFI Lua checkpoint (2026-11-03)
 

@@ -97,9 +97,12 @@ policy and its scope. Make remains production/default. No host installation,
 upgrade, reboot or VM run occurred.
 
 The native 64-bit Lua prerequisites are now covered for regular and EFI contexts.
-IA32 variants, complete libsa/libefi/FDT/Forth archives, entry objects, final EFI
+IA32 variants, complete libsa/FDT/Forth archives, entry objects, final EFI
 links, firmware runtime and verification failure behavior remain open. Full
 world/kernel/modules/pkgbase/hardware publication, reproducible bootstrap, broad
 runtime and comparative CPU/memory/disk performance remain separate gates. Archive
 code equality and client timing are not whole-system qualification. BIP remains
 out of scope.
+
+The later libefi candidate is documented in LIBEFI-QUALIFICATION.md, including
+its retained raw assertion-filename differences and independent controls.

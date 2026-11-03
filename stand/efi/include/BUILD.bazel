@@ -3,3 +3,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # _STANDALONE is not enabled for the userland efivar consumer.
 cc_library(name = "efichar_header", hdrs = ["efichar.h"], strip_include_prefix = ".",
     visibility = ["//lib/libefivar:__pkg__", "//usr.sbin/efibootmgr:__pkg__", "//usr.sbin/efivar:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "libefi_headers", hdrs = ['efi.h', 'efi_driver_utils.h', 'efichar.h', 'eficonsctl.h', 'efilib.h', 'efizfs.h'], visibility = ["//stand/efi/libefi:__pkg__"])

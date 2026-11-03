@@ -1,2 +1,58 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["efichar.c"], visibility = ["//lib/libefivar:__pkg__", "//usr.sbin/efibootmgr:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+_COMPAT = ["@platforms//os:freebsd"] + select({"@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [], "//conditions:default": ["@platforms//:incompatible"]})
+bsd_architecture_headers(name = "architecture_headers", headers = select({
+    "@platforms//cpu:x86_64": {"//sys/amd64/include:libefi_headers": "machine", "//sys/x86/include:libefi_headers": "x86"},
+    "@platforms//cpu:aarch64": {"//sys/arm64/include:libefi_headers": "machine"},
+    "@platforms//cpu:riscv64": {"//sys/riscv/include:libefi_headers": "machine"}, "//conditions:default": {},
+}))
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Wformat', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-Istand/libsa/geli', '-ffreestanding', '-Ilib/libsecureboot/h', '-Istand/efi/include', '-Isys/contrib/edk2/Include', '-Istand/libsa/zfs', '-Isys/cddl/boot/zfs', '-Isys/cddl/contrib/opensolaris/uts/common', '-Istand/common', '-D__printf__=__freebsd_kprintf__', '-DTERM_EMU', '-Ilib/libsecureboot/h', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments'] + select({
+    "@platforms//cpu:x86_64": ["-fshort-wchar", "-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
+    "@platforms//cpu:aarch64": ["-fshort-wchar", "-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
+    "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"], "//conditions:default": [],
+})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:loader_geli_enabled": ["-DLOADER_GELI_SUPPORT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:loader_disk_enabled": ["-DLOADER_DISK_SUPPORT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:loader_net_enabled": ["-DLOADER_NET_SUPPORT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:loader_md_enabled": ["-DLOADER_MD_SUPPORT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:loader_zfs_enabled": ["-DEFI_ZFS_BOOT"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:efi_loader_veriexec_enabled": ["-DLOADER_VERIEXEC"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:efi_loader_veriexec_vectx_enabled": ["-DLOADER_VERIEXEC_VECTX"], "//conditions:default": []})
+_CFLAGS = _CFLAGS + select({"//tools/build/bazel/config:efi_loader_veriexec_pass_manifest_enabled": ["-DLOADER_VERIEXEC_PASS_MANIFEST"], "//conditions:default": []})
+_DEPS = ['//contrib/pnglite:libefi_headers', '//stand/common:libefi_headers', '//stand/efi/include:libefi_headers', '//stand/efi/loader:libefi_headers', '//stand/libsa:libefi_headers', '//stand/libsa/zfs:libefi_headers', '//sys/cddl/boot:libefi_headers', '//sys/contrib/edk2/Include:libefi_headers', '//sys/crypto:libefi_headers', '//sys/net:libefi_headers', '//sys/netinet:libefi_headers', '//sys/netinet6:libefi_headers', '//sys/sys:libefi_headers', '//sys/teken:libefi_headers', ':architecture_headers', '//stand/libsa:standalone_headers'] + select({"//tools/build/bazel/config:efi_loader_veriexec_enabled": ["//lib/libsecureboot:standalone_verify_header"], "//conditions:default": []})
+_FEATURES = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"]
+_COMMON = ["delay.c", "devicename.c", "devpath.c", "efi_console.c", "efi_driver_utils.c", "efichar.c", "eficom.c", "efienv.c", "efihttp.c", "efinet.c", "efipart.c", "efizfs.c", "env.c", "errno.c", "handles.c", "libefi.c", "wchar.c"]
+[cc_library(name = source[:-2], srcs = [source], copts = _CFLAGS +
+    (["-Wno-format"] if source in ["efinet.c", "efipart.c", "env.c"] else []) +
+    (["-Isys/teken", "-Icontrib/pnglite", "-Istand/efi/loader"] if source == "efi_console.c" else []),
+    deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT) for source in _COMMON]
+cc_library(name = "terminal", srcs = ["//sys/teken:teken.c"],
+    copts = _CFLAGS + ["-Isys/teken"], deps = _DEPS + ["//sys/teken:device_io_state_headers"],
+    features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
+cc_library(name = "clock", srcs = select({"@platforms//cpu:x86_64": ["time.c"], "@platforms//cpu:aarch64": ["time_arm64.c"], "@platforms//cpu:riscv64": ["time_event.c"], "//conditions:default": []}),
+    copts = _CFLAGS, deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
+bsd_component_archive(name = "static_archive", groups = [":" + source[:-2] for source in _COMMON] + [":terminal", ":clock"],
+    object_order = [source[:-2] + ".o" for source in _COMMON] + ["teken.o"] + select({"@platforms//cpu:x86_64": ["time.o"], "@platforms//cpu:aarch64": ["time_arm64.o"], "@platforms//cpu:riscv64": ["time_event.o"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+cc_library(name = "abi_contract", srcs = ["abi-contract.c"], copts = _CFLAGS, deps = _DEPS,
+    features = _FEATURES, testonly = True, linkstatic = True, target_compatible_with = _COMPAT)
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+filegroup(name = "inspection_tools", srcs = ["@bsd_sdk//toolchain:archive_inputs",
+    "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:llvm-nm_runtime",
+    "@bsd_sdk//toolchain:bin/awk", "@bsd_sdk//toolchain:awk_runtime"])
+bsd_host_artifact_test(name = "archive_test", src = "archive-test.py",
+    data = [":static_archive", ":abi_contract", ":inspection_tools", "//sys/teken:state_header",
+        "//sys/teken:gensequences", "//sys/teken:sequences", "@bsd_sdk//toolchain:bin/llvm-ar",
+        "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:bin/awk"],
+    args = ["--machine"] + select({"@platforms//cpu:x86_64": ["62"], "@platforms//cpu:aarch64": ["183"], "@platforms//cpu:riscv64": ["243"], "//conditions:default": ["0"]}) +
+        ["--clock"] + select({"@platforms//cpu:x86_64": ["time.o"], "@platforms//cpu:aarch64": ["time_arm64.o"], "@platforms//cpu:riscv64": ["time_event.o"], "//conditions:default": ["unsupported"]}) +
+        ["--zfs"] + select({"//tools/build/bazel/config:loader_zfs_enabled": ["yes"], "//conditions:default": ["no"]}) +
+        ["--archive", "$(location :static_archive)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--awk", "$(location @bsd_sdk//toolchain:bin/awk)",
+        "--generator", "$(location //sys/teken:gensequences)", "--sequences", "$(location //sys/teken:sequences)",
+        "--state-header", "$(location //sys/teken:state_header)", "--tool-inputs", "$(locations :inspection_tools)"],
+    size = "small", visibility = ["//visibility:public"], target_compatible_with = _COMPAT)

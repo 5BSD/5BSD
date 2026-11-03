@@ -10903,3 +10903,13 @@ regular archive bytes remain unchanged. Source/provider inventory is shared;
 no existing DTrace/BSM source was omitted. Host artifact/ABI checks establish no
 firmware diagnostic delivery or verification failure behavior. Those remain
 runtime gates for the completed loader.
+
+## EFI support library (2026-11-03)
+
+All 19 selected units per architecture retain the maintained firmware disk,
+network, console, clock, character and EFI variable interfaces. The source/recipe
+inventory has no DTrace provider or BSM audit source to carry forward in this
+pre-kernel archive. No assertion was disabled to obtain comparison equality;
+relative assertion filenames remain an explicit raw difference. Actual firmware
+I/O, variable failures and diagnostics require completed-loader VM/runtime tests.
+Host artifact tests and filename controls do not close those runtime gates.

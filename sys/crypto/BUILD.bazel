@@ -403,3 +403,5 @@ bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
         "sha1.h",
     ],
     includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "libefi_headers", hdrs = ['intake.h'], visibility = ["//stand/efi/libefi:__pkg__"])

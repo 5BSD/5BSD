@@ -15,3 +15,5 @@ filegroup(name = "boot2_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'setjmp.h'], visibility = ["//stand/liblua:__pkg__"])
+
+filegroup(name = "libefi_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h'], visibility = ["//stand/efi/libefi:__pkg__"])

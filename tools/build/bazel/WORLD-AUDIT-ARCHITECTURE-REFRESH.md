@@ -109,3 +109,10 @@ alias alone establishes qualification. See EFI-LUA-QUALIFICATION.md for actual
 Make/action/ABI evidence. Complete libsa/libefi/FDT/Forth contexts and final EFI
 loader links remain open. The recorded metadata/package-presence counts above
 remain snapshots, not current converted-product counts.
+
+The later native libefi candidate now builds all selected 19-unit archives on
+these three architectures. LIBEFI-QUALIFICATION.md retains its 18/19 raw Make
+comparison and one independently explained filename-only control per profile.
+Its native header/action/ABI evidence does not establish a completed EFI loader
+or whole-world build. The original snapshot's minimal libefi exports description
+above remains historical.

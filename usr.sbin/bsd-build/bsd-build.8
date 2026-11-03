@@ -4660,6 +4660,21 @@ AMD64, ARM64 and RISC-V archive/ABI comparisons use native host artifact tests;
 this setting and these tests do not qualify signed images or verified boot.
 See
 .Pa tools/build/bazel/EFI-LUA-QUALIFICATION.md .
+.Ss Native EFI support library
+The native
+.Li //stand/efi/libefi:static_archive
+uses typed format-5 build-settings booleans
+.Li //tools/build/bazel/config:loader_net ,
+.Li //tools/build/bazel/config:loader_md ,
+and
+.Li //tools/build/bazel/config:loader_zfs .
+They default true for this component's network, UEFI memory-disk device and ZFS
+support, following the maintained Make defaults.
+The native terminal state header is generated from declared AWK/data inputs.
+Archive and ABI inspection on AMD64, ARM64 and RISC-V executes native tools;
+firmware I/O and complete loader boot require separate qualification.
+See
+.Pa tools/build/bazel/LIBEFI-QUALIFICATION.md .
 .Ss Cross-target Bazel kernel artifacts
 Format-5 source graph inputs may select
 .Dq target-kind

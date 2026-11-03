@@ -568,3 +568,10 @@ config_setting(name = "loader_efi_secureboot_enabled", flag_values = {":loader_e
 selects.config_setting_group(name = "efi_loader_veriexec_enabled", match_any = [":veriexec_enabled", ":loader_efi_secureboot_enabled"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "efi_loader_veriexec_vectx_enabled", match_all = [":efi_loader_veriexec_enabled", ":loader_veriexec_vectx_requested"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "efi_loader_veriexec_pass_manifest_enabled", match_all = [":efi_loader_veriexec_enabled", ":loader_veriexec_pass_manifest_requested"], visibility = ["//visibility:public"])
+
+bool_flag(name = "loader_net", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_net_enabled", flag_values = {":loader_net": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "loader_md", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_md_enabled", flag_values = {":loader_md": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "loader_zfs", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_zfs_enabled", flag_values = {":loader_zfs": "true"}, visibility = ["//visibility:public"])

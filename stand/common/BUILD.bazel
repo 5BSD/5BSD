@@ -4,3 +4,5 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = 'boot2_headers', hdrs = ['paths.h', 'rbx.h'], visibility = ['//stand/i386/boot2:__pkg__'])
 
 bsd_source_headers(name = "standalone_lua_headers", hdrs = ['bootstrap.h', 'gfx_fb.h', 'readin.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])
+
+bsd_source_headers(name = "libefi_headers", hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'readin.h'], visibility = ["//stand/efi/libefi:__pkg__"])

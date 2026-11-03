@@ -18,3 +18,5 @@ bsd_architecture_headers(
 )
 
 filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'param.h', 'setjmp.h'], visibility = ["//stand/liblua:__pkg__"])
+
+filegroup(name = "libefi_headers", srcs = ['_armreg.h', '_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'armreg.h', 'endian.h', 'metadata.h', 'param.h'], visibility = ["//stand/efi/libefi:__pkg__"])
