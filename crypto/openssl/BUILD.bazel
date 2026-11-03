@@ -39,3 +39,22 @@ exports_files([label.split(":", 1)[1] for _, label in INSTALL_HEADERS] +
     visibility = ["//secure/lib/libcrypto:__pkg__", "//secure/lib/libssl:__pkg__"])
 
 exports_files(["apps/openssl.cnf"], visibility = ["//secure/usr.bin/openssl:__pkg__"])
+
+# Core cross-architecture additions; preserve existing module/SSL/CLI exports.
+exports_files([
+    "crypto/armcap.c",
+    "crypto/camellia/camellia.c",
+    "crypto/camellia/cmll_cbc.c",
+    "crypto/chacha/chacha_enc.c",
+    "crypto/rc4/rc4_enc.c",
+    "crypto/rc4/rc4_skey.c",
+    "crypto/whrlpool/wp_block.c"
+],
+    visibility = ["//secure/lib/libcrypto:__pkg__"])
+
+load(":crypto_sources_selected.bzl", "CORE_HEADER_FILES", "CORE_TEXTUAL_FILES")
+# Exact union of original core consumed source headers/textual fragments.
+# Include search roots are the original ordered -I flags on the core objects;
+# this declaration adds no system/include roots or public-header propagation.
+cc_library(name = "core_compilation_headers", hdrs = CORE_HEADER_FILES,
+    textual_hdrs = CORE_TEXTUAL_FILES, visibility = ["//secure/lib/libcrypto:__pkg__"])

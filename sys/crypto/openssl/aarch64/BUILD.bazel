@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Checked-in original ARM64 assembly; import maintenance is not a build action.
+exports_files([
+    "arm64cpuid.S",
+    "aesv8-armx.S",
+    "vpaes-armv8.S",
+    "armv8-mont.S",
+    "chacha-armv8.S",
+    "chacha-armv8-sve.S",
+    "ecp_nistz256-armv8.S",
+    "ghashv8-armx.S",
+    "aes-gcm-armv8_64.S",
+    "aes-gcm-armv8-unroll8_64.S",
+    "poly1305-armv8.S",
+    "keccak1600-armv8.S",
+    "sha1-armv8.S",
+    "sha256-armv8.S",
+    "sha512-armv8.S"
+],
+    visibility = ["//secure/lib/libcrypto:__pkg__"])

@@ -10856,3 +10856,16 @@ format suite passes on the unchanged native r4 tool and rejects both foreign
 r4 tools on localization. Refresh/qualify the foreign cross-tools and new SDKs;
 keep the old failures. No new probe edits, fuzzy type matching or transform-order
 workaround is required. Actual post-refresh instrumentation remains unqualified.
+
+
+### 2026-11-03: three-architecture libcrypto core checkpoint
+
+This checkpoint changes only Bazel metadata and artifact tests; original C and
+assembly sources and their instrumentation remain unchanged. All 5,826 object
+contexts preserve allocated payloads/runtime relocations against explicit
+original filename-policy controls; full DSO allocated payloads/symbols match.
+This does not establish tracing or audit delivery. No new probe/audit coverage
+is claimed for libcrypto; semantic assessment of operations needing additional
+coverage, recursive OpenSSL and runtime/performance remain open. Separate
+DWARF/source lookup remains open, including RISC-V debug-local symbol offsets.
+See LIBCRYPTO-CORE-THREE-ARCH-QUALIFICATION.md for retained rejections and scope.

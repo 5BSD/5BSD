@@ -1806,3 +1806,29 @@ and hashes alone cannot prove the needed capability. Full native Bazel toolchain
 bootstrap and declared regression coverage for every selected SDK remain gates.
 Separate DWARF/source lookup, remaining runtime helper families, whole-system
 production/runtime and comparative performance remain open.
+
+
+### 2026-11-03: selected-default libcrypto core checkpoint
+
+The native AMD64/ARM64/RISC-V core producers now have source-owned ordered
+normal/PIC lists, architecture assembly/ISA policy, target-derived buildinf,
+explicit installed archive providers and shared whole-PIC linkage. Actual input
+and link receipts bind all 5,826 production contexts. Independent original
+controls add only the recorded filename-map flag: all allocated bytes and
+runtime relocations match; all DSO symbols match. RISC-V raw object symbols
+remain unequal only in 300,356 exhaustively classified local offsets into
+nonallocated debug sections (1,868 objects). This is not raw Make byte parity
+or completed debug qualification. The untouched filename rejections remain.
+
+Each ABI core install manifest matches 6,465 original metadata records through
+physical hardlink equivalence; 6,460 fixed source payloads are exact. AMD64 runs
+the real static/shared API tests; foreign profiles run host artifact inspection
+without executing foreign ELF. See LIBCRYPTO-CORE-THREE-ARCH-QUALIFICATION.md.
+Existing format-5 frontend/SDK/install interfaces cover this checkpoint; no new
+CLI, signing, packaging or publication fields are required.
+
+Next close default recursion: engines, providers, FIPS tests, libssl, openssl
+CLI and complete component/package ownership. Do not disable Make recursion,
+produce a partial OpenSSL package, or count core-only qualification as selected
+world completion. Separate debug/source lookup, alternate options, foreign
+runtime, native toolchain bootstrap and performance remain open.

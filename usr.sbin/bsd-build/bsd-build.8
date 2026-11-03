@@ -5751,3 +5751,14 @@ Target compiler, ABI inspection, DTrace drti and target test runtime inputs
 retain their target identities.
 See
 .Pa tools/build/bazel/KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md .
+.Pp
+Selected-default libcrypto core producers support AMD64, ARM64 and RISC-V.
+Qualification covers original ordered archive variants, declared compiler
+inputs, shared linkage, core installation metadata and artifact tests.
+Independent filename-policy controls establish allocated payload and runtime
+relocation equivalence; raw debug bytes and RISC-V debug-local symbols differ.
+Only AMD64 API programs execute; foreign profiles inspect target artifacts.
+Engines, providers, FIPS tests, libssl, openssl CLI, complete packages and debug
+source lookup remain separate open gates.
+See
+.Pa tools/build/bazel/LIBCRYPTO-CORE-THREE-ARCH-QUALIFICATION.md .
