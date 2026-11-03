@@ -3,14 +3,15 @@
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <setjmp.h>
-#include <stdarg.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <dtraced_derived.h>
+#include <dtraced_io.h>
 #include <dt_list.h>
 
 typedef struct { int marker; } dtrace_prog_t;
@@ -22,10 +23,15 @@ typedef struct {
     uint8_t ingress_digest[SHA256_DIGEST_LENGTH];
     int derived_parent_known;
     int ingress_digest_known;
+    int derived_failures;
+    int64_t derived_retry_at;
 } dt_pgplist_t;
 typedef struct { uint8_t rx_session[16]; } dtd_arg_t;
 
 static void *g_dtp;
+static _Atomic int g_intr, g_stop;
+static pthread_mutex_t g_pgplistmtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_pgpcond;
 static dt_list_t g_pgplist, g_derived_replaylist;
 static char created_path[80];
 static int creates, sends, fail_create, fail_send;
@@ -78,26 +84,19 @@ tmp_mkstemp(char *path, size_t size, const char *name)
     return (mkstemp(path));
 }
 static int tmp_unlink(const char *path) { return (unlink(path)); }
-static useconds_t slept[8];
-static int sleeps, failures;	/* static: read after longjmp() */
-static char fatal_message[160];
-static jmp_buf fatal_return;
-static int
+/* The listener never sleeps or ends the session over one delivery. */
+static int __unused
 test_usleep(useconds_t delay)
 {
-    assert(sleeps < 8);
-    slept[sleeps++] = delay;
-    return (0);
+    (void)delay;
+    abort();
 }
 #define usleep test_usleep
-static void
+static void __unused
 fatal(const char *fmt, ...)
 {
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(fatal_message, sizeof(fatal_message), fmt, ap);
-    va_end(ap);
-    longjmp(fatal_return, 1);
+    (void)fmt;
+    abort();
 }
 
 #include "consumer-derived-replay.inc"
@@ -182,17 +181,52 @@ main(void)
         digest, 13) == -1 &&
         errno == EIO);
     assert(access(created_path, F_OK) == -1 && errno == ENOENT);
-    /* A persistent refusal backs off and ends; it does not spin. */
+    /* A persistent refusal backs off per delivery and gives that delivery
+     * up; it neither spins, nor sleeps the listener, nor ends the session. */
     assert(dtraced_connection_lost(EPIPE) && !dtraced_connection_lost(EPROTO));
-    if (setjmp(fatal_return) == 0) {
-        for (;;)
-            derived_send_failed(&failures, EPROTO);
+    pthread_condattr_t attr;
+    assert(pthread_condattr_init(&attr) == 0 &&
+        pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) == 0 &&
+        pthread_cond_init(&g_pgpcond, &attr) == 0);
+    dt_pgplist_t other = entry;
+    other.derived_parent.delivery_id = 100;
+    static const int64_t backoff[] = { 250, 500, 1000, 2000, 4000 };
+    for (int n = 0; n < 5; n++) {
+        /* Failures of different deliveries do not add up. */
+        int64_t before = dtraced_io_milliseconds();
+        assert(derived_send_failed(&entry, EPROTO) == 0);
+        assert(derived_send_failed(&other, EPROTO) == 0);
+        int64_t after = dtraced_io_milliseconds();
+        assert(entry.derived_retry_at >= before + backoff[n] &&
+            entry.derived_retry_at <= after + backoff[n]);
     }
-    assert(failures == 6 && sleeps == 5);
-    assert(slept[0] == 250000 && slept[1] == 500000 && slept[2] == 1000000 &&
-        slept[3] == 2000000 && slept[4] == 4000000);
-    assert(strcmp(fatal_message, "dtraced did not accept the derived "
-        "program after 6 attempts: Protocol error\n") == 0);
-    puts("PASS: active and completed parent replay exact ELF; distinct uploads and failures do not ACK success; a persistent derived refusal gives up after bounded backoff");
+    assert(entry.derived_failures == 5 && other.derived_failures == 5 &&
+        entry.derived_parent_known && other.derived_parent_known);
+    /* The replay of a failed delivery waits out its own deadline, with
+     * g_pgplistmtx released while it waits. */
+    other.derived_retry_at = dtraced_io_milliseconds() - 1;
+    assert(pthread_mutex_lock(&g_pgplistmtx) == 0);
+    assert(derived_send_wait(&other) == 0);
+    entry.derived_retry_at = dtraced_io_milliseconds() + 200;
+    int64_t started = dtraced_io_milliseconds();
+    int waits = 0;
+    while (derived_send_wait(&entry))
+        waits++;
+    assert(waits >= 1 && dtraced_io_milliseconds() >= entry.derived_retry_at &&
+        dtraced_io_milliseconds() - started < 2000);
+    atomic_store(&g_stop, 1);
+    entry.derived_retry_at = dtraced_io_milliseconds() + 60000;
+    assert(derived_send_wait(&entry) == 0);
+    atomic_store(&g_stop, 0);
+    assert(pthread_mutex_unlock(&g_pgplistmtx) == 0);
+    /* The sixth failure gives this delivery up: a replay no longer
+     * re-sends it, and the other delivery keeps its own budget. */
+    assert(derived_send_failed(&entry, EPROTO) == 1);
+    assert(!entry.derived_parent_known && find_identified_derived(&connection,
+        &header) == NULL);
+    assert(reemit_identified_derived(&entry, &connection, &header,
+        digest, 13) == 0);
+    assert(other.derived_parent_known && other.derived_failures == 5);
+    puts("PASS: active and completed parent replay exact ELF; distinct uploads and failures do not ACK success; a persistent derived refusal backs off per delivery and gives that delivery up without sleeping the listener or ending the session");
     return (0);
 }

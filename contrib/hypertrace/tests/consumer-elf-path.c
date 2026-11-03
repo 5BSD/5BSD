@@ -15,9 +15,10 @@
  *	process_elf_hypertrace() for a program it does not run: upload the
  *	linked program to the guest daemon's outbound with its identity, which
  *	the daemon lists for the launch of the program derived from it.
- * usage: consumer-elf-path -q -Y SPOOL [-N]
+ * usage: consumer-elf-path -q -Y SPOOL[,guest,SOURCE] [-N]
  *	The guest's dtrace -Y as the guest daemon's launch_program() runs it
- *	(HT_EXEC_DTRACE in daemon-main.cc): with -N, read the identifier list;
+ *	(HT_EXEC_DTRACE in daemon-main.cc), the argument parsed by dtrace.c's
+ *	link_target_parse(): with -N, read the identifier list;
  *	parse the program (a derived program's srcident is acknowledged, a
  *	base program is acknowledged with no identifier), link it with
  *	dtrace.c's link_acknowledged() and upload it to HT_DTRACE_SOCKET's
@@ -29,7 +30,7 @@
  * usage: consumer-elf-path derive BASE-ELF LINKED-ELF DERIVED-ELF
  *	listen_dtraced(): the guest program (VM 42, epoch 99) derived from the
  *	guest's linked upload of BASE-ELF.
- * usage: consumer-elf-path upload SOCKET SPOOL LINKED-ELF
+ * usage: consumer-elf-path upload SOCKET SPOOL,guest,SOURCE LINKED-ELF
  *	The guest's upload of LINKED-ELF for SPOOL again, with send_linked().
  * usage: consumer-elf-path SOCKET OUTDIR COUNT
  *	dtrace -E: compile the program, register it (HPI2) on the ELF receiver,
@@ -201,18 +202,26 @@ publish_linked(const char *linked)
  * <HT_ROOT>/idents.<spool name>.
  */
 static int
-run_guest(const char *spool, int with_idents)
+run_guest(char *arg, int with_idents)
 {
 	char acknowledged[DT_PROG_IDENTLEN], linked[PATH_MAX], path[PATH_MAX];
 	const char *daemon = getenv("HT_DTRACE_SOCKET");
-	const char *name = strrchr(spool, '/');
+	const char *name;
+	char *spool;
 	unsigned char *idents = NULL;
+	uint8_t source[16];
 	size_t count = 0;
 	dtrace_hdl_t *dtp;
 	dtrace_prog_t *pgp;
 	FILE *f;
-	int fd, sock, err = 0, prog_exec;
+	int fd, sock, err = 0, prog_exec, host, sourced;
 
+	if (link_target_parse(arg, &spool, &host, source, &sourced) != 0 ||
+	    host) {
+		fprintf(stderr, "-Y: %s\n", strerror(EINVAL));
+		return (1);
+	}
+	name = strrchr(spool, '/');
 	name = name == NULL ? spool : name + 1;
 	if (daemon == NULL ||
 	    strlcpy(sockpath, daemon, sizeof(sockpath)) >= sizeof(sockpath) ||
@@ -249,7 +258,8 @@ run_guest(const char *spool, int with_idents)
 	pgp->dp_pid = getpid();
 	fd = write_elf(dtp, pgp, linked);
 	sock = fd < 0 ? -1 : open_dtraced(DTD_SUB_READDATA);
-	if (sock < 0 || send_linked(pgp, fd, sock, spool, 0, prog_exec) != 0) {
+	if (sock < 0 || send_linked(pgp, fd, sock, sourced ? source : NULL, 0,
+	    prog_exec) != 0) {
 		fprintf(stderr, "upload: %s\n", strerror(errno));
 		return (1);
 	}
@@ -270,19 +280,24 @@ run_guest(const char *spool, int with_idents)
  * refuse it once a KILL has revoked the spool's source.
  */
 static int
-upload_again(const char *spool, const char *linked)
+upload_again(char *arg, const char *linked)
 {
 	dtrace_hdl_t *dtp;
 	dtrace_prog_t *pgp = NULL;
-	int fd, sock, err = 0;
+	uint8_t source[16];
+	char *spool;
+	int fd, sock, err = 0, host, sourced;
 
+	if (link_target_parse(arg, &spool, &host, source, &sourced) != 0 ||
+	    host || !sourced)
+		return (2);
 	dtp = open_handle(1);
 	fd = open(linked, O_RDONLY);
 	step("parsed", fd < 0 || (pgp = dtrace_elf_parse(dtp, fd, linked, 1,
 	    &err, errmsg, NULL)) == NULL);
 	sock = open_dtraced(DTD_SUB_READDATA);
 	step("uploaded", sock < 0 || lseek(fd, 0, SEEK_SET) != 0 ||
-	    send_linked(pgp, fd, sock, spool, 0, pgp->dp_exec) != 0);
+	    send_linked(pgp, fd, sock, source, 0, pgp->dp_exec) != 0);
 	close(sock);
 	close(fd);
 	dtrace_close(dtp);

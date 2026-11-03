@@ -577,6 +577,50 @@ live('refusals-are-logged', ['-d', '-D', '@ROOT@/state'], refusals_logged,
      {'HT_ATTEST': '7:9:guest-a'})
 
 
+def refusal_limits(root, proc):
+    # The refusal limiter is bounded and per client: frames of kinds a
+    # client invents share one entry (one line a second, the rest counted),
+    # and a second client's refusal of the same kind and check is still
+    # logged.  Regressions: the limiter was keyed by the raw wire type, so
+    # each invented kind took a new entry for good (and its own line); it
+    # was global, so the noisy client hid the quiet one's refusal.  An
+    # entry whose second has passed is dropped, reporting what it suppressed.
+    d = {}
+
+    def bogus(ident, kind):
+        c = consumer(root, ident=ident)
+        h = bytearray(HEADER)
+        struct.pack_into('<Q', h, 0, kind)
+        frame(c, bytes(h))
+        closed = expect_closed(c)
+        c.close()
+        return closed
+
+    def logged():
+        return [line[line.index('refused'):] for line in
+                (Path(root) / 'stderr.log').read_text().splitlines()
+                if 'refused' in line and 'unknown frame' in line]
+
+    time.sleep(0.2)
+    d['closed'] = [bogus('noisy', 1000 + n) for n in range(5)]
+    d['closed'] += [bogus('quiet', 1000), bogus('quiet', 1001)]
+    time.sleep(1.2)
+    d['closed'].append(bogus('noisy', 2000))
+    time.sleep(0.2)
+    d['logged'] = logged()
+    noisy = [line for line in d['logged'] if 'from noisy' in line]
+    quiet = [line for line in d['logged'] if 'from quiet' in line]
+    d['ok'] = (all(d['closed']) and len(noisy) == 2 and len(quiet) == 2 and
+               all('header fields: Protocol error' in line
+                   for line in d['logged']) and
+               '(4 more since the last)' in noisy[1] and
+               quiet[1].startswith('refused 1 more unknown frames from quiet'))
+    return d
+
+
+live('refusal-limits', ['-d', '-D', '@ROOT@/state'], refusal_limits)
+
+
 def hostile(root, proc):
     detail = {}
     # frame shorter than a header, longer than the limit, undecodable header
@@ -1768,7 +1812,8 @@ def outbound_sources(root):
 
 def upload_again(root, spool):
     p = subprocess.run([str(CONSUMER_CLIENT), 'upload',
-                        os.path.join(root, 'sub.sock'), spool,
+                        os.path.join(root, 'sub.sock'),
+                        '%s,guest,%s' % (spool, spool.split('.')[2]),
                         os.path.join(root, 'linked.' + spool)],
                        capture_output=True, text=True, timeout=30)
     return [line.split(' ')[0] + ' ' + line.split(' ')[1]
@@ -1867,6 +1912,51 @@ def derived_sessions_in_guest(root, state):
     return d
 
 
+def derived_kill_race_in_guest(root, state):
+    # A KILL lands between a guest upload's revocation check and its
+    # publication (HT_REVOKED_CHECK_HOLD holds the check's answer): the
+    # upload and its listed identifier precede the KILL, which drops the
+    # identifier, so the next base launch gets none.  Regression: the check
+    # ran before identlistmtx was taken; dtt_kill() revoked and dropped the
+    # source's identifiers inside that window, the upload then listed its
+    # identifier under the revoked source and every later launch got it.
+    d = {}
+    work = Path(root) / 'work'
+    work.mkdir()
+    hold = Path(root) / 'revoked-check'
+
+    def base(n):
+        p = subprocess.run([str(CONSUMER_CLIENT), 'compile',
+                            str(work / ('base.%d' % n))],
+                           capture_output=True, text=True, timeout=30)
+        source = p.stdout.split()[-1]
+        program = '%032x' % (0xb0 + n)
+        d['elf.%d' % n] = inject_line(root, 'elf %d 42 99 %s %s %s' % (
+            910 + n, program, source, work / ('base.%d' % n)))
+        return source, 'elf.%s.%s' % (program, source)
+
+    killacks = lambda: [n for n in os.listdir(state / 'inbound')
+                        if n.startswith('.killack.')]
+    hold.write_text('')
+    source, _ = base(1)
+    d['held'] = wait_until(lambda: Path(str(hold) + '.held').exists(), 15)
+    d['kill'] = inject_line(root, 'kill 4243 42 99 %s' % source)
+    # informational: the fixed daemon finishes the KILL only after the
+    # held upload is published
+    d['killed_while_held'] = wait_until(killacks, 1)
+    Path(str(hold) + '.release').write_text('')
+    d['killed'] = wait_until(killacks, 15)
+    _, second = base(2)
+    wait_until(lambda: (Path(root) / ('idents.' + second)).exists(), 15)
+    try:
+        d['idents.base.2'] = int((Path(root) / ('idents.' + second)).read_text())
+    except (OSError, ValueError):
+        d['idents.base.2'] = None
+    d['ok'] = (d['elf.1'] == 'ok' and d['held'] and d['kill'] == 'ok' and
+               d['killed'] and d['elf.2'] == 'ok' and d['idents.base.2'] == 0)
+    return d
+
+
 if (not ONLY or 'minion-derived-program' in ONLY) and DERIVED.get('kill_source'):
     minion('minion-derived-program', '0,42,99,0,0', answer=True,
            body=derived_program_in_guest,
@@ -1890,6 +1980,17 @@ if not ONLY or 'minion-derived-sessions' in ONLY:
                       'HT_DTT_INJECT': '@ROOT@/inject.sock',
                       'HT_DTT_LOG': '@ROOT@/dtt.log', 'HT_DTT_LOG_IDS': '1',
                       'HT_EXEC_DTRACE': str(CONSUMER_CLIENT)})
+if not ONLY or 'minion-derived-kill-race' in ONLY:
+    if 'CONSUMER_CLIENT' not in globals():
+        CONSUMER_CLIENT = consumer_client()
+    minion('minion-derived-kill-race', '0,42,99,0,0', answer=True,
+           body=derived_kill_race_in_guest,
+           extra_env={'HT_DTT_ACK': '1', 'HT_PD_BIRTH': '1',
+                      'HT_DTT_CLEANUP': '0,0,0,0,0',
+                      'HT_DTT_INJECT': '@ROOT@/inject.sock',
+                      'HT_DTT_LOG': '@ROOT@/dtt.log', 'HT_DTT_LOG_IDS': '1',
+                      'HT_EXEC_DTRACE': str(CONSUMER_CLIENT),
+                      'HT_REVOKED_CHECK_HOLD': '@ROOT@/revoked-check'})
 # Regression: the transport writer waited out its 10 s idle read deadline
 # before noticing shutdown; a guest daemon now exits promptly on SIGTERM.
 minion('minion-prompt-shutdown', '0,42,99,0,0', answer=True,
