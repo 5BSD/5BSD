@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Native zlib installation inventory."""
-load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_directory", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
 
 def zlib_installation(name):
-    native.filegroup(name = name + "_archive", srcs = [":z"], output_group = "archive")
+    native.filegroup(name = name + "_archive", srcs = [":static_archive"])
     native.filegroup(name = name + "_debug", srcs = [":debug"], output_group = "debug_files")
-    entries = []
+    bsd_install_directory(name = name + "_debug_lib_dir", destination = "/usr/lib/debug/lib",
+        owner = "root", group = "wheel", mode = "0755", install_tags = ["package=zlib", "dbg"])
+    entries = [":" + name + "_debug_lib_dir"]
     files = [
         ("archive", ":" + name + "_archive", "/usr/lib/libz.a", ["package=zlib", "dev"]),
         ("shared", ":stripped", "/lib/libz.so.6", ["package=zlib"]),

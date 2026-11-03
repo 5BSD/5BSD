@@ -1538,3 +1538,16 @@ source lookup are retained distinctions; no package archive byte-equality claim.
 See BZIP2-FAMILY-QUALIFICATION.md and its hash-bound summary. Complete selected
 world/rescue/pkgbase, dependency solver/installation, bootstrap, foreign runtime
 and publication remain incomplete; this is the selected four-package profile.
+
+### 2026-11-03: actual libz and three-package family on three ABIs
+
+The selected lib/libz gap now has original-order regular/PIC archives, genuine
+default CcInfo extraction, DSO, generated metadata and original installation
+records. Three normal profiles pass 96 production compiler contexts/3,648
+consumed pairs, three allocated DSO comparisons, ten links, 33 install records,
+nine independent original package comparisons and seven declared tests. The
+initial SDK/project header identity rejection is preserved and corrected.
+See ZLIB-THREE-ARCH-QUALIFICATION.md. Package timestamp policies and separate
+DWARF/source lookup remain explicit; this is not full world, bootstrap, foreign
+runtime, installation or publication qualification. Broader libz consumer
+rebuilds remain a full-world gate because CTF tools consume this library.

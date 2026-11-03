@@ -48414,3 +48414,15 @@ and 366 install records. A real 1-Wire export defect is fixed in both backends
 and additionally qualified on amd64. All twelve positive/negative provider
 tests pass. Separate DWARF, runtime and performance gates remain open. See
 [CROSS-IO-BUSES-QUALIFICATION.md](CROSS-IO-BUSES-QUALIFICATION.md).
+
+## zlib library/package family on three ABIs (2026-11-03)
+
+Source-owned libz archives, DSO and three selected packages now pass normal
+amd64, ARM64 and RISC-V profiles against independent original Make controls.
+All 96 production contexts/3,648 consumed pairs, 96 archive members, three DSO
+allocated payloads, ten actual links, 33 installation records and nine packages
+pass bounded checks. Seven declared tests pass; foreign checks use native host
+tools. The initial identical-byte header producer mismatch was rejected and
+corrected precisely. Epoch policy and separate DWARF/source lookup remain
+explicit; full-world consumers and bootstrap remain open. See
+[ZLIB-THREE-ARCH-QUALIFICATION.md](ZLIB-THREE-ARCH-QUALIFICATION.md).

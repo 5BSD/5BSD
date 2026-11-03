@@ -1,19 +1,34 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library", "cc_test", "cc_binary")
 load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
 
 cc_library(
-    name = "z",
-    srcs = ['zopen.c', '//sys/contrib/zlib:adler32.c', '//sys/contrib/zlib:compress.c', '//sys/contrib/zlib:crc32.c', '//sys/contrib/zlib:deflate.c', '//sys/contrib/zlib:gzclose.c', '//sys/contrib/zlib:gzlib.c', '//sys/contrib/zlib:gzread.c', '//sys/contrib/zlib:gzwrite.c', '//sys/contrib/zlib:infback.c', '//sys/contrib/zlib:inffast.c', '//sys/contrib/zlib:inflate.c', '//sys/contrib/zlib:inftrees.c', '//sys/contrib/zlib:trees.c', '//sys/contrib/zlib:uncompr.c', '//sys/contrib/zlib:zutil.c', '//sys/contrib/zlib:inftrees.h', '//sys/contrib/zlib:inffast.h', '//sys/contrib/zlib:crc32.h', '//sys/contrib/zlib:deflate.h', '//sys/contrib/zlib:trees.h', '//sys/contrib/zlib:zutil.h', '//sys/contrib/zlib:gzguts.h', '//sys/contrib/zlib:inffixed.h', '//sys/contrib/zlib:inflate.h'],
-    deps = ["//sys/contrib/zlib:headers"],
+    name = "objects",
+    srcs = ['//sys/contrib/zlib:adler32.c', '//sys/contrib/zlib:compress.c', '//sys/contrib/zlib:crc32.c', '//sys/contrib/zlib:deflate.c', '//sys/contrib/zlib:gzclose.c', '//sys/contrib/zlib:gzlib.c', '//sys/contrib/zlib:gzread.c', '//sys/contrib/zlib:gzwrite.c', '//sys/contrib/zlib:infback.c', '//sys/contrib/zlib:inffast.c', '//sys/contrib/zlib:inflate.c', '//sys/contrib/zlib:inftrees.c', '//sys/contrib/zlib:trees.c', '//sys/contrib/zlib:uncompr.c', '//sys/contrib/zlib:zutil.c', 'zopen.c', '//sys/contrib/zlib:inftrees.h', '//sys/contrib/zlib:inffast.h', '//sys/contrib/zlib:crc32.h', '//sys/contrib/zlib:deflate.h', '//sys/contrib/zlib:trees.h', '//sys/contrib/zlib:zutil.h', '//sys/contrib/zlib:gzguts.h', '//sys/contrib/zlib:inffixed.h', '//sys/contrib/zlib:inflate.h', '//sys/contrib/zlib:zlib.h', '//sys/contrib/zlib:zconf.h'],
+    # Project C files find their own local headers. zopen.c intentionally uses
+    # the selected SDK headers, matching the original Make -Ilib/libz recipe.
     local_defines = ["_LARGEFILE64_SOURCE=1", "HAVE_HIDDEN"] + select({
         "@platforms//cpu:x86_64": ["UNALIGNED_OK"],
         "@platforms//cpu:x86_32": ["UNALIGNED_OK"],
         "//conditions:default": [],
     }),
+    copts = ["-Ilib/libz"] + ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-deprecated-non-prototype', '-Wno-strict-prototypes', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Qunused-arguments'],
+    features = ["bsd_small_pic"],
+    linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd"],
-    visibility = ["//visibility:public"],
 )
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_objects")
+bsd_component_archive(name = "static_archive", groups = [":objects"],
+    object_order = ['adler32.o', 'compress.o', 'crc32.o', 'deflate.o', 'gzclose.o', 'gzlib.o', 'gzread.o', 'gzwrite.o', 'infback.o', 'inffast.o', 'inflate.o', 'inftrees.o', 'trees.o', 'uncompr.o', 'zutil.o', 'zopen.o'])
+bsd_component_archive(name = "pic_archive", groups = [":objects"], pic = True,
+    object_order = ['adler32.pic.o', 'compress.pic.o', 'crc32.pic.o', 'deflate.pic.o', 'gzclose.pic.o', 'gzlib.pic.o', 'gzread.pic.o', 'gzwrite.pic.o', 'infback.pic.o', 'inffast.pic.o', 'inflate.pic.o', 'inftrees.pic.o', 'trees.pic.o', 'uncompr.pic.o', 'zutil.pic.o', 'zopen.pic.o'])
+cc_import(name = "archive_link", static_library = ":static_archive", pic_static_library = ":pic_archive")
+cc_library(name = "z", deps = ["//sys/contrib/zlib:headers", ":archive_link"],
+    target_compatible_with = ["@platforms//os:freebsd"], visibility = ["//visibility:public"])
+bsd_component_objects(name = "regular_objects", group = ":objects", visibility = ["//visibility:public"])
+bsd_component_objects(name = "pic_objects", group = ":objects", pic = True, visibility = ["//visibility:public"])
+config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+config_setting(name = "target_riscv64", constraint_values = ["@platforms//cpu:riscv64"])
 bsd_configured_version_map(
     name = "version_map", symbol_maps = ["Symbol.map"], versions = "Versions.def",
     generator = "//share/mk:version_gen.awk", cpp_flags = ["-P", "-nostdinc", "-undef"],
@@ -25,9 +40,10 @@ bsd_configured_version_map(
 cc_shared_library(
     name = "z_shared", deps = [":z"], shared_lib_name = "libz.so.6",
     additional_linker_inputs = [":version_map"],
-    user_link_flags = ["-Wl,-soname,libz.so.6",
+    user_link_flags = ["-fstack-protector-strong", "-Wl,-x", "-Wl,-soname,libz.so.6",
         "-Wl,--version-script=$(location :version_map),--no-undefined-version",
-        "-Wl,--fatal-warnings,--warn-shared-textrel"],
+        "-Wl,--fatal-warnings,--warn-shared-textrel"] + select({
+        ":target_aarch64": ["-Wl,--fix-cortex-a53-843419"], "//conditions:default": []}),
     target_compatible_with = ["@platforms//os:freebsd"],
     visibility = ["//visibility:public"],
 )
@@ -40,20 +56,14 @@ cc_test(
     dynamic_deps = [":z_shared"], features = ["bsd_test_runtime_paths"], size = "small", target_compatible_with = ["@platforms//os:freebsd"],
 )
 
-load("//tools/build/bazel:bsd_pkgconfig.bzl", "bsd_header_pkgconfig")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 load(":installation.bzl", "zlib_installation")
-
-bsd_header_pkgconfig(
-    name = "pkgconfig", template = "//sys/contrib/zlib:zlib.pc.in",
-    header = "//sys/contrib/zlib:zlib.h",
-    version_patterns = ['^#define ZLIB_VERSION "([^" ]+)"'], output = "zlib.pc",
-    substitutions = {"prefix": "/usr", "exec_prefix": "${prefix}", "libdir": "/usr/lib",
-        "sharedlibdir": "/lib", "includedir": "/usr/include"},
-    python = "@bsd_sdk//toolchain:extra_python",
-    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
-    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
-)
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+bsd_script_output(name = "pkgconfig", script = "gen-pc.sh", src = "//sys/contrib/zlib:zlib.pc.in",
+    additional_sources = ["//sys/contrib/zlib:zlib.h"], input_mode = "argument", output = "zlib.pc",
+    shell = "@bsd_sdk//toolchain:sh", path_tools = {"@bsd_sdk//toolchain:sed": "sed"},
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:sed_runtime"])
 bsd_debug_split(
     name = "debug", src = ":z_shared", binary_name = "install/libz.so.6", debug_name = "install/libz.so.6.debug",
     objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
@@ -75,3 +85,18 @@ cc_test(
     dynamic_deps = [":z_shared"], features = ["bsd_test_runtime_paths"],
     size = "small", target_compatible_with = ["@platforms//os:freebsd"],
 )
+
+# The original upstream example supplies a real default static consumer on every
+# ABI. Its cross artifacts are inspected on the host, never executed.
+cc_binary(name = "example_artifact", srcs = ["//sys/contrib/zlib:test/example.c"],
+    deps = [":z"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd"])
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_host_artifact_test(name = "archive_contract_test", src = "archive-contract-test.py",
+    data = [":example_artifact", ":z_shared", ":static_archive", ":pic_archive", "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-objdump"],
+    args = ["--example", "$(location :example_artifact)", "--shared", "$(location :z_shared)",
+            "--archive", "$(location :static_archive)", "--pic-archive", "$(location :pic_archive)",
+            "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
+            "--objdump", "$(location @bsd_sdk//toolchain:bin/llvm-objdump)", "--machine"] +
+        select({":target_aarch64": ["183"], ":target_riscv64": ["243"], "//conditions:default": ["62"]}),
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:llvm-ar_runtime", "@bsd_sdk//toolchain:llvm-objdump_runtime"],
+    size = "small")

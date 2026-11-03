@@ -10696,3 +10696,14 @@ RTC/sensors, 1-Wire discovery/CRC/errors, PWM, SPI/flash and
 attach/detach/suspend lifetime. Untouched and filename-controlled Make
 references remain distinct. See
 [CROSS-IO-BUSES-QUALIFICATION.md](CROSS-IO-BUSES-QUALIFICATION.md).
+
+### libz on three userland ABIs (2026-11-03)
+
+Owner-local build/install/test declarations preserve runtime C and existing
+instrumentation. All 96 production objects and three DSO allocated payloads
+match independent original controls, with actual input and link bindings.
+Native upstream and BSD-wrapper tests plus immutable selected-DSO loader traces
+pass; cross artifacts are inspected by native tools. This establishes no live
+probe delivery or foreign runtime claim. Header producer identity was checked
+even when bytes matched. Separate DWARF/source lookup and full-world consumers
+remain open. See ZLIB-THREE-ARCH-QUALIFICATION.md.

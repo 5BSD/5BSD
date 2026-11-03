@@ -5582,3 +5582,15 @@ See
 .Pa tools/build/bazel/CROSS-IO-BUSES-QUALIFICATION.md
 for actual compiler, dependency, link and installation evidence and remaining
 DWARF, runtime, full-system and measured-performance gates.
+
+.Pp
+The selected libz format-5 profiles qualify source-owned regular and PIC
+archives, the shared library, and zlib, zlib-dbg and zlib-dev packages on amd64,
+ARM64 and RISC-V.
+Existing native tests exercise upstream and BSD APIs; cross profiles run native
+host artifact inspection without executing target programs.
+See
+.Pa tools/build/bazel/ZLIB-THREE-ARCH-QUALIFICATION.md
+for original Make input, archive extraction, library, installation and package
+comparisons, cached generator witness scope, timestamp policy and remaining
+separate DWARF, full-world consumer, bootstrap and foreign runtime gates.
