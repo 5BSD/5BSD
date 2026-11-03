@@ -512,6 +512,36 @@ vm_mem_dirty_log_map_snapshot(struct vm *vm,
 	return (0);
 }
 
+/*
+ * An alias can remain writable after the primary pmap dirty bit is cleared.
+ * Until secondary pmaps participate in collection, conservatively retain the
+ * entire backing segment in every dirty generation, including its other GPA
+ * mappings.  The marker survives alias removal and capability changes, so
+ * writes before those changes are retained.  It is reset only when the segment
+ * is freed; unmapping one GPA must not clean another alias of the same object.
+ */
+bool
+vm_mem_dirty_log_alias(struct vm *vm, uint64_t gpa,
+    struct vmm_dirty_log_range *range)
+{
+	struct vm_mem_map *map;
+
+	vm_assert_memseg_xlocked(vm);
+	for (int i = 0; i < VM_MAX_MEMMAPS; i++) {
+		map = &vm_mem(vm)->mem_maps[i];
+		if (gpa < map->gpa || gpa - map->gpa >= map->len)
+			continue;
+		if (atomic_load_int(&vm_mem(vm)->mem_segs[map->segid].dirty_alias) == 0)
+			return (false);
+		*range = (struct vmm_dirty_log_range) {
+			.gpa = map->gpa,
+			.length = map->len,
+		};
+		return (true);
+	}
+	return (false);
+}
+
 int
 vm_mem_dirty_log_enable(struct vm *vm, const struct vmm_dirty_log_range *range,
     bool allow_holes)
@@ -809,6 +839,9 @@ vm_gpa_map_alias(struct vcpu *vcpu, struct vmspace *dst_vmspace,
 		vm_object_deallocate(seg->object);
 		return (vm_mmap_to_errno(error));
 	}
+	/* Collection freezes every vCPU before inspecting this marker. */
+	if ((prot & VM_PROT_WRITE) != 0)
+		atomic_store_int(&seg->dirty_alias, 1);
 	if (effective_prot != NULL)
 		*effective_prot = prot;
 	return (0);

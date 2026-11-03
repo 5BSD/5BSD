@@ -29,10 +29,16 @@ vmm_dirty_log_machdep_access(void *arg, uint64_t gpa, bool clear,
 	if (vm == NULL || leaf == NULL ||
 	    (gpa & (VMM_DIRTY_LOG_GRANULARITY - 1)) != 0)
 		return (EINVAL);
+	if (vm_mem_dirty_log_alias(vm, gpa, &leaf->range)) {
+		/* Clearing the primary pmap cannot clean a writable alias. */
+		leaf->dirty = true;
+		return (0);
+	}
+
 	error = pmap_guest_query_dirty(vmspace_pmap(vm_vmspace(vm)), gpa,
 	    clear, &hardware);
 	if (error == ENOENT) {
-		/* An absent nested translation has never been written by a vCPU. */
+		/* An absent primary translation has no hardware dirty bit. */
 		*leaf = (struct vmm_dirty_log_leaf) {
 			.range = {
 				.gpa = gpa,

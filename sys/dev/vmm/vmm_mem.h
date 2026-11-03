@@ -56,6 +56,8 @@ struct vm_mem_seg {
 	size_t	len;
 	bool	sysmem;
 	struct vm_object *object;
+	/* Writable secondary mappings bypass primary-pmap dirty tracking. */
+	u_int	dirty_alias;
 };
 
 struct vm_mem_map {
@@ -133,6 +135,8 @@ int vm_mem_dirty_log_clear(struct vm *, const struct vmm_dirty_log_ticket *,
 int vm_mem_dirty_log_finish(struct vm *, const struct vmm_dirty_log_ticket *);
 int vm_mem_dirty_log_abort(struct vm *, const struct vmm_dirty_log_ticket *);
 int vm_mem_dirty_log_invalidate(struct vm *);
+bool vm_mem_dirty_log_alias(struct vm *, uint64_t,
+    struct vmm_dirty_log_range *);
 bool vm_memseg_sysmem(struct vm *vm, int ident);
 int vm_get_memseg(struct vm *vm, int ident, size_t *len, bool *sysmem,
     struct vm_object **objptr);
