@@ -20,6 +20,8 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
-bsd_python_test(name = "help_test", src = "help-test.py", data = [":ntptime"],
-    runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/msun:m_shared", "//lib/libthr:thr_shared"],
+filegroup(name = "test_program_runtime", testonly = True, srcs = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] + ["//lib/msun:m_shared", "//lib/libthr:thr_shared"])
+bsd_python_test(name = "help_test", src = "help-test.py", data = [":ntptime"] + [":test_program_runtime"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    args = ["--program-runtime", "$(locations :test_program_runtime)"],
     visibility = ["//visibility:public"])

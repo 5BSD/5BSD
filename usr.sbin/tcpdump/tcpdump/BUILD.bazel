@@ -107,7 +107,9 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
-bsd_python_test(name = "offline_test", src = "offline-test.py", data = [":tcpdump"],
-    runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/libpcap:pcap_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libthr:thr_shared"] +
-        select({"//tools/build/bazel/config:ofed_enabled": ["//lib/ofed/libibverbs:ibverbs_shared", "//lib/ofed/libbnxtre:bnxtre_shared", "//lib/ofed/libmlx5:mlx5_shared"], "//conditions:default": []}),
+filegroup(name = "test_program_runtime", testonly = True, srcs = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] + ["//lib/libpcap:pcap_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libthr:thr_shared"] +
+        select({"//tools/build/bazel/config:ofed_enabled": ["//lib/ofed/libibverbs:ibverbs_shared", "//lib/ofed/libbnxtre:bnxtre_shared", "//lib/ofed/libmlx5:mlx5_shared"], "//conditions:default": []}))
+bsd_python_test(name = "offline_test", src = "offline-test.py", data = [":tcpdump"] + [":test_program_runtime"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    args = ["--program-runtime", "$(locations :test_program_runtime)"],
     visibility = ["//visibility:public"])

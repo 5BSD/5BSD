@@ -1,5 +1,13 @@
 # Bazel qualification
 
+## Program runtime checkpoint (2026-11-03)
+
+Six native utility tests now isolate their program libraries from Python SDK
+libraries and check actual startup loader paths. All six targets executed
+freshly and passed, covering 16 unittest methods. See
+[PROGRAM-RUNTIME-QUALIFICATION.md](PROGRAM-RUNTIME-QUALIFICATION.md) for scope,
+retained evidence and remaining runtime review.
+
 ## Repository discovery checkpoint (2026-11-03)
 
 The complete offline native graph query now loads after correcting foreign

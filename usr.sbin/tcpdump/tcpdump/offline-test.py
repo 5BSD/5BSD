@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Decode private PCAP files without opening a live capture interface."""
 import ipaddress
+import argparse
 import os
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -40,7 +42,41 @@ def ipv6():
     return ethernet(0x86dd, header + udp())
 
 
+def program_environment():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--program-runtime', nargs='+', required=True)
+    args, unittest_args = parser.parse_known_args()
+    sys.argv[1:] = unittest_args
+    libraries = {Path(path).resolve(strict=True) for path in args.program_runtime}
+    environment = dict(os.environ)
+    environment.pop('LD_PRELOAD', None)
+    environment['LD_LIBRARY_PATH'] = ':'.join(sorted({str(path.parent) for path in libraries}))
+    return environment, libraries
+
+
+PROGRAM_ENVIRONMENT, PROGRAM_LIBRARIES = program_environment()
+
+
 class OfflineTest(unittest.TestCase):
+    def test_declared_program_libraries(self):
+        root = Path(os.environ['TEST_SRCDIR']) / os.environ['TEST_WORKSPACE']
+        environment = dict(PROGRAM_ENVIRONMENT, LD_TRACE_LOADED_OBJECTS='1',
+                           LD_TRACE_LOADED_OBJECTS_FMT1='%o|%p\\n',
+                           LD_TRACE_LOADED_OBJECTS_FMT2='%o|%p\\n')
+        result = subprocess.run([str(root / 'usr.sbin/tcpdump/tcpdump/tcpdump')], env=environment,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        paths = []
+        for line in result.stdout.splitlines():
+            name, path = line.split('|')
+            if name == path == '[vdso]':
+                continue
+            loaded = Path(path).resolve(strict=True)
+            self.assertIn(loaded, PROGRAM_LIBRARIES)
+            paths.append(loaded)
+        self.assertTrue(paths)
+
     def run_capture(self, content, *filters):
         root = Path(os.environ['TEST_SRCDIR']) / os.environ['TEST_WORKSPACE']
         with tempfile.TemporaryDirectory() as temporary:
@@ -48,7 +84,7 @@ class OfflineTest(unittest.TestCase):
             capture.write_bytes(content)
             result = subprocess.run([str(root / 'usr.sbin/tcpdump/tcpdump/tcpdump'),
                 '-n', '-t', '-r', str(capture), *filters], cwd=temporary,
-                capture_output=True, text=True, timeout=15)
+                env=PROGRAM_ENVIRONMENT, capture_output=True, text=True, timeout=15)
             self.assertEqual(sorted(p.name for p in Path(temporary).iterdir()), ['input.pcap'])
             self.assertEqual(capture.read_bytes(), content)
             return result

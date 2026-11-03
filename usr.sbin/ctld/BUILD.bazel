@@ -41,5 +41,8 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
-bsd_python_test(name = "help_test", src = "help-test.py", data = [":ctld"],
-    runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/libexpat:bsdxml_shared", "//lib/libmd:md_shared", "//lib/libnv:nv_shared", "//lib/libsbuf:sbuf_shared", "//lib/libutil:util_shared", "//lib/libucl:ucl_shared", "//lib/msun:m_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"], visibility = ["//visibility:public"])
+filegroup(name = "test_program_runtime", testonly = True, srcs = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] + ["//lib/libexpat:bsdxml_shared", "//lib/libmd:md_shared", "//lib/libnv:nv_shared", "//lib/libsbuf:sbuf_shared", "//lib/libutil:util_shared", "//lib/libucl:ucl_shared", "//lib/msun:m_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"])
+bsd_python_test(name = "help_test", src = "help-test.py", data = [":ctld"] + [":test_program_runtime"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    args = ["--program-runtime", "$(locations :test_program_runtime)"],
+    visibility = ["//visibility:public"])
