@@ -213,3 +213,41 @@ configuration, security, package or publication interface changes here.
 A third completed-cache block-clone pass also finished with unchanged cache
 identities. Its records are under bazel-completed-cache-blockclone-r3-20261103;
 this is storage recovery only, not build performance evidence.
+
+
+## ARM64-stage tool qualified; RISC-V refresh active (2026-11-03)
+
+The ARM64 bootstrap LLVM library and objcopy program rebuild/install completed.
+The broad inventory observer rejected its program debug output as a change under
+usr/lib. Preserve that initial rejection: target-before/after.json differ in
+exactly usr/lib/debug/usr/bin/llvm-objcopy.debug. The follow-up proves the
+installed file equals the actual newly built separate native debug artifact,
+checks its native ELF machine, and verifies every other inventory entry is
+unchanged. This is an explicit program install output, not a target library or
+an exception for the debug tree. Source/profile bindings also remain unchanged.
+The build record is bazel-objcopy-bootstrap-refresh-aarch64-r1-20261103;
+the accepted narrowed inventory review and format results are
+bazel-objcopy-bootstrap-refresh-aarch64-review-r2-20261103, under /usr/obj/usr/src.
+
+The refreshed staged tool SHA256 is
+04c5e1a27322410954f2922a382eb010bb367ee67fc7496ec35ef02c1e8067e5.
+It passes all 65 maintained format checks. The r4 frozen SDK is unchanged and
+still contains its previously rejected tool; no fresh SDK or real module pass
+is claimed yet. LLVM rebuilding took 694.77 elapsed seconds with 16 jobs; raw
+time -l CPU, RSS and block-I/O observations are retained. The reported maximum
+RSS is not an aggregate parallel-build memory peak, and this is not a Make
+versus Bazel performance comparison. The disk reserve did not interrupt it.
+
+The RISC-V refresh is running at
+bazel-objcopy-bootstrap-refresh-riscv64-r2-20261103. Its observer explicitly
+proves the single program debug output against its built bytes if that path
+changes, while requiring all other target inventory entries unchanged. It
+retains the same 18 GiB admission / 16 GiB reserve and all-CPU build policy.
+No RISC-V refresh or format result is claimed until that run terminates.
+
+Existing nullfs_artifacts_test remains AMD64 ET_REL-specific and uses the
+older target-tool audit contract. A private follow-up test design reuses the
+independent CTF graph parser with explicit shared-module opt-in and the existing
+host-artifact rule; this must inspect actual foreign modules, their SYMTAB
+links and source-policy global types. It is not implemented or Bazel-qualified.
+Do not count the existing AMD64 test as foreign semantic module coverage.

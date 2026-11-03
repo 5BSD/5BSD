@@ -5740,7 +5740,9 @@ An unchanged composite ARM64 nullfs profile reproduced a native loader failure
 with target libc; ten corrected host actions bind native ELF inputs.
 Strict target artifact review rejects a CTF symbol/type association error
 at ARM64 export localization; full module qualification remains open.
-The source fix exists, but foreign SDK tools fail the existing format suite.
+The source fix exists, but frozen foreign SDK tools fail the format suite.
+The rebuilt ARM64-stage bootstrap tool passes all 65 format checks; fresh SDK
+and real cross-module qualification remain open.
 Refresh bootstrap tools through their maintained source-owner recipes and
 qualify fresh SDKs without replacing files or rewriting receipts in existing
 frozen snapshots.

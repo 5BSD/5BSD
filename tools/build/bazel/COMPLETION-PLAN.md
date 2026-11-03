@@ -1832,3 +1832,21 @@ CLI and complete component/package ownership. Do not disable Make recursion,
 produce a partial OpenSSL package, or count core-only qualification as selected
 world completion. Separate debug/source lookup, alternate options, foreign
 runtime, native toolchain bootstrap and performance remain open.
+
+
+### 2026-11-03: ARM64 bootstrap tool refresh closes format gate
+
+The maintained bootstrap source-owner rebuild/install completed for ARM64's
+native objcopy. All 65 format regressions pass on its actual newly staged bytes.
+The initial inventory rejection is retained; exactly its separate native program
+debug file changed under usr/lib, and follow-up checks prove that install output
+against the new build while every other target header/library entry is unchanged.
+RISC-V refresh is active, not yet qualified. Both frozen r4 SDKs remain unchanged.
+See KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md for hashes and actual evidence.
+
+Next finish the RISC-V refresh, construct fresh composite SDKs and qualify their
+selected tools, then rerun real module export/CTF/debug/install and cache paths.
+Add a declared cross-module semantic test: the existing AMD64 whole-module audit
+cannot establish foreign ET_DYN coverage. Preserve original failures and compare
+against independently refreshed original controls. Full-system/bootstrap/debug/
+performance gates and Make production/default policy remain unchanged.
