@@ -4,8 +4,10 @@
 
 The maintained world audit now checks explicit architecture/profile contexts and
 captures additional test kinds and grouped headers. All three SDK/profile
-preflights and two mismatch-rejection checks pass. The full amd64/ARM64/RISC-V
-audit matrix is running; no refreshed complete coverage count is claimed yet.
+preflights and two mismatch-rejection checks pass. The amd64 metadata survey
+finishes with 2,128 directories and no query failures; these are not successful
+build counts. ARM64/RISC-V audits are still running. Source review identifies
+complete standalone/EFI libraries and EFI loader links as required next work.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
 
 ## Googletest framework checkpoint (2026-11-03)

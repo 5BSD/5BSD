@@ -36,8 +36,8 @@ At this checkpoint:
 
 | Target ABI | Recorded machine | SDK/profile preflight | Full world audit |
 | --- | --- | --- | --- |
-| amd64 | amd64 | passed | directory traversal complete: 2,128 directories; component survey running |
-| aarch64 | arm64 | passed | queued |
+| amd64 | amd64 | passed | complete metadata and package-presence survey: 2,128 directories, no query failures |
+| aarch64 | arm64 | passed | traversal complete: 2,087 directories; component survey running |
 | riscv64 | riscv | passed | queued |
 
 `sdk-preflight.json` records actual BuildEnvironment construction, compiler and
@@ -55,7 +55,24 @@ checks the newly added metadata fields against real maintained Makefiles.
 Partial streams are not complete inventories. Final component summaries and
 native surveys must pass before publishing refreshed directory/package counts.
 
-The last completed survey predates many native conversions. Its numbers remain
+The refreshed amd64 survey is complete. Its 2,128 directories divide into
+1,479 with local BUILD files and 649 with only ancestor packages. Among those
+ancestor-only directories, 125 have program metadata and 55 have library
+metadata. These are review leads, not unconverted binary/library counts:
+parents can own implementations, while a local BUILD file can contain only
+source/header bindings. The ARM64 and RISC-V surveys remain incomplete.
+
+`bazel-world-components-amd64-r1-20261103/review.json` records the complete
+amd64 metadata checks and a concrete next dependency review. The generic
+standalone and EFI standalone libraries select different source/verification
+contexts. Existing `stand/libsa/BUILD.bazel` covers boot2 header/textual inputs;
+`stand/efi/libefi/BUILD.bazel` exports efichar.c for userland. Neither defines
+its corresponding complete freestanding archive. The selected EFI loader
+directories lack native program declarations. Their archive/source-generator
+contexts and final EFI links are a required next implementation tranche.
+Do not omit these boot products to construct a passing partial world.
+
+The 2026-10-27/30 survey predates many native conversions. Its numbers remain
 historical and must not be presented as current coverage. The old root-package
 "source file only" description was also inaccurate: the current root has
 source/header bindings, while a complete native world aggregate remains absent.
