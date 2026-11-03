@@ -662,3 +662,26 @@ bsd_source_headers(name = "rdma_module_context_4", hdrs = ["in6.h", "in6_fib.h",
 
 bsd_source_headers(name = "chelsio_module_context_4", hdrs = ["in6.h", "in6_fib.h", "scope6_var.h"], includes = [],
     visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ip6_mroute_ip6_mroute_module",
+    srcs = ['ip6_mroute.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:ipv6_kernel_raw_ip6_headers", "//sys/netinet6:network_services_module_context_5", "//sys/netinet:network_services_module_context_12", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp6_usrreq_module",
+    srcs = ['sctp6_usrreq.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:network_services_module_context_15", "//sys/netinet:network_services_module_context_45", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "send_send_module",
+    srcs = ['send.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:ipv6_kernel_mld6_headers", "//sys/netinet6:network_services_module_context_16", "//sys/netinet:network_services_module_context_47", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]

@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "if_geneve", objects = ["//sys/net:if_geneve_if_geneve_module_object_files"], object_order = ["if_geneve.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "if_geneve",
+    objects = ["//sys/net:" + arch + "_if_geneve_if_geneve_module_object_files"],
+    object_order = ['if_geneve.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

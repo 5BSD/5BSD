@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "ip_mroute", objects = ["//sys/netinet:ip_mroute_ip_mroute_module_object_files"], object_order = ["ip_mroute.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "ip_mroute",
+    objects = ["//sys/netinet:" + arch + "_ip_mroute_ip_mroute_module_object_files"],
+    object_order = ['ip_mroute.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

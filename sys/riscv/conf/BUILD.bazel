@@ -48,7 +48,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ((["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"] + (["//sys/dev/usb/net:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__"] if option in ["inet", "inet6"] else [])) + {'cam': ['//sys/dev/usb:__pkg__'], 'inet': ['//sys/dev/usb:__pkg__']}.get(option, [])) + {'evdev': ['//sys/dev/cyapa:__pkg__', '//sys/dev/gpio:__pkg__']}.get(option, []))
+    strip_include_prefix = "generic_options", visibility = ((((["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"] + (["//sys/dev/usb/net:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__"] if option in ["inet", "inet6"] else [])) + {'cam': ['//sys/dev/usb:__pkg__'], 'inet': ['//sys/dev/usb:__pkg__']}.get(option, [])) + {'evdev': ['//sys/dev/cyapa:__pkg__', '//sys/dev/gpio:__pkg__']}.get(option, [])) + {'inet': ['//sys/dev/wg:__pkg__', '//sys/netinet6:__pkg__', '//sys/netipsec:__pkg__', '//sys/netlink:__pkg__']}.get(option, [])) + {'inet6': ['//sys/dev/wg:__pkg__', '//sys/netinet6:__pkg__', '//sys/netipsec:__pkg__', '//sys/netlink:__pkg__']}.get(option, []))
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 
 # Filesystem module option contents come from the target config tree.
@@ -84,7 +84,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["ipsec", "kern_tls", "rss"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__"])
+    strip_include_prefix = "generic_options", visibility = (["//sys/net:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__"]) + {'ipsec': ['//sys/netipsec:__pkg__']}.get(option, []))
  for option in ["ipsec", "kern_tls", "rss"]]
 
 # Storage option contents come from the target config tree.
@@ -117,7 +117,7 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["posix", "sysvipc", "capsicum"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = (["//sys/kern:__pkg__"]) + {'capsicum': ['//sys/netinet:__pkg__']}.get(option, []))
  for option in ["posix", "sysvipc", "capsicum"]]
 
 # Filesystem module options come from the actual target configuration.
@@ -259,3 +259,24 @@ bsd_tree_file(name = "opt_spi", tree = ":generic_config", member = "opt_spi.h",
 
 cc_library(name = "generic_opt_spi_header", hdrs = [":opt_spi"],
     strip_include_prefix = "generic_options", visibility = ['//sys/dev/spibus:__pkg__'])
+
+bsd_tree_file(name = "opt_ktrace", tree = ":generic_config", member = "opt_ktrace.h",
+    output = "generic_options/opt_ktrace.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "generic_opt_ktrace_header", hdrs = [":opt_ktrace"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/netinet:__pkg__'])
+
+bsd_tree_file(name = "opt_mrouting", tree = ":generic_config", member = "opt_mrouting.h",
+    output = "generic_options/opt_mrouting.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "generic_opt_mrouting_header", hdrs = [":opt_mrouting"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/netinet:__pkg__'])
+
+bsd_tree_file(name = "opt_sctp", tree = ":generic_config", member = "opt_sctp.h",
+    output = "generic_options/opt_sctp.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "generic_opt_sctp_header", hdrs = [":opt_sctp"],
+    strip_include_prefix = "generic_options", visibility = ['//sys/netinet6:__pkg__', '//sys/netinet:__pkg__', '//sys/netipsec:__pkg__'])

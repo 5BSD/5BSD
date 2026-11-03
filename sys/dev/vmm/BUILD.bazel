@@ -236,3 +236,6 @@ amd64_generic_module_objects(name = "vmm_vmm_snapshot_state_module", srcs = ["vm
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
 
 bsd_source_headers(name = "vmx_layout_extra_headers", hdrs = ["vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [], visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+# Additional physical prerequisites of the cross-target network protocol consumers.
+bsd_source_headers(name = "cross_network_protocol_if_tuntap_if_tuntap_module_headers", hdrs = ['vmm_snapshot_common.h'], visibility = ['//sys/net:__pkg__'])

@@ -2,3 +2,13 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "alias_irc", objects = ["//sys/netinet/libalias:alias_irc_alias_irc_module_object_files"], object_order = ["alias_irc.o"], export_all = False)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "alias_irc",
+    objects = ["//sys/netinet/libalias:" + arch + "_alias_irc_alias_irc_module_object_files"],
+    object_order = ['alias_irc.o'],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

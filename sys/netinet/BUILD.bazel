@@ -1183,3 +1183,213 @@ bsd_source_headers(name = "linux64_module_context_1", hdrs = ["icmp6.h", "in.h",
     srcs = ["in_fib_dxr.c"],
     deps = ["//sys/contrib/ck:cross_routing_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:network_policy_kernel_route_helpers_headers", "//sys/net:network_services_module_context_9", "//sys/netinet6:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_inet_header"],
 ) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ip_mroute_ip_mroute_module",
+    srcs = ['ip_mroute.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_services_module_context_19", "//sys/netinet6:usb_net_umb_headers", "//sys/netinet:network_services_module_context_13", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_mrouting_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "h_ertt_h_ertt_module",
+    srcs = ['khelp/h_ertt.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:network_services_module_context_24", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_asconf_module",
+    srcs = ['sctp_asconf.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_30", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_auth_module",
+    srcs = ['sctp_auth.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_31", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_bsd_addr_module",
+    srcs = ['sctp_bsd_addr.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_32", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_cc_functions_module",
+    srcs = ['sctp_cc_functions.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_33", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_indata_module",
+    srcs = ['sctp_indata.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_34", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_input_module",
+    srcs = ['sctp_input.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_35", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_kdtrace_module",
+    srcs = ['sctp_kdtrace.c'],
+    deps = [],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_module_module",
+    srcs = ['sctp_module.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:network_services_module_context_15", "//sys/netinet:network_services_module_context_36", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_output_module",
+    srcs = ['sctp_output.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_37", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_pcb_module",
+    srcs = ['sctp_pcb.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_38", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_peeloff_module",
+    srcs = ['sctp_peeloff.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_39", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_ss_functions_module",
+    srcs = ['sctp_ss_functions.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_40", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_syscalls_module",
+    srcs = ['sctp_syscalls.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:network_services_module_context_15", "//sys/netinet:network_services_module_context_41", "//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:filesystems_rpc_kernel_rpc_generic_headers", "//sys/" + arch + "/conf:generic_opt_capsicum_header", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ktrace_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_sysctl_module",
+    srcs = ['sctp_sysctl.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_42", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_timer_module",
+    srcs = ['sctp_timer.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:network_services_module_context_43", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctp_usrreq_module",
+    srcs = ['sctp_usrreq.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:network_services_module_context_15", "//sys/netinet:network_services_module_context_44", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "sctp_sctputil_module",
+    srcs = ['sctputil.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:network_services_module_context_15", "//sys/netinet:network_services_module_context_46", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_sctp_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "siftr_siftr_module",
+    srcs = ['siftr.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_services_module_context_47", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:usb_net_umb_headers", "//sys/netinet:network_services_module_context_50", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcp_bbr_bbr_module",
+    srcs = ['tcp_stacks/bbr.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:storage_tcp_ktest_module_context_3", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet:storage_tcp_ktest_module_context_2", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header", "//sys/" + arch + "/conf:generic_opt_ratelimit_header"],
+    local_defines = ['MODNAME=tcp_bbr', 'STACKNAME=bbr'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcp_bbr_sack_filter_module",
+    srcs = ['tcp_stacks/sack_filter.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:storage_tcp_ktest_module_context_3", "//sys/vm:usb_net_usie_headers"],
+    local_defines = ['MODNAME=tcp_bbr', 'STACKNAME=bbr'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcp_bbr_rack_bbr_common_module",
+    srcs = ['tcp_stacks/rack_bbr_common.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:storage_tcp_ktest_module_context_4", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet:storage_tcp_ktest_module_context_4", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header", "//sys/" + arch + "/conf:generic_opt_ratelimit_header"],
+    local_defines = ['MODNAME=tcp_bbr', 'STACKNAME=bbr'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcphpts_tcp_hpts_module",
+    srcs = ['tcp_hpts.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:ipv4_kernel_tcp_lro_headers", "//sys/netinet:storage_tcp_ktest_module_context_5", "//sys/vm:mii_family_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_rss_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcphpts_tcp_lro_hpts_module",
+    srcs = ['tcp_lro_hpts.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:storage_tcp_ktest_module_context_5", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:ipv4_kernel_tcp_lro_headers", "//sys/netinet:storage_tcp_ktest_module_context_6", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcp_rack_rack_module",
+    srcs = ['tcp_stacks/rack.c', 'tcp_stacks/rack_pcm.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:storage_tcp_ktest_module_context_6", "//sys/netinet/cc:storage_tcp_ktest_module_context_1", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet:storage_tcp_ktest_module_context_7", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header", "//sys/" + arch + "/conf:generic_opt_kern_tls_header", "//sys/" + arch + "/conf:generic_opt_ratelimit_header"],
+    local_defines = ['MODNAME=tcp_rack', 'STACKNAME=rack'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcp_rack_sack_filter_module",
+    srcs = ['tcp_stacks/sack_filter.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:storage_tcp_ktest_module_context_3", "//sys/vm:usb_net_usie_headers"],
+    local_defines = ['MODNAME=tcp_rack', 'STACKNAME=rack'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcp_rack_rack_bbr_common_module",
+    srcs = ['tcp_stacks/rack_bbr_common.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:storage_tcp_ktest_module_context_4", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet:storage_tcp_ktest_module_context_4", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header", "//sys/" + arch + "/conf:generic_opt_ratelimit_header"],
+    local_defines = ['MODNAME=tcp_rack', 'STACKNAME=rack'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "tcp_rack_tailq_hash_module",
+    srcs = ['tcp_stacks/tailq_hash.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:storage_tcp_ktest_module_context_6", "//sys/netinet/cc:storage_tcp_ktest_module_context_1", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet:storage_tcp_ktest_module_context_8", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header", "//sys/" + arch + "/conf:generic_opt_kern_tls_header", "//sys/" + arch + "/conf:generic_opt_ratelimit_header"],
+    local_defines = ['MODNAME=tcp_rack', 'STACKNAME=rack'],
+) for arch in ['arm64', 'riscv']]

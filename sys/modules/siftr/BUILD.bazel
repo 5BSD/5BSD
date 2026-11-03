@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "siftr", objects = ["//sys/netinet:siftr_siftr_module_object_files"], object_order = ["siftr.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "siftr",
+    objects = ["//sys/netinet:" + arch + "_siftr_siftr_module_object_files"],
+    object_order = ['siftr.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

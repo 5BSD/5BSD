@@ -35,3 +35,41 @@ amd64_generic_module_objects(name = "if_wg_wg_crypto_module", srcs = ["wg_crypto
 amd64_generic_module_objects(name = "if_wg_wg_noise_module", srcs = ["wg_noise.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/wg:network_services_module_context_3", "//sys/crypto/siphash:core_kernel_uipc_mbuf_headers", "//sys/crypto:network_services_module_context_0"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-include", "$(execpath //sys/dev/wg:compat.h)"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = ["//sys/dev/wg:compat.h"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_wg_if_wg_module",
+    srcs = ['if_wg.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto:network_services_module_context_0", "//sys/dev/wg:network_services_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:network_services_module_context_16", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/netinet:network_services_module_context_10", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    copts = ['-include', '$(execpath //sys/dev/wg:compat.h)'],
+    textual_hdrs = ['//sys/dev/wg:compat.h'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_wg_wg_cookie_module",
+    srcs = ['wg_cookie.c'],
+    deps = ["//sys/crypto/siphash:core_kernel_uipc_mbuf_headers", "//sys/crypto:network_services_module_context_0", "//sys/dev/wg:network_services_module_context_1", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    copts = ['-include', '$(execpath //sys/dev/wg:compat.h)'],
+    textual_hdrs = ['//sys/dev/wg:compat.h'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_wg_wg_crypto_module",
+    srcs = ['wg_crypto.c'],
+    deps = ["//sys/crypto:network_services_module_context_0", "//sys/dev/wg:network_services_module_context_2", "//sys/opencrypto:opencrypto_kernel_criov_headers", "//sys/vm:usb_net_usie_headers"],
+    copts = ['-include', '$(execpath //sys/dev/wg:compat.h)'],
+    textual_hdrs = ['//sys/dev/wg:compat.h'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_wg_wg_noise_module",
+    srcs = ['wg_noise.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/crypto/siphash:core_kernel_uipc_mbuf_headers", "//sys/crypto:network_services_module_context_0", "//sys/dev/wg:network_services_module_context_3"],
+    copts = ['-include', '$(execpath //sys/dev/wg:compat.h)'],
+    textual_hdrs = ['//sys/dev/wg:compat.h'],
+) for arch in ['arm64', 'riscv']]

@@ -2,3 +2,16 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "netlink", objects = ["//sys/netlink:netlink_netlink_module_module_object_files", "//sys/netlink:netlink_netlink_domain_module_object_files", "//sys/netlink:netlink_netlink_io_module_object_files", "//sys/netlink:netlink_netlink_message_writer_module_object_files", "//sys/netlink:netlink_netlink_generic_module_object_files", "//sys/netlink:netlink_netlink_sock_diag_module_object_files", "//sys/netlink:netlink_netlink_route_module_object_files", "//sys/netlink:netlink_iface_module_object_files", "//sys/netlink:netlink_iface_drivers_module_object_files", "//sys/netlink:netlink_neigh_module_object_files", "//sys/netlink:netlink_nexthop_module_object_files", "//sys/netlink:netlink_rt_module_object_files"], object_order = ["netlink_module.o", "netlink_domain.o", "netlink_io.o", "netlink_message_writer.o", "netlink_generic.o", "netlink_sock_diag.o", "netlink_route.o", "iface.o", "iface_drivers.o", "neigh.o", "nexthop.o", "rt.o"], export_all = True, package = "kernel", aliases = [], ctf_object_paths = ["netlink_module.o", "netlink_domain.o", "netlink_io.o", "netlink_message_writer.o", "netlink_generic.o", "netlink_sock_diag.o", "netlink_route.o", "route/iface.o", "route/iface_drivers.o", "route/neigh.o", "route/nexthop.o", "route/rt.o"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "netlink",
+    objects = ["//sys/netlink:" + arch + "_netlink_netlink_module_module_object_files", "//sys/netlink:" + arch + "_netlink_netlink_domain_module_object_files", "//sys/netlink:" + arch + "_netlink_netlink_io_module_object_files", "//sys/netlink:" + arch + "_netlink_netlink_message_writer_module_object_files", "//sys/netlink:" + arch + "_netlink_netlink_generic_module_object_files", "//sys/netlink:" + arch + "_netlink_netlink_sock_diag_module_object_files", "//sys/netlink:" + arch + "_netlink_netlink_route_module_object_files", "//sys/netlink:" + arch + "_netlink_iface_module_object_files", "//sys/netlink:" + arch + "_netlink_iface_drivers_module_object_files", "//sys/netlink:" + arch + "_netlink_neigh_module_object_files", "//sys/netlink:" + arch + "_netlink_nexthop_module_object_files", "//sys/netlink:" + arch + "_netlink_rt_module_object_files"],
+    object_order = ['netlink_module.o', 'netlink_domain.o', 'netlink_io.o', 'netlink_message_writer.o', 'netlink_generic.o', 'netlink_sock_diag.o', 'netlink_route.o', 'iface.o', 'iface_drivers.o', 'neigh.o', 'nexthop.o', 'rt.o'],
+    package = 'kernel',
+    aliases = [],
+    ctf_object_paths = ['netlink_module.o', 'netlink_domain.o', 'netlink_io.o', 'netlink_message_writer.o', 'netlink_generic.o', 'netlink_sock_diag.o', 'netlink_route.o', 'route/iface.o', 'route/iface_drivers.o', 'route/neigh.o', 'route/nexthop.o', 'route/rt.o'],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

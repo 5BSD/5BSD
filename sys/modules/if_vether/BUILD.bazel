@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "if_vether", objects = ["//sys/net:if_vether_if_vether_module_object_files"], object_order = ["if_vether.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "if_vether",
+    objects = ["//sys/net:" + arch + "_if_vether_if_vether_module_object_files"],
+    object_order = ['if_vether.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

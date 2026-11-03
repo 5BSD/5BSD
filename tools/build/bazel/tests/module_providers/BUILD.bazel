@@ -289,3 +289,18 @@ io_bus_provider_tests(
     modules = {name: _IO_BUS_MODULES[name] + ":generic_module" for name in ["ow", "ow_temp", "owc"]},
     ow_provider = "//sys/modules/ow/ow:generic_full",
 )
+
+load(":network_protocol_tests.bzl", "network_protocol_provider_tests")
+
+_NETWORK_PROTOCOL_MODULES = {'if_geneve': '//sys/modules/if_geneve', 'if_ovpn': '//sys/modules/if_ovpn', 'if_tuntap': '//sys/modules/if_tuntap', 'if_vether': '//sys/modules/if_vether', 'if_vxlan': '//sys/modules/if_vxlan', 'if_wg': '//sys/modules/if_wg', 'ip6_mroute': '//sys/modules/ip6_mroute_mod', 'ip_mroute': '//sys/modules/ip_mroute_mod', 'ipsec': '//sys/modules/ipsec', 'h_ertt': '//sys/modules/khelp/h_ertt', 'libalias': '//sys/modules/libalias/libalias', 'alias_dummy': '//sys/modules/libalias/modules/dummy', 'alias_ftp': '//sys/modules/libalias/modules/ftp', 'alias_irc': '//sys/modules/libalias/modules/irc', 'alias_nbt': '//sys/modules/libalias/modules/nbt', 'alias_pptp': '//sys/modules/libalias/modules/pptp', 'alias_skinny': '//sys/modules/libalias/modules/skinny', 'alias_smedia': '//sys/modules/libalias/modules/smedia', 'netlink': '//sys/modules/netlink', 'nlsysevent': '//sys/modules/nlsysevent', 'sctp': '//sys/modules/sctp', 'send': '//sys/modules/send', 'siftr': '//sys/modules/siftr', 'tcp_bbr': '//sys/modules/tcp/bbr', 'tcphpts': '//sys/modules/tcp/hpts', 'tcp_rack': '//sys/modules/tcp/rack', 'tcpmd5': '//sys/modules/tcp/tcpmd5', 'xdr': '//sys/modules/xdr'}
+[network_protocol_provider_tests(
+    arch = arch,
+    modules = {name: package + ":" + arch + "_generic_module" for name, package in _NETWORK_PROTOCOL_MODULES.items()},
+    hpts_provider = "//sys/modules/tcp/hpts:" + arch + "_generic_localized",
+) for arch in ["arm64", "riscv"]]
+
+network_protocol_provider_tests(
+    arch = "amd64",
+    modules = {name: _NETWORK_PROTOCOL_MODULES[name] + ":generic_module" for name in ["tcphpts", "tcp_bbr", "tcp_rack"]},
+    hpts_provider = "//sys/modules/tcp/hpts:generic_full",
+)

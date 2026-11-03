@@ -1738,3 +1738,45 @@ bsd_source_headers(name = "linux64_module_context_1", hdrs = ["if.h", "if_dl.h",
 
 # Additional physical prerequisites of the cross-target I/O-bus consumers.
 bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_module_headers", hdrs = ['ethernet.h', 'if.h'], visibility = (((['//sys/dev/gpio:__pkg__']) + ['//sys/dev/iicbus:__pkg__']) + ['//sys/dev/pwm:__pkg__']) + ['//sys/dev/spibus:__pkg__'])
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_geneve_if_geneve_module",
+    srcs = ['if_geneve.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:network_services_module_context_11", "//sys/netinet6:network_services_module_context_3", "//sys/netinet:network_services_module_context_6", "//sys/netlink:net_kernel_if_gif_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_ovpn_if_ovpn_module",
+    srcs = ['if_ovpn.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_services_module_context_12", "//sys/netinet6:network_services_module_context_1", "//sys/netinet:network_services_module_context_7", "//sys/opencrypto:opencrypto_kernel_criov_headers", "//sys/vm:mii_family_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_tuntap_if_tuntap_module",
+    srcs = ['if_tuntap.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/dev/virtio/network:net_kernel_if_tuntap_headers", "//sys/dev/vmm:cross_network_protocol_if_tuntap_if_tuntap_module_headers", "//sys/dev/vmm:net_kernel_if_tuntap_headers", "//sys/net:net_kernel_if_tuntap_headers", "//sys/netinet6:usb_net_if_ure_headers", "//sys/netinet:net_kernel_if_tuntap_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:acpi_support_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_vether_if_vether_module",
+    srcs = ['if_vether.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:net_kernel_if_vether_headers", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "if_vxlan_if_vxlan_module",
+    srcs = ['if_vxlan.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_services_module_context_15", "//sys/netinet6:network_services_module_context_3", "//sys/netinet:network_services_module_context_9", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ipsec_if_ipsec_module",
+    srcs = ['if_ipsec.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:network_services_module_context_20", "//sys/netinet6:network_policy_kernel_route_ctl_headers", "//sys/netinet:network_services_module_context_14", "//sys/netipsec:network_services_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header", "//sys/" + arch + "/conf:generic_opt_ipsec_header"],
+) for arch in ['arm64', 'riscv']]

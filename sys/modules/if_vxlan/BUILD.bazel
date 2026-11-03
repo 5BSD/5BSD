@@ -2,3 +2,15 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "if_vxlan", objects = ["//sys/net:if_vxlan_if_vxlan_module_object_files"], object_order = ["if_vxlan.o"], export_all = False, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "if_vxlan",
+    objects = ["//sys/net:" + arch + "_if_vxlan_if_vxlan_module_object_files"],
+    object_order = ['if_vxlan.o'],
+    package = 'kernel',
+    aliases = [],
+    export_all = False,
+) for arch in ["arm64", "riscv"]]

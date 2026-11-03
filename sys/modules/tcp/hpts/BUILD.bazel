@@ -1,4 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
-amd64_generic_module(module = "tcphpts", objects = ["//sys/netinet:tcphpts_tcp_hpts_module_object_files", "//sys/netinet:tcphpts_tcp_lro_hpts_module_object_files"], object_order = ["tcp_hpts.o", "tcp_lro_hpts.o"], export_all = False, package = "kernel")
+amd64_generic_module(module = "tcphpts", objects = ["//sys/netinet:tcphpts_tcp_hpts_module_object_files", "//sys/netinet:tcphpts_tcp_lro_hpts_module_object_files"], object_order = ["tcp_hpts.o", "tcp_lro_hpts.o"], export_all = True, package = "kernel")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "tcphpts",
+    objects = ["//sys/netinet:" + arch + "_tcphpts_tcp_hpts_module_object_files", "//sys/netinet:" + arch + "_tcphpts_tcp_lro_hpts_module_object_files"],
+    object_order = ['tcp_hpts.o', 'tcp_lro_hpts.o'],
+    package = 'kernel',
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

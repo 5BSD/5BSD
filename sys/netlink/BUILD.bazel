@@ -167,3 +167,108 @@ bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["netlink.h
 
 bsd_source_headers(name = "compat_services_module_context_1", hdrs = ["netlink.h"], includes = [],
     visibility = ["//sys/compat/linux:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_netlink_module_module",
+    srcs = ['netlink_module.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_netlink_domain_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_module_headers"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_netlink_domain_module",
+    srcs = ['netlink_domain.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_netlink_domain_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_domain_headers", "//sys/vm:usb_net_usie_headers"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_netlink_io_module",
+    srcs = ['netlink_io.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_netlink_domain_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_io_headers", "//sys/vm:usb_net_usie_headers"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_netlink_message_writer_module",
+    srcs = ['netlink_message_writer.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_netlink_domain_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_message_writer_headers", "//sys/vm:usb_net_usie_headers"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_netlink_generic_module",
+    srcs = ['netlink_generic.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_netlink_domain_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_generic_headers"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_netlink_sock_diag_module",
+    srcs = ['netlink_sock_diag.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:usb_net_if_ure_headers", "//sys/netinet:network_policy_kernel_netlink_sock_diag_headers", "//sys/netlink:network_policy_kernel_netlink_sock_diag_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_netlink_route_module",
+    srcs = ['netlink_route.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_netlink_route_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:usb_net_usie_headers"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_iface_module",
+    srcs = ['route/iface.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_iface_headers", "//sys/netinet6:network_policy_kernel_route_ctl_headers", "//sys/netinet:ipv4_kernel_in_debug_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_iface_drivers_module",
+    srcs = ['route/iface_drivers.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_iface_drivers_headers", "//sys/netinet6:ipv6_kernel_in6_cksum_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_neigh_module",
+    srcs = ['route/neigh.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_neigh_headers", "//sys/netinet6:network_policy_kernel_neigh_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_nexthop_module",
+    srcs = ['route/nexthop.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_nexthop_headers", "//sys/netinet6:ipv6_kernel_in6_cksum_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "netlink_rt_module",
+    srcs = ['route/rt.c'],
+    deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/net:network_policy_kernel_rt_headers", "//sys/netinet6:ipv6_kernel_in6_cksum_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_inet6_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+    local_defines = ['NETLINK_MODULE'],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "nlsysevent_netlink_sysevent_module",
+    srcs = ['netlink_sysevent.c'],
+    deps = ["//sys/net:network_policy_kernel_netlink_domain_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netlink:system_io_module_context_0"],
+) for arch in ['arm64', 'riscv']]

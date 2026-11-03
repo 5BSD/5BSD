@@ -1,6 +1,6 @@
 # Bazel migration: DTrace and security-audit review log
 
-Last updated: 2026-11-02. This is an open review ledger, not a coverage certificate.
+Last updated: 2026-11-03. This is an open review ledger, not a coverage certificate.
 
 ## Review required for each migrated component
 
@@ -10707,3 +10707,15 @@ pass; cross artifacts are inspected by native tools. This establishes no live
 probe delivery or foreign runtime claim. Header producer identity was checked
 even when bytes matched. Separate DWARF/source lookup and full-world consumers
 remain open. See ZLIB-THREE-ARCH-QUALIFICATION.md.
+
+## Network protocol/interface cross-target checkpoint (2026-11-03)
+
+The 28-module ARM64/RISC-V cohort preserves 157 candidate marker lines across
+84 bound physical C sources and exact compiled instrumentation contracts in
+68 variants. The 71 sources without direct matched markers remain candidates
+for operation-specific review; shared tracing may already cover them. The
+actual 344 compilers/55,296 consumed pairs preserve original definitions and
+forced-header policy. No C implementation or probes changed. Live firing,
+audit delivery and enabled/disabled costs remain open. See
+[CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md](CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md)
+and the retained observability-r1.json source/line inventory.

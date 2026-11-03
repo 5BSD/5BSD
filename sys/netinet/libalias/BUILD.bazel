@@ -81,3 +81,96 @@ amd64_generic_module_objects(name = "alias_skinny_alias_skinny_module", srcs = [
 amd64_generic_module_objects(name = "alias_smedia_alias_smedia_module", srcs = ["alias_smedia.c"],
     deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "libalias_alias_module",
+    srcs = ['alias.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_0", "//sys/vm:usb_net_usie_headers"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "libalias_alias_db_module",
+    srcs = ['alias_db.c'],
+    deps = ["//sys/net:core_kernel_kern_jail_headers", "//sys/netinet/libalias:alias_ntb_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "libalias_alias_proxy_module",
+    srcs = ['alias_proxy.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "libalias_alias_util_module",
+    srcs = ['alias_util.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "libalias_alias_mod_module",
+    srcs = ['alias_mod.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_2"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "libalias_alias_sctp_module",
+    srcs = ['alias_sctp.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_3"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "alias_dummy_alias_dummy_module",
+    srcs = ['alias_dummy.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_4"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "alias_ftp_alias_ftp_module",
+    srcs = ['alias_ftp.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "alias_irc_alias_irc_module",
+    srcs = ['alias_irc.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "alias_nbt_alias_nbt_module",
+    srcs = ['alias_nbt.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_4"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "alias_pptp_alias_pptp_module",
+    srcs = ['alias_pptp.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "alias_skinny_alias_skinny_module",
+    srcs = ['alias_skinny.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "alias_smedia_alias_smedia_module",
+    srcs = ['alias_smedia.c'],
+    deps = ["//sys/net:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/netinet:alias_ntb_module_context_1"],
+) for arch in ['arm64', 'riscv']]

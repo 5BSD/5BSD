@@ -1,6 +1,6 @@
 .PATH: ${SRCTOP}/sys/net
 
 KMOD=	if_tuntap
-SRCS=	if_tuntap.c opt_inet.h opt_inet6.h
+SRCS=	if_tuntap.c opt_inet.h opt_inet6.h vnode_if.h
 
 .include <bsd.kmod.mk>

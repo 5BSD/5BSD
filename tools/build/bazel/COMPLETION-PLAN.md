@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Cross-target network protocol checkpoint (2026-11-03)
+
+Twenty-eight selected network protocol/interface module leaves per architecture
+pass ARM64/RISC-V builds and artifact checks. Fifty of 56 plain modules equal
+untouched Make bytes; six equal explicit identical-source canonical-filename
+controls. CTF/runtime checks retain the same 50/6 distinction. The review
+covers 344 actual compiler contexts/55,296 canonical consumed pairs, 224 ordered
+links and 168 installation records. It preserves WireGuard's forced header,
+TCP-specific defines and Netlink's relative CTF object paths. A missing tuntap
+generated-header prerequisite and localized TCP timer API exports are corrected
+in maintained Make and native metadata. Twelve actual provider tests pass
+across six profiles, including amd64 regressions. Separate DWARF, runtime,
+full-system and performance gates remain open. See
+[CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md](CROSS-NETWORK-PROTOCOLS-QUALIFICATION.md).
+
 ## Cross-target I/O-bus checkpoint (2026-11-03)
 
 Sixty-one selected GPIO/I2C/1-Wire/PWM/SPI module leaves per architecture pass

@@ -2,3 +2,16 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "xdr", objects = ["//sys/xdr:xdr_xdr_module_object_files", "//sys/xdr:xdr_xdr_mbuf_module_object_files"], object_order = ["xdr.o", "xdr_array.o", "xdr_mbuf.o", "xdr_mem.o", "xdr_reference.o", "xdr_sizeof.o"], exports = [], export_all = True, package = "kernel", aliases = [])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "xdr",
+    objects = ["//sys/xdr:" + arch + "_xdr_xdr_module_object_files", "//sys/xdr:" + arch + "_xdr_xdr_mbuf_module_object_files"],
+    object_order = ['xdr.o', 'xdr_array.o', 'xdr_mbuf.o', 'xdr_mem.o', 'xdr_reference.o', 'xdr_sizeof.o'],
+    exports = [],
+    package = 'kernel',
+    aliases = [],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]
