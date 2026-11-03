@@ -5,18 +5,20 @@
 LLD section integration is implemented. Fresh verified SDKs now pass normal
 maintained build-bsd/Bazel nullfs profiles on AMD64, ARM64 and RISC-V. The strict
 CTF/export/debug-split tests actually execute (112/112/114 associations and
-fourteen named-type checks per architecture). Prior ARM64/RISC-V action reviews
-are retained; the AMD64 compact action review is pending converter restoration.
+fourteen named-type checks per architecture). Actual selected SDK/tool actions
+are reviewed on all three architectures.
 
 Native Bazel now builds LLD and passes its 138 section/graph/script cases and
 ten symbol/thunk/reference cases. Its first run exposed an SDK/compiler versus
 source-built LLVM runtime collision in a test. Explicit per-child runtime
 selection fixes that collision; every regression assertion remains intact.
-BEP outputs and both executed tests are retained. Full compact action-input
-review remains pending an exact-version upstream converter rebuild after older
-converter inputs were removed by concurrent cleanup.
+BEP outputs and both executed tests are retained. The rebuilt exact-version
+upstream converter now verifies the native action chain from eight relevant
+source compilations through the PIC archive, LLVM shared library, LLD and both
+executed tests. Failed and corrected symbol tests use identical linked inputs.
 
-Independent refreshed Make controls, debugger/runtime behavior, compression/
+Shared test-runner runtime inheritance still needs an audit beyond these fixed
+harnesses. Independent refreshed Make controls, debugger/runtime, compression/
 footprint, complete LLVM/bootstrap, world/kernel, packaging/publication,
 sandbox/cache and broad performance acceptance remain open.
 

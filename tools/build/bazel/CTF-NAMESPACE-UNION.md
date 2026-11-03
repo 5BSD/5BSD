@@ -13,7 +13,7 @@ flag, omitted metadata or name-based matching.
 LLVM Object CTFSymbolTable::merge provides that union and LLD now uses it for
 script-selected sections. ARM64/RISC-V now pass both controlled pipelines and
 normal maintained frontend profiles with fresh verified SDKs. AMD64 now passes
-its normal profile too; see the latest checkpoint for pending action review. The strict final
+its normal profile too; actual module and native linker action reviews pass. The strict final
 CTF/export/debug-split tests actually run. Independent refreshed original
 controls and target runtime remain open; this is not system acceptance.
 
@@ -102,8 +102,9 @@ LLD retains exact file/index provenance and connects namespace union,
 script-selected placement, layout sizes, final symtab order and sh_link. Fresh
 AMD64/ARM64/RISC-V source-owner tools, verified SDKs and normal frontend nullfs
 profiles now pass, as do the selected source-built Bazel linker tests. Next
-restore the converter and finish AMD64/native compact action reviews, independent
-refreshed Make controls, debugger/runtime behavior and resource/footprint limits. Never
+audit shared test-runner runtime inheritance beyond these harnesses, qualify
+independent refreshed Make controls, debugger/runtime behavior and resource/
+footprint limits. Never
 infer identities from names, addresses or redirected input symbol arrays.
 
 The local libctf v2 width/rounding inconsistency is separate and remains open.
@@ -401,3 +402,55 @@ arguments and scripts change together; no C frontend/schema, signing, staging
 policy, packaging or publication change is required. The uncompressed CTF
 footprint gate above remains open. Make stays production/default; BIP is excluded.
 No running-system installation, upgrade, module loading or reboot occurred.
+
+## 2026-11-03: restored upstream converter and verified native action chain
+
+The exact Bazel 9.3.1 upstream converter and deploy JAR build successfully in
+bazel-execlog-rebuild-r1-20261103/build-r1, using the maintained upstream bootstrap
+helper and current FreeBSD port toolchains. Downloads are disabled. Initial
+bootstrap lockfile changes are retained explicitly, and checked source/port
+inputs remain unchanged. The generated launcher is byte-identical to the former
+launcher; its newly built runtime artifacts receive fresh bindings, not assumed
+old hashes. No historical helper or incomplete compact decoder is substituted.
+
+A new explicit converter receipt binds 407 files: generated converter/runfiles,
+selected JDK files and inspected JVM/shell native dependencies. Every conversion
+checks those hashes and the compact log before/after, streams upstream JSON
+through the maintained bounded reader, and retains its command, receipt hash and
+time report. This is an artifact/runtime binding for these conversions, not a
+claim of complete traced host closure or reproducible bootstrap qualification.
+
+AMD64 review bazel-lld-ctf-fresh-amd64-review-r2-20261103 now passes. Five actual
+actions cover the initial module link, export processing, debug extraction,
+debug split and the noncached strict test. Linker/objcopy digests match the frozen
+SDK selected by the normal profile; reader/script/policy inputs and BEP-declared
+CTF JSON are checked. The prior incomplete review and its converter failure stay
+retained. Combined with the earlier ARM64/RISC-V reviews, selected module action
+qualification is now complete on all three architectures.
+
+Native review bazel-lld-ctf-native-linker-action-review-r1-20261103 passes and
+retains actual compact-log actions for:
+
+- Eight relevant source compilations, including CTF.cpp, CTFMerge.cpp and the
+  changed LLD ELF sources. Their source digests match the qualified tree.
+- Both CTF PIC object outputs consumed by the native component archive.
+- That exact archive consumed by the source-built LLVM shared-library link.
+- The exact source-built LLVM shared library consumed by the LLD link.
+- The resulting LLD matching its retained frontend artifact and both noncached
+  passing tests (r2 section cases and r3 symbol/thunk/reference cases).
+
+The first failed symbol test and corrected test carry the SAME source-built LLD
+and LLVM library digests. The corrected test still declares the older SDK LLVM
+library required by its fixture compiler; its per-child environment keeps those
+runtime selections separate. Compiler runtime file hashes are matched against
+the frozen SDK and actual test action inputs. This fixes a demonstrated runtime
+collision without changing linker code, replacing a library or weakening tests.
+
+Next audit the shared Python runner's inherited library paths across other
+harnesses: the demonstrated collision can affect how mixed SDK/source-built
+tools select libraries. These two harnesses are explicitly fixed; broad runtime
+isolation is not established by them. Refresh original Make controls, address
+uncompressed output footprint, and continue debugger/target execution, complete
+LLVM/bootstrap/configuration, world/kernel, packages/publication and comparative
+CPU/memory/I/O/disk qualification. The persistent-client RSS caveat above remains.
+Make stays default and BIP stays excluded. No host installation or reboot.
