@@ -122,15 +122,48 @@ class CtfSemanticsTest(unittest.TestCase):
                         self.assertEqual(result['right_unreferenced_empty_slots'], [1])
                         self.assertEqual(result['symbol_associations'], 2)
 
-    def test_v2_record_relative_padding(self):
-        data,symbols=fixture(version=2)
-        header=list(struct.unpack_from('<HBB8I',data))
-        # Omit optional object-table alignment bytes. Function record lengths
-        # are rounded independently of their absolute offset (ctf_open.c).
-        fun=header[7];body=data[36:];body=body[:fun-2]+body[fun:]
-        header[7]-=2;header[8]-=2;header[9]-=2
-        unaligned=struct.pack('<HBB8I',*header)+body
-        self.assertTrue(compare(self.graph(),Graph(unaligned,symbols))['equivalent'])
+    def test_packed_function_associations(self):
+        # An odd-argument known record MUST be followed immediately by the
+        # next record. Unknown associations consume one word, not four bytes.
+        # This is distinct from argument vectors in the TYPE section.
+        for version in (2, 3):
+            for endian in ('<', '>'):
+                for compressed in (False, True):
+                    for object_padding in (False, True):
+                        with self.subTest(version=version, endian=endian,
+                                          compressed=compressed, object_padding=object_padding):
+                            data, symbols = fixture(version=version, endian=endian)
+                            header = list(struct.unpack_from(endian + 'HBB8I', data))
+                            body = data[36:]
+                            width = 2 if version == 2 else 4
+                            word = 'H' if version == 2 else 'I'
+                            info = lambda n: (5 << (11 if version == 2 else 26)) | n
+                            # Known one-arg, unknown, known zero-arg, variadic.
+                            functions = struct.pack(endian + word * 10,
+                                                    info(1), 2, 5, 0,
+                                                    info(0), 1, info(2), 2, 6, 0)
+                            fun = header[6] + width
+                            if object_padding:
+                                fun = (fun + 3) & ~3
+                            prefix = body[:header[6] + width] + bytes(fun - header[6] - width)
+                            typ = (fun + len(functions) + 3) & ~3
+                            tail = body[header[8]:]
+                            header[7], header[8], header[9] = fun, typ, typ + header[9] - header[8]
+                            header[2] = int(compressed)
+                            payload = prefix + functions + bytes(typ - fun - len(functions)) + tail
+                            encoded = struct.pack(endian + 'HBB8I', *header) + (zlib.compress(payload) if compressed else payload)
+                            identities = [symbols[0]] + [
+                                ('function_' + str(i), 2, 1, 0, '.text', i * 16, 16)
+                                for i in range(4)]
+                            graph = Graph(encoded, identities)
+                            for identity, refs in zip(identities[1:], [(2, 5), (), (1,), (2, 6, 0)]):
+                                self.assertEqual(graph.symbols[(identity, False)], refs)
+                            # Reject a misaligned type section even if all its
+                            # bytes and references would otherwise decode.
+                            bad = list(header); bad[8] += 2; bad[9] += 2
+                            malformed = prefix + functions + bytes(typ - fun - len(functions) + 2) + tail
+                            with self.assertRaisesRegex(ValueError, 'unaligned CTF subsection'):
+                                Graph(struct.pack(endian + 'HBB8I', *bad) + (zlib.compress(malformed) if compressed else malformed), identities)
 
     def test_member_offset(self):
         self.changed(lambda d: d[4][4].__setitem__(0, ('payload', 3, 8)))

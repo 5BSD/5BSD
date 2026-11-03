@@ -50,6 +50,7 @@ class Graph:
             return string(external_strings if value >> 31 else names, value & 0x7fffffff)
         width = 2 if version == 2 else 4
         word = 'H' if width == 2 else 'I'
+        require(obj % width == 0 and fun % width == 0 and typ % 4 == 0, 'unaligned CTF subsection')
         sentinel = 0xffff if version == 2 else 0xffffffff
         threshold = 1 << (13 if version == 2 else 29)
         def info(value):
@@ -151,9 +152,9 @@ class Graph:
                     require(function_kind == 5, 'invalid function association')
                     values, pos = unpack(word * (count + 1), pos, stop)
                     refs = tuple(values)
-                    padding = -((count + 2) * width) % 4
-                    require(pos + padding <= stop and not any(body[pos:pos + padding]), 'function association padding')
-                    pos += padding
+                    # Associations are packed (ctf/cvt resurrect_functions and
+                    # ctf/dump read_funcs). Only the following type SECTION is
+                    # aligned, unlike function argument vectors inside it.
             require(all(ref == 0 or ref in nodes for ref in refs), 'invalid symbol type reference')
             association_key = (identity, root if kind == 2 else False)
             require(association_key not in associations, 'ambiguous symbol identity')

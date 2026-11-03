@@ -27,8 +27,10 @@ or one complete label. Parent/child containers, partial/multiple labels,
 extended ELF indices and unsupported type kinds fail explicitly. This is not
 an implicit fallback or a claim of every CTF container form. Intrinsic and array
 vlen values 0/1 are supported because the maintained CTF library creator and
-converter use those encodings. Function padding is record-relative, as required
-by the maintained library reader, including v2 tables at unaligned offsets.
+converter use those encodings. Function associations are packed: info, return type and argument IDs follow
+without per-record padding. Only the following type section is four-byte
+aligned. Function argument vectors INSIDE the type section retain their
+separate alignment requirement. See the correction below.
 
 ## Comparison contract
 
@@ -91,3 +93,42 @@ RISC-V module full/runtime families and policy-owned named STRUCT associations.
 Native passes; the foreign final shared links remain rejected, despite refreshed
 objcopy passing the format suite. See CROSS-MODULE-CTF-QUALIFICATION.md for
 actual profiles, source/copy controls and still-open producer work.
+
+## Packed association correction (2026-11-03)
+
+Review found that this checker's v2 association parser incorrectly rounded each
+known function record to four bytes. The previous single-function fixture hid
+this because trailing subsection alignment looked identical. Its unaligned
+fixture also failed to preserve the required type-section alignment.
+
+The proposed equivalent objcopy change was rejected before implementation:
+a privately padded fixture fails independent installed ctfdump association
+checks. The existing packed fixture and objcopy pass. The maintained
+cvt/ctf.c resurrect_functions and dump/dump.c read_funcs both consume packed
+records, consistent with upstream illumos common/ctf/ctf_open.c and the
+[illumos CTF format description](https://smartos.org/man/5/ctf).
+The local libctf init_symtab path instead rounds lengths and reads a uint_t
+regardless of v2 width; that inconsistent consumer remains an OPEN issue.
+No LLVM producer or libctf source was changed in this correction.
+
+The corrected parser removes association padding and checks subsection
+alignment. The replacement regression covers 16 combinations of version, byte
+order, compression and object-table alignment, with consecutive odd-argument,
+unknown, zero-argument and variadic associations, plus invalid type alignment.
+The maintained build-bsd/Bazel suite passes 30 unittest methods at
+/usr/obj/usr/src/bazel-ctf-packed-associations-r1-20261103. The copy test is cached;
+the CTF test executes with verified actual source-input hashes.
+
+The explicit-tool format audit also accepts --semantic-reader PATH. With the
+corrected reader it passes 129 checks, including the original independent
+ctfdump controls and all baseline/transformed semantic parses. The previous
+reader rejects the same valid fixture after ctfdump accepts it. Evidence,
+source snapshots, original failures and selected tool hashes are retained at
+/usr/obj/usr/src/bazel-ctf-packed-associations-review-r2-20261103. This is host
+checker qualification, not target execution, linker acceptance or performance
+proof. The disk guard keeps a 16 GiB reserve and does not interrupt the run.
+
+Frontend assessment: existing format-5 bazel-test selects the declared test
+without any new option, SDK rebuild, signing, packaging or publication change.
+The optional explicit reader input belongs to the format diagnostic only.
+Final shared-link CTF corrections and complete module qualification remain open.

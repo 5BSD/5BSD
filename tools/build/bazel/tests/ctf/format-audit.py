@@ -104,6 +104,8 @@ def main():
     parser.add_argument('--ldd', type=Path, required=True)
     parser.add_argument('--objcopy-library-directory', type=Path, action='append', default=[])
     parser.add_argument('--ctf-library-directory', type=Path, action='append', default=[])
+    parser.add_argument('--semantic-reader', type=Path,
+                        help='also check packed fixtures with this explicit ctf_semantics.py')
     parser.add_argument('--work', type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=False)
@@ -111,6 +113,13 @@ def main():
     for name in ('objcopy', 'baseline', 'ctfdump'):
         path = getattr(args, name).resolve(strict=True)
         report['inputs'][name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    semantic = None
+    if args.semantic_reader:
+        path = args.semantic_reader.resolve(strict=True)
+        report['inputs']['semantic_reader'] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+        module_spec = importlib.util.spec_from_file_location('selected_ctf_semantics', path)
+        semantic = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(semantic)
     tool_env = dict(os.environ)
     tool_env.pop('LD_LIBRARY_PATH', None)
     if args.objcopy_library_directory:
@@ -157,6 +166,9 @@ def main():
                                   'global_payload' if binding == 1 and identity[0] != 'call_static' else 'local_payload')
                                   for _, identity, binding in table}
                         check(tag + '-independent-ctfdump', descriptions == wanted)
+                    if semantic:
+                        graph = semantic.Graph(payload, [identity for _, identity, _ in table])
+                        check(tag + '-semantic-baseline', len(graph.symbols) == len(table))
                     for name, flags in [('copy', []), ('localize', ['-Lshared_data', '-Lshared_function']),
                                         ('debug-strip', ['--strip-debug']), ('remove', ['--strip-symbol=exported_function']),
                                         ('rename', ['--redefine-sym=shared_data=renamed_data', '--redefine-sym=shared_function=renamed_function']),
@@ -172,6 +184,10 @@ def main():
                                       for identity, value in wanted.items()}
                         if name.startswith('add-'):
                             wanted[('added', 1 if name == 'add-object' else 2, '.data' if name == 'add-object' else '.text', 0, 0)] = bytes(2 if version == 2 else 4)
+                        if semantic:
+                            graph = semantic.Graph(sections(output)['.SUNW_ctf'][2],
+                                                   [identity for _, identity, _ in localization.symbols(output)])
+                            check(tag + '-' + name + '-semantic', len(graph.symbols) == len(wanted))
                         section = sections(output)['.SUNW_ctf'][2]
                         output_body = zlib.decompress(section[36:]) if compressed else section[36:]
                         check(tag + '-' + name, actual == wanted and actual_tail == tail and linked and

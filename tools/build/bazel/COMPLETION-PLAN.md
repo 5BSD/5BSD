@@ -1878,3 +1878,22 @@ The initial disk-guard interruption remains rejected, followed by fully verified
 cache reuse. This is storage-copy correctness, not comparative performance.
 No config schema, SDK staging helper, signing, packaging or publication change
 is introduced. Keep Make production/default and BIP excluded.
+
+
+### 2026-11-03: correct the CTF checker before linker extraction
+
+Independent producer/ctfdump checks disproved the proposed per-function padding
+change to objcopy. The semantic checker was wrong for consecutive packed v2
+function associations; its single-record fixture masked the defect. Corrected
+it, added subsection alignment checks, and replaced the misleading fixture with
+16 format/alignment combinations. Normal build-bsd/Bazel executes all 30 CTF
+methods successfully, and explicit-tool independent/semantic checks pass 129
+cases. Previous-reader rejection and proposed-padded-fixture failure remain
+retained. See CTF-SEMANTIC-CHECK.md for source bindings and qualification scope.
+
+Still OPEN: local libctf init_symtab's inconsistent v2 width/record rounding;
+exact linker symbol provenance and final CTF sh_link/association preservation;
+initial multi-input CTF link/merge handling; full module and system acceptance.
+No linker fix, producer change or completed world/kernel build is claimed.
+No frontend schema or production-default change is required for this checker
+correction. Keep Make production/default and BIP excluded.

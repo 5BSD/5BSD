@@ -76,3 +76,15 @@ per-child wait4 CPU/RSS/block-I/O counters, elapsed time and file sizes/hashes.
 An empty options file measures copying. These are warm-cache microbenchmarks;
 block counts and immediate filesystem allocation reports do not establish
 physical disk throughput or durable allocation.
+
+
+The optional --semantic-reader PATH input selects an explicit ctf_semantics.py
+for additional baseline and transformed-output parses; its hash is recorded.
+This extends the audit from 65 to 129 checks while retaining independent
+ctfdump controls. Function associations are packed, including v2 odd-argument
+records; only the following type section is aligned. A proposed per-record
+padding change fails independent ctfdump and was rejected. The corrected
+semantic reader passes the expanded suite; the previous reader rejects valid
+packed v2 records. See CTF-SEMANTIC-CHECK.md and the retained review at
+/usr/obj/usr/src/bazel-ctf-packed-associations-review-r2-20261103. These checks
+exercise an AMD64 container, not foreign execution or the final shared linker.
