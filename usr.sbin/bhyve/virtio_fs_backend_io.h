@@ -41,6 +41,14 @@ struct virtio_fs_backend_stream {
 int	virtio_fs_backend_connect_start(const char *, uid_t, gid_t, int *,
 	    bool *);
 int	virtio_fs_backend_connect_finish(int, uid_t, gid_t);
+/*
+ * dir_open() splits an absolute socket path and opens its parent directory;
+ * connect_start_at() connects to a final name relative to that directory and
+ * works in capability mode (the descriptor needs CAP_CONNECTAT).
+ */
+int	virtio_fs_backend_dir_open(const char *, int *, char **);
+int	virtio_fs_backend_connect_start_at(int, const char *, uid_t, gid_t,
+	    int *, bool *);
 int	virtio_fs_backend_authenticate(int, uid_t, gid_t);
 void	virtio_fs_backend_size_buffers(int, uint32_t);
 

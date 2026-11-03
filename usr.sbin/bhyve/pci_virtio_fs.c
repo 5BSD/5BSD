@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/capsicum.h>
 #include <sys/endian.h>
 #include <sys/linker_set.h>
 #include <sys/param.h>
@@ -32,6 +33,7 @@
 #endif
 #include "virtio.h"
 #include "virtio_fs_backend.h"
+#include "virtio_fs_backend_io.h"
 #include "virtio_fs_connection.h"
 #include "virtio_fs_host.h"
 #include "virtio_fs_state.h"
@@ -84,7 +86,12 @@ struct pci_vtfs_softc {
 	int vsc_event_fd;
 	bool vsc_event_fd_valid;
 	struct virtio_fs_backend_hello vsc_offer;
-	char *vsc_backend_path;
+	/*
+	 * Backend socket directory, opened before cap_enter(2) and limited to
+	 * CAP_CONNECTAT: a guest reset reconnects from capability mode.
+	 */
+	int vsc_backend_dirfd;
+	char *vsc_backend_name;
 	char *vsc_backend_identity;
 	uint8_t *vsc_checkpoint_backend_state;
 	size_t vsc_checkpoint_backend_state_len;
@@ -240,7 +247,8 @@ pci_vtfs_connect(struct pci_vtfs_softc *sc)
 {
 	int error, fd;
 
-	error = virtio_fs_connection_connect_required(sc->vsc_backend_path,
+	error = virtio_fs_connection_connect_required_at(sc->vsc_backend_dirfd,
+	    sc->vsc_backend_name,
 	    geteuid(), getegid(), &sc->vsc_offer, VTFS_MAX_INFLIGHT,
 	    VTFS_MAX_INFLIGHT, VIRTIO_FS_BACKEND_F_CANCEL |
 	    (sc->vsc_notifications ? VIRTIO_FS_BACKEND_F_NOTIFICATION : 0) |
@@ -1292,6 +1300,7 @@ pci_vtfs_init(struct pci_devinst *pi, nvlist_t *nvl)
 	bool cond_initialized, intr_initialized, mutex_initialized, packed;
 	bool notifications;
 	pthread_condattr_t condattr;
+	cap_rights_t dir_rights;
 	bool condattr_initialized;
 	int error;
 
@@ -1321,14 +1330,21 @@ pci_vtfs_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vsc_num_request_queues = queues;
 	sc->vsc_notifications = notifications;
 	sc->vsc_nvq = queues + 1 + (notifications ? 1 : 0);
-	sc->vsc_backend_path = strdup(path);
+	sc->vsc_backend_dirfd = -1;
+	if (virtio_fs_backend_dir_open(path, &sc->vsc_backend_dirfd,
+	    &sc->vsc_backend_name) != 0)
+		goto fail;
+	cap_rights_init(&dir_rights, CAP_CONNECTAT);
+	if (cap_rights_limit(sc->vsc_backend_dirfd, &dir_rights) != 0 &&
+	    errno != ENOSYS)
+		goto fail;
 	sc->vsc_backend_identity = identity == NULL ? NULL :
 	    strdup(identity);
 	sc->vsc_vq = calloc(sc->vsc_nvq, sizeof(*sc->vsc_vq));
 	sc->vsc_reset = calloc(sc->vsc_nvq, sizeof(*sc->vsc_reset));
 	sc->vsc_notify_pending = calloc(sc->vsc_nvq,
 	    sizeof(*sc->vsc_notify_pending));
-	if (sc->vsc_backend_path == NULL || sc->vsc_vq == NULL ||
+	if (sc->vsc_vq == NULL ||
 	    sc->vsc_reset == NULL ||
 	    sc->vsc_notify_pending == NULL ||
 	    (identity != NULL && sc->vsc_backend_identity == NULL))
@@ -1410,7 +1426,9 @@ fail:
 	pci_vtfs_checkpoint_state_clear(sc);
 #endif
 	free(sc->vsc_backend_identity);
-	free(sc->vsc_backend_path);
+	if (sc->vsc_backend_dirfd >= 0)
+		(void)close(sc->vsc_backend_dirfd);
+	free(sc->vsc_backend_name);
 	free(sc);
 	return (1);
 }

@@ -236,6 +236,8 @@ TEST_METADATA.unix_passfd_stream+=	is_exclusive="true"
 ATF_TESTS_C+=	unix_seqpacket_test
 TEST_METADATA.unix_seqpacket_test+=	timeout="15"
 ATF_TESTS_C+=	unix_stream
+# In-kernel test of the virtio 9P transport scatter list (ktest_virtio_p9fs.ko).
+ATF_TESTS_PYTEST+=	virtio_p9fs_sglist_test.py
 ATF_TESTS_C+=	waitpid_nohang
 ATF_TESTS_C+=	pdeathsig
 ATF_TESTS_C+=	sigsys

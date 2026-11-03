@@ -28,6 +28,9 @@ struct virtio_fs_backend_client;
 int	virtio_fs_backend_client_connect(const char *, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *,
 	    struct virtio_fs_backend_client **);
+int	virtio_fs_backend_client_connect_at(int, const char *, uid_t, gid_t,
+	    const struct virtio_fs_backend_hello *,
+	    struct virtio_fs_backend_client **);
 int	virtio_fs_backend_client_adopt(int, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *,
 	    struct virtio_fs_backend_client **);

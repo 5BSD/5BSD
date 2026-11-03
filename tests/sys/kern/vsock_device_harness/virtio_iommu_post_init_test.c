@@ -423,6 +423,7 @@ ATF_TC_BODY(host_topology_post_init_binds_endpoint, tc)
 	    VIRTIO_F_ACCESS_PLATFORM) != 0);
 }
 
+#ifndef VIRTIO_IOMMU_POST_INIT_NO_TP
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -430,3 +431,4 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, host_topology_post_init_binds_endpoint);
 	return (atf_no_error());
 }
+#endif

@@ -74,24 +74,29 @@ virtio_fs_backend_connect_finish(int fd, uid_t expected_uid,
 	    expected_gid));
 }
 
+/*
+ * Resolve a backend socket path to its parent directory and final name.
+ * bhyve opens the directory once, before cap_enter(2), and reconnects with
+ * connectat(2) relative to it after a device reset: capability mode forbids
+ * the absolute-path open() that a path-based reconnect needs.
+ */
 int
-virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
-    gid_t expected_gid, int *result_fd, bool *connecting)
+virtio_fs_backend_dir_open(const char *path, int *dfdp, char **namep)
 {
-	struct sockaddr_un address;
 	char *name, *parent;
 	size_t name_len;
-	int dfd, error, fd;
+	int dfd, error;
 
-	if (result_fd == NULL || connecting == NULL)
+	if (dfdp == NULL || namep == NULL)
 		return (EINVAL);
-	*result_fd = -1;
-	*connecting = false;
+	*dfdp = -1;
+	*namep = NULL;
 	error = virtio_fs_backend_path_split(path, &parent, &name);
 	if (error != 0)
 		return (error);
 	name_len = strlen(name);
-	if (name_len == 0 || name_len >= sizeof(address.sun_path)) {
+	if (name_len == 0 ||
+	    name_len >= sizeof(((struct sockaddr_un *)NULL)->sun_path)) {
 		free(name);
 		free(parent);
 		return (ENAMETOOLONG);
@@ -103,30 +108,45 @@ virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
 		free(name);
 		return (error);
 	}
+	*dfdp = dfd;
+	*namep = name;
+	return (0);
+}
+
+int
+virtio_fs_backend_connect_start_at(int dfd, const char *name,
+    uid_t expected_uid, gid_t expected_gid, int *result_fd, bool *connecting)
+{
+	struct sockaddr_un address;
+	size_t name_len;
+	int error, fd;
+
+	if (result_fd == NULL || connecting == NULL)
+		return (EINVAL);
+	*result_fd = -1;
+	*connecting = false;
+	if (dfd < 0 || name == NULL || strchr(name, '/') != NULL)
+		return (EINVAL);
+	name_len = strlen(name);
+	if (name_len == 0 || name_len >= sizeof(address.sun_path))
+		return (ENAMETOOLONG);
 	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-	if (fd < 0) {
-		error = errno;
-		(void)close(dfd);
-		free(name);
-		return (error);
-	}
+	if (fd < 0)
+		return (errno);
 	memset(&address, 0, sizeof(address));
 	address.sun_family = AF_UNIX;
 	address.sun_len = (uint8_t)(offsetof(struct sockaddr_un, sun_path) +
 	    name_len + 1);
 	memcpy(address.sun_path, name, name_len + 1);
-	free(name);
 	if (connectat(dfd, fd, (struct sockaddr *)&address,
 	    address.sun_len) != 0) {
 		error = errno;
-		(void)close(dfd);
 		if (error != EINPROGRESS) {
 			(void)close(fd);
 			return (error);
 		}
 		*connecting = true;
 	} else {
-		(void)close(dfd);
 		error = virtio_fs_backend_connect_finish(fd, expected_uid,
 		    expected_gid);
 		if (error != 0) {
@@ -136,6 +156,27 @@ virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
 	}
 	*result_fd = fd;
 	return (0);
+}
+
+int
+virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
+    gid_t expected_gid, int *result_fd, bool *connecting)
+{
+	char *name;
+	int dfd, error;
+
+	if (result_fd == NULL || connecting == NULL)
+		return (EINVAL);
+	*result_fd = -1;
+	*connecting = false;
+	error = virtio_fs_backend_dir_open(path, &dfd, &name);
+	if (error != 0)
+		return (error);
+	error = virtio_fs_backend_connect_start_at(dfd, name, expected_uid,
+	    expected_gid, result_fd, connecting);
+	(void)close(dfd);
+	free(name);
+	return (error);
 }
 
 static void
