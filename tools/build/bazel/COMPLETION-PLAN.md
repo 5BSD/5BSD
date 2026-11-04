@@ -16,6 +16,19 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Roken native installation and regular/PIC comparison (2026-11-04)
+
+Native roken now contributes the original static/shared library, symlink, eleven
+public headers and separate debug file through maintained typed installation and
+archive rules. A fresh original Make build/stage passes with the bound original
+header generator. All 17 component metadata records match; all eleven headers
+match byte for byte. Both installed debug CRCs pass, as do shared versioned
+exports/ELF hardening/identity and ordered runtime-library requirements. All 118
+regular/PIC object contracts pass (114 raw, four explicit filename compiler
+controls); all 59 static archive members match in order. Full linked/debug bytes,
+consumer Make parity, other options/architectures and whole Heimdal/world/pkgbase
+composition remain open. See ROKEN-INSTALLATION-QUALIFICATION.md.
+
 ## Original Heimdal library references and generation tests (2026-11-04)
 
 Maintained Make references now bind original native generator executables through

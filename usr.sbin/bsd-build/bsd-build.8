@@ -2173,6 +2173,14 @@ Original consumer/shared installation parity remains required.
 See
 .Pa tools/build/bazel/HEIMDAL-ORIGINAL-REFERENCE-QUALIFICATION.md .
 .Pp
+Native roken installation qualification contributes its original libraries,
+symlink, public headers and separate debug file through typed archive rules.
+Its component metadata and header bytes match a fresh original Make stage;
+regular/PIC object contracts and versioned shared metadata are compared separately.
+This does not qualify complete Heimdal or pkgbase publication.
+See
+.Pa tools/build/bazel/ROKEN-INSTALLATION-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer
