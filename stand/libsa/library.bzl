@@ -394,6 +394,9 @@ _ORDER = ['__main.o',
  'sha512c.o',
  'md5c.o']
 
+def standalone_sa_arch_cflags():
+    return _ARCH_CFLAGS
+
 def standalone_sa_groups(deps, compatible, prefix = "sa_", early_cflags = _EARLY_CFLAGS, cflags = _CFLAGS):
     groups = []
     for group in _GROUPS:

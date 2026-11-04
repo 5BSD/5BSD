@@ -1,11 +1,24 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Private AMD64 EFI context with explicit policy and shared standalone sources."""
+"""Private EFI context with explicit policy and shared standalone sources."""
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-load(":library.bzl", "standalone_sa_groups", "standalone_sa_order")
+load(":library.bzl", "standalone_sa_arch_cflags", "standalone_sa_groups", "standalone_sa_order")
 
-_EARLY = ['-O2', '-pipe', '-fno-common', '-Wformat', '-fshort-wchar', '-nostdinc']
-_CFLAGS = ['-Istand/libsa',
+_WCHAR_CFLAGS = select({
+    "@platforms//cpu:x86_64": ["-fshort-wchar"],
+    "@platforms//cpu:aarch64": ["-fshort-wchar"],
+    "//conditions:default": [],
+})
+_EFI_MACHINE_CFLAGS = select({
+    "@platforms//cpu:x86_64": ["-Istand/efi/include/amd64"],
+    "@platforms//cpu:aarch64": ["-Istand/efi/include/arm64"],
+    "@platforms//cpu:riscv64": ["-Istand/efi/include/riscv"],
+    "//conditions:default": [],
+})
+_EARLY = ["-O2", "-pipe", "-fno-common", "-Wformat"] + _WCHAR_CFLAGS + ["-nostdinc"]
+# brf.c also consumes the BearSSL tool interface. Keep its options in the same
+# position as the common Make recipe, with no second copy of the common flags.
+_CFLAGS_BEFORE_TOOLS = ['-Istand/libsa',
  '-D_STANDALONE',
  '-Isys',
  '-Ddouble=jagged-little-pill',
@@ -19,12 +32,9 @@ _CFLAGS = ['-Istand/libsa',
  '-Icontrib/bearssl/inc',
  '-Wno-deprecated-non-prototype',
  '-Icontrib/bearssl/src',
- '-Ilib/libsecureboot/h',
- '-DVE_PCR_SUPPORT',
- '-Isys/contrib/edk2/Include',
- '-Istand/efi/include',
- '-Istand/efi/include/amd64',
- '-g',
+ '-Ilib/libsecureboot/h']
+_CFLAGS_BEFORE_MACHINE = ['-DVE_PCR_SUPPORT', '-Isys/contrib/edk2/Include', '-Istand/efi/include']
+_CFLAGS_AFTER_MACHINE = ['-g',
  '-gz=zlib',
  '-std=gnu17',
  '-Wno-format-zero-length',
@@ -51,113 +61,13 @@ _CFLAGS = ['-Istand/libsa',
  '-Qunused-arguments',
  '-include',
  'secureboot_config.h']
+
+def _efi_cflags(tool_flags = []):
+    return _CFLAGS_BEFORE_TOOLS + tool_flags + _CFLAGS_BEFORE_MACHINE + _EFI_MACHINE_CFLAGS + _CFLAGS_AFTER_MACHINE
+
 _EXTRA = [
-    struct(name = 'ccopy', sources = ['//contrib/bearssl:standalone_sa_efi_ccopy_sources', '//lib/libsecureboot:standalone_sa_efi_ccopy_sources'], copts = ['-O2',
- '-pipe',
- '-fno-common',
- '-Wformat',
- '-fshort-wchar',
- '-nostdinc',
- '-Istand/libsa',
- '-D_STANDALONE',
- '-Isys',
- '-Ddouble=jagged-little-pill',
- '-Dfloat=floaty-mcfloatface',
- '-DLOADER_GELI_SUPPORT',
- '-Istand/libsa/geli',
- '-DLOADER_DISK_SUPPORT',
- '-ffreestanding',
- '-DLOADER_VERIEXEC',
- '-Ilib/libsecureboot/h',
- '-Icontrib/bearssl/inc',
- '-Wno-deprecated-non-prototype',
- '-Icontrib/bearssl/src',
- '-Ilib/libsecureboot/h',
- '-DVE_PCR_SUPPORT',
- '-Isys/contrib/edk2/Include',
- '-Istand/efi/include',
- '-Istand/efi/include/amd64',
- '-g',
- '-gz=zlib',
- '-std=gnu17',
- '-Wno-format-zero-length',
- '-Wsystem-headers',
- '-Werror',
- '-Wno-pointer-sign',
- '-Wdate-time',
- '-Wno-empty-body',
- '-Wno-string-plus-int',
- '-Wno-unused-const-variable',
- '-Wno-error=unused-but-set-parameter',
- '-Wno-error=cast-function-type-mismatch',
- '-Wno-tautological-compare',
- '-Wno-unused-value',
- '-Wno-parentheses-equality',
- '-Wno-unused-function',
- '-Wno-enum-conversion',
- '-Wno-unused-local-typedef',
- '-Wno-address-of-packed-member',
- '-Wno-switch',
- '-Wno-switch-enum',
- '-Wno-knr-promoted-parameter',
- '-Wno-parentheses',
- '-Qunused-arguments',
- '-include',
- 'secureboot_config.h']),
-    struct(name = 'brf', sources = ['//lib/libsecureboot:standalone_sa_efi_brf_sources'], copts = ['-O2',
- '-pipe',
- '-fno-common',
- '-Wformat',
- '-fshort-wchar',
- '-nostdinc',
- '-Istand/libsa',
- '-D_STANDALONE',
- '-Isys',
- '-Ddouble=jagged-little-pill',
- '-Dfloat=floaty-mcfloatface',
- '-DLOADER_GELI_SUPPORT',
- '-Istand/libsa/geli',
- '-DLOADER_DISK_SUPPORT',
- '-ffreestanding',
- '-DLOADER_VERIEXEC',
- '-Ilib/libsecureboot/h',
- '-Icontrib/bearssl/inc',
- '-Wno-deprecated-non-prototype',
- '-Icontrib/bearssl/src',
- '-Ilib/libsecureboot/h',
- '-DNO_STDIO',
- '-Icontrib/bearssl/tools',
- '-DVE_PCR_SUPPORT',
- '-Isys/contrib/edk2/Include',
- '-Istand/efi/include',
- '-Istand/efi/include/amd64',
- '-g',
- '-gz=zlib',
- '-std=gnu17',
- '-Wno-format-zero-length',
- '-Wsystem-headers',
- '-Werror',
- '-Wno-pointer-sign',
- '-Wdate-time',
- '-Wno-empty-body',
- '-Wno-string-plus-int',
- '-Wno-unused-const-variable',
- '-Wno-error=unused-but-set-parameter',
- '-Wno-error=cast-function-type-mismatch',
- '-Wno-tautological-compare',
- '-Wno-unused-value',
- '-Wno-parentheses-equality',
- '-Wno-unused-function',
- '-Wno-enum-conversion',
- '-Wno-unused-local-typedef',
- '-Wno-address-of-packed-member',
- '-Wno-switch',
- '-Wno-switch-enum',
- '-Wno-knr-promoted-parameter',
- '-Wno-parentheses',
- '-Qunused-arguments',
- '-include',
- 'secureboot_config.h']),
+    struct(name = "ccopy", sources = ["//contrib/bearssl:standalone_sa_efi_ccopy_sources", "//lib/libsecureboot:standalone_sa_efi_ccopy_sources"], tool_flags = []),
+    struct(name = "brf", sources = ["//lib/libsecureboot:standalone_sa_efi_brf_sources"], tool_flags = ["-DNO_STDIO", "-Icontrib/bearssl/tools"]),
 ]
 _EXTRA_ORDER = ['ccopy.o',
  'dec32be.o',
@@ -229,15 +139,13 @@ _EXTRA_ORDER = ['ccopy.o',
  'efi_variables.o',
  'efi_init.o']
 
-_ARCH = ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"]
-
 def efi_sa_library(name, deps, compatible):
     groups = standalone_sa_groups(deps = deps, compatible = compatible,
-        prefix = "efi_sa_", early_cflags = _EARLY, cflags = _CFLAGS)
+        prefix = "efi_sa_", early_cflags = _EARLY, cflags = _efi_cflags())
     for group in _EXTRA:
         target = "efi_sa_extra_" + group.name
-        cc_library(name = target, srcs = group.sources, copts = group.copts + _ARCH,
-            deps = deps, features = ["-opt", "-bsd_ssp"], linkstatic = True,
+        cc_library(name = target, srcs = group.sources, copts = _EARLY + _efi_cflags(group.tool_flags) + standalone_sa_arch_cflags(),
+            deps = deps, features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"], linkstatic = True,
             target_compatible_with = compatible)
         groups.append(":" + target)
     bsd_component_archive(name = name, groups = groups,

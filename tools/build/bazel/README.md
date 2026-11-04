@@ -11,16 +11,19 @@ RISC-V finishes with 2,050 directories and no query failures. Complete libsa arc
 archive variants are qualified below.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
 
-## Cross regular and AMD64 EFI libsa checkpoint (2026-11-04)
+## Cross regular and EFI libsa checkpoint (2026-11-04)
 
 The native regular inventory now covers AMD64 (191 objects), ARM64 (190) and
-RISC-V (194); the separate AMD64 EFI context adds 260 selected objects with
-explicit generated verifier inputs. Raw code/relocation comparisons match all
+RISC-V (194); separate EFI contexts select AMD64 (260), ARM64 (259) and
+RISC-V (263) objects with explicit generated verifier inputs. The inventories
+and common flags are shared, with explicit target ABI and EFI include selections. Raw code/relocation comparisons match all
 but three diagnostic-path members per context; original compiler controls match
 those three. All action/output and target ABI bindings pass. Generated headers
 match a corrected, audited Make reference; changing manifest names rebuilds only
 verify_file.o and its archive. Missing policy is rejected, and framing/reference
-helper tests pass. Firmware/debug/full-system and performance gates remain open.
+helper tests pass. A final ARM64 repeat correctly rejected a changed HyperTrace
+SDK origin after the concurrent merge; fresh SDK preparation and current-input
+repeats are pending. Firmware/debug/full-system and performance gates remain open.
 See [LIBSA-CROSS-EFI-QUALIFICATION.md](LIBSA-CROSS-EFI-QUALIFICATION.md).
 
 ## Standalone and EFI Ficl checkpoint (2026-11-03)

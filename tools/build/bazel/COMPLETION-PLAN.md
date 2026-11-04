@@ -2008,3 +2008,30 @@ Next remains LLD synthetic section placement, participation in layout before
 final offsets, final symbol ordering and sh_link, then refreshed real module
 qualification. Sizing alone does not satisfy any final module/world/kernel gate.
 No frontend configuration or security-policy changes are needed at this step.
+
+### 2026-11-04: selected EFI libsa matrix on AMD64, ARM64 and RISC-V
+
+Private ARM64 (259 objects) and RISC-V (263 objects) now reuse the regular source
+inventory and the same 69 verifier sources. Platform selections retain the real
+wchar, machine include and soft-float/general-register ABI differences. Shared
+flag definitions remove duplicated option lists. The selected regular/private
+matrix has six archive contexts; it is not a count of new programs or libraries.
+
+Both foreign archives pass complete member-order/symbol comparisons, generated
+header and actual compiler/archive bindings. Only three assertion filename
+members differ in raw allocated bytes; isolated original compiler controls
+explain all three. Regular archive bytes remain unchanged. See
+LIBSA-CROSS-EFI-QUALIFICATION.md for retained evidence and exact profile limits.
+
+A repeat on the final flag factoring correctly refused a changed HyperTrace SDK
+origin after dev advanced to a914137016e. Preserve that failure and the immutable
+previous captures. Fresh native/cross SDKs are being prepared with maintained
+plan/staging helpers; rerun current-input qualification before claiming the
+repeat/cache gate. Do not edit old receipts or suppress origin checks.
+
+Next: finish that refresh/repeat, then actual loader entry and final EFI links.
+Complete world/rescue/cross kernel/module, installation/debug, runtime/boot,
+bootstrap/sandbox/cache, pkgbase/hardware/combined publication and CPU/memory/disk
+performance gates remain required. The broad SDK input/validation overhead is
+still open. No VM, installation, upgrade or reboot occurred. Make stays default;
+BIP remains excluded. No frontend C switch or policy default changed.

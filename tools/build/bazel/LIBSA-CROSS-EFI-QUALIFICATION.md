@@ -1,6 +1,7 @@
-# Cross-platform regular and AMD64 EFI libsa candidates (2026-11-04)
+# Cross-platform regular and EFI libsa candidates (2026-11-04)
 
-Qualification runs began on 2026-11-03; their retained directory names use that date.
+The original runs began on 2026-11-03. ARM64/RISC-V EFI runs began on
+2026-11-04; retained evidence names preserve their actual dates.
 
 ## Native inventory and ABI
 
@@ -13,10 +14,13 @@ order matches each independent Make archive. RISC-V uses rv64imac/lp64 soft-floa
 ARM64 retains general-register-only code and reserved x18. Source-only physical
 header contexts and machine aliases include the actual cross dependencies.
 
-AMD64's private EFI variant reuses the same common source inventory and compiles
-independent objects, adding the 69 BearSSL/verifier sources selected by Make.
-It preserves its own wchar, firmware, PCR, tool-header and verification options.
-It does not change the shared archive's bytes. The existing three Rijndael
+All three private EFI variants reuse the common source inventory and compile
+independent objects, adding the same 69 BearSSL/verifier sources selected by Make.
+Explicit platform selections retain short wchar on AMD64/ARM64, ordinary wchar on
+RISC-V, and the corresponding EFI machine includes and freestanding CPU ABI.
+Common and BearSSL tool-specific flags share one definition; their original
+ordered option sequences are preserved. Each variant preserves its firmware,
+PCR and verification options, and leaves its regular archive's bytes unchanged. The existing three Rijndael
 NDEBUG selections remain per-source; no additional assertion was suppressed.
 
 | Context | Selected objects | Raw allocated bytes/relocations equal Make | Filename-only original compiler controls |
@@ -25,13 +29,15 @@ NDEBUG selections remain per-source; no additional assertion was suppressed.
 | ARM64 regular | 190 | 187 | 3/3 |
 | RISC-V regular | 194 | 191 | 3/3 |
 | AMD64 EFI | 260 | 257 | 3/3 |
+| ARM64 EFI | 259 | 256 | 3/3 |
+| RISC-V EFI | 263 | 260 | 3/3 |
 
 All archive orders, external symbol contracts and inspected target ELF ABI
 headers agree with the corresponding originals. The three retained differences
 per context are lz4, zfs_zstd and md5c assertion filename strings and their
 symbolic relocations. Separate original compiler controls explain these without
 editing original/native objects or adding production mappings. Full object/debug
-bytes and source lookup policy remain open. These are 835 object variants of one
+bytes and source lookup policy remain open. These are 1,357 object variants of one
 standalone library matrix, not 835 newly converted programs or libraries.
 
 ## Explicit verifier generation
@@ -53,7 +59,8 @@ placement was corrected to reproduce the maintained Make recipe exactly.
 All three generated Make headers (ta.h, vse.h, manifests.h) now match the closed
 reference byte-for-byte. Every private compiler binds the generated configuration
 header; vets, vesigned and verify_file bind the appropriate generated data-header
-digests. Actual compiler/archive output chains cover all 260 objects. The
+digests. AMD64 compiler/archive output chains cover all 260 objects; the corresponding
+ARM64 and RISC-V checks cover all 259 and 263 objects, respectively. The
 manifest-name override changes only verify_file.o and the private archive;
 restoration reproduces the complete original private archive bytes. Shared
 archive bytes remain unchanged. This is component dependency/invalidation
@@ -134,10 +141,37 @@ The first ARM64 analysis found a duplicate source-filegroup name for the two
 libc assembler owners. Separate architecture names fixed it; the failed r1 and
 successful r2 records are retained. No dependency or validation gate was removed.
 
+## Foreign EFI evidence and current SDK refresh
+
+All paths below are under `/usr/obj/usr/src`:
+
+- `bazel-libsa-efi-aarch64-r1-20261104` and
+  `bazel-libsa-efi-riscv64-r1-20261104`: successful maintained frontend builds.
+- `bazel-libsa-efi-<arch>-review-r1-20261104` and
+  `bazel-libsa-efi-<arch>-filename-controls-r1-20261104`: complete ordered member,
+  symbol, code/relocation comparisons and the three original compiler controls.
+- `bazel-libsa-efi-<arch>-action-review-r1-20261104`: every private compiler output,
+  generated header digest/byte comparison, target ELF ABI and final archive input
+  binding; each regular archive remains byte-identical to its prior capture.
+- The controlled foreign references retain their original
+  `bazel-libsa-efi-<arch>-make-r1-20261103` names and local-header audits.
+
+The ARM64 repeat after common flag factoring was rejected before compilation:
+`build-runs/20261104T002510Z-12791` records a changed SDK origin,
+`amd64.amd64/tmp/usr/include/sys/hypertrace.h`. The concurrent reviewed HyperTrace
+merge advanced dev to `a914137016e`; it changed no standalone/Bazel/frontend files.
+The successful earlier captures remain evidence for their recorded inputs; this
+failed repeat is not a cache-pass claim. Original receipts and SDKs were not
+edited, and no SDK input/hash check was removed. Current SDK preparation uses
+maintained `libmd-plan.py --sdk-only` and `libmd-stage-tools.py`, retained under
+`bazel-libsa-sdk-refresh-r1-20261104`. Refresh completion and current-input repeat
+qualification remain pending at this checkpoint.
+
 ## Frontend and completion gates
 
 The normal maintained build-bsd format-5 path selects the library/generated
-labels, all supported regular architectures and explicit policy/manifest settings.
+labels, all three supported regular/private EFI architectures, and explicit
+policy/manifest settings.
 No new C switch, publication destination, signing or stage-verification contract
 changed. The manual, default/override setting and reference/test helpers are part
 of the same source change. All compilation uses sixteen logical CPUs. Make stays
@@ -146,9 +180,9 @@ production/default, and BIP remains out of scope.
 The selected regular manual remains owned by the common library; EFI has no
 separate manual payload. Full directory/mtree/package installation, debug/source
 lookup, alternate optional inventories, global-verifier/verification-off variants,
-VECTX/pass-manifest selections, IA32 and foreign EFI implementations remain open.
-Controlled ARM64/RISC-V EFI references also pass the generated-header audit;
-reference completion alone does not establish native support. Full entry/loader links, boot and filesystem/
+VECTX/pass-manifest selections and IA32 remain open. The selected foreign EFI
+archives have actual native compiler/action comparisons, not merely prepared
+Make references. Full entry/loader links, boot and filesystem/
 crypto runtime, world/rescue/kernel/module completion, reproducible bootstrap,
 sandboxing, pkgbase/hardware/combined repository publication and CPU/memory/disk
 performance remain required. The broad SDK input/verification issue from Ficl

@@ -97,8 +97,6 @@ bsd_secureboot_headers(name = "efi_generated",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
 cc_library(name = "efi_generated_headers", hdrs = [":efi_generated"], strip_include_prefix = "efi_generated")
 _EFI_COMPAT = _LIBRARY_COMPAT + select({
-    "@platforms//cpu:x86_64": [], "//conditions:default": ["@platforms//:incompatible"],
-}) + select({
     "//tools/build/bazel/config:loader_efi_secureboot_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
 }) + select({
     "//tools/build/bazel/config:loader_veriexec_vectx_enabled": ["@platforms//:incompatible"], "//conditions:default": [],

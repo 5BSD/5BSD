@@ -10960,7 +10960,7 @@ items; original object/code comparisons do not close those gates.
 
 ## Cross regular and private EFI standalone library (2026-11-04)
 
-Regular ARM64/RISC-V and private AMD64 EFI preserve the full selected inventories,
+Regular ARM64/RISC-V and private AMD64/ARM64/RISC-V EFI preserve the selected inventories,
 ABI options and existing three Rijndael NDEBUG definitions. The private source
 selection retains verifier, PCR, UEFI variable/database interfaces and self-test
 code. Actual generated input/object/archive chains are qualified, including
