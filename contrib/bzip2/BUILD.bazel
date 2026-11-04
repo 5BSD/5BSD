@@ -11,7 +11,6 @@ exports_files([
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-
 filegroup(name = 'standalone_sa_bzlib_sources', srcs = ['bzlib.c', 'crctable.c', 'decompress.c', 'huffman.c', 'randtable.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bzlib.h', 'bzlib_private.h'], visibility = ["//stand/libsa:__pkg__"])
@@ -19,3 +18,7 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bzlib.h', 'bzlib_pri
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['bzlib.h', 'bzlib_private.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['bzlib.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['bzlib.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['bzlib.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

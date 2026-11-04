@@ -11027,3 +11027,13 @@ EFI_DEBUG and its local ZFS exclusion match the maintained Make policy. Neither
 original firmware profile supplies a host DTrace provider or BSM source; none is
 dropped by native compilation. Actual firmware/filesystem/device/error execution
 still needs runtime qualification. See EFI-BOOTSTRAP-QUALIFICATION.md.
+
+## EFI Forth/simple entry review (2026-11-04)
+
+Both interpreter source selections and all 116 entries retain existing command
+registration, verifier calls, error reporting and assertion/warning policy. Forth
+uses the real private Ficl library and version input; simple has no interpreter
+archive. No firmware-side provider or host audit source is removed by the native
+model. Original compiler controls account for filename strings without production
+assertion suppression. Actual interpreter/device/failure execution remains a
+firmware qualification gate. See EFI-INTERPRETERS-QUALIFICATION.md.

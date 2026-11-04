@@ -4790,6 +4790,21 @@ Other profiles, complete bootloader package aggregation, full debug/source looku
 and firmware/device execution remain qualification gates.
 See
 .Pa tools/build/bazel/EFI-BOOTSTRAP-QUALIFICATION.md .
+.Ss Native EFI interpreter candidates
+.Li //stand/efi/loader_4th:image
+and
+.Li //stand/efi/loader_simp:image
+build selected 64-bit AMD64 Forth/simple EFI applications from 58 native entries
+each, sharing the maintained source/order/options model with Lua.
+Their packages expose entry_objects, full, symbols, debug and install_manifest.
+Forth selects version.veriexec and native private Ficl, and excludes common help.
+Simple uses the ordinary version input and installs common help.
+The selected default-Lua loader alias remains owned by the Lua contribution.
+Existing typed metadata/reproducible and PE time inputs apply.
+IA32, foreign/alternate profiles, aggregate shared files/directories, full debug
+source lookup and firmware/interpreter execution remain qualification gates.
+See
+.Pa tools/build/bazel/EFI-INTERPRETERS-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

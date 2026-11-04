@@ -9,4 +9,8 @@ bsd_source_headers(name = "standalone_ficl_headers", hdrs = ['pnglite.h'], visib
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['pnglite.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-exports_files(['pnglite.c'], visibility = ["//stand/efi/loader:__pkg__"])
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['pnglite.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['pnglite.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+exports_files(['pnglite.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

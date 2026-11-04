@@ -319,7 +319,6 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
 
-
 filegroup(name = 'standalone_sa_core_sources', srcs = ['xform_aes_xts.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['cryptodev.h', 'xform_enc.h'], visibility = ["//stand/libsa:__pkg__"])
@@ -327,3 +326,7 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['cryptodev.h', 'xform
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['cryptodev.h', 'xform_enc.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['cryptodev.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['cryptodev.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['cryptodev.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

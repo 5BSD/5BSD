@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//stand/efi/loader:variants.bzl", "efi_loader_variant")
+efi_loader_variant(interpreter = 'simp')

@@ -191,4 +191,10 @@ bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['geom.h'], visibi
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-exports_files(['verity/g_verity_transition.c', 'verity/g_verity_verify.c'], visibility = ["//stand/efi/loader:__pkg__"])
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+exports_files(['verity/g_verity_transition.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['verity/g_verity_verify.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

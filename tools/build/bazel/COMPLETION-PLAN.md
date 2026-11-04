@@ -2184,3 +2184,18 @@ Next: final-source reuse, remaining interpreter/IA32 and foreign entry profiles,
 complete bootloader aggregation and firmware runtime. All broader world/kernel/
 module, debug, bootstrap/sandbox, publication and performance gates remain open.
 Make stays production/default.
+
+### AMD64 Forth and simple EFI interpreters (2026-11-04)
+
+Both variants now build full native entry/link/debug/PE/install candidates using
+one shared source/order/options model with Lua. The 116 entries preserve 112 raw
+allocated/relocation sets, with four independently explained filename cases.
+Both final payloads and PE bytes match completed original controls, including
+fresh private Ficl filename controls; all 6,227 consumed input pairs and final
+link orders agree. Forth's actual version.veriexec and help exclusion are retained;
+simple's ordinary version/help and unchanged Lua output are checked. See
+[EFI-INTERPRETERS-QUALIFICATION.md](EFI-INTERPRETERS-QUALIFICATION.md).
+
+Next retain final-source reuse, then IA32/foreign entry profiles, complete bootloader
+aggregation (shared help/directories), firmware/interpreter execution and the
+broader system gates. Make remains production/default.

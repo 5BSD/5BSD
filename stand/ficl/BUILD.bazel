@@ -89,3 +89,7 @@ ficl_archive_test(name = "archive_test", archive = ":static_archive",
     setting = "//tools/build/bazel/config:veriexec_enabled", compatible = _COMPAT)
 ficl_archive_test(name = "efi_archive_test", archive = ":efi_static_archive",
     setting = "//tools/build/bazel/config:efi_loader_veriexec_enabled", compatible = _COMPAT)
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['amd64/sysdep.h', 'ficl.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])

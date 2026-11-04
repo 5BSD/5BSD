@@ -37,6 +37,44 @@ bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['arch/amd64/multib
 load(":entry.bzl", "efi_loader_amd64_entry")
 efi_loader_amd64_entry()
 
-exports_files(['arch/amd64/amd64.ldscript'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])
+bsd_loader_version(name = "version_forth_configured", version = "version.veriexec", output = "vers.c",
+    description = "EFI loader", machine = _VERSION_MACHINE,
+    reproducible = select({"//tools/build/bazel/config:reproducible_build_enabled": True,
+        "//conditions:default": False}), metadata = "//tools/build/bazel/config:loader_version_metadata",
+    target_compatible_with = _VERSION_COMPAT, visibility = ["//visibility:public"])
 
-exports_files(['arch/amd64/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['arch/amd64/multiboot2.h', 'decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['arch/amd64/multiboot2.h', 'decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+exports_files(['arch/amd64/amd64.ldscript'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/amd64/amd64_tramp.S'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/amd64/elf64_freebsd.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/amd64/exc.S'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/amd64/multiboot2.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/amd64/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/amd64/trap.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['autoload.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['bootinfo.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['conf.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['copy.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['decompress.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['efi_main.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['framebuffer.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['main.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['memdisk.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

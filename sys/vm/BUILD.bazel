@@ -1391,3 +1391,7 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     includes = [], visibility = ["//sys/kern:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

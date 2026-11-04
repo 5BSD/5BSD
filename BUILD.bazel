@@ -11,10 +11,6 @@ cc_library(name = "bhyve_e1000_headers", hdrs = ['//sys/dev/e1000:e1000_defines.
 
 cc_library(name = "bhyve_kernemu_headers", hdrs = ["//sys/amd64/vmm:io/vhpet.h", "//sys/amd64/vmm:io/vioapic.h"], strip_include_prefix = '/sys/amd64', visibility = ["//usr.sbin/bhyve:__pkg__"])
 
-
-
-
-
 # Encoded firmware consumed by the native uathload installation.
 exports_files(["sys/contrib/dev/uath/ar5523.bin.uu"], visibility = ["//usr.sbin/uathload:__pkg__"])
 
@@ -43,4 +39,8 @@ bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_codes_module_headers",
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-exports_files(['stand/efi/acpica/acpi_detect.c'], visibility = ["//stand/efi/loader:__pkg__"])
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+exports_files(['stand/efi/acpica/acpi_detect.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

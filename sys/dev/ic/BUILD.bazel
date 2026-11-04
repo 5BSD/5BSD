@@ -25,3 +25,7 @@ bsd_source_headers(name = "system_io_module_context_2", hdrs = ["quicc.h"], incl
     visibility = ["//sys/dev/uart:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['ns16550.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['ns16550.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['ns16550.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

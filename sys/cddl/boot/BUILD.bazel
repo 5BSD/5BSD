@@ -13,3 +13,7 @@ bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['zfs/blake3_zfs.c
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['zfs/blake3_zfs.c', 'zfs/blkptr.c', 'zfs/fletcher.c', 'zfs/gzip.c', 'zfs/lzjb.c', 'zfs/sha256.c', 'zfs/skein_zfs.c', 'zfs/zfsimpl.h', 'zfs/zfssubr.c', 'zfs/zle.c'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

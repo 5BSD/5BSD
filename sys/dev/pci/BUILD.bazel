@@ -312,8 +312,6 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_pcib_if", srcs = [":b
     deps = ["//sys/dev/pci:kobj_builtins_physical_pcib_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/pci:kobj_builtins_kernel_pci_if_headers", "//sys/dev/pci:kobj_builtins_kernel_pcib_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
-
-
 filegroup(name = "hardware_module_pci_if_file", srcs = [":pci_if"], output_group = "header")
 cc_library(name = "hardware_module_pci_if_headers", hdrs = [":hardware_module_pci_if_file"], strip_include_prefix = "pci_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
 
@@ -336,3 +334,7 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     includes = [], visibility = ["//sys/kern:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['pcireg.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['pcireg.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['pcireg.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

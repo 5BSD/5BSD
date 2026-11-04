@@ -31,7 +31,6 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-
 filegroup(name = 'standalone_sa_core_sources', srcs = ['g_eli_hmac.c', 'pkcs5v2.c', 'g_eli_key.c', 'g_eli_key_cache.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/libsa:__pkg__"])
@@ -39,3 +38,7 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['g_eli.h', 'pkcs5v2.h
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

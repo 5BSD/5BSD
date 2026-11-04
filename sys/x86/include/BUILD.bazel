@@ -29,3 +29,7 @@ bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['_inttypes.h', '_l
 bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h'], visibility = ["//stand/efi/boot1:__pkg__"])
 
 bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'frame.h', 'metadata.h', 'psl.h', 'segments.h', 'setjmp.h', 'specialreg.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'frame.h', 'metadata.h', 'psl.h', 'segments.h', 'setjmp.h', 'specialreg.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

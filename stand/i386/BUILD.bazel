@@ -20,4 +20,12 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['libi386/libi386.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-exports_files(['libi386/comconsole.c', 'libi386/nullconsole.c', 'libi386/spinconsole.c'], visibility = ["//stand/efi/loader:__pkg__"])
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['libi386/libi386.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['libi386/libi386.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+exports_files(['libi386/comconsole.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['libi386/nullconsole.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['libi386/spinconsole.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

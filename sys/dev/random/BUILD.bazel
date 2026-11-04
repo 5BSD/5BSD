@@ -89,3 +89,7 @@ amd64_generic_module_objects(name = "rdseed_rng_rdseed_module", srcs = ["rdseed.
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['fortuna.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['fortuna.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['fortuna.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

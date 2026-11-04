@@ -129,7 +129,6 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
 
 bsd_source_headers(name = "standalone_lua_headers", hdrs = ['sha256.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])
 
-
 filegroup(name = 'standalone_sa_core_sources', srcs = ['sha256c.c', 'sha512c.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['sha224.h', 'sha256.h', 'sha256c_impl.h', 'sha384.h', 'sha512.h', 'sha512c_impl.h', 'sha512t.h'], visibility = ["//stand/libsa:__pkg__"])
@@ -137,3 +136,7 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['sha224.h', 'sha256.h
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['sha224.h', 'sha256.h', 'sha256c_impl.h', 'sha384.h', 'sha512.h', 'sha512c_impl.h', 'sha512t.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['sha256.h', 'sha512.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['sha256.h', 'sha512.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['sha256.h', 'sha512.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

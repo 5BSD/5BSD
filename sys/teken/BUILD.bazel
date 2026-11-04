@@ -55,3 +55,7 @@ exports_files(["gensequences", "sequences"], visibility = ["//stand/efi/libefi:_
 bsd_source_headers(name = "standalone_ficl_headers", hdrs = ['teken.h'], visibility = ["//stand/ficl:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['teken.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['teken.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['teken.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

@@ -82,7 +82,6 @@ amd64_generic_module_objects(name = "xz_xz_dec_stream_module", srcs = ["linux/li
     deps = [],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["XZ_USE_CRC64"], header_overrides = ["//sys/contrib/xz-embedded:system_io_module_context_2"], preinclude_headers = [], textual_hdrs = [])
 
-
 filegroup(name = 'standalone_sa_xz_crc32_sources', srcs = ['linux/lib/xz/xz_crc32.c', 'linux/lib/xz/xz_crc64.c', 'linux/lib/xz/xz_dec_bcj.c', 'linux/lib/xz/xz_dec_lzma2.c', 'linux/lib/xz/xz_dec_stream.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['freebsd/xz_config.h', 'freebsd/xz_malloc.h', 'linux/include/linux/xz.h', 'linux/lib/xz/xz_lzma2.h', 'linux/lib/xz/xz_private.h', 'linux/lib/xz/xz_stream.h'], visibility = ["//stand/libsa:__pkg__"])
@@ -90,3 +89,7 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['freebsd/xz_config.h'
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['freebsd/xz_config.h', 'freebsd/xz_malloc.h', 'linux/include/linux/xz.h', 'linux/lib/xz/xz_lzma2.h', 'linux/lib/xz/xz_private.h', 'linux/lib/xz/xz_stream.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['linux/include/linux/xz.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['linux/include/linux/xz.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['linux/include/linux/xz.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])

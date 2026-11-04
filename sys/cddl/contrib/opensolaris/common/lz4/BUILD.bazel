@@ -19,3 +19,7 @@ bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['lz4.h'], visibil
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['lz4.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['lz4.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['lz4.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['lz4.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
