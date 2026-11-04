@@ -16,6 +16,22 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Native vacation and original archive search binding (2026-11-04)
+
+Native vacation now builds with its existing generated Sendmail header and PIE
+libraries. Original internal-library references pass; the comparison helper
+correctly binds actual LIB<name>DIR-based -L/-l searches, rejecting shadows and
+unsupported ambiguity. Consumer object and original installation metadata/manual
+parity pass; all 76 libsm filename controls and the original controlled linked
+allocated image/entry/program-header comparison pass. Ordinary raw Make/debug
+byte parity is not claimed. Safe usage executes without sending a reply.
+The full SENDMAIL profile passes 268 archives and four selected tests, retaining
+all 801 previous default products unchanged. Only compile_et and telnet remain
+unconverted optional usr.bin programs. Full installed tests/world/pkgbase,
+alternate architectures/profiles, real mail scenarios, bootstrap/cache/sandbox,
+VM/runtime and comparative resources remain required.
+See VACATION-NATIVE-QUALIFICATION.md. Make remains default; BIP excluded.
+
 ## Private libsys implementation include (2026-11-04)
 
 The identified bcopy.c leak is corrected through a private implementation_deps

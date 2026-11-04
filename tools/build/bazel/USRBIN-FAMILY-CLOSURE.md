@@ -325,3 +325,23 @@ bazel-usrbin-nis-default-regression-r1-20261104. The retained comparison in
 bazel-usrbin-nis-default-review-r1-20261104 verifies all 801 default production
 archive/request/directory outputs remain byte-identical to the previous passing
 default capture. Optional dependency corrections do not alter the default set.
+
+## Native vacation and complete SENDMAIL production profile
+
+The original vacation source/manual now use existing Sendmail headers, sm_os.h
+producer and native PIE archives, with original utility package/debug policy.
+Fresh original library references and the consumer build/stage pass after the
+maintained reference checker correctly binds Make's separate -L/-l directory
+variables. Its shadow/ambiguity rejection tests pass. The consumer object,
+three-file/two-directory metadata and manual bytes agree with Make; both debug
+CRCs verify. All 76 original libsm filename controls match native objects, and
+the original controlled link matches all allocated sections, entry and program
+headers. Untouched ordinary raw Make images and full debug bytes remain distinct.
+
+The complete SENDMAIL-enabled parent passes with 268 archives and four tests;
+all 801 preceding default products remain unchanged, with no duplicate file
+paths. Exactly vacation is added. See VACATION-NATIVE-QUALIFICATION.md for input
+bindings, failed audit/reference attempts, explicit filename policy and scope.
+Only compile_et and telnet remain unconverted optional usr.bin programs.
+Full tests/world/pkgbase, other profiles/architectures, real mail/database,
+bootstrap/hardware/publication/cache/sandbox and resource/runtime gates remain.

@@ -50,6 +50,15 @@ RPC operations and configured libc resolver/NSS path. Safe -x alias tests do not
 exercise live RPC, resolver probes or authentication audit delivery. Those
 remain runtime gates; no instrumentation coverage is claimed from source triage.
 
+## Vacation consumer review (2026-11-04)
+
+The maintained vacation source uses its existing syslog/debug logger for usage,
+errors and reply decisions; native construction preserves that source unchanged.
+No dedicated DTrace provider or BSM audit calls are declared by this component.
+The safe missing-login test observes exit/output behavior before database/mail
+operations; it does not qualify live delivery logging, resolver probes or audit
+delivery. Isolated mail/database scenarios remain required.
+
 ## Findings and follow-up
 
 | Component | Finding | Status / next evidence |

@@ -122,6 +122,19 @@ def main():
             environment.options.append(variable + '=' + record['artifact'])
             if environment.query(['-V', variable]).strip() != record['artifact']:
                 raise ValueError('original library override is ineffective: ' + variable)
+        # Internal Make libraries use LIB<name>DIR for -L/-l links, separately
+        # from LIB<name> prerequisite paths. Bind both to the original archive.
+        for variable, record in library_inputs.items():
+            directory_variable = variable + 'DIR'
+            current = environment.query(['-V', directory_variable]).strip()
+            if current:
+                original_directory = Path(current)
+                if not original_directory.is_absolute() or not original_directory.is_relative_to('/usr/obj'):
+                    raise ValueError('original library search directory must use /usr/obj')
+                directory = str(Path(record['artifact']).parent)
+                environment.options.append(directory_variable + '=' + directory)
+                if environment.query(['-V', directory_variable]).strip() != directory:
+                    raise ValueError('original library search override is ineffective: ' + directory_variable)
         link_inputs = shlex.split(environment.query(['-V', 'LDADD']))
         if any(record['artifact'] not in link_inputs for record in library_inputs.values()):
             if not args.make_meta:

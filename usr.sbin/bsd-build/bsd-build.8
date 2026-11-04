@@ -4820,6 +4820,10 @@ the helper then audits actual archive operands in completed original link
 recipes and matching outputs before installation.
 Shell command chains, expansions and unrelated or escaping outputs cannot
 stand in for archive consumption.
+Internal libraries whose original Make rules expose LIB<name>DIR search variables
+bind those directories to the explicitly supplied original archive parents.
+Completed ordinary -L/-l operands must resolve first to that exact archive;
+earlier archives/shared libraries or unsupported search-mode ambiguity fail.
 Archive inputs are rechecked before/after commands; missing SDK archives need
 no copies, search-path fallback or profile identity relaxation.
 This is a comparison-reference interface, not a production backend switch.
@@ -6340,7 +6344,7 @@ not reported as fresh executions.
 .Cm //usr.bin:installation_archives
 rejects tests-enabled configurations until the complete original installed
 test hierarchy is reconciled. The production target does not assert test coverage.
-Unconverted Heimdal compiler, vacation and telnet profiles
+Unconverted Heimdal compiler and telnet profiles
 are explicitly incompatible; their conversion remains required work.
 These targets add no publication, installation or upgrade authorization.
 
@@ -6419,3 +6423,16 @@ No frontend C, signing or publication policy change is needed.
 An unchanged repeat preserves all 22 selected output records with zero actual
 logged spawn actions and six cached test results. This is local up-to-date
 reuse in maintained persistent state, not cold-build or cache-restore proof.
+
+.Ss Optional vacation consumer
+The existing format-5 sendmail setting selects native AMD64 vacation, using the
+maintained generated Sendmail header and native internal PIE libraries.
+The complete SENDMAIL-enabled production parent passes with 268 archives and
+four selected tests; its 801 previous default products remain unchanged.
+The independent Make consumer object, file/directory metadata and manual bytes
+match; both debug CRCs verify. With an explicit source-root compiler macro-prefix
+policy, the original controlled library/link matches native allocated sections,
+entry and program headers. Ordinary raw Make/debug byte equality is not claimed.
+Safe missing-login behavior executes without opening a vacation database or
+sending a reply. Real mail/database scenarios and full-system gates remain open.
+The generic frontend dispatcher, signing and publication policy are unchanged.

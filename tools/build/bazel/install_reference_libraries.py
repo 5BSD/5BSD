@@ -80,6 +80,78 @@ def verify(bindings):
             raise ValueError('original library input changed: ' + name)
 
 
+def linked_archives(argv, cwd, libraries):
+    """Resolve bound operands and ordinary -L/-l archive search, fail closed.
+
+    Only explicit search directories are considered. A shared library or another
+    archive earlier in the search order cannot witness the requested archive.
+    Response files, alternate search syntax and mode switches require a separate
+    resolver before they can witness a named archive.
+    """
+    selected = {name for name, row in libraries.items() if row['artifact'] in argv}
+    pending = {name: row for name, row in libraries.items() if name not in selected}
+    if not pending:
+        return selected
+    flags = []
+    directories = []
+    index = 1
+    ambiguous = False
+    while index < len(argv):
+        arg = argv[index]
+        if arg == '-L':
+            index += 1
+            if index == len(argv):
+                return selected
+            value = argv[index]
+            directories.append(value)
+        elif arg.startswith('-L'):
+            directories.append(arg[2:])
+        elif arg == '-l':
+            index += 1
+            if index == len(argv):
+                return selected
+            flags.append(argv[index])
+        elif arg.startswith('-l'):
+            flags.append(arg[2:])
+        elif (arg.startswith(('@', '--library-path')) or
+              (arg.startswith('-Wl,') and any(v.startswith(('-L', '-l', '--library-path'))
+                  for v in arg[4:].split(','))) or
+              arg in ('-static', '--static', '-Bstatic', '-Bdynamic') or
+              '-Bstatic' in arg or '-Bdynamic' in arg):
+            ambiguous = True
+        index += 1
+    if ambiguous:
+        return selected
+    for name, row in pending.items():
+        artifact = Path(row['artifact']).resolve(strict=True)
+        if not artifact.name.startswith('lib') or artifact.suffix != '.a':
+            continue
+        ordinary = artifact.name[3:-2]
+        for flag in flags:
+            if flag not in (ordinary, ':' + artifact.name):
+                continue
+            candidates = [artifact.name] if flag.startswith(':') else ['lib' + flag + '.so', 'lib' + flag + '.a']
+            first = None
+            for directory in directories:
+                if not directory or directory.startswith('='):
+                    # The sysroot-relative linker syntax is not a filesystem path.
+                    first = False
+                    break
+                base = Path(directory)
+                if not base.is_absolute():
+                    base = cwd / base
+                for filename in candidates:
+                    candidate = base / filename
+                    if candidate.exists() or candidate.is_symlink():
+                        first = candidate.resolve(strict=True)
+                        break
+                if first is not None:
+                    break
+            if first == artifact:
+                selected.add(name)
+    return selected
+
+
 def audit_links(objects, libraries):
     """Prove bound archives occur in completed original compiler/linker recipes.
 
@@ -111,7 +183,7 @@ def audit_links(objects, libraries):
             if (not argv or Path(argv[0]).name not in ('cc', 'c++', 'clang', 'clang++', 'ld', 'ld.lld', 'lld') or
                     any(flag in argv for flag in ('-c', '-E', '-S')) or argv.count('-o') != 1):
                 continue
-            selected = {name for name, record in libraries.items() if record['artifact'] in argv}
+            selected = linked_archives(argv, cwd, libraries)
             if not selected:
                 continue
             output_arg = argv[argv.index('-o') + 1]

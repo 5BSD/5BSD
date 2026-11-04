@@ -95,3 +95,17 @@ profiles, full package/shared directory aggregation, world/kernel/module,
 reproducible bootstrap/output-query/sandbox/cache, hardware/combined publication
 and CPU/memory/disk I/O/storage gates remain open. Make stays production/default;
 BIP remains excluded. No host installation, upgrade, reboot or VM occurred here.
+
+## Internal named archive links (2026-11-04)
+
+The vacation original reference exposed LIB<name> prerequisite overrides that
+left original LIB<name>DIR-based -L/-l links unchanged. That run fails the audit.
+The maintained helper now binds both when the original directory variable exists
+and verifies the actual completed search resolves first to the explicit archive.
+Earlier archives/shared libraries, default search assumptions, response-file or
+mode ambiguity cannot stand in for a binding. Direct original operands remain
+supported. Fifteen library-input unit tests and the existing option tests pass;
+the real corrected original consumer builds/stages against three freshly bound
+original PIE archives. See VACATION-NATIVE-QUALIFICATION.md for bounded evidence.
+This changes independent comparison inputs, not production link flags or the
+build-bsd backend selection.

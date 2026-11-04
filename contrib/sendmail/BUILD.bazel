@@ -11,3 +11,5 @@ exports_files(glob(["libsmdb/*.c", "libsmutil/*.c"]), visibility = ["//lib/libsm
 
 exports_files(glob(["libmilter/*.c"]) + ["include/libmilter/mfapi.h", "include/libmilter/mfdef.h"], visibility = ["//lib/libmilter:__pkg__"])
 cc_library(name = "milter_private_headers", hdrs = glob(["libmilter/*.h"]), visibility = ["//lib/libmilter:__pkg__"])
+
+exports_files(["vacation/vacation.c", "vacation/vacation.1"], visibility = ["//usr.bin/vacation:__pkg__"])

@@ -140,6 +140,43 @@ class CustomLinks(unittest.TestCase):
         self.assertEqual(result['commands'][0]['output_sha256'], lib.digest(self.output))
         self.assertEqual(result['commands'][0]['metadata_sha256'], lib.digest(self.meta))
 
+    def test_named_archive_search_is_bound(self):
+        for search, library in [('-L' + str(self.root), '-lsa'),
+                                ('-L ' + str(self.root), '-l sa'),
+                                ('-L' + str(self.root), '-l:libsa.a')]:
+            with self.subTest(search=search, library=library):
+                self.metadata('cc -o boot.out entry.o ' + search + ' ' + library)
+                self.assertEqual(set(lib.audit_links(self.objects, self.libraries)['libraries']), {'LIBSA32'})
+
+    def test_earlier_archive_or_shared_library_cannot_witness_binding(self):
+        earlier = self.root / 'earlier'
+        earlier.mkdir()
+        for filename in ['libsa.a', 'libsa.so']:
+            with self.subTest(filename=filename):
+                shadow = earlier / filename
+                shadow.write_bytes(b'unrelated library')
+                self.metadata('cc -o boot.out entry.o -L' + str(earlier) + ' -L' + str(self.root) + ' -lsa')
+                with self.assertRaisesRegex(ValueError, 'absent from completed link'):
+                    lib.audit_links(self.objects, self.libraries)
+                shadow.unlink()
+        shadow = self.root / 'libsa.so'
+        shadow.write_bytes(b'shared preferred to archive')
+        self.metadata('cc -o boot.out entry.o -L' + str(self.root) + ' -lsa')
+        with self.assertRaisesRegex(ValueError, 'absent from completed link'):
+            lib.audit_links(self.objects, self.libraries)
+
+    def test_named_search_modes_and_response_files_fail_closed(self):
+        for extra in ['@link.rsp', '-Wl,-Bstatic', '-static', '-Wl,-L/elsewhere', '--library-path=/elsewhere']:
+            with self.subTest(extra=extra):
+                self.metadata('cc -o boot.out entry.o -L' + str(self.root) + ' -lsa ' + extra)
+                with self.assertRaisesRegex(ValueError, 'absent from completed link'):
+                    lib.audit_links(self.objects, self.libraries)
+
+    def test_missing_search_path_is_not_a_default_library_witness(self):
+        self.metadata('cc -o boot.out entry.o -lsa')
+        with self.assertRaisesRegex(ValueError, 'absent from completed link'):
+            lib.audit_links(self.objects, self.libraries)
+
     def test_unused_archive_and_compile_are_rejected(self):
         for command in ['ld -o boot.out entry.o',
                         'cc -c -o boot.out ' + str(self.archive),
