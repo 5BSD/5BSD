@@ -15,10 +15,12 @@ bsd_loader_help(name = "help_fdt", srcs = ["//stand/fdt:help.fdt", "//stand/comm
 
 load("//tools/build/bazel:bsd_loader_generated.bzl", "bsd_loader_version")
 _VERSION_MACHINE = select({
+    "@platforms//cpu:x86_32": "amd64-ia32",
     "@platforms//cpu:x86_64": "amd64", "@platforms//cpu:aarch64": "arm64",
     "@platforms//cpu:riscv64": "riscv", "//conditions:default": "",
 })
 _VERSION_COMPAT = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_32": [],
     "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
     "@platforms//cpu:riscv64": [], "//conditions:default": ["@platforms//:incompatible"],
 })

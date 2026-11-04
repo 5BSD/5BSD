@@ -15,8 +15,9 @@ load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
 
 # Source-owned entry facts shared by the selected AMD64 interpreters.
 # Interpreter include/verification options come from stand/{lua,ficl}.mk.
-_ENTRY_BEFORE_LOCAL = ['-O2', '-pipe', '-fno-common', '-Wformat', '-fshort-wchar', '-mno-red-zone', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-DLOADER_NET_SUPPORT', '-DLOADER_MD_SUPPORT', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-fPIC', '-mno-red-zone', '-mno-relax', '-DLOADER_VERIEXEC', '-Ilib/libsecureboot/h', '-Istand/efi/acpica/include', '-Istand/efi/loader', '-Istand/libsa/zfs', '-Isys/contrib/openzfs/include', '-Isys/contrib/openzfs/include/os/freebsd/zfs', '-DEFI_ZFS_BOOT', '-fPIC', '-Wall']
-_ENTRY_AFTER_LOCAL = ['-Istand/efi/include', '-Istand/efi/include/amd64', '-Isys/contrib/edk2/Include', '-Isys/contrib/dev/acpica/include', '-Istand/i386/libi386', '-DEFI', '-DEFI_SECUREBOOT', '-DLOADER_VERITY_SUPPORT', '-Istand/common']
+_ENTRY_BEFORE_CPU = ['-O2', '-pipe', '-fno-common', '-Wformat', '-fshort-wchar', '-mno-red-zone', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-DLOADER_NET_SUPPORT', '-DLOADER_MD_SUPPORT', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float']
+_ENTRY_AFTER_CPU = ['-mno-relax', '-DLOADER_VERIEXEC', '-Ilib/libsecureboot/h', '-Istand/efi/acpica/include', '-Istand/efi/loader', '-Istand/libsa/zfs', '-Isys/contrib/openzfs/include', '-Isys/contrib/openzfs/include/os/freebsd/zfs', '-DEFI_ZFS_BOOT']
+_ENTRY_AFTER_EFI_INCLUDES = ['-Isys/contrib/edk2/Include', '-Isys/contrib/dev/acpica/include', '-Istand/i386/libi386', '-DEFI', '-DEFI_SECUREBOOT', '-DLOADER_VERITY_SUPPORT', '-Istand/common']
 _ENTRY_AFTER_INTERPRETER = ['-DLOADER_MSDOS_SUPPORT', '-DLOADER_UFS_SUPPORT', '-DLOADER_BZIP2_SUPPORT', '-DLOADER_XZ_SUPPORT', '-DLOADER_GPT_SUPPORT', '-DLOADER_MBR_SUPPORT', '-DLOADER_ZFS_SUPPORT', '-Istand/libsa/zfs', '-Isys/cddl/boot/zfs', '-Isys/cddl/contrib/opensolaris/uts/common', '\'-DHELP_FILENAME="loader.help.efi"\'', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses']
 _INTERPRETER_FLAGS = {
     "lua": ["-Icontrib/lua/src", "-Istand/common", "-Istand/liblua"],
@@ -24,10 +25,9 @@ _INTERPRETER_FLAGS = {
         "-DBF_DICTSIZE=30000", "-DLOADER_VERIEXEC", "-Ilib/libsecureboot/h"],
     "simp": [],
 }
-_AMD64_ENTRY_SOURCES = [
+_X86_COMMON_ENTRY_SOURCES = [
     ('8x16', ':console_font', ['-Oz', '-Qunused-arguments']),
     ('acpi_detect', '//stand:efi/acpica/acpi_detect.c', ['-Oz', '-Qunused-arguments']),
-    ('amd64_tramp', 'arch/amd64/amd64_tramp.S', ['-Oz', '-Qunused-arguments']),
     ('autoload', 'autoload.c', ['-Oz', '-Qunused-arguments']),
     ('bcache', '//stand/common:bcache.c', ['-Oz', '-Qunused-arguments']),
     ('boot', '//stand/common:boot.c', ['-Oz', '-Qunused-arguments']),
@@ -42,8 +42,6 @@ _AMD64_ENTRY_SOURCES = [
     ('devopen', '//stand/common:devopen.c', ['-Oz', '-Qunused-arguments']),
     ('disk', '//stand/common:disk.c', ['-Oz', '-Qunused-arguments']),
     ('efi_main', 'efi_main.c', ['-Oz', '-Qunused-arguments']),
-    ('elf64_freebsd', 'arch/amd64/elf64_freebsd.c', ['-Oz', '-Qunused-arguments']),
-    ('exc', 'arch/amd64/exc.S', ['-Oz', '-Qunused-arguments']),
     ('framebuffer', 'framebuffer.c', ['-Oz', '-Qunused-arguments', '-Isys/teken', '-Icontrib/pnglite']),
     ('g_verity_transition', '//sys/geom:verity/g_verity_transition.c', ['-Oz', '-Qunused-arguments']),
     ('g_verity_verify', '//sys/geom:verity/g_verity_verify.c', ['-Oz', '-Qunused-arguments']),
@@ -63,7 +61,6 @@ _AMD64_ENTRY_SOURCES = [
     ('misc', '//stand/common:misc.c', ['-Oz', '-Qunused-arguments']),
     ('modinfo', '//stand/common:modinfo.c', ['-Oz', '-Qunused-arguments']),
     ('module', '//stand/common:module.c', ['-Oz', '-Qunused-arguments', '-Isys/teken', '-Icontrib/pnglite']),
-    ('multiboot2', 'arch/amd64/multiboot2.c', ['-Oz', '-Qunused-arguments']),
     ('nullconsole', '//stand/i386:libi386/nullconsole.c', ['-Oz', '-Qunused-arguments']),
     ('nvstore', '//stand/common:nvstore.c', ['-Oz', '-Qunused-arguments']),
     ('part', '//stand/common:part.c', ['-Oz', '-Qunused-arguments', '-DHAVE_MEMCPY', '-Isys/contrib/zlib', '-Wno-deprecated-non-prototype']),
@@ -72,8 +69,6 @@ _AMD64_ENTRY_SOURCES = [
     ('reloc_elf64', '//stand/common:reloc_elf64.c', ['-Oz', '-Qunused-arguments']),
     ('self_reloc', '//stand/common:self_reloc.c', ['-Oz', '-Qunused-arguments']),
     ('spinconsole', '//stand/i386:libi386/spinconsole.c', ['-Oz', '-Qunused-arguments']),
-    ('start', 'arch/amd64/start.S', ['-Oz', '-Qunused-arguments']),
-    ('trap', 'arch/amd64/trap.c', ['-Oz', '-Qunused-arguments']),
     ('tslog', '//stand/common:tslog.c', ['-Oz', '-Qunused-arguments']),
     ('vdisk', '//stand/common:vdisk.c', ['-Oz', '-Qunused-arguments']),
     ('verified_root', '//stand/common:verified_root.c', ['-Oz', '-Qunused-arguments']),
@@ -84,90 +79,75 @@ _AMD64_ENTRY_SOURCES = [
     ('vers', ':version_configured', ['-Oz', '-Qunused-arguments']),
     ('zfs_cmd', '//stand/common:zfs_cmd.c', ['-Oz', '-Qunused-arguments']),
 ]
+_X86_ARCH_ENTRY_SOURCES = {
+    "amd64": [
+        ('amd64_tramp', 'arch/amd64/amd64_tramp.S', ['-Oz', '-Qunused-arguments']),
+        ('start', 'arch/amd64/start.S', ['-Oz', '-Qunused-arguments']),
+        ('elf64_freebsd', 'arch/amd64/elf64_freebsd.c', ['-Oz', '-Qunused-arguments']),
+        ('trap', 'arch/amd64/trap.c', ['-Oz', '-Qunused-arguments']),
+        ('multiboot2', 'arch/amd64/multiboot2.c', ['-Oz', '-Qunused-arguments']),
+        ('exc', 'arch/amd64/exc.S', ['-Oz', '-Qunused-arguments']),
+    ],
+    "i386": [
+        ('amd64_tramp', 'arch/i386/amd64_tramp.S', ['-Oz', '-Qunused-arguments']),
+        ('start', 'arch/i386/start.S', ['-Oz', '-Qunused-arguments']),
+        ('setup', 'arch/i386/setup.c', ['-Oz', '-Qunused-arguments']),
+        ('elf64_freebsd', 'arch/i386/elf64_freebsd.c', ['-Oz', '-Qunused-arguments']),
+    ],
+}
+
+def _efi_loader_x86_cflags(architecture, interpreter, package):
+    if architecture not in _X86_ARCH_ENTRY_SOURCES or interpreter not in _INTERPRETER_FLAGS:
+        fail("unsupported EFI architecture/interpreter")
+    if architecture == "i386" and interpreter != "lua":
+        fail("IA32 entry construction currently qualifies the Lua interpreter")
+    cpu = ["-fPIC", "-mno-red-zone"] if architecture == "amd64" else ["-m32", "-march=i386"]
+    firmware_alignment = [] if architecture == "amd64" else ["-malign-double"]
+    pic = ["-fPIC"] if architecture == "amd64" else []
+    return _ENTRY_BEFORE_CPU + firmware_alignment + cpu + _ENTRY_AFTER_CPU + pic + ["-Wall"] + [
+        "-I" + package, "-I" + package + "/arch/" + architecture,
+        "-Istand/efi/include", "-Istand/efi/include/" + architecture,
+    ] + _ENTRY_AFTER_EFI_INCLUDES + _INTERPRETER_FLAGS[interpreter] + _ENTRY_AFTER_INTERPRETER
 
 def efi_loader_amd64_cflags(interpreter, package):
-    if interpreter not in _INTERPRETER_FLAGS:
-        fail("unsupported EFI interpreter")
-    return _ENTRY_BEFORE_LOCAL + ["-I" + package, "-I" + package + "/arch/amd64"] + _ENTRY_AFTER_LOCAL + _INTERPRETER_FLAGS[interpreter] + _ENTRY_AFTER_INTERPRETER
+    return _efi_loader_x86_cflags("amd64", interpreter, package)
 
-_AMD64_ENTRY_ORDER = [
-    'autoload.o',
-    'bootinfo.o',
-    'conf.o',
-    'copy.o',
-    'decompress.o',
-    'efi_main.o',
-    'framebuffer.o',
-    'main.o',
-    'memdisk.o',
-    'self_reloc.o',
-    'vers.o',
-    'gfx_fb.o',
-    '8x16.o',
-    'acpi_detect.o',
-    'amd64_tramp.o',
-    'start.o',
-    'elf64_freebsd.o',
-    'trap.o',
-    'multiboot2.o',
-    'exc.o',
-    'nullconsole.o',
-    'comconsole.o',
-    'spinconsole.o',
-    'veritydev.o',
-    'verity_attach.o',
-    'verity_read.o',
-    'g_verity_verify.o',
-    'g_verity_transition.o',
-    'verity_commands.o',
-    'boot.o',
-    'commands.o',
-    'console.o',
-    'devopen.o',
-    'interp.o',
-    'interp_backslash.o',
-    'interp_parse.o',
-    'ls.o',
-    'misc.o',
-    'modinfo.o',
-    'module.o',
-    'nvstore.o',
-    'pnglite.o',
-    'tslog.o',
-    'verified_root.o',
-    'load_elf32.o',
-    'load_elf32_obj.o',
-    'reloc_elf32.o',
-    'load_elf64.o',
-    'load_elf64_obj.o',
-    'reloc_elf64.o',
-    'disk.o',
-    'part.o',
-    'vdisk.o',
-    'dev_net.o',
-    'bcache.o',
-    'md.o',
-    'interp_lua.o',
-    'zfs_cmd.o',
-]
+_X86_BEFORE_ARCH_ORDER = ['autoload.o', 'bootinfo.o', 'conf.o', 'copy.o', 'decompress.o', 'efi_main.o', 'framebuffer.o', 'main.o', 'memdisk.o', 'self_reloc.o', 'vers.o', 'gfx_fb.o', '8x16.o', 'acpi_detect.o']
+_X86_AFTER_ARCH_ORDER = ['nullconsole.o', 'comconsole.o', 'spinconsole.o', 'veritydev.o', 'verity_attach.o', 'verity_read.o', 'g_verity_verify.o', 'g_verity_transition.o', 'verity_commands.o', 'boot.o', 'commands.o', 'console.o', 'devopen.o', 'interp.o', 'interp_backslash.o', 'interp_parse.o', 'ls.o', 'misc.o', 'modinfo.o', 'module.o', 'nvstore.o', 'pnglite.o', 'tslog.o', 'verified_root.o', 'load_elf32.o', 'load_elf32_obj.o', 'reloc_elf32.o', 'load_elf64.o', 'load_elf64_obj.o', 'reloc_elf64.o', 'disk.o', 'part.o', 'vdisk.o', 'dev_net.o', 'bcache.o', 'md.o', 'interp_lua.o', 'zfs_cmd.o']
 
 def efi_loader_amd64_object_order(interpreter):
     selected = {"lua": "interp_lua.o", "4th": "interp_forth.o", "simp": "interp_simple.o"}
     if interpreter not in selected:
         fail("unsupported EFI interpreter")
-    return [selected[interpreter] if name == "interp_lua.o" else name for name in _AMD64_ENTRY_ORDER]
+    return _efi_loader_x86_object_order("amd64", interpreter)
+
+def _efi_loader_x86_object_order(architecture, interpreter):
+    selected = {"lua": "interp_lua.o", "4th": "interp_forth.o", "simp": "interp_simple.o"}
+    order = _X86_BEFORE_ARCH_ORDER + [row[0] + ".o" for row in _X86_ARCH_ENTRY_SOURCES[architecture]] + _X86_AFTER_ARCH_ORDER
+    return [selected[interpreter] if name == "interp_lua.o" else name for name in order]
 
 def efi_loader_amd64_sources():
-    return _AMD64_ENTRY_SOURCES
+    return _X86_COMMON_ENTRY_SOURCES + _X86_ARCH_ENTRY_SOURCES["amd64"]
 
 # This inventory is complete for the selected Make profile. Unsupported profiles
 # are incompatible instead of silently retaining a different source selection.
-_CPU = {"amd64": "@platforms//cpu:x86_64", "aarch64": "@platforms//cpu:aarch64", "riscv64": "@platforms//cpu:riscv64"}
+_CPU = {"i386": "@platforms//cpu:x86_32", "amd64": "@platforms//cpu:x86_64", "aarch64": "@platforms//cpu:aarch64", "riscv64": "@platforms//cpu:riscv64"}
 
 def _cpu_select(values, default):
     choices = {_CPU[arch]: value for arch, value in values.items()}
     choices["//conditions:default"] = default
     return select(choices)
+
+def _ia32_lua_profile(base):
+    # Explicit architecture rows keep future AMD64-only inputs out of DO32.
+    return dict(rows = _X86_COMMON_ENTRY_SOURCES + _X86_ARCH_ENTRY_SOURCES["i386"],
+        order = _efi_loader_x86_object_order("i386", "lua"),
+        flags = _efi_loader_x86_cflags("i386", "lua", native.package_name()),
+        deps = base["deps"],
+        architecture_headers = {"//sys/i386/include:efi_loader_entry_headers": "machine", "//sys/x86/include:efi_loader_ia32_headers": "x86"},
+        script = "arch/i386/i386.ldscript",
+        archives = ["//stand/efi/liblua32efi:static_archive", "//stand/efi/libefi32:static_archive", "//stand/efi/libsa32efi:static_archive"],
+        linkopts = ["-Wl,-Bsymbolic,-znotext", "-pie"], image_format = "efi-app-ia32")
 
 def efi_loader_entry():
     native.config_setting(name = "entry_profile", flag_values = {
@@ -189,7 +169,9 @@ def efi_loader_entry():
         order = efi_loader_amd64_object_order("lua"), script = "arch/amd64/amd64.ldscript",
         archives = ["//stand/efi/libluaefi:static_archive", "//stand/efi/libefi:static_archive", "//stand/efi/libsaefi:static_archive"],
         linkopts = ["-Wl,-znocombreloc", "-Wl,-Bsymbolic,-znotext", "-pie"], image_format = "efi-app-x86_64", help = ":help_common")}
+    profiles["i386"] = _ia32_lua_profile(profiles["amd64"])
     profiles.update(cross_lua_profiles())
+    native_width = compatible + _cpu_select({arch: ["@platforms//:incompatible"] if arch == "i386" else [] for arch in profiles}, ["@platforms//:incompatible"])
     bsd_architecture_headers(name = "entry_architecture_headers",
         headers = _cpu_select({arch: profile["architecture_headers"] for arch, profile in profiles.items()}, {}))
     loader_lua_paths(name = "entry_lua_paths")
@@ -208,7 +190,7 @@ def efi_loader_entry():
     native.filegroup(name = "entry_objects",
         srcs = _cpu_select({arch: [":entry_" + row[0] + "_objects" for row in profile["rows"]] for arch, profile in profiles.items()}, []),
         target_compatible_with = compatible, visibility = ["//visibility:public"])
-    bsd_firmware_link(name = "loader_lua_full", objects = [":entry_objects"], output = "loader_lua.sym.full",
+    bsd_firmware_link(name = "loader_lua_full", objects = [":entry_objects"], output = _cpu_select({arch: ("loader_ia32" if arch == "i386" else "loader_lua") + ".sym.full" for arch in profiles}, ""),
         script = _cpu_select({arch: profile["script"] for arch, profile in profiles.items()}, None),
         archives = _cpu_select({arch: profile["archives"] for arch, profile in profiles.items()}, []),
         linkopts = _cpu_select({arch: profile["linkopts"] for arch, profile in profiles.items()}, []),
@@ -216,7 +198,8 @@ def efi_loader_entry():
         object_order = _cpu_select({arch: profile["order"] for arch, profile in profiles.items()}, []),
         target_compatible_with = compatible, visibility = ["//visibility:public"])
     bsd_debug_split(name = "loader_lua_symbols", src = ":loader_lua_full",
-        binary_name = "loader_lua.sym", debug_name = "loader_lua.sym.debug",
+        binary_name = _cpu_select({arch: ("loader_ia32" if arch == "i386" else "loader_lua") + ".sym" for arch in profiles}, ""),
+        debug_name = _cpu_select({arch: ("loader_ia32" if arch == "i386" else "loader_lua") + ".sym.debug" for arch in profiles}, ""),
         objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
         objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
         target_compatible_with = compatible, visibility = ["//visibility:public"])
@@ -224,7 +207,7 @@ def efi_loader_entry():
         output_group = "debug_files", target_compatible_with = compatible,
         visibility = ["//visibility:public"])
     bsd_efi_image(name = "loader_lua_efi", src = ":loader_lua_symbols",
-        output = "loader_lua.efi", output_format = _cpu_select({arch: profile["image_format"] for arch, profile in profiles.items()}, ""),
+        output = _cpu_select({arch: ("loader_ia32" if arch == "i386" else "loader_lua") + ".efi" for arch in profiles}, ""), output_format = _cpu_select({arch: profile["image_format"] for arch, profile in profiles.items()}, ""),
         source_date_epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
         sections = [".peheader", ".text", ".sdata", ".data", ".dynamic", ".dynsym",
             ".rel.dyn", ".rela.dyn", ".reloc", ".eh_frame", "set_Xcommand_set",
@@ -232,18 +215,17 @@ def efi_loader_entry():
         objcopy_runtime = ["//usr.bin/elfcopy:execution_runtime"],
         target_compatible_with = compatible, visibility = ["//visibility:public"])
     bsd_install_file(name = "install_lua_efi", src = ":loader_lua_efi",
-        destination = "/boot/loader_lua.efi", owner = "root", group = "wheel",
+        destination = _cpu_select({arch: "/boot/" + ("loader_ia32" if arch == "i386" else "loader_lua") + ".efi" for arch in profiles}, ""), owner = "root", group = "wheel",
         mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = compatible)
-    bsd_install_file(name = "install_help", src = _cpu_select({arch: profile["help"] for arch, profile in profiles.items()}, None),
+    bsd_install_file(name = "install_help", src = _cpu_select({arch: profile.get("help", ":help_common") for arch, profile in profiles.items()}, None),
         destination = "/boot/loader.help.efi", owner = "root", group = "wheel",
-        mode = "0444", install_tags = ["package=bootloader"], target_compatible_with = compatible)
+        mode = "0444", install_tags = ["package=bootloader"], target_compatible_with = native_width)
     bsd_install_link(name = "install_default_efi", destination = "/boot/loader.efi",
         target = "/boot/loader_lua.efi", kind = "hardlink", owner = "root", group = "wheel",
-        mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = compatible)
+        mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = native_width)
     # The aggregate stage's maintained mtree supplies directory metadata. This
     # selected Lua profile is the maintained default interpreter on these platforms.
-    bsd_install_manifest(name = "install_manifest", entries = [":install_lua_efi",
-        ":install_help", ":install_default_efi"], target_compatible_with = compatible,
+    bsd_install_manifest(name = "install_manifest", entries = _cpu_select({arch: [":install_lua_efi"] if arch == "i386" else [":install_lua_efi", ":install_help", ":install_default_efi"] for arch in profiles}, []), target_compatible_with = compatible,
         visibility = ["//visibility:public"])
     bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/"},

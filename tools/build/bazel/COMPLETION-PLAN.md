@@ -2385,3 +2385,16 @@ are unchanged. IA32 EFI Lua now shares the existing native-width private source
 admission policy; its independent post-fix Make reference is explicit. See
 INTERPRETERS32-QUALIFICATION.md. Next integrate complete IA32 loader consumers;
 full system/pkgbase/runtime/debug/performance gates remain open.
+
+## Complete IA32 EFI Lua producer checkpoint (2026-11-04)
+
+The source-owned graph now composes all 56 IA32 entry objects with private Lua,
+EFI and standalone archives and the original linker script. Explicit architecture
+rows prevent accidental inheritance of AMD64-only sources. Nineteen frontend
+tests pass. A real-image test exposed and fixed elfcopy's unconditional EFI
+PE32+ selection; IA32 is now PE32. Fifty-four entry contracts match raw Make;
+two match isolated original filename controls. The complete corrected image
+equals an independent Make compiler/link/converter control with six documented
+filename controls across entry and libraries. Fifteen existing EFI images remain
+unchanged. See IA32-LOADER-QUALIFICATION.md. Alternate IA32/BIOS consumers, full
+debug/system/pkgbase/runtime/boot/bootstrap/performance acceptance remain open.

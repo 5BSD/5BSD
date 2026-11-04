@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "freestanding_image", src = "//stand/efi/loader:loader_lua_efi", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_objects", src = "//stand/efi/loader:entry_objects", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_full", src = "//stand/efi/loader:loader_lua_full", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_install_manifest", src = "//stand/efi/loader:install_manifest", architecture = "i386", visibility = ["//visibility:public"])
+
+load(":inspection.bzl", "image_epoch")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+filegroup(name = "installation_metadata", srcs = [":freestanding_install_manifest"], output_group = "manifest")
+image_epoch(name = "image_epoch", testonly = True)
+filegroup(name = "nm_inputs", srcs = ["@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:llvm-nm_runtime"])
+bsd_host_artifact_test(name = "artifact_test", src = "artifact-test.py",
+    data = [":freestanding_image", ":freestanding_full", ":installation_metadata", ":image_epoch", ":nm_inputs", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    args = ["--image", "$(location :freestanding_image)", "--full", "$(location :freestanding_full)",
+        "--manifest", "$(location :installation_metadata)", "--epoch-file", "$(location :image_epoch)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--nm-inputs", "$(locations :nm_inputs)"],
+    visibility = ["//visibility:public"], size = "small")

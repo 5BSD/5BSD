@@ -11125,3 +11125,14 @@ in the loader rather than the running kernel's DTrace/audit environment. This
 batch adds no new tracing facility. EFI Lua now preserves the loader's
 authenticated-source admission checks on IA32 as well as native width. Archive
 contracts and compiler records are inspected; firmware execution remains open.
+
+## Complete IA32 EFI Lua construction (2026-11-04)
+
+The 56-object entry graph retains the existing loader verification commands and
+source checks, and preserves MI sources shared with the qualified native-width
+loader. IA32 uses its actual long-mode setup/trampoline sources; AMD64 exception,
+trap and multiboot sources are not substituted. No DTrace or kernel security-audit
+provider source is removed or disabled. Host checks inspect actual ELF/PE output;
+firmware execution and observation of authentication failures remain open. A
+real-image ABI test found the converter's PE32+ header defect; the test remains
+strict and the shared producer is fixed for Make and Bazel.

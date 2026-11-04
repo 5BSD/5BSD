@@ -57,7 +57,9 @@ create_pe(struct elfcopy *ecp, int ifd, int ofd)
 	time_t timestamp;
 	int elferr;
 
-	if (ecp->otf == ETF_EFI || ecp->oem == EM_X86_64)
+	/* The EFI subsystem also supports IA32 with a PE32 optional header. */
+	if ((ecp->otf == ETF_EFI && ecp->oem != EM_386) ||
+	    ecp->oem == EM_X86_64)
 		po = PE_O_PE32P;
 	else
 		po = PE_O_PE32;

@@ -6137,3 +6137,12 @@ Host tests inspect ELF32 member order, interpreter APIs and verifier isolation;
 compile-time Lua checks cover its number, FILE and EFI wchar ABI.
 These archives remain internal.  Complete IA32 loader boot execution and full
 debug parity require separate qualification.
+.Ss Complete IA32 EFI Lua construction
+The loader_ia32 contribution uses explicit i386 startup sources, target headers,
+link script and private libraries in the shared loader graph.
+Its installation manifest contributes only /boot/loader_ia32.efi: it creates
+neither the native-width default-loader link nor another shared help file.
+The image converter selects PE32 for IA32; an EFI subsystem does not imply
+PE32+.  Host artifact tests verify the real firmware header, linked symbols
+and installation policy against the selected timestamp setting.
+These checks do not execute firmware or establish verified boot.

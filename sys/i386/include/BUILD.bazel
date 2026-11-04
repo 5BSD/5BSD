@@ -9,3 +9,5 @@ filegroup(name = "standalone_sa_arch_headers", srcs = ["_inttypes.h", "_limits.h
 filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'param.h', 'setjmp.h'], visibility = ["//stand/liblua:__pkg__"])
 
 filegroup(name = "standalone_ficl_headers", srcs = ['_limits.h', '_types.h', 'cpufunc.h', 'endian.h', 'metadata.h', 'setjmp.h'], visibility = ["//stand/ficl:__pkg__"])
+
+filegroup(name = "efi_loader_entry_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'asmacros.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'pmap.h', 'pmap_pae.h', 'psl.h', 'segments.h', 'setjmp.h', 'specialreg.h', 'vm.h'], visibility = ["//stand/efi/loader:__pkg__"])
