@@ -11303,3 +11303,13 @@ match original Make bytes, 0444 root/wheel modes, package tags and the 0755 test
 directory. No probe, audit policy, child discovery or runtime code is altered.
 This closes the root metadata export; complete child suites and runtime
 observability checks remain open.
+
+
+## Original TAP test installation batch in progress (2026-11-04)
+
+The shared installation helper preserves eleven original suites and their
+fixtures/metadata, retaining existing native sample/runtime declarations. It
+does not rewrite programs, test scripts, probes, generators or audit events.
+Configured archive analysis is not suite execution; original installation and
+actual archived content comparisons remain pending. Full installed tests and
+probe/audit runtime checks remain open.

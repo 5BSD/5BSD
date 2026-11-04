@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_tap_installation")
+bsd_tap_installation(
+    name = "install",
+    directory = "/usr/tests/usr.bin/tr",
+    programs = {"legacy_test": "legacy_test.sh"},
+    fixtures = [
+        "regress.00.out",
+        "regress.01.out",
+        "regress.02.out",
+        "regress.03.out",
+        "regress.04.out",
+        "regress.05.out",
+        "regress.06.out",
+        "regress.07.out",
+        "regress.08.out",
+        "regress.09.out",
+        "regress.0a.out",
+        "regress.0b.out",
+        "regress.0c.out",
+        "regress.0d.out",
+        "regress.in",
+        "regress.sh",
+        "regress2.in",
+    ],
+    metadata = {},
+)

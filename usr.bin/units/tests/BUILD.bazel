@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_tap_installation")
+bsd_tap_installation(
+    name = "install",
+    directory = "/usr/tests/usr.bin/units",
+    programs = {"basics_test": "basics_test.sh"},
+    fixtures = [
+    ],
+    metadata = {},
+)

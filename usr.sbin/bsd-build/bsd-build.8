@@ -6344,3 +6344,12 @@ restricted export used by bin/sbin/libexec. The initial missing export is retain
 as failed qualification evidence. Corrected native qualification passes and
 its actual archive matches the original Make files, ownership, modes, directory
 and package tags. This does not establish complete child test installation. The format-5 dispatch and publication interface remain unchanged.
+
+.Ss Original TAP suite archives under qualification
+The existing format-5 inputs can select the install_archive targets beneath
+usr.bin's apply, calendar, comm, file2c, join, jot, lastcomm, ncal, printf, tr and
+units tests directories. Shared native helpers preserve original TAP scripts,
+fixtures and Kyua metadata. Configured analysis passes; exact Make installation
+comparison and native archive qualification are pending. Archive construction
+does not execute those TAP programs or close the full installed-test inventory.
+No dispatch, staging-policy, signing or publication interface change is required.

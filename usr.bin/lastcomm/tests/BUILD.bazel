@@ -30,3 +30,6 @@ bsd_kyua_test(name = "legacy", program = ":legacy_test", interface = "tap",
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
     size = "small", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+bsd_test_install_archive(name = "install_archive", directory = "/usr/tests/usr.bin/lastcomm", manifests = [":install_manifest"])

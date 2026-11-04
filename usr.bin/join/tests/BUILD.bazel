@@ -5,3 +5,17 @@ bsd_compare_test(name = "legacy", program = "//usr.bin/join:join",
     arguments = ["-t", ",", "-a1", "-a2", "-e", "(unknown)", "-o", "0,1.2,2.2"],
     file_arguments = ["regress.1.in", "regress.2.in"], expected = "regress.out",
     runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_tap_installation")
+bsd_tap_installation(
+    name = "install",
+    directory = "/usr/tests/usr.bin/join",
+    programs = {"legacy_test": "legacy_test.sh"},
+    fixtures = [
+        "regress.1.in",
+        "regress.2.in",
+        "regress.out",
+        "regress.sh",
+    ],
+    metadata = {},
+)

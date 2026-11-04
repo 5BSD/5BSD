@@ -24,3 +24,6 @@ load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
  ]]
 test_suite(name = "tests", tests = [":debug_substitution", ":debug_grouping", ":debug_magic"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+bsd_test_install_archive(name = "install_archive", directory = "/usr/tests/usr.bin/apply", manifests = [":install_manifest"])

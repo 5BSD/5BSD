@@ -2678,3 +2678,14 @@ with all six expanded runtime/configuration tests. That aggregate remains live
 and unqualified. Evidence: bazel-usrbin-test-root-review-r1-20261104.
 Complete world, aggregate modules and cross-architecture/system qualification
 remain unfinished. Make remains default; BIP remains excluded.
+
+## Original TAP installations in progress (2026-11-04)
+
+The next installed-test batch carries eleven original suites, 259 fixtures,
+thirteen TAP programs and eleven Kyuafiles through shared native installation
+helpers. Existing apply/lastcomm manifests and all scripts remain unchanged.
+Configured archive analysis passes; original Make references and native/archive
+comparison are in progress. Actual suite runtime and the remaining installed-test
+hierarchy remain open, with the full tests-enabled parent still explicitly gated.
+This does not replace remaining full world/modules/pkgbase/bootstrap/runtime/
+VM/performance acceptance. See USRBIN-FAMILY-CLOSURE.md.

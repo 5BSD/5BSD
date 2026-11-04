@@ -184,3 +184,22 @@ with all six expanded runtime/configuration tests. That aggregate remains live
 and unqualified. Evidence: bazel-usrbin-test-root-review-r1-20261104.
 Complete world, aggregate modules and cross-architecture/system qualification
 remain unfinished. Make remains default; BIP remains excluded.
+
+## Original TAP suite installation batch under qualification
+
+Eleven existing suites now have complete declared installation/archive
+contributions: apply, calendar, comm, file2c, join, jot, lastcomm, ncal, printf, tr
+and units. The shared bsd_test_installation.bzl helper serializes unchanged TAP source payloads directly with their installed
+names/modes, preserves explicit fixtures and metadata, and uses the existing
+account/mtree/archive policy. Existing apply/lastcomm manifests and all original
+scripts are preserved. The batch declares 259 fixtures, thirteen TAP programs
+and eleven Kyuafiles. Configured archive analysis passes; it executes no actions.
+
+Original Make installation references are being captured sequentially with the
+maintained helper. Native archive qualification is queued behind the live
+production build. Exact inventory/bytes/modes/tags and actual archive producer
+bindings still need comparison before this batch is qualified. No full TAP
+runtime execution or complete usr.bin test hierarchy is claimed. The full
+installation target remains incompatible with tests enabled. Evidence paths:
+bazel-usrbin-tap-analysis-r2-20261104, bazel-usrbin-tap-make-batch-r1-20261104
+and the pending bazel-usrbin-tap-native-r1-20261104 under /usr/obj/usr/src.

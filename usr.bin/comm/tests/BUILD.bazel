@@ -6,3 +6,23 @@ load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
     file_arguments = ["regress." + case + "a.in", "regress." + case + "b.in"],
     expected = "regress." + case + ".out", runner = "//tools/build/bazel:byte_compare_runner",
     size = "small") for case in ["00", "01", "02"]]
+
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_tap_installation")
+bsd_tap_installation(
+    name = "install",
+    directory = "/usr/tests/usr.bin/comm",
+    programs = {"legacy_test": "legacy_test.sh"},
+    fixtures = [
+        "regress.00.out",
+        "regress.00a.in",
+        "regress.00b.in",
+        "regress.01.out",
+        "regress.01a.in",
+        "regress.01b.in",
+        "regress.02.out",
+        "regress.02a.in",
+        "regress.02b.in",
+        "regress.sh",
+    ],
+    metadata = {},
+)
