@@ -4813,7 +4813,13 @@ comparison helper accepts
 with exact format-1 JSON receipt/artifact SHA-256 bindings for LIB-prefixed
 Make variables.
 It requires matching passed target/compiler references under /usr/obj and
-verifies actual LDADD consumption before building.
+verifies selected LDADD consumption before building.
+Custom direct links require
+.Fl -make-meta ;
+the helper then audits actual archive operands in completed original link
+recipes and matching outputs before installation.
+Shell command chains, expansions and unrelated or escaping outputs cannot
+stand in for archive consumption.
 Archive inputs are rechecked before/after commands; missing SDK archives need
 no copies, search-path fallback or profile identity relaxation.
 This is a comparison-reference interface, not a production backend switch.
@@ -6192,3 +6198,16 @@ The existing legacy installation manifest/archive preserves image and manual
 metadata without a special frontend mode.
 Selected-default Make comparisons and host format checks do not qualify
 non-default boot policy, firmware execution or full-system performance.
+.Ss GPT and ISO BIOS boot construction
+The gptboot and isoboot contributions use standalone i386 compiler contexts,
+explicit startup/program/serial/disk/console object order and native libsa32.
+Declared SDK linking, flat conversion and native BTX packing construct the images.
+The existing loader_comconsole_port and loader_comconsole_speed settings select
+serial policy; loader_boot_serial_format defaults to 3.
+The loader_gptboot_ufs setting accepts UFS1_AND_UFS2, UFS1_ONLY or UFS2_ONLY.
+The loader_isoboot_max_size integer setting defaults to Make's 30720-byte bound;
+the real completed image must pass that bound before becoming the public artifact.
+Both components provide installation manifests and archives with original image
+and manual policy. The shared boot-data rules honor the existing man, mancompress
+and split_manpages settings. Construction tests and original compiler controls do not
+qualify firmware execution, full-system debug lookup or system performance.

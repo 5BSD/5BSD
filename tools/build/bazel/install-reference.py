@@ -114,6 +114,7 @@ def main():
                 shlex.split(identity[3]) != environment.cc):
             raise ValueError('component define changed baseline SDK/target/compiler identity')
     library_inputs, library_bindings = {}, {}
+    audit_library_links = False
     if args.library_inputs:
         library_inputs, library_bindings = install_reference_libraries.load(
             args.library_inputs, args.target_arch, src, Path(environment.compiler_selected))
@@ -123,7 +124,9 @@ def main():
                 raise ValueError('original library override is ineffective: ' + variable)
         link_inputs = shlex.split(environment.query(['-V', 'LDADD']))
         if any(record['artifact'] not in link_inputs for record in library_inputs.values()):
-            raise ValueError('original archive override is absent from selected LDADD')
+            if not args.make_meta:
+                raise ValueError('original archive override is absent from selected LDADD; custom links require --make-meta')
+            audit_library_links = True
         environment.inputs.update(library_bindings)
     if args.make_meta:
         install_reference_options.validate_metadata_component(environment.query)
@@ -193,6 +196,8 @@ def main():
         if args.make_meta:
             base += ['.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=yes']
         run(buildenv(base + ['-j' + str(args.jobs), 'all']), 'build')
+        if audit_library_links:
+            receipt['library_link_audit'] = install_reference_libraries.audit_links(objects, library_inputs)
         flags = ['NO_ROOT=yes', 'DB_FROM_SRC=yes', 'BUILD_PKGS=yes',
                  'DESTDIR=' + str(stage), 'METALOG=' + str(metalog)]
         # Query the actual top-level install contract, rather than duplicating flags.

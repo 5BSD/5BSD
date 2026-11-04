@@ -31,7 +31,9 @@ object-tree files under the corresponding reference component; reference and
 archive locations stay under /usr/obj. Unsafe Make/shell path syntax, symlinks
 escaping the declared location, digest mismatches, thin archives and linker
 scripts are refused. The helper checks each override is effective and appears
-in the selected expanded LDADD. No CC/CFLAGS/LDADD override is supplied by this
+in the selected expanded LDADD. Custom direct links instead require --make-meta
+and a successful audit of completed original link recipes, outputs and actual
+archive operands before installation; see GPT-ISO-BOOT-QUALIFICATION.md. No CC/CFLAGS/LDADD override is supplied by this
 API. Caller hashes and receipt paths are explicit inputs, not an authenticated
 signing or verified-boot claim.
 

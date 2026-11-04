@@ -11173,3 +11173,12 @@ fresh Make objects and flat images are whole-byte identical. No OS DTrace/BSM
 provider is removed or disabled. Host artifact tests do not execute firmware or
 prove event delivery. Non-default boot-policy and firmware/runtime checks remain
 open; see LEGACY-STANDALONE-QUALIFICATION.md.
+
+## GPT/ISO BIOS boot consumers (2026-11-04)
+
+The original GPT/ISO program, GPT loader, serial, disk and console sources and
+included filesystem/GPT C templates are unchanged. The native migration retains
+their diagnostic and failure paths; no assertion is disabled to match Make. These
+preboot components have no OS DTrace/BSM provider to move. The ISO size failure
+remains an actual build-action failure. Artifact/option controls do not establish
+BIOS disk/console execution, firmware observations or live audit delivery.

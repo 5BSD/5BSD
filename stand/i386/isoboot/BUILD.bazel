@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load("//tools/build/bazel:bsd_boot_image.bzl", "bsd_boot_link", "bsd_boot_flat_image", "bsd_btx_image", "bsd_boot_image_bytes")
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//stand/i386/common:boot_config.bzl", "boot_console_parameters")
+config_setting(name = "entry_profile", flag_values = {
+    "//tools/build/bazel/config:loader_geli": "true", "//tools/build/bazel/config:loader_disk": "true"})
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"] + select({
+    ":entry_profile": [], "//conditions:default": ["@platforms//:incompatible"]})
+boot_console_parameters(name = "console")
+_UFS = []
+bsd_architecture_headers(name = "architecture_headers", headers = {'//sys/i386/include:gpt_boot_arch_headers': 'machine', '//sys/i386/include:gpt_boot_arch_headers_pc': 'machine/pc', '//sys/x86/include:gpt_boot_arch_headers': 'x86'})
+_DEPS = [':architecture_headers', ':console', '//stand/libsa:standalone_headers', '//include:gpt_boot_headers', '//stand/common:gpt_boot_headers', '//stand/i386/boot2:gpt_boot_headers', '//stand/i386/btx/lib:gpt_boot_headers', '//stand/i386/common:gpt_boot_headers', '//stand/libsa:gpt_boot_headers', '//sys/bsm:gpt_boot_headers', '//sys/contrib/zlib:gpt_boot_headers', '//sys/crypto:gpt_boot_headers', '//sys/crypto/sha2:gpt_boot_headers', '//sys/fs/cd9660:gpt_boot_headers', '//sys/geom/eli:gpt_boot_headers', '//sys/opencrypto:gpt_boot_headers', '//sys/sys:gpt_boot_headers', '//sys/ufs/ffs:gpt_boot_headers', '//sys/ufs/ufs:gpt_boot_headers']
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '\'-DBOOTPROG="isoboot"\'', '-O1', '-Istand/common', '-Istand/i386/common', '-Istand/i386/boot2', '-Wall', '-Waggregate-return', '-Wbad-function-cast', '-Wno-cast-align', '-Wmissing-declarations', '-Wmissing-prototypes', '-Wnested-externs', '-Wpointer-arith', '-Wshadow', '-Wstrict-prototypes', '-Wwrite-strings', '-Wno-pointer-sign', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Oz', '-mstack-alignment=8', '-mllvm', '-inline-threshold=3', '-mllvm', '-enable-load-pre=false', '-Qunused-arguments']
+_SOURCES = [('cons', '//stand/i386/common:gpt_boot_cons_source'), ('drv', '//stand/i386/common:gpt_boot_drv_source'), ('gptldr', '//stand/i386/gptboot:gpt_boot_gptldr_source'), ('isoboot', 'isoboot.c'), ('sio', '//stand/i386/boot2:gpt_boot_sio_source')]
+[cc_library(name = "entry_" + name, srcs = [source], copts = _CFLAGS + _UFS,
+    deps = _DEPS, features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    linkstatic = True, target_compatible_with = _COMPAT) for name, source in _SOURCES]
+[bsd_component_object(name = "entry_" + name + "_object", group = ":entry_" + name, out = name + ".o",
+    target_compatible_with = _COMPAT) for name, _ in _SOURCES]
+filegroup(name = "entry_objects", srcs = [":entry_" + name + "_object" for name, _ in _SOURCES], target_compatible_with = _COMPAT)
+bsd_boot_link(name = "native_loader_elf", objects = [":entry_gptldr_object"], output = "gptldr.out",
+    script = "//stand/i386:boot.ldscript", linkopts = ["-m", "elf_i386_fbsd", "-static", "-N", "--gc-sections", "-e", "start", "--defsym", "ORG=0x7c00"], target_compatible_with = _COMPAT)
+bsd_boot_flat_image(name = "native_loader", src = ":native_loader_elf", output = "gptldr.bin", target_compatible_with = _COMPAT)
+bsd_boot_link(name = "native_client_elf", objects = ["//stand/i386/btx/lib:crt0", ":entry_isoboot_object", ":entry_sio_object", ":entry_drv_object", ":entry_cons_object"],
+    archives = ["//stand/libsa32:static_archive"], output = "isoboot.out",
+    script = "//stand/i386:boot.ldscript", linkopts = ["-m", "elf_i386_fbsd", "-static", "-N", "--gc-sections", "--defsym", "ORG=0x0"], target_compatible_with = _COMPAT)
+bsd_boot_flat_image(name = "native_client", src = ":native_client_elf", output = "isoboot.bin", target_compatible_with = _COMPAT)
+bsd_btx_image(name = "native_packed", src = ":native_client", loader = ":native_loader", kernel = "//stand/i386/btx/btx:btx",
+    output = "isoboot.unchecked", entry = "0x0", target_compatible_with = _COMPAT)
+bsd_boot_image_bytes(name = "native_image", srcs = [":native_packed"], operation = "check", size_setting = "//tools/build/bazel/config:loader_isoboot_max_size", output = "isoboot", target_compatible_with = _COMPAT)
+bsd_freestanding_artifact(name = "isoboot", src = ":native_image", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "objects", src = ":entry_objects", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "client", src = ":native_client", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "symbols", src = ":native_client_elf", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "loader", src = ":native_loader", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "loader_elf", src = ":native_loader_elf", architecture = "i386", visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
+boot_data_installation(files = [("isoboot", ":isoboot")], manuals = ["isoboot.8"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

@@ -253,3 +253,5 @@ filegroup(name = "bios_loader_vdisk_source", srcs = ["vdisk.c"], visibility = ["
 filegroup(name = "bios_loader_verified_root_source", srcs = ["verified_root.c"], visibility = ["//stand/i386/loader:__pkg__"])
 
 filegroup(name = "bios_loader_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "gpt_boot_headers", hdrs = ['paths.h', 'rbx.h'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])

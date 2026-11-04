@@ -78,16 +78,23 @@ bsd_btx_image = rule(implementation = _btx, attrs = {
 })
 
 def _bytes(ctx):
-    if ctx.attr.operation == "zero" and (ctx.files.srcs or ctx.attr.size < 1):
+    size = ctx.attr.size
+    if ctx.attr.size_setting:
+        if size != 0:
+            fail("select either an explicit boot image size or a setting")
+        size = ctx.attr.size_setting[BuildSettingInfo].value
+        if type(size) != "int" or size < 1:
+            fail("boot image size limit must be a positive integer")
+    if ctx.attr.operation == "zero" and (ctx.files.srcs or size < 1):
         fail("zero requires no inputs and a positive size")
-    if ctx.attr.operation == "pad" and (len(ctx.files.srcs) != 1 or ctx.attr.size < 1):
-        fail("pad requires one input and a positive size")
-    if ctx.attr.operation == "concat" and (len(ctx.files.srcs) < 2 or ctx.attr.size != 0):
+    if ctx.attr.operation in ["pad", "check"] and (len(ctx.files.srcs) != 1 or size < 1):
+        fail("pad/check requires one input and a positive size")
+    if ctx.attr.operation == "concat" and (len(ctx.files.srcs) < 2 or size != 0):
         fail("concat requires at least two ordered inputs and no size")
     out = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
     args.add_all(["-B", "-S", ctx.file._runner.path, "--operation", ctx.attr.operation,
-        "--size", str(ctx.attr.size), "--output", out.path])
+        "--size", str(size), "--output", out.path])
     args.add_all(ctx.files.srcs)
     ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run, arguments = [args],
         inputs = ctx.files.srcs + [ctx.file._runner, ctx.file.python_home] + ctx.files.runtime,
@@ -97,8 +104,9 @@ def _bytes(ctx):
 
 bsd_boot_image_bytes = rule(implementation = _bytes, attrs = {
     "srcs": attr.label_list(allow_files = True),
-    "operation": attr.string(mandatory = True, values = ["zero", "pad", "concat"]),
+    "operation": attr.string(mandatory = True, values = ["zero", "pad", "concat", "check"]),
     "size": attr.int(),
+    "size_setting": attr.label(providers = [BuildSettingInfo]),
     "output": attr.string(mandatory = True),
     "python": attr.label(default = "@bsd_sdk//toolchain:extra_python", executable = True, cfg = "exec", allow_single_file = True),
     "python_home": attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = "exec"),
@@ -109,6 +117,15 @@ bsd_boot_image_bytes = rule(implementation = _bytes, attrs = {
 def _link(ctx):
     if not ctx.files.objects or len(depset(ctx.files.objects).to_list()) != len(ctx.files.objects):
         fail("boot link requires nonempty distinct ordered objects")
+    archives = []
+    for target in ctx.attr.archives:
+        files = target[DefaultInfo].files.to_list()
+        if len(files) != 1 or files[0].extension != "a":
+            fail("each boot archive must select one native archive")
+        archives.append(files[0])
+    inputs = ctx.files.objects + archives
+    if len(depset(inputs).to_list()) != len(inputs):
+        fail("duplicate boot link inputs")
     out = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
     args.add_all(ctx.attr.linkopts)
@@ -118,15 +135,16 @@ def _link(ctx):
             fail("boot link origin must fit an unsigned 32-bit address")
         args.add_all(["--defsym", "ORG=" + str(origin)])
     args.add_all(["-T", ctx.file.script.path, "-o", out.path])
-    args.add_all(ctx.files.objects)
+    args.add_all(inputs)
     ctx.actions.run(executable = ctx.attr.linker[DefaultInfo].files_to_run,
-        arguments = [args], inputs = ctx.files.objects + [ctx.file.script], tools = ctx.files.runtime,
+        arguments = [args], inputs = inputs + [ctx.file.script], tools = ctx.files.runtime,
         outputs = [out], env = _environment(ctx.files.runtime), use_default_shell_env = False,
         mnemonic = "BSDBootLink")
     return [DefaultInfo(files = depset([out]))]
 
 bsd_boot_link = rule(implementation = _link, attrs = {
     "objects": attr.label_list(allow_files = True, mandatory = True),
+    "archives": attr.label_list(allow_files = [".a"]),
     "script": attr.label(allow_single_file = True, mandatory = True),
     "origin_setting": attr.label(providers = [BuildSettingInfo]),
     "linkopts": attr.string_list(mandatory = True),

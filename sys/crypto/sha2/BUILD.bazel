@@ -156,3 +156,5 @@ bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['sha256.h', 
 bsd_source_headers(name = "bios_libi386_headers", hdrs = ['sha256.h', 'sha512.h'], visibility = ["//stand/i386/libi386:__pkg__"])
 
 bsd_source_headers(name = "bios_loader_headers", hdrs = ['sha256.h', 'sha512.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "gpt_boot_headers", hdrs = ['sha256.h', 'sha512.h'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])

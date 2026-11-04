@@ -116,5 +116,58 @@ class LibraryInputs(unittest.TestCase):
             lib.verify(bindings)
 
 
+class CustomLinks(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir=os.environ['TEST_TMPDIR'])
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.objects = self.root / 'objects'
+        self.objects.mkdir()
+        self.archive = self.root / 'libsa.a'
+        self.archive.write_bytes(b'!<arch>\n')
+        self.libraries = {'LIBSA32': {'artifact': str(self.archive)}}
+        self.output = self.objects / 'boot.out'
+        self.output.write_bytes(b'completed output fixture')
+        self.meta = self.objects / 'boot.out.meta'
+
+    def metadata(self, command, cwd=None):
+        self.meta.write_text('CMD ' + command + '\nCWD ' + str(cwd or self.objects) + '\n')
+
+    def test_actual_link_operand_and_output_bound(self):
+        self.metadata('ld -static -o boot.out entry.o ' + str(self.archive))
+        result = lib.audit_links(self.objects, self.libraries)
+        self.assertEqual(result['libraries'], {'LIBSA32': [str(self.meta)]})
+        self.assertEqual(result['commands'][0]['output_sha256'], lib.digest(self.output))
+        self.assertEqual(result['commands'][0]['metadata_sha256'], lib.digest(self.meta))
+
+    def test_unused_archive_and_compile_are_rejected(self):
+        for command in ['ld -o boot.out entry.o',
+                        'cc -c -o boot.out ' + str(self.archive),
+                        'echo -o boot.out ' + str(self.archive),
+                        'ld -o boot.out entry.o ; echo ' + str(self.archive),
+                        'ld -o boot.out entry.o&&echo ' + str(self.archive)]:
+            with self.subTest(command=command):
+                self.metadata(command)
+                with self.assertRaisesRegex(ValueError, 'absent from completed link'):
+                    lib.audit_links(self.objects, self.libraries)
+
+    def test_output_and_directory_escape_are_rejected(self):
+        outside = self.root / 'outside.out'
+        outside.write_bytes(b'outside')
+        self.metadata('ld -o ' + str(outside) + ' ' + str(self.archive))
+        with self.assertRaisesRegex(ValueError, 'output differs'):
+            lib.audit_links(self.objects, self.libraries)
+        self.metadata('ld -o boot.out ' + str(self.archive), cwd=self.root)
+        with self.assertRaisesRegex(ValueError, 'CWD escapes'):
+            lib.audit_links(self.objects, self.libraries)
+
+    def test_different_existing_target_is_rejected(self):
+        other = self.objects / 'other.out'
+        other.write_bytes(b'other')
+        self.metadata('ld -o other.out ' + str(self.archive))
+        with self.assertRaisesRegex(ValueError, 'output differs'):
+            lib.audit_links(self.objects, self.libraries)
+
+
 if __name__ == '__main__':
     unittest.main()

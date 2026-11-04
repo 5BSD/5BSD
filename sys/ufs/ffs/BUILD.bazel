@@ -84,3 +84,5 @@ bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['fs.h'], visibi
 
 filegroup(name = "standalone_sa_ffs_subr_source", srcs = ["ffs_subr.c"], visibility = ["//stand/libsa:__pkg__"])
 filegroup(name = "standalone_sa_ffs_tables_source", srcs = ["ffs_tables.c"], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "gpt_boot_headers", hdrs = ['fs.h'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])

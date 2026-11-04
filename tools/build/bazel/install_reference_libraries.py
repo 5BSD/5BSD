@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 
 
 def digest(path):
@@ -77,3 +78,53 @@ def verify(bindings):
     for name, expected in bindings.items():
         if digest(Path(name)) != expected:
             raise ValueError('original library input changed: ' + name)
+
+
+def audit_links(objects, libraries):
+    """Prove bound archives occur in completed original compiler/linker recipes.
+
+    Custom boot Makefiles do not use LDADD. Fresh metadata is required instead
+    of assuming that a queried Make variable was actually consumed.
+    """
+    objects = Path(objects).resolve(strict=True)
+    found = {}
+    commands = []
+    for meta in sorted(objects.rglob('*.meta')):
+        text = meta.read_text()
+        cwd_rows = [line[4:] for line in text.splitlines() if line.startswith('CWD ')]
+        if len(cwd_rows) != 1:
+            continue
+        cwd = Path(cwd_rows[0]).resolve(strict=True)
+        if not cwd.is_relative_to(objects):
+            raise ValueError('original link metadata CWD escapes reference objects')
+        for line in text.splitlines():
+            if not line.startswith('CMD ') or not line[4:].strip():
+                continue
+            lexer = shlex.shlex(line[4:], posix=True, punctuation_chars=';&|<>()')
+            lexer.whitespace_split = True
+            argv = list(lexer)
+            # A path printed by a later shell command is not a linker operand.
+            if any(token and all(c in ';&|<>()' for c in token) for token in argv):
+                continue
+            if any('$' in token or '`' in token for token in argv):
+                continue
+            if (not argv or Path(argv[0]).name not in ('cc', 'c++', 'clang', 'clang++', 'ld', 'ld.lld', 'lld') or
+                    any(flag in argv for flag in ('-c', '-E', '-S')) or argv.count('-o') != 1):
+                continue
+            selected = {name for name, record in libraries.items() if record['artifact'] in argv}
+            if not selected:
+                continue
+            output_arg = argv[argv.index('-o') + 1]
+            output = (cwd / output_arg).resolve(strict=True)
+            expected = meta.with_suffix('').resolve(strict=True)
+            if output != expected or not output.is_relative_to(objects) or not output.is_file():
+                raise ValueError('original link metadata output differs from completed target')
+            item = dict(metadata=str(meta), metadata_sha256=digest(meta), argv=argv,
+                        output=str(output), output_sha256=digest(output), libraries=sorted(selected))
+            commands.append(item)
+            for name in selected:
+                found.setdefault(name, []).append(str(meta))
+    if set(found) != set(libraries):
+        raise ValueError('bound original archives absent from completed link recipes: ' +
+                         ', '.join(sorted(set(libraries) - set(found))))
+    return dict(libraries=found, commands=commands)

@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## GPT/ISO BIOS checkpoint (2026-11-04)
+
+Two previously missing boot consumers now build native standalone i386 entry,
+ordered archive link, flat image, BTX and installation pipelines. Three UFS/console
+profiles pass real artifact tests and independent original recipe controls. The
+audit binds thirty compiler contexts/1098 consumed pairs and 69 producer chains;
+four original install records have twelve profile comparisons. ISO matches raw
+Make; GPT matches explicit original compiler filename controls. A one-byte ISO
+limit fails in the real build action. Twenty-six existing boot products stay exact.
+Shared boot-data policy additionally passes default/disabled/uncompressed split
+manual checks against six actual Make references. The maintained reference helper
+now verifies direct custom-link archive operands
+with strict metadata/output checks; eleven validator methods pass. The normal
+format-5 frontend needs no new C dispatch. See
+[GPT-ISO-BOOT-QUALIFICATION.md](GPT-ISO-BOOT-QUALIFICATION.md). GPT/ZFS/PXE and other
+profiles, complete system/package/runtime/debug/bootstrap/performance gates
+remain open. Make stays production/default; BIP is excluded.
+
 ## Standalone legacy BIOS checkpoint (2026-11-04)
 
 Five remaining legacy producers (boot0, serial boot0, MBR, protective MBR and

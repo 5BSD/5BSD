@@ -9,12 +9,12 @@ def image_bytes(operation, sources, size):
         if sources or size < 1:
             raise ValueError('zero requires no inputs and a positive size')
         return bytes(size)
-    if operation == 'pad':
+    if operation in ('pad', 'check'):
         if len(sources) != 1 or size < 1:
-            raise ValueError('pad requires one input and a positive size')
+            raise ValueError('pad/check requires one input and a positive size')
         if len(sources[0]) > size:
             raise ValueError('boot image exceeds its declared size limit')
-        return sources[0] + bytes(size - len(sources[0]))
+        return sources[0] if operation == 'check' else sources[0] + bytes(size - len(sources[0]))
     if operation == 'concat':
         if len(sources) < 2 or size != 0:
             raise ValueError('concat requires at least two ordered inputs and no size')
@@ -24,7 +24,7 @@ def image_bytes(operation, sources, size):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--operation', required=True, choices=['zero', 'pad', 'concat'])
+    parser.add_argument('--operation', required=True, choices=['zero', 'pad', 'concat', 'check'])
     parser.add_argument('--size', type=int, default=0)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('sources', nargs='*', type=Path)
