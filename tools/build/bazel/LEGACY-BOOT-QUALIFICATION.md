@@ -1,5 +1,9 @@
 # Native legacy boot and BTX qualification
 
+Historical first construction record. The current standalone ABI/direct-link
+conversion is documented in [LEGACY-STANDALONE-QUALIFICATION.md](LEGACY-STANDALONE-QUALIFICATION.md);
+the older hosted cc_binary description below is superseded for all seven products.
+
 ## Selected world gap and production scope
 
 The fresh maintained world recursion discovers 2,128 selected directories,

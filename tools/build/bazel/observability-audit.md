@@ -11164,3 +11164,12 @@ unchanged while their build context becomes the correct standalone ABI. The
 static-client strip removes an invalid inherited startup debug-link metadata
 record in both Make and Bazel; executable load segments are preserved. Construction
 and archive tests do not provide BIOS execution or runtime audit delivery evidence.
+
+## Standalone legacy BIOS ABI correction (2026-11-04)
+
+The five boot0/serial/MBR/protective-MBR/cdboot declarations now select the actual
+i386 standalone ABI. All original assembly and diagnostics remain unchanged;
+fresh Make objects and flat images are whole-byte identical. No OS DTrace/BSM
+provider is removed or disabled. Host artifact tests do not execute firmware or
+prove event delivery. Non-default boot-policy and firmware/runtime checks remain
+open; see LEGACY-STANDALONE-QUALIFICATION.md.

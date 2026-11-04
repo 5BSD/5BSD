@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Standalone legacy BIOS checkpoint (2026-11-04)
+
+Five remaining legacy producers (boot0, serial boot0, MBR, protective MBR and
+cdboot) now use standalone i386 compilation, direct declared SDK linking and
+explicit public artifact boundaries. Five fresh original Make controls establish
+whole-byte equality for all objects/images and six actual installation records.
+The audit binds ten compiler/link chains and nineteen unchanged prior boot
+outputs. All 24 selected tests pass; one executes and 23 reuse unchanged cached
+results. Alternate policy/options, firmware/runtime, complete system/package,
+bootstrap and performance acceptance remain open. The normal format-5 frontend
+requires no new C dispatch; the manual is updated. Make stays default; BIP stays
+excluded. See [the standalone legacy record](LEGACY-STANDALONE-QUALIFICATION.md).
+
 ## Current CTF linker checkpoint (2026-11-03)
 
 LLD section integration is implemented. Fresh verified SDKs now pass normal

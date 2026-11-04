@@ -6183,3 +6183,12 @@ which preserves archive metadata providers without forwarding CcInfo.
 The selected profile requires text-only Lua, normal disk/network/MD/GELI/ZFS
 support and the regular verifier disabled. Unsupported profiles are incompatible.
 Construction and archive tests do not execute firmware or qualify a full system.
+.Ss Standalone legacy BIOS construction
+The boot0, serial boot0, MBR, protective MBR and cdboot contributions compile
+with the standalone i386 toolchain and link through the declared SDK linker.
+Their public image and object labels cross the freestanding artifact boundary;
+boot images are data rather than hosted executable tools.
+The existing legacy installation manifest/archive preserves image and manual
+metadata without a special frontend mode.
+Selected-default Make comparisons and host format checks do not qualify
+non-default boot policy, firmware execution or full-system performance.
