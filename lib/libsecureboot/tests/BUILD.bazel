@@ -53,3 +53,6 @@ cc_test(name = "signed_rotation_test", srcs = ["signed_rotation_test.c"],
     deps = ["//lib/libsecureboot:secureboot", "//secure/lib/libcrypto:crypto"],
     linkstatic = True, size = "medium",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+# Explicit development policy fixture; never selected as a production default.
+exports_files(["headers-policy.json"], visibility = ["//visibility:public"])

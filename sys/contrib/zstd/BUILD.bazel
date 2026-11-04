@@ -186,3 +186,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     includes = ["lib/freebsd"], visibility = ["//sys/kern:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['lib/zstd.h', 'lib/zstd_errors.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['lib/zstd.h', 'lib/zstd_errors.h'], visibility = ["//stand/libsa:__pkg__"])

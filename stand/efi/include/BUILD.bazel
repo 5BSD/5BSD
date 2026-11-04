@@ -8,3 +8,5 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "libefi_headers", hdrs = ['efi.h', 'efi_driver_utils.h', 'efichar.h', 'eficonsctl.h', 'efilib.h', 'efizfs.h'], visibility = ["//stand/efi/libefi:__pkg__"])
 
 bsd_source_headers(name = "loader_fdt_headers", hdrs = ['efi.h', 'efilib.h'], visibility = ["//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['efi.h', 'efilib.h'], visibility = ["//stand/libsa:__pkg__"])

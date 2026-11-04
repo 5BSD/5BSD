@@ -98,6 +98,9 @@ cross_generic_kernel_objects(arch = "riscv", name = "generic_common",
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "standalone_sa_headers", hdrs = ['gsb_crc32.c'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = 'standalone_sa_core_sources', srcs = ['explicit_bzero.c'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['gsb_crc32.c'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['gsb_crc32.c'], visibility = ["//stand/libsa:__pkg__"])

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""AMD64 default standalone library source inventory and native compiler groups."""
+"""Shared standalone sources with explicit architecture ABI and source variants."""
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 
@@ -9,20 +9,10 @@ _CFLAGS = ['-Istand/libsa',
  '-Isys',
  '-Ddouble=jagged-little-pill',
  '-Dfloat=floaty-mcfloatface',
- '-ffunction-sections',
- '-fdata-sections',
  '-DLOADER_GELI_SUPPORT',
  '-Istand/libsa/geli',
  '-DLOADER_DISK_SUPPORT',
  '-ffreestanding',
- '-mno-mmx',
- '-mno-sse',
- '-mno-avx',
- '-mno-avx2',
- '-msoft-float',
- '-fPIC',
- '-mno-red-zone',
- '-mno-relax',
  '-g',
  '-gz=zlib',
  '-std=gnu17',
@@ -47,8 +37,26 @@ _CFLAGS = ['-Istand/libsa',
  '-Wno-switch-enum',
  '-Wno-knr-promoted-parameter',
  '-Wno-parentheses',
- '-Oz',
  '-Qunused-arguments']
+
+_ARCH_CFLAGS = select({
+    "@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
+    "@platforms//cpu:aarch64": ["-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
+    "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"],
+    "//conditions:default": [],
+})
+_ARCH_SOURCES = select({
+    "@platforms//cpu:x86_64": ["//stand/libsa:amd64/_setjmp.S", "//stand/libsa:x86/hypervisor.c"],
+    "@platforms//cpu:aarch64": ["//lib/libc:standalone_sa_aarch64_setjmp_source"],
+    "@platforms//cpu:riscv64": ["//lib/libc:standalone_sa_riscv64_setjmp_source", "//contrib/llvm-project/compiler-rt/lib/builtins:standalone_sa_riscv_sources"],
+    "//conditions:default": [],
+})
+_CPU_ORDER = select({
+    "@platforms//cpu:x86_64": ["hypervisor.o"],
+    "@platforms//cpu:aarch64": [],
+    "@platforms//cpu:riscv64": ["bswapdi2.o", "bswapsi2.o", "clzdi2.o", "ctzdi2.o"],
+    "//conditions:default": [],
+})
 
 _GROUPS = [
     struct(name = 'core', srcs = [
@@ -386,13 +394,26 @@ _ORDER = ['__main.o',
  'sha512c.o',
  'md5c.o']
 
-def standalone_sa_library(name, deps, compatible):
+def standalone_sa_groups(deps, compatible, prefix = "sa_", early_cflags = _EARLY_CFLAGS, cflags = _CFLAGS):
     groups = []
     for group in _GROUPS:
-        target = "sa_" + group.name
-        cc_library(name = target, srcs = group.srcs, copts = _EARLY_CFLAGS + group.early + _CFLAGS + group.extra,
+        target = prefix + group.name
+        sources = group.srcs
+        if group.name == "core":
+            sources = [source for source in sources if source not in ["//stand/libsa:amd64/_setjmp.S", "//stand/libsa:x86/hypervisor.c"]] + _ARCH_SOURCES
+        cc_library(name = target, srcs = sources,
+            copts = early_cflags + group.early + cflags + group.extra + _ARCH_CFLAGS,
             deps = deps, features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"],
             linkstatic = True, target_compatible_with = compatible)
         groups.append(":" + target)
-    bsd_component_archive(name = name, groups = groups, object_order = _ORDER,
+    return groups
+
+def standalone_sa_order(before_zfs = []):
+    cpu_index = _ORDER.index("hypervisor.o")
+    zfs_index = _ORDER.index("zfs.o")
+    return _ORDER[:cpu_index] + _CPU_ORDER + _ORDER[cpu_index + 1:zfs_index] + before_zfs + _ORDER[zfs_index:]
+
+def standalone_sa_library(name, deps, compatible):
+    groups = standalone_sa_groups(deps = deps, compatible = compatible)
+    bsd_component_archive(name = name, groups = groups, object_order = standalone_sa_order(),
         target_compatible_with = compatible, visibility = ["//visibility:public"])

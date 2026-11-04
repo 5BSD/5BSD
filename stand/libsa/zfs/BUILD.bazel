@@ -6,10 +6,13 @@ cc_library(name = "nvlist_headers", hdrs = ["nvlist.h"], strip_include_prefix = 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "libefi_headers", hdrs = ['libzfs.h', 'nvlist.h'], visibility = ["//stand/efi/libefi:__pkg__"])
 
-bsd_source_headers(name = "standalone_sa_headers", hdrs = ['libzfs.h', 'nvlist.h', 'spl/sys/blake3.h', 'spl/sys/zfs_context.h', 'zfsimpl.c'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = 'standalone_sa_zfs_sources', srcs = ['zfs.c'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = 'standalone_sa_nvlist_sources', srcs = ['nvlist.c'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = 'standalone_sa_xxhash_sources', srcs = ['xxhash.c'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['libzfs.h', 'nvlist.h', 'spl/sys/blake3.h', 'spl/sys/zfs_context.h', 'zfsimpl.c'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['libzfs.h', 'nvlist.h', 'spl/sys/blake3.h', 'spl/sys/zfs_context.h', 'zfsimpl.c'], visibility = ["//stand/libsa:__pkg__"])

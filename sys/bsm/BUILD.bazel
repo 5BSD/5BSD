@@ -231,3 +231,5 @@ bsd_source_headers(
 bsd_source_headers(name = 'boot2_headers', hdrs = ['audit.h'], visibility = ['//stand/i386/boot2:__pkg__'])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['audit.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['audit.h'], visibility = ["//stand/libsa:__pkg__"])

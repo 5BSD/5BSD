@@ -76,3 +76,5 @@ amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ufs_vnops", srcs = 
 bsd_source_headers(name = 'boot2_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ['//stand/i386/boot2:__pkg__'])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/libsa:__pkg__"])

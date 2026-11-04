@@ -43,7 +43,18 @@ def main():
                         help='disable a library-local MK_ option not declared in src.opts.mk')
     parser.add_argument('--make-define', action='append', default=[],
                         help='presence-only NAME=1 selector in the component basename namespace')
+    parser.add_argument('--build-utc', type=int,
+                        help='explicit nonnegative BUILD_UTC input for reproducible verifier references')
+    parser.add_argument('--local-generated-header', action='append', default=[],
+                        help='require this generated header basename from the isolated component object directory')
     args = parser.parse_args()
+    if args.build_utc is not None and not 0 <= args.build_utc <= 2**63 - 1:
+        parser.error('--build-utc must fit a nonnegative signed 64-bit integer')
+    if (len(set(args.local_generated_header)) != len(args.local_generated_header) or
+            any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]*\.h', name) for name in args.local_generated_header)):
+        parser.error('local generated headers require distinct simple .h basenames')
+    if args.local_generated_header and not args.make_meta:
+        parser.error('local generated-header auditing requires --make-meta')
     selected = args.with_option + args.without_option + args.with_local_option + args.without_local_option
     if len(set(selected)) != len(selected) or any(not re.fullmatch(r'[A-Z][A-Z0-9_]*', value) for value in selected):
         parser.error('component options must be distinct uppercase option names')
@@ -89,7 +100,11 @@ def main():
         environment.options.append(name + '=' + value)
         if environment.query(['-V', name]).strip() != value:
             raise ValueError('component define is ineffective: ' + name)
-    if definitions:
+    if args.build_utc is not None:
+        environment.options.append('BUILD_UTC=' + str(args.build_utc))
+        if environment.query(['-V', 'BUILD_UTC']).strip() != str(args.build_utc):
+            raise ValueError('explicit reference BUILD_UTC input is ineffective')
+    if definitions or args.build_utc is not None:
         identity = environment.query(['-V', 'OBJTOP', '-V', 'MACHINE', '-V', 'MACHINE_ARCH',
                                       '-V', '${CC}'], component=src / 'lib/libmd').splitlines()
         if (len(identity) != 4 or identity[:3] != [str(objtop), environment.assignments['TARGET'], environment.assignments['TARGET_ARCH']] or
@@ -123,6 +138,8 @@ def main():
                                  'mode': 'meta missing-meta=yes nofilemon curdirok=yes' if args.make_meta else None},
                'component_options': component_options,
                'component_definitions': definitions,
+               'build_utc': args.build_utc,
+               'local_generated_headers': args.local_generated_header,
                'sdk_reconfigured': False, 'source_hashes': source_hashes,
                'implementation_hashes': implementations,
                'object_environment': {key: build_environment[key] for key in ('MAKEOBJDIR', 'REFERENCE_OBJROOT')},
@@ -149,6 +166,11 @@ def main():
     try:
         base = [str(make), '-C', str(component),
                 *environment.fixed, *environment.options]
+        if args.local_generated_header:
+            # Use the actual isolated component directory. A .OBJDIR expansion
+            # here would be evaluated by the outer buildenv Make, not its child.
+            component_objects = objects / str(component).lstrip('/')
+            base += ['CFLAGS_EARLY=' + shlex.quote('-I' + str(component_objects))]
         if args.make_meta:
             base += ['.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=yes']
         run(buildenv(base + ['-j' + str(args.jobs), 'all']), 'build')
@@ -182,6 +204,12 @@ def main():
             name: digest(output / name)
             for name in ('directories.METALOG', 'component.METALOG')
         }
+        component_objects = objects / str(component).lstrip('/')
+        if component_objects.is_dir():
+            header_audit = install_reference_options.audit_generated_headers(
+                component_objects, objtop, args.local_generated_header)
+            receipt['generated_header_audit'] = header_audit['required']
+            receipt['equivalent_external_generated_headers'] = header_audit['equivalent_external_generated_headers']
         environment.verify()
         if {str(p): digest(p) for p in component.rglob('*') if p.is_file()} != source_hashes:
             raise ValueError('component file set or contents changed during baseline')

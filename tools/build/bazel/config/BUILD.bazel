@@ -575,3 +575,7 @@ bool_flag(name = "loader_md", build_setting_default = True, visibility = ["//vis
 config_setting(name = "loader_md_enabled", flag_values = {":loader_md": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "loader_zfs", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "loader_zfs_enabled", flag_values = {":loader_zfs": "true"}, visibility = ["//visibility:public"])
+
+# Matches the maintained standalone verifier lookup order; builders may override.
+string_flag(name = "loader_manifest_names", build_setting_default = "manifest ../manifest",
+    visibility = ["//visibility:public"])

@@ -198,3 +198,7 @@ bsd_component_selected_objects(name = "rtld_jump_error_object", group = "//lib/l
 filegroup(name = "rtld_selected_objects", srcs = [":rtld_jump_objects", ":rtld_stat_objects", ":rtld_jump_error_object"])
 libc_nossp_variant(name = "rtld_nossp_objects", dep = ":rtld_selected_objects",
     visibility = ["//libexec/rtld-elf:__pkg__"])
+
+filegroup(name = 'standalone_sa_aarch64_setjmp_source', srcs = ['aarch64/gen/_setjmp.S'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_riscv64_setjmp_source', srcs = ['riscv/gen/_setjmp.S'], visibility = ["//stand/libsa:__pkg__"])

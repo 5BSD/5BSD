@@ -1,5 +1,9 @@
 # Regular AMD64 standalone library candidate (2026-11-03)
 
+The later [cross and private EFI checkpoint](LIBSA-CROSS-EFI-QUALIFICATION.md)
+extends this initial regular AMD64-only evidence. The scope below describes the
+initial run.
+
 ## Native implementation
 
 `//stand/libsa:static_archive` builds all 191 members of the maintained regular

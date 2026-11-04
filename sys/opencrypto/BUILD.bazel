@@ -319,6 +319,9 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
 
-bsd_source_headers(name = "standalone_sa_headers", hdrs = ['cryptodev.h', 'xform_enc.h'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = 'standalone_sa_core_sources', srcs = ['xform_aes_xts.c'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['cryptodev.h', 'xform_enc.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['cryptodev.h', 'xform_enc.h'], visibility = ["//stand/libsa:__pkg__"])

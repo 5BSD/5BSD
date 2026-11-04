@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd November 3, 2026
+.Dd November 4, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -4675,21 +4675,29 @@ Archive and ABI inspection on AMD64, ARM64 and RISC-V executes native tools;
 firmware I/O and complete loader boot require separate qualification.
 See
 .Pa tools/build/bazel/LIBEFI-QUALIFICATION.md .
-.Ss Native standalone library candidate
+.Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive
-selects the 191-member regular AMD64 standalone library candidate.
-Its current inventory requires enabled GELI, ZFS and disk support with global
-verification disabled; other inventories are rejected pending implementation.
-Private EFI and other architecture inventories remain open.
+selects regular AMD64, ARM64 or RISC-V standalone sources and ABI options.
+The current inventory requires enabled GELI, ZFS and disk support with global
+verification disabled; other optional inventories remain unqualified.
+.Li //stand/efi/libsaefi:static_archive
+selects the separate AMD64 EFI verifier context.
+It currently requires EFI verification with VECTX and pass-manifest disabled.
+The existing secureboot policy/certificate source settings provide explicit
+verifier inputs; no implicit date or test policy is selected.
+The source setting
+.Li //tools/build/bazel/config:loader_manifest_names
+supplies the space-separated manifest lookup order, default
+.Dq manifest ../manifest .
 .Li //stand/libsa:manual_gzip
 and
 .Li //stand/libsa:install_manifest
-materialize the common library manual and its typed installation record.
-Archive/code and selected manual-file comparisons do not establish complete
-loader boot, runtime, debug or package installation qualification.
+materialize the common manual and typed installation record.
+Header/code comparisons and helper tests do not establish firmware, runtime,
+debug or full package installation qualification.
 See
-.Pa tools/build/bazel/LIBSA-QUALIFICATION.md .
+.Pa tools/build/bazel/LIBSA-CROSS-EFI-QUALIFICATION.md .
 .Ss Native Ficl interpreter libraries
 The native
 .Li //stand/ficl:static_archive

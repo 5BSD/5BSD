@@ -103,10 +103,12 @@ def generate(policy, anchors, verification):
     if policy['compiled_trust_only']:
         config += ['#define VE_EFI_COMPILED_TRUST_ONLY 1']
     if policy['self_tests']:
+        # Make emits one newline before and after the complete KAT block.
+        ta += '\n'
         for algorithm in sorted(set(policy['hashes'])):
             digest = hashlib.new(algorithm.lower(), policy['hash_kat'].encode('utf-8')).hexdigest()
-            ta += '\nstatic char vh_' + algorithm + '[] = "' + digest + '";\n'
-        ta += c_array('vc_PEM', verify) + '\n'
+            ta += 'static char vh_' + algorithm + '[] = "' + digest + '";\n'
+        ta += '\n' + c_array('vc_PEM', verify) + '\n'
         config += ['#define VERIFY_CERTS_STR vc_PEM', '#define VE_HASH_KAT_STRLEN strlen',
                    '#define VE_HASH_KAT_STR ' + c_string(policy['hash_kat'])]
     ta += '#define BUILD_UTC ' + str(policy['build_utc']) + '\n'

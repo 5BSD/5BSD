@@ -12,3 +12,5 @@ bsd_source_headers(name = "loader_fdt_headers", hdrs = ['bootstrap.h', 'readin.h
 bsd_source_headers(name = "standalone_ficl_headers", hdrs = ['bootstrap.h', 'gfx_fb.h', 'readin.h'], visibility = ["//stand/ficl:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'readin.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'readin.h'], visibility = ["//stand/libsa:__pkg__"])

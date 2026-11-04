@@ -72,3 +72,13 @@ cc_library(name = "selftest_source", testonly = True,
 # Loader clients need verification declarations, not userland crypto dependencies.
 cc_library(name = "standalone_verify_header", hdrs = ["h/verify_file.h"],
     strip_include_prefix = "h", visibility = ["//stand/ficl:__pkg__", "//stand/liblua:__pkg__", "//stand/efi/libefi:__pkg__", "//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['h/libsecureboot.h', 'h/verify_file.h', 'libsecureboot-priv.h', 'x509_tbs.h'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_efi_ccopy_sources', srcs = ['readfile.c', 'vesigned.c', 'x509_tbs.c', 'vectx.c', 'veopen.c', 'vepcr.c', 'verify_file.c'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = 'standalone_sa_efi_brf_sources', srcs = ['brf.c', 'vets.c', 'efi/efi_variables.c', 'efi/efi_init.c'], visibility = ["//stand/libsa:__pkg__"])
+
+filegroup(name = "public_trust_awk", srcs = ["public-trust.awk"], visibility = ["//tools/build/bazel:__pkg__"])

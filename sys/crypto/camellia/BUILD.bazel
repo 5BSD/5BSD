@@ -63,3 +63,5 @@ amd64_generic_module_objects(name = "crypto_camellia_module", srcs = ["camellia.
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['camellia.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['camellia.h'], visibility = ["//stand/libsa:__pkg__"])

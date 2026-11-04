@@ -716,3 +716,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
 bsd_source_headers(name = "libefi_headers", hdrs = ['in6.h'], visibility = ["//stand/efi/libefi:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['in6.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['in6.h'], visibility = ["//stand/libsa:__pkg__"])

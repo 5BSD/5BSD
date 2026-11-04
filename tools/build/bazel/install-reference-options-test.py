@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import sys
 import unittest
-from install_reference_options import component_definitions, validate_metadata_component
+from install_reference_options import component_definitions, validate_metadata_component, audit_generated_headers
 
 
 class ComponentDefinitionsTests(unittest.TestCase):
@@ -95,6 +95,48 @@ class MetadataDirectoryTests(unittest.TestCase):
         for output in ('', 'no\n', 'no\nmaybe\n', 'no\nno\nno\n'):
             with self.subTest(output=output), self.assertRaisesRegex(ValueError, 'ambiguous'):
                 validate_metadata_component(lambda arguments: output)
+
+
+class GeneratedHeaderTests(unittest.TestCase):
+    def fixture(self, root, *, consumed_local=False, same=False):
+        obj = root / 'reference'; sdk = root / 'sdk'
+        obj.mkdir(); (sdk / 'stand').mkdir(parents=True)
+        local = obj / 'ta.h'; old = sdk / 'stand/ta.h'
+        local.write_text('#define BUILD_UTC 2\n')
+        old.write_text(local.read_text() if same else '#define BUILD_UTC 1\n')
+        selected = local if consumed_local else old
+        (obj / '.depend.vets.o').write_text('vets.o: ' + str(selected) + '\n')
+        return obj, sdk
+
+    def test_changed_generated_input_cannot_use_old_sdk_header_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            obj, sdk = self.fixture(Path(directory))
+            with self.assertRaisesRegex(ValueError, 'stale SDK generated header'):
+                audit_generated_headers(obj, sdk)
+
+    def test_identical_sdk_alias_is_recorded_but_not_accepted_for_local_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            obj, sdk = self.fixture(Path(directory), same=True)
+            result = audit_generated_headers(obj, sdk)
+            self.assertEqual(len(result['equivalent_external_generated_headers']), 1)
+            with self.assertRaisesRegex(ValueError, 'was shadowed'):
+                audit_generated_headers(obj, sdk, ['ta.h'])
+
+    def test_explicit_local_consumption_binds_header_and_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            obj, sdk = self.fixture(Path(directory), consumed_local=True)
+            result = audit_generated_headers(obj, sdk, ['ta.h'])
+            self.assertEqual(result['required']['ta.h']['path'], str(obj / 'ta.h'))
+            self.assertEqual(result['required']['ta.h']['dependencies'], [str(obj / '.depend.vets.o')])
+
+    def test_missing_or_unconsumed_local_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            obj, sdk = self.fixture(Path(directory), consumed_local=True)
+            with self.assertRaisesRegex(ValueError, 'missing regular'):
+                audit_generated_headers(obj, sdk, ['missing.h'])
+            (obj / '.depend.vets.o').write_text('vets.o: source.c\n')
+            with self.assertRaisesRegex(ValueError, 'not consumed'):
+                audit_generated_headers(obj, sdk, ['ta.h'])
 
 
 if __name__ == '__main__':

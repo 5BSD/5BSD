@@ -205,3 +205,14 @@ bsd_python_test(name = "program_test_interface_test", src = "program-test-interf
     data = [":program_test_runner"], size = "small")
 
 exports_files(["efi_image.py"], visibility = ["//visibility:public"])
+
+bsd_python_test(name = "secureboot_headers_test", src = "secureboot_headers_test.py",
+    data = ["secureboot_headers.py", "//lib/libsecureboot:public_trust_awk",
+        "//lib/libsecureboot/tests:headers-policy.json", "//usr.bin/file2c:file2c",
+        "@bsd_sdk//toolchain:awk", "@bsd_sdk//toolchain:awk_runtime"],
+    args = ["--source", ".", "--awk", "$(location @bsd_sdk//toolchain:awk)",
+        "--file2c", "$(location //usr.bin/file2c:file2c)"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    size = "small", visibility = ["//visibility:public"])

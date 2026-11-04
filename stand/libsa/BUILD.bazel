@@ -41,13 +41,15 @@ cc_library(name = "standalone_headers", hdrs = [':standalone_a_out_h', ':standal
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "libefi_headers", hdrs = ['bootp.h', 'iodesc.h', 'net.h', 'netif.h', 'stand.h'], visibility = ["//stand/efi/libefi:__pkg__"])
 
-bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootp.h', 'bootparam.h', 'dosfs.h', 'geli/geliboot.h', 'geli/geliboot_internal.h', 'iodesc.h', 'net.h', 'netif.h', 'nfsv2.h', 'nvstore.h', 'rpc.h', 'rpcv2.h', 'stand.h', 'tftp.h', 'xlocale_private.h', 'zalloc_defs.h', 'zalloc_mem.h', 'zalloc_protos.h'], visibility = ["//stand/libsa:__pkg__"])
 
 load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
 load(":library.bzl", "standalone_sa_library")
 # Explicit candidate boundary: other ABIs and optional source inventories must
 # be implemented before they are selectable. Never substitute this inventory.
-_LIBRARY_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+_LIBRARY_COMPAT = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
     "//tools/build/bazel/config:loader_geli_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
 }) + select({
     "//tools/build/bazel/config:loader_zfs_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
@@ -56,10 +58,12 @@ _LIBRARY_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select(
 }) + select({
     "//tools/build/bazel/config:veriexec_enabled": ["@platforms//:incompatible"], "//conditions:default": [],
 })
-bsd_architecture_headers(name = "library_architecture_headers", headers = {
-    "//sys/amd64/include:standalone_sa_arch_headers": "machine",
-    "//sys/x86/include:standalone_sa_arch_headers": "x86",
-})
+bsd_architecture_headers(name = "library_architecture_headers", headers = select({
+    "@platforms//cpu:x86_64": {"//sys/amd64/include:standalone_sa_arch_headers": "machine", "//sys/x86/include:standalone_sa_arch_headers": "x86"},
+    "@platforms//cpu:aarch64": {"//sys/arm64/include:standalone_sa_arch_headers": "machine"},
+    "@platforms//cpu:riscv64": {"//sys/riscv/include:standalone_sa_arch_headers": "machine"},
+    "//conditions:default": {},
+}))
 standalone_sa_library(name = "static_archive", deps = ['//contrib/bzip2:standalone_sa_headers', '//contrib/llvm-project/compiler-rt/lib/builtins:standalone_sa_headers', '//lib/libc/string:standalone_sa_headers', '//stand/common:standalone_sa_headers', '//stand/libsa/zfs:standalone_sa_headers', '//stand/libsa:standalone_sa_headers', '//sys/bsm:standalone_sa_headers', '//sys/cddl/boot:standalone_sa_headers', '//sys/cddl/contrib/opensolaris/common/lz4:standalone_sa_headers', '//sys/compat/linuxkpi/common/include/linux:standalone_sa_headers', '//sys/contrib/openzfs:standalone_sa_headers', '//sys/contrib/pcg-c:standalone_sa_headers', '//sys/contrib/xz-embedded:standalone_sa_headers', '//sys/contrib/zlib:standalone_sa_headers', '//sys/contrib/zstd:standalone_sa_headers', '//sys/crypto/camellia:standalone_sa_headers', '//sys/crypto/rijndael:standalone_sa_headers', '//sys/crypto/sha2:standalone_sa_headers', '//sys/crypto/skein:standalone_sa_headers', '//sys/crypto:standalone_sa_headers', '//sys/fs/cd9660:standalone_sa_headers', '//sys/geom/eli:standalone_sa_headers', '//sys/geom:standalone_sa_headers', '//sys/libkern:standalone_sa_headers', '//sys/net:standalone_sa_headers', '//sys/netinet6:standalone_sa_headers', '//sys/netinet:standalone_sa_headers', '//sys/opencrypto:standalone_sa_headers', '//sys/sys:standalone_sa_headers', '//sys/ufs/ffs:standalone_sa_headers', '//sys/ufs/ufs:standalone_sa_headers', ':library_architecture_headers', ':standalone_headers'], compatible = _LIBRARY_COMPAT)
 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_manifest")
@@ -75,3 +79,34 @@ bsd_install_file(name = "install_manual", src = ":manual_gzip",
     }))
 bsd_install_manifest(name = "install_manifest", entries = [":install_manual"],
     visibility = ["//visibility:public"])
+
+bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootp.h', 'bootparam.h', 'dosfs.h', 'geli/geliboot.h', 'geli/geliboot_internal.h', 'iodesc.h', 'net.h', 'netif.h', 'nfsv2.h', 'nvstore.h', 'rpc.h', 'rpcv2.h', 'stand.h', 'tftp.h', 'xlocale_private.h', 'zalloc_defs.h', 'zalloc_mem.h', 'zalloc_protos.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['bootp.h', 'bootparam.h', 'dosfs.h', 'geli/geliboot.h', 'geli/geliboot_internal.h', 'iodesc.h', 'net.h', 'netif.h', 'nfsv2.h', 'nvstore.h', 'rpc.h', 'rpcv2.h', 'stand.h', 'tftp.h', 'xlocale_private.h', 'zalloc_defs.h', 'zalloc_mem.h', 'zalloc_protos.h'], visibility = ["//stand/libsa:__pkg__"])
+
+load("//tools/build/bazel:bsd_secureboot_headers.bzl", "bsd_secureboot_headers")
+load(":efi.bzl", "efi_sa_library")
+# No implicit trust policy or date: both come from the existing builder inputs.
+bsd_secureboot_headers(name = "efi_generated",
+    policy = "//tools/build/bazel/config:secureboot_policy",
+    anchors = ["//tools/build/bazel/config:secureboot_trust_anchors"],
+    verification = ["//tools/build/bazel/config:secureboot_verification_certificates"],
+    manifest_names_setting = "//tools/build/bazel/config:loader_manifest_names",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
+cc_library(name = "efi_generated_headers", hdrs = [":efi_generated"], strip_include_prefix = "efi_generated")
+_EFI_COMPAT = _LIBRARY_COMPAT + select({
+    "@platforms//cpu:x86_64": [], "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "//tools/build/bazel/config:loader_efi_secureboot_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "//tools/build/bazel/config:loader_veriexec_vectx_enabled": ["@platforms//:incompatible"], "//conditions:default": [],
+})
+# This selected profile does not include pass_manifest.c or the VECTX define.
+_EFI_COMPAT = _EFI_COMPAT + select({
+    "//tools/build/bazel/config:efi_loader_veriexec_vectx_enabled": ["@platforms//:incompatible"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:efi_loader_veriexec_pass_manifest_enabled": ["@platforms//:incompatible"], "//conditions:default": [],
+})
+efi_sa_library(name = "efi_static_archive", deps = ['//contrib/bearssl:standalone_sa_efi_headers', '//contrib/bzip2:standalone_sa_efi_headers', '//contrib/bzip2:standalone_sa_headers', '//contrib/llvm-project/compiler-rt/lib/builtins:standalone_sa_efi_headers', '//contrib/llvm-project/compiler-rt/lib/builtins:standalone_sa_headers', '//lib/libc/string:standalone_sa_efi_headers', '//lib/libc/string:standalone_sa_headers', '//lib/libsecureboot:standalone_sa_efi_headers', '//stand/common:standalone_sa_efi_headers', '//stand/common:standalone_sa_headers', '//stand/efi/include:standalone_sa_efi_headers', '//stand/libsa/zfs:standalone_sa_efi_headers', '//stand/libsa/zfs:standalone_sa_headers', '//stand/libsa:standalone_sa_efi_headers', '//stand/libsa:standalone_sa_headers', '//sys/bsm:standalone_sa_efi_headers', '//sys/bsm:standalone_sa_headers', '//sys/cddl/boot:standalone_sa_efi_headers', '//sys/cddl/boot:standalone_sa_headers', '//sys/cddl/contrib/opensolaris/common/lz4:standalone_sa_efi_headers', '//sys/cddl/contrib/opensolaris/common/lz4:standalone_sa_headers', '//sys/compat/linuxkpi/common/include/linux:standalone_sa_efi_headers', '//sys/compat/linuxkpi/common/include/linux:standalone_sa_headers', '//sys/contrib/edk2/Include:standalone_sa_efi_headers', '//sys/contrib/openzfs:standalone_sa_efi_headers', '//sys/contrib/openzfs:standalone_sa_headers', '//sys/contrib/pcg-c:standalone_sa_efi_headers', '//sys/contrib/pcg-c:standalone_sa_headers', '//sys/contrib/xz-embedded:standalone_sa_efi_headers', '//sys/contrib/xz-embedded:standalone_sa_headers', '//sys/contrib/zlib:standalone_sa_efi_headers', '//sys/contrib/zlib:standalone_sa_headers', '//sys/contrib/zstd:standalone_sa_efi_headers', '//sys/contrib/zstd:standalone_sa_headers', '//sys/crypto/camellia:standalone_sa_efi_headers', '//sys/crypto/camellia:standalone_sa_headers', '//sys/crypto/rijndael:standalone_sa_efi_headers', '//sys/crypto/rijndael:standalone_sa_headers', '//sys/crypto/sha2:standalone_sa_efi_headers', '//sys/crypto/sha2:standalone_sa_headers', '//sys/crypto/skein:standalone_sa_efi_headers', '//sys/crypto/skein:standalone_sa_headers', '//sys/crypto:standalone_sa_efi_headers', '//sys/crypto:standalone_sa_headers', '//sys/fs/cd9660:standalone_sa_efi_headers', '//sys/fs/cd9660:standalone_sa_headers', '//sys/geom/eli:standalone_sa_efi_headers', '//sys/geom/eli:standalone_sa_headers', '//sys/geom:standalone_sa_efi_headers', '//sys/geom:standalone_sa_headers', '//sys/libkern:standalone_sa_efi_headers', '//sys/libkern:standalone_sa_headers', '//sys/net:standalone_sa_efi_headers', '//sys/net:standalone_sa_headers', '//sys/netinet6:standalone_sa_efi_headers', '//sys/netinet6:standalone_sa_headers', '//sys/netinet:standalone_sa_efi_headers', '//sys/netinet:standalone_sa_headers', '//sys/opencrypto:standalone_sa_efi_headers', '//sys/opencrypto:standalone_sa_headers', '//sys/sys:standalone_sa_efi_headers', '//sys/sys:standalone_sa_headers', '//sys/ufs/ffs:standalone_sa_efi_headers', '//sys/ufs/ffs:standalone_sa_headers', '//sys/ufs/ufs:standalone_sa_efi_headers', '//sys/ufs/ufs:standalone_sa_headers', ':efi_generated_headers', ':library_architecture_headers', ':standalone_headers'], compatible = _EFI_COMPAT)

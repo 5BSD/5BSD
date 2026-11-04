@@ -28,3 +28,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
     includes = [], visibility = ["//sys/kern:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['include/pcg_variants.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['include/pcg_variants.h'], visibility = ["//stand/libsa:__pkg__"])
