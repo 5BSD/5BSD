@@ -24,6 +24,7 @@ cc_library(
     name = "protocol_headers",
     hdrs = [":yp.h"],
     include_prefix = "rpcsvc",
+    visibility = ["//usr.bin/ypcat:__pkg__", "//usr.bin/ypmatch:__pkg__", "//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv/common:__pkg__"],
 )
 
 cc_library(

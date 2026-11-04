@@ -16,6 +16,25 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Native NIS clients and aggregate dependency follow-up (2026-11-04)
+
+ypcat, ypmatch and ypwhich now build through normal format-5 with configured
+native libc and shared native/source protocol headers. All four original/native
+object contracts match fresh Make objects; three archive audits and two safe
+alias tests pass. Parent queries select 267/270 archives when NIS is disabled/
+enabled. A fresh original NIS libc reference passes separately. Complete client
+link/stage and live RPC parity remain open. Three optional programs still need
+conversion: compile_et, vacation and telnet.
+The combined NIS/Hesiod aggregate exposed libypclnt's missing native libc link;
+its dependency and quota/chpass final links are corrected. The full combined
+profile passes 271 archives and four tests; namespace/delta review passes.
+All 795 unaffected default outputs remain exact; the iconv symbol-order delta
+is separately inspected with unchanged targets and valid debug CRCs.
+The final default regression passes with all 801 prior output hashes unchanged.
+The actual input audit also finds libsys's public bcopy.c implementation include
+leaking into consumer compiles; private implementation scoping is next.
+See NIS-CLIENTS-NATIVE-QUALIFICATION.md. Make remains default; BIP excluded.
+
 ## Optional Hesiod consumer and test package boundary (2026-11-04)
 
 Native AMD64 hesinfo now builds with its configured native libc exports, declared

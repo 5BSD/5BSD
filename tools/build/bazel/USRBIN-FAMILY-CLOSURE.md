@@ -293,3 +293,35 @@ bazel-usrbin-file2c-boundary-native-r1-20261104. The independent capture review
 proves all 801 production archive/request/directory outputs unchanged from the
 previous passing production run. No test was deleted, fixture patched or failure
 masked. This follow-up supersedes earlier aggregate status for the changed graph.
+
+## Native optional NIS clients and complete combined profile
+
+ypcat, ypmatch and ypwhich now build with the shared native rpcgen yp.h, explicit
+source protocol/common headers, configured native libc and original yp package
+policy. All four original/native object contracts match fresh Make objects.
+Three archive serialization audits and safe alias-list tests pass. A fresh
+original NIS libc build/stage reference passes separately; it is not a complete
+native/original libc parity claim or an SDK replacement.
+
+The combined NIS/Hesiod production profile exposed missing native libc links in
+libypclnt and final quota/chpass consumers. Correct declarations preserve the
+DSO-only interface and program-only nonshared wrapper ownership. Final native r4
+passes all 271 archives and four tests. Its capture review finds the four added
+owners, 795 unchanged default outputs, expected chpass/passwd/quota changes and
+an explicitly inspected iconv PLT symbol-order delta. There are no duplicate
+non-directory destinations. Raw differing iconv bytes remain retained; named
+jump targets/symbol identities and both debug CRCs agree, not whole-file bytes.
+See NIS-CLIENTS-NATIVE-QUALIFICATION.md for evidence and failed earlier attempts.
+
+Three optional programs remain unconverted: compile_et, vacation and telnet.
+Complete independent linked/staged client parity, installed tests, live NIS/DNS/
+authentication, other architectures, world/pkgbase/bootstrap/cache/sandbox and
+resource performance remain required. The compiler-input audit also records a
+private libsys implementation include leaking into consumer actions; scope it
+privately and qualify the effect next. Make stays default; BIP excluded.
+
+The final default-profile regression passes separately in
+bazel-usrbin-nis-default-regression-r1-20261104. The retained comparison in
+bazel-usrbin-nis-default-review-r1-20261104 verifies all 801 default production
+archive/request/directory outputs remain byte-identical to the previous passing
+default capture. Optional dependency corrections do not alter the default set.

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = 'quota', srcs = ['quota.c'], deps = ["//lib/librpcsvc:rpcsvc", "//lib/libutil:util", "//include/rpcsvc:rquota_public_header"], dynamic_deps = ["//lib/librpcsvc:rpcsvc_shared", "//lib/libutil:util_shared"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_NIS = "//tools/build/bazel/config:nis_enabled"
+# NIS-enabled librpcsvc needs the same configured libc at the final link.
+cc_binary(name = 'quota', srcs = ['quota.c'], deps = ["//lib/librpcsvc:rpcsvc", "//lib/libutil:util", "//include/rpcsvc:rquota_public_header"] + select({_NIS: ["//lib/libc:shared_link_interface"], "//conditions:default": []}), dynamic_deps = ["//lib/librpcsvc:rpcsvc_shared", "//lib/libutil:util_shared"] + select({_NIS: ["//lib/libc:c_shared", "//lib/libsys:sys_shared"], "//conditions:default": []}), copts = ["-fPIE"], linkopts = ["-pie"] + select({_NIS: ["-nodefaultlibs"], "//conditions:default": []}), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = 'quota', manual = 'quota.1', package = 'utilities', bindir = "/usr/bin", man_section = '1', binary_mode = "4555")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

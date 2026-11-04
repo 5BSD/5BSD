@@ -26,3 +26,8 @@ cc_library(name = "library_local_headers", hdrs = [":" + n + ".h" for n in RPCSV
 
 cc_library(name = "locking_protocol_headers", hdrs = [":sm_inter.h", ":nlm_prot.h"], strip_include_prefix = ".", include_prefix = "rpcsvc", visibility = ["//usr.sbin/rpc.lockd:__pkg__", "//usr.sbin/clear_locks:__pkg__"])
 cc_library(name = "spray_client_header", hdrs = [":spray.h"], strip_include_prefix = ".", include_prefix = "rpcsvc", visibility = ["//usr.sbin/spray:__pkg__"])
+
+# Handwritten public NIS interfaces accompany the native generated yp.h.
+cc_library(name = "nis_client_headers", hdrs = ["yp_prot.h", "ypclnt.h"],
+    strip_include_prefix = ".", include_prefix = "rpcsvc",
+    visibility = ["//usr.bin/ypcat:__pkg__", "//usr.bin/ypmatch:__pkg__", "//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv/common:__pkg__"])

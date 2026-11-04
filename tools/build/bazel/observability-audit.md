@@ -42,6 +42,14 @@ case does not establish live resolver probe firing. DNS/Hesiod resolution and
 its inherited observability require service runtime qualification; no absence
 of a dedicated CLI provider is treated as an instrumentation defect.
 
+## NIS consumer review (2026-11-04)
+
+ypcat, ypmatch, ypwhich and common yplib_host sources declare no dedicated DTrace
+provider or BSM audit calls. Their native construction preserves the original
+RPC operations and configured libc resolver/NSS path. Safe -x alias tests do not
+exercise live RPC, resolver probes or authentication audit delivery. Those
+remain runtime gates; no instrumentation coverage is claimed from source triage.
+
 ## Findings and follow-up
 
 | Component | Finding | Status / next evidence |
