@@ -9,7 +9,7 @@ cc_library(name = "resource_input", srcs = ["resource.c"], deps = [":integer_hea
     target_compatible_with = ["@bsd_sdk//toolchain:standalone"],
     copts = ["-std=c23"] + select({"@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64"],
                     "//conditions:default": []}))
-bsd_component_objects(name = "resource_object", group = ":resource_input",
+bsd_component_objects(name = "resource_object", group = ":resource_input", visibility = ["//visibility:public"],
     target_compatible_with = ["@bsd_sdk//toolchain:standalone"])
 bsd_host_artifact_test(name = "resource_test", src = "resource_test.py", data = [":resource_object"],
     args = ["--object", "$(rlocationpath :resource_object)", "--machine"] + select({
@@ -23,3 +23,5 @@ bsd_host_artifact_test(name = "resource_test", src = "resource_test.py", data = 
 cc_library(name = "undeclared_hosted_header", srcs = ["hosted_header.c"], tags = ["manual"],
     target_compatible_with = ["@bsd_sdk//toolchain:standalone"],
     visibility = ["//visibility:public"])
+
+exports_files(["resource_test.py"], visibility = ["//tools/build/bazel/tests/freestanding_boundary:__pkg__"])

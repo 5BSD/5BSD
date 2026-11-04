@@ -9,3 +9,10 @@ bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['drv.h'], visibility = 
 bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['drv.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
 
 bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['drv.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+# Hosted world/image consumers cross an explicit freestanding ABI boundary.
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "freestanding_image", src = ":image",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_install_manifest", src = ":install_manifest",
+    visibility = ["//visibility:public"])

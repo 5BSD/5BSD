@@ -1,3 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//stand/efi/loader:variants.bzl", "efi_loader_variant")
 efi_loader_variant(interpreter = 'simp')
+
+# Hosted world/image consumers cross an explicit freestanding ABI boundary.
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "freestanding_image", src = ":image",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_install_manifest", src = ":install_manifest",
+    visibility = ["//visibility:public"])

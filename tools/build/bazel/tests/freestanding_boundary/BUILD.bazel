@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# One hosted build contains all three target ABIs and native execution tools.
+[bsd_freestanding_artifact(name = "resource_" + arch,
+    src = "//tools/build/bazel/standalone_tests:resource_object", architecture = arch)
+ for arch in ["amd64", "aarch64", "riscv64"]]
+[bsd_host_artifact_test(name = "resource_" + arch + "_test",
+    src = "//tools/build/bazel/standalone_tests:resource_test.py", data = [":resource_" + arch],
+    args = ["--object", "$(rlocationpath :resource_" + arch + ")", "--machine", machine],
+    size = "small") for arch, machine in [("amd64", "62"), ("aarch64", "183"), ("riscv64", "243")]]
+
+# Exercise the public consumer-CPU default and typed installation-provider path.
+bsd_install_archive(name = "lua_install_archive",
+    manifests = ["//stand/efi/loader:freestanding_install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+bsd_freestanding_artifact(name = "hosted_header_rejected",
+    src = "//tools/build/bazel/standalone_tests:undeclared_hosted_header",
+    architecture = "amd64", tags = ["manual"])
+
+bsd_freestanding_artifact(name = "ficl_archive", src = "//stand/ficl:efi_static_archive")
+bsd_freestanding_artifact(name = "softcore_source", src = "//stand/ficl:softcore_source")
+
+# A hosted image builder can select every supported EFI target in one graph.
+[bsd_freestanding_artifact(name = "image_" + arch + "_" + package,
+    src = "//stand/efi/" + package + ":" + image, architecture = arch)
+ for arch in ["amd64", "aarch64", "riscv64"]
+ for package, image in [("boot1", "image"), ("gptboot", "image"),
+                        ("loader", "loader_lua_efi"), ("loader_4th", "image"),
+                        ("loader_simp", "image")]]

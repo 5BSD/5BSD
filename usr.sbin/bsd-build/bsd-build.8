@@ -6084,3 +6084,18 @@ canonical archives encode link identities and installation metadata.
 Existing physical outputs still require verification before packaging.
 See
 .Pa tools/build/bazel/MANAGED-ACTION-CACHE-QUALIFICATION.md .
+.Ss Mixed hosted and freestanding targets
+A format-5 userland selection may consume freestanding artifacts through the
+maintained bsd_freestanding_artifact dependency transition.
+The dependency selects its standalone SDK platform.
+The source module registers the disjoint SDK toolchains;
+execution tools retain the native execution configuration.
+Source-graph inputs require snapshot-bound freestanding toolchain schema 1.
+Regenerate older SDKs with the maintained SDK stager.
+The wrapper forwards files, output groups and typed installation providers.
+It does not forward C/C++ linkage providers or executable-tool interfaces.
+The EFI packages expose freestanding_image and freestanding_install_manifest
+for hosted image and installation consumers.
+The architecture defaults to the consumer CPU and may be explicitly selected
+for a multi-architecture image.
+These interfaces do not establish complete world or package qualification.

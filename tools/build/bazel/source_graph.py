@@ -110,6 +110,17 @@ def prepare_action_cache(policy, state):
     return record, flags
 
 
+def validate_sdk_toolchains(receipt):
+    """The source module registers both hosted and standalone SDK toolchains."""
+    if (not isinstance(receipt, dict) or
+            type(receipt.get('freestanding_toolchains')) is not int or
+            receipt['freestanding_toolchains'] != 1):
+        raise ValueError('source graph requires SDK freestanding toolchain schema 1; regenerate with the maintained SDK stager')
+    snapshot = receipt.get('snapshot')
+    if not isinstance(snapshot, dict) or not {'toolchain/BUILD.bazel', 'toolchain/cc_toolchain_config.bzl'} <= set(snapshot):
+        raise ValueError('SDK toolchain declarations must be bound in its snapshot')
+
+
 def platform_arguments(config, target_arch, receipt=None):
     """Separate the execution SDK from the explicitly selected target ABI."""
     kind = config.get('target-kind', 'userland')
@@ -128,17 +139,13 @@ def platform_arguments(config, target_arch, receipt=None):
                     '--extra_toolchains=@bsd_sdk//toolchain/host:registered']
         return ['--platforms=' + native, '--host_platform=' + native]
     if kind == 'standalone':
-        if receipt is None or type(receipt.get('freestanding_toolchains')) is not int or receipt['freestanding_toolchains'] != 1:
-            raise ValueError('standalone requires a verified SDK with freestanding toolchain schema 1')
-        if not {'toolchain/BUILD.bazel', 'toolchain/cc_toolchain_config.bzl'} <= set(receipt.get('snapshot', {})):
-            raise ValueError('standalone SDK toolchain declarations must be bound in its snapshot')
+        validate_sdk_toolchains(receipt)
         sdk_arch = userland_sdk.target_architecture(receipt.get('target'))
         if sdk_arch != 'amd64' and sdk_arch != target_arch:
             raise ValueError('standalone SDK target differs from selected architecture')
         userland_sdk.receipt_architecture(receipt, sdk_arch)
         name = '@bsd_sdk//toolchain:standalone_' + target_arch
-        result = ['--platforms=' + name, '--host_platform=' + native,
-                  '--extra_toolchains=' + name + '_registered']
+        result = ['--platforms=' + name, '--host_platform=' + native]
         if sdk_arch != 'amd64':
             result.append('--extra_toolchains=@bsd_sdk//toolchain/host:registered')
         return result
@@ -267,6 +274,7 @@ def _qualify(config, args, state):
         any(p==out or p.is_relative_to(out) or (p.is_dir() and out.is_relative_to(p)) for p in protected)):
         raise ValueError('fresh nonoverlapping /usr/obj output required')
     sdk=selected['toolchain-workspace'];receipt=json.loads(selected['toolchain-receipt'].read_text())
+    validate_sdk_toolchains(receipt)
     platforms = platform_arguments(config, args.target_arch, receipt)
     host_artifacts_only = config.get('target-kind') in ('kernel', 'standalone') or args.target_arch != 'amd64'
     verification = {}

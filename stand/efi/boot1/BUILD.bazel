@@ -21,3 +21,10 @@ exports_files(['boot1.c'], visibility = ['//stand/efi/gptboot:__pkg__'])
 exports_files(['ufs_module.c'], visibility = ['//stand/efi/gptboot:__pkg__'])
 
 exports_files(["artifact_test.py"], visibility = ["//stand/efi/gptboot:__pkg__", "//stand/efi/loader_4th:__pkg__", "//stand/efi/loader_simp:__pkg__"])
+
+# Hosted world/image consumers cross an explicit freestanding ABI boundary.
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "freestanding_image", src = ":image",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_install_manifest", src = ":install_manifest",
+    visibility = ["//visibility:public"])

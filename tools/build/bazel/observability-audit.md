@@ -11098,3 +11098,9 @@ BOOTSTRAP_XINSTALL policy remains; the production installer and its DTrace
 provider sources are unchanged. Canonical archive restoration and actual staged
 link tests do not establish probe firing or audit delivery. No source/provider
 is removed to seed the cache. Runtime and full-system tracing gates remain open.
+
+2026-11-04: The shared Ficl softcore AWK generator declares its logical C filename
+with #line 1 before the original output body. Make and Bazel retain original body
+line numbers; assertion diagnostics no longer embed a Bazel configuration path.
+No DTrace provider, probe, audit hook or service authorization behavior changes.
+Firmware execution and separate-debug/source lookup remain explicit gates.

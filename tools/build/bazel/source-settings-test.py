@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 from userland_sdk import verify_profile
-from source_graph import setting_arguments, platform_arguments, execution_log_format, action_cache_settings, prepare_action_cache, build_state_directory
+from source_graph import setting_arguments, platform_arguments, execution_log_format, action_cache_settings, prepare_action_cache, build_state_directory, validate_sdk_toolchains
 
 
 class SettingsTest(unittest.TestCase):
@@ -133,8 +133,14 @@ class StandalonePlatformTest(unittest.TestCase):
         for arch in ['amd64', 'aarch64', 'riscv64']:
             label = '@bsd_sdk//toolchain:standalone_' + arch
             self.assertEqual(platform_arguments({'target-kind':'standalone'}, arch, self.receipt()),
-                ['--platforms='+label, '--host_platform=@bsd_sdk//toolchain:native',
-                 '--extra_toolchains='+label+'_registered'])
+                ['--platforms='+label, '--host_platform=@bsd_sdk//toolchain:native'])
+
+    def test_source_module_requires_bound_sdk_toolchains(self):
+        validate_sdk_toolchains(self.receipt())
+        for receipt in [None, [], {}, dict(self.receipt(), freestanding_toolchains=True),
+                dict(self.receipt(), snapshot=None), dict(self.receipt(), snapshot={})]:
+            with self.subTest(receipt=receipt), self.assertRaises(ValueError):
+                validate_sdk_toolchains(receipt)
 
     def test_old_or_incomplete_capability_rejected(self):
         for value in [None, False, True, 0, 2, '1']:

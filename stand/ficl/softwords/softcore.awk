@@ -13,6 +13,8 @@
 
 BEGIN \
 {
+  # Keep __FILE__ and source line numbers independent of the object directory.
+  printf "#line 1 \"softcore.c\"\n";
   printf "/*******************************************************************\n";
   printf "** s o f t c o r e . c\n";
   printf "** Forth Inspired Command Language -\n";

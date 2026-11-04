@@ -48918,3 +48918,18 @@ documented in [MANAGED-ACTION-CACHE-QUALIFICATION.md](MANAGED-ACTION-CACHE-QUALI
 
 This supersedes the isolated missing-CAS gate above, not the full-system cache,
 installation, sandbox, bootstrap, runtime or performance gates. Make stays default.
+
+### Hosted consumers of freestanding artifacts
+
+`bsd_freestanding_artifact` is a dependency transition, following
+[Bazel's configuration model](https://bazel.build/extending/config#user-defined-transitions).
+It changes only the dependency target platform. MODULE.bazel registers all three
+disjoint standalone SDK toolchains alongside the hosted toolchain. Native execution
+tools retain their ordinary configuration without transition-specific toolchain
+overrides. Source-graph SDK inputs require schema-1 freestanding declarations
+bound in the snapshot; regenerate older SDKs with the maintained stager. The consumer keeps its hosted platform. The default architecture
+follows the consumer CPU; an explicit architecture supports multi-target image
+construction. It forwards artifact files, output groups and typed installation
+providers, excluding CcInfo and executable tool/test interfaces. EFI packages expose
+`freestanding_image` and `freestanding_install_manifest`. This connects the ABI
+boundary required by future world aggregates; it is not full-world qualification.

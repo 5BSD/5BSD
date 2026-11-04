@@ -132,3 +132,10 @@ exports_files(['memdisk.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//
 exports_files(['arch/arm64/arm64.ldscript'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['arch/riscv/riscv.ldscript'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+# Hosted world/image consumers cross an explicit freestanding ABI boundary.
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "freestanding_image", src = ":loader_lua_efi",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_install_manifest", src = ":install_manifest",
+    visibility = ["//visibility:public"])

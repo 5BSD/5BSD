@@ -2325,3 +2325,16 @@ installation, sandbox, bootstrap, runtime or performance gates. Make stays defau
 Failed-test evidence retention is already implemented in the frontend exception
 path. The managed-cache failed adapter log/XML copies and manifest hashes were
 rechecked after later builds. Review failure-test-reports, not mutable BEP URIs.
+
+### 2026-11-04: Hosted world consumes freestanding boot artifacts
+
+A platform-only dependency transition now connects hosted image/install consumers
+to five EFI producers on AMD64, ARM64 and RISC-V. The source module registers the
+disjoint SDK toolchains; native execution tools avoid transition-specific toolchain
+overrides. Source qualification explicitly requires the maintained snapshot-bound
+SDK capability. The shared Ficl AWK generator fixes a configuration-dependent
+assertion filename using a logical source name without changing body line numbers.
+See FREESTANDING-BOUNDARY-QUALIFICATION.md for strict comparisons, actual configured
+execution sharing, passing tests and retained initial failures. This closes the
+selected ABI-boundary mechanism; complete world/boot aggregation and the other
+full-system, bootstrap, sandbox, runtime and performance gates remain open.
