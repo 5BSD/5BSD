@@ -13,6 +13,30 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## usr.bin production build and TAP archive results (2026-11-04)
+
+The maintained format-5 frontend now passes the complete declared AMD64 usr.bin
+production aggregate: 267 flattened archives, the seven-contribution LLVM family,
+strict LLVM manifest and test-root archive. All six selected tests pass (five
+executed, source_settings_test cached). This is a native build and selected-test
+result, not independent full Make installation parity or full-world acceptance.
+The separate all-archive producer/payload audit remains in progress.
+
+Eleven original TAP suite archives now match fresh maintained Make installation
+references: 283 files (13 TAP programs, 259 fixtures and 11 Kyuafiles), eleven
+explicit directories, exact payloads, modes, ownership and tags. Archive producer
+bindings are checked. This batch does not execute the TAP programs; complete
+installed tests, optional profiles, full world/modules/pkgbase, other architectures,
+bootstrap, VM/runtime and performance remain open. See USRBIN-FAMILY-CLOSURE.md
+for evidence and remaining scope. Make remains default; BIP stays excluded.
+
+Capture inspection now supports a verified batch, parsing one receipt/manifest
+snapshot while independently hashing every selected payload. The maintained
+qualification_artifacts_test target passes, including corruption and concurrent
+metadata-change rejection. This improves audit metadata I/O; it is not a build
+performance qualification. Existing build-bsd dispatch and publication policy
+remain unchanged; its manual describes the interface.
+
 ## usr.bin production parent under qualification (2026-11-04)
 
 The source-owned AMD64 production parent now analyzes with 242 immediate owners,

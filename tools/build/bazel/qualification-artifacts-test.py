@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import qualification_artifacts as artifacts
 
@@ -45,6 +46,50 @@ class CapturedArtifactsTest(unittest.TestCase):
         self.assertEqual(binding['receipt_sha256'], artifacts.digest(self.root/'receipt.json'))
         self.assertEqual(binding['manifest_sha256'], artifacts.digest(self.capture/'manifest.json'))
         self.assertEqual(binding['source'], 'qualification-capture')
+
+    def second_output(self):
+        other = self.capture / 'files/second'
+        other.write_bytes(b'other captured output')
+        self.manifest['targets'].append({'target': {'label': '//other:archive'},
+            'outputs': [dict(self.output, file='files/second',
+                name='bin/other/libother.a', size=other.stat().st_size,
+                sha256=artifacts.digest(other))]})
+        self.write_manifest()
+        return other
+
+    def test_batch_resolves_distinct_outputs_with_shared_metadata_binding(self):
+        other = self.second_output()
+        result = artifacts.resolve_many(self.root,
+            [('//component:archive', '.a'), ('//other:archive', '/libother.a')])
+        self.assertEqual([p for p, _ in result], [self.payload, other])
+        self.assertEqual(result[0][1]['receipt_sha256'], result[1][1]['receipt_sha256'])
+        self.assertEqual(result[0][1]['manifest_sha256'], result[1][1]['manifest_sha256'])
+        self.assertEqual(result[1][1]['sha256'], artifacts.digest(other))
+
+    def test_batch_rejects_corrupt_later_output(self):
+        other = self.second_output()
+        other.write_bytes(b'x' * other.stat().st_size)
+        with self.assertRaisesRegex(ValueError, 'content mismatch'):
+            artifacts.resolve_many(self.root,
+                [('//component:archive', '.a'), ('//other:archive', '.a')])
+
+    def test_batch_cannot_report_an_empty_qualification(self):
+        with self.assertRaisesRegex(ValueError, 'at least one'):
+            artifacts.resolve_many(self.root, [])
+
+    def test_metadata_changes_during_payload_validation_are_rejected(self):
+        original_digest = artifacts.digest
+        for selected in ['receipt', 'manifest']:
+            self.write_manifest()
+            def changed(path):
+                value = original_digest(path)
+                if path == self.payload:
+                    target = self.root/'receipt.json' if selected == 'receipt' else self.capture/'manifest.json'
+                    target.write_text('{}')
+                return value
+            with self.subTest(selected=selected), patch.object(artifacts, 'digest', side_effect=changed):
+                with self.assertRaisesRegex(ValueError, 'metadata changed'):
+                    self.resolve()
 
     def test_mutable_output_tree_is_not_selected(self):
         alias = self.root / 'bazel-bin'

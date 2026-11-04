@@ -203,3 +203,36 @@ runtime execution or complete usr.bin test hierarchy is claimed. The full
 installation target remains incompatible with tests enabled. Evidence paths:
 bazel-usrbin-tap-analysis-r2-20261104, bazel-usrbin-tap-make-batch-r1-20261104
 and the pending bazel-usrbin-tap-native-r1-20261104 under /usr/obj/usr/src.
+
+## Native production and TAP archive results
+
+The subsequent bazel-usrbin-production-runtime-r1-20261104 qualification passes
+through normal build-bsd format-5. It materializes the 267 declared production
+archives, seven-contribution LLVM collection, strict merged LLVM manifest and
+usr.bin test-root archive. All six selected tests pass: source settings (cached),
+LLVM utilities and profiles, LLDB safe CLI, LLDB API smoke and lldb-server safe
+CLI (five executed). Native Clang/LLD also build in the execution configuration
+for the real profile test. No Make compilation fallback is introduced.
+This supersedes the earlier live-build status above. Independent full Make
+installation parity and completed-world namespace reconciliation remain open;
+the separate 267-archive producer/payload audit is still running.
+
+The eleven TAP references in bazel-usrbin-tap-make-batch-r1-20261104 and native
+build bazel-usrbin-tap-native-r1-20261104 pass. The independent review in
+bazel-usrbin-tap-review-r1-20261104/review.json checks all 283 files and eleven
+explicit directories: exact bytes, modes, ownership, flags, package tags,
+configured inventory and actual archive producer bindings. The 13 programs,
+259 fixtures and 11 Kyuafiles preserve original installation names. This closes
+this batch's archive installation comparison, not execution of those TAP scripts
+or the complete tests-enabled parent, which remains explicitly incompatible.
+
+The capture reader now has resolve_many for nonempty batches. Receipt/manifest
+metadata is parsed once and rehashed before returning; each selected payload
+still requires unique target/output selection, contained regular files, exact
+size and SHA-256. No global cache or mutable bazel-bin lookup is added. The
+existing single-output resolve interface delegates to the same checks.
+bazel-qualification-artifact-batch-r1-20261104 passes the maintained Bazel test;
+16 unit checks include later-output corruption, empty selection and metadata
+mutation rejection. This reduces repeated metadata parsing, not a measured
+whole-build speed or memory claim. Generic build-bsd format-5 dispatch already
+supports these inputs; no C dispatcher or packaging/publication change is needed.
