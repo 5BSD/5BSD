@@ -2,3 +2,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ['auth-proto.h', 'auth.h', 'enc-proto.h', 'encrypt.h', 'key-proto.h', 'misc-proto.h', 'misc.h', 'pk.h'], strip_include_prefix = ".", visibility = ["//lib/libtelnet:__pkg__"])
 exports_files(['genget.c', 'getent.c', 'misc.c', 'encrypt.c', 'auth.c', 'enc_des.c', 'sra.c', 'pk.c'], visibility = ["//lib/libtelnet:__pkg__"])
+
+# Client sources use <libtelnet/...>; library sources retain their local interface.
+cc_library(name = "public_headers", hdrs = ["auth-proto.h", "auth.h", "enc-proto.h", "encrypt.h", "key-proto.h", "misc-proto.h", "misc.h", "pk.h"], strip_include_prefix = ".", include_prefix = "libtelnet", visibility = ["//usr.bin/telnet:__pkg__"])

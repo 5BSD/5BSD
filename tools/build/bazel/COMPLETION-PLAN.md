@@ -16,6 +16,27 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Native Telnet and shared protocol source fix (2026-11-04)
+
+The original Telnet source now builds with option-dependent native libraries and
+proper public/private headers. Its existing baud code had an undefined command,
+wrong trace pointer, extra NUL, missing IAC escaping and truncating validation;
+shared Make/Bazel sources now use a bounded codec with wire/capacity tests and
+compatible numeric parsing. Default and no-OpenSSL/IPv4 profiles pass five tests.
+Nineteen consumer contexts match original Make (seventeen raw, two explicit
+filename controls), as do eleven raw internal-library contexts, complete
+component installation metadata/manual bytes/debug CRCs/runtime-library order.
+The combined production parent passes 273 archives and five cached tests, with
+all 813 preceding products unchanged, canonical collision-free members, and
+exact component-to-aggregate binding. The final parser changes only Telnet's tar
+among 819 products. Only compile_et remains unconverted in this optional usr.bin
+queue; the unfinished Heimdal graph, full installed tests/world/pkgbase,
+alternate architectures/profiles and full service/bootstrap/cache/sandbox/
+resource gates remain required. Three configured checks preserve explicit
+rejection of unfinished Heimdal and full installed-test paths.
+See TELNET-NATIVE-QUALIFICATION.md.
+Make stays default; BIP excluded.
+
 ## Native vacation and original archive search binding (2026-11-04)
 
 Native vacation now builds with its existing generated Sendmail header and PIE

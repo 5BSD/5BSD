@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_OPENSSL = "//tools/build/bazel/config:openssl_enabled"
+_CRYPTO = ["//lib/libmp:mp", "//secure/lib/libcrypto:crypto", "//lib/libpam/libpam:pam"]
+_CRYPTO_SHARED = ["//lib/libmp:mp_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libpam/libpam:pam_shared"]
+cc_binary(
+    name = "telnet",
+    srcs = ["//contrib/telnet/telnet:" + n for n in ["commands.c", "comport.c", "main.c", "network.c", "ring.c", "sys_bsd.c", "telnet.c", "terminal.c", "utilities.c"]] + select({
+        _OPENSSL: ["//contrib/telnet/telnet:authenc.c"], "//conditions:default": [],
+    }),
+    deps = ["//contrib/telnet/telnet:headers", "//contrib/telnet/telnet:comport_headers", "//contrib/telnet/libtelnet:public_headers", "//lib/libtelnet:telnet_pie", "//lib/ncurses/tinfo:tinfo", "//lib/libipsec:ipsec"] + select({
+        _OPENSSL: _CRYPTO, "//conditions:default": [],
+    }),
+    dynamic_deps = ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libipsec:ipsec_shared"] + select({
+        _OPENSSL: _CRYPTO_SHARED, "//conditions:default": [],
+    }),
+    local_defines = ["KLUDGELINEMODE", "USE_TERMIO", "ENV_HACK", "OPIE", "IPSEC"] + select({
+        "//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": [],
+    }) + select({_OPENSSL: ["ENCRYPTION", "AUTHENTICATION"], "//conditions:default": []}),
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    # libtelnet explicitly rejects the unfinished non-MIT Kerberos graph.
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:telnet_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+)
+utility_installation(name = "install_manifest", program = "telnet", manual = "//contrib/telnet/telnet:telnet.1", package = "telnet")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=telnet","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# Three positional arguments fail before any connection is attempted.
+bsd_compare_test(name = "usage_test", program = ":telnet", arguments = ["one", "two", "three"],
+    expected_exit = 1, expected = "bazel-fixtures/empty",
+    expected_stderr = select({_OPENSSL: "bazel-fixtures/usage-auth", "//conditions:default": "bazel-fixtures/usage-plain"}),
+    runtime_lib = ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libipsec:ipsec_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + select({
+        _OPENSSL: _CRYPTO_SHARED + ["@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"], "//conditions:default": [],
+    }), runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+
+bsd_compare_test(name = "baud_overflow_test", program = ":telnet", arguments = ["-B", "4294976896", "one", "two", "three"],
+    expected_exit = 1, expected = "bazel-fixtures/empty", expected_stderr = "bazel-fixtures/invalid-baud",
+    runtime_lib = ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libipsec:ipsec_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + select({
+        _OPENSSL: _CRYPTO_SHARED + ["@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"], "//conditions:default": [],
+    }), runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+
+bsd_compare_test(name = "baud_positive_test", program = ":telnet", arguments = ["-B", " +9600", "one", "two", "three"],
+    expected_exit = 1, expected = "bazel-fixtures/empty",
+    expected_stderr = select({_OPENSSL: "bazel-fixtures/usage-auth", "//conditions:default": "bazel-fixtures/usage-plain"}),
+    runtime_lib = ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libipsec:ipsec_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + select({
+        _OPENSSL: _CRYPTO_SHARED + ["@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"], "//conditions:default": [],
+    }), runner = "//tools/build/bazel:byte_compare_runner", size = "small")

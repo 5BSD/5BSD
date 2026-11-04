@@ -59,6 +59,16 @@ The safe missing-login test observes exit/output behavior before database/mail
 operations; it does not qualify live delivery logging, resolver probes or audit
 delivery. Isolated mail/database scenarios remain required.
 
+## Telnet consumer and baud source correction (2026-11-04)
+
+The client and libtelnet declare no dedicated DTrace provider or BSM calls.
+The OpenSSL profile retains the original PAM library dependency, including its
+existing pamchain provider. The corrected baud path traces the actual bounded
+frame rather than an argument-end pointer. Wire tests and no-connection CLI
+cases do not exercise live PAM events, network negotiation, encryption or audit
+delivery. Those require isolated service/runtime qualification; no telemetry
+payload or credential logging is introduced by this migration.
+
 ## Findings and follow-up
 
 | Component | Finding | Status / next evidence |

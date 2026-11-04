@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["commands.c", "main.c", "network.c", "ring.c", "sys_bsd.c", "telnet.c", "terminal.c", "utilities.c", "authenc.c", "telnet.1"], visibility = ["//usr.bin/telnet:__pkg__"])
+cc_library(name = "headers", hdrs = ["baud.h", "defines.h", "externs.h", "fdset.h", "general.h", "ring.h", "types.h"], strip_include_prefix = ".", visibility = ["//usr.bin/telnet:__pkg__"])
+
+exports_files(["comport.c"], visibility = ["//usr.bin/telnet:__pkg__", "//usr.bin/telnet/tests:__pkg__"])
+cc_library(name = "comport_headers", hdrs = ["comport.h"], strip_include_prefix = ".", visibility = ["//usr.bin/telnet:__pkg__", "//usr.bin/telnet/tests:__pkg__"])

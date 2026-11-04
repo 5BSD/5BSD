@@ -345,3 +345,24 @@ bindings, failed audit/reference attempts, explicit filename policy and scope.
 Only compile_et and telnet remain unconverted optional usr.bin programs.
 Full tests/world/pkgbase, other profiles/architectures, real mail/database,
 bootstrap/hardware/publication/cache/sandbox and resource/runtime gates remain.
+
+## Native Telnet, source correction and combined optional profile
+
+Telnet now preserves source-owned feature selection, native terminfo/IPsec and
+OpenSSL-selected authentication libraries, original package/manual/debug policy
+and explicit rejection of the unfinished Heimdal path. Its newly exposed baud
+source defects are corrected in shared Make/Bazel code, with bounded RFC packet
+encoding and real CLI range/compatibility checks; no compiler-define shim is used.
+Both qualified profiles pass five tests. All nineteen consumer contexts and
+eleven internal-library contexts reconcile against fresh original Make builds
+(with two explicit source-filename controls), and installation/manual/debug CRC/
+direct-runtime-library contracts agree. See TELNET-NATIVE-QUALIFICATION.md.
+
+With all converted optional families enabled the production parent passes 273
+archives. All 813 earlier NIS/Hesiod products remain exact; only vacation/Telnet
+are added. Directory/file namespaces and member paths pass separate checks, and
+the merged Telnet products equal the independently reviewed component. The final
+numeric-compatibility refinement changes just Telnet's tar among 819 outputs.
+Only compile_et remains unconverted in this optional queue. The Heimdal graph,
+full tests/world/pkgbase and cross-platform/runtime/bootstrap/cache/sandbox/
+performance requirements remain open. Make remains production/default.

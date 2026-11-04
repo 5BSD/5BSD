@@ -41,6 +41,7 @@ static const char sccsid[] = "@(#)telnet.c	8.4 (Berkeley) 5/30/95";
  */
 
 #include <ctype.h>
+#include <inttypes.h>
 #include <curses.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -50,6 +51,7 @@ static const char sccsid[] = "@(#)telnet.c	8.4 (Berkeley) 5/30/95";
 #include <arpa/telnet.h>
 
 #include "ring.h"
+#include "comport.h"
 
 #include "defines.h"
 #include "externs.h"
@@ -206,35 +208,31 @@ unsigned char ComPortBaudRate[256];
 void
 DoBaudRate(char *arg)
 {
-    char *temp, temp2[11];
-    int i;
+    unsigned char frame[TELNET_COMPORT_BAUDRATE_MAX_FRAME];
+    char *end;
+    intmax_t value;
     uint32_t baudrate;
+    size_t length;
+    int i;
 
     errno = 0;
-    baudrate = (uint32_t)strtol(arg, &temp, 10);
-    if (temp[0] != '\0' || (baudrate == 0 && errno != 0))
-	ExitString("Invalid baud rate provided.\n", 1);
-
+    value = strtoimax(arg, &end, 10);
+    if (end == arg || errno != 0 || *end != '\0' || value < 0 ||
+        (uintmax_t)value > UINT32_MAX)
+        ExitString("Invalid baud rate provided.\n", 1);
+    baudrate = (uint32_t)value;
     for (i = 1; termspeeds[i].speed != -1; i++)
-	if (baudrate == termspeeds[i].speed)
-	    break;
+        if (baudrate == (uint32_t)termspeeds[i].speed)
+            break;
     if (termspeeds[i].speed == -1)
-	ExitString("Invalid baud rate provided.\n", 1);
+        ExitString("Invalid baud rate provided.\n", 1);
 
-    strlcpy(ComPortBaudRate, arg, sizeof(ComPortBaudRate));
-
-    if (NETROOM() < sizeof(temp2)) {
-	ExitString("No room in buffer for baud rate.\n", 1);
-	/* NOTREACHED */
-    }
-
-    snprintf(temp2, sizeof(temp2), "%c%c%c%c....%c%c", IAC, SB, TELOPT_COMPORT,
-	COMPORT_SET_BAUDRATE, IAC, SE);
-
-    baudrate = htonl(baudrate);
-    memcpy(&temp2[4], &baudrate, sizeof(baudrate));
-    ring_supply_data(&netoring, temp2, sizeof(temp2));
-    printsub('>', &temp[2], sizeof(temp2) - 2);
+    length = telnet_comport_baudrate(baudrate, frame, sizeof(frame));
+    if (length == 0 || NETROOM() < (int)length)
+        ExitString("No room in buffer for baud rate.\n", 1);
+    strlcpy((char *)ComPortBaudRate, arg, sizeof(ComPortBaudRate));
+    ring_supply_data(&netoring, frame, (int)length);
+    printsub('>', frame + 2, (int)length - 2);
 }
 
 void

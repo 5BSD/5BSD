@@ -1,0 +1,2 @@
+usage: telnet [-4] [-6] [-8] [-B baudrate] [-E] [-K] [-L] [-N] [-S tos] [-X atype]
+	[-c] [-d] [-e char] [-k realm] [-l user] [-f/-F] [-n tracefile] [-r] [-s src_addr] [-u] [-P policy] [-y] [host-name [port]]

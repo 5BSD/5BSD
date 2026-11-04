@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "comport_test", srcs = ["comport_test.c", "//contrib/telnet/telnet:comport.c"],
+    deps = ["//contrib/telnet/telnet:comport_headers"], features = ["bsd_test_runtime_paths"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], size = "small", visibility = ["//visibility:public"])

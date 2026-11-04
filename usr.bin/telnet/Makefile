@@ -7,7 +7,7 @@ TELNETDIR=	${SRCTOP}/contrib/telnet
 
 PROG=		telnet
 
-SRCS=		commands.c main.c network.c ring.c sys_bsd.c \
+SRCS=		commands.c comport.c main.c network.c ring.c sys_bsd.c \
 		telnet.c terminal.c utilities.c
 
 CFLAGS+=	-DKLUDGELINEMODE -DUSE_TERMIO -DENV_HACK -DOPIE \
