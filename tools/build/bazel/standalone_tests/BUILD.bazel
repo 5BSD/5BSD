@@ -25,3 +25,9 @@ cc_library(name = "undeclared_hosted_header", srcs = ["hosted_header.c"], tags =
     visibility = ["//visibility:public"])
 
 exports_files(["resource_test.py"], visibility = ["//tools/build/bazel/tests/freestanding_boundary:__pkg__"])
+
+load("//tools/build/bazel:bsd_firmware_link.bzl", "bsd_firmware_link")
+bsd_firmware_link(name = "resource_image", objects = [":resource_object"],
+    object_order = ["resource.o"], archives = [], script = "resource.ld", output = "resource.elf",
+    linkopts = ["-static", "-no-pie"], target_compatible_with = ["@bsd_sdk//toolchain:standalone"],
+    visibility = ["//visibility:public"])

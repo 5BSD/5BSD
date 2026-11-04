@@ -2338,3 +2338,13 @@ See FREESTANDING-BOUNDARY-QUALIFICATION.md for strict comparisons, actual config
 execution sharing, passing tests and retained initial failures. This closes the
 selected ABI-boundary mechanism; complete world/boot aggregation and the other
 full-system, bootstrap, sandbox, runtime and performance gates remain open.
+
+### 2026-11-04: IA32 boot ABI prerequisite
+
+The selected AMD64 world includes 32-bit BIOS/EFI producers. A real i386 standalone
+SDK platform now uses x86_32 constraints and native execution tools. SDK schema 2
+is staged and verified, rather than retagging old receipts. Eleven wrappers pass;
+ELF32 compilation/static linking and the other three ABIs are checked, all fifteen
+EFI image bytes are preserved, and hosted-header/old-SDK rejection is explicit.
+See IA32-TOOLCHAIN-QUALIFICATION.md. Convert the selected BIOS/IA32 EFI contexts
+next; this prerequisite does not close those programs or complete world/pkgbase.

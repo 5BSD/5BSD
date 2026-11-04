@@ -10,6 +10,7 @@ load(":bsd_install.bzl", "BsdInstallFileInfo", "BsdInstallManifestInfo")
 
 _CPU = {
     "amd64": "@platforms//cpu:x86_64",
+    "i386": "@platforms//cpu:x86_32",
     "aarch64": "@platforms//cpu:aarch64",
     "riscv64": "@platforms//cpu:riscv64",
 }

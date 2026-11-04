@@ -35,3 +35,22 @@ bsd_freestanding_artifact(name = "softcore_source", src = "//stand/ficl:softcore
  for package, image in [("boot1", "image"), ("gptboot", "image"),
                         ("loader", "loader_lua_efi"), ("loader_4th", "image"),
                         ("loader_simp", "image")]]
+
+# IA32 boot producers are target artifacts, never native execution tools.
+bsd_freestanding_artifact(name = "resource_i386",
+    src = "//tools/build/bazel/standalone_tests:resource_object", architecture = "i386")
+bsd_host_artifact_test(name = "resource_i386_test",
+    src = "//tools/build/bazel/standalone_tests:resource_test.py", data = [":resource_i386"],
+    args = ["--object", "$(rlocationpath :resource_i386)", "--machine", "3", "--elf-class", "1"], size = "small")
+[bsd_freestanding_artifact(name = "linked_" + arch,
+    src = "//tools/build/bazel/standalone_tests:resource_image", architecture = arch)
+ for arch in ["amd64", "i386", "aarch64", "riscv64"]]
+[bsd_host_artifact_test(name = "linked_" + arch + "_test",
+    src = "//tools/build/bazel/standalone_tests:resource_test.py", data = [":linked_" + arch],
+    args = ["--object", "$(rlocationpath :linked_" + arch + ")", "--machine", machine,
+            "--elf-class", elf_class, "--kind", "executable"], size = "small")
+ for arch, machine, elf_class in [("amd64", "62", "2"), ("i386", "3", "1"),
+                                 ("aarch64", "183", "2"), ("riscv64", "243", "2")]]
+bsd_freestanding_artifact(name = "i386_hosted_header_rejected",
+    src = "//tools/build/bazel/standalone_tests:undeclared_hosted_header",
+    architecture = "i386", tags = ["manual"])

@@ -43,8 +43,9 @@ def freestanding_toolchains(target, version):
     tools resolve the native userland platform, independently of these targets.
     """
     suffix = target.split('-', 1)[1]
-    rows = [('amd64', 'x86_64', 'k8'), ('aarch64', 'aarch64', 'aarch64'),
-            ('riscv64', 'riscv64', 'riscv64')]
+    rows = [('amd64', 'x86_64', 'k8', 'x86_64'), ('i386', 'x86_32', 'piii', 'i386'),
+            ('aarch64', 'aarch64', 'aarch64', 'aarch64'),
+            ('riscv64', 'riscv64', 'riscv64', 'riscv64')]
     lines = [
         'constraint_setting(name="environment", default_constraint_value=":userland")',
         'constraint_value(name="userland", constraint_setting=":environment")',
@@ -53,14 +54,14 @@ def freestanding_toolchains(target, version):
         'filegroup(name="standalone_link_inputs", srcs=[":standalone_compile_inputs", "bin/ld.lld", ":ld.lld_runtime"])',
         'filegroup(name="standalone_all_inputs", srcs=[":standalone_compile_inputs", ":standalone_link_inputs", ":archive_inputs", ":objcopy_inputs", ":strip_inputs"])',
     ]
-    for arch, cpu, cc_cpu in rows:
+    for arch, cpu, cc_cpu, triple_cpu in rows:
         name = 'standalone_' + arch
         constraints = ['@platforms//os:freebsd', '@platforms//cpu:' + cpu,
                        ':standalone', ':selected_sdk']
         lines += [
             'platform(name=%s, constraint_values=%s)' % (json.dumps(name), json.dumps(constraints)),
             'bsd_cc_config(name=%s, target=%s, cpu=%s, clang_version=%s, freestanding=True)' %
-                tuple(json.dumps(v) for v in (name+'_config', cpu+'-'+suffix, cc_cpu, version)),
+                tuple(json.dumps(v) for v in (name+'_config', triple_cpu+'-'+suffix, cc_cpu, version)),
             'cc_toolchain(name=%s, toolchain_identifier=%s, toolchain_config=%s, all_files=":standalone_all_inputs", compiler_files=":standalone_compile_inputs", as_files=":standalone_compile_inputs", linker_files=":standalone_link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)' %
                 tuple(json.dumps(v) for v in (name+'_compiler', 'bsd-'+name, ':'+name+'_config')),
             'toolchain(name=%s, toolchain=%s, toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' %
@@ -258,7 +259,7 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
     snapshot={str(path.relative_to(root)):digest(path) for path in tc.rglob('*') if path.is_file()}
     result={'format':1,'scope':'native amd64 candidate SDK snapshot; no Bazel execution or hermeticity claim','inputs':inputs,'execution_host_dependencies':dependencies,'tool_execution_dependencies':tool_dependencies,'dependency_commands':commands,'tool_origins':{k:str(v) for k,v in origins.items()},'snapshot':snapshot,'python_runtime':python_info,'bazel_analyzed':False,'bazel_built':False,'target':target}
     result['compiler_resource_version'] = version
-    result['freestanding_toolchains'] = 1
+    result['freestanding_toolchains'] = 2
     if host is not None:
         result.update(format=2, scope='explicit target SDK plus independently bound native execution SDK; no world/runtime qualification',
                       execution_target=host['target'], execution_sdk={

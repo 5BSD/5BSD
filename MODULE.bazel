@@ -9,6 +9,7 @@ register_toolchains("@bsd_sdk//toolchain:registered")
 # Hosted and standalone platforms have disjoint environment constraints.
 register_toolchains(
     "@bsd_sdk//toolchain:standalone_amd64_registered",
+    "@bsd_sdk//toolchain:standalone_i386_registered",
     "@bsd_sdk//toolchain:standalone_aarch64_registered",
     "@bsd_sdk//toolchain:standalone_riscv64_registered",
 )

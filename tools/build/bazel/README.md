@@ -48923,13 +48923,22 @@ installation, sandbox, bootstrap, runtime or performance gates. Make stays defau
 
 `bsd_freestanding_artifact` is a dependency transition, following
 [Bazel's configuration model](https://bazel.build/extending/config#user-defined-transitions).
-It changes only the dependency target platform. MODULE.bazel registers all three
+It changes only the dependency target platform. MODULE.bazel registers all four
 disjoint standalone SDK toolchains alongside the hosted toolchain. Native execution
 tools retain their ordinary configuration without transition-specific toolchain
-overrides. Source-graph SDK inputs require schema-1 freestanding declarations
+overrides. Source-graph SDK inputs require schema-2 freestanding declarations
 bound in the snapshot; regenerate older SDKs with the maintained stager. The consumer keeps its hosted platform. The default architecture
 follows the consumer CPU; an explicit architecture supports multi-target image
 construction. It forwards artifact files, output groups and typed installation
 providers, excluding CcInfo and executable tool/test interfaces. EFI packages expose
 `freestanding_image` and `freestanding_install_manifest`. This connects the ABI
 boundary required by future world aggregates; it is not full-world qualification.
+
+
+The fourth standalone SDK platform is `standalone_i386`, selected by the artifact
+boundary's explicit `architecture = "i386"` for 32-bit boot producers. It uses
+Clang's i386 FreeBSD target, with x86_32 platform constraints and native execution
+tools. This does not enable an i386 system/world target. Schema 2 requires a new
+verified SDK snapshot; it does not reinterpret a schema-1 receipt. The resource
+qualification checks ELF32 and ELF64 objects and statically linked images, with
+an entry point in executable code and no program interpreter.

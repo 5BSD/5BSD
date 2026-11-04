@@ -114,8 +114,8 @@ def validate_sdk_toolchains(receipt):
     """The source module registers both hosted and standalone SDK toolchains."""
     if (not isinstance(receipt, dict) or
             type(receipt.get('freestanding_toolchains')) is not int or
-            receipt['freestanding_toolchains'] != 1):
-        raise ValueError('source graph requires SDK freestanding toolchain schema 1; regenerate with the maintained SDK stager')
+            receipt['freestanding_toolchains'] != 2):
+        raise ValueError('source graph requires SDK freestanding toolchain schema 2; regenerate with the maintained SDK stager')
     snapshot = receipt.get('snapshot')
     if not isinstance(snapshot, dict) or not {'toolchain/BUILD.bazel', 'toolchain/cc_toolchain_config.bzl'} <= set(snapshot):
         raise ValueError('SDK toolchain declarations must be bound in its snapshot')

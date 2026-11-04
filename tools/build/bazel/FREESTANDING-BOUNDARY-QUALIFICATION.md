@@ -99,3 +99,7 @@ fair CPU/memory/disk measurements remain open. Separate debug/source lookup and
 complete package/publication parity also remain open. Make stays production and
 default; BIP remains excluded. No installation into the running system, upgrade,
 reboot or publication was performed.
+
+Later prerequisite: IA32-TOOLCHAIN-QUALIFICATION.md extends the registered SDK to
+four standalone ABIs and requires schema 2. The schema-1 evidence above remains
+historical; regenerate SDK inputs for current source qualification.

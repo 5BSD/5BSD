@@ -6090,7 +6090,7 @@ maintained bsd_freestanding_artifact dependency transition.
 The dependency selects its standalone SDK platform.
 The source module registers the disjoint SDK toolchains;
 execution tools retain the native execution configuration.
-Source-graph inputs require snapshot-bound freestanding toolchain schema 1.
+Source-graph inputs require snapshot-bound freestanding toolchain schema 2.
 Regenerate older SDKs with the maintained SDK stager.
 The wrapper forwards files, output groups and typed installation providers.
 It does not forward C/C++ linkage providers or executable-tool interfaces.
@@ -6099,3 +6099,13 @@ for hosted image and installation consumers.
 The architecture defaults to the consumer CPU and may be explicitly selected
 for a multi-architecture image.
 These interfaces do not establish complete world or package qualification.
+
+.Ss IA32 boot compilation
+The standalone SDK includes an i386 platform for 32-bit BIOS and IA32 EFI
+producer graphs, with native AMD64 execution tools.
+This is a nested artifact architecture, not a new supported system target.
+The ABI boundary accepts architecture i386 explicitly.
+Schema 2 adds this platform; regenerate older SDK inputs with the maintained
+SDK stager before source qualification.
+Compilation and linking checks inspect ELF32 artifacts without executing them.
+Complete BIOS and IA32 EFI producer graphs remain separate qualification work.

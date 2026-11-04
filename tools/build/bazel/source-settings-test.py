@@ -125,7 +125,7 @@ class PlatformTest(unittest.TestCase):
 class StandalonePlatformTest(unittest.TestCase):
     def receipt(self):
         return {'format': 1, 'target': 'x86_64-unknown-freebsd16.0',
-                'freestanding_toolchains': 1, 'snapshot': {
+                'freestanding_toolchains': 2, 'snapshot': {
                     'toolchain/BUILD.bazel': 'a'*64,
                     'toolchain/cc_toolchain_config.bzl': 'b'*64}}
 
@@ -143,7 +143,7 @@ class StandalonePlatformTest(unittest.TestCase):
                 validate_sdk_toolchains(receipt)
 
     def test_old_or_incomplete_capability_rejected(self):
-        for value in [None, False, True, 0, 2, '1']:
+        for value in [None, False, True, 0, 1, '2']:
             receipt = dict(self.receipt(), freestanding_toolchains=value)
             with self.subTest(value=value), self.assertRaises(ValueError):
                 platform_arguments({'target-kind':'standalone'}, 'amd64', receipt)
