@@ -2148,3 +2148,24 @@ Next rerun relevant shared EFI regressions, stage the actual component/archive
 with maintained directory/pkgbase policy, and qualify firmware execution. Foreign
 entry/image profiles and all complete-system/debug/bootstrap/performance gates
 remain open. Make remains production/default; BIP remains excluded.
+
+### Loader component stage and shared regressions (2026-11-04)
+
+The existing EFI conversion target passes its seven unittest methods. The selected
+AMD64 archive derives ancestor modes and named IDs from maintained mtree/account
+inputs and preserves actual payload/hardlinks. Its package partition is explicitly
+component scope, with complete manifests refused. Typed archive times support
+2147483649; literal 42 and configured 00042 produce identical archives. Four
+invalid-input guards and the existing partial-package guard pass.
+
+The original component install adds a utilities tag to /boot in addition to the
+common mtree's bootloader assignment. Record and handle multiple directory package
+assignments at complete-package aggregation; do not claim full metadata parity
+from this component. See LOADER-STAGE-QUALIFICATION.md. Next retain default archive
+restoration, then complete bootloader aggregation and firmware qualification;
+foreign/alternate profiles and all broader completion gates remain open.
+
+Default restoration now preserves the complete archive, PE and component-layout
+bytes on final source. Only conversion and archive serialization rerun; no compiler
+or final ELF link reruns. Retained proof: restoration-review.json in the future
+stage review. Complete package directory assignments and boot remain open.

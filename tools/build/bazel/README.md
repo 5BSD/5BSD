@@ -48805,3 +48805,16 @@ only conversion. See [LOADER-PE-QUALIFICATION.md](LOADER-PE-QUALIFICATION.md).
 This does not establish DWARF/source lookup, complete installation/package staging
 or firmware boot. Native tool runtime/search paths are audited, while full
 sandbox and system-wide performance remain open. Make stays default.
+
+### AMD64 loader component staging (2026-11-04)
+
+The selected loader now has a five-member archive with source-mtree directories,
+source account identities and the actual PE/help/hardlink payload. Typed staging
+time supports beyond-2038 values while preserving existing integer-epoch archive
+bytes. Four input guards and the existing partial-package guard pass. The shared
+EFI regression target also passes all seven unittest methods. See
+[LOADER-STAGE-QUALIFICATION.md](LOADER-STAGE-QUALIFICATION.md).
+
+This is a bootloader component contribution, not a complete bootloader package.
+Directory package-assignment aggregation, remaining profiles and firmware boot
+remain gates. Make stays production/default.

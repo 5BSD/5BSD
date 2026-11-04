@@ -9,6 +9,8 @@ load("//tools/build/bazel:bsd_firmware_link.bzl", "bsd_firmware_link")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
 load("//tools/build/bazel:bsd_efi_image.bzl", "bsd_efi_image")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
 
 # This inventory is complete for the selected Make profile. Unsupported profiles
 # are incompatible instead of silently retaining a different source selection.
@@ -140,4 +142,19 @@ def efi_loader_amd64_entry():
     # selected Lua profile is the maintained default interpreter on AMD64.
     bsd_install_manifest(name = "install_manifest", entries = [":install_lua_efi",
         ":install_help", ":install_default_efi"], target_compatible_with = compatible,
+        visibility = ["//visibility:public"])
+    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+        mtree_specs = {"//etc/mtree:BSD.root.dist": "/"},
+        passwd = "//etc:master.passwd", group = "//etc:group",
+        mtree = "@bsd_sdk//toolchain:extra_mtree",
+        epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
+        python = "@bsd_sdk//toolchain:extra_python",
+        python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+        runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+        target_compatible_with = compatible, visibility = ["//visibility:public"])
+    # EFI Lua is one contributor to bootloader. Aggregate the other boot
+    # programs before permitting complete pkgbase manifests or publication.
+    bsd_pkg_layout(name = "component_package_layout", scope = "component",
+        manifests = [":install_manifest"], packages = ["bootloader"],
+        suffix_tags = ["dbg", "dev"], target_compatible_with = compatible,
         visibility = ["//visibility:public"])

@@ -4762,6 +4762,20 @@ These remain qualification candidates; firmware execution, other configurations
 and system-wide completion gates are separate.
 See
 .Pa tools/build/bazel/LOADER-PE-QUALIFICATION.md .
+.Ss Native EFI component archive
+.Li //stand/efi/loader:install_archive
+stages the selected PE/help/hardlink contribution with ancestor directory policy
+from BSD.root.dist and identities from source account files.
+Its archive time uses the configured loader_source_date_epoch setting.
+.Li //stand/efi/loader:component_package_layout
+is explicitly component scope; it cannot emit a complete bootloader package.
+The shared archive rule retains explicit integer epochs and supports a mutually
+exclusive typed decimal-string epoch_setting.
+Missing, conflicting, malformed and negative inputs are rejected.
+Full package aggregation, shared directory ownership and firmware execution
+remain unqualified.
+See
+.Pa tools/build/bazel/LOADER-STAGE-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

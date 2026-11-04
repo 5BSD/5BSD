@@ -1,12 +1,23 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Cacheable installation archives; inode relationships are serialized metadata."""
 load(":bsd_install.bzl", "BsdInstallManifestInfo")
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
 BsdInstallArchiveInfo = provider(fields = ["directory_metadata"])
 # A collection preserves output groups but is not a single package archive.
 BsdInstallArchiveSetInfo = provider(fields = [])
 
 def _archive(ctx):
+    epoch = ctx.attr.epoch
+    if ctx.attr.epoch_setting:
+        if epoch != -1:
+            fail("select either an explicit archive epoch or a setting")
+        value = ctx.attr.epoch_setting[BuildSettingInfo].value
+        if type(value) != "string" or not value or any([c not in "0123456789" for c in value.elems()]):
+            fail("archive epoch setting must be a nonnegative decimal string")
+        epoch = int(value, 10)
+    if epoch < 0:
+        fail("explicit nonnegative archive epoch required")
     records, payloads = [], []
     runtime_names = []
     for library in ctx.files.mtree_runtime_libraries:
@@ -48,7 +59,7 @@ def _archive(ctx):
         records = records,
         users = {key: int(value) for key, value in ctx.attr.users.items()},
         groups = {key: int(value) for key, value in ctx.attr.groups.items()},
-        epoch = ctx.attr.epoch,
+        epoch = epoch,
         mtree_specs = specs,
         directory_packages = ctx.attr.directory_packages,
         mtree = ctx.executable.mtree.path if ctx.executable.mtree else None,
@@ -85,7 +96,8 @@ bsd_install_archive = rule(
         "passwd": attr.label(allow_single_file = True),
         "group": attr.label(allow_single_file = True),
         "_policy_modules": attr.label_list(default = [Label(":archive_policy.py"), Label(":directory_metadata.py")], allow_files = True, cfg = "exec"),
-        "epoch": attr.int(mandatory = True),
+        "epoch": attr.int(default = -1),
+        "epoch_setting": attr.label(providers = [BuildSettingInfo]),
         "python": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
         "python_home": attr.label(cfg = "exec", allow_single_file = True, mandatory = True),
         "runtime": attr.label_list(cfg = "exec", allow_files = True),
