@@ -32,7 +32,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
-    name = "install_archive",
+    name = "install_archive", visibility = ["//usr.bin:__pkg__"],
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.bin/procstat/tests:install_manifest"], "//conditions:default": []}),
     directories = select({"//tools/build/bazel/config:tests_enabled": {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/usr.bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/usr.bin/procstat': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/tests/usr.bin/procstat': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]}'}, "//conditions:default": {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}'}}),
     mtree_specs = {

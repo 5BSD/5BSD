@@ -6324,3 +6324,16 @@ aggregate archive and runtime qualification are still pending.
 The seven archive contributions account for 17 default Make directories because
 the toolchain contribution closes ten utility manifests and their manual links.
 This is a configuration checkpoint, not full-system acceptance.
+
+.Ss usr.bin production family under qualification
+The explicit format-5 interface can select
+.Cm //usr.bin:production_installation_archives
+for the configured AMD64 production contributions.
+Configured ownership matches the retained Make profile; native aggregate
+compilation and archive/runtime qualification remain pending.
+.Cm //usr.bin:installation_archives
+rejects tests-enabled configurations until the complete original installed
+test hierarchy is reconciled. The production target does not assert test coverage.
+Unconverted Hesiod, Heimdal compiler, NIS clients, vacation and telnet profiles
+are explicitly incompatible; their conversion remains required work.
+These targets add no publication, installation or upgrade authorization.

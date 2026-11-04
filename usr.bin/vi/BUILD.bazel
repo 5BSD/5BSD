@@ -133,7 +133,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
-    name = "install_archive",
+    name = "install_archive", visibility = ["//usr.bin:__pkg__"],
     manifests = [":install_manifest", "//usr.bin/vi/catalog:install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.bin/vi/tests:install_manifest"], "//conditions:default": []}),
     directories = select({"//tools/build/bazel/config:tests_enabled": {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=vi","dbg"]}' for directory in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/usr/share/vi/catalog": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=vi"]}'} | {"/usr/tests/usr.bin/vi": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=vi","dbg"]}' for directory in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/usr/share/vi/catalog": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=vi"]}'}}),
     mtree_specs = {

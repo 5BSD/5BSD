@@ -4,9 +4,10 @@ The complete-world review queue's remaining production directories without local
 BUILD files mostly have real parent-owned producers (iconv/OpenSSL modules,
 Switchboard NSS and EFI Lua) or are Make recursion wrappers. This is not proof
 that their installed contents or the whole world are complete. The larger next
-gap is explicit family composition: usr.bin still lacks its full aggregate;
-the LLVM family declaration is now under qualification. Do not use recursive //... patterns or BUILD-file counts
-as an installed-world definition.
+gap is explicit family composition: usr.bin now has a production declaration
+under qualification, while full installed tests and optional-program coverage
+remain incomplete. Do not use recursive //... patterns or BUILD-file counts as
+an installed-world definition.
 
 A fresh maintained component-plan query records 243 selected usr.bin entries.
 The LLVM subtree has 18 SUBDIR tokens: 17 directories and one .WAIT barrier.
@@ -52,8 +53,9 @@ production code. An initial audit misparsed absolute Bazel labels; only that
 label parser was corrected. Failed attempts remain retained.
 
 Next: finish native LLVM family qualification and construct the source-owned
-usr.bin aggregate with maintained option selection, explicit nested/test
-contributions and coverage checks. The usr.bin root has not been built or qualified. Its metadata query and
+usr.bin aggregate with explicit nested/test contributions and coverage checks.
+The production parent is now declared and analyzed, but has not been built or
+qualified as a full installation. Its metadata query and
 unconfigured declaration query cannot establish installed-world coverage.
 Other world/library/data/rescue/kernel/module/bootstrap/pkgbase/hardware and
 runtime/VM/CPU/memory/disk gates remain open. The existing format-5 build-bsd path
@@ -115,3 +117,52 @@ archives and records these source candidates and limitations. The text scan is
 not an exhaustive configured test inventory. The LLVM build and small test-root
 qualification are serialized by the maintained backend state lock; an isolated
 Bazel output identifier does not bypass that lock.
+
+## usr.bin production parent checkpoint
+
+The source-owned production_installation_archives target now selects normal
+AMD64 production contributions with native options. No Make discovery is used
+by the production Bazel graph. Fifteen missing boolean options and the existing
+mail option's selector are declared with maintained source defaults. Toolchain
+disablement excludes the LLVM family and compiler-support utilities; LDNS utility
+selection preserves its library/crypto prerequisites. Nested production owners
+are used where the Make directory owns several children. Leaf production
+archives keep test-suite contributions separate.
+
+Configured analysis matches all 242 immediate production roots from the retained
+Make profile (243 including its separate tests root). Its 267 flattened archives
+are not a program count or an installed filesystem inventory. The first analysis
+reported 184 private archive targets; each now grants only its usr.bin parent
+access. Eight already native optional archives receive the same parent interface. A full
+AST comparison against the recorded committed baseline proves all 192 leaf edits
+change only archive visibility, with previous access preserved. Compiler, generator,
+installation content and package policy definitions are unchanged by those edits.
+
+The full installation_archives target explicitly rejects tests-enabled builds
+until the complete original hierarchy is reconciled. The production-only target
+remains separately selectable. Seven optional programs still need conversion:
+hesinfo, compile_et, ypcat, ypmatch, ypwhich, vacation and telnet. Selecting their
+profiles is explicitly incompatible. These are open requirements, not excluded
+scope. ARM64/RISC-V parent qualification and alternate profile parity also remain
+open. Native aggregate compilation, archive installation, full tests, pkgbase,
+world/kernel/bootstrap/runtime and performance acceptance are still pending.
+
+Evidence under /usr/obj/usr/src:
+
+- bazel-usrbin-family-analysis-r1-20261104 (original visibility failures and edit bindings)
+- bazel-usrbin-family-analysis-r3-20261104 (final configured graph)
+- bazel-usrbin-family-review-r2-20261104 (selected ownership and all 192 visibility-only edits)
+- bazel-usrbin-family-gates-r1-20261104 (configured tests/optional/toolchain gates)
+
+The existing format-5 frontend selects these targets/settings unchanged. The
+large initial LLVM build and the queued test-root archive qualification remain
+live; no passing native production aggregate is claimed by this checkpoint.
+
+Four configured gate checks pass: the full default tests-enabled target is
+incompatible; disabling tests makes it compatible; requesting unconverted
+Hesiod makes production incompatible; disabling the toolchain excludes the LLVM
+family and compiler-support programs while retaining ordinary production tools.
+These checks execute no compiler or runtime actions. The next maintained
+frontend qualification is queued behind the live LLVM and test-root processes,
+and starts only if both finish with passing receipts. It selects the complete
+production parent plus the existing LLVM utility/profile/debugger tests.

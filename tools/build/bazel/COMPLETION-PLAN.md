@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## usr.bin production parent under qualification (2026-11-04)
+
+The source-owned AMD64 production parent now analyzes with 242 immediate owners,
+matching the retained selected Make production roots. The 267 flattened archive
+outputs are not compiled products or installed-world coverage. All 192 leaf
+changes (184 selected plus eight optional interfaces) are structurally verified
+as archive-parent visibility grants only. Four configured gate checks pass;
+these execute no compilation or runtime actions.
+Complete installation with tests remains explicitly incompatible until its full
+hierarchy is carried forward. Seven optional programs remain to convert:
+hesinfo, compile_et, ypcat, ypmatch, ypwhich, vacation and telnet; selecting their
+profiles is explicitly rejected. Native production/archive/runtime qualification,
+complete tests, alternate profiles and ARM64/RISC-V acceptance remain next work.
+See [USRBIN-FAMILY-CLOSURE.md](USRBIN-FAMILY-CLOSURE.md). Continue full world,
+kernel/modules, bootstrap, pkgbase/hardware/publication, runtime and performance
+gates; this checkpoint does not replace them. Make stays default; BIP excluded.
+
 ## LLVM family composition in progress (2026-11-04)
 
 Normal LLVM family analysis now passes after preserving LLDB's existing archive

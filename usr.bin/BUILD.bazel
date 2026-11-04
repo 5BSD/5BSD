@@ -1,0 +1,495 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# Source-owned normal AMD64 production subtree from this directory's Makefile.
+# Do not replace this configured inventory with a recursive //... wildcard.
+_ARCHIVES = [
+    "//usr.bin/apply:install_archive",
+    "//usr.bin/asa:install_archive",
+    "//usr.bin/awk:install_archive",
+    "//usr.bin/backlight:install_archive",
+    "//usr.bin/banner:install_archive",
+    "//usr.bin/basename:install_archive",
+    "//usr.bin/bintrans:install_archive",
+    "//usr.bin/brandelf:install_archive",
+    "//usr.bin/bsdcat:install_archive",
+    "//usr.bin/bsddialog:install_archive",
+    "//usr.bin/bsdiff:installation_archives",
+    "//usr.bin/bzip2:install_archive_bundle",
+    "//usr.bin/bzip2recover:install_archive",
+    "//usr.bin/cap_mkdb:install_archive",
+    "//usr.bin/chat:install_archive",
+    "//usr.bin/chpass:install_archive",
+    "//usr.bin/cksum:install_archive",
+    "//usr.bin/cmp:install_archive",
+    "//usr.bin/col:install_archive",
+    "//usr.bin/colrm:install_archive",
+    "//usr.bin/column:install_archive",
+    "//usr.bin/comm:install_archive",
+    "//usr.bin/command:install_archive",
+    "//usr.bin/compress:install_archive",
+    "//usr.bin/cpio:install_archive",
+    "//usr.bin/csplit:install_archive",
+    "//usr.bin/ctlstat:install_archive",
+    "//usr.bin/cut:install_archive",
+    "//usr.bin/diff:install_archive",
+    "//usr.bin/diff3:install_archive",
+    "//usr.bin/dirname:install_archive",
+    "//usr.bin/dtc:install_archive",
+    "//usr.bin/du:install_archive",
+    "//usr.bin/elfctl:install_archive",
+    "//usr.bin/elfdump:install_archive",
+    "//usr.bin/enigma:install_archive",
+    "//usr.bin/env:install_archive",
+    "//usr.bin/etdump:install_archive",
+    "//usr.bin/expand:install_archive",
+    "//usr.bin/false:install_archive",
+    "//usr.bin/fetch:install_archive",
+    "//usr.bin/find:install_archive",
+    "//usr.bin/fmt:install_archive",
+    "//usr.bin/fold:install_archive",
+    "//usr.bin/fstat:install_archive",
+    "//usr.bin/fsync:install_archive",
+    "//usr.bin/gcore:install_archive",
+    "//usr.bin/gencat:install_archive",
+    "//usr.bin/getaddrinfo:install_archive",
+    "//usr.bin/getconf:install_archive",
+    "//usr.bin/getent:install_archive",
+    "//usr.bin/getopt:install_archive",
+    "//usr.bin/grep:install_archive",
+    "//usr.bin/gzip:install_archive",
+    "//usr.bin/head:install_archive",
+    "//usr.bin/hexdump:install_archive",
+    "//usr.bin/id:install_archive",
+    "//usr.bin/ident:install_archive",
+    "//usr.bin/ipcrm:install_archive",
+    "//usr.bin/ipcs:install_archive",
+    "//usr.bin/join:install_archive",
+    "//usr.bin/jot:install_archive",
+    "//usr.bin/killall:install_archive",
+    "//usr.bin/ktrace:install_archive",
+    "//usr.bin/ktrdump:install_archive",
+    "//usr.bin/lam:install_archive",
+    "//usr.bin/ldd:install_archive",
+    "//usr.bin/leave:install_archive",
+    "//usr.bin/less:install_archive",
+    "//usr.bin/lessecho:install_archive",
+    "//usr.bin/limits:install_archive",
+    "//usr.bin/locale:install_archive",
+    "//usr.bin/localedef:install_archive",
+    "//usr.bin/lock:install_archive",
+    "//usr.bin/lockf:install_archive",
+    "//usr.bin/logger:install_archive",
+    "//usr.bin/login:install_archive",
+    "//usr.bin/logins:install_archive",
+    "//usr.bin/logname:install_archive",
+    "//usr.bin/look:install_archive",
+    "//usr.bin/lsvfs:install_archive",
+    "//usr.bin/lzmainfo:install_archive",
+    "//usr.bin/m4:install_archive",
+    "//usr.bin/mandoc:install_archive",
+    "//usr.bin/mdo:install_archive",
+    "//usr.bin/mesg:install_archive",
+    "//usr.bin/ministat:install_archive",
+    "//usr.bin/mkdep:install_archive",
+    "//usr.bin/mkfifo:install_archive",
+    "//usr.bin/mkimg:install_archive",
+    "//usr.bin/mktemp:install_archive",
+    "//usr.bin/mkuzip:install_archive",
+    "//usr.bin/mt:install_archive",
+    "//usr.bin/ncal:install_archive",
+    "//usr.bin/ncurses:install_archive",
+    "//usr.bin/netstat:install_archive",
+    "//usr.bin/newgrp:install_archive",
+    "//usr.bin/nfsstat:install_archive",
+    "//usr.bin/nice:install_archive",
+    "//usr.bin/nl:install_archive",
+    "//usr.bin/nohup:install_archive",
+    "//usr.bin/pagesize:install_archive",
+    "//usr.bin/passwd:install_archive",
+    "//usr.bin/paste:install_archive",
+    "//usr.bin/patch:install_archive",
+    "//usr.bin/pathchk:install_archive",
+    "//usr.bin/perror:install_archive",
+    "//usr.bin/posixmqcontrol:install_archive",
+    "//usr.bin/posixshmcontrol:install_archive",
+    "//usr.bin/pr:install_archive",
+    "//usr.bin/printenv:install_archive",
+    "//usr.bin/printf:install_archive",
+    "//usr.bin/proccontrol:install_archive",
+    "//usr.bin/procstat:install_archive",
+    "//usr.bin/protect:install_archive",
+    "//usr.bin/protoc:install_archive",
+    "//usr.bin/rctl:install_archive",
+    "//usr.bin/renice:install_archive",
+    "//usr.bin/resizewin:install_archive",
+    "//usr.bin/rev:install_archive",
+    "//usr.bin/revoke:install_archive",
+    "//usr.bin/rpcinfo:install_archive",
+    "//usr.bin/rs:install_archive",
+    "//usr.bin/runat:install_archive",
+    "//usr.bin/script:install_archive",
+    "//usr.bin/sdiff:install_archive",
+    "//usr.bin/sed:install_archive",
+    "//usr.bin/seq:install_archive",
+    "//usr.bin/showmount:install_archive",
+    "//usr.bin/sockstat:install_archive",
+    "//usr.bin/soelim:install_archive",
+    "//usr.bin/sort:install_archive",
+    "//usr.bin/split:install_archive",
+    "//usr.bin/stat:install_archive",
+    "//usr.bin/stdbuf:install_archive",
+    "//usr.bin/strings:install_archive",
+    "//usr.bin/su:install_archive",
+    "//usr.bin/systat:install_archive",
+    "//usr.bin/tail:install_archive",
+    "//usr.bin/tar:install_archive",
+    "//usr.bin/tcopy:install_archive",
+    "//usr.bin/tee:install_archive",
+    "//usr.bin/time:install_archive",
+    "//usr.bin/tip:installation_archives",
+    "//usr.bin/top:install_archive",
+    "//usr.bin/touch:install_archive",
+    "//usr.bin/tr:install_archive",
+    "//usr.bin/true:install_archive",
+    "//usr.bin/truncate:install_archive",
+    "//usr.bin/ts:install_archive",
+    "//usr.bin/tsort:install_archive",
+    "//usr.bin/tty:install_archive",
+    "//usr.bin/uname:install_archive",
+    "//usr.bin/unexpand:install_archive",
+    "//usr.bin/uniq:install_archive",
+    "//usr.bin/unzip:install_archive",
+    "//usr.bin/units:install_archive",
+    "//usr.bin/unvis:install_archive",
+    "//usr.bin/vis:install_archive",
+    "//usr.bin/vmstat:install_archive",
+    "//usr.bin/w:install_archive",
+    "//usr.bin/wall:install_archive",
+    "//usr.bin/wc:install_archive",
+    "//usr.bin/wg:install_archive",
+    "//usr.bin/what:install_archive",
+    "//usr.bin/whereis:install_archive",
+    "//usr.bin/which:install_archive",
+    "//usr.bin/whois:install_archive",
+    "//usr.bin/write:install_archive",
+    "//usr.bin/xargs:install_archive",
+    "//usr.bin/xinstall:install_archive",
+    "//usr.bin/xo:install_archive",
+    "//usr.bin/xz:install_archive",
+    "//usr.bin/xzdec:install_archive",
+    "//usr.bin/yes:install_archive",
+    "//usr.bin/zstd:install_archive",
+    "//usr.bin/gh-bc:install_archive",
+]
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:acct_enabled": [
+        "//usr.bin/lastcomm:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:at_enabled": [
+        "//usr.bin/at:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:bluetooth_enabled": [
+        "//usr.bin/bluetooth:installation_archives",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:calendar_enabled": [
+        "//usr.bin/calendar:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:ee_enabled": [
+        "//usr.bin/ee:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:file_enabled": [
+        "//usr.bin/file:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:finger_enabled": [
+        "//usr.bin/finger:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:ftp_enabled": [
+        "//usr.bin/ftp:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:games_enabled": [
+        "//usr.bin/caesar:install_archive",
+        "//usr.bin/factor:install_archive",
+        "//usr.bin/fortune:installation_archives",
+        "//usr.bin/grdc:install_archive",
+        "//usr.bin/morse:install_archive",
+        "//usr.bin/number:install_archive",
+        "//usr.bin/pom:install_archive",
+        "//usr.bin/primes:install_archive",
+        "//usr.bin/random:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:iconv_enabled": [
+        "//usr.bin/iconv:install_archive",
+        "//usr.bin/mkcsmapper:install_archive",
+        "//usr.bin/mkesdb:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:iscsi_enabled": [
+        "//usr.bin/iscsictl:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:kdump_enabled": [
+        "//usr.bin/kdump:install_archive",
+        "//usr.bin/truss:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:ldns_utils_enabled": [
+        "//usr.bin/drill:install_archive",
+        "//usr.bin/host:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:locate_enabled": [
+        "//usr.bin/locate:installation_archives",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:mail_enabled": [
+        "//usr.bin/from:install_archive",
+        "//usr.bin/mail:install_archive",
+        "//usr.bin/msgs:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:make_enabled": [
+        "//usr.bin/bmake:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:man_utils_enabled": [
+        "//usr.bin/man:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:netcat_enabled": [
+        "//usr.bin/nc:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:netlink_enabled": [
+        "//usr.bin/genl:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:openssh_enabled": [
+        "//usr.bin/ssh-copy-id:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:pkgconf_enabled": [
+        "//usr.bin/bomtool:install_archive",
+        "//usr.bin/pkgconf:install_archive",
+        "//usr.bin/spdxtool:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:quotas_enabled": [
+        "//usr.bin/quota:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:sound_enabled": [
+        "//usr.bin/beep:install_archive",
+        "//usr.bin/mididump:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:talk_enabled": [
+        "//usr.bin/talk:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:tests_support_enabled": [
+        "//usr.bin/kyua:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:textproc_enabled": [
+        "//usr.bin/ul:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:tftp_enabled": [
+        "//usr.bin/tftp:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:vi_enabled": [
+        "//usr.bin/vi:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:vt_enabled": [
+        "//usr.bin/vtfontcvt:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:usb_enabled": [
+        "//usr.bin/usbhidaction:install_archive",
+        "//usr.bin/usbhidctl:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:utmpx_enabled": [
+        "//usr.bin/last:install_archive",
+        "//usr.bin/users:install_archive",
+        "//usr.bin/who:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:ofed_enabled": [
+        "//usr.bin/ofed:installation_archives",
+    ],
+    "//conditions:default": [],
+})
+
+config_setting(name = "mitkrb5_disabled", flag_values = {"//tools/build/bazel/config:mitkrb5": "false"})
+config_setting(name = "llvm_binutils_disabled", flag_values = {"//tools/build/bazel/config:llvm_binutils": "false"})
+selects.config_setting_group(name = "heimdal", match_all = ["//tools/build/bazel/config:kerberos_enabled", ":mitkrb5_disabled"])
+selects.config_setting_group(name = "elftoolchain", match_all = ["//tools/build/bazel/config:toolchain_enabled", ":llvm_binutils_disabled"])
+selects.config_setting_group(name = "llvm_tools_requested", match_any = [
+    "//tools/build/bazel/config:clang_enabled", "//tools/build/bazel/config:llvm_binutils_enabled",
+    "//tools/build/bazel/config:lld_enabled", "//tools/build/bazel/config:lldb_enabled",
+])
+selects.config_setting_group(name = "llvm_tools", match_all = [":llvm_tools_requested", "//tools/build/bazel/config:toolchain_enabled"])
+# Optional owners still requiring conversion: hesinfo, compile_et, ypcat,
+# ypmatch, ypwhich, vacation and telnet. Reject their selecting profiles below;
+# never report an installation that silently omits selected programs.
+selects.config_setting_group(name = "unfinished_optional_programs", match_any = [
+    "//tools/build/bazel/config:hesiod_enabled", ":heimdal",
+    "//tools/build/bazel/config:nis_enabled", "//tools/build/bazel/config:sendmail_enabled",
+    "//tools/build/bazel/config:telnet_enabled",
+])
+_ARCHIVES = _ARCHIVES + select({":llvm_tools": ["//usr.bin/clang:installation_archives"], "//conditions:default": []})
+
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:toolchain_enabled": [
+        "//usr.bin/c89:install_archive",
+        "//usr.bin/c99:install_archive",
+        "//usr.bin/ctags:install_archive",
+        "//usr.bin/elfcopy:install_archive",
+        "//usr.bin/file2c:install_archive",
+        "//usr.bin/gprof:install_archive",
+        "//usr.bin/indent:install_archive",
+        "//usr.bin/lex:install_archive",
+        "//usr.bin/lorder:install_archive",
+        "//usr.bin/mkstr:install_archive",
+        "//usr.bin/rpcgen:install_archive",
+        "//usr.bin/unifdef:install_archive",
+        "//usr.bin/xstr:install_archive",
+        "//usr.bin/yacc:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+_ARCHIVES = _ARCHIVES + select({
+    ":elftoolchain": [
+        "//usr.bin/addr2line:install_archive",
+        "//usr.bin/ar:install_archive",
+        "//usr.bin/cxxfilt:install_archive",
+        "//usr.bin/nm:install_archive",
+        "//usr.bin/readelf:install_archive",
+        "//usr.bin/size:install_archive",
+    ],
+    "//conditions:default": [],
+})
+
+# Separate production packaging from the installed test-suite contribution.
+# This target makes no assertion that Make's selected test hierarchy is complete.
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+    ":unfinished_optional_programs": ["@platforms//:incompatible"], "//conditions:default": [],
+})
+bsd_install_archive_set(name = "production_installation_archives", archives = _ARCHIVES,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Until every selected test subdirectory/fixture/support file is reconciled,
+# reject full tests-enabled installation instead of shipping sampled tests.
+bsd_install_archive_set(name = "installation_archives", archives = _ARCHIVES,
+    target_compatible_with = _PLATFORM + select({
+        "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }), visibility = ["//visibility:public"])

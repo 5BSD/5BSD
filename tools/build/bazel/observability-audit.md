@@ -11281,3 +11281,15 @@ archive grouping does not prove probe firing or security audit delivery. The
 usr.bin root installs the unchanged source-owned automatic Kyuafile rather than
 inventing a second child-test allowlist. Native/archive/runtime qualification is
 pending; complete installed tests and OS observability remain open.
+
+
+## usr.bin parent composition checkpoint (2026-11-04)
+
+The native parent now accounts for the selected production owners. Structural
+comparison proves 192 leaf edits only grant their installation archive to the
+source-owned parent; no compiler, DTrace/FIDL, installation-content or audit
+policy change is hidden in those edits. Parent selection is native source policy,
+not runtime Make discovery. The incomplete original installed-test hierarchy
+and seven unconverted optional programs remain explicit gates. Configured owner
+analysis does not establish runtime probe firing, audit delivery or full OS
+qualification. Preserve those checks through complete world/kernel assembly.
