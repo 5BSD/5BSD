@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+alias(name = "static_archive", actual = "//stand/libsa:i386_static_archive", visibility = ["//visibility:public"])

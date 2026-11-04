@@ -3,3 +3,5 @@
 filegroup(name = "boot2_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'bootinfo.h', 'elf.h', 'endian.h', 'exec.h', 'param.h', 'psl.h', 'reloc.h'], visibility = ["//stand/i386/boot2:__pkg__"])
 
 filegroup(name = "libefi_headers", srcs = ["_inttypes.h", "_limits.h", "_stdint.h", "_types.h", "endian.h", "metadata.h", "param.h"], visibility = ["//stand/efi/libefi:__pkg__"])
+
+filegroup(name = "standalone_sa_arch_headers", srcs = ["_inttypes.h", "_limits.h", "_stdint.h", "_types.h", "asm.h", "atomic.h", "cpufunc.h", "endian.h", "npx.h", "param.h", "pcb.h", "proc.h", "segments.h", "setjmp.h", "signal.h", "specialreg.h", "ucontext.h"], visibility = ["//stand/libsa:__pkg__"])

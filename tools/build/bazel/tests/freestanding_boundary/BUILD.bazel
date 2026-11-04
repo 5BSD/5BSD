@@ -56,3 +56,8 @@ bsd_host_artifact_test(name = "resource_i386_test",
 bsd_freestanding_artifact(name = "i386_hosted_header_rejected",
     src = "//tools/build/bazel/standalone_tests:undeclared_hosted_header",
     architecture = "i386", tags = ["manual"])
+
+# Regress the common source-group policy on existing regular library ABIs.
+[bsd_freestanding_artifact(name = "regular_sa_" + arch,
+    src = "//stand/libsa:static_archive", architecture = arch)
+ for arch in ["amd64", "aarch64", "riscv64"]]

@@ -46,7 +46,7 @@ load(":library.bzl", "standalone_sa_library")
 # Explicit candidate boundary: other ABIs and optional source inventories must
 # be implemented before they are selectable. Never substitute this inventory.
 _LIBRARY_COMPAT = ["@platforms//os:freebsd"] + select({
-    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:x86_32": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
     "//conditions:default": ["@platforms//:incompatible"],
 }) + select({
     "//tools/build/bazel/config:loader_geli_enabled": [], "//conditions:default": ["@platforms//:incompatible"],
@@ -59,6 +59,7 @@ _LIBRARY_COMPAT = ["@platforms//os:freebsd"] + select({
 })
 bsd_architecture_headers(name = "library_architecture_headers", headers = select({
     "@platforms//cpu:x86_64": {"//sys/amd64/include:standalone_sa_arch_headers": "machine", "//sys/x86/include:standalone_sa_arch_headers": "x86"},
+    "@platforms//cpu:x86_32": {"//sys/i386/include:standalone_sa_arch_headers": "machine", "//sys/x86/include:standalone_sa_arch_headers": "x86"},
     "@platforms//cpu:aarch64": {"//sys/arm64/include:standalone_sa_arch_headers": "machine"},
     "@platforms//cpu:riscv64": {"//sys/riscv/include:standalone_sa_arch_headers": "machine"},
     "//conditions:default": {},
@@ -147,3 +148,9 @@ bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['bootp.h', '
 
 
 exports_files(['verity_read.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "i386_static_archive", src = ":static_archive", architecture = "i386",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "i386_efi_static_archive", src = ":efi_static_archive", architecture = "i386",
+    visibility = ["//visibility:public"])

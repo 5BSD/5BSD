@@ -81,3 +81,6 @@ bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['fs.h'], visibili
 bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
 
 bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+filegroup(name = "standalone_sa_ffs_subr_source", srcs = ["ffs_subr.c"], visibility = ["//stand/libsa:__pkg__"])
+filegroup(name = "standalone_sa_ffs_tables_source", srcs = ["ffs_tables.c"], visibility = ["//stand/libsa:__pkg__"])

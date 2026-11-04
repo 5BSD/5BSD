@@ -41,18 +41,21 @@ _CFLAGS = ['-Istand/libsa',
 
 _ARCH_CFLAGS = select({
     "@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
+    "@platforms//cpu:x86_32": ["-m32", "-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-march=i386", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
     "@platforms//cpu:aarch64": ["-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
     "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"],
     "//conditions:default": [],
 })
 _ARCH_SOURCES = select({
     "@platforms//cpu:x86_64": ["//stand/libsa:amd64/_setjmp.S", "//stand/libsa:x86/hypervisor.c"],
+    "@platforms//cpu:x86_32": ["//stand/libsa:i386/_setjmp.S", "//stand/libsa:x86/hypervisor.c"],
     "@platforms//cpu:aarch64": ["//lib/libc:standalone_sa_aarch64_setjmp_source"],
     "@platforms//cpu:riscv64": ["//lib/libc:standalone_sa_riscv64_setjmp_source", "//contrib/llvm-project/compiler-rt/lib/builtins:standalone_sa_riscv_sources"],
     "//conditions:default": [],
 })
 _CPU_ORDER = select({
     "@platforms//cpu:x86_64": ["hypervisor.o"],
+    "@platforms//cpu:x86_32": ["hypervisor.o"],
     "@platforms//cpu:aarch64": [],
     "@platforms//cpu:riscv64": ["bswapdi2.o", "bswapsi2.o", "clzdi2.o", "ctzdi2.o"],
     "//conditions:default": [],
@@ -127,7 +130,7 @@ _GROUPS = [
         '//stand/libsa:ext2fs.c',
         '//stand/libsa:splitfs.c',
         '//stand/libsa:time.c',
-        '//sys/ufs/ffs:standalone_sa_core_sources',
+        '//sys/ufs/ffs:standalone_sa_ffs_tables_source',
         '//sys/libkern:standalone_sa_core_sources',
         '//stand/libsa:crc32_libkern.c',
         '//sys/geom/eli:standalone_sa_core_sources',
@@ -137,6 +140,10 @@ _GROUPS = [
         '//sys/opencrypto:standalone_sa_core_sources',
         '//sys/crypto/sha2:standalone_sa_core_sources',
     ], early = [], extra = []),
+    struct(name = 'ffs_subr', srcs = ['//sys/ufs/ffs:standalone_sa_ffs_subr_source'],
+        early = [], extra = [], suffix = select({
+            "@platforms//cpu:x86_32": ["-DSTANDALONE_SMALL"], "//conditions:default": [],
+        })),
     struct(name = 'bzlib', srcs = [
         '//contrib/bzip2:standalone_sa_bzlib_sources',
     ], early = [], extra = ['-DBZ_NO_STDIO', '-DBZ_NO_COMPRESS']),
@@ -405,7 +412,7 @@ def standalone_sa_groups(deps, compatible, prefix = "sa_", early_cflags = _EARLY
         if group.name == "core":
             sources = [source for source in sources if source not in ["//stand/libsa:amd64/_setjmp.S", "//stand/libsa:x86/hypervisor.c"]] + _ARCH_SOURCES
         cc_library(name = target, srcs = sources,
-            copts = early_cflags + group.early + cflags + group.extra + _ARCH_CFLAGS,
+            copts = early_cflags + group.early + cflags + group.extra + _ARCH_CFLAGS + getattr(group, "suffix", []),
             deps = deps, features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"],
             linkstatic = True, target_compatible_with = compatible)
         groups.append(":" + target)

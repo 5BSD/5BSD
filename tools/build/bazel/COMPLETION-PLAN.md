@@ -2360,3 +2360,15 @@ multi-configuration runfiles collision is fixed with explicit artifact paths
 and a runner analysis guard. See LIBEFI32-QUALIFICATION.md. Continue real
 libsa32/EFI/interpreter/BIOS contexts; complete world/pkgbase/runtime and the
 broader gates remain open. No test subset establishes whole-system completion.
+
+### 2026-11-04: IA32 regular and private EFI standalone archives
+
+The shared graph now builds the selected 191/260-member DO32 contexts. Raw Make
+contracts match 188/257 members, with six matching original filename controls
+and all symbol/identity/order contracts retained. Private generated headers match
+the fresh isolated reference; all 451 actual compiler producers preserve CPU,
+size, assertion and verifier policy. Fourteen wrappers pass. Existing regular
+AMD64/ARM64/RISC-V member contracts and all fifteen EFI image bytes are preserved;
+full regular archive/debug bytes remain different and explicit. See
+LIBSA32-QUALIFICATION.md. Continue 32-bit interpreter/loader composition before
+world/pkgbase aggregation; broader runtime/bootstrap/performance gates remain.

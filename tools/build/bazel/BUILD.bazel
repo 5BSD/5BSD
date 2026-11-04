@@ -271,3 +271,11 @@ bsd_host_artifact_test(name = "elf_object_collision_rejected", src = "elf-object
     data = ["elf_object_contract.py", "//tools/build/bazel/tests/freestanding_boundary:resource_i386",
             "//tools/build/bazel/tests/freestanding_boundary:resource_amd64"],
     tags = ["manual"], size = "small")
+
+bsd_host_artifact_test(name = "standalone_i386_archive_test", src = "standalone-archive-test.py",
+    data = ["elf_object_contract.py", "//stand/libsa32:static_archive", "//stand/efi/libsa32efi:static_archive",
+            "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:archive_inputs"],
+    args = ["--regular", "$(rlocationpath //stand/libsa32:static_archive)",
+            "--private", "$(rlocationpath //stand/efi/libsa32efi:static_archive)",
+            "--ar", "$(rlocationpath @bsd_sdk//toolchain:bin/llvm-ar)",
+            "--runtime", "$(rlocationpaths @bsd_sdk//toolchain:archive_inputs)"], size = "small")

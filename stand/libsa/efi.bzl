@@ -6,11 +6,13 @@ load(":library.bzl", "standalone_sa_arch_cflags", "standalone_sa_groups", "stand
 
 _WCHAR_CFLAGS = select({
     "@platforms//cpu:x86_64": ["-fshort-wchar"],
+    "@platforms//cpu:x86_32": ["-fshort-wchar", "-mno-red-zone", "-malign-double"],
     "@platforms//cpu:aarch64": ["-fshort-wchar"],
     "//conditions:default": [],
 })
 _EFI_MACHINE_CFLAGS = select({
     "@platforms//cpu:x86_64": ["-Istand/efi/include/amd64"],
+    "@platforms//cpu:x86_32": ["-Istand/efi/include/amd64"],
     "@platforms//cpu:aarch64": ["-Istand/efi/include/arm64"],
     "@platforms//cpu:riscv64": ["-Istand/efi/include/riscv"],
     "//conditions:default": [],

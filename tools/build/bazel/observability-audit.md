@@ -11110,3 +11110,9 @@ warning policy. No production macro filename mapping, NDEBUG, DTrace probe or
 audit hook change was introduced. Teken's raw assertion filename difference is
 retained and independently controlled. The new runfiles guard prevents a test
 from silently consuming the wrong configured ABI.
+
+2026-11-04: IA32 standalone contexts preserve the original i386 ffs_subr-only
+size policy and existing three Rijndael NDEBUG selections. No extra assertion,
+DTrace probe or audit hook is removed. The six assertion filename differences
+remain raw and are explained by isolated original compiler controls, not maps
+in production. Target execution and separate-debug/source lookup remain open.

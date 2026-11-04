@@ -6118,3 +6118,12 @@ path; callers must declare distinct artifact names for such test inputs.
 The ELF object inspector compares allocated bytes and symbolic relocations
 without rewriting objects or normalizing diagnostic strings.
 Debug and live firmware execution require separate qualification.
+.Ss IA32 standalone library qualification
+The regular libsa32 and private EFI libsa32efi components share the maintained
+standalone source inventory and use explicit i386 artifact boundaries.
+The 32-bit setjmp source and machine headers are declared target inputs.
+The original filesystem size policy applies only to the ffs_subr compiler;
+existing per-source cryptographic assertion policy is retained.
+Private EFI objects use separate compiler contexts and explicit verifier inputs.
+These internal archives do not add installed userland libraries.
+Complete BIOS and IA32 loader programs require further qualification.
