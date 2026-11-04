@@ -113,10 +113,12 @@ Evidence under `/usr/obj/usr/src/`:
 - `bazel-managed-install-cache-roundtrip-r2-20261104` (three passing phases)
 - `bazel-managed-action-cache-final-review-r1-20261104`
 
-The failed native adapter run retains BEP and stderr summaries, but its detailed
-test log was referenced in a mutable Bazel output tree and was overwritten by a
-later run. That original detailed report is not claimed as retained evidence.
-Capture failed test reports before returning from the frontend in a follow-up.
+The failed native adapter run retains detailed log/XML copies under
+`failure-test-reports`, bound by `FAILED.json` and its report manifest. All four
+copied report hashes were rechecked after subsequent builds; the failed adapter
+trace remains intact. The frontend already captures these in its exception path.
+The BEP references mutable output paths, so review the retained copies rather than
+following those paths after another build.
 
 ## Remaining gates
 

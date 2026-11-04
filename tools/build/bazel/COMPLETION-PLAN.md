@@ -2322,6 +2322,6 @@ documented in [MANAGED-ACTION-CACHE-QUALIFICATION.md](MANAGED-ACTION-CACHE-QUALI
 This supersedes the isolated missing-CAS gate above, not the full-system cache,
 installation, sandbox, bootstrap, runtime or performance gates. Make stays default.
 
-Failed-test evidence retention: capture detailed reports before returning on a
-failed Bazel invocation; current failure BEP paths can refer to mutable outputs.
-The managed-cache passing captures remain intact.
+Failed-test evidence retention is already implemented in the frontend exception
+path. The managed-cache failed adapter log/XML copies and manifest hashes were
+rechecked after later builds. Review failure-test-reports, not mutable BEP URIs.
