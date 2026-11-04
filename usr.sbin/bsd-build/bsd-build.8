@@ -6146,3 +6146,14 @@ The image converter selects PE32 for IA32; an EFI subsystem does not imply
 PE32+.  Host artifact tests verify the real firmware header, linked symbols
 and installation policy against the selected timestamp setting.
 These checks do not execute firmware or establish verified boot.
+.Ss BIOS platform support archive
+The source-owned stand/i386/libi386 archive uses the explicit i386 standalone
+ABI and its actual BIOS, PXE, console and trampoline sources.
+The existing generated Teken state header is a declared prerequisite.
+The loader_comconsole_port and loader_comconsole_speed integer settings retain
+Make defaults 1016 (0x3f8) and 115200.
+The loader_biosdisk_debug and loader_bios_framebuffer boolean settings retain
+Make defaults false and apply only to the corresponding compiler contexts.
+Format-5 build-settings can override these values through the maintained frontend.
+The archive remains internal and adds no installed library.
+Host inspection and compiler comparisons do not execute BIOS services.

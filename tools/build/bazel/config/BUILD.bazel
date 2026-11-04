@@ -621,3 +621,11 @@ selects.config_setting_group(name = "boot_man_loader_lua_enabled", match_all = [
 selects.config_setting_group(name = "boot_man_loader_kboot_enabled", match_all = [":man_enabled", ":loader_kboot_enabled"], visibility = ["//visibility:public"])
 
 selects.config_setting_group(name = "boot_split_manpages_enabled", match_all = [":man_enabled", ":split_manpages_enabled"], visibility = ["//visibility:public"])
+
+# BIOS console policy follows stand/i386/libi386/Makefile defaults.
+int_flag(name = "loader_comconsole_port", build_setting_default = 1016, visibility = ["//visibility:public"])
+int_flag(name = "loader_comconsole_speed", build_setting_default = 115200, visibility = ["//visibility:public"])
+bool_flag(name = "loader_biosdisk_debug", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "loader_biosdisk_debug_enabled", flag_values = {":loader_biosdisk_debug": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "loader_bios_framebuffer", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "loader_bios_framebuffer_enabled", flag_values = {":loader_bios_framebuffer": "true"}, visibility = ["//visibility:public"])

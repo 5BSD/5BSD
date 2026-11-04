@@ -189,3 +189,5 @@ exports_files(['verity_commands.c'], visibility = ['//stand/efi/loader:__pkg__',
 exports_files(['veritydev.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['zfs_cmd.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+bsd_source_headers(name = "bios_libi386_headers", hdrs = ['bootstrap.h', 'disk.h', 'gfx_fb.h', 'isapnp.h', 'modinfo.h', 'readin.h'], visibility = ["//stand/i386/libi386:__pkg__"])

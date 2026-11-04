@@ -11136,3 +11136,12 @@ provider source is removed or disabled. Host checks inspect actual ELF/PE output
 firmware execution and observation of authentication failures remain open. A
 real-image ABI test found the converter's PE32+ header defect; the test remains
 strict and the shared producer is fixed for Make and Bazel.
+
+## BIOS libi386 platform archive (2026-11-04)
+
+The thirty original BIOS, PXE, console, boot-information and trampoline sources
+remain intact. There is no kernel DTrace/audit provider in this preboot archive;
+this migration does not remove or disable one. Disk diagnostics remain a typed
+per-source build option and are not treated as security audit delivery. Native
+archive/API checks and original compiler controls cover construction only; BIOS
+execution, PXE behavior and hardware console/disk observation remain open.

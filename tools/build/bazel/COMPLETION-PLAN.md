@@ -2398,3 +2398,17 @@ equals an independent Make compiler/link/converter control with six documented
 filename controls across entry and libraries. Fifteen existing EFI images remain
 unchanged. See IA32-LOADER-QUALIFICATION.md. Alternate IA32/BIOS consumers, full
 debug/system/pkgbase/runtime/boot/bootstrap/performance acceptance remain open.
+
+## BIOS platform archive checkpoint (2026-11-04)
+
+The source-owned libi386 graph now builds all thirty original BIOS platform
+objects with explicit i386 ABI, generated Teken prerequisite, ordered archive
+and typed serial/debug/framebuffer controls. Default qualification passes twenty
+tests. Twenty-nine raw object contracts match Make; Teken matches an isolated
+original filename control. A nondefault frontend build passes and matches three
+original compiler option controls, with all other member contracts unchanged.
+Actual default/nondefault compiler input chains and both archive producers are
+reviewed; all sixteen existing EFI images remain unchanged after source ownership
+moves to the new package. See LIBI386-QUALIFICATION.md. Next compose the remaining
+BIOS loader and GPT/ZFS/ISO/PXE programs; full debug/system/pkgbase/runtime and
+performance acceptance remain open.

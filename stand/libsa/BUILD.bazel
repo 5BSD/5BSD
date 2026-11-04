@@ -154,3 +154,5 @@ bsd_freestanding_artifact(name = "i386_static_archive", src = ":static_archive",
     visibility = ["//visibility:public"])
 bsd_freestanding_artifact(name = "i386_efi_static_archive", src = ":efi_static_archive", architecture = "i386",
     visibility = ["//visibility:public"])
+
+bsd_source_headers(name = "bios_libi386_headers", hdrs = ['bootp.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nfsv2.h', 'smbios.h', 'stand.h'], visibility = ["//stand/i386/libi386:__pkg__"])

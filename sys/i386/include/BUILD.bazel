@@ -11,3 +11,7 @@ filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '
 filegroup(name = "standalone_ficl_headers", srcs = ['_limits.h', '_types.h', 'cpufunc.h', 'endian.h', 'metadata.h', 'setjmp.h'], visibility = ["//stand/ficl:__pkg__"])
 
 filegroup(name = "efi_loader_entry_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'asmacros.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'pmap.h', 'pmap_pae.h', 'psl.h', 'segments.h', 'setjmp.h', 'specialreg.h', 'vm.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+filegroup(name = "bios_libi386_arch_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'bootinfo.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'pmap.h', 'pmap_pae.h', 'psl.h', 'specialreg.h', 'stdarg.h', 'vm.h'], visibility = ["//stand/i386/libi386:__pkg__"])
+
+filegroup(name = "bios_libi386_pc_headers", srcs = ["pc/bios.h"], visibility = ["//stand/i386/libi386:__pkg__"])

@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+load(":config.bzl", "bios_console_parameters")
+bios_console_parameters(name = "console_parameters")
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"]
+bsd_architecture_headers(name = "architecture_headers", headers = {
+    "//sys/i386/include:bios_libi386_arch_headers": "machine",
+    "//sys/i386/include:bios_libi386_pc_headers": "machine/pc",
+    "//sys/x86/include:bios_libi386_arch_headers": "x86",
+})
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-Istand/libsa/geli', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-Istand/common', '-Istand/i386/common', '-Isys/contrib/dev/acpica/include', '-D__printf__=__freebsd_kprintf__', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments'] + select({
+    "//tools/build/bazel/config:loader_geli_enabled": ["-DLOADER_GELI_SUPPORT"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:loader_disk_enabled": ["-DLOADER_DISK_SUPPORT"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:veriexec_enabled": ["-DLOADER_VERIEXEC"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:loader_veriexec_vectx_enabled": ["-DLOADER_VERIEXEC_VECTX"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:loader_veriexec_pass_manifest_enabled": ["-DLOADER_VERIEXEC_PASS_MANIFEST"], "//conditions:default": [],
+})
+_DEPS = ['//contrib/pnglite:bios_libi386_headers', '//include:bios_libi386_headers', '//stand/common:bios_libi386_headers', '//stand/i386/btx/lib:bios_libi386_headers', '//stand/i386/common:bios_libi386_headers', '//stand/libsa:bios_libi386_headers', '//sys/contrib/dev/acpica/include:bios_libi386_headers', '//sys/crypto:bios_libi386_headers', '//sys/crypto/sha2:bios_libi386_headers', '//sys/dev/ic:bios_libi386_headers', '//sys/dev/pci:bios_libi386_headers', '//sys/dev/vt:bios_libi386_headers', '//sys/geom/eli:bios_libi386_headers', '//sys/net:bios_libi386_headers', '//sys/netinet:bios_libi386_headers', '//sys/netinet6:bios_libi386_headers', '//sys/opencrypto:bios_libi386_headers', '//sys/sys:bios_libi386_headers', '//sys/teken:bios_libi386_headers', '//sys/vm:bios_libi386_headers', ':architecture_headers', ':console_parameters', '//stand/libsa:standalone_headers'] + select({
+    "//tools/build/bazel/config:veriexec_enabled": ["//lib/libsecureboot:standalone_verify_header"], "//conditions:default": [],
+})
+_SOURCES = [
+    ('amd64_tramp', 'amd64_tramp.S', []),
+    ('bio', 'bio.c', []),
+    ('biosacpi', 'biosacpi.c', []),
+    ('biosdisk', 'biosdisk.c', []),
+    ('biosmem', 'biosmem.c', []),
+    ('biosmemdisk', 'biosmemdisk.c', []),
+    ('biospci', 'biospci.c', []),
+    ('biospnp', 'biospnp.c', []),
+    ('biossmap', 'biossmap.c', []),
+    ('bootinfo', 'bootinfo.c', ['-Isys/teken', '-Icontrib/pnglite']),
+    ('bootinfo32', 'bootinfo32.c', []),
+    ('bootinfo64', 'bootinfo64.c', []),
+    ('comconsole', 'comconsole.c', []),
+    ('devicename', 'devicename.c', []),
+    ('elf32_freebsd', 'elf32_freebsd.c', []),
+    ('elf64_freebsd', 'elf64_freebsd.c', []),
+    ('i386_copy', 'i386_copy.c', []),
+    ('i386_module', 'i386_module.c', []),
+    ('multiboot', 'multiboot.c', []),
+    ('multiboot_tramp', 'multiboot_tramp.S', []),
+    ('nullconsole', 'nullconsole.c', []),
+    ('pxe', 'pxe.c', []),
+    ('pxetramp', 'pxetramp.S', []),
+    ('relocater_tramp', 'relocater_tramp.S', []),
+    ('spinconsole', 'spinconsole.c', []),
+    ('teken', '//sys/teken:teken.c', ['-Isys/teken']),
+    ('textvidc', 'textvidc.c', ['-DTERM_EMU']),
+    ('time', 'time.c', []),
+    ('vbe', 'vbe.c', ['-Isys/teken', '-Icontrib/pnglite']),
+    ('vidconsole', 'vidconsole.c', ['-Isys/teken', '-Icontrib/pnglite']),
+]
+_HEADERS = ['libi386.h', 'multiboot.h', 'pxe.h', 'vbe.h']
+[cc_library(name = name + "_compile", srcs = [source], hdrs = _HEADERS,
+        copts = _CFLAGS + flags + (select({
+            "//tools/build/bazel/config:loader_biosdisk_debug_enabled": ["-DDISK_DEBUG"], "//conditions:default": [],
+        }) if name == "biosdisk" else []) + (select({
+            "//tools/build/bazel/config:loader_bios_framebuffer_enabled": ["-DFRAMEBUFFER_MODE"], "//conditions:default": [],
+        }) if name == "vidconsole" else []),
+        deps = _DEPS + (["//sys/teken:device_io_state_headers"] if name == "teken" else []),
+        features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+        linkstatic = True, target_compatible_with = _COMPAT) for name, source, flags in _SOURCES]
+bsd_component_archive(name = "native_archive", groups = [name + "_compile" for name, _, _ in _SOURCES],
+    object_order = ['amd64_tramp.o', 'bio.o', 'biosacpi.o', 'biosdisk.o', 'biosmem.o', 'biosmemdisk.o', 'biospci.o', 'biospnp.o', 'biossmap.o', 'bootinfo.o', 'bootinfo32.o', 'bootinfo64.o', 'comconsole.o', 'devicename.o', 'elf32_freebsd.o', 'elf64_freebsd.o', 'i386_copy.o', 'i386_module.o', 'multiboot.o', 'multiboot_tramp.o', 'nullconsole.o', 'pxe.o', 'pxetramp.o', 'relocater_tramp.o', 'spinconsole.o', 'time.o', 'textvidc.o', 'vbe.o', 'vidconsole.o', 'teken.o'], visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "static_archive", src = ":native_archive", architecture = "i386", visibility = ["//visibility:public"])
+exports_files(["libi386.h"], visibility = ["//stand/i386:__pkg__"])
+exports_files(["comconsole.c", "nullconsole.c", "spinconsole.c"], visibility = ["//stand/efi/loader:__pkg__", "//stand/efi/loader_4th:__pkg__", "//stand/efi/loader_simp:__pkg__"])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+filegroup(name = "inspection_tools", srcs = ["@bsd_sdk//toolchain:archive_inputs", "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:llvm-nm_runtime"])
+bsd_host_artifact_test(name = "archive_test", src = "archive-test.py",
+    data = [":static_archive", ":inspection_tools", "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    args = ["--machine", "3", "--archive", "$(location :static_archive)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--tool-inputs", "$(locations :inspection_tools)"],
+    visibility = ["//visibility:public"], size = "small")
