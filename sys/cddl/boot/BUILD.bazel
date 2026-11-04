@@ -9,3 +9,5 @@ bsd_source_headers(name = "libefi_headers", hdrs = ['zfs/zfsimpl.h'], visibility
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['zfs/blake3_zfs.c', 'zfs/blkptr.c', 'zfs/fletcher.c', 'zfs/gzip.c', 'zfs/lzjb.c', 'zfs/sha256.c', 'zfs/skein_zfs.c', 'zfs/zfsimpl.h', 'zfs/zfssubr.c', 'zfs/zle.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['zfs/blake3_zfs.c', 'zfs/blkptr.c', 'zfs/fletcher.c', 'zfs/gzip.c', 'zfs/lzjb.c', 'zfs/sha256.c', 'zfs/skein_zfs.c', 'zfs/zfsimpl.h', 'zfs/zfssubr.c', 'zfs/zle.c'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader:__pkg__"])

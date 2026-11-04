@@ -10986,3 +10986,15 @@ revision/invalid metadata fail the build; no version, user, host or clock fallba
 is manufactured for native actions. Reproducible mode skips unused host metadata
 calls. This offline generator has no dedicated DTrace provider or BSM source;
 firmware/loader failure paths still require final runtime qualification.
+
+## EFI entry source review (2026-11-04)
+
+All 58 selected AMD64 entry sources retain their original implementations, command
+registration, diagnostics and assertion policy, including startup exceptions,
+consoles, graphics, disk/network, verifier/error paths and Lua integration. The
+Make profile adds no dedicated DTrace provider or host BSM audit integration to
+this firmware executable. No provider or audit source was dropped during native
+compilation; adding host audit hooks to this firmware stage is not appropriate.
+Actual diagnostic output and failure behavior still require final firmware/VM
+qualification. Assertion filename differences are recorded, not normalized away
+in production. See LOADER-ENTRY-QUALIFICATION.md.

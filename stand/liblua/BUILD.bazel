@@ -96,3 +96,9 @@ bsd_host_artifact_test(name = "efi_archive_test", src = "archive-test.py",
         "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)",
         "--tool-inputs", "$(locations :inspection_tools)"],
     visibility = ["//visibility:public"], size = "small", target_compatible_with = _COMPAT)
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['lerrno.h', 'lstd.h', 'luaconf.local.h', 'lutils.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+exports_files(["config.bzl"], visibility = ["//stand/efi/loader:__pkg__"])

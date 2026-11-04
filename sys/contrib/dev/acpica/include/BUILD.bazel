@@ -388,3 +388,5 @@ bsd_source_headers(name = "kobj_builtins_physical_tpm_if_headers", hdrs = ["acbu
 
 bsd_source_headers(name = "system_io_module_context_1", hdrs = ["acbuffer.h", "accommon.h", "acconfig.h", "acexcep.h", "acglobal.h", "achware.h", "aclocal.h", "acmacros.h", "acnames.h", "acobject.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "acstruct.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "acutils.h", "acuuid.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"], includes = [],
     visibility = ["//sys/dev/nvdimm:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['acbuffer.h', 'acconfig.h', 'acexcep.h', 'acnames.h', 'acoutput.h', 'acpi.h', 'acpiosxf.h', 'acpixf.h', 'acrestyp.h', 'actbl.h', 'actbl1.h', 'actbl2.h', 'actbl3.h', 'actypes.h', 'platform/acenv.h', 'platform/acenvex.h', 'platform/acfreebsd.h', 'platform/acgcc.h', 'platform/acgccex.h'], visibility = ["//stand/efi/loader:__pkg__"])

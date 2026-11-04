@@ -2002,3 +2002,5 @@ bsd_source_headers(name = "libefi_headers", hdrs = ['ethernet.h', 'if.h'], visib
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['ethernet.h', 'if.h', 'if_arp.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['ethernet.h', 'if.h', 'if_arp.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['if.h'], visibility = ["//stand/efi/loader:__pkg__"])

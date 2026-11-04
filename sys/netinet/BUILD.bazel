@@ -1614,3 +1614,5 @@ bsd_source_headers(name = "libefi_headers", hdrs = ['in.h', 'in_systm.h'], visib
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['if_ether.h', 'in.h', 'in_systm.h', 'ip.h', 'ip_var.h', 'udp.h', 'udp_var.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['if_ether.h', 'in.h', 'in_systm.h', 'ip.h', 'ip_var.h', 'udp.h', 'udp_var.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['in.h', 'in_systm.h'], visibility = ["//stand/efi/loader:__pkg__"])

@@ -23,3 +23,5 @@ bsd_source_headers(name = "system_io_module_context_0", hdrs = ["z8530.h"], incl
 
 bsd_source_headers(name = "system_io_module_context_2", hdrs = ["quicc.h"], includes = [],
     visibility = ["//sys/dev/uart:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['ns16550.h'], visibility = ["//stand/efi/loader:__pkg__"])

@@ -75,3 +75,5 @@ amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_vnops", srcs
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['cd9660_rrip.h', 'iso.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['cd9660_rrip.h', 'iso.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['iso.h'], visibility = ["//stand/efi/loader:__pkg__"])

@@ -88,3 +88,5 @@ filegroup(name = 'standalone_sa_xz_crc32_sources', srcs = ['linux/lib/xz/xz_crc3
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['freebsd/xz_config.h', 'freebsd/xz_malloc.h', 'linux/include/linux/xz.h', 'linux/lib/xz/xz_lzma2.h', 'linux/lib/xz/xz_private.h', 'linux/lib/xz/xz_stream.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['freebsd/xz_config.h', 'freebsd/xz_malloc.h', 'linux/include/linux/xz.h', 'linux/lib/xz/xz_lzma2.h', 'linux/lib/xz/xz_private.h', 'linux/lib/xz/xz_stream.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['linux/include/linux/xz.h'], visibility = ["//stand/efi/loader:__pkg__"])

@@ -334,3 +334,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "pcireg.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['pcireg.h'], visibility = ["//stand/efi/loader:__pkg__"])

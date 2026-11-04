@@ -10,3 +10,5 @@ bsd_source_headers(name = "libefi_headers", hdrs = ['efi.h', 'efi_driver_utils.h
 bsd_source_headers(name = "loader_fdt_headers", hdrs = ['efi.h', 'efilib.h'], visibility = ["//stand/fdt:__pkg__", "//stand/efi/fdt:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['efi.h', 'efilib.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['efi.h', 'efichar.h', 'eficonsctl.h', 'efilib.h', 'efipciio.h', 'efizfs.h', 'ipxe_download.h'], visibility = ["//stand/efi/loader:__pkg__"])

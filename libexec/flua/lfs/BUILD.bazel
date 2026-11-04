@@ -33,3 +33,7 @@ bsd_install_archive(
 )
 
 exports_files(['lfs.c', 'lfs.h'], visibility = ["//stand/liblua:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['lfs.h'], visibility = ["//stand/efi/loader:__pkg__"])

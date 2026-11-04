@@ -129,3 +129,5 @@ filegroup(name = 'standalone_sa_adler32_sources', srcs = ['adler32.c', 'crc32.c'
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['crc32.h', 'gzguts.h', 'inffast.h', 'inffixed.h', 'inflate.h', 'inftrees.h', 'zconf.h', 'zlib.h', 'zutil.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['crc32.h', 'gzguts.h', 'inffast.h', 'inffixed.h', 'inflate.h', 'inftrees.h', 'zconf.h', 'zlib.h', 'zutil.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['zconf.h', 'zlib.h'], visibility = ["//stand/efi/loader:__pkg__"])

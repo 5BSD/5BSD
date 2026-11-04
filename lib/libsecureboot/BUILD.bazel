@@ -82,3 +82,5 @@ filegroup(name = 'standalone_sa_efi_ccopy_sources', srcs = ['readfile.c', 'vesig
 filegroup(name = 'standalone_sa_efi_brf_sources', srcs = ['brf.c', 'vets.c', 'efi/efi_variables.c', 'efi/efi_init.c'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = "public_trust_awk", srcs = ["public-trust.awk"], visibility = ["//tools/build/bazel:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['h/verify_file.h'], visibility = ["//stand/efi/loader:__pkg__"])

@@ -2097,3 +2097,16 @@ test metadata is selected by default. See
 Next: actual loader entry objects and final native links, then installation/debug
 and runtime qualification. All complete world/kernel/module, bootstrap/sandbox,
 package/publication and performance gates remain open. Make stays default.
+
+### AMD64 EFI entry objects (2026-11-04)
+
+The selected Lua/EFI profile now compiles all 58 actual entry sources natively.
+All 3,137 consumed input pairs bind to actual successful compiler actions; 56 raw
+allocated payloads/relocation sets match Make and two assertion filename cases
+match independent original compiler controls. No production mappings or assertion
+suppressions were added. See [LOADER-ENTRY-QUALIFICATION.md](LOADER-ENTRY-QUALIFICATION.md).
+
+Next close the original-library reference and final native entry/archive links,
+then qualify installation/debug, PE conversion and runtime/boot. ARM64/RISC-V entry
+profiles and alternate inventories remain open, as do the broader system gates.
+Make remains production/default.

@@ -40,3 +40,7 @@ bsd_source_headers(name = "network_services_namespace_context_1", hdrs = ["//sys
 
 # Additional physical prerequisites of the cross-target I/O-bus consumers.
 bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_codes_module_headers", hdrs = ['sys/contrib/device-tree/include/dt-bindings/input/linux-event-codes.h'], visibility = ['//sys/dev/gpio:__pkg__'])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+exports_files(['stand/efi/acpica/acpi_detect.c'], visibility = ["//stand/efi/loader:__pkg__"])

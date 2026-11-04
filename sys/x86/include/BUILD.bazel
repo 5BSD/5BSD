@@ -23,3 +23,5 @@ filegroup(name = "loader_fdt_headers", srcs = ['_limits.h', '_stdint.h', '_types
 filegroup(name = "standalone_ficl_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'setjmp.h'], visibility = ["//stand/ficl:__pkg__"])
 
 filegroup(name = "standalone_sa_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'fpu.h', 'segments.h', 'setjmp.h', 'signal.h', 'specialreg.h', 'ucontext.h', 'x86_var.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'frame.h', 'metadata.h', 'psl.h', 'segments.h', 'setjmp.h', 'specialreg.h'], visibility = ["//stand/efi/loader:__pkg__"])

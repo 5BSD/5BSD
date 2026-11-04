@@ -37,3 +37,5 @@ filegroup(name = 'standalone_sa_core_sources', srcs = ['g_eli_hmac.c', 'pkcs5v2.
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['g_eli.h', 'pkcs5v2.h'], visibility = ["//stand/efi/loader:__pkg__"])

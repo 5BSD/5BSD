@@ -325,3 +325,5 @@ filegroup(name = 'standalone_sa_core_sources', srcs = ['xform_aes_xts.c'], visib
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['cryptodev.h', 'xform_enc.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['cryptodev.h', 'xform_enc.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['cryptodev.h'], visibility = ["//stand/efi/loader:__pkg__"])

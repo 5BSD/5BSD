@@ -31,3 +31,8 @@ bsd_loader_version(name = "version_configured", version = "version", output = "v
         "//conditions:default": False}),
     metadata = "//tools/build/bazel/config:loader_version_metadata",
     target_compatible_with = _VERSION_COMPAT, visibility = ["//visibility:public"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['arch/amd64/multiboot2.h', 'decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+load(":entry.bzl", "efi_loader_amd64_entry")
+efi_loader_amd64_entry()

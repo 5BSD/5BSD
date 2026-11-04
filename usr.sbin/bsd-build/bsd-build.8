@@ -4720,6 +4720,17 @@ Tools and native runtime are declared inputs; final loader links and firmware
 execution remain unqualified.
 See
 .Pa tools/build/bazel/LOADER-VERSION-QUALIFICATION.md .
+.Ss Native EFI entry candidate
+.Li //stand/efi/loader:entry_objects
+compiles all 58 entry sources for the selected AMD64 Lua/secureboot profile.
+It requires GELI, disk, network, memory-disk and ZFS support, EFI secureboot,
+and disabled VECTX and pass-manifest settings.
+Unsupported exposed configurations are incompatible.
+Font/version data and native tools are declared inputs; no Make object is reused.
+Foreign entry profiles, remaining options, final links, debug/installation and
+firmware execution remain open.
+See
+.Pa tools/build/bazel/LOADER-ENTRY-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

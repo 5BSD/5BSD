@@ -412,3 +412,5 @@ filegroup(name = 'standalone_sa_md5c_sources', srcs = ['md5c.c'], visibility = [
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['intake.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['intake.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['intake.h'], visibility = ["//stand/efi/loader:__pkg__"])
