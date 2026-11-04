@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+# Linux-hosted standalone boot support, not a FreeBSD hosted userland library.
+# Other source/ABI profiles remain unavailable until implemented and qualified.
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+    "//tools/build/bazel/config:veriexec_enabled": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+})
+bsd_architecture_headers(name = "architecture_headers", headers = {
+    "//sys/amd64/include:kboot_platform_headers": "machine",
+    "//sys/x86/include:kboot_platform_headers": "x86",
+})
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/kboot/include', '-Istand/kboot/include/arch/amd64', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections'] + select({"//tools/build/bazel/config:loader_geli_enabled": ['-DLOADER_GELI_SUPPORT'], "//conditions:default": []}) + ['-Istand/libsa/geli'] + select({"//tools/build/bazel/config:loader_disk_enabled": ['-DLOADER_DISK_SUPPORT'], "//conditions:default": []}) + ['-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-fPIC', '-mno-red-zone', '-mno-relax', '-Istand/kboot/libkboot', '-Istand/kboot/libkboot/arch/amd64', '-Istand/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments']
+_DEPS = ['//stand/common:kboot_platform_headers', '//stand/kboot/include:kboot_platform_headers', '//stand/kboot/include/arch/amd64:kboot_platform_headers', '//sys/sys:kboot_platform_headers', ':architecture_headers', '//stand/kboot/libkboot/arch/amd64:kboot_platform_headers', '//stand/libsa:standalone_headers']
+_SOURCES = [('crt1', 'crt1.c'), ('dfk', 'dfk.c'), ('host_syscall', '//stand/kboot/libkboot/arch/amd64:host_syscall.S'), ('host_syscalls', 'host_syscalls.c'), ('seg', 'seg.c'), ('termios', 'termios.c'), ('util', 'util.c'), ('efi', 'efi.c')]
+[cc_library(name = name + "_compile", srcs = [source], copts = _CFLAGS,
+    deps = _DEPS, features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    linkstatic = True, target_compatible_with = _COMPAT) for name, source in _SOURCES]
+bsd_component_archive(name = "native_archive", groups = [name + "_compile" for name, _ in _SOURCES],
+    object_order = [name + ".o" for name, _ in _SOURCES], visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "static_archive", src = ":native_archive", architecture = "amd64",
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+filegroup(name = "inspection_tools", srcs = ["@bsd_sdk//toolchain:archive_inputs",
+    "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:llvm-nm_runtime"])
+bsd_host_artifact_test(name = "archive_test", src = "archive-test.py",
+    data = [":static_archive", ":inspection_tools", "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    args = ["--machine", "62", "--archive", "$(location :static_archive)",
+        "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)", "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)",
+        "--tool-inputs", "$(locations :inspection_tools)"], size = "small", visibility = ["//visibility:public"])

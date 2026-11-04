@@ -393,3 +393,5 @@ filegroup(name = "bios_simp_vdisk_source", srcs = ["vdisk.c"], visibility = ["//
 filegroup(name = "bios_simp_verified_root_source", srcs = ["verified_root.c"], visibility = ["//stand/i386/loader:__pkg__"])
 
 filegroup(name = "bios_simp_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "kboot_platform_headers", hdrs = ['bootstrap.h', 'readin.h'], visibility = ["//stand/kboot/libkboot:__pkg__"])

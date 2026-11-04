@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "kboot_platform_headers", hdrs = ['stat_arch.h', 'syscall_nr.h', 'termios_arch.h'], visibility = ["//stand/kboot/libkboot:__pkg__"])

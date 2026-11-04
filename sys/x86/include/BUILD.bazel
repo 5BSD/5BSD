@@ -47,3 +47,5 @@ filegroup(name = "gpt_zfs_arch_headers", srcs = ['_limits.h', '_stdint.h', '_typ
 filegroup(name = "bios_4th_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'metadata.h', 'psl.h', 'setjmp.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 filegroup(name = "bios_simp_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'metadata.h', 'psl.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "kboot_platform_headers", hdrs = ['_limits.h', '_types.h', 'elf.h', 'endian.h', 'metadata.h'], visibility = ["//stand/kboot/libkboot:__pkg__"])

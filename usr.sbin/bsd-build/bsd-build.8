@@ -6252,3 +6252,12 @@ The loader_pxe_interpreter setting defaults to auto and inherits this choice;
 explicit values independently select the corresponding real client.
 Host tests reconcile default aliases, help and archive inodes with actual Make
 stages. They do not execute firmware or qualify a complete installed system.
+
+.Ss Kboot support library
+The native source graph includes an AMD64 standalone libkboot archive with the
+original Linux syscall/startup sources and declared architecture header views.
+It is selected through the existing explicit format-5 bazel-test input interface.
+The internal library has no installed-file contribution.
+Other architectures and regular verifier profiles are not yet available.
+Archive ABI/API tests and original compiler comparisons qualify construction;
+they do not execute Linux syscalls or build the complete loader.kboot consumer.

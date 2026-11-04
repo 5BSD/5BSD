@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## World inventory and AMD64 kboot library (2026-11-04)
+
+Fresh Make discovery and all 2,128 component queries pass. The declaration review
+queue distinguishes 1,510 local owners and 618 ancestor owners; presence is not
+native build coverage. Native AMD64 libkboot now has eight original compiler
+contexts, exact allocated/symbol/relocation contracts, declared headers and the
+real archive producer. The audit binds 255 consumed source/header pairs and the
+original empty install contribution. Regular verifier and other architectures
+remain unavailable; the complete kboot consumer is still missing. See
+[KBOOT-LIBRARY-QUALIFICATION.md](KBOOT-LIBRARY-QUALIFICATION.md). Complete system,
+runtime, packaging/bootstrap/debug and performance gates remain open. Make stays
+default; BIP remains excluded.
+
 ## Complete selected BIOS interpreter family (2026-11-04)
 
 Lua/Forth/simple now share one source-owned model with 36 contexts each. The two

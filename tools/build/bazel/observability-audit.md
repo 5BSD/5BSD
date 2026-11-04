@@ -11211,3 +11211,12 @@ no assertion-disable flag is introduced. The default/explicit alias and PXE
 changes select real producers and preserve source-defined help ownership.
 These artifact checks establish neither firmware/interpreter execution nor OS
 DTrace/BSM delivery. Graphical/verifier and full runtime coverage remain open.
+
+
+## AMD64 kboot platform library (2026-11-04)
+
+The eight original sources retain startup, Linux syscall assembly and diagnostic
+behavior. Original Make declares no DTrace provider, FIDL binding or installed
+program for this internal archive; no instrumentation was dropped by conversion.
+Artifact/API checks do not establish Linux syscall runtime behavior, DTrace/BSM
+delivery or complete loader startup. Runtime and complete kboot remain open.
