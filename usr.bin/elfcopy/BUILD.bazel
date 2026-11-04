@@ -34,18 +34,26 @@ bsd_install_archive(
 )
 
 load("@rules_cc//cc:defs.bzl", "cc_test")
-_TEST_BASE_LIBRARIES = ["//lib/libarchive:archive_shared", "//lib/libelf:elf_shared",
+_SHARED_RUNTIME_BASE_LIBRARIES = ["//lib/libarchive:archive_shared", "//lib/libelf:elf_shared",
     "//lib/libz:z_shared", "//lib/libbz2:bz2_shared", "//lib/liblzma:lzma_shared",
     "//lib/libexpat:bsdxml_shared", "//lib/libzstd:zstd_shared", "//lib/libmd:md_shared"]
-_TEST_LIBRARIES = _TEST_BASE_LIBRARIES + select({
+_TEST_LIBRARIES = _SHARED_RUNTIME_BASE_LIBRARIES + select({
         "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": [],
     })
 cc_test(name = "functional_test", srcs = ["functional_test.c"],
     deps = ["//lib/libelf:elf"], linkstatic = True,
     data = [":elfcopy", ":fixture"] + _TEST_LIBRARIES,
-    args = ["$(rootpath :elfcopy)", "$(rootpath :fixture)"] + ["$(rootpath " + lib + ")" for lib in _TEST_BASE_LIBRARIES] + select({
+    args = ["$(rootpath :elfcopy)", "$(rootpath :fixture)"] + ["$(rootpath " + lib + ")" for lib in _SHARED_RUNTIME_BASE_LIBRARIES] + select({
         "//tools/build/bazel/config:openssl_enabled": ["$(rootpath //secure/lib/libcrypto:crypto_shared)"], "//conditions:default": [],
     }),
     size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 
 cc_binary(name = "fixture", srcs = ["fixture.c"], copts = ["-g"], linkstatic = True, testonly = True)
+
+# Host process closure for declared execution tools, including cross builds.
+filegroup(name = "execution_runtime", srcs = _SHARED_RUNTIME_BASE_LIBRARIES + [
+    "//lib/libthr:thr_shared", "//lib/msun:m_shared", "//lib/libc:c_shared",
+    "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:execution-runtime/lib/libgcc_s.so.1",
+    "@bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1",
+] + select({"//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared"],
+    "//conditions:default": []}), visibility = ["//visibility:public"])

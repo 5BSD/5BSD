@@ -8,7 +8,8 @@ import subprocess
 def environment(runtime, epoch):
     result = {'LC_ALL': 'C', 'SOURCE_DATE_EPOCH': epoch}
     if runtime:
-        result['LD_LIBRARY_PATH'] = ':'.join(sorted({str(p.resolve(strict=True).parent) for p in runtime}))
+        libraries = [p.resolve(strict=True) for p in runtime if p.name.endswith('.so') or '.so.' in p.name]
+        result['LD_LIBRARY_PATH'] = ':'.join(sorted({str(p.parent) for p in libraries}))
     return result
 
 

@@ -11008,3 +11008,13 @@ headers and symbol closure against an independently linked original under the
 recorded filename controls. No dead-code policy, assertion suppression or runtime
 audit/provider substitution was added. Firmware diagnostic execution still needs
 VM qualification. See LOADER-LINK-QUALIFICATION.md.
+
+## Loader PE/debug transformations (2026-11-04)
+
+Debug splitting preserves every runtime ELF section and the PE action preserves
+Make's command/Lua linker-set policy. The source-built elfcopy retains original
+error handling and ELF/PE algorithms. Its libc/libthr dependency retains DTrace
+provider generation, including the real full dtrace tool closure; no probe or
+provider was suppressed to reduce build time. Runtime diagnostic execution and
+firmware errors still require VM tests. PE signature/key policy is not proven by
+conversion equality. See LOADER-PE-QUALIFICATION.md.

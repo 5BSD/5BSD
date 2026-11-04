@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """EFI image conversion; source linking, policy and signing remain separate."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+
 def _efi(ctx):
     if not ctx.attr.sections:
         fail("EFI conversion requires the selected Make section list")
-    epoch = ctx.attr.source_date_epoch
+    if ctx.attr.source_date_epoch_setting and ctx.attr.source_date_epoch:
+        fail("select either a PE timestamp setting or an explicit value")
+    epoch = ctx.attr.source_date_epoch_setting[BuildSettingInfo].value if ctx.attr.source_date_epoch_setting else ctx.attr.source_date_epoch
     if not epoch or any([c not in "0123456789" for c in epoch.elems()]) or int(epoch) > 4294967295:
         fail("SOURCE_DATE_EPOCH must fit an unsigned PE timestamp")
     out = ctx.actions.declare_file(ctx.attr.output)
@@ -19,7 +23,8 @@ def _efi(ctx):
     args.add_all(ctx.files.nm_runtime)
     args.add("--objcopy-runtime")
     args.add_all(ctx.files.objcopy_runtime)
-    runtime_dirs = depset([file.dirname for file in ctx.files.python_runtime]).to_list()
+    runtime_dirs = depset([file.dirname for file in ctx.files.python_runtime
+        if file.basename.endswith(".so") or ".so." in file.basename]).to_list()
     ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run, arguments = [args],
         inputs = [ctx.file.src, ctx.file._runner, ctx.file.python_home] + ctx.files.python_runtime,
         tools = [ctx.attr.nm[DefaultInfo].files_to_run, ctx.attr.objcopy[DefaultInfo].files_to_run] +
@@ -34,7 +39,8 @@ bsd_efi_image = rule(implementation = _efi, attrs = {
     "output": attr.string(mandatory = True),
     "output_format": attr.string(mandatory = True),
     # Decimal string retains the PE unsigned timestamp range beyond int32/2038.
-    "source_date_epoch": attr.string(mandatory = True),
+    "source_date_epoch": attr.string(),
+    "source_date_epoch_setting": attr.label(providers = [BuildSettingInfo]),
     "sections": attr.string_list(mandatory = True),
     "objcopy": attr.label(default = "//usr.bin/elfcopy:elfcopy", executable = True, cfg = "exec"),
     "objcopy_runtime": attr.label_list(allow_files = True, cfg = "exec", mandatory = True),

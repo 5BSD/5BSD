@@ -588,3 +588,8 @@ config_setting(name = "reproducible_build_enabled", flag_values = {":reproducibl
     visibility = ["//visibility:public"])
 label_flag(name = "loader_version_metadata", build_setting_default = "//stand/common:unconfigured_version_metadata",
     visibility = ["//visibility:public"])
+
+# stand/efi/Makefile.inc chooses 1 January 2024 for reproducible PE timestamps.
+# This is source build policy, independently overrideable from version metadata.
+string_flag(name = "loader_source_date_epoch", build_setting_default = "1704067200",
+    visibility = ["//visibility:public"])

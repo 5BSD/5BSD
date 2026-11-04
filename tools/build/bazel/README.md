@@ -48792,3 +48792,16 @@ identical linked hash. See [LOADER-LINK-QUALIFICATION.md](LOADER-LINK-QUALIFICAT
 Next: debug splitting, explicit PE timestamp input/conversion and installation
 metadata, followed by firmware execution. ARM64/RISC-V entry/link profiles and all
 broader system completion gates remain open. Make remains production/default.
+
+### AMD64 loader PE and installation contracts (2026-11-04)
+
+The real source-built elfcopy produces the selected loader's PE image byte for
+byte like the independently controlled original Make recipe. Debug splitting
+preserves the runtime ELF and validates its debuglink CRC; the three file/link
+installation records and help match Make. Configured default, beyond-2038, invalid
+and restored PE timestamps are qualified; changing/restoring the timestamp runs
+only conversion. See [LOADER-PE-QUALIFICATION.md](LOADER-PE-QUALIFICATION.md).
+
+This does not establish DWARF/source lookup, complete installation/package staging
+or firmware boot. Native tool runtime/search paths are audited, while full
+sandbox and system-wide performance remain open. Make stays default.

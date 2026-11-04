@@ -4742,6 +4742,26 @@ dependencies; PE conversion, debug/installation and firmware execution remain
 separate qualification gates.
 See
 .Pa tools/build/bazel/LOADER-LINK-QUALIFICATION.md .
+.Ss Native EFI image and installation candidates
+.Li //stand/efi/loader:loader_lua_symbols
+and
+.Li //stand/efi/loader:loader_lua_debug
+split the selected final ELF using the maintained objcopy recipe.
+.Li //stand/efi/loader:loader_lua_efi
+uses the source-built execution-configured elfcopy and its declared library inputs.
+The format-5 string setting
+.Li //tools/build/bazel/config:loader_source_date_epoch
+selects the unsigned PE timestamp, independently of loader version metadata.
+Its source-policy default is 1704067200, matching stand/efi/Makefile.inc;
+values outside the unsigned 32-bit range are rejected.
+.Li //stand/efi/loader:install_manifest
+provides the selected Lua PE image, common help and default-loader hardlink.
+The build-only symbol/debug files are not installed by this INTERNALPROG profile.
+Directory policy comes from the aggregate stage's maintained mtree inputs.
+These remain qualification candidates; firmware execution, other configurations
+and system-wide completion gates are separate.
+See
+.Pa tools/build/bazel/LOADER-PE-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

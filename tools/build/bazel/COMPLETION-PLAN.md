@@ -2123,3 +2123,28 @@ identical linked hash. See [LOADER-LINK-QUALIFICATION.md](LOADER-LINK-QUALIFICAT
 Next: debug splitting, explicit PE timestamp input/conversion and installation
 metadata, followed by firmware execution. ARM64/RISC-V entry/link profiles and all
 broader system completion gates remain open. Make remains production/default.
+
+### EFI transformations in progress (2026-11-04)
+
+The selected AMD64 loader has source-owned debug splitting, PE conversion and
+three installation file/link records. The PE timestamp is a typed format-5 source
+setting with Make's maintained default and no execution-host clock fallback.
+The native elfcopy execution closure and final transformations now pass the
+checks recorded in LOADER-PE-QUALIFICATION.md.
+It includes libc/libthr DTrace generation and the existing full dtrace executable's
+C++/HyperTrace/telemetry/protobuf build dependencies. Review that cold tool-closure
+cost during bootstrap/performance qualification; do not suppress probes or silently
+replace the tool to avoid it. Next verify PE bytes/debug integrity/metadata and
+exercise timestamp override/rejection/restoration before firmware tests.
+
+PE/debug/metadata qualification completed: final PE bytes match independent
+original filename controls, runtime ELF/debuglink integrity passes, and all three
+file/link records match Make. Beyond-2038 and out-of-range settings plus exact
+default restoration are exercised. The timestamp change/restoration executes
+only conversion. Runtime search paths exclude data directories and the native
+interpreter input is explicit, with host-interpreter equality attested.
+
+Next rerun relevant shared EFI regressions, stage the actual component/archive
+with maintained directory/pkgbase policy, and qualify firmware execution. Foreign
+entry/image profiles and all complete-system/debug/bootstrap/performance gates
+remain open. Make remains production/default; BIP remains excluded.
