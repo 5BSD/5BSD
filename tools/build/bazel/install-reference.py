@@ -43,7 +43,7 @@ def main():
     parser.add_argument('--without-local-option', action='append', default=[],
                         help='disable a library-local MK_ option not declared in src.opts.mk')
     parser.add_argument('--make-define', action='append', default=[],
-                        help='presence-only NAME=1 selector in the component basename namespace')
+                        help='presence-only NAME=1 selector in component or BOOT_component namespace')
     parser.add_argument('--build-utc', type=int,
                         help='explicit nonnegative BUILD_UTC input for reproducible verifier references')
     parser.add_argument('--local-generated-header', action='append', default=[],

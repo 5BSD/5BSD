@@ -87,8 +87,8 @@ def _bytes(ctx):
             fail("boot image size limit must be a positive integer")
     if ctx.attr.operation == "zero" and (ctx.files.srcs or size < 1):
         fail("zero requires no inputs and a positive size")
-    if ctx.attr.operation in ["pad", "check"] and (len(ctx.files.srcs) != 1 or size < 1):
-        fail("pad/check requires one input and a positive size")
+    if ctx.attr.operation in ["pad", "check", "align"] and (len(ctx.files.srcs) != 1 or size < 1):
+        fail("pad/check/align requires one input and a positive size")
     if ctx.attr.operation == "concat" and (len(ctx.files.srcs) < 2 or size != 0):
         fail("concat requires at least two ordered inputs and no size")
     out = ctx.actions.declare_file(ctx.attr.output)
@@ -104,7 +104,7 @@ def _bytes(ctx):
 
 bsd_boot_image_bytes = rule(implementation = _bytes, attrs = {
     "srcs": attr.label_list(allow_files = True),
-    "operation": attr.string(mandatory = True, values = ["zero", "pad", "concat", "check"]),
+    "operation": attr.string(mandatory = True, values = ["zero", "pad", "concat", "check", "align"]),
     "size": attr.int(),
     "size_setting": attr.label(providers = [BuildSettingInfo]),
     "output": attr.string(mandatory = True),

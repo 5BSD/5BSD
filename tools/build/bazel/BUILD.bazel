@@ -315,3 +315,11 @@ bsd_install_archive_set(name = "bios_loader_archive_set", archives = ["//stand/i
     size = "small", visibility = ["//visibility:public"])
  for test_name, components in [("gpt_iso_boot_test", ["gptboot", "isoboot"]),
     ("gpt_bios_boot_test", ["gptboot", "isoboot", "gptzfsboot"])]]
+
+bsd_host_artifact_test(name = "pxe_boot_test", src = "pxe-boot-test.py",
+    data = ["boot_image.py", "//stand/i386/pxeldr:inspection_policy", "//stand/i386/pxeldr:installation_metadata", "//stand/i386/loader_lua:client"] + [
+        "//stand/i386/pxeldr:" + n for n in ["pxeboot", "pxeldr", "compiler_object", "client", "loader", "install_archive"]],
+    args = ["--helper", "$(location :boot_image.py)", "--policy", "$(location //stand/i386/pxeldr:inspection_policy)",
+        "--metadata", "$(location //stand/i386/pxeldr:installation_metadata)", "--source-client", "$(location //stand/i386/loader_lua:client)"] + [
+        item for option, target in [("image", "pxeboot"), ("prefix", "pxeldr"), ("object", "compiler_object"), ("client", "client"), ("loader", "loader"), ("archive", "install_archive")] for item in ["--" + option, "$(location //stand/i386/pxeldr:" + target + ")"]],
+    size = "small", visibility = ["//visibility:public"])

@@ -11192,3 +11192,12 @@ explains the diagnostic string difference without suppressing it. Existing
 BOOT2/GPT/MBR/ZFS/GELI policy and the explicit zfsimpl.c Make prerequisite remain
 declared. No OS DTrace/BSM provider occurs in these preboot sources. Matching
 compiler/image contracts do not qualify BIOS/ZFS runtime or live audit delivery.
+
+## PXE BIOS consumer (2026-11-04)
+
+Original pxeldr.S and its keyboard/serial/argument/handoff paths are unchanged.
+All four console-selector object/prefix variants equal actual original Make
+bytes. No OS DTrace/BSM provider occurs in this preboot assembler; host image
+checks do not prove firmware/network execution or event delivery. The original
+client size guard remains an actual action failure, and unqualified interpreters
+are rejected rather than silently replaced.

@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## PXE construction checkpoint (2026-11-04)
+
+The missing PXE consumer now has native i386 assembly/link, actual native Lua
+client dependency, original size guard, a.out BTX packing, ordered concatenation,
+2048-byte alignment and shared-policy archives. Four console combinations match
+fresh original Make prefix/object bytes; actual original BTX/dd recipe controls
+over the independently qualified original loader reproduce every complete image.
+The older SDK client in the raw Make references remains explicit. The audit binds
+four compilers/twelve consumed pairs, 28 producer associations, eight install
+record comparisons and 32 unchanged prior boot products. Actual over-limit and
+unsupported-interpreter builds fail. Final default: 29 passing test targets, two
+executed and 27 cached. The normal frontend/manual and restricted boot-selector
+reference API are updated. See [PXE-BOOT-QUALIFICATION.md](PXE-BOOT-QUALIFICATION.md).
+Firmware/network execution, alternate profiles and complete system/package/
+bootstrap/debug/cache/performance gates remain open. Make stays default; BIP is
+excluded.
+
 ## GPT/ZFS BIOS checkpoint (2026-11-04)
 
 The missing GPT/ZFS consumer now builds ten original i386 entry contexts, ordered

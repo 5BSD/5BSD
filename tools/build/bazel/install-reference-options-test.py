@@ -21,6 +21,16 @@ class ComponentDefinitionsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'namespace'):
             component_definitions(Path('/usr/src/usr.sbin/traceroute6'), ['TRACEROUTE_NO_IPSEC'])
 
+    def test_boot_component_selectors_remain_scoped_and_presence_only(self):
+        component = Path('/usr/src/stand/i386/pxeldr')
+        names = ['BOOT_PXELDR_PROBE_KEYBOARD', 'BOOT_PXELDR_ALWAYS_SERIAL']
+        self.assertEqual(component_definitions(component, names), {name:'1' for name in names})
+        for name in ['BOOT_PXELDR_', 'BOOT_LOADER_FLAGS', 'BOOT_PXELDR_PROBE_KEYBOARD=0']:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                component_definitions(component, [name])
+        with self.assertRaisesRegex(ValueError, 'collides'):
+            component_definitions(component, names, profile_names=[names[0]])
+
     def test_arbitrary_assignments_and_make_expansions_are_rejected(self):
         for name in ['TRACEROUTE_NO_IPSEC=0', 'TRACEROUTE_$(CC)', 'TRACEROUTE_X\nY',
                      'traceroute_no_ipsec', 'TRACEROUTE_X Y', '', None]:

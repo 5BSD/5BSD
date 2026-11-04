@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_boot_image.bzl", "bsd_boot_link", "bsd_btx_image", "bsd_boot_image_bytes")
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+config_setting(name = "lua", flag_values = {"//tools/build/bazel/config:loader_pxe_interpreter": "lua"})
+config_setting(name = "probe_keyboard", flag_values = {"//tools/build/bazel/config:loader_pxe_probe_keyboard": "true"})
+config_setting(name = "always_serial", flag_values = {"//tools/build/bazel/config:loader_pxe_always_serial": "true"})
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"] + select({":lua": [], "//conditions:default": ["@platforms//:incompatible"]})
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-Istand/i386/common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments']
+cc_library(name = "objects", srcs = ["pxeldr.S"],
+    deps = ["//stand/i386/common:pxe_headers", "//sys/sys:pxe_headers"],
+    copts = _CFLAGS + select({":probe_keyboard": ["-DPROBE_KEYBOARD"], "//conditions:default": []}) + select({":always_serial": ["-DALWAYS_SERIAL"], "//conditions:default": []}),
+    features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    linkstatic = True, target_compatible_with = _COMPAT)
+bsd_component_object(name = "native_object", group = ":objects", out = "pxeldr.o", target_compatible_with = _COMPAT)
+bsd_boot_link(name = "native_prefix", objects = [":native_object"], output = "pxeldr",
+    script = "//stand/i386:boot.ldscript", linkopts = ["-m", "elf_i386_fbsd", "-e", "start", "--defsym", "ORG=0x7c00", "-N", "-S", "--oformat", "binary", "--build-id=none", "-z", "now", "-z", "relro", "--no-rosegment"], target_compatible_with = _COMPAT)
+bsd_boot_image_bytes(name = "native_client", srcs = ["//stand/i386/loader_lua:client"], operation = "check",
+    size_setting = "//tools/build/bazel/config:loader_pxe_max_size", output = "client.bin", target_compatible_with = _COMPAT)
+bsd_btx_image(name = "native_loader", src = ":native_client", loader = "//stand/i386/btx/btxldr:btxldr", kernel = "//stand/i386/btx/btx:btx",
+    entry_setting = "//tools/build/bazel/config:loader_bios_address", entry_kind = "output", output_format = "aout", output = "loader", target_compatible_with = _COMPAT)
+bsd_boot_image_bytes(name = "native_combined", srcs = [":native_prefix", ":native_loader"], operation = "concat", output = "pxeboot.unpadded", target_compatible_with = _COMPAT)
+bsd_boot_image_bytes(name = "native_image", srcs = [":native_combined"], operation = "align", size = 2048, output = "pxeboot", target_compatible_with = _COMPAT)
+bsd_freestanding_artifact(name = "pxeboot", src = ":native_image", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "pxeldr", src = ":native_prefix", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "compiler_object", src = ":native_object", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "client", src = ":native_client", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "loader", src = ":native_loader", architecture = "i386", visibility = ["//visibility:public"])
+
+boot_data_installation(files = [("pxeboot", ":pxeboot")], manuals = ["pxeboot.8"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+load(":inspection.bzl", "pxe_inspection")
+pxe_inspection(name = "inspection_policy", visibility = ["//tools/build/bazel:__pkg__"])
+filegroup(name = "installation_metadata", srcs = [":install_manifest"], output_group = "manifest", visibility = ["//tools/build/bazel:__pkg__"])

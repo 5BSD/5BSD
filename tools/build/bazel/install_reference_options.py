@@ -16,7 +16,7 @@ _RESERVED = {
 
 
 def component_definitions(component, names, *, option_names=(), profile_names=()):
-    """Return NAME=1 selectors restricted to the component basename namespace.
+    """Return NAME=1 selectors in component or BOOT_component namespaces.
 
     This does not expose arbitrary Make assignments. For example, traceroute
     may define TRACEROUTE_NO_IPSEC, but cannot override global configuration,
@@ -34,8 +34,9 @@ def component_definitions(component, names, *, option_names=(), profile_names=()
             raise ValueError('component define requires an uppercase identifier')
         if name in _RESERVED or name.startswith(('MK_', 'WITH_', 'WITHOUT_', 'MAKE_')):
             raise ValueError('component define cannot override global Make configuration: ' + name)
-        if not name.startswith(namespace) or name == namespace:
-            raise ValueError('component define must use namespace ' + namespace)
+        namespaces = (namespace, 'BOOT_' + namespace)
+        if not any(name.startswith(prefix) and name != prefix for prefix in namespaces):
+            raise ValueError('component define must use namespace ' + ' or '.join(namespaces))
         if name in result:
             raise ValueError('duplicate component define: ' + name)
         if name in selected:

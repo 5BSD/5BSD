@@ -640,3 +640,9 @@ string_flag(name = "loader_gptboot_ufs", build_setting_default = "UFS1_AND_UFS2"
     values = ["UFS1_AND_UFS2", "UFS1_ONLY", "UFS2_ONLY"], visibility = ["//visibility:public"])
 int_flag(name = "loader_boot_serial_format", build_setting_default = 3, visibility = ["//visibility:public"])
 int_flag(name = "loader_isoboot_max_size", build_setting_default = 30720, visibility = ["//visibility:public"])
+
+# PXE retains Make's client-size limit and independent console selectors.
+int_flag(name = "loader_pxe_max_size", build_setting_default = 530000, visibility = ["//visibility:public"])
+bool_flag(name = "loader_pxe_probe_keyboard", build_setting_default = False, visibility = ["//visibility:public"])
+bool_flag(name = "loader_pxe_always_serial", build_setting_default = False, visibility = ["//visibility:public"])
+string_flag(name = "loader_pxe_interpreter", build_setting_default = "lua", values = ["lua", "4th", "simp"], visibility = ["//visibility:public"])

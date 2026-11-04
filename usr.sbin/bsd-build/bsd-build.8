@@ -6224,3 +6224,19 @@ The gpt_bios_boot_test host target checks GPT/UFS, ISO and GPT/ZFS artifacts wit
 shared ABI, layout and installation assertions. It does not execute firmware.
 Original compiler controls and archive checks do not qualify ZFS pool behavior,
 normal VM startup, complete debug/source lookup or system performance.
+.Ss PXE construction
+The pxeldr contribution compiles a standalone i386 prefix and consumes the native
+BIOS Lua client through a declared dependency.
+The loader_pxe_max_size setting defaults to Make's actual 530000-byte bound;
+the client must pass that check before a.out BTX packing.
+Ordered concatenation and 2048-byte alignment preserve the original dd layout.
+The loader_pxe_probe_keyboard and loader_pxe_always_serial settings independently
+select the original console paths. The loader_pxe_interpreter setting currently
+qualifies lua; explicit 4th or simp selections are incompatible pending their
+BIOS producers. No fallback producer is selected.
+Shared boot-data rules retain image/manual package policy and archive metadata.
+The maintained Make reference helper accepts component and BOOT_component
+presence-only namespaces with its existing assignment/global-identity guards.
+Original-reference comparisons retain the SDK loader prerequisite and distinguish
+it from independent current-loader recipe controls.
+Construction tests do not qualify DHCP/TFTP, firmware or normal system startup.

@@ -23,3 +23,5 @@ boot_image_inspection(name = "gpt_iso_policy", visibility = ["//tools/build/baze
 bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['bootargs.h', 'cons.h'], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
 
 filegroup(name = "gpt_zfs_cons_source", srcs = ["cons.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+bsd_source_headers(name = "pxe_headers", hdrs = ["bootargs.h"], visibility = ["//stand/i386/pxeldr:__pkg__"])
