@@ -14,6 +14,6 @@ _Static_assert(sizeof(((FILE *)0)->verification_path) == sizeof(char *), "loader
 #endif
 #endif
 
-#if defined(LOADER_LUA_EFI) && (defined(__x86_64__) || defined(__aarch64__))
+#if defined(LOADER_LUA_EFI) && (defined(__i386__) || defined(__x86_64__) || defined(__aarch64__))
 _Static_assert(sizeof(__WCHAR_TYPE__) == 2, "EFI uses 16-bit wchar on this target");
 #endif

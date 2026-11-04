@@ -2372,3 +2372,16 @@ AMD64/ARM64/RISC-V member contracts and all fifteen EFI image bytes are preserve
 full regular archive/debug bytes remain different and explicit. See
 LIBSA32-QUALIFICATION.md. Continue 32-bit interpreter/loader composition before
 world/pkgbase aggregation; broader runtime/bootstrap/performance gates remain.
+
+## IA32 interpreter archive checkpoint (2026-11-04)
+
+All four regular/private EFI Lua and Ficl DO32 archives now use the source-owned
+shared graph. Eighteen wrappers pass through the maintained frontend. Both Lua
+archives match all 31 original member contracts directly. Each Ficl archive has
+four direct matches and eleven assertion-filename controls; all raw identities,
+symbols, relocations and member orders match. Actual 92 compiler/four archive
+producer records retain ABI and private policy, and fifteen previous EFI images
+are unchanged. IA32 EFI Lua now shares the existing native-width private source
+admission policy; its independent post-fix Make reference is explicit. See
+INTERPRETERS32-QUALIFICATION.md. Next integrate complete IA32 loader consumers;
+full system/pkgbase/runtime/debug/performance gates remain open.

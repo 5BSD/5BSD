@@ -27,16 +27,18 @@ bsd_host_artifact_test(name = "softcore_test", src = "softcore-test.py",
     visibility = ["//visibility:public"], size = "small")
 
 _COMPAT = ["@platforms//os:freebsd"] + select({
-    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
+    "@platforms//cpu:x86_32": [], "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
     "//conditions:default": ["@platforms//:incompatible"],
 })
 bsd_architecture_headers(name = "architecture_headers", headers = select({
+    "@platforms//cpu:x86_32": {"//sys/i386/include:standalone_ficl_headers": "machine", "//sys/x86/include:standalone_ficl_headers": "x86"},
     "@platforms//cpu:x86_64": {"//sys/amd64/include:standalone_ficl_headers": "machine", "//sys/x86/include:standalone_ficl_headers": "x86"},
     "@platforms//cpu:aarch64": {"//sys/arm64/include:standalone_ficl_headers": "machine"},
     "@platforms//cpu:riscv64": {"//sys/riscv/include:standalone_ficl_headers": "machine"},
     "//conditions:default": {},
 }))
 _ARCH_CFLAGS = select({
+    "@platforms//cpu:x86_32": ["-m32", "-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-march=i386", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
     "@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
     "@platforms//cpu:aarch64": ["-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
     "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"],
@@ -46,6 +48,7 @@ _CFLAGS = ['-O2', '-pipe', '-fno-common', '-nostdinc', '-Istand/libsa', '-D_STAN
     "//tools/build/bazel/config:loader_geli_enabled": ["-DLOADER_GELI_SUPPORT"], "//conditions:default": []}) + select({
     "//tools/build/bazel/config:loader_disk_enabled": ["-DLOADER_DISK_SUPPORT"], "//conditions:default": []})
 _CFLAGS = _CFLAGS + select({
+    "@platforms//cpu:x86_32": ["-Istand/ficl/i386"],
     "@platforms//cpu:x86_64": ["-Istand/ficl/amd64"],
     "@platforms//cpu:aarch64": ["-Istand/ficl/aarch64"],
     "@platforms//cpu:riscv64": ["-Istand/ficl/riscv"], "//conditions:default": [],
@@ -67,6 +70,7 @@ loader_ficl_library(name = "static_archive", prefix = "", copts = _CFLAGS + _VER
 
 # EFI's mandatory verifier setting is confined to its private interpreter.
 _EFI_CFLAGS = _CFLAGS + ["-Wformat"] + select({
+    "@platforms//cpu:x86_32": ["-fshort-wchar", "-mno-red-zone", "-malign-double"],
     "@platforms//cpu:x86_64": ["-fshort-wchar"], "@platforms//cpu:aarch64": ["-fshort-wchar"],
     "//conditions:default": [],
 }) + select({
@@ -97,3 +101,14 @@ bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['amd64/sysdep.h', 'f
 bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['aarch64/sysdep.h', 'ficl.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['ficl.h', 'riscv/sysdep.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+# AMD64 DO32 consumers retain a separate standalone ABI.
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "i386_static_archive", src = ":static_archive", architecture = "i386",
+    visibility = ["//visibility:public"])
+ficl_archive_test(name = "archive_i386_test", archive = ":i386_static_archive",
+    setting = "//tools/build/bazel/config:veriexec_enabled", compatible = [], machine = "3")
+bsd_freestanding_artifact(name = "i386_efi_static_archive", src = ":efi_static_archive", architecture = "i386",
+    visibility = ["//visibility:public"])
+ficl_archive_test(name = "archive_i386_efi_test", archive = ":i386_efi_static_archive",
+    setting = "//tools/build/bazel/config:efi_loader_veriexec_enabled", compatible = [], machine = "3")

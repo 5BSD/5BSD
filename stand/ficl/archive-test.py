@@ -33,6 +33,10 @@ def symbols(text):
 
 
 class StandaloneFicl(unittest.TestCase):
+    def test_make_selected_member_order(self):
+        expected = "dict ficl fileaccess float loader math64 prefix search stack tools vm words gfx_loader sysdep softcore".split()
+        self.assertEqual(run(args.ar, 't').splitlines(), [name + '.o' for name in expected])
+
     def test_every_member_target_abi(self):
         members = run(args.ar, 't').splitlines()
         self.assertTrue(members, 'empty archive')
@@ -41,7 +45,7 @@ class StandaloneFicl(unittest.TestCase):
             data = run(args.ar, 'p', member=member, binary=True)
             with self.subTest(member=member):
                 self.assertGreaterEqual(len(data), 64)
-                self.assertEqual(data[:6], b'\x7fELF\x02\x01')
+                self.assertEqual(data[:6], b'\x7fELF' + bytes([1 if args.machine == 3 else 2, 1]))
                 self.assertEqual(struct.unpack_from('<H', data, 16)[0], 1)
                 self.assertEqual(struct.unpack_from('<H', data, 18)[0], args.machine)
                 if args.machine == 243:

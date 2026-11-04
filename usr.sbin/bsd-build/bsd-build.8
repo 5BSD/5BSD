@@ -6127,3 +6127,13 @@ existing per-source cryptographic assertion policy is retained.
 Private EFI objects use separate compiler contexts and explicit verifier inputs.
 These internal archives do not add installed userland libraries.
 Complete BIOS and IA32 loader programs require further qualification.
+.Ss IA32 interpreter archives
+The liblua32 and ficl32 components and their private EFI variants use the shared
+source inventories through explicit i386 artifact boundaries.
+EFI objects retain short wchar and double alignment independently of regular
+BIOS objects.  The IA32 EFI Lua Make wrapper shares the native-width private
+verification policy, including authenticated-source checks.
+Host tests inspect ELF32 member order, interpreter APIs and verifier isolation;
+compile-time Lua checks cover its number, FILE and EFI wchar ABI.
+These archives remain internal.  Complete IA32 loader boot execution and full
+debug parity require separate qualification.

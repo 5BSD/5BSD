@@ -7,16 +7,18 @@ load(":config.bzl", "loader_lua_paths")
 loader_lua_paths(name = "configured_paths")
 # The loader ABI is separate from ordinary userland on every architecture.
 _COMPAT = ["@platforms//os:freebsd"] + select({
-    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
+    "@platforms//cpu:x86_32": [], "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
     "//conditions:default": ["@platforms//:incompatible"],
 })
 bsd_architecture_headers(name = "architecture_headers", headers = select({
+    "@platforms//cpu:x86_32": {"//sys/i386/include:standalone_lua_headers": "machine", "//sys/x86/include:standalone_lua_headers": "x86"},
     "@platforms//cpu:x86_64": {"//sys/amd64/include:standalone_lua_headers": "machine", "//sys/x86/include:standalone_lua_headers": "x86"},
     "@platforms//cpu:aarch64": {"//sys/arm64/include:standalone_lua_headers": "machine"},
     "@platforms//cpu:riscv64": {"//sys/riscv/include:standalone_lua_headers": "machine"},
     "//conditions:default": {},
 }))
 _ARCH_CFLAGS = select({
+    "@platforms//cpu:x86_32": ["-m32", "-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-march=i386", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
     "@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2", "-msoft-float", "-fPIC", "-mno-red-zone", "-mno-relax", "-ffunction-sections", "-fdata-sections", "-Oz"],
     "@platforms//cpu:aarch64": ["-mgeneral-regs-only", "-ffixed-x18", "-fPIC", "-mno-relax"],
     "@platforms//cpu:riscv64": ["-march=rv64imac", "-mabi=lp64", "-fPIC", "-mno-relax", "-mcmodel=medium"],
@@ -40,6 +42,7 @@ loader_lua_library(name = "static_archive", prefix = "", copts = _CFLAGS + _VERI
     deps = _DEPS, features = _FEATURES, compatible = _COMPAT)
 # EFI policy is local to this private context; it never changes shared BIOS inputs.
 _EFI_CFLAGS = _CFLAGS + ["-Wformat"] + select({
+    "@platforms//cpu:x86_32": ["-fshort-wchar", "-mno-red-zone", "-malign-double"],
     "@platforms//cpu:x86_64": ["-fshort-wchar"], "@platforms//cpu:aarch64": ["-fshort-wchar"],
     "//conditions:default": [],
 }) + select({
@@ -106,3 +109,34 @@ exports_files(["config.bzl"], visibility = ["//stand/efi/loader:__pkg__"])
 bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['lerrno.h', 'lstd.h', 'luaconf.local.h', 'lutils.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['lerrno.h', 'lstd.h', 'luaconf.local.h', 'lutils.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+# AMD64 DO32 consumers retain a separate standalone ABI.
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "i386_static_archive", src = ":static_archive", architecture = "i386",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "i386_efi_static_archive", src = ":efi_static_archive", architecture = "i386",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "i386_configuration_contract", src = ":configuration_contract", architecture = "i386", testonly = True)
+bsd_freestanding_artifact(name = "i386_efi_configuration_contract", src = ":efi_configuration_contract", architecture = "i386", testonly = True)
+bsd_host_artifact_test(name = "archive_i386_test", src = "archive-test.py",
+    data = [":i386_static_archive", ":i386_configuration_contract", ":inspection_tools",
+        "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    args = ["--machine", "3"] + select({
+        "//tools/build/bazel/config:veriexec_enabled": ["--verification", "yes", "--verity", "no"],
+        "//conditions:default": ["--verification", "no", "--verity", "no"],
+    }) + ["--archive", "$(location :i386_static_archive)",
+        "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)",
+        "--tool-inputs", "$(locations :inspection_tools)"],
+    visibility = ["//visibility:public"], size = "small")
+bsd_host_artifact_test(name = "archive_i386_efi_test", src = "archive-test.py",
+    data = [":i386_efi_static_archive", ":i386_efi_configuration_contract", ":inspection_tools",
+        "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    args = ["--machine", "3"] + select({
+        "//tools/build/bazel/config:efi_loader_veriexec_enabled": ["--verification", "yes", "--verity", "yes"],
+        "//conditions:default": ["--verification", "no", "--verity", "no"],
+    }) + ["--archive", "$(location :i386_efi_static_archive)",
+        "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)",
+        "--tool-inputs", "$(locations :inspection_tools)"],
+    visibility = ["//visibility:public"], size = "small")

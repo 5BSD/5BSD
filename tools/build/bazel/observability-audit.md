@@ -11116,3 +11116,12 @@ size policy and existing three Rijndael NDEBUG selections. No extra assertion,
 DTrace probe or audit hook is removed. The six assertion filename differences
 remain raw and are explained by isolated original compiler controls, not maps
 in production. Target execution and separate-debug/source lookup remain open.
+
+## IA32 interpreter contexts (2026-11-04)
+
+The regular and private EFI Lua/Ficl DO32 contexts reuse the existing selected
+source inventories; no probe or audit source is removed or replaced. These run
+in the loader rather than the running kernel's DTrace/audit environment. This
+batch adds no new tracing facility. EFI Lua now preserves the loader's
+authenticated-source admission checks on IA32 as well as native width. Archive
+contracts and compiler records are inspected; firmware execution remains open.
