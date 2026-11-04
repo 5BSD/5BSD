@@ -164,8 +164,13 @@ The successful earlier captures remain evidence for their recorded inputs; this
 failed repeat is not a cache-pass claim. Original receipts and SDKs were not
 edited, and no SDK input/hash check was removed. Current SDK preparation uses
 maintained `libmd-plan.py --sdk-only` and `libmd-stage-tools.py`, retained under
-`bazel-libsa-sdk-refresh-r1-20261104`. Refresh completion and current-input repeat
-qualification remain pending at this checkpoint.
+`bazel-libsa-sdk-refresh-r1-20261104`. All three refreshed
+`bazel-libsa-efi-<arch>-current-r1-20261104` runs now pass and preserve both archive
+byte hashes. The initial native SDK update nevertheless reran all 451 selected
+compilers because their toolchain inputs contain both changed system headers.
+See [SDK-VERIFICATION-QUALIFICATION.md](SDK-VERIFICATION-QUALIFICATION.md) for the
+exact SDKs, preserved failure, bounded full-content verification and open
+compiler-input/performance work.
 
 ## Frontend and completion gates
 

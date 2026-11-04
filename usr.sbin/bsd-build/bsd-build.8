@@ -4675,6 +4675,20 @@ Archive and ABI inspection on AMD64, ARM64 and RISC-V executes native tools;
 firmware I/O and complete loader boot require separate qualification.
 See
 .Pa tools/build/bazel/LIBEFI-QUALIFICATION.md .
+.Ss Source-graph SDK verification
+Format-5 qualification hashes every selected SDK origin, execution-host binding,
+original snapshot entry and cached-copy entry on every invocation.
+The existing
+.Fl -jobs
+bounds the hash workers; results retain manifest-order failure reporting.
+No modification-time or previous-digest shortcut is used.
+.Pa sdk-verification.json
+records file counts, logical bytes hashed, workers and hashing times.
+The qualification receipt binds that report and the verification helper.
+Logical bytes and hash-phase timings do not measure physical disk I/O or complete
+build performance.
+See
+.Pa tools/build/bazel/SDK-VERIFICATION-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

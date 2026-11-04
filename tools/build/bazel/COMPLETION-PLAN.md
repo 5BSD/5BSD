@@ -2025,11 +2025,20 @@ LIBSA-CROSS-EFI-QUALIFICATION.md for retained evidence and exact profile limits.
 
 A repeat on the final flag factoring correctly refused a changed HyperTrace SDK
 origin after dev advanced to a914137016e. Preserve that failure and the immutable
-previous captures. Fresh native/cross SDKs are being prepared with maintained
-plan/staging helpers; rerun current-input qualification before claiming the
-repeat/cache gate. Do not edit old receipts or suppress origin checks.
+previous captures. Fresh native/cross SDKs were prepared with maintained
+plan/staging helpers. All three current-input frontend repeats pass and preserve
+both archive byte hashes. The changed SDK update reran all 451 native compilers;
+that coarse invalidation is not a warm-cache pass. Old receipts and origin
+checks remain intact. See SDK-VERIFICATION-QUALIFICATION.md.
 
-Next: finish that refresh/repeat, then actual loader entry and final EFI links.
+The maintained frontend now performs bounded parallel full-content verification
+using --jobs, with receipt-bound file/byte/worker/hash-phase timing records.
+Native Bazel runs 43 methods covering corruption, concurrency, settings and test
+inventory. No digest cache or input-check suppression was introduced. Narrowing
+freestanding compiler inputs and measuring SDK materialization/CPU/memory/physical
+I/O remain required; parallel hashing alone does not qualify performance.
+
+Next: actual loader entry and final EFI links.
 Complete world/rescue/cross kernel/module, installation/debug, runtime/boot,
 bootstrap/sandbox/cache, pkgbase/hardware/combined publication and CPU/memory/disk
 performance gates remain required. The broad SDK input/validation overhead is

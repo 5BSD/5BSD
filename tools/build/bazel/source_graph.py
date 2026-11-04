@@ -15,6 +15,7 @@ import test_reports
 import bsd_toolchain
 import userland_sdk
 import sdk_copy
+import sdk_digests
 from libmd_environment import digest
 
 
@@ -185,13 +186,13 @@ def _qualify(config, args, state):
     sdk=selected['toolchain-workspace'];receipt=json.loads(selected['toolchain-receipt'].read_text())
     platforms = platform_arguments(config, args.target_arch, receipt)
     host_artifacts_only = config.get('target-kind') == 'kernel' or args.target_arch != 'amd64'
-    for field in ('inputs','execution_host_dependencies'):
-        for name,value in receipt[field].items():
-            if digest(Path(name))!=value:raise ValueError('SDK input changed: '+name)
-    for name,value in receipt['snapshot'].items():
-        p=Path(name)
-        if p.is_absolute() or '..' in p.parts or digest(sdk/p)!=value:raise ValueError('SDK snapshot changed: '+name)
-    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),Path(userland_sdk.__file__).resolve(),Path(sdk_copy.__file__).resolve(),Path(bsd_toolchain.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock',src/'REPO.bazel']}
+    verification = {}
+    for field in ('inputs', 'execution_host_dependencies'):
+        verification[field] = sdk_digests.verify(receipt[field], jobs=args.jobs,
+            prefix='SDK input changed: ')
+    verification['snapshot'] = sdk_digests.verify(receipt['snapshot'], root=sdk,
+        jobs=args.jobs, prefix='SDK snapshot changed: ')
+    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),Path(userland_sdk.__file__).resolve(),Path(sdk_copy.__file__).resolve(),Path(sdk_digests.__file__).resolve(),Path(bsd_toolchain.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock',src/'REPO.bazel']}
     out.mkdir(parents=True)
     module = 'module(name="bsd_sdk",version="0.0.0")\nbazel_dep(name="rules_cc",version="0.2.17")\nbazel_dep(name="platforms",version="1.0.0")\n'
     sdk_key = hashlib.sha256(json.dumps(dict(snapshot=receipt['snapshot'], module=module),sort_keys=True).encode()).hexdigest()
@@ -209,8 +210,11 @@ def _qualify(config, args, state):
         raise ValueError('cached SDK module changed')
     actual={str(p.relative_to(repository)) for p in (repository/'toolchain').rglob('*') if p.is_file()}
     if actual!=set(receipt['snapshot']):raise ValueError('cached SDK file inventory changed')
-    for name,value in receipt['snapshot'].items():
-        if digest(repository/name)!=value:raise ValueError('cached SDK input changed: '+name)
+    verification['cached_snapshot'] = sdk_digests.verify(receipt['snapshot'],
+        root=repository, jobs=args.jobs, prefix='cached SDK input changed: ')
+    (out/'sdk-verification.json').write_text(json.dumps(dict(
+        scope='full-content verification; logical bytes are not physical disk I/O',
+        jobs=args.jobs, phases=verification), indent=2)+'\n')
     cache_digest, cache_entries = bsd_toolchain.verify_repository_cache(selected['repository-cache'])
     distdir_digest, distdir_files = bsd_toolchain.verify_distdirs(distdirs)
     staged_cache = out / 'repository-cache'
@@ -278,7 +282,7 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

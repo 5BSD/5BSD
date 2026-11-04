@@ -1,5 +1,16 @@
 # Bazel qualification
 
+## Current SDK refresh and full-content verification (2026-11-04)
+
+All three refreshed regular/private EFI libsa builds pass and preserve their
+qualified archive bytes. Format-5 SDK verification now hashes every origin and
+snapshot entry with bounded `--jobs` workers and records receipt-bound phase
+metrics. Native Bazel passes 43 verification/settings/inventory methods. The
+actual native SDK update reran all 451 selected compilers because unrelated
+system headers are mandatory toolchain inputs; coarse invalidation and complete
+CPU/memory/disk performance qualification remain open. See
+[SDK-VERIFICATION-QUALIFICATION.md](SDK-VERIFICATION-QUALIFICATION.md).
+
 ## World metadata audit checkpoint (2026-11-03)
 
 The maintained world audit now checks explicit architecture/profile contexts and
@@ -21,9 +32,9 @@ but three diagnostic-path members per context; original compiler controls match
 those three. All action/output and target ABI bindings pass. Generated headers
 match a corrected, audited Make reference; changing manifest names rebuilds only
 verify_file.o and its archive. Missing policy is rejected, and framing/reference
-helper tests pass. A final ARM64 repeat correctly rejected a changed HyperTrace
-SDK origin after the concurrent merge; fresh SDK preparation and current-input
-repeats are pending. Firmware/debug/full-system and performance gates remain open.
+helper tests pass. An ARM64 repeat correctly rejected a changed HyperTrace
+SDK origin after the concurrent merge; all three refreshed current-input repeats
+now pass with unchanged archive bytes. Firmware/debug/full-system and performance gates remain open.
 See [LIBSA-CROSS-EFI-QUALIFICATION.md](LIBSA-CROSS-EFI-QUALIFICATION.md).
 
 ## Standalone and EFI Ficl checkpoint (2026-11-03)
