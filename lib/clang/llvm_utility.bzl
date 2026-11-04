@@ -50,7 +50,7 @@ def llvm_utility(name, srcs, options, manual, deps = [], aliases = {}, generated
                 install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clang-man"], "//conditions:default": ["package=clang"]}))
             entries.append(":" + alias + "_manual_file")
     utility_installation(name = "install_manifest", program = name, binary = ":" + name + "_installed", manual = manual, package = "clang", extra_entries = entries)
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    bsd_install_archive(name = "install_archive", visibility = ["//usr.bin/clang:__pkg__"], manifests = [":install_manifest"],
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
         python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",

@@ -3,5 +3,19 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_man
 exports_files(["regress.m4"])
 bsd_install_file(name = "regression_macros", src = "regress.m4", destination = "/usr/tests/usr.bin/regress.m4",
     owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
-# Parent Kyuafile assembly remains part of full-world test inventory integration.
 bsd_install_manifest(name = "support_manifest", entries = [":regression_macros"], visibility = ["//visibility:public"])
+
+# Use the same source-owned, directory-discovering Kyuafile as bsd.test.mk.
+# The installed hierarchy determines child discovery; no generated allowlist.
+bsd_install_file(name = "kyuafile_file", src = "//tests:Kyuafile", destination = "/usr/tests/usr.bin/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":support_manifest"],
+    entries = [":kyuafile_file"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {"/usr/tests/usr.bin": json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]})},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//usr.bin:__pkg__"])

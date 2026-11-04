@@ -39,9 +39,9 @@ def lldb_utility(name, srcs, options, headers, manual, kvm = False):
     bsd_component_sources(name = "source_inventory", groups = [":objects"], visibility = ["//visibility:public"])
     bsd_component_objects(name = "compiler_outputs", group = ":objects", pic = False, visibility = ["//visibility:public"])
     utility_installation(name = "install_manifest", program = name, manual = manual, package = "lldb", binary = ":" + name + "_installed")
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    bsd_install_archive(name = "install_archive", visibility = ["//usr.bin/clang:__pkg__", "//lib/clang:__pkg__"], manifests = [":install_manifest"],
         directories = {p: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=lldb", "dbg"]}) for p in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
         python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
-        runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//lib/clang:__pkg__"])
+        runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

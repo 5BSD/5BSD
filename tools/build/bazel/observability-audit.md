@@ -11270,3 +11270,14 @@ DTrace/FIDL generator, probe or audit integration changes. Gzip's existing trace
 producer remains in its dependency graph. The bc/dc producer rename preserves
 actual script bytes and installed/Kyuafile names. Artifact/recovery/package checks
 do not establish full usr.bin, OS probe delivery or system runtime/performance.
+
+
+## LLVM and usr.bin test-root family composition in progress (2026-11-04)
+
+The current work changes component selection and installation composition, not
+LLVM compiler contexts, FIDL/DTrace generation or audit event definitions.
+Retain each selected producer and reject duplicate installed destinations;
+archive grouping does not prove probe firing or security audit delivery. The
+usr.bin root installs the unchanged source-owned automatic Kyuafile rather than
+inventing a second child-test allowlist. Native/archive/runtime qualification is
+pending; complete installed tests and OS observability remain open.

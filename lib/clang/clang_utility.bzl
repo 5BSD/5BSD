@@ -31,7 +31,7 @@ def clang_utility(name, srcs, options = None, deps = [], compatible_with = []):
     bsd_component_sources(name = "source_inventory", groups = [":objects"], visibility = ["//visibility:public"])
 
     utility_installation(name = "install_manifest", program = name, binary = ":" + name + "_installed", manual = None, package = "clang")
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    bsd_install_archive(name = "install_archive", visibility = ["//usr.bin/clang:__pkg__"], manifests = [":install_manifest"],
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
         python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",

@@ -1,5 +1,30 @@
 # Native Bazel completion plan
 
+## LLVM family composition in progress (2026-11-04)
+
+Normal LLVM family analysis now passes after preserving LLDB's existing archive
+visibility while granting its new family consumer. Full native compilation is
+running. Configured review now closes toolchain/utility overlap through one shared
+owner and a strict merged manifest: seven contributions account for all 17
+selected Make directories, with all 50 metadata input hashes rechecked. This
+query executes no actions. Before native qualification, run existing utility/
+profile/debugger tests and compare the usr.bin test-root archive with Make's
+two original files and directory metadata. Keep extras and unresolved alternate
+profiles explicit. No passing aggregate is claimed yet. See
+[USRBIN-FAMILY-CLOSURE.md](USRBIN-FAMILY-CLOSURE.md). All full-world/kernel/
+pkgbase/bootstrap/runtime/performance gates remain open; Make stays default.
+
+## Full usr.bin tests remain a separate completion gate (2026-11-04)
+
+The selected-profile review queue now maps all 243 immediate owners, not builds.
+A conservative scan finds 84 roots mentioning test recursion and 36 existing
+child test directories without local native BUILD declarations. Some declared
+native tests are samples, not the full original installed tests (awk/comm).
+Before family acceptance with tests enabled, reconcile configured child recursion,
+fixtures, support files, nested tests and original installation inventory. Keep
+these gaps visible; do not accept a source/query count as completed coverage.
+See USRBIN-FAMILY-CLOSURE.md and the r2 owner queue under /usr/obj/usr/src.
+
 ## usr.bin family closure prerequisites (2026-11-04)
 
 The production queue points to missing family composition rather than unowned

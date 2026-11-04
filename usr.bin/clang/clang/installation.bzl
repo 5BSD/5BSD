@@ -12,7 +12,7 @@ def clang_installation(binary):
         manual = "clang.1", package = "clang", bindir = "/usr/bin", man_section = "1",
         aliases = ["clang++", "clang-cpp", "cc", "c++", "cpp"],
         manual_aliases = ["CC"], extra_entries = [":cc_script"])
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    bsd_install_archive(name = "install_archive", visibility = ["//usr.bin/clang:__pkg__"], manifests = [":install_manifest"],
         mtree_specs = {
             "//etc/mtree:BSD.root.dist": "/",
             "//etc/mtree:BSD.usr.dist": "/usr",

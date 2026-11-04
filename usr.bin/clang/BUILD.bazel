@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":installation.bzl", "llvm_family_installation")
+
+llvm_family_installation()

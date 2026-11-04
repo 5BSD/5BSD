@@ -668,3 +668,8 @@ config_setting(name = "loader_pxe_explicit_simp", flag_values = {":loader_pxe_in
 selects.config_setting_group(name = "loader_pxe_auto_simp", match_all = [":loader_pxe_auto", ":loader_default_simp"] )
 selects.config_setting_group(name = "loader_pxe_simp", match_any = [":loader_pxe_explicit_simp", ":loader_pxe_auto_simp"], visibility = ["//visibility:public"])
 config_setting(name = "loader_pxe_auto", flag_values = {":loader_pxe_interpreter": "auto"})
+
+# MK_CLANG selects installed compiler programs; MK_CLANG_FULL independently
+# selects their full feature set and must not stand in for this switch.
+bool_flag(name = "clang", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "clang_enabled", flag_values = {":clang": "true"}, visibility = ["//visibility:public"])
