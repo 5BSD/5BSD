@@ -43,3 +43,9 @@ bsd_compare_test(name = "version_test", program = ":compile_et", arguments = ["-
     expected = "bazel-fixtures/empty", expected_stderr = "bazel-fixtures/version",
     runtime_lib = ["//kerberos5/lib/libroken:roken_shared", "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"],
     runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+_GENERATION_RUNTIME = ["//kerberos5/lib/libroken:roken_shared", "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"]
+bsd_python_test(name = "generation_test", src = "generation-test.py",
+    data = [":compile_et", "bazel-fixtures/sample.et"] + _GENERATION_RUNTIME,
+    args = ["$(rootpath :compile_et)", "$(rootpath bazel-fixtures/sample.et)"] + ["$(rootpath " + lib + ")" for lib in _GENERATION_RUNTIME], size = "small")

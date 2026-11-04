@@ -108,7 +108,7 @@ bsd_python_test(
 bsd_python_test(
     name = "install_reference_options_test",
     src = "install-reference-options-test.py",
-    data = ["install_reference_options.py", "install_reference_libraries.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
+    data = ["install_reference_options.py", "install_reference_libraries.py", "install_reference_generators.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
 )
 
 # Includes rejection of foreign userland and unqualified target execution.
@@ -331,3 +331,6 @@ bsd_host_artifact_test(name = "pxe_boot_test", src = "pxe-boot-test.py",
         "--metadata", "$(location //stand/i386/pxeldr:installation_metadata)", "--source-client", "$(location //stand/i386/pxeldr:source_client)"] + [
         item for option, target in [("image", "pxeboot"), ("prefix", "pxeldr"), ("object", "compiler_object"), ("client", "client"), ("loader", "loader"), ("archive", "install_archive")] for item in ["--" + option, "$(location //stand/i386/pxeldr:" + target + ")"]],
     size = "small", visibility = ["//visibility:public"])
+
+bsd_python_test(name = "install_reference_generators_test", src = "install-reference-generators-test.py",
+    data = ["install_reference_generators.py", "install_reference_libraries.py"], size = "small", visibility = ["//visibility:public"])

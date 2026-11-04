@@ -16,6 +16,21 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Original Heimdal library references and generation tests (2026-11-04)
+
+Maintained Make references now bind original native generator executables through
+versioned receipt/artifact inputs, verify compiler identity and hashes, and
+require direct use in completed metadata recipes. SDK verification precedes
+optional component configuration, so Heimdal can be selected against an unchanged
+MIT-profile SDK. Fresh original roken/vers builds pass. Sixty-one library object
+contracts pass: 59 raw exact and two isolated filename compiler controls; this
+covers regular roken and regular/PIE vers, not roken PIC/shared parity. Native
+compile_et generation tests pass for sparse indices/prefix reset/repeatability,
+invalid table names and missing input with no output artifacts. Six selected
+Bazel targets pass, including provenance-helper regressions. Consumer Make
+link/install/debug parity, roken installation and broader Heimdal composition
+remain open. See HEIMDAL-ORIGINAL-REFERENCE-QUALIFICATION.md.
+
 ## Heimdal libraries and compile_et candidate (2026-11-04)
 
 Native regular/PIE roken and vers archives, versioned roken DSO, generated

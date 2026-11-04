@@ -1,0 +1,9 @@
+# Exercise prefix changes and sparse error indices.
+error_table AB
+prefix TEST
+error_code FIRST, "first error"
+index 3
+error_code FOURTH, "fourth error"
+prefix
+error_code BARE, "bare error"
+end

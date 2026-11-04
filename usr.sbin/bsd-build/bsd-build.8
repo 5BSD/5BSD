@@ -2163,6 +2163,16 @@ and generated error-table qualification; full Heimdal profiles remain gated.
 See
 .Pa tools/build/bazel/HEIMDAL-COMPILE-ET-CANDIDATE.md .
 .Pp
+The maintained independent Make reference helper also accepts
+.Fl -generator-inputs
+with metadata mode: original native generator receipts and executable hashes
+are bound explicitly, checked around commands and audited in completed recipes.
+This supports fresh Heimdal library references without installing build tools.
+Native compile_et tests exercise generated error-table semantics and failures.
+Original consumer/shared installation parity remains required.
+See
+.Pa tools/build/bazel/HEIMDAL-ORIGINAL-REFERENCE-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

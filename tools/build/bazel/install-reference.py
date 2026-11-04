@@ -15,6 +15,7 @@ import subprocess
 import libmd_environment
 import install_reference_options
 import install_reference_libraries
+import install_reference_generators
 from libmd_environment import BuildEnvironment, digest
 
 
@@ -50,7 +51,11 @@ def main():
                         help='require this generated header basename from the isolated component object directory')
     parser.add_argument("--library-inputs", type=Path,
                         help="explicit original archive/receipt bindings; no SDK archive copies")
+    parser.add_argument("--generator-inputs", type=Path,
+                        help="explicit original native Make generator receipt/executable bindings; requires metadata")
     args = parser.parse_args()
+    if args.generator_inputs and not args.make_meta:
+        parser.error('--generator-inputs requires --make-meta')
     if args.build_utc is not None and not 0 <= args.build_utc <= 2**63 - 1:
         parser.error('--build-utc must fit a nonnegative signed 64-bit integer')
     if (len(set(args.local_generated_header)) != len(args.local_generated_header) or
@@ -76,12 +81,16 @@ def main():
         parser.error('component must be a maintained directory within the actual source tree')
     definitions = install_reference_options.component_definitions(
         component, args.make_define, option_names=selected)
-    environment = BuildEnvironment(src, objtop, profile, make, component, target_architecture=args.target_arch)
+    # Establish the unchanged SDK/profile using its baseline component first.
+    # An explicitly selected optional component can be invalid under the SDK's
+    # default options (for example Heimdal with an MIT-configured SDK).
+    environment = BuildEnvironment(src, objtop, profile, make, src / 'lib/libmd', target_architecture=args.target_arch)
     definitions = install_reference_options.component_definitions(
         component, args.make_define, option_names=selected,
         profile_names=environment.assignments)
     # Verify the baseline before changing the isolated component configuration.
     environment.verify()
+    environment.component = component
     component_options = {name: 'yes' for name in args.with_option}
     component_options.update({name: 'no' for name in args.without_option})
     for name, expected in component_options.items():
@@ -113,6 +122,23 @@ def main():
         if (len(identity) != 4 or identity[:3] != [str(objtop), environment.assignments['TARGET'], environment.assignments['TARGET_ARCH']] or
                 shlex.split(identity[3]) != environment.cc):
             raise ValueError('component define changed baseline SDK/target/compiler identity')
+    generator_inputs, generator_bindings = {}, {}
+    if args.generator_inputs:
+        # This frontend currently executes on AMD64; target references can be
+        # foreign, but their generators must be native to the execution host.
+        import platform
+        execution_arch = {"amd64": "amd64", "x86_64": "amd64"}.get(platform.machine().lower())
+        if execution_arch is None:
+            raise ValueError('original generator binding needs a qualified execution host')
+        generator_inputs, generator_bindings = install_reference_generators.load(
+            args.generator_inputs, execution_arch, src, Path(environment.compiler_selected))
+        for variable, record in generator_inputs.items():
+            environment.options.append(variable + '=' + record['artifact'])
+            if environment.query(['-V', variable]).strip() != record['artifact']:
+                raise ValueError('original generator override is ineffective: ' + variable)
+        identity = environment.query(['-V', 'OBJTOP', '-V', 'MACHINE', '-V', 'MACHINE_ARCH', '-V', '${CC}'], component=src / 'lib/libmd').splitlines()
+        if len(identity) != 4 or identity[:3] != [str(objtop), environment.assignments['TARGET'], environment.assignments['TARGET_ARCH']] or shlex.split(identity[3]) != environment.cc:
+            raise ValueError('generator binding changed selected SDK/compiler identity')
     library_inputs, library_bindings = {}, {}
     audit_library_links = False
     if args.library_inputs:
@@ -163,7 +189,8 @@ def main():
     implementations = {str(Path(__file__).resolve()): digest(Path(__file__)),
                        str(Path(libmd_environment.__file__).resolve()): digest(Path(libmd_environment.__file__)),
                        str(Path(install_reference_options.__file__).resolve()): digest(Path(install_reference_options.__file__)),
-                       str(Path(install_reference_libraries.__file__).resolve()): digest(Path(install_reference_libraries.__file__))}
+                       str(Path(install_reference_libraries.__file__).resolve()): digest(Path(install_reference_libraries.__file__)),
+                       str(Path(install_reference_generators.__file__).resolve()): digest(Path(install_reference_generators.__file__))}
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference' if args.target_arch == 'amd64' else 'cross-Make-installation-reference', 'target_architecture': args.target_arch,
                'component': str(component), 'jobs': args.jobs,
                'make_metadata': {'enabled': args.make_meta,
@@ -171,6 +198,7 @@ def main():
                'component_options': component_options,
                'component_definitions': definitions,
                'library_reference_inputs': library_inputs,
+               'generator_reference_inputs': generator_inputs,
                'build_utc': args.build_utc,
                'local_generated_headers': args.local_generated_header,
                'sdk_reconfigured': False, 'source_hashes': source_hashes,
@@ -185,12 +213,14 @@ def main():
 
     def run(command, label):
         install_reference_libraries.verify(library_bindings)
+        install_reference_generators.verify(generator_bindings)
         log = output / (label + '.log')
         with log.open('w') as stream:
             result = subprocess.run(command, env=build_environment, stdout=stream, stderr=subprocess.STDOUT)
         receipt['commands'].append({'argv': command, 'status': result.returncode,
                                     'log': log.name, 'log_sha256': digest(log)})
         install_reference_libraries.verify(library_bindings)
+        install_reference_generators.verify(generator_bindings)
         if result.returncode:
             raise RuntimeError(label + ' failed; see ' + str(log))
 
@@ -209,6 +239,8 @@ def main():
         if args.make_meta:
             base += ['.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=yes']
         run(buildenv(base + ['-j' + str(args.jobs), 'all']), 'build')
+        if generator_inputs:
+            receipt['generator_recipe_audit'] = install_reference_generators.audit_recipes(objects, generator_inputs)
         if audit_library_links:
             receipt['library_link_audit'] = install_reference_libraries.audit_links(objects, library_inputs)
         flags = ['NO_ROOT=yes', 'DB_FROM_SRC=yes', 'BUILD_PKGS=yes',
