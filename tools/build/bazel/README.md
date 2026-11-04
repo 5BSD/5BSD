@@ -48753,3 +48753,16 @@ headers and two binary firmware input contexts. Six declared tests pass.
 See [CROSS-KERNEL-CORE-QUALIFICATION.md](CROSS-KERNEL-CORE-QUALIFICATION.md).
 Complete kernels, other configurations, debug source packages, boot/runtime,
 world/packages/bootstrap/sandbox/cache and comparative performance remain open.
+
+### Native loader version generation (2026-11-04)
+
+The maintained version script now runs as a declared native Bazel action for
+AMD64, ARM64 and RISC-V. Original-script byte comparisons, seven focused methods
+and metadata change/restoration checks pass. Typed format-5 settings select
+reproducible output or an explicit metadata source label; no host identity or
+test metadata is selected by default. See
+[LOADER-VERSION-QUALIFICATION.md](LOADER-VERSION-QUALIFICATION.md).
+
+Next: actual loader entry objects and final native links, then installation/debug
+and runtime qualification. All complete world/kernel/module, bootstrap/sandbox,
+package/publication and performance gates remain open. Make stays default.

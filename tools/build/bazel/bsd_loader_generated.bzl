@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Loader font and ordered help generation with declared native tools."""
+"""Loader font, help and version generation with declared native tools."""
 
 def _library_directories(files):
     # Pure Python source/data directories are not native library search paths.
@@ -61,4 +61,55 @@ bsd_loader_help = rule(implementation = _help, attrs = {
     "python_home": attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = "exec"),
     "python_runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib"], allow_files = True, cfg = "exec"),
     "_runner": attr.label(default = Label("//tools/build/bazel:loader_help.py"), allow_single_file = True),
+})
+
+
+def _version(ctx):
+    metadata = ctx.attr.metadata[DefaultInfo].files.to_list() if ctx.attr.metadata else []
+    if not ctx.attr.reproducible and len(metadata) != 1:
+        fail("select exactly one explicit loader version metadata file outside reproducible mode")
+    output = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.output)
+    args = ctx.actions.args()
+    args.add_all(["-B", "-S", ctx.file._version_runner.path,
+        "--script", ctx.file.script.path, "--version", ctx.file.version.path,
+        "--output", output.path, "--description", ctx.attr.description, "--machine", ctx.attr.machine])
+    tools = []
+    for name in ["shell", "awk", "mktemp", "cat", "mv", "rm"]:
+        target = getattr(ctx.attr, name)
+        args.add_all(["--" + name, getattr(ctx.executable, name).path])
+        tools.append(target[DefaultInfo].files_to_run)
+    inputs = [ctx.file._version_runner, ctx.file.script, ctx.file.version, ctx.file.python_home]
+    if ctx.attr.reproducible:
+        args.add("--reproducible")
+    else:
+        args.add_all(["--metadata", metadata[0].path])
+        inputs.append(metadata[0])
+    args.add_all(ctx.files.tool_runtime, before_each = "--runtime")
+    ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run, arguments = [args],
+        inputs = inputs, tools = tools + ctx.files.tool_runtime + ctx.files.python_runtime,
+        outputs = [output], use_default_shell_env = False,
+        env = {"LC_ALL": "C", "PYTHONHOME": ctx.file.python_home.dirname,
+            "PYTHONNOUSERSITE": "1", "LD_LIBRARY_PATH": ":".join(_library_directories(ctx.files.python_runtime))},
+        mnemonic = "BSDLoaderVersion")
+    return [DefaultInfo(files = depset([output]))]
+
+bsd_loader_version = rule(implementation = _version, attrs = {
+    "version": attr.label(allow_single_file = True, mandatory = True),
+    "output": attr.string(mandatory = True),
+    "description": attr.string(mandatory = True),
+    "machine": attr.string(mandatory = True),
+    "reproducible": attr.bool(mandatory = True),
+    "metadata": attr.label(allow_files = True),
+    "script": attr.label(default = "//stand/common:newvers.sh", allow_single_file = True),
+    "shell": attr.label(default = "@bsd_sdk//toolchain:sh", executable = True, allow_single_file = True, cfg = "exec"),
+    "awk": attr.label(default = "@bsd_sdk//toolchain:awk", executable = True, allow_single_file = True, cfg = "exec"),
+    "mktemp": attr.label(default = "@bsd_sdk//toolchain:extra_mktemp", executable = True, allow_single_file = True, cfg = "exec"),
+    "cat": attr.label(default = "@bsd_sdk//toolchain:cat", executable = True, allow_single_file = True, cfg = "exec"),
+    "mv": attr.label(default = "@bsd_sdk//toolchain:mv", executable = True, allow_single_file = True, cfg = "exec"),
+    "rm": attr.label(default = "@bsd_sdk//toolchain:rm", executable = True, allow_single_file = True, cfg = "exec"),
+    "tool_runtime": attr.label_list(default = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:extra_mktemp_runtime", "@bsd_sdk//toolchain:cat_runtime", "@bsd_sdk//toolchain:mv_runtime", "@bsd_sdk//toolchain:rm_runtime"], allow_files = True, cfg = "exec"),
+    "python": attr.label(default = "@bsd_sdk//toolchain:extra_python", executable = True, allow_single_file = True, cfg = "exec"),
+    "python_home": attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = "exec"),
+    "python_runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib"], allow_files = True, cfg = "exec"),
+    "_version_runner": attr.label(default = Label("//tools/build/bazel:loader_version.py"), allow_single_file = True),
 })

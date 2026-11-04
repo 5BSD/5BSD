@@ -2084,3 +2084,16 @@ ordinary Make interface and output while removing metadata-only calls from -r.
 Continue the full installation/debug, world/rescue/cross kernel/module,
 bootstrap/sandbox/cache, publication, runtime and CPU/memory/disk gates.
 Make stays default; BIP remains excluded. No installation or reboot authorized.
+
+### Native loader version generation (2026-11-04)
+
+The maintained version script now runs as a declared native Bazel action for
+AMD64, ARM64 and RISC-V. Original-script byte comparisons, seven focused methods
+and metadata change/restoration checks pass. Typed format-5 settings select
+reproducible output or an explicit metadata source label; no host identity or
+test metadata is selected by default. See
+[LOADER-VERSION-QUALIFICATION.md](LOADER-VERSION-QUALIFICATION.md).
+
+Next: actual loader entry objects and final native links, then installation/debug
+and runtime qualification. All complete world/kernel/module, bootstrap/sandbox,
+package/publication and performance gates remain open. Make stays default.

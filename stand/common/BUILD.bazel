@@ -16,3 +16,8 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootstrap.h', 'disk.
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'readin.h'], visibility = ["//stand/libsa:__pkg__"])
 
 exports_files(["help.common", "merge_help.awk"], visibility = ["//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])
+
+exports_files(["newvers.sh"], visibility = ["//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__", "//tools/build/bazel/tests/loader:__pkg__"])
+
+# Site identity is supplied by the build configuration, without a fabricated default.
+filegroup(name = "unconfigured_version_metadata", srcs = [], visibility = ["//visibility:public"])

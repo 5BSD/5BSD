@@ -579,3 +579,12 @@ config_setting(name = "loader_zfs_enabled", flag_values = {":loader_zfs": "true"
 # Matches the maintained standalone verifier lookup order; builders may override.
 string_flag(name = "loader_manifest_names", build_setting_default = "manifest ../manifest",
     visibility = ["//visibility:public"])
+
+# bsd.opts.mk defaults REPRODUCIBLE_BUILD to no. Non-reproducible loader
+# generation requires recorded build metadata instead of reading the host.
+bool_flag(name = "reproducible_build", build_setting_default = False,
+    visibility = ["//visibility:public"])
+config_setting(name = "reproducible_build_enabled", flag_values = {":reproducible_build": "true"},
+    visibility = ["//visibility:public"])
+label_flag(name = "loader_version_metadata", build_setting_default = "//stand/common:unconfigured_version_metadata",
+    visibility = ["//visibility:public"])

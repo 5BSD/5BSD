@@ -29,42 +29,61 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-tempfile=$(mktemp tmp.XXXXXX) || exit
-trap "rm -f $tempfile" EXIT INT TERM
-
+# Tool overrides and an explicit output let native build actions declare every
+# executable and artifact. Ordinary Make callers retain the same defaults.
+version_output=vers.c
 include_metadata=true
-while getopts r opt; do
+while getopts ro: opt; do
 	case "$opt" in
 	r)
 		include_metadata=
 		;;
+	o)
+		version_output=$OPTARG
+		;;
+	*)
+		exit 1
+		;;
 	esac
 done
 shift $((OPTIND - 1))
+if [ "$#" -ne 3 ]; then
+	printf 'usage: %s [-r] [-o output] version-file description machine\n' "$0" >&2
+	exit 1
+fi
 
 LC_ALL=C; export LC_ALL
-u=${USER-root} h=${HOSTNAME-`hostname`}
-if [ -n "$SOURCE_DATE_EPOCH" ]; then
-	if ! t=$(date -ur $SOURCE_DATE_EPOCH 2>/dev/null); then
-		echo "Invalid SOURCE_DATE_EPOCH" >&2
-		exit 1
+# Reproducible output does not consume date, user or host metadata.
+if [ -n "$include_metadata" ]; then
+	u=${USER-root} h=${HOSTNAME-`hostname`}
+	if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+		if ! t=$(date -ur "$SOURCE_DATE_EPOCH" 2>/dev/null); then
+			echo "Invalid SOURCE_DATE_EPOCH" >&2
+			exit 1
+		fi
+	else
+		t="${NEWVERS_DATE:-`date`}"
 	fi
-else
-	t="${NEWVERS_DATE:-`date`}"
 fi
-r=`awk -F: ' /^[0-9]\.[0-9]+:/ { print $1; exit }' $1`
+r=$("${NEWVERS_AWK:-awk}" -F: ' /^[0-9]\.[0-9]+:/ { print $1; exit }' "$1")
+if [ -z "$r" ]; then
+	echo "Missing loader revision" >&2
+	exit 1
+fi
 
 bootprog_info="5BSD/${3} ${2}, Revision ${r}\\n"
-if [ -n "${include_metadata}" ]; then
+if [ -n "$include_metadata" ]; then
 	bootprog_info="$bootprog_info(${t} ${u}@${h})\\n"
-	if [ -n "$BUILD_UTC" ]; then
+	if [ -n "${BUILD_UTC:-}" ]; then
 		# We can use what(1) to extract BUILD_UTC
 		bootprog_info="$bootprog_info\\0@(#)BUILD_UTC=$BUILD_UTC"
 	fi
 fi
 
-cat > $tempfile <<EOF
+tempfile=$("${NEWVERS_MKTEMP:-mktemp}" "${version_output}.XXXXXX") || exit
+trap '"${NEWVERS_RM:-rm}" -f "$tempfile"' EXIT INT TERM
+"${NEWVERS_CAT:-cat}" > "$tempfile" <<EOF
 char bootprog_info[] = "$bootprog_info";
 unsigned bootprog_rev = ${r%%.*} * 1000 + ${r##*.};
 EOF
-mv $tempfile vers.c
+"${NEWVERS_MV:-mv}" "$tempfile" "$version_output"

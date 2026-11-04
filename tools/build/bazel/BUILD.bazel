@@ -229,3 +229,22 @@ bsd_host_artifact_test(name = "loader_help_test", src = "loader-help-test.py",
         "--script", "$(rlocationpath //stand/common:merge_help.awk)",
         "--common", "$(rlocationpath //stand/common:help.common)",
         "--fdt", "$(rlocationpath //stand/fdt:help.fdt)"])
+
+exports_files(["loader_version.py"], visibility = ["//visibility:public"])
+bsd_host_artifact_test(name = "loader_version_test", src = "loader-version-test.py",
+    data = ["loader_version.py", "//stand/common:newvers.sh",
+        "@bsd_sdk//toolchain:sh", "@bsd_sdk//toolchain:awk", "@bsd_sdk//toolchain:extra_mktemp",
+        "@bsd_sdk//toolchain:cat", "@bsd_sdk//toolchain:mv", "@bsd_sdk//toolchain:rm",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mktemp_runtime"],
+    args = ["--shell", "$(rlocationpath @bsd_sdk//toolchain:sh)",
+        "--script", "$(rlocationpath //stand/common:newvers.sh)",
+        "--awk", "$(rlocationpath @bsd_sdk//toolchain:awk)",
+        "--mktemp", "$(rlocationpath @bsd_sdk//toolchain:extra_mktemp)",
+        "--cat", "$(rlocationpath @bsd_sdk//toolchain:cat)",
+        "--mv", "$(rlocationpath @bsd_sdk//toolchain:mv)",
+        "--rm", "$(rlocationpath @bsd_sdk//toolchain:rm)",
+        "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/lib/libc.so.7)",
+        "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7)",
+        "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1)"])

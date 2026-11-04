@@ -10978,3 +10978,11 @@ algorithm; errors propagate through failed Bazel actions, and malformed-script
 coverage rejects partial successful output. No assertion or diagnostic was
 suppressed. These generation checks do not exercise final loader commands,
 firmware I/O or boot failure diagnostics; those remain runtime qualification.
+
+## Loader version generation (2026-11-04)
+
+The original version algorithm and C payload framing are retained. Missing
+revision/invalid metadata fail the build; no version, user, host or clock fallback
+is manufactured for native actions. Reproducible mode skips unused host metadata
+calls. This offline generator has no dedicated DTrace provider or BSM source;
+firmware/loader failure paths still require final runtime qualification.

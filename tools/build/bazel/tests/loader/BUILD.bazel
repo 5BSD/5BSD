@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_loader_generated.bzl", "bsd_loader_version")
+bsd_loader_version(name = "version_with_metadata", testonly = True,
+    version = "version", output = "vers.c", description = "loader fixture",
+    machine = "test64", reproducible = False, metadata = "version-metadata.json",
+    visibility = ["//visibility:public"])
+
+# Explicit qualification input only; never the production setting default.
+exports_files(["version-metadata.json"], visibility = ["//visibility:public"])

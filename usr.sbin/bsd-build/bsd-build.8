@@ -4698,10 +4698,28 @@ and
 stream ordered source inputs through the maintained AWK script.
 Native and foreign target configurations share these architecture-independent
 outputs while retaining declared native tool/runtime inputs.
-Final version generation, entry/link/profile dispatch and boot qualification
-remain open.
+Entry/link/profile dispatch and boot qualification remain open.
 See
 .Pa tools/build/bazel/LOADER-GENERATORS-QUALIFICATION.md .
+.Ss Native loader version candidates
+.Li //stand/efi/loader:version_reproducible
+uses the maintained version script with metadata suppressed.
+.Li //stand/efi/loader:version_configured
+uses the format-5 boolean setting
+.Li //tools/build/bazel/config:reproducible_build
+(default false, matching Make).
+Outside reproducible mode, the label setting
+.Li //tools/build/bazel/config:loader_version_metadata
+must select exactly one source JSON file.
+The default selects no file and supplies no implicit host or test identity.
+The JSON requires string fields date, user and host, with an optional decimal
+string build_utc; date must be nonempty.
+Unsafe C string characters and unknown fields are rejected.
+Reproducible mode consumes no metadata file or host clock.
+Tools and native runtime are declared inputs; final loader links and firmware
+execution remain unqualified.
+See
+.Pa tools/build/bazel/LOADER-VERSION-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive
