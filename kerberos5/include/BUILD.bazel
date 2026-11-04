@@ -6,3 +6,4 @@ cc_library(
     strip_include_prefix = ".",
     visibility = ["//kerberos5:__subpackages__"],
 )
+cc_library(name = "version_headers", hdrs = ["version.h"], strip_include_prefix = ".", visibility = ["//kerberos5/lib/libvers:__pkg__"])

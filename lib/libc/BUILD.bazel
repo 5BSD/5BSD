@@ -70,7 +70,7 @@ bsd_configured_version_map(name = "version_map",
 # Shared libc uses its own filtered syscall bodies. Runtime dependencies remain
 # below the archive root so cc_shared_library extracts only needed builtins.
 cc_import(name = "shared_link_objects", static_library = ":shared_objects_archive",
-    deps = ["//lib/libcompiler_rt:compiler_rt", "//lib/libsys:sys"], visibility = ["//lib/librpcsvc:__pkg__", "//lib/libypclnt:__pkg__"])
+    deps = ["//lib/libcompiler_rt:compiler_rt", "//lib/libsys:sys"], visibility = ["//lib/librpcsvc:__pkg__", "//lib/libypclnt:__pkg__", "//kerberos5/lib/libroken:__pkg__"])
 cc_shared_library(name = "c_shared", deps = [":shared_link_objects"],
     dynamic_deps = ["//lib/libsys:sys_shared"], shared_lib_name = "libc.so.7",
     additional_linker_inputs = [":version_map"],

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
 load(":header.bzl", "roken_header")
 
@@ -30,3 +30,5 @@ roken_header(
     redirect = "@bsd_sdk//toolchain:stdout_redirect",
     visibility = ["//kerberos5:__subpackages__"],
 )
+cc_library(name = "headers", hdrs = [":roken_header"], strip_include_prefix = ".",
+    visibility = ["//kerberos5:__subpackages__"])

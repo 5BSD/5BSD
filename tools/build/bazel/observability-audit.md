@@ -11349,3 +11349,13 @@ does not rewrite programs, test scripts, probes, generators or audit events.
 Configured archive analysis is not suite execution; original installation and
 actual archived content comparisons remain pending. Full installed tests and
 probe/audit runtime checks remain open.
+
+## Heimdal roken/vers/compile_et candidate (2026-11-04)
+
+The three original component Makefiles contain no DTrace provider or audit-link
+selection; no original instrumentation source was removed in this conversion.
+The candidate adds no probes/audit events. Error-table generation is a build
+operation; absence of dedicated security audit events is not by itself a defect.
+Roken includes network/process/file helpers used by other consumers: a separate
+operation-level instrumentation review remains necessary when those consumers
+are qualified. No runtime probe firing or audit-delivery coverage is claimed.

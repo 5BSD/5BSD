@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+[cc_library(name = "vers" + suffix, srcs = ["//crypto/heimdal/lib/vers:print_version.c"],
+    deps = ["//kerberos5/lib/libroken:headers"],
+    implementation_deps = ["//kerberos5/include:config_headers", "//kerberos5/include:version_headers"],
+    local_defines = ["HAVE_CONFIG_H"], copts = ["-fpie"] if suffix else [],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//kerberos5:__subpackages__", "//usr.bin/compile_et:__pkg__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":vers"])
+bsd_component_archive(name = "pie_archive", groups = [":vers_pie"])

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "headers", deps = ["//kerberos5/tools/make-roken:headers", "//crypto/heimdal/lib/roken:headers"],
+    visibility = ["//kerberos5:__subpackages__", "//usr.bin/compile_et:__pkg__"])
+load(":sources.bzl", "ROKEN_SOURCES")
+[cc_library(name = "roken" + suffix, srcs = ROKEN_SOURCES,
+    deps = [":headers", "//lib/libcrypt:crypt", "//lib/libc:shared_link_objects"],
+    implementation_deps = ["//kerberos5/include:config_headers", "//crypto/openssl:headers"],
+    local_defines = ["HAVE_CONFIG_H"], copts = ["-fpie"] if suffix else [],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//kerberos5:__subpackages__", "//usr.bin/compile_et:__pkg__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":roken"])
+bsd_component_archive(name = "pie_archive", groups = [":roken_pie"])
+cc_shared_library(name = "roken_shared", deps = [":roken"],
+    dynamic_deps = ["//lib/libcrypt:crypt_shared", "//lib/libc:c_shared"],
+    shared_lib_name = "libroken.so.11",
+    user_link_flags = ["-Wl,-soname,libroken.so.11", "-Wl,--version-script=$(location //crypto/heimdal/lib/roken:version-script.map)", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    additional_linker_inputs = ["//crypto/heimdal/lib/roken:version-script.map"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//usr.bin/compile_et:__pkg__"])

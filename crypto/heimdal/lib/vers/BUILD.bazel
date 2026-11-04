@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["print_version.c"], visibility = ["//kerberos5/lib/libvers:__pkg__"])

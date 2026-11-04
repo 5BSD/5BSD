@@ -2155,6 +2155,14 @@ this does not qualify Heimdal library consumers or complete system bootstrap.
 See
 .Pa tools/build/bazel/HEIMDAL-ROKEN-GENERATOR-QUALIFICATION.md .
 .Pp
+Explicit Heimdal library and compile_et targets also build regular/PIE
+archives, the versioned roken shared library, lexer/parser outputs and a consumer
+installation contribution, with a selected native CLI runtime test.
+These remain candidates pending independent Make consumer/install comparisons
+and generated error-table qualification; full Heimdal profiles remain gated.
+See
+.Pa tools/build/bazel/HEIMDAL-COMPILE-ET-CANDIDATE.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

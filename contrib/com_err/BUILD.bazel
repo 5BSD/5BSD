@@ -2,3 +2,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["com_err.h", "com_right.h"], includes = ["."], visibility = ["//lib/libcom_err:__pkg__"])
 exports_files(["com_err.c", "error.c", "com_err.h", "com_right.h", "com_err.3", "version-script.map"], visibility = ["//lib/libcom_err:__pkg__"])
+cc_library(name = "compiler_headers", hdrs = ["compile_et.h", "lex.h"], strip_include_prefix = ".", visibility = ["//usr.bin/compile_et:__pkg__"])
+exports_files(["compile_et.c", "parse.y", "lex.l", "compile_et.1"], visibility = ["//usr.bin/compile_et:__pkg__"])

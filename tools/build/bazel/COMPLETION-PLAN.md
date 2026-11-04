@@ -16,6 +16,20 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Heimdal libraries and compile_et candidate (2026-11-04)
+
+Native regular/PIE roken and vers archives, versioned roken DSO, generated
+lexer/parser, compile_et consumer and component installation archive now build
+through maintained format-5. The CLI version test executes with declared native
+runtime libraries. Both roken archives contain all 59 original source members;
+both vers archives contain the original single source. The captured three-file
+consumer archive has a verified executable/debug CRC pair. This is a candidate,
+not independent Make consumer/library/install parity or full Heimdal closure.
+The existing root Heimdal rejection remains. Next: original generator-tool
+bindings for fresh Make library references, generated error-table semantics,
+shared-library installation and parent integration. See
+HEIMDAL-COMPILE-ET-CANDIDATE.md.
+
 ## Heimdal platform-header generator (2026-11-04)
 
 Native make-roken now preserves the original AWK -> configured C executable ->
