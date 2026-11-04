@@ -2268,3 +2268,21 @@ manual comparisons pass, with all 27 ARM64 pre-test captures retained in the tes
 A shared userland warning-policy gate remains: literal -Werror operands currently
 prevent reliable werror=false selection. Complete bootloader/system/package,
 firmware, bootstrap/sandbox/cache and performance gates remain open. Make stays default.
+
+### 2026-11-04: Cross Forth/simple EFI variants
+
+Four independent original Make references pass for ARM64/RISC-V Forth/simple.
+The shared native cross ABI/source/order model now selects interpreter inputs
+explicitly; all 192 original compiler recipes agree with its flag/order model.
+Both native cross builds, thirteen artifact wrappers across three architectures,
+controlled payload comparisons and actual 192 compiler/input-chain reviews pass.
+The first response-file audit failure and its digest-bound correction are retained.
+AMD64 retains all 225 prior captures; each cross Lua profile retains fifty. See
+[CROSS-EFI-VARIANTS-QUALIFICATION.md](CROSS-EFI-VARIANTS-QUALIFICATION.md).
+Complete bootloader, whole-system and performance gates remain open.
+
+Freestanding input-closure follow-up: a retained RISC-V compiler action declares
+4,346 inputs, with 4,104 SDK sysroot files under -nostdinc. Review native
+freestanding toolchain specialization and incremental invalidation with real
+input/cache tests; preserve every required input and dependency validation.
+See the cross EFI variant qualification record.

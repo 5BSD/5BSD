@@ -20,4 +20,4 @@ exports_files(['boot1.c'], visibility = ['//stand/efi/gptboot:__pkg__'])
 
 exports_files(['ufs_module.c'], visibility = ['//stand/efi/gptboot:__pkg__'])
 
-exports_files(["artifact_test.py"], visibility = ["//stand/efi/gptboot:__pkg__"])
+exports_files(["artifact_test.py"], visibility = ["//stand/efi/gptboot:__pkg__", "//stand/efi/loader_4th:__pkg__", "//stand/efi/loader_simp:__pkg__"])

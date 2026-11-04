@@ -34,3 +34,7 @@ bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['_armreg.h', '_i
 bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'param.h'], visibility = ["//stand/efi/boot1:__pkg__"])
 
 bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'param.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_aarch64_headers', hdrs = ['_armreg.h', '_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'armreg.h', 'atomic.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'psl.h', 'setjmp.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['_armreg.h', '_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'armreg.h', 'atomic.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'psl.h', 'setjmp.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])

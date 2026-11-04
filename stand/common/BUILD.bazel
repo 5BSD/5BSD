@@ -32,9 +32,9 @@ bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['bootstrap.h', 'dev_
 
 bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'load_elf_obj.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h', 'veritydev.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
 
-exports_files(['interp_forth.c'], visibility = ['//stand/efi/loader_4th:__pkg__'])
 
-exports_files(['interp_simple.c'], visibility = ['//stand/efi/loader_simp:__pkg__'])
+
+
 
 exports_files(['load_elf32.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
@@ -48,7 +48,85 @@ bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['bootstrap.h', '
 
 bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h', 'veritydev.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-exports_files(['metadata.c'], visibility = ['//stand/efi/loader:__pkg__'])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exports_files(['interp_lua.c'], visibility = ['//stand/efi/loader:__pkg__'])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+
+
+bsd_source_headers(name = 'efi_loader_simp_aarch64_headers', hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h', 'veritydev.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h', 'veritydev.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h', 'veritydev.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h', 'veritydev.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+
+
+
 
 exports_files(['bcache.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
@@ -70,15 +148,19 @@ exports_files(['interp.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand
 
 exports_files(['interp_backslash.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
-exports_files(['interp_lua.c'], visibility = ['//stand/efi/loader:__pkg__'])
+exports_files(['interp_forth.c'], visibility = ['//stand/efi/loader_4th:__pkg__'])
 
 exports_files(['interp_parse.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['interp_simple.c'], visibility = ['//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['load_elf64.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['ls.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['md.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['metadata.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['misc.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
@@ -91,6 +173,8 @@ exports_files(['nvstore.c'], visibility = ['//stand/efi/loader:__pkg__', '//stan
 exports_files(['part.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['reloc_elf64.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['self_reloc.c'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['tslog.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
@@ -105,13 +189,3 @@ exports_files(['verity_commands.c'], visibility = ['//stand/efi/loader:__pkg__',
 exports_files(['veritydev.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['zfs_cmd.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
-
-bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/boot1:__pkg__"])
-
-bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/boot1:__pkg__"])
-
-bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
-
-bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
-
-exports_files(['self_reloc.c'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

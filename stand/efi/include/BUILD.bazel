@@ -32,3 +32,11 @@ bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['efi.h', 'efichar
 bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['efi.h', 'efichar.h', 'eficonsctl.h', 'efilib.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
 
 bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['efi.h', 'efichar.h', 'eficonsctl.h', 'efilib.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_aarch64_headers', hdrs = ['efi.h', 'efichar.h', 'eficonsctl.h', 'efilib.h', 'efipciio.h', 'efizfs.h', 'ipxe_download.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['efi.h', 'efichar.h', 'eficonsctl.h', 'efilib.h', 'efipciio.h', 'efizfs.h', 'ipxe_download.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['efi.h', 'efichar.h', 'eficonsctl.h', 'efilib.h', 'efipciio.h', 'efizfs.h', 'ipxe_download.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['efi.h', 'efichar.h', 'eficonsctl.h', 'efilib.h', 'efipciio.h', 'efizfs.h', 'ipxe_download.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])

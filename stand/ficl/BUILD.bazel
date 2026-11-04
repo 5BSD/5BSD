@@ -93,3 +93,7 @@ ficl_archive_test(name = "efi_archive_test", archive = ":efi_static_archive",
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['amd64/sysdep.h', 'ficl.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['aarch64/sysdep.h', 'ficl.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['ficl.h', 'riscv/sysdep.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])

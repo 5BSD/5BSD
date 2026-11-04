@@ -6046,3 +6046,10 @@ Alternate userland warning policy remains incomplete where profiles retain
 literal compiler warning options.
 See
 .Pa tools/build/bazel/CROSS-EFI-BOOTSTRAP-QUALIFICATION.md .
+.Pp
+Selected native EFI Forth and simple loader candidates also include ARM64 and
+RISC-V profiles with native FDT libraries and explicit interpreter inputs.
+Their host artifact tests inspect target files without executing firmware.
+Native build and independent parity qualification are recorded in
+.Pa tools/build/bazel/CROSS-EFI-VARIANTS-QUALIFICATION.md .
+These profiles do not establish a complete bootloader or system backend.

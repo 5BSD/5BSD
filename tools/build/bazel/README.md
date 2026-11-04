@@ -48885,3 +48885,10 @@ manual comparisons pass, with all 27 ARM64 pre-test captures retained in the tes
 A shared userland warning-policy gate remains: literal -Werror operands currently
 prevent reliable werror=false selection. Complete bootloader/system/package,
 firmware, bootstrap/sandbox/cache and performance gates remain open. Make stays default.
+
+ARM64/RISC-V Forth and simple EFI candidates now share the Lua ABI/source/link
+model while preserving explicit interpreter and version dependencies. Cross native
+builds, artifact tests, controlled payload comparisons and Lua regressions pass;
+real compiler/input audits and AMD64 regression pass. Retained response-file audit
+failures are corrected with actual input-digest bindings. See
+[CROSS-EFI-VARIANTS-QUALIFICATION.md](CROSS-EFI-VARIANTS-QUALIFICATION.md).

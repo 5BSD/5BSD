@@ -25,3 +25,11 @@ bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['zfs/zfsimpl.h']
 bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['zfs/blake3_zfs.c', 'zfs/blkptr.c', 'zfs/fletcher.c', 'zfs/gzip.c', 'zfs/lzjb.c', 'zfs/sha256.c', 'zfs/skein_zfs.c', 'zfs/zfsimpl.h', 'zfs/zfssubr.c', 'zfs/zle.c'], visibility = ["//stand/efi/boot1:__pkg__"])
 
 bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['zfs/blake3_zfs.c', 'zfs/blkptr.c', 'zfs/fletcher.c', 'zfs/gzip.c', 'zfs/lzjb.c', 'zfs/sha256.c', 'zfs/skein_zfs.c', 'zfs/zfsimpl.h', 'zfs/zfssubr.c', 'zfs/zle.c'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_aarch64_headers', hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['zfs/zfsimpl.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])

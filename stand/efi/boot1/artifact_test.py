@@ -9,15 +9,19 @@ import unittest
 import zlib
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--program", choices=["boot1", "gptboot"], required=True)
+parser.add_argument("--program", choices=["boot1", "gptboot", "loader_4th", "loader_simp"], required=True)
 parser.add_argument("--arch", choices=["amd64", "aarch64", "riscv64"], required=True)
 for name in ["full", "symbols", "debug", "image", "manifest"]:
     parser.add_argument("--" + name, type=Path, required=True)
 for name in ["manual", "compressed", "split"]:
     parser.add_argument("--" + name, choices=["yes", "no"], required=True)
+parser.add_argument("--help-data", type=Path)
 args = parser.parse_args()
 for name in ["full", "symbols", "debug", "image", "manifest"]:
     setattr(args, name, Path(os.environ["TEST_SRCDIR"]) / getattr(args, name))
+
+if args.help_data is not None:
+    args.help_data = Path(os.environ["TEST_SRCDIR"]) / args.help_data
 
 
 def elf(path):
@@ -89,11 +93,16 @@ class FirmwareTest(unittest.TestCase):
 
     def test_installation(self):
         records = json.loads(args.manifest.read_text())["files"]
-        self.assertEqual(len(records), 1 + (args.manual == "yes"))
+        self.assertEqual(len(records), 1 + (args.manual == "yes") + (args.help_data is not None))
         entries = {record["destination"]: record for record in records}
         image = entries["/boot/" + args.program + ".efi"]
         self.assertEqual((image["type"], image["owner"], image["group"], image["mode"], image["tags"]),
                          ("file", "root", "wheel", "0555", ["package=bootloader"]))
+        if args.help_data is not None:
+            help_record = entries["/boot/loader.help.efi"]
+            self.assertEqual((help_record["type"], help_record["owner"], help_record["group"], help_record["mode"], help_record["tags"]),
+                             ("file", "root", "wheel", "0444", ["package=bootloader"]))
+            self.assertTrue(args.help_data.read_bytes())
         if args.manual == "yes":
             manual = entries["/usr/share/man/man8/gptboot.efi.8" + (".gz" if args.compressed == "yes" else "")]
             self.assertEqual((manual["type"], manual["owner"], manual["group"], manual["mode"], manual["tags"]),

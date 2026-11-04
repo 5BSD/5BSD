@@ -42,3 +42,11 @@ bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['elf.h', 'limits.
 bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['elf.h', 'limits.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
 
 bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['elf.h', 'limits.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_aarch64_headers', hdrs = ['assert.h', 'elf.h', 'limits.h', 'setjmp.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['assert.h', 'elf.h', 'limits.h', 'setjmp.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['assert.h', 'elf.h', 'limits.h', 'setjmp.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['assert.h', 'elf.h', 'limits.h', 'setjmp.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])

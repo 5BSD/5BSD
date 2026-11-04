@@ -61,6 +61,54 @@ exports_files(['arch/amd64/start.S'], visibility = ['//stand/efi/boot1:__pkg__',
 
 exports_files(['arch/amd64/trap.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+
+
+
+
+
+
+bsd_source_headers(name = 'efi_loader_simp_aarch64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+
+
+
+
+exports_files(['arch/arm64/exec.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/arm64/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/riscv/exec.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+exports_files(['arch/riscv/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
 exports_files(['autoload.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['bootinfo.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
@@ -79,12 +127,8 @@ exports_files(['main.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//sta
 
 exports_files(['memdisk.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
-bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-exports_files(['arch/arm64/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])
+exports_files(['arch/arm64/arm64.ldscript'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
-exports_files(['arch/riscv/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])
-
-exports_files(["arch/arm64/arm64.ldscript", "arch/riscv/riscv.ldscript"], visibility = ["//stand/efi/boot1:__pkg__", "//stand/efi/gptboot:__pkg__"])
+exports_files(['arch/riscv/riscv.ldscript'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

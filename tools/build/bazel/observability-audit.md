@@ -11073,3 +11073,12 @@ EFI diagnostics and local EFI_DEBUG/ZFS distinctions. No firmware probe or BSM
 source is removed to obtain a passing build. Host artifact tests inspect binaries;
 they do not prove firmware error delivery, probe firing or audit delivery. Runtime
 qualification remains open. See CROSS-EFI-BOOTSTRAP-QUALIFICATION.md.
+
+## ARM64/RISC-V EFI Forth/simple migration (2026-11-04)
+
+The variants retain original entry sources, verifier, filesystem/network and
+firmware diagnostics. The private Ficl interpreter and version.veriexec input
+remain explicit for Forth; simple retains ordinary version and FDT help. No
+DTrace or BSM source is removed. Artifact parity and host tests do not prove
+firmware diagnostic delivery, probe firing or runtime audit behavior. See
+CROSS-EFI-VARIANTS-QUALIFICATION.md; firmware/runtime qualification remains open.

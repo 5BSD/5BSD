@@ -427,3 +427,11 @@ bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['intake.h'], vis
 bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['intake.h'], visibility = ["//stand/efi/boot1:__pkg__"])
 
 bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['intake.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_aarch64_headers', hdrs = ['intake.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['intake.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['intake.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['intake.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
