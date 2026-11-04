@@ -52,3 +52,7 @@ filegroup(name = "bios_simp_pnglite_source", srcs = ["pnglite.c"], visibility = 
 bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['pnglite.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
 
 filegroup(name = 'kboot_loader_pnglite_source', srcs = ['pnglite.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['pnglite.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_pnglite_source', srcs = ['pnglite.c'], visibility = ['//stand/userboot/userboot:__pkg__'])

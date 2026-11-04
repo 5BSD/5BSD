@@ -114,3 +114,7 @@ ficl_archive_test(name = "archive_i386_efi_test", archive = ":i386_efi_static_ar
     setting = "//tools/build/bazel/config:efi_loader_veriexec_enabled", compatible = [], machine = "3")
 
 bsd_source_headers(name = "bios_4th_headers", hdrs = ['ficl.h', 'i386/sysdep.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['ficl.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+bsd_source_headers(name = 'userboot_entry_headers_amd64', hdrs = ['amd64/sysdep.h'], visibility = ['//stand/userboot/userboot:__pkg__'])

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['libuserboot.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_autoload_source', srcs = ['autoload.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_biossmap_source', srcs = ['biossmap.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_bootinfo_source', srcs = ['bootinfo.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_bootinfo32_source', srcs = ['bootinfo32.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_bootinfo64_source', srcs = ['bootinfo64.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_conf_source', srcs = ['conf.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_copy_source', srcs = ['copy.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_devicename_source', srcs = ['devicename.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_elf32_freebsd_source', srcs = ['elf32_freebsd.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_elf64_freebsd_source', srcs = ['elf64_freebsd.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_host_source', srcs = ['host.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_main_source', srcs = ['main.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_userboot_cons_source', srcs = ['userboot_cons.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+filegroup(name = 'userboot_entry_userboot_disk_source', srcs = ['userboot_disk.c'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+load(":variants.bzl", "userboot_variants")
+userboot_variants()

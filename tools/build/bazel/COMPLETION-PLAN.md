@@ -1,5 +1,19 @@
 # Native Bazel completion plan
 
+## Native AMD64 userboot shared construction (2026-11-04)
+
+Both Lua/Forth variants now build their 42 native PIC contexts, ordered native
+shared links, split debug and original default installation/archive contributions.
+The audit binds 84 object contracts (82 direct plus two original filename controls)
+and 3,896 consumed pairs. Actual callback interpreter replies and exit behavior
+match original Make controls. Regression: 35 passing targets (one executed,
+34 cached), 34 previous boot outputs unchanged. This is a construction checkpoint,
+not complete userboot qualification. Next: independent whole linked-image/library
+controls, alternate default/profile stages and scripted/disk/guest startup. See
+[USERBOOT-SHARED-CONSTRUCTION.md](USERBOOT-SHARED-CONSTRUCTION.md). Full-system,
+bootstrap/package/debug/runtime/performance gates remain open. Make stays default;
+BIP remains excluded.
+
 ## Userboot harness and original variant references (2026-11-04)
 
 The hosted AMD64 internal harness now builds natively with original object and

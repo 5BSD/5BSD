@@ -11240,3 +11240,14 @@ Original metadata declares no DTrace provider or FIDL generator for the harness;
 none is omitted. Three actual usage/library/disk error-path executions establish
 only those host behaviors. Native interpreter shared objects, callback execution,
 guest/kernel startup and DTrace/BSM delivery remain unqualified.
+
+
+## Native userboot shared-object construction (2026-11-04)
+
+Both 42-source variants carry forward original command/console, environment,
+interpreter, ELF/ZFS and tslog sources. Original variant metadata declares no
+DTrace provider or FIDL generator; none was omitted. Both real interpreters now
+execute selected console/environment callbacks through the original hosted
+harness. Those empty-root checks do not establish scripted/guest/kernel startup
+or DTrace/BSM delivery. Full linked-image controls and alternate profiles remain
+required by the construction checkpoint.

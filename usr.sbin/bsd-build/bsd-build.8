@@ -6279,5 +6279,18 @@ The explicit format-5 bazel-test interface can build the original AMD64 internal
 userboot harness and split debug artifacts, with no installed-file contribution.
 Its native runtime test executes usage, missing-library and disk-open error paths
 through declared SDK linker/libraries. This does not qualify successful userboot
-callbacks, guest kernels or VM startup. Native Lua/Forth shared-object conversion
-and the corresponding installations remain open.
+callbacks, guest kernels or VM startup. The subsequent shared-object construction section describes native variants;
+complete userboot and guest startup qualification remains open.
+
+.Ss Userboot shared-object construction
+The selected AMD64 Lua/Forth graphs use native PIC compilation and shared binary
+linking with declared, ordered native interpreter/libsa archives.
+The debug splitter exports unstripped_files and debug_files output groups.
+Only its data artifacts cross the existing standalone boundary.
+Both variants contribute shared objects and debug files; Lua owns common help,
+and the selected default owns the userboot.so hardlink.
+The explicit format-5 bazel-test path exercises actual hosted interpreter
+console/environment callbacks against empty private roots.
+These checks do not qualify packaged scripts, virtual disks or guest kernels.
+Independent full linked-image controls and alternate profiles remain open;
+Make remains the production/default system builder.

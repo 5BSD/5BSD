@@ -170,3 +170,7 @@ bsd_source_headers(name = "bios_simp_headers", hdrs = ['bootp.h', 'bootparam.h',
 bsd_source_headers(name = 'kboot_loader_headers_geli', hdrs = ['geli/geliboot.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
 
 bsd_source_headers(name = "kboot_loader_headers", hdrs = ['nvstore.h', 'smbios.h', 'stand.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['nvstore.h', 'stand.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+bsd_source_headers(name = 'userboot_entry_headers_geli', hdrs = ['geli/geliboot.h'], visibility = ['//stand/userboot/userboot:__pkg__'])

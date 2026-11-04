@@ -1644,3 +1644,5 @@ bsd_source_headers(name = "bios_4th_headers", hdrs = ['in.h', 'in_systm.h'], vis
 bsd_source_headers(name = "bios_simp_headers", hdrs = ['in.h', 'in_systm.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['in.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['in.h'], visibility = ['//stand/userboot/userboot:__pkg__'])

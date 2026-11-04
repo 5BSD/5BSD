@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "image", src = "//stand/userboot/userboot:4th_image", architecture = "amd64", visibility = ["//visibility:public"])
+filegroup(name = "symbols", srcs = [":image"], output_group = "unstripped_files", visibility = ["//visibility:public"])
+filegroup(name = "debug", srcs = [":image"], output_group = "debug_files", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'objects', src = '//stand/userboot/userboot:4th_objects', architecture = "amd64", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'install_manifest', src = '//stand/userboot/userboot:4th_manifest', architecture = "amd64", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'install_archive', src = '//stand/userboot/userboot:4th_archive', architecture = "amd64", visibility = ["//visibility:public"])

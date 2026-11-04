@@ -1,3 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "interface_headers", hdrs = ["userboot.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['userboot.h'], visibility = ['//stand/userboot/userboot:__pkg__'])

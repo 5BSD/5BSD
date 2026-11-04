@@ -16,7 +16,7 @@ def _debug_split(ctx):
             mnemonic = "BSDStripKernelDebug",
         )
         return [DefaultInfo(files = depset([binary])),
-                OutputGroupInfo(debug_files = depset()),
+                OutputGroupInfo(debug_files = depset(), unstripped_files = depset([ctx.file.src])),
                 BsdDebugInfo(binary = binary, debug = None, unstripped = ctx.file.src)]
     debug = ctx.actions.declare_file(ctx.attr.debug_name)
     ctx.actions.run(
@@ -34,7 +34,7 @@ def _debug_split(ctx):
         mnemonic = "BSDSplitDebug",
     )
     return [DefaultInfo(files = depset([binary])),
-            OutputGroupInfo(debug_files = depset([debug])),
+            OutputGroupInfo(debug_files = depset([debug]), unstripped_files = depset([ctx.file.src])),
             BsdDebugInfo(binary = binary, debug = debug, unstripped = ctx.file.src)]
 
 bsd_debug_split = rule(

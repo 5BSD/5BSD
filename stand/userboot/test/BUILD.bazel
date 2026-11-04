@@ -17,3 +17,11 @@ bsd_python_test(name = "runtime_test", src = "runtime-test.py",
     args = ["--program", "$(location :harness)", "--loader", "$(location @bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1)",
         "--libraries", "$(locations :execution_libraries)"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"], size = "small")
+
+bsd_python_test(name = "shared_runtime_test", src = "shared-runtime-test.py",
+    data = [":harness", ":execution_libraries", "@bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1",
+        "//stand/userboot/userboot_lua:image", "//stand/userboot/userboot_4th:image"],
+    args = ["--program", "$(location :harness)", "--loader", "$(location @bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1)",
+        "--libraries", "$(locations :execution_libraries)", "--lua", "$(location //stand/userboot/userboot_lua:image)",
+        "--forth", "$(location //stand/userboot/userboot_4th:image)"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], size = "small", visibility = ["//visibility:public"])

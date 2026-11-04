@@ -1399,3 +1399,5 @@ bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['_vm_radix.h', 'pma
 bsd_source_headers(name = "bios_libi386_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h'], visibility = ["//stand/i386/libi386:__pkg__"])
 
 bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h'], visibility = ['//stand/userboot/userboot:__pkg__'])

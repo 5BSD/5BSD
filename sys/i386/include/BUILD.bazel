@@ -29,3 +29,7 @@ filegroup(name = "gpt_zfs_arch_headers_pc", srcs = ['pc/bios.h'], visibility = [
 filegroup(name = "bios_4th_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'bootinfo.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'psl.h', 'setjmp.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 filegroup(name = "bios_simp_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'bootinfo.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'psl.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['bootinfo.h', 'elf.h'], visibility = ['//stand/userboot/userboot:__pkg__'])

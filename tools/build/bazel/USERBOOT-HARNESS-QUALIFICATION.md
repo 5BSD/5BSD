@@ -42,8 +42,10 @@ implementing native shared linking and installations:
 - /usr/obj/usr/src/bazel-userboot-lua-make-r1-20261104.
 - /usr/obj/usr/src/bazel-userboot-forth-make-r1-20261104.
 
-This checkpoint does not yet provide native userboot shared objects, successful
-callback/kernel/disk boot, VM execution or complete cross-platform support.
+At this harness checkpoint native userboot shared objects and callback execution
+were still missing. The subsequent [shared construction checkpoint](USERBOOT-SHARED-CONSTRUCTION.md)
+adds both variants and selected callbacks. Kernel/disk boot, VM execution and
+complete cross-platform support remain open.
 The maintained format-5 frontend already handles the harness and its native test;
 its C dispatcher needs no new action and its manual is updated. Full system,
 bootstrap/package/debug/runtime/performance gates remain open. Make remains the
