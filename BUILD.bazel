@@ -36,18 +36,3 @@ bsd_source_headers(name = "network_services_namespace_context_1", hdrs = ["//sys
 
 # Additional physical prerequisites of the cross-target I/O-bus consumers.
 bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_codes_module_headers", hdrs = ['sys/contrib/device-tree/include/dt-bindings/input/linux-event-codes.h'], visibility = ['//sys/dev/gpio:__pkg__'])
-
-bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
-
-bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
-
-bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
-
-
-bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['stand/arm64/libarm64/cache.h', 'stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
-
-bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['stand/efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
-
-exports_files(['stand/arm64/libarm64/cache.c'], visibility = ['//stand/efi/loader:__pkg__'])
-
-exports_files(['stand/efi/acpica/acpi_detect.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])

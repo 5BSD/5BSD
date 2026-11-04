@@ -1,0 +1,9 @@
+# Explicit qualification layout; the default selects no site extension.
+. type=dir uname=root gname=wheel mode=0755
+    boot type=dir uname=root gname=wheel mode=0755 tags=package=bootloader
+        site type=dir uname=root gname=wheel mode=0750 tags=package=bootloader
+            lua type=dir uname=root gname=wheel mode=0750 tags=package=bootloader
+            ..
+        ..
+    ..
+..

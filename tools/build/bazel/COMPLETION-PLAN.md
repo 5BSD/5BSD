@@ -2236,3 +2236,22 @@ AMD64 regression retains all 225 prior captures. Explicit unsupported cross opti
 selection is rejected at analysis. Continue IA32/alternate interpreter profiles, complete bootloader contributions and actual
 firmware qualification. All broader system/package/bootstrap/sandbox/cache/performance
 gates remain open. Make stays default; BIP remains excluded.
+
+### 2026-11-04: Native boot data, source policy and configured Lua paths
+
+Six components now provide native data/man/font installation and aggregate archives.
+Default AMD64/ARM64 inventories contain 86 files; RISC-V contains 85 after correcting
+its source-defined KBOOT exclusion. Independent default/option Make references check
+payload bytes and file metadata. Actual archive, VFNT/catalog/gzip/PNG tests cover
+normal, site-path/split, raw/reduced and MAN=no configurations. A missing custom
+path policy is rejected. Explicit supplemental mtree input mutation changes only
+its two directory modes, causes only archive/test actions, and restores 271 captures.
+
+Cross compiled-path qualification found and removed stale literal LUA_PATH operands.
+Real ARM64/RISC-V entry, private Lua archive and final-loader strings now agree with
+the eighteen relocated scripts. Default loader restoration and the existing 225
+AMD64 / 50-per-cross loader outputs are checked. See BOOT-DATA-QUALIFICATION.md.
+These are data/selected-loader contributions, without complete package, firmware,
+world/kernel/module, bootstrap/sandbox/cache or performance qualification. Continue
+missing boot programs/interpreter profiles, shared help/directory package aggregation
+and actual firmware execution; preserve all broader completion gates. Make stays default.

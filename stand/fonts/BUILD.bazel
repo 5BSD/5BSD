@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
+load("//tools/build/bazel:bsd_loader_generated.bzl", "bsd_loader_font")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress")
+
+_FONTS = {'6x12': ['//contrib/terminus:ter-u12n.bdf', '//contrib/terminus:ter-u12b.bdf'], '8x14': ['//contrib/terminus:ter-u14n.bdf', '//contrib/terminus:ter-u14b.bdf'], '8x14v': ['//contrib/terminus:ter-u14v.bdf'], '8x16': ['//contrib/terminus:ter-u16n.bdf', '//contrib/terminus:ter-u16b.bdf'], '8x16b': ['//contrib/terminus:ter-u16b.bdf'], '8x16v': ['//contrib/terminus:ter-u16v.bdf'], '10x18': ['//contrib/terminus:ter-u18n.bdf', '//contrib/terminus:ter-u18b.bdf'], '10x20': ['//contrib/terminus:ter-u20n.bdf', '//contrib/terminus:ter-u20b.bdf'], '11x22': ['//contrib/terminus:ter-u22n.bdf', '//contrib/terminus:ter-u22b.bdf'], '12x24': ['//contrib/terminus:ter-u24n.bdf', '//contrib/terminus:ter-u24b.bdf'], '14x28': ['//contrib/terminus:ter-u28n.bdf', '//contrib/terminus:ter-u28b.bdf'], '16x32': ['//contrib/terminus:ter-u32n.bdf', '//contrib/terminus:ter-u32b.bdf'], '32x64': ['//contrib/spleen:spleen-32x64.bdf']}
+
+
+[
+    bsd_loader_font(name = name, srcs = sources, format = "font", output = name + ".fnt")
+    for name, sources in _FONTS.items()
+]
+[
+    bsd_compress(name = name + "_gzip", src = ":" + name, output = name + ".fnt.gz",
+        arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+        redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+    for name in _FONTS
+]
+boot_data_installation(files = [(name + ".fnt.gz", ":" + name + "_gzip") for name in _FONTS] +
+    [("INDEX.fonts", "INDEX.fonts")], directory = "/boot/fonts")

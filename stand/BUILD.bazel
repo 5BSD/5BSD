@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Default-profile data contribution only; complete bootloader programs are separate.
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
+_COMPONENTS = ["defaults", "images", "man", "fonts"]
+_MANIFESTS = ["//stand/" + name + ":install_manifest" for name in _COMPONENTS] + select({
+    "//tools/build/bazel/config:loader_lua_enabled": ["//stand/lua:install_manifest"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:forth_enabled": ["//stand/forth:install_manifest"], "//conditions:default": [],
+})
+bsd_install_manifest(name = "boot_data_manifest",
+    manifests = _MANIFESTS,
+    visibility = ["//visibility:public"])
+bsd_install_archive(name = "boot_data_archive", manifests = [":boot_data_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
+    supplemental_mtree_setting = "//tools/build/bazel/config:boot_data_directory_policy",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
+bsd_pkg_layout(name = "boot_data_package_layout", scope = "component", manifests = [":boot_data_manifest"],
+    packages = ["bootloader"] + select({"//tools/build/bazel/config:boot_split_manpages_enabled": ["bootloader-man"], "//conditions:default": []}),
+    suffix_tags = ["dbg", "dev"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
+bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
+bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['arm64/libarm64/cache.h', 'efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
+bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['efi/acpica/include/acpi_detect.h'], visibility = ["//stand/efi/loader:__pkg__"])
+exports_files(['arm64/libarm64/cache.c'], visibility = ['//stand/efi/loader:__pkg__'])
+exports_files(['efi/acpica/acpi_detect.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_host_artifact_test(name = "boot_data_test", src = "boot_data_test.py",
+    data = [":boot_data_archive"], args = ["$(rlocationpath :boot_data_archive)"] + select({
+        "//tools/build/bazel/config:man_enabled": ["yes"], "//conditions:default": ["no"],
+    }),
+    size = "small", visibility = ["//visibility:public"])
+
+filegroup(name = "no_directory_overrides", srcs = [], visibility = ["//visibility:public"])

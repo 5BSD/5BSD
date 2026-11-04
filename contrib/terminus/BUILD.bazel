@@ -1,2 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["ter-u16b.bdf"], visibility = ["//stand/efi/loader:__pkg__"])
+exports_files(["ter-u16b.bdf"], visibility = ["//stand/efi/loader:__pkg__", "//stand/fonts:__pkg__"])
+
+exports_files(['ter-u12b.bdf', 'ter-u12n.bdf', 'ter-u14b.bdf', 'ter-u14n.bdf', 'ter-u14v.bdf', 'ter-u16n.bdf', 'ter-u16v.bdf', 'ter-u18b.bdf', 'ter-u18n.bdf', 'ter-u20b.bdf', 'ter-u20n.bdf', 'ter-u22b.bdf', 'ter-u22n.bdf', 'ter-u24b.bdf', 'ter-u24n.bdf', 'ter-u28b.bdf', 'ter-u28n.bdf', 'ter-u32b.bdf', 'ter-u32n.bdf'], visibility = ["//stand/fonts:__pkg__"])

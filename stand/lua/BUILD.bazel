@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
+
+_FILES = ['cli.lua', 'color.lua', 'config.lua', 'core.lua', 'drawer.lua', 'hook.lua', 'loader.lua', 'secureboot.lua', 'gfx-5bsd.lua', 'gfx-beastie.lua', 'gfx-beastiebw.lua', 'gfx-fbsdbw.lua', 'gfx-install.lua', 'gfx-orb.lua', 'gfx-orbbw.lua', 'menu.lua', 'password.lua', 'screen.lua']
+_MANUALS = ['loader.conf.lua.5', 'cli.lua.8', 'color.lua.8', 'config.lua.8', 'core.lua.8', 'drawer.lua.8', 'gfx.lua.8', 'hook.lua.8', 'loader.lua.8', 'menu.lua.8', 'password.lua.8', 'screen.lua.8']
+
+boot_data_installation(files = [(name, name) for name in _FILES], directory = '', manuals = _MANUALS,
+    prefixes = ["//tools/build/bazel/config:loader_lua_path"])

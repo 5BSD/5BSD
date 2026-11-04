@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
+
+_FILES = []
+_MANUALS = ['boot1.efi.8', 'loader.8', 'loader.efi.8', 'loader_4th.8', 'loader.kboot.8', 'loader_lua.8', 'loader_simp.8']
+
+boot_data_installation(files = [(name, name) for name in _FILES], directory = '/boot', manuals = _MANUALS,
+    manual_conditions = {
+        "boot1.efi.8": "//tools/build/bazel/config:boot_man_efi_enabled",
+        "loader.efi.8": "//tools/build/bazel/config:boot_man_efi_enabled",
+        "loader_4th.8": "//tools/build/bazel/config:boot_man_forth_enabled",
+        "loader_lua.8": "//tools/build/bazel/config:boot_man_loader_lua_enabled",
+        "loader.kboot.8": "//tools/build/bazel/config:boot_man_loader_kboot_enabled",
+    })

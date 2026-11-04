@@ -37,10 +37,18 @@ def _archive(ctx):
     request = ctx.actions.declare_file(ctx.label.name + ".json")
     archive = ctx.actions.declare_file(ctx.label.name + ".tar")
     directory_metadata = ctx.actions.declare_file(ctx.label.name + ".directories.json")
+    supplemental_mtree = ctx.file.supplemental_mtree
+    configured = ctx.files.supplemental_mtree_setting
+    if len(configured) > 1 or (configured and supplemental_mtree):
+        fail("select at most one explicit or configured supplemental mtree file")
+    if configured:
+        supplemental_mtree = configured[0]
+    if supplemental_mtree and supplemental_mtree.is_directory:
+        fail("supplemental mtree must identify a file")
     policy_inputs = ctx.files.mtree_specs + ctx.files._policy_modules
     policy_tools = []
     specs = []
-    if ctx.file.supplemental_mtree and not ctx.attr.mtree_specs:
+    if supplemental_mtree and not ctx.attr.mtree_specs:
         fail("supplemental mtree requires base mtree/account policy")
     if ctx.attr.mtree_specs:
         if not ctx.executable.mtree or not ctx.file.passwd or not ctx.file.group:
@@ -52,9 +60,9 @@ def _archive(ctx):
             if len(files) != 1:
                 fail("one file per mtree specification required")
             specs.append(dict(source = files[0].path, prefix = prefix))
-    if ctx.file.supplemental_mtree:
-        policy_inputs.append(ctx.file.supplemental_mtree)
-        specs.append(dict(source = ctx.file.supplemental_mtree.path, prefix = "/"))
+    if supplemental_mtree:
+        policy_inputs.append(supplemental_mtree)
+        specs.append(dict(source = supplemental_mtree.path, prefix = "/"))
     ctx.actions.write(request, json.encode(dict(
         records = records,
         users = {key: int(value) for key, value in ctx.attr.users.items()},
@@ -88,6 +96,8 @@ bsd_install_archive = rule(
         "directories": attr.string_dict(),
         "directory_packages": attr.string_list(),
         "supplemental_mtree": attr.label(allow_single_file = True),
+        "supplemental_mtree_setting": attr.label(allow_files = True,
+            doc = "Optional file-valued label setting; an empty filegroup selects no override."),
         "users": attr.string_dict(),
         "groups": attr.string_dict(),
         "mtree_specs": attr.label_keyed_string_dict(allow_files = True),

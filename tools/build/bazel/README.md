@@ -48868,3 +48868,7 @@ Make stays default.
 Selected ARM64/RISC-V Lua EFI construction and the consumer-toolchain DTrace
 runtime correction are described in [CROSS-EFI-LOADER-QUALIFICATION.md](CROSS-EFI-LOADER-QUALIFICATION.md).
 These remain component candidates, with complete-system and performance gates open.
+
+Native boot data, fonts, configured script paths and original Make option-profile
+comparisons are described in [BOOT-DATA-QUALIFICATION.md](BOOT-DATA-QUALIFICATION.md).
+The contribution remains component-scoped; complete bootloader/system gates remain open.

@@ -7,18 +7,29 @@ def _library_directories(files):
         if file.basename.endswith(".so") or ".so." in file.basename]).to_list()
 
 def _font(ctx):
+    if ctx.file.src and ctx.files.srcs:
+        fail("choose src or ordered srcs for loader font conversion")
+    sources = [ctx.file.src] if ctx.file.src else ctx.files.srcs
+    if len(sources) not in [1, 2]:
+        fail("font conversion requires one normal source and at most one bold source")
+    for source in ctx.attr.srcs:
+        if len(source[DefaultInfo].files.to_list()) != 1:
+            fail("each ordered font source must identify one file")
     output = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.output)
     args = ctx.actions.args()
-    args.add_all(["-f", "compressed-source", "-o", output.path, ctx.file.src.path])
+    args.add_all(["-f", ctx.attr.format, "-o", output.path])
+    args.add_all(sources)
     ctx.actions.run(executable = ctx.attr.converter[DefaultInfo].files_to_run,
-        arguments = [args], inputs = [ctx.file.src], tools = ctx.files.runtime,
+        arguments = [args], inputs = sources, tools = ctx.files.runtime,
         outputs = [output], use_default_shell_env = False,
         env = {"LC_ALL": "C", "LD_LIBRARY_PATH": ":".join(_library_directories(ctx.files.runtime))},
         mnemonic = "BSDLoaderFont")
     return [DefaultInfo(files = depset([output]))]
 
 bsd_loader_font = rule(implementation = _font, attrs = {
-    "src": attr.label(allow_single_file = True, mandatory = True),
+    "src": attr.label(allow_single_file = True),
+    "srcs": attr.label_list(allow_files = True, doc = "Ordered normal and optional bold BDF sources."),
+    "format": attr.string(default = "compressed-source", values = ["font", "source", "compressed-source"]),
     "output": attr.string(mandatory = True),
     "converter": attr.label(default = "//usr.bin/vtfontcvt:vtfontcvt", executable = True, cfg = "exec"),
     # Source-built C tools run against the native execution ABI, including in

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Explicit qualification input; never selected by the production default.
+exports_files(["site.mtree"], visibility = ["//visibility:public"])

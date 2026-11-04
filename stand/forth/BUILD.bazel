@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
+
+_FILES = ['beastie.4th', 'brand.4th', 'brand-fbsd.4th', 'check-password.4th', 'color.4th', 'delay.4th', 'efi.4th', 'frames.4th', 'loader.4th', 'logo-beastie.4th', 'logo-beastiebw.4th', 'logo-fbsdbw.4th', 'logo-orb.4th', 'logo-orbbw.4th', 'menu.4th', 'menu-commands.4th', 'menusets.4th', 'screen.4th', 'shortcuts.4th', 'support.4th', 'version.4th']
+_MANUALS = ['beastie.4th.8', 'brand.4th.8', 'check-password.4th.8', 'color.4th.8', 'delay.4th.8', 'loader.4th.8', 'menu.4th.8', 'menusets.4th.8', 'version.4th.8']
+
+boot_data_installation(files = [(name, name) for name in _FILES] + [("loader.rc", select({"@platforms//cpu:x86_64": "//stand/i386/loader:loader.rc", "//conditions:default": "loader.rc"})), ("menu.rc", "menu.rc")], directory = '/boot', manuals = _MANUALS)

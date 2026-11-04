@@ -11053,3 +11053,15 @@ programs use the target toolchain. Full cross loader builds pass with probes
 enabled. Final compiler/input audits cover the 96 entry producers, not runtime
 host probe firing. See CROSS-EFI-LOADER-QUALIFICATION.md for retained failures,
 current artifact checks and open runtime/performance gates.
+
+## Boot data and font conversion review (2026-11-04)
+
+Original Lua/Forth script inventories, secureboot.lua, loader defaults, font data,
+logo and manuals are retained as source-owned payloads with Make byte comparisons.
+No firmware command logging/verifier code is rewritten or probe/audit source dropped.
+Font conversion uses the actual native vtfontcvt and declared ordered BDF inputs;
+no generated font is substituted from an SDK. Actual firmware scripts, diagnostics,
+font rendering and failure paths remain runtime qualifications. Cross compiled path
+strings are checked in allocated target sections, alongside installed destinations.
+The new artifact tests and cache checks do not claim DTrace firing or BSM delivery.
+See BOOT-DATA-QUALIFICATION.md.

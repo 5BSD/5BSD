@@ -6022,3 +6022,17 @@ execution tools used during cross compilation.
 These component checks do not establish a complete bootloader package,
 firmware execution, whole-system qualification or comparative performance.
 Make remains the production backend.
+.Pp
+Selected native boot data targets include source-owned scripts, defaults,
+images, manuals and thirteen font conversion pipelines.
+The format-5 build-settings map supports the boot data man, mancompress, forth,
+loader_lua, efi and loader_kboot choices, plus split_manpages.
+These choices are qualified for this contribution
+rather than every base component.
+The loader_lua_path setting controls compiled Lua paths and script destinations.
+Custom directories require an explicit boot_data_directory_policy label naming
+supplemental mtree data; its default adds no override.
+These are component archives and host artifact tests, not complete bootloader
+packages, firmware execution, verified boot or system performance qualification.
+See
+.Pa tools/build/bazel/BOOT-DATA-QUALIFICATION.md .
