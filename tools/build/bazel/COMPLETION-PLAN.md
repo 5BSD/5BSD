@@ -7,8 +7,11 @@ split debug. The 2026-11-03 source-bound refresh compares all 2,462 link objects
 and complete allocated kernel/CTF contracts against an independent Make build.
 See [CURRENT-KERNEL-REFRESH-QUALIFICATION.md](CURRENT-KERNEL-REFRESH-QUALIFICATION.md).
 This is a completed controlled kernel construction milestone; it is not a full
-world/modules/pkgbase system build or a VM boot. The aggregate 729 selected
-amd64 modules, ARM64/RISC-V/configuration coverage, complete world installation,
+world/modules/pkgbase system build or a VM boot. The subsequent aggregate build of all 729 selected amd64 modules and the kernel
+also passes; its captured ELF/debug/install-payload review passes. See
+[AMD64-AGGREGATE-MODULES-QUALIFICATION.md](AMD64-AGGREGATE-MODULES-QUALIFICATION.md).
+Complete module installation/pkgbase parity, ARM64/RISC-V/configuration coverage,
+complete world installation,
 bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.

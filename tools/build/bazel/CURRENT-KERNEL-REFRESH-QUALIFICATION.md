@@ -56,8 +56,11 @@ policy changes are needed for this refresh. The qualification manual and roadmap
 are updated. Make stays production/default; BIP stays excluded. No host kernel
 installation, module loading, upgrade, reboot or VM boot is performed.
 
-Next build all 729 selected amd64 modules together and qualify installation/
-pkgbase closure. ARM64/RISC-V and other configurations, complete world/rescue/
+The subsequent aggregate build of all 729 selected amd64 modules together with
+the kernel passes, as does its captured payload/ELF/debuglink review. See
+AMD64-AGGREGATE-MODULES-QUALIFICATION.md and its passed native r2 and payload
+review r3 receipts. Complete original aggregate installation/pkgbase closure
+remains open. ARM64/RISC-V and other configurations, complete world/rescue/
 stand, bootstrap, hardware/combined publication, debugger source lookup,
 sandboxing, VM/runtime and measured CPU/memory/disk/cache gates remain open.
 Full separate DWARF equality and actual debugger source resolution remain

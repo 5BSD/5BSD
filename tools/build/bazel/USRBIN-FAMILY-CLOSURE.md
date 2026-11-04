@@ -236,3 +236,14 @@ bazel-qualification-artifact-batch-r1-20261104 passes the maintained Bazel test;
 mutation rejection. This reduces repeated metadata parsing, not a measured
 whole-build speed or memory claim. Generic build-bsd format-5 dispatch already
 supports these inputs; no C dispatcher or packaging/publication change is needed.
+
+## Aggregate module status reconciliation
+
+The older kernel refresh next-step text was stale: the later recorded
+bazel-all-amd64-modules-ctf-debug-native-r2-20261103 receipt passes all 2,191
+requested kernel/module targets, and
+bazel-all-amd64-modules-payload-review-r3-20261103/summary.json passes for all
+729 selected modules. The module aggregate construction gate is complete;
+independent complete installation/pkgbase parity and runtime remain open.
+The authoritative bounded details are in AMD64-AGGREGATE-MODULES-QUALIFICATION.md.
+This correction records existing evidence, not a new build or runtime result.
