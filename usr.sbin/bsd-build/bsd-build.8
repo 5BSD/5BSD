@@ -6231,12 +6231,24 @@ The loader_pxe_max_size setting defaults to Make's actual 530000-byte bound;
 the client must pass that check before a.out BTX packing.
 Ordered concatenation and 2048-byte alignment preserve the original dd layout.
 The loader_pxe_probe_keyboard and loader_pxe_always_serial settings independently
-select the original console paths. The loader_pxe_interpreter setting currently
-qualifies lua; explicit 4th or simp selections are incompatible pending their
-BIOS producers. No fallback producer is selected.
+select the original console paths. The loader_pxe_interpreter setting accepts auto, lua, 4th or simp.
+Auto inherits the selected default; explicit values select their real qualified
+BIOS client producers without a replacement-client fallback.
 Shared boot-data rules retain image/manual package policy and archive metadata.
 The maintained Make reference helper accepts component and BOOT_component
 presence-only namespaces with its existing assignment/global-identity guards.
 Original-reference comparisons retain the SDK loader prerequisite and distinguish
 it from independent current-loader recipe controls.
 Construction tests do not qualify DHCP/TFTP, firmware or normal system startup.
+.Ss Shared BIOS interpreter selection
+Lua, Forth and simple BIOS loaders use one source-owned compiler/link/strip/BTX
+construction model and retain separate native interpreter/archive contexts.
+The loader_default_interpreter setting accepts auto, lua, 4th or simp.
+Auto follows source policy: enabled Lua first, otherwise enabled Forth, otherwise
+simple. Only that selected default contribution owns the loader and zfsloader
+hardlinks. Each contribution installs its own image; only simple installs the
+original generated loader.help.bios file.
+The loader_pxe_interpreter setting defaults to auto and inherits this choice;
+explicit values independently select the corresponding real client.
+Host tests reconcile default aliases, help and archive inodes with actual Make
+stages. They do not execute firmware or qualify a complete installed system.

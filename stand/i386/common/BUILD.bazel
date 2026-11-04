@@ -25,3 +25,7 @@ bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['bootargs.h', 'cons.h'], vi
 filegroup(name = "gpt_zfs_cons_source", srcs = ["cons.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
 
 bsd_source_headers(name = "pxe_headers", hdrs = ["bootargs.h"], visibility = ["//stand/i386/pxeldr:__pkg__"])
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['bootargs.h', 'drv.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_simp_headers", hdrs = ['bootargs.h', 'drv.h'], visibility = ["//stand/i386/loader:__pkg__"])

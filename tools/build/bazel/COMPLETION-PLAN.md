@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Complete selected BIOS interpreter family (2026-11-04)
+
+Lua/Forth/simple now share one source-owned model with 36 contexts each. The two
+new producers retain original archive/link/strip/BTX contracts; 70 new raw entry
+contracts match directly and two assertion-filename controls explain the rest.
+Original recipe controls reproduce whole clients/images. Default aliases follow
+actual Lua/Forth/simple feature precedence or an explicit input; only simple owns
+the generated shared help file. PXE inherits that default or an explicit real
+client. Five routing profiles and actual Make default stages pass. The audit binds
+108 family compiler contexts/4990 consumed pairs, 120 producer associations, ten
+install record comparisons and 34 unchanged prior boot outputs. Default test
+profile: 31 passes, four executed and 27 cached. Retained failed first analysis
+and prior cached-producer provenance remain explicit. See
+[BIOS-FAMILY-QUALIFICATION.md](BIOS-FAMILY-QUALIFICATION.md). The maintained frontend
+and manual are updated; complete system, runtime, packaging/bootstrap/debug and
+performance gates remain open. Make stays default; BIP stays excluded.
+
 ## PXE construction checkpoint (2026-11-04)
 
 The missing PXE consumer now has native i386 assembly/link, actual native Lua

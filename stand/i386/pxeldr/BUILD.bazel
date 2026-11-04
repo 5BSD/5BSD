@@ -5,10 +5,9 @@ load("//tools/build/bazel:bsd_boot_image.bzl", "bsd_boot_link", "bsd_btx_image",
 load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
 load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-config_setting(name = "lua", flag_values = {"//tools/build/bazel/config:loader_pxe_interpreter": "lua"})
 config_setting(name = "probe_keyboard", flag_values = {"//tools/build/bazel/config:loader_pxe_probe_keyboard": "true"})
 config_setting(name = "always_serial", flag_values = {"//tools/build/bazel/config:loader_pxe_always_serial": "true"})
-_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"] + select({":lua": [], "//conditions:default": ["@platforms//:incompatible"]})
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"]
 _CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-Istand/i386/common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments']
 cc_library(name = "objects", srcs = ["pxeldr.S"],
     deps = ["//stand/i386/common:pxe_headers", "//sys/sys:pxe_headers"],
@@ -18,7 +17,7 @@ cc_library(name = "objects", srcs = ["pxeldr.S"],
 bsd_component_object(name = "native_object", group = ":objects", out = "pxeldr.o", target_compatible_with = _COMPAT)
 bsd_boot_link(name = "native_prefix", objects = [":native_object"], output = "pxeldr",
     script = "//stand/i386:boot.ldscript", linkopts = ["-m", "elf_i386_fbsd", "-e", "start", "--defsym", "ORG=0x7c00", "-N", "-S", "--oformat", "binary", "--build-id=none", "-z", "now", "-z", "relro", "--no-rosegment"], target_compatible_with = _COMPAT)
-bsd_boot_image_bytes(name = "native_client", srcs = ["//stand/i386/loader_lua:client"], operation = "check",
+bsd_boot_image_bytes(name = "native_client", srcs = select({"//tools/build/bazel/config:loader_pxe_" + i: ["//stand/i386/loader_" + i + ":client"] for i in ["lua", "4th", "simp"]}), operation = "check",
     size_setting = "//tools/build/bazel/config:loader_pxe_max_size", output = "client.bin", target_compatible_with = _COMPAT)
 bsd_btx_image(name = "native_loader", src = ":native_client", loader = "//stand/i386/btx/btxldr:btxldr", kernel = "//stand/i386/btx/btx:btx",
     entry_setting = "//tools/build/bazel/config:loader_bios_address", entry_kind = "output", output_format = "aout", output = "loader", target_compatible_with = _COMPAT)
@@ -41,3 +40,5 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
 load(":inspection.bzl", "pxe_inspection")
 pxe_inspection(name = "inspection_policy", visibility = ["//tools/build/bazel:__pkg__"])
 filegroup(name = "installation_metadata", srcs = [":install_manifest"], output_group = "manifest", visibility = ["//tools/build/bazel:__pkg__"])
+
+filegroup(name = "source_client", srcs = select({"//tools/build/bazel/config:loader_pxe_" + i: ["//stand/i386/loader_" + i + ":client"] for i in ["lua", "4th", "simp"]}), visibility = ["//tools/build/bazel:__pkg__"])

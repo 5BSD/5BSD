@@ -302,6 +302,14 @@ bsd_host_artifact_test(name = "bios_loader_test", src = "bios-loader-test.py",
         "--objects", "$(locations //stand/i386/loader_lua:objects)"],
     visibility = ["//visibility:public"], size = "small")
 
+[bsd_host_artifact_test(name = "bios_loader_" + i + "_test", src = "bios-loader-test.py",
+    data = ["boot_strip.py", "//stand/i386/loader:" + i + "_inspection_policy", "//stand/i386/btx/btx:btx", "//stand/i386/btx/btxldr:btxldr", "@bsd_sdk//toolchain:bin/llvm-strip", "@bsd_sdk//toolchain:strip_inputs"] + [
+        "//stand/i386/loader_" + i + ":" + t for t in ["image","symbols","client","objects","installation_metadata","install_archive"]] + (["//stand/i386/loader_simp:help"] if i=="simp" else []),
+    args = ["--interpreter", i, "--archive", "$(location //stand/i386/loader_" + i + ":install_archive)", "--image", "$(location //stand/i386/loader_" + i + ":image)", "--symbols", "$(location //stand/i386/loader_" + i + ":symbols)", "--client", "$(location //stand/i386/loader_" + i + ":client)",
+        "--metadata", "$(location //stand/i386/loader_" + i + ":installation_metadata)", "--policy", "$(location //stand/i386/loader:" + i + "_inspection_policy)", "--stub", "$(location //stand/i386/btx/btxldr:btxldr)", "--kernel", "$(location //stand/i386/btx/btx:btx)",
+        "--helper", "$(location :boot_strip.py)", "--strip", "$(location @bsd_sdk//toolchain:bin/llvm-strip)"] + (["--help-data", "$(location //stand/i386/loader_simp:help)"] if i=="simp" else []) + ["--strip-inputs", "$(locations @bsd_sdk//toolchain:strip_inputs)", "--objects", "$(locations //stand/i386/loader_" + i + ":objects)"],
+    visibility = ["//visibility:public"], size = "small") for i in ["4th", "simp"]]
+
 load(":bsd_install_archive.bzl", "bsd_install_archive_set")
 bsd_install_archive_set(name = "bios_loader_archive_set", archives = ["//stand/i386/loader_lua:install_archive"])
 
@@ -317,9 +325,9 @@ bsd_install_archive_set(name = "bios_loader_archive_set", archives = ["//stand/i
     ("gpt_bios_boot_test", ["gptboot", "isoboot", "gptzfsboot"])]]
 
 bsd_host_artifact_test(name = "pxe_boot_test", src = "pxe-boot-test.py",
-    data = ["boot_image.py", "//stand/i386/pxeldr:inspection_policy", "//stand/i386/pxeldr:installation_metadata", "//stand/i386/loader_lua:client"] + [
+    data = ["boot_image.py", "//stand/i386/pxeldr:inspection_policy", "//stand/i386/pxeldr:installation_metadata", "//stand/i386/pxeldr:source_client"] + [
         "//stand/i386/pxeldr:" + n for n in ["pxeboot", "pxeldr", "compiler_object", "client", "loader", "install_archive"]],
     args = ["--helper", "$(location :boot_image.py)", "--policy", "$(location //stand/i386/pxeldr:inspection_policy)",
-        "--metadata", "$(location //stand/i386/pxeldr:installation_metadata)", "--source-client", "$(location //stand/i386/loader_lua:client)"] + [
+        "--metadata", "$(location //stand/i386/pxeldr:installation_metadata)", "--source-client", "$(location //stand/i386/pxeldr:source_client)"] + [
         item for option, target in [("image", "pxeboot"), ("prefix", "pxeldr"), ("object", "compiler_object"), ("client", "client"), ("loader", "loader"), ("archive", "install_archive")] for item in ["--" + option, "$(location //stand/i386/pxeldr:" + target + ")"]],
     size = "small", visibility = ["//visibility:public"])

@@ -15,7 +15,7 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootstrap.h', 'disk.
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'readin.h'], visibility = ["//stand/libsa:__pkg__"])
 
-exports_files(["help.common", "merge_help.awk"], visibility = ["//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])
+exports_files(["help.common", "merge_help.awk"], visibility = ["//stand/i386/loader:__pkg__", "//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])
 
 exports_files(["newvers.sh"], visibility = ["//stand/i386/loader:__pkg__", "//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__", "//tools/build/bazel/tests/loader:__pkg__"])
 
@@ -269,3 +269,127 @@ filegroup(name = "gpt_zfs_misc_source", srcs = ["misc.c"], visibility = ['//stan
 filegroup(name = "gpt_zfs_part_source", srcs = ["part.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
 
 filegroup(name = "gpt_zfs_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'isapnp.h', 'load_elf.c', 'load_elf_obj.c', 'modinfo.h', 'part.h', 'readin.h', 'reloc_elf.c', 'verified_root.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_bcache_source", srcs = ["bcache.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_boot_source", srcs = ["boot.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_commands_source", srcs = ["commands.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_console_source", srcs = ["console.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_dev_net_source", srcs = ["dev_net.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_devopen_source", srcs = ["devopen.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_disk_source", srcs = ["disk.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_interp_source", srcs = ["interp.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_interp_backslash_source", srcs = ["interp_backslash.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_interp_forth_source", srcs = ["interp_forth.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_interp_parse_source", srcs = ["interp_parse.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_isapnp_source", srcs = ["isapnp.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_load_elf32_source", srcs = ["load_elf32.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_load_elf32_obj_source", srcs = ["load_elf32_obj.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_load_elf64_source", srcs = ["load_elf64.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_load_elf64_obj_source", srcs = ["load_elf64_obj.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_ls_source", srcs = ["ls.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_md_source", srcs = ["md.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_misc_source", srcs = ["misc.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_modinfo_source", srcs = ["modinfo.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_module_source", srcs = ["module.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_nvstore_source", srcs = ["nvstore.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_part_source", srcs = ["part.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_pnp_source", srcs = ["pnp.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_reloc_elf32_source", srcs = ["reloc_elf32.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_reloc_elf64_source", srcs = ["reloc_elf64.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_tslog_source", srcs = ["tslog.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_vdisk_source", srcs = ["vdisk.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_verified_root_source", srcs = ["verified_root.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_simp_headers", hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'isapnp.h', 'load_elf.c', 'load_elf_obj.c', 'modinfo.h', 'part.h', 'readin.h', 'reloc_elf.c', 'verified_root.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_bcache_source", srcs = ["bcache.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_boot_source", srcs = ["boot.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_commands_source", srcs = ["commands.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_console_source", srcs = ["console.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_dev_net_source", srcs = ["dev_net.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_devopen_source", srcs = ["devopen.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_disk_source", srcs = ["disk.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_interp_source", srcs = ["interp.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_interp_backslash_source", srcs = ["interp_backslash.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_interp_parse_source", srcs = ["interp_parse.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_interp_simple_source", srcs = ["interp_simple.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_isapnp_source", srcs = ["isapnp.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_load_elf32_source", srcs = ["load_elf32.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_load_elf32_obj_source", srcs = ["load_elf32_obj.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_load_elf64_source", srcs = ["load_elf64.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_load_elf64_obj_source", srcs = ["load_elf64_obj.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_ls_source", srcs = ["ls.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_md_source", srcs = ["md.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_misc_source", srcs = ["misc.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_modinfo_source", srcs = ["modinfo.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_module_source", srcs = ["module.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_nvstore_source", srcs = ["nvstore.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_part_source", srcs = ["part.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_pnp_source", srcs = ["pnp.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_reloc_elf32_source", srcs = ["reloc_elf32.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_reloc_elf64_source", srcs = ["reloc_elf64.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_tslog_source", srcs = ["tslog.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_vdisk_source", srcs = ["vdisk.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_verified_root_source", srcs = ["verified_root.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ["//stand/i386/loader:__pkg__"])

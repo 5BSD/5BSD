@@ -350,3 +350,7 @@ bsd_source_headers(name = "bios_loader_headers", hdrs = ['cryptodev.h'], visibil
 bsd_source_headers(name = "gpt_boot_headers", hdrs = ['cryptodev.h'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])
 
 bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['cryptodev.h'], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['cryptodev.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_simp_headers", hdrs = ['cryptodev.h'], visibility = ["//stand/i386/loader:__pkg__"])

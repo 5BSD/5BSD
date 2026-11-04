@@ -2026,3 +2026,7 @@ bsd_source_headers(name = "bios_libi386_headers", hdrs = ['ethernet.h', 'if.h'],
 bsd_source_headers(name = "bios_loader_headers", hdrs = ['if.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['if.h'], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['if.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_simp_headers", hdrs = ['if.h'], visibility = ["//stand/i386/loader:__pkg__"])

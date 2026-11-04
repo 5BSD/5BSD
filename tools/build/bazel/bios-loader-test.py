@@ -12,6 +12,8 @@ import tarfile
 import unittest
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--interpreter', choices=['lua','4th','simp'], default='lua')
+parser.add_argument('--help-data', type=Path)
 for name in ['archive','image','symbols','client','stub','kernel','metadata','policy','helper','strip']:
     parser.add_argument('--'+name, type=Path, required=True)
 parser.add_argument('--strip-inputs', type=Path, nargs='+', required=True)
@@ -19,6 +21,10 @@ parser.add_argument('--objects', type=Path, nargs='+', required=True)
 args, remaining = parser.parse_known_args()
 sys.argv[1:] = remaining
 policy = json.loads(args.policy.read_text())
+program = '/boot/loader_' + args.interpreter
+links = {'/boot/loader','/boot/zfsloader'} if policy['default_interpreter']==args.interpreter else set()
+help_path = '/boot/loader.help.bios'
+expected = {program} | links | ({help_path} if args.interpreter=='simp' else set())
 
 
 def elf(data):
@@ -67,13 +73,16 @@ class BiosLoader(unittest.TestCase):
 
     def test_installed_default_and_zfs_links(self):
         records={r['destination']:r for r in json.loads(args.metadata.read_text())['files']}
-        self.assertEqual(set(records),{'/boot/loader_lua','/boot/loader','/boot/zfsloader'})
-        self.assertEqual(records['/boot/loader_lua']['type'],'file')
+        self.assertEqual(set(records),expected)
+        self.assertEqual(records[program]['type'],'file')
         for name,r in records.items():
-            self.assertEqual((r['owner'],r['group'],r['mode']),('root','wheel','0555'))
+            mode='0444' if name==help_path else '0555'
+            self.assertEqual((r['owner'],r['group'],r['mode']),('root','wheel',mode))
             self.assertEqual(r['tags'],['package=bootloader'])
-            if name!='/boot/loader_lua':
-                self.assertEqual((r['type'],r['link']),('hardlink','/boot/loader_lua'))
+            if name in links:
+                self.assertEqual((r['type'],r['link']),('hardlink',program))
+            else:
+                self.assertEqual(r['type'],'file')
 
     def test_real_installation_archive_and_hardlink_inodes(self):
         with tarfile.open(args.archive) as archive:
@@ -82,21 +91,28 @@ class BiosLoader(unittest.TestCase):
                 self.assertFalse(Path(member.name).is_absolute())
                 self.assertNotIn('..',Path(member.name).parts)
             files={m.name:m for m in members if not m.isdir()}
-            self.assertEqual(set(files),{'boot/loader_lua','boot/loader','boot/zfsloader'})
-            self.assertTrue(files['boot/loader_lua'].isfile())
-            self.assertEqual(archive.extractfile(files['boot/loader_lua']).read(),args.image.read_bytes())
+            self.assertEqual(set(files),{p.lstrip('/') for p in expected})
+            base=program.lstrip('/')
+            self.assertTrue(files[base].isfile())
+            self.assertEqual(archive.extractfile(files[base]).read(),args.image.read_bytes())
             for name,member in files.items():
-                self.assertEqual((member.uid,member.gid,member.mode),(0,0,0o555))
-                if name!='boot/loader_lua':
+                self.assertEqual((member.uid,member.gid,member.mode),(0,0,0o444 if '/'+name==help_path else 0o555))
+                if '/'+name in links:
                     self.assertTrue(member.islnk())
-                    self.assertEqual(member.linkname,'boot/loader_lua')
+                    self.assertEqual(member.linkname,base)
+                else:
+                    self.assertTrue(member.isfile())
+            if args.interpreter=='simp':
+                self.assertIsNotNone(args.help_data)
+                self.assertEqual(archive.extractfile(files[help_path.lstrip('/')]).read(),args.help_data.read_bytes())
             with tempfile.TemporaryDirectory(dir=os.environ['TEST_TMPDIR']) as temp:
-                # This build-owned archive has validated paths/types/link targets above.
-                # Preserve its modes: data_filter deliberately adds owner write permission.
+                # Paths, member types and hardlink targets were validated above.
                 archive.extractall(temp,filter='fully_trusted')
-                stats=[(Path(temp)/name).stat() for name in files]
+                stats=[(Path(temp)/p.lstrip('/')).stat() for p in {program}|links]
                 self.assertEqual(len({(s.st_dev,s.st_ino) for s in stats}),1)
                 self.assertTrue(all(s.st_mode&0o7777==0o555 for s in stats))
+                if args.interpreter=='simp':
+                    self.assertEqual((Path(temp)/help_path.lstrip('/')).stat().st_mode&0o7777,0o444)
 
     def test_actual_strip_exact_limit_and_overflow_are_atomic(self):
         with tempfile.TemporaryDirectory(dir=os.environ['TEST_TMPDIR']) as temp:

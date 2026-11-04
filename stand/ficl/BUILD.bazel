@@ -112,3 +112,5 @@ bsd_freestanding_artifact(name = "i386_efi_static_archive", src = ":efi_static_a
     visibility = ["//visibility:public"])
 ficl_archive_test(name = "archive_i386_efi_test", archive = ":i386_efi_static_archive",
     setting = "//tools/build/bazel/config:efi_loader_veriexec_enabled", compatible = [], machine = "3")
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['ficl.h', 'i386/sysdep.h'], visibility = ["//stand/i386/loader:__pkg__"])

@@ -40,3 +40,11 @@ bsd_source_headers(name = "bios_libi386_headers", hdrs = ['pnglite.h'], visibili
 bsd_source_headers(name = "bios_loader_headers", hdrs = ['pnglite.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 filegroup(name = "bios_loader_pnglite_source", srcs = ["pnglite.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['pnglite.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_4th_pnglite_source", srcs = ["pnglite.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_simp_headers", hdrs = ['pnglite.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_simp_pnglite_source", srcs = ["pnglite.c"], visibility = ["//stand/i386/loader:__pkg__"])

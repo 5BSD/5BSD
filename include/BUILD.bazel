@@ -58,3 +58,7 @@ bsd_source_headers(name = "bios_loader_headers", hdrs = ['assert.h', 'limits.h',
 bsd_source_headers(name = "gpt_boot_headers", hdrs = ['a.out.h', 'assert.h', 'limits.h', 'nlist.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])
 
 bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['a.out.h', 'assert.h', 'limits.h', 'nlist.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['assert.h', 'limits.h', 'setjmp.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_simp_headers", hdrs = ['assert.h', 'limits.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/i386/loader:__pkg__"])

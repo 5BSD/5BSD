@@ -222,3 +222,7 @@ exports_files(['verity/g_verity_transition.c'], visibility = ['//stand/efi/loade
 exports_files(['verity/g_verity_verify.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 bsd_source_headers(name = "bios_loader_headers", hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_4th_headers", hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_simp_headers", hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ["//stand/i386/loader:__pkg__"])

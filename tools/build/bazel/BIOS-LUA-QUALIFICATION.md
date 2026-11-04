@@ -1,5 +1,9 @@
 # Complete native BIOS Lua loader (2026-11-04)
 
+Historical construction checkpoint. Current shared interpreter/default-selection
+and PXE routing behavior is documented in [BIOS-FAMILY-QUALIFICATION.md](BIOS-FAMILY-QUALIFICATION.md);
+older Lua-only ownership or unsupported Forth/simple statements below are superseded.
+
 ## Source-owned construction
 
 The new stand/i386/loader_lua contribution crosses an explicit i386 standalone

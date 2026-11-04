@@ -11201,3 +11201,13 @@ bytes. No OS DTrace/BSM provider occurs in this preboot assembler; host image
 checks do not prove firmware/network execution or event delivery. The original
 client size guard remains an actual action failure, and unqualified interpreters
 are rejected rather than silently replaced.
+
+## Shared BIOS interpreter family (2026-11-04)
+
+All 108 original Lua/Forth/simple entry compiler contexts preserve C/assembly,
+assertions and preboot diagnostic paths. Two new entry assertion filename
+controls and original library controls explain allocated diagnostic strings;
+no assertion-disable flag is introduced. The default/explicit alias and PXE
+changes select real producers and preserve source-defined help ownership.
+These artifact checks establish neither firmware/interpreter execution nor OS
+DTrace/BSM delivery. Graphical/verifier and full runtime coverage remain open.

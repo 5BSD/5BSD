@@ -1,5 +1,9 @@
 # Native PXE construction qualification (2026-11-04)
 
+Historical construction checkpoint. Current shared interpreter/default-selection
+and PXE routing behavior is documented in [BIOS-FAMILY-QUALIFICATION.md](BIOS-FAMILY-QUALIFICATION.md);
+older Lua-only ownership or unsupported Forth/simple statements below are superseded.
+
 ## Graph and inputs
 
 The missing PXE contribution now compiles the original pxeldr.S with the
