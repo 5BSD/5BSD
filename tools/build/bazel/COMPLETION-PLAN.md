@@ -2044,3 +2044,21 @@ bootstrap/sandbox/cache, pkgbase/hardware/combined publication and CPU/memory/di
 performance gates remain required. The broad SDK input/validation overhead is
 still open. No VM, installation, upgrade or reboot occurred. Make stays default;
 BIP remains excluded. No frontend C switch or policy default changed.
+
+### 2026-11-04: first EFI loader construction reference
+
+The maintained AMD64 loader reference passes at
+`bazel-efi-loader-amd64-make-r1-20261104`, with 58 actual object recipes,
+REPRODUCIBLE_BUILD explicitly enabled and BUILD_UTC explicitly selected. It
+produces the full/debug/stripped symbol files, PE image and installation records.
+Its link still consumes the existing world SDK's three private EFI archives;
+this is an entry-object/generator reference, not a closed whole-loader oracle
+or a native Bazel loader build.
+
+Next carry the actual font, help and version generators into declared actions,
+then entry objects and final links. The existing newvers.sh still collects host
+metadata even when -r suppresses it; remove that unnecessary dependency while
+preserving Make output. PE epoch must be a declared input; the current recipe's
+maintained 2024 timestamp default is reference policy, not a value to embed in a
+new generator. Close the original-library link inputs before asserting complete
+loader parity or boot qualification. All broader completion gates remain open.
