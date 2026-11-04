@@ -23,6 +23,8 @@
 #include "vmx_nested_reflect.h"
 #include "vmx_nested_validate.h"
 
+#define	NVMX_EPTP_AD_ENABLED		(UINT64_C(1) << 6)
+#define	NVMX_EPT_ENTRY_DIRTY		(UINT64_C(1) << 9)
 #define	NVMX_EPTQ_ACCESS_MASK		UINT64_C(0x7)
 #define	NVMX_EPTQ_GLA_VALID		(UINT64_C(1) << 7)
 #define	NVMX_EPTQ_FINAL_TRANSLATION	(UINT64_C(1) << 8)
@@ -438,6 +440,14 @@ vmx_nested_ept_handoff_handle(struct vmx_nested_ept_handoff *handoff,
 		goto retry;
 
 	if (resolved.plan.action == VMX_NESTED_EPT_FAULT_POPULATE) {
+		/*
+		 * A read walk can leave a writable EPT12 leaf clean.  Keep
+		 * its EPT02 alias read-only until a write walk commits EPT12 D;
+		 * otherwise hardware writes through the alias bypass that update.
+		 */
+		if ((request->eptp & NVMX_EPTP_AD_ENABLED) != 0 &&
+		    (result.entry & NVMX_EPT_ENTRY_DIRTY) == 0)
+			resolved.plan.permissions &= ~VMX_NESTED_EPT_ACCESS_WRITE;
 		if (ops == NULL || ops->populate == NULL) {
 			error = ENOTSUP;
 			goto retry;

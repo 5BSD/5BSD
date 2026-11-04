@@ -574,9 +574,20 @@ vmx_nested_event_plan(const struct vmx_nested_event_input *input,
 		return (EINVAL);
 	memset(&candidate, 0, sizeof(candidate));
 	candidate.kind = input->kind;
+	/*
+	 * L2 IF cannot block an external-interrupt exit to L1.  Like KVM,
+	 * also allow that exit during STI/MOVSS shadows, as permitted by the
+	 * SDM.  With virtual NMIs enabled, L2 NMI blocking represents only
+	 * virtual-NMI blocking and cannot block an NMI exit to L1.  Without
+	 * that control, preserve physical NMI blocking.  Window exits still
+	 * require an open L2 window.
+	 */
 	if (input->nested_entry_pending || input->reinjection_pending) {
 		candidate.action = VMX_NESTED_EVENT_ACTION_DEFER;
-	} else if (input->guest_blocked) {
+	} else if (input->guest_blocked &&
+	    !(input->pending && input->l1_event_exiting &&
+	    (input->kind == VMX_NESTED_EVENT_EXTERNAL_INTERRUPT ||
+	    input->l1_virtual_nmis))) {
 		if (input->pending || input->l1_window_exiting) {
 			candidate.action =
 			    VMX_NESTED_EVENT_ACTION_WAIT_FOR_WINDOW;
@@ -585,7 +596,7 @@ vmx_nested_event_plan(const struct vmx_nested_event_input *input,
 			else
 				candidate.arm_interrupt_window = true;
 		}
-	} else if (input->l1_window_exiting) {
+	} else if (input->l1_window_exiting && !input->guest_blocked) {
 		candidate.action = VMX_NESTED_EVENT_ACTION_REFLECT_WINDOW;
 	} else if (!input->pending) {
 		candidate.action = VMX_NESTED_EVENT_ACTION_NONE;

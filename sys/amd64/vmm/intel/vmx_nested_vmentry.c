@@ -359,11 +359,14 @@ vmx_nested_vmentry_snapshot_validate(
 	struct vmx_nested_entry_controls controls;
 	struct vmx_nested_vmentry_result candidate;
 	enum vmx_nested_msr_failure msr_failure;
+	enum vmx_nested_entry_control_failure control_failure;
 	uint32_t count, failed_msr;
 	size_t entries_length;
 	int error;
 
-	if (input == NULL || input->controls == NULL ||
+	if (vmx_nested_capabilities_validate(capabilities) != 0 ||
+	    input == NULL || input->controls == NULL || input->host == NULL ||
+	    input->guest_control == NULL || input->guest_arch == NULL ||
 	    snapshot_count == NULL || result == NULL ||
 	    (input->controls->entry_msr_load_count != 0 && entries == NULL))
 		return (EINVAL);
@@ -383,6 +386,18 @@ vmx_nested_vmentry_snapshot_validate(
 	    vmx_nested_state_ranges_overlap(snapshot_count,
 	    sizeof(*snapshot_count), result, sizeof(*result)))
 		return (EINVAL);
+
+	/* Validate the original list controls before suppressing content reads. */
+	if (vmx_nested_entry_controls_validate_for_guest(capabilities,
+	    input->controls, input->guest_control->cr0,
+	    &control_failure) != 0) {
+		memset(&candidate, 0, sizeof(candidate));
+		nvmx_vmfail(&candidate, VMX_NESTED_VMENTRY_STAGE_CONTROLS, 7,
+		    control_failure);
+		*snapshot_count = 0;
+		*result = candidate;
+		return (0);
+	}
 
 	/*
 	 * Preserve the architectural validation order while suppressing the

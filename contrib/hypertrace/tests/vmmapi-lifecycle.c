@@ -25,7 +25,10 @@ void *__wrap_malloc(size_t n) { if (allocfail) { allocfail=0; errno=ENOMEM; retu
 int __wrap_modfind(const char *s) { assert(strcmp(s,"vmm")==0); lookups++; return mode==9 ? -1 : 1; }
 int __wrap_kldload(const char *s) { assert(strcmp(s,"vmm")==0); loads++;return 1; }
 int __wrap_open(const char *s,int flags,...) {
-    if (strncmp(s,"/usr/obj/5BSD-hypertrace-validation/",35)==0) {
+    const char *profile_dir = getenv("VMMAPI_TEST_PROFILE_DIR");
+    size_t profile_len = profile_dir != NULL ? strlen(profile_dir) : 0;
+    if (profile_len != 0 && strncmp(s,profile_dir,profile_len)==0 &&
+        s[profile_len]=='/') {
         va_list ap;int perm=0;
         if(flags&O_CREAT){va_start(ap,flags);perm=va_arg(ap,int);va_end(ap);}
         profile_fd=__real_open(s,flags,perm);return profile_fd;

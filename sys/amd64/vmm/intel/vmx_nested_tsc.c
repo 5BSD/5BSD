@@ -170,11 +170,20 @@ vmx_nested_tsc_write_plan(const struct vmx_nested_tsc_write_input *input,
 	if (error != 0)
 		return (error);
 	if (input->timer_enabled) {
+		/* TSC writes change the epoch, not the timer's elapsed budget. */
+		l1_virtual_tsc = vmx_nested_tsc_scaled_ticks(
+		    input->timer_host_tsc, input->current.l1_multiplier,
+		    input->current.l1_offset);
+		error = vmx_nested_timer_remaining(l1_virtual_tsc,
+		    input->timer_rate, input->timer.deadline_ticks,
+		    &candidate.timer);
+		if (error != 0)
+			return (error);
 		l1_virtual_tsc = vmx_nested_tsc_scaled_ticks(
 		    input->timer_host_tsc, candidate.updated.l1_multiplier,
 		    candidate.updated.l1_offset);
-		error = vmx_nested_timer_remaining(l1_virtual_tsc,
-		    input->timer_rate, input->timer.deadline_ticks,
+		error = vmx_nested_timer_start(l1_virtual_tsc,
+		    input->timer_rate, candidate.timer.remaining,
 		    &candidate.timer);
 		if (error != 0)
 			return (error);

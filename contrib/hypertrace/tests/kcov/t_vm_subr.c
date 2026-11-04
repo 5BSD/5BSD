@@ -17,6 +17,9 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
+#include <sys/hypertrace.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -43,6 +46,7 @@ vm_page_t vm_page_array;
 long vm_page_array_size;
 
 static int next_hpage;		/* host page bump allocator */
+static bool pmap_initialized;
 static struct pmap npmap;	/* the nested (EPT/RVI) pmap */
 static uint64_t nvalid;		/* valid bit for nested entries */
 
@@ -50,6 +54,7 @@ static void
 reset(int type, int flags)
 {
 	memset(arena, 0, sizeof(arena));
+	memset(pages, 0, sizeof(pages));
 	dmaplimit = sizeof(arena);
 	kva_layout.dmap_low = (vm_offset_t)arena;
 	kva_layout.dmap_high = (vm_offset_t)arena + sizeof(arena);
@@ -58,7 +63,11 @@ reset(int type, int flags)
 	vm_page_array = pages;
 	vm_page_array_size = NPAGES;
 	first_page = 0;
+	if (pmap_initialized)
+		mtx_destroy(&npmap.pm_mtx);
+	pmap_initialized = true;
 	memset(&npmap, 0, sizeof(npmap));
+	mtx_init(&npmap.pm_mtx, "test pmap", NULL, MTX_DEF);
 	npmap.pm_type = type;
 	npmap.pm_flags = flags;
 	nvalid = type == PT_EPT ?
@@ -96,10 +105,13 @@ nmap(uint64_t gpa, uint64_t hpa, int top, int leaf)
 		int idx = (gpa >> (PAGE_SHIFT + 9 * level)) & 0x1ff;
 
 		if ((table[idx] & nvalid) == 0)
-			table[idx] = hpage() | nvalid;
+			table[idx] = hpage() | nvalid | (npmap.pm_type == PT_RVI ?
+			    X86_PG_RW : EPT_PG_WRITE | EPT_PG_EMUL_RW);
 		table = hva_of(table[idx] & PG_FRAME);
 	}
-	table[(gpa >> (PAGE_SHIFT + 9 * leaf)) & 0x1ff] = hpa | nvalid |
+	table[(gpa >> (PAGE_SHIFT + 9 * leaf)) & 0x1ff] = hpa | nvalid | PG_MANAGED |
+	    (npmap.pm_type == PT_RVI ? X86_PG_RW :
+	    EPT_PG_WRITE | EPT_PG_EMUL_RW) |
 	    (leaf != 0 ? PG_PS : 0);
 }
 
@@ -437,6 +449,196 @@ case_nested(void)
 	KHX_EQ(walk(0, PAGING_MODE_FLAT, 0, &hva), EINVAL);
 }
 
+static uint64_t *
+host_leaf(uint64_t gpa)
+{
+	uint64_t *t = hva_of(0), *entry;
+	for (int level = la57 ? 4 : 3; ; level--) {
+		entry = &t[(gpa >> (PAGE_SHIFT + 9 * level)) & 0x1ff];
+		if (level == 0 || (*entry & PG_PS) != 0)
+			return (entry);
+		t = hva_of(*entry & PG_FRAME);
+	}
+}
+
+static void
+case_checked_modes(int mode)
+{
+	struct vm_guest_paging p;
+	uint64_t bits = X86_PG_V | X86_PG_U | X86_PG_RW;
+	uint64_t *leaf;
+	char b[8];
+
+	khx_host_case("checked-paging-modes");
+	reset(PT_RVI, 0);
+	gram = nmap_guest_ram(G_RAM, 3);
+	p = (struct vm_guest_paging){ .cr3 = G_ROOT * PAGE_SIZE,
+	    .cpl = 3, .pmap = &npmap, .cpu_mode = CPU_MODE_64BIT,
+	    .paging_mode = mode };
+	if (mode == PAGING_MODE_32) {
+		((uint32_t *)gtable(G_ROOT))[0] = PG_PS | bits;
+		leaf = NULL;
+	} else if (mode == PAGING_MODE_PAE) {
+		/* PDPTE U/S and R/W are not permission bits in PAE. */
+		gtable(G_ROOT)[0] = G_L1 * PAGE_SIZE | X86_PG_V;
+		leaf = &gtable(G_L1)[0];
+		*leaf = PG_PS | bits | (1ULL << PAGE_SHIFT);
+	} else {
+		if (mode == PAGING_MODE_64_LA57) {
+			gtable(G_ROOT)[0] = G_L3 * PAGE_SIZE | bits;
+			gtable(G_L3)[0] = G_L2 * PAGE_SIZE | bits;
+		} else
+			gtable(G_ROOT)[0] = G_L2 * PAGE_SIZE | bits;
+		gtable(G_L2)[0] = G_L1 * PAGE_SIZE | bits;
+		leaf = &gtable(G_L1)[0];
+		*leaf = PG_PS | bits | (1ULL << PAGE_SHIFT);
+	}
+	PMAP_LOCK(&npmap);
+	memcpy(gtable(G_DATA), "original", 8);
+	KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, b, 8, VM_PROT_READ), 0);
+	KHX_EQ(memcmp(b, "original", 8), 0);
+	KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, "modified", 8, VM_PROT_WRITE), 0);
+	KHX_EQ(memcmp(gtable(G_DATA), "modified", 8), 0);
+	/* Reserved low address bits in a large leaf cannot alias valid RAM. */
+	if (leaf != NULL)
+		*leaf |= 1ULL << 13;
+	else
+		((uint32_t *)gtable(G_ROOT))[0] |= 1U << 13;
+	KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, "BADWRITE", 8, VM_PROT_WRITE), EFAULT);
+	KHX_EQ(memcmp(gtable(G_DATA), "modified", 8), 0);
+	if (leaf != NULL)
+		*leaf &= ~(1ULL << 13);
+	else
+		((uint32_t *)gtable(G_ROOT))[0] &= ~(1U << 13);
+	/* Unmanaged page-table backing cannot be used even if data is managed. */
+	*host_leaf(G_ROOT * PAGE_SIZE) &= ~PG_MANAGED;
+	KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, b, 8, VM_PROT_READ), EFAULT);
+	*host_leaf(G_ROOT * PAGE_SIZE) |= PG_MANAGED;
+	if (leaf != NULL) {
+		*leaf &= ~X86_PG_U;
+		KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, b, 8, VM_PROT_READ), EFAULT);
+		*leaf |= X86_PG_U;
+		*leaf &= ~X86_PG_RW;
+		KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, "BADWRITE", 8, VM_PROT_WRITE), EFAULT);
+		KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, b, 8, VM_PROT_READ), 0);
+	}
+	if (mode == PAGING_MODE_64 || mode == PAGING_MODE_64_LA57) {
+		gtable(G_L2)[0] = PG_PS | bits | (1ULL << PAGE_SHIFT);
+		KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, "one-giga", 8, VM_PROT_WRITE), 0);
+		gtable(G_L2)[0] |= 1ULL << 21;
+		KHX_EQ(dtrace_guest_copy(&p, G_DATA * PAGE_SIZE, "BADWRITE", 8, VM_PROT_WRITE), EFAULT);
+		KHX_EQ(memcmp(gtable(G_DATA), "one-giga", 8), 0);
+	}
+	PMAP_UNLOCK(&npmap);
+}
+
+static void
+case_resident_copy(int type, int flags)
+{
+	struct vm_guest_paging p;
+	char b[8];
+	uint64_t bits = X86_PG_V | X86_PG_U | X86_PG_RW;
+
+	khx_host_case("resident-copy");
+	reset(type, flags);
+	gram = nmap_guest_ram(G_RAM, 3);
+	p = (struct vm_guest_paging){ .cr3 = G_ROOT * PAGE_SIZE,
+	    .cpl = 3, .pmap = &npmap, .cpu_mode = CPU_MODE_64BIT,
+	    .paging_mode = PAGING_MODE_64 };
+	gtable(G_ROOT)[0] = G_L2 * PAGE_SIZE | bits;
+	gtable(G_L2)[0] = G_L1 * PAGE_SIZE | bits;
+	gtable(G_L1)[0] = G_L0 * PAGE_SIZE | bits;
+	gtable(G_L0)[0] = G_DATA * PAGE_SIZE | bits;
+	gtable(G_L0)[1] = (G_DATA + 1) * PAGE_SIZE | bits;
+	memcpy((char *)gtable(G_DATA) + PAGE_SIZE - 4, "ABCDEFGH", 8);
+	PMAP_LOCK(&npmap);
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, b, 8, VM_PROT_READ), 0);
+	KHX_EQ(memcmp(b, "ABCDEFGH", 8), 0);
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, "12345678", 8,
+	    VM_PROT_WRITE), 0);
+	KHX_EQ(memcmp((char *)gtable(G_DATA) + PAGE_SIZE - 4, "12345678", 8), 0);
+	KHX_EQ(pages[gram / PAGE_SIZE + G_DATA].dirty, VM_PAGE_BITS_ALL);
+	KHX_EQ(pages[gram / PAGE_SIZE + G_DATA + 1].dirty, VM_PAGE_BITS_ALL);
+	/* Migration reads host leaf dirty bits, not vm_page->dirty. */
+	uint64_t modified = type == PT_RVI ? X86_PG_M :
+	    flags ? EPT_PG_WRITE : EPT_PG_M;
+	KHX_CHECK((*host_leaf(G_DATA * PAGE_SIZE) & modified) != 0);
+	KHX_CHECK((*host_leaf((G_DATA + 1) * PAGE_SIZE) & modified) != 0);
+	*host_leaf(G_DATA * PAGE_SIZE) &= ~modified;
+	KHX_EQ(dtrace_guest_copy(&p, 0, "dirtybit", 8, VM_PROT_WRITE), 0);
+	KHX_CHECK((*host_leaf(G_DATA * PAGE_SIZE) & modified) != 0);
+
+	/* Permission failure must change neither data nor migration dirty bits. */
+	*host_leaf(G_DATA * PAGE_SIZE) &= ~modified;
+	*host_leaf((G_DATA + 1) * PAGE_SIZE) &= ~modified;
+	gtable(G_L0)[1] &= ~X86_PG_RW;
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, "XXXXXXXX", 8,
+	    VM_PROT_WRITE), EFAULT);
+	KHX_EQ(memcmp((char *)gtable(G_DATA) + PAGE_SIZE - 4, "12345678", 8), 0);
+	KHX_EQ(*host_leaf(G_DATA * PAGE_SIZE) & modified, 0);
+	KHX_EQ(*host_leaf((G_DATA + 1) * PAGE_SIZE) & modified, 0);
+	gtable(G_L0)[1] &= ~X86_PG_U;
+	memset(b, 'Z', sizeof(b));
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, b, 8, VM_PROT_READ), EFAULT);
+	KHX_EQ(memcmp(b, "ZZZZZZZZ", 8), 0);
+	gtable(G_L0)[1] |= bits;
+	gtable(G_ROOT)[0] &= ~X86_PG_U;
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), EFAULT);
+	gtable(G_ROOT)[0] |= bits;
+	/* Unmanaged host RAM and absent mappings must not be faulted in. */
+	nmap(G_DATA * PAGE_SIZE, gram + G_DATA * PAGE_SIZE, 3, 0);
+	uint64_t *t = hva_of(0);
+	for (int level = 3; level > 0; level--)
+		t = hva_of(t[0] & PG_FRAME);
+	t[G_DATA] &= ~PG_MANAGED;
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), EFAULT);
+	t[G_DATA] |= PG_MANAGED;
+	t[G_DATA] &= ~(type == PT_RVI ? X86_PG_RW :
+	    flags ? EPT_PG_EMUL_RW : EPT_PG_WRITE);
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_WRITE), EFAULT);
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), 0);
+	KHX_EQ(dtrace_guest_copy(&p, UINT64_MAX - 2, b, 8, VM_PROT_READ), EINVAL);
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, PAGE_SIZE + 1, VM_PROT_READ), EINVAL);
+	PMAP_UNLOCK(&npmap);
+	/* A competing owner must cause an immediate failure, with no mutation. */
+	struct thread *other = khx_thread_new("pmap owner", 0);
+	struct thread *saved = khx_set_curthread(other);
+	PMAP_LOCK(&npmap);
+	khx_set_curthread(saved);
+	memset(b, 'Q', sizeof(b));
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), EFAULT);
+	KHX_EQ(memcmp(b, "QQQQQQQQ", 8), 0);
+	khx_set_curthread(other);
+	PMAP_UNLOCK(&npmap);
+	khx_set_curthread(saved);
+	khx_thread_free(other);
+}
+
+static void
+case_host_large_copy(int type, int leaflevel)
+{
+	struct vm_guest_paging p;
+	uint64_t gpa = leaflevel == 1 ? 0x200000 : 0x40000000;
+	uint64_t modified = type == PT_RVI ? X86_PG_M : EPT_PG_M;
+	char b[8];
+
+	khx_host_case("host-large-copy-dirty");
+	reset(type, 0);
+	nmap(gpa, 0, 3, leaflevel);
+	gpa += 40 * PAGE_SIZE;
+	p = (struct vm_guest_paging){ .cpl = 0, .pmap = &npmap,
+	    .cpu_mode = CPU_MODE_64BIT, .paging_mode = PAGING_MODE_FLAT };
+	PMAP_LOCK(&npmap);
+	KHX_EQ(*host_leaf(gpa) & modified, 0);
+	KHX_EQ(dtrace_guest_copy(&p, gpa, "dirtybit", 8, VM_PROT_WRITE), 0);
+	KHX_CHECK((*host_leaf(gpa) & modified) != 0);
+	KHX_EQ(pages[40].dirty, VM_PAGE_BITS_ALL);
+	KHX_EQ(memcmp(arena + 40 * PAGE_SIZE, "dirtybit", 8), 0);
+	KHX_EQ(dtrace_guest_copy(&p, gpa, b, 8, VM_PROT_READ), 0);
+	KHX_EQ(memcmp(b, "dirtybit", 8), 0);
+	PMAP_UNLOCK(&npmap);
+}
+
 int
 khx_test_main(void)
 {
@@ -449,5 +651,17 @@ khx_test_main(void)
 	case_table_outside_dmap();
 	case_flat_and_args();
 	case_nested();
+	case_host_large_copy(PT_RVI, 1);
+	case_host_large_copy(PT_RVI, 2);
+	case_host_large_copy(PT_EPT, 1);
+	case_host_large_copy(PT_EPT, 2);
+	case_checked_modes(PAGING_MODE_32);
+	case_checked_modes(PAGING_MODE_PAE);
+	case_checked_modes(PAGING_MODE_64);
+	case_checked_modes(PAGING_MODE_64_LA57);
+	case_resident_copy(PT_RVI, 0);
+	case_resident_copy(PT_EPT, 0);
+	case_resident_copy(PT_EPT, PMAP_EMULATE_AD_BITS);
+	mtx_destroy(&npmap.pm_mtx);
 	return (khx_host_finish("dtrace_vm_subr"));
 }

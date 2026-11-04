@@ -159,6 +159,19 @@ SUITES['vmx_nested_ept_root'] = {
 }
 
 
+SUITES['vmm_mem_dirty'] = {
+    'production': ['sys/dev/vmm/vmm_mem.c',
+                   'sys/amd64/vmm/vmm_dirty_log_machdep.c'],
+    'deps': ['sys/dev/vmm/vmm_dirty_log.c',
+             'sys/dev/vmm/vmm_dirty_log_owner.c',
+             'sys/dev/vmm/vmm_dirty_log_map.c',
+             'sys/dev/vmm/vmm_dirty_log_collector.c'],
+    'tests': ['t_vmm_mem_dirty.c'],
+    'shims': [],
+    'component': 'guest memory alias dirty accounting',
+}
+
+
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 

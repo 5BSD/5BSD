@@ -535,6 +535,12 @@ khx_test_main(void)
 		size_t size;
 
 		khx_host_stack_bounds(&lo, &size);
+		/* td_kstack_pages is u_short; a 512-MiB host stack wraps to zero.
+		 * Keep the upper representable part containing these live frames. */
+		if (size / PAGE_SIZE > USHRT_MAX) {
+			lo = (char *)lo + size - (size_t)USHRT_MAX * PAGE_SIZE;
+			size = (size_t)USHRT_MAX * PAGE_SIZE;
+		}
 		root_td->td_kstack = (void *)lo;
 		root_td->td_kstack_pages = size / PAGE_SIZE;
 		tf.tf_rip = 0x400100;

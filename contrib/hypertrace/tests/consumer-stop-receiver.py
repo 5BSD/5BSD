@@ -12,7 +12,7 @@ out.mkdir(parents=True, exist_ok=True)
 source = (root / 'cddl/contrib/opensolaris/cmd/dtrace/dtrace.c').read_text()
 a = source.index('static int\nconsumer_drain_gate_held(')
 b = source.index('\n}', a) + 2
-c = source.index('static int\nconsumer_stop_lock(')
+c = source.index('static int\nmutex_trylock(')
 d = source.index('\ntypedef struct dtrace_workarg', c)
 stop_source = source[c:d]
 start = stop_source.index('/* Acquire before collector tracing work')

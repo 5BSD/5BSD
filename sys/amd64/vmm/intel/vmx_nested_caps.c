@@ -251,6 +251,9 @@ vmx_nested_capabilities_build(
 	    VMX_EXIT_IMPLEMENTED, 0);
 	candidate.vmentry = nvmx_virtual_control(input->vmentry,
 	    VMX_ENTRY_IMPLEMENTED, 0);
+	/* L0 must preserve the timer residual across its own nested exits. */
+	if ((candidate.vmexit & (UINT64_C(1) << (32 + 22))) == 0)
+		candidate.pinbased &= ~(UINT64_C(1) << (32 + 6));
 
 	/*
 	 * A secondary-control capability is meaningless unless L1 can

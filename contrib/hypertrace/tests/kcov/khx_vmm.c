@@ -276,17 +276,23 @@ kb_getdesc(void *vcpui, int num, struct seg_desc *desc)
 	return (0);
 }
 
-static struct vmspace khx_vmspace;
-
 static struct vmspace *
 kb_vmspace_alloc(vm_offset_t min __unused, vm_offset_t max __unused)
 {
-	return (khx_vmm_vmspace_fail ? NULL : &khx_vmspace);
+	struct vmspace *vmspace;
+
+	if (khx_vmm_vmspace_fail)
+		return (NULL);
+	vmspace = malloc(sizeof(*vmspace), M_DEVBUF, M_WAITOK | M_ZERO);
+	PMAP_LOCK_INIT(vmspace_pmap(vmspace));
+	return (vmspace);
 }
 
 static void
-kb_vmspace_free(struct vmspace *vmspace __unused)
+kb_vmspace_free(struct vmspace *vmspace)
 {
+	PMAP_LOCK_DESTROY(vmspace_pmap(vmspace));
+	free(vmspace, M_DEVBUF);
 }
 
 static int kb_vlapic_token;
@@ -789,6 +795,35 @@ khx_translate(struct vm_guest_paging *paging, uint64_t gla, int prot,
 	return (0);
 }
 
+/* Resident-copy dependency; the real walker has its own production-TU suite. */
+int
+dtrace_guest_copy(struct vm_guest_paging *paging, uint64_t gla, void *buf,
+    size_t len, int prot)
+{
+	uint64_t gpa[2];
+	size_t chunks[2], done = 0;
+	int n = 0, fault;
+	while (done < len) {
+		if (khx_translate(paging, gla + done, prot, &gpa[n], &fault) != 0 ||
+		    fault || khx_gpa_hold_fail == 0)
+			return (EFAULT);
+		if (khx_gpa_hold_fail > 0)
+			khx_gpa_hold_fail--;
+		chunks[n] = MIN(len - done, PAGE_SIZE - ((gla + done) & PAGE_MASK));
+		if (gpa[n] < KHX_GPA_BASE ||
+		    gpa[n] - KHX_GPA_BASE + chunks[n] > sizeof(khx_gmem))
+			return (EFAULT);
+		done += chunks[n++];
+	}
+	for (done = 0, n = 0; done < len; done += chunks[n++]) {
+		if (prot == VM_PROT_WRITE)
+			memcpy(khx_gmem + (gpa[n] - KHX_GPA_BASE), (char *)buf + done, chunks[n]);
+		else
+			memcpy((char *)buf + done, khx_gmem + (gpa[n] - KHX_GPA_BASE), chunks[n]);
+	}
+	return (0);
+}
+
 int
 vm_gla2gpa(struct vcpu *vcpu __unused, struct vm_guest_paging *paging,
     uint64_t gla, int prot, uint64_t *gpa, int *fault)
@@ -931,6 +966,7 @@ hypertrace_probe(const void *vmhdl, hypertrace_id_t id,
 	const char *name;
 	uint64_t v;
 
+	KHX_CHECK(PMAP_LOCKED((pmap_t)((const struct vm_hdl *)vmhdl)->paging->pmap));
 	memset(r, 0, sizeof(*r));
 	khx_ht_probes++;
 	r->id = id;

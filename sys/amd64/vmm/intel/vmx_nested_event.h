@@ -32,10 +32,12 @@ struct vmx_nested_event_input {
 	uint8_t		vector;
 	bool pending;
 	bool vector_valid;
+	/* L2 interruptibility/IF blocking; activity-state eligibility is external. */
 	bool guest_blocked;
 	bool nested_entry_pending;
 	bool reinjection_pending;
 	bool l1_event_exiting;
+	bool l1_virtual_nmis;
 	bool l1_window_exiting;
 	bool acknowledge_on_exit;
 };

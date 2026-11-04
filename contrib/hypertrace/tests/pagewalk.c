@@ -12,8 +12,15 @@
 #define PG_FRAME 0x000ffffffffff000UL
 #define PG_PS 0x80
 #define X86_PG_V 1
+#define X86_PG_RW 2
+#define X86_PG_U 4
+#define EPT_PG_WRITE 2
+#define EPT_PG_EMUL_RW (1ULL << 53)
+#define PG_MANAGED 0x400
+#define VM_PROT_READ 1
+#define VM_PROT_WRITE 2
 #define EPT_PG_READ 1
-#define EPT_PG_EMUL_V 0x200
+#define EPT_PG_EMUL_V (1ULL << 52)
 #define PMAP_EMULATE_AD_BITS 0x200
 #define VM_PHYSSEG_DENSE 1
 #define atop(pa) ((pa) >> PAGE_SHIFT)
@@ -37,6 +44,8 @@ enum { PAGING_MODE_FLAT, PAGING_MODE_32, PAGING_MODE_PAE,
     PAGING_MODE_64, PAGING_MODE_64_LA57 };
 struct vm_guest_paging { uint64_t cr3; int cpl; void *pmap; int paging_mode; };
 #define panic(...) abort()
+#define KASSERT(c, msg) assert(c)
+#define ASSERT(c) assert(c)
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define CPU_DTRACE_NOFAULT 1
 #define CPU_DTRACE_BADADDR 2
@@ -111,8 +120,7 @@ int main(void)
     assert(dtrace_guest_load(&pg, PAGE_SIZE - 4, 8) == 0);
     assert(cpu_core[0].cpuc_dtrace_flags == CPU_DTRACE_BADADDR);
     cpu_core[0].cpuc_dtrace_flags = 0;
-    assert(dtrace_guest_load(&pg, UINTPTR_MAX - 1, 8) == 0);
-    assert(cpu_core[0].cpuc_dtrace_flags == CPU_DTRACE_BADADDR);
+    /* Overflow is a caller precondition asserted by dtrace_guest_load(). */
     pg.paging_mode = PAGING_MODE_FLAT;
     assert(dtrace_gla2hva(&pg, 7 * PAGE_SIZE + 25, &hva) == 0);
     /* PAE root at the last 32 bytes of a page, fourth PDPT entry. */

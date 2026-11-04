@@ -3950,7 +3950,7 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 {
 	pdp_entry_t pdpe, *pdpep;
 	pd_entry_t pde, *pdep;
-	pt_entry_t pte, PG_RW, PG_V;
+	pt_entry_t pte, *leaf, PG_RW, PG_V;
 	vm_page_t m;
 
 	m = NULL;
@@ -3964,6 +3964,7 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 	if ((pdpe & PG_PS) != 0) {
 		if ((pdpe & PG_RW) == 0 && (prot & VM_PROT_WRITE) != 0)
 			goto out;
+		leaf = (pt_entry_t *)pdpep;
 		m = PHYS_TO_VM_PAGE((pdpe & PG_PS_FRAME) | (va & PDPMASK));
 		goto check_page;
 	}
@@ -3974,11 +3975,13 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 	if ((pde & PG_PS) != 0) {
 		if ((pde & PG_RW) == 0 && (prot & VM_PROT_WRITE) != 0)
 			goto out;
+		leaf = (pt_entry_t *)pdep;
 		m = PHYS_TO_VM_PAGE((pde & PG_PS_FRAME) | (va & PDRMASK));
 		goto check_page;
 	}
 
-	pte = *pmap_pde_to_pte(pdep, va);
+	leaf = pmap_pde_to_pte(pdep, va);
+	pte = *leaf;
 	if ((pte & PG_V) == 0 ||
 	    ((pte & PG_RW) == 0 && (prot & VM_PROT_WRITE) != 0))
 		goto out;
@@ -3987,6 +3990,15 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 check_page:
 	if (m != NULL && !vm_page_wire_mapped(m))
 		m = NULL;
+	/*
+	 * A writable guest-page hold permits a later direct-map write.  Such
+	 * writes dirty vm_page but bypass the guest PTE used by migration.
+	 * Mark the actual leaf while its translation is stable under our lock.
+	 */
+	if (m != NULL && pmap_type_guest(pmap) &&
+	    (prot & VM_PROT_WRITE) != 0)
+		atomic_set_long((u_long *)leaf, pmap_modified_bit(pmap) |
+		    pmap_accessed_bit(pmap));
 out:
 	PMAP_UNLOCK(pmap);
 	return (m);

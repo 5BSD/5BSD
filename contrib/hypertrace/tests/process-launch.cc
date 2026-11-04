@@ -217,7 +217,16 @@ int main(int argc, char **argv) {
     assert(close(s.pidfds.at(sourced_pid)) == 0); /* Parent death closes it. */
     s.pidfds.erase(sourced_pid);
     bool disappeared = false;
+    int sourced_status;
     for (int i = 0; i < 200; ++i) {
+        /* Native fixtures retain pdfork's waitpid reference. Last close
+         * kills the child but cannot discard that parent-owned zombie. */
+        pid_t waited = waitpid(sourced_pid, &sourced_status, WNOHANG);
+        if (waited == sourced_pid)
+            assert(WIFSIGNALED(sourced_status) &&
+                WTERMSIG(sourced_status) == SIGKILL);
+        else
+            assert(waited == 0 || (waited == -1 && errno == ECHILD));
         if (kill(sourced_pid, 0) == -1 && errno == ESRCH) {
             disappeared = true;
             break;
@@ -225,7 +234,6 @@ int main(int argc, char **argv) {
         usleep(10000);
     }
     assert(disappeared);
-    int sourced_status;
     assert(waitpid(sourced_pid, &sourced_status, WNOHANG) == -1 &&
         errno == ECHILD);
     assert(retire_guest_child(inbound.dirfd, sourced_pid));
