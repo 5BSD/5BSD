@@ -1,5 +1,19 @@
 # Native Bazel completion plan
 
+## AMD64 Lua kboot consumer (2026-11-04)
+
+The native consumer now has 39 original compiler contexts, declared dependencies,
+version/help generation, original ordered link, strip and two-file installation
+archive. Thirty-seven entry contracts match directly; two original filename-only
+controls plus the original libsa controls reproduce the entire installed image
+through original link/install recipes. The audit binds 1,818 consumed pairs.
+Final regression: 33 passing targets (one executed, 32 cached), 34 prior outputs
+unchanged, all kboot outputs rebound. The selected profile is AMD64 Lua with
+FDT disabled; alternate profiles and Linux/kexec runtime remain open. See
+[KBOOT-LOADER-QUALIFICATION.md](KBOOT-LOADER-QUALIFICATION.md). Full system,
+bootstrap/packages/debug/runtime/performance gates are still incomplete. Make
+remains default; BIP stays excluded.
+
 ## World inventory and AMD64 kboot library (2026-11-04)
 
 Fresh Make discovery and all 2,128 component queries pass. The declaration review

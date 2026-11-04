@@ -48,3 +48,7 @@ filegroup(name = "bios_4th_pnglite_source", srcs = ["pnglite.c"], visibility = [
 bsd_source_headers(name = "bios_simp_headers", hdrs = ['pnglite.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 filegroup(name = "bios_simp_pnglite_source", srcs = ["pnglite.c"], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['pnglite.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_pnglite_source', srcs = ['pnglite.c'], visibility = ["//stand/kboot/kboot:__pkg__"])

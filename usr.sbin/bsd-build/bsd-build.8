@@ -6261,3 +6261,15 @@ The internal library has no installed-file contribution.
 Other architectures and regular verifier profiles are not yet available.
 Archive ABI/API tests and original compiler comparisons qualify construction;
 they do not execute Linux syscalls or build the complete loader.kboot consumer.
+
+.Ss Kboot loader construction
+The AMD64 Lua consumer now has native entry compilation, version/help generation,
+ordered static linking, install stripping and an installation archive.
+The selected profile has GELI, disk and ZFS enabled with FDT disabled.
+Other architectures, interpreters, FDT and regular verifier profiles remain open.
+The two contributions are /boot/loader.kboot and /boot/loader.help.kboot,
+with original root/wheel ownership, modes and bootloader package tags.
+The existing explicit format-5 bazel-test interface selects these targets;
+no new frontend dispatch or publication policy is required.
+Construction and original-recipe comparisons do not qualify Linux syscall/kexec
+execution, VM startup or a complete installed system.

@@ -3403,3 +3403,7 @@ bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['include/os/freebsd/zfs/sys
 bsd_source_headers(name = "bios_4th_headers", hdrs = ['include/os/freebsd/zfs/sys/zfs_bootenv_os.h', 'include/sys/zfs_bootenv.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "bios_simp_headers", hdrs = ['include/os/freebsd/zfs/sys/zfs_bootenv_os.h', 'include/sys/zfs_bootenv.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers_include_os_freebsd_zfs_sys', hdrs = ['include/os/freebsd/zfs/sys/zfs_bootenv_os.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers_include_sys', hdrs = ['include/sys/zfs_bootenv.h'], visibility = ["//stand/kboot/kboot:__pkg__"])

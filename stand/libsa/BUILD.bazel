@@ -166,3 +166,7 @@ bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['geli/geliboot.h', 'stand.h
 bsd_source_headers(name = "bios_4th_headers", hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "bios_simp_headers", hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers_geli', hdrs = ['geli/geliboot.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+bsd_source_headers(name = "kboot_loader_headers", hdrs = ['nvstore.h', 'smbios.h', 'stand.h'], visibility = ["//stand/kboot/kboot:__pkg__"])

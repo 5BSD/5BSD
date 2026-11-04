@@ -103,3 +103,5 @@ bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['iso.h'], visibility = ['//
 bsd_source_headers(name = "bios_4th_headers", hdrs = ['iso.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "bios_simp_headers", hdrs = ['iso.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['iso.h'], visibility = ["//stand/kboot/kboot:__pkg__"])

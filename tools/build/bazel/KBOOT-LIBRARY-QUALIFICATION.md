@@ -22,7 +22,9 @@ not query Make or consume exported Make metadata.
 
 The archive is internal boot support. The original Make reference installs no
 component files, so this change adds no invented installation contribution.
-It does not build the complete loader.kboot consumer yet.
+At this library checkpoint the loader.kboot consumer was still missing. The
+subsequent [consumer qualification](KBOOT-LOADER-QUALIFICATION.md) covers the
+selected AMD64 Lua construction and installation.
 
 ## Evidence
 

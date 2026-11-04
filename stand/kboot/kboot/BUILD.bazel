@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+
+
+
+
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":entry.bzl", "CFLAGS", "SOURCES", "ORDER", "DEPS", "VIEWS")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+load("//tools/build/bazel:bsd_firmware_link.bzl", "bsd_firmware_link")
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+load("//tools/build/bazel:bsd_loader_generated.bzl", "bsd_loader_version", "bsd_loader_help")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_strip_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//stand/liblua:config.bzl", "loader_lua_paths")
+config_setting(name = "selected_profile", flag_values = {
+    "//tools/build/bazel/config:loader_lua": "true",
+    "//tools/build/bazel/config:loader_geli": "true",
+    "//tools/build/bazel/config:loader_disk": "true",
+    "//tools/build/bazel/config:loader_zfs": "true",
+})
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+    ":selected_profile": [], "//conditions:default": ["@platforms//:incompatible"],
+}) + select({"//tools/build/bazel/config:veriexec_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+bsd_architecture_headers(name = "architecture_headers", headers = VIEWS)
+loader_lua_paths(name = "lua_paths")
+bsd_loader_version(name = "version_configured", version = "version", output = "vers.c",
+    description = "kboot loader", machine = "amd64",
+    reproducible = select({"//tools/build/bazel/config:reproducible_build_enabled": True, "//conditions:default": False}),
+    metadata = "//tools/build/bazel/config:loader_version_metadata", target_compatible_with = _COMPAT)
+[cc_library(name = "entry_" + name, srcs = [source], copts = CFLAGS + extra,
+    deps = DEPS + ([":lua_paths"] if name == "interp_lua" else []),
+    features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    linkstatic = True, target_compatible_with = _COMPAT) for name, source, extra in SOURCES]
+[bsd_component_objects(name = "entry_" + name + "_objects", group = ":entry_" + name,
+    target_compatible_with = _COMPAT) for name, _, _ in SOURCES]
+filegroup(name = "entry_objects", srcs = [":entry_" + name + "_objects" for name, _, _ in SOURCES], target_compatible_with = _COMPAT)
+bsd_firmware_link(name = "native_symbols", output = "loader.kboot.full", objects = [":entry_objects"], object_order = ORDER,
+    archives = ["//stand/liblua:static_archive", "//stand/libsa:static_archive", "//stand/kboot/libkboot:native_archive"],
+    script = "arch/amd64/amd64.ldscript", linkopts = ["-static", "-Wl,-znow", "-Wl,-zrelro"],
+    features = ["-bsd_riscv_userland_abi"], target_compatible_with = _COMPAT)
+bsd_strip_binary(name = "native_image", src = ":native_symbols", output = "loader.kboot",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs", target_compatible_with = _COMPAT)
+bsd_loader_help(name = "native_help", srcs = ["//stand/common:help.common"], output = "loader.help.kboot", target_compatible_with = _COMPAT)
+bsd_install_file(name = "install_image", src = ":native_image", destination = "/boot/loader.kboot",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = _COMPAT)
+bsd_install_file(name = "install_help", src = ":native_help", destination = "/boot/loader.help.kboot",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bootloader"], target_compatible_with = _COMPAT)
+bsd_install_manifest(name = "native_install_manifest", entries = [":install_image", ":install_help"], target_compatible_with = _COMPAT)
+bsd_install_archive(name = "native_install_archive", manifests = [":native_install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/"}, passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], target_compatible_with = _COMPAT)
+bsd_freestanding_artifact(name = 'image', src = ':native_image', architecture = "amd64", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'symbols', src = ':native_symbols', architecture = "amd64", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'objects', src = ':entry_objects', architecture = "amd64", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'help', src = ':native_help', architecture = "amd64", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'install_manifest', src = ':native_install_manifest', architecture = "amd64", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = 'install_archive', src = ':native_install_archive', architecture = "amd64", visibility = ["//visibility:public"])
+
+bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['kboot.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_conf_source', srcs = ['conf.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_hostcons_source', srcs = ['hostcons.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_hostdisk_source', srcs = ['hostdisk.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_hostfs_source', srcs = ['hostfs.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_init_source', srcs = ['init.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_main_source', srcs = ['main.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_amd64_tramp_source', srcs = ['arch/amd64/amd64_tramp.S'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_elf64_freebsd_source', srcs = ['arch/amd64/elf64_freebsd.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_load_addr_source', srcs = ['arch/amd64/load_addr.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_fdt_arch_source', srcs = ['arch/amd64/fdt_arch.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_lua_bindings_source', srcs = ['lua_bindings.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+filegroup(name = "installation_metadata", srcs = [":install_manifest"], output_group = "manifest")
+bsd_host_artifact_test(name = "artifact_test", src = "archive-test.py",
+    data = [":image", ":symbols", ":help", ":installation_metadata", ":install_archive"],
+    args = ["--image", "$(location :image)", "--symbols", "$(location :symbols)",
+        "--help-data", "$(location :help)", "--manifest", "$(location :installation_metadata)",
+        "--archive", "$(location :install_archive)"], visibility = ["//visibility:public"], size = "small")

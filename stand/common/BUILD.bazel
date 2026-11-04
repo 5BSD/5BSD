@@ -15,9 +15,9 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootstrap.h', 'disk.
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'readin.h'], visibility = ["//stand/libsa:__pkg__"])
 
-exports_files(["help.common", "merge_help.awk"], visibility = ["//stand/i386/loader:__pkg__", "//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])
+exports_files(["help.common", "merge_help.awk"], visibility = ["//stand/kboot/kboot:__pkg__", "//stand/i386/loader:__pkg__", "//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])
 
-exports_files(["newvers.sh"], visibility = ["//stand/i386/loader:__pkg__", "//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__", "//tools/build/bazel/tests/loader:__pkg__"])
+exports_files(["newvers.sh"], visibility = ["//stand/kboot/kboot:__pkg__", "//stand/i386/loader:__pkg__", "//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__", "//tools/build/bazel/tests/loader:__pkg__"])
 
 # Site identity is supplied by the build configuration, without a fabricated default.
 filegroup(name = "unconfigured_version_metadata", srcs = [], visibility = ["//visibility:public"])
@@ -395,3 +395,55 @@ filegroup(name = "bios_simp_verified_root_source", srcs = ["verified_root.c"], v
 filegroup(name = "bios_simp_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "kboot_platform_headers", hdrs = ['bootstrap.h', 'readin.h'], visibility = ["//stand/kboot/libkboot:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['bootstrap.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'load_elf_obj.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_boot_source', srcs = ['boot.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_commands_source', srcs = ['commands.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_console_source', srcs = ['console.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_devopen_source', srcs = ['devopen.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_interp_source', srcs = ['interp.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_interp_backslash_source', srcs = ['interp_backslash.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_interp_parse_source', srcs = ['interp_parse.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_ls_source', srcs = ['ls.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_misc_source', srcs = ['misc.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_modinfo_source', srcs = ['modinfo.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_module_source', srcs = ['module.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_nvstore_source', srcs = ['nvstore.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_tslog_source', srcs = ['tslog.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_verified_root_source', srcs = ['verified_root.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_load_elf32_source', srcs = ['load_elf32.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_load_elf32_obj_source', srcs = ['load_elf32_obj.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_reloc_elf32_source', srcs = ['reloc_elf32.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_load_elf64_source', srcs = ['load_elf64.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_load_elf64_obj_source', srcs = ['load_elf64_obj.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_reloc_elf64_source', srcs = ['reloc_elf64.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_disk_source', srcs = ['disk.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_part_source', srcs = ['part.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_vdisk_source', srcs = ['vdisk.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_interp_lua_source', srcs = ['interp_lua.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+filegroup(name = 'kboot_loader_zfs_cmd_source', srcs = ['zfs_cmd.c'], visibility = ["//stand/kboot/kboot:__pkg__"])

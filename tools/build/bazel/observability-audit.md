@@ -11220,3 +11220,14 @@ behavior. Original Make declares no DTrace provider, FIDL binding or installed
 program for this internal archive; no instrumentation was dropped by conversion.
 Artifact/API checks do not establish Linux syscall runtime behavior, DTrace/BSM
 delivery or complete loader startup. Runtime and complete kboot remain open.
+
+
+## AMD64 Lua kboot consumer (2026-11-04)
+
+All 39 original contexts preserve the loader commands, console, Linux host I/O,
+ELF loaders, Lua bindings and existing tslog source. The original component has
+no DTrace provider or FIDL binding; no such generator was dropped. Filename-only
+controls preserve assertions, including relocation addends affected by string
+lengths. Artifact/install checks do not qualify Linux syscall/kexec execution,
+DTrace/BSM delivery or normal OS startup. The prior library-only checkpoint's
+missing consumer is now covered for selected construction, with runtime open.

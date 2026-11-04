@@ -61,3 +61,7 @@ bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['_inttypes.h', '_lim
 bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['_inttypes.h', '_limits.h', '_pmap.h', '_stdint.h', '_types.h', 'asmacros.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'frame.h', 'metadata.h', 'param.h', 'pmap.h', 'psl.h', 'pte.h', 'segments.h', 'setjmp.h', 'specialreg.h', 'tss.h', 'vm.h', 'vmparam.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
 
 bsd_source_headers(name = "kboot_platform_headers", hdrs = ['_limits.h', '_types.h', 'asm.h', 'efi.h', 'elf.h', 'endian.h', 'metadata.h', 'param.h'], visibility = ["//stand/kboot/libkboot:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['_inttypes.h', '_limits.h', '_pmap.h', '_stdint.h', '_types.h', 'cpufunc.h', 'efi.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'pmap.h', 'psl.h', 'pte.h', 'specialreg.h', 'vm.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers_pc', hdrs = ['pc/bios.h'], visibility = ["//stand/kboot/kboot:__pkg__"])

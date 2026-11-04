@@ -3,3 +3,5 @@
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "kboot_platform_headers", hdrs = ['efi.h', 'host_syscall.h', 'seg.h', 'termios.h', 'termios_gen.h', 'util.h'], visibility = ["//stand/kboot/libkboot:__pkg__"])
+
+bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['efi.h', 'host_syscall.h', 'seg.h', 'termios.h', 'termios_gen.h', 'util.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
