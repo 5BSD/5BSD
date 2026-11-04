@@ -11182,3 +11182,13 @@ their diagnostic and failure paths; no assertion is disabled to match Make. Thes
 preboot components have no OS DTrace/BSM provider to move. The ISO size failure
 remains an actual build-action failure. Artifact/option controls do not establish
 BIOS disk/console execution, firmware observations or live audit delivery.
+
+## GPT/ZFS BIOS consumer (2026-11-04)
+
+The ten original program/serial/console/cache/device/disk/partition/ZFS command
+compiler contexts retain their original sources and diagnostics. In particular,
+disk.c's assertion is enabled; an independent original compiler filename control
+explains the diagnostic string difference without suppressing it. Existing
+BOOT2/GPT/MBR/ZFS/GELI policy and the explicit zfsimpl.c Make prerequisite remain
+declared. No OS DTrace/BSM provider occurs in these preboot sources. Matching
+compiler/image contracts do not qualify BIOS/ZFS runtime or live audit delivery.

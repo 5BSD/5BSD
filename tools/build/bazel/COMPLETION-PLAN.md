@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## GPT/ZFS BIOS checkpoint (2026-11-04)
+
+The missing GPT/ZFS consumer now builds ten original i386 entry contexts, ordered
+startup/BIOS/standalone links, flat/BTX images and shared-policy archives. Two
+console/manual profiles pass actual artifact tests and independent original
+compiler/link controls. The audit binds twenty compiler contexts/910 consumed
+pairs, the explicit zfsimpl.c prerequisite in both contexts, 32 producer chains
+and four installation-record comparisons. Thirty prior boot products stay exact.
+Default profile: 27 passing test targets, three executed and 24 cached; no claim
+of firmware or full-system qualification. The maintained frontend/manual are
+reviewed; no new C dispatcher is required. See
+[GPT-ZFS-BOOT-QUALIFICATION.md](GPT-ZFS-BOOT-QUALIFICATION.md). PXE/alternate profiles,
+complete system/package/runtime/debug/bootstrap and performance gates remain
+open. Make stays default; BIP is excluded.
+
 ## GPT/ISO BIOS checkpoint (2026-11-04)
 
 Two previously missing boot consumers now build native standalone i386 entry,

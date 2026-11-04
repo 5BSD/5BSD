@@ -255,3 +255,17 @@ filegroup(name = "bios_loader_verified_root_source", srcs = ["verified_root.c"],
 filegroup(name = "bios_loader_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "gpt_boot_headers", hdrs = ['paths.h', 'rbx.h'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])
+
+bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'paths.h', 'rbx.h', 'readin.h'], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+filegroup(name = "gpt_zfs_bcache_source", srcs = ["bcache.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+filegroup(name = "gpt_zfs_devopen_source", srcs = ["devopen.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+filegroup(name = "gpt_zfs_disk_source", srcs = ["disk.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+filegroup(name = "gpt_zfs_misc_source", srcs = ["misc.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+filegroup(name = "gpt_zfs_part_source", srcs = ["part.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+filegroup(name = "gpt_zfs_zfs_cmd_source", srcs = ["zfs_cmd.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])

@@ -305,11 +305,13 @@ bsd_host_artifact_test(name = "bios_loader_test", src = "bios-loader-test.py",
 load(":bsd_install_archive.bzl", "bsd_install_archive_set")
 bsd_install_archive_set(name = "bios_loader_archive_set", archives = ["//stand/i386/loader_lua:install_archive"])
 
-bsd_host_artifact_test(name = "gpt_iso_boot_test", src = "gpt-iso-boot-test.py",
+[bsd_host_artifact_test(name = test_name, src = "gpt-iso-boot-test.py",
     data = ["boot_image.py", "//stand/i386/common:gpt_iso_policy", "//stand/i386/btx/btx:btx"] + [
-        "//stand/i386/" + n + ":" + target for n in ["gptboot", "isoboot"] for target in [n, "client", "symbols", "loader", "loader_elf", "objects", "install_archive"]],
-    args = ["--helper", "$(location :boot_image.py)", "--policy", "$(location //stand/i386/common:gpt_iso_policy)",
+        "//stand/i386/" + n + ":" + target for n in components for target in [n, "client", "symbols", "loader", "loader_elf", "objects", "install_archive"]],
+    args = ["--components"] + components + ["--helper", "$(location :boot_image.py)", "--policy", "$(location //stand/i386/common:gpt_iso_policy)",
         "--kernel", "$(location //stand/i386/btx/btx:btx)"] + [
-        item for n in ["gptboot", "isoboot"] for target in [n, "client", "symbols", "loader", "loader_elf", "install_archive"] for item in ["--" + n + "-" + target, "$(location //stand/i386/" + n + ":" + target + ")"]] + [
-        "--gptboot-objects", "$(locations //stand/i386/gptboot:objects)", "--isoboot-objects", "$(locations //stand/i386/isoboot:objects)"],
+        item for n in components for target in [n, "client", "symbols", "loader", "loader_elf", "install_archive"] for item in ["--" + n + "-" + target, "$(location //stand/i386/" + n + ":" + target + ")"]] + [
+        item for n in components for item in ["--" + n + "-objects", "$(locations //stand/i386/" + n + ":objects)"]],
     size = "small", visibility = ["//visibility:public"])
+ for test_name, components in [("gpt_iso_boot_test", ["gptboot", "isoboot"]),
+    ("gpt_bios_boot_test", ["gptboot", "isoboot", "gptzfsboot"])]]

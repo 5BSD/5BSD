@@ -160,3 +160,5 @@ bsd_source_headers(name = "bios_libi386_headers", hdrs = ['bootp.h', 'geli/gelib
 bsd_source_headers(name = "bios_loader_headers", hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "gpt_boot_headers", hdrs = ['cd9660read.c', 'geli/geliboot.h', 'gpt.c', 'gpt.h', 'stand.h', 'ufsread.c'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])
+
+bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['geli/geliboot.h', 'stand.h'], visibility = ['//stand/i386/gptzfsboot:__pkg__'])

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load("//tools/build/bazel:bsd_boot_image.bzl", "bsd_boot_link", "bsd_boot_flat_image", "bsd_btx_image")
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//stand/i386/common:boot_config.bzl", "boot_console_parameters")
+config_setting(name = "entry_profile", flag_values = {
+    "//tools/build/bazel/config:loader_geli": "true", "//tools/build/bazel/config:loader_disk": "true",
+    "//tools/build/bazel/config:loader_zfs": "true"})
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"] + select({
+    ":entry_profile": [], "//conditions:default": ["@platforms//:incompatible"]})
+boot_console_parameters(name = "console")
+bsd_architecture_headers(name = "architecture_headers", headers = {'//sys/i386/include:gpt_zfs_arch_headers': 'machine', '//sys/i386/include:gpt_zfs_arch_headers_pc': 'machine/pc', '//sys/x86/include:gpt_zfs_arch_headers': 'x86'})
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '\'-DBOOTPROG="gptzfsboot"\'', '-O1', '-DBOOT2', '-DLOADER_GPT_SUPPORT', '-DLOADER_MBR_SUPPORT', '-DLOADER_ZFS_SUPPORT', '-Istand/common', '-Istand/i386/common', '-Istand/i386/libi386', '-Istand/libsa/zfs', '-Isys/crypto/skein', '-Isys/cddl/boot/zfs', '-Isys/contrib/openzfs/include', '-Isys/contrib/openzfs/include/os/freebsd/spl', '-Isys/contrib/openzfs/include/os/freebsd/zfs', '-Isys/cddl/contrib/opensolaris/common/lz4', '-Istand/i386/btx/lib', '-Istand/i386/boot2', '-DHAVE_MEMCPY', '-Isys/contrib/zlib', '-Wno-deprecated-non-prototype', '-Wall', '-Waggregate-return', '-Wbad-function-cast', '-Wmissing-declarations', '-Wmissing-prototypes', '-Wnested-externs', '-Wpointer-arith', '-Wshadow', '-Wstrict-prototypes', '-Wwrite-strings', '-Wno-pointer-sign', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Wno-tentative-definition-incomplete-type', '-Qunused-arguments']
+_SOURCES = [('bcache', '//stand/common:gpt_zfs_bcache_source', []), ('cons', '//stand/i386/common:gpt_zfs_cons_source', []), ('devopen', '//stand/common:gpt_zfs_devopen_source', []), ('disk', '//stand/common:gpt_zfs_disk_source', []), ('gptldr', '//stand/i386/gptboot:gpt_zfs_gptldr_source', []), ('misc', '//stand/common:gpt_zfs_misc_source', []), ('part', '//stand/common:gpt_zfs_part_source', []), ('sio', '//stand/i386/boot2:gpt_zfs_sio_source', []), ('zfs_cmd', '//stand/common:gpt_zfs_zfs_cmd_source', []), ('zfsboot', 'zfsboot.c', [])]
+_DEPS = [':architecture_headers', ':console', '//stand/libsa:standalone_headers', '//include:gpt_zfs_headers', '//stand/common:gpt_zfs_headers', '//stand/i386/boot2:gpt_zfs_headers', '//stand/i386/btx/lib:gpt_zfs_headers', '//stand/i386/common:gpt_zfs_headers', '//stand/i386/libi386:gpt_zfs_headers', '//stand/libsa:gpt_zfs_headers', '//stand/libsa/zfs:gpt_zfs_headers', '//sys/cddl/boot:gpt_zfs_headers', '//sys/contrib/openzfs:gpt_zfs_headers', '//sys/contrib/zlib:gpt_zfs_headers', '//sys/crypto:gpt_zfs_headers', '//sys/crypto/sha2:gpt_zfs_headers', '//sys/fs/cd9660:gpt_zfs_headers', '//sys/geom/eli:gpt_zfs_headers', '//sys/net:gpt_zfs_headers', '//sys/netinet:gpt_zfs_headers', '//sys/netinet6:gpt_zfs_headers', '//sys/opencrypto:gpt_zfs_headers', '//sys/sys:gpt_zfs_headers']
+[cc_library(name = "entry_" + name, srcs = [source], copts = _CFLAGS + flags,
+    deps = _DEPS,
+    additional_compiler_inputs = ["//stand/libsa/zfs:gpt_zfs_explicit_dependency"] if name == "zfsboot" else [],
+    features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    linkstatic = True, target_compatible_with = _COMPAT) for name, source, flags in _SOURCES]
+[bsd_component_object(name = "entry_" + name + "_object", group = ":entry_" + name, out = name + ".o",
+    target_compatible_with = _COMPAT) for name, _, _ in _SOURCES]
+filegroup(name = "entry_objects", srcs = [":entry_" + name + "_object" for name, _, _ in _SOURCES], target_compatible_with = _COMPAT)
+bsd_boot_link(name = "native_loader_elf", objects = [":entry_gptldr_object"], output = "gptldr.out",
+    script = "//stand/i386:boot.ldscript", linkopts = ["-m", "elf_i386_fbsd", "-static", "-N", "--gc-sections", "-e", "start", "--defsym", "ORG=0x7c00"], target_compatible_with = _COMPAT)
+bsd_boot_flat_image(name = "native_loader", src = ":native_loader_elf", output = "gptldr.bin", target_compatible_with = _COMPAT)
+bsd_boot_link(name = "native_client_elf",
+    objects = ["//stand/i386/btx/lib:crt0", ":entry_zfsboot_object", ":entry_sio_object", ":entry_cons_object", ":entry_bcache_object", ":entry_devopen_object", ":entry_disk_object", ":entry_part_object", ":entry_zfs_cmd_object", ":entry_misc_object"],
+    archives = ["//stand/i386/libi386:static_archive", "//stand/libsa32:static_archive"], output = "gptzfsboot.out",
+    script = "//stand/i386:boot.ldscript", linkopts = ["-m", "elf_i386_fbsd", "-static", "-N", "--gc-sections", "--defsym", "ORG=0x0"], target_compatible_with = _COMPAT)
+bsd_boot_flat_image(name = "native_client", src = ":native_client_elf", output = "gptzfsboot.bin", target_compatible_with = _COMPAT)
+bsd_btx_image(name = "native_image", src = ":native_client", loader = ":native_loader", kernel = "//stand/i386/btx/btx:btx",
+    output = "gptzfsboot", entry = "0x0", target_compatible_with = _COMPAT)
+bsd_freestanding_artifact(name = "gptzfsboot", src = ":native_image", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "objects", src = ":entry_objects", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "client", src = ":native_client", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "symbols", src = ":native_client_elf", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "loader", src = ":native_loader", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "loader_elf", src = ":native_loader_elf", architecture = "i386", visibility = ["//visibility:public"])
+boot_data_installation(files = [("gptzfsboot", ":gptzfsboot")], manuals = ["gptzfsboot.8"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

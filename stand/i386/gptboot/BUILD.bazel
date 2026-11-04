@@ -51,3 +51,5 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+filegroup(name = "gpt_zfs_gptldr_source", srcs = ["gptldr.S"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])

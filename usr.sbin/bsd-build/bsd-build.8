@@ -6211,3 +6211,16 @@ Both components provide installation manifests and archives with original image
 and manual policy. The shared boot-data rules honor the existing man, mancompress
 and split_manpages settings. Construction tests and original compiler controls do not
 qualify firmware execution, full-system debug lookup or system performance.
+.Ss GPT/ZFS BIOS boot construction
+The gptzfsboot contribution uses ten original standalone i386 compiler contexts,
+explicit startup/program/cache/device/partition order and the native BIOS and
+standalone archives.
+The original explicit zfsimpl.c prerequisite is declared as an additional
+compiler input; it is not replaced by an assumption about header discovery.
+The existing console port, speed and UART format settings apply.
+Shared boot-data rules provide image/manual manifests and archives while honoring
+man, mancompress and split_manpages.
+The gpt_bios_boot_test host target checks GPT/UFS, ISO and GPT/ZFS artifacts with
+shared ABI, layout and installation assertions. It does not execute firmware.
+Original compiler controls and archive checks do not qualify ZFS pool behavior,
+normal VM startup, complete debug/source lookup or system performance.

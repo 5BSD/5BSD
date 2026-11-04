@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Inspect real GPT/ISO boot artifacts and exercise the actual size-check CLI."""
+"""Inspect real GPT/UFS, ISO and GPT/ZFS boot artifacts and exercise the actual size-check CLI."""
 import argparse
 import json
 import os
@@ -14,7 +14,12 @@ import unittest
 parser = argparse.ArgumentParser()
 for name in ['helper', 'policy', 'kernel']:
     parser.add_argument('--' + name, type=Path, required=True)
-for name in ['gptboot', 'isoboot']:
+parser.add_argument('--components', nargs='+', choices=['gptboot', 'isoboot', 'gptzfsboot'],
+                    default=['gptboot', 'isoboot'])
+selected, _ = parser.parse_known_args()
+if len(set(selected.components)) != len(selected.components):
+    parser.error('distinct boot components required')
+for name in selected.components:
     for target in [name, 'client', 'symbols', 'loader', 'loader_elf', 'install_archive']:
         parser.add_argument('--' + name + '-' + target, type=Path, required=True)
     parser.add_argument('--' + name + '-objects', type=Path, nargs='+', required=True)
@@ -35,9 +40,11 @@ def elf(data):
 
 class BootImages(unittest.TestCase):
     def test_input_and_linked_abi(self):
-        for component in ['gptboot', 'isoboot']:
+        for component in args.components:
             objects = artifact(component, 'objects')
-            self.assertEqual({p.name for p in objects}, {component + '.o', 'cons.o', 'drv.o', 'sio.o', 'gptldr.o'})
+            expected = ({'zfsboot.o', 'sio.o', 'cons.o', 'bcache.o', 'devopen.o', 'disk.o', 'part.o', 'zfs_cmd.o', 'misc.o', 'gptldr.o'}
+                        if component == 'gptzfsboot' else {component + '.o', 'cons.o', 'drv.o', 'sio.o', 'gptldr.o'})
+            self.assertEqual({p.name for p in objects}, expected)
             for obj in objects:
                 self.assertEqual(elf(obj.read_bytes())[1:3], (1, 3))
             for name, entry in [('symbols', 0), ('loader_elf', 0x7c00)]:
@@ -49,7 +56,7 @@ class BootImages(unittest.TestCase):
 
     def test_complete_btx_and_client_layout(self):
         kernel = args.kernel.read_bytes()
-        for component in ['gptboot', 'isoboot']:
+        for component in args.components:
             data = artifact(component, component).read_bytes()
             loader = artifact(component, 'loader').read_bytes()
             client = artifact(component, 'client').read_bytes()
@@ -61,10 +68,11 @@ class BootImages(unittest.TestCase):
             self.assertEqual(btx[16:], kernel[16:])
             self.assertEqual(data[len(loader) + len(kernel):], client)
             self.assertFalse(client.startswith(b'\x7fELF'))
-        self.assertLessEqual(artifact('isoboot', 'isoboot').stat().st_size, policy['maximum'])
+        if 'isoboot' in args.components:
+            self.assertLessEqual(artifact('isoboot', 'isoboot').stat().st_size, policy['maximum'])
 
     def test_real_archives(self):
-        for component in ['gptboot', 'isoboot']:
+        for component in args.components:
             with tarfile.open(artifact(component, 'install_archive')) as archive:
                 files = {m.name: m for m in archive.getmembers() if not m.isdir()}
                 image = 'boot/' + component
@@ -78,6 +86,8 @@ class BootImages(unittest.TestCase):
                     self.assertEqual(archive.extractfile(files[manual]).read().startswith(b'\x1f\x8b'), policy['compressed'])
 
     def test_actual_size_boundary_preserves_previous_output_on_failure(self):
+        if 'isoboot' not in args.components:
+            self.skipTest('the bounded ISO artifact is not selected')
         source = artifact('isoboot', 'isoboot')
         with tempfile.TemporaryDirectory(dir=os.environ['TEST_TMPDIR']) as temp:
             output = Path(temp) / 'checked'

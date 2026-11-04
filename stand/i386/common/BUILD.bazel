@@ -19,3 +19,7 @@ filegroup(name = "gpt_boot_drv_source", srcs = ["drv.c"], visibility = ['//stand
 
 load(":boot_config.bzl", "boot_image_inspection")
 boot_image_inspection(name = "gpt_iso_policy", visibility = ["//tools/build/bazel:__pkg__"])
+
+bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['bootargs.h', 'cons.h'], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
+
+filegroup(name = "gpt_zfs_cons_source", srcs = ["cons.c"], visibility = ['//stand/i386/gptzfsboot:__pkg__'])
