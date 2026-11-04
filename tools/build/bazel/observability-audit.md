@@ -11293,3 +11293,13 @@ not runtime Make discovery. The incomplete original installed-test hierarchy
 and seven unconverted optional programs remain explicit gates. Configured owner
 analysis does not establish runtime probe firing, audit delivery or full OS
 qualification. Preserve those checks through complete world/kernel assembly.
+
+
+## Generic usr.bin Kyuafile export correction (2026-11-04)
+
+The missing source visibility grant now admits the usr.bin subtree exactly as
+bin/sbin/libexec were admitted. The actual archived generic Kyuafile and regress.m4
+match original Make bytes, 0444 root/wheel modes, package tags and the 0755 test
+directory. No probe, audit policy, child discovery or runtime code is altered.
+This closes the root metadata export; complete child suites and runtime
+observability checks remain open.

@@ -166,3 +166,21 @@ These checks execute no compiler or runtime actions. The next maintained
 frontend qualification is queued behind the live LLVM and test-root processes,
 and starts only if both finish with passing receipts. It selects the complete
 production parent plus the existing LLVM utility/profile/debugger tests.
+
+## Native LLVM build and test-root export follow-up
+
+The initial 17-archive LLVM qualification now passes in
+bazel-llvm-family-r2-20261104. Its only test is source_settings_test; this is not
+the revised seven-contribution production aggregate or LLVM runtime acceptance.
+The first test-root run failed because the existing generic Kyuafile export
+allowed bin/sbin/libexec but omitted usr.bin. Its source export now grants the
+same narrow usr.bin subtree access; bytes, automatic discovery and installation
+policy are unchanged. Fresh qualification r2 passes through the maintained frontend. Its actual
+archive matches the original two 0444 root/wheel files and 0755 tests directory,
+including package tags and exact file bytes. The initial queued broader build
+stopped on that failed prerequisite. After the corrected qualification passed,
+the maintained frontend started bazel-usrbin-production-runtime-r1-20261104
+with all six expanded runtime/configuration tests. That aggregate remains live
+and unqualified. Evidence: bazel-usrbin-test-root-review-r1-20261104.
+Complete world, aggregate modules and cross-architecture/system qualification
+remain unfinished. Make remains default; BIP remains excluded.

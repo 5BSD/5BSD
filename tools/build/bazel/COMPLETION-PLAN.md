@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Established kernel milestone and remaining system gates
+
+The complete amd64 GENERIC kernel already builds natively through link, CTF and
+split debug. The 2026-11-03 source-bound refresh compares all 2,462 link objects
+and complete allocated kernel/CTF contracts against an independent Make build.
+See [CURRENT-KERNEL-REFRESH-QUALIFICATION.md](CURRENT-KERNEL-REFRESH-QUALIFICATION.md).
+This is a completed controlled kernel construction milestone; it is not a full
+world/modules/pkgbase system build or a VM boot. The aggregate 729 selected
+amd64 modules, ARM64/RISC-V/configuration coverage, complete world installation,
+bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
+CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
+milestone as missing or use it to imply whole-system acceptance.
+
 ## usr.bin production parent under qualification (2026-11-04)
 
 The source-owned AMD64 production parent now analyzes with 242 immediate owners,
@@ -2647,3 +2660,21 @@ boundary for aggregation; sixteen prior EFI images remain unchanged. See
 BIOS-LUA-QUALIFICATION.md. Graphical/verifier/alternate-interpreter profiles and
 remaining GPT/ZFS/ISO/PXE producers, full debug/world/kernel/pkgbase/bootstrap/
 runtime/VM and broad performance acceptance remain open.
+
+## Native LLVM build and test-root export follow-up
+
+The initial 17-archive LLVM qualification now passes in
+bazel-llvm-family-r2-20261104. Its only test is source_settings_test; this is not
+the revised seven-contribution production aggregate or LLVM runtime acceptance.
+The first test-root run failed because the existing generic Kyuafile export
+allowed bin/sbin/libexec but omitted usr.bin. Its source export now grants the
+same narrow usr.bin subtree access; bytes, automatic discovery and installation
+policy are unchanged. Fresh qualification r2 passes through the maintained frontend. Its actual
+archive matches the original two 0444 root/wheel files and 0755 tests directory,
+including package tags and exact file bytes. The initial queued broader build
+stopped on that failed prerequisite. After the corrected qualification passed,
+the maintained frontend started bazel-usrbin-production-runtime-r1-20261104
+with all six expanded runtime/configuration tests. That aggregate remains live
+and unqualified. Evidence: bazel-usrbin-test-root-review-r1-20261104.
+Complete world, aggregate modules and cross-architecture/system qualification
+remain unfinished. Make remains default; BIP remains excluded.
