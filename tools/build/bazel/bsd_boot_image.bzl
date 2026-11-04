@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Declared BIOS image transformations and the original BTX linker invocation."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+
 def _environment(files):
     result = {"LC_ALL": "C"}
     if files:
@@ -42,7 +44,15 @@ bsd_boot_flat_image = rule(implementation = _flat, attrs = {
 def _btx(ctx):
     out = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
-    args.add_all(["-v", "-E", ctx.attr.entry, "-f", "bin", "-b", ctx.file.kernel.path,
+    if bool(ctx.attr.entry) == bool(ctx.attr.entry_setting):
+        fail("select exactly one explicit BTX entry value or setting")
+    entry = ctx.attr.entry
+    if ctx.attr.entry_setting:
+        value = ctx.attr.entry_setting[BuildSettingInfo].value
+        if type(value) != "int" or value < 0 or value > 4294967295:
+            fail("BTX entry must fit an unsigned 32-bit address")
+        entry = str(value)
+    args.add_all(["-v", "-E" if ctx.attr.entry_kind == "client" else "-e", entry, "-f", ctx.attr.output_format, "-b", ctx.file.kernel.path,
         "-l", ctx.file.loader.path, "-o", out.path])
     if ctx.attr.page_control:
         args.add_all(["-P", str(ctx.attr.page_control)])
@@ -57,7 +67,10 @@ bsd_btx_image = rule(implementation = _btx, attrs = {
     "src": attr.label(allow_single_file = True, mandatory = True),
     "kernel": attr.label(allow_single_file = True, mandatory = True),
     "loader": attr.label(allow_single_file = True, mandatory = True),
-    "entry": attr.string(mandatory = True),
+    "entry": attr.string(),
+    "entry_setting": attr.label(providers = [BuildSettingInfo]),
+    "entry_kind": attr.string(default = "client", values = ["client", "output"]),
+    "output_format": attr.string(default = "bin", values = ["bin", "aout", "elf"]),
     "page_control": attr.int(default = 0),
     "output": attr.string(mandatory = True),
     "tool": attr.label(default = "//usr.sbin/btxld:btxld", executable = True, cfg = "exec"),
@@ -99,6 +112,11 @@ def _link(ctx):
     out = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
     args.add_all(ctx.attr.linkopts)
+    if ctx.attr.origin_setting:
+        origin = ctx.attr.origin_setting[BuildSettingInfo].value
+        if type(origin) != "int" or origin < 0 or origin > 4294967295:
+            fail("boot link origin must fit an unsigned 32-bit address")
+        args.add_all(["--defsym", "ORG=" + str(origin)])
     args.add_all(["-T", ctx.file.script.path, "-o", out.path])
     args.add_all(ctx.files.objects)
     ctx.actions.run(executable = ctx.attr.linker[DefaultInfo].files_to_run,
@@ -110,8 +128,38 @@ def _link(ctx):
 bsd_boot_link = rule(implementation = _link, attrs = {
     "objects": attr.label_list(allow_files = True, mandatory = True),
     "script": attr.label(allow_single_file = True, mandatory = True),
+    "origin_setting": attr.label(providers = [BuildSettingInfo]),
     "linkopts": attr.string_list(mandatory = True),
     "output": attr.string(mandatory = True),
     "linker": attr.label(default = "@bsd_sdk//toolchain:bin/ld.lld", executable = True, cfg = "exec", allow_single_file = True),
     "runtime": attr.label_list(default = ["@bsd_sdk//toolchain:ld.lld_runtime"], allow_files = True, cfg = "exec"),
+})
+
+def _strip_client(ctx):
+    maximum = ctx.attr.maximum[BuildSettingInfo].value
+    if type(maximum) != "int" or maximum <= 0:
+        fail("boot client size limit must be a positive integer")
+    output = ctx.actions.declare_file(ctx.attr.output)
+    args = ctx.actions.args()
+    args.add_all(["-B", "-S", ctx.file._runner.path, "--source", ctx.file.src.path,
+        "--output", output.path, "--strip", ctx.executable.strip.path, "--max-size", str(maximum), "--runtime"])
+    args.add_all(ctx.files.strip_runtime)
+    env = _environment([file for file in ctx.files.python_runtime if file.basename.endswith(".so") or ".so." in file.basename])
+    env.update({"PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1"})
+    ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run,
+        arguments = [args], inputs = [ctx.file.src, ctx.file._runner, ctx.file.python_home] + ctx.files.python_runtime,
+        tools = [ctx.attr.strip[DefaultInfo].files_to_run] + ctx.files.strip_runtime,
+        outputs = [output], env = env, use_default_shell_env = False, mnemonic = "BSDBootStripClient")
+    return [DefaultInfo(files = depset([output]))]
+
+bsd_boot_strip_client = rule(implementation = _strip_client, attrs = {
+    "src": attr.label(allow_single_file = True, mandatory = True),
+    "output": attr.string(mandatory = True),
+    "maximum": attr.label(providers = [BuildSettingInfo], mandatory = True),
+    "strip": attr.label(default = "@bsd_sdk//toolchain:bin/llvm-strip", executable = True, cfg = "exec", allow_single_file = True),
+    "strip_runtime": attr.label_list(default = ["@bsd_sdk//toolchain:strip_inputs"], allow_files = True, cfg = "exec"),
+    "python": attr.label(default = "@bsd_sdk//toolchain:extra_python", executable = True, cfg = "exec", allow_single_file = True),
+    "python_home": attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = "exec"),
+    "python_runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib"], allow_files = True, cfg = "exec"),
+    "_runner": attr.label(default = "//tools/build/bazel:boot_strip.py", allow_single_file = True),
 })

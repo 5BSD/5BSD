@@ -629,3 +629,8 @@ bool_flag(name = "loader_biosdisk_debug", build_setting_default = False, visibil
 config_setting(name = "loader_biosdisk_debug_enabled", flag_values = {":loader_biosdisk_debug": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "loader_bios_framebuffer", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "loader_bios_framebuffer_enabled", flag_values = {":loader_bios_framebuffer": "true"}, visibility = ["//visibility:public"])
+
+# Maintained BIOS loader defaults; site profiles may provide explicit alternatives.
+bool_flag(name = "loader_bios_textonly", build_setting_default = True, visibility = ["//visibility:public"])
+int_flag(name = "loader_bios_max_size", build_setting_default = 505000, visibility = ["//visibility:public"])
+int_flag(name = "loader_bios_address", build_setting_default = 2097152, visibility = ["//visibility:public"])

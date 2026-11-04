@@ -41,3 +41,5 @@ bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['lfs.h'], visibili
 bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['lfs.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['lfs.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = "bios_loader_headers", hdrs = ['lfs.h'], visibility = ["//stand/i386/loader:__pkg__"])

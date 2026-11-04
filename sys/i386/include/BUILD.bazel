@@ -15,3 +15,5 @@ filegroup(name = "efi_loader_entry_headers", srcs = ['_inttypes.h', '_limits.h',
 filegroup(name = "bios_libi386_arch_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'bootinfo.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'pmap.h', 'pmap_pae.h', 'psl.h', 'specialreg.h', 'stdarg.h', 'vm.h'], visibility = ["//stand/i386/libi386:__pkg__"])
 
 filegroup(name = "bios_libi386_pc_headers", srcs = ["pc/bios.h"], visibility = ["//stand/i386/libi386:__pkg__"])
+
+filegroup(name = "bios_loader_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'bootinfo.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'psl.h'], visibility = ["//stand/i386/loader:__pkg__"])

@@ -287,3 +287,20 @@ bsd_host_artifact_test(name = "btx_startup_test", src = "btx-startup-test.py",
         "--debug", "$(location //stand/i386/btx/lib:crt0_debug)", "--objects"] + [
         "$(location //stand/i386/btx/lib:" + name + "_object)" for name in ["btxcsu", "btxsys", "btxv86"]],
     size = "small", visibility = ["//visibility:public"])
+
+exports_files(["boot_strip.py"], visibility = ["//stand/i386/loader:__pkg__"])
+
+bsd_host_artifact_test(name = "bios_loader_test", src = "bios-loader-test.py",
+    data = [":bios_loader_archive_set", "boot_strip.py", "//stand/i386/loader_lua:image", "//stand/i386/loader_lua:symbols", "//stand/i386/loader_lua:client",
+        "//stand/i386/loader_lua:objects", "//stand/i386/loader_lua:installation_metadata", "//stand/i386/loader:inspection_policy",
+        "//stand/i386/btx/btx:btx", "//stand/i386/btx/btxldr:btxldr", "@bsd_sdk//toolchain:bin/llvm-strip", "@bsd_sdk//toolchain:strip_inputs"],
+    args = ["--archive", "$(location :bios_loader_archive_set)", "--image", "$(location //stand/i386/loader_lua:image)", "--symbols", "$(location //stand/i386/loader_lua:symbols)",
+        "--client", "$(location //stand/i386/loader_lua:client)", "--stub", "$(location //stand/i386/btx/btxldr:btxldr)",
+        "--kernel", "$(location //stand/i386/btx/btx:btx)", "--metadata", "$(location //stand/i386/loader_lua:installation_metadata)",
+        "--policy", "$(location //stand/i386/loader:inspection_policy)", "--helper", "$(location :boot_strip.py)",
+        "--strip", "$(location @bsd_sdk//toolchain:bin/llvm-strip)", "--strip-inputs", "$(locations @bsd_sdk//toolchain:strip_inputs)",
+        "--objects", "$(locations //stand/i386/loader_lua:objects)"],
+    visibility = ["//visibility:public"], size = "small")
+
+load(":bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "bios_loader_archive_set", archives = ["//stand/i386/loader_lua:install_archive"])

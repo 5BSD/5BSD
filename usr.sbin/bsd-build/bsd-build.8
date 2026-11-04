@@ -6166,3 +6166,20 @@ Separate debug output is selected through the preserved debug output group.
 The host artifact test checks ELF32 relocatable identity, startup position,
 platform symbols and debug-link integrity; boot2 remains a checked consumer.
 These construction checks do not execute BIOS firmware.
+.Ss Complete BIOS Lua construction
+The default text-only BIOS Lua contribution uses thirty-six source-owned entry
+objects, the standalone BTX startup object and the regular Lua, BIOS platform
+and standalone archives in the original link order.
+The BTX kernel and loader stub also use explicit i386 artifact boundaries.
+The loader_bios_max_size integer setting defaults to Make's 505000-byte client
+limit; the actual strip action rejects overflow before publishing output.
+The loader_bios_address integer setting defaults to 2097152 and controls the
+stub origin and final a.out entry through the same configured value.
+The strip recipes remove a stale debug link inherited from the separately split
+startup object; this static client has no separate program debug file.
+The contribution installs /boot/loader_lua with its default-loader and zfsloader
+hardlinks.  Its real archive can join an archive set across the ABI boundary,
+which preserves archive metadata providers without forwarding CcInfo.
+The selected profile requires text-only Lua, normal disk/network/MD/GELI/ZFS
+support and the regular verifier disabled. Unsupported profiles are incompatible.
+Construction and archive tests do not execute firmware or qualify a full system.

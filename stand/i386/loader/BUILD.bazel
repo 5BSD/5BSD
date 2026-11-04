@@ -1,2 +1,111 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["loader.rc"], visibility = ["//stand/forth:__pkg__"])
+
+package(default_visibility = [":loader_consumers"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+load("//tools/build/bazel:bsd_firmware_link.bzl", "bsd_firmware_link")
+load("//tools/build/bazel:bsd_loader_generated.bzl", "bsd_loader_version")
+load("//tools/build/bazel:bsd_boot_image.bzl", "bsd_boot_strip_client", "bsd_btx_image")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//stand/liblua:config.bzl", "loader_lua_paths")
+loader_lua_paths(name = "lua_paths")
+config_setting(name = "entry_profile", flag_values = {
+    "//tools/build/bazel/config:loader_geli": "true", "//tools/build/bazel/config:loader_disk": "true",
+    "//tools/build/bazel/config:loader_net": "true", "//tools/build/bazel/config:loader_md": "true",
+    "//tools/build/bazel/config:loader_zfs": "true", "//tools/build/bazel/config:loader_lua": "true",
+    "//tools/build/bazel/config:loader_bios_textonly": "true",
+})
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"] + select({
+    ":entry_profile": [], "//conditions:default": ["@platforms//:incompatible"],
+}) + select({"//tools/build/bazel/config:veriexec_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+bsd_loader_version(name = "version_configured", version = "version", output = "vers.c",
+    description = "bootstrap loader", machine = "x86",
+    reproducible = select({"//tools/build/bazel/config:reproducible_build_enabled": True, "//conditions:default": False}),
+    metadata = "//tools/build/bazel/config:loader_version_metadata", target_compatible_with = _COMPAT)
+bsd_architecture_headers(name = "architecture_headers", headers = {'//sys/i386/include:bios_loader_arch_headers': 'machine', '//sys/x86/include:bios_loader_arch_headers': 'x86'})
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-DLOADER_NET_SUPPORT', '-DLOADER_MD_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-Istand/common', '-Icontrib/lua/src', '-Istand/common', '-Istand/liblua', '-DLOADER_CD9660_SUPPORT', '-DLOADER_UFS_SUPPORT', '-DLOADER_GZIP_SUPPORT', '-DLOADER_BZIP2_SUPPORT', '-DLOADER_XZ_SUPPORT', '-DLOADER_NFS_SUPPORT', '-DLOADER_TFTP_SUPPORT', '-DLOADER_GPT_SUPPORT', '-DLOADER_MBR_SUPPORT', '-DLOADER_ZFS_SUPPORT', '-Istand/libsa/zfs', '-Isys/cddl/boot/zfs', '-Isys/cddl/contrib/opensolaris/uts/common', "'-DHELP_FILENAME=\"loader.help.bios\"'", '-Wall', '-Istand/i386', '-DLOADER_PREFER_AMD64', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments']
+_DEPS = ['//contrib/lua/src:bios_loader_headers', '//contrib/pnglite:bios_loader_headers', '//include:bios_loader_headers', '//libexec/flua/lfs:bios_loader_headers', '//stand/common:bios_loader_headers', '//stand/i386/btx/lib:bios_loader_headers', '//stand/i386/common:bios_loader_headers', '//stand/i386/libi386:bios_loader_headers', '//stand/liblua:bios_loader_headers', '//stand/libsa:bios_loader_headers', '//stand/libsa/zfs:bios_loader_headers', '//sys/cddl/boot:bios_loader_headers', '//sys/contrib/openzfs:bios_loader_headers', '//sys/contrib/zlib:bios_loader_headers', '//sys/crypto:bios_loader_headers', '//sys/crypto/sha2:bios_loader_headers', '//sys/fs/cd9660:bios_loader_headers', '//sys/geom:bios_loader_headers', '//sys/geom/eli:bios_loader_headers', '//sys/net:bios_loader_headers', '//sys/netinet:bios_loader_headers', '//sys/netinet6:bios_loader_headers', '//sys/opencrypto:bios_loader_headers', '//sys/sys:bios_loader_headers', '//sys/teken:bios_loader_headers', '//sys/ufs/ufs:bios_loader_headers', ':architecture_headers', '//stand/libsa:standalone_headers']
+_SOURCES = [
+    ('bcache', '//stand/common:bios_loader_bcache_source', []),
+    ('boot', '//stand/common:bios_loader_boot_source', []),
+    ('chain', 'chain.c', []),
+    ('commands', '//stand/common:bios_loader_commands_source', []),
+    ('conf', 'conf.c', ['-DBIOS_TEXT_ONLY']),
+    ('console', '//stand/common:bios_loader_console_source', []),
+    ('dev_net', '//stand/common:bios_loader_dev_net_source', []),
+    ('devopen', '//stand/common:bios_loader_devopen_source', []),
+    ('disk', '//stand/common:bios_loader_disk_source', []),
+    ('gfx_bios', 'gfx_bios.c', ['-DBIOS_TEXT_ONLY']),
+    ('interp', '//stand/common:bios_loader_interp_source', []),
+    ('interp_backslash', '//stand/common:bios_loader_interp_backslash_source', []),
+    ('interp_lua', '//stand/common:bios_loader_interp_lua_source', ['-Ilibexec/flua/lfs']),
+    ('interp_parse', '//stand/common:bios_loader_interp_parse_source', []),
+    ('isapnp', '//stand/common:bios_loader_isapnp_source', []),
+    ('load_elf32', '//stand/common:bios_loader_load_elf32_source', []),
+    ('load_elf32_obj', '//stand/common:bios_loader_load_elf32_obj_source', []),
+    ('load_elf64', '//stand/common:bios_loader_load_elf64_source', []),
+    ('load_elf64_obj', '//stand/common:bios_loader_load_elf64_obj_source', []),
+    ('ls', '//stand/common:bios_loader_ls_source', []),
+    ('main', 'main.c', ['-Isys/contrib/openzfs/include', '-Isys/contrib/openzfs/include/os/freebsd/zfs']),
+    ('md', '//stand/common:bios_loader_md_source', []),
+    ('misc', '//stand/common:bios_loader_misc_source', []),
+    ('modinfo', '//stand/common:bios_loader_modinfo_source', []),
+    ('module', '//stand/common:bios_loader_module_source', ['-Isys/teken', '-Icontrib/pnglite']),
+    ('nvstore', '//stand/common:bios_loader_nvstore_source', []),
+    ('part', '//stand/common:bios_loader_part_source', ['-DHAVE_MEMCPY', '-Isys/contrib/zlib', '-Wno-deprecated-non-prototype']),
+    ('pnglite', '//contrib/pnglite:bios_loader_pnglite_source', ['-Icontrib/pnglite', '-DHAVE_MEMCPY', '-Isys/contrib/zlib']),
+    ('pnp', '//stand/common:bios_loader_pnp_source', []),
+    ('reloc_elf32', '//stand/common:bios_loader_reloc_elf32_source', []),
+    ('reloc_elf64', '//stand/common:bios_loader_reloc_elf64_source', []),
+    ('tslog', '//stand/common:bios_loader_tslog_source', []),
+    ('vdisk', '//stand/common:bios_loader_vdisk_source', []),
+    ('verified_root', '//stand/common:bios_loader_verified_root_source', []),
+    ('vers', ':version_configured', []),
+    ('zfs_cmd', '//stand/common:bios_loader_zfs_cmd_source', []),
+]
+_HEADERS = []
+[cc_library(name = "entry_" + name, srcs = [source], hdrs = _HEADERS,
+    copts = _CFLAGS + flags, deps = _DEPS + ([":lua_paths"] if name == "interp_lua" else []),
+    features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    linkstatic = True, target_compatible_with = _COMPAT) for name, source, flags in _SOURCES]
+[bsd_component_objects(name = "entry_" + name + "_objects", group = ":entry_" + name,
+    target_compatible_with = _COMPAT) for name, _, _ in _SOURCES]
+filegroup(name = "entry_objects", srcs = [":entry_" + name + "_objects" for name, _, _ in _SOURCES],
+    target_compatible_with = _COMPAT)
+bsd_firmware_link(name = "loader_lua_symbols", output = "loader_lua.sym",
+    objects = ["//stand/i386/btx/lib:crt0", ":entry_objects"],
+    archives = ["//stand/liblua32:static_archive", "//stand/i386/libi386:static_archive", "//stand/libsa32:static_archive"],
+    script = "//stand/i386:boot.ldscript",
+    linkopts = ["-static", "-Wl,--defsym,ORG=0x0", "-Wl,--gc-sections", "-Wl,-z,nostart-stop-gc",
+        "-Wl,-z,max-page-size=0x1000", "-Wl,--no-rosegment"],
+    features = ["-bsd_riscv_userland_abi"],
+    object_order = ['crt0.o', 'chain.o', 'conf.o', 'gfx_bios.o', 'main.o', 'vers.o', 'boot.o', 'commands.o', 'console.o', 'devopen.o', 'interp.o', 'interp_backslash.o', 'interp_parse.o', 'ls.o', 'misc.o', 'modinfo.o', 'module.o', 'nvstore.o', 'pnglite.o', 'tslog.o', 'verified_root.o', 'load_elf32.o', 'load_elf32_obj.o', 'reloc_elf32.o', 'load_elf64.o', 'load_elf64_obj.o', 'reloc_elf64.o', 'disk.o', 'part.o', 'vdisk.o', 'dev_net.o', 'bcache.o', 'md.o', 'isapnp.o', 'pnp.o', 'interp_lua.o', 'zfs_cmd.o'], target_compatible_with = _COMPAT)
+bsd_boot_strip_client(name = "loader_lua_client", src = ":loader_lua_symbols", output = "loader_lua.bin",
+    maximum = "//tools/build/bazel/config:loader_bios_max_size", target_compatible_with = _COMPAT)
+bsd_btx_image(name = "loader_lua_image", src = ":loader_lua_client", output = "loader_lua",
+    kernel = "//stand/i386/btx/btx:btx", loader = "//stand/i386/btx/btxldr:btxldr",
+    entry_setting = "//tools/build/bazel/config:loader_bios_address", entry_kind = "output", output_format = "aout",
+    target_compatible_with = _COMPAT)
+bsd_install_file(name = "install_lua", src = ":loader_lua_image", destination = "/boot/loader_lua",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = _COMPAT)
+[bsd_install_link(name = name, destination = destination, target = "/boot/loader_lua", kind = "hardlink",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = _COMPAT)
+ for name, destination in [("install_default", "/boot/loader"), ("install_zfs", "/boot/zfsloader")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_lua", ":install_default", ":install_zfs"],
+    target_compatible_with = _COMPAT)
+
+package_group(name = "loader_consumers", packages = ["//stand/i386/loader_lua"])
+
+load(":inspection.bzl", "inspection_policy")
+inspection_policy(name = "inspection_policy", testonly = True, visibility = ["//tools/build/bazel:__pkg__"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/"}, passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    target_compatible_with = _COMPAT)

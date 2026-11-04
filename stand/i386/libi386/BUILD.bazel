@@ -80,3 +80,7 @@ bsd_host_artifact_test(name = "archive_test", src = "archive-test.py",
     args = ["--machine", "3", "--archive", "$(location :static_archive)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
         "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--tool-inputs", "$(locations :inspection_tools)"],
     visibility = ["//visibility:public"], size = "small")
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "bios_loader_headers", hdrs = ['libi386.h'], visibility = ["//stand/i386/loader:__pkg__"])

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
+bsd_freestanding_artifact(name = "image", src = "//stand/i386/loader:loader_lua_image", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "symbols", src = "//stand/i386/loader:loader_lua_symbols", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "client", src = "//stand/i386/loader:loader_lua_client", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "objects", src = "//stand/i386/loader:entry_objects", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "install_manifest", src = "//stand/i386/loader:install_manifest", architecture = "i386", visibility = ["//visibility:public"])
+filegroup(name = "installation_metadata", srcs = [":install_manifest"], output_group = "manifest", visibility = ["//tools/build/bazel:__pkg__"])
+bsd_freestanding_artifact(name = "install_archive", src = "//stand/i386/loader:install_archive", architecture = "i386", visibility = ["//visibility:public"])

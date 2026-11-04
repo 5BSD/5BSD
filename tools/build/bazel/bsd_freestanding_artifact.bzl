@@ -7,6 +7,7 @@ Bazel's execution configuration. No CcInfo crosses this boundary: boot objects
 must not become hosted link dependencies accidentally.
 """
 load(":bsd_install.bzl", "BsdInstallFileInfo", "BsdInstallManifestInfo")
+load(":bsd_install_archive.bzl", "BsdInstallArchiveInfo", "BsdInstallArchiveSetInfo")
 
 _CPU = {
     "amd64": "@platforms//cpu:x86_64",
@@ -34,7 +35,7 @@ def _impl(ctx):
     if default.files_to_run.executable != None:
         fail("freestanding boundary accepts artifacts, not executable tools or tests")
     result = [DefaultInfo(files = default.files, runfiles = default.default_runfiles)]
-    for info in [OutputGroupInfo, BsdInstallFileInfo, BsdInstallManifestInfo]:
+    for info in [OutputGroupInfo, BsdInstallFileInfo, BsdInstallManifestInfo, BsdInstallArchiveInfo, BsdInstallArchiveSetInfo]:
         if info in target:
             result.append(target[info])
     return result

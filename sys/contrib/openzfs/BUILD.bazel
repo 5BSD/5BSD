@@ -3395,3 +3395,5 @@ bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['include/os/
 bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['include/os/freebsd/zfs/sys/zfs_bootenv_os.h', 'include/sys/zfs_bootenv.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['include/os/freebsd/zfs/sys/zfs_bootenv_os.h', 'include/sys/zfs_bootenv.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = "bios_loader_headers", hdrs = ['include/os/freebsd/zfs/sys/zfs_bootenv_os.h', 'include/sys/zfs_bootenv.h'], visibility = ["//stand/i386/loader:__pkg__"])

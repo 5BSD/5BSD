@@ -117,7 +117,8 @@ ${LOADER}: ${LOADER}.bin ${BTXLDR} ${BTXKERN}
 		-b ${BTXKERN} ${LOADER}.bin
 
 ${LOADER}.bin: ${LOADER}.sym
-	${STRIPBIN} -R .comment -R .note -o ${.TARGET} ${.ALLSRC}
+	# The separately split crt0.o debug link does not describe this client.
+	${STRIPBIN} -R .comment -R .note -R .gnu_debuglink -o ${.TARGET} ${.ALLSRC}
 	@set -- `ls -l ${.TARGET}` ; x=$$((${LOADERSIZE}-$$5)); \
 	    echo "$$x bytes available"; test $$x -ge 0
 

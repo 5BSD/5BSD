@@ -2022,3 +2022,5 @@ bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['if.h'], vi
 bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['if.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
 
 bsd_source_headers(name = "bios_libi386_headers", hdrs = ['ethernet.h', 'if.h'], visibility = ["//stand/i386/libi386:__pkg__"])
+
+bsd_source_headers(name = "bios_loader_headers", hdrs = ['if.h'], visibility = ["//stand/i386/loader:__pkg__"])

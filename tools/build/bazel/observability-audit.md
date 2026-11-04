@@ -11153,3 +11153,14 @@ ELF32 standalone compilation replaces the hosted ABI construction. Startup and
 system-call trampoline symbols and relocations match original Make; no tracing
 or audit provider is removed. The host test inspects startup ordering and debug
 integrity. BIOS execution and guest observation remain open.
+
+## Complete default BIOS Lua producer (2026-11-04)
+
+The original 36 entry C sources and their included ELF templates remain intact;
+no assertion, provider or security-audit path is removed to make artifacts match.
+The selected regular verifier-disabled profile is explicit; other source profiles
+are incompatible pending qualification. The two BTX assembler sources are
+unchanged while their build context becomes the correct standalone ABI. The
+static-client strip removes an invalid inherited startup debug-link metadata
+record in both Make and Bazel; executable load segments are preserved. Construction
+and archive tests do not provide BIOS execution or runtime audit delivery evidence.

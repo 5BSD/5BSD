@@ -2425,3 +2425,21 @@ remain unchanged. See BTX-STARTUP-QUALIFICATION.md. A complete original BIOS Lua
 reference passes its unchanged size limit with 16,600 bytes available. Next
 compose its native entry/link/strip/BTX image and installation pipeline; complete
 system, debug, pkgbase, runtime/boot and performance acceptance remains open.
+
+## Complete default BIOS Lua producer checkpoint (2026-11-04)
+
+The native source-owned graph now compiles all 36 selected BIOS entry sources,
+links startup/three regular archives in original order, enforces the configured
+505000-byte client bound and produces the real a.out/BTX image and installation
+archive. Both BTX prerequisites also use explicit standalone producers and match
+original Make bytes. Twenty-four frontend tests pass, including real archive
+inodes/modes, exact-size and overflow handling. A site address/tighter-limit
+profile passes; a maximum-1 full build is rejected. An inherited startup-object
+debug link was demonstrated by a failing real-image test and removed in Make
+and native strip recipes. The corrected client is 488328 bytes. Five original
+compiler diagnostic-filename controls explain the raw Make differences; complete
+controlled client/image bytes match. Typed archive metadata survives the ABI
+boundary for aggregation; sixteen prior EFI images remain unchanged. See
+BIOS-LUA-QUALIFICATION.md. Graphical/verifier/alternate-interpreter profiles and
+remaining GPT/ZFS/ISO/PXE producers, full debug/world/kernel/pkgbase/bootstrap/
+runtime/VM and broad performance acceptance remain open.

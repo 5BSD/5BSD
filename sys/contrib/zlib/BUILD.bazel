@@ -158,3 +158,5 @@ bsd_source_headers(name = 'efi_loader_4th_aarch64_headers', hdrs = ['zconf.h', '
 bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['zconf.h', 'zlib.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['zconf.h', 'zlib.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+bsd_source_headers(name = "bios_loader_headers", hdrs = ['zconf.h', 'zlib.h'], visibility = ["//stand/i386/loader:__pkg__"])

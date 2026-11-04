@@ -36,3 +36,7 @@ bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['pnglite.h']
 exports_files(['pnglite.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 bsd_source_headers(name = "bios_libi386_headers", hdrs = ['pnglite.h'], visibility = ["//stand/i386/libi386:__pkg__"])
+
+bsd_source_headers(name = "bios_loader_headers", hdrs = ['pnglite.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+filegroup(name = "bios_loader_pnglite_source", srcs = ["pnglite.c"], visibility = ["//stand/i386/loader:__pkg__"])
