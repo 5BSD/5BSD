@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load(":header.bzl", "roken_header")
+
+# Keep the original two-stage generator: AWK emits C, whose configured
+# preprocessor selects the platform declarations before it emits roken.h.
+bsd_awk_output(
+    name = "generator_source",
+    script = "//crypto/heimdal/lib/roken:roken.awk",
+    srcs = ["//crypto/heimdal/lib/roken:roken.h.in"],
+    output = "make-roken.c",
+    awk = "//usr.bin/awk:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+cc_binary(
+    name = "make-roken",
+    srcs = [":generator_source"],
+    deps = ["//kerberos5/include:config_headers"],
+    local_defines = ["HAVE_CONFIG_H"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//kerberos5:__subpackages__"],
+)
+roken_header(
+    name = "roken_header",
+    tool = ":make-roken",
+    output = "roken.h",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    visibility = ["//kerberos5:__subpackages__"],
+)

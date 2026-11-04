@@ -2148,6 +2148,13 @@ cross-target kernel artifact qualification.
 Bazel 9 or later is the only supported Bazel, with Bzlmod and rules_cc;
 Bazel 5 and the WORKSPACE mode are no longer supported.
 .Pp
+The native Heimdal make-roken prerequisite uses explicit format-5 target
+selection for its AWK, configured C executable and generated platform header.
+An independent original Make generator produces identical AMD64 header bytes;
+this does not qualify Heimdal library consumers or complete system bootstrap.
+See
+.Pa tools/build/bazel/HEIMDAL-ROKEN-GENERATOR-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

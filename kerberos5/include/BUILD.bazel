@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "config_headers",
+    hdrs = ["config.h"],
+    strip_include_prefix = ".",
+    visibility = ["//kerberos5:__subpackages__"],
+)

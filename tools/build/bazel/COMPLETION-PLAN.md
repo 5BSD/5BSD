@@ -16,6 +16,16 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Heimdal platform-header generator (2026-11-04)
+
+Native make-roken now preserves the original AWK -> configured C executable ->
+roken.h pipeline with explicit execution-platform tools and source/configuration
+inputs. The maintained format-5 frontend passes the selected generator targets
+and source-settings test. Its captured 7,027-byte AMD64 header matches an
+independently built original Make generator byte for byte. This is a generator
+prerequisite; libroken/libvers/compile_et consumer conversion, installation and
+other architectures remain open. See HEIMDAL-ROKEN-GENERATOR-QUALIFICATION.md.
+
 ## Native Telnet and shared protocol source fix (2026-11-04)
 
 The original Telnet source now builds with option-dependent native libraries and
