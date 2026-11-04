@@ -42,6 +42,10 @@ _DEFINES = ["LIBSYS"] + select({
     "//conditions:default": [],
 })
 _COPTS = ["-ftls-model=initial-exec", "-fno-stack-protector"]
+# memcpy.c includes this implementation body; it is not a public libsys header.
+cc_library(name = "string_implementation_headers",
+    textual_hdrs = ["//lib/libc/string:bcopy.c"],
+)
 cc_library(
     name = "sys_objects",
     srcs = [":amd64_syscall_sources", "auxv.c", "interposing_table.c",
@@ -54,10 +58,9 @@ cc_library(
             "amd64_set_gsbase.c", "amd64_set_tlsbase.c", "rfork_thread.S",
             "pdrfork_thread.S", "vfork.S", "cerror.S", "getcontext.S", "_umtx_op_err.S",
         ]] + ["//lib/libc/string:" + n for n in ["memcpy.c", "memset.c", "strlcpy.c"]],
-    textual_hdrs = ["//lib/libc/string:bcopy.c"],
     # Runtime builtins are dependencies of these objects, not additional DSO
     # roots: cc_shared_library whole-links roots and normally extracts deps.
-    implementation_deps = _HEADERS + ["//lib/libcompiler_rt:compiler_rt"],
+    implementation_deps = _HEADERS + [":string_implementation_headers", "//lib/libcompiler_rt:compiler_rt"],
     local_defines = _DEFINES,
     copts = _COPTS,
     linkstatic = True,

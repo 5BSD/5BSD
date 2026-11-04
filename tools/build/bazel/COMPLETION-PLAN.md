@@ -16,6 +16,19 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Private libsys implementation include (2026-11-04)
+
+The identified bcopy.c leak is corrected through a private implementation_deps
+provider. Four actual downstream compiles lose only that unintended input; their
+commands, raw objects, nine archive products and native libc/libsys DSO bytes
+remain unchanged. Structured aquery verifies both variants of all four consumer
+sources exclude it and both actual libsys memcpy variants retain it. Six tests
+pass (three runtime tests execute, three results cached). The unchanged repeat passes with all 22 output records unchanged and zero
+actual logged spawns (all six test results cached). This is a dependency-boundary correction, not complete cache or
+resource-performance acceptance. Internal group-level private dependencies,
+mutation/cold/restore/sandbox and full world/package/runtime gates remain open.
+See LIBSYS-PRIVATE-HEADER-QUALIFICATION.md. Make stays default; BIP excluded.
+
 ## Native NIS clients and aggregate dependency follow-up (2026-11-04)
 
 ypcat, ypmatch and ypwhich now build through normal format-5 with configured

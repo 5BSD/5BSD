@@ -41,11 +41,13 @@ cached raw library outputs do not establish installation/package parity.
 
 ## Boundaries still requiring proof
 
-The current exporter creates a source snapshot. Developer edits outside that
-snapshot cannot invalidate Bazel actions automatically. Maintained frontend
-integration must refresh and validate inputs before each requested build, while
-preserving stable action identities and useful cache reuse. Qualification-only
-fresh-directory helpers are not an incremental developer build interface.
+The legacy exporter creates a source snapshot; edits outside that snapshot need
+an explicit refresh. The maintained native format-5 source_graph.py path instead
+runs Bazel directly in the selected source tree (cwd=src), with a verified cached
+SDK repository and persistent action state. Do not describe that native path as
+building a stale exported source snapshot. Verify the actual selected workflow,
+source/config/tool identities and stable action reuse before each qualification.
+Fresh result directories alone do not imply cold or independent build state.
 
 Declared dynamic-runtime copies do not redirect the host ELF loader. Prefer
 verified static execution tools or qualify and bind the actual execution
@@ -58,3 +60,16 @@ wall time, CPU, peak process/guest/host memory, bytes read/written, disk growth,
 and action counts. Use the same CPU/RAM budgets and comparable Make baselines.
 Record regression limits before evaluating results. Retain Make as the
 production backend until complete world/kernel/package parity is established.
+
+## Private libsys include checkpoint (2026-11-04)
+
+LIBSYS-PRIVATE-HEADER-QUALIFICATION.md records a real public/private dependency
+correction with actual compile-input deltas, raw artifact equality and selected
+runtime tests. Configured regular/PIC actions retain the implementation include
+only at the producer boundary. This closes that inspected dependency leak, not
+the complete mutation/cache/resource matrix above.
+
+The selected unchanged repeat passes in maintained persistent state: all 22
+captured output records remain exact, all six tests reuse cached results and
+the compact log has zero actual spawns. This establishes local up-to-date reuse
+for that request, not populated-disk restore, remote cache or mutation behavior.

@@ -6404,3 +6404,18 @@ parity. No signing, publication or host installation policy changes are added.
 
 The separate final default-profile regression passes, with all 801 production
 archive/request/directory outputs unchanged from the previous default capture.
+
+.Ss Private implementation dependency qualification
+The existing format-5 native workflow supports libsys's private bcopy.c include
+provider through implementation_deps. The include remains declared for both
+memcpy variants and no longer propagates into NIS consumer compile inputs.
+Four actual compiler commands and object bytes, nine archive products and both
+native libc/libsys shared-library bytes remain unchanged. Six selected tests
+pass: three runtime cases execute and three previous results are cached.
+This verifies an inspected dependency boundary; complete mutation, cache-restore,
+sandbox and comparative resource qualification remain required.
+No frontend C, signing or publication policy change is needed.
+
+An unchanged repeat preserves all 22 selected output records with zero actual
+logged spawn actions and six cached test results. This is local up-to-date
+reuse in maintained persistent state, not cold-build or cache-restore proof.
