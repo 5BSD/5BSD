@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Userboot harness and original variant references (2026-11-04)
+
+The hosted AMD64 internal harness now builds natively with original object and
+linked allocated-section parity, 85 consumed source/header bindings, real debug
+splitting and verified debuglink CRC. Three safe runtime error paths pass through
+the declared BSD linker and SDK libraries. It adds no installation contribution.
+Configured metadata and explicit original Make references for both 42-source
+Lua/Forth shared objects now pass. Native shared linking, variant installations,
+default aliases and successful callback/guest startup remain the next work. See
+[USERBOOT-HARNESS-QUALIFICATION.md](USERBOOT-HARNESS-QUALIFICATION.md). Complete
+system/bootstrap/package/debug/runtime/performance gates remain open; Make stays
+default and BIP stays excluded.
+
 ## AMD64 Lua kboot consumer (2026-11-04)
 
 The native consumer now has 39 original compiler contexts, declared dependencies,

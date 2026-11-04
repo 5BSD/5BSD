@@ -11231,3 +11231,12 @@ controls preserve assertions, including relocation addends affected by string
 lengths. Artifact/install checks do not qualify Linux syscall/kexec execution,
 DTrace/BSM delivery or normal OS startup. The prior library-only checkpoint's
 missing consumer is now covered for selected construction, with runtime open.
+
+
+## Hosted userboot harness (2026-11-04)
+
+The actual original callback interface and C harness retain their behavior.
+Original metadata declares no DTrace provider or FIDL generator for the harness;
+none is omitted. Three actual usage/library/disk error-path executions establish
+only those host behaviors. Native interpreter shared objects, callback execution,
+guest/kernel startup and DTrace/BSM delivery remain unqualified.

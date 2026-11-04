@@ -6273,3 +6273,11 @@ The existing explicit format-5 bazel-test interface selects these targets;
 no new frontend dispatch or publication policy is required.
 Construction and original-recipe comparisons do not qualify Linux syscall/kexec
 execution, VM startup or a complete installed system.
+
+.Ss Hosted userboot harness
+The explicit format-5 bazel-test interface can build the original AMD64 internal
+userboot harness and split debug artifacts, with no installed-file contribution.
+Its native runtime test executes usage, missing-library and disk-open error paths
+through declared SDK linker/libraries. This does not qualify successful userboot
+callbacks, guest kernels or VM startup. Native Lua/Forth shared-object conversion
+and the corresponding installations remain open.

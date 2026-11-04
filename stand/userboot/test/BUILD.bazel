@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+# Original INTERNALPROG: build and test it without an installation contribution.
+cc_binary(name = "harness.full", srcs = ["test.c"], deps = ["//stand/userboot:interface_headers"],
+    copts = ['-Istand/userboot', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments'],
+    features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_debug_split(name = "harness", src = ":harness.full", binary_name = "test", debug_name = "test.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+    visibility = ["//visibility:public"])
+filegroup(name = "debug", srcs = [":harness"], output_group = "debug_files", visibility = ["//visibility:public"])
+filegroup(name = "execution_libraries", srcs = ["@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"])
+bsd_python_test(name = "runtime_test", src = "runtime-test.py",
+    data = [":harness", ":execution_libraries", "@bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1"],
+    args = ["--program", "$(location :harness)", "--loader", "$(location @bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1)",
+        "--libraries", "$(locations :execution_libraries)"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"], size = "small")
