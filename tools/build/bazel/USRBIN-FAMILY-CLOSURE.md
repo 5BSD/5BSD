@@ -15,6 +15,14 @@ An unconfigured offline Bazel query loads 337 archive declarations beneath
 usr.bin, including optional and test declarations. These counts have different
 scopes and are not programs, built products or completion percentages.
 
+## Current optional owner follow-up (2026-11-04)
+
+compile_et now has native generators, original consumer/install/runtime comparison
+and an explicit original-condition parent archive edge. The former missing-leaf
+queue is closed at this component scope. Full non-MIT Heimdal dependencies and
+configured parent acceptance remain gated; this is not complete usr.bin installed
+tests or whole-world acceptance. See COMPILE-ET-NATIVE-QUALIFICATION.md.
+
 ## Closed prerequisites
 
 Six already native programs had installation manifests but no component archive:

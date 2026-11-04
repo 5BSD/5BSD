@@ -109,3 +109,16 @@ the real corrected original consumer builds/stages against three freshly bound
 original PIE archives. See VACATION-NATIVE-QUALIFICATION.md for bounded evidence.
 This changes independent comparison inputs, not production link flags or the
 build-bsd backend selection.
+
+## Shared ELF and installed-header extension (2026-11-04)
+
+Each library record may additionally declare kind (archive or shared; omitted
+means archive) and include_directories, a nonempty list of canonical relative
+original stage directories. Shared files must be target ELF64 DYN libraries.
+Headers are bound to the same original passed reference's component.METALOG and
+its recorded hash; every file and the complete include inventory are verified.
+Actual original compiler dependencies must name the selected include directory.
+Existing archive-only input files retain their format and behavior. Make's
+maintained CFLAGS_LAST/LDFLAGS_LAST hooks carry explicit includes/shared search
+paths while preserving existing flags. See COMPILE-ET-NATIVE-QUALIFICATION.md
+for schema semantics, new regression coverage and actual original consumer proof.

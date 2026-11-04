@@ -10,7 +10,7 @@ bsd_lex(name = "lexer", src = "//contrib/com_err:lex.l", output = "lex.c",
 cc_library(name = "parser_headers", hdrs = [":parser_header"], strip_include_prefix = ".")
 cc_binary(name = "compile_et", srcs = ["//contrib/com_err:compile_et.c", ":parser_source", ":lexer"],
     deps = [":parser_headers", "//contrib/com_err:compiler_headers", "//kerberos5/lib/libroken:roken", "//kerberos5/lib/libvers:vers_pie"],
-    dynamic_deps = ["//kerberos5/lib/libroken:roken_shared", "//lib/libcrypt:crypt_shared", "//lib/libc:c_shared"],
+    dynamic_deps = ["//kerberos5/lib/libroken:roken_shared", "//lib/libc:c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])

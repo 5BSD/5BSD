@@ -16,6 +16,23 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## compile_et original consumer qualification (2026-11-04)
+
+Maintained library reference inputs now support explicit shared ELF kind and
+installed include directories with receipt/METALOG/content/inventory bindings.
+Actual original link recipes and compiler dependencies are audited. Supported
+CFLAGS_LAST/LDFLAGS_LAST hooks preserve existing flags; the old ineffective
+CFLAGS_EARLY reference knob is removed. Fresh original compile_et build/stage
+passes against original roken/vers. Its three object contracts match raw; full
+five-record component metadata, manual bytes, debug CRCs and ELF metadata match.
+The comparison identified and removed native compile_et's extra direct crypt
+link. All eleven original error tables produce identical C/H files (22 outputs)
+with each generator's own roken and explicitly recorded SDK runtime. Native
+runtime tests separately pass with native DSOs. The conditional parent archive
+edge is declared; full Heimdal and installed-test gates remain. See
+COMPILE-ET-NATIVE-QUALIFICATION.md. Complete world/pkgbase/runtime/performance
+and other architectures/profiles remain open; Make stays default.
+
 ## Roken native installation and regular/PIC comparison (2026-11-04)
 
 Native roken now contributes the original static/shared library, symlink, eleven

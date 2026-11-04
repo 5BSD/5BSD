@@ -437,7 +437,11 @@ selects.config_setting_group(name = "llvm_tools_requested", match_any = [
     "//tools/build/bazel/config:lld_enabled", "//tools/build/bazel/config:lldb_enabled",
 ])
 selects.config_setting_group(name = "llvm_tools", match_all = [":llvm_tools_requested", "//tools/build/bazel/config:toolchain_enabled"])
-# The Heimdal compile_et owner still requires conversion; its profile is rejected.
+# compile_et is native; the full Heimdal profile remains unqualified below.
+_ARCHIVES = _ARCHIVES + select({
+    ":heimdal": ["//usr.bin/compile_et:install_archive"],
+    "//conditions:default": [],
+})
 _ARCHIVES = _ARCHIVES + select({
     "//tools/build/bazel/config:hesiod_enabled": ["//usr.bin/hesinfo:install_archive"],
     "//conditions:default": [],

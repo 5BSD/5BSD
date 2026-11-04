@@ -109,6 +109,63 @@ class LibraryInputs(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'object-tree artifact'):
             self.load()
 
+    def shared_fixture(self, machine=183):
+        self.artifact = self.artifact.with_name('libfixture.so.11')
+        self.artifact.write_bytes(b'\x7fELF\x02\x01' + bytes(10) + (3).to_bytes(2, 'little') + machine.to_bytes(2, 'little'))
+        item = self.config['libraries']['LIBSA']
+        item.update(kind='shared', artifact=str(self.artifact.relative_to(self.reference)), artifact_sha256=lib.digest(self.artifact))
+        self.refresh()
+    def test_shared_library_kind_and_target_identity(self):
+        self.shared_fixture()
+        self.assertEqual(self.load()[0]['LIBSA']['kind'], 'shared')
+        self.shared_fixture(machine=62)
+        with self.assertRaisesRegex(ValueError, 'target ELF64'): self.load()
+    def test_shared_library_cannot_be_archive_or_script(self):
+        self.shared_fixture()
+        for content in [b'!<arch>\n', b'GROUP ( another.so )']:
+            self.artifact.write_bytes(content)
+            self.config['libraries']['LIBSA']['artifact_sha256'] = lib.digest(self.artifact)
+            self.refresh()
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, 'target ELF64'): self.load()
+    def header_fixture(self):
+        directory = self.reference / 'stage/usr/include'
+        directory.mkdir(parents=True)
+        header = directory / 'fixture.h'
+        header.write_text('/* original stage fixture */\n')
+        metadata = self.reference / 'component.METALOG'
+        metadata.write_text('./usr/include/fixture.h type=file sha256=' + lib.digest(header) + '\n')
+        self.info['metadata_phases'] = {'component.METALOG': lib.digest(metadata)}
+        self.config['libraries']['LIBSA']['include_directories'] = ['stage/usr/include']
+        self.refresh()
+        return directory, header
+    def test_declared_stage_headers_and_added_file_detection(self):
+        directory, _ = self.header_fixture()
+        records, bindings = self.load()
+        lib.verify(bindings); lib.verify_headers(records)
+        (directory / 'shadow.h').write_text('changed search inventory')
+        with self.assertRaisesRegex(ValueError, 'contents changed'): lib.verify_headers(records)
+        with self.assertRaisesRegex(ValueError, 'differs from installation'): self.load()
+    def test_header_metadata_and_payload_corruption(self):
+        _, header = self.header_fixture()
+        header.write_text('different payload')
+        with self.assertRaisesRegex(ValueError, 'differs from installation'): self.load()
+    def test_stage_headers_must_appear_in_compiler_dependencies(self):
+        directory, header = self.header_fixture()
+        records, _ = self.load()
+        objects = self.root / 'consumer'; objects.mkdir()
+        dependency = objects / '.depend.fixture.pieo'
+        dependency.write_text('fixture.pieo: /elsewhere/fixture.h\n')
+        with self.assertRaisesRegex(ValueError, 'absent from compiler dependencies'):
+            lib.audit_header_dependencies(objects, records)
+        dependency.write_text('fixture.pieo: ' + str(header) + '\n')
+        self.assertEqual(len(lib.audit_header_dependencies(objects, records)[str(directory)]), 1)
+
+    def test_include_directory_must_be_in_reference_stage(self):
+        self.header_fixture()
+        for value in ['../escape', 'objects', 'stage/../objects']:
+            self.config['libraries']['LIBSA']['include_directories'] = [value]; self.refresh()
+            with self.subTest(path=value), self.assertRaises(ValueError): self.load()
+
     def test_recheck_after_loading(self):
         _, bindings = self.load()
         self.artifact.write_bytes(b'!<arch>\nlate change')
@@ -164,6 +221,17 @@ class CustomLinks(unittest.TestCase):
         self.metadata('cc -o boot.out entry.o -L' + str(self.root) + ' -lsa')
         with self.assertRaisesRegex(ValueError, 'absent from completed link'):
             lib.audit_links(self.objects, self.libraries)
+
+    def test_named_shared_search_matches_only_bound_target(self):
+        shared = self.root / 'libsa.so.11'; shared.write_bytes(b'shared fixture')
+        link = self.root / 'libsa.so'; link.symlink_to(shared.name)
+        libraries = {'LIBSA': {'artifact': str(shared), 'kind': 'shared'}}
+        self.metadata('cc -o boot.out entry.o -L' + str(self.root) + ' -lsa')
+        self.assertEqual(set(lib.audit_links(self.objects, libraries)['libraries']), {'LIBSA'})
+        other = self.root / 'libother.so.11'; other.write_bytes(b'shadow')
+        link.unlink(); link.symlink_to(other.name)
+        with self.assertRaisesRegex(ValueError, 'absent from completed link'):
+            lib.audit_links(self.objects, libraries)
 
     def test_named_search_modes_and_response_files_fail_closed(self):
         for extra in ['@link.rsp', '-Wl,-Bstatic', '-static', '-Wl,-L/elsewhere', '--library-path=/elsewhere']:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Bind original Make archive inputs to explicit passed reference receipts."""
+"""Bind original Make library inputs to explicit passed reference receipts."""
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -35,9 +35,13 @@ def load(config_path, architecture, source_root, compiler):
     compiler_sha = digest(compiler)
     for variable, item in libraries.items():
         if not re.fullmatch(r'LIB[A-Z0-9_]+', variable):
-            raise ValueError('original archive override must name a LIB variable')
-        if not isinstance(item, dict) or set(item) != {'receipt', 'receipt_sha256', 'artifact', 'artifact_sha256'}:
+            raise ValueError('original library override must name a LIB variable')
+        required = {'receipt', 'receipt_sha256', 'artifact', 'artifact_sha256'}
+        if not isinstance(item, dict) or not required <= set(item) <= required | {'kind', 'include_directories'}:
             raise ValueError('exact original library receipt/artifact binding required')
+        kind = item.get('kind', 'archive')
+        if kind not in ('archive', 'shared'):
+            raise ValueError('original library kind must be archive or shared')
         reference = safe_path(item['receipt'], True)
         if digest(reference) != item['receipt_sha256']:
             raise ValueError('original library receipt digest mismatch')
@@ -60,17 +64,30 @@ def load(config_path, architecture, source_root, compiler):
             raise ValueError('canonical relative original archive path required')
         unresolved = reference.parent / relative
         artifact = safe_path(str(unresolved), True)
-        if artifact != unresolved or not artifact.is_relative_to(reference.parent / 'objects' / str(component).lstrip('/')) or artifact.suffix != '.a':
+        if artifact != unresolved or not artifact.is_relative_to(reference.parent / 'objects' / str(component).lstrip('/')):
             raise ValueError('original archive must be a regular object-tree artifact')
         if digest(artifact) != item['artifact_sha256']:
             raise ValueError('original library artifact digest mismatch')
         with artifact.open('rb') as stream:
-            if stream.read(8) != b'!<arch>\n':
+            header = stream.read(20)
+        if kind == 'archive':
+            if artifact.suffix != '.a' or header[:8] != b'!<arch>\n':
                 raise ValueError('regular original archive required; thin/script inputs are not supported')
+        else:
+            machine = {'amd64': 62, 'aarch64': 183, 'riscv64': 243}[architecture]
+            if (not re.fullmatch(r'lib.+\.so(?:\.[0-9]+)*', artifact.name) or
+                    header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[16:18], 'little') != 3 or
+                    int.from_bytes(header[18:20], 'little') != machine):
+                raise ValueError('original shared input must be a target ELF64 dynamic library')
         records[variable] = dict(receipt=str(reference), receipt_sha256=item['receipt_sha256'],
-            artifact=str(artifact), artifact_sha256=item['artifact_sha256'], component=str(component))
+            artifact=str(artifact), artifact_sha256=item['artifact_sha256'], component=str(component), kind=kind)
+        if 'include_directories' in item:
+            headers, header_bindings = load_headers(reference.parent, receipt, item['include_directories'])
+            records[variable]['include_directories'] = headers
+            bindings.update(header_bindings)
         bindings.update({str(reference): item['receipt_sha256'], str(artifact): item['artifact_sha256'], str(selected): compiler_sha})
     verify(bindings)
+    verify_headers(records)
     return records, bindings
 
 
@@ -124,9 +141,15 @@ def linked_archives(argv, cwd, libraries):
         return selected
     for name, row in pending.items():
         artifact = Path(row['artifact']).resolve(strict=True)
-        if not artifact.name.startswith('lib') or artifact.suffix != '.a':
-            continue
-        ordinary = artifact.name[3:-2]
+        if row.get('kind', 'archive') == 'shared':
+            match = re.fullmatch(r'lib(.+)\.so(?:\.[0-9]+)*', artifact.name)
+            if not match:
+                continue
+            ordinary = match.group(1)
+        else:
+            if not artifact.name.startswith('lib') or artifact.suffix != '.a':
+                continue
+            ordinary = artifact.name[3:-2]
         for flag in flags:
             if flag not in (ordinary, ':' + artifact.name):
                 continue
@@ -200,3 +223,75 @@ def audit_links(objects, libraries):
         raise ValueError('bound original archives absent from completed link recipes: ' +
                          ', '.join(sorted(set(libraries) - set(found))))
     return dict(libraries=found, commands=commands)
+
+
+def load_headers(root, receipt, directories):
+    """Bind explicitly selected original stage include directories and payloads."""
+    if not isinstance(directories, list) or not directories or any(not isinstance(value, str) for value in directories) or len(set(directories)) != len(directories):
+        raise ValueError('distinct nonempty original include directory list required')
+    metadata = root / 'component.METALOG'
+    expected = receipt.get('metadata_phases', {}).get('component.METALOG')
+    if not expected or digest(metadata) != expected:
+        raise ValueError('original header installation metadata digest mismatch')
+    installed = {}
+    for line in metadata.read_text().splitlines():
+        words = shlex.split(line)
+        if not words:
+            continue
+        values = dict(word.split('=', 1) for word in words[1:])
+        if values.get('type') == 'file':
+            installed[words[0].removeprefix('./')] = values.get('sha256')
+    records = []
+    bindings = {str(metadata): expected}
+    stage = (root / 'stage').resolve(strict=True)
+    for relative in directories:
+        if not isinstance(relative, str) or not relative or PurePosixPath(relative).is_absolute() or '..' in relative.split('/') or str(PurePosixPath(relative)) != relative:
+            raise ValueError('canonical relative original include directory required')
+        unresolved = root / relative
+        directory = safe_path(str(unresolved), True)
+        if directory != unresolved or directory == stage or not directory.is_relative_to(stage) or not directory.is_dir():
+            raise ValueError('original include directory must be contained in reference stage')
+        files = header_inventory(directory)
+        if not files:
+            raise ValueError('original include directory is empty')
+        for name, content in files.items():
+            installed_name = str((directory / name).relative_to(stage))
+            if installed.get(installed_name) != content:
+                raise ValueError('original include payload differs from installation metadata')
+            bindings[str(directory / name)] = content
+        records.append(dict(directory=str(directory), files=files))
+    return records, bindings
+
+
+def header_inventory(directory):
+    result = {}
+    for path in sorted(directory.rglob('*')):
+        if path.is_symlink():
+            raise ValueError('original include directory cannot contain symlinks')
+        if path.is_file():
+            result[str(path.relative_to(directory))] = digest(path)
+        elif not path.is_dir():
+            raise ValueError('unsupported original include directory entry')
+    return result
+
+
+def verify_headers(libraries):
+    for library in libraries.values():
+        for record in library.get('include_directories', []):
+            if header_inventory(Path(record['directory'])) != record['files']:
+                raise ValueError('original include directory contents changed')
+
+
+def audit_header_dependencies(objects, libraries):
+    records = {record['directory']: [] for library in libraries.values() for record in library.get('include_directories', [])}
+    for dependency in sorted(objects.rglob('.depend.*')):
+        if not dependency.is_file() or dependency.name.endswith('.meta'):
+            continue
+        words = shlex.split(dependency.read_text().replace('\\\n', ' '))
+        for directory in records:
+            used = [word for word in words if word.startswith(directory + '/')]
+            if used:
+                records[directory].append(dict(dependency=str(dependency), sha256=digest(dependency), headers=used))
+    if any(not values for values in records.values()):
+        raise ValueError('bound original include directory absent from compiler dependencies')
+    return records

@@ -50,7 +50,7 @@ def main():
     parser.add_argument('--local-generated-header', action='append', default=[],
                         help='require this generated header basename from the isolated component object directory')
     parser.add_argument("--library-inputs", type=Path,
-                        help="explicit original archive/receipt bindings; no SDK archive copies")
+                        help="explicit original archive/shared ELF receipt bindings; no SDK copies")
     parser.add_argument("--generator-inputs", type=Path,
                         help="explicit original native Make generator receipt/executable bindings; requires metadata")
     args = parser.parse_args()
@@ -167,6 +167,8 @@ def main():
                 raise ValueError('original archive override is absent from selected LDADD; custom links require --make-meta')
             audit_library_links = True
         environment.inputs.update(library_bindings)
+    include_directories = list(dict.fromkeys(record['directory']
+        for library in library_inputs.values() for record in library.get('include_directories', [])))
     if args.make_meta:
         install_reference_options.validate_metadata_component(environment.query)
     # Feature overrides can legitimately add/remove Makefile includes. Freeze
@@ -213,6 +215,7 @@ def main():
 
     def run(command, label):
         install_reference_libraries.verify(library_bindings)
+        install_reference_libraries.verify_headers(library_inputs)
         install_reference_generators.verify(generator_bindings)
         log = output / (label + '.log')
         with log.open('w') as stream:
@@ -220,6 +223,7 @@ def main():
         receipt['commands'].append({'argv': command, 'status': result.returncode,
                                     'log': log.name, 'log_sha256': digest(log)})
         install_reference_libraries.verify(library_bindings)
+        install_reference_libraries.verify_headers(library_inputs)
         install_reference_generators.verify(generator_bindings)
         if result.returncode:
             raise RuntimeError(label + ' failed; see ' + str(log))
@@ -231,14 +235,23 @@ def main():
     try:
         base = [str(make), '-C', str(component),
                 *environment.fixed, *environment.options]
+        reference_includes = list(include_directories)
         if args.local_generated_header:
             # Use the actual isolated component directory. A .OBJDIR expansion
             # here would be evaluated by the outer buildenv Make, not its child.
             component_objects = objects / str(component).lstrip('/')
-            base += ['CFLAGS_EARLY=' + shlex.quote('-I' + str(component_objects))]
+            reference_includes.insert(0, str(component_objects))
+        if reference_includes:
+            base += ['CFLAGS_LAST=' + (environment.query(['-V', 'CFLAGS_LAST']).strip() + ' ' + ' '.join('-I' + value for value in reference_includes)).strip()]
+        shared_directories = list(dict.fromkeys(str(Path(record['artifact']).parent)
+            for record in library_inputs.values() if record.get('kind') == 'shared'))
+        if shared_directories:
+            base += ['LDFLAGS_LAST=' + (environment.query(['-V', 'LDFLAGS_LAST']).strip() + ' ' + ' '.join('-L' + value for value in shared_directories)).strip()]
         if args.make_meta:
             base += ['.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=yes']
         run(buildenv(base + ['-j' + str(args.jobs), 'all']), 'build')
+        if include_directories:
+            receipt['dependency_header_audit'] = install_reference_libraries.audit_header_dependencies(objects, library_inputs)
         if generator_inputs:
             receipt['generator_recipe_audit'] = install_reference_generators.audit_recipes(objects, generator_inputs)
         if audit_library_links:

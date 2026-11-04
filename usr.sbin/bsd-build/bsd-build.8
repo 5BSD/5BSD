@@ -2148,38 +2148,27 @@ cross-target kernel artifact qualification.
 Bazel 9 or later is the only supported Bazel, with Bzlmod and rules_cc;
 Bazel 5 and the WORKSPACE mode are no longer supported.
 .Pp
-The native Heimdal make-roken prerequisite uses explicit format-5 target
-selection for its AWK, configured C executable and generated platform header.
-An independent original Make generator produces identical AMD64 header bytes;
-this does not qualify Heimdal library consumers or complete system bootstrap.
+Native Heimdal qualification uses explicit format-5 targets for make-roken,
+regular/PIE libraries, the roken shared library and typed installation archive,
+and compile_et with its native lexer/parser and runtime tests.
+Original roken installation metadata/header bytes and regular/PIC object
+contracts have passed independent Make comparisons.
+The compile_et consumer also passes original object, installation, manual,
+debug CRC and ELF metadata comparisons; both generators produce identical C/H
+output for all eleven maintained error tables.
+The full Heimdal profile and complete installed tests remain gated.
 See
-.Pa tools/build/bazel/HEIMDAL-ROKEN-GENERATOR-QUALIFICATION.md .
+.Pa tools/build/bazel/ROKEN-INSTALLATION-QUALIFICATION.md
+and
+.Pa tools/build/bazel/COMPILE-ET-NATIVE-QUALIFICATION.md .
 .Pp
-Explicit Heimdal library and compile_et targets also build regular/PIE
-archives, the versioned roken shared library, lexer/parser outputs and a consumer
-installation contribution, with a selected native CLI runtime test.
-These remain candidates pending independent Make consumer/install comparisons
-and generated error-table qualification; full Heimdal profiles remain gated.
+The independent Make reference helper accepts explicit generator and library
+receipt bindings, including shared ELF libraries and original installed include
+directories, without modifying the SDK.
+Metadata, hashes, complete include inventories and actual recipe/dependency use
+are checked; these comparisons do not establish complete bootstrap independence.
 See
-.Pa tools/build/bazel/HEIMDAL-COMPILE-ET-CANDIDATE.md .
-.Pp
-The maintained independent Make reference helper also accepts
-.Fl -generator-inputs
-with metadata mode: original native generator receipts and executable hashes
-are bound explicitly, checked around commands and audited in completed recipes.
-This supports fresh Heimdal library references without installing build tools.
-Native compile_et tests exercise generated error-table semantics and failures.
-Original consumer/shared installation parity remains required.
-See
-.Pa tools/build/bazel/HEIMDAL-ORIGINAL-REFERENCE-QUALIFICATION.md .
-.Pp
-Native roken installation qualification contributes its original libraries,
-symlink, public headers and separate debug file through typed archive rules.
-Its component metadata and header bytes match a fresh original Make stage;
-regular/PIC object contracts and versioned shared metadata are compared separately.
-This does not qualify complete Heimdal or pkgbase publication.
-See
-.Pa tools/build/bazel/ROKEN-INSTALLATION-QUALIFICATION.md .
+.Pa tools/build/bazel/REFERENCE-LIBRARY-INPUTS-QUALIFICATION.md .
 .Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
