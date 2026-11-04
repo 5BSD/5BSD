@@ -23,7 +23,9 @@ production aggregate: 267 flattened archives, the seven-contribution LLVM family
 strict LLVM manifest and test-root archive. All six selected tests pass (five
 executed, source_settings_test cached). This is a native build and selected-test
 result, not independent full Make installation parity or full-world acceptance.
-The separate all-archive producer/payload audit remains in progress.
+The separate producer/payload audit now passes all 267 archives and 1,482
+file/link records with no duplicate non-directory paths: 254 current logged
+producer actions and 13 exact prior captured witnesses for cached outputs.
 
 Eleven original TAP suite archives now match fresh maintained Make installation
 references: 283 files (13 TAP programs, 259 fixtures and 11 Kyuafiles), eleven

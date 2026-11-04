@@ -215,7 +215,7 @@ CLI (five executed). Native Clang/LLD also build in the execution configuration
 for the real profile test. No Make compilation fallback is introduced.
 This supersedes the earlier live-build status above. Independent full Make
 installation parity and completed-world namespace reconciliation remain open;
-the separate 267-archive producer/payload audit is still running.
+the separate 267-archive producer/payload audit now passes.
 
 The eleven TAP references in bazel-usrbin-tap-make-batch-r1-20261104 and native
 build bazel-usrbin-tap-native-r1-20261104 pass. The independent review in
@@ -247,3 +247,28 @@ bazel-all-amd64-modules-payload-review-r3-20261103/summary.json passes for all
 independent complete installation/pkgbase parity and runtime remain open.
 The authoritative bounded details are in AMD64-AGGREGATE-MODULES-QUALIFICATION.md.
 This correction records existing evidence, not a new build or runtime result.
+
+## Complete production archive serialization audit
+
+bazel-usrbin-production-review-r3-20261104/review.json independently reads all
+801 captured archive/request/directory outputs and reconciles all 267 archives
+with the prior configured selection. All 1,482 file/link records have exact
+request inventories, logged payload hashes, modes, account-policy ownership,
+flags and link targets. No non-directory destination occurs in two archives.
+The audit reads tar contents without installing or extracting them on the host.
+
+There are 254 current logged archive producer actions. Thirteen cached outputs
+have explicit prior witnesses from the compression and LLVM qualifications:
+current/prior tar, request and directory-output hashes all match, their actual
+prior actions pass, and current payload/account-policy inputs match the logged
+digests. These are reused witnesses, not thirteen fresh actions. The retained
+prior-witness input list and audit source are hash-bound in the review.
+
+The first inspection failed on a caller's extra slash before a full output name;
+the second correctly rejected thirteen missing current action witnesses. The
+third supplies explicit prior qualifications with strict product/input binding.
+Failed inspections remain retained. No missing action record is manufactured.
+This proves serialization consistency and destination uniqueness for this
+production collection. It does not establish independent full Make installation
+parity, completed-world directory/package reconciliation, complete installed
+TAP execution or whole-system acceptance.
