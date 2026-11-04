@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import time
 import tempfile
@@ -18,6 +19,8 @@ import sdk_copy
 import sdk_digests
 from libmd_environment import digest
 
+
+BAZEL_IDLE_SECONDS = 300
 
 def setting_arguments(settings):
     """Pass typed source build settings, never arbitrary native Bazel flags."""
@@ -41,6 +44,70 @@ def execution_log_format(config):
     if value not in ('json', 'compact'):
         raise ValueError('execution-log-format must be json or compact')
     return value
+
+
+
+def action_cache_settings(config):
+    """Validate bounded local CAS policy without accepting native Bazel flags."""
+    value = config.get('action-cache')
+    if value is None:
+        return {'mode': 'disabled'}
+    fields = {'name', 'max-bytes', 'max-age-seconds', 'idle-delay-seconds', 'min-free-bytes'}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError('action-cache requires name, max-bytes, max-age-seconds, idle-delay-seconds and min-free-bytes')
+    name = value['name']
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', name):
+        raise ValueError('action-cache name must be a simple identifier')
+    for field in fields - {'name'}:
+        if type(value[field]) is not int or not 0 < value[field] <= 2**63 - 1:
+            raise ValueError('action-cache limits must be positive signed 64-bit integers')
+    if value['max-age-seconds'] > 2**31 - 1:
+        raise ValueError('action-cache age must fit positive 32-bit seconds')
+    if value['idle-delay-seconds'] >= BAZEL_IDLE_SECONDS:
+        raise ValueError('action-cache idle delay must be below the Bazel server idle timeout')
+    return dict(value, mode='disk')
+
+
+def private_state_directory(state, names):
+    if state.resolve() != state or not state.is_dir():
+        raise ValueError('build state must be a canonical directory')
+    current = state
+    for name in names:
+        current = current / name
+        if current.is_symlink():
+            raise ValueError('private build-state directories must not be symlinks')
+        current.mkdir(mode=0o700, exist_ok=True)
+        info = current.stat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise ValueError('build-state directories must be private and owned by the builder')
+    return current
+
+
+def build_state_directory(config, state):
+    name = config.get('build-state')
+    if name is None:
+        return state / 'bazel-root'
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', name):
+        raise ValueError('build-state must be a simple identifier')
+    return private_state_directory(state, ['isolated-builds', name]) / 'bazel-root'
+
+
+def prepare_action_cache(policy, state):
+    """Keep local action caches private and separate from module repositories."""
+    if policy['mode'] == 'disabled':
+        return dict(policy), []
+    if state.resolve() != state or not state.is_dir():
+        raise ValueError('action-cache state must be a canonical directory')
+    if shutil.disk_usage(state).free < policy['min-free-bytes']:
+        raise ValueError('action-cache filesystem is below the configured free-space reserve')
+    current = private_state_directory(state, ['action-caches', policy['name']])
+    record = dict(policy, path=str(current), owner_uid=os.getuid(),
+        limits='idle garbage-collection targets plus pre-build reserve; not a hard peak disk quota')
+    flags = ['--disk_cache=' + str(current),
+             '--experimental_disk_cache_gc_max_size=' + str(policy['max-bytes']),
+             '--experimental_disk_cache_gc_max_age=' + str(policy['max-age-seconds']) + 's',
+             '--experimental_disk_cache_gc_idle_delay=' + str(policy['idle-delay-seconds']) + 's']
+    return record, flags
 
 
 def platform_arguments(config, target_arch, receipt=None):
@@ -168,8 +235,9 @@ def qualify(config, args):
 def _qualify(config, args, state):
     required={'format','toolchain-workspace','toolchain-receipt','java-home',
               'repository-cache','distdirs','targets','tests'}
-    if not required <= set(config) or set(config) - required - {'build-settings', 'target-kind', 'execution-log-format'} or type(config['format']) is not int or config['format']!=5:
+    if not required <= set(config) or set(config) - required - {'build-settings', 'target-kind', 'execution-log-format', 'action-cache', 'build-state'} or type(config['format']) is not int or config['format']!=5:
         raise ValueError('exact format-5 source graph configuration required')
+    cache_policy = action_cache_settings(config)
     log_format = execution_log_format(config)
     log_path = args.output.resolve() / ('execution.' + log_format)
     settings = setting_arguments(config.get('build-settings', {}))
@@ -239,12 +307,14 @@ def _qualify(config, args, state):
     staged_digest, staged_entries = bsd_toolchain.verify_repository_cache(staged_cache)
     if (staged_digest, staged_entries) != (cache_digest, cache_entries):
         raise ValueError('staged repository cache differs from the verified input')
+    user_root = build_state_directory(config, state)
+    action_cache, cache_flags = prepare_action_cache(cache_policy, state)
     commands=[]
     try:
-        argv=[str(args.bazel),'--ignore_all_rc_files','--max_idle_secs=300','--server_javabase='+str(selected['java-home']),'--output_user_root='+str(state/'bazel-root'),
+        argv=[str(args.bazel),'--ignore_all_rc_files','--max_idle_secs='+str(BAZEL_IDLE_SECONDS),'--server_javabase='+str(selected['java-home']),'--output_user_root='+str(user_root),
               'test' if config['tests'] else 'build','--override_module=bsd_sdk='+str(repository),
               '--lockfile_mode=error','--repository_disable_download','--repository_cache='+str(staged_cache),
-              *platforms,
+              *platforms, *cache_flags,
               '--jobs='+str(args.jobs),'--compilation_mode=opt','--strip=never',
               # Extend Bazel defaults so build-only test targets retain runfiles.
               '--output_groups=+metadata,+directory_metadata',
@@ -297,7 +367,7 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

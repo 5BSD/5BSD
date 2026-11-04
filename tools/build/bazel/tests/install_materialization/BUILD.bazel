@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_stage.bzl", "bsd_stage")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+
+bsd_install_file(name = "payload", src = "payload.txt", destination = "/z", owner = "root", group = "wheel", mode = "0440", install_tags = ["package=fixture"])
+bsd_install_link(name = "a", destination = "/a", target = "/b", kind = "hardlink", owner = "root", group = "wheel", mode = "0440", install_tags = ["package=fixture"])
+bsd_install_link(name = "b", destination = "/b", target = "/z", kind = "hardlink", owner = "root", group = "wheel", mode = "0440", install_tags = ["package=fixture"])
+bsd_install_link(name = "c", destination = "/c", target = "/b", kind = "hardlink", owner = "root", group = "wheel", mode = "0440", install_tags = ["package=fixture"])
+bsd_install_link(name = "s", destination = "/s", target = "z", kind = "symlink",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=fixture"])
+bsd_install_manifest(name = "manifest", entries = [":payload", ":a", ":b", ":c", ":s"])
+bsd_install_archive(name = "archive", manifests = [":manifest"],
+    directories = {"/": '{"owner":"root","group":"wheel","mode":"0750"}'},
+    users = {"root":"0"}, groups = {"wheel":"0"}, epoch = 42,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
+bsd_stage(name = "physical", manifests = [":manifest"],
+    directories = {"/": '{"type":"dir","uname":"root","gname":"wheel","mode":"0750"}'},
+    installer = "//usr.bin/xinstall:bootstrap_install", shell = "@bsd_sdk//toolchain:sh",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime"])
+filegroup(name = "tree", srcs = [":physical"], output_group = "stage")
+filegroup(name = "metalog", srcs = [":physical"], output_group = "metalog")
+# Inode identity is runtime filesystem state, not a cacheable file digest.
+bsd_python_test(name = "materialization_test", tags = ["external"], src = "materialization_test.py",
+    data = [":tree", ":metalog", ":archive", "payload.txt"],
+    args = ["--tree", "$(rlocationpath :tree)", "--metalog", "$(rlocationpath :metalog)",
+            "--archive", "$(rlocationpath :archive)", "--payload", "$(rlocationpath payload.txt)"],
+    visibility = ["//visibility:public"], size = "small")

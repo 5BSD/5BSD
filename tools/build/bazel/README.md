@@ -48904,3 +48904,17 @@ unused SDK headers. Hosted-header rejection and local cache mutation/restoration
 and installation-metadata cache safety remain explicit gates. See
 [FREESTANDING-TOOLCHAIN-QUALIFICATION.md](FREESTANDING-TOOLCHAIN-QUALIFICATION.md).
 Full-world ABI boundary integration and broader completion gates remain open.
+
+### 2026-11-04: Managed local CAS and physical installation boundary
+
+Optional typed action-cache policy now reaches native Bazel through build-bsd.
+Named private output states share the managed CAS. Two empty output bases restore
+all 66 native compiler actions and exact canonical archives from disk, while
+physical installation executes without directory-cache restoration. The inode
+validator runs on every phase; external BSD tar extraction preserves links/modes.
+Twenty-seven frontend methods, native installation tests and all six older link
+cases pass. Retained setup/report-classification failures and policy limits are
+documented in [MANAGED-ACTION-CACHE-QUALIFICATION.md](MANAGED-ACTION-CACHE-QUALIFICATION.md).
+
+This supersedes the isolated missing-CAS gate above, not the full-system cache,
+installation, sandbox, bootstrap, runtime or performance gates. Make stays default.

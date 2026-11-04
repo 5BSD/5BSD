@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Stage declared installation payloads using the maintained BSD installer."""
+"""Local physical materialization; canonical installation archives are cacheable.
+
+A directory artifact cannot serialize POSIX hardlink identity or BSD installation
+policy. Never upload/restore this output through a file-content action cache.
+"""
 load(":bsd_install.bzl", "BsdInstallManifestInfo", "resolve_hardlinks")
 
 def _quote(value):
@@ -75,10 +79,11 @@ def _stage(ctx):
         executable = ctx.executable.shell,
         arguments = [script.path],
         inputs = depset([script], transitive = inputs),
-        tools = [ctx.executable.installer],
+        tools = [ctx.attr.installer[DefaultInfo].files_to_run, ctx.attr.shell[DefaultInfo].files_to_run] + ctx.files.runtime,
         outputs = [tree, metalog],
         env = {"LC_ALL": "C"}, use_default_shell_env = False,
         mnemonic = "BSDStageInstall",
+        execution_requirements = {"no-cache": "1", "no-remote": "1"},
     )
     return [DefaultInfo(files = depset([tree, metalog])), OutputGroupInfo(stage = depset([tree]), metalog = depset([metalog]))]
 
@@ -88,6 +93,7 @@ bsd_stage = rule(
         "manifests": attr.label_list(providers = [BsdInstallManifestInfo], mandatory = True),
         "directories": attr.string_dict(mandatory = True),
         "installer": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
+        "runtime": attr.label_list(cfg = "exec", allow_files = True, doc = "Declared execution runtimes for file-based installer/shell tools."),
         "shell": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
     },
 )

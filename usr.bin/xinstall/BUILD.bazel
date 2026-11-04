@@ -27,7 +27,7 @@ cc_binary(name = "install", deps = select({_TRACE: [":traced"], "//conditions:de
     dynamic_deps = ["//lib/libmd:md_shared"], linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
 # BOOTSTRAPPING disables copy_file_range and probes in the maintained Makefile.
-cc_binary(name = "bootstrap_install", srcs = ["xinstall.c", "installcopy_trace.h", "//contrib/mtree:getid.c"],
+cc_binary(name = "bootstrap_install", features = ["bsd_test_runtime_paths"], srcs = ["xinstall.c", "installcopy_trace.h", "//contrib/mtree:getid.c"],
     deps = ["//lib/libmd:md_link", "//contrib/mtree:install_headers", "//lib/libnetbsd:cdefs_header"],
     dynamic_deps = ["//lib/libmd:md_shared"], local_defines = ["WITH_MD5", "WITH_RIPEMD160", "BOOTSTRAP_XINSTALL"],
     copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

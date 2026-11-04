@@ -2307,3 +2307,21 @@ configured/recorded action cache under /usr/obj and qualify switching/fresh-outp
 restoration after resolving representation/cache safety for hardlinks and other
 installation metadata. Earlier isolated disk-cache successes do not close the
 whole frontend gate; do not enable caching around an unsafe directory artifact.
+
+### 2026-11-04: Managed local CAS and physical installation boundary
+
+Optional typed action-cache policy now reaches native Bazel through build-bsd.
+Named private output states share the managed CAS. Two empty output bases restore
+all 66 native compiler actions and exact canonical archives from disk, while
+physical installation executes without directory-cache restoration. The inode
+validator runs on every phase; external BSD tar extraction preserves links/modes.
+Twenty-seven frontend methods, native installation tests and all six older link
+cases pass. Retained setup/report-classification failures and policy limits are
+documented in [MANAGED-ACTION-CACHE-QUALIFICATION.md](MANAGED-ACTION-CACHE-QUALIFICATION.md).
+
+This supersedes the isolated missing-CAS gate above, not the full-system cache,
+installation, sandbox, bootstrap, runtime or performance gates. Make stays default.
+
+Failed-test evidence retention: capture detailed reports before returning on a
+failed Bazel invocation; current failure BEP paths can refer to mutable outputs.
+The managed-cache passing captures remain intact.

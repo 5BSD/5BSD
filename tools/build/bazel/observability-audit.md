@@ -11090,3 +11090,11 @@ their userland toolchain and DTrace context; boot targets select explicit native
 freestanding toolchains. All fifteen selected EFI images retain their earlier
 bytes. Configured input counts do not qualify runtime probe/audit delivery or
 physical resource consumption. See FREESTANDING-TOOLCHAIN-QUALIFICATION.md.
+
+## Managed action-cache and installer materialization review (2026-11-04)
+
+Only the bootstrap installer gains declared build runtime paths. Its existing
+BOOTSTRAP_XINSTALL policy remains; the production installer and its DTrace
+provider sources are unchanged. Canonical archive restoration and actual staged
+link tests do not establish probe firing or audit delivery. No source/provider
+is removed to seed the cache. Runtime and full-system tracing gates remain open.

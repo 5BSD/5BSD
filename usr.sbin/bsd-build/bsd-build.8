@@ -6068,3 +6068,19 @@ The complete SDK inventory is still verified before and after qualification.
 Older SDKs are rejected for this mode, rather than using a userland toolchain.
 Only declared host artifact tests may execute in this mode.
 This is a component qualification interface; Make remains the production backend.
+.Ss Managed Bazel action caching
+Format-5 source inputs may supply an action-cache object with name, max-bytes,
+max-age-seconds, idle-delay-seconds and min-free-bytes.
+Its private builder-owned directory is derived below the standard object state;
+symlinks and shared permissions are rejected.
+Omitting the object or using null disables persistent action caching.
+This cache is separate from repository-cache, which supplies module downloads.
+Size and age are idle garbage-collection targets; free-space reserve is a
+pre-build check, not a hard peak disk quota.
+The optional build-state identifier selects a private named output state while
+sharing the managed action cache and verified SDK inputs.
+Physical installation trees are excluded from content-cache restoration;
+canonical archives encode link identities and installation metadata.
+Existing physical outputs still require verification before packaging.
+See
+.Pa tools/build/bazel/MANAGED-ACTION-CACHE-QUALIFICATION.md .

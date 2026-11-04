@@ -3,8 +3,12 @@
 """Typed source setting serialization, without accepting native flag injection."""
 import unittest
 import copy
+import os
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
 from userland_sdk import verify_profile
-from source_graph import setting_arguments, platform_arguments, execution_log_format
+from source_graph import setting_arguments, platform_arguments, execution_log_format, action_cache_settings, prepare_action_cache, build_state_directory
 
 
 class SettingsTest(unittest.TestCase):
@@ -30,6 +34,72 @@ class SettingsTest(unittest.TestCase):
         for value in ([], None, "--flag"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 setting_arguments(value)
+
+
+class ActionCacheTest(unittest.TestCase):
+    def policy(self):
+        return {'name':'qualification', 'max-bytes':1024**3, 'max-age-seconds':86400,
+                'idle-delay-seconds':5, 'min-free-bytes':1}
+
+    def test_disabled_has_no_directory_side_effect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            self.assertEqual(prepare_action_cache(action_cache_settings({}),root), ({'mode':'disabled'},[]))
+            self.assertEqual(list(root.iterdir()),[])
+
+    def test_policy_is_private_and_serialized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();record,flags=prepare_action_cache(action_cache_settings({'action-cache':self.policy()}),root)
+            self.assertEqual(Path(record['path']),root/'action-caches/qualification')
+            self.assertEqual(Path(record['path']).stat().st_mode & 0o777,0o700)
+            self.assertEqual(record['owner_uid'],os.getuid())
+            self.assertIn('--disk_cache='+record['path'],flags)
+            self.assertIn('--experimental_disk_cache_gc_max_age=86400s',flags)
+
+    def test_invalid_or_injected_policy_rejected(self):
+        for value in [False, [], 'cache', {}, dict(self.policy(),name='../escape'),
+                dict(self.policy(),name='a b'),dict(self.policy(),**{'max-bytes':True}),
+                dict(self.policy(),**{'max-bytes':0}),dict(self.policy(),**{'idle-delay-seconds':300}),
+                dict(self.policy(),**{'max-age-seconds':2**31}),dict(self.policy(),extra='--remote_cache=server')]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                action_cache_settings({'action-cache':value})
+
+    def test_symlink_and_shared_cache_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();other=root/'other';other.mkdir();(root/'action-caches').symlink_to(other,target_is_directory=True)
+            with self.assertRaisesRegex(ValueError,'symlinks'):
+                prepare_action_cache(action_cache_settings({'action-cache':self.policy()}),root)
+            (root/'action-caches').unlink();(root/'action-caches').mkdir(mode=0o755)
+            with self.assertRaisesRegex(ValueError,'private'):
+                prepare_action_cache(action_cache_settings({'action-cache':self.policy()}),root)
+
+    def test_free_space_reserve_enforced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch('source_graph.shutil.disk_usage') as usage:
+                usage.return_value.free=0
+                with self.assertRaisesRegex(ValueError,'reserve'):
+                    prepare_action_cache(action_cache_settings({'action-cache':self.policy()}),Path(directory).resolve())
+
+
+class BuildStateTest(unittest.TestCase):
+    def test_default_and_isolated_states(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            self.assertEqual(build_state_directory({},root),root/'bazel-root')
+            a=build_state_directory({'build-state':'cold'},root)
+            b=build_state_directory({'build-state':'restored'},root)
+            self.assertNotEqual(a,b)
+            self.assertEqual(a.parent.stat().st_mode & 0o777,0o700)
+
+    def test_invalid_names_and_symlinks_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()
+            for name in [True,[],{},'', '../escape','a b']:
+                with self.subTest(name=name),self.assertRaises(ValueError):
+                    build_state_directory({'build-state':name},root)
+            (root/'isolated-builds').symlink_to(root,target_is_directory=True)
+            with self.assertRaisesRegex(ValueError,'symlinks'):
+                build_state_directory({'build-state':'cold'},root)
 
 
 class PlatformTest(unittest.TestCase):
