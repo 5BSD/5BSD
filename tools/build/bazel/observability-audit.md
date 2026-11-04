@@ -11261,3 +11261,12 @@ generation, not an obsolete filename control. Reproducible Make generation no
 longer reads the host clock for its comment. The extracted automatic-default
 Forth alias exercises original console/environment callbacks; scripted/disk/guest
 startup and DTrace/BSM delivery remain open.
+
+
+## usr.bin component archive closure (2026-11-04)
+
+The six archive additions retain existing native producers and manifests; no C,
+DTrace/FIDL generator, probe or audit integration changes. Gzip's existing traced
+producer remains in its dependency graph. The bc/dc producer rename preserves
+actual script bytes and installed/Kyuafile names. Artifact/recovery/package checks
+do not establish full usr.bin, OS probe delivery or system runtime/performance.

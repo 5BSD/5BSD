@@ -6303,3 +6303,11 @@ WITH_REPRODUCIBLE_BUILD is selected through the existing src-conf input.
 Ordinary developer builds retain their previous date comment.
 Fresh original generation then matches the native undated source exactly,
 including diagnostic line/file directives. No compiler output is patched.
+
+.Ss usr.bin component archives
+The explicit format-5 bazel-test interface can select per-component archives for
+bzip2recover, gzip, xz, xzdec, lzmainfo and zstd.
+They serialize existing manifests without including sibling library packages.
+Package creation tests still require an explicit package_version setting;
+qualification versions do not publish or install an upgrade.
+Complete usr.bin/LLVM family aggregation and installed-world coverage remain open.

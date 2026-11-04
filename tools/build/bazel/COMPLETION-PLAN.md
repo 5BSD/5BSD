@@ -1,5 +1,19 @@
 # Native Bazel completion plan
 
+## usr.bin family closure prerequisites (2026-11-04)
+
+The production queue points to missing family composition rather than unowned
+iconv/OpenSSL/NSS/EFI producers. Fresh usr.bin/LLVM metadata and an unconfigured
+archive query establish the next review inputs. Six missing component archives
+now preserve existing manifests: bzip2recover, gzip, xz, xzdec, lzmainfo and zstd.
+Real archive audit: 56 file/link records, 29 hardlinks, exact payload/mode/ownership.
+Existing bzip2 package/recovery tests pass with an explicit qualification version.
+Two bc/dc rule-output name collisions are fixed without changing installed scripts
+or Kyuafile names. See [USRBIN-FAMILY-CLOSURE.md](USRBIN-FAMILY-CLOSURE.md).
+Next is the complete source-owned usr.bin/LLVM aggregate with option/test/nested
+coverage. The family is not yet built; full-world/kernel/pkgbase/bootstrap,
+runtime/VM and performance remain open. Make stays default; BIP stays excluded.
+
 ## Userboot image parity and automatic Forth default (2026-11-04)
 
 Independent original Lua/Forth recipes now match complete ELF identity/entry,
