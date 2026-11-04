@@ -11359,3 +11359,14 @@ operation; absence of dedicated security audit events is not by itself a defect.
 Roken includes network/process/file helpers used by other consumers: a separate
 operation-level instrumentation review remains necessary when those consumers
 are qualified. No runtime probe firing or audit-delivery coverage is claimed.
+
+## Process-library installation contributions (2026-11-04)
+
+This batch adds metadata, archives and a self-process test; it changes no original
+library C, CDDL/ZFS/CTF conditions or provider definitions. Original libproc,
+libprocstat and librtld_db Makefiles declare no component DTrace provider to carry
+over. The separate usr.bin/procstat processquery provider and its native generation
+remain present and unchanged; installation comparisons do not establish probe
+firing. libproc's process creation/ptrace and runtime-linker operations still need
+operation-level audit-delivery/probe review with the original process-control
+suite. The read-only self-process test does not close that coverage question.

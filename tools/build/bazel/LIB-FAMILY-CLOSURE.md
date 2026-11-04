@@ -15,13 +15,16 @@ qualification; see LIBRARY-PRODUCTION-ARCHIVES-QUALIFICATION.md. Their archive
 rules are source-owned, and no Make evaluation supplies Bazel build metadata.
 The selected Make plan remains an independent comparison inventory.
 
+See PROCESS-LIBRARY-INSTALLATION-QUALIFICATION.md for the next three completed
+production contributions and their explicit remaining scope.
+
 ## Concrete remaining review queue
 
 | Owner | Source evidence and next work |
 | --- | --- |
-| lib/libproc | Native regular/shared producers exist; original Make installs libproc.a, libproc.so.5, debug and libproc.h. Add/reconcile production installation and tests; preserve CTF configuration. |
-| lib/libprocstat | Native producer exists; original Make installs library/header/manual and many MLINKS. Add/reconcile production installation and selected tests. |
-| lib/librtld_db | Native producer exists; original Make installs library/header/manual. Preserve header-only cycle break with libproc while adding installation. |
+| lib/libproc | Default production installation now qualifies against fresh Make; original installed ATF/process-control tests, CTF alternatives and other ABIs remain. |
+| lib/libprocstat | Default production installation, all 30 manual hardlinks and native self-process/argv runtime qualify; alternate options/ABIs remain. |
+| lib/librtld_db | Default production installation now qualifies; the header-only cycle break is retained. Loader/process operations and other profiles remain. |
 | lib/libthread_db | Current BUILD exports only thread_db.h to libthr. Original Make selects four C sources, architecture helpers and versioned libthread_db.so.3. Actual library conversion is still required. |
 | lib/libcapsicum | Header provider exists; original Make also installs capsicum_helpers.3 and MLINKS. Reconcile production header/manual and installed tests. |
 | lib/csu | AMD64/common/tests packages exist beneath the Make architecture wrapper; full parent/configuration/foreign composition is not established. |

@@ -16,6 +16,20 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Process-library production installation (2026-11-04)
+
+Native libproc/libprocstat/librtld_db now declare original production headers,
+static/shared libraries, manuals/aliases and debug artifacts. Fresh original
+Make production references (explicit TESTS disabled) compare all 53 metadata
+records, five header/manual payloads, all 30 manual hardlink identities, debug
+CRCs and shared ELF metadata/ordered dependencies. Fourteen object contracts
+pass: nine raw, five isolated filename compiler controls. Native libprocstat's
+new self-process/argv sysctl runtime test executes successfully. The configured
+CDDL/ZFS and CTF code remains unchanged; alternate profiles and libproc's
+original installed ATF hierarchy remain open. See
+PROCESS-LIBRARY-INSTALLATION-QUALIFICATION.md. Full lib/world/pkgbase/bootstrap/
+VM/cache/sandbox/performance and other architectures remain required.
+
 ## Library production archive prerequisites (2026-11-04)
 
 Seven existing library installation manifests now expose explicitly production

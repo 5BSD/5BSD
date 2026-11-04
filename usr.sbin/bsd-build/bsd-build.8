@@ -2180,6 +2180,15 @@ See
 and
 .Pa tools/build/bazel/LIB-FAMILY-CLOSURE.md .
 .Pp
+The libproc, libprocstat and librtld_db production contributions also build
+through explicit format-5 targets, preserving library/header/manual/hardlink and
+separate debug metadata.
+Fresh original Make production references compare their installation contracts;
+a native libprocstat test queries its own process and argument vector.
+Original installed process-control tests and alternate profiles remain required.
+See
+.Pa tools/build/bazel/PROCESS-LIBRARY-INSTALLATION-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer
