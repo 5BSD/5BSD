@@ -11082,3 +11082,11 @@ remain explicit for Forth; simple retains ordinary version and FDT help. No
 DTrace or BSM source is removed. Artifact parity and host tests do not prove
 firmware diagnostic delivery, probe firing or runtime audit behavior. See
 CROSS-EFI-VARIANTS-QUALIFICATION.md; firmware/runtime qualification remains open.
+
+## Freestanding toolchain closure (2026-11-04)
+
+No boot, kernel, DTrace or BSM source is removed. Native execution tools retain
+their userland toolchain and DTrace context; boot targets select explicit native
+freestanding toolchains. All fifteen selected EFI images retain their earlier
+bytes. Configured input counts do not qualify runtime probe/audit delivery or
+physical resource consumption. See FREESTANDING-TOOLCHAIN-QUALIFICATION.md.

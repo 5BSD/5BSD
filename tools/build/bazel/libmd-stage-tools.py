@@ -35,6 +35,40 @@ def action_input_groups():
     ]
 
 
+
+def freestanding_toolchains(target, version):
+    """Native C++ toolchains for target-owned freestanding headers and libraries.
+
+    Normal SDK toolchains retain their complete libc/header closure. Execution
+    tools resolve the native userland platform, independently of these targets.
+    """
+    suffix = target.split('-', 1)[1]
+    rows = [('amd64', 'x86_64', 'k8'), ('aarch64', 'aarch64', 'aarch64'),
+            ('riscv64', 'riscv64', 'riscv64')]
+    lines = [
+        'constraint_setting(name="environment", default_constraint_value=":userland")',
+        'constraint_value(name="userland", constraint_setting=":environment")',
+        'constraint_value(name="standalone", constraint_setting=":environment")',
+        'filegroup(name="standalone_compile_inputs", srcs=["bin/clang", ":clang_runtime"])',
+        'filegroup(name="standalone_link_inputs", srcs=[":standalone_compile_inputs", "bin/ld.lld", ":ld.lld_runtime"])',
+        'filegroup(name="standalone_all_inputs", srcs=[":standalone_compile_inputs", ":standalone_link_inputs", ":archive_inputs", ":objcopy_inputs", ":strip_inputs"])',
+    ]
+    for arch, cpu, cc_cpu in rows:
+        name = 'standalone_' + arch
+        constraints = ['@platforms//os:freebsd', '@platforms//cpu:' + cpu,
+                       ':standalone', ':selected_sdk']
+        lines += [
+            'platform(name=%s, constraint_values=%s)' % (json.dumps(name), json.dumps(constraints)),
+            'bsd_cc_config(name=%s, target=%s, cpu=%s, clang_version=%s, freestanding=True)' %
+                tuple(json.dumps(v) for v in (name+'_config', cpu+'-'+suffix, cc_cpu, version)),
+            'cc_toolchain(name=%s, toolchain_identifier=%s, toolchain_config=%s, all_files=":standalone_all_inputs", compiler_files=":standalone_compile_inputs", as_files=":standalone_compile_inputs", linker_files=":standalone_link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)' %
+                tuple(json.dumps(v) for v in (name+'_compiler', 'bsd-'+name, ':'+name+'_config')),
+            'toolchain(name=%s, toolchain=%s, toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' %
+                (json.dumps(name+'_registered'), json.dumps(':'+name+'_compiler'), json.dumps(constraints)),
+        ]
+    return lines
+
+
 def inspect_execution_dependencies(origins, inspectors):
     dependencies={}; tool_dependencies={}; commands=[]
     for name,path in origins.items():
@@ -177,11 +211,11 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
            'platform(name="native", constraint_values=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"])',
            'filegroup(name="inputs", srcs=glob(["bin/**", "sysroot/**", "execution-runtime/**", "python-home/**"]))',
            'filegroup(name="empty")',
-           'bsd_cc_config(name="config", target=%s, cpu="k8", clang_version=%s, archive_validation=%s)'%(json.dumps(target),json.dumps(version),str(bool(python_info))),
+           'bsd_cc_config(name="config", target=%s, cpu=%s, clang_version=%s, archive_validation=%s)'%(json.dumps(target),json.dumps(identity['toolchain_cpu']),json.dumps(version),str(bool(python_info))),
            'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", as_files=":compile_inputs", linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)',
-           'toolchain(name="registered", toolchain=":compiler", toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"])',
+           'toolchain(name="registered", toolchain=":compiler", toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' % json.dumps(['@platforms//os:freebsd', '@platforms//cpu:' + identity['platform_cpu'], ':selected_sdk', ':userland']),
            'cc_binary(name="stdout_redirect", srcs=["stdout_redirect.c"], linkstatic=True, features=["fully_static_link"])']
-    lines += runtime_groups(tool_dependencies) + action_input_groups()
+    lines += runtime_groups(tool_dependencies) + action_input_groups() + freestanding_toolchains(target, version)
     lines += ['alias(name=%s, actual=%s)'%(json.dumps(name),json.dumps('bin/'+name)) for name in [*settings['execution_tools'],*['extra_'+n for n in additional]]]
     if python_info:
         runtime_labels=[':extra_python_runtime']+[':'+name+'_runtime' for name in python_extensions]
@@ -189,14 +223,7 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
     if host is not None:
         # Execution and target platforms share one SDK identity while selecting
         # distinct ABI toolchains. Source-built cfg=exec tools use this host.
-        native_constraint = '"@platforms//cpu:x86_64"'
         target_constraint = json.dumps('@platforms//cpu:' + identity['platform_cpu'])
-        for i, line in enumerate(lines):
-            if line.startswith('bsd_cc_config('):
-                lines[i] = line.replace('cpu="k8"', 'cpu=' + json.dumps(identity['toolchain_cpu']))
-            elif line.startswith('toolchain(name="registered"'):
-                before, sep, after = line.partition('target_compatible_with=')
-                lines[i] = before + sep + after.replace(native_constraint, target_constraint)
         lines.append('platform(name=%s, constraint_values=["@platforms//os:freebsd", %s, ":selected_sdk"])' % (json.dumps(selected_arch), target_constraint))
         host_tc = tc/'host'
         shutil.copytree(execution_workspace/'toolchain', host_tc, symlinks=True)
@@ -231,6 +258,7 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
     snapshot={str(path.relative_to(root)):digest(path) for path in tc.rglob('*') if path.is_file()}
     result={'format':1,'scope':'native amd64 candidate SDK snapshot; no Bazel execution or hermeticity claim','inputs':inputs,'execution_host_dependencies':dependencies,'tool_execution_dependencies':tool_dependencies,'dependency_commands':commands,'tool_origins':{k:str(v) for k,v in origins.items()},'snapshot':snapshot,'python_runtime':python_info,'bazel_analyzed':False,'bazel_built':False,'target':target}
     result['compiler_resource_version'] = version
+    result['freestanding_toolchains'] = 1
     if host is not None:
         result.update(format=2, scope='explicit target SDK plus independently bound native execution SDK; no world/runtime qualification',
                       execution_target=host['target'], execution_sdk={

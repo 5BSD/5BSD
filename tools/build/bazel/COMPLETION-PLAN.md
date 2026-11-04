@@ -2286,3 +2286,24 @@ Freestanding input-closure follow-up: a retained RISC-V compiler action declares
 freestanding toolchain specialization and incremental invalidation with real
 input/cache tests; preserve every required input and dependency validation.
 See the cross EFI variant qualification record.
+
+### 2026-11-04: Explicit freestanding SDK toolchains
+
+The maintained SDK stager and source backend support standalone target platforms
+with native execution tools, full SDK verification and source-owned header inputs.
+Three native EFI/resource profiles pass; all 498 selected entry objects and fifteen
+PE images preserve their earlier qualified bytes. Configured input sets exclude
+unused SDK headers. Hosted-header rejection and local cache mutation/restoration pass; the
+900 prior capture records retain exact bytes. Persistent action CAS integration
+and installation-metadata cache safety remain explicit gates. See
+[FREESTANDING-TOOLCHAIN-QUALIFICATION.md](FREESTANDING-TOOLCHAIN-QUALIFICATION.md).
+Full-world ABI boundary integration and broader completion gates remain open.
+
+Persistent action-cache gate: source_graph.py currently configures module-download
+repository caching and Bazel's ordinary local action cache, without a maintained
+disk/remote CAS. The freestanding source-restoration experiment correctly executes
+one compile on restoration and zero on the next unchanged run. Add a separately
+configured/recorded action cache under /usr/obj and qualify switching/fresh-output
+restoration after resolving representation/cache safety for hardlinks and other
+installation metadata. Earlier isolated disk-cache successes do not close the
+whole frontend gate; do not enable caching around an unsafe directory artifact.

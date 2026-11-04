@@ -34,7 +34,7 @@ def _impl(ctx):
         # features rather than duplicated component link flags.
         # Match MK_SSP's Clang userland default. Compiler-specific stack-clash
         # flags and freestanding/kernel policy require their own toolchains.
-        feature(name = "bsd_ssp", enabled = True, flag_sets = [flag_set(
+        feature(name = "bsd_ssp", enabled = not ctx.attr.freestanding, flag_sets = [flag_set(
             actions = ["c-compile", "c++-compile", "c++-module-compile", "c++-module-codegen"],
             flag_groups = [flag_group(flags = ["-fstack-protector-strong"])],
         )]),
@@ -93,12 +93,12 @@ def _impl(ctx):
         )]),
         feature(name = "bsd_target", enabled = True, flag_sets = [flag_set(
             actions = _COMPILE + _LINK,
-            flag_groups = [flag_group(flags = ["--target=" + ctx.attr.target, "--sysroot=" + root])],
+            flag_groups = [flag_group(flags = ["--target=" + ctx.attr.target] + ([] if ctx.attr.freestanding else ["--sysroot=" + root]))],
         )]),
         # Let the selected FreeBSD driver order C++/builtin/C headers and
         # honor -nostdinc/-nostdinc++/-nostdlibinc. Both its system root and
         # resource directory point at declared staged toolchain inputs.
-        feature(name = "bsd_headers", enabled = True, flag_sets = [flag_set(
+        feature(name = "bsd_headers", enabled = not ctx.attr.freestanding, flag_sets = [flag_set(
             actions = _COMPILE,
             flag_groups = [flag_group(flags = ["-resource-dir=" + root + "/usr/lib/clang/" + ctx.attr.clang_version])],
         )]),
@@ -114,7 +114,12 @@ def _impl(ctx):
             flag_groups = [flag_group(flags = ["--ld-path=" + linker])],
         )]),
     ]
-    if ctx.attr.target.startswith("riscv64-"):
+    if ctx.attr.freestanding:
+        features.append(feature(name = "bsd_freestanding", enabled = True, flag_sets = [
+            flag_set(actions = _COMPILE, flag_groups = [flag_group(flags = ["-nostdinc", "-ffreestanding"])]),
+            flag_set(actions = _LINK, flag_groups = [flag_group(flags = ["-nostdlib"])]),
+        ]))
+    if not ctx.attr.freestanding and ctx.attr.target.startswith("riscv64-"):
         # Original bsd.cpu.mk userland ABI and bsd.sys.mk CFLAGS. Shared
         # library recipes do not repeat CFLAGS; executable recipes do.
         features = [feature(name = "bsd_riscv_userland_abi", enabled = True,
@@ -133,12 +138,12 @@ def _impl(ctx):
         ctx = ctx,
         features = features,
         action_configs = validation_actions,
-        cxx_builtin_include_directories = headers,
+        cxx_builtin_include_directories = [] if ctx.attr.freestanding else headers,
         toolchain_identifier = "bsd-staged-clang",
         host_system_name = "local",
         target_system_name = ctx.attr.target,
         target_cpu = ctx.attr.cpu,
-        target_libc = "freebsd",
+        target_libc = "none" if ctx.attr.freestanding else "freebsd",
         compiler = "clang",
         abi_version = ctx.attr.target,
         abi_libc_version = ctx.attr.target,
@@ -147,7 +152,7 @@ def _impl(ctx):
 
 bsd_cc_config = rule(
     implementation = _impl,
-    attrs = {"target": attr.string(mandatory = True), "cpu": attr.string(mandatory = True), "clang_version": attr.string(mandatory = True), "archive_validation": attr.bool(default = False)},
+    attrs = {"target": attr.string(mandatory = True), "cpu": attr.string(mandatory = True), "clang_version": attr.string(mandatory = True), "archive_validation": attr.bool(default = False), "freestanding": attr.bool(default = False)},
     provides = [CcToolchainConfigInfo],
 )
 

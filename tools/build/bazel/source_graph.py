@@ -44,10 +44,10 @@ def execution_log_format(config):
 
 
 def platform_arguments(config, target_arch, receipt=None):
-    """Separate the execution SDK from the explicitly selected target kernel ABI."""
+    """Separate the execution SDK from the explicitly selected target ABI."""
     kind = config.get('target-kind', 'userland')
-    if kind not in ('userland', 'kernel'):
-        raise ValueError('target-kind must be userland or kernel')
+    if kind not in ('userland', 'kernel', 'standalone'):
+        raise ValueError('target-kind must be userland, kernel or standalone')
     if target_arch not in ('amd64', 'aarch64', 'riscv64'):
         raise ValueError('unsupported target architecture')
     native = '@bsd_sdk//toolchain:native'
@@ -60,6 +60,21 @@ def platform_arguments(config, target_arch, receipt=None):
             return ['--platforms=@bsd_sdk//toolchain:' + target_arch, '--host_platform=' + native,
                     '--extra_toolchains=@bsd_sdk//toolchain/host:registered']
         return ['--platforms=' + native, '--host_platform=' + native]
+    if kind == 'standalone':
+        if receipt is None or type(receipt.get('freestanding_toolchains')) is not int or receipt['freestanding_toolchains'] != 1:
+            raise ValueError('standalone requires a verified SDK with freestanding toolchain schema 1')
+        if not {'toolchain/BUILD.bazel', 'toolchain/cc_toolchain_config.bzl'} <= set(receipt.get('snapshot', {})):
+            raise ValueError('standalone SDK toolchain declarations must be bound in its snapshot')
+        sdk_arch = userland_sdk.target_architecture(receipt.get('target'))
+        if sdk_arch != 'amd64' and sdk_arch != target_arch:
+            raise ValueError('standalone SDK target differs from selected architecture')
+        userland_sdk.receipt_architecture(receipt, sdk_arch)
+        name = '@bsd_sdk//toolchain:standalone_' + target_arch
+        result = ['--platforms=' + name, '--host_platform=' + native,
+                  '--extra_toolchains=' + name + '_registered']
+        if sdk_arch != 'amd64':
+            result.append('--extra_toolchains=@bsd_sdk//toolchain/host:registered')
+        return result
     cross_execution = False
     if receipt is not None:
         sdk_arch = userland_sdk.target_architecture(receipt.get('target'))
@@ -185,7 +200,7 @@ def _qualify(config, args, state):
         raise ValueError('fresh nonoverlapping /usr/obj output required')
     sdk=selected['toolchain-workspace'];receipt=json.loads(selected['toolchain-receipt'].read_text())
     platforms = platform_arguments(config, args.target_arch, receipt)
-    host_artifacts_only = config.get('target-kind') == 'kernel' or args.target_arch != 'amd64'
+    host_artifacts_only = config.get('target-kind') in ('kernel', 'standalone') or args.target_arch != 'amd64'
     verification = {}
     for field in ('inputs', 'execution_host_dependencies'):
         verification[field] = sdk_digests.verify(receipt[field], jobs=args.jobs,

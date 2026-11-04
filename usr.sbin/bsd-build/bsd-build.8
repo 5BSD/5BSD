@@ -4900,9 +4900,11 @@ and explicitly retain their original hosted/PIC compiler flags and declared
 inputs; ordinary kernel/module groups retain the defaults.
 The host platform remains native, so config and layout-extraction programs
 are built for the host. Target objects are never executed on that host.
-This profile builds artifacts only and rejects runnable test selections.
-The default target kind is userland and currently requires amd64.
-Cross userland, complete kernels and module sets remain unqualified.
+This profile builds artifacts and permits explicitly declared host artifact tests;
+it rejects target programs as runnable tests.
+The default target kind is userland and requires an SDK matching the target,
+with a separately bound native execution SDK for cross compilation.
+Complete kernels and module sets remain unqualified.
 
 .Pp
 The explicit ARM64 and RISC-V filemon module targets exercise relocatable
@@ -6053,3 +6055,16 @@ Their host artifact tests inspect target files without executing firmware.
 Native build and independent parity qualification are recorded in
 .Pa tools/build/bazel/CROSS-EFI-VARIANTS-QUALIFICATION.md .
 These profiles do not establish a complete bootloader or system backend.
+.Ss Freestanding boot toolchains
+Format-5 source graph inputs may select target-kind set to standalone.
+This requires freestanding toolchain schema 1 in a freshly staged SDK receipt.
+The native SDK supports AMD64, ARM64 and RISC-V target platforms independently
+of the native userland platform used to build and execute tools.
+Compilation defaults to no standard include search and freestanding semantics;
+links default to no standard libraries.
+Compiler and linker runtime dependencies remain declared.
+Source owners must declare any required compiler resource or system headers.
+The complete SDK inventory is still verified before and after qualification.
+Older SDKs are rejected for this mode, rather than using a userland toolchain.
+Only declared host artifact tests may execute in this mode.
+This is a component qualification interface; Make remains the production backend.

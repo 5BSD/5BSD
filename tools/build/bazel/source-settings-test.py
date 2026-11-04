@@ -52,6 +52,37 @@ class PlatformTest(unittest.TestCase):
                 platform_arguments(config, arch)
 
 
+class StandalonePlatformTest(unittest.TestCase):
+    def receipt(self):
+        return {'format': 1, 'target': 'x86_64-unknown-freebsd16.0',
+                'freestanding_toolchains': 1, 'snapshot': {
+                    'toolchain/BUILD.bazel': 'a'*64,
+                    'toolchain/cc_toolchain_config.bzl': 'b'*64}}
+
+    def test_native_sdk_targets_keep_native_execution(self):
+        for arch in ['amd64', 'aarch64', 'riscv64']:
+            label = '@bsd_sdk//toolchain:standalone_' + arch
+            self.assertEqual(platform_arguments({'target-kind':'standalone'}, arch, self.receipt()),
+                ['--platforms='+label, '--host_platform=@bsd_sdk//toolchain:native',
+                 '--extra_toolchains='+label+'_registered'])
+
+    def test_old_or_incomplete_capability_rejected(self):
+        for value in [None, False, True, 0, 2, '1']:
+            receipt = dict(self.receipt(), freestanding_toolchains=value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                platform_arguments({'target-kind':'standalone'}, 'amd64', receipt)
+        for receipt in [None, dict(self.receipt(), snapshot={})]:
+            with self.assertRaises(ValueError):
+                platform_arguments({'target-kind':'standalone'}, 'amd64', receipt)
+
+    def test_foreign_or_unbound_composite_sdk_rejected(self):
+        for arch in ['aarch64', 'riscv64']:
+            receipt = dict(self.receipt(), target=arch+'-unknown-freebsd16.0')
+            for selected in ['amd64', arch]:
+                with self.subTest(arch=arch,selected=selected), self.assertRaises(ValueError):
+                    platform_arguments({'target-kind':'standalone'}, selected, receipt)
+
+
 class CrossUserlandSDKTest(unittest.TestCase):
     def receipt(self, arch):
         host = {'workspace':'/usr/obj/sdk/workspace', 'receipt':'/usr/obj/sdk/toolchain-inputs.json',

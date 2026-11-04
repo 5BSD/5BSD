@@ -48892,3 +48892,15 @@ builds, artifact tests, controlled payload comparisons and Lua regressions pass;
 real compiler/input audits and AMD64 regression pass. Retained response-file audit
 failures are corrected with actual input-digest bindings. See
 [CROSS-EFI-VARIANTS-QUALIFICATION.md](CROSS-EFI-VARIANTS-QUALIFICATION.md).
+
+### 2026-11-04: Explicit freestanding SDK toolchains
+
+The maintained SDK stager and source backend support standalone target platforms
+with native execution tools, full SDK verification and source-owned header inputs.
+Three native EFI/resource profiles pass; all 498 selected entry objects and fifteen
+PE images preserve their earlier qualified bytes. Configured input sets exclude
+unused SDK headers. Hosted-header rejection and local cache mutation/restoration pass; the
+900 prior capture records retain exact bytes. Persistent action CAS integration
+and installation-metadata cache safety remain explicit gates. See
+[FREESTANDING-TOOLCHAIN-QUALIFICATION.md](FREESTANDING-TOOLCHAIN-QUALIFICATION.md).
+Full-world ABI boundary integration and broader completion gates remain open.
