@@ -11251,3 +11251,13 @@ execute selected console/environment callbacks through the original hosted
 harness. Those empty-root checks do not establish scripted/guest/kernel startup
 or DTrace/BSM delivery. Full linked-image controls and alternate profiles remain
 required by the construction checkpoint.
+
+
+## Userboot image parity and extracted Forth alias (2026-11-04)
+
+Current original link controls preserve all native allocated code/data and ELF
+load segments. Current Ficl diagnostic line/file behavior is compared from fresh
+generation, not an obsolete filename control. Reproducible Make generation no
+longer reads the host clock for its comment. The extracted automatic-default
+Forth alias exercises original console/environment callbacks; scripted/disk/guest
+startup and DTrace/BSM delivery remain open.

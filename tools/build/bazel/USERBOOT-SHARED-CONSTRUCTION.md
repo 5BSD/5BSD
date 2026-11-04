@@ -56,13 +56,17 @@ that show emits a variable name. The passing test expects its actual value and
 requires real command replies. Successful compiler actions from the earlier
 passing shared-object run are rebound by exact hashes when cached later.
 
-## Required follow-up; this is not complete qualification
+## Follow-up status; this is not complete qualification
 
-1. Replay original whole linked-image recipes with the original library filename
-   controls and characterize full/debug parity independently. Object contracts,
-   link order and callback behavior do not replace that comparison.
-2. Qualify alternate default/interpreter/profile routes against original stages,
-   including Forth default ownership and typed site inputs.
+The subsequent [image/default comparison](USERBOOT-IMAGE-PARITY.md) proves
+complete ELF runtime-image parity and the automatic Forth default. Raw debug
+bytes and the remaining profiles/runtime scopes below remain open.
+
+1. Original whole linked-image recipes with library controls now pass for ELF
+   identity, entry, program headers and allocated sections. Complete debug/source
+   parity remains open; raw unstripped/debug byte equality is not claimed.
+2. Automatic Forth-default ownership now passes a fresh original stage and real
+   extracted-alias execution. Remaining explicit/default/site routes stay open.
 3. Test real packaged Lua/Forth scripts, virtual disks and guest kernel startup;
    current empty-root callback checks do not demonstrate those capabilities.
 4. Continue the complete world/kernel/module/package/bootstrap/debug/runtime and

@@ -6292,5 +6292,14 @@ and the selected default owns the userboot.so hardlink.
 The explicit format-5 bazel-test path exercises actual hosted interpreter
 console/environment callbacks against empty private roots.
 These checks do not qualify packaged scripts, virtual disks or guest kernels.
-Independent full linked-image controls and alternate profiles remain open;
-Make remains the production/default system builder.
+Independent ELF identity, entry, program-header and allocated-section controls
+now pass, as does automatic Forth-default archive alias execution.
+Whole debug/source parity and remaining profiles remain open; Make remains the
+production/default system builder.
+
+.Ss Reproducible Ficl generation
+The maintained Make softcore generator omits the host date when
+WITH_REPRODUCIBLE_BUILD is selected through the existing src-conf input.
+Ordinary developer builds retain their previous date comment.
+Fresh original generation then matches the native undated source exactly,
+including diagnostic line/file directives. No compiler output is patched.

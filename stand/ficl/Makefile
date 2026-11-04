@@ -30,6 +30,14 @@ BASE_SRCS+=	gfx_loader.c	# Not TESTMAINable
 SOFTWORDS=	softcore.fr jhlocal.fr marker.fr freebsd.fr ficllocal.fr \
 		ifbrack.fr
 
+# Reproducible worlds must not embed the execution host clock, even in a
+# generated comment. Keep the normal developer-build date behavior.
+.if ${MK_REPRODUCIBLE_BUILD} == "yes"
+_SOFTCORE_DATESTAMP=	""
+.else
+_SOFTCORE_DATESTAMP=	"`LC_ALL=C date`"
+.endif
+
 softcore.c: ${SOFTWORDS} softcore.awk
 	(cd ${FICLSRC}/softwords; cat ${SOFTWORDS} \
-	    | awk -f softcore.awk -v datestamp="`LC_ALL=C date`") > ${.TARGET}
+	    | awk -f softcore.awk -v datestamp=${_SOFTCORE_DATESTAMP}) > ${.TARGET}

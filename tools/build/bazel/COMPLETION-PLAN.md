@@ -1,5 +1,19 @@
 # Native Bazel completion plan
 
+## Userboot image parity and automatic Forth default (2026-11-04)
+
+Independent original Lua/Forth recipes now match complete ELF identity/entry,
+all program headers and all allocated section bytes/layout. A stale generated
+Ficl reference was replaced with current original builds, exposing and fixing
+Make's host-date insertion under WITH_REPRODUCIBLE_BUILD. Original/native
+softcore C bytes now agree. A fresh Lua-disabled Forth default stage matches
+native metadata and hardlink ownership; the actual extracted alias executes
+callback commands. See [USERBOOT-IMAGE-PARITY.md](USERBOOT-IMAGE-PARITY.md).
+Whole debug bytes/source lookup and remaining site/profile/script/disk/guest
+checks are still open. Resume complete-world gaps while retaining those gates;
+full system/bootstrap/package/runtime/performance remains unfinished. Make stays
+default; BIP stays excluded.
+
 ## Native AMD64 userboot shared construction (2026-11-04)
 
 Both Lua/Forth variants now build their 42 native PIC contexts, ordered native
