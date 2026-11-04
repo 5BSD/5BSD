@@ -2,6 +2,7 @@
 # Source-owned common AMD64 EFI entry model and selected Lua construction.
 # Foreign/profile dispatch and runtime qualification remain separate gates.
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":cross_profiles.bzl", "cross_lua_profiles")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
 load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
 load("//stand/liblua:config.bzl", "loader_lua_paths")
@@ -161,7 +162,14 @@ def efi_loader_amd64_sources():
 
 # This inventory is complete for the selected Make profile. Unsupported profiles
 # are incompatible instead of silently retaining a different source selection.
-def efi_loader_amd64_entry():
+_CPU = {"amd64": "@platforms//cpu:x86_64", "aarch64": "@platforms//cpu:aarch64", "riscv64": "@platforms//cpu:riscv64"}
+
+def _cpu_select(values, default):
+    choices = {_CPU[arch]: value for arch, value in values.items()}
+    choices["//conditions:default"] = default
+    return select(choices)
+
+def efi_loader_entry():
     native.config_setting(name = "entry_profile", flag_values = {
         "//tools/build/bazel/config:loader_geli": "true",
         "//tools/build/bazel/config:loader_disk": "true",
@@ -172,34 +180,40 @@ def efi_loader_amd64_entry():
         "//tools/build/bazel/config:loader_veriexec_vectx": "false",
         "//tools/build/bazel/config:loader_veriexec_pass_manifest": "false",
     })
-    compatible = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+    compatible = ["@platforms//os:freebsd"] + _cpu_select({arch: [] for arch in _CPU}, ["@platforms//:incompatible"]) + select({
         ":entry_profile": [], "//conditions:default": ["@platforms//:incompatible"],
     })
-    bsd_architecture_headers(name = "entry_architecture_headers", headers = {
-        "//sys/amd64/include:efi_loader_entry_headers": "machine",
-        "//sys/x86/include:efi_loader_entry_headers": "x86",
-    })
+    profiles = {"amd64": dict(flags = efi_loader_amd64_cflags("lua", native.package_name()),
+        rows = efi_loader_amd64_sources(), deps = ['//:efi_loader_entry_headers', '//contrib/bzip2:efi_loader_entry_headers', '//contrib/lua/src:efi_loader_entry_headers', '//contrib/pnglite:efi_loader_entry_headers', '//include:efi_loader_entry_headers', '//lib/libsecureboot:efi_loader_entry_headers', '//libexec/flua/lfs:efi_loader_entry_headers', '//stand/common:efi_loader_entry_headers', '//stand/efi/include:efi_loader_entry_headers', '//stand/efi/loader:efi_loader_entry_headers', '//stand/i386:efi_loader_entry_headers', '//stand/liblua:efi_loader_entry_headers', '//stand/libsa:efi_loader_entry_headers', '//stand/libsa/zfs:efi_loader_entry_headers', '//sys/cddl/boot:efi_loader_entry_headers', '//sys/cddl/contrib/opensolaris/common/lz4:efi_loader_entry_headers', '//sys/contrib/dev/acpica/include:efi_loader_entry_headers', '//sys/contrib/edk2/Include:efi_loader_entry_headers', '//sys/contrib/openzfs:efi_loader_entry_headers', '//sys/contrib/xz-embedded:efi_loader_entry_headers', '//sys/contrib/zlib:efi_loader_entry_headers', '//sys/contrib/zstd:efi_loader_entry_headers', '//sys/crypto:efi_loader_entry_headers', '//sys/crypto/sha2:efi_loader_entry_headers', '//sys/dev/ic:efi_loader_entry_headers', '//sys/dev/pci:efi_loader_entry_headers', '//sys/dev/random:efi_loader_entry_headers', '//sys/fs/cd9660:efi_loader_entry_headers', '//sys/geom:efi_loader_entry_headers', '//sys/geom/eli:efi_loader_entry_headers', '//sys/net:efi_loader_entry_headers', '//sys/netinet:efi_loader_entry_headers', '//sys/netinet6:efi_loader_entry_headers', '//sys/opencrypto:efi_loader_entry_headers', '//sys/sys:efi_loader_entry_headers', '//sys/teken:efi_loader_entry_headers', '//sys/ufs/ufs:efi_loader_entry_headers', '//sys/vm:efi_loader_entry_headers', ':entry_architecture_headers', '//stand/libsa:standalone_headers'],
+        architecture_headers = {"//sys/amd64/include:efi_loader_entry_headers": "machine", "//sys/x86/include:efi_loader_entry_headers": "x86"},
+        order = efi_loader_amd64_object_order("lua"), script = "arch/amd64/amd64.ldscript",
+        archives = ["//stand/efi/libluaefi:static_archive", "//stand/efi/libefi:static_archive", "//stand/efi/libsaefi:static_archive"],
+        linkopts = ["-Wl,-znocombreloc", "-Wl,-Bsymbolic,-znotext", "-pie"], image_format = "efi-app-x86_64", help = ":help_common")}
+    profiles.update(cross_lua_profiles())
+    bsd_architecture_headers(name = "entry_architecture_headers",
+        headers = _cpu_select({arch: profile["architecture_headers"] for arch, profile in profiles.items()}, {}))
     loader_lua_paths(name = "entry_lua_paths")
-    deps = ['//:efi_loader_entry_headers', '//contrib/bzip2:efi_loader_entry_headers', '//contrib/lua/src:efi_loader_entry_headers', '//contrib/pnglite:efi_loader_entry_headers', '//include:efi_loader_entry_headers', '//lib/libsecureboot:efi_loader_entry_headers', '//libexec/flua/lfs:efi_loader_entry_headers', '//stand/common:efi_loader_entry_headers', '//stand/efi/include:efi_loader_entry_headers', '//stand/efi/loader:efi_loader_entry_headers', '//stand/i386:efi_loader_entry_headers', '//stand/liblua:efi_loader_entry_headers', '//stand/libsa:efi_loader_entry_headers', '//stand/libsa/zfs:efi_loader_entry_headers', '//sys/cddl/boot:efi_loader_entry_headers', '//sys/cddl/contrib/opensolaris/common/lz4:efi_loader_entry_headers', '//sys/contrib/dev/acpica/include:efi_loader_entry_headers', '//sys/contrib/edk2/Include:efi_loader_entry_headers', '//sys/contrib/openzfs:efi_loader_entry_headers', '//sys/contrib/xz-embedded:efi_loader_entry_headers', '//sys/contrib/zlib:efi_loader_entry_headers', '//sys/contrib/zstd:efi_loader_entry_headers', '//sys/crypto:efi_loader_entry_headers', '//sys/crypto/sha2:efi_loader_entry_headers', '//sys/dev/ic:efi_loader_entry_headers', '//sys/dev/pci:efi_loader_entry_headers', '//sys/dev/random:efi_loader_entry_headers', '//sys/fs/cd9660:efi_loader_entry_headers', '//sys/geom:efi_loader_entry_headers', '//sys/geom/eli:efi_loader_entry_headers', '//sys/net:efi_loader_entry_headers', '//sys/netinet:efi_loader_entry_headers', '//sys/netinet6:efi_loader_entry_headers', '//sys/opencrypto:efi_loader_entry_headers', '//sys/sys:efi_loader_entry_headers', '//sys/teken:efi_loader_entry_headers', '//sys/ufs/ufs:efi_loader_entry_headers', '//sys/vm:efi_loader_entry_headers', ':entry_architecture_headers', '//stand/libsa:standalone_headers']
-    early = efi_loader_amd64_cflags("lua", native.package_name())
-    late = []
-    sources = efi_loader_amd64_sources()
-    for name, source, flags in sources:
-        cc_library(name = "entry_" + name, srcs = [source], copts = early + flags + late,
-            deps = deps + ([":entry_lua_paths"] if name == "interp_lua" else []),
-            features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"],
-            linkstatic = True, target_compatible_with = compatible)
+    indexed = {arch: {row[0]: row for row in profile["rows"]} for arch, profile in profiles.items()}
+    names = depset([row[0] for profile in profiles.values() for row in profile["rows"]]).to_list()
+    for name in names:
+        supported = compatible + _cpu_select({arch: [] if name in rows else ["@platforms//:incompatible"] for arch, rows in indexed.items()}, ["@platforms//:incompatible"])
+        cc_library(name = "entry_" + name,
+            srcs = _cpu_select({arch: [rows[name][1]] if name in rows else [] for arch, rows in indexed.items()}, []),
+            copts = _cpu_select({arch: profiles[arch]["flags"] + rows[name][2] if name in rows else [] for arch, rows in indexed.items()}, []),
+            deps = _cpu_select({arch: profile["deps"] for arch, profile in profiles.items()}, []) + ([":entry_lua_paths"] if name == "interp_lua" else []),
+            features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"], linkstatic = True,
+            target_compatible_with = supported)
         bsd_component_objects(name = "entry_" + name + "_objects", group = ":entry_" + name,
-            target_compatible_with = compatible)
-    native.filegroup(name = "entry_objects", srcs = [":entry_" + row[0] + "_objects" for row in sources],
+            target_compatible_with = supported)
+    native.filegroup(name = "entry_objects",
+        srcs = _cpu_select({arch: [":entry_" + row[0] + "_objects" for row in profile["rows"]] for arch, profile in profiles.items()}, []),
         target_compatible_with = compatible, visibility = ["//visibility:public"])
-    bsd_firmware_link(name = "loader_lua_full", objects = [":entry_objects"],
-        output = "loader_lua.sym.full", script = "arch/amd64/amd64.ldscript",
-        archives = ["//stand/efi/libluaefi:static_archive",
-            "//stand/efi/libefi:static_archive", "//stand/efi/libsaefi:static_archive"],
-        linkopts = ["-Wl,-znocombreloc", "-Wl,-Bsymbolic,-znotext", "-pie"],
+    bsd_firmware_link(name = "loader_lua_full", objects = [":entry_objects"], output = "loader_lua.sym.full",
+        script = _cpu_select({arch: profile["script"] for arch, profile in profiles.items()}, None),
+        archives = _cpu_select({arch: profile["archives"] for arch, profile in profiles.items()}, []),
+        linkopts = _cpu_select({arch: profile["linkopts"] for arch, profile in profiles.items()}, []),
         features = ["-bsd_riscv_userland_abi"],
-        object_order = efi_loader_amd64_object_order("lua"),
+        object_order = _cpu_select({arch: profile["order"] for arch, profile in profiles.items()}, []),
         target_compatible_with = compatible, visibility = ["//visibility:public"])
     bsd_debug_split(name = "loader_lua_symbols", src = ":loader_lua_full",
         binary_name = "loader_lua.sym", debug_name = "loader_lua.sym.debug",
@@ -210,7 +224,7 @@ def efi_loader_amd64_entry():
         output_group = "debug_files", target_compatible_with = compatible,
         visibility = ["//visibility:public"])
     bsd_efi_image(name = "loader_lua_efi", src = ":loader_lua_symbols",
-        output = "loader_lua.efi", output_format = "efi-app-x86_64",
+        output = "loader_lua.efi", output_format = _cpu_select({arch: profile["image_format"] for arch, profile in profiles.items()}, ""),
         source_date_epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
         sections = [".peheader", ".text", ".sdata", ".data", ".dynamic", ".dynsym",
             ".rel.dyn", ".rela.dyn", ".reloc", ".eh_frame", "set_Xcommand_set",
@@ -220,14 +234,14 @@ def efi_loader_amd64_entry():
     bsd_install_file(name = "install_lua_efi", src = ":loader_lua_efi",
         destination = "/boot/loader_lua.efi", owner = "root", group = "wheel",
         mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = compatible)
-    bsd_install_file(name = "install_help", src = ":help_common",
+    bsd_install_file(name = "install_help", src = _cpu_select({arch: profile["help"] for arch, profile in profiles.items()}, None),
         destination = "/boot/loader.help.efi", owner = "root", group = "wheel",
         mode = "0444", install_tags = ["package=bootloader"], target_compatible_with = compatible)
     bsd_install_link(name = "install_default_efi", destination = "/boot/loader.efi",
         target = "/boot/loader_lua.efi", kind = "hardlink", owner = "root", group = "wheel",
         mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = compatible)
     # The aggregate stage's maintained mtree supplies directory metadata. This
-    # selected Lua profile is the maintained default interpreter on AMD64.
+    # selected Lua profile is the maintained default interpreter on these platforms.
     bsd_install_manifest(name = "install_manifest", entries = [":install_lua_efi",
         ":install_help", ":install_default_efi"], target_compatible_with = compatible,
         visibility = ["//visibility:public"])

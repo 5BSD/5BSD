@@ -251,3 +251,7 @@ bsd_host_artifact_test(name = "loader_version_test", src = "loader-version-test.
 
 bsd_python_test(name = "install_reference_libraries_test", src = "install-reference-libraries-test.py",
     data = ["install_reference_libraries.py"], size = "small", visibility = ["//visibility:public"])
+
+# Runtime data follows the consumer ABI, including source-built execution tools.
+load(":bsd_dtrace.bzl", "bsd_dtrace_runtime")
+bsd_dtrace_runtime(name = "dtrace_runtime_object", visibility = ["//visibility:public"])

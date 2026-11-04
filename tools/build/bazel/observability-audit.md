@@ -11037,3 +11037,19 @@ archive. No firmware-side provider or host audit source is removed by the native
 model. Original compiler controls account for filename strings without production
 assertion suppression. Actual interpreter/device/failure execution remains a
 firmware qualification gate. See EFI-INTERPRETERS-QUALIFICATION.md.
+
+## Cross Lua EFI entry and host DTrace ABI review (2026-11-04)
+
+The ARM64/RISC-V 48-entry profiles retain tslog, verifier/verity command sources,
+FDT selection, startup assembly and original freestanding assertion policy.
+Original filename controls explain diagnostic strings; production assertions stay
+enabled. No host BSM audit or DTrace firmware provider is removed. Actual loader
+commands, error delivery and firmware diagnostics remain runtime qualifications.
+
+Cross qualification exposed host libarchive DTrace linking a target drti.o.
+The consumer C/C++ toolchain now selects this runtime artifact for all thirteen
+source-owned providers; execution tools use their native toolchain and cross
+programs use the target toolchain. Full cross loader builds pass with probes
+enabled. Final compiler/input audits cover the 96 entry producers, not runtime
+host probe firing. See CROSS-EFI-LOADER-QUALIFICATION.md for retained failures,
+current artifact checks and open runtime/performance gates.

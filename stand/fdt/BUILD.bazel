@@ -55,3 +55,7 @@ bsd_program_test(name = "runtime_test", program = ":runtime_program", interface 
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 
 exports_files(["help.fdt"], visibility = ["//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['fdt_platform.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['fdt_platform.h'], visibility = ["//stand/efi/loader:__pkg__"])

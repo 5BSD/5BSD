@@ -30,7 +30,7 @@ bsd_dtrace_spec(
     cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld",
     objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
-    drti = "@bsd_sdk//toolchain:sysroot/usr/lib/dtrace/drti.o",
+    drti = "//tools/build/bazel:dtrace_runtime_object",
     tool_inputs = ["@bsd_sdk//toolchain:extra_dtrace_runtime", "@bsd_sdk//toolchain:compile_inputs",
                    "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"],
 )

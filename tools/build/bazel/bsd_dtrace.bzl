@@ -2,6 +2,24 @@
 """Declared DTrace generation; mutating tools receive fresh object copies."""
 
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
+
+
+def _runtime_object(ctx):
+    # drti is linked into the consumer, so resolve its C/C++ target toolchain.
+    # cfg=exec consumers must use the host SDK; cross consumers use their target.
+    toolchain = find_cc_toolchain(ctx)
+    objects = [f for f in toolchain.all_files.to_list()
+               if f.path.endswith("/sysroot/usr/lib/dtrace/drti.o")]
+    if len(objects) != 1:
+        fail("selected C/C++ toolchain must declare exactly one DTrace runtime object")
+    return [DefaultInfo(files = depset(objects))]
+
+bsd_dtrace_runtime = rule(
+    implementation = _runtime_object,
+    fragments = ["cpp"],
+    toolchains = use_cc_toolchain(),
+)
 
 BSDDTraceInfo = provider(doc = "Declared provider header and object generation inputs.", fields = [
     "header", "source", "drti", "headers", "options", "tools", "dtrace", "static_anchor", "objcopy", "object_path_mode", "environment", "linker",

@@ -2215,3 +2215,24 @@ Next implement native cross-loader entry/FDT/link/raw-image selection from those
 references. These are original Make references, not completed Bazel cross loaders.
 All full-system, package, firmware, bootstrap and performance gates remain open.
 Make stays default.
+
+### 2026-11-04: Cross Lua EFI candidates and DTrace consumer ABI
+
+ARM64/RISC-V source-owned Lua/FDT entry, final link, debug, image and component
+stage builds pass. Each selects all 48 Make entry objects and five native archives.
+Raw objects match 46/48 per architecture; independent original filename controls
+explain both entry differences and the existing EFI/standalone archive cases.
+Final loadable payloads and PE bytes match controlled originals; FDT help,
+debuglink integrity and extracted stage metadata are checked. RISC-V non-loadable
+ABI-attribute file offsets differ with debug layout and remain explicitly recorded.
+The root loader Make reference owns help; the private loader_lua reference does not.
+
+A real cross-build failure selected target drti.o for an execution-host libarchive.
+All thirteen source provider declarations now obtain drti from the resolved consumer
+C/C++ toolchain; probes remain enabled. See CROSS-EFI-LOADER-QUALIFICATION.md.
+Final-source 56-output equality passes for each cross profile. All 48 actual final
+compiler chains per architecture bind 2,451/2,468 consumed input digests. The
+AMD64 regression retains all 225 prior captures. Explicit unsupported cross option
+selection is rejected at analysis. Continue IA32/alternate interpreter profiles, complete bootloader contributions and actual
+firmware qualification. All broader system/package/bootstrap/sandbox/cache/performance
+gates remain open. Make stays default; BIP remains excluded.

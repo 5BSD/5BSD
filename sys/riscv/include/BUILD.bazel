@@ -14,3 +14,7 @@ filegroup(name = "loader_fdt_headers", srcs = ['_limits.h', '_stdint.h', '_types
 filegroup(name = "standalone_ficl_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'param.h', 'setjmp.h'], visibility = ["//stand/ficl:__pkg__"])
 
 filegroup(name = "standalone_sa_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'asm.h', 'atomic.h', 'cpufunc.h', 'endian.h', 'param.h', 'proc.h', 'setjmp.h', 'signal.h', 'ucontext.h'], visibility = ["//stand/libsa:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'asm.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'md_var.h', 'metadata.h', 'param.h', 'psl.h', 'setjmp.h'], visibility = ["//stand/efi/loader:__pkg__"])

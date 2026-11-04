@@ -48864,3 +48864,7 @@ Next implement native cross-loader entry/FDT/link/raw-image selection from those
 references. These are original Make references, not completed Bazel cross loaders.
 All full-system, package, firmware, bootstrap and performance gates remain open.
 Make stays default.
+
+Selected ARM64/RISC-V Lua EFI construction and the consumer-toolchain DTrace
+runtime correction are described in [CROSS-EFI-LOADER-QUALIFICATION.md](CROSS-EFI-LOADER-QUALIFICATION.md).
+These remain component candidates, with complete-system and performance gates open.
