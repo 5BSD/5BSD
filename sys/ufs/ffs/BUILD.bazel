@@ -73,3 +73,11 @@ bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['fs.h'], visibili
 bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/boot1:__pkg__"])
 
 bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['fs.h'], visibility = ["//stand/efi/gptboot:__pkg__"])

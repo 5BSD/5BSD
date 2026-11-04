@@ -11065,3 +11065,11 @@ font rendering and failure paths remain runtime qualifications. Cross compiled p
 strings are checked in allocated target sections, alongside installed destinations.
 The new artifact tests and cache checks do not claim DTrace firing or BSM delivery.
 See BOOT-DATA-QUALIFICATION.md.
+
+## Cross EFI boot1/gptboot review (2026-11-04)
+
+The native migration preserves original boot1/gptboot sources, verifier calls,
+EFI diagnostics and local EFI_DEBUG/ZFS distinctions. No firmware probe or BSM
+source is removed to obtain a passing build. Host artifact tests inspect binaries;
+they do not prove firmware error delivery, probe firing or audit delivery. Runtime
+qualification remains open. See CROSS-EFI-BOOTSTRAP-QUALIFICATION.md.

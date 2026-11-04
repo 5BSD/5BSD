@@ -48872,3 +48872,16 @@ These remain component candidates, with complete-system and performance gates op
 Native boot data, fonts, configured script paths and original Make option-profile
 comparisons are described in [BOOT-DATA-QUALIFICATION.md](BOOT-DATA-QUALIFICATION.md).
 The contribution remains component-scoped; complete bootloader/system gates remain open.
+
+### 2026-11-04: Cross EFI first-stage programs
+
+Source-owned boot1/gptboot profiles now build ARM64 and RISC-V entry, native
+archive links, debug and PE images. All 24 cross entry objects match original
+Make code/relocations; final payload/PE comparisons and two artifact wrappers per
+architecture pass. Configured graph reviews account for original dependency names
+and ordered links. AMD64 regression retains all 225 prior captures; MAN=no and raw/split
+manual comparisons pass, with all 27 ARM64 pre-test captures retained in the tested build. See [CROSS-EFI-BOOTSTRAP-QUALIFICATION.md](CROSS-EFI-BOOTSTRAP-QUALIFICATION.md).
+
+A shared userland warning-policy gate remains: literal -Werror operands currently
+prevent reliable werror=false selection. Complete bootloader/system/package,
+firmware, bootstrap/sandbox/cache and performance gates remain open. Make stays default.

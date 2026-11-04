@@ -1,79 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Source-owned selected AMD64 EFI bootstrap profile, preserving Make's local policy.
-load("@rules_cc//cc:defs.bzl", "cc_library")
-load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
-load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
-load("//tools/build/bazel:bsd_firmware_link.bzl", "bsd_firmware_link")
-load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
-load("//tools/build/bazel:bsd_efi_image.bzl", "bsd_efi_image")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
-
-config_setting(name = "selected_profile", flag_values = {
-    "//tools/build/bazel/config:loader_geli": "true",
-    "//tools/build/bazel/config:loader_disk": "true",
-    "//tools/build/bazel/config:loader_zfs": "true",
-    "//tools/build/bazel/config:loader_efi_secureboot": "true",
-    "//tools/build/bazel/config:loader_veriexec_vectx": "false",
-    "//tools/build/bazel/config:loader_veriexec_pass_manifest": "false",
-})
-_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
-    ":selected_profile": [], "//conditions:default": ["@platforms//:incompatible"],
-})
-bsd_architecture_headers(name = "architecture_headers", headers = {
-    "//sys/amd64/include:efi_gptboot_headers": "machine",
-    "//sys/x86/include:efi_gptboot_headers": "x86",
-})
-_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Wformat', '-fshort-wchar', '-mno-red-zone', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-fPIC', '-mno-red-zone', '-mno-relax', '-DLOADER_VERIEXEC', '-Ilib/libsecureboot/h', '-Istand/efi/boot1', '-Istand/efi/gptboot', '\'-DBOOTPROG="gptboot.efi"\'', '-DHAVE_MEMCPY', '-Isys/contrib/zlib', '-Wno-deprecated-non-prototype', '-DEFI_BOOT1', '-Istand/efi/include', '-Isys/contrib/edk2/Include', '-Istand/efi/include/amd64', '-Isys/contrib/dev/acpica/include', '-DEFI_UFS_BOOT', '-DEFI_DEBUG', '-DLOADER_VERIEXEC', '-Ilib/libsecureboot/h', '-Istand/common', '-fPIC', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses']
-_DEPS = ['//include:efi_gptboot_headers', '//lib/libsecureboot:efi_gptboot_headers', '//stand/common:efi_gptboot_headers', '//stand/efi/boot1:efi_gptboot_headers', '//stand/efi/gptboot:efi_gptboot_headers', '//stand/efi/include:efi_gptboot_headers', '//stand/libsa:efi_gptboot_headers', '//sys/bsm:efi_gptboot_headers', '//sys/contrib/edk2/Include:efi_gptboot_headers', '//sys/contrib/zlib:efi_gptboot_headers', '//sys/sys:efi_gptboot_headers', '//sys/ufs/ffs:efi_gptboot_headers', '//sys/ufs/ufs:efi_gptboot_headers', ':architecture_headers', '//stand/libsa:standalone_headers']
-_SOURCES = [
-    ('boot1', '//stand/efi/boot1:boot1.c', ['-Wno-format', '-Oz', '-Qunused-arguments']),
-    ('gpt', '//stand/libsa:gpt.c', ['-Wno-sign-compare', '-Wno-cast-align', '-Oz', '-Qunused-arguments']),
-    ('proto', 'proto.c', ['-Wno-format', '-Oz', '-Qunused-arguments']),
-    ('self_reloc', '//stand/common:self_reloc.c', ['-Oz', '-Qunused-arguments']),
-    ('start', '//stand/efi/loader:arch/amd64/start.S', ['-Oz', '-Qunused-arguments']),
-    ('ufs_module', '//stand/efi/boot1:ufs_module.c', ['-Wno-format', '-Wno-cast-align', '-Oz', '-Qunused-arguments']),
- ]
-[cc_library(name = "entry_" + name, srcs = [source], copts = _CFLAGS + flags,
-    deps = _DEPS, features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"],
-    linkstatic = True, target_compatible_with = _COMPAT) for name, source, flags in _SOURCES]
-[bsd_component_objects(name = "entry_" + row[0] + "_objects", group = ":entry_" + row[0],
-    target_compatible_with = _COMPAT) for row in _SOURCES]
-filegroup(name = "entry_objects", srcs = [":entry_" + row[0] + "_objects" for row in _SOURCES],
-    target_compatible_with = _COMPAT, visibility = ["//visibility:public"])
-bsd_firmware_link(name = "full", objects = [":entry_objects"], output = "gptboot.sym.full",
-    script = "//stand/efi/loader:arch/amd64/amd64.ldscript",
-    archives = ["//stand/efi/libefi:static_archive", "//stand/efi/libsaefi:static_archive"],
-    linkopts = ["-Wl,-znocombreloc", "-Wl,-Bsymbolic,-znotext", "-pie"],
-    object_order = ['gpt.o', 'boot1.o', 'proto.o', 'self_reloc.o', 'start.o', 'ufs_module.o'], target_compatible_with = _COMPAT, visibility = ["//visibility:public"])
-bsd_debug_split(name = "symbols", src = ":full", binary_name = "gptboot.sym",
-    debug_name = "gptboot.sym.debug", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
-    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs", target_compatible_with = _COMPAT,
-    visibility = ["//visibility:public"])
-filegroup(name = "debug", srcs = [":symbols"], output_group = "debug_files",
-    target_compatible_with = _COMPAT, visibility = ["//visibility:public"])
-bsd_efi_image(name = "image", src = ":symbols", output = "gptboot.efi",
-    output_format = "efi-app-x86_64",
-    source_date_epoch_setting = "//tools/build/bazel/config:loader_source_date_epoch",
-    sections = [".peheader", ".text", ".sdata", ".data", ".dynamic", ".dynsym",
-        ".rel.dyn", ".rela.dyn", ".reloc", ".eh_frame"],
-    objcopy_runtime = ["//usr.bin/elfcopy:execution_runtime"],
-    target_compatible_with = _COMPAT, visibility = ["//visibility:public"])
-bsd_install_file(name = "install_image", src = ":image", destination = "/boot/gptboot.efi",
-    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bootloader"],
-    target_compatible_with = _COMPAT)
-# The maintained gptboot profile forces EFI_DEBUG and disables its local ZFS
-# module; its shared standalone libraries retain their selected global profile.
-bsd_compress(name = "manual", src = "gptboot.efi.8", output = "gptboot.efi.8.gz",
-    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
-    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
-    target_compatible_with = _COMPAT)
-bsd_install_file(name = "install_manual", src = ":manual",
-    destination = "/usr/share/man/man8/gptboot.efi.8.gz", owner = "root", group = "wheel", mode = "0444",
-    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bootloader-man"],
-        "//conditions:default": ["package=bootloader"]}), target_compatible_with = _COMPAT)
-bsd_install_manifest(name = "install_manifest", entries = [":install_image", ":install_manual"],
-    target_compatible_with = _COMPAT, visibility = ["//visibility:public"])
+load("//stand/efi/boot1:bootstrap.bzl", "efi_bootstrap")
+efi_bootstrap('gptboot')
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['drv.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['drv.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['drv.h'], visibility = ["//stand/efi/gptboot:__pkg__"])

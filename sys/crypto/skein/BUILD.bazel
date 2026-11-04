@@ -54,3 +54,7 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['skein.h', 'skein_fre
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['skein.h', 'skein_freebsd.h', 'skein_iv.h', 'skein_port.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['skein.h', 'skein_freebsd.h', 'skein_port.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['skein.h', 'skein_freebsd.h', 'skein_port.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['skein.h', 'skein_freebsd.h', 'skein_port.h'], visibility = ["//stand/efi/boot1:__pkg__"])

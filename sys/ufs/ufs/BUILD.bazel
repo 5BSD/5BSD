@@ -92,3 +92,11 @@ bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['dinode.h', 'dir.h'
 bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['dinode.h', 'dir.h'], visibility = ["//stand/efi/gptboot:__pkg__"])

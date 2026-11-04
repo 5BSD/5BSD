@@ -82,3 +82,9 @@ exports_files(['memdisk.c'], visibility = ['//stand/efi/loader_4th:__pkg__', '//
 bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['decompress.h', 'framebuffer.h', 'loader_efi.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+exports_files(['arch/arm64/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])
+
+exports_files(['arch/riscv/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])
+
+exports_files(["arch/arm64/arm64.ldscript", "arch/riscv/riscv.ldscript"], visibility = ["//stand/efi/boot1:__pkg__", "//stand/efi/gptboot:__pkg__"])

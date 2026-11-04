@@ -6036,3 +6036,13 @@ These are component archives and host artifact tests, not complete bootloader
 packages, firmware execution, verified boot or system performance qualification.
 See
 .Pa tools/build/bazel/BOOT-DATA-QUALIFICATION.md .
+.Pp
+Selected native EFI boot1 and gptboot profiles support AMD64, ARM64 and RISC-V
+through the existing format-5 target and architecture inputs.
+Host artifact tests inspect firmware ABI, debug splitting and installation records.
+The gptboot manifest honors man, mancompress and split_manpages settings.
+These component checks do not qualify firmware execution or a complete system.
+Alternate userland warning policy remains incomplete where profiles retain
+literal compiler warning options.
+See
+.Pa tools/build/bazel/CROSS-EFI-BOOTSTRAP-QUALIFICATION.md .

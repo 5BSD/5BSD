@@ -114,16 +114,22 @@ bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['stand.h', 'ufsread.c'], 
 
 bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['gpt.h', 'stand.h', 'ufsread.c'], visibility = ["//stand/efi/gptboot:__pkg__"])
 
-exports_files(['gpt.c'], visibility = ["//stand/efi/gptboot:__pkg__"])
-
 bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h', 'verity_read.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h', 'verity_read.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
-
 
 bsd_source_headers(name = 'efi_loader_aarch64_headers', hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h', 'verity_read.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_riscv64_headers', hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h', 'verity_read.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-
 exports_files(['verity_read.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+bsd_source_headers(name = 'efi_boot1_aarch64_headers', hdrs = ['stand.h', 'ufsread.c'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_riscv64_headers', hdrs = ['stand.h', 'ufsread.c'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['gpt.h', 'stand.h', 'ufsread.c'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['gpt.h', 'stand.h', 'ufsread.c'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+exports_files(['gpt.c'], visibility = ['//stand/efi/gptboot:__pkg__'])
