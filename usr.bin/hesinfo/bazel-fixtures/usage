@@ -1,0 +1,3 @@
+usage: hesinfo [-bl] name type
+	-l selects long format
+	-b also does hes_to_bind conversion

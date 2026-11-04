@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+
+# Hesiod symbols are optional libc exports. Link the configured native libc,
+# rather than assuming the prepared SDK's libc was built with WITH_HESIOD.
+cc_binary(
+    name = "hesinfo",
+    srcs = ["hesinfo.c"],
+    deps = ["//include:hesiod_header", "//lib/libc:shared_link_interface"],
+    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-nodefaultlibs", "-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:hesiod_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+)
+utility_installation(name = "install_manifest", program = "hesinfo", manual = "hesinfo.1", package = "utilities")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+bsd_compare_test(
+    name = "usage_test",
+    program = ":hesinfo",
+    expected = "bazel-fixtures/empty",
+    expected_stderr = "bazel-fixtures/usage",
+    expected_exit = 2,
+    runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)

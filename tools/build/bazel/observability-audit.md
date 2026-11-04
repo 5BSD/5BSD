@@ -33,6 +33,15 @@ claimed from archive inspection. Userland Lua is a separate component/context. A
 qualification uses host inspection only and does not add runtime observability
 evidence.
 
+## Hesiod consumer review (2026-11-04)
+
+hesinfo.c and its original Makefile declare no component-specific DTrace provider
+or BSM audit calls to preserve. The new consumer uses configured native libc,
+including its existing resolver/NSS provider path when enabled. A safe usage
+case does not establish live resolver probe firing. DNS/Hesiod resolution and
+its inherited observability require service runtime qualification; no absence
+of a dedicated CLI provider is treated as an instrumentation defect.
+
 ## Findings and follow-up
 
 | Component | Finding | Status / next evidence |

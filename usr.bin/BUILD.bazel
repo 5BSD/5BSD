@@ -437,14 +437,18 @@ selects.config_setting_group(name = "llvm_tools_requested", match_any = [
     "//tools/build/bazel/config:lld_enabled", "//tools/build/bazel/config:lldb_enabled",
 ])
 selects.config_setting_group(name = "llvm_tools", match_all = [":llvm_tools_requested", "//tools/build/bazel/config:toolchain_enabled"])
-# Optional owners still requiring conversion: hesinfo, compile_et, ypcat,
+# Optional owners still requiring conversion: compile_et, ypcat,
 # ypmatch, ypwhich, vacation and telnet. Reject their selecting profiles below;
 # never report an installation that silently omits selected programs.
 selects.config_setting_group(name = "unfinished_optional_programs", match_any = [
-    "//tools/build/bazel/config:hesiod_enabled", ":heimdal",
+    ":heimdal",
     "//tools/build/bazel/config:nis_enabled", "//tools/build/bazel/config:sendmail_enabled",
     "//tools/build/bazel/config:telnet_enabled",
 ])
+_ARCHIVES = _ARCHIVES + select({
+    "//tools/build/bazel/config:hesiod_enabled": ["//usr.bin/hesinfo:install_archive"],
+    "//conditions:default": [],
+})
 _ARCHIVES = _ARCHIVES + select({":llvm_tools": ["//usr.bin/clang:installation_archives"], "//conditions:default": []})
 
 _ARCHIVES = _ARCHIVES + select({

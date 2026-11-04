@@ -6340,7 +6340,7 @@ not reported as fresh executions.
 .Cm //usr.bin:installation_archives
 rejects tests-enabled configurations until the complete original installed
 test hierarchy is reconciled. The production target does not assert test coverage.
-Unconverted Hesiod, Heimdal compiler, NIS clients, vacation and telnet profiles
+Unconverted Heimdal compiler, NIS clients, vacation and telnet profiles
 are explicitly incompatible; their conversion remains required work.
 These targets add no publication, installation or upgrade authorization.
 
@@ -6369,3 +6369,18 @@ rechecks metadata before returning. Ambiguous selections, corrupted payloads
 and metadata changes are rejected. The single-output interface uses the same
 checks. This changes inspection metadata I/O, not build caching, signing,
 publication policy or the format-5 dispatcher.
+
+.Ss Optional Hesiod consumer
+The existing format-5 hesiod setting selects the AMD64 hesinfo archive through
+the usr.bin parent. The program links configured native libc and uses its source
+Hesiod header. Native archive construction and safe usage testing pass; an
+independent original reference needs a coherent HESIOD-enabled SDK, and full
+DNS runtime qualification remains open. Disabled Hesiod excludes the contribution.
+Existing file2c native tests use explicit test-package fixture labels with
+restricted parent exports; no fixture bytes or installed metadata are changed.
+
+The corrected full production aggregate and all nine existing native file2c
+cases pass; its 801 captured archive/request/directory outputs match the previous
+passing aggregate. Configured Hesiod parent queries preserve the disabled set
+and add only the Hesiod contribution when enabled. These are bounded component
+checks, not complete world, package or DNS service acceptance.

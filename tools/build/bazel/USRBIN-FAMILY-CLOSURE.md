@@ -272,3 +272,24 @@ This proves serialization consistency and destination uniqueness for this
 production collection. It does not establish independent full Make installation
 parity, completed-world directory/package reconciliation, complete installed
 TAP execution or whole-system acceptance.
+
+## Optional Hesiod closure and file2c regression correction
+
+AMD64 hesinfo now has a native program, source header dependency, configured
+native libc/libsys link, standard debug/manual/archive contribution and safe CLI
+test. The default production set remains 267 archives; WITH_HESIOD selects 268
+in a passing configured parent query. Native build/test and archive serialization
+pass. Independent Make parity needs a coherent original HESIOD-enabled SDK:
+the retained leaf reference fails because the unchanged SDK lacks hesiod.h.
+DNS runtime, alternate architectures and full installation/pkgbase are open.
+Six optional programs remain unconverted: compile_et, ypcat, ypmatch, ypwhich,
+vacation and telnet. See HESINFO-NATIVE-QUALIFICATION.md for bounded evidence.
+
+The new query exposed a package-boundary error from the earlier TAP batch:
+file2c's parent native cases referenced files inside the new tests package via
+old relative labels. Explicit package labels and eleven narrowly exported
+fixtures repair it. All nine original native cases plus source settings pass in
+bazel-usrbin-file2c-boundary-native-r1-20261104. The independent capture review
+proves all 801 production archive/request/directory outputs unchanged from the
+previous passing production run. No test was deleted, fixture patched or failure
+masked. This follow-up supersedes earlier aggregate status for the changed graph.

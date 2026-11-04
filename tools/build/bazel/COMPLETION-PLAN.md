@@ -16,6 +16,21 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Optional Hesiod consumer and test package boundary (2026-11-04)
+
+Native AMD64 hesinfo now builds with its configured native libc exports, declared
+source header and normal installation/debug/archive rules. Its safe CLI and
+source-settings tests pass; archive payload/action audit passes. The default SDK
+cannot build an independent original reference because it lacks optional Hesiod
+headers/exports. Full original HESIOD profile parity and DNS runtime remain open.
+Six other optional programs still need conversion. A parent query exposed invalid
+file2c fixture labels after its tests became a package; explicit restricted labels
+repair that boundary. Both parent profile queries pass (267 archives disabled,
+268 enabled). Complete default production rebuild and nine existing file2c cases
+pass; all 801 production captures remain unchanged. See
+HESINFO-NATIVE-QUALIFICATION.md.
+Generic build-bsd dispatch remains valid; manual updated. Make stays default.
+
 ## usr.bin production build and TAP archive results (2026-11-04)
 
 The maintained format-5 frontend now passes the complete declared AMD64 usr.bin

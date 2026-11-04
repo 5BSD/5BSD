@@ -20,3 +20,6 @@ bsd_tap_installation(
     ],
     metadata = {"legacy_test": {"required_programs": "file2c"}},
 )
+
+# Existing parent-declared native cases consume these test-package fixtures.
+exports_files(["empty.out", "regress.1.out", "regress.2.out", "regress.3.out", "regress.4.out", "regress.5.out", "regress.6.out", "regress.7.out", "regress.8.out", "regress.9.out", "regress.in"], visibility = ["//usr.bin/file2c:__pkg__"])
