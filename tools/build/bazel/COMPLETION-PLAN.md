@@ -2062,3 +2062,25 @@ preserving Make output. PE epoch must be a declared input; the current recipe's
 maintained 2024 timestamp default is reference policy, not a value to embed in a
 new generator. Close the original-library link inputs before asserting complete
 loader parity or boot qualification. All broader completion gates remain open.
+
+### 2026-11-04: native loader font and ordered help
+
+The actual source-built execution converter and maintained AWK script now produce
+font/common/FDT-help artifacts on all three target configurations. Generated font
+and common help match the actual Make reference, and all three output sets have
+identical hashes. Native ELF/runtime and full configured input/action reviews
+pass. Seven methods execute natively and are reused by foreign profiles; cached
+results are not counted as fresh executions. See LOADER-GENERATORS-QUALIFICATION.md.
+
+The native runtime audit was corrected to inspect transitive dependencies. The
+foreign audit was corrected to attest cached producers using exact configured
+actions and input hashes. Production outputs or tests were not changed to hide
+those diagnostic assumptions. Final helper search paths exclude Python data
+directories. No new frontend C switch or input format was needed.
+
+Next: maintained-script version generation with declared tools/output/build
+metadata, then real entry objects and final links. Preserve the version script's
+ordinary Make interface and output while removing metadata-only calls from -r.
+Continue the full installation/debug, world/rescue/cross kernel/module,
+bootstrap/sandbox/cache, publication, runtime and CPU/memory/disk gates.
+Make stays default; BIP remains excluded. No installation or reboot authorized.

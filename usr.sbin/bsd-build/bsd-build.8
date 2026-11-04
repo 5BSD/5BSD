@@ -4689,6 +4689,19 @@ Logical bytes and hash-phase timings do not measure physical disk I/O or complet
 build performance.
 See
 .Pa tools/build/bazel/SDK-VERIFICATION-QUALIFICATION.md .
+.Ss Native loader font and help candidates
+.Li //stand/efi/loader:console_font
+uses a source-built converter in the execution configuration.
+.Li //stand/efi/loader:help_common
+and
+.Li //stand/efi/loader:help_fdt
+stream ordered source inputs through the maintained AWK script.
+Native and foreign target configurations share these architecture-independent
+outputs while retaining declared native tool/runtime inputs.
+Final version generation, entry/link/profile dispatch and boot qualification
+remain open.
+See
+.Pa tools/build/bazel/LOADER-GENERATORS-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

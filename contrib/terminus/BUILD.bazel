@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ter-u16b.bdf"], visibility = ["//stand/efi/loader:__pkg__"])

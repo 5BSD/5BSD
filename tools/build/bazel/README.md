@@ -1,5 +1,15 @@
 # Bazel qualification
 
+## Native loader font/help checkpoint (2026-11-04)
+
+Source-built cfg=exec vtfontcvt and the maintained AWK algorithm now generate the
+font and ordered common/FDT help. Native outputs match the actual Make reference;
+all three target configurations produce identical bytes. Seven native help
+methods pass and their result is reused in foreign profiles. Configured action,
+complete input-hash and runtime-closure reviews distinguish fresh/cached steps.
+Version generation, entry objects, final links and all system-wide gates remain
+open. See [LOADER-GENERATORS-QUALIFICATION.md](LOADER-GENERATORS-QUALIFICATION.md).
+
 ## Current SDK refresh and full-content verification (2026-11-04)
 
 All three refreshed regular/private EFI libsa builds pass and preserve their

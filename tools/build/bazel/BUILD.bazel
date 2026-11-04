@@ -78,7 +78,7 @@ exports_files(["tests/compiler_rt_runtime.c"], visibility = ["//lib/libcompiler_
 exports_files(["tests/libc_runtime.c"], visibility = ["//lib/libc:__pkg__"])
 
 
-load(":bsd_python_test.bzl", "bsd_python_test")
+load(":bsd_python_test.bzl", "bsd_host_artifact_test", "bsd_python_test")
 
 bsd_python_test(
     name = "bep_artifacts_test",
@@ -218,3 +218,14 @@ bsd_python_test(name = "secureboot_headers_test", src = "secureboot_headers_test
     size = "small", visibility = ["//visibility:public"])
 
 bsd_python_test(name = "sdk_digests_test", src = "sdk-digests-test.py", data = ["sdk_digests.py"])
+
+exports_files(["loader_help.py"], visibility = ["//visibility:public"])
+bsd_host_artifact_test(name = "loader_help_test", src = "loader-help-test.py",
+    data = ["loader_help.py", "//stand/common:merge_help.awk", "//stand/common:help.common",
+        "//stand/fdt:help.fdt", "@bsd_sdk//toolchain:awk", "@bsd_sdk//toolchain:cat"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:cat_runtime"],
+    args = ["--awk", "$(rlocationpath @bsd_sdk//toolchain:awk)",
+        "--cat", "$(rlocationpath @bsd_sdk//toolchain:cat)",
+        "--script", "$(rlocationpath //stand/common:merge_help.awk)",
+        "--common", "$(rlocationpath //stand/common:help.common)",
+        "--fdt", "$(rlocationpath //stand/fdt:help.fdt)"])

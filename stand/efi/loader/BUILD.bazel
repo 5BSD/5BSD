@@ -2,3 +2,13 @@
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "libefi_headers", hdrs = ['framebuffer.h'], visibility = ["//stand/efi/libefi:__pkg__"])
+
+load("//tools/build/bazel:bsd_loader_generated.bzl", "bsd_loader_font", "bsd_loader_help")
+bsd_loader_font(name = "console_font", src = "//contrib/terminus:ter-u16b.bdf",
+    output = "8x16.c", visibility = ["//visibility:public"])
+# Final loader profiles select the relevant variant. Preserve Make's FDT-first
+# source order; the shared helper adds no separator bytes between inputs.
+bsd_loader_help(name = "help_common", srcs = ["//stand/common:help.common"],
+    output = "loader.help.efi", visibility = ["//visibility:public"])
+bsd_loader_help(name = "help_fdt", srcs = ["//stand/fdt:help.fdt", "//stand/common:help.common"],
+    output = "loader.help.efi", visibility = ["//visibility:public"])

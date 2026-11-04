@@ -14,3 +14,5 @@ bsd_source_headers(name = "standalone_ficl_headers", hdrs = ['bootstrap.h', 'gfx
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'readin.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['bootstrap.h', 'disk.h', 'part.h', 'readin.h'], visibility = ["//stand/libsa:__pkg__"])
+
+exports_files(["help.common", "merge_help.awk"], visibility = ["//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])

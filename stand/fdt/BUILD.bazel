@@ -53,3 +53,5 @@ bsd_program_test(name = "runtime_test", program = ":runtime_program", interface 
     runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
     visibility = ["//visibility:public"], size = "small",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+exports_files(["help.fdt"], visibility = ["//stand/efi/loader:__pkg__", "//tools/build/bazel:__pkg__"])

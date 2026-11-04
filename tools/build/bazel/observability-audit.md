@@ -10968,3 +10968,13 @@ one-object manifest-name invalidation. Header framing/reference tests do not
 execute firmware trust decisions, certificate/key rotation, device I/O, loader
 panic/error paths or measured-boot delivery. Those remain full-loader runtime/VM
 review items. No new assertion or diagnostic suppression was introduced.
+
+## Loader font/help generation (2026-11-04)
+
+The execution converter retains its original vtfontcvt/lz4 sources and diagnostic
+paths. The maintained Make recipe selects no dedicated DTrace provider or BSM
+source for this offline conversion. Help continues to use the original AWK
+algorithm; errors propagate through failed Bazel actions, and malformed-script
+coverage rejects partial successful output. No assertion or diagnostic was
+suppressed. These generation checks do not exercise final loader commands,
+firmware I/O or boot failure diagnostics; those remain runtime qualification.
