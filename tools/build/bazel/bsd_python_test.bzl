@@ -10,6 +10,15 @@ def _impl(ctx):
     source = ctx.file.src
     files = [python, source, python_home] + ctx.files.data + ctx.files.runtime
     targets = [ctx.attr.python, ctx.attr.python_home] + ctx.attr.data + ctx.attr.runtime
+    # Configured outputs can share short_path while naming different files.
+    # A runfiles tree cannot represent both; never silently select one ABI.
+    all_files = depset(files, transitive = [target[DefaultInfo].default_runfiles.files for target in targets])
+    paths = {}
+    for file in all_files.to_list():
+        previous = paths.get(file.short_path)
+        if previous != None and previous != file.path:
+            fail("conflicting test runfile " + file.short_path + "; declare distinct artifact paths for different configurations")
+        paths[file.short_path] = file.path
     runfiles = ctx.runfiles(files = files).merge_all([
         target[DefaultInfo].default_runfiles
         for target in targets

@@ -2348,3 +2348,15 @@ ELF32 compilation/static linking and the other three ABIs are checked, all fifte
 EFI image bytes are preserved, and hosted-header/old-SDK rejection is explicit.
 See IA32-TOOLCHAIN-QUALIFICATION.md. Convert the selected BIOS/IA32 EFI contexts
 next; this prerequisite does not close those programs or complete world/pkgbase.
+
+### 2026-11-04: Selected IA32 EFI support archive
+
+The shared libefi graph now represents the selected AMD64 DO32 context through
+stand/efi/libefi32. Its nineteen-unit order, firmware ABI/flags and original
+Make contract are qualified with eighteen raw matches and one isolated original
+filename control. The ELF32/64 inspector is reusable and tested; independent
+readelf counts cover all 2,461 allocated-target relocations. A discovered
+multi-configuration runfiles collision is fixed with explicit artifact paths
+and a runner analysis guard. See LIBEFI32-QUALIFICATION.md. Continue real
+libsa32/EFI/interpreter/BIOS contexts; complete world/pkgbase/runtime and the
+broader gates remain open. No test subset establishes whole-system completion.

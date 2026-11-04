@@ -6109,3 +6109,12 @@ Schema 2 adds this platform; regenerate older SDK inputs with the maintained
 SDK stager before source qualification.
 Compilation and linking checks inspect ELF32 artifacts without executing them.
 Complete BIOS and IA32 EFI producer graphs remain separate qualification work.
+.Ss IA32 EFI support library qualification
+The selected libefi32 component uses the shared libefi source inventory with
+an explicit i386 artifact boundary and AMD64 DO32 firmware compiler policy.
+Its archive remains internal and does not create an installed userland library.
+The native test runner rejects different configured files sharing one runfiles
+path; callers must declare distinct artifact names for such test inputs.
+The ELF object inspector compares allocated bytes and symbolic relocations
+without rewriting objects or normalizing diagnostic strings.
+Debug and live firmware execution require separate qualification.

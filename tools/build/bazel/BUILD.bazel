@@ -255,3 +255,19 @@ bsd_python_test(name = "install_reference_libraries_test", src = "install-refere
 # Runtime data follows the consumer ABI, including source-built execution tools.
 load(":bsd_dtrace.bzl", "bsd_dtrace_runtime")
 bsd_dtrace_runtime(name = "dtrace_runtime_object", visibility = ["//visibility:public"])
+
+# Distinct configured outputs need explicit runfiles names. Skylib emits
+# symlink actions here; producer bytes and object identities are unchanged.
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+copy_file(name = "elf_contract_32", src = "//tools/build/bazel/tests/freestanding_boundary:resource_i386",
+    out = "elf_contract_inputs/i386/resource.o", allow_symlink = True)
+copy_file(name = "elf_contract_64", src = "//tools/build/bazel/tests/freestanding_boundary:resource_amd64",
+    out = "elf_contract_inputs/amd64/resource.o", allow_symlink = True)
+bsd_host_artifact_test(name = "elf_object_contract_test", src = "elf-object-contract-test.py",
+    data = ["elf_object_contract.py", ":elf_contract_32", ":elf_contract_64"],
+    args = ["--elf32", "$(rlocationpath :elf_contract_32)",
+            "--elf64", "$(rlocationpath :elf_contract_64)"], size = "small")
+bsd_host_artifact_test(name = "elf_object_collision_rejected", src = "elf-object-contract-test.py",
+    data = ["elf_object_contract.py", "//tools/build/bazel/tests/freestanding_boundary:resource_i386",
+            "//tools/build/bazel/tests/freestanding_boundary:resource_amd64"],
+    tags = ["manual"], size = "small")

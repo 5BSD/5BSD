@@ -5,7 +5,8 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # One hosted build contains all three target ABIs and native execution tools.
 [bsd_freestanding_artifact(name = "resource_" + arch,
-    src = "//tools/build/bazel/standalone_tests:resource_object", architecture = arch)
+    src = "//tools/build/bazel/standalone_tests:resource_object", architecture = arch,
+    visibility = ["//tools/build/bazel:__pkg__"])
  for arch in ["amd64", "aarch64", "riscv64"]]
 [bsd_host_artifact_test(name = "resource_" + arch + "_test",
     src = "//tools/build/bazel/standalone_tests:resource_test.py", data = [":resource_" + arch],
@@ -38,7 +39,8 @@ bsd_freestanding_artifact(name = "softcore_source", src = "//stand/ficl:softcore
 
 # IA32 boot producers are target artifacts, never native execution tools.
 bsd_freestanding_artifact(name = "resource_i386",
-    src = "//tools/build/bazel/standalone_tests:resource_object", architecture = "i386")
+    src = "//tools/build/bazel/standalone_tests:resource_object", architecture = "i386",
+    visibility = ["//tools/build/bazel:__pkg__"])
 bsd_host_artifact_test(name = "resource_i386_test",
     src = "//tools/build/bazel/standalone_tests:resource_test.py", data = [":resource_i386"],
     args = ["--object", "$(rlocationpath :resource_i386)", "--machine", "3", "--elf-class", "1"], size = "small")

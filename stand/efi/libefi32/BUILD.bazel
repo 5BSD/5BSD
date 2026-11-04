@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Preserve the source-owner library graph; this Make directory selects DO32.
+alias(name = "static_archive", actual = "//stand/efi/libefi:i386_archive", visibility = ["//visibility:public"])

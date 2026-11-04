@@ -43,7 +43,7 @@ class EfiLibrary(unittest.TestCase):
             data = run(args.ar, 'p', member=member, binary=True)
             with self.subTest(member=member):
                 self.assertGreaterEqual(len(data), 64)
-                self.assertEqual(data[:6], b'\x7fELF\x02\x01')
+                self.assertEqual(data[:6], b'\x7fELF' + bytes([1 if args.machine == 3 else 2, 1]))
                 self.assertEqual(struct.unpack_from('<H', data, 16)[0], 1)
                 self.assertEqual(struct.unpack_from('<H', data, 18)[0], args.machine)
                 if args.machine == 243:

@@ -1,3 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 filegroup(name = "boot2_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'bootinfo.h', 'elf.h', 'endian.h', 'exec.h', 'param.h', 'psl.h', 'reloc.h'], visibility = ["//stand/i386/boot2:__pkg__"])
+
+filegroup(name = "libefi_headers", srcs = ["_inttypes.h", "_limits.h", "_stdint.h", "_types.h", "endian.h", "metadata.h", "param.h"], visibility = ["//stand/efi/libefi:__pkg__"])

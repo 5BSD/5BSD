@@ -11104,3 +11104,9 @@ with #line 1 before the original output body. Make and Bazel retain original bod
 line numbers; assertion diagnostics no longer embed a Bazel configuration path.
 No DTrace provider, probe, audit hook or service authorization behavior changes.
 Firmware execution and separate-debug/source lookup remain explicit gates.
+
+2026-11-04: The IA32 libefi context preserves original assertions and per-file
+warning policy. No production macro filename mapping, NDEBUG, DTrace probe or
+audit hook change was introduced. Teken's raw assertion filename difference is
+retained and independently controlled. The new runfiles guard prevents a test
+from silently consuming the wrong configured ABI.
