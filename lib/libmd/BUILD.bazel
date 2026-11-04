@@ -479,3 +479,23 @@ bsd_pkg_layout(
     suffix_tags = ["dbg", "dev"],
     visibility = ["//visibility:public"],
 )
+
+# Production payload only; installed test-suite contributions remain separate.
+bsd_install_archive(
+    name = "production_install_archive",
+    visibility = ["//lib:__pkg__", "//tools/build/bazel:__pkg__"],
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

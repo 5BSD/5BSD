@@ -16,6 +16,22 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Library production archive prerequisites (2026-11-04)
+
+Seven existing library installation manifests now expose explicitly production
+archive contributions: libarchive, libexpat, liblzma, libmd, libz, libzstd and
+libc_nonshared. Their existing installed test contributions remain separate.
+Normal format-5 builds all seven archives and passes six selected targets (five
+runtime tests execute, source-settings cached). The captured assembly review
+passes 438 records, canonical members/metadata/links and zero duplicate
+non-directory paths across 429 members. A fresh original libc_nonshared reference
+matches its one installation record, twelve raw object contracts and archive
+order. Other library implementation/Make parity is not newly claimed by this
+assembly result. The fresh Make lib-family plan selects 173 immediate entries,
+not 173 libraries or a completion percentage. Full lib composition still lacks
+production installation owners and wrapper/test/configuration closure; see
+LIB-FAMILY-CLOSURE.md and LIBRARY-PRODUCTION-ARCHIVES-QUALIFICATION.md.
+
 ## compile_et original consumer qualification (2026-11-04)
 
 Maintained library reference inputs now support explicit shared ELF kind and

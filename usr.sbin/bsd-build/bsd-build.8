@@ -2170,6 +2170,16 @@ are checked; these comparisons do not establish complete bootstrap independence.
 See
 .Pa tools/build/bazel/REFERENCE-LIBRARY-INPUTS-QUALIFICATION.md .
 .Pp
+The libarchive, libexpat, liblzma, libmd, libz, libzstd and libc_nonshared
+owners expose explicit production_install_archive contributions from their
+existing production manifests.
+Installed test-suite contributions remain separate; these targets do not
+establish complete library-family or pkgbase coverage.
+See
+.Pa tools/build/bazel/LIBRARY-PRODUCTION-ARCHIVES-QUALIFICATION.md
+and
+.Pa tools/build/bazel/LIB-FAMILY-CLOSURE.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer
