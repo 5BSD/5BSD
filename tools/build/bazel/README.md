@@ -48848,3 +48848,19 @@ simple's ordinary version/help and unchanged Lua output are checked. See
 Next retain final-source reuse, then IA32/foreign entry profiles, complete bootloader
 aggregation (shared help/directories), firmware/interpreter execution and the
 broader system gates. Make remains production/default.
+
+### Original cross-loader library inputs (2026-11-04)
+
+The maintained reference helper now binds independent original archives by exact
+receipt/content hashes, target/compiler identity and actual LDADD use. Missing
+SDK archives remain missing; no copies or search-path fallback are used. ARM64
+and RISC-V original loader references pass with all five explicit libraries,
+FDT and EFI verification selected, each with 48 object recipes and full outputs.
+Seven validator methods and fourteen existing option methods pass through the
+maintained frontend. See
+[REFERENCE-LIBRARY-INPUTS-QUALIFICATION.md](REFERENCE-LIBRARY-INPUTS-QUALIFICATION.md).
+
+Next implement native cross-loader entry/FDT/link/raw-image selection from those
+references. These are original Make references, not completed Bazel cross loaders.
+All full-system, package, firmware, bootstrap and performance gates remain open.
+Make stays default.

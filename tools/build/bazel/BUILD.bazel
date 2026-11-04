@@ -108,7 +108,7 @@ bsd_python_test(
 bsd_python_test(
     name = "install_reference_options_test",
     src = "install-reference-options-test.py",
-    data = ["install_reference_options.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
+    data = ["install_reference_options.py", "install_reference_libraries.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
 )
 
 # Includes rejection of foreign userland and unqualified target execution.
@@ -248,3 +248,6 @@ bsd_host_artifact_test(name = "loader_version_test", src = "loader-version-test.
         "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/lib/libc.so.7)",
         "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7)",
         "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1)"])
+
+bsd_python_test(name = "install_reference_libraries_test", src = "install-reference-libraries-test.py",
+    data = ["install_reference_libraries.py"], size = "small", visibility = ["//visibility:public"])

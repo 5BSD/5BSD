@@ -4805,6 +4805,20 @@ IA32, foreign/alternate profiles, aggregate shared files/directories, full debug
 source lookup and firmware/interpreter execution remain qualification gates.
 See
 .Pa tools/build/bazel/EFI-INTERPRETERS-QUALIFICATION.md .
+.Ss Explicit original reference archive inputs
+The maintained
+.Pa tools/build/bazel/install-reference.py
+comparison helper accepts
+.Fl -library-inputs
+with exact format-1 JSON receipt/artifact SHA-256 bindings for LIB-prefixed
+Make variables.
+It requires matching passed target/compiler references under /usr/obj and
+verifies actual LDADD consumption before building.
+Archive inputs are rechecked before/after commands; missing SDK archives need
+no copies, search-path fallback or profile identity relaxation.
+This is a comparison-reference interface, not a production backend switch.
+See
+.Pa tools/build/bazel/REFERENCE-LIBRARY-INPUTS-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

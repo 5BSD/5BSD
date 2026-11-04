@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Build and stage a native Make component as a Bazel comparison baseline.
+"""Build and stage a Make component as a Bazel comparison baseline.
 
 This does not import Bazel outputs or establish package/runtime parity.
 """
@@ -14,6 +14,7 @@ import subprocess
 
 import libmd_environment
 import install_reference_options
+import install_reference_libraries
 from libmd_environment import BuildEnvironment, digest
 
 
@@ -47,6 +48,8 @@ def main():
                         help='explicit nonnegative BUILD_UTC input for reproducible verifier references')
     parser.add_argument('--local-generated-header', action='append', default=[],
                         help='require this generated header basename from the isolated component object directory')
+    parser.add_argument("--library-inputs", type=Path,
+                        help="explicit original archive/receipt bindings; no SDK archive copies")
     args = parser.parse_args()
     if args.build_utc is not None and not 0 <= args.build_utc <= 2**63 - 1:
         parser.error('--build-utc must fit a nonnegative signed 64-bit integer')
@@ -110,6 +113,18 @@ def main():
         if (len(identity) != 4 or identity[:3] != [str(objtop), environment.assignments['TARGET'], environment.assignments['TARGET_ARCH']] or
                 shlex.split(identity[3]) != environment.cc):
             raise ValueError('component define changed baseline SDK/target/compiler identity')
+    library_inputs, library_bindings = {}, {}
+    if args.library_inputs:
+        library_inputs, library_bindings = install_reference_libraries.load(
+            args.library_inputs, args.target_arch, src, Path(environment.compiler_selected))
+        for variable, record in library_inputs.items():
+            environment.options.append(variable + '=' + record['artifact'])
+            if environment.query(['-V', variable]).strip() != record['artifact']:
+                raise ValueError('original library override is ineffective: ' + variable)
+        link_inputs = shlex.split(environment.query(['-V', 'LDADD']))
+        if any(record['artifact'] not in link_inputs for record in library_inputs.values()):
+            raise ValueError('original archive override is absent from selected LDADD')
+        environment.inputs.update(library_bindings)
     if args.make_meta:
         install_reference_options.validate_metadata_component(environment.query)
     # Feature overrides can legitimately add/remove Makefile includes. Freeze
@@ -131,13 +146,15 @@ def main():
                              REFERENCE_OBJROOT=str(objects))
     implementations = {str(Path(__file__).resolve()): digest(Path(__file__)),
                        str(Path(libmd_environment.__file__).resolve()): digest(Path(libmd_environment.__file__)),
-                       str(Path(install_reference_options.__file__).resolve()): digest(Path(install_reference_options.__file__))}
+                       str(Path(install_reference_options.__file__).resolve()): digest(Path(install_reference_options.__file__)),
+                       str(Path(install_reference_libraries.__file__).resolve()): digest(Path(install_reference_libraries.__file__))}
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference' if args.target_arch == 'amd64' else 'cross-Make-installation-reference', 'target_architecture': args.target_arch,
                'component': str(component), 'jobs': args.jobs,
                'make_metadata': {'enabled': args.make_meta,
                                  'mode': 'meta missing-meta=yes nofilemon curdirok=yes' if args.make_meta else None},
                'component_options': component_options,
                'component_definitions': definitions,
+               'library_reference_inputs': library_inputs,
                'build_utc': args.build_utc,
                'local_generated_headers': args.local_generated_header,
                'sdk_reconfigured': False, 'source_hashes': source_hashes,
@@ -151,11 +168,13 @@ def main():
                'commands': []}
 
     def run(command, label):
+        install_reference_libraries.verify(library_bindings)
         log = output / (label + '.log')
         with log.open('w') as stream:
             result = subprocess.run(command, env=build_environment, stdout=stream, stderr=subprocess.STDOUT)
         receipt['commands'].append({'argv': command, 'status': result.returncode,
                                     'log': log.name, 'log_sha256': digest(log)})
+        install_reference_libraries.verify(library_bindings)
         if result.returncode:
             raise RuntimeError(label + ' failed; see ' + str(log))
 
