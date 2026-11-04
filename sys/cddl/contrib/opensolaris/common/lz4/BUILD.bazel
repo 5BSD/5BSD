@@ -10,7 +10,6 @@ cc_library(
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-
 filegroup(name = 'standalone_sa_lz4_sources', srcs = ['lz4.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['lz4.h'], visibility = ["//stand/libsa:__pkg__"])
@@ -18,3 +17,5 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['lz4.h'], visibility 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['lz4.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['lz4.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['lz4.h'], visibility = ["//stand/efi/boot1:__pkg__"])

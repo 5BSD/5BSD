@@ -36,3 +36,7 @@ bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['arch/amd64/multib
 
 load(":entry.bzl", "efi_loader_amd64_entry")
 efi_loader_amd64_entry()
+
+exports_files(['arch/amd64/amd64.ldscript'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])
+
+exports_files(['arch/amd64/start.S'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__'])

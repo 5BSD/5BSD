@@ -4776,6 +4776,20 @@ Full package aggregation, shared directory ownership and firmware execution
 remain unqualified.
 See
 .Pa tools/build/bazel/LOADER-STAGE-QUALIFICATION.md .
+.Ss Native EFI bootstrap program candidates
+.Li //stand/efi/boot1:image
+and
+.Li //stand/efi/gptboot:image
+build selected AMD64 PE applications from six native entry sources each and
+the native private EFI/standalone archives.
+Their packages also expose entry_objects, full, symbols, debug and
+install_manifest targets.
+gptboot retains its local debug/GPT policy and compressed manual.
+The existing loader_source_date_epoch setting selects PE timestamps.
+Other profiles, complete bootloader package aggregation, full debug/source lookup
+and firmware/device execution remain qualification gates.
+See
+.Pa tools/build/bazel/EFI-BOOTSTRAP-QUALIFICATION.md .
 .Ss Native standalone library candidates
 The native
 .Li //stand/libsa:static_archive

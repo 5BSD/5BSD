@@ -41,7 +41,6 @@ cc_library(name = "standalone_headers", hdrs = [':standalone_a_out_h', ':standal
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "libefi_headers", hdrs = ['bootp.h', 'iodesc.h', 'net.h', 'netif.h', 'stand.h'], visibility = ["//stand/efi/libefi:__pkg__"])
 
-
 load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
 load(":library.bzl", "standalone_sa_library")
 # Explicit candidate boundary: other ABIs and optional source inventories must
@@ -112,3 +111,9 @@ efi_sa_library(name = "efi_static_archive", deps = ['//contrib/bearssl:standalon
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['bootp.h', 'bootparam.h', 'geli/geliboot.h', 'iodesc.h', 'net.h', 'netif.h', 'nvstore.h', 'smbios.h', 'stand.h', 'verity_read.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
 exports_files(['verity_read.c'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['stand.h', 'ufsread.c'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['gpt.h', 'stand.h', 'ufsread.c'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+exports_files(['gpt.c'], visibility = ["//stand/efi/gptboot:__pkg__"])

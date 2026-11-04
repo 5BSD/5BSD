@@ -11018,3 +11018,12 @@ provider generation, including the real full dtrace tool closure; no probe or
 provider was suppressed to reduce build time. Runtime diagnostic execution and
 firmware errors still require VM tests. PE signature/key policy is not proven by
 conversion equality. See LOADER-PE-QUALIFICATION.md.
+
+## EFI boot1/gptboot source review (2026-11-04)
+
+The twelve actual entries retain the original protocol selection, UFS/ZFS reads,
+GPT decisions, verifier calls, diagnostics and warning/assertion policy. gptboot's
+EFI_DEBUG and its local ZFS exclusion match the maintained Make policy. Neither
+original firmware profile supplies a host DTrace provider or BSM source; none is
+dropped by native compilation. Actual firmware/filesystem/device/error execution
+still needs runtime qualification. See EFI-BOOTSTRAP-QUALIFICATION.md.

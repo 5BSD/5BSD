@@ -233,3 +233,7 @@ bsd_source_headers(name = 'boot2_headers', hdrs = ['audit.h'], visibility = ['//
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['audit.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['audit.h'], visibility = ["//stand/libsa:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['audit.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['audit.h'], visibility = ["//stand/efi/gptboot:__pkg__"])

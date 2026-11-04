@@ -51,3 +51,7 @@ filegroup(name = "standalone_ficl_headers", srcs = ['cpufunc.h', '_inttypes.h', 
 filegroup(name = "standalone_sa_arch_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'asm.h', 'atomic.h', 'cpufunc.h', 'endian.h', 'fpu.h', 'param.h', 'pcb.h', 'proc.h', 'segments.h', 'setjmp.h', 'signal.h', 'specialreg.h', 'ucontext.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['_inttypes.h', '_limits.h', '_pmap.h', '_stdint.h', '_types.h', 'asmacros.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'frame.h', 'metadata.h', 'param.h', 'pmap.h', 'psl.h', 'pte.h', 'segments.h', 'setjmp.h', 'specialreg.h', 'tss.h', 'vm.h', 'vmparam.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'param.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'param.h'], visibility = ["//stand/efi/gptboot:__pkg__"])

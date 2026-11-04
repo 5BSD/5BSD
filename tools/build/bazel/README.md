@@ -48818,3 +48818,18 @@ EFI regression target also passes all seven unittest methods. See
 This is a bootloader component contribution, not a complete bootloader package.
 Directory package-assignment aggregation, remaining profiles and firmware boot
 remain gates. Make stays production/default.
+
+### Native AMD64 boot1 and gptboot (2026-11-04)
+
+Two additional actual EFI programs now build their twelve entry sources, final
+ELF/debug/PE products and original installation selections natively. All twelve
+entry allocated payloads/relocations match unmodified Make; both final payloads
+and PE bytes match closed originals under the recorded archive controls, with
+gptboot PE also matching raw Make. All 784 consumed input pairs and both actual
+object/archive link orders are verified; manual/default metadata and unchanged
+Lua loader bytes agree. See [EFI-BOOTSTRAP-QUALIFICATION.md](EFI-BOOTSTRAP-QUALIFICATION.md).
+
+Next: final-source reuse, remaining interpreter/IA32 and foreign entry profiles,
+complete bootloader aggregation and firmware runtime. All broader world/kernel/
+module, debug, bootstrap/sandbox, publication and performance gates remain open.
+Make stays production/default.

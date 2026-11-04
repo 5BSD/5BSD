@@ -24,4 +24,10 @@ filegroup(name = "unconfigured_version_metadata", srcs = [], visibility = ["//vi
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['bootstrap.h', 'dev_net.h', 'disk.h', 'gfx_fb.h', 'load_elf.c', 'load_elf_obj.c', 'modinfo.h', 'part.h', 'paths.h', 'readin.h', 'reloc_elf.c', 'verified_root.h', 'veritydev.h'], visibility = ["//stand/efi/loader:__pkg__"])
 
-exports_files(['bcache.c', 'boot.c', 'commands.c', 'console.c', 'dev_net.c', 'devopen.c', 'disk.c', 'gfx_fb.c', 'interp.c', 'interp_backslash.c', 'interp_lua.c', 'interp_parse.c', 'load_elf32.c', 'load_elf32_obj.c', 'load_elf64.c', 'load_elf64_obj.c', 'ls.c', 'md.c', 'misc.c', 'modinfo.c', 'module.c', 'nvstore.c', 'part.c', 'reloc_elf32.c', 'reloc_elf64.c', 'self_reloc.c', 'tslog.c', 'vdisk.c', 'verified_root.c', 'verity_attach.c', 'verity_commands.c', 'veritydev.c', 'zfs_cmd.c'], visibility = ["//stand/efi/loader:__pkg__"])
+exports_files(['bcache.c', 'boot.c', 'commands.c', 'console.c', 'dev_net.c', 'devopen.c', 'disk.c', 'gfx_fb.c', 'interp.c', 'interp_backslash.c', 'interp_lua.c', 'interp_parse.c', 'load_elf32.c', 'load_elf32_obj.c', 'load_elf64.c', 'load_elf64_obj.c', 'ls.c', 'md.c', 'misc.c', 'modinfo.c', 'module.c', 'nvstore.c', 'part.c', 'reloc_elf32.c', 'reloc_elf64.c', 'tslog.c', 'vdisk.c', 'verified_root.c', 'verity_attach.c', 'verity_commands.c', 'veritydev.c', 'zfs_cmd.c'], visibility = ['//stand/efi/loader:__pkg__'])
+
+bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['bootstrap.h', 'paths.h', 'readin.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
+
+exports_files(['self_reloc.c'], visibility = ['//stand/efi/boot1:__pkg__', '//stand/efi/gptboot:__pkg__', '//stand/efi/loader:__pkg__'])

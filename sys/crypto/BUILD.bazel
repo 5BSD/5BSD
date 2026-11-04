@@ -406,7 +406,6 @@ bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
 
 bsd_source_headers(name = "libefi_headers", hdrs = ['intake.h'], visibility = ["//stand/efi/libefi:__pkg__"])
 
-
 filegroup(name = 'standalone_sa_md5c_sources', srcs = ['md5c.c'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['intake.h'], visibility = ["//stand/libsa:__pkg__"])
@@ -414,3 +413,5 @@ bsd_source_headers(name = "standalone_sa_headers", hdrs = ['intake.h'], visibili
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['intake.h'], visibility = ["//stand/libsa:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['intake.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['intake.h'], visibility = ["//stand/efi/boot1:__pkg__"])

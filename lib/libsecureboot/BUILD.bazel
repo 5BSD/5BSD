@@ -84,3 +84,7 @@ filegroup(name = 'standalone_sa_efi_brf_sources', srcs = ['brf.c', 'vets.c', 'ef
 filegroup(name = "public_trust_awk", srcs = ["public-trust.awk"], visibility = ["//tools/build/bazel:__pkg__"])
 
 bsd_source_headers(name = "efi_loader_entry_headers", hdrs = ['h/verify_file.h'], visibility = ["//stand/efi/loader:__pkg__"])
+
+bsd_source_headers(name = 'efi_boot1_headers', hdrs = ['h/verify_file.h'], visibility = ["//stand/efi/boot1:__pkg__"])
+
+bsd_source_headers(name = 'efi_gptboot_headers', hdrs = ['h/verify_file.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
