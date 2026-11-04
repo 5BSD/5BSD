@@ -10998,3 +10998,13 @@ compilation; adding host audit hooks to this firmware stage is not appropriate.
 Actual diagnostic output and failure behavior still require final firmware/VM
 qualification. Assertion filename differences are recorded, not normalized away
 in production. See LOADER-ENTRY-QUALIFICATION.md.
+
+## EFI final ELF link (2026-11-04)
+
+The complete selected entry object order and normal private archive extraction
+preserve linker-set command registrations and original diagnostic/assertion code.
+The final payload comparison checks allocated section bytes, addresses, program
+headers and symbol closure against an independently linked original under the
+recorded filename controls. No dead-code policy, assertion suppression or runtime
+audit/provider substitution was added. Firmware diagnostic execution still needs
+VM qualification. See LOADER-LINK-QUALIFICATION.md.

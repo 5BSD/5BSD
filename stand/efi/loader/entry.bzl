@@ -5,6 +5,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
 load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
 load("//stand/liblua:config.bzl", "loader_lua_paths")
+load("//tools/build/bazel:bsd_firmware_link.bzl", "bsd_firmware_link")
 
 # This inventory is complete for the selected Make profile. Unsupported profiles
 # are incompatible instead of silently retaining a different source selection.
@@ -98,4 +99,12 @@ def efi_loader_amd64_entry():
         bsd_component_objects(name = "entry_" + name + "_objects", group = ":entry_" + name,
             target_compatible_with = compatible)
     native.filegroup(name = "entry_objects", srcs = [":entry_" + row[0] + "_objects" for row in sources],
+        target_compatible_with = compatible, visibility = ["//visibility:public"])
+    bsd_firmware_link(name = "loader_lua_full", objects = [":entry_objects"],
+        output = "loader_lua.sym.full", script = "arch/amd64/amd64.ldscript",
+        archives = ["//stand/efi/libluaefi:static_archive",
+            "//stand/efi/libefi:static_archive", "//stand/efi/libsaefi:static_archive"],
+        linkopts = ["-Wl,-znocombreloc", "-Wl,-Bsymbolic,-znotext", "-pie"],
+        features = ["-bsd_riscv_userland_abi"],
+        object_order = ['autoload.o', 'bootinfo.o', 'conf.o', 'copy.o', 'decompress.o', 'efi_main.o', 'framebuffer.o', 'main.o', 'memdisk.o', 'self_reloc.o', 'vers.o', 'gfx_fb.o', '8x16.o', 'acpi_detect.o', 'amd64_tramp.o', 'start.o', 'elf64_freebsd.o', 'trap.o', 'multiboot2.o', 'exc.o', 'nullconsole.o', 'comconsole.o', 'spinconsole.o', 'veritydev.o', 'verity_attach.o', 'verity_read.o', 'g_verity_verify.o', 'g_verity_transition.o', 'verity_commands.o', 'boot.o', 'commands.o', 'console.o', 'devopen.o', 'interp.o', 'interp_backslash.o', 'interp_parse.o', 'ls.o', 'misc.o', 'modinfo.o', 'module.o', 'nvstore.o', 'pnglite.o', 'tslog.o', 'verified_root.o', 'load_elf32.o', 'load_elf32_obj.o', 'reloc_elf32.o', 'load_elf64.o', 'load_elf64_obj.o', 'reloc_elf64.o', 'disk.o', 'part.o', 'vdisk.o', 'dev_net.o', 'bcache.o', 'md.o', 'interp_lua.o', 'zfs_cmd.o'],
         target_compatible_with = compatible, visibility = ["//visibility:public"])

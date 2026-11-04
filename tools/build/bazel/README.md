@@ -48779,3 +48779,16 @@ Next close the original-library reference and final native entry/archive links,
 then qualify installation/debug, PE conversion and runtime/boot. ARM64/RISC-V entry
 profiles and alternate inventories remain open, as do the broader system gates.
 Make remains production/default.
+
+### AMD64 EFI final ELF link (2026-11-04)
+
+The selected loader now links all 58 native entry objects and three native private
+archives through cc_common and the selected C++ toolchain. Its runtime ELF payload
+matches an independently linked original after six original compiler filename-only
+controls. Raw differences remain recorded; production assertions/output are not
+rewritten. The final-source repeat reports six passing ordering cases and the
+identical linked hash. See [LOADER-LINK-QUALIFICATION.md](LOADER-LINK-QUALIFICATION.md).
+
+Next: debug splitting, explicit PE timestamp input/conversion and installation
+metadata, followed by firmware execution. ARM64/RISC-V entry/link profiles and all
+broader system completion gates remain open. Make remains production/default.
