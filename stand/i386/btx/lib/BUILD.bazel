@@ -1,17 +1,39 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
-cc_library(name = 'btxcsu', srcs = ['btxcsu.S'], deps = ['//stand/i386/common:bootargs_header'], features = ['-opt', '-bsd_debug_info', '-bsd_ssp', '-bsd_elf_security', '-bsd_stable_debug_directory'], copts = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-I.', '-Istand/i386/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments'], target_compatible_with = ['@platforms//os:freebsd', '@platforms//cpu:x86_64'])
-bsd_component_object(name = 'btxcsu_object', group = ":btxcsu", out = 'btxcsu.o', visibility = ["//visibility:public"])
-cc_library(name = 'btxsys', srcs = ['btxsys.S'], deps = [], features = ['-opt', '-bsd_debug_info', '-bsd_ssp', '-bsd_elf_security', '-bsd_stable_debug_directory'], copts = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-I.', '-Istand/i386/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments'], target_compatible_with = ['@platforms//os:freebsd', '@platforms//cpu:x86_64'])
-bsd_component_object(name = 'btxsys_object', group = ":btxsys", out = 'btxsys.o', visibility = ["//visibility:public"])
-cc_library(name = 'btxv86', srcs = ['btxv86.S'], deps = [], features = ['-opt', '-bsd_debug_info', '-bsd_ssp', '-bsd_elf_security', '-bsd_stable_debug_directory'], copts = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-I.', '-Istand/i386/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments'], target_compatible_with = ['@platforms//os:freebsd', '@platforms//cpu:x86_64'])
-bsd_component_object(name = 'btxv86_object', group = ":btxv86", out = 'btxv86.o', visibility = ["//visibility:public"])
-cc_binary(name = "crt0_full", srcs = [":btxcsu_object", ":btxsys_object", ":btxv86_object"], features = ['-opt', '-bsd_debug_info', '-bsd_ssp', '-bsd_elf_security', '-bsd_stable_debug_directory'], linkopts = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-I.', '-Istand/i386/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments', '-nostdlib', '-Wl,-r', '-Wl,-znow', '-Wl,-zrelro', '-Wl,--no-rosegment'], target_compatible_with = ['@platforms//os:freebsd', '@platforms//cpu:x86_64'])
-bsd_debug_split(name = "crt0", src = ":crt0_full", binary_name = "crt0.o", debug_name = "crt0.o.debug", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs", visibility = ["//stand/i386/boot2:__pkg__"])
-cc_library(name = "boot2_headers", hdrs = ["btxv86.h"], visibility = ["//stand/i386/boot2:__pkg__"])
-
+load("//tools/build/bazel:bsd_relocatable_link.bzl", "bsd_relocatable_link")
+load("//tools/build/bazel:bsd_freestanding_artifact.bzl", "bsd_freestanding_artifact")
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "bios_libi386_headers", hdrs = ['btxv86.h'], visibility = ["//stand/i386/libi386:__pkg__"])
+# BTX startup is a target ELF32 relocatable object, never a hosted executable.
+_COMPAT = ["@platforms//os:freebsd", "@platforms//cpu:x86_32"]
+_SOURCES = ["btxcsu", "btxsys", "btxv86"]
+_CFLAGS = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-Istand/libsa/geli', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-Istand/i386/common', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments'] + select({
+    "//tools/build/bazel/config:loader_geli_enabled": ["-DLOADER_GELI_SUPPORT"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:loader_disk_enabled": ["-DLOADER_DISK_SUPPORT"], "//conditions:default": [],
+})
+[cc_library(name = name, srcs = [name + ".S"],
+    deps = ["//stand/i386/common:bootargs_header"] if name == "btxcsu" else [],
+    copts = _CFLAGS, features = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"],
+    linkstatic = True, target_compatible_with = _COMPAT) for name in _SOURCES]
+[bsd_component_object(name = name + "_native_object", group = ":" + name,
+    out = name + ".o", target_compatible_with = _COMPAT) for name in _SOURCES]
+bsd_relocatable_link(name = "crt0_full_native", objects = [":" + name + "_native_object" for name in _SOURCES],
+    output = "crt0.o.full", linker = "@bsd_sdk//toolchain:bin/ld.lld", runtime = ["@bsd_sdk//toolchain:ld.lld_runtime"],
+    linkopts = ["-m", "elf_i386_fbsd", "-z", "now", "-z", "relro", "--no-rosegment"],
+    target_compatible_with = _COMPAT)
+bsd_debug_split(name = "crt0_symbols", src = ":crt0_full_native",
+    binary_name = "crt0.o", debug_name = "crt0.o.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+    target_compatible_with = _COMPAT)
+[bsd_freestanding_artifact(name = name + "_object", src = ":" + name + "_native_object", architecture = "i386",
+    visibility = ["//visibility:public"]) for name in _SOURCES]
+bsd_freestanding_artifact(name = "crt0_full", src = ":crt0_full_native", architecture = "i386", visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "crt0", src = ":crt0_symbols", architecture = "i386", visibility = ["//visibility:public"])
+
+# Physical headers retain the existing consumers' source-only interfaces.
+cc_library(name = "boot2_headers", hdrs = ["btxv86.h"], visibility = ["//stand/i386/boot2:__pkg__"])
+bsd_source_headers(name = "bios_libi386_headers", hdrs = ["btxv86.h"], visibility = ["//stand/i386/libi386:__pkg__"])
+filegroup(name = "crt0_debug", srcs = [":crt0"], output_group = "debug_files", visibility = ["//visibility:public"])

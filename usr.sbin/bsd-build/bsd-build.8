@@ -6157,3 +6157,12 @@ Make defaults false and apply only to the corresponding compiler contexts.
 Format-5 build-settings can override these values through the maintained frontend.
 The archive remains internal and adds no installed library.
 Host inspection and compiler comparisons do not execute BIOS services.
+.Ss BTX startup construction
+The BIOS BTX startup object uses the i386 standalone toolchain and an explicit
+ordered relocatable link, rather than a hosted executable target with manual
+32-bit flags.
+Public object and crt0 aliases cross the standalone artifact boundary.
+Separate debug output is selected through the preserved debug output group.
+The host artifact test checks ELF32 relocatable identity, startup position,
+platform symbols and debug-link integrity; boot2 remains a checked consumer.
+These construction checks do not execute BIOS firmware.

@@ -279,3 +279,11 @@ bsd_host_artifact_test(name = "standalone_i386_archive_test", src = "standalone-
             "--private", "$(rlocationpath //stand/efi/libsa32efi:static_archive)",
             "--ar", "$(rlocationpath @bsd_sdk//toolchain:bin/llvm-ar)",
             "--runtime", "$(rlocationpaths @bsd_sdk//toolchain:archive_inputs)"], size = "small")
+
+bsd_host_artifact_test(name = "btx_startup_test", src = "btx-startup-test.py",
+    data = ["elf_object_contract.py", "//stand/i386/btx/lib:crt0_full", "//stand/i386/btx/lib:crt0", "//stand/i386/btx/lib:crt0_debug"] + [
+        "//stand/i386/btx/lib:" + name + "_object" for name in ["btxcsu", "btxsys", "btxv86"]],
+    args = ["--full", "$(location //stand/i386/btx/lib:crt0_full)", "--stripped", "$(location //stand/i386/btx/lib:crt0)",
+        "--debug", "$(location //stand/i386/btx/lib:crt0_debug)", "--objects"] + [
+        "$(location //stand/i386/btx/lib:" + name + "_object)" for name in ["btxcsu", "btxsys", "btxv86"]],
+    size = "small", visibility = ["//visibility:public"])

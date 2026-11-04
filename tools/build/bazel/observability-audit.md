@@ -11145,3 +11145,11 @@ this migration does not remove or disable one. Disk diagnostics remain a typed
 per-source build option and are not treated as security audit delivery. Native
 archive/API checks and original compiler controls cover construction only; BIOS
 execution, PXE behavior and hardware console/disk observation remain open.
+
+## BTX startup object (2026-11-04)
+
+The original btxcsu, btxsys and btxv86 assembly sources are unchanged. Explicit
+ELF32 standalone compilation replaces the hosted ABI construction. Startup and
+system-call trampoline symbols and relocations match original Make; no tracing
+or audit provider is removed. The host test inspects startup ordering and debug
+integrity. BIOS execution and guest observation remain open.

@@ -2412,3 +2412,16 @@ reviewed; all sixteen existing EFI images remain unchanged after source ownershi
 moves to the new package. See LIBI386-QUALIFICATION.md. Next compose the remaining
 BIOS loader and GPT/ZFS/ISO/PXE programs; full debug/system/pkgbase/runtime and
 performance acceptance remain open.
+
+## BTX startup boundary checkpoint (2026-11-04)
+
+The three BTX startup assemblers now use the verified i386 standalone toolchain,
+an explicit ordered ET_REL link and debug split through public artifact aliases.
+Their six compiler/full/stripped/debug allocated and symbolic contracts match
+original Make directly; full file/debug bytes differ and remain open. Twenty-three
+frontend tests pass, including the existing boot2 and legacy BIOS format suites.
+The actual compiler/link/split chain is reviewed and sixteen previous EFI images
+remain unchanged. See BTX-STARTUP-QUALIFICATION.md. A complete original BIOS Lua
+reference passes its unchanged size limit with 16,600 bytes available. Next
+compose its native entry/link/strip/BTX image and installation pipeline; complete
+system, debug, pkgbase, runtime/boot and performance acceptance remains open.
