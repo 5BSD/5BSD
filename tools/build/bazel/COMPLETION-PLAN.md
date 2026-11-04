@@ -16,6 +16,19 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Native AMD64 thread debugging library (2026-11-04)
+
+libthread_db now builds its actual four sources, AMD64 register helper, original
+version map and production installation instead of providing only a header.
+Independent Make comparison passes all eight raw regular/PIC object contracts,
+static archive order, version-script/header bytes, seven metadata records,
+original/native debug CRCs and shared ELF metadata/ordered dependencies. All ten
+debugger-supplied ps_* callback imports remain unresolved, matching original Make;
+no callback substitutes are linked. This is build/install/interface qualification,
+not debugger runtime. Other ABIs, actual thread/process control, full lib/world/
+pkgbase/bootstrap/cache/sandbox/performance remain open. See
+THREAD-DB-NATIVE-QUALIFICATION.md. Make stays default; BIP excluded.
+
 ## Process-library production installation (2026-11-04)
 
 Native libproc/libprocstat/librtld_db now declare original production headers,

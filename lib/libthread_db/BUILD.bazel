@@ -2,3 +2,50 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "thread_db_header", hdrs = ["thread_db.h"], strip_include_prefix = ".",
     visibility = ["//lib/libthr:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "private_headers", hdrs = ["thread_db_int.h", "libpthread_db.h", "kse.h"], strip_include_prefix = ".")
+cc_library(name = "thread_db", srcs = ["thread_db.c", "//lib/libthread_db/arch/amd64:libpthread_md.c", "libpthread_db.c", "libthr_db.c"],
+    deps = [":thread_db_header"], implementation_deps = [":private_headers"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":thread_db"], target_compatible_with = _PLATFORM)
+bsd_configured_version_map(name = "version_map", symbol_maps = ["Symbol.map"], versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk", cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang", compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk", awk_runtime = "@bsd_sdk//toolchain:awk_runtime", redirect = "@bsd_sdk//toolchain:stdout_redirect")
+# ps_* process-service callbacks are supplied by the debugger using this DSO,
+# as in original Make; do not link fake callback implementations into it.
+cc_shared_library(name = "thread_db_shared", deps = [":thread_db"], shared_lib_name = "libthread_db.so.3",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-Wl,-soname,libthread_db.so.3", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# Production contribution only; selected installed tests require separate closure.
+bsd_install_archive(
+    name = "production_install_archive",
+    visibility = ["//lib:__pkg__", "//tools/build/bazel:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libthread_db","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+bsd_component_archive(name = "pic_archive", groups = [":thread_db"], pic = True, target_compatible_with = _PLATFORM)

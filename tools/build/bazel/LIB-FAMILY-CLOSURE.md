@@ -25,7 +25,7 @@ production contributions and their explicit remaining scope.
 | lib/libproc | Default production installation now qualifies against fresh Make; original installed ATF/process-control tests, CTF alternatives and other ABIs remain. |
 | lib/libprocstat | Default production installation, all 30 manual hardlinks and native self-process/argv runtime qualify; alternate options/ABIs remain. |
 | lib/librtld_db | Default production installation now qualifies; the header-only cycle break is retained. Loader/process operations and other profiles remain. |
-| lib/libthread_db | Current BUILD exports only thread_db.h to libthr. Original Make selects four C sources, architecture helpers and versioned libthread_db.so.3. Actual library conversion is still required. |
+| lib/libthread_db | Native AMD64 library/production installation now passes original regular/PIC and interface comparisons. Actual debugger runtime and other architectures remain; see THREAD-DB-NATIVE-QUALIFICATION.md. |
 | lib/libcapsicum | Header provider exists; original Make also installs capsicum_helpers.3 and MLINKS. Reconcile production header/manual and installed tests. |
 | lib/csu | AMD64/common/tests packages exist beneath the Make architecture wrapper; full parent/configuration/foreign composition is not established. |
 | lib/libcasper | Native child producers exist; reconcile wrapper's libcasper/services/test recursion without selecting arbitrary descendants. |

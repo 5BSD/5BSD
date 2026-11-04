@@ -2189,6 +2189,14 @@ Original installed process-control tests and alternate profiles remain required.
 See
 .Pa tools/build/bazel/PROCESS-LIBRARY-INSTALLATION-QUALIFICATION.md .
 .Pp
+Explicit libthread_db targets now build the native AMD64 library, architecture
+helper, version script and production installation contribution.
+Regular/PIC objects, metadata, versioned interface and debug CRCs compare against
+original Make; process-service callbacks remain supplied by the debugger.
+This does not qualify debugger/thread-control runtime or other architectures.
+See
+.Pa tools/build/bazel/THREAD-DB-NATIVE-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

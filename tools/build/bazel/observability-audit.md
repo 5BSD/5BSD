@@ -11370,3 +11370,12 @@ remain present and unchanged; installation comparisons do not establish probe
 firing. libproc's process creation/ptrace and runtime-linker operations still need
 operation-level audit-delivery/probe review with the original process-control
 suite. The read-only self-process test does not close that coverage question.
+
+## Native AMD64 libthread_db (2026-11-04)
+
+The four original sources and both linker-set agents are carried forward. The
+original Makefile declares no dedicated DTrace/audit provider. The library delegates
+process/thread control to the real debugger's ps_* callbacks; matching imports
+are retained and no callback substitute is linked. Thread/register/TLS/event and
+ptrace audit/probe delivery must be qualified with that debugger integration.
+Build/install/version comparisons do not close runtime observability coverage.
