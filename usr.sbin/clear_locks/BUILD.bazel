@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_nis.bzl", "nis_runtime_deps", "nis_runtime_linkopts")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-cc_binary(name = "clear_locks", srcs = ["clear_locks.c"], deps = ["//lib/librpcsvc:rpcsvc", "//include/rpcsvc:locking_protocol_headers"], dynamic_deps = ["//lib/librpcsvc:rpcsvc_shared"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+cc_binary(name = "clear_locks", srcs = ["clear_locks.c"], deps = ["//lib/librpcsvc:rpcsvc", "//include/rpcsvc:locking_protocol_headers"] + nis_runtime_deps(), dynamic_deps = ["//lib/librpcsvc:rpcsvc_shared"], copts = ["-fPIE"], linkopts = ["-pie"] + nis_runtime_linkopts(), linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 utility_installation(name = "install_manifest", program = "clear_locks", manual = "clear_locks.8", package = "nfs", bindir = "/usr/sbin", man_section = "8", manual_aliases = [])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

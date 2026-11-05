@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+nis_program(name = "ypbind", manual = "ypbind.8",
+    srcs = ['ypbind.c', 'yp_ping.c', 'yp_ping.h'],
+    defines = ['DAEMON'])

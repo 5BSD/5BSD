@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+nis_program(name = "ypset", manual = "ypset.8",
+    srcs = ['ypset.c'])

@@ -24,7 +24,7 @@ cc_library(
     name = "protocol_headers",
     hdrs = [":yp.h"],
     include_prefix = "rpcsvc",
-    visibility = ["//usr.bin/ypcat:__pkg__", "//usr.bin/ypmatch:__pkg__", "//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv/common:__pkg__"],
+    visibility = ["//usr.bin/ypcat:__pkg__", "//usr.bin/ypmatch:__pkg__", "//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv/common:__pkg__"] + ["//usr.sbin/ypbind:__pkg__", "//usr.sbin/yp_mkdb:__pkg__", "//usr.sbin/yppoll:__pkg__", "//usr.sbin/yppush:__pkg__", "//usr.sbin/ypset:__pkg__", "//usr.sbin/ypserv:__pkg__", "//usr.sbin/rpc.ypxfrd:__pkg__", "//usr.sbin/rpc.yppasswdd:__pkg__", "//usr.sbin/rpc.ypupdated:__pkg__", "//usr.sbin/ypldap:__pkg__"],
 )
 
 cc_library(

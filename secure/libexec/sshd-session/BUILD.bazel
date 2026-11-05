@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_nis.bzl", "nis_runtime_deps", "nis_runtime_linkopts")
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
@@ -63,7 +64,7 @@ bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = 
 [filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
 cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
 cc_import(name = "traced", alwayslink = True, objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _DEPS)
-cc_binary(name = "sshd-session", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}), dynamic_deps = _DYNAMIC, linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_binary(name = "sshd-session", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}) + nis_runtime_deps(), dynamic_deps = _DYNAMIC, linkopts = ["-pie"] + nis_runtime_linkopts(), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 utility_installation(name = "install_manifest", program = "sshd-session", manual = None, package = "ssh", bindir = "/usr/libexec")
 bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     directories = {d: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=ssh", "dbg"]}) for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]},

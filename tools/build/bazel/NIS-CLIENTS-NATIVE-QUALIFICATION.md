@@ -85,3 +85,19 @@ bazel-usrbin-nis-default-regression-r1-20261104. The retained comparison in
 bazel-usrbin-nis-default-review-r1-20261104 verifies all 801 default production
 archive/request/directory outputs remain byte-identical to the previous passing
 default capture. Optional dependency corrections do not alter the default set.
+
+## Public libc ABI boundary follow-up (2026-11-05)
+
+The administration integration exposed the feature-disabled bootstrap libc at
+NIS-enabled RPC/wrapper consumer links. The new shared_abi_interface depends on
+the actual native libc shared-library producer through cc_import, plus the
+original nonshared wrappers. It does not propagate libc implementation linking
+inputs into executable links. Strict original yp_mkdb ELF comparison caught and
+rejected an earlier candidate with a direct libsys dependency; the corrected
+candidate needs only libc, matching Make. No unresolved-symbol allowance, host
+DSO substitution or linker-script change was introduced.
+
+Optional RPC/wrapper consumers now select that declared ABI when NIS is enabled.
+Legacy shared_link_interface consumers remain to be migrated and checked against
+original ELF dependencies; this change does not establish global ABI parity.
+See NIS-ADMIN-NATIVE-QUALIFICATION.md for construction and bounded runtime evidence.

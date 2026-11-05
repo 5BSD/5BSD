@@ -5,7 +5,9 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
     name = "wrap",
     srcs = ['//contrib/tcp_wrappers:clean_exit.c', '//contrib/tcp_wrappers:diag.c', '//contrib/tcp_wrappers:eval.c', '//contrib/tcp_wrappers:fix_options.c', '//contrib/tcp_wrappers:fromhost.c', '//contrib/tcp_wrappers:hosts_access.c', '//contrib/tcp_wrappers:hosts_ctl.c', '//contrib/tcp_wrappers:misc.c', '//contrib/tcp_wrappers:myvsyslog.c', '//contrib/tcp_wrappers:options.c', '//contrib/tcp_wrappers:percent_m.c', '//contrib/tcp_wrappers:percent_x.c', '//contrib/tcp_wrappers:refuse.c', '//contrib/tcp_wrappers:rfc931.c', '//contrib/tcp_wrappers:shell_cmd.c', '//contrib/tcp_wrappers:socket.c', '//contrib/tcp_wrappers:tli.c', '//contrib/tcp_wrappers:update.c', '//contrib/tcp_wrappers:workarounds.c', 'libvars.c'],
-    deps = ["//contrib/tcp_wrappers:headers"],
+    deps = ["//contrib/tcp_wrappers:headers"] + select({
+        "//tools/build/bazel/config:nis_enabled": ["//lib/libc:shared_abi"], "//conditions:default": [],
+    }),
     local_defines = ['FACILITY=LOG_AUTH', 'HOSTS_ACCESS', 'NETGROUP', 'DAEMON_UMASK=022', 'REAL_DAEMON_DIR=\\"/usr/libexec\\"', 'PROCESS_OPTIONS', 'SEVERITY=LOG_INFO', 'RFC931_TIMEOUT=10', 'HOSTS_DENY=\\"/etc/hosts.deny\\"', 'HOSTS_ALLOW=\\"/etc/hosts.allow\\"', 'SYS_ERRLIST_DEFINED', 'ALWAYS_HOSTNAME', 'USE_STRSEP'] + select({
         "//tools/build/bazel/config:nis_enabled": [],
         "//conditions:default": ["USE_GETDOMAIN"],
@@ -22,7 +24,7 @@ cc_shared_library(
     name = "wrap_shared",
     deps = [":wrap"],
     shared_lib_name = "libwrap.so.6",
-    user_link_flags = ["-Wl,-z,defs", "-Wl,-soname,libwrap.so.6"],
+    user_link_flags = ["-Wl,-z,defs", "-Wl,-soname,libwrap.so.6"] + select({"//tools/build/bazel/config:nis_enabled": ["-nodefaultlibs"], "//conditions:default": []}),
     visibility = ["//visibility:public"],
 )
 

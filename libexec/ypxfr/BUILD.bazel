@@ -54,3 +54,6 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+exports_files(["yp_dbwrite.c", "ypxfr_getmap.c", "ypxfr_misc.c"], visibility = ["//usr.sbin/ypbind:__pkg__", "//usr.sbin/yp_mkdb:__pkg__", "//usr.sbin/yppoll:__pkg__", "//usr.sbin/yppush:__pkg__", "//usr.sbin/ypset:__pkg__", "//usr.sbin/ypserv:__pkg__", "//usr.sbin/rpc.ypxfrd:__pkg__", "//usr.sbin/rpc.yppasswdd:__pkg__", "//usr.sbin/rpc.ypupdated:__pkg__", "//usr.sbin/ypldap:__pkg__"])
+cc_library(name = "server_headers", hdrs = ["ypxfr_extern.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/ypbind:__pkg__", "//usr.sbin/yp_mkdb:__pkg__", "//usr.sbin/yppoll:__pkg__", "//usr.sbin/yppush:__pkg__", "//usr.sbin/ypset:__pkg__", "//usr.sbin/ypserv:__pkg__", "//usr.sbin/rpc.ypxfrd:__pkg__", "//usr.sbin/rpc.yppasswdd:__pkg__", "//usr.sbin/rpc.ypupdated:__pkg__", "//usr.sbin/ypldap:__pkg__"])

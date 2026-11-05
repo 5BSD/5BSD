@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+nis_rpc(name = "generate_ypupdate_prot_h", schema = "//include/rpcsvc:ypupdate_prot.x", output = "ypupdate_prot.h", mode = "-h", flags = ["-I", "-C"], state = "")
+nis_rpc(name = "generate_ypupdate_prot_svc_c", schema = "//include/rpcsvc:ypupdate_prot.x", output = "ypupdate_prot_svc.c", mode = "-m", flags = ["-I", "-C"], state = "s/static int _rpcsvcstate/int _rpcsvcstate/g")
+cc_library(name = "generated_headers", hdrs = [":ypupdate_prot.h"], includes = ["."])
+nis_program(name = "rpc.ypupdated", manual = "",
+    srcs = [':generate_ypupdate_prot_svc_c', 'ypupdated_main.c', '//usr.sbin/ypserv:yp_error.c', 'update.c', 'ypupdated_server.c', 'yp_dbdelete.c', 'yp_dbupdate.c', 'ypupdated_extern.h', '//usr.sbin/ypserv:yp_dblookup.c', '//libexec/ypxfr:yp_dbwrite.c'],
+    deps = ['//usr.sbin/ypserv:headers', '//libexec/ypxfr:server_headers', ':generated_headers', '//lib/librpcsvc:rpcsvc'],
+    shared = ['//lib/librpcsvc:rpcsvc_shared'])

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+nis_rpc(name = "generate_ypxfrd_h", schema = "//include/rpcsvc:ypxfrd.x", output = "ypxfrd.h", mode = "-h", flags = ["-I", "-C"], state = "")
+nis_rpc(name = "generate_ypxfrd_svc_c", schema = "//include/rpcsvc:ypxfrd.x", output = "ypxfrd_svc.c", mode = "-m", flags = ["-I", "-C"], state = "s/static int _rpcsvcstate/int _rpcsvcstate/g")
+cc_library(name = "generated_headers", hdrs = [":ypxfrd.h"], includes = ["."])
+nis_program(name = "rpc.ypxfrd", manual = "rpc.ypxfrd.8",
+    srcs = [':generate_ypxfrd_svc_c', 'ypxfrd_server.c', '//usr.sbin/ypserv:yp_error.c', '//usr.sbin/ypserv:yp_access.c', 'ypxfrd_main.c', 'ypxfrd_extern.h'],
+    deps = [':generated_headers', '//usr.sbin/ypserv:headers', '//lib/librpcsvc:rpcsvc'],
+    shared = ['//lib/librpcsvc:rpcsvc_shared'],
+    defines = ['XFRBLOCKSIZE=65535'])

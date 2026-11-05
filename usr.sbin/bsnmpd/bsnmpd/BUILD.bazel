@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_nis.bzl", "nis_runtime_deps", "nis_runtime_linkopts")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load(":generation.bzl", "snmp_tree")
 snmp_tree(name = "generated", source = "//contrib/bsnmp/snmpd:tree.def", includes = ["//contrib/bsnmp/lib:tc.def"],
@@ -11,10 +12,10 @@ filegroup(name = "tree_headers", srcs = [":generated"], output_group = "headers"
 cc_library(name = "generated_headers", hdrs = [":tree_headers"], strip_include_prefix = "generated")
 _WRAP = "//tools/build/bazel/config:tcp_wrappers_enabled"
 cc_binary(name = "bsnmpd", srcs = [":tree_source"] + ["//contrib/bsnmp/snmpd:" + source for source in ["main.c", "action.c", "config.c", "export.c", "trap.c", "trans_lsock.c", "trans_inet.c"]],
-    deps = [":generated_headers", "//contrib/bsnmp/snmpd:headers", "//lib/libbegemot:begemot", "//lib/libbsnmp/libbsnmp:bsnmp"] + select({_WRAP: ["//lib/libwrap:wrap"], "//conditions:default": []}),
+    deps = [":generated_headers", "//contrib/bsnmp/snmpd:headers", "//lib/libbegemot:begemot", "//lib/libbsnmp/libbsnmp:bsnmp"] + select({_WRAP: ["//lib/libwrap:wrap"], "//conditions:default": []}) + nis_runtime_deps(),
     dynamic_deps = ["//lib/libbegemot:begemot_shared", "//lib/libbsnmp/libbsnmp:bsnmp_shared"] + select({_WRAP: ["//lib/libwrap:wrap_shared"], "//conditions:default": []}),
     local_defines = ["USE_LIBBEGEMOT", "HAVE_STDINT_H", "HAVE_INTTYPES_H", "HAVE_ERR_H", "HAVE_STRLCPY"] + select({"//tools/build/bazel/config:openssl_enabled": ["HAVE_LIBCRYPTO"], "//conditions:default": []}) + select({_WRAP: ["USE_TCPWRAPPERS"], "//conditions:default": []}),
-    copts = ["-fPIE"], linkopts = ["-pie", "-Wl,-export-dynamic"], linkstatic = True,
+    copts = ["-fPIE"], linkopts = ["-pie", "-Wl,-export-dynamic"] + nis_runtime_linkopts(), linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 
 load(":installation.bzl", "daemon_installation")
@@ -24,9 +25,9 @@ exports_files(["generation.bzl", "generate.py"], visibility = ["//usr.sbin/bsnmp
 
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 cc_binary(name = "runtime_test", srcs = ["runtime_test.c"],
-    deps = ["//lib/atf/libatf-c:atf_c"],
+    deps = ["//lib/atf/libatf-c:atf_c"] + nis_runtime_deps(),
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
-    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True)
+    copts = ["-fPIE"], linkopts = ["-pie"] + nis_runtime_linkopts(), linkstatic = True)
 bsd_atf_test(name = "native_runtime", body = ":runtime_test",
     case_name = "private_request", interface = "program",
     config_files = {":bsnmpd": "daemon", "//usr.sbin/bsnmpd/tools/bsnmptools:bsnmpget": "client"},

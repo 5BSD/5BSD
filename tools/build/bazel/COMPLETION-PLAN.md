@@ -3379,3 +3379,31 @@ comparison are in progress. Actual suite runtime and the remaining installed-tes
 hierarchy remain open, with the full tests-enabled parent still explicitly gated.
 This does not replace remaining full world/modules/pkgbase/bootstrap/runtime/
 VM/performance acceptance. See USRBIN-FAMILY-CLOSURE.md.
+
+## Native NIS administration and libc ABI checkpoint (2026-11-05)
+
+All ten selected NIS administration owners now have source-owned native targets,
+declared RPC/parser/header generation and original package installation entries.
+The final maintained frontend run passes with 363 administration installation
+archives and five selected test targets; three database unittest cases run in
+the focused corrected-ABI qualification. Original Make selection accounts for
+256 immediate owners in this profile. Three NIS programs have full component
+metadata/data and strict ELF/debug comparisons, bound unchanged into the final
+capture. Seven original linked references and all live NIS service/authentication
+checks remain open; the bootstrap reference SDK lacks the selected NIS ABI.
+
+A public source-built libc ABI interface prevents leaking implementation libsys
+link inputs into packaged clients. Strict ELF comparison rejected the earlier
+leaking candidate. Legacy libc link-interface consumers still require migration
+and original ELF checks. The final NIS-disabled regression preserves 1413/1415
+captured entries exactly; the remaining two reference only the updated manual
+archive, with all other payload and metadata unchanged. The LDAP parser header
+matches Make exactly; C differences are only generated #line paths.
+
+See NIS-ADMIN-NATIVE-QUALIFICATION.md for immutable evidence and limitations.
+Next close sendmail, installed-test and remaining world-family construction;
+obtain independently matching original feature profiles for linked comparisons.
+Complete world/kernel/module installation/pkgbase, cross-architecture, bootstrap,
+runtime/VM and CPU/RAM/disk I/O/footprint/cache/sandbox gates remain open. Existing
+format-5 frontend support suffices; the manual is updated. Make stays default;
+BIP remains excluded.

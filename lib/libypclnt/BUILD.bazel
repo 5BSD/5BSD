@@ -21,11 +21,11 @@ _RPC = [
 cc_library(name = "headers", hdrs = ["ypclnt.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 cc_library(name = "rpc_headers", hdrs = [":" + output for _, _, outputs in _RPC for output, mode in outputs if mode == "-h"], strip_include_prefix = ".")
 cc_library(name = "ypclnt", srcs = ["ypclnt_connect.c", "ypclnt_error.c", "ypclnt_free.c", "ypclnt_new.c", "ypclnt_passwd.c"] + [":" + output for _, _, outputs in _RPC for output, mode in outputs if mode != "-h"],
-    deps = [":headers", "//lib/libc:shared_link_objects"], implementation_deps = [":rpc_headers"], linkstatic = True,
+    deps = [":headers", "//lib/libc:shared_abi"], implementation_deps = [":rpc_headers"], linkstatic = True,
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":ypclnt"], visibility = ["//visibility:public"])
 cc_shared_library(name = "ypclnt_shared", deps = [":ypclnt"],
-    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"], shared_lib_name = "libypclnt.so.4",
+    shared_lib_name = "libypclnt.so.4",
     user_link_flags = ["-nodefaultlibs", "-Wl,-z,defs", "-Wl,-soname,libypclnt.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"],
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 load(":installation.bzl", "library_installation")

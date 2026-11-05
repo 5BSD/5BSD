@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 # ypwhich compiles this source in its own program context, as Make does.
-exports_files(["yplib_host.c"], visibility = ["//usr.bin/ypwhich:__pkg__"])
+exports_files(["yplib_host.c"], visibility = ["//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv:__pkg__"])
 cc_library(name = "host_headers", hdrs = ["yplib_host.h"],
-    strip_include_prefix = ".", visibility = ["//usr.bin/ypwhich:__pkg__"])
+    strip_include_prefix = ".", visibility = ["//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv:__pkg__"])

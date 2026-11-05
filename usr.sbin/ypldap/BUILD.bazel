@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_yacc")
+bsd_yacc(name = "parser", src = "parse.y", output = "parse.c", header = "parse.h", yacc = "//usr.bin/yacc:yacc")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation")
+script_installation(name = "extra_manual", scripts = {}, manuals = ["ypldap.conf.5"], package = "yp")
+cc_library(name = "local_headers", hdrs = ["ypldap.h", "aldap.h", "ber.h"], strip_include_prefix = ".")
+nis_program(name = "ypldap", manual = "ypldap.8",
+    srcs = [':parser', 'ypldap.c', 'log.c', 'ldapclient.c', 'entries.c', 'yp.c', 'aldap.c', 'ber.c', 'ypldap_dns.c', 'ypldap.h', 'aldap.h', 'ber.h'],
+    deps = [':local_headers', '//lib/libopenbsd:openbsd_pie', '//lib/libevent1:event1', '//lib/libutil:util', '//lib/librpcsvc:rpcsvc'],
+    shared = ['//lib/libevent1:event1_shared', '//lib/libutil:util_shared', '//lib/librpcsvc:rpcsvc_shared'], extra_manifests = [":extra_manual"])

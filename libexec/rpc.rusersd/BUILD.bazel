@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_nis.bzl", "nis_runtime_deps", "nis_runtime_linkopts")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = "rpc.rusersd", srcs = ["rusersd.c", "rusers_proc.c", "extern.h"],
-    deps = ["//lib/librpcsvc:rpcsvc", "//include/rpcsvc:rnusers_public_header"],
+    deps = ["//lib/librpcsvc:rpcsvc", "//include/rpcsvc:rnusers_public_header"] + nis_runtime_deps(),
     dynamic_deps = ["//lib/librpcsvc:rpcsvc_shared"],
-    copts = ["-fPIE"], linkopts = ["-pie"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + nis_runtime_linkopts(),
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "rpc.rusersd", manual = "rpc.rusersd.8", man_section = "8", package = "rcmds", bindir = "/usr/libexec")

@@ -1,2 +1,20 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["yppasswd_private.x"], visibility = ["//lib/libypclnt:__pkg__"])
+
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+nis_rpc(name = "generate_yp_h", schema = "//include/rpcsvc:yp.x", output = "yp.h", mode = "-h", flags = ["-I", "-C"], state = "")
+nis_rpc(name = "generate_yp_clnt_c", schema = "//include/rpcsvc:yp.x", output = "yp_clnt.c", mode = "-l", flags = ["-I", "-C", "-DYPSERV_ONLY"], state = "")
+nis_rpc(name = "generate_yppasswd_h", schema = "//include/rpcsvc:yppasswd.x", output = "yppasswd.h", mode = "-h", flags = ["-I", "-C"], state = "")
+nis_rpc(name = "generate_yppasswd_svc_c", schema = "//include/rpcsvc:yppasswd.x", output = "yppasswd_svc.c", mode = "-m", flags = ["-I", "-C"], state = "s/static int _rpcsvcstate/int _rpcsvcstate/g")
+nis_rpc(name = "generate_yppasswd_private_h", schema = ":yppasswd_private.x", output = "yppasswd_private.h", mode = "-h", flags = ["-I", "-C"], state = "")
+nis_rpc(name = "generate_yppasswd_private_xdr_c", schema = ":yppasswd_private.x", output = "yppasswd_private_xdr.c", mode = "-c", flags = ["-I", "-C"], state = "")
+nis_rpc(name = "generate_yppasswd_private_svc_c", schema = ":yppasswd_private.x", output = "yppasswd_private_svc.c", mode = "-m", flags = ["-I", "-C"], state = "s/static int _rpcsvcstate = _IDLE/extern int _rpcsvcstate/g")
+cc_library(name = "generated_headers", hdrs = [":yp.h", ":yppasswd.h", ":yppasswd_private.h"], includes = ["."])
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation")
+script_installation(name = "update_script", scripts = {"yppwupdate": "/usr/libexec/yppwupdate"}, manuals = [], package = "yp")
+nis_program(name = "rpc.yppasswdd", manual = "rpc.yppasswdd.8",
+    srcs = ['//usr.bin/chpass:util.c', '//usr.sbin/ypserv:yp_access.c', '//usr.sbin/ypserv:yp_dblookup.c', '//libexec/ypxfr:yp_dbwrite.c', '//usr.sbin/ypserv:yp_error.c', 'yppasswdd_main.c', 'yppasswdd_server.c', 'yppasswdd_extern.h', '//libexec/ypxfr:ypxfr_misc.c', ':yp_clnt.c', ':generate_yppasswd_private_svc_c', ':yppasswd_private_xdr.c', ':generate_yppasswd_svc_c'],
+    deps = ['//usr.sbin/ypserv:headers', '//libexec/ypxfr:server_headers', ':generated_headers', '//usr.bin/chpass:utility_headers', '//lib/librpcsvc:rpcsvc', '//lib/libcrypt:crypt', '//lib/libutil:util'],
+    shared = ['//lib/librpcsvc:rpcsvc_shared', '//lib/libcrypt:crypt_shared', '//lib/libutil:util_shared'],
+    copts = ['-fno-strict-aliasing'], extra_manifests = [":update_script"])

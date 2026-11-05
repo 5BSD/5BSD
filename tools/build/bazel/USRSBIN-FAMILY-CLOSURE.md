@@ -204,7 +204,9 @@ support is unchanged; no C dispatcher, signing or publication change is required
 ## Explicit remaining work
 
 This production parent rejects installed tests and other ABIs. It also rejects
-NIS and sendmail while those selected subtrees lack native production closures. These constraints identify migration
+sendmail while that selected subtree lacks a native production closure. NIS
+construction is now included when selected; its outstanding original linked and
+service-runtime checks are recorded in NIS-ADMIN-NATIVE-QUALIFICATION.md. These constraints identify migration
 work; they are not evidence that all configurations have been converted.
 
 Finish those optional owners and original installed tests, then remove each gate

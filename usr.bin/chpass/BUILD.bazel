@@ -35,3 +35,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["util.c"], visibility = ["//usr.sbin/rpc.yppasswdd:__pkg__"])
+cc_library(name = "utility_headers", hdrs = ["chpass.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/rpc.yppasswdd:__pkg__"])

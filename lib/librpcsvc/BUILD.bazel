@@ -14,7 +14,7 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
     srcs = [":" + n + "_xdr.c" for n in RPCSVC_PROTOCOLS] +
         ["secretkey.c", "xcrypt.c", "rnusers.c", "rstat.c", "rwall.c"] +
         select({"//tools/build/bazel/config:nis_enabled": ["yp_passwd.c", "yp_update.c"], "//conditions:default": []}),
-    deps = ["//lib/libc:shared_link_objects"],
+    deps = select({"//tools/build/bazel/config:nis_enabled": ["//lib/libc:shared_abi"], "//conditions:default": ["//lib/libc:shared_link_objects"]}),
     implementation_deps = ["//include/rpcsvc:library_protocol_headers", "//include/rpcsvc:library_local_headers"],
     local_defines = ["YP"],
     copts = flags,
@@ -26,7 +26,7 @@ bsd_component_archive(name = "static_archive", groups = [":rpcsvc"], visibility 
 bsd_component_archive(name = "pie_archive", groups = [":rpcsvc_pie"], visibility = ["//visibility:public"])
 
 cc_shared_library(name = "rpcsvc_shared", deps = [":rpcsvc"],
-    dynamic_deps = ["//lib/libc:c_shared"], shared_lib_name = "librpcsvc.so.5",
+    dynamic_deps = select({"//tools/build/bazel/config:nis_enabled": [], "//conditions:default": ["//lib/libc:c_shared"]}), shared_lib_name = "librpcsvc.so.5",
     user_link_flags = ["-nodefaultlibs", "-Wl,-z,defs", "-Wl,-soname,librpcsvc.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load(":installation.bzl", "library_installation")

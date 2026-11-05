@@ -11541,3 +11541,17 @@ Eleven program ELF/debug comparisons, full component metadata/data, both
 internal archives and four pure-output lptest/filter runtime cases qualify.
 No daemon, queue/spool mutation, printer, privileged execution, live logging/
 audit/probe delivery or resource-performance acceptance is established.
+
+## NIS administration (2026-11-05)
+
+Native construction now includes ypbind, yp_mkdb, yppoll, yppush, ypset, ypserv,
+rpc.ypxfrd, rpc.yppasswdd, rpc.ypupdated and ypldap. Original program sources,
+RPC state transformations and parser semantics are retained. This is not
+evidence of live DTrace/OpenBSM coverage or authentication correctness.
+
+Review binding/domain changes, map transfer and update authorization, password
+changes and LDAP synchronization for required audit events and error logging.
+The local yp_mkdb test checks database payload/metadata, duplicate and filtering
+behavior, permissions and exclusive creation. It never mutates the host domain,
+clears RPC maps or contacts services. Network RPC, credentials, service lifecycle,
+probe/audit delivery and resource/performance qualification remain open.

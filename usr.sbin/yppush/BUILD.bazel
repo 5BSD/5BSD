@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+nis_rpc(name = "generate_yp_h", schema = "//include/rpcsvc:yp.x", output = "yp.h", mode = "-h", flags = ["-C"], state = "")
+nis_rpc(name = "generate_yp_clnt_c", schema = "//include/rpcsvc:yp.x", output = "yp_clnt.c", mode = "-l", flags = ["-C", "-DYPSERV_ONLY"], state = "")
+nis_rpc(name = "generate_yppush_svc_c", schema = "//include/rpcsvc:yp.x", output = "yppush_svc.c", mode = "-m", flags = ["-C", "-DYPPUSH_ONLY"], state = "")
+cc_library(name = "generated_headers", hdrs = [":yp.h"], includes = ["."])
+nis_program(name = "yppush", manual = "yppush.8",
+    srcs = ['//libexec/ypxfr:ypxfr_getmap.c', '//usr.sbin/ypserv:yp_dblookup.c', '//usr.sbin/ypserv:yp_error.c', '//libexec/ypxfr:ypxfr_misc.c', 'yppush_main.c', 'yppush_extern.h', ':yp_clnt.c', ':yppush_svc.c'],
+    deps = ['//usr.sbin/ypserv:headers', '//libexec/ypxfr:server_headers', ':generated_headers'])

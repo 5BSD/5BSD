@@ -1,4 +1,24 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(["yp_dblookup.c", "yp_error.c"], visibility = ["//libexec/ypxfr:__pkg__"])
-cc_library(name = "headers", hdrs = ["yp_extern.h"], strip_include_prefix = ".", visibility = ["//libexec/ypxfr:__pkg__"])
+exports_files(["yp_dblookup.c", "yp_error.c"], visibility = ["//libexec/ypxfr:__pkg__"] + ["//usr.sbin/ypbind:__pkg__", "//usr.sbin/yp_mkdb:__pkg__", "//usr.sbin/yppoll:__pkg__", "//usr.sbin/yppush:__pkg__", "//usr.sbin/ypset:__pkg__", "//usr.sbin/ypserv:__pkg__", "//usr.sbin/rpc.ypxfrd:__pkg__", "//usr.sbin/rpc.yppasswdd:__pkg__", "//usr.sbin/rpc.ypupdated:__pkg__", "//usr.sbin/ypldap:__pkg__"])
+cc_library(name = "headers", hdrs = ["yp_extern.h"], strip_include_prefix = ".", visibility = ["//libexec/ypxfr:__pkg__"] + ["//usr.sbin/ypbind:__pkg__", "//usr.sbin/yp_mkdb:__pkg__", "//usr.sbin/yppoll:__pkg__", "//usr.sbin/yppush:__pkg__", "//usr.sbin/ypset:__pkg__", "//usr.sbin/ypserv:__pkg__", "//usr.sbin/rpc.ypxfrd:__pkg__", "//usr.sbin/rpc.yppasswdd:__pkg__", "//usr.sbin/rpc.ypupdated:__pkg__", "//usr.sbin/ypldap:__pkg__"])
+
+exports_files(["yp_access.c"], visibility = ["//usr.sbin/ypbind:__pkg__", "//usr.sbin/yp_mkdb:__pkg__", "//usr.sbin/yppoll:__pkg__", "//usr.sbin/yppush:__pkg__", "//usr.sbin/ypset:__pkg__", "//usr.sbin/ypserv:__pkg__", "//usr.sbin/rpc.ypxfrd:__pkg__", "//usr.sbin/rpc.yppasswdd:__pkg__", "//usr.sbin/rpc.ypupdated:__pkg__", "//usr.sbin/ypldap:__pkg__"])
+
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+nis_rpc(name = "generate_yp_h", schema = "//include/rpcsvc:yp.x", output = "yp.h", mode = "-h", flags = ["-I", "-C"], state = "")
+nis_rpc(name = "generate_yp_svc_c", schema = "//include/rpcsvc:yp.x", output = "yp_svc.c", mode = "-m", flags = ["-I", "-C", "-DYPSERV_ONLY"], state = "s/static int _rpcsvcstate/int _rpcsvcstate/g")
+nis_rpc(name = "generate_ypxfr_clnt_c", schema = "//include/rpcsvc:yp.x", output = "ypxfr_clnt.c", mode = "-l", flags = ["-I", "-C", "-DYPPUSH_ONLY"], state = "")
+cc_library(name = "generated_headers", hdrs = [":yp.h", "yp_extern.h"], includes = ["."])
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_directory", "bsd_install_link", "bsd_install_manifest")
+script_installation(name = "extra_manual", scripts = {"ypinit.sh": "/usr/sbin/ypinit"}, manuals = ["ypinit.8"], package = "yp")
+bsd_install_file(name = "map_makefile", src = "Makefile.yp", destination = "/var/yp/Makefile.dist", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=yp"])
+bsd_install_directory(name = "map_directory", destination = "/var/yp", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=yp"])
+bsd_install_link(name = "map_link", destination = "/var/yp/Makefile", target = "Makefile.dist", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=yp"])
+bsd_install_manifest(name = "map_manifest", entries = [":map_makefile", ":map_directory", ":map_link"])
+nis_program(name = "ypserv", manual = "ypserv.8",
+    srcs = [':generate_yp_svc_c', 'yp_server.c', 'yp_dblookup.c', 'yp_dnslookup.c', ':ypxfr_clnt.c', 'yp_main.c', 'yp_error.c', 'yp_access.c', 'yp_svc_udp.c', '//usr.sbin/ypserv/common:yplib_host.c'],
+    deps = [':generated_headers', '//usr.sbin/ypserv/common:host_headers', '//usr.sbin/ypserv:headers'] + select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["//lib/libwrap:wrap"], "//conditions:default": []}),
+    defines = ['DB_CACHE'] + select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["TCP_WRAPPER"], "//conditions:default": []}),
+    shared = select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["//lib/libwrap:wrap_shared"], "//conditions:default": []}), extra_manifests = [":extra_manual", ":map_manifest"])

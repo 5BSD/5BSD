@@ -6703,3 +6703,15 @@ selected tests cached.
 Its two explicit FDT archive outputs match original Make member order and symbols;
 complete code-byte and runtime equivalence remain unproven.
 An explicit tests=true production-parent build is rejected as incompatible.
+
+.Pp
+The native administration parent includes the ten selected NIS programs when
+nis is enabled, using configured source-built libc at optional ABI boundaries.
+The public shared_abi_interface links the produced libc DSO and nonshared wrappers;
+it keeps libc's implementation dependency on libsys out of executable link inputs.
+RPC and parser generators are declared native actions with explicit tools and
+outputs, including the LDAP parser header.
+Selected local database and client ABI tests do not establish live NIS service,
+authentication or network correctness.
+Original linked parity requires a reference SDK that provides the selected ABI.
+The generic format-5 dispatcher, signing and publication contracts are unchanged.

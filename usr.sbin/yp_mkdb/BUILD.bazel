@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/ypserv:program.bzl", "nis_program", "nis_rpc")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+nis_program(name = "yp_mkdb", manual = "yp_mkdb.8",
+    srcs = ['yp_mkdb.c', '//usr.sbin/ypserv:yp_dblookup.c', '//libexec/ypxfr:yp_dbwrite.c'],
+    deps = ['//usr.sbin/ypserv:headers', '//libexec/ypxfr:server_headers'],
+    defines = ['yp_error=warnx'])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "roundtrip_test", src = "roundtrip-test.py",
+    data = [":yp_mkdb", "//lib/libc:c_shared", "//lib/libsys:sys_shared"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:nis_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
