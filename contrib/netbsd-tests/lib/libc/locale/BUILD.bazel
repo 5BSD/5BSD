@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_iconv.c", "t_mbrtowc.c", "t_mbstowcs.c", "t_mbsnrtowcs.c", "t_mbtowc.c", "t_wcscspn.c", "t_wcspbrk.c", "t_wcsspn.c", "t_wcstod.c", "t_wctomb.c"], visibility = ["//lib/libc/tests/locale:__pkg__"])

@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Complete locale-test construction; installed-resource cases open (2026-11-05)
+
+All twenty-eight original local/imported locale programs now build/install with
+five local aliases and scoped compatibility/diagnostic policy. Fifty-seven file
+records, exact Kyua, twenty-eight ELF/interface/hardening contracts and debug CRCs
+match original Make. All forty original case registrations/metadata match. Eight
+physical native LC_CTYPE payloads (nine requested identities) match original Make
+bytes, following maintained ctypedef aliases. Thirty host cases pass; unsupported
+individual NetBSD locale scenarios remain explicitly reported, not claimed tested.
+Final r2 retains reviewed output hashes and captured runtime/data payloads. See
+LIBC-LOCALE-TEST-QUALIFICATION.md for exact scope and unsupported scenarios.
+
+Next: execute the ten ICONV-enabled c16rtomb/mbrtoc16/iconv cases with declared
+native installed Citrus modules/data in a disposable VM, using existing maintained
+fixture/harness work and real installed paths. Those cases are built/installed but
+not runtime-qualified here. Continue remaining libc/test roots, parent traversal,
+source-owned archive ordering and all independent whole-world/debug/pkgbase/cross/
+bootstrap/runtime/resource/cache/sandbox/publication gates. Full-tests guards and
+Make default remain; BIP excluded.
+
 ## Complete fortify installation and ordinary runtime coverage (2026-11-05)
 
 All twelve original fortify programs and twenty-five installed records match

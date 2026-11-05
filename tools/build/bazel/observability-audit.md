@@ -21,6 +21,18 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Locale conversion/state and declared LC_CTYPE inputs (2026-11-05)
+
+Twenty-eight unchanged original programs retain aliases, scoped compatibility and
+all forty original ATF registrations. Thirty host cases pass with native C/sys/ATF
+and private native LC_CTYPE fixtures. Seven imported cases still omit unsupported
+individual locale scenarios as in original source; ten installed Citrus-resource
+cases are not executed. DOF initialization is disabled for isolated checks, so
+conversion/state correctness does not prove live provider firing, audit delivery
+or overhead. No probe/audit source is removed. See
+LIBC-LOCALE-TEST-QUALIFICATION.md for fixture/installation/interface evidence and
+remaining installed-resource VM scope.
+
 ## Fortify overflow detection and stdin terminal execution (2026-11-05)
 
 Twelve unchanged original programs preserve _FORTIFY_SOURCE=2 and child SIGABRT
