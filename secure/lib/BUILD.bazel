@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:production.bzl", "production_archives")
+_ARCHIVES = select({"//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:production_installation_archives", "//secure/lib/libssl:production_install_archive"], "//conditions:default": []}) + select({"//tools/build/bazel/config:openssh_enabled": ["//secure/lib/libssh:install_archive"], "//conditions:default": []})
+production_archives(_ARCHIVES)
+# libpkgecc is always an internal library at this Make parent.
+filegroup(name = "production_libraries", srcs = [":production_installation_archives", "//secure/lib/libpkgecc:static_archive", "//secure/lib/libpkgecc:pie_archive"], visibility = ["//visibility:public"])

@@ -108,3 +108,8 @@ bsd_host_artifact_test(name = "archive_contract_test", src = "archive-contract-t
         ["--member-order", "$(location :core_member_order)"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-ar_runtime",
         "@bsd_sdk//toolchain:llvm-nm_runtime"], size = "small")
+
+load("//secure:production.bzl", "component_archive")
+component_archive(name = "production_install_archive", manifests = [":install_manifest"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "production_installation_archives", archives = [":production_install_archive", "//secure/lib/libcrypto/engines:production_install_archive", "//secure/lib/libcrypto/modules:production_install_archive"], visibility = ["//secure/lib:__pkg__"])

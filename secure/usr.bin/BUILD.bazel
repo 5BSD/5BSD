@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:production.bzl", "production_archives")
+_ARCHIVES = select({"//tools/build/bazel/config:openssl_enabled": ["//secure/usr.bin/openssl:production_install_archive"], "//conditions:default": []}) + select({"//tools/build/bazel/config:openssh_enabled": ['//secure/usr.bin/scp:install_archive', '//secure/usr.bin/sftp:install_archive', '//secure/usr.bin/ssh:install_archive', '//secure/usr.bin/ssh-add:install_archive', '//secure/usr.bin/ssh-agent:install_archive', '//secure/usr.bin/ssh-keygen:install_archive', '//secure/usr.bin/ssh-keyscan:install_archive'], "//conditions:default": []})
+production_archives(_ARCHIVES)

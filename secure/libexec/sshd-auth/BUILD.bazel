@@ -61,7 +61,7 @@ cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects =
 cc_import(name = "traced", alwayslink = True, objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _DEPS)
 cc_binary(name = "sshd-auth", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}), dynamic_deps = _DYNAMIC, linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 utility_installation(name = "install_manifest", program = "sshd-auth", manual = None, package = "ssh", bindir = "/usr/libexec")
-bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+bsd_install_archive(visibility = ["//secure/libexec:__pkg__"], name = "install_archive", manifests = [":install_manifest"],
     directories = {d: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=ssh", "dbg"]}) for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]},
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,

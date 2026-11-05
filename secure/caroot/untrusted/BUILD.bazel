@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_directory", "bsd_install_manifest")
+# Make selects every source-owned *.pem in this trust category. No fetch occurs.
+_CERTIFICATES = glob(["*.pem"])
+[bsd_install_file(name = "certificate_" + certificate, src = certificate,
+    destination = "/usr/share/certs/untrusted/" + certificate,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=caroot"])
+ for certificate in _CERTIFICATES]
+bsd_install_directory(name = "certificate_directory", destination = "/usr/share/certs/untrusted",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities"])
+bsd_install_manifest(name = "install_manifest", entries = [":certificate_directory"] + [":certificate_" + certificate for certificate in _CERTIFICATES], visibility = ["//secure/caroot:__pkg__"])

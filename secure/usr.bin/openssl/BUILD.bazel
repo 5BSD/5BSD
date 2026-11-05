@@ -15,3 +15,6 @@ load(":installation.bzl", "openssl_installation")
 openssl_installation(name = "install_manifest")
 
 filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/openssl:__pkg__"])
+
+load("//secure:production.bzl", "component_archive")
+component_archive(name = "production_install_archive", manifests = [":install_manifest"])

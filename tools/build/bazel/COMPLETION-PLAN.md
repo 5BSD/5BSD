@@ -6,8 +6,12 @@ NIS and sendmail administration are now included when selected; their combined
 AMD64 profile builds 368 installation archives and passes ten selected test
 targets. CDDL now has a source-owned production parent: 37 installation archives
 plus two internal libdtotel archives, with fourteen selected test targets passing.
-See NIS-ADMIN-NATIVE-QUALIFICATION.md, SENDMAIL-NATIVE-QUALIFICATION.md and
-CDDL-COMPOSITION-QUALIFICATION.md for exact scope, failures and retained evidence.
+The secure production parent also builds 21 installation archives and two internal
+archives, with twelve selected crypto/TLS/SSH-configuration/SFTP test targets
+passing. All 167 CA certificates and both source-owned category directories
+match original Make. See NIS-ADMIN-NATIVE-QUALIFICATION.md,
+SENDMAIL-NATIVE-QUALIFICATION.md, CDDL-COMPOSITION-QUALIFICATION.md and
+SECURE-FAMILY-COMPOSITION-QUALIFICATION.md for exact scope, failures and evidence.
 Full native world composition, installed tests/metadata/pkgbase, other ABIs,
 bootstrap, system runtime and controlled resource/performance acceptance remain
 open. Make remains production/default. The dated checkpoints below are historical
@@ -3466,3 +3470,25 @@ installed-test/ownership closure; complete original CDDL installation/pkgbase,
 other profiles/ABIs, bootstrap, runtime/VM and comparative CPU/RAM/disk I/O/
 footprint/cache/sandbox gates remain required. Existing format-5 frontend support
 suffices and the manual is updated. Make remains default; BIP remains excluded.
+
+## Secure production-family composition checkpoint (2026-11-05)
+
+The secure root now owns four explicit production subparents and optional CA
+certificates. Existing OpenSSL manifests gain five component archives, preserving
+engine/provider recursion; both internal libpkgecc archives remain build-only.
+The final normal frontend run builds 21 installation archives and two internal
+archives, with twelve selected native test targets passing. Existing crypto/TLS,
+module/archive, SSH configuration and direct SFTP transfer/read-only checks are
+reused. No listeners, host authentication or host trust-store updates occur.
+
+All 167 original CA certificate payloads and two original directory records
+match fresh Make. The comparison caught and corrected directory ownership tags
+(utilities for directories, caroot for files). Actual configured parent selection
+matches original Make across six option profiles. All 86 production capture
+entries remain unchanged when the additional runtime tests are selected.
+
+See SECURE-FAMILY-COMPOSITION-QUALIFICATION.md. Full original OpenSSL/SSH/secure
+installation/debug/pkgbase, installed tests, other profiles/ABIs and actual
+authentication/boot trust initialization remain open alongside the remaining
+world roots and system/bootstrap/package/VM/resource gates. Existing format-5
+support suffices; the manual is updated. Make stays default and BIP is excluded.

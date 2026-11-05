@@ -26,3 +26,6 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
 _INSTALL_GROUPS = [openssl_binary_entries(name + "_install", ":" + name, "/usr/lib/engines-3/" + name + ".so") for name in _ENGINES]
 bsd_install_manifest(name = "install_manifest", entries = [entry for group in _INSTALL_GROUPS for entry in group],
     visibility = ["//visibility:public"])
+
+load("//secure:production.bzl", "component_archive")
+component_archive(name = "production_install_archive", manifests = [":install_manifest"])

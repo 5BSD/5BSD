@@ -11580,3 +11580,13 @@ DTrace authorization/probe delivery, ZFS pool/device mutation, service/audit
 behavior and resource-performance qualification as separate gates. The restored
 SPL allocation wrappers and private libumem header boundary require no program
 rewrite; full original object/installed-world parity remains open.
+
+## Secure production composition (2026-11-05)
+
+The secure parent reuses existing OpenSSL/SSH compilation and DTrace providers;
+no instrumentation or original program sources are changed. Twelve selected
+crypto/TLS/module/archive/SSH-config/SFTP/settings test targets pass. Configuration
+checks do not authenticate users; direct SFTP checks do not establish network
+transport or audit delivery. Preserve login/PAM/credential handling, rejected
+authentication, SFTP path authorization, provider/probe events, service logging
+and controlled resource measurements as explicit runtime/audit gates.

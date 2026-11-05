@@ -45,3 +45,6 @@ _FIPS_INSTALL = openssl_binary_entries("fips_install", ":fips", "/usr/lib/ossl-m
 bsd_install_manifest(name = "install_manifest", entries = _LEGACY_INSTALL + select({
     "//tools/build/bazel/config:openssl_fips_enabled": _FIPS_INSTALL, "//conditions:default": [],
 }), visibility = ["//visibility:public"])
+
+load("//secure:production.bzl", "component_archive")
+component_archive(name = "production_install_archive", manifests = [":install_manifest"])

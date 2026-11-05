@@ -1,2 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["ssh_program.bzl"], visibility = ["//secure:__subpackages__"])
+
+load(":production.bzl", "production_archives")
+production_archives(["//secure/lib:production_installation_archives", "//secure/libexec:production_installation_archives", "//secure/usr.bin:production_installation_archives", "//secure/usr.sbin:production_installation_archives"] + select({"//tools/build/bazel/config:caroot_enabled": ["//secure/caroot:production_install_archive"], "//conditions:default": []}))
+filegroup(name = "production_products", srcs = [":production_installation_archives", "//secure/lib:production_libraries"], visibility = ["//visibility:public"])

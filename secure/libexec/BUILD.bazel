@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:production.bzl", "production_archives")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+selects.config_setting_group(name = "ssh_usb", match_all = ["//tools/build/bazel/config:openssh_enabled", "//tools/build/bazel/config:usb_enabled"])
+_ARCHIVES = select({"//tools/build/bazel/config:openssh_enabled": ["//secure/libexec/sftp-server:install_archive", "//secure/libexec/ssh-keysign:install_archive", "//secure/libexec/ssh-pkcs11-helper:install_archive", "//secure/libexec/sshd-session:install_archive", "//secure/libexec/sshd-auth:install_archive"], "//conditions:default": []}) + select({":ssh_usb": ["//secure/libexec/ssh-sk-helper:install_archive"], "//conditions:default": []})
+production_archives(_ARCHIVES)

@@ -16,7 +16,7 @@ def ssh_program(name, srcs, deps = [], dynamic_deps = [], bindir = "/usr/bin", m
         manual = "//crypto/openssh:" + name + "." + man_section, package = "ssh", bindir = bindir, man_section = man_section, binary_mode = binary_mode, aliases = aliases, extra_entries = extra_entries)
     directories = {d: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=ssh", "dbg"]}) for d in ["/usr/lib/debug/usr", "/usr/lib/debug" + bindir]}
     directories.update(extra_directories)
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    bsd_install_archive(name = "install_archive", visibility = ["//" + native.package_name().rsplit("/", 1)[0] + ":__pkg__"], manifests = [":install_manifest"],
         directories = directories,
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,

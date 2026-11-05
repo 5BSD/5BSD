@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:production.bzl", "component_archive")
+component_archive(name = "production_install_archive", manifests = ["//secure/caroot/trusted:install_manifest", "//secure/caroot/untrusted:install_manifest"])

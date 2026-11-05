@@ -35,3 +35,6 @@ cc_test(name = "tls_shared", srcs = ["tls_test.c"], deps = [":ssl", "//secure/li
 
 load(":installation.bzl", "ssl_installation")
 ssl_installation(name = "install_manifest")
+
+load("//secure:production.bzl", "component_archive")
+component_archive(name = "production_install_archive", manifests = [":install_manifest"])
