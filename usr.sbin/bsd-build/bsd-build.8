@@ -6892,3 +6892,12 @@ Distribution is a separate phase from account initialization, normal component
 installation, installconfig and afterinstall manual database construction.
 The independent Make reference records install or distribution explicitly;
 install remains its default phase and retains configuration recursion.
+
+.Pp
+Native manual database generation consumes typed installed manual records and
+selected source artifacts, preserving hardlink and alias relationships.
+Unrelated generated trees are excluded and overlapping trees without an explicit
+supported manual inventory are rejected.
+The declared mandoc execution variant is linked statically.
+The selected shared-manual database is a construction checkpoint; full-world
+finalization must also supply program, library and OpenSSL manuals.

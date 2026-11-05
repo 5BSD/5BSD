@@ -341,3 +341,15 @@ bsd_python_test(name = "install_tree_test", src = "install_tree_test.py",
 
 exports_files(["bsd_public_headers.bzl"])
 exports_files(["bsd_osreldate.bzl"])
+
+exports_files(["bsd_man_database.bzl", "generate_man_database.py"])
+
+bsd_python_test(name = "man_database_test", src = "man-database-test.py",
+    data = ["generate_man_database.py", "//usr.bin/mandoc:makewhatis_execution"],
+    visibility = ["//visibility:public"])
+
+# Unrelated execution-expanded payloads must not enter manual database inputs.
+load(":bsd_man_database.bzl", "bsd_man_database")
+bsd_man_database(name = "manual_database_with_zoneinfo",
+    archives = ["//share/man:installation_archives", "//share/zoneinfo:production_installation_archives"],
+    root = "/usr/share/man", visibility = ["//visibility:public"])

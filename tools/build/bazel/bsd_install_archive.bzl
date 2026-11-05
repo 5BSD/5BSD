@@ -3,9 +3,9 @@
 load(":bsd_install.bzl", "BsdInstallManifestInfo")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
-BsdInstallArchiveInfo = provider(fields = ["directory_metadata"])
+BsdInstallArchiveInfo = provider(fields = ["directory_metadata", "records", "payload", "trees"])
 # A collection preserves output groups but is not a single package archive.
-BsdInstallArchiveSetInfo = provider(fields = [])
+BsdInstallArchiveSetInfo = provider(fields = ["records", "payload", "trees"])
 
 def _archive(ctx):
     epoch = ctx.attr.epoch
@@ -87,7 +87,7 @@ def _archive(ctx):
         use_default_shell_env = False,
         mnemonic = "BSDInstallArchive",
     )
-    return [DefaultInfo(files = depset([archive])), OutputGroupInfo(metadata = depset([request]), directory_metadata = depset([directory_metadata])), BsdInstallArchiveInfo(directory_metadata = directory_metadata)]
+    return [DefaultInfo(files = depset([archive])), OutputGroupInfo(metadata = depset([request]), directory_metadata = depset([directory_metadata])), BsdInstallArchiveInfo(directory_metadata = directory_metadata, records = records, payload = depset(transitive = payloads), trees = [])]
 
 bsd_install_archive = rule(
     implementation = _archive,
@@ -116,8 +116,14 @@ bsd_install_archive = rule(
 )
 
 def _archive_set(ctx):
+    records, payloads, trees = [], [], []
+    for target in ctx.attr.archives:
+        info = target[BsdInstallArchiveInfo] if BsdInstallArchiveInfo in target else target[BsdInstallArchiveSetInfo]
+        records.extend(info.records)
+        payloads.append(info.payload)
+        trees.extend(info.trees)
     return [
-        BsdInstallArchiveSetInfo(),
+        BsdInstallArchiveSetInfo(records = records, payload = depset(transitive = payloads), trees = trees),
         DefaultInfo(files = depset(transitive = [target[DefaultInfo].files for target in ctx.attr.archives])),
         OutputGroupInfo(
             metadata = depset(transitive = [target[OutputGroupInfo].metadata for target in ctx.attr.archives]),

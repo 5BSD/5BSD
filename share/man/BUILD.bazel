@@ -11,3 +11,6 @@ bsd_install_archive_set(name = "installation_archives", archives = [
     "//share/man/man8:install_archive",
     "//share/man/man9:install_archive",
 ], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_man_database.bzl", "bsd_man_database")
+bsd_man_database(name = "selected_database", archives = [":installation_archives"], root = "/usr/share/man", visibility = ["//visibility:public"])

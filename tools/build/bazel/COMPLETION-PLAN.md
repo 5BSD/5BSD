@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Native manual database dependency checkpoint (2026-11-05)
+
+A typed native rule now indexes installed manual records with selected file inputs,
+physical hardlink preservation and bounded symlink validation. A static native
+mandoc execution variant generates bytes matching maintained Make makedb using an
+independently Make-built tool and fresh original corpus: 4248 paths, 1426 inode
+groups. Three real database/query/rejection test methods pass. Archive providers
+carry static records plus explicit execution-expanded tree boundaries; the latter
+cannot silently disappear from an overlapping manual corpus. The unrelated
+zoneinfo variant excludes timezone payloads from its observed action inputs and
+produces the same database. All 33 existing shared-manual outputs stay unchanged.
+See MANUAL-DATABASE-QUALIFICATION.md. This is selected shared-manual generation,
+not full-world afterinstall: join program/library/OpenSSL manuals during world
+finalization, then qualify complete etc installation. Remaining rescue/sys/stand,
+installed tests, full packaging/bootstrap/cross/runtime/resource gates stay open.
+Make remains production/default; BIP stays excluded.
+
 ## Native etc distribution phase (2026-11-05)
 
 Complete selected distribution profiles now match independent Make stages:
