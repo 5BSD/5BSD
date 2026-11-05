@@ -168,6 +168,67 @@ echo 'HIT 9'
             self.env['MODE'] = mode
             p = self.run_script('dtrace-cases.sh')
             self.assertNotEqual(p.returncode, 0, (mode, p.stdout))
+    def test_dtrace_independent_verdicts(self):
+        self.dtrace_stubs()
+        stub = self.bin/'dtrace'
+        stub.write_text(stub.read_text().replace('echo \'HIT 9\'\n',
+            'case "$*" in *proc:::exec-success*) exit 0 ;; esac\necho \'HIT 9\'\n'))
+        p = self.run_script('dtrace-cases.sh')
+        self.assertEqual(p.returncode, 1, p.stdout+p.stderr)
+        output = self.root/'local.txt'
+        output.write_text(p.stdout)
+        def verdict(rc, probe):
+            return subprocess.run(['sh', str(KIT/'lib/dtrace-check.sh'), str(output),
+                                   str(rc), probe], capture_output=True).returncode
+        self.assertEqual(verdict(1, 'begin-end'), 0)
+        self.assertEqual(verdict(1, 'proc-exec'), 1)
+        for rc in (0, 124, 139):
+            self.assertEqual(verdict(rc, 'begin-end'), 2)
+        for text in (p.stdout.replace('DTRACE-CASES-DONE', ''),
+                     p.stdout+'DTRACE-CASE begin-end PASS\n',
+                     p.stdout.replace('DTRACE-CASE proc-exec FAIL\n', '')):
+            output.write_text(text)
+            self.assertEqual(verdict(1, 'begin-end'), 2)
+
+    def test_dtrace_target_executes_after_initial_exec(self):
+        self.dtrace_stubs()
+        stub = self.bin/'dtrace'
+        stub.write_text(stub.read_text().replace("echo 'HIT 9'\n", r'''while [ "$#" -gt 0 ]; do
+ if [ "$1" = -c ]; then
+  shift
+  grep -qx 'exec /bin/echo' "$1" || exit 3
+  "$1" || exit 4
+  break
+ fi
+ shift
+done
+echo 'HIT 9'
+'''))
+        p = self.run_script('dtrace-cases.sh')
+        self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+
+    def test_nested_clean_snapshots(self):
+        before, after, vms = (self.root/n for n in ('before', 'after', 'vms'))
+        baseline = 'boot\none\ntwo\nthree\nfour\n'
+        before.write_text(baseline)
+        cases = [(baseline, '', 0), ('two\nthree\nfour\n', '', 0),
+                 (baseline+'benign message\n', '', 0),
+                 (baseline+'vmm: fault\n', '', 1),
+                 ('two\nthree\nfour\npanic: failure\n', '', 1),
+                 (baseline, 'leftover-l2\n', 1),
+                 ('unrelated\nnew\nmessages\n', '', 2), ('', '', 2)]
+        for text, inventory, expected in cases:
+            after.write_text(text); vms.write_text(inventory)
+            p = subprocess.run(['sh', str(KIT/'lib/nested-clean.sh'),
+                                str(before), str(after), str(vms)], capture_output=True)
+            self.assertEqual(p.returncode, expected, (text, inventory, p.stdout, p.stderr))
+
+        after.write_text(baseline)
+        vms.unlink()
+        p = subprocess.run(['sh', str(KIT/'lib/nested-clean.sh'), str(before),
+                            str(after), str(vms)], capture_output=True)
+        self.assertEqual(p.returncode, 2, p.stdout+p.stderr)
+
     def test_session_deadline_preserves_child_failure(self):
         text = (KIT/'phases/hypertrace.sh').read_text()
         helper = text.split('trace_session_finished()\n', 1)[1].split('\n}\n', 1)[0] + '\n}\n'

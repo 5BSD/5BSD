@@ -53,7 +53,7 @@ for target in host ht-trace1 ht-trace2; do
   local_rc=$?
  fi
  for probe in begin-end syscall-entry syscall-return syscall-exit proc-exec invalid-program; do
-  if [ "$local_rc" -eq 0 ] && grep -qx "DTRACE-CASE $probe PASS" "$O/local-$target.txt"; then
+  if sh "$HT_KIT/lib/dtrace-check.sh" "$O/local-$target.txt" "$local_rc" "$probe"; then
    check "dtrace-local-$target-$probe" PASS
   else
    check "dtrace-local-$target-$probe" FAIL "see local-$target.txt (command rc=$local_rc)"

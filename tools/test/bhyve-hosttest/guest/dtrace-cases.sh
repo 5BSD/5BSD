@@ -5,7 +5,9 @@ set -u
 D=$(mktemp -d /tmp/ht-dtrace.XXXXXX) || exit 1
 trap 'rm -rf "$D"' EXIT
 trap 'exit 130' HUP INT TERM
-cp /bin/echo "$D/htprobe" || exit 1
+# -c stops after the initial exec.  Execute again after tracing is enabled.
+printf '%s\n' '#!/bin/sh' 'exec /bin/echo' > "$D/htprobe" || exit 1
+chmod 700 "$D/htprobe" || exit 1
 failed=0
 run_case()
 {
@@ -35,4 +37,5 @@ else
  echo 'DTRACE-CASE invalid-program FAIL'; failed=1
 fi
 sed 's/^/DTRACE-ERROR invalid-program /' "$D/invalid.err"
+echo DTRACE-CASES-DONE
 exit "$failed"
