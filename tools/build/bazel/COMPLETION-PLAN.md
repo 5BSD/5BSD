@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Recovery helper objects connected to native rescue (2026-11-05)
+
+Seven native librescue replacements now link directly after crunched programs
+and before ordinary archives, preserving original override semantics. A fresh
+Make reference explicitly matches the native NIS-enabled selection; all seven
+ELF payload/symbol/relocation contracts agree. Native frontend r2 passes 107
+runtime plus 28 source-setting methods; original Make reproduces all 208 entire
+pipeline outputs with identical helper/object/archive inputs. Retained r1
+configuration/order mismatches are documented in RESCUE-103-PROGRAM-QUALIFICATION.md.
+Next: complete option composition and real rescue installation/aliases/helper
+runtime qualification, then all remaining system gates. This closes composition,
+not guest recovery behavior, full debug/resource parity or complete migration.
+
 ## Default rescue source selection reaches 103 applications (2026-11-05)
 
 Bectl/zfs/zpool/zdb/zfsbootcfg complete default program selection in the bounded

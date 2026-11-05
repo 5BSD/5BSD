@@ -112,7 +112,9 @@ _CORE_ARCHIVES = [
     deps = select({"//tools/build/bazel/config:openssl_enabled": [":core_ssl_static_link"], "//conditions:default": [":core_md_static_link"]}) if name == "archive" else
         ([":core_" + _CORE_ARCHIVES[index + 1][0] + "_static_link"] if index + 1 < len(_CORE_ARCHIVES) else ["//lib/libc:static_link_objects"]))
  for index, (name, archive) in enumerate(_CORE_ARCHIVES)]
-cc_binary(name = "rescue_core", srcs = [":core_dispatcher_compiler_output"] + [":" + p + "_crunched" for p in _CORE_PROGRAMS],
+# Direct helper overrides precede archive searching, as in original CRUNCH_LIBS.
+# An archive would lose the original unconditional replacement semantics.
+cc_binary(name = "rescue_core", srcs = [":core_dispatcher_compiler_output"] + [":" + p + "_crunched" for p in _CORE_PROGRAMS] + ["//rescue/librescue:regular_compiler_outputs"],
     deps = [":core_crypt_static_link"],
     features = ["fully_static_link"], linkstatic = True,
     linkopts = ["-nodefaultlibs", "-Wl,--allow-multiple-definition", "-Wl,-znow", "-Wl,-zrelro",

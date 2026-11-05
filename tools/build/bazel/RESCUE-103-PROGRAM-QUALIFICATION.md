@@ -82,3 +82,34 @@ configuration/install semantics; then finish every full-system gate in
 COMPLETION-PLAN.md. ARM64/RISC-V, independent world/debug/header/pkgbase parity,
 current kernel/modules, bootstrap reproducibility, normal boot/services, hardware
 publication and CPU/memory/disk/cache/sandbox gates are still required.
+
+## Direct recovery helper integration (2026-11-05)
+
+The follow-up now includes //rescue/librescue:regular_compiler_outputs directly
+in rescue_core, after the crunched application objects and before ordinary
+archive searching. No archive wrapper, lazy extraction or fallback to ordinary
+libc replacements is used. These seven existing rescue variants preserve
+/rescue helper/shell/search-path definitions and original no-SSP compilation.
+
+- bazel-rescue-overrides-make-r2-20261105/report.json: fresh original regular
+  helper build with explicit MK_NIS=yes, matching the native request's existing
+  nis=true setting. All seven allocated ELF, external-symbol and nondebug
+  symbolic-relocation contracts match in
+  bazel-rescue-overrides-object-review-r2-20261105/review.json.
+- bazel-rescue-overrides-native-r2-20261105/receipt.json: maintained frontend,
+  16 jobs, all 107 runtime plus 28 source-setting methods pass with the overrides.
+- bazel-rescue-overrides-pipeline-review-r2-20261105/review.json: original
+  Make link with the same seven captured helper objects in its original LIBS
+  position reproduces all 208 complete output bytes, including the final ELF.
+
+Earlier evidence remains: Make reference r1 used selected-world NIS=no and
+exposed a real getusershell configuration difference; native r1 put direct helper
+objects earlier among source inputs and failed complete ELF comparison despite
+passing runtime tests. The final reference explicitly matches configuration and
+the final declaration matches original object order. Neither mismatch was
+normalized or ignored. The prior helper compiler rules were unchanged.
+
+This closes the missing direct-helper composition gap. It does not establish
+installed /rescue links, successful system/popen/exec shell recovery in a guest,
+NSS/credentials behavior, full option/cross/debug parity or resource performance.
+Those remain qualification gates. No host installation or reboot occurred.

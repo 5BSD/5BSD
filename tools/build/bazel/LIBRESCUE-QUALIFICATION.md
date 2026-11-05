@@ -88,3 +88,12 @@ rescue generation/link/install/runtime, other configurations and architectures,
 world aggregation, package creation and publication remain open. Existing
 format-5/component/SDK providers suffice; no frontend C/backend/manual/security
 or publication interface changed. Make remains production.
+
+## Consumer follow-up (2026-11-05)
+
+The bounded 103-program native rescue core now consumes regular_compiler_outputs
+directly after crunched applications and before ordinary archives. Fresh matching
+NIS-enabled Make objects agree in all seven allocated/symbol/relocation contracts;
+the original pipeline on identical captured inputs reproduces the entire final
+executable. See RESCUE-103-PROGRAM-QUALIFICATION.md for evidence, retained order/
+configuration failures and the remaining installed guest recovery gates.

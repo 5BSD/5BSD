@@ -21,6 +21,16 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Rescue helper composition (2026-11-05)
+
+The existing seven regular librescue objects now enter the native final link
+directly before ordinary archives, retaining original disabled-SSP and RESCUE
+policies. Login_class continues its existing rescue recipe without WITH_DTRACE;
+no ordinary libutil provider is substituted for this replacement. Whole pipeline
+byte parity and safe host tests do not establish live login/credential events,
+NSS behavior, recovery-shell exec, system/popen helpers or audit delivery.
+Private guest installation and runtime checks remain necessary.
+
 ## Five ZFS rescue variants (2026-11-05)
 
 Bectl/zfsbootcfg/zfs/zpool/zdb bring the bounded default core to 103 programs.
