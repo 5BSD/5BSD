@@ -127,10 +127,14 @@ the independent qualification inventory, and native declarations supply builds.
 The same fresh production recursion query selects 242 immediate usr.sbin owners.
 `bazel-usrsbin-family-composition-request-r1-20261105` maps each one to its
 reviewed native production contribution, including capability daemons. Tests
-and daemon runtime are not silently included in production acceptance. The normal frontend has now launched it at
-`bazel-usrsbin-family-composition-native-r1-20261105`, after both library runs
-terminated successfully. It is a live construction attempt, not acceptance.
-Its command and complete bindings are retained.
+and daemon runtime are not silently included in production acceptance. The r1 normal frontend attempt stopped at pkg's existing repository-policy
+analysis guard: the request omitted version_branch. No source fallback or
+invented repository channel was added. A fresh maintained Make pkg query reports
+BRANCH=CURRENT, REVISION=16.0 and PKGCONFBRANCH=latest. The r2 request explicitly
+supplies the branch input and retains its original query/provenance. The normal
+frontend has launched `bazel-usrsbin-family-composition-native-r2-20261105` after
+the failed r1 terminated. It is a live compilation/installation construction
+attempt, not acceptance. Its command and complete bindings are retained.
 
 After these combined attempts, correct actual graph failures and reconcile all
 installation namespaces/owners. Then introduce source-owned lib and usr.sbin
