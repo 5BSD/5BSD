@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:tls_test_library.bzl", "tls_test_library")
+
+tls_test_library(source = "//contrib/netbsd-tests/lib/libc/tls_dso:h_tls_dynamic.c",
+    archive_name = "libh_tls_dynamic.a", soname = "libh_tls_dynamic.so.1", link_name = "libh_tls_dynamic.so")

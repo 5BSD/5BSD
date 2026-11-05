@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Complete selected libc TLS construction (2026-11-05)
+
+Both selected original TLS programs, two helper DSOs and two static archives now
+build and install. All twelve installed file/link records and exact Kyua bytes
+match original Make; two program, two DSO and two archive contracts plus debug
+CRCs pass. ABI imports preserve original helper-first dependency order and the
+dlopen plugin's unresolved main-program callbacks. Explicit path comparison
+inputs preserve original RUNPATH while retaining default rejection and hardening.
+Ten regression methods and both original native cases pass. An independent fresh
+execution traces actual opens of both captured native helpers, ruling out host TLS
+helper substitution. See LIBC-TLS-TEST-QUALIFICATION.md for evidence and failures.
+
+Continue remaining libc/test roots and parent traversal, source-owned archive
+ordering and independent whole-world/debug/pkgbase/cross/bootstrap/runtime/
+resource/cache/sandbox/publication gates. Full-tests parent guards and Make as
+production/default remain. No whole-system completion or performance claim.
+
 ## Complete libc stdio-test construction (2026-11-05)
 
 All thirty original stdio programs now build/install with original aliases,

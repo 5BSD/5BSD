@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:tls_test_library.bzl", "tls_test_library")
+
+tls_test_library(source = "//contrib/netbsd-tests/lib/libc/tls/dso:h_tls_dlopen.c",
+    archive_name = "libh_tls_dlopen.a", soname = "h_tls_dlopen.so")

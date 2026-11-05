@@ -21,6 +21,16 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc TLS helper loading and pthread execution (2026-11-05)
+
+Original linked and dlopen TLS programs/helpers retain their source, callback
+imports, exported TLS symbols and pthread dependencies. Both original cases pass
+with captured native libc/libsys/ATF/pthread/helpers. Own-child loader traces show
+successful native helper opens, including the runtime dlopen path. DTrace DOF
+initialization is disabled for these isolated runtime tests; this does not qualify
+provider firing, audit delivery or tracing overhead. No probe/audit source was
+removed or newly invented. See LIBC-TLS-TEST-QUALIFICATION.md for retained evidence.
+
 ## Libc stdio formats, streams and interruption (2026-11-05)
 
 Thirty original test programs retain scoped compiler/library policy and full

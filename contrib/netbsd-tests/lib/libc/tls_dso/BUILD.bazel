@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["h_tls_dynamic.c"], visibility = ["//lib/libc/tests/tls_dso:__pkg__"])

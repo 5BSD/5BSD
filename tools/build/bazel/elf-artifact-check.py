@@ -72,6 +72,9 @@ def parse_program(text, program=True):
     # Version definitions (a versioned library exports name@VERSION).
     definitions = sorted(set(re.findall(r'^\s*0x[0-9a-f]+:\s+Rev:\s+\d+\s+Flags:\s+\S+\s+'
                                         r'Index:\s+\d+\s+Cnt:\s+\d+\s+Name:\s+(\S+)', text, re.M)))
+    search_paths = re.findall(r'\((RPATH|RUNPATH)\)[^\n]*\[(.*)\]\s*$', text, re.M)
+    if len(search_paths) != len(re.findall(r'\((?:RPATH|RUNPATH)\)', text)):
+        raise ValueError('unsupported runtime search path metadata')
     return {'class': field('Class'), 'data': field('Data'), 'osabi': field('OS/ABI'),
             'machine': field('Machine'), 'type': field('Type').split()[0],
             'interpreter': interp[0] if interp else None, 'soname': sonames[0] if sonames else None,
@@ -81,7 +84,7 @@ def parse_program(text, program=True):
             'relro': bool(re.search(r'^\s*GNU_RELRO\s', text, re.M)),
             'now': bool(re.search(r'\(FLAGS(?:_1)?\)[^\n]*\b(?:BIND_NOW|NOW)\b', text)),
             'textrel': bool(re.search(r'\(TEXTREL\)|\(FLAGS\)[^\n]*\bTEXTREL\b', text)),
-            'search_path': bool(re.search(r'\((?:RPATH|RUNPATH)\)', text)),
+            'search_path': bool(search_paths), 'search_paths': search_paths,
             'executable_stack': 'E' in ''.join(stack[0][6:-1]),
             'writable_executable_load': any('W' in ''.join(r[6:-1]) and 'E' in ''.join(r[6:-1])
                                             for r in loads),
@@ -134,22 +137,27 @@ def sections(objcopy, readelf, artifact, scratch):
     return result
 
 
-def compare_program(readelf, objcopy, candidate, reference, scratch):
+def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected_search_paths=None):
     records = {}
     for key, path in (('candidate', candidate), ('make_reference', reference)):
         text = run([readelf, '-h', '-l', '-d', '-W', '--dyn-syms', '--version-info', path])
         records[key] = {'path': str(path), 'sha256': sha(path), 'metadata': parse_program(text),
                         'sections': sections(objcopy, readelf, path, scratch)}
     a, b = records['candidate']['metadata'], records['make_reference']['metadata']
+    if expected_search_paths is not None and not isinstance(expected_search_paths, (list, tuple)):
+        raise ValueError('runtime search path contract must be a list or tuple')
+    expected = [] if expected_search_paths is None else list(expected_search_paths)
     for label, record in (('candidate', a), ('reference', b)):
         if record['type'] != 'DYN' or not record['pie']:
             raise ValueError(label + ': PIE executable required')
         if not record['relro'] or not record['now']:
             raise ValueError(label + ': RELRO and immediate binding required')
-        if any(record[k] for k in ('textrel', 'search_path', 'executable_stack',
+        if [value for kind, value in record['search_paths']] != expected:
+            raise ValueError(label + ': unexpected runtime search path')
+        if any(record[k] for k in ('textrel', 'executable_stack',
                                    'writable_executable_load')):
             raise ValueError(label + ': unsafe or installation-specific ELF metadata')
-    for key in ('class', 'data', 'osabi', 'machine', 'interpreter', 'needed', 'imports',
+    for key in ('search_paths', 'class', 'data', 'osabi', 'machine', 'interpreter', 'needed', 'imports',
                 'exports', 'version_requirements'):
         if a[key] != b[key]:
             raise ValueError('Make program metadata mismatch: ' + key)
@@ -158,7 +166,7 @@ def compare_program(readelf, objcopy, candidate, reference, scratch):
                          json.dumps({'candidate': a['needed_order'], 'make': b['needed_order']}))
     sa, sb = records['candidate']['sections'], records['make_reference']['sections']
     differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
-    return {'scope': 'program-metadata-comparison', 'readelf_sha256': sha(readelf),
+    return {'scope': 'program-metadata-comparison', 'expected_search_paths': expected, 'readelf_sha256': sha(readelf),
             **records, 'needed_order_equal': a['needed_order'] == b['needed_order'],
             'byte_identical': sha(candidate) == sha(reference),
             'section_names_equal': sorted(sa) == sorted(sb), 'differing_sections': differing,
@@ -250,7 +258,11 @@ def main():
     selection.add_argument('--qualification', type=Path, help='completed native qualification directory')
     p.add_argument('--target', help='explicit captured target label')
     p.add_argument('--output-suffix', help='unique literal suffix of its captured output name')
+    p.add_argument('--expected-search-path', action='append', default=[],
+                   help='explicit expected program RPATH/RUNPATH value; candidate and Make tags must still agree')
     a = p.parse_args()
+    if a.kind != 'program' and a.expected_search_path:
+        p.error('--expected-search-path requires program comparison')
     if a.qualification is not None:
         if not a.target or not a.output_suffix:
             p.error('--qualification requires --target and --output-suffix')
@@ -262,7 +274,7 @@ def main():
     if a.kind == 'program':
         scratch = a.output.with_suffix('.scratch')
         scratch.mkdir()
-        result = compare_program(a.readelf, a.objcopy, a.candidate, a.make_artifact, scratch)
+        result = compare_program(a.readelf, a.objcopy, a.candidate, a.make_artifact, scratch, expected_search_paths=a.expected_search_path)
         scratch.rmdir()
     else:
         result = compare_archive(a.nm, a.ar, a.candidate, a.make_artifact)

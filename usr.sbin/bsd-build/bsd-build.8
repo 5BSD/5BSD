@@ -7146,3 +7146,17 @@ Installed metadata/Kyua and bounded ELF/debug comparisons remain separate from
 raw binary equality, other cases/locales and full installed-system acceptance.
 The existing explicit-input workflow also captures the actual fixture payloads.
 Production Make and full-tests parent guards remain unchanged.
+
+.Pp
+The selected native libc TLS contribution includes both original programs,
+two helper DSOs, two regular archives and original library alias/debug metadata.
+ABI imports preserve original helper-first linkage and dlopen callbacks from the
+exporting executable. Selected runtime qualification uses captured native helper
+libraries; independent own-child loader traces distinguish these from host copies.
+The ELF comparison helper rejects runtime paths by default. Its explicit
+.Fl -expected-search-path
+input requires the same expected values in candidate and Make, with identical
+RPATH/RUNPATH tags and all existing hardening checks retained.
+Existing explicit-input targets/tests and artifact captures express this leaf
+contribution. Full-tests parent guards, production Make and signing/publication
+rules remain unchanged; full installed-system qualification remains required.

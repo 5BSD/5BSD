@@ -361,3 +361,7 @@ exports_files(["bsd_sed_output.bzl"], visibility = ["//visibility:public"])
 bsd_python_test(name = "elf_section_reader_test", src = "elf-section-reader-test.py",
     data = ["elf-artifact-check.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
+
+bsd_python_test(name = "elf_runtime_path_test", src = "elf-runtime-path-test.py",
+    data = ["elf-artifact-check.py", "qualification_artifacts.py"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
