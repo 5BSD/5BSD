@@ -5,3 +5,5 @@ cc_library(name = "tcpdump_support_headers", hdrs = ["sys/dev/usb/usbpcap.h", "s
     visibility = ["//usr.sbin/tcpdump/tcpdump:__pkg__"])
 
 exports_files(["share/man/man5/pf.conf.5", "share/man/man5/pf.os.5"], visibility = ["//share/man/man5:__pkg__"])
+
+exports_files(['share/man/man4/divert.4', 'share/man/man4/pf.4', 'share/man/man4/pflog.4', 'share/man/man4/pflow.4', 'share/man/man4/pfsync.4'], visibility = ["//share/man/man4:__pkg__"])

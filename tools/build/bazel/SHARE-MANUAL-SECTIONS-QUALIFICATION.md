@@ -1,5 +1,9 @@
 # Native shared manual sections (2026-11-05)
 
+The subsequent complete-parent checkpoint adds section 4 and its children; see
+SHARE-MANUAL-PARENT-QUALIFICATION.md. This document retains the earlier eight-section
+evidence and its original limits.
+
 ## Implementation
 
 Sections 1, 3, 3lua, 5, 6, 7, 8 and 9 now have source-owned BUILD.bazel inventories.

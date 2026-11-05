@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_manual_installation.bzl", "manual_entries")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_pages = ['armv8crypto.4', 'enetc.4', 'felix.4', 'rk_gpio.4', 'rk_grf.4', 'rk_grf_gpio.4', 'rk_i2c.4', 'rk_pinctrl.4']
+_aliases = [('armv8crypto.4', 'aarch64/armv8crypto.4'), ('enetc.4', 'aarch64/enetc.4'), ('felix.4', 'aarch64/felix.4'), ('rk_gpio.4', 'aarch64/rk_gpio.4'), ('rk_grf.4', 'aarch64/rk_grf.4'), ('rk_grf_gpio.4', 'aarch64/rk_grf_gpio.4'), ('rk_i2c.4', 'aarch64/rk_i2c.4'), ('rk_pinctrl.4', 'aarch64/rk_pinctrl.4')]
+_entries_plain = manual_entries(name = "manuals", pages = _pages, aliases = _aliases)
+
+config_setting(name = "only_aarch64", flag_values = {"//tools/build/bazel/config:manual_architectures": "aarch64"})
+_common = manual_entries(name = "common_arm", pages = ["bcm283x_pwm.4"],
+    aliases = [("bcm283x_pwm.4", "aarch64/bcm283x_pwm.4")],
+    sources = {"bcm283x_pwm.4": "//share/man/man4/man4.arm:bcm283x_pwm.4"})
+load("@bazel_skylib//lib:selects.bzl", "selects")
+selects.config_setting_group(name = "common_selected", match_all = ["//tools/build/bazel/config:man_enabled", ":only_aarch64"])
+bsd_install_manifest(name = "install_manifest", entries = select({
+    "//tools/build/bazel/config:man_enabled": _entries_plain, "//conditions:default": [],
+}) + select({":common_selected": _common, "//conditions:default": []}), visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive")

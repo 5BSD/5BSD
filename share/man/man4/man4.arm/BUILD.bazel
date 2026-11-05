@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_manual_installation.bzl", "manual_entries")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_pages = ['ar40xx.4', 'bcm283x_pwm.4', 'devcfg.4', 'dwcotg.4', 'imx6_ahci.4', 'imx6_snvs.4', 'imx_wdog.4', 'mge.4', 'ti_adc.4']
+_aliases = [('imx_wdog.4', 'imxwdt.4'), ('mge.4', 'if_mge.4'), ('imxwdt.4', 'arm/imxwdt.4'), ('if_mge.4', 'arm/if_mge.4'), ('ar40xx.4', 'arm/ar40xx.4'), ('bcm283x_pwm.4', 'arm/bcm283x_pwm.4'), ('devcfg.4', 'arm/devcfg.4'), ('dwcotg.4', 'arm/dwcotg.4'), ('imx6_ahci.4', 'arm/imx6_ahci.4'), ('imx6_snvs.4', 'arm/imx6_snvs.4'), ('imx_wdog.4', 'arm/imx_wdog.4'), ('mge.4', 'arm/mge.4'), ('ti_adc.4', 'arm/ti_adc.4')]
+_entries = manual_entries(name = "manuals", pages = _pages, aliases = _aliases)
+bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:man_enabled": _entries, "//conditions:default": []}), visibility = ["//visibility:public"])
+exports_files(["bcm283x_pwm.4"], visibility = ["//share/man/man4/man4.aarch64:__pkg__"])
+script_install_archive(name = "install_archive")

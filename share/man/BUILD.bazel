@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [
+    "//share/man/man1:install_archive",
+    "//share/man/man3:install_archive",
+    "//share/man/man3lua:install_archive",
+    "//share/man/man4:installation_archives",
+    "//share/man/man5:install_archive",
+    "//share/man/man6:install_archive",
+    "//share/man/man7:install_archive",
+    "//share/man/man8:install_archive",
+    "//share/man/man9:install_archive",
+], visibility = ["//visibility:public"])

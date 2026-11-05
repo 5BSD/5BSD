@@ -6785,3 +6785,10 @@ Native share-manual component targets preserve group-specific packages,
 optional manual compression and alias hardlinks.
 The native inet setting selects networking manuals independently of inet_support.
 These selected sections do not yet constitute the complete installed manual tree.
+
+.Pp
+The native shared-manual parent includes section 4 and both original ARM
+architecture directories by default.
+The manual_architectures setting accepts all, arm, aarch64 or none to select
+those child inventories; it does not change the target CPU's main page selection.
+Manual-database construction remains a separate installation-stage requirement.

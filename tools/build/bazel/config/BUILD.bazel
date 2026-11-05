@@ -766,3 +766,7 @@ selects.config_setting_group(name = "cddl_spl_enabled", match_any = [":dtrace_en
 # MK_INET controls installed networking manuals independently of INET_SUPPORT.
 bool_flag(name = "inet", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "inet_enabled", flag_values = {":inet": "true"}, visibility = ["//visibility:public"])
+
+# Canonical selections of the current MAN_ARCH child-directory inventories.
+string_flag(name = "manual_architectures", build_setting_default = "all",
+    values = ["all", "arm", "aarch64", "none"], visibility = ["//visibility:public"])

@@ -48,6 +48,17 @@ components. Cross-capture namespace reconciliation now covers 1132 archives and
 SHARE-MANUAL-SECTIONS-QUALIFICATION.md. Section 4 and complete share/world/package
 and system qualification remain open; this is not a combined full-world build.
 
+## Complete configured shared-manual parent (2026-11-05)
+
+The native share/man parent now includes section 4 and both original architecture
+children. Complete original subtree comparisons pass for normal and raw/split/
+opposite-feature profiles: 4248 and 4075 records respectively. Normal mode has
+1426 unique files and 2822 exact hardlink aliases. Manual-directory choices match
+actual Make query inventories; target-ABI cross-build and independent alternate
+architecture-choice staging remain open. All eleven components also pass the
+native manual-disable check. See SHARE-MANUAL-PARENT-QUALIFICATION.md. Mandoc
+databases, remaining share/world composition and the system gates remain open.
+
 ## Current composition checkpoint (2026-11-05)
 
 NIS and sendmail administration are now included when selected; their combined
@@ -3616,3 +3627,17 @@ an interrupted original reference remains rejected and stable references pass.
 No Python implementation changes are needed. Continue section 4 and remaining
 share/world composition and the open installed-world/package/bootstrap/runtime/
 performance gates. See SHARE-MANUAL-SECTIONS-QUALIFICATION.md.
+
+
+## Shared-manual parent checkpoint (2026-11-05)
+
+Complete configured share/man source construction now passes through the normal
+frontend and an independent original Make subtree comparison in two profiles.
+Native section-4 CPU/feature choices and architecture-directory aliases preserve
+actual source policy; unsupported CPUs are incompatible at the endpoint. The
+manual_architectures input has explicit canonical inventories, with bounded
+original-query/payload checks for each nondefault choice. Cross-capture namespace
+review covers 1135 archives/27823 file paths without conflicting claims and keeps
+the prior eight manual contributions identical. Continue docs/examples/zoneinfo,
+remaining world roots and the open installed-world/package/bootstrap/runtime/
+resource gates; Make remains default. See SHARE-MANUAL-PARENT-QUALIFICATION.md.
