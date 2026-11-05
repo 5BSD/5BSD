@@ -26,7 +26,7 @@ def text_locales(category, locales, aliases):
         entries.append(":alias_" + alias)
         directories["/usr/share/locale/" + alias] = json.encode(dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=locales"]))
     bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:locales_enabled": entries, "//conditions:default": []}))
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"], visibility = ["//share:__pkg__"],
         directories = select({"//tools/build/bazel/config:locales_enabled": directories, "//conditions:default": {}}),
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
         passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,

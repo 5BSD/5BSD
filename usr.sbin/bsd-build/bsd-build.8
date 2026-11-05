@@ -6824,3 +6824,11 @@ subtree as regular read-only copies, including its source directories.
 It does not require the source checkout at runtime.
 The Make developer SHARED=symlinks layout is not implemented by that endpoint;
 configuration generation and mail-service runtime need separate qualification.
+
+.Pp
+The native locale installation parent always includes runtime C.UTF-8 and selects
+other locale categories through the locales setting.
+Its CTYPE and collation actions declare the execution-platform localedef runtime
+as action inputs.
+Locale parent construction is currently qualified for amd64; complete share/world,
+other target architectures and locale runtime behavior require further checks.

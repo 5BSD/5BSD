@@ -228,7 +228,7 @@ def ctype_installation():
     }))
     # Preserve Make's directory ownership tag; the C.UTF-8 file itself is runtime.
     always = {"/usr/share": json.encode(dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=utilities"])), "/usr/share/locale/C.UTF-8": json.encode(dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=utilities"]))}
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"], visibility = ["//share:__pkg__"],
         directories = select({"//tools/build/bazel/config:locales_enabled": dict(always.items() + directories.items()), "//conditions:default": always}),
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
         passwd = "//etc:master.passwd", group = "//etc:group",

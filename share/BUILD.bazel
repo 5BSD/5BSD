@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# ctypedef is unconditional in the maintained share traversal; C.UTF-8 remains
+# runtime data even with optional locales disabled. This is not the world root.
+bsd_install_archive_set(name = "locale_installation_archives", archives = [
+    "//share/ctypedef:install_archive",
+] + select({"//tools/build/bazel/config:locales_enabled": [
+    "//share/colldef:install_archive", "//share/colldef_unicode:install_archive",
+    "//share/monetdef:install_archive", "//share/monetdef_unicode:install_archive",
+    "//share/msgdef:install_archive", "//share/msgdef_unicode:install_archive",
+    "//share/numericdef:install_archive", "//share/numericdef_unicode:install_archive",
+    "//share/timedef:install_archive",
+], "//conditions:default": []}), visibility = ["//visibility:public"])

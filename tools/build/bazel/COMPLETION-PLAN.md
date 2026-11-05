@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Shared locale and encoding composition checkpoint (2026-11-05)
+
+The new configured locale parent composes ten existing native owners and keeps
+C.UTF-8 when optional locales are disabled. Together with existing i18n data,
+complete independent original comparisons pass 3052 component metadata records,
+1207 exact regular files and 640 symlinks. Directory records repeat across
+components; no whole-world directory/pkgbase reconciliation is implied. Review
+found and corrected missing localedef execution-runtime dependencies: all 181
+observed actions now declare libc/libsys/loader, and all 33 archive/metadata outputs
+remain unchanged. The minimal parent passes its complete three-record original
+comparison; returning to the full profile preserves all outputs without uncached
+share actions. See SHARED-LOCALE-COMPOSITION-QUALIFICATION.md. Cross-capture evidence
+now covers 1158 archives and 30736 non-directory paths without conflicting claims.
+Next compose the complete share parent and close remaining world roots/installed
+tests. AMD64-only locale selections, other ABIs, bootstrap, complete installation/
+pkgbase, runtime and comparative resource gates remain open. Make stays default.
+
 ## Sendmail shared source data checkpoint (2026-11-05)
 
 Source-owned Bazel globs now install the maintained sendmail cf subtree through
