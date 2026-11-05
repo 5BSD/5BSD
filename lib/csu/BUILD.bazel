@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# The Make wrapper selects the target architecture plus tests when enabled.
+# Only AMD64 has a qualified native producer here; other ABIs stay incompatible
+# until their actual startup implementations and test policies are migrated.
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PRODUCTION = ["//lib/csu/amd64:install_archive"]
+bsd_install_archive_set(name = "production_installation_archives", archives = _PRODUCTION,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_install_archive_set(name = "installation_archives", archives = _PRODUCTION + select({
+    "//tools/build/bazel/config:tests_enabled": ["//lib/csu/tests:install_archive"],
+    "//conditions:default": [],
+}), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+test_suite(name = "tests", tests = [
+    "//lib/csu/tests:static_tests", "//lib/csu/tests:dynamic_tests",
+    "//lib/csu/tests:dynamicpie_tests", "//lib/csu/tests:dynamiclib_tests",
+    "//lib/csu/tests:errno_static_plain", "//lib/csu/tests:errno_static_threaded",
+    "//lib/csu/tests:errno_dynamic_plain", "//lib/csu/tests:errno_dynamic_threaded",
+], visibility = ["//visibility:public"])

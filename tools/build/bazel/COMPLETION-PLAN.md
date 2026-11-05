@@ -16,6 +16,42 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Full-world convergence and larger build groups (2026-11-05)
+
+Prioritize complete configured world ownership and aggregate build failures over
+separate leaf reports. The refreshed maintained Make traversal at
+/usr/obj/usr/src/bazel-world-inventory-r1-20261105/inventory.json succeeds with
+2,128 directories and sixteen top-level families. The complete component query
+is running at bazel-world-components-r1-20261105; partial records do not establish
+complete metadata coverage. Existing native parent packages must be reconciled
+with actual selected products, installation manifests and generated inputs.
+Root BUILD files are absent for lib, cddl, rescue, share, sys and usr.sbin;
+children may already have native producers, so absence is an assembly review
+item, not a count of missing implementations. Other roots may have differently
+named or incomplete installation ownership and also require reconciliation.
+
+The current AMD64 csu parent candidate composes production startup objects and
+all existing test contributions; original fresh Make parent construction passes
+at bazel-csu-parent-make-r1-20261105. Native qualification remains running at
+bazel-csu-parent-native-r1-20261105 while native LLVM/LLD dependencies build.
+Do not accept this candidate until all 36 original cases, installation ownership
+(including suite directories), ten startup object contracts and debug checks
+pass. The fresh Make log contains repeated identical directory contributions;
+logical reconciliation must retain every distinct record and reject conflicts
+or repeated non-directory payloads. Other architectures remain unimplemented at
+this wrapper and explicitly incompatible.
+
+A sequential launcher at bazel-world-program-families-launch-r1-20261105 waits
+for the live csu qualification process, then invokes the maintained build-bsd
+frontend on bin, sbin, libexec and usr.bin together. Its explicit format-5 request
+selects production installation with tests disabled and the existing source
+settings test. This is the next larger construction attempt, not complete world
+or installed-test qualification. Preserve errors, fix coherent groups, compare
+actual installed payload/metadata ownership with the selected independent Make
+inventory, and commit reviewed batches. Complete lib/usr.sbin and other world
+parents remain required before an honest full-world acceptance claim. All
+pkgbase/bootstrap/runtime/cross-platform/resource/default-switch gates remain.
+
 ## libcasper production parent and original connection cases (2026-11-05)
 
 The native parent now composes the original library and all eight service

@@ -2228,6 +2228,14 @@ Full service runtime, live tracing and complete world/pkgbase remain unqualified
 See
 .Pa tools/build/bazel/CASPER-PARENT-COMPOSITION-QUALIFICATION.md .
 .Pp
+Explicit lib/csu parent labels compose AMD64 production startup objects and,
+when tests are enabled, the original installed startup-test hierarchy.
+The tests suite selects all four constructor/destructor modes and four errno
+programs. Other startup architectures are currently incompatible at this parent.
+The new parent is a qualification candidate; its current full build and metadata
+review must finish before acceptance. This adds no dispatcher or input-schema
+change and does not change the default system build backend.
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer
