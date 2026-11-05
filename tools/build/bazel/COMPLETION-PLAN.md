@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to twenty-seven applications (2026-11-05)
+
+Eight source-owned variants add date/chio/kenv/setfacl/stty/kill/sync/dd. The
+native static core now links 27 of the default 103 applications and passes 54
+runtime methods. Fresh original nested Make builds check 25 C objects and three
+providers; allocated code/relocations agree, with independently verified DTrace
+path aliases and actual function/patch-site parity. Fresh original generated
+Make on identical captured inputs matches main, 27 stubs, 27 combined objects and
+the complete executable in all 56 whole-byte comparisons. This is pipeline parity,
+not independent complete library/debug/DOF/full-rescue acceptance. Sync is not
+executed on the host. See RESCUE-TWENTY-SEVEN-PROGRAM-QUALIFICATION.md. Continue
+remaining 76 applications, libraries/configuration/cross and full rescue install;
+all full-world/kernel/pkgbase/bootstrap/publication/runtime/performance gates
+remain open. Make stays production/default; BIP stays excluded.
+
 ## AMD64 boot parent construction and normal sys world (2026-11-05)
 
 The selected native AMD64 boot parent now builds data, EFI/IA32/BIOS/userboot/

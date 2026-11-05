@@ -5792,6 +5792,13 @@ and
 for cross-filesystem helper execution.
 Those installed paths require separate qualification.
 .Pp
+The bounded rescue core additionally constructs date, chio, kenv, setfacl, stty,
+kill, sync and dd, for twenty-seven selected applications.
+The declared rescue variants preserve the original provider exclusions for kenv
+and setfacl and the providers for dd, kill and sync.
+Runtime tests use private files or read-only inputs; they do not execute sync or
+establish live probe firing, full rescue installation or complete library parity.
+.Pp
 The default traced
 .Cm //lib/libutil:static_archive
 target preserves original Make member order and its separate DTrace provider.

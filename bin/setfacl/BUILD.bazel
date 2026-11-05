@@ -50,3 +50,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['file.c', 'mask.c', 'merge.c', 'remove.c', 'setfacl.c', 'util.c', 'setfacl.h', 'aclwrite_trace.h'],
+    object_names = ['file.o', 'mask.o', 'merge.o', 'remove.o', 'setfacl.o', 'util.o'], deps = [])

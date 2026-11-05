@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -315,6 +315,64 @@ class RescueCore(unittest.TestCase):
             p = self.run_app("rm", "-r", str(tree))
             self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
             self.assertFalse(tree.exists())
+
+    def test_date_epoch_read_only(self):
+        p = self.run_app("date", "-u", "-r", "0", "+%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"1970-01-01T00:00:00Z\n", b""))
+
+    def test_date_parse_without_setting_clock(self):
+        p = self.run_app("date", "-j", "-u", "-f", "%Y-%m-%d", "2024-02-29", "+%Y%m%d")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"20240229\n", b""))
+
+    def test_dd_binary_stdin(self):
+        data = bytes(range(256)) * 3
+        p = self.run_app("dd", "bs=17", "status=none", data=data)
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, data, b""))
+
+    def test_dd_conversion(self):
+        p = self.run_app("dd", "bs=4", "conv=swab", "status=none", data=b"abcdefgh")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"badcfehg", b""))
+
+    def test_dd_private_sparse_output(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "output"
+            data = b"\0" * 4096 + b"private\n"
+            p = self.run_app("dd", "bs=4096", "conv=sparse", "status=none", "of=" + str(path), data=data)
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(path.read_bytes(), data)
+
+    def test_kill_signal_names_without_signalling(self):
+        p = self.run_app("kill", "-l", "15")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"TERM\n", b""))
+
+    def test_kill_rejects_invalid_signal_without_signalling(self):
+        p = self.run_app("kill", "-l", "999999")
+        self.assertNotEqual(p.returncode, 0)
+
+    def test_stty_requires_terminal(self):
+        p = self.run_app("stty", "-a")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual(p.stderr, b"stty: stdin isn't a terminal\n")
+
+    def test_chio_usage_without_opening_hardware(self):
+        p = self.run_app("chio")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"usage:", p.stderr)
+
+    def test_kenv_invalid_option_without_changing_environment(self):
+        p = self.run_app("kenv", "-Z")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"usage:", p.stderr)
+
+    def test_setfacl_rejects_invalid_acl_on_private_file(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"private\n")
+            before = path.stat().st_mode
+            p = self.run_app("setfacl", "-m", "invalid", str(path))
+            self.assertNotEqual(p.returncode, 0)
+            self.assertEqual(path.stat().st_mode, before)
+            self.assertEqual(path.read_bytes(), b"private\n")
 
 if __name__ == "__main__":
     unittest.main()

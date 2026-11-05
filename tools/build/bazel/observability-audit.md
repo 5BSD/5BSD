@@ -21,6 +21,26 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Eight additional rescue application variants (2026-11-05)
+
+Date/chio/kenv/setfacl/stty/kill/sync/dd are native RESCUE variants in the bounded
+27-application core. Original Make enables ddio, signaltool and flushall providers
+here; the native variants preserve them. Kenv/envquery and setfacl/aclwrite are
+explicitly excluded by their Makefiles in RESCUE/BOOTSTRAPPING; retain that policy
+rather than silently expanding instrumentation during migration. Date/chio/stty
+have no direct provider in their maintained recipes. No direct BSM audit call or
+include was found in the eight application source/header sets. Kernel syscall
+coverage is separate; review clock-change, signal, kernel-environment and ACL
+mutation audit delivery when their privileged runtime cases are qualified.
+
+Fresh original Make/provider comparisons establish three actual ET_REL function
+bindings, probe locations, schemas and patched sites; path-derived alias hashes
+are independently checked. Full raw DOF/debug encoding parity, live registration,
+probe firing and audit delivery remain open. Safe host tests disable DOF startup
+and do not change the system clock, kernel environment or hardware. Sync's source
+always calls global sync; it is built/linked but not executed by host tests.
+See RESCUE-TWENTY-SEVEN-PROGRAM-QUALIFICATION.md for evidence and rejected runs.
+
 ## Standalone Lua review (2026-11-03)
 
 The 31 selected standalone Lua sources and maintained library recipes contain no

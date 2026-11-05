@@ -25,3 +25,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['cchar.c', 'gfmt.c', 'key.c', 'modes.c', 'print.c', 'stty.c', 'util.c', 'stty.h', 'extern.h'],
+    object_names = ['cchar.o', 'gfmt.o', 'key.o', 'modes.o', 'print.o', 'stty.o', 'util.o'], deps = [])
