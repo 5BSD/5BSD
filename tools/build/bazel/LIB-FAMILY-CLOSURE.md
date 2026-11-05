@@ -21,6 +21,24 @@ production contributions and their explicit remaining scope.
 See CAPSICUM-PROTOBUF-COMPOSITION-QUALIFICATION.md for Capsicum production/ATF
 execution and the explicit normal protobuf parent.
 
+## Internal library installation reconciliation (2026-11-05)
+
+The selected libelftc implementation was native, but its original manuals had no
+installation contribution. INTERNALLIB suppresses library/header installation;
+it does not suppress MAN/MLINKS. The native source-owned inventory now installs
+all nine manuals and eleven hardlinks, using the original toolchain-dev package
+(or toolchain-man when split_manpages is enabled). No installed library/header
+was invented for this internal owner.
+
+`bazel-elftc-parent-native-r1-20261105` passes the existing API test and builds
+regular/PIE archives plus the production manual archive through build-bsd.
+`original-review/review.json` compares the fresh original
+`bazel-elftc-parent-make-r2-20261105`: all twenty metadata records and compressed
+payloads, all eleven actual hardlink relationships, and regular/PIE member order
+and symbols agree. Other package profiles/ABIs and full-world parity remain open.
+All paths are under /usr/obj/usr/src. Generic format-5 selection already supports
+the labels; no C frontend, SDK, signing or publication interface changed.
+
 ## Concrete remaining review queue
 
 | Owner | Source evidence and next work |

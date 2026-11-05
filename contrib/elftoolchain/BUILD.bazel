@@ -41,3 +41,6 @@ exports_files(["readelf/readelf.c", "readelf/readelf.1"], visibility = ["//usr.b
 
 load("//lib/libdwarf:installation_data.bzl", DWARF_MANUALS = "MANUALS")
 exports_files(["libdwarf/" + name for name in DWARF_MANUALS + ["dwarf.h", "libdwarf.h"]], visibility = ["//lib/libdwarf:__pkg__"])
+
+load("//lib/libelftc:installation_data.bzl", ELFTC_MANUALS = "MANUALS")
+exports_files(["libelftc/" + manual for manual in ELFTC_MANUALS], visibility = ["//lib/libelftc:__pkg__"])

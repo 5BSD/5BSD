@@ -76,6 +76,19 @@ for retained evidence and limits. These results do not complete world/pkgbase,
 bootstrap independence, diagnostic/alternate profiles, daemon runtime,
 cross-platform, VM or comparative resource qualification. Make remains default.
 
+## Complete lib selection reconciliation (2026-11-05)
+
+The library-parent queue now accounts for internal owners separately from
+installed contributions. Original component metadata identifies libelftc's nine
+manuals even though it is INTERNALLIB. Its missing native manual archive is now
+implemented and independently qualified: twenty original records/payloads,
+eleven hardlinks and regular/PIE archive members/symbols match Make; the existing
+API test executes and passes. Evidence:
+`bazel-elftc-parent-native-r1-20261105/original-review/review.json`.
+See LIB-FAMILY-CLOSURE.md. This is another completed contribution, not complete
+lib-parent selection or world acceptance. Continue explicit configured parent
+composition without treating internal-only archives as installed files.
+
 ## Earlier dtraced configured-option checkpoint (superseded by composition above)
 
 All eleven original daemon C++ sources now have native compilation and declared

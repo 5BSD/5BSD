@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load(":sources.bzl", "ELFTC_SOURCES")
-# INTERNAL library: no installed DSO or public installation is introduced.
+# INTERNAL library: no installed library/header; original manuals are separate.
 cc_library(name = "elftc", srcs = ELFTC_SOURCES,
     deps = ["//contrib/elftoolchain:elftc_headers", "//lib/libelf:elf"],
     implementation_deps = ["//contrib/elftoolchain:elftc_internal_headers"],
@@ -21,3 +21,30 @@ cc_import(name = "archive_link", static_library = ":static_archive")
 cc_test(name = "api_test", srcs = ["api_test.c"],
     deps = [":archive_link", "//contrib/elftoolchain:elftc_headers", "//lib/libelf:elf"],
     linkstatic = True, size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+# INTERNALLIB suppresses library/header installation, not MAN/MLINKS.
+load(":installation_data.bzl", "MANUALS", "MANUAL_LINKS")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+_MAN_TAGS = select({
+    "//tools/build/bazel/config:split_manpages_enabled": ["package=toolchain-man"],
+    "//conditions:default": ["package=toolchain-dev"],
+})
+[bsd_compress(name = "manual_" + manual.replace(".", "_"),
+    src = "//contrib/elftoolchain:libelftc/" + manual, output = manual + ".gz",
+    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+ for manual in MANUALS]
+[bsd_install_file(name = "install_" + manual.replace(".", "_"),
+    src = ":manual_" + manual.replace(".", "_"), destination = "/usr/share/man/man3/" + manual + ".gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+ for manual in MANUALS]
+[bsd_install_link(name = "install_" + alias.replace(".", "_"),
+    destination = "/usr/share/man/man3/" + alias + ".gz", target = "/usr/share/man/man3/" + original + ".gz",
+    kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+ for original, alias in MANUAL_LINKS]
+bsd_install_manifest(name = "install_manifest",
+    entries = [":install_" + manual.replace(".", "_") for manual in MANUALS] +
+        [":install_" + alias.replace(".", "_") for _, alias in MANUAL_LINKS],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+script_install_archive(name = "production_install_archive")
