@@ -4,7 +4,7 @@ exports_files(["regcomp.c", "regerror.c", "regexec.c", "regfree.c", "engine.c", 
     visibility = ["//lib/libregex:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(features = LIBC_VARIANT_FEATURES, name = "test_headers", hdrs = ["utils.h", "regex2.h"], includes = ["."], visibility = ["//lib/libregex/tests:__pkg__"])
+cc_library(features = LIBC_VARIANT_FEATURES, name = "test_headers", hdrs = ["utils.h", "regex2.h"], includes = ["."], visibility = ["//lib/libregex/tests:__pkg__", "//lib/libc/tests/regex:__pkg__"])
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # libc uses locale collation; standalone libregex defines LIBREGEX instead.

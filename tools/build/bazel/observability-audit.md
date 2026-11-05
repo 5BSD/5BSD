@@ -21,6 +21,16 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc regex helper, exhaustion and shell behavior (2026-11-05)
+
+All original thirty regex cases are exercised with native libc: twenty-nine
+passes and the unchanged expected failure for left-associative matching.
+Native helper/shell/ATF/locale dependencies are declared; original sources remain
+unchanged. DTrace DOF initialization is disabled for these isolated executions.
+Provider firing, audit delivery and tracing/resource overhead are not qualified;
+regular-expression execution is not a substitute for those checks. See
+LIBC-REGEX-TEST-QUALIFICATION.md for installation/ELF/runtime evidence.
+
 ## Libc TLS helper loading and pthread execution (2026-11-05)
 
 Original linked and dlopen TLS programs/helpers retain their source, callback

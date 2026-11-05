@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Complete libc regex suite construction and execution (2026-11-05)
+
+All three original C programs, two shell suites, README and twenty-six fixture
+files now build/install with original flags, private headers and native libc
+regex behavior. All thirty-six installed file records, exact nonbinary bytes,
+physical suite/data/debug directories, three ELF contracts and debug CRCs match
+original Make. All thirty original cases run: twenty-nine pass and leftassoc
+retains its original expected failure. Shell cases use declared native tools,
+C++ runtimes and C.UTF-8 data; exhaustion retains its original 256 MiB bound.
+Final frontend r5 passes 31 targets including source settings, retaining explicit
+expected-failure reporting. See LIBC-REGEX-TEST-QUALIFICATION.md for failures and
+independent hash-bound review. Existing WARNS=2/4 flag lists remain identical.
+
+Continue remaining libc/test roots and parent traversal, source-owned archive
+ordering and every independent whole-world/debug/pkgbase/cross/bootstrap/runtime/
+resource/cache/sandbox/publication gate. Make stays default, BIP excluded.
+
 ## Complete selected libc TLS construction (2026-11-05)
 
 Both selected original TLS programs, two helper DSOs and two static archives now
