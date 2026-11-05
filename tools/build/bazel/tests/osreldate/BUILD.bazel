@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_osreldate.bzl", "bsd_osreldate")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+load(":tools.bzl", "execution_tools")
+bsd_osreldate(name = "future", output = "future/osreldate.h", param = "param.h", copyright = "COPYRIGHT")
+execution_tools(name = "execution_tools")
+bsd_host_artifact_test(name = "generation_test", src = "generation_test.py",
+    data = ["param.h", "COPYRIGHT", ":future", ":execution_tools", "//include:osreldate", "//include:mk-osreldate.sh",
+        "//sys/conf:newvers.sh", "//sys/sys:param.h", "//:COPYRIGHT", "//share/examples/etc:bsd-style-copyright"],
+    visibility = ["//visibility:public"])

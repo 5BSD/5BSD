@@ -6858,3 +6858,11 @@ The maintained Make installation reference passes both DESTDIR and SDESTDIR to
 its stage and verifies actual recorded objects, hashes and symlink values.
 These checks validate recorded staged payloads and do not provide a filesystem
 sandbox for arbitrary Make recipes.
+
+.Pp
+Native osreldate generation uses declared version and copyright source inputs
+with execution-SDK shell tools.
+The maintained generator provides a stateless explicit-input stdout mode;
+normal Make construction retains file output.
+Version and copyright queries avoid unrelated source or clock discovery when
+explicit minimum inputs are supplied.

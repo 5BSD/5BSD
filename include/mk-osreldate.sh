@@ -28,26 +28,47 @@
 
 set -e
 
-CURDIR=$(pwd)
-ECHO=${ECHO:=echo}
-
+# -s emits reproducible header contents to stdout using explicit source inputs.
+stdout=no
+case "$#:$1" in
+0:) ;;
+1:-s)
+    stdout=yes
+    : "${NEWVERS_SH:?stdout mode requires NEWVERS_SH}"
+    : "${PARAMFILE:?stdout mode requires PARAMFILE}"
+    : "${NEWVERS_COPYRIGHT:?stdout mode requires NEWVERS_COPYRIGHT}"
+    : "${NEWVERS_COPYRIGHT_TEMPLATE:?stdout mode requires NEWVERS_COPYRIGHT_TEMPLATE}"
+    ;;
+*) echo "usage: mk-osreldate.sh [-s]" >&2; exit 1 ;;
+esac
+if [ "$stdout" = yes ]; then
+    copyright_query=-C
+else
+    NEWVERS_SH=${NEWVERS_SH:-$(pwd)/../sys/conf/newvers.sh}
+    copyright_query=-c
+    ${ECHO:=echo} creating osreldate.h from newvers.sh
+fi
+COPYRIGHT=$(sh "$NEWVERS_SH" "$copyright_query") || exit 1
+version=$(sh "$NEWVERS_SH" -V RELDATE) || exit 1
+case "$version" in
+'RELDATE="'*'"') RELDATE=${version#RELDATE=\"}; RELDATE=${RELDATE%\"} ;;
+*) echo "Invalid RELDATE query result" >&2; exit 1 ;;
+esac
+case "$RELDATE" in
+""|*[!0-9]*) echo "Invalid RELDATE value" >&2; exit 1 ;;
+esac
+emit_header()
+{
+    printf '%s\n' "$COPYRIGHT" '#ifdef _KERNEL' \
+        '#error "<osreldate.h> cannot be used in the kernel, use <sys/param.h>"' \
+        '#else' '#undef __FreeBSD_version' "#define __FreeBSD_version $RELDATE" '#endif'
+}
+if [ "$stdout" = yes ]; then
+    emit_header
+    exit 0
+fi
 tmpfile=$(mktemp osreldate.XXXXXXXX)
-trap "rm -f $tmpfile" EXIT
-
-${ECHO} creating osreldate.h from newvers.sh
-
-set +e
-COPYRIGHT=$(sh ${NEWVERS_SH:=$CURDIR/../sys/conf/newvers.sh} -c) || exit 1
-eval $(sh ${NEWVERS_SH} -V RELDATE) || exit 1
-set -e
-cat > $tmpfile <<EOF
-$COPYRIGHT
-#ifdef _KERNEL
-#error "<osreldate.h> cannot be used in the kernel, use <sys/param.h>"
-#else
-#undef __FreeBSD_version
-#define __FreeBSD_version $RELDATE
-#endif
-EOF
-chmod 644 $tmpfile
-mv -f $tmpfile osreldate.h
+trap 'rm -f "$tmpfile"' EXIT
+emit_header > "$tmpfile"
+chmod 644 "$tmpfile"
+mv -f "$tmpfile" osreldate.h

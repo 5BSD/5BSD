@@ -68,3 +68,9 @@ rpc_installation()
 
 load(":fixed_installation.bzl", "fixed_installation")
 fixed_installation()
+
+load("//tools/build/bazel:bsd_osreldate.bzl", "bsd_osreldate")
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+exports_files(["mk-osreldate.sh"])
+bsd_osreldate(name = "osreldate", output = "generated/osreldate.h", visibility = ["//visibility:public"])
+public_header_installation(name = "osreldate_install", files = {":osreldate": "osreldate.h"}, directory = "")

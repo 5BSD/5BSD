@@ -39,6 +39,9 @@
 #		mode does not query Make/VCS/clock/host or update a build counter.
 #		Use -e alone, after any variable overrides.
 #
+#	-C	Print copyright from explicit NEWVERS_COPYRIGHT and
+#		NEWVERS_COPYRIGHT_TEMPLATE inputs only; no clock/source search.
+#
 #	-c	Print the copyright / license statement as a C comment and exit
 #
 #	-r	Reproducible build.  Do not embed directory names, user	names,
@@ -79,6 +82,18 @@ done
 RELEASE="${RELEASE:-${REVISION}-${BRANCH}}"
 VERSION="${VERSION:-${BRAND} ${RELEASE}}"
 
+copyright_only=no
+if [ "$#" -eq 1 ] && [ "$1" = "-C" ]; then
+    copyright_only=yes
+    : "${NEWVERS_COPYRIGHT:?explicit copyright requires NEWVERS_COPYRIGHT}"
+    : "${NEWVERS_COPYRIGHT_TEMPLATE:?explicit copyright requires NEWVERS_COPYRIGHT_TEMPLATE}"
+fi
+version_only=no
+if { [ "$#" -eq 1 ] && [ "$1" = "-v" ]; } ||
+    { [ "$#" -eq 2 ] && [ "$1" = "-V" ] && [ "$2" = "RELDATE" ]; }; then
+    version_only=yes
+fi
+
 explicit_inputs=no
 if [ "$#" -eq 1 ] && [ "$1" = "-e" ]; then
 	explicit_inputs=yes
@@ -101,11 +116,14 @@ if [ "$#" -eq 1 ] && [ "$1" = "-e" ]; then
 	done
 fi
 
-if [ "$explicit_inputs" != yes ] && [ -z "${SYSDIR}" ]; then
+if [ "$explicit_inputs" != yes ] && [ "$copyright_only" != yes ] &&
+    [ -z "${SYSDIR}" ] && { [ "$version_only" != yes ] || [ -z "${PARAMFILE}" ]; }; then
 	SYSDIR=$(dirname $0)/..
 fi
 
-RELDATE=$(awk '/^#define[[:space:]]*__FreeBSD_version/ {print $3}' "${PARAMFILE:-${SYSDIR}/sys/param.h}") || exit 1
+if [ "$copyright_only" != yes ]; then
+	RELDATE=$(awk '/^#define[[:space:]]*__FreeBSD_version/ {print $3}' "${PARAMFILE:-${SYSDIR}/sys/param.h}") || exit 1
+fi
 
 # The exact version-only query needs no copyright or build metadata. Keep this
 # usable by declared build actions with just newvers.sh and the target param.h.
@@ -116,12 +134,16 @@ print_version_variables()
 		echo ${v}=\"${val}\"
 	done
 }
-if [ "$#" -eq 1 ] && [ "$1" = "-v" ]; then
-	print_version_variables
-	exit 0
+if [ "$version_only" = yes ]; then
+    if [ "$1" = "-v" ]; then
+        print_version_variables
+    else
+        printf 'RELDATE="%s"\n' "$RELDATE"
+    fi
+    exit 0
 fi
 
-if [ "$explicit_inputs" = yes ]; then
+if [ "$explicit_inputs" = yes ] || [ "$copyright_only" = yes ]; then
 	year=$(sed -Ee '/^Copyright .* The FreeBSD Project/!d;s/^.*1992-([0-9]*) .*$/\1/g' "$NEWVERS_COPYRIGHT") || exit 1
 	case "$year" in
 	""|*[!0-9]*) echo "Invalid explicit copyright year" >&2; exit 1;;
@@ -140,7 +162,7 @@ render_copyright()
 	    -e 's/\[your name\]\.*/The FreeBSD Project./' \
 	    -e '/\[id for your version control system, if any\]/d' "$1"
 }
-if [ "$explicit_inputs" = yes ]; then
+if [ "$explicit_inputs" = yes ] || [ "$copyright_only" = yes ]; then
 	COPYRIGHT=$(render_copyright "$NEWVERS_COPYRIGHT_TEMPLATE") || exit 1
 	[ -n "$COPYRIGHT" ] || { echo "Empty explicit copyright template" >&2; exit 1; }
 else
@@ -165,6 +187,11 @@ fi
 COPYRIGHT="$COPYRIGHT
 "
 
+if [ "$copyright_only" = yes ]; then
+    echo "$COPYRIGHT"
+    exit 0
+fi
+
 if [ "$explicit_inputs" = yes ]; then
 	case "$RELDATE" in
 	""|*[!0-9]*) echo "Invalid explicit osreldate" >&2; exit 1;;
@@ -181,8 +208,12 @@ else
 builddir=$(pwd)
 include_metadata=yes
 modified=no
-while getopts ced:rRvV: opt; do
+while getopts cCed:rRvV: opt; do
 	case "$opt" in
+	C)
+		echo "-C must be used alone" >&2
+		exit 1
+		;;
 	e)
 		echo "-e must be used alone after variable overrides" >&2
 		exit 1

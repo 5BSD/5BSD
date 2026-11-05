@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Native osreldate generation checkpoint (2026-11-05)
+
+The public OS version header now builds with declared source/copyright inputs
+and SDK execution tools through maintained shell generators. A new explicit
+copyright query and stateless stdout mode avoid source/clock discovery and
+scratch files in the Bazel action. Fresh full Make include staging matches the
+native header byte for byte and preserves clibs/dev metadata. Three meaningful
+generation test methods and the source-settings target pass; altered fixture
+inputs and missing/invalid inputs are exercised with only sh/awk/sed available.
+Existing copyright/version-query/kernel explicit-version outputs retain exact
+bytes against the previous committed script; no rebuilt-kernel claim is made.
+All eighteen existing fixed-header outputs remain identical. See
+OSRELDATE-GENERATION-QUALIFICATION.md. Namespace evidence is 1169 archives and
+30992 non-directory paths without conflicts. Continue ordinary root/kernel/
+architecture headers and aliases toward complete include/world construction;
+all existing package/bootstrap/cross/runtime/resource gates remain required.
+Make stays production/default; BIP stays excluded.
+
 ## Fixed public headers and Make reference destination correction (2026-11-05)
 
 Six further public include children now match complete original stages: 89 files

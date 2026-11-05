@@ -340,3 +340,4 @@ bsd_python_test(name = "install_tree_test", src = "install_tree_test.py",
     data = ["install_tree.py", "install_archive.py", "archive_policy.py", "directory_metadata.py"])
 
 exports_files(["bsd_public_headers.bzl"])
+exports_files(["bsd_osreldate.bzl"])
