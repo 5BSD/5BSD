@@ -1,0 +1,4 @@
+
+# hosttest: autologin root on the 3-wire bhyve serial console.
+al.3wire.115200|hosttest autologin 3wire:\
+	:al=root:np:nc:sp#115200:

@@ -446,6 +446,8 @@ dt_aggregate_snap_cpu(dtrace_hdl_t *dtp, processorid_t cpu)
 	dtrace_recdesc_t *rec;
 	dt_aggregate_t *agp = &dtp->dt_aggregate;
 	dtrace_aggdesc_t *agg;
+	dtrace_eprobedesc_t *edesc;
+	dtrace_probedesc_t *pdesc;
 	dt_ahash_t *hash = &agp->dtat_hash;
 	dt_ahashent_t *h;
 	dtrace_bufdesc_t b = agp->dtat_buf, *buf = &b;
@@ -520,9 +522,14 @@ dt_aggregate_snap_cpu(dtrace_hdl_t *dtp, processorid_t cpu)
 		if ((rval = dt_aggid_lookup(dtp, id, &agg)) != 0)
 			return (rval);
 
+		if ((rval = dt_epid_lookup(dtp, agg->dtagd_epid,
+		    &edesc, &pdesc)) != 0)
+			return (rval);
+
 		addr = buf->dtbd_data + offs;
 		size = agg->dtagd_size;
-		hashval = 0;
+		/* Identical tuples from different guests retain their origin. */
+		hashval = edesc->dtepd_vmid;
 
 		for (j = 0; j < agg->dtagd_nrecs - 1; j++) {
 			rec = &agg->dtagd_rec[j];
@@ -569,6 +576,8 @@ dt_aggregate_snap_cpu(dtrace_hdl_t *dtp, processorid_t cpu)
 				continue;
 
 			aggdata = &h->dtahe_data;
+			if (aggdata->dtada_edesc->dtepd_vmid != edesc->dtepd_vmid)
+				continue;
 			data = aggdata->dtada_data;
 
 			for (j = 0; j < agg->dtagd_nrecs - 1; j++) {
@@ -626,8 +635,8 @@ hashnext:
 		aggdata->dtada_size = size;
 		aggdata->dtada_desc = agg;
 		aggdata->dtada_handle = dtp;
-		(void) dt_epid_lookup(dtp, agg->dtagd_epid,
-		    &aggdata->dtada_edesc, &aggdata->dtada_pdesc);
+		aggdata->dtada_edesc = edesc;
+		aggdata->dtada_pdesc = pdesc;
 		aggdata->dtada_normal = 1;
 
 		h->dtahe_hashval = hashval;
@@ -806,6 +815,17 @@ dt_aggregate_keycmp(const void *lhs, const void *rhs)
 	dtrace_recdesc_t *lrec, *rrec;
 	char *ldata, *rdata;
 	int rval, i, j, keypos, nrecs;
+	uint16_t lvmid, rvmid;
+
+	/* Joined walks must not bundle identical keys from different VMs. */
+	lvmid = lh->dtahe_data.dtada_edesc != NULL ?
+	    lh->dtahe_data.dtada_edesc->dtepd_vmid : 0;
+	rvmid = rh->dtahe_data.dtada_edesc != NULL ?
+	    rh->dtahe_data.dtada_edesc->dtepd_vmid : 0;
+	if (lvmid < rvmid)
+		return (DT_LESSTHAN);
+	if (lvmid > rvmid)
+		return (DT_GREATERTHAN);
 
 	if ((rval = dt_aggregate_hashcmp(lhs, rhs)) != 0)
 		return (rval);
@@ -1712,6 +1732,8 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 	dt_ahashent_t *h, **sorted = NULL, ***bundle, **nbundle;
 	const dtrace_aggdata_t **data;
 	dt_ahashent_t *zaggdata = NULL;
+	dtrace_eprobedesc_t **zedesc = NULL;
+	dtrace_probedesc_t **zpdesc = NULL;
 	dt_ahash_t *hash = &agp->dtat_hash;
 	size_t nentries = 0, nbundles = 0, start, zsize = 0, bundlesize;
 	dtrace_aggvarid_t max = 0, aggvar;
@@ -1878,9 +1900,14 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 				aggdata->dtada_size = agg->dtagd_size;
 				aggdata->dtada_desc = agg;
 				aggdata->dtada_handle = dtp;
-				(void) dt_epid_lookup(dtp, agg->dtagd_epid,
+				if (dt_epid_lookup(dtp, agg->dtagd_epid,
 				    &aggdata->dtada_edesc,
-				    &aggdata->dtada_pdesc);
+				    &aggdata->dtada_pdesc) != 0) {
+					/* All data pointers are still borrowed here. */
+					for (j = 0; j < naggvars; j++)
+						zaggdata[j].dtahe_data.dtada_data = NULL;
+					goto out;
+				}
 				aggdata->dtada_normal = 1;
 				zaggdata[i].dtahe_hashval = 0;
 				zaggdata[i].dtahe_size = agg->dtagd_size;
@@ -1997,6 +2024,34 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 		}
 
 		aggdata->dtada_data = zdata;
+	}
+
+	/*
+	 * Zero columns borrow a variable's layout, but belong to the current
+	 * bundle's VM.  Own their descriptors so assigning that synthetic
+	 * origin cannot change cached metadata or another live aggregation.
+	 */
+	zedesc = dt_zalloc(dtp, naggvars * sizeof (*zedesc));
+	zpdesc = dt_zalloc(dtp, naggvars * sizeof (*zpdesc));
+	if (zedesc == NULL || zpdesc == NULL)
+		goto out;
+	for (i = 0; i < naggvars; i++) {
+		dtrace_aggdata_t *zero = &zaggdata[i].dtahe_data;
+		size_t esize;
+
+		if (zero->dtada_edesc == NULL || zero->dtada_pdesc == NULL) {
+			(void) dt_set_errno(dtp, EDT_BADAGG);
+			goto out;
+		}
+		esize = DTRACE_SIZEOF_EPROBEDESC(zero->dtada_edesc);
+		zedesc[i] = dt_alloc(dtp, esize);
+		zpdesc[i] = dt_alloc(dtp, sizeof (*zpdesc[i]));
+		if (zedesc[i] == NULL || zpdesc[i] == NULL)
+			goto out;
+		bcopy(zero->dtada_edesc, zedesc[i], esize);
+		bcopy(zero->dtada_pdesc, zpdesc[i], sizeof (*zpdesc[i]));
+		zero->dtada_edesc = zedesc[i];
+		zero->dtada_pdesc = zpdesc[i];
 	}
 
 	/*
@@ -2137,6 +2192,10 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 		 */
 		assert(bundle[i][j] != NULL);
 		data[0] = &bundle[i][j]->dtahe_data;
+		for (j = 0; j < naggvars; j++) {
+			zedesc[j]->dtepd_vmid = data[0]->dtada_edesc->dtepd_vmid;
+			zpdesc[j]->dtpd_vmid = data[0]->dtada_pdesc->dtpd_vmid;
+		}
 
 		if ((rval = func(data, naggvars + 1, arg)) == -1)
 			goto out;
@@ -2144,6 +2203,14 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 
 	rval = 0;
 out:
+	for (i = 0; i < naggvars; i++) {
+		if (zedesc != NULL)
+			dt_free(dtp, zedesc[i]);
+		if (zpdesc != NULL)
+			dt_free(dtp, zpdesc[i]);
+	}
+	dt_free(dtp, zedesc);
+	dt_free(dtp, zpdesc);
 	for (i = 0; i < nbundles; i++)
 		dt_free(dtp, bundle[i]);
 

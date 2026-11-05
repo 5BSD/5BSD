@@ -1,0 +1,120 @@
+#!/bin/sh
+# Run inside the L1 guest: boot the L2 guest from the second disk (vtbd1)
+# with bhyve and wait for its marker on an nmdm console.
+#   l2-boot.sh MARKER [MEM]      run L2 (prints L2-OK or L2-FAIL at the end)
+#   l2-boot.sh --status          background run: last tick, bhyve alive?
+#   l2-boot.sh --wait [SECONDS]  background run: wait for the end, report
+# Environment (all optional):
+#   L2_CPUS=1        L2 vCPUs
+#   L2_WORK=0        MiB per vCPU for the CPU-bound checksum workload
+#                    (srtool work MB 1000+cpu, pinned to each vCPU); L1
+#                    computes the same digests natively and compares
+#   L2_HOLD=0        seconds L2 stays up printing ticks before poweroff
+#   L2_NET=no        yes: tap in L1 (10.231.78.1/24), L2 at .2; L1 pings
+#                    L2 during the hold (needs L2_HOLD >= 10)
+#   L2_BG=no         yes: return once L2 holds (use --status / --wait)
+#   L2_TIMEOUT=600   bhyve limit. Callers keep their console limit above
+#                    L2_TIMEOUT + 150 so these diagnostics reach the host
+#                    (gen3: inner 720 s vs. a 600 s dtrace session lost them)
+set -u
+S=${L2_RUNDIR:-/tmp/l2run}
+T=${SRTOOL:-/root/hosttest/srtool}
+con() { tr -d '\r' < $S/console; }
+l2_report()
+{
+	rc=$(cat $S/rc 2>/dev/null || echo running)
+	t1=$(date +%s); t0=$(cat $S/t0 2>/dev/null || echo "$t1")
+	[ -s $S/tap ] && ifconfig "$(cat $S/tap)" destroy 2>/dev/null
+	kill "$(cat $S/conpid 2>/dev/null)" 2>/dev/null
+	bhyvectl --vm=l2 --destroy >/dev/null 2>&1
+	m=$(cat $S/marker)
+	ok=no
+	con | grep "HOSTTEST-L2-MARKER $m" && ok=yes
+	work=$(cat $S/work)
+	if [ "$work" -gt 0 ]; then
+		n=$(cat $S/cpus); i=0; wok=yes; detail=""
+		while [ $i -lt "$n" ]; do
+			want=$("$T" expect "$work" $((1000 + i)))
+			got=$(con | sed -n "s/.*HOSTTEST-L2-WORK cpu=$i sum=\([0-9a-f]*\).*/\1/p" | tail -1)
+			on=$(con | sed -n "s/.*HOSTTEST-L2-WORK cpu=$i sum=[0-9a-f]* ran_on=\([0-9]*\).*/\1/p" | tail -1)
+			[ "$got" = "$want" ] && [ "$on" = "$i" ] || wok=no
+			[ "$got" = "$want" ] && g=match || g="${got:-none}!=$want"
+			detail="$detail cpu$i=$g@${on:-?}"
+			i=$((i + 1))
+		done
+		echo "L2-WORK-$([ $wok = yes ] && echo OK || echo FAIL) mb=$work$detail $(con | grep -o 'HOSTTEST-L2-WORK-DONE.*' | tail -1)"
+	fi
+	if [ "$(cat $S/net)" = yes ]; then
+		if grep -q ' 0.0% packet loss' $S/ping 2>/dev/null; then echo "L2-NET-OK $(tail -1 $S/ping)"
+		else echo "L2-NET-FAIL $(tail -2 $S/ping 2>/dev/null | tr '\n' ' ')"; fi
+	fi
+	if [ $ok = yes ]; then
+		echo "L2-OK bhyve_exit=$rc seconds=$((t1 - t0)) ticks=$(con | grep -c HOSTTEST-L2-TICK)"
+	else
+		con | tail -40; cat $S/bhyve; echo "L2-FAIL bhyve_exit=$rc"
+		return 5
+	fi
+}
+case "${1:-}" in
+--status)
+	t=$(con | sed -n 's/.*HOSTTEST-L2-TICK n=\([0-9]*\).*/\1/p' | tail -1)
+	echo "L2-STATUS tick=${t:-none} rc=$(cat $S/rc 2>/dev/null || echo running)"
+	exit 0 ;;
+--wait)
+	lim=${2:-600}; i=0
+	while [ ! -f $S/rc ] && [ $i -lt "$lim" ]; do sleep 1; i=$((i + 1)); done
+	[ -f $S/rc ] || { echo "L2-WAIT-TIMEOUT after ${lim}s"; pkill -x bhyve; sleep 2; }
+	l2_report; exit $? ;;
+esac
+
+m=${1:?marker} mem=${2:-${L2_MEM:-512M}} disk=/dev/vtbd1
+cpus=${L2_CPUS:-1} work=${L2_WORK:-0} hold=${L2_HOLD:-0} net=${L2_NET:-no}
+bg=${L2_BG:-no} lim=${L2_TIMEOUT:-600}
+echo "L1 cpu: $(sysctl -n hw.model) ncpu=$(sysctl -n hw.ncpu)"
+grep -o 'Features2=[^ ]*' /var/run/dmesg.boot | head -1
+grep -E 'AMD Features2|SVM:|VT-x:' /var/run/dmesg.boot | head -3
+if ! kldstat -q -m vmm || [ ! -e /dev/vmmctl ]; then
+	echo "L1-VMM-NOT-LOADED"; dmesg | grep -i -E 'vmm|svm|vmx|hypertrace' | tail -8; exit 3
+fi
+sysctl hw.vmm.svm.features hw.vmm.svm.num_asids hw.vmm.vmx.initialized 2>/dev/null
+[ -s $S/conpid ] && kill "$(cat $S/conpid)" 2>/dev/null
+bhyvectl --vm=l2 --destroy >/dev/null 2>&1
+rm -rf $S; mkdir -p $S
+echo "$m" > $S/marker; echo "$cpus" > $S/cpus; echo "$work" > $S/work; echo "$net" > $S/net
+: > $S/console
+( cat /dev/nmdm7B > $S/console ) & echo $! > $S/conpid
+slots="" kenv=""
+if [ "$net" = yes ]; then
+	tap=$(ifconfig tap create) || { echo "L2-FAIL cannot create a tap in L1"; exit 6; }
+	echo "$tap" > $S/tap
+	ifconfig "$tap" inet 10.231.78.1/24 up
+	slots="-s 4,virtio-net,$tap"; kenv="-e hosttest.inet=10.231.78.2/24"
+fi
+# shellcheck disable=SC2086
+timeout 120 bhyveload -c /dev/nmdm7A -m "$mem" -d "$disk" -e hosttest.role=l2 \
+    -e "hosttest.marker=$m" -e hosttest.hostname=ht-l2 -e "hosttest.l2work=$work" \
+    -e "hosttest.l2hold=$hold" $kenv l2 > $S/load 2>&1 ||
+    { cat $S/load; echo "L2-FAIL bhyveload"; kill "$(cat $S/conpid)"; exit 4; }
+date +%s > $S/t0
+# shellcheck disable=SC2086
+( timeout "$lim" bhyve -c "$cpus" -m "$mem" -H -w -D -s 0,hostbridge -s 3,virtio-blk,"$disk" \
+    $slots -s 31,lpc -l com1,/dev/nmdm7A l2 > $S/bhyve 2>&1
+  echo $? > $S/rc.tmp; mv $S/rc.tmp $S/rc ) > /dev/null 2>&1 &
+if [ "$hold" -gt 0 ]; then
+	# Wait until L2 holds (it is up) or the run ends.
+	i=0
+	while [ ! -f $S/rc ] && [ $i -lt "$lim" ] && ! con | grep -q 'HOSTTEST-L2-HOLD start'; do
+		sleep 1; i=$((i + 1))
+	done
+	if [ "$net" = yes ] && [ ! -f $S/rc ]; then
+		sleep 2; ping -c 3 -t 10 10.231.78.2 > $S/ping 2>&1
+	fi
+	if [ "$bg" = yes ]; then
+		[ -f $S/rc ] && { l2_report; exit $?; }
+		echo "L2-BG-RUNNING after $(( $(date +%s) - $(cat $S/t0) ))s"
+		exit 0
+	fi
+fi
+while [ ! -f $S/rc ]; do sleep 1; done
+sleep 1
+l2_report

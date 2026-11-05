@@ -19,11 +19,39 @@ offset=$((size + 1))
 started=$(date +%s)
 status=
 chunk=
+chunks=
+
+# A console attachment owns a unique lifetime file. Detaching removes it;
+# a later attachment cannot revive an old command waiting on the same VM.
+console_alive()
+{
+	if [ -n "${CONSOLE_LIFETIME:-}" ] && [ ! -e "$CONSOLE_LIFETIME" ]; then
+		echo "guest console command cancelled: console detached" >&2
+		exit 125
+	fi
+}
+
+console_finish()
+{
+	[ -z "$chunks" ] || rm -f "$chunks"
+	# Preserve output even when the caller interrupts or detaches the VM.
+	tail -c +"$offset" "$log" 2>/dev/null | tr -d '\r' | awk -v b="$begin" -v e="$end" '
+		$0 == b { capture = 1; next }
+		index($0, e ":") == 1 { capture = 0; exit }
+		capture { print }
+	'
+}
+trap 'console_finish' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+console_alive
 
 wait_for_marker()
 {
 	marker=$1
 	while :; do
+		console_alive
 		chunk=$(tail -c +"$offset" "$log" 2>/dev/null | tr -d '\r')
 		printf '%s\n' "$chunk" | grep -F -x -q "$marker" && return 0
 		now=$(date +%s)
@@ -47,7 +75,6 @@ else
 	guest_base="/tmp/.vc$$"
 	encoded=$(printf %s "$command" | base64 | tr -d '\n')
 	chunks=$(mktemp "${TMPDIR:-/tmp}/acmd-console.XXXXXX") || exit 1
-	trap 'rm -f "$chunks"' EXIT HUP INT TERM
 	printf '%s\n' "$encoded" | fold -w 96 > "$chunks"
 	sequence=0
 	while IFS= read -r encoded_chunk; do
@@ -66,7 +93,7 @@ else
 		fi
 	done < "$chunks"
 	rm -f "$chunks"
-	trap - EXIT HUP INT TERM
+	chunks=
 	decode="__VSOCK_DECODE_${nonce}__"
 	printf 'base64 -d %s.b > %s; d=$?; rm -f %s.b; printf "\\n%%s:%%s\\n" %s "$d"\r' \
 	    "$guest_base" "$guest_base" "$guest_base" "$decode" >> "$input"
@@ -79,6 +106,7 @@ else
 fi
 
 while :; do
+	console_alive
 	chunk=$(tail -c +"$offset" "$log" 2>/dev/null | tr -d '\r')
 	status=$(printf '%s\n' "$chunk" | sed -n "s/^${end}:\([0-9][0-9]*\)$/\1/p" | tail -1)
 	[ -n "$status" ] && break
@@ -88,12 +116,6 @@ while :; do
 done
 if [ -z "${status:-}" ]; then
 	echo "guest console command timed out after ${limit}s" >&2
-	return 124 2>/dev/null || exit 124
+	exit 124
 fi
-
-printf '%s\n' "$chunk" | awk -v b="$begin" -v e="$end" '
-	$0 == b { capture = 1; next }
-	index($0, e ":") == 1 { capture = 0; exit }
-	capture { print }
-'
 exit "$status"

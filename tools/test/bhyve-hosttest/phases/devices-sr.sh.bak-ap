@@ -1,0 +1,934 @@
+# Phase devices-sr (dm): bhyve checkpoint/suspend/restore for every emulated
+# device with save/restore support that a FreeBSD guest can drive. Separate
+# from the hardware "devices" phase; runs alone and in any order.
+#
+# Per device group one bhyveload guest (the kit image) gets the devices,
+# EXERCISES them so they hold live state (I/O in flight, open files, sessions,
+# armed timers, connected ports), then: a checkpoint of the running guest
+# (it must keep working), a suspend, a restore with the identical config,
+# and the same exercises again on the restored guest, partly by the very
+# processes that ran before the suspend. Each device gets PASS/FAIL/SKIP with
+# a cause (bhyve's line, the guest's dmesg tail); "present-after-restore"
+# compares the guest's pciconf/devinfo/usbconfig before and after.
+#
+#   stor   nvme, ahci-hd, ahci-cd, virtio-blk (modern, 4 queues) + 2nd
+#          virtio-blk; virtio-scsi only with HT_DSR_SCSI=yes (host CTL LUN)
+#   net    e1000, virtio-net (modern, 2 queue pairs), virtio-console
+#          (2 ports), COM2 (lpc uart over TCP)
+#   gfx    xhci+tablet, fbuf (VNC), hda, virtio-snd (null backend),
+#          virtio-input (a uinput keyboard made by dsrtool)
+#   gpu    virtio-gpu alone (QEMU smoke: the guest driver panics at boot
+#          attach, "timed sleep before timers are working"; see dm-record.md)
+#   fs     virtio-9p, virtio-fs (virtiofsd), virtio-balloon, virtio-pmem,
+#          virtio-mem
+#   misc   i6300esb, virtio-rtc (alarm), virtio-crypto (geli), pvpanic;
+#          tpm only with HT_DSR_TPM=yes and swtpm; fw_cfg SKIP (no guest
+#          driver)
+#   iommu  virtio-iommu with a modern virtio-blk endpoint behind it
+#   neg    passthru (the only emulation without pe_snapshot): checkpoint
+#          must be refused; needs HT_DSR_PPT=pptN|b/s/f, else SKIP
+#   uefi   UEFI firmware boot, checkpoint/suspend/restore, localhost
+#          migration (SKIP when the firmware is not installed)
+# HT_DSR_GROUPS (default "stor net gfx gpu fs misc iommu neg uefi") selects groups.
+
+phase_begin devices-sr
+need_root
+need_generation
+need_vmm
+need_image
+need_mem_mb 3072
+need_disk_mb 16384
+sysctl -n kern.conftxt 2>/dev/null | grep -q '^options[[:space:]]*BHYVE_SNAPSHOT' || refuse "kernel lacks options BHYVE_SNAPSHOT"
+bhyve -h 2>&1 | grep -q -- '-r: path to checkpoint file' || refuse "bhyve built without snapshot support"
+for t in srtool dsrtool; do
+	[ -x "$HT_KIT/guest-bin/$t" ] || refuse "guest-bin/$t missing; run images/refresh-tools.sh, then images/build-guest.sh"
+done
+[ -f "$HT_KIT/guest/dsr-guest.sh" ] || refuse "guest/dsr-guest.sh missing"
+need_tool makefs
+
+DSR_GROUPS=${HT_DSR_GROUPS:-stor net gfx gpu fs misc iommu neg uefi}
+DT=$HT_KIT/guest-bin/dsrtool
+SRT=$HT_KIT/guest-bin/srtool
+G=/root/hosttest/dsr-guest.sh
+# virtio-pmem MiB written per round: the shared-memory BAR is emulated (every
+# guest access to vtpmem0 traps to bhyve, about 70 KB/s on the AMD host), so 8
+# MiB took over two minutes and overran the 120 s command limit.
+PMEM_MB=${HT_DSR_PMEM_MB:-1}
+R=/root/hosttest/sr-guest.sh
+
+# --- optional backends: decided before anything starts (also in dry runs) ----
+opt_reason() { # opt_reason NAME -> empty when usable, else the SKIP reason
+	case $1 in
+	scsi)
+		[ "${HT_DSR_SCSI:-no}" = yes ] || { echo "virtio-scsi's backend is the host CTL target (/dev/cam/ctl, ctl.ko + a ctladm LUN): host configuration the kit does not make; set HT_DSR_SCSI=yes with a LUN you created (read-only test)"; return; }
+		[ -c /dev/cam/ctl ] || { echo "HT_DSR_SCSI=yes but /dev/cam/ctl is absent (ctl.ko not loaded)"; return; }
+		[ "$(ctladm devlist 2>/dev/null | awk 'NR > 1' | wc -l | tr -d ' ')" -gt 0 ] || echo "HT_DSR_SCSI=yes but ctladm devlist shows no LUN" ;;
+	input)
+		[ -c /dev/uinput ] || echo "virtio-input needs a host evdev source; /dev/uinput is absent (uinput not in the host kernel)" ;;
+	vfs)
+		command -v virtiofsd > /dev/null 2>&1 || echo "virtiofsd(8) not installed on the host" ;;
+	tpm)
+		[ "${HT_DSR_TPM:-no}" = yes ] || { echo "no TPM backend: swtpm (sysutils/swtpm) is $(command -v swtpm > /dev/null 2>&1 && echo installed || echo 'not installed') and TPM checkpoint also needs tpm migration=true, state_id and migration_key_id (tpm_device.c); passthru would expose the host TPM. Opt in with HT_DSR_TPM=yes"; return; }
+		command -v swtpm > /dev/null 2>&1 || echo "HT_DSR_TPM=yes but swtpm is not installed (sysutils/swtpm)" ;;
+	ppt)
+		[ -n "${HT_DSR_PPT:-}" ] || echo "the only emulation without pe_snapshot is passthru ($(dsr_nosnap_devices /usr/src/usr.sbin/bhyve 2>/dev/null | sed 's/^$/source not on this host/')); it needs a host device reserved with pptdevs. Set HT_DSR_PPT=pptN or bus/slot/func to run it" ;;
+	uefi)
+		[ -f "$HT_UEFI_FD" ] || { echo "UEFI firmware not installed: $HT_UEFI_FD; install 5BSD-ports sysutils/edk2 (bhyve flavor)"; return; }
+		img_has_esp "${HT_IMAGE:-}" > /dev/null ||
+		    echo "guest image ${HT_IMAGE:-?} has no EFI system partition; rerun images/build-guest.sh (mkimage.sh adds it since dm)" ;;
+	esac
+}
+plan() { echo "$*" >> "$HT_OUT/plan.txt"; log "plan: $*"; }
+: > "$HT_OUT/plan.txt"
+for o in scsi input vfs tpm ppt uefi; do
+	r=$(opt_reason $o)
+	plan "optional $o: ${r:-available}"
+done
+plan "groups: $DSR_GROUPS (each: boot, exercise, running checkpoint, suspend, restore, exercise again, inventory compare)"
+dry && dry_end
+phase_workdir
+O=$HT_OUT
+W=$HT_WORK/dsr
+mkdir -p "$W"
+at_cleanup "rm -rf $W"
+SEED=$(( $(date +%s) % 100000 + 1 ))
+GLOG=""     # bhyve log of the current group's VM
+
+# dfail CHECK DETAIL: FAIL with the guest's error lines and bhyve's last lines.
+dfail()
+{
+	df_g=$(vm_cmd "$vm" "$G errs" 20 2>/dev/null | tr -d '\r' | sed -n 's/^DSRERRS //p' | tail -1)
+	check "$1" FAIL "$2 [guest: ${df_g:-no answer}] [bhyve: $(bhyve_refusal "$HT_WORK/$vm.bhyve.log" | cut -c1-200)]"
+}
+# gq FILE CMD [TIMEOUT]: guest command into $O/FILE. A timed-out command may
+# still be running in the guest shell and would answer the next command's
+# markers late (the run-20261102T141640Z fs group lost every check after a slow
+# virtio-pmem write that way), so resynchronise the console before going on.
+gq()
+{
+	vm_cmd "$vm" "$2" "${3:-60}" > "$O/$1" 2>&1; gq_rc=$?
+	[ $gq_rc -ne 124 ] || vm_sync_shell "$vm" "${HT_DSR_RESYNC:-300}" ||
+	    log "$vm: console did not resynchronise after '$2' timed out"
+	return $gq_rc
+}
+v() { sr_val "$O/$1" "$2" "$3"; }
+hook() { type "$1" > /dev/null 2>&1 && "$1"; return 0; }
+
+# dsr_net TAG GIP HIP: ping and TCP both ways (sr-guest.sh helpers).
+dsr_net()
+{
+	vm_cmd "$vm" "ping -c 3 -t 10 $3 | tail -2" 30 > "$O/$1-ping.txt" 2>&1
+	dn_ping=no; grep -q ' 0.0% packet loss' "$O/$1-ping.txt" && dn_ping=yes
+	hp=5500; while sockstat -4 -l 2>/dev/null | grep -q ":$hp[[:space:]]"; do hp=$((hp + 1)); done
+	tok1="g2h-$1-$SEED" tok2="h2g-$1-$SEED"
+	timeout 40 nc -l "$3" $hp > "$O/$1-g2h.txt" 2>&1 & np=$!
+	sleep 0.5
+	vm_cmd "$vm" "$R tcp-send $3 $hp $tok1" 40 > "$O/$1-g2h-guest.txt" 2>&1
+	wait $np 2>/dev/null
+	vm_cmd "$vm" "$R tcp-listen 5601" 20 > "$O/$1-h2g-guest.txt" 2>&1
+	echo "$tok2" | timeout 20 nc -N "$2" 5601 > /dev/null 2>&1
+	vm_cmd "$vm" "$R tcp-got 5601" 30 >> "$O/$1-h2g-guest.txt" 2>&1
+	dn_g2h=no dn_h2g=no
+	grep -q -x "$tok1" "$O/$1-g2h.txt" && dn_g2h=yes
+	grep -q "SRTCP-GOT port=5601 data=$tok2" "$O/$1-h2g-guest.txt" && dn_h2g=yes
+	DN="ping=$dn_ping guest->host=$dn_g2h host->guest=$dn_h2g"
+	[ $dn_ping = yes ] && [ $dn_g2h = yes ] && [ $dn_h2g = yes ]
+}
+
+# blk_before DEV-CHECK GUESTDEV MB SEED / blk_after ...: raw pattern on a disk.
+blk_before()
+{
+	exp=$("$SRT" expect "$3" "$4")
+	gq "$1-before.txt" "$G blk-write $2 $3 $4" 120
+	s=$(v "$1-before.txt" 'DSRBLK ' sha256)
+	[ "$s" = "$exp" ] && check "dsr-$1-before" PASS "/dev/$2: $3 MiB pattern written, synced, read back" ||
+	    dfail "dsr-$1-before" "/dev/$2 read back '${s:-none}' != $exp ($(v "$1-before.txt" 'DSRBLK ' err))"
+}
+blk_after() # blk_after NAME DEV MB OLDSEED NEWSEED
+{
+	gq "$1-after-read.txt" "$G blk-read $2 $3" 120
+	gq "$1-after-write.txt" "$G blk-write $2 $3 $5" 120
+	o=$(v "$1-after-read.txt" 'DSRBLK ' sha256) n=$(v "$1-after-write.txt" 'DSRBLK ' sha256)
+	if [ "$o" = "$("$SRT" expect "$3" "$4")" ] && [ "$n" = "$("$SRT" expect "$3" "$5")" ]; then
+		check "dsr-$1-after" PASS "/dev/$2: pre-suspend pattern intact, new $3 MiB pattern written and read back"
+	else
+		dfail "dsr-$1-after" "/dev/$2: old pattern $([ "$o" = "$("$SRT" expect "$3" "$4")" ] && echo intact || echo "changed ('${o:-none}')"), new write $([ "$n" = "$("$SRT" expect "$3" "$5")" ] && echo ok || echo "bad ('${n:-none}' $(v "$1-after-write.txt" 'DSRBLK ' err))")"
+	fi
+}
+# bgio_check NAME TAG BEFOREFILE: reader loop started before the checkpoint
+# advanced after the restore without errors.
+bgio_check()
+{
+	gq "$1-bgio-a.txt" "$G bgio-read $2" 30
+	sleep 3
+	gq "$1-bgio-b.txt" "$G bgio-read $2" 30
+	set -- "$1" "$2" "$3" "$(dsr_grew "$O/$1-bgio-a.txt" "$O/$1-bgio-b.txt" 'DSRBGIO ' n)"
+	e=$(v "$1-bgio-b.txt" 'DSRBGIO ' errors) n0=$(v "$3" 'DSRBGIO ' n)
+	if [ "${4%% *}" = ok ] && [ "$e" = 0 ] && grep -q 'DSRBGIO-ALIVE tag=.* yes' "$O/$1-bgio-b.txt"; then
+		check "dsr-$1-io-across-restore" PASS "the read loop started before the checkpoint ($n0 passes at suspend) kept running: ${4#ok }, 0 errors"
+	else
+		dfail "dsr-$1-io-across-restore" "read loop: ${4#* } errors=${e:-?} $(grep -o 'DSRBGIO-ALIVE.*' "$O/$1-bgio-b.txt")"
+	fi
+}
+
+# === the group runner =========================================================
+# dsr_group G CPUS MEM "SLOTS" "DEVICES": hooks dsr_pre_G (exercise before),
+# dsr_mid_G (right before the suspend), dsr_between_G (VM gone),
+# dsr_up_G (after the restore), dsr_post_G (exercise after),
+# dsr_host_G (after shutdown).
+dsr_group()
+{
+	g=$1 cpus=$2 mem=$3 slots=$4 devs=$5
+	vm=ht-dsr-$g
+	log "=== group $g: $devs"
+	disk=$(vm_disk "$vm")
+	if ! { vm_boot "$vm" "$disk" "$mem" "$cpus" "hosttest.role=l1 hosttest.hostname=$vm" "$slots" &&
+	    vm_wait "$vm" HOSTTEST-GUEST-READY "${HT_BOOT_TIMEOUT:-600}"; }; then
+		check "dsr-$g-boot" FAIL "devices: $devs; $(tr -d '\r' < "$HT_WORK/$vm.console" | grep -m1 -E "^panic:|Fatal trap" | sed "s/^/guest /") $(vm_diag "$vm")"
+		for d in $devs; do check "dsr-$d" SKIP "not exercised: group $g guest did not boot (dsr-$g-boot)"; done
+		vm_destroy "$vm"; rm -f "$disk"; return 1
+	fi
+	check "dsr-$g-boot" PASS "devices: $devs"
+	hook "dsr_pre_$g"
+	# Checkpoint of the running guest: published, and the guest goes on.
+	mkdir -p "$HT_CKP/$g-run"
+	bhyvectl --vm="$vm" --checkpoint="$HT_CKP/$g-run/run" > "$O/$g-run-checkpoint.txt" 2>&1; rc=$?
+	vm_cmd "$vm" "$G dmesg-tail" 60 > "$O/$g-after-run-checkpoint.txt" 2>&1; arc=$?
+	if [ $rc -eq 0 ] && ckp_manifest "$HT_CKP/$g-run/run" && [ $arc -eq 0 ]; then
+		check "dsr-$g-checkpoint-running" PASS "published with $devs live; guest answered afterwards"
+	else
+		dfail "dsr-$g-checkpoint-running" "bhyvectl rc=$rc: $(head -2 "$O/$g-run-checkpoint.txt" | tr '\n' ' '); guest answered: $([ $arc -eq 0 ] && echo yes || echo no)"
+	fi
+	rm -rf "$HT_CKP/$g-run"
+	hook "dsr_mid_$g"
+	vm_cmd "$vm" "$G inv" 60 > "$O/$g-inv-before.txt" 2>&1
+	mkdir -p "$HT_CKP/$g"
+	if ! vm_suspend "$vm" "$HT_CKP/$g/ckp" "dsr-$g-suspend" "$O/$g-suspend.txt" 180; then
+		for d in $devs; do check "dsr-$d-after" FAIL "not restored: suspend failed (dsr-$g-suspend)"; done
+		vm_destroy "$vm"; rm -rf "$HT_CKP/$g"; rm -f "$disk"; return 1
+	fi
+	vm_destroy "$vm"
+	hook "dsr_between_$g"
+	t0=$(date +%s)
+	if vm_restore "$vm" "$HT_CKP/$g/ckp"; then
+		check "dsr-$g-restore" PASS "bhyve -r with the boot configuration is running"
+	else
+		check "dsr-$g-restore" FAIL "restore refused: $HT_REFUSAL"
+		for d in $devs; do check "dsr-$d-after" FAIL "not exercised: restore refused ($HT_REFUSAL)"; done
+		vm_destroy "$vm"; rm -rf "$HT_CKP/$g"; rm -f "$disk"; return 1
+	fi
+	hook "dsr_up_$g"
+	if ! vm_cmd "$vm" "$G inv" 120 > "$O/$g-inv-after.txt" 2>&1; then
+		check "dsr-$g-guest-responds" FAIL "no answer within 120 s of the restore $(vm_diag "$vm")"
+		for d in $devs; do check "dsr-$d-after" FAIL "restored guest does not answer"; done
+		vm_destroy "$vm"; rm -rf "$HT_CKP/$g"; rm -f "$disk"; return 1
+	fi
+	check "dsr-$g-guest-responds" PASS "answered $(( $(date +%s) - t0 )) s after the restore started"
+	set -- $(dsr_inv_diff "$O/$g-inv-before.txt" "$O/$g-inv-after.txt")
+	case $1 in
+	same) check "dsr-$g-present-after-restore" PASS "pciconf/devinfo/usbconfig identical ($2 entries)" ;;
+	*) dfail "dsr-$g-present-after-restore" "device inventory $*" ;;
+	esac
+	hook "dsr_post_$g"
+	vm_cmd "$vm" "$G errs" 30 > "$O/$g-errs.txt" 2>&1
+	check "dsr-$g-guest-errors" INFO "$(tr -d '\r' < "$O/$g-errs.txt" | sed -n 's/^DSRERRS //p' | tail -1)"
+	vm_cmd "$vm" "$G stop" 20 > /dev/null 2>&1
+	co=$(( $(wc -c < "$HT_WORK/$vm.console") + 1 ))
+	vm_shutdown "$vm"
+	sp=$(tail -c +$co "$HT_WORK/$vm.console" | tr -d '\r' | grep -m1 -E "^panic:|Fatal trap")
+	[ -z "$sp" ] && check "dsr-$g-clean-shutdown" PASS "guest powered off without a panic" ||
+	    check "dsr-$g-clean-shutdown" FAIL "guest $sp; frames: $(tail -c +$co "$HT_WORK/$vm.console" | tr -d '\r' | sed -n "/^panic:/,/^KDB: enter/p" | grep -E "^[a-z_]+\\(\\) at" | sed -n "4,8p" | cut -d" " -f1 | tr "\\n" " ")"
+	hook "dsr_host_$g"
+	rm -rf "$HT_CKP/$g"; rm -f "$disk"
+	return 0
+}
+
+# === stor =====================================================================
+grp_stor()
+{
+	S1=$SEED S2=$((SEED + 1)) MB=16
+	for f in nvme ahci mq blk2; do truncate -s 64m "$W/$f.img"; done
+	rm -rf "$W/cd"; mkdir -p "$W/cd"
+	"$SRT" pattern 4 $((SEED + 9)) > "$W/cd/pattern.bin"
+	makefs -t cd9660 -o rockridge,label=HTDSR "$W/cd.iso" "$W/cd" > "$O/makefs-cd.log" 2>&1
+	CDSHA=$(sha256 -q "$W/cd.iso")
+	sl="-s 5,nvme,$W/nvme.img,ser=HTNVME01 -s 7,ahci-hd,$W/ahci.img -s 8,ahci-cd,$W/cd.iso"
+	sl="$sl -s 9,virtio-blk,$W/mq.img,transport=modern,queues=4 -s 10,virtio-blk,$W/blk2.img"
+	devs="nvme ahci-hd ahci-cd virtio-blk-mq virtio-blk-2"
+	r=$(opt_reason scsi)
+	if [ -z "$r" ]; then
+		sl="$sl -s 11,virtio-scsi,/dev/cam/ctl"; devs="$devs virtio-scsi"
+	else
+		check dsr-virtio-scsi SKIP "$r"
+	fi
+	dsr_group stor 2 1G "$sl" "$devs"
+}
+dsr_pre_stor()
+{
+	for d in "nvme nvme" "ahci-hd ahci" "ahci-cd cd" "virtio-blk-mq vtblk 9" "virtio-blk-2 vtblk 10" "virtio-scsi scsi"; do
+		set -- $d; n=$1; shift
+		vm_cmd "$vm" "$G disk $*" 30 > "$O/disk-$n.txt" 2>&1
+		eval "D_$(echo "$n" | tr '-' '_')=\$(v disk-$n.txt 'DSRDISK ' dev)"
+	done
+	[ "${D_nvme:-none}" != none ] && blk_before nvme "$D_nvme" $MB $S1 || dfail dsr-nvme-before "no nvme namespace disk in the guest"
+	gq nvme-id-before.txt "$G nvme-id" 30
+	[ "${D_ahci_hd:-none}" != none ] && blk_before ahci-hd "$D_ahci_hd" $MB $S1 || dfail dsr-ahci-hd-before "no ada disk in the guest"
+	if [ "${D_ahci_cd:-none}" != none ]; then
+		gq cd-before.txt "$G cd-read $D_ahci_cd" 120
+		[ "$(v cd-before.txt 'DSRCD ' sha256)" = "$CDSHA" ] && check dsr-ahci-cd-before PASS "/dev/$D_ahci_cd: whole ISO read, sha256 = host image" ||
+		    dfail dsr-ahci-cd-before "/dev/$D_ahci_cd sha256 $(v cd-before.txt 'DSRCD ' sha256) != host $CDSHA ($(v cd-before.txt 'DSRCD ' bytes) bytes)"
+	else
+		dfail dsr-ahci-cd-before "no cd device in the guest"
+	fi
+	[ "${D_virtio_blk_mq:-none}" != none ] && blk_before virtio-blk-mq "$D_virtio_blk_mq" $MB $S1 || dfail dsr-virtio-blk-mq-before "no vtbd at slot 9"
+	gq vtblk-q.txt "$G vtblk-q $D_virtio_blk_mq" 30
+	check dsr-virtio-blk-mq-queues INFO "bhyve offers 4 request queues; guest reports: $(tr -d '\r' < "$O/vtblk-q.txt" | sed -n 's/^DSRVQ //p' | tail -1)"
+	[ "${D_virtio_blk_2:-none}" != none ] && blk_before virtio-blk-2 "$D_virtio_blk_2" $MB $S1 || dfail dsr-virtio-blk-2-before "no vtbd at slot 10"
+	if [ -n "$D_virtio_scsi" ] && [ "$D_virtio_scsi" != none ]; then
+		gq scsi-before.txt "$G blk-read $D_virtio_scsi 16" 120
+		SCSI0=$(v scsi-before.txt 'DSRBLK ' sha256)
+		[ -n "$SCSI0" ] && check dsr-virtio-scsi-before PASS "/dev/$D_virtio_scsi: 16 MiB read (read-only: the LUN is yours)" ||
+		    dfail dsr-virtio-scsi-before "read of /dev/$D_virtio_scsi failed"
+	fi
+}
+dsr_mid_stor()
+{
+	# Reads in flight on three controllers through the suspend.
+	for d in "nvme ${D_nvme:-none}" "ahcihd ${D_ahci_hd:-none}" "mq ${D_virtio_blk_mq:-none}"; do
+		set -- $d; [ "$2" != none ] && gq "bgio-$1-start.txt" "$G bgio-start $1 $2" 30
+	done
+	for t in nvme ahcihd mq; do gq "bgio-$t-suspend.txt" "$G bgio-read $t" 30; done
+}
+dsr_post_stor()
+{
+	bgio_check nvme nvme "$O/bgio-nvme-suspend.txt"
+	bgio_check ahci-hd ahcihd "$O/bgio-ahcihd-suspend.txt"
+	bgio_check virtio-blk-mq mq "$O/bgio-mq-suspend.txt"
+	for t in nvme ahcihd mq; do gq "bgio-$t-stop.txt" "$G bgio-stop $t" 30; done
+	blk_after nvme "$D_nvme" $MB $S1 $S2
+	gq nvme-id-after.txt "$G nvme-id" 30
+	a=$(v nvme-id-before.txt 'DSRNVME ' serial) b=$(v nvme-id-after.txt 'DSRNVME ' serial)
+	[ "$a" = HTNVME01 ] && [ "$b" = "$a" ] && check dsr-nvme-admin-after PASS "identify through the admin queue: serial $b before and after" ||
+	    dfail dsr-nvme-admin-after "identify serial before '$a' after '$b' (expected HTNVME01)"
+	blk_after ahci-hd "$D_ahci_hd" $MB $S1 $S2
+	gq cd-after.txt "$G cd-read $D_ahci_cd" 120
+	[ "$(v cd-after.txt 'DSRCD ' sha256)" = "$CDSHA" ] && check dsr-ahci-cd-after PASS "whole ISO read again after the restore, sha256 = host image" ||
+	    dfail dsr-ahci-cd-after "sha256 $(v cd-after.txt 'DSRCD ' sha256) != host $CDSHA"
+	blk_after virtio-blk-mq "$D_virtio_blk_mq" $MB $S1 $S2
+	blk_after virtio-blk-2 "$D_virtio_blk_2" $MB $S1 $S2
+	if [ -n "$D_virtio_scsi" ] && [ "$D_virtio_scsi" != none ]; then
+		gq scsi-after.txt "$G blk-read $D_virtio_scsi 16" 120
+		[ "$(v scsi-after.txt 'DSRBLK ' sha256)" = "$SCSI0" ] && check dsr-virtio-scsi-after PASS "same 16 MiB read after the restore" ||
+		    dfail dsr-virtio-scsi-after "read after restore differs or failed"
+	fi
+}
+dsr_host_stor()
+{
+	e=$("$SRT" expect $MB $S2)
+	for d in "nvme nvme" "ahci-hd ahci" "virtio-blk-mq mq" "virtio-blk-2 blk2"; do
+		set -- $d
+		h=$(dd if="$W/$2.img" bs=1m count=$MB 2>/dev/null | sha256 -q)
+		[ "$h" = "$e" ] && check "dsr-$1-backing" PASS "host backing file holds the post-restore write" ||
+		    check "dsr-$1-backing" FAIL "host $2.img first $MB MiB sha256 $h != expected $e (the restored device's write did not reach the backend)"
+	done
+	rm -f "$W"/nvme.img "$W"/ahci.img "$W"/mq.img "$W"/blk2.img "$W/cd.iso"
+}
+
+# === net ======================================================================
+grp_net()
+{
+	HA=10.231.80.1 GA=10.231.80.2 HB=10.231.81.1 GB=10.231.81.2
+	br=$(ifconfig bridge create) || { check dsr-net-setup FAIL "cannot create bridge"; return 1; }
+	at_cleanup "ifconfig $br destroy"
+	tapA=$(ifconfig tap create) && at_cleanup "ifconfig $tapA destroy"
+	tapB=$(ifconfig tap create) && at_cleanup "ifconfig $tapB destroy"
+	ifconfig "$br" inet $HA/24 addm "$tapA" addm "$tapB" up
+	ifconfig "$br" inet $HB/24 alias
+	ifconfig "$tapA" up; ifconfig "$tapB" up
+	pfctl -s info 2>/dev/null | grep -q 'Status: Enabled' && pf_on=yes || pf_on=no
+	log "network $br/$tapA,$tapB $HA/24 + $HB/24 (pf enabled: $pf_on; no pf rules are changed)"
+	C2=$(free_port 4860)
+	rm -f "$W"/vcon*.sock
+	sl="-s 4,e1000,$tapA -s 5,virtio-net,$tapB,transport=modern,queues=2"
+	sl="$sl -s 7,virtio-console,htcon1=$W/vcon1.sock,htcon2=$W/vcon2.sock -l com2,tcp=127.0.0.1:$C2"
+	dsr_group net 2 1G "$sl" "e1000 virtio-net-mq virtio-console com2"
+	ifconfig "$br" destroy 2>/dev/null; ifconfig "$tapA" destroy 2>/dev/null; ifconfig "$tapB" destroy 2>/dev/null
+}
+# vcon_h2g TAG SOCK GUESTTAG TOKEN / vcon_g2h ...: host side of a port.
+vcon_h2g() { printf '%s\n' "$3" | timeout 10 nc -N -U "$1" > /dev/null 2>&1; sleep 1; gq "$2.txt" "$G tty-got $4 $3" 20; }
+vcon_g2h() # SOCK|tcp:PORT OUT GUESTDEV TOKEN
+{
+	case $1 in
+	tcp:*) timeout 15 nc -d 127.0.0.1 "${1#tcp:}" > "$2" 2>&1 & ;;
+	*) timeout 15 nc -d -U "$1" > "$2" 2>&1 & ;;
+	esac
+	vg=$!; sleep 1
+	vm_cmd "$vm" "$G tty-send $3 $4" 20 > "$2.guest" 2>&1
+	sleep 2; kill $vg 2>/dev/null; wait $vg 2>/dev/null
+	grep -q -F "$4" "$2"
+}
+dsr_pre_net()
+{
+	gq net-em0.txt "$G net-up em0 $GA/24" 30
+	gq net-vtnet0.txt "$G net-up vtnet0 $GB/24" 30
+	dsr_net e1000-before $GA $HA && check dsr-e1000-before PASS "em0: $DN" ||
+	    dfail dsr-e1000-before "em0 ($(v net-em0.txt 'DSRNET ' addr)): $DN (pf enabled: $pf_on)"
+	dsr_net vnet-before $GB $HB && check dsr-virtio-net-mq-before PASS "vtnet0: $DN" ||
+	    dfail dsr-virtio-net-mq-before "vtnet0 ($(v net-vtnet0.txt 'DSRNET ' addr)): $DN (pf enabled: $pf_on)"
+	gq vq-before.txt "$G vtnet-q vtnet0" 30
+	# virtio-console: a reader on port 1 stays open across the restore.
+	gq vcon-reader.txt "$G tty-reader vc1 /dev/vtcon/htcon1" 30
+	vcon_h2g "$W/vcon1.sock" vcon-h2g-before "vc-a-$SEED" vc1
+	vcon_g2h "$W/vcon2.sock" "$O/vcon-g2h-before.txt" /dev/vtcon/htcon2 "vc-b-$SEED" && g2h=yes || g2h=no
+	grep -q 'got=yes' "$O/vcon-h2g-before.txt" && [ $g2h = yes ] &&
+	    check dsr-virtio-console-before PASS "host->port htcon1 and port htcon2->host delivered" ||
+	    dfail dsr-virtio-console-before "host->htcon1: $(grep -o 'got=[a-z]*' "$O/vcon-h2g-before.txt"); htcon2->host: $g2h; reader $(v vcon-reader.txt 'DSRTTY ' reader)"
+	# COM2 (lpc uart1) over TCP.
+	gq com2-reader.txt "$G tty-reader c2 /dev/cuau1" 30
+	printf '%s\n' "c2-a-$SEED" | timeout 10 nc -N 127.0.0.1 "$C2" > /dev/null 2>&1; sleep 1
+	gq com2-h2g-before.txt "$G tty-got c2 c2-a-$SEED" 20
+	vcon_g2h "tcp:$C2" "$O/com2-g2h-before.txt" /dev/cuau1 "c2-b-$SEED" && g2h=yes || g2h=no
+	grep -q 'got=yes' "$O/com2-h2g-before.txt" && [ $g2h = yes ] &&
+	    check dsr-com2-before PASS "host->COM2 and COM2->host delivered (tcp 127.0.0.1:$C2)" ||
+	    dfail dsr-com2-before "host->cuau1: $(grep -o 'got=[a-z]*' "$O/com2-h2g-before.txt"); cuau1->host: $g2h"
+}
+dsr_mid_net()
+{
+	gq ping-em-start.txt "$G ping-start em $HA" 30
+	gq ping-vn-start.txt "$G ping-start vn $HB" 30
+	gq ping-em-suspend.txt "$G ping-read em" 30   # dsr_post_net reads ping-$tag-suspend.txt
+	gq ping-vn-suspend.txt "$G ping-read vn" 30
+}
+dsr_between_net() { rm -f "$W"/vcon*.sock; }   # bhyve leaves its port sockets
+dsr_up_net() { ifconfig "$tapA" up; ifconfig "$tapB" up; }
+dsr_post_net()
+{
+	sleep 3
+	for t in "em e1000" "vn virtio-net-mq"; do
+		set -- $t
+		gq "ping-$1-after.txt" "$G ping-read $1" 30
+		gr=$(dsr_grew "$O/ping-$1-suspend.txt" "$O/ping-$1-after.txt" 'DSRPING ' replies)
+		[ "${gr%% *}" = ok ] && check "dsr-$2-traffic-across-restore" PASS "ping started before the suspend got replies after the restore (${gr#ok })" ||
+		    dfail "dsr-$2-traffic-across-restore" "replies ${gr#* } (pf enabled: $pf_on)"
+		gq "ping-$1-stop.txt" "$G ping-stop $1" 20
+	done
+	dsr_net e1000-after $GA $HA && check dsr-e1000-after PASS "em0: $DN" || dfail dsr-e1000-after "em0: $DN"
+	dsr_net vnet-after $GB $HB && check dsr-virtio-net-mq-after PASS "vtnet0: $DN" || dfail dsr-virtio-net-mq-after "vtnet0: $DN"
+	gq vq-after.txt "$G vtnet-q vtnet0" 30
+	a=$(v vq-before.txt 'DSRVQ ' act) b=$(v vq-after.txt 'DSRVQ ' act) m=$(v vq-after.txt 'DSRVQ ' max)
+	if [ -n "$a" ] && [ "$a" = "$b" ] && [ "${m:-0}" -ge 2 ]; then
+		check dsr-virtio-net-mq-queues PASS "act_vq_pairs $a before and after (max $m)"
+	else
+		dfail dsr-virtio-net-mq-queues "act_vq_pairs before '$a' after '$b' max '$m' (bhyve offers queues=2)"
+	fi
+	vcon_h2g "$W/vcon1.sock" vcon-h2g-after "vc-c-$SEED" vc1
+	vcon_g2h "$W/vcon2.sock" "$O/vcon-g2h-after.txt" /dev/vtcon/htcon2 "vc-d-$SEED" && g2h=yes || g2h=no
+	grep -q 'got=yes reader_alive=yes' "$O/vcon-h2g-after.txt" && [ $g2h = yes ] &&
+	    check dsr-virtio-console-after PASS "the pre-suspend reader on htcon1 got host data after the restore; htcon2->host delivered" ||
+	    dfail dsr-virtio-console-after "host->htcon1: $(grep -o 'got=.*' "$O/vcon-h2g-after.txt"); htcon2->host: $g2h"
+	printf '%s\n' "c2-c-$SEED" | timeout 10 nc -N 127.0.0.1 "$C2" > /dev/null 2>&1; sleep 1
+	gq com2-h2g-after.txt "$G tty-got c2 c2-c-$SEED" 20
+	vcon_g2h "tcp:$C2" "$O/com2-g2h-after.txt" /dev/cuau1 "c2-d-$SEED" && g2h=yes || g2h=no
+	grep -q 'got=yes reader_alive=yes' "$O/com2-h2g-after.txt" && [ $g2h = yes ] &&
+	    check dsr-com2-after PASS "the pre-suspend reader on cuau1 got host data after the restore; cuau1->host delivered" ||
+	    dfail dsr-com2-after "host->cuau1: $(grep -o 'got=.*' "$O/com2-h2g-after.txt"); cuau1->host: $g2h"
+}
+
+# === gfx ======================================================================
+grp_gfx()
+{
+	VNC=$(free_port 5990)
+	sl="-s 5,xhci,tablet -s 7,fbuf,tcp=127.0.0.1:$VNC,w=800,h=600"
+	sl="$sl -s 8,hda${HT_DSR_HDA_DSP:+,play=$HT_DSR_HDA_DSP,rec=$HT_DSR_HDA_DSP} -s 9,virtio-snd,backend=null"
+	devs="xhci-tablet fbuf hda virtio-snd"
+	EV=""
+	r=$(opt_reason input)
+	if [ -z "$r" ]; then
+		: > "$W/uinput.ctl"
+		"$DT" uinput hosttest-uinput "$W/uinput.ctl" "$W/uinput.pid" > "$O/uinput.txt" 2>&1 &
+		at_cleanup "rm -f $W/uinput.ctl; kill \$(cut -d' ' -f1 $W/uinput.pid 2>/dev/null) 2>/dev/null"
+		i=0; while [ ! -s "$W/uinput.pid" ] && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); done
+		EV=$(cut -d' ' -f2 "$W/uinput.pid" 2>/dev/null)
+		if [ -c "$EV" ]; then
+			sl="$sl -s 11,virtio-input,$EV"; devs="$devs virtio-input"
+		else
+			check dsr-virtio-input FAIL "dsrtool uinput did not create an evdev node: $(head -2 "$O/uinput.txt" | tr '\n' ' ')"
+			EV=""
+		fi
+	else
+		check dsr-virtio-input SKIP "$r"
+	fi
+	dsr_group gfx 2 1G "$sl" "$devs"
+	[ -z "$EV" ] || { rm -f "$W/uinput.ctl"; sleep 0.5; }
+}
+rfb_read() { (sleep 3) | timeout 6 nc 127.0.0.1 "$VNC" > "$O/$1" 2>/dev/null; dsr_rfb "$O/$1"; }
+ev_keys() { i=0; while [ $i -lt "$1" ]; do echo key >> "$W/uinput.ctl"; sleep 0.3; i=$((i + 1)); done; sleep 2; }
+gfx_round() # gfx_round before|after
+{
+	p=$1
+	gq "usb-$p.txt" "$G usb-desc" 30
+	u=$(v "usb-$p.txt" 'DSRUSBDESC ' dev) iv=$(v "usb-$p.txt" 'DSRUSBDESC ' idVendor)
+	[ -n "$u" ] && [ "$u" != none ] && [ -n "$iv" ] && [ "$iv" != none ] &&
+	    check "dsr-xhci-tablet-$p" PASS "tablet $u enumerated on xhci, device descriptor read (idVendor $iv, driver $(v "usb-$p.txt" 'DSRUSBDESC ' driver))" ||
+	    dfail "dsr-xhci-tablet-$p" "tablet '$u' descriptor '$iv' (usbconfig sees: $(tr -d "\r" < "$O/$g-inv-before.txt" | grep -c "^DSRUSB") devices before the suspend)"
+	set -- $(rfb_read "rfb-$p.txt")
+	[ "$1" = ok ] && check "dsr-fbuf-$p" PASS "VNC listener 127.0.0.1:$VNC sent '$2 $3'" ||
+	    dfail "dsr-fbuf-$p" "VNC 127.0.0.1:$VNC banner $*"
+	gq "hda-$p.txt" "$G present hdac" 20
+	hd=$(v "hda-$p.txt" 'DSRPRESENT ' dev)
+	if [ -n "${HT_DSR_HDA_DSP:-}" ]; then
+		gq "hda-unit-$p.txt" "$G snd-unit 'HDA|hdaa'" 20; hu=$(v "hda-unit-$p.txt" 'DSRSNDUNIT ' unit)
+		gq "hda-play-$p.txt" "$G snd-play $hu" 40
+		[ "$hd" != none ] && [ "$(v "hda-play-$p.txt" 'DSRPLAY ' rc)" = 0 ] &&
+		    check "dsr-hda-$p" PASS "$hd attached; 1 s of silence played to pcm$hu (host $HT_DSR_HDA_DSP)" ||
+		    dfail "dsr-hda-$p" "controller '$hd', play rc $(v "hda-play-$p.txt" 'DSRPLAY ' rc) on pcm$hu"
+	else
+		[ -n "$hd" ] && [ "$hd" != none ] &&
+		    check "dsr-hda-$p" PASS "$hd attached (controller only: no host audio backend; HT_DSR_HDA_DSP=/dev/dspN adds a codec and playback)" ||
+		    dfail "dsr-hda-$p" "no hdac controller in the guest"
+	fi
+	gq "vsnd-unit-$p.txt" "$G snd-unit 'VirtIO|virtio'" 20; su=$(v "vsnd-unit-$p.txt" 'DSRSNDUNIT ' unit)
+	gq "vsnd-play-$p.txt" "$G snd-play $su" 40
+	gq "vsnd-rec-$p.txt" "$G snd-rec $su" 40
+	[ -n "$su" ] && [ "$su" != none ] && [ "$(v "vsnd-play-$p.txt" 'DSRPLAY ' rc)" = 0 ] && [ "$(v "vsnd-rec-$p.txt" 'DSRREC ' bytes)" = 65536 ] &&
+	    check "dsr-virtio-snd-$p" PASS "pcm$su: 1 s played, 64 KiB captured (null backend)" ||
+	    dfail "dsr-virtio-snd-$p" "pcm '$su' play rc $(v "vsnd-play-$p.txt" 'DSRPLAY ' rc) capture $(v "vsnd-rec-$p.txt" 'DSRREC ' bytes) bytes"
+}
+
+# === gpu (alone: under QEMU the preloaded vtgpu panics at boot attach) =========
+grp_gpu() { dsr_group gpu 2 1G "-s 5,virtio-gpu" "virtio-gpu"; }
+gpu_round()
+{
+	gq "gpu-$1.txt" "$G gpu" 20
+	[ "$(v "gpu-$1.txt" 'DSRGPU ' attached)" = yes ] && [ "$(v "gpu-$1.txt" 'DSRGPU ' errors)" = 0 ] &&
+	    check "dsr-virtio-gpu-$1" PASS "vtgpu0 attached, no vtgpu errors (headless scanout)" ||
+	    dfail "dsr-virtio-gpu-$1" "attached=$(v "gpu-$1.txt" 'DSRGPU ' attached) errors=$(v "gpu-$1.txt" 'DSRGPU ' errors)"
+}
+dsr_pre_gpu() { gpu_round before; }
+dsr_post_gpu() { gpu_round after; }
+dsr_pre_gfx()
+{
+	gfx_round before
+	[ -n "$EV" ] || return 0
+	gq evfind.txt "$G evfind hosttest-uinput" 30
+	GEV=$(v evfind.txt 'DSREVDEV ' dev)
+	gq ev-start.txt "$G evread-start $GEV 1800" 30
+	ev_keys 3
+	gq ev-before.txt "$G evread" 20
+	c=$(v ev-before.txt 'DSREV ' count)
+	[ "$GEV" != none ] && [ "${c:-0}" -ge 6 ] 2>/dev/null &&
+	    check dsr-virtio-input-before PASS "host uinput $EV -> guest $GEV: $c key events" ||
+	    dfail dsr-virtio-input-before "guest node '$GEV', $c key events for 3 host key presses"
+}
+dsr_post_gfx()
+{
+	gfx_round after
+	[ -n "$EV" ] || return 0
+	gq ev-after0.txt "$G evread" 20
+	ev_keys 3
+	gq ev-after.txt "$G evread" 20
+	gr=$(dsr_grew "$O/ev-after0.txt" "$O/ev-after.txt" 'DSREV ' count)
+	p0=$(v ev-before.txt 'DSREV ' pid) p1=$(v ev-after.txt 'DSREV ' pid)
+	[ "${gr%% *}" = ok ] && [ "$p0" = "$p1" ] &&
+	    check dsr-virtio-input-after PASS "the reader opened before the suspend (pid $p1) got the new key events (${gr#ok })" ||
+	    dfail dsr-virtio-input-after "events ${gr#* }, reader pid $p0 -> $p1"
+}
+
+# === fs =======================================================================
+grp_fs()
+{
+	S1=$SEED S2=$((SEED + 1))
+	rm -rf "$W/share" "$W/vfsexport"; mkdir -p "$W/share" "$W/vfsexport"
+	"$SRT" pattern 4 $((SEED + 3)) > "$W/share/h1"
+	: > "$W/share/g1"; : > "$W/share/g2"   # overwritten by the guest; c1/c2 are created by it
+	"$SRT" pattern 4 $((SEED + 4)) > "$W/vfsexport/p"
+	truncate -s 64m "$W/pmem.img"; dd if=/dev/zero of="$W/pmem.img" bs=1m count=1 conv=notrunc 2>/dev/null
+	sl="-s 5,virtio-9p,htshare=$W/share -s 7,virtio-balloon,target=128M"
+	sl="$sl -s 8,virtio-pmem,path=$W/pmem.img,id=htpmem -s 9,virtio-mem,size=256M,requested=128M"
+	devs="virtio-9p virtio-balloon virtio-pmem virtio-mem"
+	VFS=""
+	r=$(opt_reason vfs)
+	if [ -z "$r" ]; then
+		vfsd_start
+		if [ -S "$W/vfs.sock" ]; then
+			VFS=yes; sl="$sl -s 10,virtio-fs,path=$W/vfs.sock,tag=htvfs,identity=hosttest-vfs-1"; devs="$devs virtio-fs"
+		else
+			check dsr-virtio-fs FAIL "virtiofsd did not create $W/vfs.sock: $(tail -2 "$O/virtiofsd.log" | tr '\n' ' ')"
+		fi
+	else
+		check dsr-virtio-fs SKIP "$r"
+	fi
+	dsr_group fs 2 1G "$sl" "$devs"
+	[ -z "$VFS" ] || kill "$(cat "$W/vfsd.pid" 2>/dev/null)" 2>/dev/null
+}
+vfsd_start()
+{
+	rm -f "$W/vfs.sock"
+	virtiofsd -r "$W/vfsexport" -s "$W/vfs.sock" -U "$(id -u)" -G "$(id -g)" >> "$O/virtiofsd.log" 2>&1 &
+	echo $! > "$W/vfsd.pid"
+	at_cleanup "kill \$(cat $W/vfsd.pid 2>/dev/null) 2>/dev/null"
+	i=0; while [ ! -S "$W/vfs.sock" ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i + 1)); done
+}
+dsr_pre_fs()
+{
+	E9=$("$SRT" expect 4 "$S1") EH=$("$SRT" expect 4 $((SEED + 3))) EV4=$("$SRT" expect 4 $((SEED + 4)))
+	gq 9p-mount.txt "$G mnt9p htshare /mnt/9p" 30
+	# Without the mount, file-write lands in the guest's own /mnt/9p and
+	# reports rc 0: report the mount failure once and skip the share checks.
+	P9M=$(v 9p-mount.txt 'DSR9P ' mounted)
+	if [ "$P9M" != yes ]; then
+		dfail dsr-virtio-9p-before "share not mounted: $(v 9p-mount.txt 'DSR9P ' err)"
+		dfail dsr-virtio-9p-create "not run: share not mounted (dsr-virtio-9p-before)"
+	else
+	gq 9p-write.txt "$G file-write /mnt/9p/g1 4 $S1" 60
+	gq 9p-read.txt "$G file-read /mnt/9p/h1" 60
+	hs=$(sha256 -q "$W/share/g1" 2>/dev/null)
+	[ "$hs" = "$E9" ] && [ "$(v 9p-read.txt 'DSRFILE ' sha256)" = "$EH" ] &&
+	    check dsr-virtio-9p-before PASS "guest write visible on the host, host file read in the guest" ||
+	    dfail dsr-virtio-9p-before "mount $(v 9p-mount.txt 'DSR9P ' mounted) $(v 9p-mount.txt 'DSR9P ' err); host g1 ${hs:-missing} (want $E9); guest h1 $(v 9p-read.txt 'DSRFILE ' sha256)"
+	gq 9p-create.txt "$G file-write /mnt/9p/c1 1 $S1" 60
+	[ "$(sha256 -q "$W/share/c1" 2>/dev/null)" = "$("$SRT" expect 1 "$S1")" ] &&
+	    check dsr-virtio-9p-create PASS "file created by the guest present on the host" ||
+	    dfail dsr-virtio-9p-create "guest create of share/c1: rc $(v 9p-create.txt "DSRFILE " rc), host $(sha256 -q "$W/share/c1" 2>/dev/null || echo missing) (QEMU smoke: ENOENT on create, overwrite worked; dm-record.md)"
+	gq 9p-hold.txt "$G hold-start 9p /mnt/9p/h1 2" 30
+	fi
+	i=0; while [ $i -lt 30 ]; do
+		gq balloon-before.txt "$G balloon" 20
+		[ -n "$(v balloon-before.txt 'DSRBALLOON ' current)" ] && [ "$(v balloon-before.txt 'DSRBALLOON ' current)" = "$(v balloon-before.txt 'DSRBALLOON ' desired)" ] && break
+		sleep 2; i=$((i + 1))
+	done
+	bd=$(v balloon-before.txt 'DSRBALLOON ' desired) bc=$(v balloon-before.txt 'DSRBALLOON ' current)
+	[ "${bd:-0}" = 32768 ] && [ "$bc" = "$bd" ] &&
+	    check dsr-virtio-balloon-before PASS "inflated to target 128M: desired=current=$bc pages" ||
+	    dfail dsr-virtio-balloon-before "desired '$bd' current '$bc' pages (target=128M = 32768 pages)"
+	gq pmem-disk.txt "$G disk pmem" 20; DP=$(v pmem-disk.txt 'DSRDISK ' dev)
+	[ "${DP:-none}" != none ] && blk_before virtio-pmem "$DP" $PMEM_MB "$S1" || dfail dsr-virtio-pmem-before "no /dev/vtpmem0 in the guest"
+	gq vmem-before.txt "$G vmem" 20
+	[ "$(v vmem-before.txt 'DSRVMEM ' plugged)" = 134217728 ] &&
+	    check dsr-virtio-mem-before PASS "requested=plugged=128 MiB ($(v vmem-before.txt 'DSRVMEM ' blocks) blocks)" ||
+	    dfail dsr-virtio-mem-before "$(tr -d '\r' < "$O/vmem-before.txt" | grep DSRVMEM | tail -1)"
+	if [ -n "$VFS" ]; then
+		gq vfs-mount.txt "$G mntvfs htvfs /mnt/vfs" 30
+		gq vfs-read.txt "$G file-read /mnt/vfs/p" 60
+		[ "$(v vfs-read.txt 'DSRFILE ' sha256)" = "$EV4" ] &&
+		    check dsr-virtio-fs-before PASS "virtiofsd export read in the guest (fusefs over virtio-fs), sha256 = host file" ||
+		    dfail dsr-virtio-fs-before "$(tr -d '\r' < "$O/vfs-mount.txt" | grep DSRVFS | tail -1); read $(v vfs-read.txt 'DSRFILE ' sha256)"
+		gq vfs-hold.txt "$G hold-start vfs /mnt/vfs/p 2" 30
+	fi
+}
+dsr_between_fs()
+{
+	[ -n "$VFS" ] || return 0
+	if kill -0 "$(cat "$W/vfsd.pid")" 2>/dev/null; then
+		check dsr-virtio-fs-backend INFO "virtiofsd kept running across the suspend; the restored bhyve reconnects to it"
+	else
+		vfsd_start
+		check dsr-virtio-fs-backend INFO "virtiofsd exited with the suspended bhyve ($(tail -1 "$O/virtiofsd.log")); restarted for the restore"
+	fi
+}
+dsr_post_fs()
+{
+	if [ "$P9M" != yes ]; then
+		dfail dsr-virtio-9p-after "not run: share not mounted before the suspend (dsr-virtio-9p-before)"
+	else
+	gq 9p-hold-after.txt "$G hold-finish 9p" 60
+	[ "$(v 9p-hold-after.txt 'DSRHOLD ' sha256)" = "$EH" ] &&
+	    check dsr-virtio-9p-open-file-across-restore PASS "file opened before the suspend read to the end after the restore (fid kept)" ||
+	    dfail dsr-virtio-9p-open-file-across-restore "half before/half after sha256 $(v 9p-hold-after.txt 'DSRHOLD ' sha256) != $EH"
+	gq 9p-read-after.txt "$G file-read /mnt/9p/g1" 60
+	gq 9p-write-after.txt "$G file-write /mnt/9p/g2 4 $S2" 60
+	hs=$(sha256 -q "$W/share/g2" 2>/dev/null)
+	[ "$(v 9p-read-after.txt 'DSRFILE ' sha256)" = "$E9" ] && [ "$hs" = "$("$SRT" expect 4 "$S2")" ] &&
+	    check dsr-virtio-9p-after PASS "pre-suspend file read back; guest write to share/g2 visible on the host" ||
+	    dfail dsr-virtio-9p-after "g1 $(v 9p-read-after.txt 'DSRFILE ' sha256) (want $E9); host g2 ${hs:-missing}"
+	gq 9p-create-after.txt "$G file-write /mnt/9p/c2 1 $S2" 60
+	[ "$(sha256 -q "$W/share/c2" 2>/dev/null)" = "$("$SRT" expect 1 "$S2")" ] &&
+	    check dsr-virtio-9p-create-after PASS "file created after the restore present on the host" ||
+	    dfail dsr-virtio-9p-create-after "guest create of share/c2: rc $(v 9p-create-after.txt 'DSRFILE ' rc)"
+	fi
+	gq balloon-after.txt "$G balloon" 20
+	[ "$(v balloon-after.txt 'DSRBALLOON ' desired)" = "$bd" ] && [ "$(v balloon-after.txt 'DSRBALLOON ' current)" = "$bc" ] &&
+	    check dsr-virtio-balloon-after PASS "desired/current $bd/$bc pages unchanged by the restore" ||
+	    dfail dsr-virtio-balloon-after "before $bd/$bc, after $(v balloon-after.txt 'DSRBALLOON ' desired)/$(v balloon-after.txt 'DSRBALLOON ' current)"
+	blk_after virtio-pmem "$DP" $PMEM_MB "$S1" "$S2"
+	gq vmem-after.txt "$G vmem" 20
+	[ "$(v vmem-after.txt 'DSRVMEM ' plugged)" = "$(v vmem-before.txt 'DSRVMEM ' plugged)" ] && [ "$(v vmem-after.txt 'DSRVMEM ' plugged)" = 134217728 ] &&
+	    check dsr-virtio-mem-after PASS "plugged 128 MiB before and after" ||
+	    dfail dsr-virtio-mem-after "before $(v vmem-before.txt 'DSRVMEM ' plugged) after $(v vmem-after.txt 'DSRVMEM ' plugged)"
+	if [ -n "$VFS" ]; then
+		gq vfs-hold-after.txt "$G hold-finish vfs" 60
+		[ "$(v vfs-hold-after.txt 'DSRHOLD ' sha256)" = "$EV4" ] &&
+		    check dsr-virtio-fs-open-file-across-restore PASS "handle opened before the suspend read to the end after the restore (backend state transfer)" ||
+		    dfail dsr-virtio-fs-open-file-across-restore "sha256 $(v vfs-hold-after.txt 'DSRHOLD ' sha256) != $EV4"
+		gq vfs-read-after.txt "$G file-read /mnt/vfs/p" 60
+		[ "$(v vfs-read-after.txt 'DSRFILE ' sha256)" = "$EV4" ] &&
+		    check dsr-virtio-fs-after PASS "export read again after the restore" ||
+		    dfail dsr-virtio-fs-after "read $(v vfs-read-after.txt 'DSRFILE ' sha256)"
+	fi
+}
+dsr_host_fs()
+{
+	h=$(dd if="$W/pmem.img" bs=1m count=$PMEM_MB 2>/dev/null | sha256 -q)
+	[ "$h" = "$("$SRT" expect $PMEM_MB "$S2")" ] && check dsr-virtio-pmem-backing PASS "host pmem.img holds the post-restore write" ||
+	    check dsr-virtio-pmem-backing FAIL "host pmem.img first $PMEM_MB MiB $h != the guest's post-restore pattern"
+	rm -f "$W/pmem.img"
+}
+
+# === misc =====================================================================
+WD=16     # watchdog -t (seconds; a power of two, as watchdog(8) rounds)
+grp_misc()
+{
+	sl="-s 5,i6300esb,action=notify,timeout=$WD -s 7,virtio-rtc,alarm=true -s 8,virtio-crypto -l pvpanic"
+	devs="i6300esb virtio-rtc virtio-crypto pvpanic"
+	TPM=""
+	r=$(opt_reason tpm)
+	if [ -z "$r" ]; then
+		mkdir -p "$W/swtpm"
+		swtpm socket --tpm2 --tpmstate dir="$W/swtpm" --ctrl type=unixio,path="$W/swtpm.sock" --flags not-need-init,startup-clear \
+		    > "$O/swtpm.log" 2>&1 &
+		echo $! > "$W/swtpm.pid"; at_cleanup "kill \$(cat $W/swtpm.pid) 2>/dev/null"; sleep 1
+		sl="$sl -l tpm,swtpm,$W/swtpm.sock,migration=true,state_id=$(printf '%032x' $SEED),migration_key_id=$(printf '%032x' $((SEED + 1)))"
+		devs="$devs tpm"; TPM=yes
+	else
+		check dsr-tpm SKIP "$r"
+	fi
+	check dsr-fw_cfg SKIP "fw_cfg (-l fwcfg,qemu) is read by boot firmware; FreeBSD guests have no fw_cfg driver, and bhyveload guests run no firmware (the uefi group boots firmware that reads it)"
+	dsr_group misc 2 1G "$sl" "$devs"
+}
+dsr_pre_misc()
+{
+	gq wdog-start.txt "$G wdog-start $WD" 30
+	sleep 3
+	gq wdog-before.txt "$G wdog-read" 20
+	wdev=$(tr -d '\r' < "$O/wdog-start.txt" | sed -n 's/^DSRWDOG-DEV //p' | tail -1)
+	p=$(v wdog-before.txt 'DSRWDOG ' pats)
+	echo "$wdev" | grep -q -i '6300ESB' && [ "${p:-0}" -ge 2 ] 2>/dev/null &&
+	    check dsr-i6300esb-before PASS "ichwd: '$wdev' armed (watchdog -t $WD), patted $p times" ||
+	    dfail dsr-i6300esb-before "watchdog device '$wdev', pats '$p'"
+	gq rtc-set1.txt "$G rtc-alarm 4" 20
+	sleep 8
+	gq rtc-1.txt "$G rtc" 20
+	c0=$(v rtc-set1.txt 'DSRRTC ' count) c1=$(v rtc-1.txt 'DSRRTC ' count)
+	[ -n "$c1" ] && [ "${c1:-0}" -gt "${c0:-0}" ] 2>/dev/null &&
+	    check dsr-virtio-rtc-before PASS "alarm 4 s ahead fired (count $c0 -> $c1)" ||
+	    dfail dsr-virtio-rtc-before "alarm count $c0 -> $c1 (set rc $(v rtc-set1.txt 'DSRRTC ' rc) $(v rtc-set1.txt 'DSRRTC ' err))"
+	gq crypto-start.txt "$G crypto-start" 60
+	gq crypto-before.txt "$G crypto-io 8 $SEED" 120
+	cx=$(v crypto-before.txt 'DSRCRYPTO-IO ' crypto) ci=$(v crypto-before.txt 'DSRCRYPTO-IO ' intr)
+	[ "$(v crypto-before.txt 'DSRCRYPTO-IO ' sha256)" = "$("$SRT" expect 8 "$SEED")" ] && [ "$cx" = hardware ] &&
+	    check dsr-virtio-crypto-before PASS "geli AES-CBC on vtcrypto (Crypto: $cx, $ci vtcrypto interrupts): 8 MiB through .eli verified" ||
+	    dfail dsr-virtio-crypto-before "geli $(tr -d '\r' < "$O/crypto-start.txt" | grep DSRCRYPTO | tail -1); io sha $(v crypto-before.txt 'DSRCRYPTO-IO ' sha256) crypto=$cx intr=$ci"
+	gq pvp-before.txt "$G present 'acpi_pvpanic|pvpanic'" 20
+	[ "$(v pvp-before.txt 'DSRPRESENT ' dev)" != none ] &&
+	    check dsr-pvpanic-before PASS "$(v pvp-before.txt 'DSRPRESENT ' dev) attached (ISA 0x505, QEMU0001)" ||
+	    dfail dsr-pvpanic-before "no pvpanic driver attached"
+	if [ -n "$TPM" ]; then
+		gq tpm-before.txt "$G tpm" 30
+		[ "$(v tpm-before.txt 'DSRTPM ' rc)" = 0x0 ] && check dsr-tpm-before PASS "TPM2_GetRandom answered" ||
+		    dfail dsr-tpm-before "$(tr -d '\r' < "$O/tpm-before.txt" | grep DSRTPM | tail -1)"
+	fi
+}
+dsr_mid_misc()
+{
+	# An alarm that falls due while the guest is suspended; the watchdog
+	# stays armed and patted.
+	gq rtc-set2.txt "$G rtc-alarm 40" 20
+	RC2=$(v rtc-set2.txt 'DSRRTC ' count)
+	gq wdog-suspend.txt "$G wdog-read" 20
+	BT=$(v wdog-suspend.txt 'DSRUPTIME ' s)
+}
+dsr_between_misc()
+{
+	# Stay down longer than both watchdog stages and past the RTC alarm.
+	log "misc: waiting $((2 * WD + 10)) s before the restore (watchdog stages $WD s, RTC alarm due)"
+	sleep $((2 * WD + 10))
+}
+dsr_up_misc() { WOFF=$(( $(wc -c < "$HT_WORK/$vm.bhyve.log") + 1 )); }
+dsr_post_misc()
+{
+	sleep $((WD + 5))
+	gq wdog-after.txt "$G wdog-read" 20
+	gr=$(dsr_grew "$O/wdog-suspend.txt" "$O/wdog-after.txt" 'DSRWDOG ' pats)
+	fired=$(dsr_wdog_fires "$HT_WORK/$vm.bhyve.log" "$WOFF")
+	bt=$(v wdog-after.txt 'DSRUPTIME ' s)
+	[ "${gr%% *}" = ok ] && [ "$fired" = 0 ] && [ "$bt" = "$BT" ] &&
+	    check dsr-i6300esb-no-spurious-fire PASS "patting continued (${gr#ok }), no expiry in $((WD + 5)) s after the restore, same boot" ||
+	    dfail dsr-i6300esb-no-spurious-fire "pats ${gr#* }, expiry lines after restore: $fired, boottime $BT -> $bt"
+	# Positive control: stop patting (still armed) and the watchdog fires.
+	gq wdog-stop.txt "$G wdog-stop" 20
+	i=0; while [ $i -lt $((3 * WD + 30)) ] && [ "$(dsr_wdog_fires "$HT_WORK/$vm.bhyve.log" "$WOFF")" = 0 ]; do sleep 1; i=$((i + 1)); done
+	[ "$(dsr_wdog_fires "$HT_WORK/$vm.bhyve.log" "$WOFF")" -gt 0 ] &&
+	    check dsr-i6300esb-fires-when-unpetted PASS "restored watchdog expired ${i} s after patting stopped: $(tail -c +"$WOFF" "$HT_WORK/$vm.bhyve.log" | grep -m1 'watchdog expired' | tr -d '\r')" ||
+	    dfail dsr-i6300esb-fires-when-unpetted "no expiry in $((3 * WD + 30)) s after patting stopped (the restored timer is not running)"
+	gq wdog-off.txt "$G wdog-off" 20
+	gq rtc-2.txt "$G rtc" 20
+	c=$(v rtc-2.txt 'DSRRTC ' count)
+	[ -n "$c" ] && [ "${c:-0}" -gt "${RC2:-0}" ] 2>/dev/null &&
+	    check dsr-virtio-rtc-alarm-across-restore PASS "alarm set before the suspend fired after the restore (count $RC2 -> $c, observed $(v rtc-2.txt 'DSRRTC ' observed))" ||
+	    dfail dsr-virtio-rtc-alarm-across-restore "alarm count $RC2 -> '$c' ($(tr -d '\r' < "$O/rtc-2.txt" | grep DSRRTC | tail -1))"
+	gq rtc-set3.txt "$G rtc-alarm 4" 20; sleep 8; gq rtc-3.txt "$G rtc" 20
+	[ "$(v rtc-3.txt 'DSRRTC ' count)" -gt "$(v rtc-set3.txt 'DSRRTC ' before)" ] 2>/dev/null &&
+	    check dsr-virtio-rtc-after PASS "new alarm fired after the restore (count $(v rtc-set3.txt 'DSRRTC ' before) -> $(v rtc-3.txt 'DSRRTC ' count))" ||
+	    dfail dsr-virtio-rtc-after "count $(v rtc-set3.txt 'DSRRTC ' before) -> $(v rtc-3.txt 'DSRRTC ' count)"
+	gq crypto-after.txt "$G crypto-io 8 $((SEED + 1))" 120
+	ci2=$(v crypto-after.txt 'DSRCRYPTO-IO ' intr)
+	[ "$(v crypto-after.txt 'DSRCRYPTO-IO ' sha256)" = "$("$SRT" expect 8 $((SEED + 1)))" ] && [ "$(v crypto-after.txt "DSRCRYPTO-IO " crypto)" = hardware ] &&
+	    check dsr-virtio-crypto-after PASS "the geli session from before the suspend encrypts on vtcrypto after the restore (interrupts $ci -> $ci2)" ||
+	    dfail dsr-virtio-crypto-after "sha $(v crypto-after.txt 'DSRCRYPTO-IO ' sha256), crypto=$(v crypto-after.txt 'DSRCRYPTO-IO ' crypto), interrupts $ci -> $ci2"
+	gq pvp-after.txt "$G present 'acpi_pvpanic|pvpanic'" 20
+	[ "$(v pvp-after.txt 'DSRPRESENT ' dev)" = "$(v pvp-before.txt 'DSRPRESENT ' dev)" ] && [ "$(v pvp-after.txt 'DSRPRESENT ' dev)" != none ] &&
+	    check dsr-pvpanic-after PASS "$(v pvp-after.txt 'DSRPRESENT ' dev) still attached (no panic event is raised: that would end the test guest)" ||
+	    dfail dsr-pvpanic-after "pvpanic $(v pvp-after.txt 'DSRPRESENT ' dev)"
+	if [ -n "$TPM" ]; then
+		gq tpm-after.txt "$G tpm" 30
+		[ "$(v tpm-after.txt 'DSRTPM ' rc)" = 0x0 ] && check dsr-tpm-after PASS "TPM2_GetRandom answered after the restore" ||
+		    dfail dsr-tpm-after "$(tr -d '\r' < "$O/tpm-after.txt" | grep DSRTPM | tail -1)"
+	fi
+}
+
+# === iommu ====================================================================
+grp_iommu()
+{
+	truncate -s 64m "$W/iommu.img"
+	dsr_group iommu 2 1G "-s 5,virtio-iommu -s 7,virtio-blk,$W/iommu.img,transport=modern" "virtio-iommu"
+	rm -f "$W/iommu.img"
+}
+dsr_pre_iommu()
+{
+	# The guest driver attaches only with hw.virtio_iommu.enable=1 (overlay
+	# loader.conf); it speaks the protocol but gives busdma no translation.
+	gq iommu-before.txt "$G present vtiommu" 20
+	gq iommu-disk.txt "$G disk vtblk 7" 20; DI=$(v iommu-disk.txt 'DSRDISK ' dev)
+	[ "$(v iommu-before.txt 'DSRPRESENT ' dev)" != none ] && check dsr-virtio-iommu-attach PASS "vtiommu attached ($(v iommu-before.txt 'DSRPRESENT ' dev))" ||
+	    dfail dsr-virtio-iommu-attach "vtiommu not attached (the guest needs hw.virtio_iommu.enable=1)"
+	if [ "${DI:-none}" = none ]; then
+		# bhyve requires VIRTIO_F_ACCESS_PLATFORM from an endpoint behind
+		# the IOMMU (VIRTIO 1.x 6.1 permits that); FreeBSD's virtio core
+		# never negotiates it, so the endpoint refuses FEATURES_OK.
+		gq iommu-dmesg.txt "$G dmesg-tail" 20
+		dfail dsr-virtio-iommu-endpoint "endpoint disk at slot 7 not attached; FreeBSD guests do not negotiate VIRTIO_F_ACCESS_PLATFORM, which bhyve requires behind the IOMMU (guest: $(tr -d '\r' < "$O/iommu-dmesg.txt" | sed -n 's/^DSRDMESG //p' | tail -1))"
+		return 0
+	fi
+	blk_before virtio-iommu "$DI" 16 "$SEED"
+}
+dsr_post_iommu()
+{
+	gq iommu-after.txt "$G present vtiommu" 20
+	[ "$(v iommu-after.txt 'DSRPRESENT ' dev)" != none ] || dfail dsr-virtio-iommu-attach-after "vtiommu gone after the restore"
+	[ "${DI:-none}" = none ] || blk_after virtio-iommu "$DI" 16 "$SEED" $((SEED + 1))
+}
+
+# === neg: a device without save/restore ========================================
+grp_neg()
+{
+	scan=$(dsr_nosnap_devices /usr/src/usr.sbin/bhyve 2>/dev/null)
+	[ -n "$scan" ] && check dsr-neg-source-scan INFO "emulations without pe_snapshot in /usr/src: $scan"
+	r=$(opt_reason ppt)
+	[ -z "$r" ] || { check dsr-neg-passthru-refused SKIP "$r"; return 0; }
+	vm=ht-dsr-neg
+	disk=$(vm_disk $vm)
+	if ! { vm_boot $vm "$disk" 1G 2 "hosttest.role=l1 hosttest.hostname=$vm" "-S -s 5,passthru,$HT_DSR_PPT" &&
+	    vm_wait $vm HOSTTEST-GUEST-READY "${HT_BOOT_TIMEOUT:-600}"; }; then
+		check dsr-neg-passthru-refused FAIL "guest with passthru $HT_DSR_PPT did not boot: $(vm_diag $vm)"
+		vm_destroy $vm; rm -f "$disk"; return 1
+	fi
+	off=$(( $(wc -c < "$HT_WORK/$vm.bhyve.log") + 1 ))
+	mkdir -p "$HT_CKP/neg"
+	bhyvectl --vm=$vm --checkpoint="$HT_CKP/neg/ckp" > "$O/neg-checkpoint.txt" 2>&1; rc=$?
+	sleep 2
+	line=$(tail -c +$off "$HT_WORK/$vm.bhyve.log" | tr -d '\r' | grep -E 'Failed to snapshot|passthru|not supported|checkpoint' | head -2 | tr '\n' ' ')
+	if [ $rc -ne 0 ] && ! ckp_manifest "$HT_CKP/neg/ckp"; then
+		check dsr-neg-passthru-refused PASS "checkpoint refused (bhyvectl rc=$rc: $(head -1 "$O/neg-checkpoint.txt")); bhyve: ${line:-no line}"
+		echo "$line" | grep -q -i -E 'passthru' && echo "$line" | grep -q -i -E 'not supported|unsupported|ENOTSUP|cannot' &&
+		    check dsr-neg-passthru-message INFO "names the device and the reason" ||
+		    check dsr-neg-passthru-message INFO "message does not say plainly that passthru cannot be checkpointed: '${line:-none}' (see dm-record.md)"
+	else
+		check dsr-neg-passthru-refused FAIL "checkpoint of a guest with passthru was published (rc=$rc)"
+	fi
+	vm_cmd $vm "uptime" 30 > "$O/neg-alive.txt" 2>&1 &&
+	    check dsr-neg-guest-survives PASS "guest still answers after the refused checkpoint" ||
+	    check dsr-neg-guest-survives FAIL "guest stopped answering after the refused checkpoint $(vm_diag $vm)"
+	vm_shutdown $vm; rm -rf "$HT_CKP/neg"; rm -f "$disk"
+}
+
+# === uefi =====================================================================
+grp_uefi()
+{
+	r=$(opt_reason uefi)
+	[ -z "$r" ] || { check dsr-uefi SKIP "$r"; return 0; }
+	vm=ht-dsr-uefi
+	disk=$(vm_disk $vm)
+	vars=""
+	[ -f "$HT_UEFI_VARS" ] && { cp "$HT_UEFI_VARS" "$W/uefi-vars.fd"; vars=$W/uefi-vars.fd; }
+	if ! { vm_boot_uefi $vm "$disk" 1G 2 "$vars" "" && vm_wait $vm HOSTTEST-GUEST-READY "${HT_BOOT_TIMEOUT:-600}"; }; then
+		check dsr-uefi-boot FAIL "firmware $HT_UEFI_FD: $(vm_diag $vm)"
+		vm_destroy $vm; rm -f "$disk"; return 1
+	fi
+	vm_cmd $vm "sysctl -n machdep.bootmethod" 20 > "$O/uefi-bootmethod.txt" 2>&1
+	grep -q UEFI "$O/uefi-bootmethod.txt" && check dsr-uefi-boot PASS "kit image booted through $HT_UEFI_FD (machdep.bootmethod=UEFI)" ||
+	    check dsr-uefi-boot FAIL "guest up but machdep.bootmethod is '$(tr -d '\r' < "$O/uefi-bootmethod.txt" | grep -v VSOCK | tail -1)'"
+	EXPU=$("$SRT" expect 64 "$SEED")
+	vm_cmd $vm "$R prep 64 $SEED; $R spin 2" 180 > "$O/uefi-prep.txt" 2>&1
+	mkdir -p "$HT_CKP/uefi-run"
+	bhyvectl --vm=$vm --checkpoint="$HT_CKP/uefi-run/run" > "$O/uefi-run-checkpoint.txt" 2>&1; rc=$?
+	[ $rc -eq 0 ] && ckp_manifest "$HT_CKP/uefi-run/run" &&
+	    check dsr-uefi-checkpoint-running PASS || check dsr-uefi-checkpoint-running FAIL "bhyvectl rc=$rc $(head -1 "$O/uefi-run-checkpoint.txt") $(vm_diag $vm)"
+	rm -rf "$HT_CKP/uefi-run"
+	vm_cmd $vm "$R read" 120 > "$O/uefi-before.txt" 2>&1
+	t0=$(date +%s)
+	mkdir -p "$HT_CKP/uefi"
+	if vm_suspend $vm "$HT_CKP/uefi/ckp" dsr-uefi-suspend "$O/uefi-suspend.txt" 180; then
+		vm_destroy $vm
+		if vm_restore $vm "$HT_CKP/uefi/ckp"; then
+			check dsr-uefi-restore PASS "restored with the same bootrom/varfile config"
+			vm_cmd $vm "$R read" 120 > "$O/uefi-after.txt" 2>&1
+			set -- $(sr_hold_verdict "$O/uefi-after.txt" "$EXPU")
+			[ "$1" = ok ] && { shift; check dsr-uefi-memory PASS "$*"; } || { shift; check dsr-uefi-memory FAIL "$* $(vm_diag $vm)"; }
+			cv=$(sr_clock_verdict "$O/uefi-before.txt" "$O/uefi-after.txt" $(( $(date +%s) - t0 )))
+			[ "${cv%% *}" = ok ] && check dsr-uefi-clock PASS "${cv#ok }" || check dsr-uefi-clock FAIL "$cv"
+		else
+			check dsr-uefi-restore FAIL "restore refused: $HT_REFUSAL"
+		fi
+	fi
+	rm -rf "$HT_CKP/uefi"
+	# Localhost migration of the (restored) UEFI guest; the destination
+	# gets its own varfile copy and the same firmware.
+	if bhyvectl --help 2>&1 | grep -q -- '--migrate-plaintext-unix' && kill -0 "$(cat "$HT_WORK/$vm.pid" 2>/dev/null)" 2>/dev/null; then
+		dst=ht-dsr-uefi-dst
+		dvars=""; [ -n "$vars" ] && { cp "$vars" "$W/uefi-vars-dst.fd"; dvars=",$W/uefi-vars-dst.fd"; }
+		dport=$(free_port $(( $(cat "$HT_WORK/$vm.port") + 1 ))); echo "$dport" > "$HT_WORK/$dst.port"
+		: > "$HT_WORK/$dst.console"; : > "$HT_WORK/$dst.input"
+		HT_VMS="$HT_VMS $dst"; at_cleanup "vm_destroy $dst"
+		dcmd="exec bhyve -c 2 -m 1G -H -w -D -R 3 -o migrate.plaintext_unix=true -l bootrom,$HT_UEFI_FD$dvars -s 0,hostbridge -s 3,virtio-blk,$disk -s 6,virtio-rnd -s 31,lpc -l com1,tcp=127.0.0.1:$dport $dst"
+		scmd="exec bhyvectl --vm=$vm --migrate-fd=3 --migrate-plaintext-unix"
+		printf 'dst: %s\nsrc: %s\n' "$dcmd" "$scmd" > "$O/uefi-mig-cmds.txt"
+		if vm_mem_guard "$dst" 1G; then
+			t1=$(date +%s)
+			"$HT_KIT/bin/ht-sockpair" -p "$HT_WORK/$dst.pid" -t 3 sh -c "$dcmd >> $HT_WORK/$dst.bhyve.log 2>&1" \
+			    -- sh -c "$scmd" > "$O/uefi-mig-bhyvectl.txt" 2>&1; rc=$?
+			topo=$(tr -d '\r' < "$HT_WORK/$dst.bhyve.log" | grep -i -m1 'topology' || true)
+			check dsr-uefi-migration-topology INFO "destination: ${topo:-no topology line (accepted silently)}"
+			if [ $rc -eq 0 ] && vm_attach_console "$dst" && vm_cmd "$dst" "$R read" 120 > "$O/uefi-mig-after.txt" 2>&1 &&
+			    [ "$(set -- $(sr_hold_verdict "$O/uefi-mig-after.txt" "$EXPU"); echo "$1")" = ok ]; then
+				check dsr-uefi-migration PASS "handoff in $(( $(date +%s) - t1 )) s; destination holds the same memory pattern"
+			else
+				check dsr-uefi-migration FAIL "bhyvectl rc=$rc $(tail -1 "$O/uefi-mig-bhyvectl.txt"); destination: $(bhyve_refusal "$HT_WORK/$dst.bhyve.log")"
+			fi
+		else
+			check dsr-uefi-migration FAIL "$HT_GUARD_MSG"
+		fi
+		vm_shutdown "$dst"
+	else
+		check dsr-uefi-migration SKIP "no running restored UEFI guest or bhyvectl without --migrate-plaintext-unix"
+	fi
+	vm_shutdown $vm
+	rm -f "$disk" "$W"/uefi-vars*.fd
+}
+
+for grp in $DSR_GROUPS; do
+	case $grp in
+	stor|net|gfx|gpu|fs|misc|iommu|neg|uefi) "grp_$grp" ;;
+	*) check "dsr-group-$grp" FAIL "unknown group (HT_DSR_GROUPS)" ;;
+	esac
+done
+phase_end

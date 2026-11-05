@@ -462,17 +462,19 @@ check_console_long_command()
 	output="$work/console-long.out"
 	error="$work/console-long.err"
 	payload=$(dd if=/dev/zero bs=1 count=900 2>/dev/null | tr '\0' L)
+	# The mock starts several processes per chunk; allow a loaded host to
+	# complete the framing test. check_console_timeout tests the deadline.
 	long_command="printf '%s\\n' '$payload'"
 	: > "$log"
 	: > "$input"
 	CONSOLE_LOG="$log" CONSOLE_INPUT="$input" \
-	    sh "$here/acmd-console.sh" "$long_command" 10 \
+	    sh "$here/acmd-console.sh" "$long_command" 30 \
 	    > "$output" 2> "$error" &
 	server_pid=$!
 	processed=0
 	completed=no
 	i=0
-	while [ "$completed" = no ] && [ "$i" -lt 200 ]; do
+	while [ "$completed" = no ] && [ "$i" -lt 600 ]; do
 		lines=$(tr '\r' '\n' < "$input" | awk 'NF { n++ } END { print n + 0 }')
 		while [ "$processed" -lt "$lines" ]; do
 			processed=$((processed + 1))
@@ -961,6 +963,7 @@ check_cli_rejection
 check_console_status 0
 check_console_status 7
 check_console_timeout
+sh "$here/console-lifetime-selftest.sh"
 check_console_long_command
 check_nested_evidence_validator
 check_ring_trace_parser

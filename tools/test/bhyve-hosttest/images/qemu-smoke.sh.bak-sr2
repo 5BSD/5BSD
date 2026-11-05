@@ -1,0 +1,48 @@
+#!/bin/sh
+# Unprivileged smoke test of the guest image under QEMU/TCG (authoring aid:
+# bhyve needs root and vmm). Checks boot, the serial autologin with /bin/sh,
+# the rc.local marker, the console command driver, the guest helpers and
+# which HyperTrace/vmm modules the guest loaded.
+#   usage: images/qemu-smoke.sh [IMAGE] [WORKDIR]
+set -u
+KIT=$(cd "$(dirname "$0")/.." && pwd)
+IMG=${1:-/usr/obj/5BSD-otel-validation/hosttest-images/current/guest.img}
+W=${2:-/usr/obj/5BSD-otel-validation/hosttest-results/qemu-smoke}
+Q=${QEMU:-/usr/local/bin/qemu-system-x86_64}
+[ -x "$Q" ] || { echo "no QEMU at $Q" >&2; exit 2; }
+rm -rf "$W"; mkdir -p "$W"
+cp "$IMG" "$W/disk.img"
+port=4790; while sockstat -4 -l | grep -q "127.0.0.1:$port[[:space:]]"; do port=$((port + 1)); done
+"$Q" -accel tcg,thread=multi -machine q35 -cpu max -m 2048 -smp 2 \
+    -drive file="$W/disk.img",format=raw,if=virtio -nic none -display none \
+    -serial "tcp:127.0.0.1:$port,server=on,wait=on" > "$W/qemu.log" 2>&1 &
+qpid=$!
+conpid=
+trap 'kill $qpid 2>/dev/null; [ -z "$conpid" ] || { pkill -P $conpid; kill $conpid; } 2>/dev/null; rm -f "$W/disk.img"' EXIT
+sleep 2
+: > "$W/console"; : > "$W/input"
+(tail -f "$W/input" | nc 127.0.0.1 "$port" >> "$W/console" 2>&1) &
+conpid=$!
+t0=$(date +%s)
+until tr -d '\r' < "$W/console" | grep -q HOSTTEST-GUEST-READY; do
+	kill -0 $qpid 2>/dev/null || { echo "qemu exited"; cat "$W/qemu.log"; exit 1; }
+	[ $(( $(date +%s) - t0 )) -lt ${TIMEOUT:-900} ] || { echo "no ready marker"; tail -30 "$W/console"; exit 1; }
+	sleep 2
+done
+echo "ready after $(( $(date +%s) - t0 )) s"
+sleep 5   # let getty autologin settle
+g() { CONSOLE_LOG=$W/console CONSOLE_INPUT=$W/input sh "$KIT/lib/acmd-console.sh" "$1" "${2:-60}"; }
+rc=0
+g 'echo SHELL=$0 USER=$(id -un); hostname; cat /etc/hosttest-generation' 60 | tee "$W/whoami.txt" || rc=1
+g 'kldstat | grep -E "dtrace|dttransport|virtio_dtrace|vmm|nmdm"; ls -l /dev/dttransport /dev/vmm 2>&1; dmesg | grep -i -E "vmm|undefined|hypertrace" | tail -5' 60 | tee "$W/modules.txt" || true
+g '/root/hosttest/counter.sh start; sleep 1; /root/hosttest/counter.sh read' 30 | tee "$W/counter.txt" || rc=1
+g '/root/hosttest/workload.sh htsmoke 3' 60 | tee "$W/workload.txt" || rc=1
+g 'ls -l /root/hosttest /var/ddtrace; /root/hosttest/vsock-pipe 2>&1 | head -2; true' 30 | tee "$W/files.txt" || rc=1
+g 'i=0; while [ $i -lt 40 ]; do printf "%s" "long-command-chunking-check-"; i=$((i+1)); done; echo; echo LONG-OK' 60 | grep -q LONG-OK || { echo "long command path failed"; rc=1; }
+grep -q 'SHELL=.*sh USER=root' "$W/whoami.txt" || { echo "console is not a root sh"; rc=1; }
+grep -q 'COUNTER value=[1-9]' "$W/counter.txt" || { echo "counter failed"; rc=1; }
+grep -q 'WORKLOAD tag=htsmoke runs=[1-9]' "$W/workload.txt" || { echo "workload failed"; rc=1; }
+g 'shutdown -p now' 10 >/dev/null 2>&1
+i=0; while kill -0 $qpid 2>/dev/null && [ $i -lt 120 ]; do sleep 1; i=$((i + 1)); done
+echo "SMOKE $([ $rc -eq 0 ] && echo PASS || echo FAIL) (logs in $W)"
+exit $rc
