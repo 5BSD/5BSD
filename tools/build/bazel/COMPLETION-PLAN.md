@@ -162,6 +162,27 @@ claim that all alternate profiles are implemented. Complete installed tests,
 remaining world families, pkgbase, other architectures, bootstrap, VM/runtime
 and comparative resource gates remain open. Make stays default.
 
+## Cross-family installation namespace checkpoint (2026-11-05)
+
+`bazel-world-family-namespace-review-r1-20261105/review.json` resolves every
+captured installation request from the final program, library and administration
+family runs. The 975 archive selections contain 967 unique archives; eight
+repeated administration selections have identical archive/request identities.
+Across those unique contributions, all 15,350 non-directory destinations are
+collision-free. Directory claims are retained separately; this does not assert
+complete directory-ownership reconciliation, payload equivalence, full original
+Make parity, pkgbase or complete-world acceptance. No conflicting file claim was
+ignored or hidden through an output filter.
+
+The remaining configured world families include cddl, etc, include, krb5,
+rescue, secure, share, stand, sys and the installed test hierarchy. Existing
+children and some parents already have native declarations; inspect actual
+configured products rather than treating a missing parent as missing code or
+existing declarations as successful build evidence. Next consolidate source-owned
+lib/usr.sbin parent selection and reconcile/build the remaining family products
+before a complete world-stage/package attempt. Preserve the outstanding kernel/
+module installation, cross-platform, bootstrap, VM/runtime and resource gates.
+
 ## Earlier dtraced configured-option checkpoint (superseded by composition above)
 
 All eleven original daemon C++ sources now have native compilation and declared
