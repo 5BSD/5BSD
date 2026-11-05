@@ -518,6 +518,12 @@ config_setting(name = "mailwrapper_enabled", flag_values = {":mailwrapper": "tru
 bool_flag(name = "dtrace_optimized", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "dtrace_optimized_enabled", flag_values = {":dtrace_optimized": "true"}, visibility = ["//visibility:public"])
 
+# Original dtraced opt-in diagnostics; ASan takes precedence over TSan.
+[bool_flag(name = "dtraced_" + option, build_setting_default = False, visibility = ["//visibility:public"])
+ for option in ["asan", "tsan", "robust", "debug"]]
+[config_setting(name = "dtraced_" + option + "_enabled", flag_values = {":dtraced_" + option: "true"}, visibility = ["//visibility:public"])
+ for option in ["asan", "tsan", "robust", "debug"]]
+
 # Feature support switches used by PPP's actual source/install graph.
 bool_flag(name = "pam_support", build_setting_default = True, visibility = ["//visibility:public"])
 bool_flag(name = "radius_support", build_setting_default = True, visibility = ["//visibility:public"])

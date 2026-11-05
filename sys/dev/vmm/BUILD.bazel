@@ -247,3 +247,17 @@ bsd_source_headers(name = "cross_network_builtin_headers", hdrs = [
         "vmm_snapshot_common.h",
     ],
     includes = [], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+# Source headers consumed by the original dtraced -I sys context.
+filegroup(
+    name = "dtraced_userland_headers",
+    srcs = [
+        "vmm_dirty_log_request.h",
+        "vmm_param.h",
+        "vmm_startup_event.h",
+        "vmm_startup_mode.h",
+        "vmm_startup_request.h",
+        "vmm_startup_run_request.h",
+    ],
+    visibility = ["//usr.sbin/dtraced:__pkg__"],
+)

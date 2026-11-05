@@ -33,3 +33,7 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "K
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_dttransport", srcs = ["dttransport.c"],
     deps = ["//sys/dev/dttransport:peripheral_devices_kernel_dttransport_headers", "//sys/kern:peripheral_devices_kernel_bus_if_headers", "//sys/kern:peripheral_devices_kernel_device_if_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+# Original -I sys/dev/dttransport userland include, separate from kernel contexts.
+cc_library(name = "userland_headers", hdrs = ["dttransport.h"], strip_include_prefix = ".",
+    visibility = ["//usr.sbin/dtraced:__pkg__"])

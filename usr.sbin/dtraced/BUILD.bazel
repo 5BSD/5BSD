@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # dtraced's wire/IO declarations, which libdtrace, dtrace(1) and bhyve's
 # HyperTrace sources include (their Makefiles add -I usr.sbin/dtraced).  The
-# daemon itself is not a native target yet.
+# daemon production candidate is declared below.
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = glob(["*.h"]), includes = ["."],
     visibility = ["//cddl/lib/libdtrace:__pkg__", "//cddl/usr.sbin/dtrace:__pkg__", "//cddl/usr.sbin/bsdinstruments:__subpackages__", "//usr.sbin/bhyve:__pkg__"])
@@ -10,3 +10,6 @@ cc_library(name = "headers", hdrs = glob(["*.h"]), includes = ["."],
 # headers out of its compilation context.
 cc_library(name = "ctl_headers", hdrs = ["dtraced.h", "dtraced_io.h", "dtraced_wire.h"],
     strip_include_prefix = ".", visibility = ["//usr.sbin/dtracedctl:__pkg__"])
+
+load(":production.bzl", "dtraced_production")
+dtraced_production()

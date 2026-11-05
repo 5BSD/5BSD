@@ -11464,3 +11464,26 @@ audit delivery and policy enforcement remain pending. The .5bsd.policy payload
 is unsigned policy input, with separate downstream signing requirements.
 Dtraced's existing header targets do not establish daemon conversion; production,
 its option profiles and runtime tracing/collector behavior remain open.
+
+## Dtraced native production candidate (2026-11-05)
+
+All eleven C++ sources and existing headers are unchanged. The new rule preserves
+source logging and explicitly declares HyperTrace/dttransport dependencies.
+Original DTRACED_DEBUG/ROBUST conditionals are carried into native settings;
+configured action checks cover them and sanitizer/LTO selection. No probes or
+audit events were added, and no live tracing/collector behavior is claimed.
+A source scan finds the existing vsyslog error/warning/debug/info functions in
+dtraced_errmsg.cc and no direct SDT_PROBE/DTRACE_PROBE or named BSM submission
+calls in these sources. This is not a claim about lower-layer instrumentation.
+Candidate security-audit review: client-request/job acceptance, rejection and
+termination in dtraced_clientrequest.cc and dtraced_process.cc, including remote
+collector/transport authority changes. Event requirements, delivery and overhead
+need source/security review and runtime qualification; ordinary syslog is not
+proof of security-audit coverage. Native object/provider, archive and VM runtime
+checks remain pending.
+
+The final dtraced dependency review also preserves all 71 original source headers
+from Make's source sys/transport include contexts, including sys/sdt.h and the
+current HyperTrace/VMM interfaces. Actual configured input-depset checks pass in
+every regular/PIC context across five profiles. No native preprocessing, emitted
+probe/CTF contract, module behavior or audit delivery is inferred from that check.

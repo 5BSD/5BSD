@@ -2270,6 +2270,26 @@ Full tests-enabled installation remains incomplete and rejects selection.
 See
 .Pa tools/build/bazel/SWITCHBOARDCTL-PRODUCTION-QUALIFICATION.md .
 .Pp
+The dtraced production candidate declares all eleven original C++ sources and
+native source-header/library dependencies. Four opt-in boolean build settings,
+.Cm dtraced_asan ,
+.Cm dtraced_tsan ,
+.Cm dtraced_robust
+and
+.Cm dtraced_debug
+use source labels beneath //tools/build/bazel/config through existing format-5
+build-settings. ASan takes precedence over TSan. Existing dtrace_optimized
+selects compile/link LTO on this AMD64 candidate; other architectures remain
+incompatible. Actual configured action checks pass for five profiles, and all
+five original metadata records match. The original -I sys context is explicit:
+all 71 source headers and eleven C++ sources match the original default compiler
+dependency records in every configured compile context across five profiles.
+This does not prove executed preprocessing or other option dependency closure.
+Native ELF/debug/archive and diagnostic
+runtime qualification remain pending.
+See
+.Pa tools/build/bazel/DTRACED-PRODUCTION-QUALIFICATION.md .
+.Pp
 Additional candidate format-5 labels assemble the ATF production parent,
 Googletest production and existing test manifests, and LLVM/Clang shared-library
 installation ownership without compiler tool executables.

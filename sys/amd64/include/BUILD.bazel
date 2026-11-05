@@ -69,3 +69,12 @@ bsd_source_headers(name = 'kboot_loader_headers_pc', hdrs = ['pc/bios.h'], visib
 bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['_inttypes.h', '_limits.h', '_pmap.h', '_stdint.h', '_types.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'metadata.h', 'param.h', 'pmap.h', 'psl.h', 'pte.h', 'segments.h', 'setjmp.h', 'specialreg.h', 'vm.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
 
 bsd_source_headers(name = 'userboot_entry_headers_pc', hdrs = ['pc/bios.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+# Source headers consumed by the original dtraced -I sys context.
+filegroup(
+    name = "dtraced_userland_headers",
+    srcs = [
+        "vmm_dev.h",
+    ],
+    visibility = ["//usr.sbin/dtraced:__pkg__"],
+)

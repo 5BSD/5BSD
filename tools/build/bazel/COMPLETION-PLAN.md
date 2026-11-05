@@ -16,6 +16,31 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Dtraced native production and option-selection candidate (2026-11-05)
+
+All eleven original daemon C++ sources now have native compilation and declared
+source-header/library dependencies. Four opt-in diagnostic settings preserve
+Make's sanitizer precedence and robust/debug flags; existing dtrace_optimized
+selects AMD64 compile/link LTO. Cross-platform support remains incompatible.
+Three original references pass, including the final corrected source file set
+and original source-header context.
+Actual configured metadata matches all five original records, and five real
+configured action profiles pass (both regular/PIC contexts and the link action).
+A dependency review caught the original -I sys header scope: seventy private
+source kernel headers plus the bare transport header are now explicit. In all
+five profiles, every configured compile context declares all 71 original source
+headers and the exact eleven original C++ sources. This avoids substituting SDK
+headers for the known source closure. These checks do not establish native
+compilation, executed preprocessing or diagnostic runtime.
+See [DTRACED-PRODUCTION-QUALIFICATION.md](DTRACED-PRODUCTION-QUALIFICATION.md).
+
+The current next request is
+/usr/obj/usr/src/bazel-library-admin-composition-request-r3-20261105/inputs.json.
+Its request.json records the exact normal frontend command and supersedes the
+unstarted r2 request. It adds the real daemon, source objects and installation
+archive. Native payload/ELF/debug/runtime qualification remains required. No
+second compilation frontend was launched while the existing aggregate runs.
+
 ## Switchboardctl production candidate and remaining daemon gap (2026-11-05)
 
 Switchboardctl now has a distinct native production binary, real source-object
@@ -32,8 +57,9 @@ which supersedes the retained unstarted r1 request. It includes this program and
 its genuine source objects alongside the preceding batch. It is prepared, not
 queued or started while the current aggregate owns the frontend lock. The
 original embedded policy remains unsigned input; no signing/boot claim is made.
-Dtraced remains a real production gap: its existing native headers do not build
-the daemon. Its C++ sources, dependencies and build-option profiles remain open.
+Dtraced initially had headers only at this checkpoint. Its subsequent production
+and option-selection candidate is recorded above; native construction and runtime
+qualification still remain open.
 
 ## Bsdconfig and two test-discovery roots (2026-11-05)
 

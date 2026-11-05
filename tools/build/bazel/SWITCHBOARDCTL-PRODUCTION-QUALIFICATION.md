@@ -51,7 +51,9 @@ Make remains default. No host install, upgrade or reboot is authorized here.
 
 ## Other identified production gap
 
-usr.sbin/dtraced still supplies native public/control headers only. Its eleven
-C++ daemon sources, explicit CTF/ELF/proc/crypto dependencies, DTRACE_OPTIMIZED
-architecture exclusions and ASan/TSan/robust/debug options remain to migrate and
-qualify. Header presence must not be counted as completed daemon support.
+At this checkpoint usr.sbin/dtraced supplied native public/control headers only.
+The subsequent [dtraced production candidate](DTRACED-PRODUCTION-QUALIFICATION.md)
+now declares its eleven C++ sources, native dependencies and build-option graph.
+Configured action/metadata checks pass; native compilation, diagnostic runtime
+and cross-platform closure remain open. Header presence alone was not daemon
+conversion, and the new declarations alone do not establish native acceptance.

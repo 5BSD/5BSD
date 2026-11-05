@@ -247,3 +247,12 @@ bsd_source_headers(name = 'efi_gptboot_aarch64_headers', hdrs = ['audit.h'], vis
 bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['audit.h'], visibility = ["//stand/efi/gptboot:__pkg__"])
 
 bsd_source_headers(name = "gpt_boot_headers", hdrs = ['audit.h'], visibility = ['//stand/i386/gptboot:__pkg__', '//stand/i386/isoboot:__pkg__'])
+
+# Source headers consumed by the original dtraced -I sys context.
+filegroup(
+    name = "dtraced_userland_headers",
+    srcs = [
+        "audit.h",
+    ],
+    visibility = ["//usr.sbin/dtraced:__pkg__"],
+)
