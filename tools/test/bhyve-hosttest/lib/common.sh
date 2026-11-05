@@ -15,6 +15,22 @@ HT_BROKEN_GENERATIONS=${HT_BROKEN_GENERATIONS:-16.snap20261031171249}
 HT_DRYRUN=${HT_DRYRUN:-no}
 
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+# A candidate must survive this library's PATH reset, including timeout's
+# external command lookup. Never silently fall back after an invalid override.
+if [ -n "${HT_BHYVE_DIR:-}" ]; then
+	case "$HT_BHYVE_DIR" in
+	/*) ;;
+	*) echo 'HT_BHYVE_DIR must be an absolute directory' >&2; exit 2 ;;
+	esac
+	case "$HT_BHYVE_DIR" in
+	*:*|*'
+'*) echo 'HT_BHYVE_DIR contains a PATH separator or newline' >&2; exit 2 ;;
+	esac
+	[ -f "$HT_BHYVE_DIR/bhyve" ] && [ -x "$HT_BHYVE_DIR/bhyve" ] || {
+		echo 'HT_BHYVE_DIR has no executable bhyve' >&2; exit 2;
+	}
+	PATH="$HT_BHYVE_DIR:$PATH"
+fi
 export PATH
 
 ht_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -208,6 +224,7 @@ nested_gate()
 # kernel identity.
 host_cap_report()
 {
+	echo "host: bhyve=$(command -v bhyve)"
 	v=$(host_vendor)
 	echo "host: vendor=$v model=\"$(sysctl -n hw.model 2>/dev/null | sed 's/ *$//')\" ncpu=$(sysctl -n hw.ncpu) $(grep -o 'Family=0x[0-9a-f]* *Model=0x[0-9a-f]* *Stepping=[0-9]*' "$HT_DMESG_BOOT" 2>/dev/null | head -1 | tr -s ' ')"
 	echo "host: virtualization: $(grep -E '^ *(SVM|VT-x):' "$HT_DMESG_BOOT" 2>/dev/null | head -1 | sed 's/^ *//')"

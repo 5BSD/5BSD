@@ -120,6 +120,28 @@ exit 0
             p = subprocess.run(['sh', '-c', runner], env=self.env, capture_output=True, text=True)
             self.assertEqual(p.returncode == 0, plane == 'capability_plane=YES\n', p.stderr)
 
+    def test_candidate_bhyve_selection(self):
+        self.stub('bhyve', 'echo "CANDIDATE $*"')
+        self.env.update(HT_KIT=str(KIT), HT_BHYVE_DIR=str(self.bin))
+        setup = (KIT/'lib/common.sh').read_text().split('# --- results', 1)[0]
+        selected = subprocess.run(['sh', '-c', setup+'\ncommand -v bhyve'], env=self.env,
+                                  capture_output=True, text=True)
+        self.assertEqual(selected.stdout.strip(), str(self.bin/'bhyve'))
+        p = subprocess.run(['sh', '-c', setup+'\nbhyve direct; timeout 2 bhyve timed'],
+                           env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.splitlines(), ['CANDIDATE direct', 'CANDIDATE timed'])
+        for invalid in ('relative', '/missing/bhyve-candidate', str(self.bin)+':/usr/sbin', str(self.bin)+'\n'):
+            self.env['HT_BHYVE_DIR'] = invalid
+            p = subprocess.run(['sh', '-c', setup+'\necho UNEXPECTED-FALLBACK'], env=self.env,
+                               capture_output=True, text=True)
+            self.assertEqual(p.returncode, 2, (invalid, p.stderr))
+            self.assertNotIn('UNEXPECTED-FALLBACK', p.stdout)
+        self.env['HT_BHYVE_DIR'] = str(self.bin)
+        (self.bin/'bhyve').chmod(0o644)
+        p = subprocess.run(['sh', '-c', setup], env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 2, p.stderr)
+
     def stub(self, name, body):
         p = self.bin/name
         p.write_text('#!/bin/sh\n'+body+'\n')

@@ -614,3 +614,9 @@ Each runtime check is bounded to five seconds. A guest failure prevents both
 READY and L2 success markers. These checks establish runtime prerequisites;
 they do not prove every grant or policy operation is correct. Plane-OFF images
 remain available for manual comparisons but are refused by normal qualification.
+
+To qualify an uninstalled bhyve candidate, set `HT_BHYVE_DIR` to an absolute
+directory containing its executable named `bhyve`. The kit preserves that
+selection when resetting PATH and when using timeout wrappers, and records the
+selected path in RUNINFO. Invalid overrides fail rather than using the installed
+binary. This does not select guest kernels/modules or imply compatible builds.
