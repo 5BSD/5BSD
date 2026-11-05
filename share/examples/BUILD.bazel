@@ -1,0 +1,464 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+
+# Source-owned normal installed example inventory. Legacy Make staging is separate.
+config_setting(name = "cpu_amd64", constraint_values = ["@platforms//cpu:x86_64"])
+config_setting(name = "cpu_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+config_setting(name = "cpu_riscv", constraint_values = ["@platforms//cpu:riscv64"])
+selects.config_setting_group(name = "supported_cpu", match_any = [":cpu_amd64", ":cpu_aarch64", ":cpu_riscv"])
+selects.config_setting_group(name = "bhyve_cpu", match_any = [":cpu_amd64", ":cpu_aarch64"])
+
+# BSD_daemon (examples)
+script_installation(name = "bsd_daemon", scripts = {}, manuals = [], package = "examples", files = {
+    'BSD_daemon/FreeBSD.pfa': '/usr/share/examples/BSD_daemon/FreeBSD.pfa',
+    'BSD_daemon/README': '/usr/share/examples/BSD_daemon/README',
+    'BSD_daemon/beastie.eps': '/usr/share/examples/BSD_daemon/beastie.eps',
+    'BSD_daemon/beastie.fig': '/usr/share/examples/BSD_daemon/beastie.fig',
+    'BSD_daemon/eps.patch': '/usr/share/examples/BSD_daemon/eps.patch',
+    'BSD_daemon/poster.sh': '/usr/share/examples/BSD_daemon/poster.sh',
+})
+
+# bhyve (bhyve)
+script_installation(name = "bhyve", scripts = {}, manuals = [], package = "bhyve", files = {
+    'bhyve/vmrun.sh': '/usr/share/examples/bhyve/vmrun.sh',
+})
+selects.config_setting_group(name = "bhyve_selected", match_all = ["//tools/build/bazel/config:bhyve_enabled", ":bhyve_cpu"])
+
+# FreeBSD_version (examples)
+script_installation(name = "freebsd_version", scripts = {}, manuals = [], package = "examples", files = {
+    'FreeBSD_version/FreeBSD_version.c': '/usr/share/examples/FreeBSD_version/FreeBSD_version.c',
+    'FreeBSD_version/Makefile': '/usr/share/examples/FreeBSD_version/Makefile',
+    'FreeBSD_version/README': '/usr/share/examples/FreeBSD_version/README',
+})
+
+# bootforth (bootloader)
+script_installation(name = "bootforth", scripts = {}, manuals = [], package = "bootloader", files = {
+    'bootforth/README': '/usr/share/examples/bootforth/README',
+    'bootforth/boot.4th': '/usr/share/examples/bootforth/boot.4th',
+    'bootforth/frames.4th': '/usr/share/examples/bootforth/frames.4th',
+    'bootforth/loader.rc': '/usr/share/examples/bootforth/loader.rc',
+    'bootforth/menu.4th': '/usr/share/examples/bootforth/menu.4th',
+    'bootforth/menuconf.4th': '/usr/share/examples/bootforth/menuconf.4th',
+    'bootforth/screen.4th': '/usr/share/examples/bootforth/screen.4th',
+})
+
+# csh (csh)
+script_installation(name = "csh", scripts = {}, manuals = [], package = "csh", files = {
+    'csh/dot.cshrc': '/usr/share/examples/csh/dot.cshrc',
+})
+
+# etc (examples)
+script_installation(name = "etc", scripts = {}, manuals = [], package = "examples", files = {
+    '//share/examples/etc:README.examples': '/usr/share/examples/etc/README.examples',
+    '//share/examples/etc:bsd-style-copyright': '/usr/share/examples/etc/bsd-style-copyright',
+    '//share/examples/etc:make.conf': '/usr/share/examples/etc/make.conf',
+})
+
+# find_interface (examples)
+script_installation(name = "find_interface", scripts = {}, manuals = [], package = "examples", files = {
+    'find_interface/Makefile': '/usr/share/examples/find_interface/Makefile',
+    'find_interface/README': '/usr/share/examples/find_interface/README',
+    'find_interface/find_interface.c': '/usr/share/examples/find_interface/find_interface.c',
+})
+
+# flua (examples)
+script_installation(name = "flua", scripts = {}, manuals = [], package = "examples", files = {
+    'flua/libjail.lua': '/usr/share/examples/flua/libjail.lua',
+})
+
+# indent (examples)
+script_installation(name = "indent", scripts = {}, manuals = [], package = "examples", files = {
+    'indent/indent.pro': '/usr/share/examples/indent/indent.pro',
+})
+
+# inotify (examples)
+script_installation(name = "inotify", scripts = {}, manuals = [], package = "examples", files = {
+    'inotify/inotify.c': '/usr/share/examples/inotify/inotify.c',
+    'inotify/Makefile': '/usr/share/examples/inotify/Makefile',
+})
+
+# jails (jail)
+script_installation(name = "jails", scripts = {}, manuals = [], package = "jail", files = {
+    'jails/README': '/usr/share/examples/jails/README',
+    'jails/VIMAGE': '/usr/share/examples/jails/VIMAGE',
+    'jails/jail.xxx.conf': '/usr/share/examples/jails/jail.xxx.conf',
+    'jails/jib': '/usr/share/examples/jails/jib',
+    'jails/jng': '/usr/share/examples/jails/jng',
+    'jails/rc.conf.jails': '/usr/share/examples/jails/rc.conf.jails',
+    'jails/rcjail.xxx.conf': '/usr/share/examples/jails/rcjail.xxx.conf',
+})
+
+# kld (examples)
+script_installation(name = "kld", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/Makefile': '/usr/share/examples/kld/Makefile',
+})
+
+# mac_abac (mac-abac)
+script_installation(name = "mac_abac", scripts = {}, manuals = [], package = "mac-abac", files = {
+    'mac_abac/sample.conf': '/usr/share/examples/mac_abac/sample.conf',
+    'mac_abac/sample.json': '/usr/share/examples/mac_abac/sample.json',
+    'mac_abac/sample.rules': '/usr/share/examples/mac_abac/sample.rules',
+    'mac_abac/sample.ucl': '/usr/share/examples/mac_abac/sample.ucl',
+})
+
+# kld/cdev (examples)
+script_installation(name = "kld_cdev", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/cdev/Makefile': '/usr/share/examples/kld/cdev/Makefile',
+    'kld/cdev/README': '/usr/share/examples/kld/cdev/README',
+})
+
+# kld/cdev/module (examples)
+script_installation(name = "kld_cdev_module", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/cdev/module/Makefile': '/usr/share/examples/kld/cdev/module/Makefile',
+    'kld/cdev/module/cdev.c': '/usr/share/examples/kld/cdev/module/cdev.c',
+    'kld/cdev/module/cdev.h': '/usr/share/examples/kld/cdev/module/cdev.h',
+    'kld/cdev/module/cdevmod.c': '/usr/share/examples/kld/cdev/module/cdevmod.c',
+})
+
+# kld/cdev/test (examples)
+script_installation(name = "kld_cdev_test", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/cdev/test/Makefile': '/usr/share/examples/kld/cdev/test/Makefile',
+    'kld/cdev/test/testcdev.c': '/usr/share/examples/kld/cdev/test/testcdev.c',
+})
+
+# kld/dyn_sysctl (examples)
+script_installation(name = "kld_dyn_sysctl", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/dyn_sysctl/Makefile': '/usr/share/examples/kld/dyn_sysctl/Makefile',
+    'kld/dyn_sysctl/README': '/usr/share/examples/kld/dyn_sysctl/README',
+    'kld/dyn_sysctl/dyn_sysctl.c': '/usr/share/examples/kld/dyn_sysctl/dyn_sysctl.c',
+})
+
+# kld/firmware (examples)
+script_installation(name = "kld_firmware", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/firmware/Makefile': '/usr/share/examples/kld/firmware/Makefile',
+    'kld/firmware/README': '/usr/share/examples/kld/firmware/README',
+})
+
+# kld/firmware/fwconsumer (examples)
+script_installation(name = "kld_firmware_fwconsumer", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/firmware/fwconsumer/Makefile': '/usr/share/examples/kld/firmware/fwconsumer/Makefile',
+    'kld/firmware/fwconsumer/fw_consumer.c': '/usr/share/examples/kld/firmware/fwconsumer/fw_consumer.c',
+})
+
+# kld/firmware/fwimage (examples)
+script_installation(name = "kld_firmware_fwimage", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/firmware/fwimage/Makefile': '/usr/share/examples/kld/firmware/fwimage/Makefile',
+    'kld/firmware/fwimage/firmware.img.uu': '/usr/share/examples/kld/firmware/fwimage/firmware.img.uu',
+})
+
+# kld/khelp (examples)
+script_installation(name = "kld_khelp", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/khelp/Makefile': '/usr/share/examples/kld/khelp/Makefile',
+    'kld/khelp/README': '/usr/share/examples/kld/khelp/README',
+    'kld/khelp/h_example.c': '/usr/share/examples/kld/khelp/h_example.c',
+})
+
+# kld/syscall (examples)
+script_installation(name = "kld_syscall", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/syscall/Makefile': '/usr/share/examples/kld/syscall/Makefile',
+})
+
+# kld/syscall/module (examples)
+script_installation(name = "kld_syscall_module", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/syscall/module/Makefile': '/usr/share/examples/kld/syscall/module/Makefile',
+    'kld/syscall/module/syscall.c': '/usr/share/examples/kld/syscall/module/syscall.c',
+})
+
+# kld/syscall/test (examples)
+script_installation(name = "kld_syscall_test", scripts = {}, manuals = [], package = "examples", files = {
+    'kld/syscall/test/Makefile': '/usr/share/examples/kld/syscall/test/Makefile',
+    'kld/syscall/test/call.c': '/usr/share/examples/kld/syscall/test/call.c',
+})
+
+# libvgl (examples)
+script_installation(name = "libvgl", scripts = {}, manuals = [], package = "examples", files = {
+    'libvgl/Makefile': '/usr/share/examples/libvgl/Makefile',
+    'libvgl/demo.c': '/usr/share/examples/libvgl/demo.c',
+})
+
+# mdoc (examples)
+script_installation(name = "mdoc", scripts = {}, manuals = [], package = "examples", files = {
+    'mdoc/POSIX-copyright': '/usr/share/examples/mdoc/POSIX-copyright',
+    'mdoc/deshallify.sh': '/usr/share/examples/mdoc/deshallify.sh',
+    'mdoc/example.1': '/usr/share/examples/mdoc/example.1',
+    'mdoc/example.3': '/usr/share/examples/mdoc/example.3',
+    'mdoc/example.4': '/usr/share/examples/mdoc/example.4',
+    'mdoc/example.9': '/usr/share/examples/mdoc/example.9',
+})
+
+# netgraph (examples)
+script_installation(name = "netgraph", scripts = {}, manuals = [], package = "examples", files = {
+    'netgraph/ether.bridge': '/usr/share/examples/netgraph/ether.bridge',
+    'netgraph/frame_relay': '/usr/share/examples/netgraph/frame_relay',
+    'netgraph/ngctl': '/usr/share/examples/netgraph/ngctl',
+    'netgraph/raw': '/usr/share/examples/netgraph/raw',
+    'netgraph/udp.tunnel': '/usr/share/examples/netgraph/udp.tunnel',
+    'netgraph/virtual.chain': '/usr/share/examples/netgraph/virtual.chain',
+    'netgraph/virtual.lan': '/usr/share/examples/netgraph/virtual.lan',
+})
+
+# oci (examples)
+script_installation(name = "oci", scripts = {}, manuals = [], package = "examples", files = {
+    'oci/README': '/usr/share/examples/oci/README',
+    'oci/Containerfile.pkg': '/usr/share/examples/oci/Containerfile.pkg',
+})
+
+# oes (examples)
+script_installation(name = "oes", scripts = {}, manuals = [], package = "examples", files = {
+    '//share/examples/oes:oeslogger.c': '/usr/share/examples/oes/oeslogger.c',
+})
+
+# pf (pf)
+script_installation(name = "pf", scripts = {}, manuals = [], package = "pf", files = {
+    'pf/README': '/usr/share/examples/pf/README',
+    'pf/pf.conf': '/usr/share/examples/pf/pf.conf',
+})
+selects.config_setting_group(name = "pf_selected", match_all = ["//tools/build/bazel/config:pf_enabled"])
+
+# ppp (ppp)
+script_installation(name = "ppp", scripts = {}, manuals = [], package = "ppp", files = {
+    'ppp/chap-auth': '/usr/share/examples/ppp/chap-auth',
+    'ppp/login-auth': '/usr/share/examples/ppp/login-auth',
+    'ppp/ppp.conf.sample': '/usr/share/examples/ppp/ppp.conf.sample',
+    'ppp/ppp.conf.span-isp': '/usr/share/examples/ppp/ppp.conf.span-isp',
+    'ppp/ppp.conf.span-isp.working': '/usr/share/examples/ppp/ppp.conf.span-isp.working',
+    'ppp/ppp.linkdown.sample': '/usr/share/examples/ppp/ppp.linkdown.sample',
+    'ppp/ppp.linkdown.span-isp': '/usr/share/examples/ppp/ppp.linkdown.span-isp',
+    'ppp/ppp.linkdown.span-isp.working': '/usr/share/examples/ppp/ppp.linkdown.span-isp.working',
+    'ppp/ppp.linkup.sample': '/usr/share/examples/ppp/ppp.linkup.sample',
+    'ppp/ppp.linkup.span-isp': '/usr/share/examples/ppp/ppp.linkup.span-isp',
+    'ppp/ppp.linkup.span-isp.working': '/usr/share/examples/ppp/ppp.linkup.span-isp.working',
+    'ppp/ppp.secret.sample': '/usr/share/examples/ppp/ppp.secret.sample',
+    'ppp/ppp.secret.span-isp': '/usr/share/examples/ppp/ppp.secret.span-isp',
+    'ppp/ppp.secret.span-isp.working': '/usr/share/examples/ppp/ppp.secret.span-isp.working',
+})
+
+# printing (lp)
+script_installation(name = "printing", scripts = {}, manuals = [], package = "lp", files = {
+    'printing/diablo-if-net': '/usr/share/examples/printing/diablo-if-net',
+    'printing/hpdf': '/usr/share/examples/printing/hpdf',
+    'printing/hpif': '/usr/share/examples/printing/hpif',
+    'printing/hpof': '/usr/share/examples/printing/hpof',
+    'printing/hprf': '/usr/share/examples/printing/hprf',
+    'printing/hpvf': '/usr/share/examples/printing/hpvf',
+    'printing/if-simple': '/usr/share/examples/printing/if-simple',
+    'printing/if-simpleX': '/usr/share/examples/printing/if-simpleX',
+    'printing/ifhp': '/usr/share/examples/printing/ifhp',
+    'printing/make-ps-header': '/usr/share/examples/printing/make-ps-header',
+    'printing/netprint': '/usr/share/examples/printing/netprint',
+    'printing/psdf': '/usr/share/examples/printing/psdf',
+    'printing/psdfX': '/usr/share/examples/printing/psdfX',
+    'printing/psif': '/usr/share/examples/printing/psif',
+    'printing/pstf': '/usr/share/examples/printing/pstf',
+    'printing/pstfX': '/usr/share/examples/printing/pstfX',
+})
+selects.config_setting_group(name = "printing_selected", match_all = ["//tools/build/bazel/config:lpr_enabled"])
+
+# ses (examples)
+script_installation(name = "ses", scripts = {}, manuals = [], package = "examples", files = {
+    'ses/Makefile': '/usr/share/examples/ses/Makefile',
+    'ses/Makefile.inc': '/usr/share/examples/ses/Makefile.inc',
+})
+
+# ses/getencstat (examples)
+script_installation(name = "ses_getencstat", scripts = {}, manuals = [], package = "examples", files = {
+    'ses/getencstat/Makefile': '/usr/share/examples/ses/getencstat/Makefile',
+    'ses/getencstat/getencstat.0': '/usr/share/examples/ses/getencstat/getencstat.0',
+})
+
+# ses/sesd (examples)
+script_installation(name = "ses_sesd", scripts = {}, manuals = [], package = "examples", files = {
+    'ses/sesd/Makefile': '/usr/share/examples/ses/sesd/Makefile',
+    'ses/sesd/sesd.0': '/usr/share/examples/ses/sesd/sesd.0',
+})
+
+# ses/setencstat (examples)
+script_installation(name = "ses_setencstat", scripts = {}, manuals = [], package = "examples", files = {
+    'ses/setencstat/Makefile': '/usr/share/examples/ses/setencstat/Makefile',
+    'ses/setencstat/setencstat.0': '/usr/share/examples/ses/setencstat/setencstat.0',
+})
+
+# ses/setobjstat (examples)
+script_installation(name = "ses_setobjstat", scripts = {}, manuals = [], package = "examples", files = {
+    'ses/setobjstat/Makefile': '/usr/share/examples/ses/setobjstat/Makefile',
+    'ses/setobjstat/setobjstat.0': '/usr/share/examples/ses/setobjstat/setobjstat.0',
+})
+
+# ses/srcs (examples)
+script_installation(name = "ses_srcs", scripts = {}, manuals = [], package = "examples", files = {
+    'ses/srcs/chpmon.c': '/usr/share/examples/ses/srcs/chpmon.c',
+    'ses/srcs/eltsub.c': '/usr/share/examples/ses/srcs/eltsub.c',
+    'ses/srcs/eltsub.h': '/usr/share/examples/ses/srcs/eltsub.h',
+    'ses/srcs/getencstat.c': '/usr/share/examples/ses/srcs/getencstat.c',
+    'ses/srcs/getnobj.c': '/usr/share/examples/ses/srcs/getnobj.c',
+    'ses/srcs/getobjmap.c': '/usr/share/examples/ses/srcs/getobjmap.c',
+    'ses/srcs/getobjstat.c': '/usr/share/examples/ses/srcs/getobjstat.c',
+    'ses/srcs/inienc.c': '/usr/share/examples/ses/srcs/inienc.c',
+    'ses/srcs/sesd.c': '/usr/share/examples/ses/srcs/sesd.c',
+    'ses/srcs/setencstat.c': '/usr/share/examples/ses/srcs/setencstat.c',
+    'ses/srcs/setobjstat.c': '/usr/share/examples/ses/srcs/setobjstat.c',
+})
+
+# scsi_target (examples)
+script_installation(name = "scsi_target", scripts = {}, manuals = [], package = "examples", files = {
+    'scsi_target/Makefile': '/usr/share/examples/scsi_target/Makefile',
+    'scsi_target/scsi_target.c': '/usr/share/examples/scsi_target/scsi_target.c',
+    'scsi_target/scsi_target.h': '/usr/share/examples/scsi_target/scsi_target.h',
+    'scsi_target/scsi_target.8': '/usr/share/examples/scsi_target/scsi_target.8',
+    'scsi_target/scsi_cmds.c': '/usr/share/examples/scsi_target/scsi_cmds.c',
+})
+
+# sound (examples)
+script_installation(name = "sound", scripts = {}, manuals = [], package = "examples", files = {
+    'sound/kqueue.c': '/usr/share/examples/sound/kqueue.c',
+    'sound/midi.c': '/usr/share/examples/sound/midi.c',
+    'sound/mmap.c': '/usr/share/examples/sound/mmap.c',
+    'sound/oss.h': '/usr/share/examples/sound/oss.h',
+    'sound/poll.c': '/usr/share/examples/sound/poll.c',
+    'sound/select.c': '/usr/share/examples/sound/select.c',
+    'sound/simple.c': '/usr/share/examples/sound/simple.c',
+    'sound/sndstat_nv.c': '/usr/share/examples/sound/sndstat_nv.c',
+})
+
+# sunrpc (examples)
+script_installation(name = "sunrpc", scripts = {}, manuals = [], package = "examples", files = {
+    'sunrpc/Makefile': '/usr/share/examples/sunrpc/Makefile',
+})
+
+# sunrpc/dir (examples)
+script_installation(name = "sunrpc_dir", scripts = {}, manuals = [], package = "examples", files = {
+    'sunrpc/dir/Makefile': '/usr/share/examples/sunrpc/dir/Makefile',
+    'sunrpc/dir/dir.x': '/usr/share/examples/sunrpc/dir/dir.x',
+    'sunrpc/dir/dir_proc.c': '/usr/share/examples/sunrpc/dir/dir_proc.c',
+    'sunrpc/dir/rls.c': '/usr/share/examples/sunrpc/dir/rls.c',
+})
+
+# sunrpc/msg (examples)
+script_installation(name = "sunrpc_msg", scripts = {}, manuals = [], package = "examples", files = {
+    'sunrpc/msg/Makefile': '/usr/share/examples/sunrpc/msg/Makefile',
+    'sunrpc/msg/msg.x': '/usr/share/examples/sunrpc/msg/msg.x',
+    'sunrpc/msg/msg_proc.c': '/usr/share/examples/sunrpc/msg/msg_proc.c',
+    'sunrpc/msg/printmsg.c': '/usr/share/examples/sunrpc/msg/printmsg.c',
+    'sunrpc/msg/rprintmsg.c': '/usr/share/examples/sunrpc/msg/rprintmsg.c',
+})
+
+# sunrpc/sort (examples)
+script_installation(name = "sunrpc_sort", scripts = {}, manuals = [], package = "examples", files = {
+    'sunrpc/sort/Makefile': '/usr/share/examples/sunrpc/sort/Makefile',
+    'sunrpc/sort/rsort.c': '/usr/share/examples/sunrpc/sort/rsort.c',
+    'sunrpc/sort/sort.x': '/usr/share/examples/sunrpc/sort/sort.x',
+    'sunrpc/sort/sort_proc.c': '/usr/share/examples/sunrpc/sort/sort_proc.c',
+})
+
+# uefisign (efi-tools)
+script_installation(name = "uefisign", scripts = {}, manuals = [], package = "efi-tools", files = {
+    'uefisign/uefikeys': '/usr/share/examples/uefisign/uefikeys',
+})
+selects.config_setting_group(name = "uefisign_selected", match_all = ["//tools/build/bazel/config:efi_enabled"])
+
+# ypldap (yp)
+script_installation(name = "ypldap", scripts = {}, manuals = [], package = "yp", files = {
+    'ypldap/ypldap.conf': '/usr/share/examples/ypldap/ypldap.conf',
+})
+selects.config_setting_group(name = "ypldap_selected", match_all = ["//tools/build/bazel/config:nis_enabled"])
+
+# hast (hast)
+script_installation(name = "hast", scripts = {}, manuals = [], package = "hast", files = {
+    'hast/ucarp.sh': '/usr/share/examples/hast/ucarp.sh',
+    'hast/ucarp_down.sh': '/usr/share/examples/hast/ucarp_down.sh',
+    'hast/ucarp_up.sh': '/usr/share/examples/hast/ucarp_up.sh',
+    'hast/vip-down.sh': '/usr/share/examples/hast/vip-down.sh',
+    'hast/vip-up.sh': '/usr/share/examples/hast/vip-up.sh',
+})
+selects.config_setting_group(name = "hast_selected", match_all = ["//tools/build/bazel/config:hast_enabled"])
+
+# libusb20 (examples)
+script_installation(name = "libusb20", scripts = {}, manuals = [], package = "examples", files = {
+    'libusb20/Makefile': '/usr/share/examples/libusb20/Makefile',
+    'libusb20/README': '/usr/share/examples/libusb20/README',
+    'libusb20/util.c': '/usr/share/examples/libusb20/util.c',
+    'libusb20/util.h': '/usr/share/examples/libusb20/util.h',
+    'libusb20/bulk.c': '/usr/share/examples/libusb20/bulk.c',
+    'libusb20/control.c': '/usr/share/examples/libusb20/control.c',
+})
+selects.config_setting_group(name = "libusb20_selected", match_all = ["//tools/build/bazel/config:usb_enabled"])
+
+# libble (examples)
+script_installation(name = "libble", scripts = {}, manuals = [], package = "examples", files = {
+    'libble/ble_battery.c': '/usr/share/examples/libble/ble_battery.c',
+    'libble/ble_peripheral.c': '/usr/share/examples/libble/ble_peripheral.c',
+    'libble/ble_scan.c': '/usr/share/examples/libble/ble_scan.c',
+    'libble/ble_security.c': '/usr/share/examples/libble/ble_security.c',
+    'libble/ble_topmem.c': '/usr/share/examples/libble/ble_topmem.c',
+    'libble/ble_weather.c': '/usr/share/examples/libble/ble_weather.c',
+})
+selects.config_setting_group(name = "libble_selected", match_all = ["//tools/build/bazel/config:bluetooth_enabled"])
+
+# libblemesh (examples)
+script_installation(name = "libblemesh", scripts = {}, manuals = [], package = "examples", files = {
+    'libblemesh/Makefile': '/usr/share/examples/libblemesh/Makefile',
+    'libblemesh/README': '/usr/share/examples/libblemesh/README',
+    'libblemesh/mesh_provision_configure.c': '/usr/share/examples/libblemesh/mesh_provision_configure.c',
+})
+selects.config_setting_group(name = "libblemesh_selected", match_all = ["//tools/build/bazel/config:bluetooth_enabled"])
+
+bsd_install_manifest(name = "install_manifest", manifests = [":bsd_daemon"] +
+    select({":bhyve_selected": [":bhyve"], "//conditions:default": []}) +
+    [":freebsd_version"] +
+    [":bootforth"] +
+    [":csh"] +
+    [":etc"] +
+    [":find_interface"] +
+    [":flua"] +
+    [":indent"] +
+    [":inotify"] +
+    [":jails"] +
+    [":kld"] +
+    [":mac_abac"] +
+    [":kld_cdev"] +
+    [":kld_cdev_module"] +
+    [":kld_cdev_test"] +
+    [":kld_dyn_sysctl"] +
+    [":kld_firmware"] +
+    [":kld_firmware_fwconsumer"] +
+    [":kld_firmware_fwimage"] +
+    [":kld_khelp"] +
+    [":kld_syscall"] +
+    [":kld_syscall_module"] +
+    [":kld_syscall_test"] +
+    [":libvgl"] +
+    [":mdoc"] +
+    [":netgraph"] +
+    [":oci"] +
+    [":oes"] +
+    select({":pf_selected": [":pf"], "//conditions:default": []}) +
+    [":ppp"] +
+    select({":printing_selected": [":printing"], "//conditions:default": []}) +
+    [":ses"] +
+    [":ses_getencstat"] +
+    [":ses_sesd"] +
+    [":ses_setencstat"] +
+    [":ses_setobjstat"] +
+    [":ses_srcs"] +
+    [":scsi_target"] +
+    [":sound"] +
+    [":sunrpc"] +
+    [":sunrpc_dir"] +
+    [":sunrpc_msg"] +
+    [":sunrpc_sort"] +
+    select({":uefisign_selected": [":uefisign"], "//conditions:default": []}) +
+    select({":ypldap_selected": [":ypldap"], "//conditions:default": []}) +
+    select({":hast_selected": [":hast"], "//conditions:default": []}) +
+    select({":libusb20_selected": [":libusb20"], "//conditions:default": []}) +
+    select({":libble_selected": [":libble"], "//conditions:default": []}) +
+    select({":libblemesh_selected": [":libblemesh"], "//conditions:default": []}), visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive", target_compatible_with = ["@platforms//os:freebsd"] +
+    select({":supported_cpu": [], "//conditions:default": ["@platforms//:incompatible"]}))
+bsd_install_archive_set(name = "production_installation_archives", archives = [":install_archive"], visibility = ["//visibility:public"])
+# Do not imply that the installed ATF/plain/TAP/Googletest examples are converted.
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"], target_compatible_with = select({
+    "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": [],
+}), visibility = ["//visibility:public"])

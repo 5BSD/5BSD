@@ -1,2 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["bsd-style-copyright"])
+
+exports_files(["README.examples", "make.conf"], visibility = ["//share/examples:__pkg__"])

@@ -6798,3 +6798,11 @@ The native shared-documentation parent preserves the source-owned book,
 firmware-license notices, IPv6 and compiler notices, and selected test documents.
 The native tests, clang and inet6 settings select the corresponding documentation
 owners; selecting test documentation does not itself execute those test suites.
+
+.Pp
+Native example installation preserves the normal installed Make inventory,
+including corrected bootloader, jail and MAC_ABAC sample ownership and the OES
+source example independently of Bluetooth.
+Optional hardware/service examples follow their declared build settings.
+The full examples endpoint rejects tests-enabled installation until its installed
+test hierarchy is converted; the production endpoint does not claim those tests.

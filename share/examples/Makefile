@@ -21,6 +21,7 @@ LDIRS=	BSD_daemon \
 	mdoc \
 	netgraph \
 	oci \
+	oes \
 	ppp \
 	ses \
 	scsi_target \
@@ -54,7 +55,7 @@ SE_FREEBSD_VERSION= \
 	README
 
 SE_DIRS+=	bootforth
-SE_BOOTFORTH_PACKAGE=bootloader
+SE_BOOTFORTHPACKAGE=bootloader
 SE_BOOTFORTH= \
 	README \
 	boot.4th \
@@ -92,7 +93,7 @@ SE_INOTIFY=	inotify.c \
 
 
 SE_DIRS+=	jails
-SE_JAILPACKAGE=	jail
+SE_JAILSPACKAGE=	jail
 SE_JAILS= \
 	README \
 	VIMAGE \
@@ -106,7 +107,7 @@ SE_DIRS+=	kld
 SE_KLD=	Makefile
 
 SE_DIRS+=	mac_abac
-SE_MAC_ABAC_PACKAGE=	mac-abac
+SE_MAC_ABACPACKAGE=	mac-abac
 SE_MAC_ABAC=	sample.conf sample.json sample.rules sample.ucl
 
 SE_DIRS+=	kld/cdev
@@ -194,6 +195,10 @@ SE_DIRS+=	oci
 SE_OCI= \
 	README \
 	Containerfile.pkg
+
+# OES examples are independent of Bluetooth and must have an installed file group.
+SE_DIRS+=	oes
+SE_OES=		oeslogger.c
 
 .if ${MK_PF} != "no"
 SE_DIRS+=	pf
@@ -377,7 +382,6 @@ SE_LIBBLE= \
 	ble_topmem.c \
 	ble_weather.c
 LDIRS+=		libblemesh
-LDIRS+=		oes
 SE_DIRS+=	libblemesh
 SE_LIBBLEMESH= \
 	Makefile \

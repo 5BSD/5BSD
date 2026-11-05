@@ -69,6 +69,17 @@ the original/native repetition counts must agree. See
 SHARE-DOCUMENTATION-QUALIFICATION.md. Examples, zoneinfo, locale composition and
 remaining world/system gates remain open; this is not a full world build.
 
+## Production examples checkpoint (2026-11-05)
+
+The maintained Make inventory now corrects bootforth/jail/MAC_ABAC sample package
+assignments and installs the missing OES source independently of Bluetooth.
+Native production examples match complete original staging in both profiles:
+235 records/185 exact files with optional groups, 185 records/144 files without.
+The full tests-enabled endpoint is explicitly rejected while the installed test
+hierarchy remains unconverted. See SHARE-EXAMPLES-QUALIFICATION.md. Source data
+installation is qualified for these AMD64 profiles, not sample/service runtime,
+actual package upgrades, complete world or system acceptance.
+
 ## Current composition checkpoint (2026-11-05)
 
 NIS and sendmail administration are now included when selected; their combined
@@ -3665,7 +3676,7 @@ locale and world composition plus the outstanding system qualification gates.
 See SHARE-DOCUMENTATION-QUALIFICATION.md.
 
 
-### Next: fix source example inventory defects before native parity
+### Source example inventory defects recorded before correction
 
 Read-only original Make queries confirm SER_BOOTFORTHPACKAGE,
 SER_MAC_ABACPACKAGE and SER_JAILSPACKAGE all resolve to examples: their apparent
@@ -3677,3 +3688,16 @@ inventory alone would preserve an uninstalled OES sample. Correct the maintained
 Make declarations and native inventories together, then compare complete example
 metadata/payloads and selected option branches. No example implementation change
 has been made in the documentation checkpoint.
+
+
+## Example source corrections and native construction (2026-11-05)
+
+The previously recorded group-name mismatches and missing OES file group are now
+fixed in maintained Make and represented natively. All selected production sample
+paths, packages, modes, exact payloads and tar records match complete independent
+Make staging, including the optional-groups-disabled profile. The OES file remains
+present with Bluetooth disabled. The full endpoint does not claim the missing
+installed ATF/plain/TAP/Googletest examples: its actual tests-enabled request fails
+explicitly and retains FAILED.json. Continue those tests, zoneinfo/locale/world
+composition and outstanding package/bootstrap/runtime/resource qualification.
+See SHARE-EXAMPLES-QUALIFICATION.md for evidence and limits.
