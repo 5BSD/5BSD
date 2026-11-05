@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+_FILES = ["README", "propernames", "web2", "web2a", "freebsd"]
+[bsd_install_file(name = "file_" + file, src = file,
+    destination = "/usr/share/dict/" + file, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=utilities"]) for file in _FILES]
+bsd_install_link(name = "words", destination = "/usr/share/dict/words",
+    target = "web2", kind = "symlink", owner = "root", group = "wheel",
+    mode = "0755", install_tags = ["package=utilities"])
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + file for file in _FILES] + [":words"],
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {"/usr/share/dict": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'})

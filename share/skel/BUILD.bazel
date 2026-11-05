@@ -1,2 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["dot.zprofile", "dot.zshrc"], visibility = ["//bin/zsh:__pkg__"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+_FILES = ["dot.cshrc", "dot.login", "dot.login_conf", "dot.mailrc", "dot.profile",
+    "dot.shrc", "dot.mail_aliases", "dot.zprofile", "dot.zshrc"]
+[bsd_install_file(name = "file_" + file, src = file,
+    destination = "/usr/share/skel/" + file, owner = "root", group = "wheel",
+    mode = "0600" if file == "dot.mail_aliases" else "0644",
+    install_tags = ["package=utilities"]) for file in _FILES]
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + file for file in _FILES],
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {"/usr/share/skel": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'})

@@ -16,6 +16,17 @@ complete installed tests/Make/pkgbase parity, other ABIs, bootstrap, system
 runtime/VM and comparative resource/performance gates remain open. Make stays
 production/default. No complete world endpoint or system acceptance is implied.
 
+## Shared data installation checkpoint (2026-11-05)
+
+Six additional share owners now produce native installation archives: dictionaries,
+miscellaneous data, skeletons, installed Make support and two repository-key
+payload owners. Independent complete Make comparisons pass 114 metadata records
+and 107 exact file payloads. The alternate USB/editor/test-support branches pass
+95 records and 93 file payloads across misc/mk. Source-owned BUILD declarations
+preserve package tags, modes and the dictionary link; no Python implementation
+change is needed. See SHARE-DATA-INSTALLATION-QUALIFICATION.md. This is additional
+component coverage, not a complete share/world endpoint or package acceptance.
+
 ## Current composition checkpoint (2026-11-05)
 
 NIS and sendmail administration are now included when selected; their combined
@@ -3549,3 +3560,15 @@ The public generated profile header retains one recorded filename-comment
 variation; byte identity is not claimed. See MIT-FAMILY-COMPOSITION-QUALIFICATION.md.
 Remaining full world, installed tests/metadata/pkgbase, cross-architecture,
 bootstrap, runtime and performance gates remain open. Make remains default.
+
+
+## Shared base data checkpoint (2026-11-05)
+
+The six new native data owners pass complete original component inventory,
+metadata, exact payload, symlink and tar checks. Their option-dependent files and
+Make test fragments also pass independently configured original comparisons.
+Missing directory metadata and an overly broad package-wide mtree selection were
+caught and corrected in the declarations; no comparison exception was added.
+Continue complete share and other remaining world roots, then installed-world/
+package/bootstrap/runtime/performance qualification. See
+SHARE-DATA-INSTALLATION-QUALIFICATION.md for retained evidence and limits.

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_FILES = ['pkg.freebsd.org.2013102301']
+[bsd_install_file(name = "file_" + file, src = file,
+    destination = "/usr/share/keys/pkg/trusted/" + file, owner = "root", group = "wheel",
+    mode = "0644", install_tags = ["package=pkg-bootstrap"]) for file in _FILES]
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + file for file in _FILES],
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {"/usr/share/keys/pkg/trusted": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=pkg-bootstrap"]}'})

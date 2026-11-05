@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_FILES = ["ascii", "birthtoken", "bsd-family-tree", "committers-doc.dot",
+    "committers-ports.dot", "committers-src.dot", "flowers", "iso3166", "iso639",
+    "latin1", "mdoc.template", "operator", "pci_vendors", "scsi_modes",
+    "usb_vendors", "organization.dot"]
+_USB_FILES = {"usb_hid_usages": "usb_hid_usages", "usbdevs": "//sys/dev/usb:usbdevs"}
+[bsd_install_file(name = "file_" + file, src = file,
+    destination = "/usr/share/misc/" + file, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=utilities"]) for file in _FILES]
+[bsd_install_file(name = "file_" + file, src = source,
+    destination = "/usr/share/misc/" + file, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=utilities"]) for file, source in _USB_FILES.items()]
+bsd_install_file(name = "editor_defaults", src = "init.ee", destination = "/usr/share/misc/init.ee",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=ee"])
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + file for file in _FILES] + select({
+    "//tools/build/bazel/config:usb_enabled": [":file_" + file for file in _USB_FILES],
+    "//conditions:default": [],
+}) + select({"//tools/build/bazel/config:ee_enabled": [":editor_defaults"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+# Original bsd.files.mk's EE group assigns the common directory's package tags.
+script_install_archive(name = "install_archive", directories = select({
+    "//tools/build/bazel/config:ee_enabled": {"/usr/share/misc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ee"]}'},
+    "//conditions:default": {"/usr/share/misc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+}))
