@@ -1,5 +1,14 @@
 # Native Bazel completion plan
 
+## Network generator groundwork (2026-11-05)
+
+Original gen_ether_subr now runs as a declared native action using explicit
+output-file argument support. Captured output and unchanged stdout-mode GENERIC
+assym/offset outputs match independent Make bytes. See
+LIBC-NET-GENERATOR-QUALIFICATION.md. This does not complete the network suite;
+next are original C/C++20 programs, shell/helper/data installation and bounded
+runtime qualification. All whole-system gates below remain open.
+
 ## Complete selected locale/fortify suites execute in bounded VM (2026-11-05)
 
 A declarative installed-ATF plan now drives actual program metadata/case selection

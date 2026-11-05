@@ -7243,3 +7243,10 @@ identified bootstrap inputs. These fixture results do not establish verified boo
 normal startup, full installed-system or performance acceptance. Existing explicit
 build targets/tests express the closure without changing production backend
 selection, signing or publication policy.
+
+.Pp
+The libc network test generator is available through the explicit Bazel-input
+qualification interface. Its maintained shell script receives a declared output
+filename and uses declared native AWK inputs. Captured generator output and
+existing AMD64 kernel assym/offset stdout outputs match Make bytes; this does
+not qualify the network test programs or the complete installed system.

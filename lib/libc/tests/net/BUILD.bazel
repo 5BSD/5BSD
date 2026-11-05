@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+
+# Preserve the original script/source pairing and its output-file interface.
+bsd_script_output(
+    name = "aton_ether_subr",
+    script = "//contrib/netbsd-tests/lib/libc/net:gen_ether_subr",
+    src = "//sys/net:if_ethersubr.c",
+    input_mode = "argument",
+    output_mode = "argument",
+    output = "aton_ether_subr.c",
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"//usr.bin/awk:awk": "awk"},
+    runtime = ["@bsd_sdk//toolchain:sh_runtime"],
+    runtime_libraries = [
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7",
+        "//lib/msun:m_shared",
+    ],
+)

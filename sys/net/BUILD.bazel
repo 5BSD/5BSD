@@ -2043,3 +2043,6 @@ public_header_installation(name = "public_flat_net_install", directory = "net",
 
 public_header_installation(name = "public_flat_net_route_install", directory = "net/route",
     files = {header: header.split("/")[-1] for header in glob(["route/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+# Original libc network-test generator extracts from this maintained source.
+exports_files(["if_ethersubr.c"], visibility = ["//lib/libc/tests/net:__pkg__"])

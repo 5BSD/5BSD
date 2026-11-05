@@ -17,6 +17,8 @@ def _generate(ctx):
         fail("additional sources require argument input mode")
     if ctx.attr.source_files and ctx.attr.input_mode != "file-list":
         fail("source_files require file-list input mode")
+    if ctx.attr.output_mode == "argument" and ctx.attr.input_mode != "argument":
+        fail("argument output mode requires argument input mode")
     directory = None
     if ctx.attr.input_mode == "directory":
         anchor = ctx.attr.directory_anchor
@@ -129,7 +131,14 @@ def _generate(ctx):
     )
     if file_list:
         inputs.append(file_list)
-    ctx.actions.run(executable = ctx.attr.redirect[DefaultInfo].files_to_run,
+    # Some maintained generators open their output themselves. Pass the declared
+    # output as the final argument; do not pre-open/truncate it through redirect.
+    executable = ctx.attr.redirect[DefaultInfo].files_to_run
+    if ctx.attr.output_mode == "argument":
+        executable = ctx.attr.shell[DefaultInfo].files_to_run
+        args = [launcher.path] + ctx.attr.arguments + [ctx.file.src.path]
+        args += [file.path for file in ctx.files.additional_sources] + [output.path]
+    ctx.actions.run(executable = executable,
         arguments = args, inputs = depset(inputs, transitive = compiler_inputs),
         tools = tools + ctx.files.runtime, outputs = [output],
         env = environment, use_default_shell_env = False,
@@ -142,6 +151,7 @@ bsd_script_output = rule(implementation = _generate, attrs = {
     "additional_sources": attr.label_list(allow_files = True),
     "source_files": attr.label_list(allow_files = True, cfg = "exec", doc = "Declared generator inputs used by file-list mode."),
     "output": attr.string(mandatory = True),
+    "output_mode": attr.string(default = "stdout", values = ["stdout", "argument"], doc = "Capture stdout, or pass output as final script argument (requires argument input mode)."),
     "input_mode": attr.string(default = "stdin", values = ["stdin", "argument", "directory", "file-list"], doc = "file-list passes a stable manifest of source_files to the generator."),
     "directory_anchor": attr.string(doc = "Source path relative to the directory argument; all other accessed files must be declared in inputs."),
     "environment": attr.string_dict(),

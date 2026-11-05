@@ -12032,3 +12032,11 @@ audit source selection is retained. Original gssd/KDC metadata/ELF/debug parity
 does not establish audit delivery or probe behavior. Keep network authentication,
 service startup, credential failure/recovery, audit/probe events and resource
 measurements as explicit runtime gates.
+
+
+## libc network generator groundwork (2026-11-05)
+
+Original script and kernel extraction source remain unchanged. Only declared
+Bazel generator inputs/output calling convention change; no probes, audit hooks
+or test expectations are altered. Network programs and their runtime/probe/audit
+behavior are not yet qualified by this generator comparison.
