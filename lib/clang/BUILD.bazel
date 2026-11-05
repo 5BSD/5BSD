@@ -54,3 +54,17 @@ bsd_install_archive_set(name = "debugger_installation_archives", archives = sele
 test_suite(name = "debugger_safe_tests", tests = [
     "//lib/clang/liblldb:api_smoke_test", "//usr.bin/clang/lldb:safe_cli_test", "//usr.bin/clang/lldb-server:safe_cli_test",
 ], visibility = ["//visibility:public"])
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+selects.config_setting_group(name = "clang_or_lldb", match_any = [
+    "//tools/build/bazel/config:clang_enabled", "//tools/build/bazel/config:lldb_enabled"])
+# Exact lib/clang/Makefile shared-library profile: llvm always, clang + resource
+# headers for CLANG or LLDB, debugger library for LLDB. No tool executables here.
+bsd_install_archive_set(name = "production_installation_archives",
+    archives = ["//lib/clang/libllvm:install_archive"] + select({
+        ":clang_or_lldb": ["//lib/clang/libclang:install_archive", "//lib/clang/headers:install_archive"],
+        "//conditions:default": [],
+    }) + select({"//tools/build/bazel/config:lldb_enabled": ["//lib/clang/liblldb:install_archive"], "//conditions:default": []}),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

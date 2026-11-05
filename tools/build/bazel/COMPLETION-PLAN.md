@@ -52,6 +52,23 @@ inventory, and commit reviewed batches. Complete lib/usr.sbin and other world
 parents remain required before an honest full-world acceptance claim. All
 pkgbase/bootstrap/runtime/cross-platform/resource/default-switch gates remain.
 
+## Library composition batch prepared (2026-11-05; not yet qualified)
+
+The next source-owned library assembly batch adds original ATF parent selection,
+archive endpoints for existing Googletest manifests, and LLVM/Clang library
+archives plus the lib/clang shared-library parent. Compiler library ownership is
+kept separate from usr.bin/clang programs: llvm is unconditional inside the
+selected parent, clang/resource headers follow CLANG or LLDB, and the debugger
+library follows LLDB. Existing leaf producers/manifests are reused; no binary
+payload, compiler source, generated implementation or Make dependency is copied.
+ATF's incomplete original test-parent recursion remains explicitly gated rather
+than represented by its two production libraries. Googletest retains its existing
+optional full-test manifest separately from the new production-only contribution.
+The normal format-5 frontend request is prepared; these new archive/parent labels
+are candidates until configured analysis, original selected ownership comparisons
+and aggregate construction pass. Static compiler-library profiles and foreign
+architectures remain open. Do not count prepared declarations as built libraries.
+
 ## libcasper production parent and original connection cases (2026-11-05)
 
 The native parent now composes the original library and all eight service

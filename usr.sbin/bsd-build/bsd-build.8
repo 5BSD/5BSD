@@ -2236,6 +2236,13 @@ The new parent is a qualification candidate; its current full build and metadata
 review must finish before acceptance. This adds no dispatcher or input-schema
 change and does not change the default system build backend.
 .Pp
+Additional candidate format-5 labels assemble the ATF production parent,
+Googletest production and existing test manifests, and LLVM/Clang shared-library
+installation ownership without compiler tool executables.
+They remain pending aggregate qualification; static compiler-library profiles
+and other architectures are not established. The dispatcher and security,
+signing, staging and publication interfaces are unchanged.
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

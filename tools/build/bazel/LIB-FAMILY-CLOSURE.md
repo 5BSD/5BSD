@@ -34,7 +34,9 @@ execution and the explicit normal protobuf parent.
 | lib/libcasper | Native production parent now preserves all nine owners; 139 production and eight original connection-test records qualify. Both original connection cases execute; complete service-test/parent Kyuafile ownership remains gated. See CASPER-PARENT-COMPOSITION-QUALIFICATION.md. |
 | lib/libxo | Production parent now preserves library + CSV encoder contributions; all 96 original metadata records and three actual runtime targets pass. Full installed functional/encoder test hierarchy remains explicitly gated; see LIBXO-PARENT-COMPOSITION-QUALIFICATION.md. |
 | lib/protobuf | Explicit parent now builds all four children and preserves three install contributions, including upb licences and no libprotoc payload. Other profiles/ABIs and refreshed implementation parity remain. |
-| lib/atf and lib/tests | Test support and installed test hierarchy require explicit parent ownership and original configuration closure. |
+| lib/atf and lib/tests | ATF production parent candidate now declares both existing library owners; original ATF test recursion and general lib/tests parent remain open. |
+| lib/clang | Shared-library parent and LLVM/Clang archive endpoint candidates now preserve original library/resource-header selection separately from tool executables; aggregate construction and selected Make ownership comparisons remain pending. |
+| lib/googletest | Production/full-manifest archive endpoint candidates reuse existing four framework owners and optional selftest manifests. Aggregate analysis, build and ownership acceptance remain pending. |
 
 This is a concrete next queue, not an exhaustive list of missing work or a claim
 that every other selected entry is accepted. Reconcile every selected immediate

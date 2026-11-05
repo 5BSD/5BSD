@@ -225,3 +225,6 @@ cc_shared_library(name = "llvm_shared", deps = [":llvm"],
 
 load("//lib/clang:shared_installation.bzl", "compiler_shared_installation")
 compiler_shared_installation(name = "install_manifest", library = "llvm", major = 21, binary = ":llvm_shared")
+
+load("//lib/clang:shared_installation.bzl", "compiler_shared_archive")
+compiler_shared_archive(name = "install_archive")

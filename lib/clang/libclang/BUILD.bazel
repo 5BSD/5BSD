@@ -433,3 +433,6 @@ cc_shared_library(name = "clang_shared", deps = [":clang"],
 
 load("//lib/clang:shared_installation.bzl", "compiler_shared_installation")
 compiler_shared_installation(name = "install_manifest", library = "clang", major = 21, binary = ":clang_shared")
+
+load("//lib/clang:shared_installation.bzl", "compiler_shared_archive")
+compiler_shared_archive(name = "install_archive")

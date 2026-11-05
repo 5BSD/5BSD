@@ -299,6 +299,7 @@ bsd_install_manifest(name = "install_manifest",
         select({"//tools/build/bazel/config:install_conflicting_clang_headers_enabled": [":header_" + name.replace("/", "_") for name in _CONFLICTING_HEADERS], "//conditions:default": []}),
     visibility = ["//visibility:public"])
 bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    visibility = ["//lib/clang:__pkg__"],
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include"},
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",

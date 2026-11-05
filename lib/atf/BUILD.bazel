@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+_PRODUCTION = ["//lib/atf/libatf-c:install_archive", "//lib/atf/libatf-c++:install_archive"]
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_install_archive_set(name = "production_installation_archives", archives = _PRODUCTION,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Original lib/atf/tests recursion still needs complete parent reconciliation.
+bsd_install_archive_set(name = "installation_archives", archives = _PRODUCTION,
+    target_compatible_with = _PLATFORM + select({
+        "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }), visibility = ["//visibility:public"])
