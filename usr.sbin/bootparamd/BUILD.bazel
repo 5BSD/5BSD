@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [
+    "//usr.sbin/bootparamd/bootparamd:install_archive", "//usr.sbin/bootparamd/callbootd:install_archive",
+], visibility = ["//visibility:public"])

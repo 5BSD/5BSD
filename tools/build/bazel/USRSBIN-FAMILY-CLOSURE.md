@@ -81,14 +81,63 @@ and compares Make's effective support in the explicit-yes, explicit-no and
 automatic-disabled cases. All three agree. It also executes explicit native
 build requests for each of the seven missing optional/test selections and
 for SSH/telnet Heimdal with automatic support enabled. All nine requests reject
-as incompatible. This proves rejection, not implementation of those features;
+as incompatible at that earlier checkpoint. Bootparamd, FDT/ofwdump and
+freebsd-update have since been implemented and qualified below. The other
+rejection gates remain. This proves rejection at that checkpoint, not implementation;
 it does not establish live SSH authentication or daemon runtime.
+
+## Three optional production groups (2026-11-05)
+
+The bootparamd, FDT/ofwdump and freebsd-update gates are replaced with native
+parent selects after implementing their real producers:
+
+- bootparamd and callbootd generate their header, server/client and XDR sources
+  from the source-owned bootparam_prot.x schema using declared native rpcgen,
+  preprocessor and runtime/tool inputs. Their inherited warning option, TFTP
+  definition and conditional NIS definition are preserved. No generated stubs
+  or staged generated C files replace those actions.
+- ofwdump declares its two C sources and local headers against the selected
+  declared SDK's installed firmware interfaces. Hardware access remains untested.
+- freebsd-update installs its unchanged script, manual and configuration with
+  original ownership, modes and configuration tag. Its package-owned /etc
+  directory is explicit. This legacy optional updater is not the pkgbase or
+  BSDFoundry upgrade path and is not run by qualification.
+
+`bazel-optional-admin-native-r2-20261105` passes the normal frontend with all
+three options enabled: 245 selected immediate owners and 340 installation
+archives. Its source-settings test is cached and passing.
+`bazel-optional-admin-selection-r1-20261105/review.json` independently confirms
+all 245 configured owners against Make for this expanded profile.
+`parent-output-comparison.json` preserves all 1,009 prior logical outputs byte
+for byte and adds exactly the four new archive/request/directory-metadata triples.
+
+The run's `original-review/review.json` compares fresh original references:
+`bazel-optional-bootparamd-make-r1-20261105`,
+`bazel-optional-ofwdump-make-r1-20261105` and
+`bazel-optional-freebsd-update-make-r2-20261105`. The three groups match 8/5/5
+unique component metadata records, coalescing only identical repeated directory
+claims. All six script/configuration/manual payloads match exactly. The three
+programs pass strict ELF dependency/interface/hardening comparisons, native and
+original debug CRC validation, and safe usage-status/stdout/stderr comparisons.
+The updater passes shell syntax checking only. Active RPC, NIS-enabled bootparamd,
+firmware device access, update execution, other ABIs, alternate package profiles
+and comparative resource acceptance remain unqualified.
+
+The review's `input-equivalence.json` also verifies that the source-owned RPC schema
+and selected firmware headers match the original Make SDK inputs byte for byte.
+
+The initial native script archive omitted the package-owned /etc directory;
+the original component reference identified it. The corrected manifest and fresh
+reference preserve it. No C or shell production source was changed, and no
+failed/missing payload was filtered out. Generic frontend settings/labels already
+represent these options; no C dispatcher, backend, signing or publication
+interface change is needed. See observability-audit.md for instrumentation gaps.
 
 ## Explicit remaining work
 
 This production parent rejects installed tests and other ABIs. It also rejects
-bootparamd, FDT/ofwdump, freebsd-update, lpr, NIS and sendmail while those selected
-subtrees lack native production closures. These constraints identify migration
+lpr, NIS and sendmail while those selected subtrees lack native production
+closures. These constraints identify migration
 work; they are not evidence that all configurations have been converted.
 
 Finish those optional owners and original installed tests, then remove each gate

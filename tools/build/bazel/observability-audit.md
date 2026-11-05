@@ -11514,3 +11514,16 @@ fix adds vmgenc.h to bhyve's existing snapshot header interface, preserving the
 original snapshot feature and unchanged instrumentation/C sources. Original
 snapshot-enabled bhyvectl ELF/install/debug comparisons pass. Full per-program
 probe/audit requirements and resource/runtime qualification remain open.
+
+## Optional administration programs (2026-11-05)
+
+| Owner | Existing instrumentation and review queue |
+| --- | --- |
+| bootparamd | Optional syslog request logging via -s remains unchanged. No explicit DTrace provider or OpenBSM audit calls were found in these sources. Review network-service/request and bootparams-file access observability; active RPC logging/audit remains untested. |
+| callbootd | No explicit DTrace or OpenBSM integration found. Client request/error reporting remains unchanged; live RPC behavior is not qualified by its usage test. |
+| ofwdump | No explicit DTrace or OpenBSM calls found. Review firmware-device access observability separately; safe usage qualification does not open the device. |
+| freebsd-update | Unchanged shell updater; no explicit DTrace/OpenBSM calls or logger/syslog invocation found. Review update-operation observability if this legacy optional workflow is retained. Only syntax/payload is qualified; no update is executed. |
+
+Native optional-admin r2 preserves all original C/shell sources and build flags.
+Its independent metadata/data/ELF/debug and safe usage checks pass; this does not
+establish live probe delivery, audit requirements, service security or performance.

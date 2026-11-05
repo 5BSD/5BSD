@@ -108,10 +108,16 @@ selection and unsupported-Heimdal guards use the same effective condition.
 Explicitly disabled telnet regular/PIE archive members/symbols match fresh Make.
 See USRSBIN-FAMILY-CLOSURE.md for evidence and limits.
 
-Next: finish missing optional usr.sbin owners (bootparamd, ofwdump,
-freebsd-update, lpr, NIS and sendmail) and installed tests, remove their explicit
-incompatibility gates as qualified, reconcile all family ownership/payloads,
-and complete remaining world roots. This parent still rejects other ABIs.
+The follow-up optional-admin r2 normal build implements bootparamd/callbootd,
+ofwdump and freebsd-update and removes their three parent gates. The expanded
+profile matches all 245 original owners and builds 340 installation archives;
+all 1,009 prior parent outputs remain identical. Fresh original component
+metadata/data and three strict program ELF/debug/usage comparisons pass.
+See USRSBIN-FAMILY-CLOSURE.md for exact evidence and limitations.
+
+Next: finish missing optional usr.sbin owners (lpr, NIS and sendmail) and
+installed tests, remove their explicit incompatibility gates as qualified,
+reconcile all family ownership/payloads, and complete remaining world roots. This parent still rejects other ABIs.
 No selected construction/analysis result substitutes for full installed-world,
 bootstrap/pkgbase/hardware/publication/runtime/VM/resource acceptance.
 

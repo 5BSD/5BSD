@@ -204,6 +204,10 @@ _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:acpi_enabled": ["//u
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:apm_enabled": ["//usr.sbin/apm:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bhyve_enabled": ["//usr.sbin/bhyve:install_archive", "//usr.sbin/virtiofsd:install_archive", "//usr.sbin/bhyvectl:install_archive", "//usr.sbin/bhyveload:install_archive"], "//conditions:default": []})
 
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bootparamd_enabled": ["//usr.sbin/bootparamd:installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:fdt_enabled": ["//usr.sbin/ofwdump:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:freebsd_update_enabled": ["//usr.sbin/freebsd-update:install_archive"], "//conditions:default": []})
+
 # This parent owns nvram(8), including on architectures without nvram(8) binary.
 bsd_compress(name = "nvram_manual_gz", src = "nvram/nvram.8", output = "nvram.8.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
@@ -218,9 +222,6 @@ script_install_archive(name = "manual_install_archive", manifest = ":manual_mani
 # Missing optional subtrees and installed tests remain explicit migration work.
 # Reject their selection rather than silently omitting their Make-owned outputs.
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:bootparamd_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
-_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:fdt_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
-_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:freebsd_update_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
 _PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:lpr_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
 _PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:nis_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
 _PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:sendmail_enabled": ["@platforms//:incompatible"], "//conditions:default": []})

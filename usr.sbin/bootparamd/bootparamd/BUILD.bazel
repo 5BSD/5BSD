@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
+bsd_rpcgen(name = "bootparam_prot.h", source = "//include/rpcsvc:bootparam_prot.x", output = "bootparam_prot.h", mode = "-h",
+    flags = ["-C"], cpp_flags = ["-E", "-x", "c", "-nostdinc"], rpcgen = "//usr.bin/rpcgen:rpcgen",
+    cpp = "@bsd_sdk//toolchain:bin/cpp", compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", runtime = ["@bsd_sdk//toolchain:cpp_runtime"])
+bsd_rpcgen(name = "bootparam_prot_svc.c", source = "//include/rpcsvc:bootparam_prot.x", output = "bootparam_prot_svc.c", mode = "-m",
+    flags = ["-C"], cpp_flags = ["-E", "-x", "c", "-nostdinc"], rpcgen = "//usr.bin/rpcgen:rpcgen",
+    cpp = "@bsd_sdk//toolchain:bin/cpp", compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", runtime = ["@bsd_sdk//toolchain:cpp_runtime"])
+bsd_rpcgen(name = "bootparam_prot_xdr.c", source = "//include/rpcsvc:bootparam_prot.x", output = "bootparam_prot_xdr.c", mode = "-c",
+    flags = ["-C"], cpp_flags = ["-E", "-x", "c", "-nostdinc"], rpcgen = "//usr.bin/rpcgen:rpcgen",
+    cpp = "@bsd_sdk//toolchain:bin/cpp", compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", runtime = ["@bsd_sdk//toolchain:cpp_runtime"])
+cc_library(name = "generated_headers", hdrs = [":bootparam_prot.h"], includes = ["."])
+cc_binary(name = "bootparamd", srcs = ["bootparamd.c", "main.c", ":bootparam_prot_svc.c", ":bootparam_prot_xdr.c"], deps = [":generated_headers"],
+    local_defines = ['TFTP_DIR="/tftpboot"'] + select({"//tools/build/bazel/config:nis_enabled": ["YP"], "//conditions:default": []}), copts = ["-fPIE", "-Wno-incompatible-pointer-types-discards-qualifiers"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "bootparamd", manual = "bootparamd.8",
+    package = "utilities", bindir = "/usr/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation")
+script_installation(name = "protocol_manual", scripts = {}, manuals = ["bootparams.5"], package = "utilities")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest", ":protocol_manual"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

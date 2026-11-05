@@ -31,3 +31,5 @@ cc_library(name = "spray_client_header", hdrs = [":spray.h"], strip_include_pref
 cc_library(name = "nis_client_headers", hdrs = ["yp_prot.h", "ypclnt.h"],
     strip_include_prefix = ".", include_prefix = "rpcsvc",
     visibility = ["//usr.bin/ypcat:__pkg__", "//usr.bin/ypmatch:__pkg__", "//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv/common:__pkg__"])
+
+exports_files(["bootparam_prot.x"], visibility = ["//usr.sbin/bootparamd:__subpackages__"])
