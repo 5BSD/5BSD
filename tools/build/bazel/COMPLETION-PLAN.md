@@ -54,6 +54,13 @@ pkgbase/bootstrap/runtime/cross-platform/resource/default-switch gates remain.
 
 ## Library composition batch prepared (2026-11-05; not yet qualified)
 
+The GEOM installation parent now uses the typed archive-set provider, preserving
+request and directory metadata alongside the same OpenSSL-selected child tar
+outputs. The previous plain filegroup retained files but lost those metadata
+output groups, blocking typed world composition. This source-level fix joins the
+same aggregate qualification request; payload equality and configured output
+coverage remain to be checked, so it is not accepted from BUILD inspection alone.
+
 The next source-owned library assembly batch adds original ATF parent selection,
 archive endpoints for existing Googletest manifests, and LLVM/Clang library
 archives plus the lib/clang shared-library parent. Compiler library ownership is

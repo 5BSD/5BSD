@@ -8,9 +8,10 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# Individual installation archives, not a merged filesystem or pkgbase package.
-filegroup(
+# Preserve each archive's request/directory metadata for world composition.
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(
     name = "installation_archives",
-    srcs = geom_class_labels("//lib/geom/{cls}:install_archive"),
+    archives = geom_class_labels("//lib/geom/{cls}:install_archive"),
     visibility = ["//visibility:public"],
 )
