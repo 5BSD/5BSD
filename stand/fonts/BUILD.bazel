@@ -17,4 +17,4 @@ _FONTS = {'6x12': ['//contrib/terminus:ter-u12n.bdf', '//contrib/terminus:ter-u1
     for name in _FONTS
 ]
 boot_data_installation(files = [(name + ".fnt.gz", ":" + name + "_gzip") for name in _FONTS] +
-    [("INDEX.fonts", "INDEX.fonts")], directory = "/boot/fonts")
+    [("INDEX.fonts", "INDEX.fonts")], directory = "/boot/fonts", directory_tags = {"/boot/fonts": ["package=bootloader"]})

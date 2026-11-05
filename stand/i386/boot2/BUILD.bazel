@@ -34,8 +34,8 @@ load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
 bsd_python_test(name = "boot2_test", src = "boot2_test.py", data = [":boot", ":boot1", ":boot2", ":boot2_loader", ":boot2_linked", ":boot1_symbols", ":boot2_header", "//stand/i386/btx/lib:crt0", "//tools/build/bazel:boot_image.py"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-bsd_install_archive(name = "install_archive", manifests = [":install_manifest", "//usr.sbin/btxld:install_manifest"],
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {},
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",

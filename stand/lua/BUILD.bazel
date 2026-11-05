@@ -5,4 +5,4 @@ _FILES = ['cli.lua', 'color.lua', 'config.lua', 'core.lua', 'drawer.lua', 'hook.
 _MANUALS = ['loader.conf.lua.5', 'cli.lua.8', 'color.lua.8', 'config.lua.8', 'core.lua.8', 'drawer.lua.8', 'gfx.lua.8', 'hook.lua.8', 'loader.lua.8', 'menu.lua.8', 'password.lua.8', 'screen.lua.8']
 
 boot_data_installation(files = [(name, name) for name in _FILES], directory = '', manuals = _MANUALS,
-    prefixes = ["//tools/build/bazel/config:loader_lua_path"])
+    prefixes = ["//tools/build/bazel/config:loader_lua_path"], prefix_directory_tags = ["package=bootloader"])

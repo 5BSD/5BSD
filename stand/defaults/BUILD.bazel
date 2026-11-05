@@ -3,4 +3,4 @@ exports_files(["loader.conf"], visibility = ["//usr.sbin/capsule/tests:__pkg__"]
 
 load("//tools/build/bazel:bsd_boot_data.bzl", "boot_data_installation")
 
-boot_data_installation(files = [("loader.conf", "loader.conf")], directory = "/boot/defaults", manuals = ["loader.conf.5"])
+boot_data_installation(files = [("loader.conf", "loader.conf")], directory = "/boot/defaults", manuals = ["loader.conf.5"], directory_tags = {"/boot": ["package=utilities"], "/boot/defaults": ["package=utilities"]})

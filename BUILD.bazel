@@ -51,3 +51,9 @@ public_header_installation(name = "public_flat_security_mac_grantbylabel_install
 
 load("//tools/build/bazel:world_installation.bzl", "world_contributions")
 world_contributions()
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# sys/Makefile has no normal world payload; MODULES_WITH_WORLD is separate.
+bsd_install_archive_set(name = "sys_world_installation_archives", archives = [],
+    target_compatible_with = select({"//tools/build/bazel/config:modules_with_world_enabled": ["@platforms//:incompatible"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

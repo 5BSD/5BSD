@@ -71,13 +71,13 @@ bsd_compress(name = "manual_gzip", src = "libsa.3", output = "libsa.3.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual", src = ":manual_gzip",
-    destination = "/usr/share/man/man3/libsa.3.gz", owner = "root", group = "wheel",
+bsd_install_file(name = "install_manual", src = select({"//tools/build/bazel/config:mancompress_enabled": ":manual_gzip", "//conditions:default": "libsa.3"}),
+    destination = select({"//tools/build/bazel/config:mancompress_enabled": "/usr/share/man/man3/libsa.3.gz", "//conditions:default": "/usr/share/man/man3/libsa.3"}), owner = "root", group = "wheel",
     mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=bootloader-man"],
         "//conditions:default": ["package=bootloader-dev"],
     }))
-bsd_install_manifest(name = "install_manifest", entries = [":install_manual"],
+bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:man_enabled": [":install_manual"], "//conditions:default": []}),
     visibility = ["//visibility:public"])
 
 bsd_source_headers(name = "standalone_sa_headers", hdrs = ['bootp.h', 'bootparam.h', 'dosfs.h', 'geli/geliboot.h', 'geli/geliboot_internal.h', 'iodesc.h', 'net.h', 'netif.h', 'nfsv2.h', 'nvstore.h', 'rpc.h', 'rpcv2.h', 'stand.h', 'tftp.h', 'xlocale_private.h', 'zalloc_defs.h', 'zalloc_mem.h', 'zalloc_protos.h'], visibility = ["//stand/libsa:__pkg__"])

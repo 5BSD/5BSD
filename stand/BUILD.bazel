@@ -11,6 +11,7 @@ _MANIFESTS = ["//stand/" + name + ":install_manifest" for name in _COMPONENTS] +
 })
 bsd_install_manifest(name = "boot_data_manifest",
     manifests = _MANIFESTS,
+    merge_identical_directories = True,
     visibility = ["//visibility:public"])
 bsd_install_archive(name = "boot_data_archive", manifests = [":boot_data_manifest"],
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
@@ -21,7 +22,7 @@ bsd_install_archive(name = "boot_data_archive", manifests = [":boot_data_manifes
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
 bsd_pkg_layout(name = "boot_data_package_layout", scope = "component", manifests = [":boot_data_manifest"],
-    packages = ["bootloader"] + select({"//tools/build/bazel/config:boot_split_manpages_enabled": ["bootloader-man"], "//conditions:default": []}),
+    packages = ["bootloader", "utilities"] + select({"//tools/build/bazel/config:boot_split_manpages_enabled": ["bootloader-man"], "//conditions:default": []}),
     suffix_tags = ["dbg", "dev"], visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
@@ -57,3 +58,6 @@ bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['efi/acpica/
 exports_files(['arm64/libarm64/cache.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
 
 exports_files(['efi/acpica/acpi_detect.c'], visibility = ['//stand/efi/loader:__pkg__', '//stand/efi/loader_4th:__pkg__', '//stand/efi/loader_simp:__pkg__'])
+
+load(":installation.bzl", "stand_installation")
+stand_installation()

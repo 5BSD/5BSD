@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Boot component data and manuals using declared source-owned inventories."""
-load(":bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_manifest")
+load(":bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_manifest", "bsd_install_directory")
 
 
-def boot_data_installation(files = [], directory = "/boot", manuals = [], prefixes = [], manual_conditions = {}):
+def boot_data_installation(files = [], directory = "/boot", manuals = [], prefixes = [], manual_conditions = {}, directory_tags = {}, prefix_directory_tags = None):
     entries = []
     for filename, source in files:
         name = "install_file_" + filename.replace(".", "_").replace("-", "_")
@@ -27,4 +27,12 @@ def boot_data_installation(files = [], directory = "/boot", manuals = [], prefix
                 "//conditions:default": ["package=bootloader"]}))
         setting = manual_conditions.get(manual, "//tools/build/bazel/config:man_enabled")
         entries += select({setting: [":install_" + name], "//conditions:default": []})
+    for index, (path, tags) in enumerate(directory_tags.items()):
+        name = "install_directory_" + str(index)
+        bsd_install_directory(name = name, destination = path, owner = "root", group = "wheel", mode = "0755", install_tags = tags)
+        entries += [":" + name]
+    if prefix_directory_tags != None:
+        bsd_install_directory(name = "install_prefix_directory", destination = "", destination_prefixes = prefixes,
+            owner = "root", group = "wheel", mode = "0755", install_tags = prefix_directory_tags)
+        entries += [":install_prefix_directory"]
     bsd_install_manifest(name = "install_manifest", entries = entries, visibility = ["//visibility:public"])

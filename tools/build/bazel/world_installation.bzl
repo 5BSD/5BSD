@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Compose maintained native world roots; rescue/sys/stand/tests remain open."""
+"""Compose maintained native world roots; rescue/stand/tests remain open."""
 load(":bsd_install_archive.bzl", "bsd_install_archive_set")
 load(":bsd_man_database.bzl", "bsd_man_database")
 load(":bsd_install.bzl", "bsd_install_manifest")
@@ -11,7 +11,7 @@ def world_contributions():
         "//bin:installation_archives", "//sbin:installation_archives",
         "//include:installation_archives", "//usr.bin:production_installation_archives",
         "//usr.sbin:production_installation_archives", "//share:production_installation_archives",
-        "//etc:pre_database_installation_archives",
+        "//etc:pre_database_installation_archives", ":sys_world_installation_archives",
     ] + select({"//tools/build/bazel/config:cddl_enabled": ["//cddl:production_installation_archives"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:crypt_enabled": ["//secure:production_installation_archives"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:world_kerberos_mit": ["//krb5:production_installation_archives"],

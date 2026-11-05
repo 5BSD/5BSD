@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## AMD64 boot parent construction and normal sys world (2026-11-05)
+
+The selected native AMD64 boot parent now builds data, EFI/IA32/BIOS/userboot/
+kboot producers and the internal userboot harness together; three tests pass.
+Fresh complete original parent comparison closes unique inventory/metadata and
+24 directory claims across 127 paths. It exposed and corrected btxld over-install,
+the missing libsa manual and missing per-owner directory claims. 107 payloads
+match exactly; sixteen binary/debug differences remain explicitly unresolved.
+One identical repeated loader.help.efi claim still needs proper world ownership;
+stand is not yet joined to world. Do not call this full binary or boot acceptance.
+See AMD64-BOOT-PARENT-CONSTRUCTION.md. Normal sys world traversal independently
+has no payload without MODULES_WITH_WORLD; its explicit empty native contribution
+is connected without creating a disruptive sys source package. The combined
+world rerun and boot-data package-layout consumer pass; all 108 prior boot
+target/output bindings retain exact content. Module-world
+installation remains explicitly unsupported, not silently empty. Finish stand
+ownership/binary/product/option/ABI gaps, rescue and installed tests; all complete
+system installation/pkgbase/bootstrap/hardware/publication/runtime/resource gates
+remain open. Make stays production/default; BIP stays excluded.
+
 ## Combined world contributions and finalization (2026-11-05)
 
 A single maintained frontend invocation now builds the current native production

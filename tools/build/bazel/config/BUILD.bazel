@@ -811,3 +811,25 @@ config_setting(name = "world_kerberos_disabled", flag_values = {":kerberos": "fa
 config_setting(name = "world_kerberos_mit", flag_values = {":kerberos": "true", ":mitkrb5": "true"}, visibility = ["//visibility:public"])
 selects.config_setting_group(name = "world_manual_database_enabled", match_all = [":man_enabled", ":man_utils_enabled"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "world_openssl_database_enabled", match_all = [":world_manual_database_enabled", ":openssl_enabled"], visibility = ["//visibility:public"])
+
+bool_flag(name = "modules_with_world", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "modules_with_world_enabled", flag_values = {":modules_with_world": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "loader_bios", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_bios_enabled", flag_values = {":loader_bios": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "loader_userboot", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_userboot_enabled", flag_values = {":loader_userboot": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "loader_ia32", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_ia32_enabled", flag_values = {":loader_ia32": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "loader_pxeboot", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_pxeboot_enabled", flag_values = {":loader_pxeboot": "true"}, visibility = ["//visibility:public"])
+
+config_setting(name = "loader_ia32_disabled", flag_values = {":loader_ia32": "false"}, visibility = ["//visibility:public"])
+selects.config_setting_group(name = "stand_ia32_lua_selected", match_all = [":loader_ia32_enabled", ":loader_default_lua", ":loader_lua_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "stand_userboot_lua_alias", match_all = [":loader_default_lua", ":loader_lua_enabled"])
+selects.config_setting_group(name = "stand_userboot_4th_alias", match_all = [":loader_default_4th", ":forth_enabled"])
+selects.config_setting_group(name = "stand_userboot_alias_enabled", match_any = [":stand_userboot_lua_alias", ":stand_userboot_4th_alias"], visibility = ["//visibility:public"])
