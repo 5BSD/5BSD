@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Complete libc stdio-test construction (2026-11-05)
+
+All thirty original stdio programs now build/install with original aliases,
+scoped compatibility/math/MD dependencies and only the four original format-warning
+exceptions. All 75 selected native cases pass, including C23 narrow/wide formats,
+floating-point rounding/locales, streams and interrupted I/O. Numeric fixtures
+follow maintained source locale/alias inventories in private runtime paths.
+All 61 installed records and exact Kyua bytes match fresh Make; thirty ELF/
+hardening and native/original debug CRC contracts pass. Final frontend r2 passes
+76 targets from cache and separately freezes four numeric data payloads while
+retaining all three independently reviewed installation outputs. See
+LIBC-STDIO-TEST-QUALIFICATION.md. No original C test was rewritten.
+
+Continue remaining stdio/libc/test roots and parent Kyua/helper/data traversal,
+full installed-system case/privilege/PTY coverage, source-owned archive ordering
+and every whole-world/debug/pkgbase/cross/bootstrap/runtime/resource/cache/sandbox/
+publication gate. Full test-enabled guards remain and Make stays default.
+
 ## Complete libc string-test construction (2026-11-05)
 
 All 42 original string programs now build/install with original source aliases,

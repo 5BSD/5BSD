@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_" + stem + ".c" for stem in ["clearerr", "fflush", "fmemopen", "fopen", "fputc",
+    "mktemp", "open_memstream", "popen", "printf", "scanf"]], visibility = ["//lib/libc/tests/stdio:__pkg__"])

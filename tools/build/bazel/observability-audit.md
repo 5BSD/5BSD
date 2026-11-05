@@ -21,6 +21,16 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc stdio formats, streams and interruption (2026-11-05)
+
+Thirty original test programs retain scoped compiler/library policy and full
+installed ATF inventories. Seventy-five selected cases pass against native
+libc/libsys/ATF with native math/MD and declared numeric locales where required.
+Private stream/file/socket/signal operations exercise ordinary system paths;
+no source audit hook is removed or replaced. DOF init remains explicitly disabled,
+so neither probe firing nor audit delivery is established. Other stdio and
+installed-image cases remain open. See LIBC-STDIO-TEST-QUALIFICATION.md.
+
 ## Libc string operation tests (2026-11-05)
 
 All 42 original test programs preserve no-builtin calls, per-consumer textual C
