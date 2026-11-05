@@ -21,6 +21,18 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc hidden weak DTrace aliases (2026-11-05)
+
+The real libc provider uses hidden weak aliases ($dtrace.function), as explicitly
+emitted by dt_link.c, alongside keyed hidden global aliases. The relocatable DOF
+verifier now accepts each form only with its matching binding, preserving exact
+symbol lookup, visibility, executable bounds and patch validation. Twenty-two
+fixture methods pass directly and under Bazel in the final eight-target native
+frontend r4 qualification. The native/fresh-Make libc carrier review validates
+12 real function bindings, 14 ordinary and 15 enabled sites. This does not prove
+weak-symbol interposition behavior in a final executable, live firing, linked
+addresses or audit delivery. See LIBC-SOURCE-ALIASES-QUALIFICATION.md.
+
 ## Relocatable rescue probe binding review (2026-11-05)
 
 Independent controls now account for the earlier 21 external-only DTrace

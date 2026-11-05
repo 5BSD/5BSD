@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Fresh libc comparison and weak DTrace aliases (2026-11-05)
+
+A fresh original Make libc parent builds/stages successfully, including configured
+test binaries. Its 1455 regular archive members compare with the native alias
+checkpoint: 1396 exact nondebug contracts, 57 filename controls, one path-derived
+DTrace symbol case and one provider case. All 57 independent original filename
+controls and 12 real provider-to-code bindings pass. The review found and fixed
+the DOF verifier's missing hidden weak alias support; matching binding, visibility,
+function bounds and patch validation remain mandatory. See
+LIBC-SOURCE-ALIASES-QUALIFICATION.md for retained failures and evidence scopes.
+Raw member ordering/naming/debug, other libc variants and final ELF acceptance
+remain open, along with every full-system/cross/runtime/resource gate below.
+
 ## Libc source identities and bounded rescue controls (2026-11-05)
 
 Native source producers now preserve original gdtoa/jemalloc prefixes,

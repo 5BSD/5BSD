@@ -7060,3 +7060,14 @@ The maintained explicit-input bazel-test workflow also qualifies selected libc
 and rescue runtime tests; archive ordering, independent complete library/debug
 parity and full-system acceptance remain open.
 This qualification does not change the production backend or publication policy.
+
+.Pp
+Relocatable DOF qualification recognizes both keyed hidden global function aliases
+and unkeyed hidden weak function aliases emitted by the maintained DTrace linker.
+It requires the matching symbol binding and retains visibility, executable bounds
+and probe patch checks.
+Fresh original Make libc comparisons and explicit filename controls are bounded
+object evidence; they do not establish raw debug/archive-order equivalence,
+final executable weak-symbol selection or live probe firing.
+The existing explicit-input test workflow expresses these checks without a new
+frontend option, signing policy or production backend change.

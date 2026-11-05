@@ -87,7 +87,7 @@ class RelocatableDof:
             raise ValueError('unsupported DOF ELF/user relocation semantics')
         reference = relocation['symbol']
         owner = self.symbols if reference['section'] == 0 else self.object
-        alias = re.fullmatch(r'\$dtrace([0-9]+)\.(.+)', reference['name'])
+        alias = re.fullmatch(r'\$dtrace([0-9]*)\.(.+)', reference['name'])
         if alias is None or alias[2] != function:
             raise ValueError('DOF relocation does not name its actual function alias')
         matches = [symbol for table in owner['tables'].values() for symbol in table
@@ -95,8 +95,11 @@ class RelocatableDof:
         if len(matches) != 1:
             raise ValueError('DOF function requires one defined matching object symbol')
         symbol = matches[0]
-        if symbol['type'] != 2 or symbol['binding'] != 1 or symbol['visibility'] != 2 or not symbol['size'] or symbol['section'] >= len(owner['sections']):
-            raise ValueError('DOF function alias lacks a bounded hidden global FUNC definition')
+        # dt_link.c gives strong aliases a per-object key; weak aliases retain
+        # one shared name so the linker can merge them. Both must stay hidden.
+        expected_binding = 1 if alias[1] else 2
+        if symbol['type'] != 2 or symbol['binding'] != expected_binding or symbol['visibility'] != 2 or not symbol['size'] or symbol['section'] >= len(owner['sections']):
+            raise ValueError('DOF function alias lacks a bounded hidden FUNC definition with matching binding')
         code = owner['sections'][symbol['section']]
         if code[1] == 8 or not code[2] & 4 or symbol['value'] + symbol['size'] > code[5] or code[4] + code[5] > len(owner['data']):
             raise ValueError('DOF function exceeds its executable section')

@@ -78,3 +78,67 @@ Private pkg database tests still require OS root or a guest. Full world, kernel,
 modules, cross-platform, bootstrap, cache/sandbox, guest services and comparative
 CPU/memory/disk gates remain open. Make stays production/default. BIP is excluded;
 no host installation, repository publication, upgrade or reboot occurred.
+
+## Fresh original libc reference and complete regular-member review
+
+The maintained install-reference.py completed a fresh original libc parent build
+and private installation at bazel-libc-installation-make-r1-20261105, using the
+recorded production-malloc profile, metadata recipes and all 16 jobs. Its
+configured test binaries are built and staged, not executed by this reference.
+No host installation occurs.
+
+bazel-libc-member-review-r2-20261105/review.json binds that reference receipt and
+all actual archive members against the immutable native r3 archive. All 1455
+members pair uniquely: 1396 exact allocated-data, external-symbol and nondebug
+relocation contracts; 57 read-only string/associated relocation differences;
+one external-symbol-only difference; one provider metadata difference. Pairing
+57 .nopic filenames with their original .o roles is explicitly diagnostic: raw
+names, archive sequence, payload hashes and differing contracts remain recorded.
+The earlier r1 review against the existing SDK is retained and has the same
+counts. Neither report establishes raw ELF/debug or archive-order equality.
+
+bazel-libc-filename-controls-r3-20261105/review.json accounts for all 57 string
+cases with independently compiled original Make controls. Fifty-six use the
+explicit /usr/src/ filename prefix map from the retained r2 build. The remaining
+subr_acl_nfs4 case uses an additional explicit basename mapping: original Make
+copies the kernel source into its object directory and compiles the relative
+filename; native Bazel compiles the declared kernel source directly. The actual
+original generated copy equals its source bytes. A fresh single-object control
+matches the native contract exactly. Original warnings, definitions, optimization
+and other compiler policy agree, and actual original/control dependency closures
+are hash-bound. Production compiler flags are not changed to force equality.
+The retained r1 control incorrectly passed .WAIT as a command-line target; r2
+uses separate preparation/compilation and exposes the generated-copy distinction.
+
+## Hidden weak DTrace alias verification
+
+The libc review exposed an incomplete verifier assumption: dt_link.c deliberately
+uses hidden keyed global aliases for ordinary functions and hidden unkeyed weak
+aliases for weak functions so the linker can merge them. The metadata verifier
+previously understood only the global form. It now requires the corresponding
+name/binding pair and keeps exact matching-function lookup, hidden visibility,
+function type/size, executable-section bounds and ordinary/enabled patch checks.
+Twenty-two maintained fixture methods cover both valid forms and reject wrong
+binding, visibility, function identity, relocation semantics, bounds and patches.
+This is a verifier correction; libc or dt_link runtime behavior is not changed.
+
+bazel-libc-dtrace-binding-review-r2-20261105/review.json checks the actual
+res_send object-path hash against the real declared native output bytes and the
+fresh original object path. Their other symbol properties, allocated bytes and
+relocations match. Independent partial links include every provider-referenced
+function (res_send, nsdispatch and both semaphore units). All 12 actual libc
+probe bindings, 14 ordinary sites and 15 enabled sites match in schemas,
+symbol-relative locations and bounded function code/patch bytes. The retained
+r1 fails on the verifier's unsupported weak alias form; it is not accepted as
+passing evidence. This closes the bounded regular-member differences, not live
+tracing, final linked addresses, shared/NOSSP variants, raw debug or whole-library
+semantic acceptance. Source-owned archive order remains open.
+
+The final maintained frontend run
+bazel-libc-source-aliases-native-r4-20261105 passes all eight Bazel test targets.
+The 22-method DOF fixture target executes freshly under Bazel; the seven prior
+libc/rescue/source-settings targets are cache hits. Its request is
+bazel-libc-source-aliases-request-r2-20261105/inputs.json. Immutable artifact
+resolution verifies the captured r3/r4 libc archives have the identical SHA-256
+31508f6ff0dd18c05fcfde0dc0bda8ce23b1af9bcce9308d7c81a6c80cd8c7c8. No C frontend, backend input format or staging/signing
+change is required for this verifier-only follow-up.

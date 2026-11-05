@@ -17,7 +17,8 @@ spec.loader.exec_module(checker)
 
 def fixture(*, defined=True, alias='$dtrace123.fn', machine=62, kind=24,
             symbol_index=1, site=0, enabled_site=11, bad_patch=False, user_kind=2,
-            function_value=0, address=0, extra_relocation=False, linked=False):
+            function_value=0, address=0, extra_relocation=False, linked=False,
+            binding=1, visibility=2):
     """One provider/probe, one ordinary site and one enabled site.
 
     The .text body has NOPs at 0..4 and XOR/NOPs at 8..12. DOF references
@@ -48,7 +49,7 @@ def fixture(*, defined=True, alias='$dtrace123.fn', machine=62, kind=24,
     name_offsets = {name: names.index(name.encode() + b'\0') for name in
                     ['.shstrtab', '.strtab', '.symtab', '.text', '.SUNW_dof', '.rela.SUNW_dof']}
     symbols = b'\0' + alias.encode() + b'\0'
-    symbol_table = b'\0' * 24 + struct.pack('<IBBHQQ', 1, 0x12, 2,
+    symbol_table = b'\0' * 24 + struct.pack('<IBBHQQ', 1, (binding << 4) | 2, visibility,
                                           4 if defined else 0, function_value, 16)
     code = bytearray(b'\x90' * 8 + b'\x48\x33\xc0\x90\x90' + b'\x90' * 3)
     if bad_patch:
@@ -108,6 +109,23 @@ class RelocatableInventoryTests(unittest.TestCase):
         self.assertEqual(binding['symbol']['name'], '$dtrace123.fn')
         self.assertEqual((binding['code_section'], binding['symbol']['size']), ('.text', 16))
         self.assertEqual((binding['elf_relocation_kind'], binding['user_relocation_kind']), (24, 2))
+
+    def test_hidden_weak_alias_resolves_actual_symbol_and_sites(self):
+        result = checker.inventory(self.object(alias='$dtrace.fn', binding=2),
+                                   relocatable=True)
+        symbol = result['relocatable_metadata']['bindings'][0]['symbol']
+        self.assertEqual((symbol['name'], symbol['binding'], symbol['visibility']),
+                         ('$dtrace.fn', 2, 2))
+
+    def test_alias_naming_requires_corresponding_binding(self):
+        self.rejected('matching binding', alias='$dtrace.fn', binding=1)
+        self.rejected('matching binding', binding=2)
+
+    def test_weak_alias_must_be_hidden_and_have_valid_code(self):
+        self.rejected('bounded hidden FUNC', alias='$dtrace.fn', binding=2,
+                      visibility=0)
+        self.rejected('bounded NOP/RET', alias='$dtrace.fn', binding=2,
+                      bad_patch=True)
 
     def test_absolute_elf_and_user_relocation_pair_is_resolved(self):
         result = checker.inventory(self.object(kind=1, user_kind=1), relocatable=True)
