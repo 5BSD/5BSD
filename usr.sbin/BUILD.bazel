@@ -1,0 +1,229 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_manifest")
+
+# Source-owned usr.sbin/Makefile and Makefile.amd64 production selection.
+# Make supplies independent qualification inventory, never build metadata.
+_ARCHIVES = [
+    "//usr.sbin/adduser:production_install_archive",
+    "//usr.sbin/arp:install_archive",
+    "//usr.sbin/base-accounts:install_archive",
+    "//usr.sbin/BSDAudit:daemon_install_archive",
+    "//usr.sbin/binmiscctl:install_archive",
+    "//usr.sbin/boottrace:install_archive",
+    "//usr.sbin/bsd-build:install_archive",
+    "//usr.sbin/bsdconfig:production_install_archive",
+    "//usr.sbin/camdd:install_archive",
+    "//usr.sbin/cdcontrol:install_archive",
+    "//usr.sbin/chkgrp:install_archive",
+    "//usr.sbin/chown:install_archive",
+    "//usr.sbin/chroot:install_archive",
+    "//usr.sbin/ckdist:install_archive",
+    "//usr.sbin/clear_locks:install_archive",
+    "//usr.sbin/crashinfo:production_install_archive",
+    "//usr.sbin/cron:install_archive",
+    "//usr.sbin/ctld:install_archive",
+    "//usr.sbin/ctladm:install_archive",
+    "//usr.sbin/daemon:install_archive",
+    "//usr.sbin/dconschat:install_archive",
+    "//usr.sbin/devctl:install_archive",
+    "//usr.sbin/devinfo:install_archive",
+    "//usr.sbin/diskinfo:install_archive",
+    "//usr.sbin/dumpcis:install_archive",
+    "//usr.sbin/etcupdate:production_install_archive",
+    "//usr.sbin/extattr:install_archive",
+    "//usr.sbin/extattrctl:install_archive",
+    "//usr.sbin/oeslogger:install_archive",
+    "//usr.sbin/fifolog:installation_archives",
+    "//usr.sbin/BSDCrypto:daemon_install_archive",
+    "//usr.sbin/BSDDevice:daemon_install_archive",
+    "//usr.sbin/fstyp:install_archive",
+    "//usr.sbin/fwcontrol:install_archive",
+    "//usr.sbin/fwget:production_install_archive",
+    "//usr.sbin/getfmac:install_archive",
+    "//usr.sbin/getpmac:install_archive",
+    "//usr.sbin/gstat:install_archive",
+    "//usr.sbin/hwstat:install_archive",
+    "//usr.sbin/otelauditd:install_archive",
+    "//usr.sbin/otelconf:install_archive",
+    "//usr.sbin/otelpfd:install_archive",
+    "//usr.sbin/i2c:install_archive",
+    "//usr.sbin/ifmcstat:install_archive",
+    "//usr.sbin/iostat:install_archive",
+    "//usr.sbin/iovctl:install_archive",
+    "//usr.sbin/kldxref:install_archive",
+    "//usr.sbin/mac_abac_ctl:install_archive",
+    "//usr.sbin/mac_abacd:install_archive",
+    "//usr.sbin/mailwrapper:install_archive",
+    "//usr.sbin/makefs:install_archive",
+    "//usr.sbin/memcontrol:install_archive",
+    "//usr.sbin/mfiutil:install_archive",
+    "//usr.sbin/mlxcontrol:install_archive",
+    "//usr.sbin/mountd:install_archive",
+    "//usr.sbin/mpsutil:install_archive",
+    "//usr.sbin/mptutil:install_archive",
+    "//usr.sbin/mtest:install_archive",
+    "//usr.sbin/BSDLog:daemon_install_archive",
+    "//usr.sbin/logctl:install_archive",
+    "//usr.sbin/BSDNetwork:daemon_install_archive",
+    "//usr.sbin/BSDSysctl:daemon_install_archive",
+    "//usr.sbin/BSDTime:daemon_install_archive",
+    "//usr.sbin/BSDTimectl:install_archive",
+    "//usr.sbin/BSDMemory:daemon_install_archive",
+    "//usr.sbin/BSDPower:daemon_install_archive",
+    "//usr.sbin/BSDPowerctl:program_install_archive",
+    "//usr.sbin/sysctlcmpctl:program_install_archive",
+    "//usr.sbin/networkcmpctl:install_archive",
+    "//usr.sbin/BSDNotify:daemon_install_archive",
+    "//usr.sbin/notifyctl:install_archive",
+    "//usr.sbin/newsyslog:install_archive",
+    "//usr.sbin/nfscbd:install_archive",
+    "//usr.sbin/nfsd:install_archive",
+    "//usr.sbin/nfsdumpstate:install_archive",
+    "//usr.sbin/nfsdtop:install_archive",
+    "//usr.sbin/nfsrevoke:install_archive",
+    "//usr.sbin/nfsuserd:install_archive",
+    "//usr.sbin/nmtree:install_archive",
+    "//usr.sbin/nologin:install_archive",
+    "//usr.sbin/capsule:runtime_install_archive",
+    "//usr.sbin/capsulectl:install_archive",
+    "//usr.sbin/pciconf:install_archive",
+    "//usr.sbin/periodic:production_install_archive",
+    "//usr.sbin/pnfsdscopymr:install_archive",
+    "//usr.sbin/pnfsdsfile:install_archive",
+    "//usr.sbin/pnfsdskill:install_archive",
+    "//usr.sbin/powerd:install_archive",
+    "//usr.sbin/prometheus_sysctl_exporter:install_archive",
+    "//usr.sbin/pstat:install_archive",
+    "//usr.sbin/pw:install_archive",
+    "//usr.sbin/pwd_mkdb:install_archive",
+    "//usr.sbin/pwm:install_archive",
+    "//usr.sbin/quot:install_archive",
+    "//usr.sbin/rarpd:install_archive",
+    "//usr.sbin/rmt:install_archive",
+    "//usr.sbin/reclaimstat:install_archive",
+    "//usr.sbin/rpcbind:install_archive",
+    "//usr.sbin/rpc.lockd:install_archive",
+    "//usr.sbin/rpc.statd:install_archive",
+    "//usr.sbin/rpc.umntall:install_archive",
+    "//usr.sbin/rtprio:install_archive",
+    "//usr.sbin/service:production_install_archive",
+    "//usr.sbin/policyctl:install_archive",
+    "//usr.sbin/switchboardctl:production_install_archive",
+    "//usr.sbin/switchboard:runtime_install_archive",
+    "//usr.sbin/services_mkdb:install_archive",
+    "//usr.sbin/sesutil:install_archive",
+    "//usr.sbin/BSDExtension:daemon_install_archive",
+    "//usr.sbin/sysextctl:program_install_archive",
+    "//usr.sbin/setfib:install_archive",
+    "//usr.sbin/setfmac:install_archive",
+    "//usr.sbin/setpmac:install_archive",
+    "//usr.sbin/smart:install_archive",
+    "//usr.sbin/smbmsg:install_archive",
+    "//usr.sbin/snapinfo:install_archive",
+    "//usr.sbin/spi:install_archive",
+    "//usr.sbin/spray:install_archive",
+    "//usr.sbin/sysconf:install_archive",
+    "//usr.sbin/syslogd:install_archive",
+    "//usr.sbin/sysrc:production_install_archive",
+    "//usr.sbin/tcpdrop:install_archive",
+    "//usr.sbin/tcpdump:install_archive",
+    "//usr.sbin/tcpsso:install_archive",
+    "//usr.sbin/traceroute:install_archive",
+    "//usr.sbin/trim:install_archive",
+    "//usr.sbin/tzfsctl:program_install_archive",
+    "//usr.sbin/BSDFilesystem:daemon_install_archive",
+    "//usr.sbin/tzsetup:install_archive",
+    "//usr.sbin/valectl:install_archive",
+    "//usr.sbin/vigr:production_install_archive",
+    "//usr.sbin/vipw:install_archive",
+    "//usr.sbin/BSDVM:daemon_install_archive",
+    "//usr.sbin/wake:install_archive",
+    "//usr.sbin/BSDNamespace:daemon_install_archive",
+    "//usr.sbin/watch:install_archive",
+    "//usr.sbin/watchdogd:install_archive",
+    "//usr.sbin/zdump:install_archive",
+    "//usr.sbin/zic:install_archive",
+    "//usr.sbin/zonectl:install_archive",
+    "//usr.sbin/boot0cfg:install_archive",
+    "//usr.sbin/cpucontrol:install_archive",
+    "//usr.sbin/mptable:install_archive",
+    "//usr.sbin/spkrtest:production_install_archive",
+    "//usr.sbin/zzz:install_archive",
+    ":manual_install_archive",
+]
+
+config_setting(name = "audit_crypto", flag_values = {"//tools/build/bazel/config:audit": "true", "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:crypt": "true"})
+config_setting(name = "openssl_caroot", flag_values = {"//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:crypt": "true", "//tools/build/bazel/config:caroot": "true"})
+config_setting(name = "efi_crypto", flag_values = {"//tools/build/bazel/config:efi": "true", "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:crypt": "true"})
+config_setting(name = "cuse_sound", flag_values = {"//tools/build/bazel/config:cuse": "true", "//tools/build/bazel/config:sound": "true"})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:acct_enabled": ["//usr.sbin/accton:install_archive", "//usr.sbin/sa:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:audit_enabled": ["//usr.sbin/audit:install_archive", "//usr.sbin/auditd:install_archive", "//usr.sbin/auditreduce:install_archive", "//usr.sbin/praudit:install_archive", "//usr.sbin/setaudit:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:authpf_enabled": ["//usr.sbin/authpf:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:autofs_enabled": ["//usr.sbin/autofs:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:blacklist_enabled": ["//usr.sbin/blacklistctl:install_archive", "//usr.sbin/blacklistd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:blocklist_enabled": ["//usr.sbin/blocklistctl:install_archive", "//usr.sbin/blocklistd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bluetooth_enabled": ["//usr.sbin/bluetooth:installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bsdinstall_enabled": ["//usr.sbin/bsdinstall:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bsnmp_enabled": ["//usr.sbin/bsnmpd:installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:dtrace_enabled": ["//usr.sbin/BSDTrace:daemon_install_archive", "//usr.sbin/dtraced:install_archive", "//usr.sbin/dtracedctl:install_archive", "//usr.sbin/tracectl:program_install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:cxgbetool_enabled": ["//usr.sbin/cxgbetool:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:efi_enabled": ["//usr.sbin/efivar:install_archive", "//usr.sbin/efidp:install_archive", "//usr.sbin/efibootmgr:install_archive", "//usr.sbin/efitable:install_archive", "//usr.sbin/efiwake:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:kerberos_support_enabled": ["//usr.sbin/gssd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:gpio_enabled": ["//usr.sbin/gpioctl:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:hyperv_enabled": ["//usr.sbin/hyperv:installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:inet6_enabled": ["//usr.sbin/ip6addrctl:install_archive", "//usr.sbin/mld6query:install_archive", "//usr.sbin/ndp:install_archive", "//usr.sbin/rrenumd:install_archive", "//usr.sbin/rtadvctl:install_archive", "//usr.sbin/rtadvd:install_archive", "//usr.sbin/rtsold:program_install_archive", "//usr.sbin/traceroute6:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:inetd_enabled": ["//usr.sbin/inetd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:iscsi_enabled": ["//usr.sbin/iscsid:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:jail_enabled": ["//usr.sbin/jail:install_archive", "//usr.sbin/jexec:install_archive", "//usr.sbin/jls:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:legacy_console_enabled": ["//usr.sbin/kbdcontrol:install_archive", "//usr.sbin/kbdmap:install_archive", "//usr.sbin/moused:installation_archives", "//usr.sbin/vidcontrol:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ppp_enabled": ["//usr.sbin/pppctl:install_archive", "//usr.sbin/ppp:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ns_caching_enabled": ["//usr.sbin/nscd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:man_utils_enabled": ["//usr.sbin/manctl:production_install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:mlx5tool_enabled": ["//usr.sbin/mlx5tool:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:netgraph_enabled": ["//usr.sbin/flowctl:install_archive", "//usr.sbin/ngctl:install_archive", "//usr.sbin/nghook:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ntp_enabled": ["//usr.sbin/ntp:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:openssl_ktls_enabled": ["//usr.sbin/rpc.tlsclntd:install_archive", "//usr.sbin/rpc.tlsservd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pf_enabled": ["//usr.sbin/ftp-proxy:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pkgbootstrap_enabled": ["//usr.sbin/pkg:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pmc_enabled": ["//usr.sbin/pmc:install_archive", "//usr.sbin/pmcannotate:install_archive", "//usr.sbin/pmccontrol:install_archive", "//usr.sbin/pmcstat:install_archive", "//usr.sbin/pmcstudy:install_archive", "//usr.sbin/bsdtrace:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:quotas_enabled": ["//usr.sbin/edquota:install_archive", "//usr.sbin/quotaon:install_archive", "//usr.sbin/repquota:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:sound_enabled": ["//usr.sbin/mixer:install_archive", "//usr.sbin/sndctl:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":cuse_sound": ["//usr.sbin/virtual_oss:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["//usr.sbin/tcpdchk:install_archive", "//usr.sbin/tcpdmatch:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:toolchain_enabled": ["//usr.sbin/config:install_archive", "//usr.sbin/crunch:installation_archives", "//usr.sbin/btxld:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:unbound_enabled": ["//usr.sbin/unbound:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:usb_enabled": ["//usr.sbin/uathload:install_archive", "//usr.sbin/uhsoctl:install_archive", "//usr.sbin/usbconfig:install_archive", "//usr.sbin/usbdump:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:utmpx_enabled": ["//usr.sbin/ac:install_archive", "//usr.sbin/lastlogin:install_archive", "//usr.sbin/utx:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:wireless_enabled": ["//usr.sbin/wlandebug:install_archive", "//usr.sbin/wlanstat:install_archive", "//usr.sbin/wpa:installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":audit_crypto": ["//usr.sbin/auditdistd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":openssl_caroot": ["//usr.sbin/certctl:install_archive", "//usr.sbin/capsign:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":efi_crypto": ["//usr.sbin/uefisign:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:acpi_enabled": ["//usr.sbin/acpi:installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:apm_enabled": ["//usr.sbin/apm:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bhyve_enabled": ["//usr.sbin/bhyve:install_archive", "//usr.sbin/virtiofsd:install_archive", "//usr.sbin/bhyvectl:install_archive", "//usr.sbin/bhyveload:install_archive"], "//conditions:default": []})
+
+# This parent owns nvram(8), including on architectures without nvram(8) binary.
+bsd_compress(name = "nvram_manual_gz", src = "nvram/nvram.8", output = "nvram.8.gz",
+    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "nvram_manual", src = ":nvram_manual_gz",
+    destination = "/usr/share/man/man8/nvram.8.gz", owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"],
+        "//conditions:default": ["package=utilities"]}))
+bsd_install_manifest(name = "manual_manifest", entries = [":nvram_manual"])
+script_install_archive(name = "manual_install_archive", manifest = ":manual_manifest")
+
+# Missing optional subtrees and installed tests remain explicit migration work.
+# Reject their selection rather than silently omitting their Make-owned outputs.
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:bootparamd_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:fdt_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:freebsd_update_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:lpr_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:nis_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:sendmail_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
+bsd_install_archive_set(name = "production_installation_archives", archives = _ARCHIVES,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

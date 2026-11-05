@@ -65,7 +65,7 @@ bsd_install_file(name = "tzfs_manual_install", src = ":tzfs_manual", destination
     owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 bsd_install_manifest(name = "bundle_install_manifest", entries = [":bundle_install", ":unit_install", ":config_install", ":tzfs_manual_install"])
-bsd_install_archive(name = "daemon_install_archive",
+bsd_install_archive(name = "daemon_install_archive", visibility = ["//usr.sbin:__pkg__"],
     manifests = [":program_install", ":bundle_install_manifest"],
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'
         for d in ["/Capabilities/Config", "/usr/share/tzfs"]} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}'

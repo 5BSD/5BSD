@@ -2,7 +2,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 def _config(ctx):
     lines = ["/* Generated from explicit SSH build settings. */", '#include "ssh_namespace.h"']
-    if ctx.attr.kerberos[BuildSettingInfo].value:
+    if ctx.attr.kerberos:
         lines.append('#include "krb5_config.h"')
         if not ctx.attr.mit[BuildSettingInfo].value:
             lines.append("#define HEIMDAL 1")
@@ -19,5 +19,5 @@ def _config(ctx):
     return [DefaultInfo(files = depset([output]))]
 ssh_configuration = rule(implementation = _config, attrs = {
     name: attr.label(providers = [BuildSettingInfo], mandatory = True)
-    for name in ["kerberos", "mit", "usb", "xauth", "askpass"]
-})
+    for name in ["mit", "usb", "xauth", "askpass"]
+} | {"kerberos": attr.bool(mandatory = True)})

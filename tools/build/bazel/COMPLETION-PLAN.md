@@ -92,6 +92,29 @@ See LIB-FAMILY-CLOSURE.md. This is another completed contribution, not complete
 lib-parent selection or world acceptance. Continue explicit configured parent
 composition without treating internal-only archives as installed files.
 
+## Native administration parent checkpoint (2026-11-05)
+
+The source-owned AMD64 usr.sbin production parent now declares all 242 selected
+child owners and its previously omitted parent-owned nvram manual. The normal
+r3 build passes: 336 installation archives plus affected SSH/telnet targets;
+its source-settings test is cached. Six actual configured selections match Make
+(242/238/238/240/234/206). Captured-output review explains the updated frontend
+manual, preserves the other 1,005 baseline outputs and independently matches the
+added manual against original Make metadata/payload.
+
+Option review exposed KERBEROS_SUPPORT's final dependent-option handling in
+src.opts.mk. The shared setting is now auto/yes/no; SSH headers, dependency
+selection and unsupported-Heimdal guards use the same effective condition.
+Explicitly disabled telnet regular/PIE archive members/symbols match fresh Make.
+See USRSBIN-FAMILY-CLOSURE.md for evidence and limits.
+
+Next: finish missing optional usr.sbin owners (bootparamd, ofwdump,
+freebsd-update, lpr, NIS and sendmail) and installed tests, remove their explicit
+incompatibility gates as qualified, reconcile all family ownership/payloads,
+and complete remaining world roots. This parent still rejects other ABIs.
+No selected construction/analysis result substitutes for full installed-world,
+bootstrap/pkgbase/hardware/publication/runtime/VM/resource acceptance.
+
 ## Native library parent checkpoint (2026-11-05)
 
 The source-owned AMD64 production parent now declares library contributions and

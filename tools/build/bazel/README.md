@@ -48942,3 +48942,15 @@ tools. This does not enable an i386 system/world target. Schema 2 requires a new
 verified SDK snapshot; it does not reinterpret a schema-1 receipt. The resource
 qualification checks ELF32 and ELF64 objects and statically linked images, with
 an entry point in executable code and no program interpreter.
+
+## Source-owned administration parent (2026-11-05)
+
+See [USRSBIN-FAMILY-CLOSURE.md](USRSBIN-FAMILY-CLOSURE.md) for the native
+usr.sbin production parent, original parent-owned manual and its explicit
+remaining optional/test/ABI gates. The kerberos_support setting now accepts
+auto/yes/no, default auto, matching the maintained final dependent-option pass.
+The selected SDK profile's explicit WITH_KERBEROS_SUPPORT uses yes. SSH headers
+and dependency selection share the effective condition; unsupported Heimdal
+remains rejected. The earlier Boolean-input qualification records above are
+historical evidence, not the current input spelling. Make remains default;
+complete system/pkgbase/runtime/resource qualification is still required.

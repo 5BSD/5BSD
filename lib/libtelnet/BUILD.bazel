@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # Non-MIT Kerberos needs the separate Heimdal graph; do not silently omit it.
-config_setting(name = "heimdal_requested", flag_values = {"//tools/build/bazel/config:kerberos_support": "true",
-    "//tools/build/bazel/config:mitkrb5": "false"})
-config_setting(name = "kerberos_without_openssl", flag_values = {"//tools/build/bazel/config:kerberos_support": "true", "//tools/build/bazel/config:openssl": "false"})
-config_setting(name = "kerberos_without_crypt", flag_values = {"//tools/build/bazel/config:kerberos_support": "true", "//tools/build/bazel/config:crypt": "false"})
+config_setting(name = "heimdal_requested_flags", flag_values = {"//tools/build/bazel/config:mitkrb5": "false"})
+selects.config_setting_group(name = "heimdal_requested", match_all = [":heimdal_requested_flags", "//tools/build/bazel/config:kerberos_support_enabled"])
+config_setting(name = "kerberos_without_openssl_flags", flag_values = {"//tools/build/bazel/config:openssl": "false"})
+selects.config_setting_group(name = "kerberos_without_openssl", match_all = [":kerberos_without_openssl_flags", "//tools/build/bazel/config:kerberos_support_enabled"])
+config_setting(name = "kerberos_without_crypt_flags", flag_values = {"//tools/build/bazel/config:crypt": "false"})
+selects.config_setting_group(name = "kerberos_without_crypt", match_all = [":kerberos_without_crypt_flags", "//tools/build/bazel/config:kerberos_support_enabled"])
 _COMPATIBLE = select({":heimdal_requested": ["@platforms//:incompatible"], ":kerberos_without_openssl": ["@platforms//:incompatible"], ":kerberos_without_crypt": ["@platforms//:incompatible"], "//conditions:default": []})
 _OPENSSL = "//tools/build/bazel/config:openssl_enabled"
 _SOURCES = ["//contrib/telnet/libtelnet:" + name for name in ["genget.c", "getent.c", "misc.c"]] + select({

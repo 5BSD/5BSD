@@ -7,7 +7,7 @@ load(":configuration.bzl", "ssh_configuration")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 _DEPS = ["//crypto/openssh:headers", "//secure/lib/libcrypto:crypto", "//lib/libcrypt:crypt", "//lib/libz:z"] + select({"//tools/build/bazel/config:ldns_enabled": ["//lib/libldns:ldns"], "//conditions:default": []})
-ssh_configuration(name = "ssh_build_config", visibility = ["//secure:__subpackages__"], kerberos = "//tools/build/bazel/config:kerberos_support", mit = "//tools/build/bazel/config:mitkrb5", usb = "//tools/build/bazel/config:usb", xauth = "//tools/build/bazel/config:ssh_xauth_path", askpass = "//tools/build/bazel/config:ssh_askpass_path")
+ssh_configuration(name = "ssh_build_config", visibility = ["//secure:__subpackages__"], kerberos = select({"//tools/build/bazel/config:kerberos_support_enabled": True, "//conditions:default": False}), mit = "//tools/build/bazel/config:mitkrb5", usb = "//tools/build/bazel/config:usb", xauth = "//tools/build/bazel/config:ssh_xauth_path", askpass = "//tools/build/bazel/config:ssh_askpass_path")
 bsd_dtrace_header(
     name = "provider", source = "sshkeys_provider.d", output = "sshkeys_provider.h",
     flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",

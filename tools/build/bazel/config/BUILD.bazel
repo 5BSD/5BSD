@@ -146,8 +146,10 @@ config_setting(name = "nis_enabled", flag_values = {":nis": "true"}, visibility 
 bool_flag(name = "ldns", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "ldns_enabled", flag_values = {":ldns": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 
-bool_flag(name = "kerberos_support", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "kerberos_support_enabled", flag_values = {":kerberos_support": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+# src.opts.mk reapplies explicit KERBEROS_SUPPORT after crypto dependencies.
+string_flag(name = "kerberos_support", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
+config_setting(name = "kerberos_support_requested", flag_values = {":kerberos_support": "yes"})
+config_setting(name = "kerberos_support_auto", flag_values = {":kerberos_support": "auto"})
 
 bool_flag(name = "mitkrb5", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "mitkrb5_enabled", flag_values = {":mitkrb5": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
@@ -355,6 +357,8 @@ config_setting(name = "man_utils_enabled", flag_values = {':man_utils': 'true'},
 config_setting(name = "netgraph_enabled", flag_values = {":netgraph": "true"}, visibility = ["//visibility:public"])
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
+selects.config_setting_group(name = "kerberos_support_default", match_all = [":kerberos_support_auto", ":kerberos_enabled"])
+selects.config_setting_group(name = "kerberos_support_enabled", match_any = [":kerberos_support_requested", ":kerberos_support_default"], visibility = ["//visibility:public"])
 # Make defaults TESTS_SUPPORT to TESTS, but permits an explicit override.
 string_flag(name = "tests_support", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
 config_setting(name = "tests_support_requested", flag_values = {":tests_support": "yes"})
@@ -717,7 +721,7 @@ config_setting(name = "vt_enabled", flag_values = {":vt": "true"}, visibility = 
 
 # lib/Makefile parent selection; FDT defaults off on the initial AMD64 parent.
 bool_flag(name = "blacklist", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "blacklist_enabled", flag_values = {":blacklist": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "blacklist_enabled", flag_values = {":blacklist": "true", ":blocklist": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "bhyve", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "bhyve_enabled", flag_values = {":bhyve": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "cuse", build_setting_default = True, visibility = ["//visibility:public"])
@@ -730,3 +734,24 @@ bool_flag(name = "openmp", build_setting_default = True, visibility = ["//visibi
 config_setting(name = "openmp_enabled", flag_values = {":openmp": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "fdt", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "fdt_enabled", flag_values = {":fdt": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "apm", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "apm_enabled", flag_values = {":apm": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "authpf", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "authpf_enabled", flag_values = {":authpf": "true", ":pf": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "bsdinstall", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "bsdinstall_enabled", flag_values = {":bsdinstall": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "caroot", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "caroot_enabled", flag_values = {":caroot": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "cxgbetool", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "cxgbetool_enabled", flag_values = {":cxgbetool": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "mlx5tool", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "mlx5tool_enabled", flag_values = {":mlx5tool": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "pkgbootstrap", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pkgbootstrap_enabled", flag_values = {":pkgbootstrap": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])

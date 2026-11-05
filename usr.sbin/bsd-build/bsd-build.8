@@ -3145,6 +3145,10 @@ termination may prevent cleanup.
 
 Native SSH library targets accept typed build settings for ldns,
 kerberos_support, mitkrb5, tcp_wrappers, usb and dtrace.
+The kerberos_support setting accepts auto, yes or no.
+Its automatic default follows effective kerberos; an explicit yes or no is
+independent, matching the final dependent-option handling in src.opts.mk.
+Consumers use the same effective condition for headers and dependencies.
 The native sshd-session target also accepts audit and blocklist_support
 (default true), corresponding to MK_AUDIT and MK_BLOCKLIST_SUPPORT.
 DTrace-enabled session builds generate provider headers and rewrite program

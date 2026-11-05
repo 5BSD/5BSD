@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
-config_setting(name = "heimdal", flag_values = {"//tools/build/bazel/config:crypt": "true", "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:kerberos_support": "true", "//tools/build/bazel/config:mitkrb5": "false"})
+config_setting(name = "heimdal_flags", flag_values = {"//tools/build/bazel/config:crypt": "true", "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:mitkrb5": "false"})
+selects.config_setting_group(name = "heimdal", match_all = [":heimdal_flags", "//tools/build/bazel/config:kerberos_support_enabled"])
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({":heimdal": ["@platforms//:incompatible"], "//conditions:default": []})
 # Keep PAM before SSH, as in the maintained static-link dependency order.
 _DEPS = ["//lib/libpam/libpam:pam", "//secure/lib/libssh:ssh", "//lib/libutil:util"] + select({
