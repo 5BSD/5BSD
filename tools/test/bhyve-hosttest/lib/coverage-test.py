@@ -19,6 +19,52 @@ class Coverage(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.bin)+':'+os.environ['PATH'],
                         CASE_ROOT=str(self.root), L2_DEVICE_WORKDIR=str(self.root/'state'),
                         SRTOOL=os.environ.get('SRTOOL', str(KIT/'guest-bin/srtool')))
+    def test_virtqueue_aggregate_validation(self):
+        output = self.root / 'virtqueue.out'
+        good = 'SUBMIT ht-trace1 0 0 16\nCOMPLETE ht-trace1 0 0 16\n'
+        cases = [(good, True), (good.replace(' 0 0 ', ' 0 1 '), False),
+                 ('', False), (good.replace('ht-trace1', 'ht-trace2'), False),
+                 (good.replace(' 16', ' 0'), False),
+                 ('SUBMIT ht-trace1 0 0 16\n', False),
+                 (good + 'unexpected output\n', False),
+                 (good + 'TRANSPORT ht-trace1 0 0 1\n', False),
+                 (good.replace('COMPLETE ht-trace1 0 0', 'COMPLETE ht-trace1 0 1'), False)]
+        for text, expected in cases:
+            output.write_text(text)
+            result = subprocess.run(['sh', str(KIT/'lib/virtqueue-check.sh'), str(output)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode == 0, expected, text)
+
+        output.write_text(good.replace(' 0 0 ', ' 0 1 '))
+        result = subprocess.run(['sh', str(KIT/'lib/virtqueue-check.sh'), str(output), 'yes'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_local_virtqueue_mode_and_failures(self):
+        self.stub('timeout', 'shift 3; exec "$@"')
+        self.stub('dtrace', r'''
+case "${MODE:-}" in timeout) exit 124 ;; missing-probes) exit 1 ;; esac
+[ "${MODE:-}" = missing-workload ] || echo VIRTQUEUE-WORK-DONE
+case "${MODE:-}" in packed) ring=1 ;; *) ring=0 ;; esac
+case "${MODE:-}" in zero) count=0 ;; *) count=16 ;; esac
+echo "SUBMIT 0 $ring $count"
+[ "${MODE:-}" = missing-completion ] || echo "COMPLETE 0 $ring $count"
+case "${MODE:-}" in noise) echo unexpected ;; failed-exit) exit 1 ;; esac
+exit 0
+''')
+        for mode in ('', 'packed', 'timeout', 'missing-probes', 'missing-workload',
+                     'zero', 'missing-completion', 'noise', 'failed-exit'):
+            self.env['MODE'] = mode
+            p = self.run_script('virtqueue-local.sh', 'no')
+            self.assertEqual(p.returncode == 0, mode == '', (mode, p.stdout, p.stderr))
+        self.env['MODE'] = 'packed'
+        p = self.run_script('virtqueue-local.sh', 'yes')
+        self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+        self.assertEqual(p.stdout.strip(), 'VIRTQUEUE-LOCAL-OK packed=1')
+        self.env['MODE'] = ''
+        self.assertNotEqual(self.run_script('virtqueue-local.sh', 'yes').returncode, 0)
+        self.assertEqual(self.run_script('virtqueue-local.sh', 'invalid').returncode, 2)
+
     def stub(self, name, body):
         p = self.bin/name
         p.write_text('#!/bin/sh\n'+body+'\n')
@@ -47,7 +93,7 @@ echo 'HIT 9'
             self.assertNotEqual(p.returncode, 0, (mode, p.stdout))
     def test_session_deadline_preserves_child_failure(self):
         text = (KIT/'phases/hypertrace.sh').read_text()
-        helper = text.split('trace_session_finished()\n', 1)[1].split('for kind in exec exit;', 1)[0]
+        helper = text.split('trace_session_finished()\n', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
         helper = 'trace_session_finished()\n' + helper
         for handler, expected in (('sys.exit(0)', 0), ('sys.exit(139)', 139), ('None', 137)):
             code = 'import signal,sys,time; signal.signal(signal.SIGINT, lambda *a: '+handler+'); print("HIT 9", flush=True); time.sleep(30)'
@@ -57,7 +103,8 @@ echo 'HIT 9'
             self.assertEqual(status, expected, p.stderr)
             self.assertIn('HIT 9', p.stdout)
             (self.root/'case.rc').write_text(str(status))
-            verdict = subprocess.run(['sh', '-c', helper+'\nO="$1"; trace_session_finished case', 'fixture', str(self.root)])
+            verdict = subprocess.run(['sh', '-c', helper+'\nO="$1"; trace_session_finished case', 'fixture', str(self.root)], capture_output=True, text=True)
+            self.assertEqual(verdict.stderr, '')
             self.assertEqual(verdict.returncode == 0, expected == 0)
     def storage_stubs(self):
         self.stub('kenv', 'case "$2" in hosttest.role) echo l2 ;; *) echo storage ;; esac')

@@ -83,6 +83,27 @@ sr_net()
 	    check "$1-tcp" FAIL "guest->host=$g2h ($(grep SRTCP-SENT "$O/$1-g2h-guest.txt")) host->guest=$h2g (nc rc=$hrc; $(grep SRTCP-GOT "$O/$1-h2g-guest.txt"))"
 }
 
+# Packed runs must prove negotiation, rather than just preserve offered options.
+# Split runs can opt in with HT_SR_VIRTQUEUE=yes on an updated guest image.
+sr_virtqueue()
+{
+ case "${HT_SR_VIRTQUEUE:-no}" in yes|no) ;;
+ *) check "$1-virtqueue" FAIL "HT_SR_VIRTQUEUE must be yes or no"; return 1 ;; esac
+ case "${HT_ROOT_PACKED:-no}:${HT_SR_VIRTQUEUE:-no}" in
+ yes:*|no:yes) ;;
+ no:no) return 0 ;;
+ *) check "$1-virtqueue" FAIL "HT_SR_VIRTQUEUE must be yes or no"; return 1 ;;
+ esac
+ case "${HT_ROOT_PACKED:-no}" in yes) ring=1 ;; *) ring=0 ;; esac
+ if vm_cmd "$2" "sh /root/hosttest/virtqueue-local.sh ${HT_ROOT_PACKED:-no}" 30 > "$O/$1-virtqueue.txt" 2>&1 &&
+     grep -qx "VIRTQUEUE-LOCAL-OK packed=$ring" "$O/$1-virtqueue.txt"; then
+  check "$1-virtqueue" PASS "root queue submissions and completions; packed=$ring"
+ else
+  check "$1-virtqueue" FAIL "root queue activity/mode unverified; see $1-virtqueue.txt"
+  return 1
+ fi
+}
+
 # sr_verify TAG VM BEFORE_FILE HOST_T0 NCPU EXPECTED [full]
 #   After a restore: guest responds, memory holder digest, file digest,
 #   pinned per-vCPU workers, clock; "full" adds network and a write.
@@ -96,6 +117,7 @@ sr_verify()
 		return 1
 	fi
 	check "$tag-guest-responds" PASS "answered $((t1 - t0)) s after the restore started"
+	sr_virtqueue "$tag" "$v"
 	sleep 3
 	vm_cmd "$v" "$G read" 120 > "$O/$tag-read2.txt" 2>&1
 	set -- $(sr_hold_verdict "$O/$tag-read1.txt" "$exp")
@@ -144,6 +166,7 @@ if ! { vm_boot $vm "$disk" 1G 2 "hosttest.role=l1 hosttest.hostname=$vm hosttest
 	check boot-ht-sr1 FAIL "$(vm_diag $vm)"; phase_end; exit 1
 fi
 check boot-ht-sr1 PASS
+sr_virtqueue sr-baseline "$vm"
 vm_cmd $vm "$G cpuleaves" 60 > "$O/guest-cpuleaves.txt" 2>&1
 for l in 0x80000026 0x1a; do
 	set -- $(sr_leaf_verdict "$O/guest-cpuleaves.txt" $l)
@@ -243,6 +266,7 @@ disk4=$(vm_disk $vm)
 if vm_boot $vm "$disk4" 1G 4 "hosttest.role=l1 hosttest.hostname=$vm hosttest.inet=$GIP/24" "-s 4,virtio-net,$tap2" &&
     vm_wait $vm HOSTTEST-GUEST-READY ${HT_BOOT_TIMEOUT:-60}; then
 	check boot-ht-sr4 PASS
+	sr_virtqueue sr4-baseline "$vm"
 	vm_cmd $vm "$G prep $MB4 $SEED4; $G spin 4" 180 > "$O/sr4-prep.txt" 2>&1
 	vm_cmd $vm "$G read" 120 > "$O/sr4-busy1.txt" 2>&1
 	mkdir -p "$HT_CKP/B"

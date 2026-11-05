@@ -315,6 +315,11 @@ vm_disk()
 vm_boot()
 {
 	name=$1 disk=$2 mem=$3 cpus=$4 kenv=$5 extra=$6
+	case "${HT_ROOT_PACKED:-no}" in
+	no) root_disk_args="$disk" ;;
+	yes) root_disk_args="$disk,transport=modern,packed=true" ;;
+	*) echo "HT_ROOT_PACKED must be yes or no" >&2; return 2 ;;
+	esac
 	case "$name" in ht-*) ;; *) echo "VM names must start with ht-" >&2; return 2 ;; esac
 	date +%s > "$HT_WORK/$name.boot-start"
 	port=$(free_port 4700)
@@ -327,7 +332,7 @@ vm_boot()
 	HT_VMS="$HT_VMS $name"
 	at_cleanup "vm_destroy $name"
 	# Remembered for vm_restore: vCPUs, memory, slots (same devices).
-	printf '%s\n%s\n%s\n' "$cpus" "$mem" "-s 0,hostbridge -s 3,virtio-blk,$disk -s 6,virtio-rnd $extra -s 31,lpc" > "$HT_WORK/$name.args"
+	printf '%s\n%s\n%s\n' "$cpus" "$mem" "-s 0,hostbridge -s 3,virtio-blk,$root_disk_args -s 6,virtio-rnd $extra -s 31,lpc" > "$HT_WORK/$name.args"
 	# shellcheck disable=SC2086
 	vb_remaining=$(( ${HT_BOOT_TIMEOUT:-60} - $(date +%s) + $(cat "$HT_WORK/$name.boot-start") ))
 	[ "$vb_remaining" -gt 0 ] || { log "$name: boot deadline expired before loader"; return 1; }
@@ -335,7 +340,7 @@ vm_boot()
 	    { log "bhyveload $name failed"; vm_boot_diagnostics "$name"; return 1; }
 	# shellcheck disable=SC2086
 	bhyve -c "$cpus" -m "$mem" -H -w -D \
-	    -s 0,hostbridge -s 3,virtio-blk,"$disk" -s 6,virtio-rnd $extra \
+	    -s 0,hostbridge -s 3,virtio-blk,"$root_disk_args" -s 6,virtio-rnd $extra \
 	    -s 31,lpc -l "com1,tcp=127.0.0.1:$port" "$name" \
 	    >> "$HT_WORK/$name.bhyve.log" 2>&1 &
 	echo $! > "$HT_WORK/$name.pid"

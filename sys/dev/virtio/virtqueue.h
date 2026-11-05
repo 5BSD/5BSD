@@ -51,6 +51,8 @@ typedef enum {
 struct vq_alloc_info {
 	char		   vqai_name[VIRTQUEUE_MAX_NAME_SZ];
 	int		   vqai_maxindirsz;
+	/* Suppress SDT for tracing transports, before any queue traffic. */
+	bool		   vqai_no_sdt;
 	virtqueue_intr_t  *vqai_intr;
 	void		  *vqai_intr_arg;
 	struct virtqueue **vqai_vq;
@@ -59,6 +61,7 @@ struct vq_alloc_info {
 #define VQ_ALLOC_INFO_INIT(_i,_nsegs,_intr,_arg,_vqp,_str,...) do {	\
 	snprintf((_i)->vqai_name, VIRTQUEUE_MAX_NAME_SZ, _str,		\
 	    ##__VA_ARGS__);						\
+	(_i)->vqai_no_sdt = false;				\
 	(_i)->vqai_maxindirsz = (_nsegs);				\
 	(_i)->vqai_intr = (_intr);					\
 	(_i)->vqai_intr_arg = (_arg);					\

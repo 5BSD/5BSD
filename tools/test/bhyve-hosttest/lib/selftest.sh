@@ -560,7 +560,9 @@ printf '#!/bin/sh\ntrap "" TERM\necho "stub bhyve: no guest entry" >&2\nwhile :;
 printf '#!/bin/sh\n[ "${STUB_LOAD_HANG:-no}" = yes ] || exit 0\ntrap "" TERM\nwhile :; do sleep 1; done\n' > "$SB/bin/bhyveload"
 for c in bhyvectl kldstat; do printf '#!/bin/sh\nexit 0\n' > "$SB/bin/$c"; done
 for c in sysctl procstat top dmesg service; do printf '#!/bin/sh\necho "stub %s $*"\n' $c > "$SB/bin/$c"; done
-printf '#!/bin/sh\n: > "$2"\nexec cat "$1"\n' > "$SB/bin/l2-console"
+# A console reader remains alive after readiness; an empty regular file
+# followed by cat exited immediately and raced the readiness check.
+printf '#!/bin/sh\n: > "$2"\nexec tail -f "$1"\n' > "$SB/bin/l2-console"
 chmod +x "$SB/bin/"*; : > "$SB/con"; : > "$SB/vmmctl"
 l2stub() { # OUT SCRIPT [VAR=VALUE...]
 	o=$1 s=$2; shift 2
