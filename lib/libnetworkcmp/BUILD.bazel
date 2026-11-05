@@ -87,6 +87,7 @@ cc_library(name = "test_source_headers", hdrs = ["networkcmp_probes.h"],
 load("//lib/libnetworkcmp/tests:installation.bzl", TEST_MANIFESTS = "MANIFESTS", TEST_DIRECTORIES = "DIRECTORIES")
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": TEST_MANIFESTS, "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnetworkcmp"]}' for d in ["/usr/share/licenses/libnetworkcmp", "/usr/share/licenses/libnetworkcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnetworkcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnetworkcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}),
     mtree_specs = {

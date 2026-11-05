@@ -7,8 +7,8 @@ The fresh maintained Make plan at
 selected immediate SUBDIR entries after removing .WAIT barriers. These entries
 include actual library producers, internal libraries with no installed archive,
 header/manual-only owners, recursion wrappers and test hierarchies. This is
-configuration evidence, not a count of completed libraries. There is currently
-no accepted complete lib production parent or full installed lib test hierarchy.
+configuration evidence, not a count of completed libraries. The source-owned AMD64 production parent below now replaces the explicit leaf
+request for this profile. Full installed lib tests and other ABIs remain open.
 
 Seven known manifest-to-production-archive gaps now build and pass bounded
 qualification; see LIBRARY-PRODUCTION-ARCHIVES-QUALIFICATION.md. Their archive
@@ -57,6 +57,52 @@ files; libelftc's manuals remain a distinct installed contribution. This request
 is a passing configured combined build, not yet a source-owned lib parent or
 accepted complete original installation ownership. See COMPLETION-PLAN.md for the next usr.sbin batch and remaining
 option-dependent parent integration.
+
+## Source-owned production parent (2026-11-05)
+
+`lib/BUILD.bazel` now declares production library selection using native labels
+and configuration selects. Make remains an independent qualification oracle;
+it does not supply this parent's graph at evaluation or execution time.
+`//lib:production_libraries` builds installation contributions and internal
+regular/PIE archives. Also select `//lib:production_installation_archives`
+in format-5 qualification requests to capture installation request and directory
+metadata output groups. A plain filegroup does not forward those groups.
+
+The parent explicitly rejects installed tests and non-AMD64 platforms while
+those closures remain incomplete. Existing production endpoints grant only the
+required `//lib:__pkg__` access where previously private. Header and implementation
+visibility retain their existing scopes. FDT also declares its missing PIE archive.
+
+`bazel-lib-parent-native-r4-20261105` passes the normal frontend and two selected
+tests. Its `parent-output-comparison.json` verifies all 720 unique logical output
+paths and captured payload hashes against the accepted explicit r2 library
+aggregate, with no missing, extra or changed output. The maintained artifact
+resolver binds immutable captures; this is not independent Make payload parity.
+
+`bazel-lib-parent-selection-r4-20261105/review.json` compares actual configured
+parent edges with independent Make recursion for six profiles: default (172
+owners), disabled test support (169), disabled blacklist (170), disabled
+netgraph/Bluetooth (167), optional libraries (182), and a reduced profile (151).
+These are selection analyses, not alternate-profile compilation or runtime.
+The comparison caught and corrected GOOGLETEST's dependency on TESTS_SUPPORT in
+the shared configuration definitions, matching src.opts.mk. Earlier failed
+audits remain retained, including harness environment/canonical-label errors and
+the real GoogleTest mismatch. No failed result is accepted.
+
+The final `bazel-lib-parent-native-r5-20261105` rerun passes after that option
+correction (both selected tests cached). Its parent-output comparison preserves
+all 720 baseline outputs and adds exactly the two explicitly requested FDT
+archives. Maintained `elf-artifact-check.py` comparisons against the fresh
+`bazel-lib-parent-fdt-make-r1-20261105` regular/PIE archives pass member order and
+per-member symbols; they do not establish code-byte or runtime equivalence.
+Evidence is `fdt-regular-comparison.json` and `fdt-pie-comparison.json` in r5.
+`unsupported-tests.json` records an actual explicit build request with tests=true
+rejected as incompatible; no production subset is accepted for that request.
+
+Explicit settings now include blacklist, bhyve, cuse, gpio, pmc, openmp and fdt;
+FDT defaults off for this initial AMD64 parent. Generic format-5 dispatch already
+accepts these labels/settings. No C dispatcher, Make backend, SDK interface,
+signing or publication interface change is needed. Make remains default.
 
 ## Concrete remaining review queue
 

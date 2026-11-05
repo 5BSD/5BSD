@@ -92,6 +92,24 @@ See LIB-FAMILY-CLOSURE.md. This is another completed contribution, not complete
 lib-parent selection or world acceptance. Continue explicit configured parent
 composition without treating internal-only archives as installed files.
 
+## Native library parent checkpoint (2026-11-05)
+
+The source-owned AMD64 production parent now declares library contributions and
+internal regular/PIE outputs with native labels/selects. The normal r4 build
+passes its two selected tests; all 720 logical output paths and captured hashes
+match the accepted explicit r2 library aggregate. Six actual configured selection
+analyses match Make recursion (172/169/170/167/182/151 owners). The disabled-test-
+support case caught and corrected the shared GOOGLETEST option dependency.
+The final r5 normal rerun passes with both selected tests cached; its regular/PIE
+FDT archives match Make member order and symbols, and an explicit tests=true
+build is rejected. See LIB-FAMILY-CLOSURE.md for endpoints and evidence.
+
+Continue installed-library ownership/payload/test closure and remaining native
+world parents, including usr.sbin. The production library parent explicitly
+rejects installed tests and other ABIs; this does not complete world/pkgbase,
+bootstrap/runtime/performance gates. Make remains default. Generic format-5
+supports this parent without a C dispatcher or signing/publication schema change.
+
 ## Complete selected-family construction requests (2026-11-05)
 
 A fresh maintained BuildEnvironment query of lib's production recursion, using

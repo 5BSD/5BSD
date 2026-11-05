@@ -2,7 +2,14 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # Userland INTERNALLIB; standalone loader sources/options are a separate graph.
-cc_library(name = "fdt", srcs = ["//sys/contrib/libfdt:" + source for source in ['fdt.c', 'fdt_addresses.c', 'fdt_empty_tree.c', 'fdt_overlay.c', 'fdt_ro.c', 'fdt_rw.c', 'fdt_strerror.c', 'fdt_sw.c', 'fdt_wip.c', 'libfdt_internal.h']],
+_SOURCES = ["//sys/contrib/libfdt:" + source for source in ['fdt.c', 'fdt_addresses.c', 'fdt_empty_tree.c', 'fdt_overlay.c', 'fdt_ro.c', 'fdt_rw.c', 'fdt_strerror.c', 'fdt_sw.c', 'fdt_wip.c', 'libfdt_internal.h']]
+cc_library(name = "fdt", srcs = _SOURCES,
     deps = ["//sys/contrib/libfdt:headers"], linkstatic = True,
     visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":fdt"], visibility = ["//visibility:public"])
+
+# bsd.lib.mk builds the internal PIE archive independently of the normal one.
+cc_library(name = "fdt_pie", srcs = _SOURCES,
+    deps = ["//sys/contrib/libfdt:headers"], copts = ["-fPIE", "-DPIC"],
+    linkstatic = True, visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":fdt_pie"], visibility = ["//visibility:public"])

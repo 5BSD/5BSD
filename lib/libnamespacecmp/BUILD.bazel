@@ -42,6 +42,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 # Library-only payload; maintained test installation is added separately.
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"],
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnamespacecmp"]}' for d in ["/usr/share/licenses/libnamespacecmp", "/usr/share/licenses/libnamespacecmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnamespacecmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnamespacecmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
     mtree_specs = {

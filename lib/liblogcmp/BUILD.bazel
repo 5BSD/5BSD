@@ -86,6 +86,7 @@ cc_library(name = "test_private_headers", hdrs = ["logcmp_wakeup.h", "logcmp_pro
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/liblogcmp/tests:install_logcmp_test", "//lib/liblogcmp/tests:install_client_lifecycle_test", "//lib/liblogcmp/tests:install_extra"], "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp"]}' for d in ["/usr/share/licenses/liblogcmp", "/usr/share/licenses/liblogcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/share/licenses/liblogcmp-tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-tests"]}',

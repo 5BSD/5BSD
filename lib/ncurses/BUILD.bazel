@@ -2,6 +2,7 @@
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = ["//lib/ncurses/tinfo:library_manual_manifest", "//lib/ncurses/tinfo:pkgconfig_manifest"] + ["//lib/ncurses/" + lib + ":install_manifest" for lib in ["ncurses", "form", "menu", "panel"]],
     directories = {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ncurses","dbg"]}' for directory in ["/usr/lib/debug/lib", "/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
     mtree_specs = {

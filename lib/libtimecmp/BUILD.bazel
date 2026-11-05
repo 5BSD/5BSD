@@ -81,6 +81,7 @@ bsd_install_archive(
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libtimecmp/tests:install_protocol_test", "//lib/libtimecmp/tests:install_extra"], "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtimecmp"]}' for d in ["/usr/share/licenses/libtimecmp", "/usr/share/licenses/libtimecmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtimecmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtimecmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/tests/lib/libtimecmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtimecmp-tests"]}',

@@ -65,6 +65,7 @@ bsd_install_archive(
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libsysctlcmp/tests:install_sysctlcmp_test", "//lib/libsysctlcmp/tests:install_client_strings_test", "//lib/libsysctlcmp/tests:install_extra"], "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp"]}' for d in ["/usr/share/licenses/libsysctlcmp", "/usr/share/licenses/libsysctlcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/share/licenses/libsysctlcmp-tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests"]}',

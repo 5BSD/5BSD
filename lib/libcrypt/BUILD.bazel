@@ -25,6 +25,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libcrypt/tests:install_crypt_test", "//lib/libcrypt/tests:install_crypt_tests", "//lib/libcrypt/tests:install_extra"], "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libcrypt"]} | {"/usr/tests/lib/libcrypt": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {}}),
     mtree_specs = {

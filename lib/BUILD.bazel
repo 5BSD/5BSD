@@ -1,0 +1,233 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+
+# Source-owned lib/Makefile production selection. Edges on the actual producers
+# supply scheduling; Make's bootstrap .WAIT barriers are not a second graph.
+# Internal libraries build archives and do not acquire installed payloads.
+_ARCHIVES = [
+    "//lib/csu:production_installation_archives",
+    "//lib/libc:install_archive",
+    "//lib/libc_nonshared:production_install_archive",
+    "//lib/libcompiler_rt:install_archive",
+    "//lib/libc++:install_archive",
+    "//lib/libc++experimental:install_archive",
+    "//lib/libcxxrt:install_archive",
+    "//lib/libelf:install_archive",
+    "//lib/libssp:install_archive",
+    "//lib/libssp_nonshared:install_archive",
+    "//lib/libsys:install_archive",
+    "//lib/msun:install_archive",
+    "//lib/libsqlite3:install_archive",
+    "//lib/geom:installation_archives",
+    "//lib/lib9p:install_archive",
+    "//lib/libabsl:install_archive",
+    "//lib/libalias:installation_archives",
+    "//lib/libarchive:production_install_archive",
+    "//lib/libauditcmp:install_archive",
+    "//lib/libbegemot:install_archive",
+    "//lib/libblocksruntime:install_archive",
+    "//lib/libbsdconf:install_archive",
+    "//lib/libbsddialog:install_archive",
+    "//lib/libbsdstat:install_archive",
+    "//lib/libbsm:install_archive",
+    "//lib/libbz2:install_archive_bundle",
+    "//lib/libcalendar:install_archive",
+    "//lib/libcam:install_archive",
+    "//lib/libcapability:install_archive",
+    "//lib/libcapbundle:install_archive",
+    "//lib/libcapimage:install_archive",
+    "//lib/libcache:install_archive",
+    "//lib/libcapreclaim:install_archive",
+    "//lib/libcryptodesc:install_archive",
+    "//lib/libcryptocmp:install_archive",
+    "//lib/libdevicecmp:install_archive",
+    "//lib/libcapsicum:production_install_archive",
+    "//lib/libcasper:production_installation_archives",
+    "//lib/libchannel:install_archive",
+    "//lib/libcompat:install_archive",
+    "//lib/libcrypt:install_archive",
+    "//lib/libdevctl:install_archive",
+    "//lib/libdevdctl:install_archive",
+    "//lib/libdevinfo:install_archive",
+    "//lib/libdevstat:install_archive",
+    "//lib/libdl:install_archive",
+    "//lib/libdwarf:install_archive",
+    "//lib/libedit:install_archive",
+    "//lib/libelftc:production_install_archive",
+    "//lib/libevent1:install_archive",
+    "//lib/libexecinfo:install_archive",
+    "//lib/libexpat:production_install_archive",
+    "//lib/libfetch:install_archive",
+    "//lib/libfidl:install_archive",
+    "//lib/libgcc_eh:install_archive",
+    "//lib/libgcc_s:install_archive",
+    "//lib/libgcc_s_asneeded:install_archive",
+    "//lib/libgeom:install_archive",
+    "//lib/libipsec:install_archive",
+    "//lib/libjail:install_archive",
+    "//lib/libkiconv:install_archive",
+    "//lib/libkldelf:install_archive",
+    "//lib/libkvm:install_archive",
+    "//lib/liblogcmp:install_archive",
+    "//lib/libnotify:install_archive",
+    "//lib/liblzma:production_install_archive",
+    "//lib/libmemstat:install_archive",
+    "//lib/libmd:production_install_archive",
+    "//lib/libmt:install_archive",
+    "//lib/lib80211:install_archive",
+    "//lib/libnghttp2:install_archive",
+    "//lib/libnetmap:install_archive",
+    "//lib/libnetworkcmp:install_archive",
+    "//lib/libsysctlcmp:install_archive",
+    "//lib/libtimecmp:install_archive",
+    "//lib/libpowercmp:install_archive",
+    "//lib/libextensioncmp:install_archive",
+    "//lib/libfilesystemcmp:install_archive",
+    "//lib/libnamespacecmp:install_archive",
+    "//lib/libvmcmp:install_archive",
+    "//lib/libnv:install_archive",
+    "//lib/liboes:install_archive",
+    "//lib/libotelexport:install_archive",
+    "//lib/protobuf:production_installation_archives",
+    "//lib/libcapsulert:install_archive",
+    "//lib/libpam:installation_archives",
+    "//lib/libpathconv:install_archive",
+    "//lib/libpcap:install_archive",
+    "//lib/libpjdlog:install_archive",
+    "//lib/libproc:production_install_archive",
+    "//lib/libprocstat:production_install_archive",
+    "//lib/libregex:install_archive",
+    "//lib/librpcsvc:install_archive",
+    "//lib/librss:install_archive",
+    "//lib/librt:install_archive",
+    "//lib/librtld_db:production_install_archive",
+    "//lib/libsbuf:install_archive",
+    "//lib/libservice:install_archive",
+    "//lib/libshmring:install_archive",
+    "//lib/libstdbuf:install_archive",
+    "//lib/libstdthreads:install_archive",
+    "//lib/libsysdecode:install_archive",
+    "//lib/libtacplus:install_archive",
+    "//lib/libthr:install_archive",
+    "//lib/libthread_db:production_install_archive",
+    "//lib/libtrustedzfs:install_archive",
+    "//lib/libbsdfilesystem:install_archive",
+    "//lib/libucl:install_archive",
+    "//lib/libufs:install_archive",
+    "//lib/libulog:install_archive",
+    "//lib/libutil:install_archive",
+    "//lib/libutil++:install_archive",
+    "//lib/libuvmem:install_archive",
+    "//lib/libwrap:install_archive",
+    "//lib/libxo:production_installation_archives",
+    "//lib/liby:install_archive",
+    "//lib/libyaml:install_archive",
+    "//lib/libz:production_install_archive",
+    "//lib/libzstd:production_install_archive",
+    "//lib/ncurses:install_archive",
+    "//lib/nss_tacplus:install_archive",
+]
+_BUILD_ONLY = [
+    "//lib/libder:static_archive",
+    "//lib/libder:pie_archive",
+    "//lib/libdiff:static_archive",
+    "//lib/libdiff:pie_archive",
+    "//lib/libelftc:static_archive",
+    "//lib/libelftc:pie_archive",
+    "//lib/libifconfig:static_archive",
+    "//lib/libifconfig:pie_archive",
+    "//lib/libiscsiutil:static_archive",
+    "//lib/libiscsiutil:pie_archive",
+    "//lib/liblua:static_archive",
+    "//lib/liblua:pie_archive",
+    "//lib/libnetbsd:static_archive",
+    "//lib/libnetbsd:pie_archive",
+    "//lib/libnvmf:static_archive",
+    "//lib/libnvmf:pie_archive",
+    "//lib/libopenbsd:static_archive",
+    "//lib/libopenbsd:pie_archive",
+    "//lib/libotelexport:static_archive",
+    "//lib/libotelexport:pie_archive",
+    "//lib/libutil++:static_archive",
+    "//lib/libutil++:pie_archive",
+]
+
+# Native Clang SDK only; these production parents are not cross-ABI accepted.
+selects.config_setting_group(name = "llvm_libraries", match_any = [
+    "//tools/build/bazel/config:clang_enabled", "//tools/build/bazel/config:lld_enabled",
+    "//tools/build/bazel/config:lldb_enabled", "//tools/build/bazel/config:llvm_binutils_enabled",
+])
+config_setting(name = "blacklist_libraries", flag_values = {
+    "//tools/build/bazel/config:blacklist": "true", "//tools/build/bazel/config:blocklist": "true",
+})
+config_setting(name = "bluetooth_libraries", flag_values = {
+    "//tools/build/bazel/config:bluetooth": "true", "//tools/build/bazel/config:netgraph": "true",
+})
+config_setting(name = "heimdal_libraries", flag_values = {
+    "//tools/build/bazel/config:kerberos": "true", "//tools/build/bazel/config:mitkrb5": "false",
+    "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:crypt": "true",
+})
+config_setting(name = "radius_libraries", flag_values = {"//tools/build/bazel/config:radius_support": "true"})
+config_setting(name = "fido_libraries", flag_values = {
+    "//tools/build/bazel/config:usb": "true", "//tools/build/bazel/config:openssh": "true",
+})
+config_setting(name = "virtual_audio_libraries", flag_values = {
+    "//tools/build/bazel/config:cuse": "true", "//tools/build/bazel/config:sound": "true",
+})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:clang_enabled": ["//lib/libclang_rt:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":llvm_libraries": ["//lib/clang:production_installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bearssl_enabled": ["//lib/libbearssl:install_archive", "//lib/libsecureboot:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":blacklist_libraries": ["//lib/libblacklist:install_archive", "//lib/libblocklist:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":bluetooth_libraries": ["//lib/libble:install_archive", "//lib/libbluetooth:install_archive", "//lib/libmesh:install_archive", "//lib/libsdp:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bsnmp_enabled": ["//lib/libbsnmp:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:audit_enabled": ["//lib/libauditd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:cuse_enabled": ["//lib/libcuse:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:dtrace_enabled": ["//lib/libtracecmp:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:file_enabled": ["//lib/libmagic:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:gpio_enabled": ["//lib/libgpio:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:kerberos_enabled": ["//lib/librpcsec_gss:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":heimdal_libraries": ["//lib/libgssapi:install_archive", "//lib/libcom_err:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:iconv_enabled": ["//lib/libiconv_modules:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ldns_enabled": ["//lib/libldns:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pkgconf_enabled": ["//lib/libpkgconf:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:stats_enabled": ["//lib/libstats:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:efi_enabled": ["//lib/libefivar:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:googletest_enabled": ["//lib/googletest:production_install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:netgraph_enabled": ["//lib/libnetgraph:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pmc_enabled": ["//lib/libipt:install_archive", "//lib/libpmc:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bhyve_enabled": ["//lib/libvmmapi:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:openmp_enabled": ["//lib/libomp:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":fido_libraries": ["//lib/libcbor:install_archive", "//lib/libfido2:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:openssl_enabled": ["//lib/libmp:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":radius_libraries": ["//lib/libradius:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:sendmail_enabled": ["//lib/libmilter:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:sound_enabled": ["//lib/libmixer:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":virtual_audio_libraries": ["//lib/libsamplerate:install_archive", "//lib/virtual_oss:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:tests_support_enabled": ["//lib/atf:production_installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:unbound_enabled": ["//lib/libunbound:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:usb_enabled": ["//lib/libusbhid:install_archive", "//lib/libusb:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ofed_enabled": ["//lib/ofed:installation_archives"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:veriexec_enabled": ["//lib/libveriexec:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ["//lib/libbe:install_archive"], "//conditions:default": []})
+# AMD64 vgl is selected independently of the optional feature knobs.
+_ARCHIVES = _ARCHIVES + ["//lib/libvgl:install_archive"]
+_BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:toolchain_enabled": ["//lib/libpe:static_archive", "//lib/libpe:pie_archive"], "//conditions:default": []})
+_BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:fdt_enabled": ["//lib/libfdt:static_archive", "//lib/libfdt:pie_archive"], "//conditions:default": []})
+_BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:pmc_enabled": ["//lib/libpmcstat:static_archive", "//lib/libpmcstat:pie_archive"], "//conditions:default": []})
+_BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:sendmail_enabled": ["//lib/libsm:static_archive", "//lib/libsm:pie_archive", "//lib/libsmdb:static_archive", "//lib/libsmdb:pie_archive", "//lib/libsmutil:static_archive", "//lib/libsmutil:pie_archive"], "//conditions:default": []})
+_BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:telnet_enabled": ["//lib/libtelnet:static_archive", "//lib/libtelnet:pie_archive"], "//conditions:default": []})
+_BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:tests_support_enabled": ["//lib/liblutok:static_archive", "//lib/liblutok:pie_archive"], "//conditions:default": []})
+
+# Existing children contain incomplete installed-test and other-ABI closures.
+# Do not silently present a production-only subset as full installation.
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+})
+bsd_install_archive_set(name = "production_installation_archives", archives = _ARCHIVES,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+filegroup(name = "production_libraries", srcs = [":production_installation_archives"] + _BUILD_ONLY,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# A full installed test hierarchy is not provided by these production targets.

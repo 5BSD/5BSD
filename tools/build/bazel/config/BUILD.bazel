@@ -172,7 +172,7 @@ string_flag(name = "magic_path", build_setting_default = "/usr/share/misc",
 
 # Controls GoogleTest-dependent installation alongside the general tests flag.
 bool_flag(name = "googletest", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "googletest_enabled", flag_values = {":googletest": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "googletest_requested", flag_values = {":googletest": "true"})
 
 # Qualification-only selection; live tracing and resource gates remain open.
 bool_flag(name = "experimental_dtrace_section_archives", build_setting_default = False,
@@ -279,7 +279,7 @@ config_setting(name = "acct_enabled", flag_values = {":acct": "true"}, visibilit
 bool_flag(name = "autofs", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "autofs_enabled", flag_values = {":autofs": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "blocklist", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "blocklist_enabled", flag_values = {":blocklist": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "blocklist_enabled", flag_values = {":blocklist": "true", ":blacklist": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "bluetooth", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "bluetooth_enabled", flag_values = {":bluetooth": "true", ":netgraph": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "bootparamd", build_setting_default = False, visibility = ["//visibility:public"])
@@ -360,6 +360,8 @@ string_flag(name = "tests_support", build_setting_default = "auto", values = ["a
 config_setting(name = "tests_support_requested", flag_values = {":tests_support": "yes"})
 config_setting(name = "tests_support_default", flag_values = {":tests_support": "auto", ":tests": "true"})
 selects.config_setting_group(name = "tests_support_enabled", match_any = [":tests_support_requested", ":tests_support_default"], visibility = ["//visibility:public"])
+# src.opts.mk disables GOOGLETEST when TESTS_SUPPORT is disabled.
+selects.config_setting_group(name = "googletest_enabled", match_all = [":googletest_requested", ":tests_support_enabled"], visibility = ["//visibility:public"])
 
 # Runtime Perl interpreter for installed TAP tests (tap.test.mk default).
 string_flag(name = "tap_perl_interpreter", build_setting_default = "/usr/local/bin/perl", visibility = ["//visibility:public"])
@@ -712,3 +714,19 @@ bool_flag(name = "toolchain", build_setting_default = True, visibility = ["//vis
 config_setting(name = "toolchain_enabled", flag_values = {":toolchain": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "vt", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "vt_enabled", flag_values = {":vt": "true"}, visibility = ["//visibility:public"])
+
+# lib/Makefile parent selection; FDT defaults off on the initial AMD64 parent.
+bool_flag(name = "blacklist", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "blacklist_enabled", flag_values = {":blacklist": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "bhyve", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "bhyve_enabled", flag_values = {":bhyve": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "cuse", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "cuse_enabled", flag_values = {":cuse": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "gpio", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "gpio_enabled", flag_values = {":gpio": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "pmc", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pmc_enabled", flag_values = {":pmc": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "openmp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "openmp_enabled", flag_values = {":openmp": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "fdt", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "fdt_enabled", flag_values = {":fdt": "true"}, visibility = ["//visibility:public"])

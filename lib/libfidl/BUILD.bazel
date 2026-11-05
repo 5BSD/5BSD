@@ -75,6 +75,7 @@ bsd_install_archive(
 config_setting(name = "gtest_install_enabled", flag_values = {"//tools/build/bazel/config:tests": "true", "//tools/build/bazel/config:googletest": "true"})
 bsd_install_archive(
     name = "install_archive",
+    visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libfidl/tests:install_" + name for name in ["c_binding_test", "c_wire_test", "sync_call_bench", "ipc_bench", "extra"]], "//conditions:default": []}) + select({":gtest_install_enabled": ["//lib/libfidl/tests:install_runtime_test"], "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} |
         {"/usr/include/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dev"]}' for d in FIDL_INCLUDE_DIRECTORIES} |
