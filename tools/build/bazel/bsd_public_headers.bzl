@@ -3,7 +3,7 @@
 load(":bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
 load(":bsd_install_archive.bzl", "bsd_install_archive")
 
-def public_header_installation(name, files, directory, create_directory = False, directory_tags = []):
+def public_header_installation(name, files, directory, create_directory = False, directory_tags = [], enabled = "//tools/build/bazel/config:includes_enabled"):
     if directory.startswith("/") or (directory and any([p in ["", ".", ".."] for p in directory.split("/")])):
         fail("public header directory must be a normalized relative path")
     prefix = "/usr/include" + ("/" + directory if directory else "")
@@ -19,7 +19,7 @@ def public_header_installation(name, files, directory, create_directory = False,
             owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
         entries.append(":" + item)
     bsd_install_manifest(name = name + "_manifest", entries = select({
-        "//tools/build/bazel/config:includes_enabled": entries, "//conditions:default": [],
+        enabled: entries, "//conditions:default": [],
     }), visibility = ["//include:__pkg__"])
     # Companion architecture Makefiles create their directory in beforeinstall,
     # independently of the includes option. Ordinary groups rely on mtree.

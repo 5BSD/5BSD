@@ -784,3 +784,8 @@ config_setting(name = "sharedocs_enabled", flag_values = {":sharedocs": "true"},
 
 bool_flag(name = "includes", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "includes_enabled", flag_values = {":includes": "true"}, visibility = ["//visibility:public"])
+
+# Optional include groups follow the maintained include/Makefile selections.
+config_setting(name = "includes_iconv_enabled", flag_values = {":includes": "true", ":iconv": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "includes_hesiod_enabled", flag_values = {":includes": "true", ":hesiod": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "includes_legacy_gss_enabled", flag_values = {":includes": "true", ":kerberos": "true", ":mitkrb5": "false"}, visibility = ["//visibility:public"])

@@ -37,3 +37,6 @@ amd64_generic_kernel_objects(name = "generic_peripheral_devices_dttransport", sr
 # Original -I sys/dev/dttransport userland include, separate from kernel contexts.
 cc_library(name = "userland_headers", hdrs = ["dttransport.h"], strip_include_prefix = ".",
     visibility = ["//usr.sbin/dtraced:__pkg__"])
+
+# Public include installation consumes the maintained source header.
+exports_files(["dttransport.h"], visibility = ["//include:__pkg__"])

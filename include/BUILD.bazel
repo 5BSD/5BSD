@@ -74,3 +74,6 @@ load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
 exports_files(["mk-osreldate.sh"])
 bsd_osreldate(name = "osreldate", output = "generated/osreldate.h", visibility = ["//visibility:public"])
 public_header_installation(name = "osreldate_install", files = {":osreldate": "osreldate.h"}, directory = "")
+
+load(":root_installation.bzl", "root_header_installation")
+root_header_installation()

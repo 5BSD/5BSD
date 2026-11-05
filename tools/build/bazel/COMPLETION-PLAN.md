@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Ordinary public include checkpoint (2026-11-05)
+
+Native source-owned declarations now install the 100 common ordinary public
+headers and configured iconv, Hesiod and legacy GSS contributions. Default and
+alternate selections match full independent Make include stages: 101 and 103
+exact payloads with clibs/dev metadata. Includes-disabled is checked against its
+own original profile. The common archive remains identical across optional
+selection changes. See ROOT-PUBLIC-HEADERS-QUALIFICATION.md. Default cross-capture
+namespace evidence is 1174 archives and 31093 non-directory paths without
+conflicts; empty optional archives are included, not program/library counts.
+Continue kernel/architecture public header groups and aliases, then complete
+include/world composition and installed tests. Full installation/debug/pkgbase,
+bootstrap, cross/runtime/resource gates remain open. Make stays production/default;
+BIP stays excluded.
+
 ## Native osreldate generation checkpoint (2026-11-05)
 
 The public OS version header now builds with declared source/copyright inputs

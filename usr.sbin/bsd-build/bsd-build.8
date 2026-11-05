@@ -6866,3 +6866,10 @@ The maintained generator provides a stateless explicit-input stdout mode;
 normal Make construction retains file output.
 Version and copyright queries avoid unrelated source or clock discovery when
 explicit minimum inputs are supplied.
+
+.Pp
+The native ordinary public header endpoint uses source-owned lists and selects
+iconv, Hesiod and legacy GSS headers from configured source options.
+Disabling includes also disables optional header contributions.
+This endpoint is separate from generated version headers, kernel header groups
+and compatibility aliases; it does not establish complete include/world parity.

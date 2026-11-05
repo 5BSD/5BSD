@@ -7,3 +7,6 @@ exports_files(["vis.c", "unvis.c"], visibility = ["//lib/libc/gen:__pkg__"])
     ('libc_manual_unvis.3', 'unvis.3'),
     ('libc_manual_vis.3', 'vis.3'),
 ]]
+
+# Public include installation consumes the maintained source header.
+exports_files(["vis.h"], visibility = ["//include:__pkg__"])
