@@ -72,3 +72,8 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     epoch = 0, python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['gzip.c', 'gzipstream_trace.h'],
+    textual_hdrs = ['unbzip2.c', 'zuncompress.c', 'unpack.c', 'unxz.c', 'unlz.c', 'unzstd.c'],
+    object_names = ['gzip.o'], deps = ['//lib/libbz2:headers', '//contrib/xz:headers', '//sys/contrib/zstd:headers'], warns = 6, defines = [])

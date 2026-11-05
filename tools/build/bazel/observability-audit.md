@@ -21,6 +21,27 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Eight rescue text/compression/configuration variants (2026-11-05)
+
+Sed/gzip/bzip2/mt/md5/ldconfig/sysctl/fsck_msdosfs expand the core to 65.
+Sysctl preserves sysctltool; FAT checking preserves fatcheck and its static anchor.
+All FAT probe sites belong to actual check.o, not main.o. Maintained ET_REL
+comparison verifies source-bound sites, schemas, functions and actual path hashes,
+including separately qualified sysctl diagnostic filename controls. Raw DOF/debug
+encoding and live firing remain open. Gzip retains its original RESCUE provider
+exclusion; md5 omits original Casper/Capsicum definitions under RESCUE. Other
+recipes in this batch declare no direct provider to add during migration.
+
+The static executable contains native libpthread initializer/create symbols;
+source-owned library probes remain intact. Host wrappers disable DOF startup and
+perform private compression/text/FAT checks plus read-only sysctl lookup. These
+do not qualify live library/provider registration, thread stress or audit delivery.
+Review mutable sysctl, linker hints and tape operations in dedicated privileged
+runtime tests. Ordinary gzip still has its existing SDK DTrace/drti generator
+path; review it against the qualified native bootstrap before complete source
+build acceptance. Rescue gzip deliberately does not exercise that producer.
+See RESCUE-SIXTY-FIVE-PROGRAM-QUALIFICATION.md for accepted/rejected evidence.
+
 ## Eight rescue filesystem variants (2026-11-05)
 
 Clri/fsirand/dumpfs/tunefs/newfs/fsck/newfs_msdos/umount expand the core to 57.

@@ -24,7 +24,7 @@ _COPTS = ['-pipe', '-fno-common', '-std=gnu17', '-fvisibility=hidden', '-Wno-for
     ]
 ]
 _GROUPS = [":common_objects", ":pool_objects", ":huf_objects"]
-bsd_component_archive(name = "static_archive", groups = _GROUPS, object_order = _ORDER)
+bsd_component_archive(name = "static_archive", groups = _GROUPS, visibility = ["//rescue/rescue:__pkg__"], object_order = _ORDER)
 bsd_component_archive(name = "pic_archive", groups = _GROUPS, pic = True,
     object_order = ['entropy_common.pic.o', 'error_private.pic.o', 'fse_decompress.pic.o', 'pool.pic.o', 'threading.pic.o', 'xxhash.pic.o', 'zstd_common.pic.o', 'fse_compress.pic.o', 'huf_compress.pic.o', 'zstd_compress.pic.o', 'zstd_compress_literals.pic.o', 'zstd_compress_sequences.pic.o', 'zstd_compress_superblock.pic.o', 'zstd_preSplit.pic.o', 'zstdmt_compress.pic.o', 'huf_decompress.pic.o', 'zstd_ddict.pic.o', 'zstd_decompress.pic.o', 'zstd_decompress_block.pic.o', 'zbuff_common.pic.o', 'zbuff_compress.pic.o', 'zbuff_decompress.pic.o', 'cover.pic.o', 'divsufsort.pic.o', 'zdict.pic.o', 'zstd_fast.pic.o', 'zstd_lazy.pic.o', 'zstd_ldm.pic.o', 'zstd_opt.pic.o', 'zstd_double_fast.pic.o', 'debug.pic.o', 'hist.pic.o', 'fastcover.pic.o'] + select({":target_riscv64": ["zstd_kfreebsd.pic.o"], "//conditions:default": []}))
 cc_import(name = "archive_link", static_library = ":static_archive", pic_static_library = ":pic_archive")

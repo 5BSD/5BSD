@@ -279,3 +279,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 bsd_install_archive_set(name = "library_program_install_archives",
     archives = ["//lib/libbz2:install_archive_bundle", ":install_archive_bundle"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['//contrib/bzip2:bzip2.c'],
+    object_names = ['bzip2.o'], deps = ['//lib/libbz2:headers'], warns = 3, defines = ['_FILE_OFFSET_BITS=64'])

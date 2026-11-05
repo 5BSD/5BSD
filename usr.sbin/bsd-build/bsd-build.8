@@ -5822,6 +5822,14 @@ and UFS inspection/modification; no host device or mount is used.
 These checks do not establish mounted filesystem acceptance, complete rescue
 installation, independent library/debug parity or full-system qualification.
 .Pp
+The bounded rescue core further includes sed, gzip, bzip2, mt, md5, ldconfig,
+sysctl and fsck_msdosfs, reaching sixty-five applications.
+Textually included decompressor sources remain declared inputs, and native
+compression, threading and digest archives retain selected library order.
+Runtime checks include compression aliases, private text edits and read-only FAT
+image checking. They do not establish full rescue installation, complete library/
+debug parity, thread stress/performance or privileged VM acceptance.
+.Pp
 The default traced
 .Cm //lib/libutil:static_archive
 target preserves original Make member order and its separate DTrace provider.

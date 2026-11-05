@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -513,6 +513,58 @@ class RescueCore(unittest.TestCase):
             with path.open("rb") as f:
                 boot = f.read(512)
             self.assertEqual(boot[510:512], b"\x55\xaa")
+            before = path.read_bytes()
+            p = self.run_app("fsck_msdosfs", "-n", str(path))
+            self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_sed_extended_expression(self):
+        p = self.run_app("sed", "-E", "s/([0-9]+)/[\\1]/g", data=b"alpha12 beta3\n")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"alpha[12] beta[3]\n", b""))
+
+    def test_sed_private_inplace(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"before\n")
+            p = self.run_app("sed", "-i", ".bak", "s/before/after/", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(path.read_bytes(), b"after\n")
+            self.assertEqual(Path(str(path) + ".bak").read_bytes(), b"before\n")
+
+    def test_compression_roundtrip(self):
+        data = bytes(range(256)) * 64 + b"private rescue compression\n"
+        for name in ["gzip", "bzip2"]:
+            with self.subTest(program=name):
+                p = self.run_app(name, "-c", data=data)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertNotEqual(p.stdout, data)
+                decoded = self.run_app(name, "-d", "-c", data=p.stdout)
+                self.assertEqual((decoded.returncode, decoded.stdout, decoded.stderr), (0, data, b""))
+
+    def test_compression_aliases(self):
+        data = b"alias dispatch\n" * 100
+        for program, aliases in [("gzip", ["gunzip", "gzcat", "zcat"]), ("bzip2", ["bunzip2", "bzcat"])]:
+            compressed = self.run_app(program, "-c", data=data)
+            self.assertEqual(compressed.returncode, 0, compressed.stderr)
+            for alias in aliases:
+                with self.subTest(alias=alias):
+                    p = self.run_app(alias, "-c", data=compressed.stdout)
+                    self.assertEqual((p.returncode, p.stdout, p.stderr), (0, data, b""))
+
+    def test_md5_known_vector(self):
+        p = self.run_app("md5", "-q", data=b"abc")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"900150983cd24fb0d6963f7d28e17f72\n", b""))
+
+    def test_sysctl_readonly_osrelease(self):
+        p = self.run_app("sysctl", "-n", "kern.osrelease")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, os.uname().release.encode() + b"\n", b""))
+
+    def test_tape_and_linker_usage_before_open_or_write(self):
+        for name in ["mt", "ldconfig"]:
+            with self.subTest(program=name):
+                p = self.run_app(name, "-Z")
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
 
 if __name__ == "__main__":
     unittest.main()

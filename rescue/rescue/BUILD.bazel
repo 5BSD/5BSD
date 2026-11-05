@@ -22,12 +22,13 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
 # No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# Supported combined-object stage, bounded to fifty-seven real applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount']]
+# Supported combined-object stage, bounded to sixty-five real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs']]
 _CORE_OWNERS = {p: "usr.bin/" + p for p in ["head", "tail", "tee", "id"]}
 _CORE_OWNERS.update({p: "usr.sbin/" + p for p in ["chroot", "chown"]})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount']})
+_CORE_OWNERS.update({'sed': 'usr.bin/sed', 'gzip': 'usr.bin/gzip', 'bzip2': 'usr.bin/bzip2', 'mt': 'usr.bin/mt', 'md5': 'sbin/md5', 'ldconfig': 'sbin/ldconfig', 'sysctl': 'sbin/sysctl', 'fsck_msdosfs': 'sbin/fsck_msdosfs'})
 _CORE_OBJECTS = {p: "//" + _CORE_OWNERS.get(p, "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
 bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
     object_names = {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS},
@@ -52,7 +53,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real fifty-seven-program executable, with native static libc and startup.
+# Bounded real sixty-five-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],
@@ -68,12 +69,18 @@ _CORE_ARCHIVES = [
     ("tinfo", "//lib/ncurses/tinfo:static_archive"),
     ("util", "//lib/libutil:static_archive"),
     ("xo", "//lib/libxo/libxo:static_archive"),
+    ("lzma", "//lib/liblzma:static_archive"),
+    ("pthread", "//lib/libthr:static_archive"),
     ("geom", "//lib/libgeom:static_archive"),
     ("bsdxml", "//lib/libexpat:static_archive"),
     ("kiconv", "//lib/libkiconv:static_archive"),
+    ("mt", "//lib/libmt:static_archive"),
     ("sbuf", "//lib/libsbuf:static_archive"),
     ("ufs", "//lib/libufs:static_archive"),
     ("z", "//lib/libz:static_archive"),
+    ("bz2", "//lib/libbz2:static_archive"),
+    ("zstd", "//lib/libzstd:static_archive"),
+    ("md", "//lib/libmd:md"),
     ("m", "//lib/msun:static_archive"),
 ]
 [cc_import(name = "core_" + name + "_static_link", static_library = archive,

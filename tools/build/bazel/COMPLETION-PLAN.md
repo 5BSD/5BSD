@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to sixty-five applications (2026-11-05)
+
+Eight text/compression/digest/configuration/FAT tools bring the AMD64 core to
+65 of 103 applications. Native compression/threading/digest archives and explicit
+gzip textual C includes preserve source behavior. The runtime wrapper passes
+78 methods, including binary compression/aliases and read-only checking of a
+private FAT image. All seventeen actual compiler policies and 1032 declared/
+hash-matched dependency occurrences agree with original Make's names/bytes.
+Independent assertion-path/compiler/provider controls preserve untouched baselines;
+actual sysctl and anchored FAT sites verify. Original generated Make on identical
+inputs matches all 132 pipeline outputs and the executable. See
+RESCUE-SIXTY-FIVE-PROGRAM-QUALIFICATION.md. Continue remaining 38 applications,
+actual rescue libraries/options/cross/full installation and all full-system gates.
+Review ordinary gzip's existing SDK DTrace/drti producer against the native
+bootstrap path; rescue's source-mandated exclusion does not exercise it. Full
+library/debug/raw-DOF, pkgbase/bootstrap/publication/VM/resource/cache/sandbox
+acceptance remains open. Make stays default; BIP stays excluded.
+
 ## Native rescue expansion to fifty-seven applications (2026-11-05)
 
 Eight filesystem tools bring the selected AMD64 core to 57 of 103 programs with

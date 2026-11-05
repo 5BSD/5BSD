@@ -77,3 +77,7 @@ bsd_install_file(name = "config_file", src = "sysctl.conf", destination = "/etc/
 # The maintained error tests include the command implementation textually.
 cc_library(name = "query_test_inputs", textual_hdrs = ["sysctl.c", "sysctltool_trace.h"],
     visibility = ["//sbin/sysctl/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['sysctl.c', 'sysctltool_trace.h'],
+    object_names = ['sysctl.o'], deps = [], warns = 3, defines = [], provider = 'sysctltool_provider')
