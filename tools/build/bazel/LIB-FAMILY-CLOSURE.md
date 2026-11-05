@@ -25,7 +25,7 @@ execution and the explicit normal protobuf parent.
 
 | Owner | Source evidence and next work |
 | --- | --- |
-| lib/libproc | Default production installation now qualifies against fresh Make; original installed ATF/process-control tests, CTF alternatives and other ABIs remain. |
+| lib/libproc | Default production installation now qualifies against fresh Make; original installed ATF/process-control tests, CTF-enabled compilation/production archive now builds in the OpenZFS header-closure batch; independent CTF-enabled original/runtime comparisons and other ABIs remain. |
 | lib/libprocstat | Default production installation, all 30 manual hardlinks and native self-process/argv runtime qualify; alternate options/ABIs remain. |
 | lib/librtld_db | Default production installation now qualifies; the header-only cycle break is retained. Loader/process operations and other profiles remain. |
 | lib/libthread_db | Native AMD64 library/production installation now passes original regular/PIC and interface comparisons. Actual debugger runtime and other architectures remain; see THREAD-DB-NATIVE-QUALIFICATION.md. |
@@ -35,8 +35,8 @@ execution and the explicit normal protobuf parent.
 | lib/libxo | Production parent now preserves library + CSV encoder contributions; all 96 original metadata records and three actual runtime targets pass. Full installed functional/encoder test hierarchy remains explicitly gated; see LIBXO-PARENT-COMPOSITION-QUALIFICATION.md. |
 | lib/protobuf | Explicit parent now builds all four children and preserves three install contributions, including upb licences and no libprotoc payload. Other profiles/ABIs and refreshed implementation parity remain. |
 | lib/atf and lib/tests | ATF production parent candidate now declares both existing library owners; original ATF test recursion and general lib/tests parent remain open. |
-| lib/clang | Shared-library parent and LLVM/Clang archive endpoint candidates now preserve original library/resource-header selection separately from tool executables; aggregate construction and selected Make ownership comparisons remain pending. |
-| lib/googletest | Production/full-manifest archive endpoint candidates reuse existing four framework owners and optional selftest manifests. Aggregate analysis, build and ownership acceptance remain pending. |
+| lib/clang | Shared-library parent and LLVM/Clang archive endpoint candidates now preserve original library/resource-header selection separately from tool executables; aggregate construction passes in the library/admin batch; selected Make ownership comparisons remain pending. |
+| lib/googletest | Production/full-manifest archive endpoint candidates reuse existing four framework owners and optional selftest manifests. Aggregate construction passes in the library/admin batch; complete original ownership acceptance remains pending. |
 
 This is a concrete next queue, not an exhaustive list of missing work or a claim
 that every other selected entry is accepted. Reconcile every selected immediate

@@ -8,7 +8,8 @@ PACKAGE=	zfs
 LIB_PACKAGE=
 
 LIB=	spl
-LIBADD=
+# SPL implements thread/condition/taskq operations and must load their provider.
+LIBADD=	pthread
 
 SRCS = \
         assert.c \

@@ -11487,3 +11487,19 @@ from Make's source sys/transport include contexts, including sys/sdt.h and the
 current HyperTrace/VMM interfaces. Actual configured input-depset checks pass in
 every regular/PIC context across five profiles. No native preprocessing, emitted
 probe/CTF contract, module behavior or audit delivery is inferred from that check.
+
+## Native composition checkpoint (2026-11-05)
+
+Dtraced and switchboardctl now compile/link natively and pass strict original
+loader/interface/hardening, installation metadata and debug CRC comparisons.
+Private-header and link-provider corrections change build declarations, plus
+SPL's maintained Make dependency catalogue; production C/C++ sources and their
+instrumentation are unchanged. These checks do not establish live probe delivery,
+collector/job/transport behavior, security-audit delivery or instrumentation
+performance. See COMPOSITION-QUALIFICATION-20261105.md for source-bound evidence.
+
+The library follow-up catches and corrects RPC include precedence in nvpair.
+Original SPL userland XDR adaptation is restored without modifying probes or
+production C sources. All nine CTF/SPL/AVL/nvpair targets pass; original nvpair
+metadata/member-symbol/shared-ELF/debug comparisons pass. Serialization checks
+are bounded runtime evidence, not live DTrace, audit or performance acceptance.

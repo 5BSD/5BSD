@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "nvpair", srcs = ["//sys/contrib/openzfs:lib/libnvpair/libnvpair.c", "//sys/contrib/openzfs:lib/libnvpair/libnvpair_json.c", "//sys/contrib/openzfs:lib/libnvpair/nvpair_alloc_system.c", "//sys/contrib/openzfs:module/nvpair/nvpair_alloc_fixed.c", "//sys/contrib/openzfs:module/nvpair/nvpair.c", "//sys/contrib/openzfs:module/nvpair/fnvpair.c"],
     deps = ["//cddl/lib/libspl:spl"],
-    implementation_deps = ["//sys/rpc:nvpair_headers"],
+    implementation_deps = ["//sys/contrib/openzfs:spl_headers", "//sys/rpc:nvpair_headers", "//cddl/compat/opensolaris/include:headers"],
     local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY", "HAVE_RPC_TYPES", "HAVE_ISSETUGID", "HAVE_CONFIG_H", "HAVE_XDR_BYTESREC"],
     copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
@@ -17,10 +17,10 @@ cc_shared_library(name = "nvpair_shared", deps = [":nvpair"], dynamic_deps = ["/
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
 cc_import(name = "archive_link", static_library = ":static_archive")
 [cc_test(name = "roundtrip_" + variant, srcs = ["roundtrip_test.c"],
-    deps = ([":archive_link", "//cddl/lib/libspl:spl"] if variant == "static" else [":nvpair"]),
+    deps = ["//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers"] + ([":archive_link", "//cddl/lib/libspl:spl"] if variant == "static" else [":nvpair"]),
     dynamic_deps = [] if variant == "static" else [":nvpair_shared", "//cddl/lib/libspl:spl_shared"],
     local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
-    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], linkopts = ["-pthread"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], linkopts = ["-pthread"] + (["-static"] if variant == "static" else []),
     features = [] if variant == "static" else ["bsd_test_runtime_paths"], linkstatic = variant == "static",
     size = "small", target_compatible_with = _PLATFORM)
  for variant in ["static", "shared"]]
@@ -35,6 +35,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 bsd_install_archive(
     name = "install_archive",
     manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=zfs","dbg"]}'},
     mtree_specs = {
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",

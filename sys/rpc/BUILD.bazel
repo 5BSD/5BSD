@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "nvpair_headers", hdrs = ["types.h", "xdr.h"], strip_include_prefix = "/sys",
+# This is Make's later -I sys context, after the SPL rpc/xdr.h wrapper.
+# A virtual -I tree would precede SPL's -isystem paths and bypass its userland
+# xdr_control adapter, incorrectly calling the kernel x_ops layout in libc.
+cc_library(name = "nvpair_headers", hdrs = ["types.h", "xdr.h"], includes = [".."],
     visibility = ["//cddl/lib/libnvpair:__pkg__"])
 
 cc_library(name = "kernel_auth_headers", hdrs = ["types.h", "xdr.h", "auth.h", "clnt_stat.h", "netconfig.h"],

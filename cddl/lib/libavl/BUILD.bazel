@@ -4,6 +4,7 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "avl", srcs = ["//sys/contrib/openzfs:module/avl/avl.c"],
     deps = ["//cddl/lib/libspl:spl"],
+    implementation_deps = ["//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers"],
     local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
     copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
@@ -15,10 +16,10 @@ cc_shared_library(name = "avl_shared", deps = [":avl"], dynamic_deps = ["//cddl/
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
 cc_import(name = "archive_link", static_library = ":static_archive")
 [cc_test(name = "tree_" + variant, srcs = ["tree_test.c"],
-    deps = ([":archive_link", "//cddl/lib/libspl:spl"] if variant == "static" else [":avl"]),
+    deps = ["//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers"] + ([":archive_link", "//cddl/lib/libspl:spl"] if variant == "static" else [":avl"]),
     dynamic_deps = [] if variant == "static" else [":avl_shared", "//cddl/lib/libspl:spl_shared"],
     local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
-    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], linkopts = ["-pthread"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], linkopts = ["-pthread"] + (["-static"] if variant == "static" else []),
     features = [] if variant == "static" else ["bsd_test_runtime_paths"], linkstatic = variant == "static",
     size = "small", target_compatible_with = _PLATFORM)
  for variant in ["static", "shared"]]

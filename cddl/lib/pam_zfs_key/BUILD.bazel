@@ -3,6 +3,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "module", srcs = ["//sys/contrib/openzfs:contrib/pam_zfs_key/pam_zfs_key.c"], hdrs = ["//sys/modules/zfs:zfs_config.h"],
     deps = ['//cddl/lib/libzfs:zfs', '//cddl/lib/libzfs_core:zfs_core', '//cddl/lib/libnvpair:nvpair', '//secure/lib/libcrypto:crypto', '//lib/libpam/libpam:pam'] + ["//sys/contrib/openzfs:pam_zfs_headers"],
+    implementation_deps = ["//cddl/compat/opensolaris/include:headers"],
     local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY", "OPENPAM_DEBUG", 'RUNSTATEDIR=\\"/var/run\\"'],
     copts = ["-std=c99", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"],
     linkstatic = True, target_compatible_with = _PLATFORM)

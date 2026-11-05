@@ -5,6 +5,7 @@ _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "zfs_core", srcs = ["//sys/contrib/openzfs:lib/libzfs_core/libzfs_core.c", "//sys/contrib/openzfs:lib/libzfs_core/os/freebsd/libzfs_core_ioctl.c"],
     hdrs = ["//sys/modules/zfs:zfs_config.h"],
     deps = ["//sys/contrib/openzfs:zfs_core_headers", "//cddl/lib/libnvpair:nvpair", "//cddl/lib/libspl:spl", "//cddl/lib/libzutil:zutil"],
+    implementation_deps = ["//cddl/compat/opensolaris/include:headers"],
     local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
     copts = ["-std=c99", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

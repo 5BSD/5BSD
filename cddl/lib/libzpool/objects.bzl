@@ -2,6 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 def zpool_objects(name, srcs, deps, extra_copts = []):
     cc_library(name = name, srcs = srcs, hdrs = ["//sys/modules/zfs:zfs_config.h"],
+        implementation_deps = ["//cddl/compat/opensolaris/include:headers"],
         deps = deps + ["//sys/modules/zfs:build_headers", "//sys/contrib/openzfs:zpool_build_headers"],
         local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY",
             "HAVE_TOOLCHAIN_SSE2", "HAVE_TOOLCHAIN_SSSE3", "__x86_64", "HAVE_TOOLCHAIN_AVX2", "HAVE_TOOLCHAIN_AVX", "HAVE_TOOLCHAIN_AVX512F", "HAVE_TOOLCHAIN_AVX512BW",

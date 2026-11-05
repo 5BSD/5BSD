@@ -1,5 +1,15 @@
 # Bsdconfig and library/administration test roots
 
+## Later native construction checkpoint
+
+The selected normal frontend batch and original comparisons now pass. See
+[COMPOSITION-QUALIFICATION-20261105.md](COMPOSITION-QUALIFICATION-20261105.md)
+for exact retained receipts, fixes and limits. The configured-only and prepared
+request descriptions below record the earlier checkpoint. They do not describe
+the current execution status. Runtime, alternate profiles and whole-system
+qualification remain open.
+
+
 ## Implemented candidate (2026-11-05)
 
 The source-owned `usr.sbin/bsdconfig/BUILD.bazel` declares all 42 original Make

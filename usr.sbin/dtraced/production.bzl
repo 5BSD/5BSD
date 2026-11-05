@@ -17,11 +17,12 @@ _WARNINGS = [
     "-Wno-zero-length-array", "-Wno-c99-designator", "-Wno-c++20-extensions",
     "-Wno-c++23-lambda-attributes", "-Wno-nullability-completeness",
 ]
-_LIBS = ["//cddl/lib/libctf:ctf", "//lib/libelf:elf", "//lib/libproc:proc", "//lib/libthr:thr",
-         "//secure/lib/libcrypto:crypto", "//lib/libutil:util", "//lib/libcxxrt:cxxrt",
+# Make emits its pthread link option after the other explicit LIBADD entries.
+_LIBS = ["//cddl/lib/libctf:ctf", "//lib/libelf:elf", "//lib/libproc:proc",
+         "//secure/lib/libcrypto:crypto", "//lib/libutil:util", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr",
          "//lib/libc++:cxx", "//lib/msun:m"]
-_SHARED = ["//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//lib/libthr:thr_shared",
-           "//secure/lib/libcrypto:crypto_shared", "//lib/libutil:util_shared", "//lib/libcxxrt:cxxrt_shared",
+_SHARED = ["//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared",
+           "//secure/lib/libcrypto:crypto_shared", "//lib/libutil:util_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libthr:thr_shared",
            "//lib/libc++:cxx_shared", "//lib/msun:m_shared"]
 
 def dtraced_production():
@@ -54,7 +55,7 @@ def dtraced_production():
                 "dtraced_misc.cc", "dtraced_process.cc", "dtraced_state.cc"] + native.glob(["*.h"]),
         deps = _LIBS + ["//sys/dev/dttransport:userland_headers", ":source_kernel_headers"],
         dynamic_deps = _SHARED,
-        copts = ["-std=c++17", "-fPIE", "-pipe", "-fno-common", "-Qunused-arguments", "-Wno-format-zero-length"] +
+        copts = ["-nostdinc++", "-std=c++17", "-fPIE", "-pipe", "-fno-common", "-Qunused-arguments", "-Wno-format-zero-length"] +
             _WARNINGS + lto + sanitize + robust + ["-g", "-gz=zlib"] +
             select({"//tools/build/bazel/config:dtraced_debug_enabled": ["-DDTRACED_DEBUG"], "//conditions:default": []}) +
             select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}),

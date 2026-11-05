@@ -502,6 +502,7 @@ _DP_radius=	crypto
 _DP_rt=		pthread
 _DP_rtld_db=	elf procstat
 _DP_smb=	kiconv
+_DP_spl=	pthread
 _DP_sqlite3=	pthread
 _DP_ssl=	pthread crypto
 _DP_ssh=	crypto crypt z

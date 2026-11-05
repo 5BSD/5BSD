@@ -1,5 +1,15 @@
 # Dtraced native production candidate (2026-11-05)
 
+## Later native construction checkpoint
+
+The selected normal frontend batch and original comparisons now pass. See
+[COMPOSITION-QUALIFICATION-20261105.md](COMPOSITION-QUALIFICATION-20261105.md)
+for exact retained receipts, fixes and limits. The configured-only and prepared
+request descriptions below record the earlier checkpoint. They do not describe
+the current execution status. Runtime, alternate profiles and whole-system
+qualification remain open.
+
+
 ## Implementation
 
 The production candidate uses native rules_cc compilation for all eleven original

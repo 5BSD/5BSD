@@ -14,6 +14,9 @@ _SHARED = ["//lib/libcxxrt:cxxrt_shared", "//lib/libelf:elf_shared", "//lib/libp
 cc_library(name = "proc", srcs = PROC_SOURCES + ["_libproc.h"], deps = [":headers"] + _LIBS,
     local_defines = select({_CTF: ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "HAVE_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"], "//conditions:default": ["NO_CTF"]}),
     copts = select({_CTF: ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], "//conditions:default": []}),
+    # MK_CTF gives this implementation its own Solaris/CTF include context.
+    # libctf's link interface deliberately does not export those private paths.
+    implementation_deps = select({_CTF: ["//cddl/contrib/opensolaris:ctf_library_headers"], "//conditions:default": []}),
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":proc"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "proc_shared", deps = [":proc"], dynamic_deps = _SHARED,

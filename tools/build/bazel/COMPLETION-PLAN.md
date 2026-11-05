@@ -16,7 +16,67 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
-## Dtraced native production and option-selection candidate (2026-11-05)
+## Program and library composition checkpoint (2026-11-05)
+
+The normal frontend completed `bazel-world-program-families-native-r1-20261105`:
+40 bin, 74 sbin, 20 libexec, 266 usr.bin and eight administration archives
+(408 total, 3,361 unique non-directory destinations). The source-settings test
+passed. Captured archive/request serialization and logged producer payloads were
+reviewed for all 408, including eight cached outputs matched to their retained
+prior producer evidence. This is selected-profile construction and serialization
+coverage, not independent complete Make installed-world parity.
+
+That request disables installed tests and leaves tests_support automatic, so it
+also disables Kyua. The recorded Make SDK profile explicitly enables tests support.
+The r2 request sets tests_support=yes to match that input without enabling the
+unconverted full installed test hierarchy. Its first execution correctly failed
+on undeclared nvpair headers after SPL compatibility includes became private.
+The r3 execution exposed the same accidental inheritance in zutil. Explicit
+implementation dependencies now reproduce each affected owner's original Make
+include contexts. The r4 build passed, selecting 410 archives: 40 bin, 74 sbin,
+21 libexec, 267 usr.bin and eight administration owners. The added contributions
+are ATF and Kyua. The final r5 rerun also passes after the RPC wrapper correction
+below; all 408 prior archive/request/directory-metadata outputs remain identical.
+The two added contributions still need independent complete installation parity.
+
+`bazel-library-admin-composition-native-r10-20261105` completed five selected
+tests, the GEOM/Clang/ATF/Googletest parents, administration archives, SPL/CTF and
+actual dtraced/switchboardctl programs and source objects. The r9 administration
+review compares 273 original metadata records and 220 exact file payloads for
+fwget, periodic, bsdconfig and two test-discovery roots. The r10 daemon review
+passes strict ordered ELF dependencies, loader/interfaces/hardening, complete
+component metadata, manuals/policy and native/original debug CRCs.
+
+Composition revealed real dependency defects: private CTF/SPL compatibility
+headers leaked into ordinary C++ clients; SPL used pthread symbols without its
+own provider; dtraced mixed declared and SDK C++ include trees and ordered pthread
+incorrectly. Native rules now keep private includes private, declare pthread,
+select declared libc++ headers and preserve original direct library order.
+SPL's maintained Makefile and src.libnames catalogue also declare pthread. The
+maintained SDK staging helpers refreshed changed source bindings while retaining
+the identical tool snapshot. The default CTF public C++ consumer and static/shared
+functional tests pass at r10. The follow-up openzfs-header-closure r3/r4/r5 runs
+pass all nine CTF/SPL/AVL/nvpair tests and build CTF-enabled libproc, including its
+production archive. CTF-enabled original parity remains open. The first request
+failed on my incorrect libproc target name; its corrected request uses the
+existing production_install_archive, with no fallback or source alias.
+
+Both nvpair tests exposed a pre-existing native include-precedence defect.
+The virtual RPC header tree bypassed SPL's xdr_control userland wrapper; actual
+XDR decoding used the wrong x_ops offsets. The RPC context now follows SPL in
+the original include order. Tests remain unchanged and both encodings pass.
+Fresh Make comparison also caught the missing package-owned debug directory;
+the native archive now preserves it. The final nvpair independent comparison
+passes six original metadata records, header bytes, static member order/symbols,
+shared ELF dependency/interfaces/hardening and native/original debug CRCs.
+Evidence: bazel-openzfs-header-closure-native-r5-20261105/nvpair-wrapper-review-r3.
+
+See [COMPOSITION-QUALIFICATION-20261105.md](COMPOSITION-QUALIFICATION-20261105.md)
+for retained evidence and limits. These results do not complete world/pkgbase,
+bootstrap independence, diagnostic/alternate profiles, daemon runtime,
+cross-platform, VM or comparative resource qualification. Make remains default.
+
+## Earlier dtraced configured-option checkpoint (superseded by composition above)
 
 All eleven original daemon C++ sources now have native compilation and declared
 source-header/library dependencies. Four opt-in diagnostic settings preserve
@@ -34,7 +94,7 @@ headers for the known source closure. These checks do not establish native
 compilation, executed preprocessing or diagnostic runtime.
 See [DTRACED-PRODUCTION-QUALIFICATION.md](DTRACED-PRODUCTION-QUALIFICATION.md).
 
-The current next request is
+The earlier prepared request was
 /usr/obj/usr/src/bazel-library-admin-composition-request-r3-20261105/inputs.json.
 Its request.json records the exact normal frontend command and supersedes the
 unstarted r2 request. It adds the real daemon, source objects and installation
