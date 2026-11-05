@@ -143,6 +143,11 @@ def _spec(ctx):
 # For providers whose consumers already have maintained probe macros.
 bsd_dtrace_spec = rule(implementation = _spec, attrs = _attrs())
 
+BSDDTraceObjectsInfo = provider(
+    doc = "Exact input-to-rewritten artifact maps and provider objects.",
+    fields = ["regular", "regular_provider", "pic", "pic_provider"],
+)
+
 def _cc_objects(ctx):
     if ctx.attr.archive_members and not ctx.attr.archive_runner:
         fail("archive member composition requires a declared archive_runner")
@@ -172,6 +177,8 @@ def _cc_objects(ctx):
             fail("DTrace component groups contain duplicate object inputs")
     outputs = []
     groups = {}
+    rewritten_maps = {}
+    provider_objects = {}
     for variant, objects, suffix in [("regular", regular, ".nopic.o"), ("pic", pic, ".pic.o")]:
         if objects:
             rewritten, provider = dtrace_rewrite(
@@ -180,6 +187,10 @@ def _cc_objects(ctx):
                 ctx.label.name + "/" + variant, ctx.attr.provider_object + suffix,
                 nopic_names = variant == "regular",
             )
+            if len(objects) != len(rewritten):
+                fail("DTrace rewrite must preserve every input object")
+            rewritten_maps[variant] = {source: rewritten[index] for index, source in enumerate(objects)}
+            provider_objects[variant] = provider
             outputs += rewritten + [provider]
             groups[variant] = depset(rewritten + [provider])
             groups[variant + "_objects"] = depset(rewritten)
@@ -204,7 +215,10 @@ def _cc_objects(ctx):
                     )
                     members.append(member)
                 groups[variant + "_archive_objects"] = depset(members)
-    return [DefaultInfo(files = depset(outputs)), OutputGroupInfo(**groups)]
+    return [DefaultInfo(files = depset(outputs)), OutputGroupInfo(**groups),
+            BSDDTraceObjectsInfo(regular = rewritten_maps.get("regular", {}),
+                regular_provider = provider_objects.get("regular"),
+                pic = rewritten_maps.get("pic", {}), pic_provider = provider_objects.get("pic"))]
 
 bsd_dtrace_cc_objects = rule(
     implementation = _cc_objects,

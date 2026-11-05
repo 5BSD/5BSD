@@ -1,19 +1,25 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 # Keep constructor-bearing sources in maintained registration order.
+_SOURCES_BEFORE_PF = (
+["ifconfig.c", "af_link.c"] +
+    select({"//tools/build/bazel/config:inet_support_enabled": ["af_inet.c"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:inet6_support_enabled": ["af_inet6.c", "af_nd6.c"], "//conditions:default": []}) +
+    ["ifclone.c", "ifmac.c", "ifmedia.c", "iffib.c", "ifrdomain.c", "ifvlan.c", "ifvxlan.c", "ifgre.c", "ifgif.c", "ifipsec.c", "sfp.c"] +
+    select({"//tools/build/bazel/config:wireless_support_enabled": ["ifieee80211.c"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:usb_enabled": ["ifue.c"], "//conditions:default": []}) +
+    ["carp.c", "ifgroup.c"]
+)
+_PF_SOURCES = select({"//tools/build/bazel/config:pf_enabled": ["ifpf.c"], "//conditions:default": []})
+_SOURCES_AFTER_PF = (
+["ifbridge.c", "iflagg.c"] +
+    select({"//tools/build/bazel/config:netlink_support_enabled": ["ifconfig_netlink.c", "ifvfstatus.c", "ifgeneve.c"], "//conditions:default": []}) +
+    ["ifconfig.h", "ifconfig_netlink.h"]
+)
+_SOURCES = _SOURCES_BEFORE_PF + _PF_SOURCES + _SOURCES_AFTER_PF
 cc_binary(
     name = "ifconfig",
-    srcs = ["ifconfig.c", "af_link.c"] +
-        select({"//tools/build/bazel/config:inet_support_enabled": ["af_inet.c"], "//conditions:default": []}) +
-        select({"//tools/build/bazel/config:inet6_support_enabled": ["af_inet6.c", "af_nd6.c"], "//conditions:default": []}) +
-        ["ifclone.c", "ifmac.c", "ifmedia.c", "iffib.c", "ifrdomain.c", "ifvlan.c", "ifvxlan.c", "ifgre.c", "ifgif.c", "ifipsec.c", "sfp.c"] +
-        select({"//tools/build/bazel/config:wireless_support_enabled": ["ifieee80211.c"], "//conditions:default": []}) +
-        select({"//tools/build/bazel/config:usb_enabled": ["ifue.c"], "//conditions:default": []}) +
-        ["carp.c", "ifgroup.c"] +
-        select({"//tools/build/bazel/config:pf_enabled": ["ifpf.c"], "//conditions:default": []}) +
-        ["ifbridge.c", "iflagg.c"] +
-        select({"//tools/build/bazel/config:netlink_support_enabled": ["ifconfig_netlink.c", "ifvfstatus.c", "ifgeneve.c"], "//conditions:default": []}) +
-        ["ifconfig.h", "ifconfig_netlink.h"],
+    srcs = _SOURCES,
     deps = ["//lib/libifconfig:ifconfig_pie", "//lib/msun:m", "//lib/libutil:util", "//lib/libnv:nv"] +
         select({"//tools/build/bazel/config:wireless_support_enabled": ["//lib/lib80211:80211"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail"], "//conditions:default": []}) +
@@ -62,3 +68,18 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+_RESCUE_COPTS = ['-pipe', '-fno-common', '-Wall', '-Wmissing-prototypes', '-Wcast-qual', '-Wwrite-strings', '-Wnested-externs', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments']
+_RESCUE_DEPS = ["//lib/libifconfig:headers", "//lib/libutil:headers"] + select({
+    "//tools/build/bazel/config:wireless_support_enabled": ["//lib/lib80211:headers"], "//conditions:default": [],
+}) + select({"//tools/build/bazel/config:pf_enabled": ["//sys/netpfil/openbsd-pf/user:compat_headers"], "//conditions:default": []})
+_RESCUE_DEFINES = select({"//tools/build/bazel/config:inet_support_enabled": ["INET"], "//conditions:default": []}) + select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) + select({"//tools/build/bazel/config:netlink_support_enabled": [], "//conditions:default": ["WITHOUT_NETLINK"]})
+cc_library(name = "rescue_ifpf_objects", srcs = _PF_SOURCES + ["ifconfig.h", "ifconfig_netlink.h"],
+    deps = _RESCUE_DEPS, local_defines = ["RESCUE"] + _RESCUE_DEFINES,
+    copts = _RESCUE_COPTS + ['-Wno-unused-parameter', '-Wno-cast-align', '-Wno-sign-compare', '-Wno-shadow'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+rescue_application(srcs = _SOURCES_BEFORE_PF + _SOURCES_AFTER_PF, ordered_sources = _SOURCES,
+    deps = _RESCUE_DEPS, defines = _RESCUE_DEFINES, compiler_options = _RESCUE_COPTS,
+    components = select({"//tools/build/bazel/config:pf_enabled": [":rescue_ifpf_objects"], "//conditions:default": []}),
+    archives = ["//lib/libnv:static_archive"])

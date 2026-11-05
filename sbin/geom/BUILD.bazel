@@ -4,7 +4,8 @@ load(":configuration.bzl", "geom_configuration")
 geom_configuration(name = "configuration", path = "//tools/build/bazel/config:geom_class_dir")
 cc_library(name = "headers", hdrs = ["core/geom.h"], strip_include_prefix = "core", visibility = ["//visibility:public"])
 cc_library(name = "misc_headers", hdrs = ["misc/subr.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
-cc_binary(name = "geom", srcs = ["core/geom.c", "misc/subr.c", ":configuration"],
+_SOURCES = ["core/geom.c", "misc/subr.c"]
+cc_binary(name = "geom", srcs = _SOURCES + [":configuration"],
     deps = [":headers", ":misc_headers", "//lib/libgeom:geom", "//lib/libutil:util", "//lib/libxo/libxo:xo"],
     dynamic_deps = ["//lib/libgeom:geom_shared", "//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared"],
     copts = ["-fPIE", "-include", "$(location :configuration)"], linkopts = ["-pie"],
@@ -30,3 +31,8 @@ bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pk
 
 exports_files(["misc/subr.c"], visibility = ["//lib/geom:__subpackages__"])
 cc_library(name = "plugin_headers", hdrs = ["core/geom.h", "misc/subr.h"], strip_include_prefix = ".", visibility = ["//lib/geom:__subpackages__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES + ["//lib/geom/label:geom_label.c", "//lib/geom/part:geom_part.c"],
+    object_names = ['geom.o', 'subr.o', 'geom_label.o', 'geom_part.o'], deps = [':headers', ':misc_headers', ':plugin_headers', '//lib/libgeom:headers', '//lib/libutil:headers', '//contrib/libxo:headers', '//sys/geom/label:headers'],
+    defines = ["STATIC_GEOM_CLASSES", "'GEOM_CLASS_DIR=\"\"'"], warns = 2)

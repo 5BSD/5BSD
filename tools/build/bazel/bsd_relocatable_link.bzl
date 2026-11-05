@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Link ordered objects and optional archives without a final executable link."""
 
+load(":bsd_component_archive.bzl", "BSDComponentObjectsInfo")
+
 def _impl(ctx):
     objects = ctx.files.objects
-    inputs = objects + ctx.files.archives
+    archives = ctx.files.archives
+    if ctx.attr.application:
+        application = ctx.attr.application[BSDComponentObjectsInfo]
+        objects = objects + application.objects
+        archives = archives + application.archives
+    inputs = objects + archives
     if not objects or len(depset(inputs).to_list()) != len(inputs):
         fail("relocatable link requires nonempty unique object inputs")
     out = ctx.actions.declare_file(ctx.attr.output)
@@ -22,6 +29,7 @@ def _impl(ctx):
 
 bsd_relocatable_link = rule(implementation = _impl, attrs = {
     "objects": attr.label_list(allow_files = [".o"], mandatory = True),
+    "application": attr.label(providers = [BSDComponentObjectsInfo], doc = "Typed ordered application objects and program-specific archives."),
     "archives": attr.label_list(allow_files = [".a"], doc = "Ordered archives after the objects; extraction flags remain explicit in linkopts."),
     "runtime": attr.label_list(allow_files = True, cfg = "exec", doc = "Declared dynamic libraries for the selected linker; empty preserves its existing runfiles."),
     "output": attr.string(mandatory = True),

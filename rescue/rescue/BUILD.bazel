@@ -22,8 +22,8 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
 # No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# Supported combined-object stage, bounded to ninety-four real applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch', 'dump', 'restore', 'fsck_ffs', 'fsdb', 'mount_nfs', 'init', 'ping', 'dhclient', 'iscsictl', 'iscsid', 'tar', 'sh', 'csh', 'vi']]
+# Supported combined-object stage, bounded to ninety-eight real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch', 'dump', 'restore', 'fsck_ffs', 'fsdb', 'mount_nfs', 'init', 'ping', 'dhclient', 'iscsictl', 'iscsid', 'tar', 'sh', 'csh', 'vi', 'camcontrol', 'geom', 'ifconfig', 'pfctl']]
 _CORE_OWNERS = {p: "usr.bin/" + p for p in ["head", "tail", "tee", "id"]}
 _CORE_OWNERS.update({p: "usr.sbin/" + p for p in ["chroot", "chown"]})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']})
@@ -34,21 +34,10 @@ _CORE_OWNERS.update({'reboot': 'sbin/reboot', 'shutdown': 'sbin/shutdown', 'dump
 _CORE_OWNERS.update({'dump': 'sbin/dump', 'restore': 'sbin/restore', 'fsck_ffs': 'sbin/fsck_ffs', 'fsdb': 'sbin/fsdb', 'mount_nfs': 'sbin/mount_nfs'})
 _CORE_OWNERS.update({'init': 'sbin/init', 'ping': 'sbin/ping', 'dhclient': 'sbin/dhclient', 'iscsictl': 'usr.bin/iscsictl', 'iscsid': 'usr.sbin/iscsid', 'tar': 'usr.bin/tar'})
 _CORE_OWNERS.update({'sh': 'bin/sh', 'csh': 'bin/csh', 'vi': 'usr.bin/vi'})
+_CORE_OWNERS.update({'camcontrol': 'sbin/camcontrol', 'geom': 'sbin/geom', 'pfctl': 'sbin/pfctl', 'ifconfig': 'sbin/ifconfig'})
 _CORE_OBJECTS = {p: "//" + _CORE_OWNERS.get(p, "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
-[config_setting(name = name, flag_values = {
-    "//tools/build/bazel/config:inet_support": v4,
-    "//tools/build/bazel/config:inet6_support": v6,
-}) for name, v4, v6 in [("ping_dual_stack", "true", "true"), ("ping_ipv4_only", "true", "false"), ("ping_ipv6_only", "false", "true")]]
 bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
-    object_names = select({
-        "//tools/build/bazel/config:netlink_support_enabled": {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS if p != "ping"},
-        "//conditions:default": {p: (["route.o", "show.o"] if p == "route" else OBJECT_NAMES[p]) for p in _CORE_PROGRAMS if p != "ping"},
-    }) | select({
-        ":ping_dual_stack": {"ping": ["main.o", "ping.o", "utils.o", "ping6.o"]},
-        ":ping_ipv4_only": {"ping": ["main.o", "ping.o", "utils.o"]},
-        ":ping_ipv6_only": {"ping": ["main.o", "ping6.o"]},
-        "//conditions:default": {"ping": ["main.o"]},
-    }),
+    object_files = {_CORE_OBJECTS[p]: p for p in _CORE_PROGRAMS},
     aliases = {p: ALIASES[p] for p in _CORE_PROGRAMS if p in ALIASES and p != "ping"} | select({
         "//tools/build/bazel/config:inet6_support_enabled": {"ping": ["ping6"]}, "//conditions:default": {},
     }), emit_stubs = True,
@@ -63,7 +52,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [bsd_component_objects(name = p + "_entry_compiler_output", group = ":" + p + "_entry_objects", pic = False) for p in _CORE_PROGRAMS]
 # These object-only links have no library lookup. Original driver --sysroot/-L
 # search roots are unused; actual emitted linker behavior is checked against Make.
-[bsd_relocatable_link(name = p + "_unhidden", objects = [":" + p + "_entry_compiler_output", _CORE_OBJECTS[p]],
+[bsd_relocatable_link(name = p + "_unhidden", objects = [":" + p + "_entry_compiler_output"], application = _CORE_OBJECTS[p],
     output = p + ".lo", linker = "@bsd_sdk//toolchain:bin/ld.lld",
     runtime = ["@bsd_sdk//toolchain:link_inputs"],
     linkopts = ["--eh-frame-hdr", "-Bstatic", "--allow-multiple-definition", "-znow", "-zrelro"]) for p in _CORE_PROGRAMS]
@@ -72,7 +61,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real ninety-four-program executable, with native static libc and startup.
+# Bounded real ninety-eight-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],
@@ -90,6 +79,8 @@ _CORE_ARCHIVES = [
     ("tinfo", "//lib/ncurses/tinfo:static_archive"),
     ("util", "//lib/libutil:static_archive"),
     ("xo", "//lib/libxo/libxo:static_archive"),
+    ("80211", "//lib/lib80211:static_archive"),
+    ("cam", "//lib/libcam:static_archive"),
     ("ncurses", "//lib/ncurses/ncurses:static_archive"),
     ("ipsec", "//lib/libipsec:static_archive"),
     ("lzma", "//lib/liblzma:static_archive"),
@@ -108,6 +99,7 @@ _CORE_ARCHIVES = [
     ("ssl", "//secure/lib/libssl:static_archive"),
     ("crypto", "//secure/lib/libcrypto:static_archive"),
     ("md", "//lib/libmd:md"),
+    ("ifconfig", "//lib/libifconfig:static_archive"),
     ("m", "//lib/msun:static_archive"),
     ("iscsiutil", "//lib/libiscsiutil:static_archive"),
 ]

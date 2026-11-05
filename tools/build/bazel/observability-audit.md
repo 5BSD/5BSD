@@ -21,6 +21,24 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Four rescue storage/network/firewall variants (2026-11-05)
+
+Camcontrol/geom/ifconfig/pfctl expand the core to 98 applications. Their original
+recipes declare no new direct provider object; existing library/kernel coverage
+must be evaluated for device management, interface transitions and firewall
+control. Source-specific compatibility options and constructor order are retained.
+Typed DTrace artifact maps preserve old providers through the changed extraction
+metadata; pipeline parity does not establish live registration or firing.
+
+Host tests cover rejection before control operations and PF no-action parsing with
+an explicit nonexistent private device path. They do not establish successful
+storage commands, partition/label writes, network reconfiguration or kernel PF
+behavior. Candidate guest cases include CAM/NVMe errors and recovery, GEOM
+transactions, interface/VNET/wireless state changes and PF rule/table/state/jail/
+ethernet behavior. Review audit delivery and event fields without leaking packet,
+authentication or storage payloads. Registration/firing and enabled/disabled costs
+remain open. See RESCUE-NINETY-EIGHT-PROGRAM-QUALIFICATION.md for exact evidence.
+
 ## Three rescue shell/editor variants (2026-11-05)
 
 Sh/csh/vi expand the selected core to 94 applications. Original recipes declare

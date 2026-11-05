@@ -21,7 +21,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'init', b'ping', b'ping6', b'dhclient', b'iscsictl', b'iscsid', b'tar', b'sh', b'-sh', b'csh', b'-csh', b'tcsh', b'-tcsh', b'vi', b'ex', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'init', b'ping', b'ping6', b'dhclient', b'iscsictl', b'iscsid', b'tar', b'sh', b'-sh', b'csh', b'-csh', b'tcsh', b'-tcsh', b'vi', b'ex', b'camcontrol', b'geom', b'gpart', b'glabel', b'ifconfig', b'pfctl', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -837,6 +837,42 @@ class RescueCore(unittest.TestCase):
                                      "NEXINIT": "", "VINIT": "", "PATH": "", "TERM": "dumb"})
                     self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
                     self.assertEqual(path.read_bytes(), after)
+
+    def test_storage_network_control_argument_rejection(self):
+        for name, arguments in [("camcontrol", ["__unknown_command__"]),
+                                ("geom", ["-h"]), ("ifconfig", ["-h"]), ("pfctl", ["-h"])]:
+            with self.subTest(program=name):
+                p = self.run_app(name, *arguments)
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
+
+    def test_pfctl_private_parser_roundtrip(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source = Path(d) / "rules"
+            normalized = Path(d) / "normalized"
+            device = Path(d) / "no-device"
+            rules = b"block all\npass in inet proto tcp from 192.0.2.1 to 198.51.100.2 port 443\n"
+            source.write_bytes(rules)
+            p = self.run_app("pfctl", "-o", "none", "-n", "-v", "-p", str(device), "-f", str(source), cwd=d)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn(b"192.0.2.1", p.stdout)
+            self.assertIn(b"198.51.100.2", p.stdout)
+            normalized.write_bytes(p.stdout)
+            second = self.run_app("pfctl", "-o", "none", "-n", "-v", "-p", str(device), "-f", str(normalized), cwd=d)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(second.stdout, p.stdout)
+            self.assertEqual(source.read_bytes(), rules)
+            self.assertFalse(device.exists())
+
+    def test_pfctl_private_invalid_rule(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source = Path(d) / "invalid"
+            device = Path(d) / "no-device"
+            source.write_bytes(b"not-a-firewall-rule\n")
+            p = self.run_app("pfctl", "-o", "none", "-n", "-p", str(device), "-f", str(source), cwd=d)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn(b"syntax error", p.stderr)
+            self.assertFalse(device.exists())
 
 if __name__ == "__main__":
     unittest.main()

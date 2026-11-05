@@ -9,6 +9,11 @@ load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolcha
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 
+BSDComponentObjectsInfo = provider(
+    doc = "Ordered own compiler artifacts and their original object names.",
+    fields = ["objects", "names", "archives"],
+)
+
 def _impl(ctx):
     toolchain = find_cc_toolchain(ctx)
     features = cc_common.configure_features(ctx = ctx, cc_toolchain = toolchain,
@@ -74,29 +79,49 @@ bsd_component_object = rule(implementation = _object, attrs = {
 
 
 def _selected_objects(ctx):
-    group = ctx.attr.group
+    if bool(ctx.attr.group) == bool(ctx.attr.groups):
+        fail("choose group or groups for component selection")
+    groups = [ctx.attr.group] if ctx.attr.group else ctx.attr.groups
     available = {}
-    for item in group[CcInfo].linking_context.linker_inputs.to_list():
-        if item.owner == group.label:
-            for library in item.libraries:
-                for obj in (library.pic_objects if ctx.attr.pic else library.objects):
-                    if obj.basename in available:
-                        fail("ambiguous component object basename: " + obj.basename)
-                    available[obj.basename] = obj
+    for group in groups:
+        for item in group[CcInfo].linking_context.linker_inputs.to_list():
+            if item.owner == group.label:
+                for library in item.libraries:
+                    for obj in (library.pic_objects if ctx.attr.pic else library.objects):
+                        if obj.basename in available:
+                            fail("ambiguous component object basename: " + obj.basename)
+                        available[obj.basename] = obj
+    if ctx.attr.object_names and ctx.attr.ordered_sources:
+        fail("choose object_names or ordered_sources")
     requested = ctx.attr.object_names
+    if ctx.attr.ordered_sources:
+        requested = []
+        for target in ctx.attr.ordered_sources:
+            for source in target[DefaultInfo].files.to_list():
+                if source.extension in ["c", "cc", "cpp", "cxx", "s", "S"]:
+                    requested.append(source.basename[:-len(source.extension)] + "o")
+                elif source.extension not in ["h", "hh", "hpp", "hxx", "inc"]:
+                    fail("unsupported ordered component source: " + source.path)
+        if sorted(requested) != sorted(available.keys()):
+            fail("ordered sources must account for every own compiler output")
     if not requested or len(requested) != len(depset(requested).to_list()):
         fail("component object selection must be nonempty and unique")
     missing = [name for name in requested if name not in available]
     if missing:
-        fail("component object selection absent from " + str(group.label) + ": " + str(missing))
-    # Forward declared compiler outputs directly: no archive extraction action,
-    # filesystem search, or transitive link dependency can expand this selection.
-    return [DefaultInfo(files = depset([available[name] for name in requested]))]
+        fail("component object selection absent: " + str(missing))
+    objects = [available[name] for name in requested]
+    # Forward compiler artifacts directly, with source-order metadata. No archive
+    # extraction, filesystem discovery or transitive linker input can expand it.
+    return [DefaultInfo(files = depset(objects)),
+            BSDComponentObjectsInfo(objects = objects, names = requested, archives = ctx.files.archives)]
 
 bsd_component_selected_objects = rule(implementation = _selected_objects, attrs = {
-    "group": attr.label(providers = [CcInfo], mandatory = True),
+    "group": attr.label(providers = [CcInfo]),
+    "groups": attr.label_list(providers = [CcInfo]),
     "pic": attr.bool(default = False),
-    "object_names": attr.string_list(mandatory = True),
+    "object_names": attr.string_list(),
+    "ordered_sources": attr.label_list(allow_files = True),
+    "archives": attr.label_list(allow_files = [".a"]),
 })
 
 
@@ -110,7 +135,8 @@ def _all_objects(ctx):
     if not objects or len(objects) != len(depset(objects).to_list()):
         fail("component must expose a nonempty unique object set: " + str(group.label))
     # Preserve full artifact paths, including equal basenames in subdirectories.
-    return [DefaultInfo(files = depset(objects))]
+    return [DefaultInfo(files = depset(objects)),
+            BSDComponentObjectsInfo(objects = objects, names = [obj.basename for obj in objects], archives = [])]
 
 bsd_component_objects = rule(implementation = _all_objects, attrs = {
     "group": attr.label(providers = [CcInfo], mandatory = True),

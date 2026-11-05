@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+_SOURCES = (
+['camcontrol.c', 'attrib.c', 'depop.c', 'epc.c', 'fwdownload.c', 'modeedit.c', 'persist.c', 'progress.c', 'timestamp.c', 'util.c', 'zone.c', '//sbin/nvmecontrol:identify_ext.c', '//sbin/nvmecontrol:nc_util.c', '//sys/dev/nvme:nvme_util.c'] + glob(["*.h"])
+)
 cc_binary(
     name = "camcontrol",
-    srcs = ['camcontrol.c', 'attrib.c', 'depop.c', 'epc.c', 'fwdownload.c', 'modeedit.c', 'persist.c', 'progress.c', 'timestamp.c', 'util.c', 'zone.c', '//sbin/nvmecontrol:identify_ext.c', '//sbin/nvmecontrol:nc_util.c', '//sys/dev/nvme:nvme_util.c'] + glob(["*.h"]),
+    srcs = _SOURCES,
     deps = ['//lib/libcam:cam', '//lib/libnvmf:nvmf_pie', '//lib/libnv:nv', '//lib/libsbuf:sbuf', '//lib/libutil:util'] + ["//sbin/nvmecontrol:headers"],
     dynamic_deps = ['//lib/libcam:cam_shared', '//lib/libnv:nv_shared', '//lib/libsbuf:sbuf_shared', '//lib/libutil:util_shared'],
     copts = ["-fPIE"], linkopts = ["-pie"],
@@ -31,3 +34,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES, object_names = ['camcontrol.o', 'attrib.o', 'depop.o', 'epc.o', 'fwdownload.o', 'modeedit.o', 'persist.o', 'progress.o', 'timestamp.o', 'util.o', 'zone.o', 'identify_ext.o', 'nc_util.o', 'nvme_util.o'],
+    deps = ['//lib/libcam:headers', '//lib/libnvmf:headers', '//lib/libutil:headers', '//sbin/nvmecontrol:headers'], archives = ['//lib/libnvmf:static_archive', '//lib/libnv:static_archive'])

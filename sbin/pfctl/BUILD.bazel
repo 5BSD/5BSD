@@ -2,7 +2,10 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_yacc")
 bsd_yacc(name = "parser", src = "//contrib/openbsd-pf/sbin/pfctl:parse.y", output = "parse.c", yacc = "//usr.bin/yacc:yacc", visibility = ["//sbin/pfctl/tests:__pkg__"])
-cc_binary(name = "pfctl", srcs = ['//contrib/openbsd-pf/sbin/pfctl:pfctl.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_parser.c', '//contrib/openbsd-pf/sbin/pfctl:pf_print_state.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_osfp.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_radix.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_table.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_optimize.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_queue.c', ':parser', '//contrib/openbsd-pf/sys/net:pf_ruleset.c', '//sys/netpfil/openbsd-pf/user:pfctl_jail.c', '//sys/netpfil/openbsd-pf/user:pfctl_ether.c'],
+_SOURCES = (
+['//contrib/openbsd-pf/sbin/pfctl:pfctl.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_parser.c', '//contrib/openbsd-pf/sbin/pfctl:pf_print_state.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_osfp.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_radix.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_table.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_optimize.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_queue.c', ':parser', '//contrib/openbsd-pf/sys/net:pf_ruleset.c', '//sys/netpfil/openbsd-pf/user:pfctl_jail.c', '//sys/netpfil/openbsd-pf/user:pfctl_ether.c']
+)
+cc_binary(name = "pfctl", srcs = _SOURCES,
     deps = ["//sys/netpfil/openbsd-pf/user:pfctl_headers", "//contrib/openbsd-pf/sbin/pfctl:headers", "//lib/msun:m", "//lib/libmd:md_link"],
     dynamic_deps = ["//lib/msun:m_shared", "//lib/libmd:md_shared"], copts = ["-fPIE", "-include", "openbsd_compat.h"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
@@ -31,3 +34,8 @@ bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], m
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+_RESCUE_COPTS = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wno-incompatible-pointer-types-discards-qualifiers', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-format', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Qunused-arguments', '-include', 'openbsd_compat.h']
+rescue_application(srcs = _SOURCES, object_names = ['pfctl.o', 'parse.o', 'pfctl_parser.o', 'pf_print_state.o', 'pfctl_osfp.o', 'pfctl_radix.o', 'pfctl_table.o', 'pfctl_optimize.o', 'pf_ruleset.o', 'pfctl_queue.o', 'pfctl_jail.o', 'pfctl_ether.o'],
+    deps = ['//sys/netpfil/openbsd-pf/user:pfctl_headers', '//contrib/openbsd-pf/sbin/pfctl:headers'], compiler_options = _RESCUE_COPTS)

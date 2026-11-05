@@ -18,3 +18,5 @@ bsd_install_archive(name = "install_archive", visibility = ["//lib/geom:__pkg__"
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+exports_files(["geom_label.c"], visibility = ["//sbin/geom:__pkg__"])

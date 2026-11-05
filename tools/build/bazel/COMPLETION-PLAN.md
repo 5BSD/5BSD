@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to ninety-eight applications (2026-11-05)
+
+Camcontrol/geom/ifconfig/pfctl reach 98 of 103 default applications. Native core
+object descriptors now consume typed ordered compiler metadata and exact DTrace
+rewrite maps; manual parent route/ping object cases are removed. Source-specific
+ifpf compilation and constructor order remain explicit, and program-specific
+archives stay in original partial-link stages. Default and Netlink-disabled cores
+pass 102 runtime methods plus 28 source-settings methods. All 98 descriptors and
+two program archive lists match fresh original Make in each profile; disabled
+route/ifconfig select two/23 objects. All 56 default compiler policies and 4844
+consumed dependency occurrences are checked; one exact generated PF parser
+occurrence remains explicitly byte-different with successful producer controls.
+Original pipeline on identical inputs matches all 198 outputs. See
+RESCUE-NINETY-EIGHT-PROGRAM-QUALIFICATION.md. Finish remaining five ZFS-family
+applications, actual rescue libraries/config/cross/full installation and every
+full-system gate. Make stays default; BIP excluded. No system/performance claim.
+
 ## Native rescue expansion to ninety-four applications (2026-11-05)
 
 Sh/csh/vi reach 94 of 103 default applications. Final native r3 passes 99 runtime

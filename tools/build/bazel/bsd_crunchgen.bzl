@@ -6,6 +6,7 @@ program supplies its object list, so crunchgen never enters its Make-query path.
 The incidental Makefile/cache are declared outputs and are never executed.
 """
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load(":bsd_component_archive.bzl", "BSDComponentObjectsInfo")
 
 _NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
 _IDENT_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
@@ -22,7 +23,21 @@ def _impl(ctx):
     programs = ctx.attr.programs
     if not programs or len(depset(programs).to_list()) != len(programs):
         fail("crunchgen programs must be nonempty and unique")
-    if sorted(ctx.attr.object_names.keys()) != sorted(programs):
+    if bool(ctx.attr.object_names) == bool(ctx.attr.object_files):
+        fail("choose explicit object_names or typed object_files")
+    object_names = ctx.attr.object_names
+    program_archives = {}
+    if ctx.attr.object_files:
+        object_names = {}
+        for target, program in ctx.attr.object_files.items():
+            if program in object_names:
+                fail("duplicate crunchgen compilation program: " + program)
+            metadata = target[BSDComponentObjectsInfo]
+            if len(metadata.names) != len(metadata.objects):
+                fail("invalid compiler object/name metadata")
+            object_names[program] = metadata.names
+            program_archives[program] = metadata.archives
+    if sorted(object_names.keys()) != sorted(programs):
         fail("crunchgen requires an explicit object list for every program")
     if any([name not in programs for name in ctx.attr.aliases.keys()]):
         fail("crunchgen aliases require a declared program")
@@ -40,7 +55,7 @@ def _impl(ctx):
         if not ident or ident[0] in "0123456789" or ident in identifiers:
             fail("crunchgen program identifiers must be valid and unique")
         identifiers[ident] = True
-        objects = ctx.attr.object_names[program]
+        objects = object_names[program]
         if not objects or len(depset(objects).to_list()) != len(objects):
             fail("crunchgen object lists must be nonempty and unique")
         for obj in objects:
@@ -48,6 +63,10 @@ def _impl(ctx):
             if not obj.endswith(".o") or any([part in ["", ".", ".."] for part in obj.split("/")]):
                 fail("crunchgen object names must be canonical relative .o paths")
         lines += ["progs " + program, "special " + program + " objs " + " ".join(objects)]
+        if program_archives.get(program):
+            # Metadata only: crunchgen records these declared graph paths in its
+            # incidental Makefile. Native linking consumes the same typed files.
+            lines.append("special " + program + " lib " + " ".join([f.path for f in program_archives[program]]))
         for alias in ctx.attr.aliases.get(program, []):
             _token(alias, _NAME_CHARS + "[]", "crunchgen alias")
             if alias in seen or alias in programs:
@@ -97,7 +116,8 @@ def _impl(ctx):
 
 bsd_crunchgen = rule(implementation = _impl, attrs = {
     "programs": attr.string_list(mandatory = True),
-    "object_names": attr.string_list_dict(mandatory = True),
+    "object_names": attr.string_list_dict(),
+    "object_files": attr.label_keyed_string_dict(providers = [BSDComponentObjectsInfo]),
     "aliases": attr.string_list_dict(),
     "executable_name": attr.string(mandatory = True),
     "emit_stubs": attr.bool(default = False, doc = "Declare original crunchgen -s entry stubs."),

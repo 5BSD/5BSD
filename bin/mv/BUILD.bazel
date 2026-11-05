@@ -1,3 +1,4 @@
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
@@ -57,5 +58,8 @@ cc_library(name = "rescue_objects", srcs = ['mv.c', 'moveio_trace.h'],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 bsd_dtrace_cc_objects(name = "rescue_traced_objects", library = ":rescue_objects", provider = ":provider",
     provider_object = 'moveio_provider', copy_runner = "//tools/build/bazel:dtrace_copy_runner")
-filegroup(name = "rescue_compiler_outputs", srcs = [":rescue_traced_objects"], output_group = "regular",
-    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_transformed_objects")
+bsd_component_selected_objects(name = "rescue_raw_compiler_outputs", group = ":rescue_objects",
+    object_names = ['mv.o'])
+rescue_transformed_objects(name = "rescue_compiler_outputs", original = ":rescue_raw_compiler_outputs",
+    transformed = ":rescue_traced_objects", provider_name = 'moveio_provider', visibility = ["//visibility:public"])
