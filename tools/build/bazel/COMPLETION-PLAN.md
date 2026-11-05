@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Complete libc string-test construction (2026-11-05)
+
+All 42 original string programs now build/install with original source aliases,
+no-builtin policy and selective compatibility/libmd linkage. Eight textual C
+consumers use exact per-body textual_hdrs dependencies. All 85 installed file
+records and exact Kyua bytes match fresh original Make; 42 ELF/hardening contracts
+and native/original debug CRCs pass. All 31 selected native runtime cases pass,
+including six libmd-dependent cases. Final frontend r3 passes 32 targets from
+cache and all three final installation outputs retain independent review bindings.
+See LIBC-STRING-TEST-QUALIFICATION.md. No original C program was rewritten.
+
+Remaining string/locale cases, libc and other test roots, parent Kyua/helper/data
+traversal and every full-system/cross/bootstrap/runtime/resource/publication gate
+remain open. Source-owned archive ordering and independent whole-world/debug/
+pkgbase parity still require acceptance. Full test-enabled parent guards remain;
+Make stays the production default and BIP stays excluded.
+
 ## Complete libc DB/RPC test contributions (2026-11-05)
 
 DB now builds five ATF C programs and two helpers plus the real transformed shell

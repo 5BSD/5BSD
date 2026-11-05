@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_" + name + ".c" for name in ["memchr", "memcpy", "memmem", "memset",
+    "strcat", "strchr", "strchrnul", "strcmp", "strcpy", "strerror", "strlen", "strpbrk", "strrchr", "swab"]],
+    visibility = ["//lib/libc/tests/string:__pkg__"])

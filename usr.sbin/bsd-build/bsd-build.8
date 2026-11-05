@@ -7125,3 +7125,13 @@ Exact Make installation/script/data/generator comparisons and ELF/debug checks
 are separate from full hierarchy, raw binary parity and runtime acceptance.
 The existing explicit-input workflow expresses these contributions; full-tests
 parent guards and the production Make backend remain unchanged.
+
+.Pp
+The complete selected libc string-test contribution preserves all 42 original
+programs, source aliases, no-builtin flags and per-consumer textual C dependencies.
+Its installation includes original Kyua and split-debug metadata; selected native
+execution also supplies libmd only where declared by the original program.
+Complete Make installation and bounded ELF/debug comparisons are distinct from
+remaining test-case, locale/data and full installed-system acceptance.
+Existing explicit-input targets/tests express the contribution without changing
+the production Make backend or full-tests parent guards.

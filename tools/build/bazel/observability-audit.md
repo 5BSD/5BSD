@@ -21,6 +21,16 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc string operation tests (2026-11-05)
+
+All 42 original test programs preserve no-builtin calls, per-consumer textual C
+bodies and original installed ATF metadata. Thirty-one selected native cases
+pass, including native libmd-dependent memory tests. DOF initialization remains
+explicitly disabled; these are not live probe or audit-delivery checks. These
+ordinary arithmetic/string test operations introduce no new security-sensitive
+mutation requiring a new audit event. Remaining locale/guard-page/installed-image
+cases stay open. See LIBC-STRING-TEST-QUALIFICATION.md.
+
 ## Libc DB/RPC actual installed program review (2026-11-05)
 
 The five original DB C test programs retain real private structure definitions
