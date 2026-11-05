@@ -789,3 +789,15 @@ config_setting(name = "includes_enabled", flag_values = {":includes": "true"}, v
 config_setting(name = "includes_iconv_enabled", flag_values = {":includes": "true", ":iconv": "true"}, visibility = ["//visibility:public"])
 config_setting(name = "includes_hesiod_enabled", flag_values = {":includes": "true", ":hesiod": "true"}, visibility = ["//visibility:public"])
 config_setting(name = "includes_legacy_gss_enabled", flag_values = {":includes": "true", ":kerberos": "true", ":mitkrb5": "false"}, visibility = ["//visibility:public"])
+
+config_setting(name = "includes_cddl_enabled", flag_values = {":includes": "true", ":cddl": "true"}, visibility = ["//visibility:public"])
+
+config_setting(name = "includes_mlx5tool_enabled", flag_values = {":includes": "true", ":mlx5tool": "true"}, visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "includes_bluetooth_enabled", match_all = [":includes_enabled", ":bluetooth_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "includes_cuse_enabled", match_all = [":includes_enabled", ":cuse_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "includes_usb_enabled", match_all = [":includes_enabled", ":usb_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "includes_bhyve_enabled", match_all = [":includes_enabled", ":bhyve_enabled"], visibility = ["//visibility:public"])

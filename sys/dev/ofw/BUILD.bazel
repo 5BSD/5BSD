@@ -152,3 +152,9 @@ bsd_source_headers(name = "cross_io_bus_gpioiic_gpioiic_module_headers", hdrs = 
 
 # Additional physical prerequisites of the cross-target I/O-bus consumers.
 bsd_source_headers(name = "cross_io_bus_spigen_spigen_module_headers", hdrs = ['ofw_bus_subr.h', 'openfirm.h'], visibility = ['//sys/dev/spibus:__pkg__'])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_ofw_install", directory = "dev/ofw",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

@@ -3,3 +3,9 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(["ng_netflow.c", "netflow.c", "netflow_v9.c"], visibility = ["//sys/netgraph:__pkg__"])
 cc_library(name = "kernel_headers", hdrs = ["netflow.h", "netflow_v9.h", "ng_netflow.h"],
     strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_netgraph_netflow_install", directory = "netgraph/netflow",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

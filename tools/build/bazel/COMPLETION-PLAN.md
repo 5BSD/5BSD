@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Complete selected include parent (2026-11-05)
+
+The native include endpoint now composes ordinary/generated/RPC/fixed/kernel ABI
+headers, architecture companions and aliases. Complete default original comparison
+matches 1417 files, fourteen symlinks and three directory claims; includes-disabled
+and optional-kernel-families-disabled profiles have independent full originals.
+The latter keeps includes enabled so feature selections are actually exercised.
+The reduced comparison caught and corrected an incorrect assumption about Make's
+conditional realinstall dependency; rejected evidence is retained. Actual action
+logs bind 1368 file inputs across 95 observed archives; nine up-to-date actions
+remain unobserved, and all 312 default artifacts remain identical after the fix.
+See COMPLETE-INCLUDE-QUALIFICATION.md. Default cross-capture namespace evidence
+is 1265 archives/32297 non-directory paths without conflicts, not a combined world.
+Continue remaining etc/rescue/sys/stand/world roots and installed tests; complete
+installation/debug/pkgbase, bootstrap, cross/runtime/resource gates remain open.
+Make stays production/default; BIP stays excluded.
+
 ## Ordinary public include checkpoint (2026-11-05)
 
 Native source-owned declarations now install the 100 common ordinary public

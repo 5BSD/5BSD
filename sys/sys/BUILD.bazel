@@ -230,3 +230,12 @@ filegroup(
     ],
     visibility = ["//usr.sbin/dtraced:__pkg__"],
 )
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_sys_install", directory = "sys",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_flat_sys_disk_install", directory = "sys/disk",
+    files = {header: header.split("/")[-1] for header in glob(["disk/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

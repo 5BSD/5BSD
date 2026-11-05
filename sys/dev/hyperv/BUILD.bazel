@@ -167,3 +167,9 @@ amd64_generic_module_objects(name = "hv_utils_hv_kvp_module", srcs = ["utilities
 amd64_generic_module_objects(name = "hv_utils_vmbus_heartbeat_module", srcs = ["utilities/vmbus_heartbeat.c", "utilities/vmbus_shutdown.c", "utilities/vmbus_timesync.c"],
     deps = ["//sys/dev/hyperv:firewire_hyperv_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_hyperv_install", directory = "dev/hyperv",
+    files = {"utilities/hv_snapshot.h": "hv_snapshot.h", "include/hyperv.h": "hyperv.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

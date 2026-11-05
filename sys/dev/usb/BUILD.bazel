@@ -1419,3 +1419,9 @@ bsd_source_headers(name = "usb_fdt_support_headers", hdrs = ['usb.h', 'usb_bus.h
     srcs = ["usb_fdt_support.c"],
     deps = ["//sys/dev/fdt:mii_family_headers", "//sys/dev/ofw:storage_module_headers", "//sys/contrib/libfdt:mii_family_headers", "//sys/vm:usb_net_uether_headers", "//sys/net:usb_net_uether_headers", ":usb_fdt_support_headers", "//sys/dev/usb/net:usb_net_uether_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/" + arch + "/conf:generic_opt_usb_header", "//sys/" + arch + "/conf:generic_opt_inet_header"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_usb_install", directory = "dev/usb",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_usb_enabled")

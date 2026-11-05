@@ -230,3 +230,9 @@ bsd_source_headers(name = "bios_simp_headers", hdrs = ['verity/g_verity_transiti
 bsd_source_headers(name = 'kboot_loader_headers_verity', hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
 
 bsd_source_headers(name = 'userboot_entry_headers_verity', hdrs = ['verity/g_verity_transition.h', 'verity/g_verity_verify.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_geom_install", directory = "geom",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

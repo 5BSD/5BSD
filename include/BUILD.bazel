@@ -77,3 +77,15 @@ public_header_installation(name = "osreldate_install", files = {":osreldate": "o
 
 load(":root_installation.bzl", "root_header_installation")
 root_header_installation()
+
+load(":kernel_installation.bzl", "kernel_header_installation")
+kernel_header_installation()
+
+load(":aliases_installation.bzl", "alias_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+alias_installation()
+bsd_install_archive_set(name = "installation_archives", archives = [
+    ":root_header_installation_archives", ":fixed_installation_archives",
+    ":rpc_installation_archives", ":osreldate_install_archive",
+    ":kernel_header_installation_archives", ":aliases_archive",
+], visibility = ["//visibility:public"])

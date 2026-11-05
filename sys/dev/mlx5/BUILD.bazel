@@ -571,3 +571,9 @@ amd64_generic_module_objects(name = "mlx5ib_mlx5_ib_mr_module", srcs = ["mlx5_ib
 amd64_generic_module_objects(name = "mlx5ib_mlx5_ib_virt_module", srcs = ["mlx5_ib/mlx5_ib_virt.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:mlx_kernel_mlx5_alloc_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mlx5:rdma_module_context_36", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/ofed/include:rdma_module_context_33", "//sys/compat/linuxkpi/common/include:rdma_module_context_47"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_mlx5_install", directory = "dev/mlx5",
+    files = {"mlx5io.h": "mlx5io.h"}, enabled = "//tools/build/bazel/config:includes_mlx5tool_enabled")

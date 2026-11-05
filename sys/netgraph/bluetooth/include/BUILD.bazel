@@ -35,3 +35,9 @@ bsd_source_headers(name = "network_policy_kernel_ng_btsocket_sco_headers", hdrs 
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_ng_btsocket_iso_headers", hdrs = ["ng_bluetooth.h", "ng_btsocket.h", "ng_btsocket_iso.h", "ng_hci.h", "ng_l2cap.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_netgraph_bluetooth_include_install", directory = "netgraph/bluetooth/include",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_bluetooth_enabled")

@@ -474,3 +474,21 @@ bsd_source_headers(name = "linux64_module_context_0", hdrs = ["scsi/scsi_sg.h"],
     srcs = ['ctl/scsi_ctl.c'],
     deps = ["//sys/cam:compat_services_module_context_14", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/" + arch + "/conf:generic_opt_cam_header"],
 ) for arch in ['arm64', 'riscv']]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_cam_install", directory = "cam",
+    files = {"cam.h": "cam.h", "cam_ccb.h": "cam_ccb.h", "cam_compat.h": "cam_compat.h", "cam_debug.h": "cam_debug.h", "cam_iosched.h": "cam_iosched.h", "cam_periph.h": "cam_periph.h", "cam_queue.h": "cam_queue.h", "cam_sim.h": "cam_sim.h", "cam_xpt.h": "cam_xpt.h", "cam_xpt_internal.h": "cam_xpt_internal.h", "cam_xpt_periph.h": "cam_xpt_periph.h", "cam_xpt_sim.h": "cam_xpt_sim.h"}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_group_camata_install", directory = "cam/ata",
+    files = {"ata/ata_all.h": "ata_all.h"}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_group_cammmc_install", directory = "cam/mmc",
+    files = {"mmc/mmc.h": "mmc.h", "mmc/mmc_bus.h": "mmc_bus.h", "mmc/mmc_all.h": "mmc_all.h"}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_group_camnvme_install", directory = "cam/nvme",
+    files = {"nvme/nvme_all.h": "nvme_all.h"}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_group_camscsi_install", directory = "cam/scsi",
+    files = {"scsi/scsi_all.h": "scsi_all.h", "scsi/scsi_cd.h": "scsi_cd.h", "scsi/scsi_ch.h": "scsi_ch.h", "scsi/scsi_da.h": "scsi_da.h", "scsi/scsi_enc.h": "scsi_enc.h", "scsi/scsi_enc_internal.h": "scsi_enc_internal.h", "scsi/scsi_iu.h": "scsi_iu.h", "scsi/scsi_message.h": "scsi_message.h", "scsi/scsi_pass.h": "scsi_pass.h", "scsi/scsi_pt.h": "scsi_pt.h", "scsi/scsi_sa.h": "scsi_sa.h", "scsi/scsi_ses.h": "scsi_ses.h", "scsi/scsi_sg.h": "scsi_sg.h", "scsi/scsi_targetio.h": "scsi_targetio.h", "scsi/smp_all.h": "smp_all.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

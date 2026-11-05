@@ -368,3 +368,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['xb360gp.c'],
     deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:cross_input_module_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_13", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:input_module_opt_kbd_header", "//sys/" + arch + "/conf:input_module_opt_usb_header"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_hid_install", directory = "dev/hid",
+    files = {"hid.h": "hid.h", "hidraw.h": "hidraw.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

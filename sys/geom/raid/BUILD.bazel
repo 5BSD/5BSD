@@ -44,3 +44,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     ],
     copts = ["-fmacro-prefix-map=$(location :g_raid_md_if_source)=g_raid_md_if.c", "-fmacro-prefix-map=$(location :g_raid_tr_if_source)=g_raid_tr_if.c"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_geom_raid_install", directory = "geom/raid",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

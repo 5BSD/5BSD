@@ -78,3 +78,12 @@ filegroup(
     ],
     visibility = ["//usr.sbin/dtraced:__pkg__"],
 )
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_amd64_machine_install", directory = "machine",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_amd64_machine_pc_install", directory = "machine/pc",
+    files = {header: header.split("/")[-1] for header in glob(["pc/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

@@ -12,3 +12,9 @@ exports_files(
     ["spkr.c"],
     visibility = ["//sys/modules/speaker:__pkg__"],
 )
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_speaker_install", directory = "dev/speaker",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

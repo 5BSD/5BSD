@@ -134,3 +134,9 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_nvme_if", srcs = [":b
 
 bsd_source_headers(name = "linux64_module_context_0", hdrs = ["nvme_linux.h"], includes = [],
     visibility = ["//sys/compat/linux:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_nvme_install", directory = "dev/nvme",
+    files = {"nvme.h": "nvme.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

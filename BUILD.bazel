@@ -36,3 +36,15 @@ bsd_source_headers(name = "network_services_namespace_context_1", hdrs = ["//sys
 
 # Additional physical prerequisites of the cross-target I/O-bus consumers.
 bsd_source_headers(name = "cross_io_bus_gpiokeys_gpiokeys_codes_module_headers", hdrs = ['sys/contrib/device-tree/include/dt-bindings/input/linux-event-codes.h'], visibility = ['//sys/dev/gpio:__pkg__'])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_nfsserver_install", directory = "nfsserver",
+    files = {header: header.split("/")[-1] for header in glob(["sys/nfsserver/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_flat_dev_pbio_install", directory = "dev/pbio",
+    files = {header: header.split("/")[-1] for header in glob(["sys/dev/pbio/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+public_header_installation(name = "public_flat_security_mac_grantbylabel_install", directory = "security/mac_grantbylabel",
+    files = {header: header.split("/")[-1] for header in glob(["sys/security/mac_grantbylabel/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

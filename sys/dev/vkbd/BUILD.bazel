@@ -21,3 +21,9 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "vkbd_vkbd_module", srcs = ["vkbd.c"],
     deps = ["//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/dev/vkbd:peripheral_devices_kernel_vkbd_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_vkbd_install", directory = "dev/vkbd",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

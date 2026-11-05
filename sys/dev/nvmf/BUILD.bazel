@@ -164,3 +164,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['controller/nvmft_qpair.c'],
     deps = ["//sys/cam:storage_tcp_ktest_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_6", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet:tracing_core_headers"],
 ) for arch in ['arm64', 'riscv']]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_nvmf_install", directory = "dev/nvmf",
+    files = {"nvmf.h": "nvmf.h", "nvmf_proto.h": "nvmf_proto.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

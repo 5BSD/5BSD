@@ -332,3 +332,9 @@ bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["ieee80211.h
 
 bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["_ieee80211.h", "ieee80211.h", "ieee80211_ageq.h", "ieee80211_crypto.h", "ieee80211_dfs.h", "ieee80211_freebsd.h", "ieee80211_ht.h", "ieee80211_ioctl.h", "ieee80211_node.h", "ieee80211_phy.h", "ieee80211_power.h", "ieee80211_proto.h", "ieee80211_radiotap.h", "ieee80211_scan.h", "ieee80211_var.h", "ieee80211_vht.h"], includes = [],
     visibility = ["//sys/dev/rtwn:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_net80211_install", directory = "net80211",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

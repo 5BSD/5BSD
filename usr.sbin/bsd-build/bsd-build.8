@@ -6873,3 +6873,13 @@ iconv, Hesiod and legacy GSS headers from configured source options.
 Disabling includes also disables optional header contributions.
 This endpoint is separate from generated version headers, kernel header groups
 and compatibility aliases; it does not establish complete include/world parity.
+
+.Pp
+The complete native include parent composes ordinary and generated headers,
+kernel ABI groups, architecture companions and installed compatibility aliases.
+Kernel source globs and explicit groups are owned by existing source packages.
+The normal includes selection gates the kernel copy phase and its directories;
+companion child beforeinstall directories and the library include alias retain
+their independent Make behavior.
+Current complete include qualification covers selected AMD64 copy layouts,
+without establishing whole-world, package, bootstrap or cross-ABI acceptance.

@@ -130,3 +130,9 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "pmu_dmc620_reg.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_hwpmc_install", directory = "dev/hwpmc",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

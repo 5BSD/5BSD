@@ -74,3 +74,9 @@ bsd_source_headers(name = "cross_io_bus_pwmbus_ofw_pwm_module_headers", hdrs = [
     srcs = ['pwmc.c'],
     deps = ["//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/pwm:device_families_module_context_1", "//sys/dev/pwm:pwmbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_tty_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
 ) for arch in ['arm64', 'riscv']]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_pwm_install", directory = "dev/pwm",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

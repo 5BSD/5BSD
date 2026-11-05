@@ -26,3 +26,9 @@ bsd_source_headers(name = 'efi_gptboot_riscv64_headers', hdrs = ['_limits.h', '_
 bsd_source_headers(name = 'efi_loader_simp_riscv64_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'asm.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'md_var.h', 'metadata.h', 'param.h', 'psl.h', 'setjmp.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
 
 bsd_source_headers(name = 'efi_loader_4th_riscv64_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'asm.h', 'cpufunc.h', 'elf.h', 'endian.h', 'exec.h', 'md_var.h', 'metadata.h', 'param.h', 'psl.h', 'setjmp.h'], visibility = ["//stand/efi/loader_4th:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_riscv_machine_install", directory = "machine",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

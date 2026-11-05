@@ -26,3 +26,9 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
 amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cuse", srcs = ["cuse.c"],
     deps = ["//sys/fs/cuse:filesystems_rpc_kernel_cuse_headers", "//sys/vm:filesystems_rpc_kernel_cuse_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_fs_cuse_install", directory = "fs/cuse",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_cuse_enabled")

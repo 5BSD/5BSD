@@ -81,3 +81,9 @@ amd64_generic_kernel_objects(name = "generic_storage_core_g_label_disk_ident", s
 amd64_generic_kernel_objects(name = "generic_storage_core_g_label_swaplinux", srcs = ["g_label_swaplinux.c"],
     deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_ext2fs_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_geom_label_install", directory = "geom/label",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

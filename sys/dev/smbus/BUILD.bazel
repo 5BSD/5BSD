@@ -86,3 +86,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['smbconf.c', 'smbus.c'],
     deps = ["//sys/dev/smbus:peripheral_devices_kernel_smbconf_headers", "//sys/dev/smbus:smbus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
 ) for arch in ['arm64', 'riscv']]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_smbus_install", directory = "dev/smbus",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

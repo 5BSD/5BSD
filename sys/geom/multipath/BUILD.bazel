@@ -18,3 +18,9 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_g_label_disk_ident_headers", hdrs = ["g_multipath.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_geom_multipath_install", directory = "geom/multipath",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

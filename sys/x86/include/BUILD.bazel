@@ -53,3 +53,9 @@ bsd_source_headers(name = "kboot_platform_headers", hdrs = ['_limits.h', '_types
 bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'metadata.h', 'psl.h', 'specialreg.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
 
 bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'metadata.h', 'psl.h', 'segments.h', 'setjmp.h', 'specialreg.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_x86_companion_install", directory = "x86",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled", create_directory = True, directory_tags = ["package=clibs", "dev"], directory_follows_selection = True)

@@ -46,3 +46,9 @@ amd64_generic_kernel_objects(name = "generic_monitoring_devices_nfs_diskless", s
 amd64_generic_kernel_objects(name = "generic_monitoring_devices_nfs_nfssvc", srcs = ["nfs_nfssvc.c"],
     deps = ["//sys/nfs:monitoring_devices_kernel_nfs_nfssvc_headers", "//sys/security/audit:monitoring_devices_kernel_nfs_nfssvc_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_nfs_header"], early_deps = [],
     pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_nfs_install", directory = "nfs",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

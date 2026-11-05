@@ -14,3 +14,9 @@ bsd_source_headers(name = "filesystems_rpc_kernel_nlm_advlock_headers", hdrs = [
 # Physical prerequisites for native monitoring device built-ins.
 bsd_source_headers(name = "monitoring_devices_kernel_nfs_diskless_headers", hdrs = ["nfs.h", "nfsargs.h", "nfsstats.h"],
     visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_nfsclient_install", directory = "nfsclient",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

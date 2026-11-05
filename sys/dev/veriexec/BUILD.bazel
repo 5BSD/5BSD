@@ -13,3 +13,9 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "K
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_verified_exec", srcs = ["verified_exec.c"],
     deps = ["//sys/dev/veriexec:peripheral_devices_kernel_verified_exec_headers", "//sys/security/mac_veriexec:peripheral_devices_kernel_verified_exec_headers", "//sys/vm:peripheral_devices_kernel_verified_exec_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_veriexec_install", directory = "dev/veriexec",
+    files = {"veriexec_ioctl.h": "veriexec_ioctl.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

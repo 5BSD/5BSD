@@ -110,3 +110,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['uinput.c'],
     deps = ["//sys/contrib/ck:cross_input_module_headers", "//sys/dev/evdev:device_io_kernel_uinput_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/" + arch + "/conf:input_module_opt_evdev_header", "//sys/" + arch + "/conf:input_module_opt_kbd_header"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_evdev_install", directory = "dev/evdev",
+    files = {"input.h": "input.h", "input-event-codes.h": "input-event-codes.h", "uinput.h": "uinput.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

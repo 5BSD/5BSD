@@ -340,3 +340,9 @@ bsd_source_headers(name = 'efi_loader_4th_headers', hdrs = ['pcireg.h'], visibil
 bsd_source_headers(name = 'efi_loader_simp_headers', hdrs = ['pcireg.h'], visibility = ["//stand/efi/loader_simp:__pkg__"])
 
 bsd_source_headers(name = "bios_libi386_headers", hdrs = ['pcireg.h'], visibility = ["//stand/i386/libi386:__pkg__"])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_group_pci_install", directory = "dev/pci",
+    files = {"pcireg.h": "pcireg.h"}, enabled = "//tools/build/bazel/config:includes_enabled")

@@ -10,3 +10,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 [cross_generic_module_objects(arch = arch, srcs = ["filemon.c"], textual_hdrs = ["filemon_wrapper.c"],
     deps = [":user_header", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_filemon_install", directory = "dev/filemon",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

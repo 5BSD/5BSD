@@ -289,3 +289,9 @@ amd64_generic_kernel_objects(name = "generic_network_policy_ng_parse", srcs = ["
 amd64_generic_kernel_objects(name = "generic_network_policy_ng_socket", srcs = ["ng_socket.c"],
     deps = ["//sys/contrib/ck:network_policy_kernel_ng_base_headers", "//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_socket_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_netgraph_install", directory = "netgraph",
+    files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")

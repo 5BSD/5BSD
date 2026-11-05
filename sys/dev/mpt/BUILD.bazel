@@ -113,3 +113,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['mpt_user.c'],
     deps = ["//sys/dev/mpt:storage_controllers_kernel_mpt_user_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/pci:pci_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/" + arch + "/conf:generic_opt_ddb_header"],
 ) for arch in ['arm64', 'riscv']]
+
+load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
+
+# Public installed ABI headers follow include/Makefile source groups.
+public_header_installation(name = "public_flat_dev_mpt_mpilib_install", directory = "dev/mpt/mpilib",
+    files = {header: header.split("/")[-1] for header in glob(["mpilib/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
