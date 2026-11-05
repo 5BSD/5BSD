@@ -21,7 +21,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'init', b'ping', b'ping6', b'dhclient', b'iscsictl', b'iscsid', b'tar', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'init', b'ping', b'ping6', b'dhclient', b'iscsictl', b'iscsid', b'tar', b'sh', b'-sh', b'csh', b'-csh', b'tcsh', b'-tcsh', b'vi', b'ex', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -796,6 +796,47 @@ class RescueCore(unittest.TestCase):
                     self.assertTrue((output / "symbol").is_symlink())
                     self.assertEqual(os.readlink(output / "symbol"), "payload")
                     self.assertEqual((source / "payload").read_bytes(), data)
+
+    def test_sh_builtin_language(self):
+        script = 'set -eu; set -- alpha beta; [ "$#" -eq 2 ]; [ "${1#al}" = pha ]; sum=0; for n in 1 2 3; do sum=$((sum+n)); done; [ "$sum" -eq 6 ]; product() { printf "%s\\n" "$(($1*$2))"; }; product 6 7'
+        p = self.run_app("sh", "-c", script, environment={"PATH": "", "ENV": ""})
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"42\n", b""))
+
+    def test_sh_private_redirection_and_pipeline(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            script = 'set -eu; printf "one\\ntwo\\n" > "$1/input"; (printf "%s\\n" payload) | (IFS= read -r value; [ "$value" = payload ]); IFS= read -r first < "$1/input"; [ "$first" = one ]; printf "%s\\n" "$first"'
+            p = self.run_app("sh", "-c", script, "sh", d,
+                environment={"PATH": "", "ENV": "", "HOME": d})
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"one\n", b""))
+            self.assertEqual((Path(d) / "input").read_bytes(), b"one\ntwo\n")
+
+    def test_csh_private_builtin_language(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            script = 'set values=(one two); @ n = 6 * 7; if ($n != 42) exit 1; if ($values[2] != two) exit 1; foreach v ($values)\n echo $v\nend\necho $n'
+            p = self.run_app("csh", "-f", "-c", script, cwd=d,
+                environment={"HOME": d, "PATH": "", "TERM": "dumb"})
+            # The fresh original rescue csh also executes this -c loop once.
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"one\n42\n", b""))
+            path = Path(d) / "script.csh"
+            path.write_text(script + "\n")
+            p = self.run_app("csh", "-f", str(path), cwd=d,
+                environment={"HOME": d, "PATH": "", "TERM": "dumb"})
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"one\ntwo\n42\n", b""))
+
+    def test_vi_private_batch_edits(self):
+        cases = [(b"alpha\nbeta\n", b"%s/alpha/ALPHA/\nwq\n", b"ALPHA\nbeta\n"),
+                 (b"one\n", b"$a\ntwo\nthree\n.\nwq\n", b"one\ntwo\nthree\n"),
+                 (b"one\ntwo\n", b"1d\nu\nwq\n", b"one\ntwo\n")]
+        for program in ["vi", "ex"]:
+            for before, commands, after in cases:
+                with self.subTest(program=program, commands=commands), tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+                    path = Path(d) / "input"
+                    path.write_bytes(before)
+                    p = self.run_app(program, "-e", "-s", str(path), data=commands, cwd=d,
+                        environment={"HOME": d, "TMPDIR": d, "EXINIT": "set recdir=" + d,
+                                     "NEXINIT": "", "VINIT": "", "PATH": "", "TERM": "dumb"})
+                    self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+                    self.assertEqual(path.read_bytes(), after)
 
 if __name__ == "__main__":
     unittest.main()

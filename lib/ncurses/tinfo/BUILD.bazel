@@ -268,9 +268,12 @@ load("@rules_cc//cc:defs.bzl", "cc_shared_library")
 load(":abi.bzl", "LIBRARY_ABIS")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 
+# Match Make's INCSLINKS in the compilation view as well as installation.
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+copy_file(name = "ncurses_header_alias", src = ":curses_header", out = "ncurses.h", allow_symlink = True)
 cc_library(
     name = "public_headers",
-    hdrs = [":curses_header", ":ncurses_dll_header", ":term_header", ":termcap_header", ":unctrl_header"],
+    hdrs = [":ncurses_header_alias", ":curses_header", ":ncurses_dll_header", ":term_header", ":termcap_header", ":unctrl_header"],
     strip_include_prefix = ".",
     visibility = ["//visibility:public"],
 )

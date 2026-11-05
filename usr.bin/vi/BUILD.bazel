@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 cc_library(name = "configuration", hdrs = ['cl_extern.h', 'common_extern.h', 'config.h', 'ex_def.h', 'ex_extern.h', 'options_def.h', 'pathnames.h', 'version.h', 'vi_extern.h', 'ex/version.h'], strip_include_prefix = ".")
-cc_binary(
-    name = "nvi",
-    srcs = ['//contrib/nvi:cl/cl_funcs.c',
+_SOURCES = (
+['//contrib/nvi:cl/cl_funcs.c',
  '//contrib/nvi:cl/cl_main.c',
  '//contrib/nvi:cl/cl_read.c',
  '//contrib/nvi:cl/cl_screen.c',
@@ -116,7 +115,11 @@ cc_binary(
  '//contrib/nvi:regex/regcomp.c',
  '//contrib/nvi:regex/regerror.c',
  '//contrib/nvi:regex/regexec.c',
- '//contrib/nvi:regex/regfree.c'],
+ '//contrib/nvi:regex/regfree.c']
+)
+cc_binary(
+    name = "nvi",
+    srcs = _SOURCES,
     deps = [":configuration", "//contrib/nvi:headers", "//lib/libutil:util", "//lib/ncurses/tinfo:tinfo", "//lib/ncurses/ncurses:ncurses"],
     dynamic_deps = ["//lib/libutil:util_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/ncurses/ncurses:ncurses_shared"],
     local_defines = ["__REGEX_PRIVATE", "_XOPEN_SOURCE_EXTENDED=1"] + select({"//tools/build/bazel/config:iconv_enabled": ["USE_ICONV", "ICONV_TRADITIONAL"], "//conditions:default": []}),
@@ -151,3 +154,11 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['cl_funcs.o', 'cl_main.o', 'cl_read.o', 'cl_screen.o', 'cl_term.o', 'conv.o', 'cut.o', 'delete.o', 'encoding.o', 'exf.o', 'key.o', 'line.o', 'log.o', 'main.o', 'mark.o', 'msg.o', 'options.o', 'options_f.o', 'put.o', 'recover.o', 'screen.o', 'search.o', 'seq.o', 'util.o', 'ex.o', 'ex_abbrev.o', 'ex_append.o', 'ex_args.o', 'ex_argv.o', 'ex_at.o', 'ex_bang.o', 'ex_cd.o', 'ex_cmd.o', 'ex_cscope.o', 'ex_delete.o', 'ex_display.o', 'ex_edit.o', 'ex_equal.o', 'ex_file.o', 'ex_filter.o', 'ex_global.o', 'ex_init.o', 'ex_join.o', 'ex_map.o', 'ex_mark.o', 'ex_mkexrc.o', 'ex_move.o', 'ex_open.o', 'ex_preserve.o', 'ex_print.o', 'ex_put.o', 'ex_quit.o', 'ex_read.o', 'ex_screen.o', 'ex_script.o', 'ex_set.o', 'ex_shell.o', 'ex_shift.o', 'ex_source.o', 'ex_stop.o', 'ex_subst.o', 'ex_tag.o', 'ex_txt.o', 'ex_undo.o', 'ex_usage.o', 'ex_util.o', 'ex_version.o', 'ex_visual.o', 'ex_write.o', 'ex_yank.o', 'ex_z.o', 'getc.o', 'v_at.o', 'v_ch.o', 'v_cmd.o', 'v_delete.o', 'v_ex.o', 'v_increment.o', 'v_init.o', 'v_itxt.o', 'v_left.o', 'v_mark.o', 'v_match.o', 'v_paragraph.o', 'v_put.o', 'v_redraw.o', 'v_replace.o', 'v_right.o', 'v_screen.o', 'v_scroll.o', 'v_search.o', 'v_section.o', 'v_sentence.o', 'v_status.o', 'v_txt.o', 'v_ulcase.o', 'v_undo.o', 'v_util.o', 'v_word.o', 'v_xchar.o', 'v_yank.o', 'v_z.o', 'v_zexit.o', 'vi.o', 'vs_line.o', 'vs_msg.o', 'vs_refresh.o', 'vs_relative.o', 'vs_smap.o', 'vs_split.o', 'regcomp.o', 'regerror.o', 'regexec.o', 'regfree.o'],
+    deps = [':configuration', '//contrib/nvi:headers', '//lib/libutil:headers', '//lib/ncurses/tinfo:public_headers'],
+    defines = ["__REGEX_PRIVATE", "_XOPEN_SOURCE_EXTENDED=1"],
+    warns = 0,
+    copts = ['-Icontrib/nvi', '-Icontrib/nvi/regex', '-Iusr.bin/vi/ex'])

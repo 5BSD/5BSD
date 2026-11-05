@@ -22,8 +22,8 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
 # No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# Supported combined-object stage, bounded to ninety-one real applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch', 'dump', 'restore', 'fsck_ffs', 'fsdb', 'mount_nfs', 'init', 'ping', 'dhclient', 'iscsictl', 'iscsid', 'tar']]
+# Supported combined-object stage, bounded to ninety-four real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch', 'dump', 'restore', 'fsck_ffs', 'fsdb', 'mount_nfs', 'init', 'ping', 'dhclient', 'iscsictl', 'iscsid', 'tar', 'sh', 'csh', 'vi']]
 _CORE_OWNERS = {p: "usr.bin/" + p for p in ["head", "tail", "tee", "id"]}
 _CORE_OWNERS.update({p: "usr.sbin/" + p for p in ["chroot", "chown"]})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']})
@@ -33,6 +33,7 @@ _CORE_OWNERS.update({'xz': 'usr.bin/xz', 'zstd': 'usr.bin/zstd', 'less': 'usr.bi
 _CORE_OWNERS.update({'reboot': 'sbin/reboot', 'shutdown': 'sbin/shutdown', 'dumpon': 'sbin/dumpon', 'savecore': 'sbin/savecore', 'mount': 'sbin/mount', 'mdmfs': 'sbin/mdmfs', 'nos-tun': 'sbin/nos-tun', 'nc': 'usr.bin/nc', 'fetch': 'usr.bin/fetch'})
 _CORE_OWNERS.update({'dump': 'sbin/dump', 'restore': 'sbin/restore', 'fsck_ffs': 'sbin/fsck_ffs', 'fsdb': 'sbin/fsdb', 'mount_nfs': 'sbin/mount_nfs'})
 _CORE_OWNERS.update({'init': 'sbin/init', 'ping': 'sbin/ping', 'dhclient': 'sbin/dhclient', 'iscsictl': 'usr.bin/iscsictl', 'iscsid': 'usr.sbin/iscsid', 'tar': 'usr.bin/tar'})
+_CORE_OWNERS.update({'sh': 'bin/sh', 'csh': 'bin/csh', 'vi': 'usr.bin/vi'})
 _CORE_OBJECTS = {p: "//" + _CORE_OWNERS.get(p, "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
 [config_setting(name = name, flag_values = {
     "//tools/build/bazel/config:inet_support": v4,
@@ -71,7 +72,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real ninety-one-program executable, with native static libc and startup.
+# Bounded real ninety-four-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],
@@ -89,6 +90,7 @@ _CORE_ARCHIVES = [
     ("tinfo", "//lib/ncurses/tinfo:static_archive"),
     ("util", "//lib/libutil:static_archive"),
     ("xo", "//lib/libxo/libxo:static_archive"),
+    ("ncurses", "//lib/ncurses/ncurses:static_archive"),
     ("ipsec", "//lib/libipsec:static_archive"),
     ("lzma", "//lib/liblzma:static_archive"),
     ("pthread", "//lib/libthr:static_archive"),

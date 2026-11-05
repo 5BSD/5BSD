@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to ninety-four applications (2026-11-05)
+
+Sh/csh/vi reach 94 of 103 default applications. Final native r3 passes 99 runtime
+methods plus 28 source-settings methods. All 196 compiler policies agree with
+original Make; 166 fresh post-alias-fix executions and 30 retained executions bind
+to immutable passing outputs. Eleven shell generator payloads match exactly;
+original crunchgen/Make on identical inputs matches all 190 pipeline outputs.
+The review found and fixed the missing native ncurses.h compilation alias instead
+of accepting SDK fallback. All 17295 consumed occurrences are declared: eleven
+exact comment differences, five proven alias uses and twelve proven virtual-parent
+spellings remain explicit. Six diagnostic-path controls pass. See
+RESCUE-NINETY-FOUR-PROGRAM-QUALIFICATION.md. Continue remaining nine applications,
+actual libraries/config/cross/full install and every full-system gate. Diagnose
+csh NO_NLS_CATALOGS policy: no bundled source consumer found; runtime disabled
+catalog behavior is not established. Make stays default; BIP excluded.
+
 ## Native rescue expansion to ninety-one applications (2026-11-05)
 
 Six init/network/iSCSI/archive owners reach 91 of 103 default applications.

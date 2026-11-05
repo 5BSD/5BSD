@@ -14,7 +14,10 @@ filegroup(name = "generated", srcs = [":nodes", ":syntax", ":builtins", ":tokens
 cc_library(name = "headers", hdrs = ['alias.h', 'arith.h', 'arith_yacc.h', 'cd.h', 'error.h', 'eval.h', 'exec.h', 'expand.h', 'input.h', 'jobs.h', 'mail.h', 'main.h', 'memalloc.h', 'myhistedit.h', 'mystring.h', 'options.h', 'output.h', 'parser.h', 'redir.h', 'shell.h', 'show.h', 'trap.h', 'var.h', 'bltin/bltin.h'], strip_include_prefix = ".")
 [cc_library(name = name + "_headers", hdrs = [name + "/" + header], strip_include_prefix = name)
  for name, header in [("nodes", "nodes.h"), ("syntax", "syntax.h"), ("builtins", "builtins.h"), ("tokens", "token.h")]]
-cc_binary(name = "sh", srcs = ['alias.c', 'arith_yacc.c', 'arith_yylex.c', 'cd.c', 'error.c', 'eval.c', 'exec.c', 'expand.c', 'histedit.c', 'input.c', 'jobs.c', 'mail.c', 'main.c', 'memalloc.c', 'miscbltin.c', 'mystring.c', 'options.c', 'output.c', 'parser.c', 'redir.c', 'show.c', 'trap.c', 'var.c', 'bltin/echo.c', '//bin/kill:kill.c', '//bin/test:test.c', '//usr.bin/printf:printf.c', 'nodes/nodes.c', 'syntax/syntax.c', 'builtins/builtins.c', '//bin/kill:signaltool_trace.h'],
+_SOURCES = (
+['alias.c', 'arith_yacc.c', 'arith_yylex.c', 'cd.c', 'error.c', 'eval.c', 'exec.c', 'expand.c', 'histedit.c', 'input.c', 'jobs.c', 'mail.c', 'main.c', 'memalloc.c', 'miscbltin.c', 'mystring.c', 'options.c', 'output.c', 'parser.c', 'redir.c', 'show.c', 'trap.c', 'var.c', 'bltin/echo.c', '//bin/kill:kill.c', '//bin/test:test.c', '//usr.bin/printf:printf.c', 'nodes/nodes.c', 'syntax/syntax.c', 'builtins/builtins.c', '//bin/kill:signaltool_trace.h']
+)
+cc_binary(name = "sh", srcs = _SOURCES,
     deps = [":headers", ":nodes_headers", ":syntax_headers", ":builtins_headers", ":tokens_headers", "//lib/libedit:edit"],
     dynamic_deps = ["//lib/libedit:edit_shared"], local_defines = ["SHELL"],
     copts = ["-fPIE"], linkopts = ["-pie"],
@@ -62,3 +65,10 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['alias.o', 'arith_yacc.o', 'arith_yylex.o', 'cd.o', 'echo.o', 'error.o', 'eval.o', 'exec.o', 'expand.o', 'histedit.o', 'input.o', 'jobs.o', 'kill.o', 'mail.o', 'main.o', 'memalloc.o', 'miscbltin.o', 'mystring.o', 'options.o', 'output.o', 'parser.o', 'printf.o', 'redir.o', 'show.o', 'test.o', 'trap.o', 'var.o', 'builtins.o', 'nodes.o', 'syntax.o'],
+    deps = [':headers', ':nodes_headers', ':syntax_headers', ':builtins_headers', ':tokens_headers', '//contrib/libedit:headers'],
+    defines = ["SHELL"],
+    warns = 6)

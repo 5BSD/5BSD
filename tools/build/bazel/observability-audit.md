@@ -21,6 +21,26 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Three rescue shell/editor variants (2026-11-05)
+
+Sh/csh/vi expand the selected core to 94 applications. Original recipes declare
+no new direct rescue provider. Sh carries its kill/test/printf builtin sources
+under the original SHELL policy; the standalone kill provider is not newly enabled
+in this variant. Bounded source review does not establish new direct BSM audit
+coverage. Existing syscall, process, filesystem and library coverage still needs
+runtime review before proposing program-specific additions.
+
+Tests exercise shell builtins/expansion/arithmetic, private redirection/pipelines,
+original csh command/file-loop semantics and private vi/ex edits with recovery files
+confined to the test directory. Candidate guest review: interactive login/job
+control and terminal restoration, installed shell helper paths, editor crash/recovery,
+privileged shell/session audit integration and event delivery without recording
+secrets or command payloads indiscriminately. Live probes/audit delivery and costs
+remain open. A real public-header alias ownership gap was fixed and compiler
+consumption verified; it is not a tracing coverage claim. Csh catalog policy also
+needs diagnosis: NO_NLS_CATALOGS has no found bundled source consumer. See
+RESCUE-NINETY-FOUR-PROGRAM-QUALIFICATION.md for exact evidence and limitations.
+
 ## Six rescue init/network/iSCSI/archive variants (2026-11-05)
 
 Init/ping/dhclient/iscsictl/iscsid/tar expand the core to 91 applications. DHCP
