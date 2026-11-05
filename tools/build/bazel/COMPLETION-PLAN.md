@@ -89,6 +89,40 @@ See LIB-FAMILY-CLOSURE.md. This is another completed contribution, not complete
 lib-parent selection or world acceptance. Continue explicit configured parent
 composition without treating internal-only archives as installed files.
 
+## Complete selected-family construction requests (2026-11-05)
+
+A fresh maintained BuildEnvironment query of lib's production recursion, using
+the recorded SDK profile with an explicit WITHOUT_TESTS override, selects 172
+immediate owners. TESTS_SUPPORT remains explicitly enabled as recorded. The
+retained request at `bazel-lib-family-composition-request-r1-20261105` maps every
+owner to its reviewed existing native installation endpoint, or to regular/PIE
+build archives for eleven internal-only owners. Libelftc also retains its build
+archives alongside its manual-only installation. All 185 contribution/build
+targets plus source-settings and existing libelftc API tests are selected.
+
+The maintained frontend launched
+`bazel-lib-family-composition-native-r1-20261105` with sixteen jobs. This is an
+actual combined construction attempt. It is not an accepted complete lib parent,
+independent full installation comparison, or package/runtime result. Source,
+configuration, command, explicit label mapping and request-preparation bindings
+are retained. No Make recipe evaluates the native build graph: Make supplies
+the independent qualification inventory, and native declarations supply builds.
+
+The same fresh production recursion query selects 242 immediate usr.sbin owners.
+`bazel-usrsbin-family-composition-request-r1-20261105` maps each one to its
+reviewed native production contribution, including capability daemons. Tests
+and daemon runtime are not silently included in production acceptance. This
+request is prepared, not queued or launched; finish the current library frontend
+before invoking it. Its command and complete bindings are retained.
+
+After these combined attempts, correct actual graph failures and reconcile all
+installation namespaces/owners. Then introduce source-owned lib and usr.sbin
+parents with real option-dependent selects, matching the maintained Make inputs.
+Qualification request preparation is not a replacement production parent or a
+claim that all alternate profiles are implemented. Complete installed tests,
+remaining world families, pkgbase, other architectures, bootstrap, VM/runtime
+and comparative resource gates remain open. Make stays default.
+
 ## Earlier dtraced configured-option checkpoint (superseded by composition above)
 
 All eleven original daemon C++ sources now have native compilation and declared

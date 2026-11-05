@@ -39,6 +39,20 @@ and symbols agree. Other package profiles/ABIs and full-world parity remain open
 All paths are under /usr/obj/usr/src. Generic format-5 selection already supports
 the labels; no C frontend, SDK, signing or publication interface changed.
 
+## Combined selected production build
+
+The fresh production-only Make recursion selects 172 immediate owners with
+TESTS_SUPPORT explicitly enabled. The normal frontend's
+`bazel-lib-family-composition-native-r1-20261105` now attempts every selected
+owner in one batch: 185 explicit installation/build targets plus two tests.
+The request and all bindings are retained in
+`bazel-lib-family-composition-request-r1-20261105` under /usr/obj/usr/src.
+Eleven internal-only owners build regular/PIE archives without inventing installed
+files; libelftc's manuals remain a distinct installed contribution. This request
+is not yet a source-owned lib parent, accepted complete ownership, or a passing
+build result. See COMPLETION-PLAN.md for the next usr.sbin batch and remaining
+option-dependent parent integration.
+
 ## Concrete remaining review queue
 
 | Owner | Source evidence and next work |
