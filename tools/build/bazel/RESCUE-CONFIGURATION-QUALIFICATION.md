@@ -107,3 +107,10 @@ MK_DEBUG_FILES=no, installed hardlinks and suppressed login aliases (-sh/-csh/
 transformation. Compare actual staged installation/package metadata and run
 private guest recovery/helper cases. All whole-world/kernel/modules/pkgbase,
 ARM64/RISC-V/bootstrap/cache/sandbox and CPU/memory/disk gates remain open.
+
+## Installation follow-up
+
+Actual rescue-named dispatch, original installation records/script, world
+membership and a real pkgbase candidate are now implemented and bounded checks
+pass. See RESCUE-INSTALLATION-QUALIFICATION.md for current evidence and unresolved
+independent ELF/object, package database, guest and full-system gates.

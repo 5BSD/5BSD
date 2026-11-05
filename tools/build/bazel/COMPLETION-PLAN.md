@@ -1,5 +1,30 @@
 # Native Bazel completion plan
 
+## Rescue installation, world membership and actual pkgbase candidate (2026-11-05)
+
+Native rescue now has its actual rescue-named dispatcher, shared source-owned
+assembly, original no-debug installation, suppressed login aliases, hardlinks,
+owned directory and actual DHCP sed generation. All 142 metadata/inode records
+and script bytes match a fresh full Make parent build/stage. Six installed-layout
+runtime methods join 107+5 runtime and 28 source-setting methods; 146 pass for
+both development and explicit matching-production-malloc controls. Original Make
+on identical native inputs reproduces all 208 rescue-named pipeline outputs.
+World include/exclude selection works through MK_RESCUE-equivalent settings.
+The existing rescue.ucl now has native single-package construction; its real
+archive inventory, exact script/ELF payloads and private tar hardlinks/modes pass.
+See RESCUE-INSTALLATION-QUALIFICATION.md for immutable evidence and retained
+failures. No host installation/publication/reboot occurred; Make stays default.
+
+Remaining independent parity is concrete: matching malloc reduces final ELF size
+difference to 3064 bytes but does not make bytes equal. All 592 application objects
+were independently compared: 503 direct contracts match; 45 read-only string,
+23 DOF and 21 symbolic/relocation differences remain recorded. Reconcile these
+and common-library/startup contributions before claiming independent complete
+rescue payload parity. Private pkg add/check/delete needs OS root or a guest;
+the exact maintained command is prepared under the package review directory.
+Then guest recovery/helper/PID1/services, other options/architectures and every
+full-world/kernel/pkgbase/bootstrap/resource/cache/sandbox gate remain required.
+
 ## Configured rescue and real untraced-policy correction (2026-11-05)
 
 The core now selects programs and compiler/link inputs through standard select

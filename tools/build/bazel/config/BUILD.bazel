@@ -833,3 +833,7 @@ selects.config_setting_group(name = "stand_ia32_lua_selected", match_all = [":lo
 selects.config_setting_group(name = "stand_userboot_lua_alias", match_all = [":loader_default_lua", ":loader_lua_enabled"])
 selects.config_setting_group(name = "stand_userboot_4th_alias", match_all = [":loader_default_4th", ":forth_enabled"])
 selects.config_setting_group(name = "stand_userboot_alias_enabled", match_any = [":stand_userboot_lua_alias", ":stand_userboot_4th_alias"], visibility = ["//visibility:public"])
+
+# Make's MK_RESCUE controls both recovery installation and internal products.
+bool_flag(name = "rescue", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "rescue_enabled", flag_values = {":rescue": "true"}, visibility = ["//visibility:public"])

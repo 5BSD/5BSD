@@ -5911,6 +5911,16 @@ direct objects after crunched programs and before ordinary libraries. Original
 Make on identical inputs reproduces the resulting executable bytes. Installed
 recovery-shell/helper paths and guest recovery behavior still need qualification.
 .Pp
+The actual rescue target has its own rescue-named dispatcher and source-owned
+installation policy. Its one stripped ELF, original hardlinks, suppressed login
+aliases, owned directory and DHCP script match independent Make installation
+metadata. Native world contributions include rescue when its build setting is
+enabled. The existing rescue package template produces a single native pkgbase
+candidate. Private installed-layout and package-content checks pass, but complete
+independent ELF/debug parity, package database operations and guest recovery
+remain unqualified. A matching production-malloc control does not authorize
+publication or replace the default development malloc policy.
+.Pp
 The default traced
 .Cm //lib/libutil:static_archive
 target preserves original Make member order and its separate DTrace provider.
@@ -7026,8 +7036,8 @@ The root native contribution groups combine existing production installation
 roots and derive main and OpenSSL manual databases from their installed records.
 The product group additionally constructs declared internal products that are
 not installed.
-These contribution targets still exclude unfinished rescue and full test
-roots; they do not replace the production/default world build or establish
+These contribution targets include the configured rescue parent but still
+exclude full test roots; they do not replace the production/default world build or establish
 complete package, bootstrap, cross-platform or runtime acceptance.
 
 .Pp

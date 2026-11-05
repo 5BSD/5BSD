@@ -23,14 +23,18 @@ _CONDITIONS = {
     "iscsid": "//tools/build/bazel/config:iscsi_enabled",
 }
 
-def selected_program_values(values):
+def selected_program_lists(values):
     """Compose list-valued attributes in original program order."""
     result = []
     for program in PROGRAMS:
-        value = [values[program]]
+        value = values[program]
         condition = _CONDITIONS.get(program)
         result += select({condition: value, "//conditions:default": []}) if condition else value
     return result
+
+def selected_program_values(values):
+    """Select one value per configured program."""
+    return selected_program_lists({p: [values[p]] for p in PROGRAMS})
 
 def selected_programs():
     return selected_program_values({p: p for p in PROGRAMS})

@@ -67,3 +67,6 @@ rescue_application(srcs = _SOURCES,
     defines = select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) + select({"//tools/build/bazel/config:netlink_support_enabled": [], "//conditions:default": ["WITHOUT_NETLINK"]}),
     provider = 'dhcplife_provider',
     omitted_warnings = ['-Wcast-align'])
+
+# Recovery image shares the maintained script with its original shebang transform.
+exports_files(["dhclient-script"], visibility = ["//rescue/rescue:__pkg__"])

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "production_installation_archives", archives = ["//rescue/rescue:install_archive"],
+    visibility = ["//visibility:public"])
+filegroup(name = "production_products", srcs = [":production_installation_archives", "//rescue/rescue:rescue", "//rescue/librescue:all_products"],
+    visibility = ["//visibility:public"])

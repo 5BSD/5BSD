@@ -355,3 +355,5 @@ bsd_man_database(name = "manual_database_with_zoneinfo",
     root = "/usr/share/man", visibility = ["//visibility:public"])
 
 exports_files(["world_installation.bzl"])
+
+exports_files(["bsd_sed_output.bzl"], visibility = ["//visibility:public"])

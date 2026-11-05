@@ -21,6 +21,20 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Installed rescue and full original-object comparison (2026-11-05)
+
+The actual rescue-named static executable and package retain the configured
+application/provider composition. Six private installed-layout cases verify
+aliases, argv fallback and static properties, with DOF initialization explicitly
+disabled. They do not establish probe registration/firing or real guest-root
+helper/PID1/audit behavior. The original full Make rescue reference independently
+builds all applications; 592 object comparisons have 503 direct contract matches,
+45 readonly-string differences, 23 provider DOF differences and 21 symbolic/
+relocation differences without allocated changes. These remain explicit controls
+and binding-review work, not blanket accepted path noise. Full final ELF/common
+library parity and tracing/resource costs remain open. See
+RESCUE-INSTALLATION-QUALIFICATION.md.
+
 ## Configured rescue provider correction (2026-11-05)
 
 The first DTrace-disabled core passed runtime smoke tests but failed independent
