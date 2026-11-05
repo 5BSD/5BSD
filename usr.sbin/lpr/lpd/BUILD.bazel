@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/lpr:program.bzl", "printing_program")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+[bsd_install_file(name = "config_" + name, src = name, destination = "/etc/" + name,
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=lp", "config"])
+ for name in ["hosts.lpd", "printcap"]]
+printing_program(name = "lpd", srcs = ["lpd.c", "printjob.c", "recvjob.c", "lpdchar.c", "modes.c", "extern.h"], manual = "lpd.8", man_section = "8",
+    bindir = "/usr/sbin", common = True, edit = False, group = "wheel", mode = "0555", inet6 = True, extra_entries = [":config_hosts.lpd", ":config_printcap"], directories = {"/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'})

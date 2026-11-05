@@ -276,8 +276,11 @@ def main():
         groups=environment.query(['-V','CONFGROUPS'],extra=flags).split()
         configuration={group:environment.query(['-V',group],extra=flags).split() for group in groups}
         receipt['configuration_groups']=configuration
-        if any(configuration.values()):
-            run(buildenv(base + flags + assignments + ['installconfig']), 'installconfig')
+        # The parent may have no local CONFGROUPS while selected descendants
+        # install configuration. bsd.subdir.mk owns that recursion and bsd.sys.mk
+        # provides the empty leaf target; always execute the maintained phase.
+        run(buildenv(base + flags + assignments + ['installconfig']), 'installconfig')
+        receipt['configuration_recursion'] = 'maintained installconfig target, including selected descendants'
         combined_metadata = metalog.read_bytes()
         if not combined_metadata.startswith(directory_metadata):
             raise ValueError('component install rewrote directory metadata')

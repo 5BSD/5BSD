@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/lpr:program.bzl", "printing_program")
+printing_program(name = "lprm", srcs = ["lprm.c"], manual = "lprm.1", man_section = "1",
+    bindir = "/usr/bin", common = True, edit = False, group = "daemon", mode = "6555", inet6 = True)

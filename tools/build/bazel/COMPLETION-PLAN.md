@@ -115,9 +115,25 @@ all 1,009 prior parent outputs remain identical. Fresh original component
 metadata/data and three strict program ELF/debug/usage comparisons pass.
 See USRSBIN-FAMILY-CLOSURE.md for exact evidence and limitations.
 
-Next: finish missing optional usr.sbin owners (lpr, NIS and sendmail) and
-installed tests, remove their explicit incompatibility gates as qualified,
-reconcile all family ownership/payloads, and complete remaining world roots. This parent still rejects other ABIs.
+The printing follow-up implements all eleven executables, lp script, manuals,
+configuration/sample files and both internal archive variants. Normal r3 builds
+the expanded 246-owner profile, 353 installation archives and both internal
+printing archives. Complete original printing metadata/data and all eleven
+ELF/debug comparisons pass, along with both archive member/symbol comparisons
+and four bounded pure-output runtime cases. Logging fragments also match fresh
+original Make. See USRSBIN-FAMILY-CLOSURE.md for exact evidence and limits.
+
+The original-reference helper now always executes maintained installconfig
+recursion: root-only CONFGROUPS discovery had omitted descendant configuration.
+The corrected printing reference includes its two lpd files; an empty library
+leaf also succeeds. Review/refresh earlier recursive references for descendant
+configuration before accepting full installation parity. Preserve their bounded
+ELF/archive evidence without upgrading it to complete filesystem acceptance.
+
+Next: finish missing optional usr.sbin owners (NIS and sendmail) and installed
+tests, remove their explicit incompatibility gates as qualified, reconcile all
+family ownership/payloads and unconsumed internal variants, and complete remaining
+world roots. This parent still rejects other ABIs.
 No selected construction/analysis result substitutes for full installed-world,
 bootstrap/pkgbase/hardware/publication/runtime/VM/resource acceptance.
 

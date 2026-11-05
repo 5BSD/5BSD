@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+filegroup(name = "build_libraries", srcs = ["//usr.sbin/lpr/common_source:static_archive", "//usr.sbin/lpr/common_source:pie_archive"], visibility = ["//visibility:public"])
+bsd_install_archive_set(name = "installation_archives", archives = [
+    "//usr.sbin/lpr/chkprintcap:install_archive",
+    "//usr.sbin/lpr/lp:install_archive",
+    "//usr.sbin/lpr/lpc:install_archive",
+    "//usr.sbin/lpr/lpd:install_archive",
+    "//usr.sbin/lpr/lpq:install_archive",
+    "//usr.sbin/lpr/lpr:install_archive",
+    "//usr.sbin/lpr/lprm:install_archive",
+    "//usr.sbin/lpr/lptest:install_archive",
+    "//usr.sbin/lpr/pac:install_archive",
+    "//usr.sbin/lpr/filters:install_archive",
+    "//usr.sbin/lpr/filters.ru:installation_archives",
+], visibility = ["//visibility:public"])

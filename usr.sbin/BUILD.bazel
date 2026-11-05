@@ -208,6 +208,8 @@ _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bootparamd_enabled":
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:fdt_enabled": ["//usr.sbin/ofwdump:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:freebsd_update_enabled": ["//usr.sbin/freebsd-update:install_archive"], "//conditions:default": []})
 
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:lpr_enabled": ["//usr.sbin/lpr:installation_archives"], "//conditions:default": []})
+
 # This parent owns nvram(8), including on architectures without nvram(8) binary.
 bsd_compress(name = "nvram_manual_gz", src = "nvram/nvram.8", output = "nvram.8.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
@@ -222,9 +224,14 @@ script_install_archive(name = "manual_install_archive", manifest = ":manual_mani
 # Missing optional subtrees and installed tests remain explicit migration work.
 # Reject their selection rather than silently omitting their Make-owned outputs.
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-_PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:lpr_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
 _PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:nis_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
 _PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:sendmail_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
 _PLATFORM = _PLATFORM + select({"//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": []})
 bsd_install_archive_set(name = "production_installation_archives", archives = _ARCHIVES,
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+# Construction also preserves selected internal libraries without inventing
+# installed payloads. Select the typed installation sibling for metadata capture.
+filegroup(name = "production_programs", srcs = [":production_installation_archives"] + select({
+    "//tools/build/bazel/config:lpr_enabled": ["//usr.sbin/lpr:build_libraries"], "//conditions:default": [],
+}), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

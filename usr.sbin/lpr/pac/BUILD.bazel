@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/lpr:program.bzl", "printing_program")
+printing_program(name = "pac", srcs = ["pac.c"], manual = "pac.8", man_section = "8",
+    bindir = "/usr/sbin", common = True, edit = False, group = "wheel", mode = "0555", inet6 = True)

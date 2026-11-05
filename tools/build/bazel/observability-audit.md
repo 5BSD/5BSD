@@ -11527,3 +11527,17 @@ probe/audit requirements and resource/runtime qualification remain open.
 Native optional-admin r2 preserves all original C/shell sources and build flags.
 Its independent metadata/data/ELF/debug and safe usage checks pass; this does not
 establish live probe delivery, audit requirements, service security or performance.
+
+## Printing subtree (2026-11-05)
+
+The native rules preserve original sources and the inherited INET6 selection,
+internal library and libedit dependencies, setuid/setgid package modes and
+configuration. Existing lpd/common routines use syslog; no explicit DTrace
+providers or OpenBSM audit calls were found in this subtree. Review queue/spool
+mutation, network requests and privileged job-management operations for audit
+requirements. Do not infer instrumentation coverage from compilation.
+
+Eleven program ELF/debug comparisons, full component metadata/data, both
+internal archives and four pure-output lptest/filter runtime cases qualify.
+No daemon, queue/spool mutation, printer, privileged execution, live logging/
+audit/probe delivery or resource-performance acceptance is established.

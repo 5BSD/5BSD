@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/lpr:program.bzl", "printing_program")
+printing_program(name = "koi2855", srcs = ["koi2855.c"], manual = "", man_section = "8",
+    bindir = "/usr/libexec/lpr/ru", common = False, edit = False, group = "wheel", mode = "0555", inet6 = False)

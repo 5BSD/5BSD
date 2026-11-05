@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/lpr:program.bzl", "printing_program")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation")
+script_installation(name = "printcap_manual", scripts = {}, manuals = ["printcap.5"], package = "lp")
+printing_program(name = "lpr", srcs = ["lpr.c"], manual = "lpr.1", man_section = "1",
+    bindir = "/usr/bin", common = True, edit = False, group = "daemon", mode = "6555", inet6 = True, extra_manifests = [":printcap_manual"])

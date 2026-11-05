@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_directory", "bsd_install_manifest")
+bsd_install_file(name = "sample", src = "bjc-240.sh.sample", destination = "/usr/libexec/lpr/ru/bjc-240.sh.sample",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=lp"])
+bsd_install_directory(name = "directory", destination = "/usr/libexec/lpr/ru",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities"])
+bsd_install_manifest(name = "install_manifest", entries = [":directory", ":sample"])
+script_install_archive(name = "sample_install_archive")
+bsd_install_archive_set(name = "installation_archives", archives = [":sample_install_archive",
+    "//usr.sbin/lpr/filters.ru/koi2alt:install_archive", "//usr.sbin/lpr/filters.ru/koi2855:install_archive"], visibility = ["//visibility:public"])

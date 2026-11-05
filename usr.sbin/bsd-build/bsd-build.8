@@ -4960,6 +4960,14 @@ IA32, foreign/alternate profiles, aggregate shared files/directories, full debug
 source lookup and firmware/interpreter execution remain qualification gates.
 See
 .Pa tools/build/bazel/EFI-INTERPRETERS-QUALIFICATION.md .
+The native administration construction endpoint
+.Cm //usr.sbin:production_programs
+also builds selected internal printing-library variants when lpr is enabled.
+Select
+.Cm //usr.sbin:production_installation_archives
+as well to retain installation request and directory-metadata output groups.
+Internal libraries are construction outputs and acquire no installed payloads.
+
 .Ss Explicit original reference archive inputs
 The maintained
 .Pa tools/build/bazel/install-reference.py
@@ -4967,6 +4975,9 @@ comparison helper accepts
 .Fl -library-inputs
 with exact format-1 JSON receipt/artifact SHA-256 bindings for LIB-prefixed
 Make variables.
+Original component references execute both install and installconfig through
+maintained Make targets, including configuration owned by selected descendants.
+An empty parent CONFGROUPS inventory does not suppress descendant installation.
 It requires matching passed target/compiler references under /usr/obj and
 verifies selected LDADD consumption before building.
 Custom direct links require

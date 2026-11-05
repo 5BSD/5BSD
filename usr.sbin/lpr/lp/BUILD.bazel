@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+script_installation(name = "install_manifest", scripts = {"lp.sh": "/usr/bin/lp"}, manuals = ["lp.1"], package = "lp")
+script_install_archive(name = "install_archive")

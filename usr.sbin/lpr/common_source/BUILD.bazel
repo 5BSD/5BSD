@@ -2,3 +2,15 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(["printcap.c"], visibility = ["//usr.sbin/bsnmpd/modules/snmp_hostres:__pkg__"])
 cc_library(name = "printcap_headers", hdrs = ["lp.cdefs.h", "lp.h", "lp.local.h", "pathnames.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd/modules/snmp_hostres:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "headers", hdrs = ["lp.cdefs.h", "lp.h", "lp.local.h", "pathnames.h", "ctlinfo.h", "matchjobs.h"],
+    strip_include_prefix = ".", visibility = ["//usr.sbin/lpr:__subpackages__"])
+_SOURCES = ["common.c", "ctlinfo.c", "displayq.c", "matchjobs.c", "net.c", "printcap.c", "request.c", "rmjob.c", "startdaemon.c"]
+[cc_library(name = name, srcs = _SOURCES, deps = [":headers"],
+    local_defines = select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}),
+    copts = ["-fPIE", "-DPIC"] if pie else [], linkstatic = True,
+    visibility = ["//usr.sbin/lpr:__subpackages__"])
+ for name, pie in [("lpr", False), ("lpr_pie", True)]]
+bsd_component_archive(name = "static_archive", groups = [":lpr"], visibility = ["//usr.sbin/lpr:__subpackages__"])
+bsd_component_archive(name = "pie_archive", groups = [":lpr_pie"], visibility = ["//usr.sbin/lpr:__subpackages__"])

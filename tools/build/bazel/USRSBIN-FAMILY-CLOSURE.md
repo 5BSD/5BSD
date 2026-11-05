@@ -82,8 +82,8 @@ automatic-disabled cases. All three agree. It also executes explicit native
 build requests for each of the seven missing optional/test selections and
 for SSH/telnet Heimdal with automatic support enabled. All nine requests reject
 as incompatible at that earlier checkpoint. Bootparamd, FDT/ofwdump and
-freebsd-update have since been implemented and qualified below. The other
-rejection gates remain. This proves rejection at that checkpoint, not implementation;
+freebsd-update have since been implemented and qualified below. Printing is qualified in the subsequent checkpoint below; NIS, sendmail,
+installed tests and unsupported Heimdal still reject. This proves rejection at that checkpoint, not implementation;
 it does not establish live SSH authentication or daemon runtime.
 
 ## Three optional production groups (2026-11-05)
@@ -133,11 +133,78 @@ failed/missing payload was filtered out. Generic frontend settings/labels alread
 represent these options; no C dispatcher, backend, signing or publication
 interface change is needed. See observability-audit.md for instrumentation gaps.
 
+## Complete printing production subtree (2026-11-05)
+
+The LPR gate is replaced with its real native subtree: eleven executables, the
+lp shell command, manuals, two lpd configuration files and the Russian-filter
+sample. A printing-specific macro composes existing utility/install rules with
+explicit sources, destinations, shared/internal dependencies and privilege
+metadata. It preserves lpc's 02555 daemon-group mode and lpq/lpr/lprm's 06555
+modes, including their daemon-group debug files. These are package metadata;
+qualification does not run privileged programs with those modes on the host.
+
+The internal common library has separate regular/PIE producers and native
+archives. `//usr.sbin:production_programs` includes these build-only outputs when
+printing is selected. Also request `//usr.sbin:production_installation_archives`
+for its typed request/directory-metadata output groups. The construction
+filegroup does not forward those groups. No library/header payload is invented
+for the internal producer. Other recursive families' unconsumed internal
+variants still need reconciliation before whole-world construction acceptance.
+
+`bazel-printing-native-r3-20261105` passes the normal frontend with sixteen jobs:
+246 selected immediate owners in the expanded profile, 353 installation archives
+and both internal printing archives. The source-settings test is cached.
+`bazel-printing-parent-selection-r1-20261105/review.json` matches all 246 owners
+with independent Make recursion. `parent-review-r2/review.json` binds the final
+41 printing outputs to the independently reviewed r2 outputs, preserves the
+other prior outputs and explains every difference: the updated frontend manual
+and printing's newsyslog/syslogd configuration fragments. Fresh original
+printing-enabled newsyslog/syslogd references match both fragments' metadata and
+payloads. Exactly 39 staging outputs (thirteen archive/request/directory triples)
+and two build-only archives constitute the printing addition.
+
+`bazel-printing-native-r2-20261105/original-review-r3/review.json` compares the
+complete original `bazel-printing-make-r6-20261105`: 67 raw records reconcile to
+45 unique metadata claims, coalescing only identical directories. All fourteen
+script/configuration/manual/sample payloads agree exactly. All eleven programs
+pass strict ELF interfaces/dependency/hardening comparisons and native/original
+debug CRC checks. Both internal archives match original member order and
+per-member symbols. Four bounded runtime comparisons match stdout/stderr/status
+for lptest, lpf and both Russian filters, including all high-byte input values
+for the latter pair. lp passes shell syntax checking. No spool, queue, printer,
+network service, privileged execution or performance acceptance is established.
+
+The original common library was rebuilt through maintained Make at its standard
+`/usr/obj/usr/src/amd64.amd64/usr.sbin/lpr/common_source` location; its source,
+commands and both archive hashes are retained at
+`bazel-printing-standard-common-make-r1-20261105`. Existing link-audit tooling
+verifies all seven original program links consume that exact PIE archive and
+rechecks it after comparison. Early isolated references lacked that archive;
+an attempted relocated binding failed Make's source-layout guard and was
+removed. No source-layout check was weakened or temporary search-binding API
+retained. Initial native sample-directory ownership also differed from Make;
+it now correctly assigns the directory to utilities and the sample to lp.
+
+### Reference configuration-recursion correction
+
+The comparison caught a separate maintained-helper defect: a parent with no
+local CONFGROUPS skipped installconfig even when descendants owned configuration.
+`install-reference.py` now always executes the standard Make installconfig
+phase. Make owns recursion and empty leaf behavior. The final printing reference
+includes hosts.lpd and printcap even though its root has no local configuration;
+`bazel-printing-common-make-r2-20261105` also verifies the empty internal-library
+leaf succeeds with this phase. Both references bind the corrected helper.
+Earlier recursive references that skipped this phase require review/refresh for
+configuration completeness; their local CONFGROUPS inventories cannot prove
+absence of descendant configuration. Historical ELF/member checks keep their
+stated scope and do not establish full installed-world parity. The manual and
+completion plan record this outstanding audit. Generic frontend label/settings
+support is unchanged; no C dispatcher, signing or publication change is required.
+
 ## Explicit remaining work
 
 This production parent rejects installed tests and other ABIs. It also rejects
-lpr, NIS and sendmail while those selected subtrees lack native production
-closures. These constraints identify migration
+NIS and sendmail while those selected subtrees lack native production closures. These constraints identify migration
 work; they are not evidence that all configurations have been converted.
 
 Finish those optional owners and original installed tests, then remove each gate
