@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//cddl:production.bzl", "production_archives")
+_ARCHIVES = []
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:dtrace_enabled": ['//cddl/usr.sbin/bsdinstruments:install_archive', '//cddl/usr.sbin/dtrace:install_archive', '//cddl/usr.sbin/dwatch:installation_archives', '//cddl/usr.sbin/lockstat:install_archive', '//cddl/usr.sbin/plockstat:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ['//cddl/usr.sbin/zdb:install_archive', '//cddl/usr.sbin/zhack:install_archive', '//cddl/usr.sbin/zfsd:install_archive'], "//conditions:default": []})
+production_archives(_ARCHIVES)

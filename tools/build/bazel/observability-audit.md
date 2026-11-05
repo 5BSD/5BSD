@@ -11566,3 +11566,17 @@ updates, relay authorization, TLS negotiation and credential/privilege handling
 on the audit/probe review queue. Five existing libsm tests and original
 installation/ELF/debug comparisons do not establish live logging, privileged
 execution, SMTP delivery, queue operation, TLS or resource/performance acceptance.
+
+## CDDL production composition (2026-11-05)
+
+The complete selected production parent retains original program sources and
+DTrace feature selection. Disabling CDDL now also disables ordinary and
+experimental DTrace instrumentation, as Make requires. No probes or audit
+events are removed from an enabled profile by the composition change.
+
+Fourteen selected library/API/stream-queue/syntax/settings test targets pass;
+this does not establish live provider registration or event delivery. Preserve
+DTrace authorization/probe delivery, ZFS pool/device mutation, service/audit
+behavior and resource-performance qualification as separate gates. The restored
+SPL allocation wrappers and private libumem header boundary require no program
+rewrite; full original object/installed-world parity remains open.

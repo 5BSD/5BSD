@@ -42,7 +42,7 @@ bool_flag(
 )
 config_setting(
     name = "dtrace_enabled",
-    flag_values = {":dtrace": "true"},
+    flag_values = {":dtrace": "true", ":cddl": "true"},
     visibility = ["//visibility:public"],
 )
 
@@ -180,7 +180,7 @@ config_setting(name = "googletest_requested", flag_values = {":googletest": "tru
 bool_flag(name = "experimental_dtrace_section_archives", build_setting_default = False,
     visibility = ["//visibility:public"])
 config_setting(name = "experimental_dtrace_section_archives_enabled",
-    flag_values = {":dtrace": "true", ":experimental_dtrace_section_archives": "true"},
+    flag_values = {":dtrace": "true", ":cddl": "true", ":experimental_dtrace_section_archives": "true"},
     visibility = ["//visibility:public"])
 
 # src.opts.mk enables STATS by default.
@@ -759,3 +759,6 @@ config_setting(name = "pkgbootstrap_enabled", flag_values = {":pkgbootstrap": "t
 # Explicit opt-in matching Make's SENDMAIL_SET_USER_ID installation choice.
 bool_flag(name = "sendmail_set_user_id", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "sendmail_set_user_id_enabled", flag_values = {":sendmail_set_user_id": "true"}, visibility = ["//visibility:public"])
+
+# Original CDDL library recursion includes SPL for either consumer family.
+selects.config_setting_group(name = "cddl_spl_enabled", match_any = [":dtrace_enabled", ":zfs_enabled"], visibility = ["//visibility:public"])

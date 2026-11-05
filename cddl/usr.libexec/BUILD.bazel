@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//cddl:production.bzl", "production_archives")
+_ARCHIVES = []
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ['//cddl/usr.libexec/zfs_prepare_disk:install_archive', '//cddl/usr.libexec/zpool_influxdb:install_archive'], "//conditions:default": []})
+production_archives(_ARCHIVES)

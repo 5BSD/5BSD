@@ -3,6 +3,21 @@
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_compress")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 
+def utility_debug_directories(package, bindir):
+    """Original split-debug ancestors derived from the installation directory.
+
+    Return archive directory policy without duplicating package-owned ancestors
+    in the manifest. The debug root itself belongs to the base mtree policy.
+    """
+    if not bindir.startswith("/") or bindir.endswith("/") or any([p in ["", ".", ".."] for p in bindir[1:].split("/")]):
+        fail("bindir must be a canonical absolute installation directory")
+    result = {}
+    current = "/usr/lib/debug"
+    for component in bindir[1:].split("/"):
+        current += "/" + component
+        result[current] = json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=" + package, "dbg"]})
+    return result
+
 def utility_installation(name, program, manual, package, bindir = "/usr/bin", man_section = "1", aliases = [], manual_aliases = [], extra_entries = [], binary_owner = "root", binary_group = "wheel", binary_mode = "0555", binary = None, keep_sections = [], binary_flags = ""):
     """Install program under its maintained name, optionally from a variant label.
 

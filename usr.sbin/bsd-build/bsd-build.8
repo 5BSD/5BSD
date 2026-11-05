@@ -6725,3 +6725,13 @@ Native construction and libsm tests do not establish SMTP delivery, TLS, queue
 permissions, privileged execution or service-runtime acceptance.
 Custom SENDMAIL_CFLAGS, SENDMAIL_LDADD and SENDMAIL_LDFLAGS inputs still require
 explicit native configuration support; no arbitrary Make environment is imported.
+
+.Pp
+The native CDDL production parent composes its library, sbin, share, usr.bin,
+usr.libexec and usr.sbin producers through explicit feature selections.
+Internal libdtotel regular and PIE archives remain build outputs without an
+invented installed library.
+Disabling CDDL disables the effective native DTrace selection, matching Make.
+The production parent rejects the unfinished installed-test hierarchy and other
+ABIs; selected library and stream tests do not establish live pool operations
+or DTrace device/probe acceptance.

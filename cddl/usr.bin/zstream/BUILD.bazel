@@ -49,6 +49,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
+    visibility = ["//cddl/usr.bin:__pkg__"],
     name = "install_archive",
     manifests = [":install_manifest"],
     mtree_specs = {

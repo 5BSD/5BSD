@@ -3,7 +3,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(
     name = "zpool",
     srcs = ['//sys/contrib/openzfs:cmd/zpool/zpool_iter.c', '//sys/contrib/openzfs:cmd/zpool/zpool_main.c', '//sys/contrib/openzfs:cmd/zpool/zpool_util.c', '//sys/contrib/openzfs:cmd/zpool/zpool_vdev.c', '//sys/contrib/openzfs:cmd/zpool/os/freebsd/zpool_vdev_os.c', '//sys/modules/zfs:zfs_config.h'],
-    deps = ['//lib/libgeom:geom', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libzfs:zfs', '//cddl/lib/libzutil:zutil', '//cddl/lib/libavl:avl', '//cddl/lib/libspl:spl', '//cddl/lib/libzfs_core:zfs_core', '//lib/msun:m'] + ["//sys/contrib/openzfs:zpool_headers"],
+    deps = ['//lib/libgeom:geom', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libzfs:zfs', '//cddl/lib/libzutil:zutil', '//cddl/lib/libavl:avl', '//cddl/lib/libspl:spl', '//cddl/lib/libzfs_core:zfs_core', '//lib/msun:m'] + ["//sys/contrib/openzfs:zpool_headers", "//cddl/compat/opensolaris/include:headers"],
     dynamic_deps = ['//lib/libgeom:geom_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libzfs:zfs_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libavl:avl_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libzfs_core:zfs_core_shared', '//lib/msun:m_shared'],
     local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY",
         'SYSCONFDIR=\\"/etc\\"', 'PKGDATADIR=\\"/usr/share/zfs\\"'],
@@ -19,6 +19,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
+    visibility = ["//cddl/sbin:__pkg__"],
     name = "install_archive",
     manifests = [":install_manifest"],
     mtree_specs = {

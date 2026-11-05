@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//cddl:production.bzl", "production_archives")
+_ARCHIVES = []
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:cddl_spl_enabled": ['//cddl/lib/libspl:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:dtrace_enabled": ['//cddl/lib/drti:install_archive', '//cddl/lib/libctf:install_archive', '//cddl/lib/libdtrace:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ['//cddl/lib/libavl:install_archive', '//cddl/lib/libicp:install_archive', '//cddl/lib/libicp_rescue:install_archive', '//cddl/lib/libnvpair:install_archive', '//cddl/lib/libumem:install_archive', '//cddl/lib/libzdb:install_archive', '//cddl/lib/libzfs:install_archive', '//cddl/lib/libzfs_core:install_archive', '//cddl/lib/libzfsbootenv:install_archive', '//cddl/lib/libzpool:install_archive', '//cddl/lib/libzutil:install_archive', '//cddl/lib/pam_zfs_key:install_archive'], "//conditions:default": []})
+production_archives(_ARCHIVES)
+filegroup(name = "production_libraries", srcs = [":production_installation_archives"] + select({
+    "//tools/build/bazel/config:dtrace_enabled": ["//cddl/lib/libdtotel:static_archive", "//cddl/lib/libdtotel:pie_archive"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

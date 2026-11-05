@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Current composition checkpoint (2026-11-05)
+
+NIS and sendmail administration are now included when selected; their combined
+AMD64 profile builds 368 installation archives and passes ten selected test
+targets. CDDL now has a source-owned production parent: 37 installation archives
+plus two internal libdtotel archives, with fourteen selected test targets passing.
+See NIS-ADMIN-NATIVE-QUALIFICATION.md, SENDMAIL-NATIVE-QUALIFICATION.md and
+CDDL-COMPOSITION-QUALIFICATION.md for exact scope, failures and retained evidence.
+Full native world composition, installed tests/metadata/pkgbase, other ABIs,
+bootstrap, system runtime and controlled resource/performance acceptance remain
+open. Make remains production/default. The dated checkpoints below are historical
+evidence, not a substitute for those outstanding gates.
+
 ## Established kernel milestone and remaining system gates
 
 The complete amd64 GENERIC kernel already builds natively through link, CTF and
@@ -3430,3 +3443,26 @@ remaining original NIS/libc ABI checks, cross-architecture, install/pkgbase,
 bootstrap, runtime/VM and CPU/RAM/disk I/O/footprint/cache/sandbox gates remain
 open. Existing format-5 frontend support suffices; the manual is updated. Make
 remains production/default; BIP remains excluded.
+
+## CDDL production-family composition checkpoint (2026-11-05)
+
+The new CDDL root and six explicit subparents compose 37 selected production
+installation archives plus both build-only libdtotel archives. The final normal
+frontend build passes all fourteen selected tests. Original owner selection
+matches Make across five configurations; installed tests and other ABIs remain
+explicitly gated. Full original lockstat and zhack component metadata/manual and
+strict ELF/debug comparisons pass.
+
+Aggregate failures exposed lockstat and ZFS command header dependency gaps and
+a private libumem header leak. An attempted extra zhack link was rejected by
+strict ELF comparison and removed from both Make and Bazel; implementation_deps
+now keeps that header private, and original SPL wrappers are selected. Original
+Make sources remain unchanged. DTrace, including its experimental section
+selector, now follows CDDL's original disabling dependency. A real CDDL-disabled
+build and ordinary untraced libutil/constructor test pass.
+
+See CDDL-COMPOSITION-QUALIFICATION.md. Continue remaining full-world roots and
+installed-test/ownership closure; complete original CDDL installation/pkgbase,
+other profiles/ABIs, bootstrap, runtime/VM and comparative CPU/RAM/disk I/O/
+footprint/cache/sandbox gates remain required. Existing format-5 frontend support
+suffices and the manual is updated. Make remains default; BIP remains excluded.

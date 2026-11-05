@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//cddl:production.bzl", "production_archives")
+_ARCHIVES = []
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:dtrace_enabled": ['//cddl/usr.bin/ctfconvert:install_archive', '//cddl/usr.bin/ctfdump:install_archive', '//cddl/usr.bin/ctfmerge:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ['//cddl/usr.bin/zinject:install_archive', '//cddl/usr.bin/ztest:install_archive', '//cddl/usr.bin/zstream:install_archive'], "//conditions:default": []})
+production_archives(_ARCHIVES)
