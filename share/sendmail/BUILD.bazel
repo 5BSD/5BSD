@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# The production copy layout does not depend on a source checkout at runtime.
+script_install_archive(name = "install_archive", manifest = "//contrib/sendmail:cf_install_manifest")
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"],
+    visibility = ["//visibility:public"])

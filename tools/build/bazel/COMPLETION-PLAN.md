@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Sendmail shared source data checkpoint (2026-11-05)
+
+Source-owned Bazel globs now install the maintained sendmail cf subtree through
+existing typed installation/archive rules, with no Python implementation change.
+Complete independent original Make comparison passes 200 records: 190 exact file
+payloads and ten directories, including ownership, modes and package tags.
+Cross-capture reconciliation now covers 1147 archives and 28889 non-directory
+paths without conflicts; this is not a combined full-world build.
+See SHARE-SENDMAIL-DATA-QUALIFICATION.md. This covers the production copy layout;
+source-checkout symlink layout and runtime configuration/mail behavior remain
+unqualified. Remaining locale/encoding installation and complete share/world
+composition are next; all existing system acceptance gates remain required.
+
 ## Generated timezone checkpoint (2026-11-05)
 
 Native timezone generation and installation now match complete original Make

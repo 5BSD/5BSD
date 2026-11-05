@@ -6817,3 +6817,10 @@ The zoneinfo_leapseconds_support setting selects leap-second compilation when
 zoneinfo is enabled.
 Timezone choice/localtime activation and the installed ATF suite remain separate
 upgrade/runtime qualification requirements.
+
+.Pp
+The native shared sendmail configuration archive installs the vendor cf source
+subtree as regular read-only copies, including its source directories.
+It does not require the source checkout at runtime.
+The Make developer SHARED=symlinks layout is not implemented by that endpoint;
+configuration generation and mail-service runtime need separate qualification.
