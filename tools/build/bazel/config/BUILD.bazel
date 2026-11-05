@@ -776,3 +776,8 @@ bool_flag(name = "zoneinfo", build_setting_default = True, visibility = ["//visi
 config_setting(name = "zoneinfo_enabled", flag_values = {":zoneinfo": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "zoneinfo_leapseconds_support", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "zoneinfo_leapseconds_enabled", flag_values = {":zoneinfo": "true", ":zoneinfo_leapseconds_support": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "dict", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "dict_enabled", flag_values = {":dict": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "sharedocs", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "sharedocs_enabled", flag_values = {":sharedocs": "true"}, visibility = ["//visibility:public"])

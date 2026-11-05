@@ -33,6 +33,7 @@ SCRIPTS = [
     "mac_capability-shield",
     "mac_capability-summary",
     "mac_capability-who",
+    "mbufid-sidecar",
     "trustedzfs-handles",
     "trustedzfs-denials",
     "procdesc-lifecycle",

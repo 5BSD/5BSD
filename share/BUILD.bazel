@@ -12,3 +12,27 @@ bsd_install_archive_set(name = "locale_installation_archives", archives = [
     "//share/numericdef:install_archive", "//share/numericdef_unicode:install_archive",
     "//share/timedef:install_archive",
 ], "//conditions:default": []}), visibility = ["//visibility:public"])
+
+# Match the maintained production share traversal. Installed test hierarchies
+# remain a separate, explicit completion gate below.
+bsd_install_archive_set(name = "production_installation_archives", archives = [
+    ":locale_installation_archives",
+    "//share/keys:installation_archives", "//share/misc:install_archive",
+    "//share/skel:install_archive", "//share/tabset:install_archive",
+    "//share/termcap:install_archive",
+] + select({"//tools/build/bazel/config:dict_enabled": ["//share/dict:install_archive"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:sharedocs_enabled": ["//share/doc:installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:cddl_enabled": ["//share/dtrace:install_archive"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:examples_enabled": ["//share/examples:production_installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//share/firmwares:installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:iconv_enabled": ["//share/i18n:install_archive"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": ["//share/man:installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:make_enabled": ["//share/mk:install_archive"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:sendmail_enabled": ["//share/sendmail:installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:bsnmp_enabled": ["//share/snmp:installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:vt_enabled": ["//share/vt:installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:zoneinfo_enabled": ["//share/zoneinfo:production_installation_archives"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+bsd_install_archive_set(name = "installation_archives", archives = [":production_installation_archives"],
+    target_compatible_with = select({"//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

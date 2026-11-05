@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Complete selected production share parent (2026-11-05)
+
+The native share parent now follows the maintained production traversal and
+settings. Complete independent Make subtree comparisons pass default and raw/
+split-manual profiles (47 archives, 6875 file/hardlink paths, 641 symlinks) and a
+reduced-data profile (seven archives, 54 files). Directory claim attributes and
+multiplicity are checked; twenty-one explicit native timezone directories are
+independently reconciled with Make's plain-mkdir stage/global mtree policy.
+Complete comparison exposed and corrected the missing mbufid-sidecar script/two
+DTrace directories. Termcap now honors manual-disable/compression and explicit
+manual package policy. See SHARE-PARENT-COMPOSITION-QUALIFICATION.md. The actual
+tests-enabled full endpoint remains rejected pending installed share/example/
+timezone suites. Cross-capture namespace evidence is 1161 production archives and
+30866 non-directory paths without conflicting claims; it is not a combined world
+build. Next close remaining world roots and installed tests, compose full world,
+then complete installation/debug/pkgbase, cross/bootstrap, runtime and resource/
+performance gates. Make remains default; BIP stays excluded.
+
 ## Shared locale and encoding composition checkpoint (2026-11-05)
 
 The new configured locale parent composes ten existing native owners and keeps
