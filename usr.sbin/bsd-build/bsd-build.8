@@ -7225,3 +7225,21 @@ Ten ICONV-enabled conversion cases require installed native Citrus modules/data
 and remain VM qualification work. Existing target/test inputs and captures express
 this contribution without changing production backend selection or full-tests
 parent guards. Compilation and installation do not establish those runtime cases.
+
+.Pp
+The maintained installed-resource fixture assembler accepts explicit checker input
+files and a guest driver destination. Inputs remain hash-bound and unsafe or
+ambiguous paths are rejected. The installed ATF checker consumes a versioned
+program/user/terminal plan and derives cases, user requirements, cleanup and
+per-case deadlines from actual ATF listings. Each requested program must select
+cases. Separate outcome counts preserve original expected failures; skips,
+unexpected failures, nonzero exits and cleanup failures reject acceptance.
+.Pp
+The selected disk-backed 2 GiB VM qualification executes all 418 original locale
+and fortify cases: 417 passes and one original iconv expected failure, no skips.
+It includes all ten root/jail and five terminal cases. Native libraries and
+resources use installed paths; supplied kernel/loader/Python remain separately
+identified bootstrap inputs. These fixture results do not establish verified boot,
+normal startup, full installed-system or performance acceptance. Existing explicit
+build targets/tests express the closure without changing production backend
+selection, signing or publication policy.

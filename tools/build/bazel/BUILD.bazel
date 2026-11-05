@@ -365,3 +365,6 @@ bsd_python_test(name = "elf_section_reader_test", src = "elf-section-reader-test
 bsd_python_test(name = "elf_runtime_path_test", src = "elf-runtime-path-test.py",
     data = ["elf-artifact-check.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
+
+bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-test.py",
+    data = ["installed-atf-check.py"], runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")

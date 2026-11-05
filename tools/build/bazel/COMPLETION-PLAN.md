@@ -1,5 +1,28 @@
 # Native Bazel completion plan
 
+## Complete selected locale/fortify suites execute in bounded VM (2026-11-05)
+
+A declarative installed-ATF plan now drives actual program metadata/case selection
+through the maintained fixture assembler and daemon-runtime VM harness. The final
+2 GiB guest executes all 418 original locale/fortify cases: 417 pass, one original
+iconv PR 59019 expected failure, zero skips. All ten root/jail and five terminal
+fortify cases pass. Native programs, Citrus resources and locale data use real
+installed paths on a disk-backed 768 MiB UFS root; SDK loader/Python and supplied
+matching execution kernel remain explicit bootstrap inputs. Peak sampled QEMU RSS
+is 688205824 bytes under the enforced 3 GiB cap; no performance comparison claim.
+Independent review verifies exact original case/user inventory and preserves all
+six prior Make-reviewed installation output hashes. See
+INSTALLED-ATF-VM-QUALIFICATION.md for final receipts, expected failure, unsupported
+embedded locale scenarios and retained failed attempt. This closes the previously
+pending ten locale-resource and ten root fortify cases for this selected profile.
+
+Continue remaining libc/test roots and parent traversal, source-owned archive
+ordering, independent whole-world/debug/pkgbase acceptance, other ABI/options,
+Bazel kernel/module execution, bootstrap/cache/sandbox/reproducibility, normal
+system/services, controlled CPU/memory/disk-I/O/resource comparisons and combined
+hardware publication. Make stays production/default, full-tests guards remain;
+BIP excluded. Fixture boot is not verified boot or a complete installed OS proof.
+
 ## Complete locale-test construction; installed-resource cases open (2026-11-05)
 
 All twenty-eight original local/imported locale programs now build/install with

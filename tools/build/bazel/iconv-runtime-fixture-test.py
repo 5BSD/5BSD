@@ -13,6 +13,20 @@ spec = importlib.util.spec_from_file_location('fixture', Path(__file__).with_nam
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 
+class CheckerInputsTest(unittest.TestCase):
+    def test_explicit_input_files_and_nested_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p=Path(directory)/'input';p.write_text('plan input')
+            value={'plan.json':str(p),'helper/module.py':str(p)}
+            self.assertEqual(fixture.validate_checker_inputs(value),value)
+    def test_unsafe_names_sources_and_collisions_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p=Path(directory)/'input';p.write_text('plan input')
+            for value in [[], {'../escape':str(p)}, {'/absolute':str(p)}, {'a//b':str(p)}, {'a\nb':str(p)},
+                          {'a':str(p),'a/b':str(p)}, {'a':'relative'}, {'a':directory}, {'a':str(p)+'missing'}]:
+                with self.subTest(value=value),self.assertRaises(ValueError):
+                    fixture.validate_checker_inputs(value)
+
 class FixtureBoundaryTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -1,5 +1,10 @@
 # Native fortify test construction and terminal execution (2026-11-05)
 
+## VM follow-up
+
+The later installed-resource VM executes all 378 fortify cases successfully, including all ten root/jail and five terminal cases. The privileged runtime gap recorded below is now closed for this selected profile. See INSTALLED-ATF-VM-QUALIFICATION.md for final evidence and scope. The remaining sections record the earlier checkpoint.
+
+
 ## Complete original installation
 
 All twelve original checked-in fortify programs now build/install natively:

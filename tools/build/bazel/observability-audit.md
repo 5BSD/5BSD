@@ -21,6 +21,19 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Installed locale/fortify execution and privileged jail cases (2026-11-05)
+
+The selected 2 GiB disk-backed VM executes all 418 original cases: 417 passes,
+one existing iconv expected failure, no skips. All ten root/jail and five terminal
+fortify cases pass. Programs use native libraries/resources at installed paths;
+source and case/user metadata stay bound to prior original Make reviews. DOF
+initialization remains disabled for these isolated executions. SIGABRT/conversion
+success does not establish live provider firing, audit/syslog delivery or
+performance overhead. Seven imported locale cases retain absent individual
+encoding scenarios, explicitly outside coverage. See
+INSTALLED-ATF-VM-QUALIFICATION.md for resource bounds and supplied bootstrap kernel
+scope; this does not qualify normal Capsule/daemon startup or a whole OS image.
+
 ## Locale conversion/state and declared LC_CTYPE inputs (2026-11-05)
 
 Twenty-eight unchanged original programs retain aliases, scoped compatibility and

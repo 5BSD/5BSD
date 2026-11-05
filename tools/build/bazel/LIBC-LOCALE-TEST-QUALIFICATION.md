@@ -1,5 +1,10 @@
 # Native locale-test construction and bounded host execution (2026-11-05)
 
+## VM follow-up
+
+The later installed-resource VM executes all forty locale cases: thirty-nine pass and iconv_samples retains its original PR 59019 expected failure. The ten pending resource cases below are now exercised for this selected profile. See INSTALLED-ATF-VM-QUALIFICATION.md for final evidence and scope. The remaining sections record the earlier checkpoint.
+
+
 ## Construction
 
 All twenty-eight original selected locale programs now build/install natively:

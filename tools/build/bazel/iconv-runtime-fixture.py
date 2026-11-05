@@ -143,6 +143,22 @@ def kernel_modules(entries, kernel):
     return result
 
 
+def validate_checker_inputs(value):
+    if not isinstance(value, dict):
+        raise ValueError('checker_inputs must map normalized relative names to explicit files')
+    paths = []
+    for name, source in value.items():
+        if not isinstance(name, str) or any(ord(c) < 32 or ord(c) == 127 for c in name):
+            raise ValueError('checker input name must be a printable relative string')
+        path = relative(name)
+        if any(path == p or path in p.parents or p in path.parents for p in paths):
+            raise ValueError('checker input path collision')
+        paths.append(path)
+        if not isinstance(source, str) or not Path(source).is_absolute() or not Path(source).is_file():
+            raise ValueError('checker input requires an existing absolute source file')
+    return dict(value)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--qualification', type=Path, required=True)
@@ -163,9 +179,11 @@ def main():
     manifest = json.loads(manifest_path.read_text())
     plan = json.loads(args.plan.read_text())
     required = {'format', 'archives', 'files', 'kernel', 'boot_directory', 'guest_driver', 'checker', 'daemon_fixtures', 'readelf'}
-    if not required <= set(plan) or set(plan) - required - {'kernel_modules', 'checker_profile'} or type(plan['format']) is not int or plan['format'] != 1:
+    if not required <= set(plan) or set(plan) - required - {'kernel_modules', 'checker_profile', 'checker_inputs', 'guest_driver_destination'} or type(plan['format']) is not int or plan['format'] != 1:
         raise ValueError('versioned explicit fixture plan required')
     profile = runtime_profile.validate(plan.get('checker_profile', {'timeout_scale': 1}))
+    driver_destination = relative(plan.get('guest_driver_destination', 'tests/iconv_vm_driver'))
+    checker_inputs = validate_checker_inputs(plan.get('checker_inputs', {}))
     selected = {}
     for target in manifest['targets']:
         label = target['target']['label']
@@ -198,6 +216,7 @@ def main():
     bootstrap_inputs = [sdk / 'bin/extra_python', sdk / 'execution-runtime/libexec/ld-elf.so.1',
                         Path(plan['kernel']), Path(plan['checker']), Path(plan['readelf']),
                         Path(__file__).with_name('runtime_profile.py')]
+    bootstrap_inputs.extend(Path(source) for source in checker_inputs.values())
     for source in bootstrap_inputs:
         if not source.is_file():
             raise ValueError('missing explicit bootstrap input: ' + str(source))
@@ -228,6 +247,8 @@ def main():
     (runtime / 'checker-profile.json').write_text(json.dumps(profile, sort_keys=True) + '\n')
     (runtime / 'checker-profile.json').chmod(0o444)
     put(Path(__file__).with_name('runtime_profile.py'), runtime / 'runtime_profile.py', 0o444)
+    for name, source in checker_inputs.items():
+        put(Path(source), runtime / 'checker-inputs' / relative(name), 0o444)
     (runtime / 'fixture-manifest.json').write_text(json.dumps({'format': 1, 'files': files}, indent=2) + '\n')
     # The bootstrap interpreter runtime is separate from the native test root.
     shutil.copytree(sdk / 'execution-runtime', extra, dirs_exist_ok=True)
@@ -270,7 +291,7 @@ def main():
     copy_boot(Path(plan['boot_directory']), boot_root / 'boot')
     put(Path(plan['kernel']), boot_root / 'boot/kernel/kernel', 0o555)
     fixture_objtop = output / 'fixture-objtop'
-    put(driver, fixture_objtop / 'tests/iconv_vm_driver', 0o555)
+    put(driver, fixture_objtop / driver_destination, 0o555)
     for name, source in plan['daemon_fixtures'].items():
         put(Path(source), fixture_objtop / relative(name), 0o555)
     after = {str(path): digest(Path(path)) for path in before}
@@ -280,7 +301,7 @@ def main():
     report = {'format': 1, 'scope': 'explicit native fixture plus separately identified SDK Python/loader bootstrap',
               'qualification_receipt': {'path': str(receipt_path), 'sha256': digest(receipt_path)},
               'plan': {'path': str(args.plan.resolve()), 'sha256': digest(args.plan)},
-              'implementation_sha256': digest(Path(__file__)), 'checker_profile': profile,
+              'implementation_sha256': digest(Path(__file__)), 'guest_driver_destination': str(driver_destination), 'checker_profile': profile,
               'checker_profile_scope': 'explicit checker deadline input; wrapper and VM limits are separate', 'artifact_bindings': bindings,
               'bootstrap_inputs': before, 'kernel_modules': modules, 'native_elf_dependencies': native_dependencies, 'extra_root': str(extra), 'fixture_objtop': str(fixture_objtop),
               'boot_root': str(boot_root), 'boot_files': inventory(boot_root),
