@@ -6849,3 +6849,12 @@ Its includes setting controls installation; required source headers remain
 available to native builds.
 It reuses native rpcgen actions, including declared NIS schema dependencies.
 This contribution is not a complete include-tree or world installation endpoint.
+
+.Pp
+The native fixed-header parent includes arpa, protocols, ssp and xlocale, plus the
+maintained companion architecture headers selected by target CPU.
+Companion directory creation remains independent of the includes setting.
+The maintained Make installation reference passes both DESTDIR and SDESTDIR to
+its stage and verifies actual recorded objects, hashes and symlink values.
+These checks validate recorded staged payloads and do not provide a filesystem
+sandbox for arbitrary Make recipes.

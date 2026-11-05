@@ -257,7 +257,7 @@ def main():
         if audit_library_links:
             receipt['library_link_audit'] = install_reference_libraries.audit_links(objects, library_inputs)
         flags = ['NO_ROOT=yes', 'DB_FROM_SRC=yes', 'BUILD_PKGS=yes',
-                 'DESTDIR=' + str(stage), 'METALOG=' + str(metalog)]
+                 'DESTDIR=' + str(stage), 'SDESTDIR=' + str(stage), 'METALOG=' + str(metalog)]
         # Query the actual top-level install contract, rather than duplicating flags.
         install = environment.query(['-f', 'Makefile.inc1', '-V', 'IMAKE_INSTALL'],
                                     component=src, extra=flags)
@@ -285,6 +285,8 @@ def main():
         if not combined_metadata.startswith(directory_metadata):
             raise ValueError('component install rewrote directory metadata')
         (output / 'component.METALOG').write_bytes(combined_metadata[len(directory_metadata):])
+        receipt['staged_metadata_audit'] = install_reference_options.audit_staged_metadata(
+            stage, (output / 'component.METALOG').read_text())
         receipt['metadata_phases'] = {
             name: digest(output / name)
             for name in ('directories.METALOG', 'component.METALOG')

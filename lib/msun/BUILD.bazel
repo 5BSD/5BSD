@@ -74,3 +74,5 @@ bsd_install_archive(
 exports_files(["src/s_scalbn.c"], visibility = ["//lib/libc/amd64/gen:__pkg__", "//lib/libgcc_s:__pkg__"])
 
 exports_files(['src/s_fabs.c', 'src/s_fabsf.c', 'src/s_fabsl.c', 'src/s_fmax.c', 'src/s_fmaxf.c', 'src/s_logb.c', 'src/s_logbf.c', 'src/s_scalbnf.c', 'src/s_fmaxl.c', 'src/s_logbl.c', 'src/s_scalbnl.c'], visibility = ["//lib/libgcc_s:__pkg__"])
+
+exports_files(["arm/fenv.h"], visibility = ["//include:__pkg__"])

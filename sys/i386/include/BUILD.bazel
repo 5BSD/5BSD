@@ -33,3 +33,6 @@ filegroup(name = "bios_simp_arch_headers", srcs = ['_inttypes.h', '_limits.h', '
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['bootinfo.h', 'elf.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+load(":public_headers.bzl", "I386_COMPANION_HEADERS")
+exports_files(I386_COMPANION_HEADERS, visibility = ["//include:__pkg__"])

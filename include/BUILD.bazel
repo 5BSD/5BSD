@@ -65,3 +65,6 @@ bsd_source_headers(name = "bios_simp_headers", hdrs = ['assert.h', 'limits.h', '
 
 load(":rpc_installation.bzl", "rpc_installation")
 rpc_installation()
+
+load(":fixed_installation.bzl", "fixed_installation")
+fixed_installation()

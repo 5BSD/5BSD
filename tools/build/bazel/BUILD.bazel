@@ -108,7 +108,7 @@ bsd_python_test(
 bsd_python_test(
     name = "install_reference_options_test",
     src = "install-reference-options-test.py",
-    data = ["install_reference_options.py", "install_reference_libraries.py", "install_reference_generators.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
+    data = ["directory_metadata.py", "install_reference_options.py", "install_reference_libraries.py", "install_reference_generators.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
 )
 
 # Includes rejection of foreign userland and unqualified target execution.
@@ -338,3 +338,5 @@ bsd_python_test(name = "install_reference_generators_test", src = "install-refer
 exports_files(["install_tree.py", "zoneinfo_source.py"])
 bsd_python_test(name = "install_tree_test", src = "install_tree_test.py",
     data = ["install_tree.py", "install_archive.py", "archive_policy.py", "directory_metadata.py"])
+
+exports_files(["bsd_public_headers.bzl"])

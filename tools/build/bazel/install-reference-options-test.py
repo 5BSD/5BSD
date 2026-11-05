@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import sys
 import unittest
-from install_reference_options import component_definitions, validate_metadata_component, audit_generated_headers, METADATA_MODE
+from install_reference_options import component_definitions, validate_metadata_component, audit_generated_headers, audit_staged_metadata, METADATA_MODE
 
 
 class ComponentDefinitionsTests(unittest.TestCase):
@@ -171,6 +171,52 @@ class GeneratedHeaderTests(unittest.TestCase):
             (obj / '.depend.vets.o').write_text('vets.o: source.c\n')
             with self.assertRaisesRegex(ValueError, 'not consumed'):
                 audit_generated_headers(obj, sdk, ['ta.h'])
+
+
+class StagedMetadataTests(unittest.TestCase):
+    def test_recorded_payload_and_replaced_symlink_are_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'include').mkdir()
+            (root / 'include/header.h').write_bytes(b'header')
+            (root / 'alias').symlink_to('include/header.h')
+            import hashlib
+            checksum = hashlib.sha256(b'header').hexdigest()
+            result = audit_staged_metadata(root,
+                './include type=dir\n./include/header.h type=file size=6 sha256=' + checksum +
+                '\n./alias type=file\n./alias type=link link=include/header.h\n')
+            self.assertEqual((result['record_claims'], result['unique_objects'], result['sha256_files']), (4, 3, 1))
+
+    def test_out_of_stage_sdk_install_cannot_pass_as_a_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, sdk = root / 'stage', root / 'sdk'
+            stage.mkdir(); sdk.mkdir()
+            (sdk / 'header.h').write_bytes(b'header')
+            with self.assertRaisesRegex(ValueError, 'missing'):
+                audit_staged_metadata(stage, './sdk/header.h type=file size=6\n')
+
+    def test_parent_symlink_escape_and_traversal_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, outside = root / 'stage', root / 'outside'
+            stage.mkdir(); outside.mkdir()
+            (outside / 'header.h').write_bytes(b'header')
+            (stage / 'include').symlink_to(outside, target_is_directory=True)
+            for metadata in ['./include/header.h type=file\n', './../outside/header.h type=file\n']:
+                with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                    audit_staged_metadata(stage, metadata)
+
+    def test_file_type_digest_size_and_link_mismatches_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'file').write_bytes(b'header')
+            (root / 'link').symlink_to('file')
+            for metadata in ['./link type=file\n', './file type=file size=7\n',
+                             './file type=file sha256=' + '0' * 64 + '\n',
+                             './link type=link link=other\n']:
+                with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                    audit_staged_metadata(root, metadata)
 
 
 if __name__ == '__main__':

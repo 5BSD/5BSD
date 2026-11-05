@@ -2,14 +2,16 @@
 """Restricted reference selectors and generated-header provenance checks."""
 import re
 import hashlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shlex
+import stat
+from directory_metadata import records
 
 _RESERVED = {
     'CC', 'CXX', 'CPP', 'LD', 'AR', 'AS', 'NM', 'OBJCOPY', 'OBJDUMP', 'STRIP',
     'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'LDADD', 'LIBADD',
     'TARGET', 'TARGET_ARCH', 'MACHINE', 'MACHINE_ARCH', 'OBJTOP', 'SRCTOP',
-    'SYSDIR', 'WORLDTMP', 'DESTDIR', 'METALOG', 'INSTALL', 'INSTALLFLAGS',
+    'SYSDIR', 'WORLDTMP', 'DESTDIR', 'SDESTDIR', 'SYSROOT', 'METALOG', 'INSTALL', 'INSTALLFLAGS',
     'SRCCONF', 'SRC_ENV_CONF', '__MAKE_CONF', 'MAKEOBJDIR', 'MAKEOBJDIRPREFIX',
     'REFERENCE_OBJROOT', 'PATH', 'HOME', 'CCACHE_DIR',
 }
@@ -107,3 +109,65 @@ def audit_generated_headers(component_objects, objtop, required=()):
                        'dependencies': sorted(set(consumed[name]))}
                 for name in sorted(required)},
             'equivalent_external_generated_headers': equivalent}
+
+
+def audit_staged_metadata(stage, metadata):
+    """Verify final component METALOG claims name actual objects within the stage.
+
+    NO_ROOT ownership remains logical. This checks existence, object types,
+    recorded payload sizes/hashes and symlink values, not execution isolation.
+    Last claims describe final state when maintained installation replaces paths.
+    """
+    root = Path(stage).resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError('staged metadata root must be a directory')
+    latest = {}
+    rows = records(metadata)
+    for name, attributes in rows:
+        relative = '.' if name == '.' else name[2:]
+        path = PurePosixPath(relative)
+        if path.is_absolute() or '..' in path.parts or str(path) != relative:
+            raise ValueError('noncanonical staged metadata path: ' + name)
+        latest[relative] = attributes
+    files = hashed = links = directories = 0
+    for relative, attributes in latest.items():
+        path = root / relative
+        try:
+            parent = path.parent.resolve(strict=True)
+        except FileNotFoundError as error:
+            raise ValueError('staged metadata parent is missing: ' + relative) from error
+        if path != root and not parent.is_relative_to(root):
+            raise ValueError('staged metadata parent escapes stage: ' + relative)
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError as error:
+            raise ValueError('staged metadata object is missing: ' + relative) from error
+        kind = attributes.get('type')
+        if kind == 'file':
+            if not stat.S_ISREG(mode):
+                raise ValueError('staged metadata file is not regular: ' + relative)
+            if 'size' in attributes and path.stat().st_size != int(attributes['size']):
+                raise ValueError('staged metadata file size differs: ' + relative)
+            if 'sha256' in attributes:
+                expected = attributes['sha256']
+                if not re.fullmatch('[0-9a-f]{64}', expected):
+                    raise ValueError('invalid staged metadata SHA-256: ' + relative)
+                with path.open('rb') as stream:
+                    actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+                if actual != expected:
+                    raise ValueError('staged metadata file hash differs: ' + relative)
+                hashed += 1
+            files += 1
+        elif kind == 'link':
+            if not stat.S_ISLNK(mode) or path.readlink().as_posix() != attributes.get('link'):
+                raise ValueError('staged metadata symlink differs: ' + relative)
+            links += 1
+        elif kind == 'dir':
+            if not stat.S_ISDIR(mode):
+                raise ValueError('staged metadata directory differs: ' + relative)
+            directories += 1
+        else:
+            raise ValueError('unsupported staged metadata object type: ' + str(kind))
+    return dict(scope='final component staged object/type/recorded hash checks; not filesystem sandbox or NO_ROOT ownership enforcement',
+                record_claims=len(rows), unique_objects=len(latest), files=files,
+                sha256_files=hashed, symlinks=links, directories=directories)

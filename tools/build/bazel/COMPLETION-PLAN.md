@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Fixed public headers and Make reference destination correction (2026-11-05)
+
+Six further public include children now match complete original stages: 89 files
+and two companion directory records. The selected AMD64 parent has five archives;
+the explicitly tested ARM companion data does not count as ARM64 target acceptance.
+Companion directory tags and includes-disabled behavior match actual Make. A full
+include reference exposed a harness defect: SYSROOT-derived SDESTDIR sent copies
+to the object SDK. That baseline is rejected; eight missing SDK input contents
+were recovered from the verified snapshot and all 8381 content bindings rechecked.
+The maintained helper now passes SDESTDIR explicitly and verifies actual staged
+objects/types/hashes/links. Bazel regression tests pass, including rejection of the
+actual bad stage. The corrected complete original include baseline verifies 1417
+file hashes and fourteen symlinks; it is not complete native include coverage.
+See PUBLIC-FIXED-HEADERS-QUALIFICATION.md. Cross-capture AMD64 namespace evidence
+is 1168 archives/30991 non-directory paths without conflicts. Continue root/kernel/
+architecture headers and osreldate, then remaining world/system acceptance gates.
+Make remains production/default; BIP is excluded.
+
 ## Public RPC include installation checkpoint (2026-11-05)
 
 The native include RPC contribution now covers both complete maintained RPC/RPC

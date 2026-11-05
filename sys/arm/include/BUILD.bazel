@@ -3,3 +3,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # ARM64 shares these machine-independent ARM definitions with the source tree.
 cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
     strip_include_prefix = ".", include_prefix = "arm", visibility = ["//visibility:public"])
+
+load(":public_headers.bzl", "ARM_COMPANION_HEADERS")
+exports_files(ARM_COMPANION_HEADERS, visibility = ["//include:__pkg__"])
