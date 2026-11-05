@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = "fsdb", srcs = ["fsdb.c", "fsdbutil.c", "fsdb.h", "//sbin/fsck_ffs:dir.c", "//sbin/fsck_ffs:ea.c", "//sbin/fsck_ffs:fsutil.c", "//sbin/fsck_ffs:inode.c", "//sbin/fsck_ffs:pass1.c", "//sbin/fsck_ffs:pass1b.c", "//sbin/fsck_ffs:pass2.c", "//sbin/fsck_ffs:pass3.c", "//sbin/fsck_ffs:pass4.c", "//sbin/fsck_ffs:pass5.c", "//sbin/fsck_ffs:setup.c", "//sbin/fsck_ffs:utilities.c", "//sbin/fsck_ffs:globs.c", "//sys/ufs/ffs:ffs_subr.c", "//sys/ufs/ffs:ffs_tables.c", "//tools/diag/prtblknos:prtblknos.c"],
+_SOURCES = ['fsdb.c', 'fsdbutil.c', 'fsdb.h', '//sbin/fsck_ffs:dir.c', '//sbin/fsck_ffs:ea.c', '//sbin/fsck_ffs:fsutil.c', '//sbin/fsck_ffs:inode.c', '//sbin/fsck_ffs:pass1.c', '//sbin/fsck_ffs:pass1b.c', '//sbin/fsck_ffs:pass2.c', '//sbin/fsck_ffs:pass3.c', '//sbin/fsck_ffs:pass4.c', '//sbin/fsck_ffs:pass5.c', '//sbin/fsck_ffs:setup.c', '//sbin/fsck_ffs:utilities.c', '//sbin/fsck_ffs:globs.c', '//sys/ufs/ffs:ffs_subr.c', '//sys/ufs/ffs:ffs_tables.c', '//tools/diag/prtblknos:prtblknos.c']
+cc_binary(name = "fsdb", srcs = _SOURCES,
     deps = ["//sbin/fsck_ffs:shared_headers", "//lib/libedit:edit", "//lib/libufs:ufs"],
     dynamic_deps = ["//lib/libedit:edit_shared", "//lib/libufs:ufs_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"],
@@ -17,3 +18,7 @@ bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pk
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['fsdb.o', 'fsdbutil.o', 'dir.o', 'ea.o', 'fsutil.o', 'inode.o', 'pass1.o', 'pass1b.o', 'pass2.o', 'pass3.o', 'pass4.o', 'pass5.o', 'setup.o', 'utilities.o', 'ffs_subr.o', 'ffs_tables.o', 'globs.o', 'prtblknos.o'], deps = ['//sbin/fsck_ffs:shared_headers', '//contrib/libedit:headers', '//lib/libufs:headers'], warns = 2)

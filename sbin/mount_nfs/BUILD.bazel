@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = "mount_nfs", srcs = ["mount_nfs.c", "//usr.sbin/rpc.umntall:mounttab.c"], local_defines = ["NFS"], deps = ["//lib/libutil:util", "//usr.sbin/rpc.umntall:mounttab_headers"], dynamic_deps = ["//lib/libutil:util_shared"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_SOURCES = ['mount_nfs.c', '//usr.sbin/rpc.umntall:mounttab.c']
+cc_binary(name = "mount_nfs", srcs = _SOURCES, local_defines = ["NFS"], deps = ["//lib/libutil:util", "//usr.sbin/rpc.umntall:mounttab_headers"], dynamic_deps = ["//lib/libutil:util_shared"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "mount_nfs", manual = "mount_nfs.8", package = "nfs", bindir = "/sbin", man_section = "8")
 
@@ -25,3 +26,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['mount_nfs.o', 'mounttab.o'], deps = ['//lib/libutil:headers', '//usr.sbin/rpc.umntall:mounttab_headers'], warns = 6, defines = ['NFS'])

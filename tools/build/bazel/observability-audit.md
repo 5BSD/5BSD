@@ -21,6 +21,23 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Five rescue UFS/NFS variants (2026-11-05)
+
+Dump/restore/fsck_ffs/fsdb/mount_nfs expand the core to 85 applications. Fsck_ffs
+retains the anchored ffscheck provider and ten phase start/done sites; actual
+schemas/function/patch sites and path-hash aliases agree with original objects.
+Fsdb's reuse of fsck implementation sources does not enable this separate main
+provider. Bounded source/recipe review finds no new direct DTrace/BSM integration
+for the other four variants; no live audit-delivery coverage is claimed.
+
+Runtime tests execute all five checker phases and debugger reads on private UFS1/
+UFS2 regular images, plus dump/restore table paths. DOF initialization is disabled
+in the host test environment; phase execution does not establish registered/firing
+probes. Candidate guest review: successful/error NFS mount and RPC paths, dirty or
+corrupt filesystem recovery, backup failures and metadata/ACL restore audit
+requirements. Evaluate existing kernel/library coverage before adding probes.
+See RESCUE-EIGHTY-FIVE-PROGRAM-QUALIFICATION.md for bound evidence and exclusions.
+
 ## Nine rescue lifecycle/storage/transfer variants (2026-11-05)
 
 Reboot/shutdown/dumpon/savecore/mount/mdmfs/nos-tun/nc/fetch bring the core to 80.

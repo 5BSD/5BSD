@@ -5850,6 +5850,15 @@ use the original generator's mapping.
 Privileged lifecycle/storage/network operations, HTTPS, complete library/debug/
 installation parity and full-system resource qualification remain separate gates.
 .Pp
+The bounded rescue core further includes dump, restore, fsck_ffs, fsdb and
+mount_nfs, reaching eighty-five applications.
+Ordinary and rescue variants share exact source inventories; rescue policies and
+fsck_ffs's anchored provider remain explicit. Tests exercise read-only checking
+and debugger access on private UFS1/UFS2 regular images, private backup creation
+and restore table reads, with source-image hashes unchanged.
+These checks do not establish live NFS mounts, damaged filesystem recovery,
+complete rescue installation, independent library/debug parity or performance.
+.Pp
 The default traced
 .Cm //lib/libutil:static_archive
 target preserves original Make member order and its separate DTrace provider.

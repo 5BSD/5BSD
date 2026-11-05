@@ -1,5 +1,19 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to eighty-five applications (2026-11-05)
+
+Five UFS/NFS owners reach 85 of 103 default applications, sharing unchanged
+ordinary source declarations. Passing native r2 executes 92 runtime methods plus
+28 source-settings methods, including private UFS1/UFS2 five-phase checks, debugger
+reads and dump/restore table reads with unchanged source hashes. All 51 actual
+compiler policies and 3368 declared dependency occurrences agree with original
+Make; successful actions from rejected r1 bind to immutable passing raw outputs.
+Original crunchgen/Make on identical inputs matches all 172 pipeline outputs.
+Fsck_ffs provider/function/patch sites and dump diagnostic-path controls pass.
+See RESCUE-EIGHTY-FIVE-PROGRAM-QUALIFICATION.md. Continue remaining 18 applications,
+actual libraries/config/cross/full installation and every full-system gate.
+Make stays default; BIP excluded. No installed-system/performance completion claim.
+
 ## Native rescue expansion to eighty applications (2026-11-05)
 
 Nine lifecycle/storage/transfer owners reach 80 of 103 default applications.

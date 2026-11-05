@@ -21,7 +21,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -708,6 +708,53 @@ class RescueCore(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(received, [data])
         self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"reply:" + data, b""))
+
+    def test_ufs_and_nfs_argument_rejection(self):
+        for name in ["dump", "restore", "fsck_ffs", "fsdb", "mount_nfs"]:
+            with self.subTest(program=name):
+                p = self.run_app(name, "-Q")
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
+
+    def test_private_ufs_readonly_checker_and_debugger(self):
+        import hashlib
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            for version in ["1", "2"]:
+                path = Path(d) / ("ufs" + version)
+                with path.open("wb") as stream:
+                    stream.truncate(16 * 1024 * 1024)
+                p = self.run_app("newfs", "-O", version, "-b", "4096", "-f", "512", "-i", "4096", "-m", "0", "-p", "a", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                before = hashlib.sha256(path.read_bytes()).digest()
+                p = self.run_app("fsck_ffs", "-n", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn(b"(NO WRITE)", p.stdout + p.stderr)
+                for phase in range(1, 6):
+                    self.assertIn(("** Phase " + str(phase) + " -").encode(), p.stdout)
+                p = self.run_app("fsdb", "-r", str(path), data=b"quit\n")
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertEqual(hashlib.sha256(path.read_bytes()).digest(), before)
+
+    def test_private_ufs_dump_restore_table(self):
+        import hashlib
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            for version in ["1", "2"]:
+                path = Path(d) / ("ufs" + version)
+                archive = Path(d) / ("backup" + version)
+                with path.open("wb") as stream:
+                    stream.truncate(16 * 1024 * 1024)
+                p = self.run_app("newfs", "-O", version, "-b", "4096", "-f", "512", "-i", "4096", "-m", "0", "-p", "a", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                before = hashlib.sha256(path.read_bytes()).digest()
+                # No -u (dumpdates write), live mount, remote tape or snapshot.
+                p = self.run_app("dump", "-0", "-a", "-r", "-f", str(archive), str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertGreater(archive.stat().st_size, 0)
+                p = self.run_app("restore", "-t", "-f", str(archive))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn(b"\t.\n", p.stdout)
+                self.assertIn(b"\t./.snap\n", p.stdout)
+                self.assertEqual(hashlib.sha256(path.read_bytes()).digest(), before)
 
 if __name__ == "__main__":
     unittest.main()

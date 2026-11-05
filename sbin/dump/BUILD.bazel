@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-cc_binary(name = "dump", srcs = ["itime.c", "main.c", "optr.c", "dumprmt.c", "tape.c", "traverse.c", "unctime.c", "cache.c", "dump.h", "pathnames.h"],
+_SOURCES = ['itime.c', 'main.c', 'optr.c', 'dumprmt.c', 'tape.c', 'traverse.c', 'unctime.c', 'cache.c', 'dump.h', 'pathnames.h']
+cc_binary(name = "dump", srcs = _SOURCES,
     deps = ["//lib/libufs:ufs"],
     dynamic_deps = ["//lib/libufs:ufs_shared"], local_defines = ["RDUMP"],
     copts = ["-fPIE"], linkopts = ["-pie"],
@@ -25,3 +26,7 @@ load("@bazel_skylib//rules:write_file.bzl", "write_file")
 write_file(name = "dumpdates", out = "dumpdates.empty", content = [])
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
 bsd_install_file(name = "dumpdates_install", src = ":dumpdates", destination = "/etc/dumpdates", owner = "root", group = "operator", mode = "0664", install_tags = ["package=ufs", "config"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['itime.o', 'main.o', 'optr.o', 'dumprmt.o', 'tape.o', 'traverse.o', 'unctime.o', 'cache.o'], deps = ['//lib/libufs:headers'], warns = 2, defines = ['RDUMP'])

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+_SOURCES = ['dir.c', 'ea.c', 'fsutil.c', 'inode.c', 'main.c', 'pass1.c', 'pass1b.c', 'pass2.c', 'pass3.c', 'pass4.c', 'pass5.c', 'setup.c', 'suj.c', 'utilities.c', 'globs.c', 'fsck.h', 'ffscheck_trace.h']
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
@@ -15,7 +16,7 @@ bsd_dtrace_header(
 )
 cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
 
-cc_library(name = "objects", srcs = ['dir.c', 'ea.c', 'fsutil.c', 'inode.c', 'main.c', 'pass1.c', 'pass1b.c', 'pass2.c', 'pass3.c', 'pass4.c', 'pass5.c', 'setup.c', 'suj.c', 'utilities.c', 'globs.c', 'fsck.h', 'ffscheck_trace.h'],
+cc_library(name = "objects", srcs = _SOURCES,
     deps = ["//lib/libufs:ufs", "//lib/libutil:util"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
     local_defines = select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}),
     copts = ["-fPIE"], target_compatible_with = _PLATFORM)
@@ -55,3 +56,7 @@ cc_library(name = "shared_headers", hdrs = ["fsck.h", "ffscheck_trace.h"], strip
 exports_files(["utilities.c"], visibility = ["//sbin/quotacheck:__pkg__", "//sbin/fsdb:__pkg__"])
 
 exports_files(["dir.c", "ea.c", "fsutil.c", "inode.c", "pass1.c", "pass1b.c", "pass2.c", "pass3.c", "pass4.c", "pass5.c", "setup.c", "globs.c"], visibility = ["//sbin/fsdb:__pkg__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['dir.o', 'ea.o', 'fsutil.o', 'inode.o', 'main.o', 'pass1.o', 'pass1b.o', 'pass2.o', 'pass3.o', 'pass4.o', 'pass5.o', 'setup.o', 'suj.o', 'utilities.o', 'globs.o'], deps = ['//lib/libufs:headers', '//lib/libutil:headers'], warns = 2, provider = 'ffscheck_provider')
