@@ -3,7 +3,8 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 cc_library(name = "configuration", hdrs = ["defines.h"], strip_include_prefix = ".", visibility = ["//usr.bin/lessecho:__pkg__"])
-cc_binary(name = "less", srcs = ['//contrib/less:main.c', '//contrib/less:screen.c', '//contrib/less:brac.c', '//contrib/less:ch.c', '//contrib/less:charset.c', '//contrib/less:cmdbuf.c', '//contrib/less:command.c', '//contrib/less:cvt.c', '//contrib/less:decode.c', '//contrib/less:evar.c', '//contrib/less:edit.c', '//contrib/less:filename.c', '//contrib/less:forwback.c', '//contrib/less:help.c', '//contrib/less:ifile.c', '//contrib/less:input.c', '//contrib/less:jump.c', '//contrib/less:lesskey_parse.c', '//contrib/less:line.c', '//contrib/less:linenum.c', '//contrib/less:lmsg.c', '//contrib/less:lsystem.c', '//contrib/less:mark.c', '//contrib/less:optfunc.c', '//contrib/less:option.c', '//contrib/less:opttbl.c', '//contrib/less:os.c', '//contrib/less:output.c', '//contrib/less:pattern.c', '//contrib/less:position.c', '//contrib/less:prompt.c', '//contrib/less:search.c', '//contrib/less:signal.c', '//contrib/less:tags.c', '//contrib/less:ttyin.c', '//contrib/less:version.c', '//contrib/less:xbuf.c'],
+_PROGRAM_SOURCES = ['//contrib/less:main.c', '//contrib/less:screen.c', '//contrib/less:brac.c', '//contrib/less:ch.c', '//contrib/less:charset.c', '//contrib/less:cmdbuf.c', '//contrib/less:command.c', '//contrib/less:cvt.c', '//contrib/less:decode.c', '//contrib/less:evar.c', '//contrib/less:edit.c', '//contrib/less:filename.c', '//contrib/less:forwback.c', '//contrib/less:help.c', '//contrib/less:ifile.c', '//contrib/less:input.c', '//contrib/less:jump.c', '//contrib/less:lesskey_parse.c', '//contrib/less:line.c', '//contrib/less:linenum.c', '//contrib/less:lmsg.c', '//contrib/less:lsystem.c', '//contrib/less:mark.c', '//contrib/less:optfunc.c', '//contrib/less:option.c', '//contrib/less:opttbl.c', '//contrib/less:os.c', '//contrib/less:output.c', '//contrib/less:pattern.c', '//contrib/less:position.c', '//contrib/less:prompt.c', '//contrib/less:search.c', '//contrib/less:signal.c', '//contrib/less:tags.c', '//contrib/less:ttyin.c', '//contrib/less:version.c', '//contrib/less:xbuf.c']
+cc_binary(name = "less", srcs = _PROGRAM_SOURCES,
     deps = [":configuration", "//contrib/less:headers", "//lib/ncurses/tinfo:tinfo"],
     dynamic_deps = ["//lib/ncurses/tinfo:tinfo_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"],
@@ -43,3 +44,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _PROGRAM_SOURCES,
+    object_names = ['main.o', 'screen.o', 'brac.o', 'ch.o', 'charset.o', 'cmdbuf.o', 'command.o', 'cvt.o', 'decode.o', 'evar.o', 'edit.o', 'filename.o', 'forwback.o', 'help.o', 'ifile.o', 'input.o', 'jump.o', 'lesskey_parse.o', 'line.o', 'linenum.o', 'lmsg.o', 'lsystem.o', 'mark.o', 'optfunc.o', 'option.o', 'opttbl.o', 'os.o', 'output.o', 'pattern.o', 'position.o', 'prompt.o', 'search.o', 'signal.o', 'tags.o', 'ttyin.o', 'version.o', 'xbuf.o'], deps = [':configuration', '//contrib/less:headers', '//lib/ncurses/tinfo:public_headers'], warns = 1, defines = [])

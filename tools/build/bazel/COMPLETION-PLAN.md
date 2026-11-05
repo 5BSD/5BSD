@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to seventy-one applications (2026-11-05)
+
+Six owners add xz/zstd/less/route/rtsol/mount_msdosfs, reaching 71 of 103 default
+applications. All ordinary declarations are preserved with shared source lists.
+Original WARNS=1 and route AWK/Netlink/IPv4/IPv6/rescue options are explicit.
+Both Netlink-enabled/disabled selected cores pass 84 runtime methods, including
+requested two-worker compression. Fresh Make builds 81 C objects; all actual
+compiler policies match, bound from successful actions in a failed-test run to
+passing captures. Original generated Make on identical inputs matches all 144
+pipeline outputs and the executable. All 5535 consumed occurrences are declared;
+one exact generator-comment provenance difference remains explicitly reported
+rather than claimed byte-identical. See RESCUE-SEVENTY-ONE-PROGRAM-QUALIFICATION.md.
+Continue remaining 32 applications, actual libraries/options/cross/full install,
+independent library/debug/header/pkgbase acceptance and all full-system gates.
+Make stays default; BIP stays excluded.
+
 ## Native rescue expansion to sixty-five applications (2026-11-05)
 
 Eight text/compression/digest/configuration/FAT tools bring the AMD64 core to

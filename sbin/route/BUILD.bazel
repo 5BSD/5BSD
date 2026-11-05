@@ -33,3 +33,11 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ["route.c", "show.c"] + select({"//tools/build/bazel/config:netlink_support_enabled": ["route_netlink.c"], "//conditions:default": []}),
+    object_names = ["route.o", "show.o"] + select({"//tools/build/bazel/config:netlink_support_enabled": ["route_netlink.o"], "//conditions:default": []}),
+    deps = [":local_headers"], warns = 3,
+    defines = ["NS"] + select({"//tools/build/bazel/config:inet_support_enabled": ["INET"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:netlink_support_enabled": [], "//conditions:default": ["WITHOUT_NETLINK"]}))

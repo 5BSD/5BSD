@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+_PROGRAM_SOURCES = ['//sys/contrib/zstd:programs/benchfn.c', '//sys/contrib/zstd:programs/benchzstd.c', '//sys/contrib/zstd:programs/datagen.c', '//sys/contrib/zstd:programs/dibio.c', '//sys/contrib/zstd:programs/fileio.c', '//sys/contrib/zstd:programs/fileio_asyncio.c', '//sys/contrib/zstd:programs/lorem.c', '//sys/contrib/zstd:programs/timefn.c', '//sys/contrib/zstd:programs/util.c', '//sys/contrib/zstd:programs/zstdcli.c', '//sys/contrib/zstd:programs/zstdcli_trace.c']
 cc_binary(
-    name = "zstd", srcs = ['//sys/contrib/zstd:programs/benchfn.c', '//sys/contrib/zstd:programs/benchzstd.c', '//sys/contrib/zstd:programs/datagen.c', '//sys/contrib/zstd:programs/dibio.c', '//sys/contrib/zstd:programs/fileio.c', '//sys/contrib/zstd:programs/fileio_asyncio.c', '//sys/contrib/zstd:programs/lorem.c', '//sys/contrib/zstd:programs/timefn.c', '//sys/contrib/zstd:programs/util.c', '//sys/contrib/zstd:programs/zstdcli.c', '//sys/contrib/zstd:programs/zstdcli_trace.c'],
+    name = "zstd", srcs = _PROGRAM_SOURCES,
     deps = ["//lib/libzstd:zstd", "//sys/contrib/zstd:internal_headers"],
     dynamic_deps = ["//lib/libzstd:zstd_shared"],
     local_defines = ["PIC", "XXH_NAMESPACE=ZSTD_", "HAVE_THREAD=1", "ZSTD_MULTITHREAD=1"],
@@ -35,3 +36,7 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     epoch = 0, python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _PROGRAM_SOURCES,
+    object_names = ['benchfn.o', 'benchzstd.o', 'datagen.o', 'dibio.o', 'fileio.o', 'fileio_asyncio.o', 'lorem.o', 'timefn.o', 'util.o', 'zstdcli.o', 'zstdcli_trace.o'], deps = ['//sys/contrib/zstd:internal_headers'], warns = 2, defines = ['XXH_NAMESPACE=ZSTD_', 'HAVE_THREAD=1', 'ZSTD_MULTITHREAD=1'])

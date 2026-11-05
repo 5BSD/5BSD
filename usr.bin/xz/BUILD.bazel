@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+_PROGRAM_SOURCES = ['//contrib/xz:src/xz/args.c', '//contrib/xz:src/xz/coder.c', '//contrib/xz:src/xz/file_io.c', '//contrib/xz:src/xz/hardware.c', '//contrib/xz:src/xz/list.c', '//contrib/xz:src/xz/main.c', '//contrib/xz:src/xz/message.c', '//contrib/xz:src/xz/mytime.c', '//contrib/xz:src/xz/options.c', '//contrib/xz:src/xz/sandbox.c', '//contrib/xz:src/xz/signals.c', '//contrib/xz:src/xz/suffix.c', '//contrib/xz:src/xz/util.c', '//contrib/xz:src/common/tuklib_open_stdxxx.c', '//contrib/xz:src/common/tuklib_progname.c', '//contrib/xz:src/common/tuklib_exit.c', '//contrib/xz:src/common/tuklib_cpucores.c', '//contrib/xz:src/common/tuklib_mbstr_width.c', '//contrib/xz:src/common/tuklib_mbstr_fw.c', '//contrib/xz:src/common/tuklib_mbstr_nonprint.c', '//contrib/xz:src/common/tuklib_mbstr_wrap.c']
 cc_binary(
-    name = "xz", srcs = ['//contrib/xz:src/xz/args.c', '//contrib/xz:src/xz/coder.c', '//contrib/xz:src/xz/file_io.c', '//contrib/xz:src/xz/hardware.c', '//contrib/xz:src/xz/list.c', '//contrib/xz:src/xz/main.c', '//contrib/xz:src/xz/message.c', '//contrib/xz:src/xz/mytime.c', '//contrib/xz:src/xz/options.c', '//contrib/xz:src/xz/sandbox.c', '//contrib/xz:src/xz/signals.c', '//contrib/xz:src/xz/suffix.c', '//contrib/xz:src/xz/util.c', '//contrib/xz:src/common/tuklib_open_stdxxx.c', '//contrib/xz:src/common/tuklib_progname.c', '//contrib/xz:src/common/tuklib_exit.c', '//contrib/xz:src/common/tuklib_cpucores.c', '//contrib/xz:src/common/tuklib_mbstr_width.c', '//contrib/xz:src/common/tuklib_mbstr_fw.c', '//contrib/xz:src/common/tuklib_mbstr_nonprint.c', '//contrib/xz:src/common/tuklib_mbstr_wrap.c'],
+    name = "xz", srcs = _PROGRAM_SOURCES,
     deps = ["//lib/liblzma:lzma_link", "//lib/liblzma:configuration", "//contrib/xz:cli_headers"],
     dynamic_deps = ["//lib/liblzma:lzma_shared"],
     local_defines = ["HAVE_CONFIG_H"], copts = ['-fpie', '-DPIC', '-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Qunused-arguments', '-fPIE'],
@@ -46,3 +47,7 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     epoch = 0, python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _PROGRAM_SOURCES,
+    object_names = ['args.o', 'coder.o', 'file_io.o', 'hardware.o', 'list.o', 'main.o', 'message.o', 'mytime.o', 'options.o', 'sandbox.o', 'signals.o', 'suffix.o', 'util.o', 'tuklib_open_stdxxx.o', 'tuklib_progname.o', 'tuklib_exit.o', 'tuklib_cpucores.o', 'tuklib_mbstr_width.o', 'tuklib_mbstr_fw.o', 'tuklib_mbstr_nonprint.o', 'tuklib_mbstr_wrap.o'], deps = ['//lib/liblzma:configuration', '//contrib/xz:cli_headers'], warns = 3, defines = ['HAVE_CONFIG_H'])

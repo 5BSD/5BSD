@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = "rtsol", srcs = ["//usr.sbin/rtsold:cap_llflags.c", "//usr.sbin/rtsold:cap_script.c", "//usr.sbin/rtsold:cap_sendmsg.c", "//usr.sbin/rtsold:dump.c", "//usr.sbin/rtsold:if.c", "//usr.sbin/rtsold:rtsol.c", "//usr.sbin/rtsold:rtsold.c", "//usr.sbin/rtsold:rtsock.c"],
+_PROGRAM_SOURCES = ["//usr.sbin/rtsold:cap_llflags.c", "//usr.sbin/rtsold:cap_script.c", "//usr.sbin/rtsold:cap_sendmsg.c", "//usr.sbin/rtsold:dump.c", "//usr.sbin/rtsold:if.c", "//usr.sbin/rtsold:rtsol.c", "//usr.sbin/rtsold:rtsold.c", "//usr.sbin/rtsold:rtsock.c"]
+cc_binary(name = "rtsol", srcs = _PROGRAM_SOURCES,
     deps = ["//usr.sbin/rtsold:headers", "//lib/libutil:util", "//lib/libcasper/libcasper:headers", "//lib/libcasper/services/cap_syslog:headers"] + select({"//tools/build/bazel/config:casper_enabled": ["//lib/libcasper/services/cap_syslog:cap_syslog", "//lib/libcasper/libcasper:casper", "//lib/libnv:nv"], "//conditions:default": []}),
     dynamic_deps = ["//lib/libutil:util_shared"] + select({"//tools/build/bazel/config:casper_enabled": ["//lib/libcasper/services/cap_syslog:cap_syslog_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libnv:nv_shared"], "//conditions:default": []}),
     local_defines = select({"//tools/build/bazel/config:casper_enabled": ["WITH_CASPER"], "//conditions:default": []}),
@@ -19,3 +20,7 @@ bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pk
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _PROGRAM_SOURCES,
+    object_names = ['cap_llflags.o', 'cap_script.o', 'cap_sendmsg.o', 'dump.o', 'if.o', 'rtsol.o', 'rtsold.o', 'rtsock.o'], deps = ['//usr.sbin/rtsold:headers', '//lib/libutil:headers', '//lib/libcasper/libcasper:headers', '//lib/libcasper/services/cap_syslog:headers'], warns = 6, defines = [])

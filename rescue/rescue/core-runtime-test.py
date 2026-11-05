@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -561,6 +561,55 @@ class RescueCore(unittest.TestCase):
 
     def test_tape_and_linker_usage_before_open_or_write(self):
         for name in ["mt", "ldconfig"]:
+            with self.subTest(program=name):
+                p = self.run_app(name, "-Z")
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
+
+    def test_xz_two_worker_roundtrip(self):
+        data = bytes(range(256)) * (3 * 4096)
+        p = self.run_app("xz", "-0", "-T2", "--block-size=1MiB", "-c", data=data)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        decoded = self.run_app("xz", "-d", "-c", data=p.stdout)
+        self.assertEqual((decoded.returncode, decoded.stdout, decoded.stderr), (0, data, b""))
+
+    def test_zstd_two_worker_roundtrip(self):
+        data = bytes(range(256)) * (3 * 4096)
+        p = self.run_app("zstd", "-q", "-1", "-T2", "-B1M", "-c", data=data)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        decoded = self.run_app("zstd", "-q", "-d", "-c", data=p.stdout)
+        self.assertEqual((decoded.returncode, decoded.stdout, decoded.stderr), (0, data, b""))
+
+    def test_xz_aliases(self):
+        data = b"XZ alias dispatch\n" * 100
+        for encoder, aliases in [("xz", ["unxz", "xzcat"]), ("lzma", ["unlzma", "lzcat"])]:
+            p = self.run_app(encoder, "-c", data=data)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            for alias in aliases:
+                with self.subTest(alias=alias):
+                    decoded = self.run_app(alias, "-c", data=p.stdout)
+                    self.assertEqual((decoded.returncode, decoded.stdout, decoded.stderr), (0, data, b""))
+
+    def test_zstd_aliases(self):
+        data = b"Zstd alias dispatch\n" * 100
+        p = self.run_app("zstdmt", "-q", "-T2", "-c", data=data)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        for alias in ["unzstd", "zstdcat"]:
+            with self.subTest(alias=alias):
+                decoded = self.run_app(alias, "-q", "-c", data=p.stdout)
+                self.assertEqual((decoded.returncode, decoded.stdout, decoded.stderr), (0, data, b""))
+
+    def test_less_nonterminal_private_file_and_more_alias(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"one\ntwo\nthree\n")
+            for name in ["less", "more"]:
+                with self.subTest(program=name):
+                    p = self.run_app(name, str(path))
+                    self.assertEqual((p.returncode, p.stdout, p.stderr), (0, path.read_bytes(), b""))
+
+    def test_network_and_mount_usage_before_mutation(self):
+        for name in ["route", "rtsol", "mount_msdosfs"]:
             with self.subTest(program=name):
                 p = self.run_app(name, "-Z")
                 self.assertNotEqual(p.returncode, 0)

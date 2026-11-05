@@ -5830,6 +5830,15 @@ Runtime checks include compression aliases, private text edits and read-only FAT
 image checking. They do not establish full rescue installation, complete library/
 debug parity, thread stress/performance or privileged VM acceptance.
 .Pp
+The bounded rescue core also includes xz, zstd, less, route, rtsol and
+mount_msdosfs, reaching seventy-one applications.
+Ordinary and rescue variants share unchanged source inventories, while warning
+levels and source options retain their original context.
+Selected Netlink-enabled and disabled cores pass functional tests, including
+requested two-worker compression and nonterminal pager behavior.
+Network/mount mutation, complete configuration coverage, independent library/
+debug/header parity and full rescue installation remain separate gates.
+.Pp
 The default traced
 .Cm //lib/libutil:static_archive
 target preserves original Make member order and its separate DTrace provider.

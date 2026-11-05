@@ -21,6 +21,25 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Six rescue compression/pager/network variants (2026-11-05)
+
+Xz/zstd/less/route/rtsol/mount_msdosfs expand the selected core to 71 applications.
+Their maintained recipes declare no new direct DTrace provider or BSM audit calls
+in this bounded review. Native library instrumentation remains intact; rtsol
+omits Casper under the original RESCUE condition, and route omits JAIL while
+preserving IPv4/IPv6 and Netlink selections. Shared source inventories preserve
+all ordinary declarations. Audit source/recipe evidence is separate from live
+registration, firing and audit delivery.
+
+Host tests request two-worker xz/zstd compression and test aliases, private pager
+input and usage rejection before network/mount changes. They do not observe an
+exact worker count or qualify successful administration. Both native Netlink
+profiles pass, but route/IPv6 solicitation, mounted FAT operations and associated
+kernel audit events still need dedicated VM qualification. The one curses header
+input difference is reproduced as an exact generator provenance comment; it is
+retained as a byte difference, with no source/header/binary rewriting. See
+RESCUE-SEVENTY-ONE-PROGRAM-QUALIFICATION.md for accepted/rejected evidence.
+
 ## Eight rescue text/compression/configuration variants (2026-11-05)
 
 Sed/gzip/bzip2/mt/md5/ldconfig/sysctl/fsck_msdosfs expand the core to 65.
