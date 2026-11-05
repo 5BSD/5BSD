@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = "gss-client", srcs = ["//crypto/krb5/src/appl/gss-sample:" + f for f in ["gss-client.c", "gss-misc.c", "gss-misc.h"]],
-    deps = ["//crypto/krb5/src/lib/gssapi:headers", "//crypto/krb5/src/include:internal_headers", "//krb5/lib/gssapi:gssapi_krb5"] + ['//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/profile:krb5profile', '//krb5/util/support:krb5support', '//lib/libsys:sys'],
+    deps = ["//crypto/krb5/src/lib/gssapi:headers", "//crypto/krb5/src/include:internal_headers", "//krb5/lib/gssapi:gssapi_krb5"] + ['//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/profile:krb5profile_pie', '//krb5/util/support:krb5support', '//lib/libsys:sys'],
     dynamic_deps = ["//krb5/lib/gssapi:gssapi_krb5_shared", '//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared', '//lib/libsys:sys_shared'], copts = ["-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")

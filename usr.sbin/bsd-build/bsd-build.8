@@ -6756,3 +6756,13 @@ queries and records a normal build of the compatible test executables with the
 same profile after testing.
 This materializes executable outputs even when test results are cached, before
 qualification freezes and verifies the completed BEP outputs.
+
+.Pp
+The MIT Kerberos production-products endpoint includes its installed archives
+and both original variants of all five internal libraries.
+Internal profile and command libraries produce build outputs without installed
+headers or scripts, following the maintained Make install rules.
+PIE program consumers select the profile PIE variant, matching original Make
+links.
+Selected local crypto, principal, GSS, profile and utility tests do not establish
+KDC service, network authentication or credential-lifecycle acceptance.

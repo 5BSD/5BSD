@@ -107,3 +107,12 @@ login/PAM/SSH/boot/runtime and comparative CPU/RAM/disk I/O/footprint/cache/sand
 qualification remain required. A collision-free selected namespace and passing
 bounded tests do not close these gates. Make stays production/default. BIP is
 excluded; no host installation, upgrade, publication or reboot is performed.
+
+
+## Subsequent MIT composition checkpoint (2026-11-05)
+
+The final nine-family native r3 request adds MIT Kerberos and passes 52 selected
+tests with 1114 installation archives and 23350 collision-free non-directory
+paths. See MIT-FAMILY-COMPOSITION-QUALIFICATION.md for current evidence, actual
+profile dependency corrections and the remaining completion gates. The eight-family
+numbers above remain historical evidence for that earlier request.

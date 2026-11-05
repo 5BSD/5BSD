@@ -9,7 +9,7 @@ bsd_rpcgen(name = "generate_h", source = "//sys/kgssapi:gssd.x", output = "gssd.
 cc_library(name = "generated_headers", hdrs = [":gssd.h"], includes = ["."])
 # The current native Kerberos graph implements MIT; reject other selections.
 cc_binary(name = "gssd", srcs = ["gssd.c", ":gssd_svc.c", ":gssd_xdr.c", "//sys/kgssapi:gssd_prot.c"],
-    deps = [":generated_headers"] + ['//krb5/lib/gssapi:gssapi_krb5', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/profile:krb5profile', '//krb5/util/support:krb5support'],
+    deps = [":generated_headers"] + ['//krb5/lib/gssapi:gssapi_krb5', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/profile:krb5profile_pie', '//krb5/util/support:krb5support'],
     dynamic_deps = ['//krb5/lib/gssapi:gssapi_krb5_shared', '//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/support:krb5support_shared'],
     local_defines = ["MK_MITKRB5=yes"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:mitkrb5_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])

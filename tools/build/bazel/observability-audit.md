@@ -11599,3 +11599,15 @@ preserves actual program sources, probe providers and test bodies. The new
 recorded executable materialization build reruns no tests and changes no
 production instrumentation. Complete audit/probe delivery, authentication,
 network services and system/resource performance remain separate open gates.
+
+
+## MIT Kerberos composition (2026-11-05)
+
+Production composition and profile PIE/dependency fixes change only native build
+declarations; original program sources and instrumentation remain intact. The
+52 combined selected tests include bounded MIT crypto/support/principal/GSS/profile
+checks, not live KDC, GSS/NFS or credential-lifecycle service qualification. KDC
+audit source selection is retained. Original gssd/KDC metadata/ELF/debug parity
+does not establish audit delivery or probe behavior. Keep network authentication,
+service startup, credential failure/recovery, audit/probe events and resource
+measurements as explicit runtime gates.

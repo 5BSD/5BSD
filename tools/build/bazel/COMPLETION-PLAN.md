@@ -2,11 +2,15 @@
 
 ## Current combined native build (2026-11-05)
 
-One maintained frontend request now builds the eight composed AMD64 production
-families together: 1071 installation archives and their selected internal build
-outputs, with 34 selected test targets passing. The complete captured request
-namespace has 23156 non-directory paths and no conflicting file claims.
-See EIGHT-FAMILY-COMPOSITION-QUALIFICATION.md for exact scope and evidence.
+One maintained frontend request now builds nine composed AMD64 production
+families together, including MIT Kerberos: 1114 installation archives and their
+selected internal build outputs, with 52 selected test targets passing. The
+complete captured request namespace has 23350 non-directory paths and no
+conflicting file claims. MIT contributes 43 installation archives and ten internal
+archives; all 48 configured original owners match the native selection. Strict
+original gssd/KDC comparisons caught and corrected a profile dependency leak.
+See MIT-FAMILY-COMPOSITION-QUALIFICATION.md for current scope and evidence and
+EIGHT-FAMILY-COMPOSITION-QUALIFICATION.md for the preceding checkpoint.
 This is a selected construction/namespace milestone; remaining world roots,
 complete installed tests/Make/pkgbase parity, other ABIs, bootstrap, system
 runtime/VM and comparative resource/performance gates remain open. Make stays
@@ -3532,3 +3536,16 @@ then complete kernel/module/pkgbase/bootstrap/hardware/publication, other ABI,
 real runtime/VM and comparative CPU/RAM/disk I/O/footprint/cache/sandbox gates.
 The maintained backend and manual are updated; no C/frontend input-schema change
 is needed. Make remains default; BIP remains excluded.
+
+
+## MIT Kerberos integration checkpoint (2026-11-05)
+
+The final nine-family r3 build passes 52 selected tests and namespace review.
+Native production parents include both original internal-library variants;
+PIE consumers use the proper profile variant and callers own their link closure.
+Current original Make comparisons pass profile archive members/symbols, empty
+internal installations and complete changed gssd/KDC component/ELF/debug contracts.
+The public generated profile header retains one recorded filename-comment
+variation; byte identity is not claimed. See MIT-FAMILY-COMPOSITION-QUALIFICATION.md.
+Remaining full world, installed tests/metadata/pkgbase, cross-architecture,
+bootstrap, runtime and performance gates remain open. Make remains default.

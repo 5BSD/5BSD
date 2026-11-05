@@ -54,3 +54,13 @@ bsd_install_archive_set(
     archives = _ARCHIVES,
     visibility = ["//visibility:public"],
 )
+
+# Complete original internal-library outputs are separate from installation.
+# INTERNALLIB suppresses header/library installation in bsd.lib.mk; its parsed
+# SCRIPTS variable does not acquire a bsd.scripts.mk install rule either.
+_BUILD_ONLY = ["//krb5/" + owner + ":" + variant for owner in [
+    "lib/apputils", "lib/kadmin_common", "lib/kprop_util", "util/profile", "util/ss",
+] for variant in ["static_archive", "pie_archive"]]
+alias(name = "production_installation_archives", actual = ":installation_archives", visibility = ["//visibility:public"])
+filegroup(name = "production_products", srcs = [":production_installation_archives"] + _BUILD_ONLY,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
