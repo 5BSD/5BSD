@@ -16,3 +16,6 @@ bsd_account_databases(
 
 load(":account_installation.bzl", "account_installation")
 account_installation()
+
+load(":distribution.bzl", "etc_distribution")
+etc_distribution()

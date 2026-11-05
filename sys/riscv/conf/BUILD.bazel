@@ -438,3 +438,5 @@ _CORE_BUILTIN_OPTION_HEADERS = [
  for name in _CORE_BUILTIN_OPTION_HEADERS]
 cc_library(name = "core_builtin_options_headers", hdrs = [":core_builtin_" + name for name in _CORE_BUILTIN_OPTION_HEADERS],
     strip_include_prefix = "core_builtin_options", visibility = ["//sys/kern:__pkg__"])
+
+exports_files(["GENERIC.hints"], visibility = ["//etc:__pkg__"])

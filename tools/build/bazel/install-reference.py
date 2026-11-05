@@ -33,6 +33,8 @@ def main():
                         help='explicit recorded target ABI; execution tools remain native')
     parser.add_argument('--jobs', type=int, required=True)
     parser.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
+    parser.add_argument('--phase', choices=['install', 'distribution'], default='install',
+                        help='maintained installation phase; distribution does not imply install/installconfig')
     parser.add_argument('--make-meta', action='store_true',
                         help='record original build recipes with supported metadata mode, without filemon')
     parser.add_argument('--with-option', action='append', default=[],
@@ -194,7 +196,7 @@ def main():
                        str(Path(install_reference_libraries.__file__).resolve()): digest(Path(install_reference_libraries.__file__)),
                        str(Path(install_reference_generators.__file__).resolve()): digest(Path(install_reference_generators.__file__))}
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference' if args.target_arch == 'amd64' else 'cross-Make-installation-reference', 'target_architecture': args.target_arch,
-               'component': str(component), 'jobs': args.jobs,
+               'component': str(component), 'jobs': args.jobs, 'installation_phase': args.phase,
                'make_metadata': {'enabled': args.make_meta,
                                  'mode': install_reference_options.METADATA_MODE if args.make_meta else None},
                'component_options': component_options,
@@ -271,7 +273,7 @@ def main():
         # links unrelated to this component. Keep the complete METALOG as well.
         directory_metadata = metalog.read_bytes()
         (output / 'directories.METALOG').write_bytes(directory_metadata)
-        run(buildenv(base + flags + assignments + ['install']), 'install')
+        run(buildenv(base + flags + assignments + [args.phase]), args.phase)
         # Make's distribution path installs configuration separately from install.
         groups=environment.query(['-V','CONFGROUPS'],extra=flags).split()
         configuration={group:environment.query(['-V',group],extra=flags).split() for group in groups}
@@ -279,8 +281,11 @@ def main():
         # The parent may have no local CONFGROUPS while selected descendants
         # install configuration. bsd.subdir.mk owns that recursion and bsd.sys.mk
         # provides the empty leaf target; always execute the maintained phase.
-        run(buildenv(base + flags + assignments + ['installconfig']), 'installconfig')
-        receipt['configuration_recursion'] = 'maintained installconfig target, including selected descendants'
+        if args.phase == 'install':
+            run(buildenv(base + flags + assignments + ['installconfig']), 'installconfig')
+            receipt['configuration_recursion'] = 'maintained installconfig target, including selected descendants'
+        else:
+            receipt['configuration_recursion'] = 'owned by maintained distribution target; installconfig not implied'
         combined_metadata = metalog.read_bytes()
         if not combined_metadata.startswith(directory_metadata):
             raise ValueError('component install rewrote directory metadata')

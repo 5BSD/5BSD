@@ -6883,3 +6883,12 @@ companion child beforeinstall directories and the library include alias retain
 their independent Make behavior.
 Current complete include qualification covers selected AMD64 copy layouts,
 without establishing whole-world, package, bootstrap or cross-ABI acceptance.
+
+.Pp
+The native etc distribution endpoint installs configured fresh-stage defaults,
+including source-generated sendmail configuration and target device hints.
+Its m4 actions declare ordered prefix inputs, directory anchors and include files.
+Distribution is a separate phase from account initialization, normal component
+installation, installconfig and afterinstall manual database construction.
+The independent Make reference records install or distribution explicitly;
+install remains its default phase and retains configuration recursion.

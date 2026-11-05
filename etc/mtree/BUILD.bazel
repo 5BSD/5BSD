@@ -4,3 +4,5 @@ exports_files(["BSD.root.dist", "BSD.usr.dist", "BSD.include.dist", "BSD.debug.d
 exports_files(["BSD.tests.dist"])
 
 exports_files(["BSD.var.dist"])
+
+exports_files(["BSD.sendmail.dist"], visibility = ["//etc:__pkg__"])

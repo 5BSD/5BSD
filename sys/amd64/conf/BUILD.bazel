@@ -925,3 +925,5 @@ cc_library(name = "final_drivers_module_opt_qat_header", hdrs = [":opt_qat"], st
 bsd_tree_file(name = "opt_bhyve_snapshot", tree = ":generic_config", member = "opt_bhyve_snapshot.h", output = "generic_options/opt_bhyve_snapshot.h", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 
 cc_library(name = "final_drivers_module_opt_bhyve_snapshot_header", hdrs = [":opt_bhyve_snapshot"], strip_include_prefix = "generic_options", visibility = ["//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm:__pkg__"])
+
+exports_files(["GENERIC.hints"], visibility = ["//etc:__pkg__"])

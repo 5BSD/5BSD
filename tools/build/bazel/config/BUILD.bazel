@@ -801,3 +801,8 @@ selects.config_setting_group(name = "includes_cuse_enabled", match_all = [":incl
 selects.config_setting_group(name = "includes_usb_enabled", match_all = [":includes_enabled", ":usb_enabled"], visibility = ["//visibility:public"])
 
 selects.config_setting_group(name = "includes_bhyve_enabled", match_all = [":includes_enabled", ":bhyve_enabled"], visibility = ["//visibility:public"])
+
+bool_flag(name = "boot", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "boot_enabled", flag_values = {":boot": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "mitkrb5_requested", flag_values = {":mitkrb5": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "kerberos_requested", flag_values = {":kerberos": "true"}, visibility = ["//visibility:public"])

@@ -35,3 +35,7 @@ bsd_install_manifest(name = "cf_install_manifest",
     entries = [":cf_file_" + str(index) for index in range(len(_CF_FILES))] +
         [":cf_directory_" + str(index) for index in range(len(_CF_DIRECTORIES))],
     visibility = ["//share/sendmail:__pkg__"])
+
+# Complete m4 include closure for native sendmail configuration generation.
+filegroup(name = "cf_m4_inputs", srcs = glob(["cf/**/*.m4"]), visibility = ["//etc:__pkg__"])
+exports_files(["cf/README", "cf/m4/cf.m4", "src/helpfile"], visibility = ["//etc:__pkg__"])

@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Native etc distribution phase (2026-11-05)
+
+Complete selected distribution profiles now match independent Make stages:
+23 files/five links/two directories with sendmail, and nine files/three links/two
+directories for the alternate GSS/test-specification profile. Native m4 actions
+declare the source include closure; generated configuration bytes match exactly.
+The original reference explicitly distinguishes install and distribution phases.
+Review corrected the misplaced /etc/rmt utility-install claim; its three existing
+payloads remain unchanged and original normal-install metadata matches. See
+ETC-DISTRIBUTION-QUALIFICATION.md. This closes distribution for tested profiles,
+not the complete etc parent: install/afterinstall manual databases, additional
+sendmail configuration modes and other ABIs remain open. Continue remaining
+etc/rescue/sys/stand/world composition and installed tests; all full-system,
+bootstrap, package/publication/runtime/resource gates remain required. Make stays
+production/default; BIP stays excluded.
+
 ## Complete selected include parent (2026-11-05)
 
 The native include endpoint now composes ordinary/generated/RPC/fixed/kernel ABI
