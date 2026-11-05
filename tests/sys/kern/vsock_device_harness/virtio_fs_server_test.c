@@ -252,6 +252,53 @@ ATF_TC_BODY(hello_request_and_quiesce_are_bounded, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC_WITHOUT_HEAD(fresh_connection_can_quiesce_and_thaw);
+ATF_TC_BODY(fresh_connection_can_quiesce_and_thaw, tc)
+{
+	struct server_fixture fixture;
+	struct virtio_fs_backend_header header, reply;
+	uint8_t payload[4096];
+	size_t payload_len;
+
+	fixture_create(&fixture);
+	negotiate(&fixture);
+	/* Restore pauses a fresh backend before any guest FUSE request. */
+	ATF_REQUIRE_EQ(fixture.server->incarnation, 0);
+	header = (struct virtio_fs_backend_header) {
+		.version = 1,
+		.incarnation = TEST_INCARNATION,
+	};
+	header.type = VIRTIO_FS_BACKEND_QUIESCE;
+	header.payload_len = 0;
+	header.request_id = VIRTIO_FS_BACKEND_CONTROL_ID_BIT | 3;
+	ATF_REQUIRE_EQ(virtiofsd_server_handle(fixture.server, &header, NULL,
+	    0), 0);
+	/* Wait for the checkpoint barrier reply without guest request traffic. */
+	wait_for_output(&fixture);
+	ATF_REQUIRE_EQ(virtiofsd_server_flush_one(fixture.server,
+	    fixture.sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(fixture.sockets[1],
+	    &reply, payload, sizeof(payload), &payload_len), 0);
+	ATF_CHECK_EQ(reply.type, VIRTIO_FS_BACKEND_QUIESCE_REPLY);
+	ATF_CHECK_EQ(reply.incarnation, TEST_INCARNATION);
+	ATF_REQUIRE_EQ(reply.status, 0);
+	ATF_REQUIRE_EQ(payload_len, VIRTIOFSD_SESSION_STATE_SIZE);
+	ATF_CHECK_EQ(le32dec(payload), VIRTIOFSD_SESSION_STATE_MAGIC);
+
+	header.type = VIRTIO_FS_BACKEND_THAW;
+	header.payload_len = (uint32_t)payload_len;
+	header.request_id = VIRTIO_FS_BACKEND_CONTROL_ID_BIT | 4;
+	ATF_REQUIRE_EQ(virtiofsd_server_handle(fixture.server, &header, payload,
+	    payload_len), 0);
+	ATF_REQUIRE_EQ(virtiofsd_server_flush_one(fixture.server,
+	    fixture.sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(fixture.sockets[1],
+	    &reply, payload, sizeof(payload), &payload_len), 0);
+	ATF_CHECK_EQ(reply.type, VIRTIO_FS_BACKEND_THAW_REPLY);
+	ATF_CHECK_EQ(reply.status, 0);
+	fixture_destroy(&fixture);
+}
+
 ATF_TC_WITHOUT_HEAD(cancel_retires_work_before_late_completion);
 ATF_TC_WITHOUT_HEAD(quiesce_live_node_transfers_active_state);
 ATF_TC_BODY(quiesce_live_node_transfers_active_state, tc)
@@ -512,10 +559,84 @@ ATF_TC_BODY(shutdown_waits_for_work_and_preserves_response_order, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC_WITHOUT_HEAD(fresh_control_preserves_incarnation_fence);
+ATF_TC_BODY(fresh_control_preserves_incarnation_fence, tc)
+{
+	struct server_fixture fixture;
+	struct virtio_fs_backend_header header;
+	uint8_t payload = 0;
+	unsigned int scenario;
+
+	for (scenario = 0; scenario < 5; scenario++) {
+		fixture_create(&fixture);
+		if (scenario != 0)
+			negotiate(&fixture);
+		header = (struct virtio_fs_backend_header) {
+			.version = 1,
+			.type = VIRTIO_FS_BACKEND_QUIESCE,
+			.request_id = VIRTIO_FS_BACKEND_CONTROL_ID_BIT | 10,
+			.incarnation = TEST_INCARNATION,
+		};
+		if (scenario == 1)
+			header.type = VIRTIO_FS_BACKEND_THAW;
+		if (scenario == 2)
+			header.payload_len = 1;
+		if (scenario == 3)
+			header.incarnation = 0;
+		if (scenario == 4) {
+			ATF_REQUIRE_EQ(virtiofsd_server_handle(fixture.server,
+			    &header, NULL, 0), 0);
+			ATF_REQUIRE_EQ(fixture.server->phase,
+			    VIRTIO_FS_BACKEND_QUIESCED);
+			header.type = VIRTIO_FS_BACKEND_THAW;
+			header.incarnation = TEST_INCARNATION + 1;
+		}
+		ATF_REQUIRE_EQ(virtiofsd_server_handle(fixture.server, &header,
+		    header.payload_len ? &payload : NULL, header.payload_len),
+		    EPROTO);
+		ATF_CHECK_EQ(fixture.server->incarnation,
+		    scenario == 4 ? TEST_INCARNATION : 0);
+		fixture_destroy(&fixture);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(fresh_connection_can_shutdown);
+ATF_TC_BODY(fresh_connection_can_shutdown, tc)
+{
+	struct server_fixture fixture;
+	struct virtio_fs_backend_header header, reply;
+	uint8_t payload[4096];
+	size_t payload_len;
+
+	fixture_create(&fixture);
+	negotiate(&fixture);
+	header = (struct virtio_fs_backend_header) {
+		.version = 1,
+		.type = VIRTIO_FS_BACKEND_SHUTDOWN,
+		.request_id = VIRTIO_FS_BACKEND_CONTROL_ID_BIT | 10,
+		.incarnation = TEST_INCARNATION,
+	};
+	ATF_REQUIRE_EQ(virtiofsd_server_handle(fixture.server, &header,
+	    NULL, 0), 0);
+	ATF_REQUIRE_EQ(virtiofsd_server_flush_one(fixture.server,
+	    fixture.sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(fixture.sockets[1],
+	    &reply, payload, sizeof(payload), &payload_len), 0);
+	ATF_CHECK_EQ(reply.type, VIRTIO_FS_BACKEND_SHUTDOWN_REPLY);
+	ATF_CHECK_EQ(reply.incarnation, TEST_INCARNATION);
+	ATF_CHECK_EQ(reply.status, 0);
+	ATF_CHECK_EQ(payload_len, 0);
+	ATF_CHECK_EQ(fixture.server->phase, VIRTIO_FS_BACKEND_CLOSED);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, hello_request_and_quiesce_are_bounded);
+	ATF_TP_ADD_TC(tp, fresh_connection_can_quiesce_and_thaw);
+	ATF_TP_ADD_TC(tp, fresh_control_preserves_incarnation_fence);
+	ATF_TP_ADD_TC(tp, fresh_connection_can_shutdown);
 	ATF_TP_ADD_TC(tp,
 	    quiesce_live_node_transfers_active_state);
 	ATF_TP_ADD_TC(tp,

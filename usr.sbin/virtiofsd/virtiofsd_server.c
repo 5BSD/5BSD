@@ -585,6 +585,16 @@ server_control_locked(struct virtiofsd_server *server,
 {
 	struct virtio_fs_backend_header reply;
 
+	/*
+	 * Restore quiesces a newly negotiated connection before the guest can
+	 * send a FUSE request.  Such a control establishes the incarnation just
+	 * as the first request does; subsequent messages must still match it.
+	 */
+	if (server->incarnation == 0 && header->incarnation != 0 &&
+	    server->phase == VIRTIO_FS_BACKEND_ACTIVE && payload_len == 0 &&
+	    (header->type == VIRTIO_FS_BACKEND_QUIESCE ||
+	    header->type == VIRTIO_FS_BACKEND_SHUTDOWN))
+		server->incarnation = header->incarnation;
 	if (header->incarnation != server->incarnation)
 		return (EPROTO);
 	reply = (struct virtio_fs_backend_header) {

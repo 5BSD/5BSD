@@ -169,3 +169,14 @@ _FS_PCI_CASES = ['option_bounds', 'partial_frame_arms_deadline_timer', 'configur
  for case in _FS_PCI_CASES]
 test_suite(name = "virtio_fs_pci_tests", tests = [":fs_pci_" + case for case in _FS_PCI_CASES],
     visibility = ["//visibility:public"])
+
+# Make: virtio_fs_server_test, pthread; production protocol/session sources.
+cc_binary(name = "virtio_fs_server_test", srcs = ["virtio_fs_server_test.c"],
+    deps = ["//usr.sbin/virtiofsd:test_inputs", "//usr.sbin/bhyve:virtiofsd_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_FS_SERVER_CASES = ['hello_request_and_quiesce_are_bounded', 'fresh_connection_can_quiesce_and_thaw', 'cancel_retires_work_before_late_completion', 'quiesce_live_node_transfers_active_state', 'thaw_rejects_bad_state_without_losing_retry_fence', 'noreply_flag_must_match_fuse_semantics', 'shutdown_waits_for_work_and_preserves_response_order', 'fresh_control_preserves_incarnation_fence', 'fresh_connection_can_shutdown']
+[bsd_atf_test(name = case, case_name = case, body = ":virtio_fs_server_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _FS_SERVER_CASES]
+test_suite(name = "virtio_fs_server_tests", tests = [":" + case for case in _FS_SERVER_CASES], visibility = ["//visibility:public"])
