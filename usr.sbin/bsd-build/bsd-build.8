@@ -7094,3 +7094,11 @@ directory and existing base directory policy; TAP defaults remain unchanged.
 The maintained explicit-input test workflow supports this contribution.
 It does not complete the remaining installed test hierarchy or remove the
 production-only parent guards.
+
+.Pp
+The maintained ELF comparison helper streams bounded section ranges after one
+readelf table query, preserving exact raw sizes and hashes without per-section
+objcopy processes or full-file scratch copies.
+Its explicit Bazel regression target checks streaming and invalid table/range
+rejection. This changes qualification overhead, not the produced system or the
+remaining controlled resource/performance gates.

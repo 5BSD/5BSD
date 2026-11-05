@@ -357,3 +357,7 @@ bsd_man_database(name = "manual_database_with_zoneinfo",
 exports_files(["world_installation.bzl"])
 
 exports_files(["bsd_sed_output.bzl"], visibility = ["//visibility:public"])
+
+bsd_python_test(name = "elf_section_reader_test", src = "elf-section-reader-test.py",
+    data = ["elf-artifact-check.py", "qualification_artifacts.py"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")

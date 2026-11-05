@@ -1,5 +1,15 @@
 # Native Bazel completion plan
 
+## ELF comparison I/O correction (2026-11-05)
+
+The maintained comparison helper now streams actual ELF section ranges after one
+readelf table query, removing full-file scratch copies and objcopy processes per
+section. All 28 retained ELF64 section maps, a real ELF32 boot object and compressed
+split-debug control agree exactly. Eight regression methods pass freshly through
+Bazel. Metadata/interface/hardening checks are unchanged. See
+ELF-SECTION-READER-QUALIFICATION.md. This improves diagnostic overhead; controlled
+whole-build/system CPU/memory/disk performance acceptance remains open.
+
 ## Libc stdbit installed-test contribution (2026-11-05)
 
 All fourteen original stdbit programs now build natively with declared textual

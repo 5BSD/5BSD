@@ -90,18 +90,47 @@ def parse_program(text, program=True):
 
 
 def sections(objcopy, readelf, artifact, scratch):
-    names = []
-    for line in run([readelf, '-S', '-W', artifact]).splitlines():
-        match = re.match(r'^\s*\[\s*(\d+)\]\s+(\S+)\s+(\S+)', line)
-        if match and match.group(1) != '0' and match.group(3) not in ('NULL', 'NOBITS'):
-            names.append(match.group(2))
+    # Keep the call interface for existing comparison drivers. Readelf supplies
+    # the actual section offsets/sizes; hash bounded file ranges directly instead
+    # of copying the complete ELF once per section through objcopy and scratch.
+    text = run([readelf, '-S', '-W', artifact])
+    count = re.search(r'There (?:are|is) (\d+) section headers?', text)
+    if count is None:
+        raise ValueError('missing ELF section header count')
+    indexes = []
+    descriptors = []
+    for line in text.splitlines():
+        row = re.match(r'^\s*\[\s*(\d+)\]\s+(.*)$', line)
+        if row is None:
+            continue
+        indexes.append(int(row[1]))
+        if int(row[1]) == 0:
+            continue
+        fields = re.match(r'^(\S+)\s+(\S+)\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+', row[2])
+        if fields is None:
+            raise ValueError('unsupported ELF section row')
+        name, kind, offset, size = fields.groups()
+        if kind not in ('NULL', 'NOBITS'):
+            descriptors.append((name, int(offset, 16), int(size, 16)))
+    if indexes != list(range(int(count[1]))):
+        raise ValueError('incomplete or unordered ELF section table')
     result = {}
-    for name in names:
-        dump = scratch / 'section.bin'
-        run([objcopy, '--dump-section=%s=%s' % (name, dump), artifact, scratch / 'discard'])
-        result[name] = {'sha256': sha(dump), 'size': dump.stat().st_size}
-        dump.unlink()
-        (scratch / 'discard').unlink()
+    with Path(artifact).open('rb') as stream:
+        stream.seek(0, 2)
+        length = stream.tell()
+        for name, offset, size in descriptors:
+            if name in result or offset > length or size > length - offset:
+                raise ValueError('duplicate or out-of-bounds ELF section')
+            stream.seek(offset)
+            remaining = size
+            value = hashlib.sha256()
+            while remaining:
+                data = stream.read(min(1024 * 1024, remaining))
+                if not data:
+                    raise ValueError('truncated ELF section')
+                value.update(data)
+                remaining -= len(data)
+            result[name] = {'sha256': value.hexdigest(), 'size': size}
     return result
 
 
