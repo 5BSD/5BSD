@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:netbsd_test_installation.bzl", "netbsd_test_installation")
+
+netbsd_test_installation(
+    programs = {stem + "_test": "//contrib/netbsd-tests/lib/libc/ttyio:t_" + stem + ".c"
+        for stem in ['ttyio']},
+    directory = "/usr/tests/lib/libc/ttyio",
+    libraries = {"ttyio_test": ["//lib/libutil:util"]},
+    shared_libraries = {"ttyio_test": ["//lib/libutil:util_shared"]},
+    cases = {"ttyio_test": ["ioctl"]},
+)

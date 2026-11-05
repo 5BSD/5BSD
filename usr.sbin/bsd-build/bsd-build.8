@@ -7102,3 +7102,15 @@ objcopy processes or full-file scratch copies.
 Its explicit Bazel regression target checks streaming and invalid table/range
 rejection. This changes qualification overhead, not the produced system or the
 remaining controlled resource/performance gates.
+
+.Pp
+The native C063, inet, setjmp, termios, time and ttyio libc test contributions
+preserve 24 original programs and complete selected Kyua/debug installation.
+Their source-owned declarations retain compatibility headers and per-program
+library policy; absent program keys are rejected.
+The original threadjmp test pthread dependency is corrected in Make and Bazel.
+Selected ATF execution uses declared native libraries and includes actual pthread
+and PTY behavior. C063 privilege cases and termios behavior with a real terminal
+remain installed-system qualification requirements.
+These leaf contributions use the existing explicit-input interface and do not
+remove the full-tests-enabled parent guards or qualify the complete hierarchy.

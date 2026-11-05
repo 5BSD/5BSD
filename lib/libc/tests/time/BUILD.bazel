@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:netbsd_test_installation.bzl", "netbsd_test_installation")
+
+netbsd_test_installation(
+    programs = {stem + "_test": "//contrib/netbsd-tests/lib/libc/time:t_" + stem + ".c"
+        for stem in ['mktime', 'strptime']},
+    directory = "/usr/tests/lib/libc/time",
+    cases = {"mktime_test": ["localtime_r_gmt", "mktime_negyear", "timegm_epoch"],
+        "strptime_test": ["common", "day", "hour", "month", "seconds", "year", "zone", "Zone"]},
+)

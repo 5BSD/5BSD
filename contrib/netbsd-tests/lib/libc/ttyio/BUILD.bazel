@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_ttyio.c'], visibility = ["//lib/libc/tests/ttyio:__pkg__"])

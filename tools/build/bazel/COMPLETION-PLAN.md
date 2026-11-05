@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Six libc installed-test families added (2026-11-05)
+
+C063/inet/setjmp/termios/time/ttyio now build all 24 selected original programs,
+24 debug files and six Kyuafiles through source-owned native declarations. All 54
+installed file records, exact Kyua bytes and 24 ELF interface/hardening contracts
+match original Make; native/original debug CRCs pass. The original threadjmp
+pthread dependency named an absent program; both Make and Bazel now select the
+real pthread library and a fresh original control validates the correction.
+Twenty-six original ATF cases pass against native runtime libraries, including
+real pthread and PTY behavior. Final frontend r2 passes 28 targets (one fresh
+reader regression, 27 cache hits). All eighteen final installation outputs retain
+independent review bindings. See LIBC-NETBSD-TEST-BATCH-QUALIFICATION.md.
+
+C063 privilege/filesystem cases and termios terminal behavior remain unexecuted;
+the latter returns without checking when stdin is not a terminal. No headless
+pass substitutes for terminal evidence. Finish remaining libc/test roots, parent
+Kyua/helper/data composition and installed-system cases, along with source-owned
+archive ordering and all whole-system/cross/bootstrap/resource/publication gates.
+Full tests-enabled parent guards remain; Make stays production/default.
+
 ## ELF comparison I/O correction (2026-11-05)
 
 The maintained comparison helper now streams actual ELF section ranges after one

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_tcsetpgrp.c'], visibility = ["//lib/libc/tests/termios:__pkg__"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_faccessat.c', 't_fchmodat.c', 't_fchownat.c', 't_fexecve.c', 't_fstatat.c', 't_linkat.c', 't_mkdirat.c', 't_mkfifoat.c', 't_mknodat.c', 't_o_search.c', 't_openat.c', 't_readlinkat.c', 't_renameat.c', 't_symlinkat.c', 't_unlinkat.c', 't_utimensat.c'], visibility = ["//lib/libc/tests/c063:__pkg__"])

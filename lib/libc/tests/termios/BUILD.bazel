@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:netbsd_test_installation.bzl", "netbsd_test_installation")
+
+netbsd_test_installation(
+    programs = {stem + "_test": "//contrib/netbsd-tests/lib/libc/termios:t_" + stem + ".c"
+        for stem in ['tcsetpgrp']},
+    directory = "/usr/tests/lib/libc/termios",
+)

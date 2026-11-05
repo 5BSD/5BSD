@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:netbsd_test_installation.bzl", "netbsd_test_installation")
+
+netbsd_test_installation(
+    programs = {stem + "_test": "//contrib/netbsd-tests/lib/libc/c063:t_" + stem + ".c"
+        for stem in ['faccessat', 'fchmodat', 'fchownat', 'fexecve', 'fstatat', 'linkat', 'mkdirat', 'mkfifoat', 'mknodat', 'o_search', 'openat', 'readlinkat', 'renameat', 'symlinkat', 'unlinkat', 'utimensat']},
+    directory = "/usr/tests/lib/libc/c063",
+    defines = ["_INCOMPLETE_XOPEN_C063"],
+)

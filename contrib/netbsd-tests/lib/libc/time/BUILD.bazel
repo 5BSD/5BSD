@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_mktime.c', 't_strptime.c'], visibility = ["//lib/libc/tests/time:__pkg__"])

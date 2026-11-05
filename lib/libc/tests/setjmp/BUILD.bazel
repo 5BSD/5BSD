@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:netbsd_test_installation.bzl", "netbsd_test_installation")
+
+netbsd_test_installation(
+    programs = {stem + "_test": "//contrib/netbsd-tests/lib/libc/setjmp:t_" + stem + ".c"
+        for stem in ['setjmp', 'threadjmp']},
+    directory = "/usr/tests/lib/libc/setjmp",
+    warnings = 4,
+    libraries = {"threadjmp_test": ["//lib/libthr:thr"]},
+    shared_libraries = {"threadjmp_test": ["//lib/libthr:thr_shared"]},
+    cases = {"setjmp_test": ["setjmp", "_setjmp", "sigsetjmp_save", "sigsetjmp_nosave", "longjmp_zero", "_longjmp_zero"],
+        "threadjmp_test": ["setjmp", "_setjmp", "sigsetjmp_save", "sigsetjmp_nosave"]},
+)

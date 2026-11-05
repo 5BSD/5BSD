@@ -21,6 +21,18 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc imported test-family dependency review (2026-11-05)
+
+All 24 selected programs across C063/inet/setjmp/termios/time/ttyio preserve their
+original installed ATF programs and metadata. Selected native execution covers
+26 cases, including real libthr setjmp/TLS and PTY ttyio behavior, with DOF init
+explicitly disabled. The original threadjmp pthread library key was ineffective;
+Make and Bazel now link real libthr, verified independently. This is not live
+DTrace firing or audit-delivery evidence. C063 ownership/permission/execution
+cases still require privileged installed-system checks; they are not silently
+counted as executed. Termios's non-terminal early return is recorded as a runtime
+coverage gap. See LIBC-NETBSD-TEST-BATCH-QUALIFICATION.md for source and ELF proof.
+
 ## Libc stdbit installed arithmetic tests (2026-11-05)
 
 Fourteen original arithmetic ATF programs retain their real libc function calls
