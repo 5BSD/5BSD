@@ -16,41 +16,76 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Startup parent and eight administration-script owners qualified (2026-11-05)
+
+The corrected AMD64 csu parent passes bazel-csu-parent-native-r2-20261105.
+parent-review-r1/review.json matches all 64 logical installation records against
+130 original Make records (66 repeated identical directory contributions), all
+ten startup allocated-data/symbolic-relocation contracts, six byte-identical
+Kyuafiles, fifteen original/native debug pairs and seventeen loader contracts.
+All 36 unchanged original runtime cases pass: r1 executes all 36; r2 executes the
+affected cases after correcting library order and suite-directory ownership.
+The final run reports 38 passing wrappers/cases, thirteen freshly executed and
+twenty-five cached, including source settings and the existing ELF inspector test.
+That inspector retains its original real ELF32/64 cases and adds five independent
+fixtures for repeated-section payload/binding identity (nine methods pass).
+The default inspector still rejects duplicate names; its explicit occurrence
+mode retains every payload and symbol/relocation binding in legal partial links,
+without editing inputs, dropping notes or normalizing code/relocation bytes.
+
+The same completed request builds all eight new administration-script owners:
+adduser (including rmuser), crashinfo, etcupdate, service, sysrc (including its
+subr data), vigr, spkrtest and manctl. admin-script-review/review.json binds eight
+fresh original production Make receipts and compares every one of their 29
+component records and twenty script/data/manual payloads byte for byte. There
+are no non-directory collisions. The common source-owned script helper derives
+owned directories from declared destinations, preserves standard script/data
+modes and manual package policy, and performs no ELF/debug processing or shell
+rewriting. The generated vigr copy has the original source bytes. Sysrc and
+etcupdate production contributions remain separate from their incomplete installed
+test hierarchies; requesting their full tests-enabled installation rejects.
+Script functional/service/user-management scenarios remain runtime/VM work.
+
+The generic maintained format-5 frontend builds these labels without a C/schema,
+security, signing or publication change. The larger bin/sbin/libexec/usr.bin plus
+eight-script production request is now running at
+bazel-world-program-families-native-r1-20261105, with sixteen jobs and explicit
+tests-disabled installation. This is a larger construction attempt, not full
+world/pkgbase or runtime acceptance. Make stays default; BIP excluded.
+
 ## Full-world convergence and larger build groups (2026-11-05)
 
 Prioritize complete configured world ownership and aggregate build failures over
 separate leaf reports. The refreshed maintained Make traversal at
 /usr/obj/usr/src/bazel-world-inventory-r1-20261105/inventory.json succeeds with
 2,128 directories and sixteen top-level families. The complete component query
-is running at bazel-world-components-r1-20261105; partial records do not establish
-complete metadata coverage. Existing native parent packages must be reconciled
+at bazel-world-components-r1-20261105 passes all 2,128 directories with zero failed
+queries. This establishes metadata inventory only. Existing native parent packages must be reconciled
 with actual selected products, installation manifests and generated inputs.
 Root BUILD files are absent for lib, cddl, rescue, share, sys and usr.sbin;
 children may already have native producers, so absence is an assembly review
 item, not a count of missing implementations. Other roots may have differently
 named or incomplete installation ownership and also require reconciliation.
 
-The current AMD64 csu parent candidate composes production startup objects and
-all existing test contributions; original fresh Make parent construction passes
-at bazel-csu-parent-make-r1-20261105. Native qualification remains running at
-bazel-csu-parent-native-r1-20261105 while native LLVM/LLD dependencies build.
-Do not accept this candidate until all 36 original cases, installation ownership
-(including suite directories), ten startup object contracts and debug checks
-pass. The fresh Make log contains repeated identical directory contributions;
-logical reconciliation must retain every distinct record and reject conflicts
-or repeated non-directory payloads. Other architectures remain unimplemented at
-this wrapper and explicitly incompatible.
+The AMD64 csu parent now passes the bounded original comparison above; other
+startup architectures remain explicitly incompatible. Complete selected ownership
+is still required across every world family. The successful isolated, 1 GiB heap
+Bazel declaration query at bazel-world-declarations-query-r1-20261105 captured
+662 actual archive/archive-set rules before the script batch; its selection-review
+maps every selected immediate lib (173) and usr.sbin (243) owner. Internal
+libraries and alias roots are not missing producers merely because they lack an
+exact archive rule. The query does not resolve configured providers/build/runtime,
+and alternative target namespaces still require ownership review. The refreshed
+presence survey remains a review queue, not coverage evidence.
 
-A sequential launcher at bazel-world-program-families-launch-r1-20261105 waits
-for the live csu qualification process, then invokes the maintained build-bsd
-frontend on bin, sbin, libexec and usr.bin together. Its explicit format-5 request
-selects production installation with tests disabled and the existing source
-settings test. This is the next larger construction attempt, not complete world
-or installed-test qualification. Preserve errors, fix coherent groups, compare
-actual installed payload/metadata ownership with the selected independent Make
-inventory, and commit reviewed batches. Complete lib/usr.sbin and other world
-parents remain required before an honest full-world acceptance claim. All
-pkgbase/bootstrap/runtime/cross-platform/resource/default-switch gates remain.
+The first external waiting helper was canceled without starting a build. A direct
+overlap attempt correctly failed the outer build-bsd nonblocking lock; the inner
+backend's blocking lock is not an exposed build queue. After csu completed, the
+larger maintained frontend request was dispatched normally. It now combines the
+four existing program-family parents and eight script owners. Preserve actual
+errors, fix coherent groups and compare installed ownership with the independent
+Make inventory. All missing world parents, full tests, pkgbase/bootstrap/runtime,
+other architectures, resource and default-switch gates remain required.
 
 ## Library composition batch prepared (2026-11-05; not yet qualified)
 

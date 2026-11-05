@@ -2232,9 +2232,18 @@ Explicit lib/csu parent labels compose AMD64 production startup objects and,
 when tests are enabled, the original installed startup-test hierarchy.
 The tests suite selects all four constructor/destructor modes and four errno
 programs. Other startup architectures are currently incompatible at this parent.
-The new parent is a qualification candidate; its current full build and metadata
-review must finish before acceptance. This adds no dispatcher or input-schema
-change and does not change the default system build backend.
+The AMD64 parent now passes its original metadata, startup-object, debug and
+loader comparisons and all 36 original cases. This does not qualify other startup
+architectures or a complete installed system. No dispatcher/input-schema or
+default system build backend changes occur.
+.Pp
+Production script archives now cover adduser/rmuser, crashinfo, etcupdate,
+service, sysrc and its subr data, vigr, spkrtest and manctl.
+Their 29 component metadata records and twenty payloads match fresh original Make
+exactly, including package-owned directories and executable/data modes.
+The helper installs original source bytes; no ELF/debug or shell rewrite is used.
+Sysrc and etcupdate installed tests remain separate and incomplete full tests-enabled
+installation is rejected. Functional administration/service scenarios remain open.
 .Pp
 Additional candidate format-5 labels assemble the ATF production parent,
 Googletest production and existing test manifests, and LLVM/Clang shared-library

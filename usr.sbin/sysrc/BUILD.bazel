@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+script_installation(name = "install_manifest", scripts = {"sysrc": "/usr/sbin/sysrc"},
+    manuals = ["sysrc.8"], package = "rc", files = {"sysrc.subr": "/usr/share/sysrc/sysrc.subr"})
+script_install_archive(name = "production_install_archive")
+# Original installed test recursion remains to be migrated; never silently omit it.
+script_install_archive(name = "install_archive", target_compatible_with = select({
+    "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+}))

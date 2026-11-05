@@ -49,6 +49,11 @@ def csu_test_installation():
     bsd_install_manifest(name = "install_manifest", entries = entries, visibility = ["//visibility:public"])
     directories = {path: json.encode(dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=tests", "dbg"]))
         for path in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug" + CSU_TEST_ROOT] + ["/usr/lib/debug" + CSU_TEST_ROOT + "/" + mode for mode in modes]}
+    # Each original test owner contributes its installed suite directory, even
+    # when the common tests mtree also creates it. Preserve package ownership.
+    directories.update({CSU_TEST_ROOT + ("/" + mode if mode else ""): json.encode(
+        dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=tests"]))
+        for mode in [""] + modes})
     bsd_install_archive(name = "install_archive", manifests = [":install_manifest"], directories = directories,
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,

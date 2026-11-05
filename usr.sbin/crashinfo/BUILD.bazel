@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+script_installation(name = "install_manifest", scripts = {"crashinfo.sh": "/usr/sbin/crashinfo"},
+    manuals = ["crashinfo.8"], package = "utilities", files = {})
+script_install_archive(name = "production_install_archive")
+alias(name = "install_archive", actual = ":production_install_archive", visibility = ["//visibility:public"])

@@ -11414,3 +11414,15 @@ No BSM audit call appears in the selected original library/service C sources or
 leaf recipes. Request decision probes are not security-audit delivery evidence;
 application/service audit policy and loss/error behavior remain an open runtime
 review item. This batch adds no invented event and changes no probe payload.
+
+## AMD64 startup and administration-script batch (2026-11-05)
+
+No production C, assembly or shell implementation changes occur in this batch.
+Startup object contracts preserve allocated code/data/notes and relocation
+bindings, including repeated note sections, against current original Make.
+Existing constructor/destructor/TLS/errno cases execute; no synthetic DTrace or
+BSM hook is added to startup. Script, data and manual bytes match original Make
+for eight administration owners. Existing logging/reporting and calls to audited
+account/service tools remain in those original bytes; this is not proof of audit
+delivery or service/user-management behavior. Those scenarios require the actual
+installed runtime/VM qualification, not host account or service changes.

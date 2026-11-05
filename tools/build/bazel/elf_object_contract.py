@@ -5,10 +5,16 @@ No binary bytes or relocation addends are normalized. Symbol indices are resolve
 through their actual symbol/string tables; debug-only sections are outside scope.
 """
 import hashlib
+import json
 import struct
 
 
-def contract(data):
+def contract(data, *, allow_duplicate_sections=False):
+    # Partial links can retain multiple sections with the same name. Preserve
+    # their occurrence identity for both payloads and symbol/relocation bindings;
+    # never merge or discard them. Existing callers retain strict name uniqueness.
+    if type(allow_duplicate_sections) is not bool:
+        raise ValueError('duplicate-section selection must be a bool')
     if data[:4] != b'\x7fELF' or data[4:6] not in (b'\x01\x01', b'\x02\x01'):
         raise ValueError('ELF32/ELF64 little-endian object required')
     wide = data[4] == 2
@@ -43,6 +49,14 @@ def contract(data):
 
     names = payload(sections[header[13]])
     section_names = [text(names, section[0]) for section in sections]
+    if allow_duplicate_sections:
+        occurrences = {}
+        identities = []
+        for name in section_names:
+            ordinal = occurrences.get(name, 0)
+            occurrences[name] = ordinal + 1
+            identities.append(json.dumps([name, ordinal], separators=(',', ':')))
+        section_names = identities
 
     def symbol(table, index):
         fmt = '<IBBHQQ' if wide else '<IIIBBH'
