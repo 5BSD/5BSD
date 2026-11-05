@@ -43,14 +43,19 @@ the labels; no C frontend, SDK, signing or publication interface changed.
 
 The fresh production-only Make recursion selects 172 immediate owners with
 TESTS_SUPPORT explicitly enabled. The normal frontend's
-`bazel-lib-family-composition-native-r1-20261105` now attempts every selected
-owner in one batch: 185 explicit installation/build targets plus two tests.
-The request and all bindings are retained in
-`bazel-lib-family-composition-request-r1-20261105` under /usr/obj/usr/src.
+`bazel-lib-family-composition-native-r1-20261105` completes 185 explicit
+installation/build targets plus two cached passing tests. The r2 request also
+explicitly builds the four internal regular/PIE archives for libotelexport and
+libutil++, alongside their manual/data installation contributions. Its
+`bazel-lib-family-composition-native-r2-20261105` result passes all 189 build/
+installation targets plus two cached tests for all 172 selected owners, with
+230 installation archives and no incompatible selected targets.
+Requests r1/r2 and all bindings are retained in
+`bazel-lib-family-composition-request-r{1,2}-20261105` under /usr/obj/usr/src.
 Eleven internal-only owners build regular/PIE archives without inventing installed
 files; libelftc's manuals remain a distinct installed contribution. This request
-is not yet a source-owned lib parent, accepted complete ownership, or a passing
-build result. See COMPLETION-PLAN.md for the next usr.sbin batch and remaining
+is a passing configured combined build, not yet a source-owned lib parent or
+accepted complete original installation ownership. See COMPLETION-PLAN.md for the next usr.sbin batch and remaining
 option-dependent parent integration.
 
 ## Concrete remaining review queue

@@ -70,8 +70,13 @@ the directory omission. These failed attempts remain retained.
 The broad r5 program run passes with tests_support=yes: 410 archives (40 bin,
 74 sbin, 21 libexec, 267 usr.bin, eight administration). All 408 prior archive,
 request and directory-metadata outputs remain identical; ATF and Kyua add two
-contributions. This does not extend the prior independent serialization review
-to their payloads without further evidence. The broad r2/r3 failed runs remain
+contributions. The final r5 `archive-review-r2/review.json` and its
+`prior-witness-review/review.json` now cover all 410 archives and 3,423 unique
+non-directory paths. All requested metadata/inventories agree; 408 immutable
+captures are identical to the earlier fully reviewed captures, and the two
+added archives match actual r4 producer input/output payload hashes. These are
+prior witnesses, not invented fresh r5 executions. Independent complete Make
+installation, ancestor mtree and runtime qualification remain open. The broad r2/r3 failed runs remain
 retained; no failure was accepted or test threshold weakened.
 
 ## Frontend and remaining gates

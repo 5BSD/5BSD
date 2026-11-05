@@ -37,7 +37,10 @@ include contexts. The r4 build passed, selecting 410 archives: 40 bin, 74 sbin,
 21 libexec, 267 usr.bin and eight administration owners. The added contributions
 are ATF and Kyua. The final r5 rerun also passes after the RPC wrapper correction
 below; all 408 prior archive/request/directory-metadata outputs remain identical.
-The two added contributions still need independent complete installation parity.
+The final archive-review-r2 and its prior-witness supplement now cover all 410
+archives and 3,423 collision-free non-directory paths. All metadata, exact
+requested inventories and logged producer payloads agree. The two added
+contributions still need independent complete Make installation parity.
 
 `bazel-library-admin-composition-native-r10-20261105` completed five selected
 tests, the GEOM/Clang/ATF/Googletest parents, administration archives, SPL/CTF and
@@ -100,10 +103,23 @@ build archives for eleven internal-only owners. Libelftc also retains its build
 archives alongside its manual-only installation. All 185 contribution/build
 targets plus source-settings and existing libelftc API tests are selected.
 
-The maintained frontend launched
-`bazel-lib-family-composition-native-r1-20261105` with sixteen jobs. This is an
-actual combined construction attempt. It is not an accepted complete lib parent,
-independent full installation comparison, or package/runtime result. Source,
+The maintained frontend completed
+`bazel-lib-family-composition-native-r1-20261105` with sixteen jobs: 230 selected
+installation archives, two cached passing tests, 12,197 executed/internal
+processes and 21,607 action-cache hits. Bazel reports 652.836 seconds; this is
+construction timing, not controlled Make performance parity.
+
+The r2 request adds the four explicit regular/PIE archives for libotelexport and
+libutil++, whose production endpoints only install manuals/data. Like libelftc,
+these internal libraries must be built without inventing installed binaries.
+`bazel-lib-family-composition-native-r2-20261105` passes all 191 targets: 189
+contribution/build targets for every one of the 172 selected immediate owners,
+plus two cached passing tests, with zero incompatible selected targets. Its
+immutable capture contains 492 unique files, 1,213,883,227 bytes; the 230 archive
+count is an installation contribution count, not a distinct library count.
+This completes this configured combined construction check, not an accepted
+source-owned lib parent, independent full installation comparison, package or
+runtime result. Source,
 configuration, command, explicit label mapping and request-preparation bindings
 are retained. No Make recipe evaluates the native build graph: Make supplies
 the independent qualification inventory, and native declarations supply builds.
@@ -111,9 +127,10 @@ the independent qualification inventory, and native declarations supply builds.
 The same fresh production recursion query selects 242 immediate usr.sbin owners.
 `bazel-usrsbin-family-composition-request-r1-20261105` maps each one to its
 reviewed native production contribution, including capability daemons. Tests
-and daemon runtime are not silently included in production acceptance. This
-request is prepared, not queued or launched; finish the current library frontend
-before invoking it. Its command and complete bindings are retained.
+and daemon runtime are not silently included in production acceptance. The normal frontend has now launched it at
+`bazel-usrsbin-family-composition-native-r1-20261105`, after both library runs
+terminated successfully. It is a live construction attempt, not acceptance.
+Its command and complete bindings are retained.
 
 After these combined attempts, correct actual graph failures and reconcile all
 installation namespaces/owners. Then introduce source-owned lib and usr.sbin
