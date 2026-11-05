@@ -269,6 +269,13 @@ need_image() # sets HT_IMAGE, refuses if image generation != host generation
 {
 	m=$HT_IMAGES/current/guest.manifest
 	[ -f "$m" ] || refuse "no guest image; run images/build-guest.sh as an ordinary user first"
+	# Qualification requires the plane ON; comparison images remain buildable
+	# but cannot silently count as a normal virtualization qualification.
+	[ "$(sed -n 's/^capability_plane=//p' "$m")" = YES ] ||
+	    refuse "guest image must declare capability_plane=YES for qualification"
+	if ! timeout -k 1 5 sh "$HT_KIT/guest/capability-check.sh" > "$HT_OUT/host-capability.txt" 2>&1; then
+		refuse "host capability plane prerequisites failed; see host-capability.txt"
+	fi
 	HT_IMAGE=$(sed -n 's/^image=//p' "$m")
 	igen=$(sed -n 's/^generation=//p' "$m")
 	[ -f "$HT_IMAGE" ] || refuse "guest image $HT_IMAGE missing"
@@ -483,7 +490,7 @@ vm_wait() # vm_wait NAME REGEX TIMEOUT (host elapsed seconds)
 			log "$1: boot waiting $((vw_now - vw_start))/${3}s; $(vm_diag "$1")"
 			vw_next=$((vw_now + 15))
 		fi
-		grep -E -q 'panic:|Fatal trap|mountroot>' "$HT_WORK/$1.console" && { log "$1: guest panic/mountroot"; return 2; }
+		grep -E -q 'panic:|Fatal trap|mountroot>|CAPABILITY-PLANE-FAIL' "$HT_WORK/$1.console" && { log "$1: guest panic/mountroot or capability-plane failure"; return 2; }
 		sleep 0.1
 	done
 	log "$1: boot deadline expired after ${3}s; see $HT_WORK/$1.console"

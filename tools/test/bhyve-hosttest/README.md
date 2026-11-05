@@ -606,3 +606,11 @@ and after every restore. Split runs can request the same check with
 `HT_SR_VIRTQUEUE=yes`. Each check allows 20 seconds for the read-only workload
 and tracer, with a 30-second host command deadline; missing probes, wrong mode,
 failed workloads and tracer timeouts fail the check.
+
+Qualification requires `capability_plane=YES` in the guest manifest. Host
+preflight and guest boot check that the loader has not disabled the plane,
+`mac_capability` is loaded, isolation enforcement is 1 and switchboard is running.
+Each runtime check is bounded to five seconds. A guest failure prevents both
+READY and L2 success markers. These checks establish runtime prerequisites;
+they do not prove every grant or policy operation is correct. Plane-OFF images
+remain available for manual comparisons but are refused by normal qualification.

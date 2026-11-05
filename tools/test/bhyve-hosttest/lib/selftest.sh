@@ -453,12 +453,16 @@ printf 'forwarder channels: 2\noutbound deliveries: 3\ninstalled deliveries: 0\n
 mkdir -p "$T/img/current"; : > "$T/img/current/guest.img"
 (
 	HT_DRYRUN=yes; . "$HT_KIT/lib/common.sh"; HT_IMAGES=$T/img HT_GENERATION=16.snapX
-	printf 'generation=16.snapX\nimage=%s\nkit_overlay_sha256=%s\n' "$T/img/current/guest.img" "$(kit_overlay_sha256)" > "$T/img/current/guest.manifest"
+	# Runtime plane checks have separate positive/negative regression coverage.
+	timeout() { echo CAPABILITY-PLANE-ON; }
+	printf 'generation=16.snapX\ncapability_plane=YES\nimage=%s\nkit_overlay_sha256=%s\n' "$T/img/current/guest.img" "$(kit_overlay_sha256)" > "$T/img/current/guest.manifest"
 	phase_begin t16a; need_image; dry_end
 ) > /dev/null 2>&1
 (
 	HT_DRYRUN=yes; . "$HT_KIT/lib/common.sh"; HT_IMAGES=$T/img HT_GENERATION=16.snapX
-	printf 'generation=16.snapX\nimage=%s\nkit_overlay_sha256=stale\n' "$T/img/current/guest.img" > "$T/img/current/guest.manifest"
+	# Runtime plane checks have separate positive/negative regression coverage.
+	timeout() { echo CAPABILITY-PLANE-ON; }
+	printf 'generation=16.snapX\ncapability_plane=YES\nimage=%s\nkit_overlay_sha256=stale\n' "$T/img/current/guest.img" > "$T/img/current/guest.manifest"
 	phase_begin t16b; need_image; dry_end
 ) > /dev/null 2>&1
 grep -q '^t16a READY' "$HT_RUN/SUMMARY" && grep -q '^t16b WOULD-REFUSE' "$HT_RUN/SUMMARY" &&

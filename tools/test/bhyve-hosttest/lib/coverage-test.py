@@ -65,6 +65,61 @@ exit 0
         self.assertNotEqual(self.run_script('virtqueue-local.sh', 'yes').returncode, 0)
         self.assertEqual(self.run_script('virtqueue-local.sh', 'invalid').returncode, 2)
 
+    def test_capability_runtime_prerequisites(self):
+        self.stub('kenv', 'if [ "$#" -eq 0 ]; then case "${MODE:-}" in denied) exit 1 ;; inconsistent) echo capability_plane=YES ;; *) echo unrelated=yes ;; esac; exit 0; fi; case "${MODE:-}" in unset|denied|inconsistent) exit 255 ;; query-error) exit 1 ;; off) echo NO ;; unknown) echo other ;; *) echo YES ;; esac')
+        self.stub('kldstat', '[ "${MODE:-}" != no-module ]')
+        self.stub('sysctl', 'case "${MODE:-}" in no-enforcement) echo 0 ;; no-sysctl) exit 1 ;; *) echo 1 ;; esac')
+        self.stub('pgrep', '[ "${MODE:-}" != no-broker ]')
+        for mode in ('', 'unset', 'denied', 'inconsistent', 'query-error', 'off', 'unknown', 'no-module',
+                     'no-enforcement', 'no-sysctl', 'no-broker'):
+            self.env['MODE'] = mode
+            p = self.run_script('capability-check.sh')
+            self.assertEqual(p.returncode == 0, mode in ('', 'unset'), (mode, p.stdout, p.stderr))
+            self.assertIn('CAPABILITY-PLANE-ON' if p.returncode == 0 else 'CAPABILITY-PLANE-FAIL', p.stdout)
+
+    def test_capability_failure_prevents_guest_markers(self):
+        self.stub('kenv', 'case "$2" in hosttest.role) echo "${ROLE:-l1}" ;; capability_plane) echo YES ;; *) echo no ;; esac')
+        self.stub('kldstat', 'exit 0')
+        self.stub('sysctl', 'echo 1')
+        self.stub('pgrep', '[ "${MODE:-}" != no-broker ]')
+        self.stub('timeout', '[ "${MODE:-}" != timeout ] || exit 124; shift 3; exec "$@"')
+        self.stub('poweroff', 'exit 0')
+        self.stub('sleep', 'exit 0')
+        console = self.root/'console'
+        boot = (KIT/'images/overlay/rc.local').read_text().replace('/dev/console', str(console)).replace('/root/hosttest', str(KIT/'guest')).replace('> $c', '>> $c')
+        script = self.root/'rc.local'
+        script.write_text(boot)
+        for role, mode in (('l1', ''), ('l1', 'no-broker'), ('l2', 'no-broker'), ('l1', 'timeout'), ('l2', 'timeout')):
+            self.env.update(ROLE=role, MODE=mode)
+            console.write_text('')
+            p = subprocess.run(['sh', str(script)], env=self.env, capture_output=True, text=True, timeout=10)
+            output = console.read_text()
+            if mode:
+                self.assertNotEqual(p.returncode, 0, (role, mode))
+                self.assertIn('CAPABILITY-PLANE-FAIL', output)
+                self.assertNotIn('HOSTTEST-GUEST-READY', output)
+                self.assertNotIn('HOSTTEST-L2-MARKER', output)
+            else:
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn('HOSTTEST-GUEST-READY', output)
+
+    def test_capability_manifest_required(self):
+        text = (KIT/'lib/common.sh').read_text()
+        helper = text[text.index('need_image()'):text.index('# Same digest as images/build-guest.sh')]
+        images = self.root/'images'
+        (images/'current').mkdir(parents=True)
+        disk = images/'guest.img'
+        disk.touch()
+        out = self.root/'out'
+        out.mkdir()
+        runner = 'refuse() { echo "$*" >&2; exit 1; }; kit_overlay_sha256() { echo current; }; timeout() { return 0; };\n'+helper+'\nneed_image'
+        self.env.update(HT_IMAGES=str(images), HT_GENERATION='16.snapX', HT_OUT=str(out), HT_KIT=str(KIT))
+        for plane in ('capability_plane=YES\n', '', 'capability_plane=NO\n',
+                      'capability_plane=YES\ncapability_plane=NO\n'):
+            (images/'current/guest.manifest').write_text('generation=16.snapX\nimage='+str(disk)+'\nkit_overlay_sha256=current\n'+plane)
+            p = subprocess.run(['sh', '-c', runner], env=self.env, capture_output=True, text=True)
+            self.assertEqual(p.returncode == 0, plane == 'capability_plane=YES\n', p.stderr)
+
     def stub(self, name, body):
         p = self.bin/name
         p.write_text('#!/bin/sh\n'+body+'\n')
