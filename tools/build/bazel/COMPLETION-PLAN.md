@@ -16,6 +16,22 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## libcasper production parent and original connection cases (2026-11-05)
+
+The native parent now composes the original library and all eight service
+production contributions. Fresh original parent/test references match 139
+production plus eight test installation records, 103 header/manual payload paths,
+83 hardlinks, shared/program ELF interfaces and separate-debug CRCs. Both original
+many-connections and connection-churn cases execute and pass with native DSOs.
+Emitted DOF matches nine providers, 35 schema entries and 68 validated sites;
+this is not live tracing or full original object/code parity. The test declaration
+now preserves original PIE and direct library order after strict audits rejected
+earlier candidates. Tests-disabled installation retains identical production
+archives; incomplete tests-enabled full installation rejects explicitly. See
+CASPER-PARENT-COMPOSITION-QUALIFICATION.md. Complete service-test/recursion
+ownership, other wrappers/ABIs, full world/pkgbase/bootstrap/VM/cache/sandbox and
+resource gates remain required. Make stays default; BIP excluded.
+
 ## libxo production parent composition (2026-11-05)
 
 The source-owned libxo and encoder parents now preserve both production archive

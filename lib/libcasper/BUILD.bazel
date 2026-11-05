@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+exports_files(["production.bzl"])
+_PRODUCTION = [
+    "//lib/libcasper/libcasper:production_install_archive",
+    "//lib/libcasper/services:production_installation_archives",
+]
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_install_archive_set(name = "production_installation_archives", archives = _PRODUCTION,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Reject full tests-enabled installation until all original test contributions,
+# including recursion Kyuafiles and fileargs tests, are explicitly reconciled.
+bsd_install_archive_set(name = "installation_archives", archives = _PRODUCTION,
+    target_compatible_with = _PLATFORM + select({
+        "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }), visibility = ["//visibility:public"])

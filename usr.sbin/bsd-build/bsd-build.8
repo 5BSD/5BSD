@@ -2216,6 +2216,18 @@ compare successfully; this does not establish full lib or world coverage.
 See
 .Pa tools/build/bazel/LIBXO-PARENT-COMPOSITION-QUALIFICATION.md .
 .Pp
+The libcasper production parent preserves the library and all eight service
+archive contributions without inheriting installed tests.
+Its installation_archives target supports tests disabled and rejects incomplete
+tests-enabled service-test recursion.
+The original connection-count and churn ATF cases execute with native libraries;
+the original test program, Kyuafile and debug installation are declared separately.
+Original production/test metadata, ELF interfaces and emitted DTrace schemas/sites
+compare successfully, including PIE and direct library order for the test program.
+Full service runtime, live tracing and complete world/pkgbase remain unqualified.
+See
+.Pa tools/build/bazel/CASPER-PARENT-COMPOSITION-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

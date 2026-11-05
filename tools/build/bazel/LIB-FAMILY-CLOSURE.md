@@ -31,7 +31,7 @@ execution and the explicit normal protobuf parent.
 | lib/libthread_db | Native AMD64 library/production installation now passes original regular/PIC and interface comparisons. Actual debugger runtime and other architectures remain; see THREAD-DB-NATIVE-QUALIFICATION.md. |
 | lib/libcapsicum | Production header/manual/13 hardlinks now match original Make; all four original C/C++ stream ATF cases execute. Original installed-test metadata remains. |
 | lib/csu | AMD64/common/tests packages exist beneath the Make architecture wrapper; full parent/configuration/foreign composition is not established. |
-| lib/libcasper | Native child producers exist; reconcile wrapper's libcasper/services/test recursion without selecting arbitrary descendants. |
+| lib/libcasper | Native production parent now preserves all nine owners; 139 production and eight original connection-test records qualify. Both original connection cases execute; complete service-test/parent Kyuafile ownership remains gated. See CASPER-PARENT-COMPOSITION-QUALIFICATION.md. |
 | lib/libxo | Production parent now preserves library + CSV encoder contributions; all 96 original metadata records and three actual runtime targets pass. Full installed functional/encoder test hierarchy remains explicitly gated; see LIBXO-PARENT-COMPOSITION-QUALIFICATION.md. |
 | lib/protobuf | Explicit parent now builds all four children and preserves three install contributions, including upb licences and no libprotoc payload. Other profiles/ABIs and refreshed implementation parity remain. |
 | lib/atf and lib/tests | Test support and installed test hierarchy require explicit parent ownership and original configuration closure. |

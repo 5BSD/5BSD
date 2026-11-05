@@ -11398,3 +11398,19 @@ existing send/reconnect and logging hooks; formatted output and CSV tests do not
 exercise structured syslog delivery, retries or loss reporting. Record those as
 runtime qualification work alongside the original functional suite. No invented
 probe or audit event is added merely to satisfy a migration inventory.
+
+## libcasper production parent and connection cases (2026-11-05)
+
+The original nine libraries retain their DTrace source/probe macros, WITH_DTRACE
+selection, object rewriting and provider linkage. Fresh native/original emitted
+inventories match nine providers, thirty-five schema entries and sixty-eight
+ordinary sites; all function addresses/ranges and patched bytes validate for
+each build. See CASPER-PARENT-COMPOSITION-QUALIFICATION.md. Native connection
+cases pass with tracing disabled at runtime; no provider registration/live firing
+or tracing-overhead claim follows. Service command allow/deny probes must still
+be exercised with actual service requests and tracing in a qualified environment.
+
+No BSM audit call appears in the selected original library/service C sources or
+leaf recipes. Request decision probes are not security-audit delivery evidence;
+application/service audit policy and loss/error behavior remain an open runtime
+review item. This batch adds no invented event and changes no probe payload.

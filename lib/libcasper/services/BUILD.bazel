@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# Exact production child selection in services/Makefile; tests remain separate.
+bsd_install_archive_set(
+    name = "production_installation_archives",
+    archives = [
+        "//lib/libcasper/services/cap_dns:production_install_archive",
+        "//lib/libcasper/services/cap_fileargs:production_install_archive",
+        "//lib/libcasper/services/cap_grp:production_install_archive",
+        "//lib/libcasper/services/cap_net:production_install_archive",
+        "//lib/libcasper/services/cap_netdb:production_install_archive",
+        "//lib/libcasper/services/cap_pwd:production_install_archive",
+        "//lib/libcasper/services/cap_sysctl:production_install_archive",
+        "//lib/libcasper/services/cap_syslog:production_install_archive",
+    ],
+    visibility = ["//lib/libcasper:__pkg__"],
+)
