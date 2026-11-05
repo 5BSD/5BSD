@@ -48,3 +48,6 @@ public_header_installation(name = "public_flat_dev_pbio_install", directory = "d
 
 public_header_installation(name = "public_flat_security_mac_grantbylabel_install", directory = "security/mac_grantbylabel",
     files = {header: header.split("/")[-1] for header in glob(["sys/security/mac_grantbylabel/*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+load("//tools/build/bazel:world_installation.bzl", "world_contributions")
+world_contributions()

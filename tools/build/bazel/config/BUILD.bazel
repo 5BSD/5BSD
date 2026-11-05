@@ -806,3 +806,8 @@ bool_flag(name = "boot", build_setting_default = True, visibility = ["//visibili
 config_setting(name = "boot_enabled", flag_values = {":boot": "true"}, visibility = ["//visibility:public"])
 config_setting(name = "mitkrb5_requested", flag_values = {":mitkrb5": "true"}, visibility = ["//visibility:public"])
 config_setting(name = "kerberos_requested", flag_values = {":kerberos": "true"}, visibility = ["//visibility:public"])
+
+config_setting(name = "world_kerberos_disabled", flag_values = {":kerberos": "false"}, visibility = ["//visibility:public"])
+config_setting(name = "world_kerberos_mit", flag_values = {":kerberos": "true", ":mitkrb5": "true"}, visibility = ["//visibility:public"])
+selects.config_setting_group(name = "world_manual_database_enabled", match_all = [":man_enabled", ":man_utils_enabled"], visibility = ["//visibility:public"])
+selects.config_setting_group(name = "world_openssl_database_enabled", match_all = [":world_manual_database_enabled", ":openssl_enabled"], visibility = ["//visibility:public"])

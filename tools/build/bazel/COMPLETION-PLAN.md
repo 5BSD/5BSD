@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Combined world contributions and finalization (2026-11-05)
+
+A single maintained frontend invocation now builds the current native production
+contribution roots, etc termcap/distribution and both manual databases. Its 1268
+archives have 32327 unique non-directory paths. Main/OpenSSL indexes cover 11586/
+6373 manual paths and match Make's indexer on that same assembled native corpus;
+this is not independent Make installed-world parity. The final rerun includes
+noninstalled internal products and keeps all reviewed installation outputs and
+indexes identical. The combined graph caught a real LLVM Support subpackage
+ownership error; explicit source-owner labels/header grouping preserve exact
+source/option declarations and bootstrap/TableGen construction now passes.
+See WORLD-CONTRIBUTION-FINALIZATION.md. Rescue/sys/stand/full tests and extension
+roots remain absent: finish them, join the complete world/kernel/modules build,
+then prove complete Make installation/debug/metadata/directories/pkgbase, bootstrap,
+cross/configuration, hardware/publication, runtime/VM and resource/cache/sandbox
+gates. Make remains production/default; BIP stays excluded.
+
 ## Native manual database dependency checkpoint (2026-11-05)
 
 A typed native rule now indexes installed manual records with selected file inputs,

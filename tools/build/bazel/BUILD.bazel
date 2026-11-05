@@ -353,3 +353,5 @@ load(":bsd_man_database.bzl", "bsd_man_database")
 bsd_man_database(name = "manual_database_with_zoneinfo",
     archives = ["//share/man:installation_archives", "//share/zoneinfo:production_installation_archives"],
     root = "/usr/share/man", visibility = ["//visibility:public"])
+
+exports_files(["world_installation.bzl"])

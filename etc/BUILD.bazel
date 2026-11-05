@@ -19,3 +19,8 @@ account_installation()
 
 load(":distribution.bzl", "etc_distribution")
 etc_distribution()
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# afterinstall databases require manuals from the other world roots.
+bsd_install_archive_set(name = "pre_database_installation_archives",
+    archives = ["//etc/termcap:install_archive", ":distribution_archives"], visibility = ["//visibility:public"])

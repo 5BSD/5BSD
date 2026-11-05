@@ -1,2 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(['COPYRIGHT.regex'], visibility = ["//share/doc/llvm:__pkg__"])
+
+# Source ownership for both bootstrap and installed Support variants.
+exports_files(glob(["**/*.cpp", "**/*.c", "**/*.S"]), visibility = ["//contrib/llvm-project/llvm/lib:__pkg__"])
+filegroup(name = "local_headers", srcs = glob(["**/*.h", "**/*.inc"]),
+    visibility = ["//contrib/llvm-project/llvm/lib:__pkg__"])
