@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Libc stdbit installed-test contribution (2026-11-05)
+
+All fourteen original stdbit programs now build natively with declared textual
+framework inputs and original no-builtin policy. The seventy ATF operation/type
+cases pass with native libc/libsys/ATF. Complete installed file metadata and exact
+Kyua bytes match fresh original Make; all fourteen ELF interfaces/hardening and
+native debug CRCs pass. The shared test archive helper derives debug ancestors
+from its declared directory and existing policy. All 27 previous TAP outputs
+remain byte-identical. Final maintained frontend r5 passes 71 test targets (cache
+hits); see LIBC-STDBIT-TEST-QUALIFICATION.md for evidence and retained failures.
+
+Continue remaining libc and other installed-test owners, helper DSOs/fixtures and
+parent Kyua composition. Full tests-enabled parent guards remain active. Archive
+ordering, independent whole-world/debug/pkgbase parity and every cross/bootstrap/
+runtime/resource/cache/sandbox/publication gate remain open. Make stays default.
+
 ## Current world construction includes rescue/libc corrections (2026-11-05)
 
 The combined production contribution/product build passes through the maintained

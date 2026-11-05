@@ -21,6 +21,16 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc stdbit installed arithmetic tests (2026-11-05)
+
+Fourteen original arithmetic ATF programs retain their real libc function calls
+(-fno-builtin), with all seventy operation/type cases passing against declared
+native libc/libsys/ATF. DOF initialization is explicitly disabled by the test
+adapter. This establishes arithmetic runtime behavior, not probe firing or audit
+delivery. These test programs introduce no security-sensitive system mutation
+requiring a new audit event. Existing library provider behavior is unchanged.
+See LIBC-STDBIT-TEST-QUALIFICATION.md for installation and ELF evidence.
+
 ## Libc hidden weak DTrace aliases (2026-11-05)
 
 The real libc provider uses hidden weak aliases ($dtrace.function), as explicitly

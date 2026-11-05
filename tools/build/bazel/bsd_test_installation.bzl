@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Installation of unchanged TAP shell programs and their declared fixtures."""
+"""Installation archives for declared BSD test programs and fixtures."""
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_debug_directories")
 
 def bsd_tap_installation(name, directory, programs, fixtures = [], metadata = {}):
     """Declare a complete TAP suite contribution without executing its programs.
@@ -35,11 +36,16 @@ def bsd_tap_installation(name, directory, programs, fixtures = [], metadata = {}
     bsd_install_manifest(name = name + "_manifest", entries = entries, visibility = ["//visibility:public"])
     bsd_test_install_archive(name = name + "_archive", directory = directory, manifests = [":" + name + "_manifest"])
 
-def bsd_test_install_archive(name, directory, manifests):
-    """Archive a declared installed suite using the shared base test policy."""
+def bsd_test_install_archive(name, directory, manifests, debug = False):
+    """Archive a suite; compiled debug payloads require their ancestor policy."""
+    directories = {directory: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]})}
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"}
+    if debug:
+        directories.update(utility_debug_directories("tests", directory))
+        mtree_specs["//etc/mtree:BSD.debug.dist"] = "/usr/lib"
     bsd_install_archive(name = name, manifests = manifests,
-        directories = {directory: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]})},
-        mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+        directories = directories,
+        mtree_specs = mtree_specs,
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
         python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
         runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
