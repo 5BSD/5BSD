@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_directory", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+script_installation(name = "program_manifest", scripts = {"periodic.sh": "/usr/sbin/periodic"}, manuals = ["periodic.8"], package = "periodic")
+bsd_install_directory(name = "defaults_directory", destination = "/etc/defaults", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities"])
+bsd_install_file(name = "defaults", src = "periodic.conf", destination = "/etc/defaults/periodic.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=periodic", "config"])
+bsd_install_manifest(name = "install_manifest", entries = [":defaults_directory", ":defaults"], manifests = [":program_manifest"])
+script_install_archive(name = "program_install_archive")
+bsd_install_archive_set(name = "installation_archives", archives = [
+    ":program_install_archive",
+    "//usr.sbin/periodic/etc/daily:install_archive",
+    "//usr.sbin/periodic/etc/security:install_archive",
+    "//usr.sbin/periodic/etc/weekly:install_archive",
+    "//usr.sbin/periodic/etc/monthly:install_archive",
+], visibility = ["//visibility:public"])
+alias(name = "production_install_archive", actual = ":installation_archives", visibility = ["//visibility:public"])
+alias(name = "install_archive", actual = ":installation_archives", visibility = ["//visibility:public"])

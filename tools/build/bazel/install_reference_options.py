@@ -45,6 +45,10 @@ def component_definitions(component, names, *, option_names=(), profile_names=()
     return result
 
 
+# NO_OBJ descendants deliberately return to .CURDIR; never write recipe logs there.
+METADATA_MODE = "meta missing-meta=yes nofilemon curdirok=no"
+
+
 def validate_metadata_component(query):
     """Reject metadata mode where Make deliberately uses the source directory."""
     states = query(['-V', '${NO_OBJ:Dyes:Uno}',

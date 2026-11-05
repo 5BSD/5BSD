@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/periodic:installation.bzl", "periodic_configuration")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+# bsd.dirs.mk assigns the shared CONFDIR to utilities, independently of files.
+bsd_install_directory(
+    name = "suite_directory",
+    destination = "/etc/periodic/monthly",
+    owner = "root",
+    group = "wheel",
+    mode = "0755",
+    install_tags = ["package=utilities"],
+)
+
+periodic_configuration(
+    name = "base",
+    directory = "/etc/periodic/monthly",
+    files = [
+        "450.status-security",
+        "999.local",
+    ],
+)
+
+periodic_configuration(
+    name = "acct",
+    directory = "/etc/periodic/monthly",
+    files = [
+        "200.accounting",
+    ],
+    package = "acct",
+    mode = "0555",
+)
+
+bsd_install_manifest(
+    name = "install_manifest",
+    entries = [":suite_directory"],
+    manifests = [":base"] + select({
+        "//tools/build/bazel/config:utmpx_enabled": [":acct"],
+        "//conditions:default": [],
+    }),
+)
+script_install_archive(name = "install_archive")

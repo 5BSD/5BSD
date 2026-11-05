@@ -21,3 +21,121 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+load("//usr.sbin/periodic:installation.bzl", "periodic_configuration")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+# bsd.dirs.mk assigns the shared CONFDIR to utilities, independently of files.
+bsd_install_directory(
+    name = "suite_directory",
+    destination = "/etc/periodic/daily",
+    owner = "root",
+    group = "wheel",
+    mode = "0755",
+    install_tags = ["package=utilities"],
+)
+
+periodic_configuration(
+    name = "base",
+    directory = "/etc/periodic/daily",
+    files = [
+        "100.clean-disks",
+        "110.clean-tmps",
+        "120.clean-preserve",
+        "200.backup-passwd",
+        "210.backup-aliases",
+        "400.status-disks",
+        "410.status-mfi",
+        "420.status-network",
+        "430.status-uptime",
+        "450.status-security",
+        "510.status-world-kernel",
+        "999.local",
+    ],
+)
+
+periodic_configuration(
+    name = "geom",
+    directory = "/etc/periodic/daily",
+    files = [
+        "221.backup-gpart",
+        "222.backup-gmirror",
+        "401.status-graid",
+        "406.status-gmirror",
+    ],
+    package = "geom",
+)
+
+periodic_configuration(
+    name = "acct",
+    directory = "/etc/periodic/daily",
+    files = [
+        "310.accounting",
+    ],
+    package = "acct",
+    mode = "0555",
+)
+
+periodic_configuration(
+    name = "calendar",
+    directory = "/etc/periodic/daily",
+    files = [
+        "300.calendar",
+    ],
+)
+
+periodic_configuration(
+    name = "mail",
+    directory = "/etc/periodic/daily",
+    files = [
+        "130.clean-msgs",
+    ],
+)
+
+periodic_configuration(
+    name = "ntp",
+    directory = "/etc/periodic/daily",
+    files = [
+        "480.status-ntpd",
+        "480.leapfile-ntpd",
+    ],
+    package = "ntp",
+    mode = "0555",
+)
+
+periodic_configuration(
+    name = "sendmail",
+    directory = "/etc/periodic/daily",
+    files = [
+        "150.clean-hoststat",
+        "440.status-mailq",
+        "460.status-mail-rejects",
+        "500.queuerun",
+    ],
+    package = "sendmail",
+)
+
+bsd_install_manifest(
+    name = "install_manifest",
+    entries = [":suite_directory"],
+    manifests = [":base", ":geom"] + select({
+        "//tools/build/bazel/config:acct_enabled": [":acct"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:calendar_enabled": [":calendar"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:mail_enabled": [":mail"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:ntp_enabled": [":ntp"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:sendmail_enabled": [":sendmail"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:zfs_enabled": [":zfs_install_manifest"],
+        "//conditions:default": [],
+    }),
+)
+script_install_archive(name = "install_archive")

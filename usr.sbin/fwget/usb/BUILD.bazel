@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+script_installation(name = "install_manifest", scripts = {'usb': '/usr/libexec/fwget/usb', 'usb_bluetooth': '/usr/libexec/fwget/usb_bluetooth', 'usb_ralink': '/usr/libexec/fwget/usb_ralink'}, manuals = [], package = "fwget")
+script_install_archive(name = "install_archive")

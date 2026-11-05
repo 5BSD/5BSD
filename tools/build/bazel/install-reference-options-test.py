@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import sys
 import unittest
-from install_reference_options import component_definitions, validate_metadata_component, audit_generated_headers
+from install_reference_options import component_definitions, validate_metadata_component, audit_generated_headers, METADATA_MODE
 
 
 class ComponentDefinitionsTests(unittest.TestCase):
@@ -100,6 +100,30 @@ class MetadataDirectoryTests(unittest.TestCase):
 
     def test_object_component_query_does_not_run_recipe(self):
         self.assertIsNone(self.query('UNRELATED=yes'))
+
+    def test_nested_source_directory_skips_logs_but_object_directory_records(self):
+        if 'TEST_SRCDIR' in os.environ:
+            make = Path(os.environ['TEST_SRCDIR']) / os.environ['TEST_WORKSPACE'] / 'usr.bin/bmake/make'
+        else:
+            make = Path('/usr/bin/make')
+        self.assertTrue(make.is_file(), 'declared native bmake required in Bazel')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, objects = root / 'source', root / 'objects'
+            source.mkdir(); objects.mkdir()
+            makefile = source / 'Makefile'
+            makefile.write_text('.OBJDIR: ${OBJECT_DIRECTORY:U${.CURDIR}}\nprobe:\n\t@echo observed\n')
+            original = makefile.read_bytes()
+            for directory in (source, objects):
+                result = subprocess.run([str(make), '-r', '-C', str(source),
+                    'OBJECT_DIRECTORY=' + str(directory), '.MAKE.MODE=' + METADATA_MODE, 'probe'],
+                    capture_output=True, text=True, check=True, timeout=10)
+                self.assertEqual(result.stdout.strip(), 'observed')
+            self.assertEqual(list(source.iterdir()), [makefile])
+            self.assertEqual(makefile.read_bytes(), original)
+            metadata = (objects / 'probe.meta').read_text()
+            self.assertIn('CMD @echo observed', metadata)
+            self.assertIn('CWD ' + str(objects), metadata)
 
     def test_ambiguous_directory_policy_fails_closed(self):
         for output in ('', 'no\n', 'no\nmaybe\n', 'no\nno\nno\n'):

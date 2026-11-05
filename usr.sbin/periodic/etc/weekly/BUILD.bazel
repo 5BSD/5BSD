@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/periodic:installation.bzl", "periodic_configuration")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+# bsd.dirs.mk assigns the shared CONFDIR to utilities, independently of files.
+bsd_install_directory(
+    name = "suite_directory",
+    destination = "/etc/periodic/weekly",
+    owner = "root",
+    group = "wheel",
+    mode = "0755",
+    install_tags = ["package=utilities"],
+)
+
+periodic_configuration(
+    name = "base",
+    directory = "/etc/periodic/weekly",
+    files = [
+        "340.noid",
+        "450.status-security",
+        "999.local",
+    ],
+)
+
+periodic_configuration(
+    name = "locate",
+    directory = "/etc/periodic/weekly",
+    files = [
+        "310.locate",
+    ],
+)
+
+periodic_configuration(
+    name = "whatis",
+    directory = "/etc/periodic/weekly",
+    files = [
+        "320.whatis",
+    ],
+    package = "mandoc",
+)
+
+bsd_install_manifest(
+    name = "install_manifest",
+    entries = [":suite_directory"],
+    manifests = [":base"] + select({
+        "//tools/build/bazel/config:locate_enabled": [":locate"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:man_utils_enabled": [":whatis"],
+        "//conditions:default": [],
+    }),
+)
+script_install_archive(name = "install_archive")

@@ -16,6 +16,41 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Fwget and complete periodic hierarchy candidates (2026-11-05)
+
+Native source-owned declarations now cover fwget, hardware-install, its seven
+selected PCI scripts and three USB scripts, plus the full periodic daily,
+security, weekly and monthly configuration groups. The unselected
+pci_network_ittim source is not installed. Periodic preserves configuration tags,
+per-group package/mode differences, all original option guards and the existing
+independently usable ZFS producer. Shared configuration directories belong to
+utilities; executable/manual ownership remains separate.
+
+Original Make references pass in bazel-fwget-make-r1-20261105 and
+bazel-periodic-make-r2-20261105. The latter retains 58 raw component records,
+including five repeated identical directory contributions. These are original
+references, not native parity acceptance. Actual unconfigured Bazel declaration
+queries pass in bazel-admin-hierarchies-query-r2-20261105; configured construction,
+archive/metadata comparisons, option profiles and functional runtime remain open.
+The next maintained frontend request is prepared in
+/tmp/bazel-library-admin-composition-inputs-r1-20261105.json, combining these
+owners with GEOM, LLVM/Clang, ATF and Googletest composition and reference-helper
+Bazel tests. It must wait for the current aggregate frontend to finish; no
+second compilation frontend has been launched or silently queued.
+
+The first periodic reference correctly failed after NO_OBJ descendants wrote
+44 recipe metadata files into source. Only those verified, untracked generated
+files were moved under the failed run's generated-source-metadata directory.
+The supported metadata mode now uses curdirok=no, retaining object recipes while
+skipping source-directory recipe logs. All source-set checks remain intact; a
+fresh periodic reference passes without source metadata. The existing helper
+suite passes sixteen host Python methods, including a real bmake source/object
+regression, and all six maintained CLI guards pass. Bazel execution of the
+updated helper suite remains part of the next request. Top-level NO_OBJ/NOOBJ
+metadata preflight still rejects. Existing format-5 selection needs no dispatcher,
+SDK, staging/signing or publication-interface change. Make remains default;
+BIP, host installation and publication are not part of this batch.
+
 ## Startup parent and eight administration-script owners qualified (2026-11-05)
 
 The corrected AMD64 csu parent passes bazel-csu-parent-native-r2-20261105.

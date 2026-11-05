@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+script_installation(name = "install_manifest", scripts = {
+    "fwget.sh": "/usr/sbin/fwget",
+    "hardware-install.sh": "/usr/libexec/fwget/hardware-install",
+}, manuals = ["fwget.8"], package = "fwget")
+script_install_archive(name = "program_install_archive")
+bsd_install_archive_set(name = "installation_archives", archives = [
+    ":program_install_archive",
+    "//usr.sbin/fwget/pci:install_archive",
+    "//usr.sbin/fwget/usb:install_archive",
+], visibility = ["//visibility:public"])
+alias(name = "production_install_archive", actual = ":installation_archives", visibility = ["//visibility:public"])
+alias(name = "install_archive", actual = ":installation_archives", visibility = ["//visibility:public"])

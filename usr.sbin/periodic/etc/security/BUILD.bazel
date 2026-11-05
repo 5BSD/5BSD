@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/periodic:installation.bzl", "periodic_configuration")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+selects.config_setting_group(
+    name = "inetd_tcpwrap_enabled",
+    match_all = ["//tools/build/bazel/config:inetd_enabled", "//tools/build/bazel/config:tcp_wrappers_enabled"],
+)
+
+# bsd.dirs.mk assigns the shared CONFDIR to utilities, independently of files.
+bsd_install_directory(
+    name = "suite_directory",
+    destination = "/etc/periodic/security",
+    owner = "root",
+    group = "wheel",
+    mode = "0755",
+    install_tags = ["package=utilities"],
+)
+
+periodic_configuration(
+    name = "base",
+    directory = "/etc/periodic/security",
+    files = [
+        "100.chksetuid",
+        "110.neggrpperm",
+        "200.chkmounts",
+        "300.chkuid0",
+        "400.passwdless",
+        "410.logincheck",
+        "700.kernelmsg",
+        "800.loginfail",
+    ],
+)
+
+periodic_configuration(
+    name = "data",
+    directory = "/etc/periodic/security",
+    files = [
+        "security.functions",
+    ],
+    mode = "0444",
+)
+
+periodic_configuration(
+    name = "pf",
+    directory = "/etc/periodic/security",
+    files = [
+        "520.pfdenied",
+    ],
+    package = "pf",
+)
+
+periodic_configuration(
+    name = "tcpwrap",
+    directory = "/etc/periodic/security",
+    files = [
+        "900.tcpwrap",
+    ],
+    package = "tcpd",
+)
+
+bsd_install_manifest(
+    name = "install_manifest",
+    entries = [":suite_directory"],
+    manifests = [":base", ":data"] + select({
+        "//tools/build/bazel/config:pf_enabled": [":pf"],
+        "//conditions:default": [],
+    }) + select({
+        ":inetd_tcpwrap_enabled": [":tcpwrap"],
+        "//conditions:default": [],
+    }),
+)
+script_install_archive(name = "install_archive")

@@ -2245,6 +2245,13 @@ The helper installs original source bytes; no ELF/debug or shell rewrite is used
 Sysrc and etcupdate installed tests remain separate and incomplete full tests-enabled
 installation is rejected. Functional administration/service scenarios remain open.
 .Pp
+Candidate format-5 labels also compose the complete fwget PCI/USB script tree
+and periodic daily/security/weekly/monthly configuration groups.
+Original Make references pass; configured native construction, installation
+parity and functional execution remain pending. Explicit source groups preserve
+package ownership, modes, configuration tags and original build-option guards.
+These candidates use the existing dispatcher and introduce no publication policy.
+.Pp
 Additional candidate format-5 labels assemble the ATF production parent,
 Googletest production and existing test manifests, and LLVM/Clang shared-library
 installation ownership without compiler tool executables.
@@ -5619,13 +5626,17 @@ accepts
 .Fl Fl make-meta
 to record original Make recipes without filemon from the initial build.
 The option is disabled by default and accepts no arbitrary metadata-mode value.
-Components defining
+Top-level components defining
 .Va NO_OBJ
 or
 .Va NOOBJ
 reject metadata mode before actions or output creation,
 including empty definitions.
 Use ordinary reference mode for these components to avoid source recipe logs.
+The supported metadata mode also disables source-directory logs in recursively
+selected children that return to their source directory. Their original recipes
+still execute; object-directory metadata remains recorded. Source-set integrity
+checks remain enabled.
 It does not introduce Make interpretation into production Bazel actions.
 See
 .Pa tools/build/bazel/MAKE-REFERENCE-METADATA-QUALIFICATION.md

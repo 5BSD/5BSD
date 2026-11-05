@@ -196,7 +196,7 @@ def main():
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference' if args.target_arch == 'amd64' else 'cross-Make-installation-reference', 'target_architecture': args.target_arch,
                'component': str(component), 'jobs': args.jobs,
                'make_metadata': {'enabled': args.make_meta,
-                                 'mode': 'meta missing-meta=yes nofilemon curdirok=yes' if args.make_meta else None},
+                                 'mode': install_reference_options.METADATA_MODE if args.make_meta else None},
                'component_options': component_options,
                'component_definitions': definitions,
                'library_reference_inputs': library_inputs,
@@ -248,7 +248,7 @@ def main():
         if shared_directories:
             base += ['LDFLAGS_LAST=' + (environment.query(['-V', 'LDFLAGS_LAST']).strip() + ' ' + ' '.join('-L' + value for value in shared_directories)).strip()]
         if args.make_meta:
-            base += ['.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=yes']
+            base += ['.MAKE.MODE=' + install_reference_options.METADATA_MODE]
         run(buildenv(base + ['-j' + str(args.jobs), 'all']), 'build')
         if include_directories:
             receipt['dependency_header_audit'] = install_reference_libraries.audit_header_dependencies(objects, library_inputs)

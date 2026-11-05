@@ -4,7 +4,7 @@
 
 `install-reference.py --make-meta` records supported Make metadata from the
 initial build, using the single argument
-`.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=yes`. It remains disabled
+`.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=no`. It remains disabled
 by default. The receipt records the selected mode and complete commands.
 This supports auditing original compile recipes when subsequent DTrace actions
 transform the object: rebuilding an individual object to recover its recipe
@@ -74,3 +74,27 @@ Evidence under /usr/obj/usr/src/:
 
 No arbitrary Make-variable interface is added. Production Bazel actions, SDK/profile
 checks and the default-off metadata setting retain their existing behavior.
+
+## Nested NO_OBJ metadata guard (2026-11-05)
+
+The original root-only preflight does not inspect every recursively selected
+child. The first periodic reference exposed NO_OBJ descendants: its unchanged
+source-set check correctly failed after 44 untracked install recipe logs appeared
+in source. These exact, run-bound files were preserved beneath
+bazel-periodic-make-r1-20261105/generated-source-metadata, then moved out of source.
+No original sources or source-set checks were removed or ignored.
+
+The single supported mode now uses curdirok=no. Make executes the original
+recipes but does not write metadata when its object directory is its source
+directory. Object-directory compile and installation recipes remain recorded.
+Top-level NO_OBJ/NOOBJ rejection remains unchanged. Earlier controls above used
+the previous curdirok=yes mode; they are historical evidence, not rerun claims.
+
+bazel-periodic-make-r2-20261105 passes with the corrected mode and unchanged
+source-set verification. The updated install_reference_options_test has sixteen
+passing host Python methods, including a real bmake check that both recipes run,
+only object directories acquire metadata, and the source file set/bytes remain
+unchanged. The six maintained CLI guards also pass using
+bazel-periodic-reference-guards-r1-20261105. Native Bazel execution of the updated
+suite is pending in the next aggregate request. These checks concern the original
+Make oracle, not complete native periodic installation or service runtime.

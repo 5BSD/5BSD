@@ -11426,3 +11426,16 @@ for eight administration owners. Existing logging/reporting and calls to audited
 account/service tools remain in those original bytes; this is not proof of audit
 delivery or service/user-management behavior. Those scenarios require the actual
 installed runtime/VM qualification, not host account or service changes.
+
+## Fwget and periodic installation declarations (2026-11-05)
+
+This candidate adds explicit native installation ownership, not rewritten shell
+programs. Original fwget/hardware-install/PCI/USB source bytes and periodic jobs,
+security functions and default configuration are unchanged. Configuration group
+options preserve whether each job is installed, including accounting, NTP,
+Sendmail, ZFS, PF and TCP wrapper jobs. No new probes, audit events or delivery
+claims are made. Native archive payload parity and runtime job execution remain
+pending; shell logging, audit delivery and hardware installation were not run on
+the host. The original Make references pass independently of this pending native
+qualification. The reference-helper metadata fix changes diagnostic recipe-log
+placement only, with an actual bmake regression and source-set checks retained.

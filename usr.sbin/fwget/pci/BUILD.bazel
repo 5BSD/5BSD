@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+script_installation(name = "install_manifest", scripts = {'pci': '/usr/libexec/fwget/pci', 'pci_network_intel': '/usr/libexec/fwget/pci_network_intel', 'pci_network_mediatek': '/usr/libexec/fwget/pci_network_mediatek', 'pci_network_qca': '/usr/libexec/fwget/pci_network_qca', 'pci_network_realtek': '/usr/libexec/fwget/pci_network_realtek', 'pci_video_amd': '/usr/libexec/fwget/pci_video_amd', 'pci_video_intel': '/usr/libexec/fwget/pci_video_intel'}, manuals = [], package = "fwget")
+script_install_archive(name = "install_archive")
