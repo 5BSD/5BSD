@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:local_test_installation.bzl", "local_test_installation")
+local_test_installation(
+    programs = {"strptime_test": "strptime_test.c", "detect_tz_changes_test": "detect_tz_changes_test.c"},
+    directory = "/usr/tests/lib/libc/stdtime", warnings = 6,
+    headers = {"detect_tz_changes_test": ["//contrib/tzcode:tzdir_header"]},
+    defines = {"detect_tz_changes_test": select({"//tools/build/bazel/config:detect_tz_changes_enabled": ["DETECT_TZ_CHANGES"], "//conditions:default": []})},
+    cases = {"strptime_test": ["dayofweek"]},
+)

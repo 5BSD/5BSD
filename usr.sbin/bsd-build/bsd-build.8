@@ -7172,3 +7172,15 @@ Make installation/interface comparisons are distinct from raw binary equality,
 other configurations and full installed-system qualification.
 Existing explicit-input targets/tests and captures express this contribution;
 full-tests parent guards and the production Make backend remain unchanged.
+
+.Pp
+Native libc NSS, resolver and standard-time contributions retain all eleven
+original programs, original host-list fixtures and Kyua timeout metadata.
+The resolver remains dynamic with pthread; private headers and timezone feature
+definitions are scoped to their original consumers.
+Selected execution covers forty-four host database cases and day-of-week parsing.
+Host-dependent NSS cases use Bazel external/no-remote tags to force fresh local
+execution while compilation and installation artifacts remain cacheable.
+External DNS and privileged/timezone/zoneinfo scenarios remain installed-system
+requirements. Existing explicit-input labels/tests and captures express these
+contributions without changing the production Make backend or full-tests guards.

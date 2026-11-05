@@ -21,6 +21,17 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## NSS, resolver and standard-time test contribution (2026-11-05)
+
+Original sources and all eleven installed programs are preserved, including the
+dynamic threaded resolver, original host lists and timeout metadata. Forty-four
+native local NSS database cases and original day-of-week parsing pass. External
+and no-remote test tags force fresh host database execution. DOF initialization
+is disabled for these isolated tests; no provider firing or audit delivery claim
+follows from libc lookup/parsing success. External DNS and privileged timezone
+behavior remain installed-system requirements. No probe/audit source was removed.
+See LIBC-LOCAL-TEST-BATCH-QUALIFICATION.md for independent installation/ELF evidence.
+
 ## Libc regex helper, exhaustion and shell behavior (2026-11-05)
 
 All original thirty regex cases are exercised with native libc: twenty-nine

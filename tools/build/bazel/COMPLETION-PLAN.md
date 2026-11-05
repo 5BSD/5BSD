@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Complete selected NSS/resolver/stdtime construction (2026-11-05)
+
+All eleven original programs and twenty-seven installed file records now match
+original Make, including original host lists, Kyua timeout, dynamic pthread
+resolver, debug CRCs and eleven ELF/interface/hardening contracts. Forty-four
+native account/group/protocol/RPC/service/shell cases and the original day-of-week
+case pass. Host-dependent NSS cases are external/no-remote: repeated final runs
+freshly execute all forty-four while two independent targets remain cached.
+Final r4 retains all nine independently reviewed installation output hashes.
+Shared warning policies match Make and existing levels retain identical flags.
+See LIBC-LOCAL-TEST-BATCH-QUALIFICATION.md for exact scopes and retained evidence.
+
+External DNS and privileged/zoneinfo/timezone-change scenarios remain installed-
+system requirements. Continue remaining libc/test roots and parent traversal,
+source-owned archive ordering and every independent whole-world/debug/pkgbase/
+cross/bootstrap/runtime/resource/cache/sandbox/publication gate. Full-tests parent
+guards and Make as production/default remain. BIP stays excluded.
+
 ## Complete libc regex suite construction and execution (2026-11-05)
 
 All three original C programs, two shell suites, README and twenty-six fixture

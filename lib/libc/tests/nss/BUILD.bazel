@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//lib/libc:local_test_installation.bzl", "local_test_installation")
+_PROGRAMS = ["getaddrinfo_test", "getgr_test", "gethostby_test", "getpw_test", "getproto_test", "getrpc_test", "getserv_test", "getusershell_test"]
+_CASES = {
+    "getgr_test": ["getgrent", "getgrent_with_snapshot", "getgrent_with_two_pass", "getgrgid", "getgrgid_with_snapshot", "getgrnam", "getgrnam_with_snapshot", "getgrent_interleaved_getgrnam", "getgrent_interleaved_getgrgid"],
+    "getpw_test": ["getpwent", "getpwent_with_snapshot", "getpwent_with_two_pass", "getpwnam", "getpwnam_with_snapshot", "getpwuid", "getpwuid_with_snapshot", "getpwent_interleaved_getpwnam", "getpwent_interleaved_getpwuid"],
+    "getproto_test": ["build_snapshot", "getprotoent", "getprotoent_with_snapshot", "getprotoent_with_two_pass", "getprotobyname", "getprotobyname_with_snapshot", "getprotobynumber", "getprotobynumber_with_snapshot"],
+    "getrpc_test": ["build_snapshot", "getrpcbyname", "getrpcbyname_with_snapshot", "getrpcbynumber", "getrpcbynumber_with_snapshot", "getrpcbyent", "getrpcbyent_with_snapshot", "getrpcbyent_with_two_pass"],
+    "getserv_test": ["build_snapshot", "getservbyname", "getservbyname_with_snapshot", "getservbyport", "getservbyport_with_snapshot", "getservbyent", "getservbyent_with_snapshot", "getservbyent_with_two_pass"],
+    "getusershell_test": ["getusershell_with_snapshot", "getusershell_with_two_pass"],
+}
+cc_library(name = "test_headers", hdrs = ["testutil.h"], includes = ["."])
+local_test_installation(
+    programs = {p: p + ".c" for p in _PROGRAMS},
+    directory = "/usr/tests/lib/libc/nss", warnings = 3,
+    headers = {p: [":test_headers", "//tests:suite_macros"] for p in _PROGRAMS},
+    fixtures = {"//lib/libc/tests/resolv:mach": "mach"},
+    metadata = {"gethostby_test": {"timeout": "1200"}},
+    # Native libc reads this host's configured account/group/protocol/service/
+    # shell databases. These are host integration tests, not private-db fixtures.
+    # Never reuse cached outcomes or run against a remote worker's databases.
+    runtime_tags = {p: ["external", "no-remote"] for p in _CASES},
+    cases = _CASES,
+)

@@ -14,6 +14,10 @@ _WARN2 = ["-Wno-switch", "-Wno-switch-enum", "-Wno-knr-promoted-parameter"]
 _WARN3 = _WARN4[:5]
 
 def libc_test_copts(warnings = 2):
-    if warnings not in [2, 3, 4]:
+    if warnings not in [2, 3, 4, 6]:
         fail("unsupported libc test warning policy")
+    if warnings == 6:
+        return ["-pipe", "-fno-common", "-fPIE", "-std=gnu17", "-Wno-format-zero-length"] + _WARN_BEGIN + _WARN4 + [
+            "-Wchar-subscripts", "-Wnested-externs", "-Wold-style-definition",
+            "-Wno-pointer-sign", "-Wdate-time", "-Wmissing-variable-declarations", "-Wthread-safety"] + _WARN_END[3:] + ["-Qunused-arguments"]
     return ["-pipe", "-fno-common", "-fPIE", "-std=gnu17", "-Wno-format-zero-length"] + _WARN_BEGIN + (_WARN4 if warnings == 4 else (_WARN3 if warnings == 3 else [])) + _WARN_END + (_WARN_LOW if warnings <= 3 else []) + (_WARN2 if warnings == 2 else []) + ["-Qunused-arguments"]

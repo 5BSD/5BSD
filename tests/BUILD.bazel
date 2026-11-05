@@ -2,3 +2,6 @@
 exports_files(["README"], visibility = ["//lib/libregex/tests:__pkg__"])
 
 exports_files(["Kyuafile"], visibility = ["//lib/tests:__pkg__", "//usr.sbin/tests:__pkg__", "//lib/googletest/tests:__pkg__", "//libexec:__subpackages__", "//bin:__subpackages__", "//sbin:__subpackages__", "//usr.bin:__subpackages__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "suite_macros", hdrs = ["freebsd_test_suite/macros.h"], includes = ["."], visibility = ["//lib/libc/tests/nss:__pkg__"])

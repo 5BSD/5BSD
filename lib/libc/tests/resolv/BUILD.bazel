@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_import")
+load("//lib/libc:local_test_installation.bzl", "local_test_installation")
+exports_files(["mach"], visibility = ["//lib/libc/tests/nss:__pkg__"])
+cc_import(name = "pthread_interface", shared_library = "//lib/libthr:thr_shared")
+# Original external host list and threaded dynamic executable are preserved.
+# Its network cases require controlled installed-system qualification.
+local_test_installation(programs = {"resolv_test": "resolv_test.c"},
+    directory = "/usr/tests/lib/libc/resolv", warnings = 6,
+    libraries = {"resolv_test": [":pthread_interface"]}, fixtures = {"mach": "mach"})
