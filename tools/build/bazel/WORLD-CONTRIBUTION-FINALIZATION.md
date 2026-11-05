@@ -5,7 +5,7 @@
 The root `world_contributions` target composes the existing native production
 roots: lib, libexec, bin, sbin, include, usr.bin, usr.sbin, share, etc and the
 normal empty sys traversal, with the selected AMD64 stand parent under BOOT and
-configured cddl, secure and MIT Kerberos roots. The lists and conditions live in
+configured rescue, cddl, secure and MIT Kerberos roots. The lists and conditions live in
 `tools/build/bazel/world_installation.bzl`, following maintained top-level world
 traversal. Unsupported Heimdal aggregation fails explicitly rather than selecting
 an empty replacement. Normal family installation rules retain their selections.
@@ -22,8 +22,9 @@ Make's afterinstall metadata. MAN/MAN_UTILS and OpenSSL control inclusion.
 library/program products that Make builds without installing; installation
 archives alone are not substituted for that construction closure.
 
-These names describe contributions: rescue, complete installed tests
-and local extension roots are not yet part of this composition. This is not the
+These names describe contributions: complete installed tests
+and local extension roots are not yet part of this composition. Rescue now
+participates under its source-owned enable setting. This is not the
 complete world build target or a qualified replacement for buildworld/installworld.
 As remaining roots become native, their manuals must enter finalization too.
 
@@ -97,7 +98,7 @@ roots and product groups. The manual and completion plan document their limits.
 No C dispatcher/schema, signing/staging/publication backend change is needed in
 this checkpoint. Normal production/default system construction stays Make.
 
-Next finish rescue, stand product/option/ABI gaps and installed test roots and incorporate them into
+Next finish independent rescue/package/guest qualification, stand product/option/ABI gaps and installed test roots and incorporate them into
 one complete world/kernel/module build. Reconcile source inventory and complete
 Make installation/debug/metadata, directory and pkgbase behavior. Refresh current
 kernel/module evidence after source changes, qualify bootstrap/toolchain and
@@ -105,3 +106,43 @@ configuration/cross-ABI coverage, then hardware integration, verified combined
 publication, VM/runtime and CPU/memory/disk/cache/sandbox comparisons. These are
 still required gates; this combined contribution build does not close them.
 No host installation, publication, upgrade or reboot occurred. BIP remains excluded.
+
+## Current integrated rescue/libc refresh (2026-11-05)
+
+bazel-world-current-refresh-native-r1-20261105 completes one maintained
+build-bsd bazel-test invocation with 16 jobs. It constructs the configured world
+contributions, final manual indexes and noninstalled internal products together
+with the actual rescue executable and its real unsigned pkgbase package.
+All nine selected test targets pass as Bazel cache hits from qualified prior
+executions. Inputs are recorded in
+bazel-world-current-refresh-request-r1-20261105/inputs.json. The explicit
+production-malloc and NIS-disabled selections match the current libc/rescue
+comparison inputs; other explicit features remain as recorded in that file.
+Counts must not be compared as coverage percentages with earlier NIS-enabled
+captures. This does not silently broaden the independent Make parity claim.
+
+bazel-world-current-refresh-review-r2-20261105/review.json verifies the immutable
+capture, 1279 archive metadata outputs and 32515 unique nondirectory paths with
+no duplicate claims. All 3552 archive directory records and fourteen separate
+directory-policy claims are reconciled: 789 unique directory destinations have
+consistent owner/group/mode/flags and no file/directory claim collisions.
+Package tags remain attached to every repeated claim rather than being discarded
+or treated as conflicting physical ownership. This proves consistency among the
+emitted claims, not complete original Make global directory-policy parity or the
+absence of missing installation roots. The narrower r1 review checked the
+separate directory-policy outputs; r2 additionally checks every archive record.
+
+Main and OpenSSL manual corpora have 11596 and 6373 paths. Both database bytes
+and Make metadata agree with maintained Make makedb and its independently
+Make-built mandoc tool on the same assembled native corpus. This is indexer
+parity on native inputs, not independently Make-staged whole-world payload parity.
+The original Make libc reference and per-member filename/DTrace controls remain
+separate evidence in LIBC-SOURCE-ALIASES-QUALIFICATION.md.
+
+Full installed tests remain intentionally rejected by production-only parents.
+No acceptance claim covers them, other ABIs, complete installed Make parity,
+archive ordering/debug, bootstrap, all pkgbase packages, hardware/repository
+publication, guest services or resource/cache/sandbox performance. Existing
+format-5 targets/tests fully express the refreshed request; no C frontend,
+staging/signing or production backend change is required. Make stays default.
+No host installation, upgrade, reboot or BIP change occurred.

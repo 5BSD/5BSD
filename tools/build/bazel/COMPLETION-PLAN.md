@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Current world construction includes rescue/libc corrections (2026-11-05)
+
+The combined production contribution/product build passes through the maintained
+frontend with 16 jobs and all nine selected tests passing as cache hits. The
+actual rescue executable and real rescue package are included. The immutable
+review verifies 1279 archives, 32515 nondirectory paths with no duplicate claims,
+and all 3566 directory claims across 789 unique destinations with consistent
+physical attributes and no file/directory collisions. Both manual indexes match
+Make on this same native corpus (11596 main / 6373 OpenSSL paths). See
+WORLD-CONTRIBUTION-FINALIZATION.md for exact evidence and the explicit NIS-disabled,
+production-malloc profile; counts are not completion percentages.
+
+Next: source-owned archive ordering and complete installed test roots, independent
+whole-world installation/debug/pkgbase parity, then the remaining bootstrap,
+configuration/cross/runtime/resource/cache/sandbox and publication gates. Current
+contribution construction is proven; complete world acceptance is not. Make stays
+default, BIP excluded, no host upgrade.
+
 ## Fresh libc comparison and weak DTrace aliases (2026-11-05)
 
 A fresh original Make libc parent builds/stages successfully, including configured
