@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["h_db.c", "h_lfsr.c", "t_db_hash_seq.c", "t_db.sh", "README"],
+    visibility = ["//lib/libc/tests/db:__pkg__"])

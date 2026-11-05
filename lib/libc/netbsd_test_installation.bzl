@@ -7,18 +7,9 @@ load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive"
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 load(":test_runtime.bzl", "LIBC_TEST_RUNTIME")
+load(":test_policy.bzl", "libc_test_copts")
 
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-_WARN_BEGIN = ["-Wsystem-headers", "-Werror", "-Wall", "-Wno-format-y2k"]
-_WARN4 = ["-W", "-Wno-unused-parameter", "-Wstrict-prototypes", "-Wmissing-prototypes",
-    "-Wpointer-arith", "-Wreturn-type", "-Wcast-qual", "-Wwrite-strings", "-Wswitch",
-    "-Wshadow", "-Wunused-parameter", "-Wcast-align"]
-_WARN_END = ["-Wno-uninitialized", "-Wno-pointer-sign", "-Wdate-time", "-Wno-empty-body",
-    "-Wno-string-plus-int", "-Wno-unused-const-variable",
-    "-Wno-error=unused-but-set-parameter", "-Wno-error=cast-function-type-mismatch"]
-_WARN2 = ["-Wno-tautological-compare", "-Wno-unused-value", "-Wno-parentheses-equality",
-    "-Wno-unused-function", "-Wno-enum-conversion", "-Wno-unused-local-typedef",
-    "-Wno-address-of-packed-member", "-Wno-switch", "-Wno-switch-enum", "-Wno-knr-promoted-parameter"]
 
 def netbsd_test_installation(programs, directory, warnings = 2, defines = [], libraries = {}, shared_libraries = {}, cases = {}):
     """Compile explicit source labels; preserve each suite's own library policy.
@@ -31,8 +22,7 @@ def netbsd_test_installation(programs, directory, warnings = 2, defines = [], li
     for mapping in [libraries, shared_libraries, cases]:
         if any([name not in programs for name in mapping]):
             fail("test-specific policy names an absent program")
-    flags = ["-pipe", "-fno-common", "-fPIE", "-std=gnu17", "-Wno-format-zero-length"] + _WARN_BEGIN
-    flags += (_WARN4 if warnings == 4 else []) + _WARN_END + (_WARN2 if warnings == 2 else []) + ["-Qunused-arguments"]
+    flags = libc_test_copts(warnings)
     manifests = []
     runtime_tests = []
     for program, source in programs.items():
@@ -52,7 +42,7 @@ def netbsd_test_installation(programs, directory, warnings = 2, defines = [], li
                 runner = "//tools/build/bazel:atf_runner", test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
                 target_compatible_with = _PLATFORM, size = "small")
             runtime_tests.append(":" + target)
-    bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = programs.keys(),
+    bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(programs.keys()),
         interfaces = {p: "atf" for p in programs})
     bsd_install_file(name = "kyuafile_install", src = ":kyuafile", destination = directory + "/Kyuafile",
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])

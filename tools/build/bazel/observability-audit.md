@@ -21,6 +21,17 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Libc DB/RPC actual installed program review (2026-11-05)
+
+The five original DB C test programs retain real private structure definitions
+for tamper/bounds tests; all sixteen C cases pass against native libc. Raw RPC
+and XDR now exercise actual installed programs with native libc/rpcsvc/util,
+replacing the earlier partial-object/SDK-runtime prototype scope. Both generated
+protocol products match original Make. DOF init remains explicitly disabled;
+these are not live probe/audit-delivery tests. External RPC services and the DB
+shell suite remain installed-system cases. See
+LIBC-DB-RPC-TEST-QUALIFICATION.md for exact metadata/ELF/debug evidence.
+
 ## Libc imported test-family dependency review (2026-11-05)
 
 All 24 selected programs across C063/inet/setjmp/termios/time/ttyio preserve their

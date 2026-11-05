@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Complete libc DB/RPC test contributions (2026-11-05)
+
+DB now builds five ATF C programs and two helpers plus the real transformed shell
+suite and README. RPC uses its actual native-libc installed programs and declared
+rpcgen products; SDK-runtime/partial-object prototypes are removed. Sixteen DB
+and two local RPC cases pass. Final frontend r3 passes nineteen targets (cache
+hits). All nine program ELF/hardening and debug CRC contracts, 22 installed file
+records, exact script/README/Kyua bytes and both generated RPC products match
+fresh original Make. Shared compiler policy extraction preserves all eighteen
+prior six-family installation outputs. See LIBC-DB-RPC-TEST-QUALIFICATION.md for
+retained parser/order failures and exact scope.
+
+DB shell/dictionary scenarios, external RPC network cases and remaining libc/
+parent test hierarchy still require installed-system qualification. Full-tests
+parent guards stay active. Continue remaining test roots, source-owned archive
+ordering and every independent whole-world/debug/pkgbase/cross/bootstrap/runtime/
+resource/cache/sandbox/publication gate. Make stays default; BIP excluded.
+
 ## Six libc installed-test families added (2026-11-05)
 
 C063/inet/setjmp/termios/time/ttyio now build all 24 selected original programs,

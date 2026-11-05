@@ -7114,3 +7114,14 @@ and PTY behavior. C063 privilege cases and termios behavior with a real terminal
 remain installed-system qualification requirements.
 These leaf contributions use the existing explicit-input interface and do not
 remove the full-tests-enabled parent guards or qualify the complete hierarchy.
+
+.Pp
+The native libc DB contribution includes its five original ATF C programs,
+two helpers, transformed shell suite and README with declared private headers.
+RPC uses its actual installed native-libc programs and declared rpcgen products.
+Selected execution covers sixteen DB C cases and local raw RPC/XDR; external
+RPC service cases and the DB shell suite remain installed-system requirements.
+Exact Make installation/script/data/generator comparisons and ELF/debug checks
+are separate from full hierarchy, raw binary parity and runtime acceptance.
+The existing explicit-input workflow expresses these contributions; full-tests
+parent guards and the production Make backend remain unchanged.

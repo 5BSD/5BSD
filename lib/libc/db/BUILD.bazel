@@ -70,3 +70,7 @@ exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
     ('libc_manual_man_mpool.3', 'man/mpool.3'),
     ('libc_manual_man_recno.3', 'man/recno.3'),
 ]]
+
+# Only the DB test consumers need the original private structure declarations.
+cc_library(name = "test_headers", hdrs = ["btree/btree.h", "btree/extern.h", "hash/hash.h"],
+    includes = ["btree", "hash"], visibility = ["//lib/libc/tests/db:__pkg__"])
