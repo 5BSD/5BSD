@@ -27,3 +27,7 @@ bsd_install_archive(
 )
 
 exports_files(["fmt.c", "ps.h", "extern.h"], visibility = ["//usr.bin/w:__pkg__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['fmt.c', 'keyword.c', 'nlist.c', 'print.c', 'ps.c', 'ps.h', 'extern.h'],
+    object_names = ['fmt.o', 'keyword.o', 'nlist.o', 'print.o', 'ps.o'], deps = ['//lib/libjail:headers', '//lib/libkvm:headers', '//contrib/libxo:headers'], defines = select({'//tools/build/bazel/config:ps_check_keywords_enabled': ['PS_CHECK_KEYWORDS'], '//conditions:default': []}))

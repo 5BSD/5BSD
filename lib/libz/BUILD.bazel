@@ -18,7 +18,7 @@ cc_library(
     target_compatible_with = ["@platforms//os:freebsd"],
 )
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_objects")
-bsd_component_archive(name = "static_archive", groups = [":objects"],
+bsd_component_archive(name = "static_archive", groups = [":objects"], visibility = ["//rescue/rescue:__pkg__"],
     object_order = ['adler32.o', 'compress.o', 'crc32.o', 'deflate.o', 'gzclose.o', 'gzlib.o', 'gzread.o', 'gzwrite.o', 'infback.o', 'inffast.o', 'inflate.o', 'inftrees.o', 'trees.o', 'uncompr.o', 'zutil.o', 'zopen.o'])
 bsd_component_archive(name = "pic_archive", groups = [":objects"], pic = True,
     object_order = ['adler32.pic.o', 'compress.pic.o', 'crc32.pic.o', 'deflate.pic.o', 'gzclose.pic.o', 'gzlib.pic.o', 'gzread.pic.o', 'gzwrite.pic.o', 'infback.pic.o', 'inffast.pic.o', 'inflate.pic.o', 'inftrees.pic.o', 'trees.pic.o', 'uncompr.pic.o', 'zutil.pic.o', 'zopen.pic.o'])

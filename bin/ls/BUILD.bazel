@@ -43,3 +43,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['cmp.c', 'ls.c', 'print.c', 'util.c', 'ls.h', 'extern.h'],
+    object_names = ['cmp.o', 'ls.o', 'print.o', 'util.o'], deps = ['//lib/libutil:headers'] + select({'//tools/build/bazel/config:ls_colors_enabled': ['//lib/ncurses/tinfo:public_headers'], '//conditions:default': []}), defines = select({'//tools/build/bazel/config:ls_colors_enabled': ['COLORLS'], '//conditions:default': []}))

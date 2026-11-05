@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -372,6 +372,66 @@ class RescueCore(unittest.TestCase):
             p = self.run_app("setfacl", "-m", "invalid", str(path))
             self.assertNotEqual(p.returncode, 0)
             self.assertEqual(path.stat().st_mode, before)
+            self.assertEqual(path.read_bytes(), b"private\n")
+
+    def test_ls_private_directory(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            (Path(d) / "alpha").write_bytes(b"a")
+            (Path(d) / "beta").mkdir()
+            p = self.run_app("ls", "-1", d)
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"alpha\nbeta\n", b""))
+
+    def test_df_private_path(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            p = self.run_app("df", "-P", d)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn(b"Filesystem", p.stdout)
+
+    def test_ps_own_parent_without_modification(self):
+        p = self.run_app("ps", "-p", str(os.getpid()), "-o", "pid=")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.strip(), str(os.getpid()).encode())
+
+    def test_pkill_usage_without_signalling(self):
+        p = self.run_app("pkill")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"usage:", p.stderr)
+
+    def test_tail_standard_input(self):
+        p = self.run_app("tail", "-n", "2", data=b"one\ntwo\nthree\n")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"two\nthree\n", b""))
+
+    def test_tail_private_binary_file(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(bytes(range(256)))
+            p = self.run_app("tail", "-c", "17", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, bytes(range(239, 256)), b""))
+
+    def test_tee_private_append(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "output"
+            path.write_bytes(b"before\n")
+            p = self.run_app("tee", "-a", str(path), data=b"after\n")
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"after\n", b""))
+            self.assertEqual(path.read_bytes(), b"before\nafter\n")
+
+    def test_id_numeric_credentials(self):
+        p = self.run_app("id", "-u")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, str(os.geteuid()).encode() + b"\n", b""))
+
+    def test_chroot_usage_without_changing_root(self):
+        p = self.run_app("chroot")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"usage:", p.stderr)
+
+    def test_chown_current_identity_private_file(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"private\n")
+            p = self.run_app("chown", str(os.geteuid()) + ":" + str(os.getegid()), str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual((path.stat().st_uid, path.stat().st_gid), (os.geteuid(), os.getegid()))
             self.assertEqual(path.read_bytes(), b"private\n")
 
 if __name__ == "__main__":

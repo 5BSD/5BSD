@@ -26,3 +26,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['id.c'],
+    object_names = ['id.o'], deps = [], defines = select({'//tools/build/bazel/config:audit_enabled': ['USE_BSM_AUDIT'], '//conditions:default': []}))

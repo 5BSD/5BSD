@@ -21,6 +21,25 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Nine additional rescue variants and native static libraries (2026-11-05)
+
+Ls/df/ps/pkill/tail/tee/id/chroot/chown expand the core to 36 applications. Df's
+diskspace and chown's fileowner providers are preserved; maintained ET_REL
+comparison verifies schemas, symbol-relative function/patch sites and actual
+path-derived aliases. Tail/tee/chroot deliberately omit their providers under
+Make's RESCUE exclusions, and tail omits Casper. Id preserves configured
+USE_BSM_AUDIT, including its audit identity query path; numeric id host checks
+do not exercise that privileged query or establish audit event delivery.
+
+The newly linked native static-library providers retain their existing source
+rules; host wrappers disable DOF initialization and do not establish provider
+registration/firing. Review privileged root/ownership/signal changes and their
+kernel audit delivery in dedicated runtime qualification. Usage-only chroot/
+pkill checks perform no root change or signalling, and chown touches only a
+private file with the test's existing numeric identity. No new probes or audit
+events are invented during migration. See
+RESCUE-THIRTY-SIX-PROGRAM-QUALIFICATION.md for exact evidence and limitations.
+
 ## Eight additional rescue application variants (2026-11-05)
 
 Date/chio/kenv/setfacl/stty/kill/sync/dd are native RESCUE variants in the bounded

@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to thirty-six applications (2026-11-05)
+
+Nine further source owners add ls/df/ps/pkill/tail/tee/id/chroot/chown; the native
+static core reaches 36 of 103 default applications and passes 64 runtime methods.
+Declared lazy static imports preserve original selected archive order. Fresh
+original nested Make builds produce 20 C/two provider objects; provider schemas,
+actual function/patch sites and independently checked alias hashes agree.
+Separate original compiler controls explain ps/pkill assertion-filename
+strings without changing native or baseline bytes. Original generated Make on
+identical captured inputs matches all 74 pipeline outputs including the complete
+executable. See RESCUE-THIRTY-SIX-PROGRAM-QUALIFICATION.md. Continue the remaining
+67 applications, actual rescue library variants, options/cross/full installation;
+independent library/debug/raw-DOF parity and all full-world/kernel/pkgbase/
+bootstrap/publication/runtime/resource gates stay open. Make stays default.
+
 ## Native rescue expansion to twenty-seven applications (2026-11-05)
 
 Eight source-owned variants add date/chio/kenv/setfacl/stty/kill/sync/dd. The

@@ -31,3 +31,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
 [bsd_install_link(name = "compat_" + name, destination = "/usr/bin/" + name,
     target = "../../bin/" + name, kind = "symlink", owner = "root", group = "wheel",
     mode = "0755", install_tags = ["package=runtime"]) for name in ["pkill", "pgrep"]]
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['pkill.c'],
+    object_names = ['pkill.o'], deps = ['//lib/libjail:headers', '//lib/libkvm:headers'])

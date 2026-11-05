@@ -50,3 +50,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['forward.c', 'misc.c', 'read.c', 'reverse.c', 'tail.c', 'extern.h', 'tailwait_trace.h'],
+    object_names = ['forward.o', 'misc.o', 'read.o', 'reverse.o', 'tail.o'], deps = ['//lib/libutil:headers', '//lib/libcapsicum:headers', '//lib/libcasper/libcasper:headers', '//lib/libcasper/services/cap_fileargs:headers'])
