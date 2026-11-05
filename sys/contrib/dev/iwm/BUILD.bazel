@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files([
+    "iwm-3160-17.fw",
+    "iwm-3168-22.fw",
+    "iwm-7260-17.fw",
+    "iwm-7265-17.fw",
+    "iwm-7265D-22.fw",
+    "iwm-8000C-22.fw",
+    "iwm-8265-22.fw",
+    "iwm-9000-34.fw",
+    "iwm-9260-34.fw",
+], visibility = ["//share/firmwares/iwm:__pkg__"])

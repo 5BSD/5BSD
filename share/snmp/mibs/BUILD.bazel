@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+bsd_install_file(name = "mib", src = "FREEBSD-MIB.txt",
+    destination = "/usr/share/snmp/mibs/FREEBSD-MIB.txt", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=bsnmp"])
+bsd_install_manifest(name = "install_manifest", entries = [":mib"], visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {"/usr/share/snmp/mibs": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsnmp"]}'})

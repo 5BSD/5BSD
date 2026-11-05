@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_FIRMWARE = {
+    "iwm3160fw": "//sys/contrib/dev/iwm:iwm-3160-17.fw",
+    "iwm3168fw": "//sys/contrib/dev/iwm:iwm-3168-22.fw",
+    "iwm7260fw": "//sys/contrib/dev/iwm:iwm-7260-17.fw",
+    "iwm7265fw": "//sys/contrib/dev/iwm:iwm-7265-17.fw",
+    "iwm7265Dfw": "//sys/contrib/dev/iwm:iwm-7265D-22.fw",
+    "iwm8000Cfw": "//sys/contrib/dev/iwm:iwm-8000C-22.fw",
+    "iwm8265fw": "//sys/contrib/dev/iwm:iwm-8265-22.fw",
+    "iwm9000fw": "//sys/contrib/dev/iwm:iwm-9000-34.fw",
+    "iwm9260fw": "//sys/contrib/dev/iwm:iwm-9260-34.fw",
+}
+[bsd_install_file(name = "file_" + name, src = source,
+    destination = "/boot/firmware/" + name, owner = "root", group = "wheel",
+    mode = "0644", install_tags = ["package=firmware-iwm"]) for name, source in _FIRMWARE.items()]
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + name for name in _FIRMWARE],
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {"/boot/firmware": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=firmware-iwm"]}'})

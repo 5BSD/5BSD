@@ -86,3 +86,12 @@ Make/pkgbase parity, cross architectures, independent bootstrap, kernel/module
 installation, hardware/publication, runtime/VM and controlled CPU/RAM/disk I/O/
 footprint/cache/sandbox gates remain open. Make stays production/default. BIP
 remains excluded. No host installation, upgrade, publication or reboot occurred.
+
+
+## Subsequent data checkpoint (2026-11-05)
+
+VT fonts/keymaps, the SNMP MIB and iwm firmware now have four further native
+archives. Their complete original comparisons pass 121 records and 117 exact
+payloads, including fifteen generated fonts. See
+VT-FIRMWARE-SNMP-INSTALLATION-QUALIFICATION.md for evidence and remaining limits.
+The earlier remaining-content list above describes this preceding checkpoint.

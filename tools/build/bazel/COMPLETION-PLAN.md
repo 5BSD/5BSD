@@ -27,6 +27,16 @@ preserve package tags, modes and the dictionary link; no Python implementation
 change is needed. See SHARE-DATA-INSTALLATION-QUALIFICATION.md. This is additional
 component coverage, not a complete share/world endpoint or package acceptance.
 
+## VT, firmware and SNMP data checkpoint (2026-11-05)
+
+Four more original share owners now have native installation archives and complete
+original Make comparison: 121 metadata records and 117 exact payloads, including
+all fifteen generated VT fonts. Native generation reuses the existing declared
+execution-platform converter; no new Python implementation is introduced. Source
+parents cover VT, SNMP MIBs and iwm firmware. See
+VT-FIRMWARE-SNMP-INSTALLATION-QUALIFICATION.md. Console, SNMP and firmware runtime,
+complete share/world composition and the system gates remain open.
+
 ## Current composition checkpoint (2026-11-05)
 
 NIS and sendmail administration are now included when selected; their combined
@@ -3572,3 +3582,14 @@ caught and corrected in the declarations; no comparison exception was added.
 Continue complete share and other remaining world roots, then installed-world/
 package/bootstrap/runtime/performance qualification. See
 SHARE-DATA-INSTALLATION-QUALIFICATION.md for retained evidence and limits.
+
+
+## VT/shared hardware data checkpoint (2026-11-05)
+
+Source-owned VT/font/keymap, SNMP MIB and iwm firmware parents now build through
+the maintained frontend. All four complete original Make component inventories,
+metadata, file payloads and archive serialization pass. Font conversion uses the
+existing source-built execution-platform tool and declared runtime. These data
+components add no service/hardware runtime acceptance and do not complete share.
+Continue remaining share/world composition and the outstanding system gates.
+See VT-FIRMWARE-SNMP-INSTALLATION-QUALIFICATION.md.

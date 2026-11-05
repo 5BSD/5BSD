@@ -1,2 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(['spleen-32x64.bdf'], visibility = ["//stand/fonts:__pkg__"])
+exports_files([
+    "spleen-5x8.bdf",
+    "spleen-6x12.bdf",
+    "spleen-8x16.bdf",
+    "spleen-12x24.bdf",
+    "spleen-16x32.bdf",
+    "spleen-32x64.bdf",
+], visibility = ["//stand/fonts:__pkg__", "//share/vt/fonts:__pkg__"])

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+load("//tools/build/bazel:bsd_loader_generated.bzl", "bsd_loader_font")
+# Reuse the declared execution-platform converter; no prebuilt host font output.
+_FONTS = {
+    "gallant": "gallant.hex",
+    "terminus-b32": "terminus-b32.hex",
+    "tom-thumb": "tom-thumb.hex",
+    "vgarom-8x8": "vgarom-8x8.hex",
+    "vgarom-8x14": "vgarom-8x14.hex",
+    "vgarom-8x16": "vgarom-8x16.hex",
+    "vgarom-16x32": "vgarom-16x32.hex",
+    "vgarom-thin-8x8": "vgarom-thin-8x8.hex",
+    "vgarom-thin-8x16": "vgarom-thin-8x16.hex",
+    "spleen-5x8": "//contrib/spleen:spleen-5x8.bdf",
+    "spleen-6x12": "//contrib/spleen:spleen-6x12.bdf",
+    "spleen-8x16": "//contrib/spleen:spleen-8x16.bdf",
+    "spleen-12x24": "//contrib/spleen:spleen-12x24.bdf",
+    "spleen-16x32": "//contrib/spleen:spleen-16x32.bdf",
+    "spleen-32x64": "//contrib/spleen:spleen-32x64.bdf",
+}
+[bsd_loader_font(name = "font_" + name, src = source, format = "font", output = name + ".fnt")
+    for name, source in _FONTS.items()]
+[bsd_install_file(name = "file_" + name, src = ":font_" + name,
+    destination = "/usr/share/vt/fonts/" + name + ".fnt", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=vt-data"]) for name in _FONTS]
+bsd_install_file(name = "index", src = "INDEX.fonts", destination = "/usr/share/vt/fonts/INDEX.fonts",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=vt-data"])
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + name for name in _FONTS] + [":index"],
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {"/usr/share/vt/fonts": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=vt-data"]}'})
