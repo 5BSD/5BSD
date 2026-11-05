@@ -133,8 +133,26 @@ invented repository channel was added. A fresh maintained Make pkg query reports
 BRANCH=CURRENT, REVISION=16.0 and PKGCONFBRANCH=latest. The r2 request explicitly
 supplies the branch input and retains its original query/provenance. The normal
 frontend has launched `bazel-usrsbin-family-composition-native-r2-20261105` after
-the failed r1 terminated. It is a live compilation/installation construction
-attempt, not acceptance. Its command and complete bindings are retained.
+the failed r1 terminated. That r2 execution correctly caught a missing snapshot
+header declaration: bhyve snapshot.h includes vmgenc.h. The local quoted include
+closure contains sixteen bhyve headers; vmgenc.h was the sole missing declaration.
+The snapshot_headers provider now includes it, preserving the enabled feature
+and unchanged C sources.
+
+`bazel-usrsbin-family-composition-native-r3-20261105` passes all 242 selected
+production owners plus the cached source-settings test, with 335 installation
+archives and no incompatible selected targets. Its immutable capture binds 674
+unique files (143,265,537 bytes). The fresh original
+`bazel-bhyvectl-snapshot-header-make-r1-20261105` dependency record confirms the
+same source header is consumed. The r3 `bhyvectl-snapshot-header-review/review.json`
+passes all five original metadata records, exact compressed manual, strict ELF
+loader/interfaces/hardening/ordered dependencies and both debug CRCs. No VM,
+snapshot/migration operation or daemon runtime was exercised.
+
+Both selected family construction checks now pass separately; this is not one
+complete world build or original aggregate installation/package acceptance.
+Commands, configurations, inputs, failed attempts and complete bindings remain
+retained.
 
 After these combined attempts, correct actual graph failures and reconcile all
 installation namespaces/owners. Then introduce source-owned lib and usr.sbin

@@ -11503,3 +11503,14 @@ Original SPL userland XDR adaptation is restored without modifying probes or
 production C sources. All nine CTF/SPL/AVL/nvpair targets pass; original nvpair
 metadata/member-symbol/shared-ELF/debug comparisons pass. Serialization checks
 are bounded runtime evidence, not live DTrace, audit or performance acceptance.
+
+## Complete selected administration construction (2026-11-05)
+
+The combined production usr.sbin request now builds all 242 Make-selected AMD64
+owners, including their selected capability daemons, with DTrace enabled and
+335 installation archive contributions. It is construction evidence, not live
+probe/audit delivery or daemon runtime acceptance. The sole source declaration
+fix adds vmgenc.h to bhyve's existing snapshot header interface, preserving the
+original snapshot feature and unchanged instrumentation/C sources. Original
+snapshot-enabled bhyvectl ELF/install/debug comparisons pass. Full per-program
+probe/audit requirements and resource/runtime qualification remain open.
