@@ -3,7 +3,8 @@
 ## Composition (2026-11-05)
 
 The root `world_contributions` target composes the existing native production
-roots: lib, libexec, bin, sbin, include, usr.bin, usr.sbin, share and etc, with
+roots: lib, libexec, bin, sbin, include, usr.bin, usr.sbin, share, etc and the
+normal empty sys traversal, with the selected AMD64 stand parent under BOOT and
 configured cddl, secure and MIT Kerberos roots. The lists and conditions live in
 `tools/build/bazel/world_installation.bzl`, following maintained top-level world
 traversal. Unsupported Heimdal aggregation fails explicitly rather than selecting
@@ -21,7 +22,7 @@ Make's afterinstall metadata. MAN/MAN_UTILS and OpenSSL control inclusion.
 library/program products that Make builds without installing; installation
 archives alone are not substituted for that construction closure.
 
-These names describe contributions: rescue, sys, stand, complete installed tests
+These names describe contributions: rescue, complete installed tests
 and local extension roots are not yet part of this composition. This is not the
 complete world build target or a qualified replacement for buildworld/installworld.
 As remaining roots become native, their manuals must enter finalization too.
@@ -69,6 +70,21 @@ Evidence is under `/usr/obj/usr/src/`.
   metadata/directory outputs unchanged against r3, verifies 52 additional products and checks both databases unchanged.
   This connects the final product closure to the earlier combined review.
 
+- `bazel-world-with-stand-native-r1-20261105`: maintained frontend combined
+  construction with the normal empty sys contribution and selected AMD64 boot
+  parent connected under BOOT. Source-settings and manual-database tests pass.
+  `bazel-world-with-stand-review-r1-20261105/review.json` verifies 1295 archives
+  and 32454 unique non-directory paths with no duplicate claims. Main/OpenSSL
+  manual corpora contain 11622/6373 paths; both generated database bytes and
+  metadata again match maintained Make makedb on this same assembled native
+  corpus. Independent whole-world Make payload parity is still unproven.
+  Native EFI help has one source-owned install contribution without losing
+  complete standalone Lua/simple installs. Boot-enabled world aggregation is
+  currently AMD64 only; the parent rejects other ABIs explicitly. Sixteen raw
+  boot binary/debug differences remain against a fresh matching-mode original
+  Make reference; see AMD64-BOOT-PARENT-CONSTRUCTION.md. This combined build
+  does not close those differences or runtime/firmware/package acceptance.
+
 The initial r1/r2 captures failed on stale LLVM Support header/source/assembly
 ownership. They remain failed; fresh runs after the correction supply acceptance.
 Existing original control tools are bound to retained earlier output digests;
@@ -81,7 +97,7 @@ roots and product groups. The manual and completion plan document their limits.
 No C dispatcher/schema, signing/staging/publication backend change is needed in
 this checkpoint. Normal production/default system construction stays Make.
 
-Next finish rescue/sys/stand and installed test roots and incorporate them into
+Next finish rescue, stand product/option/ABI gaps and installed test roots and incorporate them into
 one complete world/kernel/module build. Reconcile source inventory and complete
 Make installation/debug/metadata, directory and pkgbase behavior. Refresh current
 kernel/module evidence after source changes, qualify bootstrap/toolchain and

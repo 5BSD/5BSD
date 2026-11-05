@@ -87,13 +87,19 @@ All evidence is under `/usr/obj/usr/src/`.
   Four tests pass, including the simple-loader artifact check. Standalone
   manifests independently retain help and their images. This before/after
   evidence does not establish independent Make binary parity. The parent is
-  not yet connected to the current world contribution group.
+  connected to the world contribution group under BOOT. The combined AMD64
+  construction passes; other boot-enabled world ABIs remain unsupported by
+  this parent rather than silently receiving AMD64 outputs.
 - The earlier full Make reference used nonreproducible mode while native mode
   was reproducible. A fresh matching-mode reference uses REPRODUCIBLE_BUILD and
   BUILD_UTC=1546329600 from the explicitly selected security policy. Its result
-  must be reviewed before closing binary differences. The r4 attempt selected
+  passed: `bazel-stand-parent-make-r5-20261105` and current-source-bound
+  `bazel-stand-parent-review-r8-20261105/review.json` establish the same 127 paths,
+  24 directory claims, 107 exact payloads and four checked links, without repeated
+  native file claims. All sixteen raw binary/debug differences remain; matching
+  reproducibility mode alone does not resolve them. The r4 attempt selected
   the archive epoch instead of the policy build epoch and was deliberately
-  terminated (exit 143); it is not accepted evidence. The corrected run is r5.
+  terminated (exit 143); it is not accepted evidence.
 - `bazel-sys-world-make-r1-20261105`: independent normal sys all/install/
   installconfig with no module-world override; source snapshot has 37098 bindings.
   Component METALOG is empty. `bazel-sys-world-review-r1-20261105/review.json`
@@ -115,7 +121,7 @@ change is needed. No boot execution, secure-boot/key-policy qualification,
 publication, host installation, upgrade or reboot is claimed.
 
 Next resolve the sixteen binary differences, complete
-stand product/option/ABI coverage and join stand to world; finish rescue and
+stand product/option/ABI coverage; finish rescue and
 installed tests. Then complete combined current world/kernel/modules,
 installation/debug/global directory/pkgbase parity, reproducible bootstrap,
 hardware/publication, VM/runtime and CPU/memory/disk/cache/sandbox gates.

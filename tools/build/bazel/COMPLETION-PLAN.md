@@ -11,7 +11,11 @@ match exactly; sixteen binary/debug differences remain explicitly unresolved.
 The repeated loader.help.efi claim now has one source-owned installation manifest;
 standalone Lua/simple installs stay complete. All 127 records/payloads and 24
 directory claims stay identical, no repeated file claims remain, and four tests
-pass. Stand is not yet joined to world. Do not call this full binary or boot acceptance.
+pass. The selected AMD64 stand parent now joins the world contribution graph
+under BOOT; the combined construction and two tests pass. The combined
+review verifies 1295 archives, 32454 unique file/link paths without collisions,
+and both manual indexes against Make on the same assembled native corpus. See
+WORLD-CONTRIBUTION-FINALIZATION.md; independent whole-world parity remains open. Do not call this full binary or boot acceptance.
 See AMD64-BOOT-PARENT-CONSTRUCTION.md. Normal sys world traversal independently
 has no payload without MODULES_WITH_WORLD; its explicit empty native contribution
 is connected without creating a disruptive sys source package. The combined
