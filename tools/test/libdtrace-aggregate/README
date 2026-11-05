@@ -1,0 +1,25 @@
+Aggregation VM identity regression
+=================================
+Run unprivileged on a matching 5BSD development host:
+
+  sh tools/test/libdtrace-aggregate/run.sh [SOURCE_ROOT] [OUTPUT_DIRECTORY]
+
+The default source is this checkout and output is under /usr/obj. The runner
+uses cddl/lib/libdtrace's maintained CFLAGS, compiles the actual dt_aggregate.c
+with mocked kernel snapshot/metadata I/O, and links installed libdtrace and
+libproc for supporting functions. This requires matching headers/library ABI,
+a compiler, and make. It does not use /dev/dtrace, load modules, or start VMs.
+Assertions are explicitly enabled even if the library flags include NDEBUG.
+
+Coverage: same-key records from different VM IDs remain separate; repeated
+records from one VM merge; host VMID0 retains existing behavior; colliding
+hashes compare identity; joined walks preserve VM identity, variable layout,
+descriptor record payload, missing columns, duplicate variable remapping and
+globally absent variables. Each joined-walk allocation is failed in turn;
+metadata failures in snapshot and joined paths must propagate without freeing
+borrowed descriptors or leaking tracked allocations.
+
+Passing the baseline Gen8 checkout as SOURCE_ROOT reproduces the original
+failure (one merged entry, count18, rather than separate counts12 and6).
+This tests VMID separation, not VMID reuse/epoch lifecycle isolation. It does
+not substitute for a host HyperTrace/OTLP run with a rebuilt matching system.

@@ -1,0 +1,101 @@
+#!/bin/sh
+# 5BSD real-hardware host test kit.
+#
+#   hosttest.sh [-n] [-o RESULTS_DIR] PHASE ...
+#
+# Phases (independent, any order; each has its own preflight and results):
+#   hwstat      AMD RAPL/cpuctl, sensors, per-core, exec energy, OTLP, coverage
+#   hypertrace  HyperTrace on bhyve: dtrace -E, delivery, multi-program,
+#               isolation, drain, fresh sessions, -x otel per-guest resources
+#   boot-smp    matched four-vCPU boot comparison, nesting off/on
+#   nested      nested virtualization (AMD SVM; Intel VMX when enabled):
+#               L2 marker, 2-vCPU checksum, L2 network, repeats, L1
+#               checkpoint/suspend/restore with L2 running, HyperTrace in L1
+#   snapshot    checkpoint, suspend/restore, HyperTrace fresh session across a
+#               suspend with an active session, localhost migration
+#               (plaintext, under memory dirtying, TLS), vsock relay
+#   saverestore save/restore in depth: memory+disk integrity, two restores of
+#               one checkpoint, 3 cycles, running checkpoint, 2 and 4 vCPUs,
+#               guest clock, ping+TCP, refused restores, CPUID per-core leaves
+#   devices-sr  bhyve checkpoint/suspend/restore of every emulated device with
+#               save/restore: storage, network, serial, USB, display, sound,
+#               input, 9p/virtio-fs, balloon/pmem/mem, watchdog, RTC, crypto,
+#               IOMMU, a refused passthru checkpoint, UEFI boot + migration
+#   devices     audio, camera, Bluetooth, ure0, OTel services, podman/PF
+#   all         hwstat hypertrace snapshot saverestore devices-sr devices nested
+#   status      print the preflight status of every phase (no changes)
+#   selftest    unprivileged self-test of the kit logic (stubs, no VMs)
+#
+# -n  dry run: preflights and planning only, no VMs, no services; may run
+#     unprivileged.
+# Results: RESULTS_DIR (default /usr/obj/5BSD-otel-validation/hosttest-results/
+#          run-<UTC timestamp>)/<phase>/{phase.log,checks.tsv,RESULT,...}
+#          and RESULTS_DIR/SUMMARY; RUNINFO has the host capability report.
+# Nothing here edits rc.conf, loader.conf, otel.conf or pf rules, loads or
+# unloads kernel modules, or installs packages. Temporary network interfaces,
+# VMs and services are removed when a phase ends (also on ^C).
+set -u
+HT_KIT=$(cd "$(dirname "$0")" && pwd -P)
+export HT_KIT
+HT_DRYRUN=no
+out=""
+usage() { sed -n '2,35p' "$0"; exit 2; }
+while getopts no: opt; do
+	case $opt in
+	n) HT_DRYRUN=yes ;;
+	o) out=$OPTARG ;;
+	*) usage ;;
+	esac
+done
+shift $((OPTIND - 1))
+[ $# -gt 0 ] || usage
+# Unprivileged self-test of the library and parsing logic (no VMs).
+[ "$1" = selftest ] && exec sh "$HT_KIT/lib/selftest.sh"
+export HT_DRYRUN
+
+phases=""
+for p in "$@"; do
+	case $p in
+	all) phases="$phases hwstat hypertrace snapshot saverestore devices-sr devices nested" ;;
+	status) HT_DRYRUN=yes; phases="$phases hwstat hypertrace nested snapshot saverestore devices-sr devices" ;;
+	boot-smp|hwstat|hypertrace|nested|snapshot|saverestore|devices-sr|devices) phases="$phases $p" ;;
+	*) echo "unknown phase: $p" >&2; exit 2 ;;
+	esac
+done
+
+HT_RESULTS_ROOT=${HT_RESULTS_ROOT:-/usr/obj/5BSD-otel-validation/hosttest-results}
+HT_RUN=${out:-$HT_RESULTS_ROOT/run-$(date -u +%Y%m%dT%H%M%SZ)$([ "$HT_DRYRUN" = yes ] && echo -dry)}
+case "$HT_RUN" in /usr/obj/*) ;; *) echo "results must be under /usr/obj" >&2; exit 2 ;; esac
+mkdir -p "$HT_RUN" || exit 1
+export HT_RUN HT_RESULTS_ROOT
+{
+	echo "hosttest run $(date -u +%Y-%m-%dT%H:%M:%SZ) uid=$(id -u) dryrun=$HT_DRYRUN phases:$phases"
+	echo "kernel: $(sysctl -n kern.version | head -1)"
+	echo "generation: $(pkg query -g '%v' '5BSD-kernel-*' 2>/dev/null | head -1)"
+	echo "kit: $HT_KIT ($(cd "$HT_KIT" && find . -type f \( -name '*.sh' -o -name '*.c' \) | sort | xargs cat | sha256 -q))"
+	( . "$HT_KIT/lib/common.sh"; host_cap_report; trap - EXIT )
+	t=""
+	for p in $phases; do t="$t $p=$( . "$HT_KIT/lib/common.sh"; phase_expect "$p" | cut -d' ' -f1; trap - EXIT)"; done
+	echo "expected minutes (idle host):$t"
+} > "$HT_RUN/RUNINFO"
+: > "$HT_RUN/SUMMARY"
+cat "$HT_RUN/RUNINFO"
+
+overall=0
+for p in $phases; do
+	t0=$(date +%s)
+	( . "$HT_KIT/lib/common.sh"; . "$HT_KIT/phases/$p.sh" )
+	rc=$?
+	t1=$(date +%s)
+	grep -q "^$p " "$HT_RUN/SUMMARY" || echo "$p ERROR exit=$rc (phase aborted; see $p/phase.log)" >> "$HT_RUN/SUMMARY"
+	sed -i '' "s|^\($p [A-Z]*.*\)$|\1 seconds=$((t1 - t0))|" "$HT_RUN/SUMMARY"
+	[ $rc -eq 0 ] || overall=1
+done
+echo
+echo "=== SUMMARY ($HT_RUN/SUMMARY)"
+cat "$HT_RUN/SUMMARY"
+echo "Failed or refused checks:"
+for f in "$HT_RUN"/*/checks.tsv; do
+	awk -F'\t' -v ph="$(basename "$(dirname "$f")")" '$2 == "FAIL" || $2 ~ /REFUSE/ {print "  " ph ": " $1 " - " $3}' "$f"
+done
+exit $overall

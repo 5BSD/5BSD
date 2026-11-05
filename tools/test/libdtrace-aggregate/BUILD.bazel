@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["aggregate_vm_test.c"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+alias(name = "aggregate_vm_test", actual = "//cddl/lib/libdtrace:aggregate_vm_test", visibility = ["//visibility:public"])

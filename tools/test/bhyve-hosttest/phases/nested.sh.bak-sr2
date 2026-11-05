@@ -1,0 +1,93 @@
+# Phase 3: AMD nested virtualization (5BSD nested SVM, commit e4cf1ad7ba7).
+# Host gate: loader tunable hw.vmm.svm.nested (read-only after vmm loads);
+# 1 by default since fix/devd-nested-ntpd, so no reboot is needed.
+# Guest gate: bhyve -o x86.nested_svm=true.
+# L1 = 5BSD guest with SVM exposed (loads its own vmm.ko), L2 = the same
+# image booted by bhyve inside L1, which prints a marker and powers off.
+# Also: HyperTrace probes from the L1 guest while it runs L2, a negative
+# control (no SVM without the per-guest gate) and the root-only nested ATF
+# cases if the waspnest tests package is installed.
+
+phase_begin nested
+need_root
+need_generation
+need_vmm
+need_image
+need_mem_mb 6144
+need_disk_mb 12288
+[ "$(sysctl -n hw.vmm.svm.nested 2>/dev/null)" = 1 ] ||
+    refuse "hw.vmm.svm.nested is $(sysctl -n hw.vmm.svm.nested 2>/dev/null || echo unset); it defaults to 1 on generations with the default-on host policy, so this generation predates it or loader.conf sets it to 0 (remove that line). One-shot for an older generation: 'nextboot -e hw.vmm.svm.nested=1 && shutdown -r now', or at the loader prompt 'set hw.vmm.svm.nested=1' then 'boot'; rerun this phase after that boot"
+grep -q 'SVM:.*DAssist' /var/run/dmesg.boot || refuse "host SVM lacks DecodeAssists (required for nested SVM)"
+dry && dry_end
+phase_workdir
+O=$HT_OUT
+grep -E 'SVM:|AMD Features2' /var/run/dmesg.boot > "$O/host-svm.txt"
+sysctl hw.vmm.svm > "$O/host-hw.vmm.svm.txt" 2>&1
+
+# 0. Root-only nested ATF cases (installed waspnest tests only; no VMs may run).
+R=/usr/tests/sys/vmm/run-svm-nested-atf.sh
+if [ -x "$R" ]; then
+	if [ -n "$(ls /dev/vmm 2>/dev/null)" ]; then
+		check atf-svm-nested SKIP "VMs are running ($(ls /dev/vmm | tr '\n' ' ')); the runner needs none"
+	else
+		wd=$HT_WORK/atf; mkdir -m 700 "$wd"
+		WORKDIR=$wd MODULE=/boot/kernel/vmm.ko KERNEL=/boot/kernel/kernel \
+		    KYUAFILE=/usr/tests/sys/vmm/Kyuafile timeout 1800 "$R" > "$O/atf-svm-nested.log" 2>&1
+		rc=$?
+		[ $rc -eq 0 ] && check atf-svm-nested PASS "$(tail -1 "$O/atf-svm-nested.log")" ||
+		    check atf-svm-nested FAIL "rc=$rc $(tail -1 "$O/atf-svm-nested.log")"
+	fi
+else
+	check atf-svm-nested SKIP "5BSD-waspnest-tests not installed (/usr/tests/sys/vmm); installing it is your decision"
+fi
+
+# 1. Negative control: without x86.nested_svm the guest must not see SVM.
+vm=ht-nonest
+vm_boot $vm "$(vm_disk $vm)" 1G 1 "hosttest.role=l1 hosttest.hostname=$vm" "" &&
+    vm_wait $vm HOSTTEST-GUEST-READY ${HT_BOOT_TIMEOUT:-600} || { check nonest-boot FAIL "see $vm.console"; }
+vm_cmd $vm 'grep -c "SVM" /var/run/dmesg.boot; grep "AMD Features2" /var/run/dmesg.boot; kldstat -q -m vmm && echo VMM-LOADED || echo VMM-ABSENT' 30 > "$O/nonest.txt" 2>&1
+grep -q 'AMD Features2=.*SVM' "$O/nonest.txt" && check svm-hidden-without-gate FAIL "SVM visible without x86.nested_svm" ||
+    check svm-hidden-without-gate PASS "$(grep -o 'VMM-[A-Z]*' "$O/nonest.txt")"
+vm_shutdown $vm
+
+# 2. L1 with nested SVM, second disk = L2 image.
+vm=ht-l1
+l1disk=$(vm_disk $vm); l2disk=$(vm_disk ht-l2)
+ht_extra=""
+if kldstat -q -m hypertrace && [ -e /dev/dtrace/hypertrace ]; then
+	ht_dtraced_up && ht_extra="$HT_VTDTR_ARGS"
+fi
+vm_boot $vm "$l1disk" 4G 4 "hosttest.role=l1 hosttest.hostname=$vm ${ht_extra:+$HT_GUEST_DTRACE_KENV}" \
+    "-o x86.nested_svm=true -s 4,virtio-blk,$l2disk $ht_extra" ||
+    { check l1-boot FAIL "bhyve refused (see $vm.bhyve.log: 'Nested SVM requested but unavailable'?)"; phase_end; exit 1; }
+if vm_wait $vm HOSTTEST-GUEST-READY ${HT_BOOT_TIMEOUT:-600}; then check l1-boot PASS; else
+	check l1-boot FAIL "see $vm.console"; phase_end; exit 1; fi
+vm_cmd $vm 'grep "AMD Features2" /var/run/dmesg.boot; grep -E "^SVM|SVM:" /var/run/dmesg.boot; kldstat | grep -E "vmm|nmdm"; ls -d /dev/vmmctl; dmesg | grep -i -E "vmm|svm" | tail -5' 30 > "$O/l1-svm.txt" 2>&1
+grep -q 'AMD Features2=.*SVM' "$O/l1-svm.txt" && check l1-sees-svm PASS || check l1-sees-svm FAIL "no SVM in L1 CPUID"
+grep -q 'vmm.ko' "$O/l1-svm.txt" && grep -q '^/dev/vmmctl' "$O/l1-svm.txt" && check l1-vmm-loaded PASS ||
+    check l1-vmm-loaded FAIL "$(grep -i -E 'undefined|vmm|svm' "$O/l1-svm.txt" | tail -2 | tr '\n' ' ')"
+
+# 3. L2 boot inside L1 (with HyperTrace probes on L1's bhyve when available).
+marker=HT$(date +%s)
+if [ -n "$ht_extra" ] && ht_wait_forwarder $vm 60; then
+	ht_session l1trace 600 10 "$vm:/root/hosttest/l2-boot.sh $marker" -- \
+	    -n "$vm:syscall::ioctl:entry /execname == \"bhyve\"/ { @[\"l1-bhyve-ioctl\"] = count(); }" \
+	    -n "$vm:proc:::exec-success /execname == \"bhyve\" || execname == \"bhyveload\"/ { @x[execname] = count(); }"
+	cp "$O/l1trace.$vm.guest" "$O/l2.txt"
+	grep -E -q 'l1-bhyve-ioctl[[:space:]]+[1-9]' "$O/l1trace.out" &&
+	    check hypertrace-probes-from-l1 PASS "$(grep l1-bhyve-ioctl "$O/l1trace.out" | tr -s ' ')" ||
+	    check hypertrace-probes-from-l1 FAIL "no L1 bhyve ioctl events $(ht_err l1trace)"
+else
+	[ -n "$ht_extra" ] && check hypertrace-probes-from-l1 FAIL "L1 forwarder did not register" ||
+	    check hypertrace-probes-from-l1 SKIP "hypertrace.ko not loaded on host"
+	vm_cmd $vm "/root/hosttest/l2-boot.sh $marker" 900 > "$O/l2.txt" 2>&1
+fi
+if grep -q "HOSTTEST-L2-MARKER $marker" "$O/l2.txt" && grep -q 'L2-OK' "$O/l2.txt"; then
+	check l2-boots-to-marker PASS "$(grep -o 'L2-OK.*' "$O/l2.txt")"
+else
+	check l2-boots-to-marker FAIL "$(grep -E 'L1-VMM-NOT-LOADED|L2-FAIL' "$O/l2.txt" | head -1) (l2.txt)"
+fi
+grep -q 'model=.*ncpu=1' "$O/l2.txt" && check l2-cpu-reported PASS "$(grep -o 'model=.*' "$O/l2.txt" | head -1)" ||
+    check l2-cpu-reported FAIL
+vm_shutdown $vm
+phase_end

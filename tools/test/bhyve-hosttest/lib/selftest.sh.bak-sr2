@@ -1,0 +1,153 @@
+#!/bin/sh
+# Unprivileged self-test of lib/common.sh logic (results, cleanup ordering,
+# dry-run refusals, ht_session fan-out, workload parsing). Uses stubs for
+# dtrace and the guest console; no VMs, no root.
+set -u
+HT_KIT=$(cd "$(dirname "$0")/.." && pwd -P); export HT_KIT
+T=$(mktemp -d /usr/obj/5BSD-otel-validation/hosttest-results/selftest.XXXXXX)
+HT_RUN=$T/run; mkdir -p "$HT_RUN"; : > "$HT_RUN/SUMMARY"; export HT_RUN
+fail=0
+ok() { echo "ok   $*"; }
+bad() { echo "FAIL $*"; fail=1; }
+
+# 1. results + cleanup LIFO
+(
+	HT_DRYRUN=no; . "$HT_KIT/lib/common.sh"
+	phase_begin t1
+	at_cleanup "echo first >> $T/order"
+	at_cleanup "echo second >> $T/order"
+	check a PASS x; check b SKIP y; check c INFO z
+	phase_end
+) > "$T/t1.out" 2>&1
+[ "$(cat "$T/order" | tr '\n' ' ')" = "second first " ] && ok "cleanup LIFO" || bad "cleanup order: $(cat "$T/order")"
+grep -q '^t1 PASS pass=1 fail=0 skip=1' "$HT_RUN/SUMMARY" && ok "phase_end PASS" || bad "summary: $(cat "$HT_RUN/SUMMARY")"
+(
+	HT_DRYRUN=no; . "$HT_KIT/lib/common.sh"
+	phase_begin t2; check a PASS; check b FAIL boom; phase_end
+) > /dev/null 2>&1 && bad "FAIL phase returned 0" || ok "FAIL phase returns nonzero"
+grep -q '^t2 FAIL pass=1 fail=1' "$HT_RUN/SUMMARY" && ok "phase_end FAIL" || bad "t2 summary"
+
+# 2. refuse: real mode exits 3, dry mode records and continues
+( HT_DRYRUN=no; . "$HT_KIT/lib/common.sh"; phase_begin t3; refuse "nope"; echo NOTREACHED ) > "$T/t3.out" 2>&1
+rc=$?
+[ $rc -eq 3 ] && ! grep -q NOTREACHED "$T/t3.out" && ok "refuse exits 3" || bad "refuse rc=$rc"
+( HT_DRYRUN=yes; . "$HT_KIT/lib/common.sh"; phase_begin t4; need_module nosuchmodule_ht; need_tool nosuchtool_ht; dry_end ) > "$T/t4.out" 2>&1
+grep -q '^t4 WOULD-REFUSE' "$HT_RUN/SUMMARY" && [ "$(grep -c WOULD-REFUSE "$HT_RUN/t4/checks.tsv")" -eq 2 ] &&
+    ok "dry-run collects refusals" || bad "dry-run: $(cat "$HT_RUN/t4/checks.tsv")"
+
+# 3. ht_session fans out guest commands and waits for them, not for other
+#    background jobs; ht_runs parses the workload line.
+mkdir -p "$T/stub"
+cat > "$T/stub/dtrace" <<'EOF2'
+#!/bin/sh
+echo "ARGS $*"; sleep 2; echo "  ht-trace1   htmark1   42"
+EOF2
+chmod +x "$T/stub/dtrace"
+(
+	HT_DRYRUN=no; . "$HT_KIT/lib/common.sh"; PATH=$T/stub:$PATH
+	phase_begin t5; HT_WORK=$T/w; mkdir -p "$HT_WORK"
+	vm_cmd() { sleep 1; echo "WORKLOAD tag=$(echo "$2" | awk '{print $2}') runs=17 on $1"; }
+	sleep 30 & bg=$!
+	s0=$(date +%s)
+	ht_session s 5 1 "ht-trace1:/root/hosttest/workload.sh htmark1 3;ht-trace2:/root/hosttest/workload.sh htmark9 3" -- \
+	    -n 'ht-trace1:syscall:::entry { @[vmname] = count(); }'
+	s1=$(date +%s)
+	kill $bg
+	echo "elapsed $((s1 - s0))"
+	echo "runs1 $(ht_runs "$HT_OUT/s.ht-trace1.guest") runs2 $(ht_runs "$HT_OUT/s.ht-trace2.guest")"
+	cat "$HT_OUT/s.out"
+) > "$T/t5.out" 2>&1
+grep -q 'runs1 17 runs2 17' "$T/t5.out" && ok "ht_session guest fan-out" || bad "fan-out: $(cat "$T/t5.out")"
+e=$(sed -n 's/^elapsed //p' "$T/t5.out")
+[ -n "$e" ] && [ "$e" -lt 10 ] && ok "ht_session does not wait on unrelated jobs ($e s)" || bad "elapsed $e"
+grep -q "ARGS -E -q -n ht-trace1:syscall" "$T/t5.out" && ok "dtrace -E argv" || bad "argv: $(grep ARGS "$T/t5.out")"
+
+# 4. (htcap) forwarder registration is the channel count, not the VM name.
+mkdir -p "$T/stub4"
+cat > "$T/stub4/dtracedctl" <<'EOF2'
+#!/bin/sh
+# Real format: dtracedctl --show-stats=NAME never prints NAME.
+case "$1" in
+--show-stats=ht-two) n=2 ;; --show-stats=ht-one) n=1 ;; *) n=0 ;;
+esac
+printf 'forwarder channels: %s\noutbound deliveries: 0\ninstalled deliveries: 0\nrevoked deliveries: 0\n' "$n"
+EOF2
+chmod +x "$T/stub4/dtracedctl"
+(
+	HT_DRYRUN=no; . "$HT_KIT/lib/common.sh"; PATH=$T/stub4:$PATH
+	phase_begin t6; HT_WORK=$T/w6; mkdir -p "$HT_WORK"
+	ht_wait_forwarder ht-two 2 && echo "two ok" || echo "two FAIL"
+	ht_wait_forwarder ht-one 2 && echo "one WRONG" || echo "one refused"
+	ht_wait_forwarder ht-none 2 && echo "none WRONG" || echo "none refused"
+) > "$T/t6.out" 2>&1
+grep -q 'two ok' "$T/t6.out" && grep -q 'one refused' "$T/t6.out" && grep -q 'none refused' "$T/t6.out" &&
+    ok "ht_wait_forwarder needs rx+wx channels" || bad "forwarder: $(cat "$T/t6.out")"
+
+# 4b. (htdel) delivery evidence is read after the session, per VM, with the
+#     dtraced job failures, and reaches the FAIL detail.
+mkdir -p "$T/stub4b"
+cat > "$T/stub4b/dtracedctl" <<'EOF2'
+#!/bin/sh
+case "$1" in --show-stats=ht-trace1) o=1 i=1 ;; *) o=0 i=0 ;; esac
+printf 'forwarder channels: 2\noutbound deliveries: %s\ninstalled deliveries: %s\nrevoked deliveries: 0\n' "$o" "$i"
+EOF2
+cat > "$T/stub4b/dtrace" <<'EOF2'
+#!/bin/sh
+sleep 1
+EOF2
+chmod +x "$T/stub4b/dtracedctl" "$T/stub4b/dtrace"
+(
+	HT_DRYRUN=no; . "$HT_KIT/lib/common.sh"; PATH=$T/stub4b:$PATH
+	phase_begin t6b; HT_WORK=$T/w6b; mkdir -p "$HT_WORK"
+	HT_VMS=" ht-trace1 ht-trace2"
+	printf 'ERROR: x.cc:1 failed to handle job kind 1 for ht-trace2: Operation timed out\n' > "$HT_OUT/dtraced.log"
+	vm_cmd() { :; }
+	ht_session d 3 0 "" -- -n 'ht-trace1:syscall:::entry { @ = count(); }'
+	ht_err d
+) > "$T/t6b.out" 2>&1
+grep -q 'deliveries out/inst: ht-trace1=1/1 ht-trace2=0/0; dtraced job failures: 1' "$T/t6b.out" &&
+    ok "ht_err reports post-session deliveries and job failures" || bad "delivery: $(cat "$T/t6b.out")"
+
+# 5. (htcap) restore/migration targets are created empty first; suspend verdicts.
+mkdir -p "$T/stub5"
+cat > "$T/stub5/bhyvectl" <<'EOF2'
+#!/bin/sh
+echo "bhyvectl $*" >> "$STUBLOG"
+case "$*" in
+*--suspend=*)
+	f=${*##*--suspend=}; f=${f%% *}
+	[ "$SUSPEND_MODE" = none ] || echo BHYVE-CHECKPOINT-MANIFEST-3 > "$f"
+	kill "$(cat "$VMPIDFILE")"
+	[ "$SUSPEND_MODE" = noreply ] && { echo "nvlist_xfer() failed: Socket is not connected"; echo "errno = 57"; exit 57; }
+	[ "$SUSPEND_MODE" = none ] && exit 1
+	exit 0 ;;
+esac
+exit 0
+EOF2
+chmod +x "$T/stub5/bhyvectl"
+(
+	HT_DRYRUN=no; . "$HT_KIT/lib/common.sh"; PATH=$T/stub5:$PATH
+	export STUBLOG=$T/stub5.log; : > "$STUBLOG"
+	phase_begin t7; HT_WORK=$T/w7; mkdir -p "$HT_WORK"
+	vm_create_empty ht-rst && echo "create rc=0"
+	grep -q -- '--vm=ht-rst --destroy' "$STUBLOG" && grep -q -- '--create --vm=ht-rst' "$STUBLOG" && echo "create order ok"
+	vm_create_empty not-ht 2>/dev/null || echo "name guard ok"
+	for m in ok noreply none; do
+		# bhyve stand-in that exits 5 (BHYVE_EXIT_SUSPEND) on SIGTERM.
+		sh -c 'trap "exit 5" TERM; while :; do sleep 0.1; done' &
+		echo $! > "$HT_WORK/ht-s.pid"; export VMPIDFILE=$HT_WORK/ht-s.pid SUSPEND_MODE=$m
+		rm -f "$HT_WORK/ckp-$m"
+		vm_suspend ht-s "$HT_WORK/ckp-$m" "susp-$m" "$HT_WORK/susp-$m.txt" 10 && echo "restorable $m" || echo "not-restorable $m"
+	done
+) > "$T/t7.out" 2>&1
+grep -q 'create rc=0' "$T/t7.out" && grep -q 'create order ok' "$T/t7.out" && grep -q 'name guard ok' "$T/t7.out" &&
+    ok "vm_create_empty destroys stale then creates" || bad "create: $(cat "$T/t7.out")"
+c=$HT_RUN/t7/checks.tsv
+grep -q '^susp-ok	PASS	bhyve exited suspended (status 5)' "$c" &&
+    grep -q '^susp-noreply	FAIL	suspend worked (checkpoint published, bhyve exit 5) but bhyvectl rc=57' "$c" &&
+    grep -q '^susp-none	FAIL	bhyvectl rc=1 bhyve=5 published=no' "$c" &&
+    grep -q 'restorable ok' "$T/t7.out" && grep -q 'restorable noreply' "$T/t7.out" && grep -q 'not-restorable none' "$T/t7.out" &&
+    ok "vm_suspend verdicts (acknowledged / unanswered / unpublished)" || bad "suspend: $(cat "$c") $(cat "$T/t7.out")"
+
+echo "selftest $([ $fail -eq 0 ] && echo PASS || echo FAIL) ($T)"
+exit $fail

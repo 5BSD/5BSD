@@ -1,0 +1,15 @@
+# hosttest guest loader.conf (bhyve, serial console)
+console="comconsole"
+comconsole_speed="115200"
+autoboot_delay="1"
+# DTrace must be preloaded (5BSD refuses late kldload of dtrace providers).
+dtraceall_load="YES"
+# HyperTrace guest side: transport + virtio-dtrace device driver.
+dttransport_load="YES"
+virtio_dtrace_load="YES"
+# L1 nested-virtualization role: vmm and nmdm for the L2 guest.
+# vmm.ko of 16.snap20261031171249 (refused by lib/common.sh) fails with an undefined
+# dtrace_hypertrace_config_lock; from b2b89d0bcd4 on the loader always loads vmm
+# (DTrace is built into GENERIC; dtraceall_load only adds what is not built in).
+vmm_load="YES"
+nmdm_load="YES"

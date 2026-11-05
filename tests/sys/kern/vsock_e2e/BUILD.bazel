@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+
+bsd_python_test(
+    name = "console_lifetime_test",
+    src = "console-lifetime-bazel.py",
+    data = ["console-lifetime-selftest.sh", "acmd-console.sh"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    tags = ["local", "no-cache"],
+    size = "small",
+)

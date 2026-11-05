@@ -1,0 +1,460 @@
+# hosttest common library (sourced by hosttest.sh and phases/*.sh).
+# Conventions:
+#   check NAME PASS|FAIL|SKIP "detail"   records one result line
+#   need_* functions are preflights; they call refuse() which aborts the
+#   phase with REFUSED (no changes made yet).
+#   at_cleanup "cmd"   registers an undo action, run LIFO on exit/signal.
+
+HT_KIT=${HT_KIT:?}
+HT_RESULTS_ROOT=${HT_RESULTS_ROOT:-/usr/obj/5BSD-otel-validation/hosttest-results}
+HT_IMAGES=${HT_IMAGES:-/usr/obj/5BSD-otel-validation/hosttest-images}
+HT_WORK_ROOT=${HT_WORK_ROOT:-/usr/obj/5BSD-otel-validation/hosttest-work}
+HT_REPO=${HT_REPO:-/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest}
+# The generation whose vmm.ko cannot load (dtrace_hypertrace_config_lock).
+HT_BROKEN_GENERATIONS=${HT_BROKEN_GENERATIONS:-16.snap20261031171249}
+HT_DRYRUN=${HT_DRYRUN:-no}
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+export PATH
+
+ht_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# --- results ---------------------------------------------------------------
+phase_begin()
+{
+	HT_PHASE=$1
+	HT_OUT=$HT_RUN/$HT_PHASE
+	mkdir -p "$HT_OUT"
+	: > "$HT_OUT/checks.tsv"
+	HT_LOG=$HT_OUT/phase.log
+	echo "== phase $HT_PHASE $(ht_ts)" | tee -a "$HT_LOG"
+}
+
+log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$HT_LOG"; }
+
+check()
+{
+	name=$1 verdict=$2; shift 2
+	printf '%s\t%s\t%s\n' "$name" "$verdict" "$*" >> "$HT_OUT/checks.tsv"
+	printf '  %-4s %s %s\n' "$verdict" "$name" "${*:+- $*}" | tee -a "$HT_LOG"
+}
+
+# check_cmd NAME CMD...  (PASS when CMD exits 0; output kept in NAME.log)
+check_cmd()
+{
+	name=$1; shift
+	if "$@" > "$HT_OUT/$name.log" 2>&1; then
+		check "$name" PASS
+	else
+		check "$name" FAIL "exit $? (see $name.log)"
+	fi
+}
+
+phase_end()
+{
+	p=$(grep -c "	PASS	" "$HT_OUT/checks.tsv")
+	f=$(grep -c "	FAIL	" "$HT_OUT/checks.tsv")
+	s=$(grep -c "	SKIP	" "$HT_OUT/checks.tsv")
+	if [ "$f" -gt 0 ]; then v=FAIL; elif [ "$p" -gt 0 ]; then v=PASS; else v=SKIP; fi
+	printf '%s %s pass=%s fail=%s skip=%s\n' "$HT_PHASE" "$v" "$p" "$f" "$s" | tee "$HT_OUT/RESULT"
+	echo "$HT_PHASE $v pass=$p fail=$f skip=$s" >> "$HT_RUN/SUMMARY"
+	[ "$v" != FAIL ]
+}
+
+refuse()
+{
+	if [ "$HT_DRYRUN" = yes ]; then
+		echo "WOULD REFUSE: $*" | tee -a "$HT_LOG" >&2
+		printf 'preflight\tWOULD-REFUSE\t%s\n' "$*" >> "$HT_OUT/checks.tsv"
+		HT_WOULD_REFUSE=yes
+		return 0
+	fi
+	echo "REFUSED: $*" | tee -a "$HT_LOG" >&2
+	printf 'preflight\tREFUSED\t%s\n' "$*" >> "$HT_OUT/checks.tsv"
+	echo "$HT_PHASE REFUSED $*" | tee "$HT_OUT/RESULT" >> "$HT_RUN/SUMMARY"
+	exit 3
+}
+
+# --- cleanup ---------------------------------------------------------------
+HT_CLEANUP=""
+at_cleanup() { HT_CLEANUP="$1
+$HT_CLEANUP"; }
+run_cleanup()
+{
+	[ -n "$HT_CLEANUP" ] || return 0
+	echo "$HT_CLEANUP" | while IFS= read -r c; do
+		[ -n "$c" ] || continue
+		echo "cleanup: $c" >> "${HT_LOG:-/dev/null}"
+		eval "$c" >> "${HT_LOG:-/dev/null}" 2>&1 || true
+	done
+	HT_CLEANUP=""
+}
+trap 'run_cleanup' EXIT
+trap 'run_cleanup; exit 130' INT TERM HUP
+
+# --- preflight -------------------------------------------------------------
+need_root()
+{
+	[ "$(id -u)" -eq 0 ] || refuse "must run as root (sudo/su -m root)"
+}
+
+host_generation() { pkg query -g '%v' '5BSD-kernel-*' 2>/dev/null | head -1; }
+
+need_generation()
+{
+	gen=$(host_generation)
+	[ -n "$gen" ] || refuse "cannot determine installed generation (pkg query -g '%v' '5BSD-kernel-*')"
+	HT_GENERATION=$gen
+	for b in $HT_BROKEN_GENERATIONS; do
+		[ "$gen" != "$b" ] || [ "${HT_ALLOW_GENERATION:-}" = "$gen" ] ||
+		    refuse "installed generation $gen is the one whose vmm.ko does not load; upgrade first (or HT_ALLOW_GENERATION=$gen for non-vmm phases)"
+	done
+	# Running kernel must be the installed generation's kernel.
+	ksha=$(sha256 -q /boot/kernel/kernel 2>/dev/null)
+	booted=$(sysctl -n kern.bootfile 2>/dev/null)
+	[ "$booted" = /boot/kernel/kernel ] || refuse "booted kernel is $booted, not /boot/kernel/kernel"
+	pub=$(sed -n 's/.*"kernel_sha256"[[:space:]]*:[[:space:]]*"\([0-9a-f]*\)".*/\1/p' "$HT_REPO/publication.json" 2>/dev/null | head -1)
+	pubgen=$(basename "$(readlink "$HT_REPO" 2>/dev/null || echo "$HT_REPO")"); pubgen=${pubgen%.complete}
+	echo "generation=$gen kernel_sha256=$ksha published=$pubgen published_kernel_sha256=$pub kern.version=$(sysctl -n kern.version | head -1)" > "$HT_OUT/identity.txt"
+	if [ "$pubgen" = "$gen" ] && [ -n "$pub" ] && [ "$pub" != "$ksha" ]; then
+		refuse "installed /boot/kernel/kernel ($ksha) differs from the published $gen kernel ($pub)"
+	fi
+	# Running kernel was booted from the file on disk: compare kern.ident and uname build.
+	[ "$(sysctl -n kern.ident)" = GENERIC-NODEBUG ] || log "note: kern.ident is $(sysctl -n kern.ident), expected GENERIC-NODEBUG"
+	pkg query -g '%n' '5BSD-hardware-abi-*' 2>/dev/null | grep -q "$ksha" ||
+	    log "note: no 5BSD-hardware-abi package names kernel $ksha (hardware packages may be stale)"
+}
+
+need_module() # need_module MODNAME [devnode]
+{
+	kldstat -q -m "$1" || kldstat -q -n "$1.ko" || {
+	    refuse "kernel module $1 is not loaded (this kit never loads modules; the upgraded generation loads it by default, or add ${1}_load=\"YES\" to loader.conf yourself)"
+		return 0; }
+	[ -z "${2:-}" ] || [ -e "$2" ] || refuse "$2 is missing although $1 is loaded"
+}
+
+need_vmm()
+{
+	need_module vmm /dev/vmmctl
+	kldstat -q -m vmm || return 0
+	sysctl -n hw.vmm.svm.features >/dev/null 2>&1 || sysctl -n hw.vmm >/dev/null 2>&1 ||
+	    refuse "hw.vmm sysctl tree missing"
+	[ "$(sysctl -n hw.vmm.vmx.initialized 2>/dev/null || echo 0)" = 1 ] ||
+	    [ -n "$(sysctl -n hw.vmm.svm.features 2>/dev/null)" ] || refuse "vmm loaded but SVM not initialized"
+}
+
+need_cpuctl() { need_module cpuctl /dev/cpuctl0; }
+
+need_mem_mb() # need_mem_mb MB
+{
+	pg=$(sysctl -n hw.pagesize)
+	free=$(( ( $(sysctl -n vm.stats.vm.v_free_count) + $(sysctl -n vm.stats.vm.v_inactive_count) ) * pg / 1048576 ))
+	# ZFS ARC can shrink; count half of it as available.
+	arc=$(( $(sysctl -n kstat.zfs.misc.arcstats.size 2>/dev/null || echo 0) / 2097152 ))
+	avail=$((free + arc))
+	[ "$avail" -ge "$1" ] || refuse "need ${1} MB free memory for guests, about ${avail} MB available (free+inactive+ARC/2)"
+	log "memory: need ${1} MB, about ${avail} MB available"
+}
+
+need_disk_mb() # need_disk_mb MB
+{
+	mkdir -p "$HT_WORK_ROOT"
+	avail=$(df -m "$HT_WORK_ROOT" | awk 'NR == 2 {print $4}')
+	[ "$avail" -ge "$1" ] || refuse "need ${1} MB free under $HT_WORK_ROOT, have ${avail} MB"
+}
+
+need_image() # sets HT_IMAGE, refuses if image generation != host generation
+{
+	m=$HT_IMAGES/current/guest.manifest
+	[ -f "$m" ] || refuse "no guest image; run images/build-guest.sh as an ordinary user first"
+	HT_IMAGE=$(sed -n 's/^image=//p' "$m")
+	igen=$(sed -n 's/^generation=//p' "$m")
+	[ -f "$HT_IMAGE" ] || refuse "guest image $HT_IMAGE missing"
+	if [ "$igen" != "${HT_GENERATION:-$(host_generation)}" ] && [ "${HT_ALLOW_IMAGE_MISMATCH:-no}" != yes ]; then
+		refuse "guest image generation $igen != host generation ${HT_GENERATION:-?}; rebuild with images/build-guest.sh (HyperTrace needs matched builds; HT_ALLOW_IMAGE_MISMATCH=yes overrides)"
+	fi
+	cp "$m" "$HT_OUT/guest.manifest"
+}
+
+need_tool() { command -v "$1" >/dev/null 2>&1 || refuse "required tool $1 not found"; }
+
+# --- bhyve helpers -----------------------------------------------------------
+# All VM names start with "ht-" and every VM is destroyed on cleanup.
+HT_VMS=""
+
+free_port()
+{
+	p=${1:-4700}
+	while sockstat -4 -l 2>/dev/null | grep -q "127.0.0.1:$p[[:space:]]"; do p=$((p + 1)); done
+	echo "$p"
+}
+
+# vm_disk NAME -> path of a private copy of the guest image (sparse/cloned).
+vm_disk()
+{
+	d=$HT_WORK/$1.img
+	cp "$HT_IMAGE" "$d"
+	echo "$d"
+}
+
+# vm_boot NAME DISK MEM CPUS "KENV..." "EXTRA bhyve args..."
+#   Starts bhyve in the background with com1 on a loopback TCP port and a
+#   console reader. Sets VM_<NAME>_* via files under $HT_WORK/NAME.*
+vm_boot()
+{
+	name=$1 disk=$2 mem=$3 cpus=$4 kenv=$5 extra=$6
+	case "$name" in ht-*) ;; *) echo "VM names must start with ht-" >&2; return 2 ;; esac
+	port=$(free_port 4700)
+	echo "$port" > "$HT_WORK/$name.port"
+	: > "$HT_WORK/$name.console"; : > "$HT_WORK/$name.input"
+	envargs=""
+	for kv in $kenv; do envargs="$envargs -e $kv"; done
+	bhyvectl --vm="$name" --destroy >/dev/null 2>&1 || true
+	HT_VMS="$HT_VMS $name"
+	at_cleanup "vm_destroy $name"
+	# shellcheck disable=SC2086
+	bhyveload -c /dev/null -m "$mem" -d "$disk" $envargs "$name" >> "$HT_WORK/$name.bhyve.log" 2>&1 ||
+	    { log "bhyveload $name failed"; return 1; }
+	# shellcheck disable=SC2086
+	bhyve -c "$cpus" -m "$mem" -H -w -D \
+	    -s 0,hostbridge -s 3,virtio-blk,"$disk" -s 6,virtio-rnd $extra \
+	    -s 31,lpc -l "com1,tcp=127.0.0.1:$port" "$name" \
+	    >> "$HT_WORK/$name.bhyve.log" 2>&1 &
+	echo $! > "$HT_WORK/$name.pid"
+	vm_attach_console "$name"
+}
+
+# Start (or restart after a restore) the console reader for NAME.
+vm_attach_console()
+{
+	name=$1 port=$(cat "$HT_WORK/$1.port")
+	i=0
+	while ! sockstat -4 -l | grep -q "127.0.0.1:${port}[[:space:]]"; do
+		kill -0 "$(cat "$HT_WORK/$name.pid")" 2>/dev/null ||
+		    { log "bhyve $name exited:"; tail -20 "$HT_WORK/$name.bhyve.log" | tee -a "$HT_LOG"; return 1; }
+		[ $i -lt 60 ] || { log "console of $name never listened"; return 1; }
+		sleep 0.5; i=$((i + 1))
+	done
+	(tail -f "$HT_WORK/$name.input" | nc 127.0.0.1 "$port" >> "$HT_WORK/$name.console" 2>&1) &
+	echo $! > "$HT_WORK/$name.conpid"
+}
+
+vm_wait() # vm_wait NAME REGEX TIMEOUT
+{
+	i=0
+	while [ $i -lt $(( $3 * 2 )) ]; do
+		if tr -d '\r' < "$HT_WORK/$1.console" | grep -E -q "$2"; then
+			# The ready marker comes from rc.local, before getty autologs
+			# root in; wait for the shell prompt so commands are not lost.
+			case "$2" in *READY*)
+				j=0
+				while [ $j -lt 60 ] && ! grep -q 'root@' "$HT_WORK/$1.console"; do
+					sleep 0.5; j=$((j + 1))
+				done
+				sleep 1 ;;
+			esac
+			return 0
+		fi
+		grep -E -q 'panic:|Fatal trap|mountroot>' "$HT_WORK/$1.console" && { log "$1: guest panic/mountroot"; return 2; }
+		sleep 0.5; i=$((i + 1))
+	done
+	return 1
+}
+
+# vm_cmd NAME "command" [timeout]  -> stdout of command; exit status of command
+vm_cmd()
+{
+	CONSOLE_LOG=$HT_WORK/$1.console CONSOLE_INPUT=$HT_WORK/$1.input \
+	    sh "$HT_KIT/lib/acmd-console.sh" "$2" "${3:-60}"
+}
+
+vm_destroy()
+{
+	name=$1
+	[ -f "$HT_WORK/$name.conpid" ] && { pkill -P "$(cat "$HT_WORK/$name.conpid")" 2>/dev/null; kill "$(cat "$HT_WORK/$name.conpid")" 2>/dev/null; }
+	[ -f "$HT_WORK/$name.pid" ] && kill "$(cat "$HT_WORK/$name.pid")" 2>/dev/null
+	sleep 1
+	bhyvectl --vm="$name" --destroy >/dev/null 2>&1 || true
+	rm -f "$HT_WORK/$name.pid" "$HT_WORK/$name.conpid"
+}
+
+# Create an empty kernel VM for `bhyve -r` (restore) or `bhyve -R`
+# (migration destination). The guests boot through bhyveload, not a boot ROM,
+# so bhyve(8) (like upstream FreeBSD) refuses to create the VM itself and exits
+# "no bootrom was configured". Memory comes from the checkpoint or stream, so
+# no loader runs; bhyvectl --create is the documented equivalent.
+vm_create_empty() # NAME
+{
+	case "$1" in ht-*) ;; *) echo "VM names must start with ht-" >&2; return 2 ;; esac
+	bhyvectl --vm="$1" --destroy >/dev/null 2>&1 || true
+	case " $HT_VMS " in *" $1 "*) ;; *) HT_VMS="$HT_VMS $1"; at_cleanup "vm_destroy $1" ;; esac
+	bhyvectl --create --vm="$1" >> "$HT_WORK/$1.bhyve.log" 2>&1 ||
+	    { log "bhyvectl --create --vm=$1 failed (see $1.bhyve.log)"; return 1; }
+}
+
+# vm_suspend NAME CKP CHECKNAME OUTFILE MAXWAIT
+#   bhyvectl --suspend, then waits for bhyve to exit and records CHECKNAME.
+#   PASS needs all three: bhyvectl exit 0, bhyve exit status 5
+#   (BHYVE_EXIT_SUSPEND) and a published checkpoint manifest. A bhyve that
+#   publishes and exits but closes the control socket unanswered (bhyvectl
+#   "nvlist_xfer() failed: Socket is not connected", before
+#   fix/hypertrace-capplane) is reported as such, so the result says whether
+#   the suspend itself worked. Returns 0 when the checkpoint is restorable.
+vm_suspend()
+{
+	vs_vm=$1 vs_ckp=$2 vs_name=$3 vs_out=$4 vs_max=${5:-120}
+	vs_pid=$(cat "$HT_WORK/$vs_vm.pid")
+	bhyvectl --vm="$vs_vm" --suspend="$vs_ckp" > "$vs_out" 2>&1; vs_rc=$?
+	vs_i=0
+	while kill -0 "$vs_pid" 2>/dev/null && [ $vs_i -lt "$vs_max" ]; do sleep 1; vs_i=$((vs_i + 1)); done
+	vs_st=running
+	if ! kill -0 "$vs_pid" 2>/dev/null; then wait "$vs_pid" 2>/dev/null; vs_st=$?; fi
+	echo "bhyvectl rc=$vs_rc bhyve exit=$vs_st after ${vs_i}s manifest=$(sed -n 1p "$vs_ckp" 2>/dev/null)" >> "$vs_out"
+	vs_pub=no
+	[ "$(sed -n 1p "$vs_ckp" 2>/dev/null)" = BHYVE-CHECKPOINT-MANIFEST-3 ] && vs_pub=yes
+	if [ $vs_rc -eq 0 ] && [ "$vs_st" = 5 ] && [ $vs_pub = yes ]; then
+		check "$vs_name" PASS "bhyve exited suspended (status 5) after ${vs_i}s; checkpoint published"
+	elif [ "$vs_st" = 5 ] && [ $vs_pub = yes ]; then
+		check "$vs_name" FAIL "suspend worked (checkpoint published, bhyve exit 5) but bhyvectl rc=$vs_rc: $(head -1 "$vs_out") - bhyve exited without answering"
+	else
+		check "$vs_name" FAIL "bhyvectl rc=$vs_rc bhyve=$vs_st published=$vs_pub: $(head -2 "$vs_out" | tr '\n' ' ')"
+	fi
+	[ $vs_pub = yes ] && [ "$vs_st" != running ]
+}
+
+# Guest power-off (clean) then destroy.
+vm_shutdown()
+{
+	vm_cmd "$1" "shutdown -p now" 10 >/dev/null 2>&1 || true
+	i=0; while [ $i -lt 60 ] && kill -0 "$(cat "$HT_WORK/$1.pid" 2>/dev/null)" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+	vm_destroy "$1"
+}
+
+phase_workdir()
+{
+	HT_WORK=$HT_WORK_ROOT/$(basename "$HT_RUN")-$HT_PHASE
+	mkdir -p "$HT_WORK"
+	at_cleanup "cp -p $HT_WORK/*.console $HT_WORK/*.log $HT_OUT/ 2>/dev/null"
+	at_cleanup "[ \"\${HT_KEEP_WORK:-no}\" = yes ] || rm -f $HT_WORK/*.img $HT_WORK/*.ckp* $HT_WORK/*.kern $HT_WORK/*.meta"
+}
+
+dry() { [ "$HT_DRYRUN" = yes ]; }
+
+# End a dry run after the preflights: report whether the phase would run.
+dry_end()
+{
+	if [ "${HT_WOULD_REFUSE:-no}" = yes ]; then
+		echo "$HT_PHASE WOULD-REFUSE (see $HT_PHASE/checks.tsv)" | tee "$HT_OUT/RESULT" >> "$HT_RUN/SUMMARY"
+	else
+		echo "$HT_PHASE READY (preflight passed)" | tee "$HT_OUT/RESULT" >> "$HT_RUN/SUMMARY"
+	fi
+	exit 0
+}
+
+# --- HyperTrace host side ------------------------------------------------------
+HT_VTDTR_ARGS="-o enable_hypertrace=true -s 7,virtio-dtrace"
+HT_GUEST_DTRACE_KENV="hosttest.dtraced=yes"
+
+need_hypertrace_host()
+{
+	need_module dtrace /dev/dtrace/dtrace
+	need_module hypertrace /dev/dtrace/hypertrace
+	need_tool dtracedctl
+}
+
+# Start a host dtraced overlord unless one is already running; create the
+# spool directories bhyve requires and remove them afterwards if we made them.
+ht_dtraced_up()
+{
+	for d in /var/ddtrace /var/ddtrace/inbound; do
+		if [ ! -d "$d" ]; then
+			mkdir -m 0700 "$d" && at_cleanup "rmdir $d 2>/dev/null"
+		fi
+	done
+	if pgrep -x dtraced >/dev/null; then
+		log "using running dtraced: $(ps -o pid=,args= -p "$(pgrep -x dtraced | head -1)")"
+		ps -o args= -p "$(pgrep -x dtraced | head -1)" | grep -q -- '-m' &&
+		    refuse "running dtraced is a minion (-m); the host needs an overlord"
+		return 0
+	fi
+	dtraced -O -d -D /var/ddtrace > "$HT_OUT/dtraced.log" 2>&1 &
+	echo $! > "$HT_WORK/dtraced.pid"
+	at_cleanup "kill \$(cat $HT_WORK/dtraced.pid) 2>/dev/null; sleep 1; rm -f /var/ddtrace/sub.sock"
+	i=0; while [ ! -S /var/ddtrace/sub.sock ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i + 1)); done
+	[ -S /var/ddtrace/sub.sock ] || { check dtraced-start FAIL "no /var/ddtrace/sub.sock"; return 1; }
+	check dtraced-start PASS "overlord pid $(cat "$HT_WORK/dtraced.pid")"
+}
+
+# Wait until dtraced reports both forwarder channels (rx and wx) for VM NAME.
+# --show-stats=NAME already selects that VM; its output never names it, so
+# the channel count is the evidence (htcap: grepping the name never matched).
+ht_forwarder_channels() # STATSFILE -> count (empty if unparsable)
+{
+	sed -n 's/^forwarder channels: \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | tail -1
+}
+ht_wait_forwarder() # NAME TIMEOUT
+{
+	i=0
+	while [ $i -lt "$2" ]; do
+		if dtracedctl --show-stats="$1" > "$HT_WORK/stats.$1" 2>&1; then
+			n=$(ht_forwarder_channels "$HT_WORK/stats.$1")
+			[ -n "$n" ] && [ "$n" -ge 2 ] && return 0
+		fi
+		sleep 1; i=$((i + 1))
+	done
+	return 1
+}
+
+# ht_session NAME SECONDS DELAY "guest-cmd VM:cmd ..." -- dtrace args
+#   Runs `dtrace -E` for SECONDS (SIGINT at the end), starts the guest
+#   commands DELAY seconds in (after program delivery). Output in NAME.*
+#   --foreground: SIGINT goes to dtrace itself. In timeout(1)'s default
+#   reaper mode a dtrace -E consumer did not end within 40 s of the
+#   PROC_REAP_KILL SIGINT and timeout then waited for every descendant
+#   (htcap VM passes 7/8 hung); a plain SIGINT ends it in ~8 s (pass 10).
+#   -k 60 bounds a session that ignores SIGINT.
+ht_session()
+{
+	sn=$1 secs=$2 delay=$3 gcmds=$4; shift 5
+	timeout --foreground -s INT -k 60 "$secs" dtrace -E -q "$@" > "$HT_OUT/$sn.out" 2> "$HT_OUT/$sn.err" &
+	dpid=$!
+	sleep "$delay"
+	_ifs=$IFS; IFS=';'; set -f; gpids=""
+	for g in $gcmds; do
+		IFS=$_ifs
+		vm=${g%%:*} cmd=${g#*:}
+		[ -n "$vm" ] || continue
+		vm_cmd "$vm" "$cmd" "$secs" > "$HT_OUT/$sn.$vm.guest" 2>&1 &
+		gpids="$gpids $!"
+	done
+	IFS=$_ifs; set +f
+	wait "$dpid"; echo $? > "$HT_OUT/$sn.rc"
+	for gp in $gpids; do wait "$gp"; done
+	# Delivery evidence after the session (htdel: the forwarder check's
+	# stats are taken before any program exists, so "outbound deliveries: 0"
+	# there says nothing about delivery). Per VM, plus dtraced job failures.
+	for vm in $HT_VMS; do
+		dtracedctl --show-stats="$vm" > "$HT_OUT/$sn.stats.$vm" 2>&1
+	done
+	grep -c 'failed to handle job' "$HT_OUT/dtraced.log" 2>/dev/null > "$HT_OUT/$sn.jobfail" || true
+}
+
+# "VM=outbound/installed ..." after session NAME, and the dtraced job
+# failures seen so far (a forwarder that never ACKed an ELF shows here).
+ht_delivery()
+{
+	_d=""
+	for vm in $HT_VMS; do
+		_o=$(sed -n 's/^outbound deliveries: //p' "$HT_OUT/$1.stats.$vm" 2>/dev/null | tail -1)
+		_i=$(sed -n 's/^installed deliveries: //p' "$HT_OUT/$1.stats.$vm" 2>/dev/null | tail -1)
+		_d="$_d $vm=${_o:-?}/${_i:-?}"
+	done
+	printf '[deliveries out/inst:%s; dtraced job failures: %s]' "$_d" "$(cat "$HT_OUT/$1.jobfail" 2>/dev/null)"
+}
+
+# Value of "WORKLOAD tag=T runs=N" printed by a guest command.
+ht_runs() { sed -n 's/.*WORKLOAD tag=[^ ]* runs=\([0-9]*\).*/\1/p' "$1" | tail -1; }
+
+# First line of a session's dtrace stderr plus its exit status, for FAIL
+# details (a session that cannot start must say why in checks.tsv).
+ht_err() { printf '[%s.err rc=%s: %s] %s' "$1" "$(cat "$HT_OUT/$1.rc" 2>/dev/null)" "$(head -1 "$HT_OUT/$1.err" 2>/dev/null)" "$(ht_delivery "$1")"; }

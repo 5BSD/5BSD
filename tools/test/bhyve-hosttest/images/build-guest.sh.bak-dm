@@ -1,0 +1,95 @@
+#!/bin/sh
+# Build the hosttest bhyve guest image from a published pkgbase generation.
+# Unprivileged (pkg INSTALL_AS_USER + METALOG, makefs/mkimg NO_ROOT style).
+# Run as an ordinary user after the upgrade so that the guest matches the
+# host generation (HyperTrace requires matched host/guest builds):
+#
+#   images/build-guest.sh [REPO_DIR]
+#
+# REPO_DIR defaults to /usr/obj/usr/src/repo/FreeBSD:16:amd64/latest.
+# Output: $IMAGES/<generation>/guest.img  (+ guest.manifest)
+#         $IMAGES/current -> <generation>
+# One image serves every role; the role is chosen at boot time with
+# bhyveload -e hosttest.role=l1|l2 (see overlay/rc.local).
+set -eu
+KIT=$(cd "$(dirname "$0")/.." && pwd)
+IMAGES=${IMAGES:-/usr/obj/5BSD-otel-validation/hosttest-images}
+REPO=${1:-/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest}
+SIZE=${SIZE:-4g}
+case "$IMAGES" in /usr/obj/*) ;; *) echo "IMAGES must be under /usr/obj" >&2; exit 2 ;; esac
+[ "$(id -u)" -ne 0 ] || echo "note: this builder does not need root" >&2
+REPO=$(cd "$REPO" && pwd -P)
+gen=$(basename "$REPO"); gen=${gen%.complete}
+case "$gen" in 16.snap*) ;; *) echo "cannot derive generation from $REPO" >&2; exit 2 ;; esac
+root=$IMAGES/root-$gen
+work=$IMAGES/$gen
+mkdir -p "$IMAGES"
+if [ ! -f "$root.generation" ] || [ "$(cat "$root.generation")" != "$gen" ]; then
+	"$KIT/images/pkgroot.sh" "$REPO" "$root" > "$IMAGES/pkgroot-$gen.log" 2>&1 ||
+	    { tail -20 "$IMAGES/pkgroot-$gen.log" >&2; exit 1; }
+fi
+[ "$(cat "$root.generation")" = "$gen" ] ||
+    { echo "root generation $(cat "$root.generation") != $gen" >&2; exit 1; }
+
+rm -rf "$work"; mkdir -p "$work/ov"
+O=$KIT/images/overlay
+ov=$work/ov
+cp "$O/loader.conf" "$O/fstab" "$O/rc.conf" "$O/rc.local" "$ov/"
+# The guests boot the default 5BSD policy (capability plane ON) since htcap;
+# GUEST_CAPABILITY_PLANE=NO rebuilds a plane-free image for comparison only.
+case "${GUEST_CAPABILITY_PLANE:-YES}" in
+[Nn][Oo]) echo 'capability_plane="NO"' >> "$ov/loader.conf"; plane=NO ;;
+*) plane=YES ;;
+esac
+echo "$gen" > "$ov/hosttest-generation"
+# Serial console: autologin root on ttyu0 (3-wire, 115200).
+sed -E 's|^ttyu0[[:space:]].*|ttyu0	"/usr/libexec/getty al.3wire.115200"	vt100	on secure|' \
+    "$root/etc/ttys" > "$ov/ttys"
+grep -q 'al.3wire.115200' "$ov/ttys"
+cat "$root/etc/gettytab" "$O/gettytab.append" > "$ov/gettytab"
+# Root uses /bin/sh so the console command driver's sh syntax is exact.
+sed -E 's|^(root:[^:]*:0:0:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*):.*$|\1:/bin/sh|' \
+    "$root/etc/master.passwd" > "$ov/master.passwd"
+grep -q '^root:.*:/bin/sh$' "$ov/master.passwd"
+pwd_mkdb -i -p -d "$ov" "$ov/master.passwd" 2>/dev/null ||
+    pwd_mkdb -i -d "$ov" "$ov/master.passwd"
+[ -f "$ov/passwd" ] || { echo "pwd_mkdb did not produce passwd" >&2; exit 1; }
+# pwd_mkdb consumed master.passwd; regenerate it for the image.
+sed -E 's|^(root:[^:]*:0:0:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*):.*$|\1:/bin/sh|' \
+    "$root/etc/master.passwd" > "$ov/master.passwd"
+{
+	echo "./boot/loader.conf mode=0644 contents=$ov/loader.conf"
+	echo "./etc/fstab mode=0644 contents=$ov/fstab"
+	echo "./etc/rc.conf mode=0644 contents=$ov/rc.conf"
+	echo "./etc/rc.local mode=0755 contents=$ov/rc.local"
+	echo "./etc/ttys mode=0644 contents=$ov/ttys"
+	echo "./etc/gettytab mode=0644 contents=$ov/gettytab"
+	echo "./etc/master.passwd mode=0600 contents=$ov/master.passwd"
+	echo "./etc/passwd mode=0644 contents=$ov/passwd"
+	echo "./etc/pwd.db mode=0644 contents=$ov/pwd.db"
+	echo "./etc/spwd.db mode=0600 contents=$ov/spwd.db"
+	echo "./etc/hosttest-generation mode=0644 contents=$ov/hosttest-generation"
+	for f in "$KIT"/guest/*.sh "$KIT"/guest-bin/*; do
+		echo "./root/hosttest/$(basename "$f") mode=0755 contents=$f"
+	done
+} > "$work/overlay.list"
+# Directories the overlay needs (declared in the root METALOG once):
+# the guest helpers and the dtraced(8) spool used by the minion.
+for d in ./root/hosttest ./var/ddtrace ./var/ddtrace/inbound; do
+	grep -q "^$d " "$root/METALOG" ||
+	    echo "$d type=dir uname=root gname=wheel mode=0755" >> "$root/METALOG"
+done
+"$KIT/images/mkimage.sh" "$root" "$work" "$SIZE" > "$work/mkimage.log" 2>&1 ||
+    { tail -20 "$work/mkimage.log" "$work/makefs.log" >&2 2>/dev/null; exit 1; }
+{
+	echo "generation=$gen"
+	echo "repo=$REPO"
+	echo "kernel_sha256=$(cat "$root.kernel.sha256")"
+	echo "image=$work/guest.img"
+	echo "image_bytes=$(stat -f %z "$work/guest.img")"
+	echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ) uid=$(id -u)"
+	echo "kit_overlay_sha256=$(cat "$O"/* "$KIT"/guest/*.sh "$KIT"/guest-bin/* | sha256 -q)"
+	echo "capability_plane=$plane"
+} > "$work/guest.manifest"
+ln -sfn "$gen" "$IMAGES/current"
+echo "image $work/guest.img"; cat "$work/guest.manifest"

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Run inside the L1 guest: boot the L2 guest from the second disk (vtbd1)
+# with bhyve and wait for its marker on an nmdm console.
+# usage: l2-boot.sh MARKER [MEM]
+set -u
+m=${1:?marker} mem=${2:-512M} disk=/dev/vtbd1
+echo "L1 cpu: $(sysctl -n hw.model)"
+grep -o 'Features2=[^ ]*' /var/run/dmesg.boot | head -1
+grep -E 'AMD Features2|SVM:' /var/run/dmesg.boot | head -3
+if ! kldstat -q -m vmm || [ ! -e /dev/vmmctl ]; then
+	echo "L1-VMM-NOT-LOADED"; dmesg | grep -i -E 'vmm|svm|hypertrace' | tail -8; exit 3
+fi
+sysctl hw.vmm.svm.features hw.vmm.svm.num_asids 2>&1
+bhyvectl --vm=l2 --destroy >/dev/null 2>&1
+: > /tmp/l2.console
+( cat /dev/nmdm7B > /tmp/l2.console ) & cpid=$!
+timeout 120 bhyveload -c /dev/nmdm7A -m "$mem" -d "$disk" -e hosttest.role=l2 \
+    -e "hosttest.marker=$m" -e hosttest.hostname=ht-l2 l2 > /tmp/l2.load 2>&1 ||
+    { cat /tmp/l2.load; echo "L2-FAIL bhyveload"; kill $cpid; exit 4; }
+t0=$(date +%s)
+# Inner limit below the caller's 900 s console limit (phases/nested.sh) so
+# the console tail and bhyve output are reported instead of being lost.
+timeout ${L2_TIMEOUT:-720} bhyve -c 1 -m "$mem" -H -w -D -s 0,hostbridge -s 3,virtio-blk,"$disk" \
+    -s 31,lpc -l com1,/dev/nmdm7A l2 > /tmp/l2.bhyve 2>&1
+rc=$?
+t1=$(date +%s)
+sleep 1; kill $cpid 2>/dev/null
+bhyvectl --vm=l2 --destroy >/dev/null 2>&1
+if tr -d '\r' < /tmp/l2.console | grep "HOSTTEST-L2-MARKER $m"; then
+	echo "L2-OK bhyve_exit=$rc seconds=$((t1 - t0))"
+else
+	tail -40 /tmp/l2.console; cat /tmp/l2.bhyve; echo "L2-FAIL bhyve_exit=$rc"; exit 5
+fi

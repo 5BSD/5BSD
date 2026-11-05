@@ -1,0 +1,226 @@
+# Phase 3: nested virtualization. AMD: 5BSD nested SVM (host gate: loader
+# tunable hw.vmm.svm.nested, 1 by default since fix/devd-nested-ntpd; guest
+# gate: bhyve -o x86.nested_svm=true). Intel: nested VMX exists behind
+# hw.vmm.vmx.nested (0 by default while live Intel qualification is in
+# progress) and -o x86.nested_vmx=true; with the tunable off the phase is
+# SKIP with that reason, with it on the same checks run against VMX.
+# L1 = 5BSD guest with the feature exposed (loads its own vmm.ko), L2 = the
+# same image booted by bhyve inside L1 (guest/l2-boot.sh, guest/l2-role.sh).
+#  - waspnest ATF gate (if installed), negative control (no feature without
+#    the per-guest gate);
+#  - L2 boots to its marker while HyperTrace counts L1's bhyve ioctls;
+#  - L2 with 2 vCPUs runs a pinned CPU-bound checksum per vCPU (digests
+#    checked by L1 with the same tool) and answers ping from L1;
+#  - L2 started and stopped HT_L2_REPEAT (3) times without L1 errors;
+#  - L1 checkpointed, suspended and restored while L2 runs (nested state
+#    is saved: sys/amd64/vmm/amd/svm.c svm_snapshot_nested_save records
+#    nested_active + VMCB12); L2 must keep ticking across both.
+
+phase_begin nested
+need_root
+need_generation
+need_vmm
+need_image
+V=$(host_vendor)
+if ! gate=$(nested_gate "$V"); then
+	if [ "$V" = intel ]; then
+		# Expected on Intel today: report, do not fail.
+		for c in atf-nested svm-or-vmx-hidden-without-gate l1-boot l2-boots-to-marker l2-2vcpu-checksum l2-network-from-l1 l2-repeat l1-checkpoint-active-l2; do
+			check "$c" SKIP "$gate"
+		done
+		if dry; then echo "nested WOULD-SKIP ($gate)" | tee "$HT_OUT/RESULT" >> "$HT_RUN/SUMMARY"; exit 0; fi
+		phase_end; exit 0
+	fi
+	case "$gate" in
+	hw.vmm.svm.nested*)
+		refuse "$gate; it defaults to 1 on generations with the default-on host policy, so this generation predates it or loader.conf sets it to 0 (remove that line). One-shot for an older generation: 'nextboot -e hw.vmm.svm.nested=1 && shutdown -r now', or at the loader prompt 'set hw.vmm.svm.nested=1' then 'boot'; rerun this phase after that boot" ;;
+	*) refuse "$gate" ;;
+	esac
+fi
+case $V in
+amd) NOPT="-o x86.nested_svm=true" FEAT=svm FEAT_RE='AMD Features2=.*SVM' ;;
+intel) NOPT="-o x86.nested_vmx=true" FEAT=vmx FEAT_RE='^ *Features2=.*VMX' ;;
+esac
+need_mem_mb 6144
+need_disk_mb 12288
+dry && dry_end
+phase_workdir
+O=$HT_OUT
+L2T=${HT_L2_TIMEOUT:-600}        # bhyve limit inside L1 per L2 run
+L2C=$((L2T + 300))               # host console limit: above L2T + bhyveload 120 s
+grep -E 'SVM:|VT-x:|AMD Features2|^ *Features2' "$HT_DMESG_BOOT" > "$O/host-virt.txt"
+sysctl hw.vmm.svm hw.vmm.vmx.nested hw.vmm.vmx.nested_vpid > "$O/host-hw.vmm.txt" 2>&1
+log "vendor $V, nested option $NOPT, L2 limit ${L2T}s, console limit ${L2C}s"
+
+# 0. Root-only nested ATF cases (installed waspnest tests only; no VMs may run).
+R=/usr/tests/sys/vmm/run-svm-nested-atf.sh
+if [ "$V" != amd ]; then
+	check atf-nested SKIP "the kit runs the AMD gate only; Intel: /usr/tests/sys/vmm/run-vmx-nested-live.sh (package 5BSD-waspnest-tests) is not wired in"
+elif [ -x "$R" ]; then
+	if [ -n "$(ls /dev/vmm 2>/dev/null)" ]; then
+		check atf-nested SKIP "VMs are running ($(ls /dev/vmm | tr '\n' ' ')); the runner needs none"
+	else
+		# The runner requires a root-owned 0700 WORKDIR whose ancestors are
+		# root-owned and not group/world-writable (sr2: the old $HT_WORK/atf
+		# under /usr/obj, owned by the build user, could never pass; /tmp and
+		# /var/tmp fail too: the runner reads stat %Lp, which has no sticky
+		# bit, so its sticky exemption never applies). /var/run is root 0755;
+		# removed afterwards.
+		wd=$(mktemp -d /var/run/ht-atf.XXXXXX) && at_cleanup "rm -rf $wd"
+		WORKDIR=$wd MODULE=/boot/kernel/vmm.ko KERNEL=/boot/kernel/kernel \
+		    KYUAFILE=/usr/tests/sys/vmm/Kyuafile timeout 1800 "$R" > "$O/atf-nested.log" 2>&1
+		rc=$?
+		cp -R "$wd" "$O/atf-evidence" 2>/dev/null
+		[ $rc -eq 0 ] && check atf-nested PASS "$(tail -1 "$O/atf-nested.log")" ||
+		    check atf-nested FAIL "rc=$rc $(grep -E 'nested-svm ATF:|failed|broken' "$O/atf-nested.log" | tail -2 | tr '\n' ' ')"
+	fi
+else
+	check atf-nested SKIP "5BSD-waspnest-tests not installed (no $R); to include it, as root: pkg install -r 5BSD-base 5BSD-waspnest-tests"
+fi
+
+# 1. Negative control: without the per-guest option the guest must not see the feature.
+vm=ht-nonest
+if vm_boot $vm "$(vm_disk $vm)" 1G 1 "hosttest.role=l1 hosttest.hostname=$vm" "" &&
+    vm_wait $vm HOSTTEST-GUEST-READY ${HT_BOOT_TIMEOUT:-600}; then
+	vm_cmd $vm 'grep -E "Features2" /var/run/dmesg.boot; kldstat -q -m vmm && echo VMM-LOADED || echo VMM-ABSENT; ls /dev/vmmctl 2>&1' 30 > "$O/nonest.txt" 2>&1
+	if ! grep -q Features2 "$O/nonest.txt"; then
+		check $FEAT-hidden-without-gate FAIL "no CPUID lines from the guest: $(vm_diag $vm)"
+	elif grep -E -q "$FEAT_RE" "$O/nonest.txt"; then
+		check $FEAT-hidden-without-gate FAIL "$FEAT visible without $NOPT"
+	else
+		check $FEAT-hidden-without-gate PASS "no $FEAT in CPUID; $(grep -o 'VMM-[A-Z]*' "$O/nonest.txt")"
+	fi
+else
+	check $FEAT-hidden-without-gate FAIL "control guest did not boot: $(vm_diag $vm)"
+fi
+vm_shutdown $vm
+
+# 2. L1 with nested virtualization, second disk = L2 image.
+vm=ht-l1
+l1disk=$(vm_disk $vm); l2disk=$(vm_disk ht-l2)
+ht_extra=""
+if kldstat -q -m hypertrace && [ -e /dev/dtrace/hypertrace ]; then
+	ht_dtraced_up && ht_extra="$HT_VTDTR_ARGS"
+fi
+vm_boot $vm "$l1disk" 4G 4 "hosttest.role=l1 hosttest.hostname=$vm ${ht_extra:+$HT_GUEST_DTRACE_KENV}" \
+    "$NOPT -s 4,virtio-blk,$l2disk $ht_extra" ||
+    { check l1-boot FAIL "bhyve refused: $(vm_diag $vm)"; phase_end; exit 1; }
+if vm_wait $vm HOSTTEST-GUEST-READY ${HT_BOOT_TIMEOUT:-600}; then check l1-boot PASS; else
+	check l1-boot FAIL "$(vm_diag $vm)"; phase_end; exit 1; fi
+vm_cmd $vm 'grep -E "Features2" /var/run/dmesg.boot; grep -E "SVM:|VT-x:" /var/run/dmesg.boot; kldstat | grep -E "vmm|nmdm"; ls -d /dev/vmmctl; dmesg | grep -i -E "vmm|svm|vmx" | tail -5' 30 > "$O/l1-$FEAT.txt" 2>&1
+grep -E -q "$FEAT_RE" "$O/l1-$FEAT.txt" && check l1-sees-$FEAT PASS "$(grep -E 'SVM:|VT-x:' "$O/l1-$FEAT.txt" | head -1 | sed 's/^ *//')" ||
+    check l1-sees-$FEAT FAIL "no $FEAT in L1 CPUID: $(grep Features2 "$O/l1-$FEAT.txt" | head -2 | tr '\n' ' ')"
+grep -q 'vmm.ko' "$O/l1-$FEAT.txt" && grep -q '^/dev/vmmctl' "$O/l1-$FEAT.txt" && check l1-vmm-loaded PASS ||
+    check l1-vmm-loaded FAIL "$(grep -i -E 'undefined|vmm|svm|vmx' "$O/l1-$FEAT.txt" | tail -2 | tr '\n' ' ')"
+l1_dmesg_lines() { vm_cmd $vm 'dmesg | wc -l' 20 2>/dev/null | tr -d ' \r' | tail -1; }
+d0=$(l1_dmesg_lines)
+
+# l2_check NAME FILE: verdict of one l2-boot.sh run.
+l2_check()
+{
+	if grep -q 'L2-OK' "$2"; then
+		check "$1" PASS "$(grep -o 'L2-OK.*' "$2" | tail -1) $(grep -o 'model=.*' "$2" | head -1 | tr -s ' ' | cut -c1-80)"
+	else
+		check "$1" FAIL "$(grep -E 'L1-VMM-NOT-LOADED|L2-FAIL|L2-WAIT-TIMEOUT|timed out' "$2" | head -1) [L2 console: $(grep -v -E '^[[:space:]]*$' "$2" | grep -v -E 'L2-FAIL|^L1 cpu' | tail -2 | tr '\n' ' ' | cut -c1-200)] $(vm_diag $vm)"
+	fi
+}
+
+# 3. L2 boots to its marker; HyperTrace counts L1's bhyve ioctls meanwhile.
+marker=HT$(date +%s)
+vm_cmd $vm "L2_TIMEOUT=$L2T /root/hosttest/l2-boot.sh $marker" $L2C > "$O/l2.txt" 2>&1 & l2p=$!
+if [ -n "$ht_extra" ] && ht_wait_forwarder $vm 60; then
+	sleep 5
+	ht_session l1trace "${HT_L1TRACE_SECS:-120}" 0 "" -- \
+	    -n "$vm:syscall::ioctl:entry /execname == \"bhyve\"/ { @[\"l1-bhyve-ioctl\"] = count(); }" \
+	    -n "$vm:proc:::exec-success /execname == \"bhyve\" || execname == \"bhyveload\"/ { @x[execname] = count(); }"
+	grep -E -q 'l1-bhyve-ioctl[[:space:]]+[1-9]' "$O/l1trace.out" &&
+	    check hypertrace-probes-from-l1 PASS "$(grep l1-bhyve-ioctl "$O/l1trace.out" | tr -s ' ') $(ht_delivery l1trace)" ||
+	    check hypertrace-probes-from-l1 FAIL "no L1 bhyve ioctl events $(ht_err l1trace)"
+elif [ -n "$ht_extra" ]; then
+	check hypertrace-probes-from-l1 FAIL "L1 forwarder did not register: $(head -1 "$HT_WORK/stats.$vm" 2>/dev/null) $(ht_jobfail_lines)"
+else
+	check hypertrace-probes-from-l1 SKIP "hypertrace.ko not loaded on host"
+fi
+wait $l2p
+l2_check l2-boots-to-marker "$O/l2.txt"
+grep -q "HOSTTEST-L2-MARKER $marker.*ncpu=1" "$O/l2.txt" && check l2-cpu-reported PASS "$(grep -o 'model=.*' "$O/l2.txt" | head -1 | tr -s ' ')" ||
+    check l2-cpu-reported FAIL "no marker with ncpu=1 in l2.txt"
+
+# 4. L2 with 2 vCPUs: per-vCPU checksum workload and network from L1.
+WMB=${HT_L2_WORK_MB:-256}
+vm_cmd $vm "L2_CPUS=2 L2_WORK=$WMB L2_HOLD=30 L2_NET=yes L2_TIMEOUT=$L2T /root/hosttest/l2-boot.sh ${marker}w" $L2C > "$O/l2-2vcpu.txt" 2>&1
+l2_check l2-2vcpu-boots "$O/l2-2vcpu.txt"
+grep -q "HOSTTEST-L2-MARKER ${marker}w.*ncpu=2" "$O/l2-2vcpu.txt" || check l2-2vcpu-ncpu FAIL "L2 did not report ncpu=2"
+grep -q 'L2-WORK-OK' "$O/l2-2vcpu.txt" && check l2-2vcpu-checksum PASS "$(grep -o 'L2-WORK-OK.*' "$O/l2-2vcpu.txt")" ||
+    check l2-2vcpu-checksum FAIL "$(grep -o 'L2-WORK-FAIL.*' "$O/l2-2vcpu.txt" || echo 'no L2-WORK result')"
+grep -q 'L2-NET-OK' "$O/l2-2vcpu.txt" && check l2-network-from-l1 PASS "$(grep -o 'L2-NET-OK.*' "$O/l2-2vcpu.txt")" ||
+    check l2-network-from-l1 FAIL "$(grep -o 'L2-NET-FAIL.*' "$O/l2-2vcpu.txt" || echo 'no L2-NET result')"
+
+# 5. Repeated L2 start/stop without L1 errors.
+k=1
+while [ $k -le "${HT_L2_REPEAT:-3}" ]; do
+	vm_cmd $vm "L2_TIMEOUT=$L2T /root/hosttest/l2-boot.sh ${marker}r$k" $L2C > "$O/l2-repeat$k.txt" 2>&1
+	l2_check l2-repeat-$k "$O/l2-repeat$k.txt"
+	k=$((k + 1))
+done
+vm_cmd $vm "d=\$(dmesg | wc -l); dmesg | tail -n \$((d - ${d0:-0})) | grep -i -E 'vmm|svm|vmx|error|panic|fault|lock order|witness|EOPNOTSUPP'; ls /dev/vmm 2>&1" 30 > "$O/l1-after-repeat.txt" 2>&1
+if [ -z "$d0" ]; then
+	check l1-clean-after-l2-runs FAIL "could not read L1 dmesg ($(vm_diag $vm))"
+elif grep -v -E 'No such file|^[[:space:]]*$' "$O/l1-after-repeat.txt" | grep -q .; then
+	check l1-clean-after-l2-runs FAIL "new L1 kernel messages or leftover VMs: $(head -3 "$O/l1-after-repeat.txt" | tr '\n' ' ' | cut -c1-240)"
+else
+	check l1-clean-after-l2-runs PASS "no vmm/svm/vmx errors in L1 dmesg after $((${HT_L2_REPEAT:-3} + 2)) L2 runs; /dev/vmm empty"
+fi
+
+# 6. L1 checkpoint, suspend and restore while L2 runs.
+l2_tick() { sed -n 's/.*L2-STATUS tick=\([0-9]*\).*/\1/p' "$1" | tail -1; }
+HOLD=${HT_L2_HOLD:-300}
+vm_cmd $vm "L2_BG=yes L2_HOLD=$HOLD L2_TIMEOUT=$((HOLD + L2T)) /root/hosttest/l2-boot.sh ${marker}c" $L2C > "$O/l2-ckp-start.txt" 2>&1
+if ! grep -q L2-BG-RUNNING "$O/l2-ckp-start.txt"; then
+	check l1-checkpoint-active-l2 FAIL "L2 did not reach its hold: $(grep -E 'L2-FAIL|L2-OK' "$O/l2-ckp-start.txt" | head -1) $(vm_diag $vm)"
+else
+	vm_cmd $vm "/root/hosttest/l2-boot.sh --status" 30 > "$O/l2-s0.txt" 2>&1; s0=$(l2_tick "$O/l2-s0.txt")
+	# Nonterminal checkpoint of L1. EBUSY is transient (a nested instruction
+	# pending in svm_snapshot_nested_save); retry twice.
+	try=1
+	while :; do
+		bhyvectl --vm=$vm --checkpoint="$HT_CKP/l1a" > "$O/l1-checkpoint.txt" 2>&1; rc=$?
+		[ $rc -ne 0 ] && [ $try -lt 3 ] && grep -q -i busy "$O/l1-checkpoint.txt" || break
+		try=$((try + 1)); sleep 2
+	done
+	alive=no; kill -0 "$(cat "$HT_WORK/$vm.pid")" 2>/dev/null && alive=yes
+	if [ $rc -eq 0 ] && [ "$(sed -n 1p "$HT_CKP/l1a" 2>/dev/null)" = BHYVE-CHECKPOINT-MANIFEST-3 ]; then
+		check l1-checkpoint-active-l2 PASS "L1 checkpointed with L2 running (attempt $try); L1 alive=$alive"
+	elif [ $alive = yes ]; then
+		check l1-checkpoint-active-l2 FAIL "refused cleanly (L1 still running), but nested state is meant to be checkpointable: rc=$rc $(tail -2 "$O/l1-checkpoint.txt" | tr '\n' ' ') $(bhyve_refusal "$HT_WORK/$vm.bhyve.log")"
+	else
+		check l1-checkpoint-active-l2 FAIL "L1 bhyve died during the checkpoint: rc=$rc $(tail -1 "$O/l1-checkpoint.txt") $(vm_diag $vm)"
+	fi
+	sleep 5
+	vm_cmd $vm "/root/hosttest/l2-boot.sh --status" 30 > "$O/l2-s1.txt" 2>&1; s1=$(l2_tick "$O/l2-s1.txt")
+	[ -n "$s0" ] && [ -n "$s1" ] && [ "$s1" -gt "$s0" ] &&
+	    check l2-runs-after-l1-checkpoint PASS "L2 tick $s0 -> $s1" ||
+	    check l2-runs-after-l1-checkpoint FAIL "L2 tick '$s0' -> '$s1' ($(cat "$O/l2-s1.txt" | tail -1)) $(vm_diag $vm)"
+	t0=$(date +%s)
+	if vm_suspend $vm "$HT_CKP/l1b" l1-suspend-active-l2 "$O/l1-suspend.txt" 300; then
+		vm_destroy $vm
+		if vm_restore $vm "$HT_CKP/l1b"; then
+			check l1-restore-active-l2 PASS "L1 restored $(( $(date +%s) - t0 )) s after the suspend began"
+			sleep 10
+			vm_cmd $vm "/root/hosttest/l2-boot.sh --status; sleep 3; /root/hosttest/l2-boot.sh --status" 60 > "$O/l2-s2.txt" 2>&1
+			s2=$(sed -n 's/.*L2-STATUS tick=\([0-9]*\).*/\1/p' "$O/l2-s2.txt" | head -1); s3=$(l2_tick "$O/l2-s2.txt")
+			[ -n "$s2" ] && [ -n "$s3" ] && [ "$s2" -ge "${s1:-0}" ] && [ "$s3" -gt "$s2" ] &&
+			    check l2-continues-after-l1-restore PASS "L2 tick $s1 before the suspend, $s2 -> $s3 after the restore" ||
+			    check l2-continues-after-l1-restore FAIL "L2 tick before '$s1', after '$s2' -> '$s3' ($(tail -1 "$O/l2-s2.txt")) $(vm_diag $vm)"
+		else
+			check l1-restore-active-l2 FAIL "restore refused: $HT_REFUSAL"
+		fi
+	fi
+	if kill -0 "$(cat "$HT_WORK/$vm.pid" 2>/dev/null)" 2>/dev/null; then
+		vm_cmd $vm "/root/hosttest/l2-boot.sh --wait $((HOLD + 120))" $((HOLD + 240)) > "$O/l2-ckp-end.txt" 2>&1
+		l2_check l2-completes-after-l1-restore "$O/l2-ckp-end.txt"
+	fi
+	rm -rf "$HT_CKP/l1a"* "$HT_CKP/l1b"*
+fi
+vm_shutdown $vm
+phase_end

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_HELPERS = ["ht-sockpair", "ht-camera", "ht-audio", "vsh-connect", "vsock-pipe", "srtool", "dsrtool", "l2-console"]
+[cc_binary(
+    name = name,
+    srcs = ["src/" + name + ".c"],
+    deps = (["//lib/libmd:md_link"] if name == "srtool" else
+            ["//lib/msun:m"] if name == "ht-audio" else []),
+    linkstatic = True,
+    linkopts = ["-static"] if name in ["srtool", "dsrtool", "l2-console"] else [],
+    target_compatible_with = _PLATFORM,
+) for name in _HELPERS]
+filegroup(name = "helpers", srcs = [":" + name for name in _HELPERS], visibility = ["//visibility:public"])
+filegroup(name = "scripts", srcs = glob(["guest/*.sh", "phases/*.sh", "lib/*.sh", "lib/*.py", "images/*.sh", "images/overlay/*", "*.sh"]), visibility = ["//visibility:public"])
+bsd_python_test(
+    name = "regression_test",
+    src = "bazel-test.py",
+    data = [":scripts", ":srtool", ":l2-console"],
+    target_compatible_with = _PLATFORM,
+    tags = ["local", "no-cache"],
+    size = "medium",
+)

@@ -1,0 +1,14 @@
+#!/bin/sh
+# hosttest guest boot marker and role dispatch.
+role=$(kenv -q hosttest.role); role=${role:-l1}
+gen=$(cat /etc/hosttest-generation 2>/dev/null)
+c=/dev/console
+echo "HOSTTEST-GUEST-BOOT role=$role generation=$gen host=$(hostname) kernel=$(sysctl -n kern.ident)" > $c
+case "$role" in
+l2)
+	echo "HOSTTEST-L2-MARKER $(kenv -q hosttest.marker) model=$(sysctl -n hw.model) ncpu=$(sysctl -n hw.ncpu)" > $c
+	sleep 1
+	poweroff
+	;;
+esac
+echo "HOSTTEST-GUEST-READY role=$role" > $c

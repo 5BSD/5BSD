@@ -92,3 +92,27 @@ cc_library(name = "public_headers", hdrs = ["//cddl/contrib/opensolaris:lib/libd
     strip_include_prefix = "/cddl/contrib/opensolaris/lib/libdtrace/common",
     deps = ["//sys/cddl/contrib/opensolaris:dtrace_public_headers", "//contrib/elftoolchain:elf_headers", "//lib/libproc:headers", "//lib/librtld_db:headers"],
     visibility = ["//visibility:public"])
+
+# The fixture includes the actual production aggregation implementation so only
+# kernel snapshot/metadata I/O and allocation failure are simulated. Use the
+# native shared library for remaining functions; executable definitions interpose.
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_library(
+    name = "aggregate_test_headers",
+    textual_hdrs = ["//cddl/contrib/opensolaris:lib/libdtrace/common/dt_aggregate.c"],
+    deps = ["//cddl/contrib/opensolaris:dtrace_headers", ":generated_headers",
+        "//sys/cddl/dev/dtrace:layout_headers", "//sys/cddl/dev/dtrace/x86:headers",
+        "//sys/cddl/dev/kinst:headers", "//sys/cddl/contrib/opensolaris:dtrace_intel_headers",
+        "//usr.sbin/dtraced:headers", "//sys/sys:kernel_headers"],
+)
+cc_test(
+    name = "aggregate_vm_test",
+    srcs = ["//tools/test/libdtrace-aggregate:aggregate_vm_test.c"],
+    deps = [":aggregate_test_headers", ":dtrace", "//lib/libproc:proc", "//lib/libxo/libxo:xo"],
+    dynamic_deps = [":dtrace_shared", "//lib/libproc:proc_shared", "//lib/libxo/libxo:xo_shared"],
+    local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "DIS_MEM", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-UNDEBUG", "-ffunction-sections", "-fdata-sections"],
+    linkopts = ["-Wl,--gc-sections"],
+    target_compatible_with = _PLATFORM,
+    visibility = ["//tools/test/libdtrace-aggregate:__pkg__"],
+)
