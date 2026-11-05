@@ -16,6 +16,21 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Capsicum production and protobuf parent composition (2026-11-05)
+
+The Capsicum helper owner now contributes its original header/manual/thirteen
+manual aliases; all fifteen records, bytes and hardlink identities match fresh
+original production Make. Both original static C/C++ ATF programs now build;
+all four unchanged stream cases execute and pass through the maintained runner.
+The protobuf parent explicitly builds all four original child owners, including
+internal regular/PIE archives, and preserves three actual install contributions:
+protobuf-lite, protobuf and upb licences. All eight build outputs and the exact
+nine parent archive/request/directory outputs are captured; payloads have zero
+non-directory collisions. This is parent assembly, not refreshed protobuf Make
+implementation parity. Installed Capsicum test metadata, other lib wrappers and
+full world/pkgbase/bootstrap/VM/performance remain open. See
+CAPSICUM-PROTOBUF-COMPOSITION-QUALIFICATION.md.
+
 ## Native AMD64 thread debugging library (2026-11-04)
 
 libthread_db now builds its actual four sources, AMD64 register helper, original

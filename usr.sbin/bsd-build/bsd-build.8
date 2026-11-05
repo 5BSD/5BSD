@@ -2197,6 +2197,15 @@ This does not qualify debugger/thread-control runtime or other architectures.
 See
 .Pa tools/build/bazel/THREAD-DB-NATIVE-QUALIFICATION.md .
 .Pp
+The Capsicum helper production archive preserves its header/manual/hardlinks,
+and all four original static C/C++ stream ATF cases execute through native targets.
+The protobuf parent separates build_libraries from production_installation_archives:
+four build owners retain three actual installation contributions, including the
+internal upb licence payload and no installed libprotoc library.
+These bounded results do not establish complete world or installed-test coverage.
+See
+.Pa tools/build/bazel/CAPSICUM-PROTOBUF-COMPOSITION-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

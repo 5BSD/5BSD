@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# Original Make parent selects four children. libprotoc installs no payload;
+# internal upb still contributes its original utilities licence files.
+bsd_install_archive_set(name = "production_installation_archives",
+    archives = ["//lib/protobuf/libprotobuf-lite:install_archive", "//lib/protobuf/libprotobuf:install_archive", "//lib/protobuf/libupb:install_archive"],
+    visibility = ["//visibility:public"])
+filegroup(name = "build_libraries", srcs = [
+    "//lib/protobuf/libprotobuf-lite:static_archive", "//lib/protobuf/libprotobuf:static_archive",
+    "//lib/protobuf/libprotoc:static_archive", "//lib/protobuf/libprotoc:pie_archive",
+    "//lib/protobuf/libupb:static_archive", "//lib/protobuf/libupb:pie_archive",
+    "//lib/protobuf/libprotobuf-lite:protobuf_lite_shared", "//lib/protobuf/libprotobuf:protobuf_shared"],
+    visibility = ["//visibility:public"])

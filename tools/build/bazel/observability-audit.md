@@ -11379,3 +11379,12 @@ process/thread control to the real debugger's ps_* callbacks; matching imports
 are retained and no callback substitute is linked. Thread/register/TLS/event and
 ptrace audit/probe delivery must be qualified with that debugger integration.
 Build/install/version comparisons do not close runtime observability coverage.
+
+## Capsicum helper and protobuf parent (2026-11-05)
+
+This batch changes native build/installation/test declarations only. It preserves
+the original helper header, protobuf implementation sources and Capsicum ATF
+assertions. Four real C/C++ stream restriction cases pass on the host. These
+cases check narrowing and failure behavior, not audit-event delivery. The Make
+owners add no dedicated provider inventory here; capability/audit/probe delivery
+and the consuming services remain separate runtime qualification requirements.
