@@ -213,3 +213,12 @@ libc_nossp_variant(name = "rtld_nossp_objects", dep = ":rtld_selected_objects",
 filegroup(name = 'standalone_sa_aarch64_setjmp_source', srcs = ['aarch64/gen/_setjmp.S'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = 'standalone_sa_riscv64_setjmp_source', srcs = ['riscv/gen/_setjmp.S'], visibility = ["//stand/libsa:__pkg__"])
+
+# Preserve the archive's source identities for consumers that extract members.
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "archive_identities_test", src = "archive-identities-test.py",
+    args = ["--archive", "$(rootpath :static_archive)", "--ar", "$(rootpath @bsd_sdk//toolchain:bin/llvm-ar)",
+        "--nm", "$(rootpath @bsd_sdk//toolchain:bin/llvm-nm)"],
+    data = [":static_archive", "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-ar_runtime", "@bsd_sdk//toolchain:llvm-nm_runtime"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

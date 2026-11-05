@@ -3,6 +3,13 @@ load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 
+# Match the maintained SOURCE_ALIAS inputs before compilation, preserving archive
+# member identity and avoiding basename collisions without renaming ELF outputs.
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+_NETLIB_OBJECTS_SOURCES = ['//contrib/gdtoa:strtorx.c', '//contrib/gdtoa:dmisc.c', '//contrib/gdtoa:dtoa.c', '//contrib/gdtoa:gdtoa.c', '//contrib/gdtoa:gethex.c', '//contrib/gdtoa:gmisc.c', '//contrib/gdtoa:hd_init.c', '//contrib/gdtoa:hexnan.c', '//contrib/gdtoa:misc.c', '//contrib/gdtoa:smisc.c', '//contrib/gdtoa:strtod.c', '//contrib/gdtoa:strtodg.c', '//contrib/gdtoa:strtof.c', '//contrib/gdtoa:strtord.c', '//contrib/gdtoa:sum.c', '//contrib/gdtoa:ulp.c']
+[copy_file(name = "source_alias_" + src.split(":")[-1], src = src,
+    out = "gdtoa_" + src.split(":")[-1], allow_symlink = True) for src in _NETLIB_OBJECTS_SOURCES]
+
 # Preserve per-source aliasing flags only on imported netlib routines.
 cc_library(
     features = LIBC_VARIANT_FEATURES,
@@ -18,7 +25,7 @@ cc_library(
 cc_library(
     features = LIBC_VARIANT_FEATURES,
     name = 'netlib_objects',
-    srcs = ['//contrib/gdtoa:strtorx.c', '//contrib/gdtoa:dmisc.c', '//contrib/gdtoa:dtoa.c', '//contrib/gdtoa:gdtoa.c', '//contrib/gdtoa:gethex.c', '//contrib/gdtoa:gmisc.c', '//contrib/gdtoa:hd_init.c', '//contrib/gdtoa:hexnan.c', '//contrib/gdtoa:misc.c', '//contrib/gdtoa:smisc.c', '//contrib/gdtoa:strtod.c', '//contrib/gdtoa:strtodg.c', '//contrib/gdtoa:strtof.c', '//contrib/gdtoa:strtord.c', '//contrib/gdtoa:sum.c', '//contrib/gdtoa:ulp.c'],
+    srcs = [":source_alias_" + src.split(":")[-1] for src in _NETLIB_OBJECTS_SOURCES],
     implementation_deps = ["//contrib/gdtoa:headers", "//lib/libc/include:math_headers", "//lib/libc/locale:gdtoa_headers", "//lib/libc/amd64:gdtoa_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ['-ftls-model=initial-exec', '-fno-strict-aliasing'],

@@ -140,3 +140,12 @@ refresh full world/kernel/modules/pkgbase, bootstrap/reproducibility/cache/sandb
 and CPU/memory/disk qualification. Hardware stays separately built and combined
 publication remains gated under /usr/obj/usr/src/repo. BIP stays excluded. No host
 installation, upgrade, reboot or publication occurred.
+
+## Follow-up: application controls and libc aliases
+
+See LIBC-SOURCE-ALIASES-QUALIFICATION.md for the subsequent independent original
+filename controls and path-specific DTrace binding reviews, and the actual libc
+archive collision correction. Those bounded controls account for the earlier
+application discrepancies; raw debug, common-library/startup and final executable
+parity remain open. The new alias qualification is separately identified and
+must not inherit unverified earlier output identities.

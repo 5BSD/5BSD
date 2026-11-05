@@ -21,6 +21,19 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Relocatable rescue probe binding review (2026-11-05)
+
+Independent controls now account for the earlier 21 external-only DTrace
+application differences using original dt_link.c object-path hashes, with other
+symbol properties and allocated/relocation contracts unchanged. All 23 provider
+cohorts validate 64 real function bindings (73 ordinary and 77 enabled sites),
+matching schemas, symbol-relative locations and bounded code patches. The 45
+filename-string cases also pass original compiler controls. Raw identities stay
+recorded. No live registration/firing, final-address/debug or audit-delivery claim
+follows. See LIBC-SOURCE-ALIASES-QUALIFICATION.md for evidence and remaining gates.
+Libc source aliases now retain original pre-compilation identities, including
+cancelpoints_; the subsequent native runtime tests do not replace live tracing.
+
 ## Installed rescue and full original-object comparison (2026-11-05)
 
 The actual rescue-named static executable and package retain the configured

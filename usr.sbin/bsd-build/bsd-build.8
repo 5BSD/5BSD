@@ -7049,3 +7049,14 @@ Normal sys world traversal contributes no payload without MODULES_WITH_WORLD;
 requesting module-world installation remains explicitly unsupported.
 Boot parent construction and metadata comparison do not establish complete binary
 parity, firmware execution, secure boot, package publication or other target ABIs.
+
+.Pp
+Native libc source producers preserve the original gdtoa, jemalloc,
+C99_Exit and cancelpoints source aliases before compilation.
+The native archive identity test validates actual member uniqueness,
+case-folded uniqueness and independent extraction of public and allocator div
+implementations with declared toolchain tools.
+The maintained explicit-input bazel-test workflow also qualifies selected libc
+and rescue runtime tests; archive ordering, independent complete library/debug
+parity and full-system acceptance remain open.
+This qualification does not change the production backend or publication policy.

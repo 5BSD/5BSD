@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Libc source identities and bounded rescue controls (2026-11-05)
+
+Native source producers now preserve original gdtoa/jemalloc prefixes,
+C99_Exit and cancelpoints_ aliases before compilation. The real libc archive
+identity/extraction test and six existing libc/rescue/source-settings targets
+pass through maintained frontend r3 (six cache hits). Retained r1/r2 failures
+and fixes are documented in LIBC-SOURCE-ALIASES-QUALIFICATION.md.
+Independent original compiler controls account for all 45 application filename
+string differences; actual path hashes explain 21 DTrace alias-only differences;
+23 provider cohorts validate 64 code bindings. These are bounded earlier-run
+controls, not whole-library/debug/live-tracing or final ELF parity.
+
+Next: source-owned libc archive ordering and independent library/startup payload
+review. Root-only private pkg tests and every full-system/cross/runtime/resource/
+cache/sandbox gate remain open. Make stays default; no BIP or host upgrade.
+
 ## Rescue installation, world membership and actual pkgbase candidate (2026-11-05)
 
 Native rescue now has its actual rescue-named dispatcher, shared source-owned
