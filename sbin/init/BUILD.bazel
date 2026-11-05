@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+_SOURCES = (
+['init.c', 'pathnames.h']
+)
 load("//tools/build/bazel:bsd_asm_payload.bzl", "bsd_asm_payload")
 bsd_asm_payload(name = "seed_object", src = "reroot_seed.embed.s", payloads = ["//sbin/reroot_seed:embed_payload"])
-cc_binary(name = "init", srcs = ["init.c", "pathnames.h", ":seed_object"],
+cc_binary(name = "init", srcs = _SOURCES + [":seed_object"],
     deps = ["//lib/libutil:util", "//lib/libcrypt:crypt"], dynamic_deps = ["//lib/libutil:util_shared", "//lib/libcrypt:crypt_shared"],
     local_defines = ["DEBUGSHELL", "SECURE", "LOGIN_CAP", "COMPAT_SYSV_INIT"], copts = ["-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
@@ -20,3 +23,9 @@ bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pk
 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
 bsd_install_file(name = "ttys_install", src = "ttys", destination = "/etc/ttys", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['init.o'],
+    deps = ['//lib/libutil:headers'],
+    defines = ["DEBUGSHELL", "SECURE", "LOGIN_CAP", "COMPAT_SYSV_INIT"])

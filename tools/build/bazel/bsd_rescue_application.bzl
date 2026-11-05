@@ -18,7 +18,7 @@ _WARNINGS_BY_LEVEL = {
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 
-def rescue_application(srcs, object_names, deps = [], copts = [], defines = [], provider = None, warns = 6, textual_hdrs = []):
+def rescue_application(srcs, object_names, deps = [], copts = [], defines = [], provider = None, warns = 6, textual_hdrs = [], omitted_warnings = []):
     """Declare compiler outputs only; ordered crunch/link/install stay in the parent.
 
     Provider/header targets belong to the application package. Supplying no
@@ -26,10 +26,17 @@ def rescue_application(srcs, object_names, deps = [], copts = [], defines = [], 
     """
     if warns not in _WARNINGS_BY_LEVEL:
         fail("unsupported rescue WARNS profile: " + str(warns))
+    # Model original NO_W* source policy by omitting exactly those flags.
+    # Reject unknown entries so a typo cannot silently weaken a profile.
+    if len(depset(omitted_warnings).to_list()) != len(omitted_warnings):
+        fail("duplicate omitted rescue warning")
+    for flag in omitted_warnings:
+        if not flag.startswith("-W") or flag not in _WARNINGS_BY_LEVEL[warns]:
+            fail("unknown omitted rescue warning: " + flag)
     cc_library(name = "rescue_objects", srcs = srcs, textual_hdrs = textual_hdrs,
         local_defines = ["RESCUE"] + defines + (select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}) if provider else []),
         deps = deps + (select({_TRACE: [":provider_headers"], "//conditions:default": []}) if provider else []),
-        copts = _WARNINGS_BY_LEVEL[warns] + copts, target_compatible_with = _PLATFORM)
+        copts = [flag for flag in _WARNINGS_BY_LEVEL[warns] if flag not in omitted_warnings] + copts, target_compatible_with = _PLATFORM)
     bsd_component_selected_objects(name = "rescue_raw_compiler_outputs" if provider else "rescue_compiler_outputs",
         group = ":rescue_objects", object_names = object_names, visibility = ["//visibility:public"])
     if provider:

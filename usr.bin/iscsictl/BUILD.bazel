@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+_SOURCES = (
+["iscsictl.c", "periphs.c", ":parser_source", ":lexer"]
+)
 load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
 bsd_yacc(name = "parser", src = "parse.y", output = "parse.c", header = "y.tab.h", report = "parse.output", yacc = "//usr.bin/yacc:yacc")
 filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
 filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
 bsd_lex(name = "lexer", src = "token.l", output = "token.c", flags = ["-i"], lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
 cc_library(name = "headers", hdrs = ["iscsictl.h", ":parser_header"], strip_include_prefix = ".")
-cc_binary(name = "iscsictl", srcs = ["iscsictl.c", "periphs.c", ":parser_source", ":lexer"],
+cc_binary(name = "iscsictl", srcs = _SOURCES,
     deps = [":headers", "//sys/dev/iscsi:user_headers", "//lib/libiscsiutil:iscsiutil_pie", "//lib/libutil:util", "//lib/libxo/libxo:xo"],
     dynamic_deps = ["//lib/libmd:md_shared", "//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"],
@@ -40,3 +43,9 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['iscsictl.o', 'periphs.o', 'parse.o', 'token.o'],
+    deps = [':headers', '//sys/dev/iscsi:user_headers', '//lib/libiscsiutil:iscsiutil', '//lib/libutil:headers', '//contrib/libxo:headers'],
+    omitted_warnings = ['-Wmissing-variable-declarations'])

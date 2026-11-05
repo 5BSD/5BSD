@@ -2,9 +2,12 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 _V4 = "//tools/build/bazel/config:inet_support_enabled"
 _V6 = "//tools/build/bazel/config:inet6_support_enabled"
+_SOURCES = (
+["main.c", "main.h", "ping.h", "ping6.h", "utils.h"] + select({_V4: ["ping.c", "utils.c"], "//conditions:default": []}) + select({_V6: ["ping6.c"], "//conditions:default": []})
+)
 _DEPS = ["//lib/msun:m"] + select({_V6: ["//lib/libmd:md_link"], "//conditions:default": []}) + ["//lib/libcasper/libcasper:casper", "//lib/libcasper/services/cap_dns:cap_dns", "//lib/libipsec:ipsec"]
 _SHARED = ["//lib/msun:m_shared"] + select({_V6: ["//lib/libmd:md_shared"], "//conditions:default": []}) + ["//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_dns:cap_dns_shared", "//lib/libipsec:ipsec_shared"]
-cc_binary(name = "ping", srcs = ["main.c", "main.h", "ping.h", "ping6.h", "utils.h"] + select({_V4: ["ping.c", "utils.c"], "//conditions:default": []}) + select({_V6: ["ping6.c"], "//conditions:default": []}),
+cc_binary(name = "ping", srcs = _SOURCES,
     deps = _DEPS, dynamic_deps = _SHARED,
     local_defines = ["IPSEC", "WITH_CASPER"] + select({_V4: ["INET"], "//conditions:default": []}) + select({_V6: ["INET6", "KAME_SCOPEID"], "//conditions:default": []}),
     copts = ["-fPIE"], linkopts = ["-pie"],
@@ -37,3 +40,9 @@ bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], m
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ["main.o"] + select({_V4: ["ping.o", "utils.o"], "//conditions:default": []}) + select({_V6: ["ping6.o"], "//conditions:default": []}),
+    deps = ['//lib/libcapsicum:headers', '//lib/libcasper/libcasper:headers', '//lib/libcasper/services/cap_dns:headers'],
+    defines = ["IPSEC"] + select({_V4: ["INET"], "//conditions:default": []}) + select({_V6: ["INET6", "KAME_SCOPEID"], "//conditions:default": []}))

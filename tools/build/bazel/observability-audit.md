@@ -21,6 +21,26 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Six rescue init/network/iSCSI/archive variants (2026-11-05)
+
+Init/ping/dhclient/iscsictl/iscsid/tar expand the core to 91 applications. DHCP
+retains anchored dhcplife state/script start/done sites: schemas, actual functions/
+patch sites and object-path-derived aliases agree with original objects. Init's
+BOOTTRACE calls remain; invalid-runlevel tests do not exercise real PID-1 lifecycle.
+Tar's executable provider is excluded by original RESCUE policy; native libarchive
+instrumentation remains linked through its existing producer. Review that ordinary
+SDK DTrace/drti producer against native bootstrap before full source-build acceptance.
+No new direct BSM coverage is established by the bounded source scan.
+
+Private tar tests cover five compression choices and binary/hard/symbolic links.
+Host argument rejections do not establish DHCP leases, ping packet delivery,
+iSCSI sessions or audit delivery. Candidate guest review: DHCP state/script/error
+flows, iSCSI authentication/session/privilege failures without exposing secrets,
+init login/session/lifecycle events and archive metadata/ACL restore. Evaluate
+existing kernel/library coverage before adding probes. Live registration/firing,
+audit delivery and disabled/enabled costs remain separate gates. See
+RESCUE-NINETY-ONE-PROGRAM-QUALIFICATION.md for evidence and retained differences.
+
 ## Five rescue UFS/NFS variants (2026-11-05)
 
 Dump/restore/fsck_ffs/fsdb/mount_nfs expand the core to 85 applications. Fsck_ffs

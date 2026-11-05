@@ -21,7 +21,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'init', b'ping', b'ping6', b'dhclient', b'iscsictl', b'iscsid', b'tar', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -755,6 +755,47 @@ class RescueCore(unittest.TestCase):
                 self.assertIn(b"\t.\n", p.stdout)
                 self.assertIn(b"\t./.snap\n", p.stdout)
                 self.assertEqual(hashlib.sha256(path.read_bytes()).digest(), before)
+
+    def test_network_and_iscsi_reject_before_service_operations(self):
+        for name in ["ping", "dhclient", "iscsictl", "iscsid"]:
+            with self.subTest(program=name):
+                p = self.run_app(name, "-h")
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
+
+    def test_init_rejects_invalid_runlevel(self):
+        # A multi-character invalid argument cannot enter COMPAT_SYSV_INIT's
+        # single-character signal-to-PID-1 path, including when tests run as root.
+        p = self.run_app("init", "invalid-runlevel")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn(b"invalid run-level" if os.getuid() == 0 else b"Operation not permitted", p.stderr)
+
+    def test_tar_private_binary_links_and_compression(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source = Path(d) / "source"
+            source.mkdir()
+            data = bytes(range(256)) * 128
+            (source / "payload").write_bytes(data)
+            os.link(source / "payload", source / "hard")
+            (source / "symbol").symlink_to("payload")
+            for index, flags in enumerate([[], ["-z"], ["-j"], ["-J"], ["--zstd"]]):
+                with self.subTest(compression=flags):
+                    archive = Path(d) / ("archive" + str(index))
+                    output = Path(d) / ("output" + str(index))
+                    output.mkdir()
+                    p = self.run_app("tar", "-c", "-f", str(archive), *flags, "--format=pax", "payload", "hard", "symbol", cwd=source)
+                    self.assertEqual(p.returncode, 0, p.stderr)
+                    p = self.run_app("tar", "-t", "-f", str(archive))
+                    self.assertEqual(p.returncode, 0, p.stderr)
+                    self.assertEqual(set(p.stdout.splitlines()), {b"payload", b"hard", b"symbol"})
+                    p = self.run_app("tar", "-x", "-f", str(archive), cwd=output)
+                    self.assertEqual(p.returncode, 0, p.stderr)
+                    self.assertEqual((output / "payload").read_bytes(), data)
+                    self.assertEqual((output / "hard").read_bytes(), data)
+                    self.assertEqual((output / "payload").stat().st_ino, (output / "hard").stat().st_ino)
+                    self.assertTrue((output / "symbol").is_symlink())
+                    self.assertEqual(os.readlink(output / "symbol"), "payload")
+                    self.assertEqual((source / "payload").read_bytes(), data)
 
 if __name__ == "__main__":
     unittest.main()

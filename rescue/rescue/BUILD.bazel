@@ -22,8 +22,8 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
 # No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# Supported combined-object stage, bounded to eighty-five real applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch', 'dump', 'restore', 'fsck_ffs', 'fsdb', 'mount_nfs']]
+# Supported combined-object stage, bounded to ninety-one real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch', 'dump', 'restore', 'fsck_ffs', 'fsdb', 'mount_nfs', 'init', 'ping', 'dhclient', 'iscsictl', 'iscsid', 'tar']]
 _CORE_OWNERS = {p: "usr.bin/" + p for p in ["head", "tail", "tee", "id"]}
 _CORE_OWNERS.update({p: "usr.sbin/" + p for p in ["chroot", "chown"]})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']})
@@ -32,13 +32,25 @@ _CORE_OWNERS.update({'sed': 'usr.bin/sed', 'gzip': 'usr.bin/gzip', 'bzip2': 'usr
 _CORE_OWNERS.update({'xz': 'usr.bin/xz', 'zstd': 'usr.bin/zstd', 'less': 'usr.bin/less', 'rtsol': 'sbin/rtsol', 'mount_msdosfs': 'sbin/mount_msdosfs', 'route': 'sbin/route'})
 _CORE_OWNERS.update({'reboot': 'sbin/reboot', 'shutdown': 'sbin/shutdown', 'dumpon': 'sbin/dumpon', 'savecore': 'sbin/savecore', 'mount': 'sbin/mount', 'mdmfs': 'sbin/mdmfs', 'nos-tun': 'sbin/nos-tun', 'nc': 'usr.bin/nc', 'fetch': 'usr.bin/fetch'})
 _CORE_OWNERS.update({'dump': 'sbin/dump', 'restore': 'sbin/restore', 'fsck_ffs': 'sbin/fsck_ffs', 'fsdb': 'sbin/fsdb', 'mount_nfs': 'sbin/mount_nfs'})
+_CORE_OWNERS.update({'init': 'sbin/init', 'ping': 'sbin/ping', 'dhclient': 'sbin/dhclient', 'iscsictl': 'usr.bin/iscsictl', 'iscsid': 'usr.sbin/iscsid', 'tar': 'usr.bin/tar'})
 _CORE_OBJECTS = {p: "//" + _CORE_OWNERS.get(p, "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
+[config_setting(name = name, flag_values = {
+    "//tools/build/bazel/config:inet_support": v4,
+    "//tools/build/bazel/config:inet6_support": v6,
+}) for name, v4, v6 in [("ping_dual_stack", "true", "true"), ("ping_ipv4_only", "true", "false"), ("ping_ipv6_only", "false", "true")]]
 bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
     object_names = select({
-        "//tools/build/bazel/config:netlink_support_enabled": {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS},
-        "//conditions:default": {p: (["route.o", "show.o"] if p == "route" else OBJECT_NAMES[p]) for p in _CORE_PROGRAMS},
+        "//tools/build/bazel/config:netlink_support_enabled": {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS if p != "ping"},
+        "//conditions:default": {p: (["route.o", "show.o"] if p == "route" else OBJECT_NAMES[p]) for p in _CORE_PROGRAMS if p != "ping"},
+    }) | select({
+        ":ping_dual_stack": {"ping": ["main.o", "ping.o", "utils.o", "ping6.o"]},
+        ":ping_ipv4_only": {"ping": ["main.o", "ping.o", "utils.o"]},
+        ":ping_ipv6_only": {"ping": ["main.o", "ping6.o"]},
+        "//conditions:default": {"ping": ["main.o"]},
     }),
-    aliases = {p: ALIASES[p] for p in _CORE_PROGRAMS if p in ALIASES}, emit_stubs = True,
+    aliases = {p: ALIASES[p] for p in _CORE_PROGRAMS if p in ALIASES and p != "ping"} | select({
+        "//tools/build/bazel/config:inet6_support_enabled": {"ping": ["ping6"]}, "//conditions:default": {},
+    }), emit_stubs = True,
     required_configuration = {"//tools/build/bazel/config:dtrace": "true"})
 filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "metadata")
 [filegroup(name = p + "_entry_source", srcs = [":core_dispatch"], output_group = "stub_" + crunchgen_identifier(p)) for p in _CORE_PROGRAMS]
@@ -59,7 +71,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real eighty-five-program executable, with native static libc and startup.
+# Bounded real ninety-one-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],
@@ -69,6 +81,7 @@ bsd_component_objects(name = "core_dispatcher_compiler_output", group = ":core_d
 # Selected archives follow original CRUNCH_LIBS order. Each cc_import preserves
 # lazy extraction; provider/header CcInfo does not become an accidental own input.
 _CORE_ARCHIVES = [
+    ("crypt", "//lib/libcrypt:static_archive"),
     ("edit", "//lib/libedit:static_archive"),
     ("jail", "//lib/libjail:static_archive"),
     ("kvm", "//lib/libkvm:static_archive"),
@@ -89,17 +102,19 @@ _CORE_ARCHIVES = [
     ("bz2", "//lib/libbz2:static_archive"),
     ("zstd", "//lib/libzstd:static_archive"),
     ("fetch", "//lib/libfetch:static_archive"),
+    ("archive", "//lib/libarchive:static_archive"),
     ("ssl", "//secure/lib/libssl:static_archive"),
     ("crypto", "//secure/lib/libcrypto:static_archive"),
     ("md", "//lib/libmd:md"),
     ("m", "//lib/msun:static_archive"),
+    ("iscsiutil", "//lib/libiscsiutil:static_archive"),
 ]
 [cc_import(name = "core_" + name + "_static_link", static_library = archive,
-    deps = select({"//tools/build/bazel/config:openssl_enabled": [":core_ssl_static_link"], "//conditions:default": [":core_md_static_link"]}) if name == "fetch" else
+    deps = select({"//tools/build/bazel/config:openssl_enabled": [":core_ssl_static_link"], "//conditions:default": [":core_md_static_link"]}) if name == "archive" else
         ([":core_" + _CORE_ARCHIVES[index + 1][0] + "_static_link"] if index + 1 < len(_CORE_ARCHIVES) else ["//lib/libc:static_link_objects"]))
  for index, (name, archive) in enumerate(_CORE_ARCHIVES)]
 cc_binary(name = "rescue_core", srcs = [":core_dispatcher_compiler_output"] + [":" + p + "_crunched" for p in _CORE_PROGRAMS],
-    deps = [":core_edit_static_link"],
+    deps = [":core_crypt_static_link"],
     features = ["fully_static_link"], linkstatic = True,
     linkopts = ["-nodefaultlibs", "-Wl,--allow-multiple-definition", "-Wl,-znow", "-Wl,-zrelro",
         "@$(location //lib/csu/amd64:startup_link_flags)"],

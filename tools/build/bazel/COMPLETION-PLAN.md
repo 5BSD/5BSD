@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to ninety-one applications (2026-11-05)
+
+Six init/network/iSCSI/archive owners reach 91 of 103 default applications.
+Default and target-OpenSSL-disabled selected cores pass 95 runtime methods plus
+28 source-settings methods, including private tar binary/link/compression round
+trips. All 39 executed compiler policies agree with original Make with explicitly
+bound init duplicate-macro and header-derived tar-version preprocessing controls.
+Original crunchgen/Make on identical inputs matches all 184 outputs. DHCP's
+anchored provider and five diagnostic-path controls pass. All 3031 consumed inputs
+are declared; two raw generated C differences remain reported and require exact
+original/native producer replays. Six ordinary declarations remain structurally
+unchanged. See RESCUE-NINETY-ONE-PROGRAM-QUALIFICATION.md. Continue remaining 12
+applications, actual libraries/config/cross/full install and every full-system gate.
+Make stays default; BIP excluded. No installed-system/performance completion claim.
+Diagnose the original iSCSI yacc PCP warning and qualify that configuration option.
+
 ## Native rescue expansion to eighty-five applications (2026-11-05)
 
 Five UFS/NFS owners reach 85 of 103 default applications, sharing unchanged

@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+_SOURCES = (
+["//contrib/libarchive:tar/" + source for source in ["bsdtar.c", "cmdline.c", "creation_set.c", "read.c", "subst.c", "util.c", "write.c"]] +
+        ["//contrib/libarchive:libarchive_fe/" + source for source in ["lafe_err.c", "line_reader.c", "passphrase.c"]]
+)
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
 _LIBRARIES = ["//lib/libarchive:archive"]
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
@@ -18,8 +22,7 @@ cc_library(
 )
 cc_library(
     name = "objects",
-    srcs = ["//contrib/libarchive:tar/" + source for source in ["bsdtar.c", "cmdline.c", "creation_set.c", "read.c", "subst.c", "util.c", "write.c"]] +
-        ["//contrib/libarchive:libarchive_fe/" + source for source in ["lafe_err.c", "line_reader.c", "passphrase.c"]],
+    srcs = _SOURCES,
     deps = _LIBRARIES,
     implementation_deps = ["//lib/libarchive:configuration", "//contrib/libarchive:tar_headers"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
     local_defines = ['PLATFORM_CONFIG_H=\\"config_freebsd.h\\"', "BSDTAR_VERSION_STRING=ARCHIVE_VERSION_ONLY_STRING"] +
@@ -71,3 +74,8 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['bsdtar.o', 'cmdline.o', 'creation_set.o', 'read.o', 'subst.o', 'util.o', 'write.o', 'lafe_err.o', 'line_reader.o', 'passphrase.o'],
+    deps = ['//contrib/libarchive:headers', '//lib/libarchive:configuration', '//contrib/libarchive:tar_headers'],
+    defines = ['PLATFORM_CONFIG_H=\\"config_freebsd.h\\"', "BSDTAR_VERSION_STRING=ARCHIVE_VERSION_ONLY_STRING"] + select({"//tools/build/bazel/config:openssl_enabled": ["WITH_OPENSSL", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": []}))

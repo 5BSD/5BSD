@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = "iscsid", srcs = ['discovery.c', 'iscsid.c', 'login.c', 'iscsid.h'],
+_SOURCES = (
+['discovery.c', 'iscsid.c', 'login.c', 'iscsid.h']
+)
+cc_binary(name = "iscsid", srcs = _SOURCES,
     deps = ['//sys/dev/iscsi:user_headers', '//lib/libiscsiutil:iscsiutil_pie', '//lib/libutil:util'],
     dynamic_deps = ['//lib/libutil:util_shared', '//lib/libmd:md_shared'],
     local_defines = ["ICL_KERNEL_PROXY"],
@@ -26,3 +29,9 @@ bsd_python_test(name = "help_test", src = "help-test.py", data = [":iscsid"] + [
     runtime = ["@bsd_sdk//toolchain:python_stdlib"],
     args = ["--program-runtime", "$(locations :test_program_runtime)"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = _SOURCES,
+    object_names = ['discovery.o', 'iscsid.o', 'login.o'],
+    deps = ['//lib/libcapsicum:headers', '//sys/dev/iscsi:user_headers', '//lib/libiscsiutil:iscsiutil', '//lib/libutil:headers'],
+    defines = ["ICL_KERNEL_PROXY"])
