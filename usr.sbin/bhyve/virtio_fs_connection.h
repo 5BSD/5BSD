@@ -82,6 +82,16 @@ uint32_t virtio_fs_connection_events(struct virtio_fs_connection *);
  */
 bool	virtio_fs_connection_deadline(const struct virtio_fs_connection *,
 	    struct timespec *);
+/*
+ * Bounded synchronous progress for startup/checkpoint callers without a running
+ * event dispatcher. Caller owns the connection serializer and excludes destroy
+ * and reconnect throughout the call. Normal connection callbacks may execute.
+ * deadline is absolute CLOCK_MONOTONIC. Zero means one progress attempt, not a
+ * completed handshake or control operation; callers recheck their condition.
+ * An operation deadline alone does not mark the connection failed.
+ */
+int	virtio_fs_connection_wait_progress(struct virtio_fs_connection *,
+	    const struct timespec *deadline);
 int	virtio_fs_connection_progress(struct virtio_fs_connection *,
 	    bool, bool);
 bool	virtio_fs_connection_active(

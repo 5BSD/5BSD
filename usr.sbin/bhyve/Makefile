@@ -122,6 +122,7 @@ SRCS=	\
 	virtio_fs_backend_io.c	\
 	virtio_fs_chain.c	\
 	virtio_fs_connection.c	\
+	virtio_fs_connection_wait.c	\
 	virtio_fs_dispatch.c	\
 	virtio_fs_host.c	\
 	virtio_fs_outbox.c	\

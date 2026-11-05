@@ -113,7 +113,7 @@ cc_binary(name = "virtio_fs_connection_test", srcs = ["virtio_fs_connection_test
     deps = ["//usr.sbin/bhyve:virtio_fs_connection_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
     dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
-_FS_CONNECTION_CASES = ["round_trip_and_readiness", "partial_response_does_not_block_event_loop",
+_FS_CONNECTION_CASES = ["wait_progress_honors_protocol_deadline", "startup_checkpoint_without_event_dispatch", "round_trip_and_readiness", "partial_response_does_not_block_event_loop",
     "slow_draining_send_does_not_block_event_loop", "late_callback_with_ready_peer_does_not_expire",
     "stalled_partial_frame_expires", "protocol_failure_completes_pending",
     "connect_path_is_authenticated_and_event_driven", "adopt_failure_preserves_caller_ownership",
@@ -148,3 +148,24 @@ _BLOCK_IF_CASES = ["config_numbers_are_bounded", "write_zeroes_file", "checkpoin
     runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
  for case in _BLOCK_IF_CASES]
 test_suite(name = "block_if_tests", tests = [":" + case for case in _BLOCK_IF_CASES], visibility = ["//visibility:public"])
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+# Match Make's local source copy so quoted includes use harness PCI/config mocks.
+copy_file(name = "fs_pci_source", src = "//usr.sbin/bhyve:pci_virtio_fs.c",
+    out = "pci_virtio_fs.c")
+cc_library(name = "fs_pci_source_headers", textual_hdrs = [":fs_pci_source"], includes = ["."])
+# Snapshot paths are compiled and exercised, including startup before dispatch.
+cc_binary(name = "virtio_fs_pci_test", srcs = ["virtio_fs_pci_test.c", "pci_emul.h", "config.h", "virtio.h",
+        "virtio_1_4_spec.h", "virtio_config_read_test_support.h"],
+    deps = [":fs_pci_source_headers", "//usr.sbin/bhyve:virtio_fs_pci_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED,
+    copts = ["-fPIE", "-DPIC", "-DBHYVE_SNAPSHOT", "-ffunction-sections", "-fdata-sections", "-Wno-error=cast-align"],
+    linkopts = ["-pie", "-Wl,--gc-sections"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+_FS_PCI_CASES = ['option_bounds', 'partial_frame_arms_deadline_timer', 'configuration_layout', 'device_contract', 'suspend_capability_requires_reconstructible_backend', 'restored_suspend_selects_destination_state', 'suspended_checkpoint_keeps_backend_quiesced', 'snapshot_serializer_reuses_pause_ownership', 'snapshot_callback_validates_before_backend_publication', 'checkpoint_pause_transfers_mutex_to_resume', 'suspended_destination_runnable_restore_thaws_backend', 'checkpoint_before_first_backend_event', 'checkpoint_wait_errors_and_deadline', 'checkpoint_progress_without_dispatcher', 'checkpoint_failed_connection_is_quarantined', 'checkpoint_thaw_failure_is_retryable', 'suspended_checkpoint_failure_preserves_thaw_blob', 'generation_scoped_reset_completion', 'async_reset_event_failure_retains_ownership', 'reconnecting_event_is_ignored', 'disconnected_event_sync_is_safe', 'event_sync_reports_registration_failure', 'completion_uses_device_context_for_pressure', 'reconnecting_queue_callbacks_are_fenced', 'notification_queue_reset_defers_delivery', 'init_composes_device_topology', 'init_enables_notifications_packed_and_suspend', 'init_rejects_invalid_configuration', 'init_unwinds_on_transport_failures', 'init_fails_when_backend_connect_fails', 'install_callbacks_registers_all_handlers', 'notify_forwards_requests_to_backend', 'notify_defers_when_callbacks_absent', 'receive_notification_publishes_to_queue', 'discard_callback_cancels_request', 'complete_discards_stale_generation', 'take_reset_completions_skips_and_clamps', 'qreset_rejects_out_of_range_and_notification', 'event_processes_progress_and_completions', 'reset_reconnects_backend', 'reset_reconnect_failure_sets_needs_reset', 'reset_reconnects_through_init_directory_in_capability_mode', 'event_descriptor_outlives_failed_connection', 'suspend_and_resume_device_quiesce_backend', 'qreset_pending_and_success', 'notify_notification_queue_retry_error', 'notify_event_arm_failure_sets_needs_reset', 'event_install_failure_and_arm_failure', 'resume_device_restored_state_and_sync_failure', 'control_wait_times_out_and_aborts', 'begin_quiesce_wait_inprogress_paths', 'snapshot_validate_serializes_with_device_lock', 'pause_failure_paths_and_rollback', 'resume_restores_suspended_destination', 'snapshot_rejects_unowned_and_contract_failure']
+[bsd_atf_test(name = "fs_pci_" + case, case_name = case, body = ":virtio_fs_pci_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small",
+    visibility = ["//visibility:public"])
+ for case in _FS_PCI_CASES]
+test_suite(name = "virtio_fs_pci_tests", tests = [":fs_pci_" + case for case in _FS_PCI_CASES],
+    visibility = ["//visibility:public"])

@@ -752,6 +752,58 @@ pci_vtfs_cfgread(void *arg, int offset, int size, uint32_t *value)
 	    offset, size, value));
 }
 
+/*
+ * Restore runs before mevent_dispatch().  Drive only the serialized backend
+ * here: waiting for a condition signalled by that dispatcher would deadlock.
+ * The ordinary event callback uses the same mutex, so it cannot progress the
+ * connection concurrently.  Guest queue kicks and deferred reset completions
+ * remain the event callback's responsibility.
+ */
+static int
+pci_vtfs_wait_progress(struct pci_vtfs_softc *sc,
+    const struct timespec *deadline)
+{
+	int error;
+
+	error = virtio_fs_connection_wait_progress(sc->vsc_connection, deadline);
+	if (error == ETIMEDOUT &&
+	    virtio_fs_connection_error(sc->vsc_connection) == 0)
+		return (error);
+	if (error == 0)
+		error = pci_vtfs_install_callbacks(sc);
+	if (error == 0)
+		error = pci_vtfs_sync_events(sc);
+	if (error != 0)
+		vi_set_needs_reset(&sc->vsc_vs);
+	return (error);
+}
+
+#ifdef BHYVE_SNAPSHOT
+static int
+pci_vtfs_ready_wait(struct pci_vtfs_softc *sc)
+{
+	struct timespec deadline;
+	int error;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno);
+	deadline.tv_sec += VTFS_CHECKPOINT_TIMEOUT_SEC;
+	for (;;) {
+		error = pci_vtfs_install_callbacks(sc);
+		if (error != 0) {
+			vi_set_needs_reset(&sc->vsc_vs);
+			return (error);
+		}
+		if (sc->vsc_callbacks_set)
+			return (0);
+		error = pci_vtfs_wait_progress(sc, &deadline);
+		if (error != 0)
+			return (error);
+	}
+}
+
+#endif
+
 static int
 pci_vtfs_control_wait(struct pci_vtfs_softc *sc)
 {
@@ -775,8 +827,7 @@ pci_vtfs_control_wait(struct pci_vtfs_softc *sc)
 		    sc->vsc_connection);
 		if (status != EINPROGRESS)
 			break;
-		error = pthread_cond_timedwait(&sc->vsc_checkpoint_cv,
-		    &sc->vsc_mtx, &deadline);
+		error = pci_vtfs_wait_progress(sc, &deadline);
 		if (error != 0) {
 			status = error;
 			break;
@@ -812,8 +863,7 @@ pci_vtfs_begin_quiesce_wait(struct pci_vtfs_softc *sc)
 			return (error);
 		}
 		sc->vsc_checkpoint_waiting = true;
-		error = pthread_cond_timedwait(&sc->vsc_checkpoint_cv,
-		    &sc->vsc_mtx, &deadline);
+		error = pci_vtfs_wait_progress(sc, &deadline);
 		sc->vsc_checkpoint_waiting = false;
 		if (error != 0) {
 			/*
@@ -1020,13 +1070,17 @@ pci_vtfs_pause(void *vsc)
 	sc->vsc_checkpoint_lock_held = true;
 	sc->vsc_checkpoint_borrowed_suspend = sc->vsc_guest_suspended;
 	if (sc->vsc_backend_identity == NULL ||
-	    sc->vsc_connection == NULL || !sc->vsc_callbacks_set ||
-	    sc->vsc_reconnecting) {
+	    sc->vsc_connection == NULL || sc->vsc_reconnecting) {
 		error = sc->vsc_backend_identity == NULL ? ENOTSUP : EBUSY;
 		goto fail;
 	}
 	if (pci_vtfs_reset_pending(sc)) {
 		error = EBUSY;
+		goto fail;
+	}
+	error = pci_vtfs_ready_wait(sc);
+	if (error != 0) {
+		VIRTIO_PROBE_FS_BACKEND("vtfs", "checkpoint-connect", 0, error);
 		goto fail;
 	}
 	if (!sc->vsc_checkpoint_borrowed_suspend) {

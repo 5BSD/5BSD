@@ -19,6 +19,7 @@
 #undef PCI_EMUL_SET
 #define	PCI_EMUL_SET(name)
 
+#include "virtio_fs_connection_wait.c"
 #include "virtio_fs_host.c"
 #include "virtio_fs_state.c"
 #include "pci_virtio_fs.c"
@@ -66,6 +67,9 @@ static unsigned int connection_set_discard_calls;
 static unsigned int connection_set_reset_complete_calls;
 static unsigned int connection_set_notification_calls;
 static int connection_progress_error;
+static int connection_saved_error;
+static unsigned int startup_progress_stage;
+static bool startup_progress_enabled;
 static bool connection_progress_readable;
 static bool connection_progress_writable;
 static int connection_control_status_result;
@@ -404,9 +408,26 @@ virtio_fs_connection_progress(
     bool readable, bool writable)
 {
 
+	if (startup_progress_enabled) {
+		char byte;
+		ATF_REQUIRE_EQ(read(connection_fd_value, &byte, 1), 1);
+		startup_progress_stage++;
+		if (startup_progress_stage == 1)
+			connection_active_result = true;
+		if (startup_progress_stage == 2)
+			connection_begin_quiesce_result = 0;
+		if (startup_progress_stage >= 3)
+			connection_control_status_result = 0;
+	}
 	connection_progress_readable = readable;
 	connection_progress_writable = writable;
 	return (connection_progress_error);
+}
+
+int
+virtio_fs_connection_error(const struct virtio_fs_connection *connection __unused)
+{
+	return (connection_saved_error);
 }
 
 uint32_t
@@ -521,6 +542,8 @@ virtio_fs_connection_begin_thaw(
     const void *state __unused, size_t state_length __unused)
 {
 
+	if (startup_progress_enabled)
+		connection_control_status_result = EINPROGRESS;
 	checkpoint_thaw_calls++;
 	return (checkpoint_thaw_error);
 }
@@ -777,6 +800,9 @@ reset_mock_state(void)
 	connection_set_reset_complete_calls = 0;
 	connection_set_notification_calls = 0;
 	connection_progress_error = 0;
+	connection_saved_error = 0;
+	startup_progress_stage = 0;
+	startup_progress_enabled = false;
 	connection_control_status_result = 0;
 	connection_begin_quiesce_result = 0;
 	connection_begin_thaw_saved_error = 0;
@@ -980,6 +1006,148 @@ ATF_TC_BODY(checkpoint_pause_transfers_mutex_to_resume, tc)
 	ATF_CHECK(!sc.vsc_checkpoint_lock_held);
 	ATF_CHECK(!pthread_mutex_isowned_np(&sc.vsc_mtx));
 	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+/* Restore pauses a newly created device before mevent_dispatch starts. */
+ATF_TC_WITHOUT_HEAD(checkpoint_before_first_backend_event);
+ATF_TC_BODY(checkpoint_before_first_backend_event, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct pci_vtfs_reset reset[2];
+	static char identity[] = "backend-identity";
+
+	memset(&sc, 0, sizeof(sc));
+	memset(reset, 0, sizeof(reset));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_nvq = nitems(reset);
+	sc.vsc_reset = reset;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_backend_identity = identity;
+	/* Even an already negotiated connection has no event-installed callbacks. */
+	ATF_REQUIRE(!sc.vsc_callbacks_set);
+	ATF_REQUIRE_EQ(pci_vtfs_pause(&sc), 0);
+	ATF_CHECK(sc.vsc_callbacks_set);
+	ATF_CHECK(pthread_mutex_isowned_np(&sc.vsc_mtx));
+	ATF_REQUIRE_EQ(pci_vtfs_resume(&sc), 0);
+	ATF_CHECK(!pthread_mutex_isowned_np(&sc.vsc_mtx));
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+static void *
+startup_peer(void *arg)
+{
+	int fd = *(int *)arg;
+
+	for (int i = 0; i < 4; i++) {
+		usleep(5000);
+		ATF_REQUIRE_EQ(write(fd, "x", 1), 1);
+	}
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(checkpoint_progress_without_dispatcher);
+ATF_TC_BODY(checkpoint_progress_without_dispatcher, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct pci_vtfs_reset reset[2];
+	static char identity[] = "backend-identity";
+	pthread_t peer;
+	int sockets[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(reset, 0, sizeof(reset));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_nvq = nitems(reset);
+	sc.vsc_reset = reset;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_backend_identity = identity;
+	connection_fd_value = sockets[0];
+	connection_events = VIRTIO_FS_CONNECTION_READ;
+	connection_active_result = false;
+	connection_begin_quiesce_result = EINPROGRESS;
+	connection_control_status_result = EINPROGRESS;
+	startup_progress_enabled = true;
+	ATF_REQUIRE_EQ(pthread_create(&peer, NULL, startup_peer, &sockets[1]), 0);
+	ATF_REQUIRE_EQ(pci_vtfs_pause(&sc), 0);
+	/* Handshake, pending I/O drain, then freeze acknowledgement. */
+	ATF_CHECK_EQ(startup_progress_stage, 3);
+	ATF_CHECK_EQ(connection_set_discard_calls, 1);
+	ATF_REQUIRE_EQ(pci_vtfs_resume(&sc), 0);
+	ATF_CHECK_EQ(startup_progress_stage, 4);
+	ATF_CHECK_EQ(checkpoint_thaw_calls, 1);
+	ATF_REQUIRE_EQ(pthread_join(peer, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+	close(sockets[0]);
+	close(sockets[1]);
+}
+
+ATF_TC_WITHOUT_HEAD(checkpoint_failed_connection_is_quarantined);
+ATF_TC_BODY(checkpoint_failed_connection_is_quarantined, tc)
+{
+	struct pci_vtfs_softc sc;
+	static char identity[] = "backend-identity";
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_backend_identity = identity;
+	connection_active_result = false;
+	connection_saved_error = ECONNRESET;
+	ATF_CHECK_EQ(pci_vtfs_pause(&sc), ECONNRESET);
+	ATF_CHECK_EQ(needs_reset_calls, 1);
+	ATF_CHECK(!sc.vsc_checkpoint_lock_held);
+	ATF_CHECK(!pthread_mutex_isowned_np(&sc.vsc_mtx));
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(checkpoint_wait_errors_and_deadline);
+ATF_TC_BODY(checkpoint_wait_errors_and_deadline, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct timespec deadline;
+	int sockets[2], error;
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	connection_set_discard_error = EIO;
+	ATF_CHECK_EQ(pci_vtfs_ready_wait(&sc), EIO);
+	ATF_CHECK_EQ(needs_reset_calls, 1);
+	connection_set_discard_error = 0;
+	/* A writable socket lets progress finish; failing event rearm quarantines. */
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+	connection_fd_value = sockets[0];
+	connection_events = VIRTIO_FS_CONNECTION_WRITE;
+	sc.vsc_write_event = (struct mevent *)(uintptr_t)2;
+	mevent_enable_write_error = EIO;
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &deadline), 0);
+	deadline.tv_sec++;
+	ATF_CHECK_EQ(pci_vtfs_wait_progress(&sc, &deadline), EIO);
+	ATF_CHECK_EQ(needs_reset_calls, 2);
+	/* No peer writes: bounded polling returns to the operation deadline. */
+	mevent_enable_write_error = 0;
+	connection_events = VIRTIO_FS_CONNECTION_READ;
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &deadline), 0);
+	deadline.tv_nsec += 20000000;
+	if (deadline.tv_nsec >= 1000000000) {
+		deadline.tv_sec++;
+		deadline.tv_nsec -= 1000000000;
+	}
+	error = pci_vtfs_wait_progress(&sc, &deadline);
+	ATF_CHECK(error == 0 || error == ETIMEDOUT);
+	deadline = (struct timespec){ 0 };
+	ATF_CHECK_EQ(pci_vtfs_wait_progress(&sc, &deadline), ETIMEDOUT);
+	ATF_CHECK_EQ(needs_reset_calls, 2);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+	close(sockets[0]);
+	close(sockets[1]);
 }
 
 ATF_TC_WITHOUT_HEAD(suspended_destination_runnable_restore_thaws_backend);
@@ -2483,12 +2651,7 @@ ATF_TC_BODY(control_wait_times_out_and_aborts, tc)
 	memset(&sc, 0, sizeof(sc));
 	reset_mock_state();
 	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
-	/*
-	 * Initialise the condition variable on CLOCK_REALTIME while the code
-	 * computes its deadline on CLOCK_MONOTONIC.  The monotonic deadline is
-	 * far in the REALTIME past, so the timed wait returns immediately and
-	 * the control wait exercises its timeout/abort path without blocking.
-	 */
+	/* No event dispatcher or peer completes the control request. */
 	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, NULL), 0);
 	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
 	sc.vsc_guest_suspended = true;
@@ -2515,7 +2678,7 @@ ATF_TC_BODY(begin_quiesce_wait_inprogress_paths, tc)
 	memset(reset, 0, sizeof(reset));
 	reset_mock_state();
 	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
-	/* REALTIME cond => the monotonic deadline is already past. */
+	/* Keep the control request pending through the bounded poll deadline. */
 	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, NULL), 0);
 	sc.vsc_nvq = nitems(reset);
 	sc.vsc_reset = reset;
@@ -2530,7 +2693,7 @@ ATF_TC_BODY(begin_quiesce_wait_inprogress_paths, tc)
 	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
 	ATF_CHECK(pci_vtfs_suspend_device(&sc) != 0);
 
-	/* Re-arm succeeds, but the drain wait times out (past deadline). */
+	/* Re-arm succeeds, but the stalled drain reaches its deadline. */
 	mevent_enable_read_error = 0;
 	connection_events = 0;
 	ATF_CHECK(pci_vtfs_suspend_device(&sc) != 0);
@@ -2667,6 +2830,10 @@ ATF_TP_ADD_TCS(tp)
 	    checkpoint_pause_transfers_mutex_to_resume);
 	ATF_TP_ADD_TC(tp,
 	    suspended_destination_runnable_restore_thaws_backend);
+	ATF_TP_ADD_TC(tp, checkpoint_before_first_backend_event);
+	ATF_TP_ADD_TC(tp, checkpoint_wait_errors_and_deadline);
+	ATF_TP_ADD_TC(tp, checkpoint_progress_without_dispatcher);
+	ATF_TP_ADD_TC(tp, checkpoint_failed_connection_is_quarantined);
 	ATF_TP_ADD_TC(tp, checkpoint_thaw_failure_is_retryable);
 	ATF_TP_ADD_TC(tp,
 	    suspended_checkpoint_failure_preserves_thaw_blob);
