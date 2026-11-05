@@ -21,6 +21,17 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Original hash algorithms and selector validation (2026-11-05)
+
+The unchanged MD5/SHA1 shell and SHA256/384/512 programs run against declared
+native MD/crypto/C runtimes, including original vector alignment and million-byte
+SHA1 scenarios. DOF initialization is disabled for these isolated tests. Existing
+provider code is retained; algorithm correctness cases do not prove live provider
+firing, audit delivery or tracing overhead. Optional OpenSSL inventory matches
+original Make on both enabled/disabled controls. A requested-suite acceptance gap
+is fixed and demonstrated by a real negative frontend run; no omitted suite is
+counted as runtime proof. See LIBC-HASH-TEST-QUALIFICATION.md.
+
 ## NSS, resolver and standard-time test contribution (2026-11-05)
 
 Original sources and all eleven installed programs are preserved, including the

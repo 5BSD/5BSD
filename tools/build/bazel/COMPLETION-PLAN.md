@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Complete original hash contribution and selector acceptance fix (2026-11-05)
+
+Both original programs, shell wrapper and all five fixtures now build/install;
+five original runtime cases pass. Enabled eleven-file and disabled nine-file
+inventories, exact scripts/data/Kyua, directory attributes and ELF/debug contracts
+match independent original Make controls. OpenSSL-disabled inventory records the
+three SHA2 tests as incompatible, not passed. Source-owned ABI imports retain the
+original md/crypto library order and compatibility headers.
+
+Review exposed an acceptance defect: an unexpanded suite alias could disappear
+behind another passing requested test. The maintained backend now validates every
+requested selector independently, with no extra query for direct tests. An actual
+negative frontend run rejects the formerly accepted alias, and twenty-three
+inventory regression methods pass under Bazel. The misleading one-test diagnostic
+is retained and explicitly not hash runtime proof. See
+LIBC-HASH-TEST-QUALIFICATION.md for evidence, failures and exact limits.
+
+Continue remaining libc/test roots and parent traversal, source-owned archive
+ordering and every independent whole-world/debug/pkgbase/cross/bootstrap/runtime/
+resource/cache/sandbox/publication gate. Full-tests guards and Make default remain;
+BIP stays excluded. Earlier qualification scope is not widened by this checkpoint.
+
 ## Complete selected NSS/resolver/stdtime construction (2026-11-05)
 
 All eleven original programs and twenty-seven installed file records now match

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 import json
 import unittest
-from source_graph import parse_test_inventory, test_inventory_command, test_results, validate_selected_tests
+from source_graph import parse_test_inventory, test_inventory_command, test_results, validate_selected_tests, validate_requested_selector
 
 def inventory(label, compatible=True):
     return json.dumps(dict(label=label, compatible=compatible)) + '\n'
@@ -45,6 +45,24 @@ class TestInventory(unittest.TestCase):
         active=json.dumps(dict(label='//:host',compatible=True,host_artifact=True))
         disabled=json.dumps(dict(label='//:target',compatible=False,host_artifact=False))
         self.assertEqual(parse_test_inventory(active+'\n'+disabled,host_artifacts_only=True),(['//:host'],['//:target']))
+    def test_empty_selector_is_not_hidden_by_another_passing_test(self):
+        for selector in ['//:empty_suite', '//:alias_to_suite', '//:not_a_test']:
+            with self.subTest(selector=selector), self.assertRaisesRegex(ValueError, 'requested test selector .*no compatible'):
+                validate_requested_selector(selector, '', ['//:unrelated_passing_test'], [])
+    def test_all_incompatible_selector_is_not_hidden_by_other_tests(self):
+        with self.assertRaisesRegex(ValueError, 'no compatible'):
+            validate_requested_selector('//:suite', inventory('//:disabled', False), ['//:other'], ['//:disabled'])
+    def test_selector_retains_active_and_excluded_members(self):
+        self.assertEqual(validate_requested_selector('//:suite', inventory('//:a')+inventory('//:b',False),
+            ['//:a','//:other'], ['//:b']), dict(requested='//:suite',expanded=['//:a'],incompatible=['//:b']))
+    def test_selector_cannot_introduce_members_missing_from_combined_query(self):
+        for text in [inventory('//:unaccounted'), inventory('//:a')+inventory('//:unaccounted',False)]:
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'differs from combined'):
+                validate_requested_selector('//:suite', text, ['//:a'], [])
+    def test_selector_keeps_cross_host_artifact_contract(self):
+        with self.assertRaisesRegex(ValueError, 'host artifact'):
+            validate_requested_selector('//:suite', json.dumps(dict(label='//:a',compatible=True,host_artifact=False)),
+                ['//:a'], [], host_artifacts_only=True)
     def test_selected_target_tests_must_match_requested_inventory(self):
         validate_selected_tests(['//:a','//:b'],['//:b','//:a'])
         for selected in [[],['//:a'],['//:a','//:b','//:unrequested']]:

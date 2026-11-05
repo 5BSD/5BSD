@@ -7184,3 +7184,18 @@ execution while compilation and installation artifacts remain cacheable.
 External DNS and privileged/timezone/zoneinfo scenarios remain installed-system
 requirements. Existing explicit-input labels/tests and captures express these
 contributions without changing the production Make backend or full-tests guards.
+
+.Pp
+Native hash-test construction retains original helper/compatibility interfaces,
+md/crypto dependency order, shell/data fixtures and OpenSSL-controlled SHA2
+installation and Kyua registration. Fixed test suites retain incompatible case
+metadata when optional tests are disabled; incompatible cases are not passes.
+.Pp
+The source-configured qualification backend requires every explicit test selector
+to expand to a compatible test. A passing unrelated test cannot hide an empty
+suite, non-test label, unexpanded suite alias or entirely incompatible selector.
+Direct tests already proven by the combined inventory need no additional query;
+indirect selectors have separately recorded configured queries and receipt-bound
+per-selector inventories. Mixed compatible/incompatible suites remain supported.
+These checks strengthen the existing explicit-input workflow without changing
+production backend selection, bundle signing or publication policy.

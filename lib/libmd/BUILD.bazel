@@ -235,7 +235,7 @@ _C_DEFINES = ["WEAK_REFS"] + select({
 _HEADERS = [":headers", "//sys/sys:md_headers", "//sys/crypto/sha2:headers", "//sys/crypto/skein:headers"]
 _COPTS = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments']
 cc_library(name = "headers", hdrs = ["md4.h", "md5.h", "ripemd.h", "sha.h"],
-    strip_include_prefix = "/lib/libmd", deps = ["//sys/sys:md_headers"])
+    strip_include_prefix = "/lib/libmd", deps = ["//sys/sys:md_headers"], visibility = ["//lib/libc/tests/hash:__pkg__"])
 cc_library(name = "common_objects",
     srcs = [":highlevel_sources", "//sys/crypto:md4c.c", "//sys/crypto:md5c.c",
         "rmd160c.c", "rmd_locl.h", "rmdconst.h", "sha0c.c", "sha1c.c", "sha_locl.h",

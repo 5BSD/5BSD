@@ -222,6 +222,21 @@ def parse_test_inventory(text, host_artifacts_only=False):
     return sorted(active), sorted(incompatible)
 
 
+def validate_requested_selector(selector, text, expected, incompatible, host_artifacts_only=False):
+    """Every explicit selector needs its own nonempty compatible expansion.
+
+    A different passing test must not hide an empty suite, non-test label or
+    suite alias which Bazel's tests() expression does not expand.
+    """
+    try:
+        active, excluded = parse_test_inventory(text, host_artifacts_only=host_artifacts_only)
+    except ValueError as error:
+        raise ValueError('requested test selector ' + selector + ': ' + str(error)) from error
+    if not set(active).issubset(expected) or not set(excluded).issubset(incompatible):
+        raise ValueError('requested test selector expansion differs from combined inventory: ' + selector)
+    return dict(requested=selector, expanded=active, incompatible=excluded)
+
+
 def validate_selected_tests(expected, selected):
     if set(expected) != set(selected):
         raise ValueError('selected test targets differ from the explicit requested test inventory')
@@ -347,7 +362,7 @@ def _qualify(config, args, state):
               '--execution_log_'+log_format+'_file='+str(log_path),'--noexecution_log_sort',
               *['--distdir='+str(p) for p in distdirs],*settings,*config['targets']]
         env=dict(os.environ,JAVA_HOME=str(selected['java-home']),LC_ALL='C',BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN='1')
-        expected, incompatible = [], []
+        expected, incompatible, selector_inventories = [], [], []
         if config['tests']:
             query = test_inventory_command(argv, config['targets'], config['tests'], host_artifacts_only=host_artifacts_only)
             start = time.monotonic()
@@ -358,6 +373,26 @@ def _qualify(config, args, state):
             if result.returncode:
                 raise RuntimeError('configured test inventory failed; see test-inventory.stderr')
             expected, incompatible = parse_test_inventory((out/'test-inventory.stdout').read_text(), host_artifacts_only=host_artifacts_only)
+            selector_inventories = []
+            for index, selector in enumerate(config['tests']):
+                if selector in expected:
+                    # The combined query already proves this direct test. Only
+                    # suites/aliases/patterns need another configured query.
+                    selector_inventories.append(dict(requested=selector, expanded=[selector], incompatible=[]))
+                    continue
+                query = test_inventory_command(argv, config['targets'], [selector], host_artifacts_only=host_artifacts_only)
+                prefix = out / ('test-selector-' + str(index))
+                start = time.monotonic()
+                with prefix.with_suffix('.stdout').open('w') as stdout, prefix.with_suffix('.stderr').open('w') as stderr:
+                    result = subprocess.run(query, cwd=src, env=env, stdout=stdout, stderr=stderr)
+                commands.append(dict(argv=query,exit_status=result.returncode,elapsed_seconds=time.monotonic()-start))
+                (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
+                if result.returncode:
+                    raise RuntimeError('requested test selector query failed: ' + selector)
+                selector_inventories.append(validate_requested_selector(selector,
+                    prefix.with_suffix('.stdout').read_text(), expected, incompatible,
+                    host_artifacts_only=host_artifacts_only))
+                selector_inventories[-1]['query_sha256'] = digest(prefix.with_suffix('.stdout'))
             if host_artifacts_only:
                 # bazel test executes test rules in targets even if the caller
                 # omitted them from tests. Validate that whole selection first.
@@ -378,7 +413,7 @@ def _qualify(config, args, state):
         commands.append(dict(argv=argv,exit_status=result.returncode,elapsed_seconds=time.monotonic()-start))
         (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
         if result.returncode:raise RuntimeError('native source graph failed; see bazel.stderr')
-        (out/'test-inventory.json').write_text(json.dumps(dict(requested=config['tests'],expanded=expected,incompatible=incompatible,selected_inventory_sha256=digest(out/'selected-test-inventory.stdout') if (out/'selected-test-inventory.stdout').exists() else None),indent=2)+'\n')
+        (out/'test-inventory.json').write_text(json.dumps(dict(requested=config['tests'],expanded=expected,incompatible=incompatible,selectors=selector_inventories,selected_inventory_sha256=digest(out/'selected-test-inventory.stdout') if (out/'selected-test-inventory.stdout').exists() else None),indent=2)+'\n')
         with (out/'events.json').open() as stream:
             tests = test_results((json.loads(line) for line in stream), expected)
         with (out/'events.json').open() as stream:

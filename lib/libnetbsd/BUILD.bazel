@@ -33,3 +33,6 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 ) for suffix in ["", "_pie"]]
 bsd_component_archive(name = "static_archive", groups = [":netbsd"], visibility = ["//visibility:public"])
 bsd_component_archive(name = "pie_archive", groups = [":netbsd_pie"], visibility = ["//visibility:public"])
+
+# The plain hash helper needs SHA1 spelling compatibility without libnetbsd code.
+cc_library(name = "sha1_header", hdrs = ["sha1.h"], strip_include_prefix = ".", visibility = ["//lib/libc/tests/hash:__pkg__"])

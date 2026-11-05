@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["h_hash.c", "t_sha2.c", "t_hash.sh"] + ["data/" + n for n in ["md5test-in", "md5test-out", "sha1test-in", "sha1test-out", "sha1test2-out"]], visibility = ["//lib/libc/tests/hash:__pkg__"])
