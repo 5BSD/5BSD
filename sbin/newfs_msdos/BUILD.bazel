@@ -26,3 +26,7 @@ bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], m
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
 
 exports_files(["mkfs_msdos.c", "mkfs_msdos.h"], visibility = ["//usr.sbin/makefs:__pkg__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['newfs_msdos.c', 'mkfs_msdos.c', 'mkfs_msdos.h'],
+    object_names = ['newfs_msdos.o', 'mkfs_msdos.o'], deps = [], warns = 6)

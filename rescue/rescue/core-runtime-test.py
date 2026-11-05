@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -468,6 +468,51 @@ class RescueCore(unittest.TestCase):
             p = self.run_app("rcorder", str(first), str(second))
             self.assertNotEqual(p.returncode, 0)
             self.assertIn(b"Circular dependency", p.stderr)
+
+    def test_filesystem_program_usage_before_opening_devices(self):
+        for name in ["clri", "fsirand", "dumpfs", "tunefs", "newfs", "newfs_msdos", "umount"]:
+            with self.subTest(program=name):
+                p = self.run_app(name)
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
+        p = self.run_app("fsck", "-Z")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"usage:", p.stderr)
+
+    def test_private_ufs_image_tools(self):
+        # Absolute paths identify existing regular files; -p selects newfs's
+        # maintained file-image mode. No mount, host device or system fstab.
+        for version in ["1", "2"]:
+            with self.subTest(ufs=version), tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+                path = Path(d) / "private.ufs"
+                with path.open("wb") as f:
+                    f.truncate(16 * 1024 * 1024)
+                p = self.run_app("newfs", "-O", version, "-b", "4096", "-f", "512", "-i", "4096", "-m", "0", "-p", "a", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                p = self.run_app("dumpfs", "-s", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn(("(UFS" + version + ")").encode(), p.stdout)
+                p = self.run_app("tunefs", "-L", "rescue_test", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                p = self.run_app("dumpfs", "-s", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn(b"rescue_test", p.stdout)
+                p = self.run_app("fsirand", "-b", str(path))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                p = self.run_app("clri", str(path), "2")
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn(b"clearing 2", p.stdout)
+                self.assertEqual(path.stat().st_size, 16 * 1024 * 1024)
+
+    def test_private_fat_image_creation(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "private.fat"
+            p = self.run_app("newfs_msdos", "-C", "4M", "-F", "12", str(path))
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(path.stat().st_size, 4 * 1024 * 1024)
+            with path.open("rb") as f:
+                boot = f.read(512)
+            self.assertEqual(boot[510:512], b"\x55\xaa")
 
 if __name__ == "__main__":
     unittest.main()

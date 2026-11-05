@@ -5814,6 +5814,14 @@ Host tests cover private dependency graphs and argument rejection before module,
 mount, device, GEOM or swap changes. Successful privileged operations and complete
 rescue installation remain separate VM qualification gates.
 .Pp
+The bounded rescue core also constructs clri, fsirand, dumpfs, tunefs, newfs,
+fsck, newfs_msdos and umount, reaching fifty-seven applications.
+Explicit source warning levels and the anchored unmount provider follow original
+recipes. Private regular-file tests exercise UFS1, UFS2 and FAT image creation
+and UFS inspection/modification; no host device or mount is used.
+These checks do not establish mounted filesystem acceptance, complete rescue
+installation, independent library/debug parity or full-system qualification.
+.Pp
 The default traced
 .Cm //lib/libutil:static_archive
 target preserves original Make member order and its separate DTrace provider.

@@ -21,6 +21,23 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Eight rescue filesystem variants (2026-11-05)
+
+Clri/fsirand/dumpfs/tunefs/newfs/fsck/newfs_msdos/umount expand the core to 57.
+Umount preserves its original provider and static DOF anchor. Maintained ET_REL
+comparison checks schemas and actual function/relocation/patch sites; aliases
+independently match real object path hashes. The remaining seven application
+recipes declare no direct provider or BSM integration in this bounded review.
+Preserve inherited libufs/libutil/kernel observability separately.
+
+Host tests perform real UFS1/UFS2 creation, inspection, relabeling, generation
+randomization and inode clearing only on private regular files, plus private
+FAT12 image creation. No filesystem is mounted and no installed helper or host
+device is used. DOF initialization stays disabled. Mounted unmount/provider
+firing, privileged storage authorization and audit delivery require VM runtime
+qualification; private file-image success does not close them. See
+RESCUE-FIFTY-SEVEN-PROGRAM-QUALIFICATION.md for execution/dependency evidence.
+
 ## Thirteen rescue system-program variants (2026-11-05)
 
 Kldload/kldunload retain moduleload/moduleunload providers; fresh original/native

@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to fifty-seven applications (2026-11-05)
+
+Eight filesystem tools bring the selected AMD64 core to 57 of 103 programs with
+native libufs and anchored unmount provider. Explicit WARNS=2/3/6 profiles match
+all fifteen actual original/native compiler recipes. All 999 consumed dependency
+occurrences are declared/hash-matched, with matching original name/byte multisets;
+full logical namespace and incremental invalidation are not yet qualified. The
+runtime wrapper passes 71 methods, including real private UFS1/UFS2 create/read/
+relabel/inode-generation/clear and FAT12 image creation. Original generated Make
+on identical inputs matches all 116 pipeline outputs and the complete executable.
+See RESCUE-FIFTY-SEVEN-PROGRAM-QUALIFICATION.md. Continue the remaining 46
+applications, actual rescue libraries/options/cross/full installation; all full
+world/kernel/pkgbase/bootstrap/publication/VM/resource/cache/sandbox gates remain
+open. Make stays default; BIP stays excluded.
+
 ## Native rescue expansion to forty-nine applications (2026-11-05)
 
 Thirteen system-program owners bring the selected AMD64 core to 49 of 103 default

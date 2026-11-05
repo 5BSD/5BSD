@@ -22,3 +22,7 @@ bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pk
 cc_library(name = "fsutil_headers", hdrs = ["fsutil.h"], strip_include_prefix = ".",
     visibility = ["//sbin/fsck_msdosfs:__pkg__", "//sbin/quotacheck:__pkg__"])
 exports_files(["fsutil.c"], visibility = ["//sbin/fsck_msdosfs:__pkg__", "//sbin/quotacheck:__pkg__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['fsck.c', 'fsutil.c', 'preen.c', 'fsutil.h'],
+    object_names = ['fsck.o', 'fsutil.o', 'preen.o'], deps = ['//lib/libutil:headers'], warns = 6)

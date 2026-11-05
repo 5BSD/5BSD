@@ -49,3 +49,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['umount.c', 'umountop_trace.h', '//sbin/mount:vfslist.c', '//usr.sbin/rpc.umntall:mounttab.c'],
+    object_names = ['umount.o', 'vfslist.o', 'mounttab.o'], deps = ['//sbin/mount:vfs_headers', '//usr.sbin/rpc.umntall:mounttab_headers'], warns = 6, provider = "umountop_provider")
