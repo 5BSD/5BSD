@@ -23,13 +23,16 @@ def _impl(ctx):
     programs = ctx.attr.programs
     if not programs or len(depset(programs).to_list()) != len(programs):
         fail("crunchgen programs must be nonempty and unique")
-    if bool(ctx.attr.object_names) == bool(ctx.attr.object_files):
-        fail("choose explicit object_names or typed object_files")
+    if len([value for value in [ctx.attr.object_names, ctx.attr.object_files, ctx.attr.applications] if value]) != 1:
+        fail("choose explicit object_names, typed object_files or ordered applications")
     object_names = ctx.attr.object_names
     program_archives = {}
-    if ctx.attr.object_files:
+    if ctx.attr.object_files or ctx.attr.applications:
+        if ctx.attr.applications and len(ctx.attr.applications) != len(programs):
+            fail("ordered applications must supply one compiler target per program")
+        selections = ctx.attr.object_files.items() if ctx.attr.object_files else zip(ctx.attr.applications, programs)
         object_names = {}
-        for target, program in ctx.attr.object_files.items():
+        for target, program in selections:
             if program in object_names:
                 fail("duplicate crunchgen compilation program: " + program)
             metadata = target[BSDComponentObjectsInfo]
@@ -39,8 +42,15 @@ def _impl(ctx):
             program_archives[program] = metadata.archives
     if sorted(object_names.keys()) != sorted(programs):
         fail("crunchgen requires an explicit object list for every program")
-    if any([name not in programs for name in ctx.attr.aliases.keys()]):
-        fail("crunchgen aliases require a declared program")
+    catalog = ctx.attr.catalog_programs if ctx.attr.catalog_programs else programs
+    if len(depset(catalog).to_list()) != len(catalog) or any([p not in catalog for p in programs]):
+        fail("selected programs must belong to a unique declared catalog")
+    if any([name not in catalog for name in ctx.attr.aliases.keys()]):
+        fail("crunchgen aliases require a declared catalog program")
+    for program in catalog:
+        _token(program, _NAME_CHARS, "catalog program name")
+        for alias in ctx.attr.aliases.get(program, []):
+            _token(alias, _NAME_CHARS + "[]", "catalog alias")
     executable = ctx.attr.executable_name
     _token(executable, _NAME_CHARS, "crunched executable name")
     seen = {executable: True, "--list": True}
@@ -118,6 +128,8 @@ bsd_crunchgen = rule(implementation = _impl, attrs = {
     "programs": attr.string_list(mandatory = True),
     "object_names": attr.string_list_dict(),
     "object_files": attr.label_keyed_string_dict(providers = [BSDComponentObjectsInfo]),
+    "applications": attr.label_list(providers = [BSDComponentObjectsInfo], doc = "Own compiler metadata in configured programs order; no source discovery."),
+    "catalog_programs": attr.string_list(doc = "Optional complete candidate catalog for aliases; selected programs must be a subset."),
     "aliases": attr.string_list_dict(),
     "executable_name": attr.string(mandatory = True),
     "emit_stubs": attr.bool(default = False, doc = "Declare original crunchgen -s entry stubs."),

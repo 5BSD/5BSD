@@ -5,9 +5,13 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary", "cc_import")
 load("//tools/build/bazel:bsd_crunchgen.bzl", "bsd_crunchgen", "crunchgen_identifier")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
 load(":catalog.bzl", "ALIASES", "OBJECT_NAMES", "PROGRAMS")
-# Bounded default selection: reject changed catalog-affecting settings rather
-# than silently generating a stale program/object table. Full option composition
-# and application variants belong to the later complete rescue aggregate.
+load(":selection.bzl", "selected_programs", "selected_program_values")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+selects.config_setting_group(name = "ping_enabled", match_any = [
+    "//tools/build/bazel/config:inet_enabled", "//tools/build/bazel/config:inet6_enabled",
+])
+# Guarded reference fixture with fixed default object descriptors. The live
+# configured core below uses source-owned compiler metadata and program selection.
 bsd_crunchgen(name = "default_dispatch", executable_name = "rescue", programs = PROGRAMS, emit_stubs = True,
     aliases = ALIASES, object_names = OBJECT_NAMES, required_configuration = {'//tools/build/bazel/config:crypt': 'true', '//tools/build/bazel/config:inet6': 'true', '//tools/build/bazel/config:inet_support': 'true', '//tools/build/bazel/config:inet6_support': 'true', '//tools/build/bazel/config:pf': 'true', '//tools/build/bazel/config:zfs': 'true', '//tools/build/bazel/config:openssl': 'true', '//tools/build/bazel/config:tcsh': 'true', '//tools/build/bazel/config:vi': 'true', '//tools/build/bazel/config:iscsi': 'true', '//tools/build/bazel/config:dtrace': 'true', '//tools/build/bazel/config:nis': 'false', '//tools/build/bazel/config:hesiod': 'false', '//tools/build/bazel/config:netlink_support': 'true'},
     visibility = ["//visibility:public"])
@@ -19,11 +23,10 @@ cc_library(name = "dispatcher_objects", srcs = [":default_dispatch"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher_objects", pic = False,
     visibility = ["//visibility:public"])
-# No full rescue executable/install/package is declared before application objects,
-# crunchide transforms and the complete static library/link contract exist.
+# Installed rescue/package composition remains a separate qualification gate.
 
 # Supported combined-object stage, covering the 103 default applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch', 'dump', 'restore', 'fsck_ffs', 'fsdb', 'mount_nfs', 'init', 'ping', 'dhclient', 'iscsictl', 'iscsid', 'tar', 'sh', 'csh', 'vi', 'camcontrol', 'geom', 'ifconfig', 'pfctl', 'bectl', 'zfsbootcfg', 'zfs', 'zpool', 'zdb']]
+_CORE_PROGRAMS = PROGRAMS
 _CORE_OWNERS = {p: "usr.bin/" + p for p in ["head", "tail", "tee", "id"]}
 _CORE_OWNERS.update({p: "usr.sbin/" + p for p in ["chroot", "chown"]})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']})
@@ -37,12 +40,11 @@ _CORE_OWNERS.update({'sh': 'bin/sh', 'csh': 'bin/csh', 'vi': 'usr.bin/vi'})
 _CORE_OWNERS.update({'camcontrol': 'sbin/camcontrol', 'geom': 'sbin/geom', 'pfctl': 'sbin/pfctl', 'ifconfig': 'sbin/ifconfig'})
 _CORE_OWNERS.update({'bectl': 'sbin/bectl', 'zfsbootcfg': 'sbin/zfsbootcfg', 'zfs': 'cddl/sbin/zfs', 'zpool': 'cddl/sbin/zpool', 'zdb': 'cddl/usr.sbin/zdb'})
 _CORE_OBJECTS = {p: "//" + _CORE_OWNERS.get(p, "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
-bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
-    object_files = {_CORE_OBJECTS[p]: p for p in _CORE_PROGRAMS},
+bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = selected_programs(), catalog_programs = PROGRAMS,
+    applications = selected_program_values(_CORE_OBJECTS),
     aliases = {p: ALIASES[p] for p in _CORE_PROGRAMS if p in ALIASES and p != "ping"} | select({
         "//tools/build/bazel/config:inet6_support_enabled": {"ping": ["ping6"]}, "//conditions:default": {},
-    }), emit_stubs = True,
-    required_configuration = {"//tools/build/bazel/config:dtrace": "true"})
+    }), emit_stubs = True)
 filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "metadata")
 [filegroup(name = p + "_entry_source", srcs = [":core_dispatch"], output_group = "stub_" + crunchgen_identifier(p)) for p in _CORE_PROGRAMS]
 # Original generated-Make stub recipe uses the parent no-SSP/no-debug policy.
@@ -81,8 +83,10 @@ _CORE_ARCHIVES = [
     ("util", "//lib/libutil:static_archive"),
     ("xo", "//lib/libxo/libxo:static_archive"),
     ("80211", "//lib/lib80211:static_archive"),
+    ("alias", "//lib/libalias/libalias:static_archive"),
     ("cam", "//lib/libcam:static_archive"),
     ("ncurses", "//lib/ncurses/ncurses:static_archive"),
+    ("devstat", "//lib/libdevstat:static_archive"),
     ("ipsec", "//lib/libipsec:static_archive"),
     ("lzma", "//lib/liblzma:static_archive"),
     ("avl", "//cddl/lib/libavl:static_archive"),
@@ -109,12 +113,15 @@ _CORE_ARCHIVES = [
     ("iscsiutil", "//lib/libiscsiutil:static_archive"),
 ]
 [cc_import(name = "core_" + name + "_static_link", static_library = archive,
-    deps = select({"//tools/build/bazel/config:openssl_enabled": [":core_ssl_static_link"], "//conditions:default": [":core_md_static_link"]}) if name == "archive" else
+    deps = select({"//tools/build/bazel/config:zfs_enabled": [":core_avl_static_link"], "//conditions:default": [":core_pthread_static_link"]}) if name == "lzma" else
+        select({"//tools/build/bazel/config:zfs_enabled": [":core_umem_static_link"], "//conditions:default": [":core_geom_static_link"]}) if name == "pthread" else
+        select({"//tools/build/bazel/config:iscsi_enabled": [":core_iscsiutil_static_link"], "//conditions:default": ["//lib/libc:static_link_objects"]}) if name == "m" else
+        select({"//tools/build/bazel/config:openssl_enabled": [":core_ssl_static_link"], "//conditions:default": [":core_md_static_link"]}) if name == "archive" else
         ([":core_" + _CORE_ARCHIVES[index + 1][0] + "_static_link"] if index + 1 < len(_CORE_ARCHIVES) else ["//lib/libc:static_link_objects"]))
  for index, (name, archive) in enumerate(_CORE_ARCHIVES)]
 # Direct helper overrides precede archive searching, as in original CRUNCH_LIBS.
 # An archive would lose the original unconditional replacement semantics.
-cc_binary(name = "rescue_core", srcs = [":core_dispatcher_compiler_output"] + [":" + p + "_crunched" for p in _CORE_PROGRAMS] + ["//rescue/librescue:regular_compiler_outputs"],
+cc_binary(name = "rescue_core", srcs = [":core_dispatcher_compiler_output"] + selected_program_values({p: ":" + p + "_crunched" for p in _CORE_PROGRAMS}) + ["//rescue/librescue:regular_compiler_outputs"],
     deps = [":core_crypt_static_link"],
     features = ["fully_static_link"], linkstatic = True,
     linkopts = ["-nodefaultlibs", "-Wl,--allow-multiple-definition", "-Wl,-znow", "-Wl,-zrelro",
@@ -123,4 +130,11 @@ cc_binary(name = "rescue_core", srcs = [":core_dispatcher_compiler_output"] + ["
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
 bsd_python_test(name = "core_runtime_test", src = "core-runtime-test.py", data = [":rescue_core"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+# This small integration suite follows explicit configured metadata and is usable
+# when optional programs are disabled; the broad default suite remains separate.
+bsd_python_test(name = "configuration_runtime_test", src = "configuration-runtime-test.py",
+    args = select({"//tools/build/bazel/config:dtrace_enabled": ["--dtrace=yes"], "//conditions:default": ["--dtrace=no"]}),
+    data = [":rescue_core", ":core_metadata"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

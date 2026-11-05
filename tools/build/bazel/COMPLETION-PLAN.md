@@ -1,5 +1,28 @@
 # Native Bazel completion plan
 
+## Configured rescue and real untraced-policy correction (2026-11-05)
+
+The core now selects programs and compiler/link inputs through standard select
+expressions and ordered typed compiler metadata. A shared candidate catalog
+replaces the duplicate parent allowlist. Common links restore original alias/
+devstat archives and conditionally omit ZFS/iSCSI support. Default passes 107+5
+runtime and 28 source-setting methods; all 208 current pipeline outputs retain
+original same-input Make byte parity. Independently configured original Make
+matches all 92 reduced-program names/aliases/ordered objects, both with tracing
+and with tracing disabled. The first untraced run exposed ten unconditional
+legacy rescue providers despite passing smoke tests; source policies are fixed,
+enabled behavior is preserved and a maintained provider-selection regression
+method passes. Executed reduced common-link arguments match all 32 original
+archive roles/order. See RESCUE-CONFIGURATION-QUALIFICATION.md for retained
+failures, exact scopes and inputs.
+
+Next priority: actual rescue-named dispatch, original no-debug-file installation,
+hardlinks/suppressed login aliases and generated dhclient-script; staged pkgbase
+metadata and guest helper/recovery qualification. Do not install a renamed
+rescue_core as a substitute. Remaining option combinations, cross/independent
+library/debug/runtime/resource/cache/sandbox and every full-system gate remain.
+Make stays default; BIP excluded; no host upgrade or reboot.
+
 ## Recovery helper objects connected to native rescue (2026-11-05)
 
 Seven native librescue replacements now link directly after crunched programs

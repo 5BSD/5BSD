@@ -21,6 +21,21 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Configured rescue provider correction (2026-11-05)
+
+The first DTrace-disabled core passed runtime smoke tests but failed independent
+original Make object metadata: chflags/chmod/cp/ln/mkdir/mv/realpath/rm/rmdir/sleep
+still forced coverage definitions, provider headers and rewritten/provider output.
+All three source-owned aspects now follow dtrace_enabled. Enabled declarations
+are unchanged; all 92 corrected untraced object lists/aliases match original Make.
+A maintained configured-provider regression test passes. The final default
+pipeline retains all 208 previously original-reproduced output hashes.
+
+This establishes configured application artifact selection, not live DOF
+registration/firing, disabled-probe overhead, audit delivery or full independent
+alternate-library/debug parity. Pool/credential/helper/guest and resource cases
+remain open. See RESCUE-CONFIGURATION-QUALIFICATION.md.
+
 ## Rescue helper composition (2026-11-05)
 
 The existing seven regular librescue objects now enter the native final link
