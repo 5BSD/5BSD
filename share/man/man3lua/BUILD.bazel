@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_manual_installation.bzl", "manual_entries")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_man_pages = [
+    'intro.3lua',
+]
+_man_aliases = [
+]
+_man = manual_entries(name = 'man', pages = _man_pages, aliases = _man_aliases, package = 'utilities', split = True)
+
+bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:man_enabled": _man, "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive")

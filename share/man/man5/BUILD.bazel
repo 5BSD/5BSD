@@ -1,0 +1,191 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_manual_installation.bzl", "manual_entries")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_man_pages = [
+    'a.out.5',
+    'boot.config.5',
+    'core.5',
+    'dir.5',
+    'disktab.5',
+    'elf.5',
+    'ethers.5',
+    'eui64.5',
+    'fbtab.5',
+    'forward.5',
+    'group.5',
+    'hosts.5',
+    'hosts.equiv.5',
+    'intro.5',
+    'libmap.conf.5',
+    'link.5',
+    'mailer.conf.5',
+    'make.conf.5',
+    'motd.5',
+    'mount.conf.5',
+    'networks.5',
+    'nsswitch.conf.5',
+    'os-release.5',
+    'pbm.5',
+    'phones.5',
+    'portindex.5',
+    'protocols.5',
+    'quota.user.5',
+    'rctl.conf.5',
+    'regdomain.5',
+    'remote.5',
+    'resolver.5',
+    'services.5',
+    'shells.5',
+    'src.conf.5',
+    'stab.5',
+    'style.Makefile.5',
+    'style.mdoc.5',
+    'sysctl.conf.5',
+]
+_man_aliases = [
+    ('dir.5', 'dirent.5'),
+    ('fs.5', 'inode.5'),
+    ('hosts.equiv.5', 'rhosts.5'),
+    ('portindex.5', 'INDEX.5'),
+    ('quota.user.5', 'quota.group.5'),
+    ('resolver.5', 'resolv.conf.5'),
+    ('src.conf.5', 'src-env.conf.5'),
+]
+_man = manual_entries(name = 'man', pages = _man_pages, aliases = _man_aliases, package = 'utilities', split = True)
+
+_acct_pages = [
+    'acct.5',
+]
+_acct_aliases = [
+]
+_acct = manual_entries(name = 'acct', pages = _acct_pages, aliases = _acct_aliases, package = 'acct', split = False)
+
+_bluetooth_pages = [
+    'bluetooth.device.conf.5',
+    'bluetooth.hosts.5',
+    'bluetooth.protocols.5',
+]
+_bluetooth_aliases = [
+]
+_bluetooth = manual_entries(name = 'bluetooth', pages = _bluetooth_pages, aliases = _bluetooth_aliases, package = 'bluetooth', split = False)
+
+_bootloader_pages = [
+    'device.hints.5',
+]
+_bootloader_aliases = [
+]
+_bootloader = manual_entries(name = 'bootloader', pages = _bootloader_pages, aliases = _bootloader_aliases, package = 'bootloader', split = False)
+
+_freebsd_update_pages = [
+    'freebsd-update.conf.5',
+]
+_freebsd_update_aliases = [
+]
+_freebsd_update = manual_entries(name = 'freebsd_update', pages = _freebsd_update_pages, aliases = _freebsd_update_aliases, package = 'utilities', split = True)
+
+_hesiod_pages = [
+    'hesiod.conf.5',
+]
+_hesiod_aliases = [
+]
+_hesiod = manual_entries(name = 'hesiod', pages = _hesiod_pages, aliases = _hesiod_aliases, package = 'utilities', split = True)
+
+_toolchain_pages = [
+    'ar.5',
+]
+_toolchain_aliases = [
+]
+_toolchain = manual_entries(name = 'toolchain', pages = _toolchain_pages, aliases = _toolchain_aliases, package = 'toolchain', split = False)
+
+_lp_pages = [
+    'hosts.lpd.5',
+]
+_lp_aliases = [
+]
+_lp = manual_entries(name = 'lp', pages = _lp_pages, aliases = _lp_aliases, package = 'lp', split = False)
+
+_periodic_pages = [
+    'periodic.conf.5',
+]
+_periodic_aliases = [
+]
+_periodic = manual_entries(name = 'periodic', pages = _periodic_pages, aliases = _periodic_aliases, package = 'periodic', split = False)
+
+_pf_pages = [
+    'pf.conf.5',
+    'pf.os.5',
+]
+_pf_aliases = [
+]
+_pf = manual_entries(name = 'pf', pages = _pf_pages, aliases = _pf_aliases, package = 'pf', split = False, sources = {'pf.conf.5': '//contrib/openbsd-pf:share/man/man5/pf.conf.5', 'pf.os.5': '//contrib/openbsd-pf:share/man/man5/pf.os.5'})
+
+_rc_pages = [
+    'rc.conf.5',
+]
+_rc_aliases = [
+    ('rc.conf.5', 'rc.conf.local.5'),
+]
+_rc = manual_entries(name = 'rc', pages = _rc_pages, aliases = _rc_aliases, package = 'rc', split = False)
+
+_runtime_pages = [
+    'devfs.conf.5',
+    'devfs.rules.5',
+    'fstab.5',
+    'passwd.5',
+]
+_runtime_aliases = [
+    ('passwd.5', 'master.passwd.5'),
+    ('passwd.5', 'pwd.db.5'),
+    ('passwd.5', 'spwd.db.5'),
+]
+_runtime = manual_entries(name = 'runtime', pages = _runtime_pages, aliases = _runtime_aliases, package = 'runtime', split = False)
+
+_ssh_pages = [
+    'moduli.5',
+]
+_ssh_aliases = [
+]
+_ssh = manual_entries(name = 'ssh', pages = _ssh_pages, aliases = _ssh_aliases, package = 'ssh', split = False)
+
+_ufs_pages = [
+    'fs.5',
+]
+_ufs_aliases = [
+]
+_ufs = manual_entries(name = 'ufs', pages = _ufs_pages, aliases = _ufs_aliases, package = 'ufs', split = False)
+
+_mac_abac_pages = [
+    'mac_abac.conf.5',
+]
+_mac_abac_aliases = [
+]
+_mac_abac = manual_entries(name = 'mac_abac', pages = _mac_abac_pages, aliases = _mac_abac_aliases, package = 'mac-abac', split = False)
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+selects.config_setting_group(name = "man_bluetooth_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:bluetooth_enabled"])
+selects.config_setting_group(name = "man_freebsd_update_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:freebsd_update_enabled"])
+selects.config_setting_group(name = "man_hesiod_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:hesiod_enabled"])
+selects.config_setting_group(name = "man_lpr_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:lpr_enabled"])
+selects.config_setting_group(name = "man_openssh_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:openssh_enabled"])
+selects.config_setting_group(name = "man_pf_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:pf_enabled"])
+selects.config_setting_group(name = "man_toolchain_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:toolchain_enabled"])
+
+bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:man_enabled": _man, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _acct, "//conditions:default": []}) +
+    select({":man_bluetooth_enabled": _bluetooth, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _bootloader, "//conditions:default": []}) +
+    select({":man_freebsd_update_enabled": _freebsd_update, "//conditions:default": []}) +
+    select({":man_hesiod_enabled": _hesiod, "//conditions:default": []}) +
+    select({":man_toolchain_enabled": _toolchain, "//conditions:default": []}) +
+    select({":man_lpr_enabled": _lp, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _periodic, "//conditions:default": []}) +
+    select({":man_pf_enabled": _pf, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _rc, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _runtime, "//conditions:default": []}) +
+    select({":man_openssh_enabled": _ssh, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _ufs, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _mac_abac, "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive")

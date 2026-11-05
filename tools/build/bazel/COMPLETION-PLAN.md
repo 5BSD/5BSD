@@ -37,6 +37,17 @@ parents cover VT, SNMP MIBs and iwm firmware. See
 VT-FIRMWARE-SNMP-INSTALLATION-QUALIFICATION.md. Console, SNMP and firmware runtime,
 complete share/world composition and the system gates remain open.
 
+## Shared manual sections checkpoint (2026-11-05)
+
+Eight manual sections now have native inventories and a shared Starlark helper
+for compression, group packages and hardlinks. Complete original comparisons pass
+3296 installed records/payloads, including 2609 hardlink aliases. The raw/split/
+optional-group profile passes 3233 records; disabling man suppresses all eight
+components. Cross-capture namespace reconciliation now covers 1132 archives and
+26871 non-directory paths without conflicting file claims. See
+SHARE-MANUAL-SECTIONS-QUALIFICATION.md. Section 4 and complete share/world/package
+and system qualification remain open; this is not a combined full-world build.
+
 ## Current composition checkpoint (2026-11-05)
 
 NIS and sendmail administration are now included when selected; their combined
@@ -3593,3 +3604,15 @@ existing source-built execution-platform tool and declared runtime. These data
 components add no service/hardware runtime acceptance and do not complete share.
 Continue remaining share/world composition and the outstanding system gates.
 See VT-FIRMWARE-SNMP-INSTALLATION-QUALIFICATION.md.
+
+
+## Native manual inventory checkpoint (2026-11-05)
+
+Sections 1/3/3lua/5/6/7/8/9 now declare all selected pages and alias relationships
+natively. Both compressed/default and raw/split/opposite-option Make comparisons
+pass complete metadata, exact payload and staged inode-equivalence checks.
+The initial invalid nested selects were replaced by normal condition groups;
+an interrupted original reference remains rejected and stable references pass.
+No Python implementation changes are needed. Continue section 4 and remaining
+share/world composition and the open installed-world/package/bootstrap/runtime/
+performance gates. See SHARE-MANUAL-SECTIONS-QUALIFICATION.md.

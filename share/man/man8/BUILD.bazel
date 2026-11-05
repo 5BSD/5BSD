@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_manual_installation.bzl", "manual_entries")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_man_pages = [
+    'beinstall.8',
+    'crash.8',
+    'debug.sh.8',
+    'diskless.8',
+    'intro.8',
+    'nanobsd.8',
+    'rescue.8',
+    'uefi.8',
+]
+_man_aliases = [
+    ('beinstall.8', 'beinstall.sh.8'),
+    ('nanobsd.8', 'nanobsd.sh.8'),
+    ('uefi.8', 'efi.8'),
+]
+_man = manual_entries(name = 'man', pages = _man_pages, aliases = _man_aliases, package = 'utilities', split = True)
+
+_rc_pages = [
+    'rc.8',
+    'rc.subr.8',
+]
+_rc_aliases = [
+    ('rc.8', 'rc.d.8'),
+    ('rc.8', 'rc.firewall.8'),
+    ('rc.8', 'rc.local.8'),
+    ('rc.8', 'rc.network.8'),
+    ('rc.8', 'rc.pccard.8'),
+    ('rc.8', 'rc.resume.8'),
+    ('rc.8', 'rc.serial.8'),
+    ('rc.8', 'rc.shutdown.8'),
+    ('rc.8', 'rc.suspend.8'),
+]
+_rc = manual_entries(name = 'rc', pages = _rc_pages, aliases = _rc_aliases, package = 'rc', split = False)
+
+_yp_pages = [
+    'yp.8',
+]
+_yp_aliases = [
+    ('yp.8', 'NIS.8'),
+    ('yp.8', 'nis.8'),
+    ('yp.8', 'YP.8'),
+]
+_yp = manual_entries(name = 'yp', pages = _yp_pages, aliases = _yp_aliases, package = 'yp', split = False)
+
+_mac_abac_pages = [
+    'mac_abac_ctl.8',
+    'mac_abacd.8',
+]
+_mac_abac_aliases = [
+]
+_mac_abac = manual_entries(name = 'mac_abac', pages = _mac_abac_pages, aliases = _mac_abac_aliases, package = 'mac-abac', split = False)
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+selects.config_setting_group(name = "man_nis_enabled", match_all = ["//tools/build/bazel/config:man_enabled", "//tools/build/bazel/config:nis_enabled"])
+
+bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:man_enabled": _man, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _rc, "//conditions:default": []}) +
+    select({":man_nis_enabled": _yp, "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:man_enabled": _mac_abac, "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive")

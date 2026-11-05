@@ -16,3 +16,6 @@ cc_library(name = "cxx_test_headers", hdrs = ["atf-c++/detail/test_helpers.hpp"]
 exports_files(['atf-sh/atf-check.cpp', 'atf-sh/atf-check.1', 'atf-sh/atf-sh.cpp', 'atf-sh/atf-sh.1', 'atf-sh/atf-sh.3', 'atf-sh/libatf-sh.subr'], visibility = ["//libexec/atf:__subpackages__"])
 
 exports_files(['atf-sh/atf-check_test.sh', 'atf-sh/atf_check_test.sh', 'atf-sh/config_test.sh', 'atf-sh/integration_test.sh', 'atf-sh/kmod_test.sh', 'atf-sh/normalize_test.sh', 'atf-sh/tc_test.sh', 'atf-sh/tp_test.sh', 'atf-sh/misc_helpers.sh'], visibility = ["//libexec/atf:__subpackages__"])
+
+exports_files(["doc/atf-test-program.1"], visibility = ["//share/man/man1:__pkg__"])
+exports_files(["doc/atf-test-case.7"], visibility = ["//share/man/man7:__pkg__"])

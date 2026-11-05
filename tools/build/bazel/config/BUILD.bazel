@@ -762,3 +762,7 @@ config_setting(name = "sendmail_set_user_id_enabled", flag_values = {":sendmail_
 
 # Original CDDL library recursion includes SPL for either consumer family.
 selects.config_setting_group(name = "cddl_spl_enabled", match_any = [":dtrace_enabled", ":zfs_enabled"], visibility = ["//visibility:public"])
+
+# MK_INET controls installed networking manuals independently of INET_SUPPORT.
+bool_flag(name = "inet", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inet_enabled", flag_values = {":inet": "true"}, visibility = ["//visibility:public"])
