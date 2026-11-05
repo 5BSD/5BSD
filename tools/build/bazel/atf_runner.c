@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
 #include <time.h>
@@ -108,10 +109,13 @@ child_changed(int signo)
  * The monotonic deadline is retained across interrupts.  -2 means timeout.
  */
 static int
-run_phase(const char *executable, char **arguments, unsigned int seconds)
+run_phase(const char *executable, char **arguments, unsigned int seconds,
+    int stdin_tty)
 {
 	pid_t child, waited;
 	int status = -1, saved_errno, result = -1;
+	int master = -1, slave = -1;
+	char terminal_path[PATH_MAX];
 	sigset_t signals, previous;
 	struct sigaction action, old_action;
 	struct timespec deadline, now, remaining;
@@ -134,6 +138,24 @@ run_phase(const char *executable, char **arguments, unsigned int seconds)
 			goto restore;
 		deadline.tv_sec += seconds;
 	}
+	if (stdin_tty) {
+		master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+		if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0) {
+			perror("allocate stdin pseudo-terminal");
+			goto restore;
+		}
+		saved_errno = ptsname_r(master, terminal_path, sizeof(terminal_path));
+		if (saved_errno != 0) {
+			errno = saved_errno;
+			perror("ptsname_r");
+			goto restore;
+		}
+		slave = open(terminal_path, O_RDWR | O_NOCTTY | O_CLOEXEC);
+		if (slave < 0) {
+			perror(terminal_path);
+			goto restore;
+		}
+	}
 	child = fork();
 	if (child < 0) {
 		perror("fork");
@@ -144,9 +166,21 @@ run_phase(const char *executable, char **arguments, unsigned int seconds)
 		    sigaction(SIGCHLD, &old_action, NULL) != 0 ||
 		    sigprocmask(SIG_SETMASK, &previous, NULL) != 0)
 			_exit(127);
+		if (stdin_tty) {
+			/* master can occupy fd 0 if the caller closed stdin. */
+			(void)close(master);
+			if (dup2(slave, STDIN_FILENO) < 0)
+				_exit(127);
+			if (slave != STDIN_FILENO)
+				(void)close(slave);
+		}
 		execv(executable, arguments);
 		perror(executable);
 		_exit(127);
+	}
+	if (slave >= 0) {
+		(void)close(slave);
+		slave = -1;
 	}
 	/* Either parent or child may establish the group first. */
 	if (setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH) {
@@ -194,6 +228,10 @@ terminate:
 	}
 restore:
 	saved_errno = errno;
+	if (slave >= 0)
+		(void)close(slave);
+	if (master >= 0)
+		(void)close(master);
 	(void)sigaction(SIGCHLD, &old_action, NULL);
 	if (sigprocmask(SIG_SETMASK, &previous, NULL) != 0)
 		return (-1);
@@ -277,6 +315,8 @@ main(int argc, char **argv)
 	const char *required_user = getenv("BSD_ATF_REQUIRED_USER");
 	const char *executable;
 	const char *loader = getenv("BSD_ATF_LOADER");
+	const char *stdin_mode = getenv("BSD_ATF_STDIN_TTY");
+	int stdin_tty = stdin_mode != NULL && strcmp(stdin_mode, "1") == 0;
 	int use_loader = loader != NULL && strcmp(loader, "1") == 0;
 	int shell_interface;
 	char temporary[PATH_MAX];
@@ -298,6 +338,10 @@ main(int argc, char **argv)
 		}
 	}
 
+	if (stdin_mode != NULL && strcmp(stdin_mode, "0") != 0 && !stdin_tty) {
+		fprintf(stderr, "invalid stdin pseudo-terminal setting\n");
+		return (1);
+	}
 	shell_interface = strcmp(interface, "shell") == 0;
 	if (!shell_interface && strcmp(interface, "program") != 0) {
 		fprintf(stderr, "invalid ATF interface: %s\n", interface);
@@ -389,7 +433,7 @@ main(int argc, char **argv)
 	if (phase_timeout("BSD_ATF_BODY_TIMEOUT", &body_seconds) != 0 ||
 	    phase_timeout("BSD_ATF_CLEANUP_TIMEOUT", &cleanup_seconds) != 0)
 		return (1);
-	status = run_phase(executable, arguments, body_seconds);
+	status = run_phase(executable, arguments, body_seconds, stdin_tty);
 	/* A failed body still needs cleanup; retain its original result. */
 	if (cleanup != NULL && strcmp(cleanup, "1") == 0) {
 		if (asprintf(&cleanup_case, "%s:cleanup", test_case) < 0) {
@@ -397,7 +441,7 @@ main(int argc, char **argv)
 			return (1);
 		}
 		arguments[argument_count - 1] = cleanup_case;
-		cleanup_status = run_phase(executable, arguments, cleanup_seconds);
+		cleanup_status = run_phase(executable, arguments, cleanup_seconds, stdin_tty);
 		free(cleanup_case);
 	}
 	if (status == -2 || cleanup_status == -2) {

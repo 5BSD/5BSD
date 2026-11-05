@@ -11,7 +11,7 @@ load(":test_policy.bzl", "libc_test_copts")
 load(":test_runtime.bzl", "LIBC_TEST_RUNTIME")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 
-def local_test_installation(programs, directory, warnings, headers = {}, libraries = {}, runtime_libraries = {}, defines = {}, cases = {}, fixtures = {}, metadata = {}, runtime_tags = {}):
+def local_test_installation(programs, directory, warnings, headers = {}, libraries = {}, runtime_libraries = {}, defines = {}, cases = {}, fixtures = {}, metadata = {}, runtime_tags = {}, required_users = {}, stdin_tty_cases = {}):
     """Leaves own sources/options/cases; runtime cases do not limit installation.
 
     libraries contains ordered native ABI imports or explicit archives. No SDK
@@ -19,12 +19,19 @@ def local_test_installation(programs, directory, warnings, headers = {}, librari
     """
     if not programs:
         fail("nonempty original program inventory required")
-    for mapping in [headers, libraries, runtime_libraries, defines, cases, metadata, runtime_tags]:
+    for mapping in [headers, libraries, runtime_libraries, defines, cases, metadata, runtime_tags, required_users, stdin_tty_cases]:
         if any([p not in programs for p in mapping]):
             fail("per-program policy names an absent program")
+    for program, users in required_users.items():
+        if any([case not in cases.get(program, []) for case in users]):
+            fail("user requirement names an absent selected case")
+    for program, tty_cases in stdin_tty_cases.items():
+        if any([case not in cases.get(program, []) for case in tty_cases]):
+            fail("stdin terminal policy names an absent selected case")
     cc_import(name = "atf_interface", shared_library = "//lib/atf/libatf-c:atf_c_shared", deps = ["//contrib/atf:c_headers"])
     manifests = []
     tests = []
+    privileged_tests = []
     for program, source in programs.items():
         bsd_link_sequence(name = program + "_link", deps = [":atf_interface"] + headers.get(program, []) + libraries.get(program, []) + ["//lib/libc:shared_abi_interface"])
         cc_binary(name = program, srcs = [source], deps = [":" + program + "_link"],
@@ -34,11 +41,17 @@ def local_test_installation(programs, directory, warnings, headers = {}, librari
         manifests.append(":" + program + "_install")
         for case in cases.get(program, []):
             name = program + "_" + case + "_runtime"
+            user = required_users.get(program, {}).get(case, "")
             bsd_atf_test(name = name, body = ":" + program, case_name = case, interface = "program",
                 runtime_lib = LIBC_TEST_RUNTIME + runtime_libraries.get(program, []), data_paths = fixtures,
                 test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"}, runner = "//tools/build/bazel:atf_runner",
-                target_compatible_with = _PLATFORM, size = "small", tags = runtime_tags.get(program, []))
-            tests.append(":" + name)
+                target_compatible_with = _PLATFORM, size = "small", required_user = user,
+                stdin_tty = case in stdin_tty_cases.get(program, []),
+                tags = runtime_tags.get(program, []) + (["manual", "external", "no-remote"] if user == "root" else []))
+            if user == "root":
+                privileged_tests.append(":" + name)
+            else:
+                tests.append(":" + name)
     entries = []
     for index, (source, dest) in enumerate(fixtures.items()):
         name = "fixture_" + str(index)
@@ -54,3 +67,5 @@ def local_test_installation(programs, directory, warnings, headers = {}, librari
     bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"], visibility = ["//visibility:public"], target_compatible_with = _PLATFORM)
     if tests:
         native.test_suite(name = "runtime_tests", tests = tests)
+    if privileged_tests:
+        native.test_suite(name = "privileged_runtime_tests", tests = privileged_tests, tags = ["manual"])

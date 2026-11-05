@@ -35,3 +35,15 @@ The maintained build-bsd format-5 test API is sufficient; no C/backend, staging,
 publication, signing or boot policy changes are required. These checks qualify
 explicit environment delivery and rejection behavior. They do not qualify host
 tracing, installed authentication, complete test hermeticity or system runtime.
+
+## Explicit stdin pseudo-terminals (2026-11-05)
+
+bsd_atf_test now supports stdin_tty=False by default. An explicit true value gives
+each body/cleanup phase a fresh real PTY only on stdin. Output/result capture,
+process-group deadlines and cleanup remain intact; allocation failure is an error.
+This supplies terminal identity, not a controlling-terminal/job-control session.
+Five unchanged original fortify ttyname_r cases now pass instead of skipping.
+The native lifecycle target passes 25 methods including PTY body/cleanup, closed
+stdin, invalid settings and timeout cleanup. See LIBC-FORTIFY-TEST-QUALIFICATION.md
+for exact current receipts and independent original ATF metadata/installation review.
+Earlier environment evidence retains its original scope.

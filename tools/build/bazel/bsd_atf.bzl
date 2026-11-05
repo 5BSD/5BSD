@@ -18,6 +18,7 @@ def _atf_test(ctx):
         "BSD_ATF_CLEANUP": "1" if ctx.attr.cleanup else "0",
         "BSD_ATF_REQUIRED_USER": ctx.attr.required_user,
         "BSD_ATF_INTERFACE": ctx.attr.interface,
+        "BSD_ATF_STDIN_TTY": "1" if ctx.attr.stdin_tty else "0",
         "BSD_ATF_HARNESS": ctx.file.body.basename,
         "BSD_ATF_CONFIG_COUNT": str(len(ctx.attr.config_files)),
     }
@@ -95,6 +96,7 @@ bsd_atf_test = rule(
     test = True,
     attrs = {
         "case_name": attr.string(mandatory = True),
+        "stdin_tty": attr.bool(default = False, doc = "Provide a fresh pseudo-terminal only on stdin for each phase; stdout/stderr and process-group deadlines remain unchanged."),
         "test_environment": attr.string_dict(doc = "Explicit test process environment; runner/Bazel isolation keys are reserved."),
         "cleanup": attr.bool(default = False),
         "required_user": attr.string(default = "", values = ["", "root", "unprivileged"],

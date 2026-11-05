@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Complete fortify installation and ordinary runtime coverage (2026-11-05)
+
+All twelve original fortify programs and twenty-five installed records match
+original Make, including exact Kyua, twelve ELF/interface/hardening contracts and
+debug CRCs. Every one of the 378 original ATF case registrations and full metadata
+matches; ten original root/jail cases have a separate explicit privileged suite.
+Final native r3 passes all 368 ordinary cases without skips. Five terminal cases
+initially skipped; real stdin PTY support now executes them without source changes.
+The maintained supervisor preserves output capture, process groups, deadlines and
+cleanup; 25 lifecycle regressions include real PTYs and initially closed stdin.
+Final 371-target detailed reports contain only passes. All twelve final archive/
+metadata outputs retain independent secure and prior local-suite review bindings.
+See LIBC-FORTIFY-TEST-QUALIFICATION.md for retained skips and scope boundaries.
+
+Ten privileged fortify cases remain VM work. Continue remaining libc/test roots
+and parent traversal, source-owned archive ordering and all independent whole-world/
+debug/pkgbase/cross/bootstrap/runtime/resource/cache/sandbox/publication gates.
+Full-tests guards and Make as production/default remain. BIP stays excluded.
+
 ## Complete original hash contribution and selector acceptance fix (2026-11-05)
 
 Both original programs, shell wrapper and all five fixtures now build/install;

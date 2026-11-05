@@ -21,6 +21,17 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Fortify overflow detection and stdin terminal execution (2026-11-05)
+
+Twelve unchanged original programs preserve _FORTIFY_SOURCE=2 and child SIGABRT
+checks. All 368 ordinary cases pass, including five ttyname_r cases now using real
+stdin PTYs. All 378 original ATF metadata records agree with Make; ten root/jail
+cases remain unexecuted. Terminal allocation preserves supervisor output capture,
+process-group deadlines and cleanup; 25 lifecycle regressions pass. DOF startup is
+disabled for isolated runtime checks. Abort observation does not prove syslog/audit
+delivery, live provider firing or tracing/performance overhead. No original probe
+or audit source is removed. See LIBC-FORTIFY-TEST-QUALIFICATION.md.
+
 ## Original hash algorithms and selector validation (2026-11-05)
 
 The unchanged MD5/SHA1 shell and SHA256/384/512 programs run against declared

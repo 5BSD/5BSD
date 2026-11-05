@@ -30,7 +30,7 @@ class CleanupLifecycle(unittest.TestCase):
     def tearDownClass(cls):
         cls.storage.cleanup()
 
-    def exercise(self, body_exit=0, cleanup_exit=0, result='passed', cleanup='1', signal=False, check_locale=False, xml=False, body_timeout="0", cleanup_timeout="0", hang_body=False, hang_cleanup=False, loader=False, missing_loader=False, required_user=""):
+    def exercise(self, body_exit=0, cleanup_exit=0, result='passed', cleanup='1', signal=False, check_locale=False, xml=False, body_timeout="0", cleanup_timeout="0", hang_body=False, hang_cleanup=False, loader=False, missing_loader=False, required_user="", stdin_tty="0", check_tty=None, closed_stdin=False):
         with tempfile.TemporaryDirectory(dir=self.root) as tmp:
             root = Path(tmp)
             suite = root / 'workspace/atf-suite'
@@ -41,6 +41,10 @@ while [ "$#" -gt 1 ]; do
     case "$1" in -r) result_file=$2;; esac
     shift 2
 done
+case "$CHECK_TTY" in
+    yes) test -t 0 || exit 39;;
+    no) test ! -t 0 || exit 40;;
+esac
 case "$1" in
 example:cleanup)
     test -f body-created || exit 33
@@ -76,7 +80,8 @@ esac
             env = dict(os.environ, TEST_SRCDIR=str(root), TEST_WORKSPACE='workspace',
                        TEST_TMPDIR=str(root), BSD_ATF_CASE='example', BSD_ATF_HARNESS='fixture',
                        BSD_ATF_INTERFACE='program', BSD_ATF_LOADER='1' if loader else '0',
-                       BSD_ATF_REQUIRED_USER=required_user,
+                       BSD_ATF_REQUIRED_USER=required_user, BSD_ATF_STDIN_TTY=stdin_tty,
+                       CHECK_TTY="yes" if check_tty is True else "no" if check_tty is False else "",
                        FIXTURE_LOADER_LOG=str(root / 'loader-calls'), BSD_ATF_CONFIG_COUNT='0', BSD_ATF_CLEANUP=cleanup,
                        BSD_ATF_BODY_TIMEOUT=str(body_timeout), BSD_ATF_CLEANUP_TIMEOUT=str(cleanup_timeout),
                        HANG_BODY='yes' if hang_body else 'no', HANG_CLEANUP='yes' if hang_cleanup else 'no',
@@ -88,7 +93,7 @@ esac
                 env.pop('XML_OUTPUT_FILE', None)
             if check_locale:
                 env.update({name: 'contaminated' for name in ['LANG', 'LC_ALL', 'LC_COLLATE', 'LC_CTYPE', 'LC_MESSAGES', 'LC_MONETARY', 'LC_NUMERIC', 'LC_TIME', 'TZ', 'PATH_LOCALE']})
-            run = subprocess.run([str(self.runner)], env=env, capture_output=True, text=True, timeout=10)
+            run = subprocess.run([str(self.runner)], env=env, stdin=subprocess.DEVNULL, preexec_fn=(lambda: os.close(0)) if closed_stdin else None, capture_output=True, text=True, timeout=10)
             markers = list(root.glob('atf.*/cleanup-ran'))
             if loader and not missing_loader:
                 calls = (root / 'loader-calls').read_text().splitlines()
@@ -103,6 +108,32 @@ esac
                 report = root / 'test.xml'
                 return run, ET.parse(report).getroot() if report.exists() else None
             return run, len(markers)
+
+    def test_explicit_stdin_tty_reaches_body_and_cleanup(self):
+        run, markers = self.exercise(stdin_tty="1", check_tty=True)
+        self.assertEqual((run.returncode, markers), (0, 1), run.stderr)
+
+    def test_stdin_tty_handles_initially_closed_stdin(self):
+        run, markers = self.exercise(stdin_tty="1", check_tty=True, closed_stdin=True)
+        self.assertEqual((run.returncode, markers), (0, 1), run.stderr)
+
+    def test_default_stdin_is_preserved(self):
+        run, markers = self.exercise(check_tty=False)
+        self.assertEqual((run.returncode, markers), (0, 1), run.stderr)
+
+    def test_invalid_stdin_tty_fails_before_body(self):
+        for value in ["", "yes", "2", "-1"]:
+            with self.subTest(value=value):
+                run, markers = self.exercise(stdin_tty=value)
+                self.assertNotEqual(run.returncode, 0)
+                self.assertEqual(markers, 0)
+                self.assertIn('invalid stdin pseudo-terminal', run.stderr)
+
+    def test_stdin_tty_keeps_phase_timeout_and_cleanup(self):
+        run, markers = self.exercise(stdin_tty="1", check_tty=True, hang_body=True, body_timeout="1")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(markers, 1)
+        self.assertIn('body timed out', run.stderr)
 
     def test_explicit_loader_runs_body_and_cleanup(self):
         run, markers = self.exercise(loader=True)
