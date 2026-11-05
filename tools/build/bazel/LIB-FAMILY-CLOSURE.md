@@ -1,6 +1,6 @@
 # lib family composition and remaining owners
 
-## Current evidence (2026-11-04)
+## Current evidence (2026-11-05)
 
 The fresh maintained Make plan at
 /usr/obj/usr/src/bazel-lib-family-plan-r1-20261104/components.json records 173
@@ -32,7 +32,7 @@ execution and the explicit normal protobuf parent.
 | lib/libcapsicum | Production header/manual/13 hardlinks now match original Make; all four original C/C++ stream ATF cases execute. Original installed-test metadata remains. |
 | lib/csu | AMD64/common/tests packages exist beneath the Make architecture wrapper; full parent/configuration/foreign composition is not established. |
 | lib/libcasper | Native child producers exist; reconcile wrapper's libcasper/services/test recursion without selecting arbitrary descendants. |
-| lib/libxo | Make recurses through libxo, encoder and tests; reconcile source-owned parent selection. |
+| lib/libxo | Production parent now preserves library + CSV encoder contributions; all 96 original metadata records and three actual runtime targets pass. Full installed functional/encoder test hierarchy remains explicitly gated; see LIBXO-PARENT-COMPOSITION-QUALIFICATION.md. |
 | lib/protobuf | Explicit parent now builds all four children and preserves three install contributions, including upb licences and no libprotoc payload. Other profiles/ABIs and refreshed implementation parity remain. |
 | lib/atf and lib/tests | Test support and installed test hierarchy require explicit parent ownership and original configuration closure. |
 

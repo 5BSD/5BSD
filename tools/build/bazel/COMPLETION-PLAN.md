@@ -16,6 +16,20 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## libxo production parent composition (2026-11-05)
+
+The source-owned libxo and encoder parents now preserve both production archive
+contributions and their metadata groups. Fresh independent Make references match
+all ninety-six installation records, eighty-five header/manual payloads and
+fifty-six hardlink identities; both shared ELF interfaces/sections match except
+for .gnu_debuglink, with valid original/native debug CRCs. Three existing native
+runtime targets actually execute. Tests-disabled full installation passes with
+identical production archives, and tests-enabled full installation rejects the
+still-unmigrated original functional hierarchy. See
+LIBXO-PARENT-COMPOSITION-QUALIFICATION.md. This closes production parent assembly,
+not all libxo tests or full world. libcasper/csu/atf and complete lib owner
+reconciliation remain; full pkgbase/bootstrap/VM/resource gates stay required.
+
 ## Capsicum production and protobuf parent composition (2026-11-05)
 
 The Capsicum helper owner now contributes its original header/manual/thirteen

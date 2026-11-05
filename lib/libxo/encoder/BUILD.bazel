@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# encoder/Makefile selects csv; retain the child metadata output groups.
+bsd_install_archive_set(
+    name = "production_installation_archives",
+    archives = ["//lib/libxo/encoder/csv:install_archive"],
+    visibility = ["//visibility:public"],
+)

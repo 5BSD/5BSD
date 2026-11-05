@@ -2206,6 +2206,16 @@ These bounded results do not establish complete world or installed-test coverage
 See
 .Pa tools/build/bazel/CAPSICUM-PROTOBUF-COMPOSITION-QUALIFICATION.md .
 .Pp
+The libxo production parent preserves both native library and CSV encoder archive
+contributions with their installation metadata groups.
+Its installation_archives target accepts tests disabled and explicitly rejects
+the incomplete original installed functional-test hierarchy when tests are enabled.
+Static/shared formatting and CSV runtime tests execute separately.
+Both original Make production installations, hardlinks and shared ELF interfaces
+compare successfully; this does not establish full lib or world coverage.
+See
+.Pa tools/build/bazel/LIBXO-PARENT-COMPOSITION-QUALIFICATION.md .
+.Pp
 Native iconv and fstyp default-path qualification uses the normal format-5
 .Cm bazel-test
 artifact/test selection plus the explicit-input preparer

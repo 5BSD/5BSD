@@ -1,6 +1,6 @@
 # Bazel migration: DTrace and security-audit review log
 
-Last updated: 2026-11-04. This is an open review ledger, not a coverage certificate.
+Last updated: 2026-11-05. This is an open review ledger, not a coverage certificate.
 
 ## Review required for each migrated component
 
@@ -11388,3 +11388,13 @@ assertions. Four real C/C++ stream restriction cases pass on the host. These
 cases check narrowing and failure behavior, not audit-event delivery. The Make
 owners add no dedicated provider inventory here; capability/audit/probe delivery
 and the consuming services remain separate runtime qualification requirements.
+
+## libxo parent composition (2026-11-05)
+
+The original library/CSV sources and leaf recipes contain no DTrace provider or
+BSM audit call to preserve. Parent composition changes no implementation or
+instrumentation policy. xo_syslog.c remains in the native library, with its
+existing send/reconnect and logging hooks; formatted output and CSV tests do not
+exercise structured syslog delivery, retries or loss reporting. Record those as
+runtime qualification work alongside the original functional suite. No invented
+probe or audit event is added merely to satisfy a migration inventory.

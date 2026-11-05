@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# Original parent: libxo .WAIT encoder, plus tests when MK_TESTS=yes.
+# Bazel dependencies order encoder linking after its native libxo dependency.
+_PRODUCTION = [
+    "//lib/libxo/libxo:install_archive",
+    "//lib/libxo/encoder:production_installation_archives",
+]
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_install_archive_set(
+    name = "production_installation_archives",
+    archives = _PRODUCTION,
+    target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"],
+)
+# The original installed functional suite and fixtures remain to be migrated.
+# Production coverage must not silently stand in for tests-enabled installation.
+bsd_install_archive_set(
+    name = "installation_archives",
+    archives = _PRODUCTION,
+    target_compatible_with = _PLATFORM + select({
+        "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
