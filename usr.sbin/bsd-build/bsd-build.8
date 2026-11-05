@@ -6792,3 +6792,9 @@ architecture directories by default.
 The manual_architectures setting accepts all, arm, aarch64 or none to select
 those child inventories; it does not change the target CPU's main page selection.
 Manual-database construction remains a separate installation-stage requirement.
+
+.Pp
+The native shared-documentation parent preserves the source-owned book,
+firmware-license notices, IPv6 and compiler notices, and selected test documents.
+The native tests, clang and inet6 settings select the corresponding documentation
+owners; selecting test documentation does not itself execute those test suites.

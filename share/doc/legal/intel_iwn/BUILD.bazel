@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_FILES = {
+    'intel_iwn.LICENSE': '//sys/contrib/dev/iwn:LICENSE',
+}
+[bsd_install_file(name = "file_" + str(index), src = source,
+    destination = '/usr/share/doc/legal/' + name, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=utilities"]) for index, (name, source) in enumerate(_FILES.items())]
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + str(index) for index in range(len(_FILES))],
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {'/usr/share/doc/legal': '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'})

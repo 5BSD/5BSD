@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [
+    "//share/doc/5bsd:install_archive", "//share/doc/legal:installation_archives",
+] + select({"//tools/build/bazel/config:inet6_enabled": ["//share/doc/IPv6:install_archive"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:clang_enabled": ["//share/doc/llvm:installation_archives"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:tests_enabled": ["//share/doc/atf:install_archive", "//share/doc/pjdfstest:install_archive"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

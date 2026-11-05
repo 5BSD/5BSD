@@ -25,3 +25,5 @@ exports_files(["iwlwifi-6000g2b-18.168.6.1.fw.uu"], visibility = ["//sys/modules
 exports_files(["iwlwifi-6050-41.28.5.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn6050:__pkg__"])
 
 exports_files(["iwnwifi-2030-18.168.6.1.fw.uu"], visibility = ["//sys/modules/iwnfw/iwn2030:__pkg__"])
+
+exports_files(["LICENSE"], visibility = ["//share/doc/legal/intel_iwn:__pkg__"])

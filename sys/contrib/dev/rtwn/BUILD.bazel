@@ -19,3 +19,5 @@ exports_files(["rtwn-rtl8723bufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rt
 exports_files(["rtwn-rtl8812aufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8812au:__pkg__"])
 
 exports_files(["rtwn-rtl8821aufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8821au:__pkg__"])
+
+exports_files(["LICENSE"], visibility = ["//share/doc/legal/realtek:__pkg__"])

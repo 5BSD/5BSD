@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['LICENSE.TXT'], visibility = ["//share/doc/llvm:__pkg__"])

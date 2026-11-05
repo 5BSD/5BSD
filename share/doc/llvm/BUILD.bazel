@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_install_archive")
+
+_FILES = {
+    'LICENSE.TXT': '//contrib/llvm-project/llvm:LICENSE.TXT',
+    'COPYRIGHT.regex': '//contrib/llvm-project/llvm/lib/Support:COPYRIGHT.regex',
+}
+[bsd_install_file(name = "file_" + str(index), src = source,
+    destination = '/usr/share/doc/llvm/' + name, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=clang"]) for index, (name, source) in enumerate(_FILES.items())]
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + str(index) for index in range(len(_FILES))],
+    visibility = ["//visibility:public"])
+script_install_archive(name = "install_archive",
+    directories = {'/usr/share/doc/llvm': '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clang"]}'})
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive", "//share/doc/llvm/clang:install_archive"],
+    visibility = ["//visibility:public"])

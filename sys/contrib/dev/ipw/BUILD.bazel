@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["LICENSE"], visibility = ["//share/doc/legal/intel_ipw:__pkg__"])

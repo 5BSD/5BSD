@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# The original legal traversal does not select its historical imx sibling.
+bsd_install_archive_set(name = "installation_archives", archives = [
+    "//share/doc/legal/intel_ipw:install_archive",
+    "//share/doc/legal/intel_iwi:install_archive",
+    "//share/doc/legal/intel_iwn:install_archive",
+    "//share/doc/legal/intel_wpi:install_archive",
+    "//share/doc/legal/realtek:install_archive",
+], visibility = ["//visibility:public"])

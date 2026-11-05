@@ -19,3 +19,5 @@ exports_files(['atf-sh/atf-check_test.sh', 'atf-sh/atf_check_test.sh', 'atf-sh/c
 
 exports_files(["doc/atf-test-program.1"], visibility = ["//share/man/man1:__pkg__"])
 exports_files(["doc/atf-test-case.7"], visibility = ["//share/man/man7:__pkg__"])
+
+exports_files(["AUTHORS", "COPYING", "NEWS", "README.md"], visibility = ["//share/doc/atf:__pkg__"])

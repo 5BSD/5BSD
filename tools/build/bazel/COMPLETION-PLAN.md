@@ -59,6 +59,16 @@ architecture-choice staging remain open. All eleven components also pass the
 native manual-disable check. See SHARE-MANUAL-PARENT-QUALIFICATION.md. Mandoc
 databases, remaining share/world composition and the system gates remain open.
 
+## Configured shared documentation checkpoint (2026-11-05)
+
+The native share/doc parent now composes the book, legal notices and selected
+IPv6/compiler/test documents. Complete independent original subtree comparisons
+pass both profiles: 104 unique records each, with 90 normal and 91 alternate exact
+file payloads. Only identical shared legal-directory claims are reconciled and
+the original/native repetition counts must agree. See
+SHARE-DOCUMENTATION-QUALIFICATION.md. Examples, zoneinfo, locale composition and
+remaining world/system gates remain open; this is not a full world build.
+
 ## Current composition checkpoint (2026-11-05)
 
 NIS and sendmail administration are now included when selected; their combined
@@ -3641,3 +3651,29 @@ review covers 1135 archives/27823 file paths without conflicting claims and keep
 the prior eight manual contributions identical. Continue docs/examples/zoneinfo,
 remaining world roots and the open installed-world/package/bootstrap/runtime/
 resource gates; Make remains default. See SHARE-MANUAL-PARENT-QUALIFICATION.md.
+
+
+## Shared documentation parent checkpoint (2026-11-05)
+
+Normal (nine archive) and test-doc/no-compiler/no-IPv6 (eight archive) native
+parents match complete original Make staging. Book inventory guards remain active;
+original notices/package assignments are retained. Duplicate legal-directory
+claims were inspected and reconciled only when metadata and repetition counts
+match; files cannot be duplicated through this path. The maintained frontend's
+existing schema suffices and its manual is updated. Continue examples/zoneinfo,
+locale and world composition plus the outstanding system qualification gates.
+See SHARE-DOCUMENTATION-QUALIFICATION.md.
+
+
+### Next: fix source example inventory defects before native parity
+
+Read-only original Make queries confirm SER_BOOTFORTHPACKAGE,
+SER_MAC_ABACPACKAGE and SER_JAILSPACKAGE all resolve to examples: their apparent
+package declarations use names not consumed by the SE_<normalized-directory>PACKAGE
+lookup (SE_BOOTFORTH_PACKAGE, SE_MAC_ABAC_PACKAGE and SE_JAILPACKAGE). The OES
+example exists, but oes is absent from SE_DIRS/FILESGROUPS; only the legacy LDIRS
+cleanup list mentions it, inside the Bluetooth block. Native parity with that
+inventory alone would preserve an uninstalled OES sample. Correct the maintained
+Make declarations and native inventories together, then compare complete example
+metadata/payloads and selected option branches. No example implementation change
+has been made in the documentation checkpoint.
