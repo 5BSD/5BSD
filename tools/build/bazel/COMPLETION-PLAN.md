@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Public RPC include installation checkpoint (2026-11-05)
+
+The native include RPC contribution now covers both complete maintained RPC/RPC
+service header groups: 77 exact files/schemas and their clibs/dev metadata match
+independent Make stages. Includes disabled matches both original empty stages.
+The existing XDR round-trip and source-settings Bazel tests pass. Fresh build-state
+and action-cache evidence observes all 22 public header generators, including the
+declared nis_object.x dependency; all 23 installed generated paths match producer
+digests and all six installation outputs match the Make-qualified capture.
+See PUBLIC-RPC-HEADERS-QUALIFICATION.md. This is not the complete include parent;
+ordinary/architecture/kernel header groups, osreldate and remaining include child
+contributions are next. Cross-capture namespace evidence is 1163 archives and
+30943 non-directory paths without conflicts. Existing world/package/bootstrap/
+cross/runtime/resource gates remain open and Make stays production/default.
+
 ## Complete selected production share parent (2026-11-05)
 
 The native share parent now follows the maintained production traversal and

@@ -33,3 +33,35 @@ cc_library(name = "nis_client_headers", hdrs = ["yp_prot.h", "ypclnt.h"],
     visibility = ["//usr.bin/ypcat:__pkg__", "//usr.bin/ypmatch:__pkg__", "//usr.bin/ypwhich:__pkg__", "//usr.sbin/ypserv/common:__pkg__"] + ["//usr.sbin/ypbind:__pkg__", "//usr.sbin/yp_mkdb:__pkg__", "//usr.sbin/yppoll:__pkg__", "//usr.sbin/yppush:__pkg__", "//usr.sbin/ypset:__pkg__", "//usr.sbin/ypserv:__pkg__", "//usr.sbin/rpc.ypxfrd:__pkg__", "//usr.sbin/rpc.yppasswdd:__pkg__", "//usr.sbin/rpc.ypupdated:__pkg__", "//usr.sbin/ypldap:__pkg__"])
 
 exports_files(["bootparam_prot.x"], visibility = ["//usr.sbin/bootparamd:__subpackages__"])
+
+# Complete public installation, beyond librpcsvc's XDR implementation subset.
+_PUBLIC_EXTRA_PROTOCOLS = ["key_prot", "yp", "nis", "nis_cache", "nis_callback", "bootparam_prot", "crypt"]
+[bsd_rpcgen(name = n + "_header", source = n + ".x", output = n + ".h", mode = "-h",
+    flags = ["-C", "-DWANT_NFS3"], cpp_flags = ["-E", "-x", "c", "-nostdinc"],
+    dependencies = ["nis_object.x"] if n == "nis" else [],
+    rpcgen = "//usr.bin/rpcgen:rpcgen", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", runtime = ["@bsd_sdk//toolchain:cpp_runtime"])
+ for n in _PUBLIC_EXTRA_PROTOCOLS]
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_PUBLIC_HEADERS = ["yp_prot.h", "ypclnt.h", "nis_db.h", "nis_tags.h", "nislib.h"]
+_PUBLIC_SCHEMAS = [n + ".x" for n in RPCSVC_PROTOCOLS + _PUBLIC_EXTRA_PROTOCOLS] + ["nis_object.x"]
+_PUBLIC_GENERATED = [n + ".h" for n in RPCSVC_PROTOCOLS + _PUBLIC_EXTRA_PROTOCOLS]
+[bsd_install_file(name = "install_" + str(index), src = path,
+    destination = "/usr/include/rpcsvc/" + path, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=clibs", "dev"])
+ for index, path in enumerate(_PUBLIC_HEADERS + _PUBLIC_SCHEMAS + _PUBLIC_GENERATED)]
+# The same generated key protocol is installed in both public namespaces.
+bsd_install_file(name = "install_rpc_key", src = ":key_prot.h",
+    destination = "/usr/include/rpc/key_prot.h", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_manifest(name = "install_manifest", entries = select({
+    "//tools/build/bazel/config:includes_enabled": [":install_" + str(index) for index in range(len(_PUBLIC_HEADERS + _PUBLIC_SCHEMAS + _PUBLIC_GENERATED))] + [":install_rpc_key"],
+    "//conditions:default": [],
+}), visibility = ["//include:__pkg__"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

@@ -6841,3 +6841,11 @@ share, example and timezone test hierarchies are converted.
 Termcap manual installation follows manual enablement and compression while
 preserving its explicit ncurses package; DTrace data includes all maintained
 scripts and both package-owned installation directories.
+
+.Pp
+The native RPC include contribution installs both public RPC header groups and
+schemas with clibs/dev package metadata.
+Its includes setting controls installation; required source headers remain
+available to native builds.
+It reuses native rpcgen actions, including declared NIS schema dependencies.
+This contribution is not a complete include-tree or world installation endpoint.

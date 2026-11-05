@@ -194,3 +194,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "xdr.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+exports_files(["clnt_nl.h"], visibility = ["//include:__pkg__"])

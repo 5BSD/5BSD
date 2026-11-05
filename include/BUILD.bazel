@@ -62,3 +62,6 @@ bsd_source_headers(name = "gpt_zfs_headers", hdrs = ['a.out.h', 'assert.h', 'lim
 bsd_source_headers(name = "bios_4th_headers", hdrs = ['assert.h', 'limits.h', 'setjmp.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/i386/loader:__pkg__"])
 
 bsd_source_headers(name = "bios_simp_headers", hdrs = ['assert.h', 'limits.h', 'stdbool.h', 'stddef.h', 'string.h', 'strings.h', 'uuid.h'], visibility = ["//stand/i386/loader:__pkg__"])
+
+load(":rpc_installation.bzl", "rpc_installation")
+rpc_installation()

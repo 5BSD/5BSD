@@ -781,3 +781,6 @@ bool_flag(name = "dict", build_setting_default = True, visibility = ["//visibili
 config_setting(name = "dict_enabled", flag_values = {":dict": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "sharedocs", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "sharedocs_enabled", flag_values = {":sharedocs": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "includes", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "includes_enabled", flag_values = {":includes": "true"}, visibility = ["//visibility:public"])
