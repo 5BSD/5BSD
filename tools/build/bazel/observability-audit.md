@@ -21,6 +21,24 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Five ZFS rescue variants (2026-11-05)
+
+Bectl/zfsbootcfg/zfs/zpool/zdb bring the bounded default core to 103 programs.
+Their 14 source compiler recipes declare no direct rescue provider object.
+Existing library/kernel instrumentation is retained, including distinct rescue
+ICP. Source review finds be_log_history and zpool_log_history call sites in
+bectl/zfs/zpool; these are pool history, not evidence of BSM audit delivery.
+Zfsbootcfg boot metadata changes and zdb pool/device access need an explicit
+runtime audit review before deciding whether new events/providers are needed.
+
+107 host runtime methods include only help/argument rejection for the five new
+programs, exiting before pool discovery/bootenv access. No successful pool write,
+bootenv transition, live probe firing or audit event delivery is established.
+Guest cases must cover create/import/export, snapshot/clone/rollback, send/recv,
+bootenv activation, labels/boot metadata, denied operations and failure recovery
+on private disposable pools. Review event fields without exposing keys or data;
+measure tracing and storage costs. See RESCUE-103-PROGRAM-QUALIFICATION.md.
+
 ## Four rescue storage/network/firewall variants (2026-11-05)
 
 Camcontrol/geom/ifconfig/pfctl expand the core to 98 applications. Their original

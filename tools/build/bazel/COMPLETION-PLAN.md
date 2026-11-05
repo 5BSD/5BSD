@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Default rescue source selection reaches 103 applications (2026-11-05)
+
+Bectl/zfs/zpool/zdb/zfsbootcfg complete default program selection in the bounded
+AMD64 core. Source-owned compiler policies retain original include precedence,
+inherited definitions, zfs_main source-specific warnings and zdb C99. Typed
+metadata preserves each program's original archive extraction order. Maintained
+frontend r4 passes 107 runtime methods plus 28 source-setting methods. All 14
+new compiler policies, 2219 consumed dependencies, all 103 ordered object lists
+and seven per-program archive lists match original Make. Seven diagnostic-path
+object differences have independent original compiler controls; 208 pipeline
+outputs are byte-identical on identical captured inputs. See
+RESCUE-103-PROGRAM-QUALIFICATION.md for retained failures and exact scope.
+
+Next priority is actual librescue overrides, complete configuration and
+installation semantics. This is not installed rescue acceptance. Continue all
+whole-world/kernel/modules/pkgbase/cross/bootstrap/runtime/performance/cache/
+sandbox gates below. Make remains default; BIP excluded; no host upgrade/reboot.
+
 ## Native rescue expansion to ninety-eight applications (2026-11-05)
 
 Camcontrol/geom/ifconfig/pfctl reach 98 of 103 default applications. Native core

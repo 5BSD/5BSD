@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+_SOURCES = ["bectl.c", "bectl_jail.c", "bectl_list.c", "bectl.h", "//sys/modules/zfs:zfs_config.h"]
 cc_binary(
     name = "bectl",
-    srcs = ["bectl.c", "bectl_jail.c", "bectl_list.c", "bectl.h", "//sys/modules/zfs:zfs_config.h"],
+    srcs = _SOURCES,
     deps = ['//lib/libbe:be', '//lib/libjail:jail', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libspl:spl', '//lib/libutil:util', '//cddl/lib/libzfsbootenv:zfsbootenv'],
     dynamic_deps = ['//lib/libbe:be_shared', '//lib/libjail:jail_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libspl:spl_shared', '//lib/libutil:util_shared', '//cddl/lib/libzfsbootenv:zfsbootenv_shared'],
     local_defines = ["IN_BASE", "HAVE_ISSETUGID", "HAVE_STRLCAT", "HAVE_STRLCPY", "NEED_SOLARIS_BOOLEAN"],
@@ -36,3 +37,12 @@ bsd_install_archive(
 )
 
 filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/zfs:__pkg__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+# Original nested rescue compiler policy, including parent Makefile.inc flags.
+_RESCUE_COPTS = ['-pipe', '-fno-common', '-Isys/contrib/openzfs/include', '-Isys/contrib/openzfs/lib/libspl/include', '-Isys/contrib/openzfs/lib/libspl/include/os/freebsd', '-Isys', '-Icddl/compat/opensolaris/include', '-Isys/contrib/openzfs/module/icp/include', '-include', 'sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h', '-include', 'sys/modules/zfs/zfs_config.h', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments']
+_RESCUE_DEFINES = ['IN_BASE', 'HAVE_ISSETUGID', 'HAVE_STRLCAT', 'HAVE_STRLCPY']
+_RESCUE_DEPS = ['//sys/contrib/openzfs:spl_headers', '//sys/sys:kernel_headers', '//cddl/compat/opensolaris/include:headers', '//lib/libbe:headers', '//lib/libjail:headers']
+rescue_application(srcs = _SOURCES, ordered_sources = _SOURCES,
+    deps = _RESCUE_DEPS, defines = _RESCUE_DEFINES, compiler_options = _RESCUE_COPTS,
+    archives = ['//lib/libbe:static_archive', '//cddl/lib/libzpool:static_archive', '//cddl/lib/libzfs:static_archive', '//cddl/lib/libzutil:static_archive', '//cddl/lib/libzfs_core:static_archive', '//cddl/lib/libzfsbootenv:static_archive', '//cddl/lib/libicp_rescue:static_archive', '//cddl/lib/libnvpair:static_archive'])

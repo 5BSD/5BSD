@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = "zdb", srcs = ["//sys/contrib/openzfs:cmd/zdb/zdb.c", "//sys/contrib/openzfs:cmd/zdb/zdb_il.c"],
+_SOURCES = ["//sys/contrib/openzfs:cmd/zdb/zdb.c", "//sys/contrib/openzfs:cmd/zdb/zdb_il.c"]
+cc_binary(name = "zdb", srcs = _SOURCES,
     deps = ['//cddl/lib/libnvpair:nvpair', '//cddl/lib/libumem:umem', '//cddl/lib/libzdb:zdb', '//cddl/lib/libzfs_core:zfs_core', '//cddl/lib/libzfs:zfs', '//cddl/lib/libspl:spl', '//cddl/lib/libavl:avl', '//cddl/lib/libzutil:zutil', '//cddl/lib/libzpool:zpool', '//secure/lib/libcrypto:crypto'] + ["//sys/contrib/openzfs:zdb_cli_headers"], dynamic_deps = ['//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libumem:umem_shared', '//cddl/lib/libzdb:zdb_shared', '//cddl/lib/libzfs_core:zfs_core_shared', '//cddl/lib/libzfs:zfs_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libavl:avl_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libzpool:zpool_shared', '//secure/lib/libcrypto:crypto_shared'],
     local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY", "DEBUG=1", "ZFS_DEBUG=1"],
     copts = ["-std=c99", "-g", "-fPIE", "-include", "sys/contrib/openzfs/include/sys/simd_config.h", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
@@ -30,3 +31,12 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+# Original nested rescue compiler policy, including parent Makefile.inc flags.
+_RESCUE_COPTS = ['-pipe', '-fno-common', '-Isys/contrib/openzfs/include', '-Isys/contrib/openzfs/lib/libspl/include', '-Isys/contrib/openzfs/lib/libspl/include/os/freebsd', '-Isys/contrib/openzfs/lib/libspl/include/os/freebsd/spl', '-Isys/contrib/openzfs/lib/libzpool/include', '-Isys', '-include', 'sys/contrib/openzfs/include/sys/simd_config.h', '-include', 'sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h', '-std=iso9899:1999', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-unknown-pragmas', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Qunused-arguments']
+_RESCUE_DEFINES = ['IN_BASE', 'HAVE_ISSETUGID', 'DEBUG=1', 'ZFS_DEBUG=1', 'NEED_SOLARIS_BOOLEAN', 'HAVE_STRLCAT', 'HAVE_STRLCPY']
+_RESCUE_DEPS = ['//sys/contrib/openzfs:spl_headers', '//sys/sys:kernel_headers', '//sys/contrib/openzfs:zdb_cli_headers']
+rescue_application(srcs = _SOURCES, ordered_sources = _SOURCES,
+    deps = _RESCUE_DEPS, defines = _RESCUE_DEFINES, compiler_options = _RESCUE_COPTS,
+    archives = ['//lib/libbe:static_archive', '//cddl/lib/libzpool:static_archive', '//cddl/lib/libzfs:static_archive', '//cddl/lib/libzutil:static_archive', '//cddl/lib/libzfs_core:static_archive', '//cddl/lib/libzfsbootenv:static_archive', '//cddl/lib/libicp_rescue:static_archive', '//cddl/lib/libnvpair:static_archive', '//cddl/lib/libzdb:static_archive'])

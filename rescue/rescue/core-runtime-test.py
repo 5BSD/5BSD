@@ -21,7 +21,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'init', b'ping', b'ping6', b'dhclient', b'iscsictl', b'iscsid', b'tar', b'sh', b'-sh', b'csh', b'-csh', b'tcsh', b'-tcsh', b'vi', b'ex', b'camcontrol', b'geom', b'gpart', b'glabel', b'ifconfig', b'pfctl', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'dump', b'restore', b'fsck_ffs', b'fsdb', b'mount_nfs', b'init', b'ping', b'ping6', b'dhclient', b'iscsictl', b'iscsid', b'tar', b'sh', b'-sh', b'csh', b'-csh', b'tcsh', b'-tcsh', b'vi', b'ex', b'camcontrol', b'geom', b'gpart', b'glabel', b'ifconfig', b'pfctl', b'bectl', b'zfsbootcfg', b'zfs', b'zpool', b'zdb', b'rdump', b'rrestore', b'fsck_4.2bsd', b'fsck_ufs', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -873,6 +873,33 @@ class RescueCore(unittest.TestCase):
             self.assertNotEqual(p.returncode, 0)
             self.assertIn(b"syntax error", p.stderr)
             self.assertFalse(device.exists())
+
+    # These argument paths exit before pool discovery or boot-environment access.
+    # Pool/data/boot operations require the separate VM qualification.
+    def test_bectl_help(self):
+        p = self.run_app("bectl", "-h")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(b"Usage:", p.stdout)
+
+    def test_zfs_help(self):
+        p = self.run_app("zfs", "--help")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(b"usage:", p.stdout)
+
+    def test_zpool_help(self):
+        p = self.run_app("zpool", "--help")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(b"usage:", p.stdout)
+
+    def test_zdb_argument_rejection(self):
+        p = self.run_app("zdb", "--invalid-rescue-test-option")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"Usage:", p.stderr)
+
+    def test_zfsbootcfg_argument_rejection(self):
+        p = self.run_app("zfsbootcfg", "operand-one", "operand-two")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn(b"usage: zfsbootcfg", p.stderr)
 
 if __name__ == "__main__":
     unittest.main()
