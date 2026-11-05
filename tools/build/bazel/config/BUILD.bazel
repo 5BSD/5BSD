@@ -755,3 +755,7 @@ config_setting(name = "mlx5tool_enabled", flag_values = {":mlx5tool": "true"}, v
 
 bool_flag(name = "pkgbootstrap", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "pkgbootstrap_enabled", flag_values = {":pkgbootstrap": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+# Explicit opt-in matching Make's SENDMAIL_SET_USER_ID installation choice.
+bool_flag(name = "sendmail_set_user_id", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "sendmail_set_user_id_enabled", flag_values = {":sendmail_set_user_id": "true"}, visibility = ["//visibility:public"])

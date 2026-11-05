@@ -3407,3 +3407,26 @@ Complete world/kernel/module installation/pkgbase, cross-architecture, bootstrap
 runtime/VM and CPU/RAM/disk I/O/footprint/cache/sandbox gates remain open. Existing
 format-5 frontend support suffices; the manual is updated. Make stays default;
 BIP remains excluded.
+
+## Native sendmail administration checkpoint (2026-11-05)
+
+The remaining five optional SENDMAIL administration owners now build natively
+through the source-owned parent. All five complete original component metadata/
+manual and strict ELF/debug comparisons pass with fresh original internal-library
+link witnesses. Three native PIE archives match original member order/symbols.
+Companion tools correctly retain utilities ownership; the daemon remains
+sendmail, setgid smmsp, with an explicit opt-in setuid metadata selector.
+
+Combined NIS/SENDMAIL construction passes with 368 administration archives and
+ten selected test targets. Actual configured selection matches all 261 immediate
+original owners in this expanded profile. A no-TLS/no-wrapper/no-IPv6 profile
+also builds and passes the six selected libsm/settings tests. See
+SENDMAIL-NATIVE-QUALIFICATION.md for original references, immutable captures
+and limitations. No live mail service or performance qualification is claimed.
+
+The administration parent still rejects installed tests and other ABIs. Custom
+sendmail compiler/link input configuration, complete world-family composition,
+remaining original NIS/libc ABI checks, cross-architecture, install/pkgbase,
+bootstrap, runtime/VM and CPU/RAM/disk I/O/footprint/cache/sandbox gates remain
+open. Existing format-5 frontend support suffices; the manual is updated. Make
+remains production/default; BIP remains excluded.

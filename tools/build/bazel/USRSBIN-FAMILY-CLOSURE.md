@@ -203,13 +203,13 @@ support is unchanged; no C dispatcher, signing or publication change is required
 
 ## Explicit remaining work
 
-This production parent rejects installed tests and other ABIs. It also rejects
-sendmail while that selected subtree lacks a native production closure. NIS
-construction is now included when selected; its outstanding original linked and
-service-runtime checks are recorded in NIS-ADMIN-NATIVE-QUALIFICATION.md. These constraints identify migration
-work; they are not evidence that all configurations have been converted.
+This production parent rejects installed tests and other ABIs. Optional NIS and
+sendmail construction is now included when selected. Remaining original linked
+and service-runtime checks are recorded in NIS-ADMIN-NATIVE-QUALIFICATION.md and
+SENDMAIL-NATIVE-QUALIFICATION.md. These constraints identify migration work;
+they are not evidence that all configurations have been converted.
 
-Finish those optional owners and original installed tests, then remove each gate
+Finish original installed tests and remaining configuration/ABI coverage, then remove each gate
 only after construction and installation qualification. Reconcile complete
 original Make metadata/payload/ancestor directories and pkgbase ownership for the
 whole family. Live capability-daemon behavior and SSH login/authentication remain

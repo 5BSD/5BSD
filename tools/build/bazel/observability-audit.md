@@ -11555,3 +11555,14 @@ The local yp_mkdb test checks database payload/metadata, duplicate and filtering
 behavior, permissions and exclusive creation. It never mutates the host domain,
 clears RPC maps or contacts services. Network RPC, credentials, service lifecycle,
 probe/audit delivery and resource/performance qualification remain open.
+
+## Sendmail administration (2026-11-05)
+
+The native sendmail, editmap, mailstats, makemap and praliases targets preserve
+original C sources, feature defines and existing sm_syslog integration. No
+explicit DTrace provider or OpenBSM audit calls were found in the reviewed
+contrib/sendmail src/libsm/libsmutil subtrees. Keep queue/mailbox mutation, map
+updates, relay authorization, TLS negotiation and credential/privilege handling
+on the audit/probe review queue. Five existing libsm tests and original
+installation/ELF/debug comparisons do not establish live logging, privileged
+execution, SMTP delivery, queue operation, TLS or resource/performance acceptance.

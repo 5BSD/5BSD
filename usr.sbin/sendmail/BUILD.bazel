@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":program.bzl", "sendmail_program")
+sendmail_program(name = "sendmail",
+    srcs = ['//contrib/sendmail:src/alias.c', '//contrib/sendmail:src/arpadate.c', '//contrib/sendmail:src/bf.c', '//contrib/sendmail:src/collect.c', '//contrib/sendmail:src/conf.c', '//contrib/sendmail:src/control.c', '//contrib/sendmail:src/convtime.c', '//contrib/sendmail:src/daemon.c', '//contrib/sendmail:src/deliver.c', '//contrib/sendmail:src/domain.c', '//contrib/sendmail:src/envelope.c', '//contrib/sendmail:src/err.c', '//contrib/sendmail:src/headers.c', '//contrib/sendmail:src/macro.c', '//contrib/sendmail:src/main.c', '//contrib/sendmail:src/map.c', '//contrib/sendmail:src/mci.c', '//contrib/sendmail:src/milter.c', '//contrib/sendmail:src/mime.c', '//contrib/sendmail:src/parseaddr.c', '//contrib/sendmail:src/queue.c', '//contrib/sendmail:src/ratectrl.c', '//contrib/sendmail:src/readcf.c', '//contrib/sendmail:src/recipient.c', '//contrib/sendmail:src/savemail.c', '//contrib/sendmail:src/sasl.c', '//contrib/sendmail:src/sched.c', '//contrib/sendmail:src/sfsasl.c', '//contrib/sendmail:src/shmticklib.c', '//contrib/sendmail:src/sm_resolve.c', '//contrib/sendmail:src/srvrsmtp.c', '//contrib/sendmail:src/stab.c', '//contrib/sendmail:src/stats.c', '//contrib/sendmail:src/sysexits.c', '//contrib/sendmail:src/timers.c', '//contrib/sendmail:src/tlsh.c', '//contrib/sendmail:src/tls.c', '//contrib/sendmail:src/trace.c', '//contrib/sendmail:src/udb.c', '//contrib/sendmail:src/usersmtp.c', '//contrib/sendmail:src/util.c', '//contrib/sendmail:src/version.c'],
+    deps = ["//lib/libsm:sm_pie", "//lib/libsmutil:smutil_pie", "//lib/libutil:util"] +
+        select({"//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["//lib/libwrap:wrap"], "//conditions:default": []}),
+    shared = ["//lib/libutil:util_shared"] +
+        select({"//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["//lib/libwrap:wrap_shared"], "//conditions:default": []}),
+    defines = ["NEWDB", "MAP_REGEX", "DNSMAP"] +
+        select({"//tools/build/bazel/config:nis_enabled": ["NIS"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:inet6_support_enabled": ["NETINET6"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:openssl_enabled": ["STARTTLS", "TLS_EC"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["TCPWRAPPERS"], "//conditions:default": []}),
+    package = "sendmail", bindir = "/usr/libexec/sendmail", group = "smmsp",
+    mode = select({"//tools/build/bazel/config:sendmail_set_user_id_enabled": "4555", "//conditions:default": "2555"}),
+    manuals = ["mailq.1", "newaliases.1", "aliases.5"], manual_aliases = ["hoststat", "purgestat"])

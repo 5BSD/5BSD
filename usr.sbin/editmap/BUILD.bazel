@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/sendmail:program.bzl", "sendmail_program")
+sendmail_program(name = 'editmap', srcs = ["//contrib/sendmail:editmap/editmap.c"],
+    deps = ['//lib/libsm:sm_pie', '//lib/libsmdb:smdb_pie', '//lib/libsmutil:smutil_pie'], defines = ['NOT_SENDMAIL', 'NEWDB'])
