@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to forty-nine applications (2026-11-05)
+
+Thirteen system-program owners bring the selected AMD64 core to 49 of 103 default
+applications. Native GEOM/bsdxml/kiconv/sbuf archives join original selected order.
+The runtime wrapper passes 68 methods including eleven pre-mutation argument
+rejection subcases and private rcorder graphs. Two mistaken test expectations
+were corrected against source without changing production behavior; failed r1
+is retained. Fresh original Make produces sixteen C/two provider objects; actual
+provider/function/patch-site and independent diagnostic-filename controls pass.
+Original generated Make on identical captured inputs matches all 100 pipeline
+outputs and the complete executable. See RESCUE-FORTY-NINE-PROGRAM-QUALIFICATION.md.
+Continue remaining 54 applications and actual rescue library/configuration/cross/
+installation coverage. Positive privileged operations require disposable VMs;
+full debug/raw-DOF/library/pkgbase/world/kernel/bootstrap/publication/runtime and
+resource gates remain open. Make stays default; BIP stays excluded.
+
 ## Native rescue expansion to thirty-six applications (2026-11-05)
 
 Nine further source owners add ls/df/ps/pkill/tail/tee/id/chroot/chown; the native

@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -433,6 +433,41 @@ class RescueCore(unittest.TestCase):
             self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
             self.assertEqual((path.stat().st_uid, path.stat().st_gid), (os.geteuid(), os.getegid()))
             self.assertEqual(path.read_bytes(), b"private\n")
+
+    def test_system_programs_reject_invalid_option_before_mutation(self):
+        programs = ["kldload", "kldunload", "kldstat", "kldconfig", "dmesg", "devfs",
+                    "mount_cd9660", "mount_nullfs", "mount_unionfs", "swapon", "mdconfig"]
+        for name in programs:
+            with self.subTest(program=name):
+                p = self.run_app(name, "-Z")
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
+
+    def test_mknod_rejects_invalid_type_before_device_creation(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "invalid-device"
+            p = self.run_app("mknod", str(path), "invalid", "1", "2")
+            self.assertEqual(p.returncode, 1)
+            self.assertIn(b"node must be type 'b' or 'c'", p.stderr)
+            self.assertFalse(path.exists())
+
+    def test_rcorder_private_dependency_graph(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            first, second = Path(d) / "first", Path(d) / "second"
+            first.write_text("# PROVIDE: first\n# REQUIRE: second\n")
+            second.write_text("# PROVIDE: second\n")
+            p = self.run_app("rcorder", str(first), str(second))
+            self.assertEqual((p.returncode, p.stdout, p.stderr),
+                (0, (str(second) + "\n" + str(first) + "\n").encode(), b""))
+
+    def test_rcorder_private_cycle_rejected(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            first, second = Path(d) / "first", Path(d) / "second"
+            first.write_text("# PROVIDE: first\n# REQUIRE: second\n")
+            second.write_text("# PROVIDE: second\n# REQUIRE: first\n")
+            p = self.run_app("rcorder", str(first), str(second))
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn(b"Circular dependency", p.stderr)
 
 if __name__ == "__main__":
     unittest.main()

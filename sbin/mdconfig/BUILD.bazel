@@ -48,3 +48,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['mdconfig.c'],
+    object_names = ['mdconfig.o'], deps = ['//lib/libutil:headers', '//lib/libgeom:headers'])

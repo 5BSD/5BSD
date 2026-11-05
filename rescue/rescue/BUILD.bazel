@@ -22,10 +22,11 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
 # No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# Supported combined-object stage, bounded to thirty-six real applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown']]
+# Supported combined-object stage, bounded to forty-nine real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']]
 _CORE_OWNERS = {p: "usr.bin/" + p for p in ["head", "tail", "tee", "id"]}
 _CORE_OWNERS.update({p: "usr.sbin/" + p for p in ["chroot", "chown"]})
+_CORE_OWNERS.update({p: "sbin/" + p for p in ['kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']})
 _CORE_OBJECTS = {p: "//" + _CORE_OWNERS.get(p, "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
 bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
     object_names = {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS},
@@ -50,7 +51,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real thirty-six-program executable, with native static libc and startup.
+# Bounded real forty-nine-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],
@@ -66,6 +67,10 @@ _CORE_ARCHIVES = [
     ("tinfo", "//lib/ncurses/tinfo:static_archive"),
     ("util", "//lib/libutil:static_archive"),
     ("xo", "//lib/libxo/libxo:static_archive"),
+    ("geom", "//lib/libgeom:static_archive"),
+    ("bsdxml", "//lib/libexpat:static_archive"),
+    ("kiconv", "//lib/libkiconv:static_archive"),
+    ("sbuf", "//lib/libsbuf:static_archive"),
     ("z", "//lib/libz:static_archive"),
     ("m", "//lib/msun:static_archive"),
 ]

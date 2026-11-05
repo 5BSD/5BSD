@@ -21,6 +21,25 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Thirteen rescue system-program variants (2026-11-05)
+
+Kldload/kldunload retain moduleload/moduleunload providers; fresh original/native
+ET_REL checks verify schemas, actual function and patched sites with independently
+verified object-path alias hashes. Kldstat excludes modulequery under the original
+RESCUE condition. Kldconfig/dmesg/rcorder/mknod/devfs/mount_cd9660/mount_nullfs/
+mount_unionfs/swapon/mdconfig declare no direct provider or BSM calls in the
+bounded source/recipe scan. Their syscall/shared-library instrumentation is
+separate from application provider coverage.
+
+Review module authorization, mounts, device/GEOM and swap audit delivery during
+privileged VM qualification. Host checks reject invalid options/types before
+those changes and only process private rcorder files. An initial test incorrectly
+assumed mknod's one-argument form made a FIFO; source and native/host EPERM results
+show it requests a character device. The accepted test rejects an invalid type
+before creation. No privilege bypass or substitute syscall was introduced.
+Live provider registration/firing and audit delivery remain open; all host child
+DOF initialization is disabled. See RESCUE-FORTY-NINE-PROGRAM-QUALIFICATION.md.
+
 ## Nine additional rescue variants and native static libraries (2026-11-05)
 
 Ls/df/ps/pkill/tail/tee/id/chroot/chown expand the core to 36 applications. Df's
