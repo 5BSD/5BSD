@@ -1,0 +1,4 @@
+# Unknown-to-the-packager names verify execution-time directory expansion.
+Zone Foundry/One 0 - FND
+Zone Foundry/Two 1:00 - FNT
+Link Foundry/One Foundry/Three

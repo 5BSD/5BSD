@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Generated timezone checkpoint (2026-11-05)
+
+Native timezone generation and installation now match complete original Make
+staging for 601 files with and without leap seconds. All 21 created directories
+match the physical original stage and global mtree policy; original file-only
+component METALOG and native expanded metadata are explicitly distinguished.
+Bazel expands the generated directory artifact into declared archive inputs;
+there is no fixed zone-name inventory. Three selected test targets pass,
+including eight serializer cases and a real zic-generated fixture. Final cold,
+cache-restored and independent builds preserve all three installation outputs.
+See ZONEINFO-GENERATED-TREE-QUALIFICATION.md. Cross-capture namespace evidence
+now covers 1146 production archives and 28699 non-directory paths without
+conflicts; this is not a combined world build. The full tests-enabled zoneinfo
+endpoint still rejects explicitly: installed ATF tests and timezone activation
+remain open. Next close remaining share locale/encoding/sendmail data and parent
+composition, then outstanding world roots and installed test coverage. Existing
+full-system, cross-platform, bootstrap, pkgbase, runtime and resource/performance
+gates remain required. Make stays production/default and BIP stays excluded.
+
 ## Current combined native build (2026-11-05)
 
 One maintained frontend request now builds nine composed AMD64 production

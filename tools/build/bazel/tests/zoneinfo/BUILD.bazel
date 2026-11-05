@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_zoneinfo.bzl", "bsd_zoneinfo_compile")
+load("//tools/build/bazel:bsd_install_tree.bzl", "bsd_install_tree_archive")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_zoneinfo_compile(name = "fixture_tree", srcs = ["custom.tz"])
+bsd_install_tree_archive(name = "fixture_archive", tree = ":fixture_tree", prefix = "/usr/share/zoneinfo",
+    extra_directories = ["Compatibility/Empty"], owner = "root", group = "wheel",
+    file_mode = "0444", directory_mode = "0755", file_tags = ["package=fixture"], directory_tags = [], epoch = 0,
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group_file = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    mtree_runtime_libraries = ["@bsd_sdk//toolchain:extra_mtree_runtime"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "fixture_metadata", srcs = [":fixture_archive"], output_group = "metadata")
+bsd_host_artifact_test(name = "artifact_test", src = "artifact_test.py",
+    data = [":fixture_archive", ":fixture_metadata"], visibility = ["//visibility:public"])

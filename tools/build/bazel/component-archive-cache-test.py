@@ -27,8 +27,13 @@ def main():
         raise ValueError("fresh output below /usr/obj required")
     if args.archive.is_absolute() or ".." in args.archive.parts or not args.target.startswith("//"):
         raise ValueError("source target and relative output archive required")
-    seed = json.loads(args.commands.read_text())[0]["argv"]
-    prefixes = ("--max_idle_secs=", "--output_user_root=", "--symlink_prefix=", "--build_event_json_file=", "--execution_log_json_file=", "--disk_cache=")
+    recorded = json.loads(args.commands.read_text())
+    seeds = [command["argv"] for command in recorded
+             if any(value in ("build", "test") for value in command["argv"])]
+    if not seeds:
+        raise ValueError("recorded commands contain no native build or test invocation")
+    seed = seeds[0]
+    prefixes = ("--max_idle_secs=", "--output_user_root=", "--symlink_prefix=", "--build_event_json_file=", "--execution_log_json_file=", "--execution_log_compact_file=", "--execution_log_binary_file=", "--output_groups=", "--disk_cache=")
     java_homes = [v.split("=", 1)[1] for v in seed if v.startswith("--server_javabase=")]
     if len(java_homes) != 1 or not Path(java_homes[0]).is_dir():
         raise ValueError("one explicit recorded Java home required")
@@ -46,14 +51,15 @@ def main():
         argv = base[:]
         argv.insert(argv.index("build"), "--output_user_root=" + str(run / "user-root"))
         argv += ["--disk_cache=" + str(cache), "--symlink_prefix=" + str(run / "bazel-"),
-                 "--execution_log_json_file=" + str(run / "execution.json"), args.target]
+                 "--execution_log_json_file=" + str(run / "execution.json"),
+                 "--output_groups=+metadata,+directory_metadata", args.target]
         start = time.monotonic()
         with (run / "build.log").open("w") as log:
             done = subprocess.run(["/usr/bin/time", "-l", *argv], cwd=src, stdout=log, stderr=subprocess.STDOUT,
                                   env=dict(os.environ, JAVA_HOME=java_homes[0], BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN="1"))
         if done.returncode:
             raise RuntimeError(name + " build failed; see " + str(run / "build.log"))
-        spawns = [v for v in objects(run / "execution.json") if v.get("targetLabel") == args.target and v.get("mnemonic") == "BSDInstallArchive"]
+        spawns = [v for v in objects(run / "execution.json") if v.get("targetLabel") == args.target and v.get("mnemonic") in ("BSDInstallArchive", "BSDInstallTreeArchive")]
         if len(spawns) != 1:
             raise ValueError("expected one installation archive spawn")
         spawn = spawns[0]
@@ -61,18 +67,21 @@ def main():
         if hit != (name == "restored"):
             raise ValueError("archive action execution/cache expectation failed: " + name)
         archive = run / "bazel-bin" / args.archive
-        hashes = {archive.name: hashlib.sha256(archive.read_bytes()).hexdigest()}
+        outputs = [archive, archive.with_suffix(".json"),
+                   archive.with_name(archive.stem + ".directories.json")]
+        hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in outputs}
         subprocess.run([os.sys.executable, str(Path(__file__).with_name("archive-extraction-check.py")),
                         "--archive", str(archive), "--output", str(run / "extraction"),
                         "--tar", str(args.tar)], check=True)
-        result = dict(name=name, argv=argv, cache_hit=hit, archive_sha256=hashes,
+        result = dict(name=name, argv=argv, cache_hit=hit, archive_sha256={archive.name: hashes[archive.name]},
+                      installation_outputs_sha256=hashes,
                       elapsed_seconds=time.monotonic() - start, action_metrics=spawn.get("metrics", {}),
-                      status="passed" if not results or results[0]["archive_sha256"] == hashes else "failed")
+                      status="passed" if not results or results[0]["installation_outputs_sha256"] == hashes else "failed")
         results.append(result)
         (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
         if result["status"] != "passed":
-            raise ValueError("archive bytes differ: " + name)
-    (out / "receipt.json").write_text(json.dumps(dict(status="passed", scope="component archive cache restoration, independent-build byte reproducibility, and extraction; not package lifecycle or Make performance comparison", results=results), indent=2) + "\n")
+            raise ValueError("installation archive or metadata bytes differ: " + name)
+    (out / "receipt.json").write_text(json.dumps(dict(status="passed", scope="component archive/metadata cache restoration, independent-build byte reproducibility, and extraction; not package lifecycle or Make performance comparison", results=results), indent=2) + "\n")
     print(out / "receipt.json")
 
 

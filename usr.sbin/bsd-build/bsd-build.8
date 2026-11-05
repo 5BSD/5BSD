@@ -6806,3 +6806,14 @@ source example independently of Bluetooth.
 Optional hardware/service examples follow their declared build settings.
 The full examples endpoint rejects tests-enabled installation until its installed
 test hierarchy is converted; the production endpoint does not claim those tests.
+
+.Pp
+Native timezone construction uses the source-built execution-platform zic and
+vendor AWK generators with declared source/version inputs.
+Bazel expands the declared generated tree into the archive action's file list;
+fully expanded installation metadata is produced with the archive.
+No separate fixed list of zone names is used.
+The zoneinfo_leapseconds_support setting selects leap-second compilation when
+zoneinfo is enabled.
+Timezone choice/localtime activation and the installed ATF suite remain separate
+upgrade/runtime qualification requirements.

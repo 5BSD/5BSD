@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_zoneinfo.bzl", "bsd_zoneinfo_compile", "bsd_zoneinfo_source")
+load("//tools/build/bazel:bsd_install_tree.bzl", "bsd_install_tree_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# Source-owned input order, matching the maintained vendor generation recipe.
+_TZFILES = ["//contrib/tzdata:" + name for name in ['africa', 'antarctica', 'asia', 'australasia', 'etcetera', 'europe', 'factory', 'northamerica', 'southamerica', 'backward']]
+bsd_zoneinfo_compile(name = "compiled", srcs = _TZFILES, leapseconds = select({
+    "//tools/build/bazel/config:zoneinfo_leapseconds_enabled": "//contrib/tzdata:leapseconds",
+    "//conditions:default": None,
+}))
+bsd_zoneinfo_source(name = "source", srcs = _TZFILES, guard = "//contrib/tzdata:ziguard.awk",
+    shrink = "//contrib/tzdata:zishrink.awk", version = "//contrib/tzdata:version")
+# These compatibility directories are explicit Make layout policy, not zone names.
+_COMPATIBILITY_DIRECTORIES = ["Africa", "America/Argentina", "America/Indiana", "America/Kentucky",
+    "America/North_Dakota", "Antarctica", "Arctic", "Asia", "Atlantic", "Australia", "Etc",
+    "Europe", "Indian", "Pacific", "US", "Mexico", "Chile", "Canada", "Brazil"]
+bsd_install_tree_archive(name = "install_archive", tree = ":compiled", prefix = "/usr/share/zoneinfo",
+    files = {":source": "tzdata.zi", "//contrib/tzdata:zone.tab": "zone.tab", "//contrib/tzdata:zone1970.tab": "zone1970.tab"},
+    extra_directories = _COMPATIBILITY_DIRECTORIES,
+    owner = "root", group = "wheel", file_mode = "0444", directory_mode = "0755",
+    file_tags = ["package=zoneinfo"], directory_tags = [], epoch = 0,
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group_file = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    mtree_runtime_libraries = ["@bsd_sdk//toolchain:extra_mtree_runtime"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
+bsd_install_archive_set(name = "production_installation_archives", archives = [":install_archive"], visibility = ["//visibility:public"])
+# Installed ATF backward-link tests and their fixtures still need native closure.
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"], target_compatible_with = select({
+    "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": [],
+}), visibility = ["//visibility:public"])

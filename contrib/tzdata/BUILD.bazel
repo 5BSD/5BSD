@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['africa', 'antarctica', 'asia', 'australasia', 'etcetera', 'europe', 'factory', 'northamerica', 'southamerica', 'backward', 'leapseconds', 'zone.tab', 'zone1970.tab', 'version', 'ziguard.awk', 'zishrink.awk'], visibility = ["//share/zoneinfo:__pkg__"])

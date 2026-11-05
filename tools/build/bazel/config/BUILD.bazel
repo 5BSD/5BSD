@@ -770,3 +770,9 @@ config_setting(name = "inet_enabled", flag_values = {":inet": "true"}, visibilit
 # Canonical selections of the current MAN_ARCH child-directory inventories.
 string_flag(name = "manual_architectures", build_setting_default = "all",
     values = ["all", "arm", "aarch64", "none"], visibility = ["//visibility:public"])
+
+# MK_ZONEINFO disables leap-second data even when the latter is requested.
+bool_flag(name = "zoneinfo", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "zoneinfo_enabled", flag_values = {":zoneinfo": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "zoneinfo_leapseconds_support", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "zoneinfo_leapseconds_enabled", flag_values = {":zoneinfo": "true", ":zoneinfo_leapseconds_support": "true"}, visibility = ["//visibility:public"])
