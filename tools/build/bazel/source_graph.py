@@ -182,6 +182,23 @@ def test_inventory_command(argv, targets, tests, host_artifacts_only=False):
                       'tests(set(' + ' '.join(json.dumps(label) for label in tests) + '))']
 
 
+def test_artifact_command(argv, targets, tests, output, log_format):
+    """Build the same configured test executables without rerunning their tests."""
+    if not targets or not tests:
+        raise ValueError('explicit build targets and configured tests required')
+    command = list(argv[:-len(targets)])
+    command[command.index('test')] = 'build'
+    replacements = {
+        '--build_event_json_file=': str(output / 'test-artifacts.events.json'),
+        '--execution_log_' + log_format + '_file=': str(output / ('test-artifacts.execution.' + log_format)),
+    }
+    for index, argument in enumerate(command):
+        for prefix, path in replacements.items():
+            if argument.startswith(prefix):
+                command[index] = prefix + path
+    return command + list(tests)
+
+
 def parse_test_inventory(text, host_artifacts_only=False):
     active, incompatible, seen = set(), set(), set()
     fields = {'label', 'compatible'} | ({'host_artifact'} if host_artifacts_only else set())
@@ -366,6 +383,24 @@ def _qualify(config, args, state):
             tests = test_results((json.loads(line) for line in stream), expected)
         with (out/'events.json').open() as stream:
             reports = test_reports.snapshot((json.loads(line) for line in stream), out/'test-reports', expected)
+        # Cached test results need not materialize their executable inputs.
+        # An ordinary build requests those outputs with the exact same profile;
+        # main BEP digests still have to match every file frozen below.
+        test_artifact_build = None
+        if expected:
+            materialize = test_artifact_command(argv, config['targets'], expected, out, log_format)
+            start = time.monotonic()
+            with (out/'test-artifacts.stdout').open('w') as stdout, (out/'test-artifacts.stderr').open('w') as stderr:
+                result = subprocess.run(['/usr/bin/time', '-l', *materialize], cwd=src, env=env, stdout=stdout, stderr=stderr)
+            commands.append(dict(phase='test-artifacts', argv=materialize, exit_status=result.returncode, elapsed_seconds=time.monotonic()-start))
+            (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
+            if result.returncode:
+                raise RuntimeError('test executable build failed; see test-artifacts.stderr')
+            artifact_events = out / 'test-artifacts.events.json'
+            artifact_log = out / ('test-artifacts.execution.' + log_format)
+            test_artifact_build = dict(targets=expected,
+                events=dict(path=str(artifact_events), sha256=digest(artifact_events)),
+                execution_log=dict(format=log_format, path=str(artifact_log), sha256=digest(artifact_log), bytes=artifact_log.stat().st_size))
         artifacts = bep_artifacts.snapshot(out/'events.json', out/'artifacts', incompatible=incompatible)
         for name,value in bindings.items():
             if digest(Path(name))!=value:raise ValueError('qualification input changed: '+name)
@@ -375,7 +410,7 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),test_artifact_build=test_artifact_build,artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

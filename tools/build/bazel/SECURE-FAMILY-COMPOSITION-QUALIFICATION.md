@@ -110,3 +110,14 @@ reproducible bootstrap, separate hardware/verified combined publication, VM and
 controlled CPU/RAM/disk I/O/footprint/cache/sandbox acceptance remain required.
 Make stays production/default. BIP is excluded. No host installation, upgrade,
 trust-store update, publication or reboot is performed.
+
+## Combined NIS runtime follow-up
+
+The eight-family integration catches a mismatch hidden by the default profile:
+SSH test runtimes supplied feature-disabled SDK libc to NIS-enabled libwrap.
+The final shared runtime selection uses declared native libc/libsys for NIS and
+preserves the original SDK pair otherwise. All three SSH configuration and both
+SFTP tests pass in the combined profile. The final default regression preserves
+all 86 production captures and passes all twelve selected tests. See
+EIGHT-FAMILY-COMPOSITION-QUALIFICATION.md for the failed and passing evidence,
+including the separate cached-test executable materialization correction.

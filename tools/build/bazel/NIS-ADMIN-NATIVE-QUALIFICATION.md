@@ -86,3 +86,13 @@ signing, verified boot and protection against compromised root are distinct;
 these unsigned build checks establish none of those security guarantees. Make
 remains production/default; BIP remains excluded. No host installation, upgrade,
 publication or reboot is performed.
+
+## Eight-family runtime integration follow-up
+
+Actual combined tests expose SDK libc in SSH's runtime declarations, despite
+the selected native NIS program ABI. The declared NIS runtime now supplies
+native libc/libsys, preserving the original explicit SDK pair for defaults.
+Test bodies and expectations are unchanged. The combined 34-target test run
+and final immutable capture pass; default secure production outputs remain
+unchanged. See EIGHT-FAMILY-COMPOSITION-QUALIFICATION.md. Live NIS service and
+original linked/whole-world gates above remain open.

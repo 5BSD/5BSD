@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("//tools/build/bazel:bsd_nis.bzl", "nis_runtime_libraries")
 cc_binary(name = "native_sftp_test", srcs = ["native_sftp_test.c"],
     deps = ["//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"], testonly = True,
@@ -10,6 +11,6 @@ cc_binary(name = "native_sftp_test", srcs = ["native_sftp_test.c"],
     runtime_lib = ["//secure/lib/libssh:ssh_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared",
         "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared", "//lib/libz:z_shared", "//lib/libedit:edit_shared",
         "//lib/ncurses/tinfo:tinfo_shared", "//lib/atf/libatf-c:atf_c_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"] + select({"//tools/build/bazel/config:ldns_enabled": ["//lib/libldns:ldns_shared"], "//conditions:default": []}),
+        "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"] + nis_runtime_libraries() + select({"//tools/build/bazel/config:ldns_enabled": ["//lib/libldns:ldns_shared"], "//conditions:default": []}),
     runner = "//tools/build/bazel:atf_runner", size = "small") for case in ["transfer", "readonly"]]
 test_suite(name = "sftp_tests", tests = [":sftp_transfer", ":sftp_readonly"], visibility = ["//visibility:public"])

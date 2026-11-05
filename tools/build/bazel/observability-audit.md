@@ -11590,3 +11590,12 @@ checks do not authenticate users; direct SFTP checks do not establish network
 transport or audit delivery. Preserve login/PAM/credential handling, rejected
 authentication, SFTP path authorization, provider/probe events, service logging
 and controlled resource measurements as explicit runtime/audit gates.
+
+## Eight-family integration (2026-11-05)
+
+All 34 selected bounded tests pass with NIS and sendmail enabled across the
+combined production families. Correcting SSH/SFTP runtime libc declarations
+preserves actual program sources, probe providers and test bodies. The new
+recorded executable materialization build reruns no tests and changes no
+production instrumentation. Complete audit/probe delivery, authentication,
+network services and system/resource performance remain separate open gates.

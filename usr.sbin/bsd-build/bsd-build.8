@@ -6713,6 +6713,8 @@ RPC and parser generators are declared native actions with explicit tools and
 outputs, including the LDAP parser header.
 Selected local database and client ABI tests do not establish live NIS service,
 authentication or network correctness.
+Declared NIS test runtimes use source-built libc and libsys when that ABI is
+selected; the feature-disabled bootstrap libc cannot supply that runtime.
 Original linked parity requires a reference SDK that provides the selected ABI.
 The generic format-5 dispatcher, signing and publication contracts are unchanged.
 
@@ -6747,3 +6749,10 @@ explicit settings.
 The unfinished complete installed-test hierarchy and other ABIs remain gated;
 selected cryptographic and in-memory TLS tests do not establish SSH login or
 whole-system authentication acceptance.
+
+.Pp
+Native qualification expands requested test suites through configured Bazel
+queries and records a normal build of the compatible test executables with the
+same profile after testing.
+This materializes executable outputs even when test results are cached, before
+qualification freezes and verifies the completed BEP outputs.

@@ -1,5 +1,17 @@
 # Native Bazel completion plan
 
+## Current combined native build (2026-11-05)
+
+One maintained frontend request now builds the eight composed AMD64 production
+families together: 1071 installation archives and their selected internal build
+outputs, with 34 selected test targets passing. The complete captured request
+namespace has 23156 non-directory paths and no conflicting file claims.
+See EIGHT-FAMILY-COMPOSITION-QUALIFICATION.md for exact scope and evidence.
+This is a selected construction/namespace milestone; remaining world roots,
+complete installed tests/Make/pkgbase parity, other ABIs, bootstrap, system
+runtime/VM and comparative resource/performance gates remain open. Make stays
+production/default. No complete world endpoint or system acceptance is implied.
+
 ## Current composition checkpoint (2026-11-05)
 
 NIS and sendmail administration are now included when selected; their combined
@@ -3492,3 +3504,31 @@ installation/debug/pkgbase, installed tests, other profiles/ABIs and actual
 authentication/boot trust initialization remain open alongside the remaining
 world roots and system/bootstrap/package/VM/resource gates. Existing format-5
 support suffices; the manual is updated. Make stays default and BIP is excluded.
+
+## Eight-family integration and cached test artifacts (2026-11-05)
+
+The combined bin/sbin/libexec/usr.bin/usr.sbin/lib/cddl/secure request now passes
+with 1071 installation archives and all 34 selected test targets. Actual namespace
+review verifies all captured archive/request hashes, accounts for duplicate
+filegroup entries, and finds 23156 non-directory paths with no conflicting file
+claims. This does not establish complete installed-world or directory/pkgbase
+parity.
+
+The integration exposed a real optional runtime mismatch: SSH tests supplied
+bootstrap libc to NIS-enabled libwrap. Their declared runtime now selects native
+libc/libsys for NIS; bodies and expectations are unchanged. The final default
+secure regression passes twelve tests and preserves all 86 production outputs.
+
+A separate qualification failure rejected missing cached libsm test executables.
+Explicit test-target/default-group experiments failed and were removed. The
+maintained driver now records an ordinary Bazel build of the configured test
+executables with unchanged flags, then verifies the original test BEP digests
+when freezing outputs. Test caching remains enabled; no tests run again in this
+phase. The final receipt binds both commands and companion logs. See
+EIGHT-FAMILY-COMPOSITION-QUALIFICATION.md.
+
+Continue remaining world roots and original installed-test/ownership closure,
+then complete kernel/module/pkgbase/bootstrap/hardware/publication, other ABI,
+real runtime/VM and comparative CPU/RAM/disk I/O/footprint/cache/sandbox gates.
+The maintained backend and manual are updated; no C/frontend input-schema change
+is needed. Make remains default; BIP remains excluded.
