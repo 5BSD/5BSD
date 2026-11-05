@@ -105,5 +105,7 @@ void	*virtqueue_poll(struct virtqueue *vq, uint32_t *len);
  * callers that consume the returned length must not enable it.
  */
 void	 virtqueue_enable_used_len_compat(struct virtqueue *vq);
+/* Call before queue traffic or interrupt setup; retained across reinit. */
+void	 virtqueue_disable_sdt(struct virtqueue *vq);
 
 #endif /* _VIRTIO_VIRTQUEUE_H */

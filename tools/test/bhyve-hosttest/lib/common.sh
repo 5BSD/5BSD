@@ -15,6 +15,22 @@ HT_BROKEN_GENERATIONS=${HT_BROKEN_GENERATIONS:-16.snap20261031171249}
 HT_DRYRUN=${HT_DRYRUN:-no}
 
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+# A candidate must survive this library's PATH reset, including timeout's
+# external command lookup. Never silently fall back after an invalid override.
+if [ -n "${HT_BHYVE_DIR:-}" ]; then
+	case "$HT_BHYVE_DIR" in
+	/*) ;;
+	*) echo 'HT_BHYVE_DIR must be an absolute directory' >&2; exit 2 ;;
+	esac
+	case "$HT_BHYVE_DIR" in
+	*:*|*'
+'*) echo 'HT_BHYVE_DIR contains a PATH separator or newline' >&2; exit 2 ;;
+	esac
+	[ -f "$HT_BHYVE_DIR/bhyve" ] && [ -x "$HT_BHYVE_DIR/bhyve" ] || {
+		echo 'HT_BHYVE_DIR has no executable bhyve' >&2; exit 2;
+	}
+	PATH="$HT_BHYVE_DIR:$PATH"
+fi
 export PATH
 
 ht_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -208,6 +224,7 @@ nested_gate()
 # kernel identity.
 host_cap_report()
 {
+	echo "host: bhyve=$(command -v bhyve)"
 	v=$(host_vendor)
 	echo "host: vendor=$v model=\"$(sysctl -n hw.model 2>/dev/null | sed 's/ *$//')\" ncpu=$(sysctl -n hw.ncpu) $(grep -o 'Family=0x[0-9a-f]* *Model=0x[0-9a-f]* *Stepping=[0-9]*' "$HT_DMESG_BOOT" 2>/dev/null | head -1 | tr -s ' ')"
 	echo "host: virtualization: $(grep -E '^ *(SVM|VT-x):' "$HT_DMESG_BOOT" 2>/dev/null | head -1 | sed 's/^ *//')"
@@ -269,6 +286,13 @@ need_image() # sets HT_IMAGE, refuses if image generation != host generation
 {
 	m=$HT_IMAGES/current/guest.manifest
 	[ -f "$m" ] || refuse "no guest image; run images/build-guest.sh as an ordinary user first"
+	# Qualification requires the plane ON; comparison images remain buildable
+	# but cannot silently count as a normal virtualization qualification.
+	[ "$(sed -n 's/^capability_plane=//p' "$m")" = YES ] ||
+	    refuse "guest image must declare capability_plane=YES for qualification"
+	if ! timeout -k 1 5 sh "$HT_KIT/guest/capability-check.sh" > "$HT_OUT/host-capability.txt" 2>&1; then
+		refuse "host capability plane prerequisites failed; see host-capability.txt"
+	fi
 	HT_IMAGE=$(sed -n 's/^image=//p' "$m")
 	igen=$(sed -n 's/^generation=//p' "$m")
 	[ -f "$HT_IMAGE" ] || refuse "guest image $HT_IMAGE missing"
@@ -315,6 +339,11 @@ vm_disk()
 vm_boot()
 {
 	name=$1 disk=$2 mem=$3 cpus=$4 kenv=$5 extra=$6
+	case "${HT_ROOT_PACKED:-no}" in
+	no) root_disk_args="$disk" ;;
+	yes) root_disk_args="$disk,transport=modern,packed=true" ;;
+	*) echo "HT_ROOT_PACKED must be yes or no" >&2; return 2 ;;
+	esac
 	case "$name" in ht-*) ;; *) echo "VM names must start with ht-" >&2; return 2 ;; esac
 	date +%s > "$HT_WORK/$name.boot-start"
 	port=$(free_port 4700)
@@ -327,7 +356,7 @@ vm_boot()
 	HT_VMS="$HT_VMS $name"
 	at_cleanup "vm_destroy $name"
 	# Remembered for vm_restore: vCPUs, memory, slots (same devices).
-	printf '%s\n%s\n%s\n' "$cpus" "$mem" "-s 0,hostbridge -s 3,virtio-blk,$disk -s 6,virtio-rnd $extra -s 31,lpc" > "$HT_WORK/$name.args"
+	printf '%s\n%s\n%s\n' "$cpus" "$mem" "-s 0,hostbridge -s 3,virtio-blk,$root_disk_args -s 6,virtio-rnd $extra -s 31,lpc" > "$HT_WORK/$name.args"
 	# shellcheck disable=SC2086
 	vb_remaining=$(( ${HT_BOOT_TIMEOUT:-60} - $(date +%s) + $(cat "$HT_WORK/$name.boot-start") ))
 	[ "$vb_remaining" -gt 0 ] || { log "$name: boot deadline expired before loader"; return 1; }
@@ -335,7 +364,7 @@ vm_boot()
 	    { log "bhyveload $name failed"; vm_boot_diagnostics "$name"; return 1; }
 	# shellcheck disable=SC2086
 	bhyve -c "$cpus" -m "$mem" -H -w -D \
-	    -s 0,hostbridge -s 3,virtio-blk,"$disk" -s 6,virtio-rnd $extra \
+	    -s 0,hostbridge -s 3,virtio-blk,"$root_disk_args" -s 6,virtio-rnd $extra \
 	    -s 31,lpc -l "com1,tcp=127.0.0.1:$port" "$name" \
 	    >> "$HT_WORK/$name.bhyve.log" 2>&1 &
 	echo $! > "$HT_WORK/$name.pid"
@@ -478,7 +507,7 @@ vm_wait() # vm_wait NAME REGEX TIMEOUT (host elapsed seconds)
 			log "$1: boot waiting $((vw_now - vw_start))/${3}s; $(vm_diag "$1")"
 			vw_next=$((vw_now + 15))
 		fi
-		grep -E -q 'panic:|Fatal trap|mountroot>' "$HT_WORK/$1.console" && { log "$1: guest panic/mountroot"; return 2; }
+		grep -E -q 'panic:|Fatal trap|mountroot>|CAPABILITY-PLANE-FAIL' "$HT_WORK/$1.console" && { log "$1: guest panic/mountroot or capability-plane failure"; return 2; }
 		sleep 0.1
 	done
 	log "$1: boot deadline expired after ${3}s; see $HT_WORK/$1.console"

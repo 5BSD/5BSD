@@ -68,6 +68,7 @@ struct virtqueue {
 #define	VIRTQUEUE_FLAG_PACKED	 0x0008
 #define	VIRTQUEUE_FLAG_IN_ORDER	 0x0010
 #define	VIRTQUEUE_FLAG_USED_LEN_COMPAT 0x0020
+#define	VIRTQUEUE_FLAG_NO_SDT	 0x0040
 
 	int			 vq_max_indirect_size;
 	bus_size_t		 vq_notify_offset;
@@ -197,6 +198,11 @@ SDT_PROVIDER_DEFINE(virtqueue);
 SDT_PROBE_DEFINE6(virtqueue, , enqueue_segments, entry, "struct virtqueue *",
     "struct vring_desc *", "uint16_t", "struct sglist *", "int", "int");
 SDT_PROBE_DEFINE1(virtqueue, , enqueue_segments, return, "uint16_t");
+/* Stable request-level probes cover split, packed and indirect paths. */
+SDT_PROBE_DEFINE6(virtqueue, , enqueue, result, "const char *", "uint16_t",
+    "int", "int", "int", "int");
+SDT_PROBE_DEFINE4(virtqueue, , dequeue, complete, "const char *", "uint16_t",
+    "int", "uint32_t");
 
 #define vq_modern(_vq) 		(((_vq)->vq_flags & VIRTQUEUE_FLAG_MODERN) != 0)
 #define	vq_packed(_vq)		(((_vq)->vq_flags & VIRTQUEUE_FLAG_PACKED) != 0)
@@ -802,6 +808,15 @@ virtqueue_enable_used_len_compat(struct virtqueue *vq)
 	vq->vq_flags |= VIRTQUEUE_FLAG_USED_LEN_COMPAT;
 }
 
+void
+virtqueue_disable_sdt(struct virtqueue *vq)
+{
+
+	VQASSERT(vq, vq->vq_free_cnt == vq->vq_nentries,
+	    "disabling SDT on a non-empty queue");
+	vq->vq_flags |= VIRTQUEUE_FLAG_NO_SDT;
+}
+
 static int
 vq_validate_segments(struct sglist *sg, int readable, int writable,
     uint32_t *writable_len, uint64_t *total_len)
@@ -845,8 +860,8 @@ vq_used_len_valid(struct virtqueue *vq, const struct vq_desc_extra *dxp,
 	    used_len <= dxp->total_len);
 }
 
-int
-virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
+static int
+virtqueue_enqueue_impl(struct virtqueue *vq, void *cookie, struct sglist *sg,
     int readable, int writable)
 {
 	struct vq_desc_extra *dxp;
@@ -923,8 +938,21 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 	return (0);
 }
 
-void *
-virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
+int
+virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
+    int readable, int writable)
+{
+	int error;
+
+	error = virtqueue_enqueue_impl(vq, cookie, sg, readable, writable);
+	if ((vq->vq_flags & VIRTQUEUE_FLAG_NO_SDT) == 0)
+		SDT_PROBE6(virtqueue, , enqueue, result, vq->vq_name,
+		    vq->vq_queue_index, vq_packed(vq) != 0, readable, writable, error);
+	return (error);
+}
+
+static void *
+virtqueue_dequeue_impl(struct virtqueue *vq, uint32_t *len)
 {
 	struct vring_used_elem *uep;
 	void *cookie;
@@ -978,6 +1006,23 @@ virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
 	VQASSERT(vq, cookie != NULL, "no cookie for index %d", desc_idx);
 	vq->vq_descx[desc_idx].cookie = NULL;
 
+	return (cookie);
+}
+
+void *
+virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
+{
+	uint32_t used_len;
+	void *cookie;
+
+	cookie = virtqueue_dequeue_impl(vq, &used_len);
+	if (cookie != NULL) {
+		if (len != NULL)
+			*len = used_len;
+		if ((vq->vq_flags & VIRTQUEUE_FLAG_NO_SDT) == 0)
+			SDT_PROBE4(virtqueue, , dequeue, complete, vq->vq_name,
+			    vq->vq_queue_index, vq_packed(vq) != 0, used_len);
+	}
 	return (cookie);
 }
 
@@ -1621,8 +1666,9 @@ vq_ring_enqueue_segments(struct virtqueue *vq, struct vring_desc *desc,
 	int i, needed;
 	uint16_t idx;
 
-	SDT_PROBE6(virtqueue, , enqueue_segments, entry, vq, desc, head_idx,
-	    sg, readable, writable);
+	if ((vq->vq_flags & VIRTQUEUE_FLAG_NO_SDT) == 0)
+		SDT_PROBE6(virtqueue, , enqueue_segments, entry, vq, desc, head_idx,
+		    sg, readable, writable);
 
 	needed = readable + writable;
 
@@ -1643,7 +1689,8 @@ vq_ring_enqueue_segments(struct virtqueue *vq, struct vring_desc *desc,
 			dp->flags |= vq_gtoh16(vq, VRING_DESC_F_WRITE);
 	}
 
-	SDT_PROBE1(virtqueue, , enqueue_segments, return, idx);
+	if ((vq->vq_flags & VIRTQUEUE_FLAG_NO_SDT) == 0)
+		SDT_PROBE1(virtqueue, , enqueue_segments, return, idx);
 	return (idx);
 }
 

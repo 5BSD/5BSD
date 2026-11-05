@@ -579,3 +579,44 @@ hosttest.sh selftest includes lib/coverage-test.py (Python3 required), which
 uses scratch-file stubs to reject missing output, trace failures, compiler
 crashes/timeouts/missing tools, corrupted disks, mounted devices, wrong capacity
 and failed mount enumeration. These are harness regressions, not hardware tests.
+
+### Guest VirtIO activity through HyperTrace
+
+The HyperTrace phase requires the guest kernel's request-level SDT probes
+`virtqueue::enqueue:result` and `virtqueue::dequeue:complete`. It performs a
+bounded, read-only raw disk workload and filters root block queue events on the
+host. The guest tracing driver suppresses SDT on its transport queues before
+forwarding; host-side predicates cannot provide that exclusion. It requires
+positive submissions and completions, clean tracer exit and delivery evidence.
+Any tracing-transport event in these aggregates fails the check.
+Counts establish activity, not one-to-one I/O accounting across session edges.
+
+Run the phase with `HT_ROOT_PACKED=no` (default split queue), then
+`HT_ROOT_PACKED=yes` to offer a modern packed root disk. The observed probe ring
+mode must match the requested mode; merely offering packed is not a pass.
+The root disk options are also preserved by the ordinary save/restore helpers,
+so `HT_ROOT_PACKED=yes` can qualify `saverestore` with the same device topology.
+This requires rebuilding the guest kernel and matching VirtIO transport modules,
+then the guest image; the new transport uses the queue probe-suppression API. It does
+not enable unsupported virtio-fs notification or packed guest negotiation.
+
+Packed `saverestore` runs require local guest DTrace evidence of positive root
+queue submissions and completions in packed mode before the first checkpoint
+and after every restore. Split runs can request the same check with
+`HT_SR_VIRTQUEUE=yes`. Each check allows 20 seconds for the read-only workload
+and tracer, with a 30-second host command deadline; missing probes, wrong mode,
+failed workloads and tracer timeouts fail the check.
+
+Qualification requires `capability_plane=YES` in the guest manifest. Host
+preflight and guest boot check that the loader has not disabled the plane,
+`mac_capability` is loaded, isolation enforcement is 1 and switchboard is running.
+Each runtime check is bounded to five seconds. A guest failure prevents both
+READY and L2 success markers. These checks establish runtime prerequisites;
+they do not prove every grant or policy operation is correct. Plane-OFF images
+remain available for manual comparisons but are refused by normal qualification.
+
+To qualify an uninstalled bhyve candidate, set `HT_BHYVE_DIR` to an absolute
+directory containing its executable named `bhyve`. The kit preserves that
+selection when resetting PATH and when using timeout wrappers, and records the
+selected path in RUNINFO. Invalid overrides fail rather than using the installed
+binary. This does not select guest kernels/modules or imply compatible builds.

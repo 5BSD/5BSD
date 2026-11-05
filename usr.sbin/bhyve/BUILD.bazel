@@ -102,7 +102,7 @@ cc_library(name = "virtio_crypto_pci_test_inputs", textual_hdrs = ["pci_virtio_c
 cc_library(name = "virtio_fs_connection_test_inputs", hdrs = ["virtio_fs_host.h", "virtio_fs_backend_client.h",
         "virtio_fs_pending.h", "virtio_fs_dispatch.h", "virtio_fs_chain.h", "virtio_fs_queue.h", "virtio_fs_connection.h"],
     textual_hdrs = ["virtio_fs_host.c", "virtio_fs_backend_client.c", "virtio_fs_pending.c", "virtio_fs_dispatch.c",
-        "virtio_fs_chain.c", "virtio_fs_queue.c", "virtio_fs_connection.c"], strip_include_prefix = ".",
+        "virtio_fs_chain.c", "virtio_fs_queue.c", "virtio_fs_connection.c", "virtio_fs_connection_wait.c"], strip_include_prefix = ".",
     deps = [":virtiofsd_test_inputs"], visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])
 cc_library(name = "virtio_iommu_post_init_test_inputs", hdrs = ENGINE_HEADERS, textual_hdrs = _IOMMU_POST_INIT_SOURCES,
     include_prefix = "bhyve", strip_include_prefix = ".", deps = [":engine_headers"],
@@ -113,3 +113,11 @@ cc_library(name = "virtio_9p_ring_test_inputs", hdrs = ENGINE_HEADERS,
     textual_hdrs = ["virtio_packed.c", "virtio.c", "pci_virtio_9p.c"],
     include_prefix = "bhyve", strip_include_prefix = ".", deps = [":engine_headers"],
     visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])
+
+# PCI composition fixture includes the real filesystem model and snapshot codec.
+cc_library(name = "virtio_fs_pci_test_inputs", hdrs = ENGINE_HEADERS,
+    textual_hdrs = ["virtio_fs_host.c", "virtio_fs_state.c", "virtio_fs_connection_wait.c"],
+    strip_include_prefix = ".", deps = [":engine_headers"],
+    visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])
+
+exports_files(["pci_virtio_fs.c"], visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])

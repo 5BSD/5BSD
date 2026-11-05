@@ -100,6 +100,32 @@ trace_session_finished()
 {
  case "$(cat "$O/$1.rc" 2>/dev/null)" in 0) return 0 ;; *) return 1 ;; esac
 }
+# Request-level VirtIO SDT probes cover both split and packed queues.
+# The guest transport suppresses its own SDT probes before queue population;
+# these host-side predicates select root disk activity after forwarding.
+# Any transport event is forbidden and rejected by the aggregate checker.
+virtqueue_probes=yes
+for spec in virtqueue::enqueue:result virtqueue::dequeue:complete; do
+ if ! vm_cmd ht-trace1 "dtrace -l -n $spec" 20 > "$O/virtqueue-${spec##*:}.probes" 2>&1; then
+  virtqueue_probes=no
+ fi
+done
+if [ "$virtqueue_probes" = yes ]; then
+ ht_session virtqueue 30 5 "ht-trace1:sh /root/hosttest/virtqueue-workload.sh" -- \
+  -n 'ht-trace1:virtqueue::enqueue:result /stringof(arg0) == "vtblk0 request.0" && arg5 == 0/ { @submit["SUBMIT", vmname, arg1, arg2] = count(); }' \
+  -n 'ht-trace1:virtqueue::dequeue:complete /stringof(arg0) == "vtblk0 request.0"/ { @complete["COMPLETE", vmname, arg1, arg2] = count(); }' \
+  -n 'ht-trace1:virtqueue::enqueue:result,ht-trace1:virtqueue::dequeue:complete /substr(stringof(arg0), 0, 5) == "vtdtr"/ { @transport["TRANSPORT", vmname, arg1, arg2] = count(); }'
+ if trace_session_finished virtqueue && ht_delivered virtqueue ht-trace1 &&
+     grep -qx VIRTQUEUE-WORK-DONE "$O/virtqueue.ht-trace1.guest" &&
+     sh "$HT_KIT/lib/virtqueue-check.sh" "$O/virtqueue.out" "${HT_ROOT_PACKED:-no}" > "$O/virtqueue-counts.txt"; then
+  check dtrace-E-virtqueue PASS "$(cat "$O/virtqueue-counts.txt")"
+ else
+  check dtrace-E-virtqueue FAIL "no clean guest VirtIO request/completion evidence: $(ht_err virtqueue)"
+ fi
+else
+ check dtrace-E-virtqueue FAIL "guest request-level virtqueue probes missing; rebuild guest kernel with the new probes and KDTRACE_HOOKS"
+fi
+
 for kind in exec exit; do
  case "$kind" in exec) probe='proc:::exec-success' ;; exit) probe='syscall::_exit:entry' ;; esac
  ht_session "individual-$kind" 30 5 "ht-trace1:$W htindiv 8" -- \

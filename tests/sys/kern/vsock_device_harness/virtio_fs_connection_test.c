@@ -15,6 +15,7 @@
 
 #include <atf-c.h>
 
+#include "virtio_fs_connection_wait.c"
 #include "virtio_fs_host.c"
 #include "virtio_fs_backend.c"
 #include "virtio_fs_backend_io.c"
@@ -500,6 +501,36 @@ ATF_TC_BODY(stalled_partial_frame_expires, tc)
 	ATF_REQUIRE_EQ(close(partial.sockets[1]), 0);
 }
 
+ATF_TC_WITHOUT_HEAD(wait_progress_honors_protocol_deadline);
+ATF_TC_BODY(wait_progress_honors_protocol_deadline, tc)
+{
+	struct partial partial;
+	struct timespec deadline;
+	uint8_t frame[40 + DOC_FUSE_INIT_OUT];
+
+	partial_setup(&partial);
+	partial_reply(&partial, frame, sizeof(frame));
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &deadline), 0);
+	deadline.tv_sec += 5;
+	ATF_REQUIRE_EQ(send(partial.sockets[1], frame, 30, 0), 30);
+	/* Partial input yields EAGAIN internally without completing the request. */
+	ATF_REQUIRE_EQ(virtio_fs_connection_wait_progress(partial.connection,
+	    &deadline), 0);
+	ATF_CHECK(virtio_fs_connection_active(partial.connection));
+	ATF_CHECK_EQ(partial.completion.calls, 0);
+	/* Protocol expiry must win over the later operation deadline. */
+	partial.connection->stream.receive_deadline = (struct timespec){ 0 };
+	ATF_CHECK_EQ(virtio_fs_connection_wait_progress(partial.connection,
+	    &deadline), ETIMEDOUT);
+	ATF_CHECK_EQ(virtio_fs_connection_error(partial.connection), ETIMEDOUT);
+	ATF_CHECK_EQ(partial.completion.calls, 1);
+	ATF_CHECK_EQ(virtio_fs_connection_wait_progress(partial.connection,
+	    &deadline), ETIMEDOUT);
+	ATF_CHECK_EQ(partial.completion.calls, 1);
+	virtio_fs_connection_destroy(partial.connection);
+	ATF_REQUIRE_EQ(close(partial.sockets[1]), 0);
+}
+
 ATF_TC_WITHOUT_HEAD(protocol_failure_completes_pending);
 ATF_TC_BODY(protocol_failure_completes_pending, tc)
 {
@@ -756,6 +787,7 @@ ATF_TC_BODY(quiesce_drains_with_admission_closed, tc)
 	struct virtio_fs_backend_hello hello;
 	struct virtio_fs_connection *connection;
 	struct completion completion;
+	struct timespec deadline;
 	struct iovec iov[2];
 	uint8_t backend_request[DOC_FUSE_INIT_IN];
 	uint8_t output[DOC_FUSE_INIT_OUT], request[DOC_FUSE_INIT_IN];
@@ -765,6 +797,8 @@ ATF_TC_BODY(quiesce_drains_with_admission_closed, tc)
 
 	memset(&completion, 0, sizeof(completion));
 	hello = offer();
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &deadline), 0);
+	deadline.tv_sec += 5;
 	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK |
 	    SOCK_CLOEXEC, 0, sockets), 0);
 	ATF_REQUIRE_EQ(virtio_fs_connection_adopt_required(sockets[0],
@@ -796,7 +830,7 @@ ATF_TC_BODY(quiesce_drains_with_admission_closed, tc)
 	ATF_CHECK_EQ(virtio_fs_connection_submit(connection,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x82), EBUSY);
 
-	ATF_REQUIRE_EQ(virtio_fs_connection_progress(connection, false, true),
+	ATF_REQUIRE_EQ(virtio_fs_connection_wait_progress(connection, &deadline),
 	    0);
 	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &inbound,
 	    backend_request, sizeof(backend_request), &payload_len), 0);
@@ -814,7 +848,7 @@ ATF_TC_BODY(quiesce_drains_with_admission_closed, tc)
 	};
 	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[1], &reply,
 	    response), 0);
-	ATF_REQUIRE_EQ(virtio_fs_connection_progress(connection, true, false),
+	ATF_REQUIRE_EQ(virtio_fs_connection_wait_progress(connection, &deadline),
 	    0);
 	ATF_CHECK_EQ(virtio_fs_connection_pending(connection), 0);
 	ATF_CHECK_EQ(completion.calls, 1);
@@ -933,6 +967,110 @@ ATF_TC_BODY(backend_state_freeze_and_thaw_are_event_driven, tc)
 	ATF_CHECK_EQ(virtio_fs_connection_control_status(connection), 0);
 	ATF_CHECK_EQ(virtio_fs_connection_checkpoint_size(connection), 0);
 
+	virtio_fs_connection_destroy(connection);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/* A real wire peer responds slowly; no mevent dispatcher drives the client. */
+static void *
+startup_wire_peer(void *arg)
+{
+	struct virtio_fs_backend_header request, reply;
+	struct virtio_fs_backend_hello selection;
+	static const uint8_t state[] = { 0x56, 0x46, 0x53, 0x42 };
+	uint8_t payload[DOC_MAX_MESSAGE], wire[DOC_HELLO_SIZE];
+	size_t length;
+	int fd = *(int *)arg;
+	struct pollfd ready = { .fd = fd, .events = POLLIN };
+
+	ATF_REQUIRE_EQ(poll(&ready, 1, 5000), 1);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(fd, &request,
+	    payload, sizeof(payload), &length), 0);
+	ATF_REQUIRE_EQ(request.type, VIRTIO_FS_BACKEND_HELLO);
+	ATF_REQUIRE_EQ(virtio_fs_backend_hello_decode(payload, length,
+	    &selection), 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_hello_encode(&selection, wire), 0);
+	reply = (struct virtio_fs_backend_header) {
+		.version = DOC_VERSION,
+		.type = VIRTIO_FS_BACKEND_HELLO_REPLY,
+		.payload_len = sizeof(wire),
+		.request_id = request.request_id,
+	};
+	usleep(5000);
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(fd, &reply, wire), 0);
+	ATF_REQUIRE_EQ(poll(&ready, 1, 5000), 1);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(fd, &request,
+	    payload, sizeof(payload), &length), 0);
+	ATF_REQUIRE_EQ(request.type, VIRTIO_FS_BACKEND_QUIESCE);
+	ATF_REQUIRE_EQ(length, 0);
+	reply = (struct virtio_fs_backend_header) {
+		.version = DOC_VERSION,
+		.type = VIRTIO_FS_BACKEND_QUIESCE_REPLY,
+		.payload_len = sizeof(state),
+		.request_id = request.request_id,
+		.incarnation = request.incarnation,
+	};
+	usleep(5000);
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(fd, &reply, state), 0);
+	ATF_REQUIRE_EQ(poll(&ready, 1, 5000), 1);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(fd, &request,
+	    payload, sizeof(payload), &length), 0);
+	ATF_REQUIRE_EQ(request.type, VIRTIO_FS_BACKEND_THAW);
+	ATF_REQUIRE_EQ(length, sizeof(state));
+	ATF_REQUIRE(memcmp(payload, state, sizeof(state)) == 0);
+	reply.type = VIRTIO_FS_BACKEND_THAW_REPLY;
+	reply.payload_len = 0;
+	reply.request_id = request.request_id;
+	reply.incarnation = request.incarnation;
+	usleep(5000);
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(fd, &reply, NULL), 0);
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(startup_checkpoint_without_event_dispatch);
+ATF_TC_BODY(startup_checkpoint_without_event_dispatch, tc)
+{
+	struct virtio_fs_backend_hello hello;
+	struct virtio_fs_backend_session backend;
+	struct virtio_fs_connection *connection;
+	struct virtio_fs_session fuse;
+	struct completion completion;
+	struct timespec deadline;
+	pthread_t peer;
+	uint8_t state[4];
+	size_t length;
+	int sockets[2];
+
+	memset(&completion, 0, sizeof(completion));
+	hello = offer();
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC,
+	    0, sockets), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_adopt_required(sockets[0],
+	    geteuid(), getegid(), &hello, 4, 2, DOC_FEATURES,
+	    complete, &completion, &connection), 0);
+	ATF_REQUIRE_EQ(pthread_create(&peer, NULL, startup_wire_peer, &sockets[1]), 0);
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &deadline), 0);
+	deadline.tv_sec += 5;
+	while (!virtio_fs_connection_active(connection))
+		ATF_REQUIRE_EQ(virtio_fs_connection_wait_progress(connection,
+		    &deadline), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_begin_quiesce(connection), 0);
+	while (virtio_fs_connection_control_status(connection) == EINPROGRESS)
+		ATF_REQUIRE_EQ(virtio_fs_connection_wait_progress(connection,
+		    &deadline), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_control_status(connection), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_checkpoint_copy(connection, &fuse,
+	    &backend, state, sizeof(state), &length), 0);
+	ATF_CHECK_EQ(length, sizeof(state));
+	ATF_CHECK(!fuse.initialized);
+	ATF_CHECK_EQ(backend.phase, VIRTIO_FS_BACKEND_QUIESCED);
+	ATF_REQUIRE_EQ(virtio_fs_connection_begin_thaw(connection, state, length), 0);
+	while (virtio_fs_connection_control_status(connection) == EINPROGRESS)
+		ATF_REQUIRE_EQ(virtio_fs_connection_wait_progress(connection,
+		    &deadline), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_control_status(connection), 0);
+	ATF_CHECK_EQ(virtio_fs_connection_checkpoint_size(connection), 0);
+	ATF_REQUIRE_EQ(pthread_join(peer, NULL), 0);
 	virtio_fs_connection_destroy(connection);
 	ATF_REQUIRE_EQ(close(sockets[1]), 0);
 }
@@ -1172,12 +1310,16 @@ ATF_TC_BODY(destroy_withdraws_queue_before_completion, tc)
 ATF_TC_WITHOUT_HEAD(notification_is_negotiated_and_retried);
 ATF_TC_BODY(notification_is_negotiated_and_retried, tc)
 {
-	struct virtio_fs_backend_header frame;
+	struct virtio_fs_backend_header frame, request, reply;
+	struct virtio_fs_backend_session backend;
+	struct virtio_fs_session fuse;
 	struct virtio_fs_backend_hello hello;
 	struct virtio_fs_connection *connection;
 	struct completion completion;
 	struct notification notification;
 	uint8_t payload[] = { 1, 2, 3, 4, 5 };
+	uint8_t state[] = { 0x51, 0x52, 0x53 }, copied[3], received[32];
+	size_t length;
 	int sockets[2];
 
 	memset(&completion, 0, sizeof(completion));
@@ -1216,6 +1358,56 @@ ATF_TC_BODY(notification_is_negotiated_and_retried, tc)
 	ATF_CHECK(memcmp(notification.bytes, payload, sizeof(payload)) == 0);
 	ATF_CHECK_EQ(virtio_fs_connection_retry_notification(connection), 0);
 	ATF_CHECK_EQ(notification.calls, 2);
+	/* Once delivered, the retained notification must no longer prevent
+	 * checkpoint admission or be replayed by thaw. */
+	ATF_REQUIRE_EQ(virtio_fs_connection_begin_quiesce(connection), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(connection, false, true), 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &request,
+	    received, sizeof(received), &length), 0);
+	ATF_REQUIRE_EQ(request.type, VIRTIO_FS_BACKEND_QUIESCE);
+	ATF_REQUIRE_EQ(length, 0);
+	reply = (struct virtio_fs_backend_header) {
+		.version = DOC_VERSION,
+		.type = VIRTIO_FS_BACKEND_QUIESCE_REPLY,
+		.payload_len = sizeof(state),
+		.request_id = request.request_id,
+		.incarnation = request.incarnation,
+	};
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[1], &reply, state), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(connection, true, false), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_control_status(connection), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_checkpoint_copy(connection, &fuse,
+	    &backend, copied, sizeof(copied), &length), 0);
+	ATF_REQUIRE_EQ(length, sizeof(state));
+	ATF_CHECK(memcmp(copied, state, sizeof(state)) == 0);
+	ATF_CHECK_EQ(backend.phase, VIRTIO_FS_BACKEND_QUIESCED);
+	ATF_CHECK_EQ(notification.calls, 2);
+	ATF_REQUIRE_EQ(virtio_fs_connection_begin_thaw(connection, copied,
+	    length), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(connection, false, true), 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &request,
+	    received, sizeof(received), &length), 0);
+	ATF_REQUIRE_EQ(request.type, VIRTIO_FS_BACKEND_THAW);
+	ATF_REQUIRE_EQ(length, sizeof(state));
+	ATF_CHECK(memcmp(received, state, sizeof(state)) == 0);
+	reply.type = VIRTIO_FS_BACKEND_THAW_REPLY;
+	reply.payload_len = 0;
+	reply.request_id = request.request_id;
+	reply.incarnation = request.incarnation;
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[1], &reply, NULL), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(connection, true, false), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_control_status(connection), 0);
+	ATF_CHECK_EQ(virtio_fs_connection_retry_notification(connection), 0);
+	ATF_CHECK_EQ(notification.calls, 2);
+	payload[0] = 9;
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[1], &frame,
+	    payload), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(connection, true, false), 0);
+	ATF_CHECK_EQ(notification.calls, 3);
+	ATF_CHECK_EQ(notification.length, sizeof(payload));
+	ATF_CHECK(memcmp(notification.bytes, payload, sizeof(payload)) == 0);
+	ATF_CHECK_EQ(virtio_fs_connection_retry_notification(connection), 0);
+	ATF_CHECK_EQ(notification.calls, 3);
 	virtio_fs_connection_destroy(connection);
 	ATF_REQUIRE_EQ(close(sockets[1]), 0);
 }
@@ -1228,6 +1420,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, slow_draining_send_does_not_block_event_loop);
 	ATF_TP_ADD_TC(tp, late_callback_with_ready_peer_does_not_expire);
 	ATF_TP_ADD_TC(tp, stalled_partial_frame_expires);
+	ATF_TP_ADD_TC(tp, wait_progress_honors_protocol_deadline);
 	ATF_TP_ADD_TC(tp, protocol_failure_completes_pending);
 	ATF_TP_ADD_TC(tp, connect_path_is_authenticated_and_event_driven);
 	ATF_TP_ADD_TC(tp, adopt_failure_preserves_caller_ownership);
@@ -1237,6 +1430,7 @@ ATF_TP_ADD_TCS(tp)
 	    checkpoint_admission_and_session_are_transactional);
 	ATF_TP_ADD_TC(tp, quiesce_drains_with_admission_closed);
 	ATF_TP_ADD_TC(tp, backend_state_freeze_and_thaw_are_event_driven);
+	ATF_TP_ADD_TC(tp, startup_checkpoint_without_event_dispatch);
 	ATF_TP_ADD_TC(tp, backend_freeze_failure_rolls_back_admission);
 	ATF_TP_ADD_TC(tp, malformed_control_reply_fails_connection);
 	ATF_TP_ADD_TC(tp, backend_thaw_failure_retains_retryable_state);

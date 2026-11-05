@@ -965,7 +965,7 @@ CLEANFILES+=	virtio_fs_host.c virtio_fs_host.h
 CLEANFILES+=	virtio_fs_backend.c virtio_fs_backend.h
 CLEANFILES+=	virtio_fs_backend_io.c virtio_fs_backend_io.h
 CLEANFILES+=	virtio_fs_backend_client.c virtio_fs_backend_client.h
-CLEANFILES+=	virtio_fs_connection.c virtio_fs_connection.h
+CLEANFILES+=	virtio_fs_connection.c virtio_fs_connection.h virtio_fs_connection_wait.c
 CLEANFILES+=	virtio_fs_pending.c virtio_fs_pending.h
 CLEANFILES+=	virtio_fs_state.c virtio_fs_state.h
 CLEANFILES+=	virtio_fs_dispatch.c virtio_fs_dispatch.h
@@ -1037,7 +1037,7 @@ beforedepend:	virtio_fs_host.c virtio_fs_host.h
 beforedepend:	virtio_fs_backend.c virtio_fs_backend.h
 beforedepend:	virtio_fs_backend_io.c virtio_fs_backend_io.h
 beforedepend:	virtio_fs_backend_client.c virtio_fs_backend_client.h
-beforedepend:	virtio_fs_connection.c virtio_fs_connection.h
+beforedepend:	virtio_fs_connection.c virtio_fs_connection.h virtio_fs_connection_wait.c
 beforedepend:	virtio_fs_pending.c virtio_fs_pending.h
 beforedepend:	virtio_fs_state.c virtio_fs_state.h
 beforedepend:	virtio_fs_dispatch.c virtio_fs_dispatch.h
@@ -1360,3 +1360,6 @@ ${_validation_file}: ${.CURDIR}/${_validation_file}
 .endif
 
 .include <bsd.test.mk>
+
+virtio_fs_connection_wait.c: ${SRCTOP}/usr.sbin/bhyve/virtio_fs_connection_wait.c
+	${_COPY_ATOMIC}

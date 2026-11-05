@@ -4,6 +4,11 @@ role=$(kenv -q hosttest.role); role=${role:-l1}
 gen=$(cat /etc/hosttest-generation 2>/dev/null)
 c=/dev/console
 echo "HOSTTEST-GUEST-BOOT role=$role generation=$gen host=$(hostname) kernel=$(sysctl -n kern.ident)" > $c
+# Check before any readiness or L2 success marker. Keep failures on the console.
+if ! timeout -k 1 5 sh /root/hosttest/capability-check.sh > $c 2>&1; then
+	echo "CAPABILITY-PLANE-FAIL guest runtime prerequisites" > $c
+	exit 1
+fi
 case "$role" in
 l2)
 	# Marker, optional checksum workload and hold (guest/l2-role.sh), then off.
