@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Preserve the original directory-discovering suite rather than a child allowlist.
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_directory(
+    name = "suite_directory",
+    destination = "/usr/tests/usr.sbin",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=tests"],
+)
+bsd_install_file(
+    name = "kyuafile",
+    src = "//tests:Kyuafile",
+    destination = "/usr/tests/usr.sbin/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"],
+)
+bsd_install_manifest(
+    name = "install_manifest",
+    entries = [":suite_directory", ":kyuafile"],
+    visibility = ["//visibility:public"],
+)
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+    },
+    passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"],
+)

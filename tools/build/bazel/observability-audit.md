@@ -11439,3 +11439,16 @@ pending; shell logging, audit delivery and hardware installation were not run on
 the host. The original Make references pass independently of this pending native
 qualification. The reference-helper metadata fix changes diagnostic recipe-log
 placement only, with an actual bmake regression and source-set checks retained.
+
+## Bsdconfig and discovery roots (2026-11-05)
+
+All 42 bsdconfig Make owners are represented by literal native install maps;
+source programs, shared shell helpers and examples are unchanged. Configured
+metadata and original source bytes compare for all 157 ungenerated bsdconfig
+payloads. This preserves current logging/audit call sites but does not prove
+delivery or add component probes. Original generic Kyuafiles also compare at the
+library and administration roots; those files discover installed suites and do
+not create test cases or instrumentation. Native archives, the generated manual,
+installed traversal and functional scenarios remain pending. No password,
+networking, package-install or system-configuration helper was executed on the
+host as a substitute for VM qualification.

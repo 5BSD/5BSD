@@ -1,0 +1,676 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Source-owned installation graph; no Make invocation or directory glob at build time.
+load("//tools/build/bazel:bsd_script_installation.bzl", "script_installation", "script_install_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+script_installation(
+    name = "program_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "bsdconfig": "/usr/sbin/bsdconfig",
+    },
+    files = {
+        "USAGE": "/usr/libexec/bsdconfig/USAGE",
+    },
+    manuals = ["bsdconfig.8"],
+)
+script_install_archive(name = "program_install_archive", manifest = ":program_manifest")
+
+script_installation(
+    name = "console_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "console/console": "/usr/libexec/bsdconfig/080.console/console",
+        "console/font": "/usr/libexec/bsdconfig/080.console/font",
+        "console/keymap": "/usr/libexec/bsdconfig/080.console/keymap",
+        "console/repeat": "/usr/libexec/bsdconfig/080.console/repeat",
+        "console/ttys": "/usr/libexec/bsdconfig/080.console/ttys",
+    },
+    files = {
+        "console/INDEX": "/usr/libexec/bsdconfig/080.console/INDEX",
+        "console/USAGE": "/usr/libexec/bsdconfig/080.console/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "console_install_archive", manifest = ":console_manifest")
+
+script_installation(
+    name = "console_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "console/include/messages.subr": "/usr/libexec/bsdconfig/080.console/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "console_include_install_archive", manifest = ":console_include_manifest")
+
+script_installation(
+    name = "datetime_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "datetime/date": "/usr/libexec/bsdconfig/085.datetime/date",
+        "datetime/datetime": "/usr/libexec/bsdconfig/085.datetime/datetime",
+        "datetime/time": "/usr/libexec/bsdconfig/085.datetime/time",
+    },
+    files = {
+        "datetime/INDEX": "/usr/libexec/bsdconfig/085.datetime/INDEX",
+        "datetime/USAGE": "/usr/libexec/bsdconfig/085.datetime/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "datetime_install_archive", manifest = ":datetime_manifest")
+
+script_installation(
+    name = "datetime_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "datetime/include/messages.subr": "/usr/libexec/bsdconfig/085.datetime/include/messages.subr",
+        "datetime/include/datetime.hlp": "/usr/libexec/bsdconfig/085.datetime/include/datetime.hlp",
+    },
+    manuals = [],
+)
+script_install_archive(name = "datetime_include_install_archive", manifest = ":datetime_include_manifest")
+
+script_installation(
+    name = "datetime_share_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "datetime/share/datetime.subr": "/usr/share/bsdconfig/datetime/datetime.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "datetime_share_install_archive", manifest = ":datetime_share_manifest")
+
+script_installation(
+    name = "diskmgmt_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "diskmgmt/diskmgmt": "/usr/libexec/bsdconfig/050.diskmgmt/diskmgmt",
+    },
+    files = {
+        "diskmgmt/INDEX": "/usr/libexec/bsdconfig/050.diskmgmt/INDEX",
+        "diskmgmt/USAGE": "/usr/libexec/bsdconfig/050.diskmgmt/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "diskmgmt_install_archive", manifest = ":diskmgmt_manifest")
+
+script_installation(
+    name = "diskmgmt_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "diskmgmt/include/messages.subr": "/usr/libexec/bsdconfig/050.diskmgmt/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "diskmgmt_include_install_archive", manifest = ":diskmgmt_include_manifest")
+
+script_installation(
+    name = "docsinstall_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "docsinstall/docsinstall": "/usr/libexec/bsdconfig/020.docsinstall/docsinstall",
+    },
+    files = {
+        "docsinstall/INDEX": "/usr/libexec/bsdconfig/020.docsinstall/INDEX",
+        "docsinstall/USAGE": "/usr/libexec/bsdconfig/020.docsinstall/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "docsinstall_install_archive", manifest = ":docsinstall_manifest")
+
+script_installation(
+    name = "docsinstall_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "docsinstall/include/messages.subr": "/usr/libexec/bsdconfig/020.docsinstall/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "docsinstall_include_install_archive", manifest = ":docsinstall_include_manifest")
+
+script_installation(
+    name = "dot_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "dot/dot": "/usr/libexec/bsdconfig/dot/dot",
+    },
+    files = {
+        "dot/INDEX": "/usr/libexec/bsdconfig/dot/INDEX",
+        "dot/USAGE": "/usr/libexec/bsdconfig/dot/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "dot_install_archive", manifest = ":dot_manifest")
+
+script_installation(
+    name = "dot_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "dot/include/messages.subr": "/usr/libexec/bsdconfig/dot/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "dot_include_install_archive", manifest = ":dot_include_manifest")
+
+script_installation(
+    name = "examples_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "examples/add_some_packages.sh": "/usr/share/examples/bsdconfig/add_some_packages.sh",
+        "examples/browse_packages_http.sh": "/usr/share/examples/bsdconfig/browse_packages_http.sh",
+        "examples/bsdconfigrc": "/usr/share/examples/bsdconfig/bsdconfigrc",
+    },
+    manuals = [],
+)
+script_install_archive(name = "examples_install_archive", manifest = ":examples_manifest")
+
+script_installation(
+    name = "include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "include/bsdconfig.hlp": "/usr/libexec/bsdconfig/include/bsdconfig.hlp",
+        "include/media.hlp": "/usr/libexec/bsdconfig/include/media.hlp",
+        "include/messages.subr": "/usr/libexec/bsdconfig/include/messages.subr",
+        "include/network_device.hlp": "/usr/libexec/bsdconfig/include/network_device.hlp",
+        "include/options.hlp": "/usr/libexec/bsdconfig/include/options.hlp",
+        "include/tcp.hlp": "/usr/libexec/bsdconfig/include/tcp.hlp",
+        "include/usage.hlp": "/usr/libexec/bsdconfig/include/usage.hlp",
+    },
+    manuals = [],
+)
+script_install_archive(name = "include_install_archive", manifest = ":include_manifest")
+
+script_installation(
+    name = "includes_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "includes/includes.sh": "/usr/libexec/bsdconfig/includes/includes",
+    },
+    files = {
+        "includes/INDEX": "/usr/libexec/bsdconfig/includes/INDEX",
+        "includes/USAGE": "/usr/libexec/bsdconfig/includes/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "includes_install_archive", manifest = ":includes_manifest")
+
+script_installation(
+    name = "includes_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "includes/include/messages.subr": "/usr/libexec/bsdconfig/includes/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "includes_include_install_archive", manifest = ":includes_include_manifest")
+
+script_installation(
+    name = "mouse_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "mouse/disable": "/usr/libexec/bsdconfig/110.mouse/disable",
+        "mouse/enable": "/usr/libexec/bsdconfig/110.mouse/enable",
+        "mouse/flags": "/usr/libexec/bsdconfig/110.mouse/flags",
+        "mouse/mouse": "/usr/libexec/bsdconfig/110.mouse/mouse",
+        "mouse/port": "/usr/libexec/bsdconfig/110.mouse/port",
+        "mouse/type": "/usr/libexec/bsdconfig/110.mouse/type",
+    },
+    files = {
+        "mouse/INDEX": "/usr/libexec/bsdconfig/110.mouse/INDEX",
+        "mouse/USAGE": "/usr/libexec/bsdconfig/110.mouse/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "mouse_install_archive", manifest = ":mouse_manifest")
+
+script_installation(
+    name = "mouse_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "mouse/include/messages.subr": "/usr/libexec/bsdconfig/110.mouse/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "mouse_include_install_archive", manifest = ":mouse_include_manifest")
+
+script_installation(
+    name = "networking_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "networking/defaultrouter": "/usr/libexec/bsdconfig/120.networking/defaultrouter",
+        "networking/devices": "/usr/libexec/bsdconfig/120.networking/devices",
+        "networking/hostname": "/usr/libexec/bsdconfig/120.networking/hostname",
+        "networking/nameservers": "/usr/libexec/bsdconfig/120.networking/nameservers",
+        "networking/networking": "/usr/libexec/bsdconfig/120.networking/networking",
+        "networking/wlanconfig": "/usr/libexec/bsdconfig/120.networking/wlanconfig",
+    },
+    files = {
+        "networking/INDEX": "/usr/libexec/bsdconfig/120.networking/INDEX",
+        "networking/USAGE": "/usr/libexec/bsdconfig/120.networking/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "networking_install_archive", manifest = ":networking_manifest")
+
+script_installation(
+    name = "networking_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "networking/include/messages.subr": "/usr/libexec/bsdconfig/120.networking/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "networking_include_install_archive", manifest = ":networking_include_manifest")
+
+script_installation(
+    name = "networking_share_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "networking/share/common.subr": "/usr/share/bsdconfig/networking/common.subr",
+        "networking/share/device.subr": "/usr/share/bsdconfig/networking/device.subr",
+        "networking/share/hostname.subr": "/usr/share/bsdconfig/networking/hostname.subr",
+        "networking/share/ipaddr.subr": "/usr/share/bsdconfig/networking/ipaddr.subr",
+        "networking/share/media.subr": "/usr/share/bsdconfig/networking/media.subr",
+        "networking/share/netmask.subr": "/usr/share/bsdconfig/networking/netmask.subr",
+        "networking/share/resolv.subr": "/usr/share/bsdconfig/networking/resolv.subr",
+        "networking/share/routing.subr": "/usr/share/bsdconfig/networking/routing.subr",
+        "networking/share/services.subr": "/usr/share/bsdconfig/networking/services.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "networking_share_install_archive", manifest = ":networking_share_manifest")
+
+script_installation(
+    name = "packages_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "packages/packages": "/usr/libexec/bsdconfig/030.packages/packages",
+    },
+    files = {
+        "packages/INDEX": "/usr/libexec/bsdconfig/030.packages/INDEX",
+        "packages/USAGE": "/usr/libexec/bsdconfig/030.packages/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "packages_install_archive", manifest = ":packages_manifest")
+
+script_installation(
+    name = "packages_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "packages/include/messages.subr": "/usr/libexec/bsdconfig/030.packages/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "packages_include_install_archive", manifest = ":packages_include_manifest")
+
+script_installation(
+    name = "password_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "password/password": "/usr/libexec/bsdconfig/040.password/password",
+    },
+    files = {
+        "password/INDEX": "/usr/libexec/bsdconfig/040.password/INDEX",
+        "password/USAGE": "/usr/libexec/bsdconfig/040.password/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "password_install_archive", manifest = ":password_manifest")
+
+script_installation(
+    name = "password_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "password/include/messages.subr": "/usr/libexec/bsdconfig/040.password/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "password_include_install_archive", manifest = ":password_include_manifest")
+
+script_installation(
+    name = "password_share_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "password/share/password.subr": "/usr/share/bsdconfig/password/password.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "password_share_install_archive", manifest = ":password_share_manifest")
+
+script_installation(
+    name = "security_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "security/kern_securelevel": "/usr/libexec/bsdconfig/130.security/kern_securelevel",
+        "security/security": "/usr/libexec/bsdconfig/130.security/security",
+    },
+    files = {
+        "security/INDEX": "/usr/libexec/bsdconfig/130.security/INDEX",
+        "security/USAGE": "/usr/libexec/bsdconfig/130.security/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "security_install_archive", manifest = ":security_manifest")
+
+script_installation(
+    name = "security_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "security/include/messages.subr": "/usr/libexec/bsdconfig/130.security/include/messages.subr",
+        "security/include/securelevel.hlp": "/usr/libexec/bsdconfig/130.security/include/securelevel.hlp",
+    },
+    manuals = [],
+)
+script_install_archive(name = "security_include_install_archive", manifest = ":security_include_manifest")
+
+script_installation(
+    name = "share_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "share/common.subr": "/usr/share/bsdconfig/common.subr",
+        "share/device.subr": "/usr/share/bsdconfig/device.subr",
+        "share/dialog.subr": "/usr/share/bsdconfig/dialog.subr",
+        "share/geom.subr": "/usr/share/bsdconfig/geom.subr",
+        "share/keymap.subr": "/usr/share/bsdconfig/keymap.subr",
+        "share/mustberoot.subr": "/usr/share/bsdconfig/mustberoot.subr",
+        "share/script.subr": "/usr/share/bsdconfig/script.subr",
+        "share/strings.subr": "/usr/share/bsdconfig/strings.subr",
+        "share/struct.subr": "/usr/share/bsdconfig/struct.subr",
+        "share/sysrc.subr": "/usr/share/bsdconfig/sysrc.subr",
+        "share/variable.subr": "/usr/share/bsdconfig/variable.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "share_install_archive", manifest = ":share_manifest")
+
+script_installation(
+    name = "share_media_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "share/media/any.subr": "/usr/share/bsdconfig/media/any.subr",
+        "share/media/cdrom.subr": "/usr/share/bsdconfig/media/cdrom.subr",
+        "share/media/common.subr": "/usr/share/bsdconfig/media/common.subr",
+        "share/media/directory.subr": "/usr/share/bsdconfig/media/directory.subr",
+        "share/media/dos.subr": "/usr/share/bsdconfig/media/dos.subr",
+        "share/media/http.subr": "/usr/share/bsdconfig/media/http.subr",
+        "share/media/httpproxy.subr": "/usr/share/bsdconfig/media/httpproxy.subr",
+        "share/media/network.subr": "/usr/share/bsdconfig/media/network.subr",
+        "share/media/nfs.subr": "/usr/share/bsdconfig/media/nfs.subr",
+        "share/media/options.subr": "/usr/share/bsdconfig/media/options.subr",
+        "share/media/tcpip.subr": "/usr/share/bsdconfig/media/tcpip.subr",
+        "share/media/ufs.subr": "/usr/share/bsdconfig/media/ufs.subr",
+        "share/media/usb.subr": "/usr/share/bsdconfig/media/usb.subr",
+        "share/media/wlan.subr": "/usr/share/bsdconfig/media/wlan.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "share_media_install_archive", manifest = ":share_media_manifest")
+
+script_installation(
+    name = "share_packages_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "share/packages/categories.subr": "/usr/share/bsdconfig/packages/categories.subr",
+        "share/packages/index.awk": "/usr/share/bsdconfig/packages/index.awk",
+        "share/packages/index.subr": "/usr/share/bsdconfig/packages/index.subr",
+        "share/packages/musthavepkg.subr": "/usr/share/bsdconfig/packages/musthavepkg.subr",
+        "share/packages/packages.subr": "/usr/share/bsdconfig/packages/packages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "share_packages_install_archive", manifest = ":share_packages_manifest")
+
+script_installation(
+    name = "startup_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "startup/misc": "/usr/libexec/bsdconfig/140.startup/misc",
+        "startup/rcadd": "/usr/libexec/bsdconfig/140.startup/rcadd",
+        "startup/rcconf": "/usr/libexec/bsdconfig/140.startup/rcconf",
+        "startup/rcdelete": "/usr/libexec/bsdconfig/140.startup/rcdelete",
+        "startup/rcedit": "/usr/libexec/bsdconfig/140.startup/rcedit",
+        "startup/rcvar": "/usr/libexec/bsdconfig/140.startup/rcvar",
+        "startup/startup": "/usr/libexec/bsdconfig/140.startup/startup",
+    },
+    files = {
+        "startup/INDEX": "/usr/libexec/bsdconfig/140.startup/INDEX",
+        "startup/USAGE": "/usr/libexec/bsdconfig/140.startup/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "startup_install_archive", manifest = ":startup_manifest")
+
+script_installation(
+    name = "startup_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "startup/include/messages.subr": "/usr/libexec/bsdconfig/140.startup/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "startup_include_install_archive", manifest = ":startup_include_manifest")
+
+script_installation(
+    name = "startup_share_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "startup/share/rcconf.subr": "/usr/share/bsdconfig/startup/rcconf.subr",
+        "startup/share/rcedit.subr": "/usr/share/bsdconfig/startup/rcedit.subr",
+        "startup/share/rcvar.subr": "/usr/share/bsdconfig/startup/rcvar.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "startup_share_install_archive", manifest = ":startup_share_manifest")
+
+script_installation(
+    name = "timezone_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "timezone/timezone": "/usr/libexec/bsdconfig/090.timezone/timezone",
+    },
+    files = {
+        "timezone/INDEX": "/usr/libexec/bsdconfig/090.timezone/INDEX",
+        "timezone/USAGE": "/usr/libexec/bsdconfig/090.timezone/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "timezone_install_archive", manifest = ":timezone_manifest")
+
+script_installation(
+    name = "timezone_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "timezone/include/messages.subr": "/usr/libexec/bsdconfig/090.timezone/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "timezone_include_install_archive", manifest = ":timezone_include_manifest")
+
+script_installation(
+    name = "timezone_share_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "timezone/share/continents.subr": "/usr/share/bsdconfig/timezone/continents.subr",
+        "timezone/share/countries.subr": "/usr/share/bsdconfig/timezone/countries.subr",
+        "timezone/share/iso3166.subr": "/usr/share/bsdconfig/timezone/iso3166.subr",
+        "timezone/share/menus.subr": "/usr/share/bsdconfig/timezone/menus.subr",
+        "timezone/share/zones.subr": "/usr/share/bsdconfig/timezone/zones.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "timezone_share_install_archive", manifest = ":timezone_share_manifest")
+
+script_installation(
+    name = "ttys_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "ttys/ttys": "/usr/libexec/bsdconfig/150.ttys/ttys",
+    },
+    files = {
+        "ttys/INDEX": "/usr/libexec/bsdconfig/150.ttys/INDEX",
+        "ttys/USAGE": "/usr/libexec/bsdconfig/150.ttys/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "ttys_install_archive", manifest = ":ttys_manifest")
+
+script_installation(
+    name = "ttys_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "ttys/include/messages.subr": "/usr/libexec/bsdconfig/150.ttys/include/messages.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "ttys_include_install_archive", manifest = ":ttys_include_manifest")
+
+script_installation(
+    name = "usermgmt_manifest",
+    package = "bsdconfig",
+    scripts = {
+        "usermgmt/groupadd": "/usr/libexec/bsdconfig/070.usermgmt/groupadd",
+        "usermgmt/groupdel": "/usr/libexec/bsdconfig/070.usermgmt/groupdel",
+        "usermgmt/groupedit": "/usr/libexec/bsdconfig/070.usermgmt/groupedit",
+        "usermgmt/useradd": "/usr/libexec/bsdconfig/070.usermgmt/useradd",
+        "usermgmt/userdel": "/usr/libexec/bsdconfig/070.usermgmt/userdel",
+        "usermgmt/useredit": "/usr/libexec/bsdconfig/070.usermgmt/useredit",
+        "usermgmt/usermgmt": "/usr/libexec/bsdconfig/070.usermgmt/usermgmt",
+    },
+    files = {
+        "usermgmt/INDEX": "/usr/libexec/bsdconfig/070.usermgmt/INDEX",
+        "usermgmt/USAGE": "/usr/libexec/bsdconfig/070.usermgmt/USAGE",
+    },
+    manuals = [],
+)
+script_install_archive(name = "usermgmt_install_archive", manifest = ":usermgmt_manifest")
+
+script_installation(
+    name = "usermgmt_include_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "usermgmt/include/messages.subr": "/usr/libexec/bsdconfig/070.usermgmt/include/messages.subr",
+        "usermgmt/include/usermgmt.hlp": "/usr/libexec/bsdconfig/070.usermgmt/include/usermgmt.hlp",
+    },
+    manuals = [],
+)
+script_install_archive(name = "usermgmt_include_install_archive", manifest = ":usermgmt_include_manifest")
+
+script_installation(
+    name = "usermgmt_share_manifest",
+    package = "bsdconfig",
+    scripts = {
+    },
+    files = {
+        "usermgmt/share/group.subr": "/usr/share/bsdconfig/usermgmt/group.subr",
+        "usermgmt/share/group_input.subr": "/usr/share/bsdconfig/usermgmt/group_input.subr",
+        "usermgmt/share/user.subr": "/usr/share/bsdconfig/usermgmt/user.subr",
+        "usermgmt/share/user_input.subr": "/usr/share/bsdconfig/usermgmt/user_input.subr",
+    },
+    manuals = [],
+)
+script_install_archive(name = "usermgmt_share_install_archive", manifest = ":usermgmt_share_manifest")
+
+bsd_install_archive_set(
+    name = "installation_archives",
+    archives = [
+        ":program_install_archive",
+        ":console_install_archive",
+        ":console_include_install_archive",
+        ":datetime_install_archive",
+        ":datetime_include_install_archive",
+        ":datetime_share_install_archive",
+        ":diskmgmt_install_archive",
+        ":diskmgmt_include_install_archive",
+        ":docsinstall_install_archive",
+        ":docsinstall_include_install_archive",
+        ":dot_install_archive",
+        ":dot_include_install_archive",
+        ":include_install_archive",
+        ":includes_install_archive",
+        ":includes_include_install_archive",
+        ":mouse_install_archive",
+        ":mouse_include_install_archive",
+        ":networking_install_archive",
+        ":networking_include_install_archive",
+        ":networking_share_install_archive",
+        ":packages_install_archive",
+        ":packages_include_install_archive",
+        ":password_install_archive",
+        ":password_include_install_archive",
+        ":password_share_install_archive",
+        ":security_install_archive",
+        ":security_include_install_archive",
+        ":share_install_archive",
+        ":share_media_install_archive",
+        ":share_packages_install_archive",
+        ":startup_install_archive",
+        ":startup_include_install_archive",
+        ":startup_share_install_archive",
+        ":timezone_install_archive",
+        ":timezone_include_install_archive",
+        ":timezone_share_install_archive",
+        ":ttys_install_archive",
+        ":ttys_include_install_archive",
+        ":usermgmt_install_archive",
+        ":usermgmt_include_install_archive",
+        ":usermgmt_share_install_archive",
+    ] + select({
+        "//tools/build/bazel/config:examples_enabled": [":examples_install_archive"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+alias(name = "production_install_archive", actual = ":installation_archives", visibility = ["//visibility:public"])
+alias(name = "install_archive", actual = ":installation_archives", visibility = ["//visibility:public"])

@@ -16,6 +16,21 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Bsdconfig and two test-discovery roots (2026-11-05)
+
+The complete source-owned bsdconfig graph now covers all 42 original owners,
+including the optional examples branch. The missing lib/tests and usr.sbin/tests
+roots install the original directory-discovering Kyuafile rather than a child
+allowlist. Three original Make references pass. Actual configured aggregate
+closure analysis matches all 44 selected manifests, 205 installation records and
+159 original source payloads; the generated manual and native archives remain
+pending. See [BSDCONFIG-DISCOVERY-QUALIFICATION.md](BSDCONFIG-DISCOVERY-QUALIFICATION.md)
+for retained receipts, source/audit bindings, request location and scope.
+The next native request combines these targets with the preceding library and
+administration batch. No second compilation frontend or VM has been launched.
+Configured metadata parity does not establish complete test traversal, functional
+administration, alternate profiles or installed-world qualification.
+
 ## Fwget and complete periodic hierarchy candidates (2026-11-05)
 
 Native source-owned declarations now cover fwget, hardware-install, its seven
@@ -33,7 +48,7 @@ references, not native parity acceptance. Actual unconfigured Bazel declaration
 queries pass in bazel-admin-hierarchies-query-r2-20261105; configured construction,
 archive/metadata comparisons, option profiles and functional runtime remain open.
 The next maintained frontend request is prepared in
-/tmp/bazel-library-admin-composition-inputs-r1-20261105.json, combining these
+/usr/obj/usr/src/bazel-library-admin-composition-request-r1-20261105/inputs.json, combining these
 owners with GEOM, LLVM/Clang, ATF and Googletest composition and reference-helper
 Bazel tests. It must wait for the current aggregate frontend to finish; no
 second compilation frontend has been launched or silently queued.
