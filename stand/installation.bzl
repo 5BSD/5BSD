@@ -16,7 +16,8 @@ def stand_installation():
     for child in ["defaults", "images", "man", "fonts", "lua", "forth"]:
         _archive("data_" + child + "_archive", ["//stand/" + child + ":install_manifest"])
     for child in ["boot1", "gptboot", "loader", "loader_4th", "loader_simp", "loader_ia32"]:
-        _archive("efi_" + child + "_archive", ["//stand/efi/" + child + ":freestanding_install_manifest"], bindir = True)
+        _archive("efi_" + child + "_archive", ["//stand/efi/" + child + (":freestanding_image_install_manifest" if child in ["loader", "loader_simp"] else ":freestanding_install_manifest")], bindir = True)
+    _archive("efi_help_archive", ["//stand/efi/loader:freestanding_help_install_manifest"])
     _archive("kboot_archive", ["//stand/kboot/kboot:install_manifest"], bindir = True)
     _archive("libsa_manual_archive", ["//stand/libsa:install_manifest"])
     for child in ["gptboot", "isoboot", "gptzfsboot", "loader_4th", "loader_lua", "loader_simp", "pxeldr"]:
@@ -29,7 +30,7 @@ def stand_installation():
         select({"//tools/build/bazel/config:loader_pxeboot_enabled": [":bios_pxeldr_archive"], "//conditions:default": []})
     )
     bsd_install_archive_set(name = "bios_installation_archives", archives = bios)
-    bsd_install_archive_set(name = "efi_installation_archives", archives = [":efi_boot1_archive", ":efi_gptboot_archive", ":efi_loader_simp_archive"] +
+    bsd_install_archive_set(name = "efi_installation_archives", archives = [":efi_help_archive", ":efi_boot1_archive", ":efi_gptboot_archive", ":efi_loader_simp_archive"] +
         select({"//tools/build/bazel/config:forth_enabled": [":efi_loader_4th_archive"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:loader_lua_enabled": [":efi_loader_archive"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:stand_ia32_lua_selected": [":efi_loader_ia32_archive"], "//tools/build/bazel/config:loader_ia32_disabled": []}, no_match_error = "IA32 aggregation currently supports Lua only; disable IA32 for other default interpreters"))

@@ -143,3 +143,9 @@ bsd_freestanding_artifact(name = "freestanding_install_manifest", src = ":instal
     visibility = ["//visibility:public"])
 
 filegroup(name = 'kboot_loader_bootinfo_source', srcs = ['bootinfo.c'], visibility = ["//stand/kboot/kboot:__pkg__"])
+
+# Parent composition owns the common help once; standalone installs remain complete.
+bsd_freestanding_artifact(name = "freestanding_image_install_manifest", src = ":image_install_manifest",
+    visibility = ["//visibility:public"])
+bsd_freestanding_artifact(name = "freestanding_help_install_manifest", src = ":help_install_manifest",
+    visibility = ["//visibility:public"])

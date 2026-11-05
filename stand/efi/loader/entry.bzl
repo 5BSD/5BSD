@@ -225,8 +225,14 @@ def efi_loader_entry():
         mode = "0555", install_tags = ["package=bootloader"], target_compatible_with = native_width)
     # The aggregate stage's maintained mtree supplies directory metadata. This
     # selected Lua profile is the maintained default interpreter on these platforms.
-    bsd_install_manifest(name = "install_manifest", entries = _cpu_select({arch: [":install_lua_efi"] if arch == "i386" else [":install_lua_efi", ":install_help", ":install_default_efi"] for arch in profiles}, []), target_compatible_with = compatible,
-        visibility = ["//visibility:public"])
+    # One source owner for help shared by the standalone Lua/simple installs.
+    bsd_install_manifest(name = "help_install_manifest", entries = [":install_help"],
+        target_compatible_with = native_width, visibility = ["//visibility:public"])
+    bsd_install_manifest(name = "image_install_manifest", entries = _cpu_select({arch: [":install_lua_efi"] if arch == "i386" else [":install_lua_efi", ":install_default_efi"] for arch in profiles}, []),
+        target_compatible_with = compatible, visibility = ["//visibility:public"])
+    bsd_install_manifest(name = "install_manifest", manifests = [":image_install_manifest"] +
+        _cpu_select({arch: [] if arch == "i386" else [":help_install_manifest"] for arch in profiles}, []),
+        target_compatible_with = compatible, visibility = ["//visibility:public"])
     bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/"},
         passwd = "//etc:master.passwd", group = "//etc:group",

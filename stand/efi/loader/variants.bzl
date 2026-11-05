@@ -106,13 +106,11 @@ def efi_loader_variant(interpreter):
         owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bootloader"],
         target_compatible_with = compatible)
     entries = [":install_image"]
-    # Forth's maintained Makefile sets INSTALL_LOADER_HELP_FILE=no.
-    if interpreter == "simp":
-        bsd_install_file(name = "install_help", src = _select({arch: profile["help"] for arch, profile in profiles.items()}, None),
-            destination = "/boot/loader.help.efi", owner = "root", group = "wheel", mode = "0444",
-            install_tags = ["package=bootloader"], target_compatible_with = compatible)
-        entries.append(":install_help")
-    bsd_install_manifest(name = "install_manifest", entries = entries,
+    bsd_install_manifest(name = "image_install_manifest", entries = entries,
+        target_compatible_with = compatible, visibility = ["//visibility:public"])
+    # Forth disables help; simple shares the Lua source owner's help policy.
+    bsd_install_manifest(name = "install_manifest", manifests = [":image_install_manifest"] +
+        (["//stand/efi/loader:help_install_manifest"] if interpreter == "simp" else []),
         target_compatible_with = compatible, visibility = ["//visibility:public"])
     native.filegroup(name = "install_metadata", srcs = [":install_manifest"], output_group = "manifest")
     test_data = [":full", ":symbols", ":debug", ":image", ":install_metadata"]

@@ -78,11 +78,22 @@ All evidence is under `/usr/obj/usr/src/`.
 - `binary-difference-classification.json` records ELF/PE header presence or raw
   format without asserting equivalence. The differing paths include BIOS/EFI/
   kboot images and userboot shared/debug files.
-- The native parent still has one repeated identical loader.help.efi file claim.
-  Both payloads and metadata agree, but world integration must canonicalize this
-  shared output through declared source ownership/validated merging; silently
-  dropping a collision is not accepted. The parent is not yet connected to the
-  current world contribution group.
+- `bazel-stand-parent-native-r8-20261105` and
+  `bazel-stand-help-ownership-review-r1-20261105/review.json` close the repeated
+  loader.help.efi claim through one declared help installation owner. Lua and
+  simple standalone manifests both include that owner; the parent composes each
+  image and the shared help separately. All 127 unique records/payloads and all
+  24 directory claims match r6 exactly, with no repeated non-directory claims.
+  Four tests pass, including the simple-loader artifact check. Standalone
+  manifests independently retain help and their images. This before/after
+  evidence does not establish independent Make binary parity. The parent is
+  not yet connected to the current world contribution group.
+- The earlier full Make reference used nonreproducible mode while native mode
+  was reproducible. A fresh matching-mode reference uses REPRODUCIBLE_BUILD and
+  BUILD_UTC=1546329600 from the explicitly selected security policy. Its result
+  must be reviewed before closing binary differences. The r4 attempt selected
+  the archive epoch instead of the policy build epoch and was deliberately
+  terminated (exit 143); it is not accepted evidence. The corrected run is r5.
 - `bazel-sys-world-make-r1-20261105`: independent normal sys all/install/
   installconfig with no module-world override; source snapshot has 37098 bindings.
   Component METALOG is empty. `bazel-sys-world-review-r1-20261105/review.json`
@@ -103,7 +114,7 @@ and completion plan are updated; no C dispatcher, signing or publication helper
 change is needed. No boot execution, secure-boot/key-policy qualification,
 publication, host installation, upgrade or reboot is claimed.
 
-Next resolve shared help ownership and the sixteen binary differences, complete
+Next resolve the sixteen binary differences, complete
 stand product/option/ABI coverage and join stand to world; finish rescue and
 installed tests. Then complete combined current world/kernel/modules,
 installation/debug/global directory/pkgbase parity, reproducible bootstrap,
