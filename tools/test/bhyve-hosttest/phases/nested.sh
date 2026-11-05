@@ -115,14 +115,8 @@ grep -E -q "$FEAT_RE" "$O/l1-$FEAT.txt" && check l1-sees-$FEAT PASS "$(grep -E '
     check l1-sees-$FEAT FAIL "no $FEAT in L1 CPUID: $(grep Features2 "$O/l1-$FEAT.txt" | head -2 | tr '\n' ' ')"
 grep -q 'vmm.ko' "$O/l1-$FEAT.txt" && grep -q '^/dev/vmmctl' "$O/l1-$FEAT.txt" && check l1-vmm-loaded PASS ||
     check l1-vmm-loaded FAIL "$(grep -i -E 'undefined|vmm|svm|vmx' "$O/l1-$FEAT.txt" | tail -2 | tr '\n' ' ')"
-l1_dmesg_lines()
-{
-	ld_out=$(vm_cmd "$vm" 'dmesg > /tmp/hosttest-dmesg-baseline && wc -l < /tmp/hosttest-dmesg-baseline' 20) || return 1
-	ld_count=$(printf '%s\n' "$ld_out" | tr -d ' \r' | sed '/^$/d')
-	case "$ld_count" in ''|*[!0-9]*) return 1 ;; esac
-	printf '%s\n' "$ld_count"
-}
-d0=$(l1_dmesg_lines)
+vm_cmd "$vm" 'dmesg' 20 > "$O/l1-dmesg-before.txt" 2>&1
+baseline_rc=$?
 
 # l2_check NAME FILE [L0SUMMARY]: verdict of one l2-boot.sh run.
 l2_check()
@@ -230,14 +224,16 @@ while [ $k -le "${HT_L2_REPEAT:-3}" ]; do
 	l2_check l2-repeat-$k "$O/l2-repeat$k.txt" || { phase_end; exit 1; }
 	k=$((k + 1))
 done
-vm_cmd $vm "dmesg > /tmp/hosttest-dmesg-after || exit 1; d=\$(wc -l < /tmp/hosttest-dmesg-after); [ \"\$d\" -ge ${d0:-0} ] || exit 1; tail -n \$((d - ${d0:-0})) /tmp/hosttest-dmesg-after | grep -i -E 'vmm|svm|vmx|error|panic|fault|lock order|witness|EOPNOTSUPP'; if [ -d /dev/vmm ]; then ls /dev/vmm; fi" 30 > "$O/l1-after-repeat.txt" 2>&1
+vm_cmd "$vm" 'dmesg' 30 > "$O/l1-dmesg-after.txt" 2>&1
 dmesg_rc=$?
-if [ -z "$d0" ] || [ "$dmesg_rc" -ne 0 ]; then
-	check l1-clean-after-l2-runs FAIL "could not read L1 dmesg ($(vm_diag $vm))"
-elif grep -v -E '^[[:space:]]*$' "$O/l1-after-repeat.txt" | grep -q .; then
-	check l1-clean-after-l2-runs FAIL "new L1 kernel messages or leftover VMs: $(head -3 "$O/l1-after-repeat.txt" | tr '\n' ' ' | cut -c1-240)"
+vm_cmd "$vm" '[ ! -d /dev/vmm ] || ls -1 /dev/vmm' 20 > "$O/l1-vmm-after.txt" 2>&1
+inventory_rc=$?
+if [ "$baseline_rc" -ne 0 ] || [ "$dmesg_rc" -ne 0 ] || [ "$inventory_rc" -ne 0 ]; then
+	check l1-clean-after-l2-runs FAIL "collection failed: baseline=$baseline_rc dmesg=$dmesg_rc inventory=$inventory_rc; see l1-dmesg-before.txt, l1-dmesg-after.txt, l1-vmm-after.txt"
+elif sh "$HT_KIT/lib/nested-clean.sh" "$O/l1-dmesg-before.txt" "$O/l1-dmesg-after.txt" "$O/l1-vmm-after.txt" > "$O/l1-after-repeat.txt" 2>&1; then
+	check l1-clean-after-l2-runs PASS "no new kernel errors; /dev/vmm empty"
 else
-	check l1-clean-after-l2-runs PASS "no vmm/svm/vmx errors in L1 dmesg after $((${HT_L2_REPEAT:-3} + 2)) L2 runs; /dev/vmm empty"
+	check l1-clean-after-l2-runs FAIL "$(head -3 "$O/l1-after-repeat.txt" | tr '\n' ' ' | cut -c1-240); see saved dmesg snapshots"
 fi
 
 # 6. L1 checkpoint, suspend and restore while L2 runs.
