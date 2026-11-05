@@ -596,8 +596,8 @@ Run the phase with `HT_ROOT_PACKED=no` (default split queue), then
 mode must match the requested mode; merely offering packed is not a pass.
 The root disk options are also preserved by the ordinary save/restore helpers,
 so `HT_ROOT_PACKED=yes` can qualify `saverestore` with the same device topology.
-This requires rebuilding the guest kernel and all matching VirtIO modules,
-then the guest image; the queue allocation interface changed. It does
+This requires rebuilding the guest kernel and matching VirtIO transport modules,
+then the guest image; the new transport uses the queue probe-suppression API. It does
 not enable unsupported virtio-fs notification or packed guest negotiation.
 
 Packed `saverestore` runs require local guest DTrace evidence of positive root

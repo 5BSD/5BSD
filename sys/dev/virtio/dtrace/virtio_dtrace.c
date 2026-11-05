@@ -598,11 +598,16 @@ vtdtr_alloc_virtqueues(struct vtdtr_softc *sc)
 	VQ_ALLOC_INFO_INIT(&info[1], sc->vtdtr_tx_nseg, txq->vtdq_vqintr, sc,
 	    &txq->vtdq_vq, "%s-control TX", device_get_nameunit(dev));
 
-	/* HyperTrace predicates run on the host: exclude the transport here. */
-	info[0].vqai_no_sdt = true;
-	info[1].vqai_no_sdt = true;
 	error = virtio_alloc_virtqueues(dev, 2, info);
 	free(info, M_TEMP);
+	if (error == 0) {
+		/*
+		 * Host-side predicates cannot prevent guest forwarding. Exclude
+		 * both queues before population, registration or interrupt setup.
+		 */
+		virtqueue_disable_sdt(rxq->vtdq_vq);
+		virtqueue_disable_sdt(txq->vtdq_vq);
+	}
 
 	return (error);
 }

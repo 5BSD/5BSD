@@ -101,7 +101,7 @@ trace_session_finished()
  case "$(cat "$O/$1.rc" 2>/dev/null)" in 0) return 0 ;; *) return 1 ;; esac
 }
 # Request-level VirtIO SDT probes cover both split and packed queues.
-# The guest transport suppresses its own SDT probes at queue allocation;
+# The guest transport suppresses its own SDT probes before queue population;
 # these host-side predicates select root disk activity after forwarding.
 # Any transport event is forbidden and rejected by the aggregate checker.
 virtqueue_probes=yes

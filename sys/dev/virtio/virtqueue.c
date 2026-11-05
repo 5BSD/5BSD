@@ -273,8 +273,6 @@ virtqueue_alloc(device_t dev, uint16_t queue, uint16_t size,
 	}
 
 	vq->vq_dev = dev;
-	if (info->vqai_no_sdt)
-		vq->vq_flags |= VIRTQUEUE_FLAG_NO_SDT;
 	strlcpy(vq->vq_name, info->vqai_name, sizeof(vq->vq_name));
 	vq->vq_queue_index = queue;
 	vq->vq_notify_offset = notify_offset;
@@ -808,6 +806,15 @@ virtqueue_enable_used_len_compat(struct virtqueue *vq)
 	VQASSERT(vq, vq->vq_free_cnt == vq->vq_nentries,
 	    "enabling used-length compatibility on a non-empty queue");
 	vq->vq_flags |= VIRTQUEUE_FLAG_USED_LEN_COMPAT;
+}
+
+void
+virtqueue_disable_sdt(struct virtqueue *vq)
+{
+
+	VQASSERT(vq, vq->vq_free_cnt == vq->vq_nentries,
+	    "disabling SDT on a non-empty queue");
+	vq->vq_flags |= VIRTQUEUE_FLAG_NO_SDT;
 }
 
 static int
