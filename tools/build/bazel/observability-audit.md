@@ -21,6 +21,24 @@ Last updated: 2026-11-05. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Nine rescue lifecycle/storage/transfer variants (2026-11-05)
+
+Reboot/shutdown/dumpon/savecore/mount/mdmfs/nos-tun/nc/fetch bring the core to 80.
+Mount retains its original anchored provider: actual object schemas, function/
+patch sites and path aliases agree. Bounded source review preserves reboot and
+shutdown BOOTTRACE/syslog, savecore syslog fallback and nos-tun syslog calls;
+rescue does not enable ordinary savecore Casper or nc statistics. Source/library
+instrumentation preservation does not prove live registration, firing or BSM audit
+delivery. No new direct BSM integration is claimed from this source scan.
+
+Host checks exercise loopback transfers and safe pre-mutation argument rejection.
+Candidate runtime review: Capsule lifecycle handoff/fallback and corresponding
+security audit events, crash-dump read/write/error logging, successful mount events,
+and privileged tunnel operations, in disposable guests. Existing kernel/library
+coverage must be evaluated before proposing new per-program probes. HTTPS/IPsec
+and live Fetch library probes remain open. See
+RESCUE-EIGHTY-PROGRAM-QUALIFICATION.md for bound construction evidence.
+
 ## Six rescue compression/pager/network variants (2026-11-05)
 
 Xz/zstd/less/route/rtsol/mount_msdosfs expand the selected core to 71 applications.

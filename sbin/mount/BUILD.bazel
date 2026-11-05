@@ -53,3 +53,7 @@ bsd_install_archive(
 
 exports_files(["vfslist.c"], visibility = ["//sbin/umount:__pkg__"])
 cc_library(name = "vfs_headers", hdrs = ["extern.h"], strip_include_prefix = ".", visibility = ["//sbin/umount:__pkg__"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['mount.c', 'mount_fs.c', 'vfslist.c', 'extern.h', 'pathnames.h', 'mountop_trace.h'],
+    object_names = ['mount.o', 'mount_fs.o', 'vfslist.o'], deps = ['//lib/libutil:headers', '//contrib/libxo:headers'], warns = 6, provider = 'mountop_provider')

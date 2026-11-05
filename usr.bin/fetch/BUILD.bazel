@@ -34,3 +34,7 @@ bsd_install_archive(
 )
 
 filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['fetch.c'],
+    object_names = ['fetch.o'], deps = ['//lib/libfetch:headers'], warns = 6)

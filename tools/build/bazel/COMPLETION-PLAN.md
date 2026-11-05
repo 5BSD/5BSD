@@ -1,5 +1,19 @@
 # Native Bazel completion plan
 
+## Native rescue expansion to eighty applications (2026-11-05)
+
+Nine lifecycle/storage/transfer owners reach 80 of 103 default applications.
+Default and target-OpenSSL-disabled cores pass 89 runtime methods and separate
+28 source-settings methods. Fresh original Make produces 13 C objects and one
+anchored mount provider with 4713 bindings. All actual compiler policies and 943
+consumed dependency occurrences agree; original crunchgen/Make on identical
+inputs matches all 162 pipeline outputs. The real nos-tun identifier/group bug
+is fixed without renaming original files; rejected r1 remains retained. Disabled
+final link omits SSL/crypto archives/symbols; host tools still need crypto.
+See RESCUE-EIGHTY-PROGRAM-QUALIFICATION.md. Continue remaining 23 applications,
+actual rescue libraries/config/cross/full install and full-system gates. Make
+stays default; BIP excluded. No installed-system or performance acceptance claim.
+
 ## Native rescue expansion to seventy-one applications (2026-11-05)
 
 Six owners add xz/zstd/less/route/rtsol/mount_msdosfs, reaching 71 of 103 default

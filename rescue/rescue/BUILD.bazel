@@ -2,7 +2,7 @@
 load("//tools/build/bazel:bsd_relocatable_link.bzl", "bsd_relocatable_link")
 load("//tools/build/bazel:bsd_crunchide.bzl", "bsd_crunchide")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary", "cc_import")
-load("//tools/build/bazel:bsd_crunchgen.bzl", "bsd_crunchgen")
+load("//tools/build/bazel:bsd_crunchgen.bzl", "bsd_crunchgen", "crunchgen_identifier")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
 load(":catalog.bzl", "ALIASES", "OBJECT_NAMES", "PROGRAMS")
 # Bounded default selection: reject changed catalog-affecting settings rather
@@ -22,14 +22,15 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
 # No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# Supported combined-object stage, bounded to seventy-one real applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route']]
+# Supported combined-object stage, bounded to eighty real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head', 'date', 'chio', 'kenv', 'setfacl', 'stty', 'kill', 'sync', 'dd', 'ls', 'df', 'ps', 'pkill', 'tail', 'tee', 'id', 'chroot', 'chown', 'kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig', 'clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount', 'sed', 'gzip', 'bzip2', 'mt', 'md5', 'ldconfig', 'sysctl', 'fsck_msdosfs', 'xz', 'zstd', 'less', 'rtsol', 'mount_msdosfs', 'route', 'reboot', 'shutdown', 'dumpon', 'savecore', 'mount', 'mdmfs', 'nos-tun', 'nc', 'fetch']]
 _CORE_OWNERS = {p: "usr.bin/" + p for p in ["head", "tail", "tee", "id"]}
 _CORE_OWNERS.update({p: "usr.sbin/" + p for p in ["chroot", "chown"]})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['kldload', 'kldunload', 'kldstat', 'kldconfig', 'dmesg', 'rcorder', 'mknod', 'devfs', 'mount_cd9660', 'mount_nullfs', 'mount_unionfs', 'swapon', 'mdconfig']})
 _CORE_OWNERS.update({p: "sbin/" + p for p in ['clri', 'fsirand', 'dumpfs', 'tunefs', 'newfs', 'fsck', 'newfs_msdos', 'umount']})
 _CORE_OWNERS.update({'sed': 'usr.bin/sed', 'gzip': 'usr.bin/gzip', 'bzip2': 'usr.bin/bzip2', 'mt': 'usr.bin/mt', 'md5': 'sbin/md5', 'ldconfig': 'sbin/ldconfig', 'sysctl': 'sbin/sysctl', 'fsck_msdosfs': 'sbin/fsck_msdosfs'})
 _CORE_OWNERS.update({'xz': 'usr.bin/xz', 'zstd': 'usr.bin/zstd', 'less': 'usr.bin/less', 'rtsol': 'sbin/rtsol', 'mount_msdosfs': 'sbin/mount_msdosfs', 'route': 'sbin/route'})
+_CORE_OWNERS.update({'reboot': 'sbin/reboot', 'shutdown': 'sbin/shutdown', 'dumpon': 'sbin/dumpon', 'savecore': 'sbin/savecore', 'mount': 'sbin/mount', 'mdmfs': 'sbin/mdmfs', 'nos-tun': 'sbin/nos-tun', 'nc': 'usr.bin/nc', 'fetch': 'usr.bin/fetch'})
 _CORE_OBJECTS = {p: "//" + _CORE_OWNERS.get(p, "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
 bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
     object_names = select({
@@ -39,7 +40,7 @@ bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs 
     aliases = {p: ALIASES[p] for p in _CORE_PROGRAMS if p in ALIASES}, emit_stubs = True,
     required_configuration = {"//tools/build/bazel/config:dtrace": "true"})
 filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "metadata")
-[filegroup(name = p + "_entry_source", srcs = [":core_dispatch"], output_group = "stub_" + p) for p in _CORE_PROGRAMS]
+[filegroup(name = p + "_entry_source", srcs = [":core_dispatch"], output_group = "stub_" + crunchgen_identifier(p)) for p in _CORE_PROGRAMS]
 # Original generated-Make stub recipe uses the parent no-SSP/no-debug policy.
 # Its repeated equivalent -O2 flags use the ordinary toolchain optimization mode.
 [cc_library(name = p + "_entry_objects", srcs = [":" + p + "_entry_source"],
@@ -53,11 +54,11 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
     runtime = ["@bsd_sdk//toolchain:link_inputs"],
     linkopts = ["--eh-frame-hdr", "-Bstatic", "--allow-multiple-definition", "-znow", "-zrelro"]) for p in _CORE_PROGRAMS]
 [bsd_crunchide(name = p + "_crunched", input_object = ":" + p + "_unhidden", program_name = p,
-    keep_symbols = ["_crunched_" + p + "_stub"]) for p in _CORE_PROGRAMS]
+    keep_symbols = ["_crunched_" + crunchgen_identifier(p) + "_stub"]) for p in _CORE_PROGRAMS]
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real seventy-one-program executable, with native static libc and startup.
+# Bounded real eighty-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],
@@ -73,6 +74,7 @@ _CORE_ARCHIVES = [
     ("tinfo", "//lib/ncurses/tinfo:static_archive"),
     ("util", "//lib/libutil:static_archive"),
     ("xo", "//lib/libxo/libxo:static_archive"),
+    ("ipsec", "//lib/libipsec:static_archive"),
     ("lzma", "//lib/liblzma:static_archive"),
     ("pthread", "//lib/libthr:static_archive"),
     ("geom", "//lib/libgeom:static_archive"),
@@ -84,11 +86,15 @@ _CORE_ARCHIVES = [
     ("z", "//lib/libz:static_archive"),
     ("bz2", "//lib/libbz2:static_archive"),
     ("zstd", "//lib/libzstd:static_archive"),
+    ("fetch", "//lib/libfetch:static_archive"),
+    ("ssl", "//secure/lib/libssl:static_archive"),
+    ("crypto", "//secure/lib/libcrypto:static_archive"),
     ("md", "//lib/libmd:md"),
     ("m", "//lib/msun:static_archive"),
 ]
 [cc_import(name = "core_" + name + "_static_link", static_library = archive,
-    deps = [":core_" + _CORE_ARCHIVES[index + 1][0] + "_static_link"] if index + 1 < len(_CORE_ARCHIVES) else ["//lib/libc:static_link_objects"])
+    deps = select({"//tools/build/bazel/config:openssl_enabled": [":core_ssl_static_link"], "//conditions:default": [":core_md_static_link"]}) if name == "fetch" else
+        ([":core_" + _CORE_ARCHIVES[index + 1][0] + "_static_link"] if index + 1 < len(_CORE_ARCHIVES) else ["//lib/libc:static_link_objects"]))
  for index, (name, archive) in enumerate(_CORE_ARCHIVES)]
 cc_binary(name = "rescue_core", srcs = [":core_dispatcher_compiler_output"] + [":" + p + "_crunched" for p in _CORE_PROGRAMS],
     deps = [":core_jail_static_link"],

@@ -20,3 +20,7 @@ bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pk
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 bool_flag(name = "nosuid", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "nosuid_enabled", flag_values = {":nosuid": "true"})
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['shutdown.c'],
+    object_names = ['shutdown.o'], deps = [], warns = 6)

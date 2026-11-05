@@ -19,3 +19,8 @@ bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pk
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['dumpon.c'],
+    object_names = ['dumpon.o'], deps = select({"//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto"], "//conditions:default": []}), warns = 6,
+    defines = select({"//tools/build/bazel/config:openssl_enabled": ["HAVE_CRYPTO", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": []}))

@@ -14,6 +14,10 @@ def _token(value, chars, description):
     if not value or any([c not in chars for c in value.elems()]):
         fail("invalid " + description + ": " + value)
 
+def crunchgen_identifier(program):
+    """Match original genident: map hyphens, discard other non-identifier chars."""
+    return "".join([c for c in program.replace("-", "_").elems() if c in _IDENT_CHARS])
+
 def _impl(ctx):
     programs = ctx.attr.programs
     if not programs or len(depset(programs).to_list()) != len(programs):
@@ -32,7 +36,7 @@ def _impl(ctx):
         if program in seen:
             fail("duplicate or reserved crunchgen entry: " + program)
         seen[program] = True
-        ident = "".join([c for c in program.replace("-", "_").elems() if c in _IDENT_CHARS])
+        ident = crunchgen_identifier(program)
         if not ident or ident[0] in "0123456789" or ident in identifiers:
             fail("crunchgen program identifiers must be valid and unique")
         identifiers[ident] = True
@@ -87,7 +91,7 @@ def _impl(ctx):
         use_default_shell_env = False, mnemonic = "BSDCrunchgen")
     groups = {"metadata": depset([config, makefile, cache]), "stubs": depset(stubs)}
     for program, stub in zip(programs, stubs):
-        ident = "".join([c for c in program.replace("-", "_").elems() if c in _IDENT_CHARS])
+        ident = crunchgen_identifier(program)
         groups["stub_" + ident] = depset([stub])
     return [DefaultInfo(files = depset([main])), OutputGroupInfo(**groups)]
 

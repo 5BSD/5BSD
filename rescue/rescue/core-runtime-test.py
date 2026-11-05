@@ -9,8 +9,10 @@ import unittest
 PROGRAM = Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"] / "rescue/rescue/rescue_core"
 
 class RescueCore(unittest.TestCase):
-    def run_app(self, *args, data=b"", name=None, cwd=None):
+    def run_app(self, *args, data=b"", name=None, cwd=None, environment=None):
         env = dict(os.environ, DTRACE_DOF_INIT_DISABLE="1", LC_ALL="C")
+        if environment:
+            env.update(environment)
         # This binary is statically linked. No host library/path fallback is used.
         return subprocess.run([name or str(PROGRAM), *args], executable=str(PROGRAM),
             input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -19,7 +21,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'date', b'chio', b'kenv', b'setfacl', b'stty', b'kill', b'sync', b'dd', b'ls', b'df', b'ps', b'pkill', b'tail', b'tee', b'id', b'chroot', b'chown', b'kldload', b'kldunload', b'kldstat', b'kldconfig', b'dmesg', b'rcorder', b'mknod', b'devfs', b'mount_cd9660', b'mount_nullfs', b'mount_unionfs', b'swapon', b'mdconfig', b'clri', b'fsirand', b'dumpfs', b'tunefs', b'newfs', b'fsck', b'newfs_msdos', b'umount', b'sed', b'gzip', b'bzip2', b'mt', b'md5', b'ldconfig', b'sysctl', b'fsck_msdosfs', b'xz', b'zstd', b'less', b'rtsol', b'mount_msdosfs', b'route', b'reboot', b'shutdown', b'dumpon', b'savecore', b'mount', b'mdmfs', b'nos-tun', b'nc', b'fetch', b'fastboot', b'halt', b'fasthalt', b'nextboot', b'poweroff', b'more', b'unxz', b'lzma', b'unlzma', b'xzcat', b'lzcat', b'unzstd', b'zstdcat', b'zstdmt', b'gunzip', b'gzcat', b'zcat', b'bunzip2', b'bzcat', b'pgrep', b'groups', b'whoami', b'chgrp', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -614,6 +616,98 @@ class RescueCore(unittest.TestCase):
                 p = self.run_app(name, "-Z")
                 self.assertNotEqual(p.returncode, 0)
                 self.assertIn(b"usage:", p.stderr)
+
+    def test_lifecycle_rejects_invalid_request(self):
+        # Both source getopt paths reject -Z before any transition. Shutdown's
+        # earlier privilege check is also required for unprivileged execution.
+        p = self.run_app("reboot", "-Z")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"usage:", p.stderr)
+        p = self.run_app("shutdown", "-Z")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"NOT super-user" if os.geteuid() else b"usage:", p.stderr)
+
+    def test_storage_and_tunnel_argument_rejection(self):
+        for name, option in [("dumpon", "-x"), ("savecore", "-Q"), ("mount", "-Z"), ("mdmfs", "-Z"), ("nos-tun", "-Z")]:
+            with self.subTest(program=name):
+                p = self.run_app(name, option)
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn(b"usage:", p.stderr)
+
+    def test_fetch_private_file(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, output = Path(d) / "source", Path(d) / "output"
+            data = bytes(range(256)) * 128
+            source.write_bytes(data)
+            p = self.run_app("fetch", "-q", "-o", str(output), source.as_uri())
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(output.read_bytes(), data)
+            self.assertEqual(source.read_bytes(), data)
+
+    def test_fetch_loopback_http(self):
+        import http.server
+        import threading
+        data = bytes(range(256)) * 128
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            def log_message(self, *args):
+                pass
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+                output = Path(d) / "download"
+                url = "http://127.0.0.1:" + str(server.server_port) + "/payload"
+                p = self.run_app("fetch", "-q", "-o", str(output), url,
+                    environment={"HTTP_PROXY": "", "http_proxy": "", "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"})
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertEqual(output.read_bytes(), data)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+
+    def test_netcat_loopback_binary_exchange(self):
+        import socket
+        import threading
+        data = bytes(range(256)) * 32
+        received, errors = [], []
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        server.settimeout(5)
+        def respond():
+            try:
+                connection, _ = server.accept()
+                with connection:
+                    connection.settimeout(5)
+                    parts = []
+                    while True:
+                        part = connection.recv(4096)
+                        if not part:
+                            break
+                        parts.append(part)
+                    received.append(b"".join(parts))
+                    connection.sendall(b"reply:" + received[0])
+            except Exception as error:
+                errors.append(repr(error))
+        worker = threading.Thread(target=respond, daemon=True)
+        worker.start()
+        try:
+            p = self.run_app("nc", "-N", "127.0.0.1", str(server.getsockname()[1]), data=data)
+        finally:
+            worker.join(timeout=6)
+            server.close()
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(received, [data])
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"reply:" + data, b""))
 
 if __name__ == "__main__":
     unittest.main()

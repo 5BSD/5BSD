@@ -28,3 +28,7 @@ bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], m
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_rescue_application.bzl", "rescue_application")
+rescue_application(srcs = ['savecore.c'],
+    object_names = ['savecore.o'], deps = ['//contrib/libxo:headers', '//sys/contrib/zlib:headers', '//sys/contrib/zstd:headers', '//lib/libcapsicum:headers', '//lib/libcasper/libcasper:headers', '//lib/libcasper/services/cap_fileargs:headers', '//lib/libcasper/services/cap_syslog:headers'], warns = 6)
