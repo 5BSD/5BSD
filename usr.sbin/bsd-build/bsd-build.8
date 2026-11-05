@@ -2261,6 +2261,15 @@ construction, installed test traversal and functional execution remain pending.
 See
 .Pa tools/build/bazel/BSDCONFIG-DISCOVERY-QUALIFICATION.md .
 .Pp
+The switchboardctl production candidate uses native rules_cc compilation,
+original embedded policy and attributed bundle layout, including its relative
+command symlink and debug directories. Configured metadata matches all sixteen
+original records; native ELF, embedded-policy, debug and archive parity remain
+pending. Embedded policy is unsigned input, not a signing or boot assertion.
+Full tests-enabled installation remains incomplete and rejects selection.
+See
+.Pa tools/build/bazel/SWITCHBOARDCTL-PRODUCTION-QUALIFICATION.md .
+.Pp
 Additional candidate format-5 labels assemble the ATF production parent,
 Googletest production and existing test manifests, and LLVM/Clang shared-library
 installation ownership without compiler tool executables.

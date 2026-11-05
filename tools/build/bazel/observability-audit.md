@@ -11452,3 +11452,15 @@ not create test cases or instrumentation. Native archives, the generated manual,
 installed traversal and functional scenarios remain pending. No password,
 networking, package-install or system-configuration helper was executed on the
 host as a substitute for VM qualification.
+
+## Switchboardctl production candidate (2026-11-05)
+
+The new production rule compiles the same six command sources and embeds the
+original policy; existing static test objects and all C source bytes remain
+unchanged. Declared source libraries retain their existing instrumentation.
+No command-specific provider or new audit event is invented. Configured metadata
+parity passes, but native object/provider review, runtime capability operations,
+audit delivery and policy enforcement remain pending. The .5bsd.policy payload
+is unsigned policy input, with separate downstream signing requirements.
+Dtraced's existing header targets do not establish daemon conversion; production,
+its option profiles and runtime tracing/collector behavior remain open.

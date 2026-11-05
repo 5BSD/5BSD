@@ -16,6 +16,25 @@ bootstrap, pkgbase/hardware/publication, full tests, runtime/VM and comparative
 CPU/memory/disk/cache/sandbox gates remain required. Do not describe the kernel
 milestone as missing or use it to imply whole-system acceptance.
 
+## Switchboardctl production candidate and remaining daemon gap (2026-11-05)
+
+Switchboardctl now has a distinct native production binary, real source-object
+output group and complete attributed bundle installation. Existing static test
+objects are unchanged. Two original Make references pass; the second binds the
+final source file set. Actual configured dependency analysis matches all sixteen
+original metadata records, the relative command symlink and both policy files.
+Native binary/debug/manual and embedded-policy/ELF comparisons remain pending.
+See [SWITCHBOARDCTL-PRODUCTION-QUALIFICATION.md](SWITCHBOARDCTL-PRODUCTION-QUALIFICATION.md).
+
+The next request is now
+/usr/obj/usr/src/bazel-library-admin-composition-request-r2-20261105/inputs.json,
+which supersedes the retained unstarted r1 request. It includes this program and
+its genuine source objects alongside the preceding batch. It is prepared, not
+queued or started while the current aggregate owns the frontend lock. The
+original embedded policy remains unsigned input; no signing/boot claim is made.
+Dtraced remains a real production gap: its existing native headers do not build
+the daemon. Its C++ sources, dependencies and build-option profiles remain open.
+
 ## Bsdconfig and two test-discovery roots (2026-11-05)
 
 The complete source-owned bsdconfig graph now covers all 42 original owners,

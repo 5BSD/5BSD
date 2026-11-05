@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-# Shared native command sources. Attributed production installation is pending.
+# Shared command objects retain their existing static test role.
 cc_library(name = "command_objects", srcs = ["switchboardctl.c", "deps.c", "install.c", "personal.c", "verify.c", "graph.c", "switchboardctl.h"],
     deps = ["//lib/libcapbundle:capbundle", "//lib/libcapsulert:capsulert", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/libelf:elf", "//lib/libmd:md_link"],
     implementation_deps = ["//lib/libcapbundle:internal_headers"],
@@ -12,3 +12,7 @@ cc_library(name = "scope_cli_test_includes", textual_hdrs = ["switchboardctl.c"]
 
 # Source fixtures shipped with Switchboard contract tests.
 exports_files(['capbundle/Unit.ucl'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+# Full original installed-test recursion remains unqualified; production is separate.
+load(":production.bzl", "switchboardctl_production")
+switchboardctl_production()
