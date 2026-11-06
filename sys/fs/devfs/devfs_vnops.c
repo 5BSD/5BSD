@@ -2104,6 +2104,7 @@ static const struct fileops devfs_ops_f = {
 	.fo_fill_kinfo = vn_fill_kinfo,
 	.fo_mmap =	devfs_mmap_f,
 	.fo_cmp =	devfs_cmp_f,
+	.fo_pathconf =	vn_pathconf,
 	.fo_flags =	DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -2123,6 +2124,7 @@ static const struct fileops devfs_ops_nonpassable_f = {
 	.fo_fill_kinfo = vn_fill_kinfo,
 	.fo_mmap =	devfs_mmap_f,
 	.fo_cmp =	devfs_cmp_f,
+	.fo_pathconf =	vn_pathconf,
 	.fo_flags =	DFLAG_SEEKABLE
 };
 

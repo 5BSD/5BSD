@@ -716,6 +716,7 @@ static const struct fileops ptsdev_ops = {
 	.fo_sendfile	= invfo_sendfile,
 	.fo_fill_kinfo	= ptsdev_fill_kinfo,
 	.fo_cmp		= file_kcmp_generic,
+	.fo_pathconf	= vn_pathconf,
 	.fo_flags	= DFLAG_PASSABLE,
 };
 

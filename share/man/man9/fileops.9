@@ -1,0 +1,114 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd November 6, 2026
+.Dt FILEOPS 9
+.Os
+.Sh NAME
+.Nm fileops ,
+.Nm fo_pathconf
+.Nd operations on an open file descriptor
+.Sh SYNOPSIS
+.In sys/param.h
+.In sys/file.h
+.Ft int
+.Fn fo_pathconf "struct file *fp" "int name" "long *valuep" "struct thread *td"
+.Sh DESCRIPTION
+Every open file
+.Pq Vt "struct file"
+carries a pointer,
+.Va f_ops ,
+to a
+.Vt "struct fileops"
+table that implements each operation a process can perform on the
+descriptor.
+System calls that take a file descriptor dispatch through this table and
+never through the descriptor's type
+.Pq Va f_type
+or through a vnode the file may carry
+.Pq Va f_vnode .
+A descriptor type therefore answers for itself, and a type that is not
+backed by a vnode is complete without one.
+.Pp
+Each member has an inline dispatch function of the same name.
+Members that a table leaves
+.Dv NULL
+dispatch to a type-neutral default, named
+.Fn invfo_* ,
+which returns the error the operation has always returned for a descriptor
+of no particular type.
+Vnode-backed descriptors use the
+.Fn vn_*
+implementations.
+.Ss Descriptors that carry a vnode without being vnode files
+Several descriptor types keep a reference to the vnode they were opened
+through although they are not
+.Dv DTYPE_VNODE
+files served by
+.Va vnops :
+FIFOs
+.Pq Va pipeops ,
+pseudo-terminal masters,
+.Xr devfs 4
+nodes under their own tables, and linuxkpi files.
+For every operation that is answered by the vnode, these tables install the
+.Fn vn_*
+implementation explicitly, so the descriptor answers exactly as its vnode
+does; no default inspects
+.Va f_vnode .
+A table that does not carry a vnode must not install a
+.Fn vn_*
+member.
+.Ss fo_pathconf
+.Fn fo_pathconf
+answers
+.Xr fpathconf 2 :
+it stores the value of the configuration variable
+.Fa name
+through
+.Fa valuep
+and returns 0, or returns an error.
+.Dv _PC_ASYNC_IO
+is answered by the system call for every descriptor and never reaches the
+table.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_pathconf
+locks the vnode shared and calls
+.Xr VOP_PATHCONF 9 .
+Directories, regular files,
+.Dv O_PATH
+files, FIFOs, pseudo-terminal masters, devfs nodes and linuxkpi files all
+use it.
+.It pipes and sockets
+Answer
+.Dv _PC_PIPE_BUF
+with
+.Dv PIPE_BUF
+and return
+.Er EINVAL
+for every other name.
+A FIFO is a pipe that carries a vnode and answers through the vnode
+instead.
+.It everything else
+.Fn invfo_pathconf
+returns
+.Er EOPNOTSUPP .
+.El
+.Sh RETURN VALUES
+Each operation returns 0 on success or an
+.Xr errno 2
+value.
+.Sh SEE ALSO
+.Xr fpathconf 2 ,
+.Xr vnode 9 ,
+.Xr VOP_PATHCONF 9
+.Sh HISTORY
+The
+.Vt "struct fileops"
+table has existed since
+.Bx 4.4 .
+.Fn fo_pathconf
+first appeared in 5BSD, in the series that made every descriptor type
+answer its own system calls without the kernel reaching past the table to
+a vnode.

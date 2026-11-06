@@ -335,6 +335,36 @@ vn_openfile_sendfile(struct file *fp, int sockfd, struct uio *hdr, struct uio *t
 	return (error);
 }
 
+/*
+ * fpathconf(2) on any descriptor that carries a vnode.  Besides vnops this
+ * is installed by FIFOs, pseudo-terminal masters, devfs, linuxkpi and O_PATH
+ * files, so each answers as its vnode does.
+ */
+int
+vn_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+	struct vnode *vp;
+	int error;
+
+	vp = fp->f_vnode;
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = VOP_PATHCONF(vp, name, valuep);
+	VOP_UNLOCK(vp);
+	return (error);
+}
+
+static int
+vn_openfile_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_pathconf(fp, name, valuep, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
 const struct fileops vnops = {
 	.fo_read = vn_openfile_io_fault,
 	.fo_write = vn_openfile_io_fault,
@@ -353,6 +383,7 @@ const struct fileops vnops = {
 	.fo_fallocate = vn_openfile_fallocate,
 	.fo_fspacectl = vn_openfile_fspacectl,
 	.fo_cmp = vn_cmp,
+	.fo_pathconf = vn_openfile_pathconf,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -374,6 +405,7 @@ const struct fileops vnops = {
 	.fo_fallocate = vn_openfile_fallocate, \
 	.fo_fspacectl = vn_openfile_fspacectl, \
 	.fo_cmp = vn_cmp, \
+	.fo_pathconf = vn_openfile_pathconf, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

@@ -1862,6 +1862,7 @@ const struct fileops linuxfileops = {
 	.fo_chown = invfo_chown,
 	.fo_sendfile = invfo_sendfile,
 	.fo_cmp = linux_file_kcmp,
+	.fo_pathconf = vn_pathconf,
 	.fo_flags = DFLAG_PASSABLE,
 };
 

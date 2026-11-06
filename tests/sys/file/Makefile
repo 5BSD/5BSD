@@ -13,6 +13,7 @@ TAP_TESTS_SH+=	flock_test
 PLAIN_TESTS_C+=	ftruncate_test
 PLAIN_TESTS_C+=	newfileops_on_fork_test
 ATF_TESTS_C+=	fspacectl_test
+ATF_TESTS_C+=	fpathconf_test
 
 PROGS+=		flock_helper
 

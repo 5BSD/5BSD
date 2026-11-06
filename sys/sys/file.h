@@ -157,6 +157,8 @@ typedef int fo_fspacectl_t(struct file *fp, int cmd,
 typedef int fo_cmp_t(struct file *fp, struct file *fp1, struct thread *td);
 typedef	int fo_fork_t(struct filedesc *fdp, struct file *fp, struct file **fp1,
 		    struct proc *p1, struct thread *td);
+typedef int fo_pathconf_t(struct file *fp, int name, long *valuep,
+		    struct thread *td);
 typedef int fo_spare_t(struct file *fp);
 typedef	int fo_flags_t;
 
@@ -183,7 +185,8 @@ struct fileops {
 	fo_fspacectl_t	*fo_fspacectl;
 	fo_cmp_t	*fo_cmp;
 	fo_fork_t	*fo_fork;
-	fo_spare_t	*fo_spares[8];	/* Spare slots */
+	fo_pathconf_t	*fo_pathconf;
+	fo_spare_t	*fo_spares[7];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
@@ -316,11 +319,13 @@ fo_kqfilter_t	invfo_kqfilter;
 fo_chmod_t	invfo_chmod;
 fo_chown_t	invfo_chown;
 fo_sendfile_t	invfo_sendfile;
+fo_pathconf_t	invfo_pathconf;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
 fo_fill_kinfo_t	vn_fill_kinfo;
 fo_kqfilter_t	vn_kqfilter_opath;
+fo_pathconf_t	vn_pathconf;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -490,6 +495,19 @@ fo_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 		return (ENODEV);
 	return ((*fp->f_ops->fo_mmap)(fp, map, addr, size, prot, cap_maxprot,
 	    flags, foff, td));
+}
+
+/*
+ * Descriptor types that never carry a vnode leave the slot NULL and get the
+ * fpathconf(2) answer they always had.
+ */
+static __inline int
+fo_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+
+	if (fp->f_ops->fo_pathconf == NULL)
+		return (invfo_pathconf(fp, name, valuep, td));
+	return ((*fp->f_ops->fo_pathconf)(fp, name, valuep, td));
 }
 
 static __inline int

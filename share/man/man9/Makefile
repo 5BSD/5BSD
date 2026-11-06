@@ -155,6 +155,7 @@ MAN=	accept_filter.9 \
 	fail.9 \
 	fdt_pinctrl.9 \
 	fetch.9 \
+	fileops.9 \
 	firmware.9 \
 	fpu_kern.9 \
 	g_access.9 \
@@ -1161,6 +1162,7 @@ MLINKS+=fetch.9 fubyte.9 \
 	fetch.9 fueword.9 \
 	fetch.9 fueword32.9 \
 	fetch.9 fueword64.9
+MLINKS+=fileops.9 fo_pathconf.9
 MLINKS+=firmware.9 firmware_get.9 \
 	firmware.9 firmware_put.9 \
 	firmware.9 firmware_register.9 \

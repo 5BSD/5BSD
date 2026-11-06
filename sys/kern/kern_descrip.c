@@ -1935,7 +1935,6 @@ int
 kern_fpathconf(struct thread *td, int fd, int name, long *valuep)
 {
 	struct file *fp;
-	struct vnode *vp;
 	int error;
 
 	error = fget(td, fd, &cap_fpathconf_rights, &fp);
@@ -1944,24 +1943,9 @@ kern_fpathconf(struct thread *td, int fd, int name, long *valuep)
 
 	if (name == _PC_ASYNC_IO) {
 		*valuep = _POSIX_ASYNCHRONOUS_IO;
-		goto out;
-	}
-	vp = fp->f_vnode;
-	if (vp != NULL) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		error = VOP_PATHCONF(vp, name, valuep);
-		VOP_UNLOCK(vp);
-	} else if (fp->f_type == DTYPE_PIPE || fp->f_type == DTYPE_SOCKET) {
-		if (name != _PC_PIPE_BUF) {
-			error = EINVAL;
-		} else {
-			*valuep = PIPE_BUF;
-			error = 0;
-		}
-	} else {
-		error = EOPNOTSUPP;
-	}
-out:
+		error = 0;
+	} else
+		error = fo_pathconf(fp, name, valuep, td);
 	fdrop(fp, td);
 	return (error);
 }
@@ -6108,6 +6092,7 @@ const struct fileops path_fileops = {
 	.fo_sendfile = badfo_sendfile,
 	.fo_fill_kinfo = vn_fill_kinfo,
 	.fo_cmp = vn_cmp,
+	.fo_pathconf = vn_pathconf,
 	.fo_flags = DFLAG_PASSABLE,
 };
 
@@ -6164,6 +6149,13 @@ invfo_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 {
 
 	return (EINVAL);
+}
+
+int
+invfo_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+
+	return (EOPNOTSUPP);
 }
 
 int
