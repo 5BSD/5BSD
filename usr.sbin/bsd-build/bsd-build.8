@@ -7356,3 +7356,13 @@ Kyuafile. Added/removed private child fixtures are discovered without parent
 changes; this metadata check does not qualify other service families.
 CASPER remains required by source policy. These use existing format-5 inputs
 and do not change the default backend or establish full system acceptance.
+.Pp
+Explicit AMD64 libarchive test targets now build all selected original sources,
+446 reference files and 450 installation records, matching original Make
+installation and ELF/debug contracts. All five library and CLI registries match
+original source selection. A private-header mutation rebuilds exactly three
+affected sources; warm and restored builds execute zero compiles.
+Three original in-memory cases pass with no skips and Make-matching assertion
+counts. The remaining 833 library cases, ATF wrapper, other architectures and
+full installed-system acceptance remain separate gates. Existing format-5 inputs
+express these targets; the production backend and signing policy do not change.

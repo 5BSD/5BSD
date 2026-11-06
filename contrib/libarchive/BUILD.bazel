@@ -6,7 +6,7 @@ cc_library(name = "headers", hdrs = ["libarchive/archive.h", "libarchive/archive
     strip_include_prefix = "libarchive", visibility = ["//visibility:public"])
 cc_library(name = "internal_headers", hdrs = glob(["libarchive/*.h", "libarchive_fe/*.h"],
     exclude = ["libarchive/archive.h", "libarchive/archive_entry.h"]),
-    includes = ["libarchive", "libarchive_fe"], visibility = ["//usr.bin/bsdcat/tests:__pkg__", "//lib/libarchive:__pkg__", "//usr.bin/tar/tests:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__"])
+    includes = ["libarchive", "libarchive_fe"], visibility = ["//usr.bin/bsdcat/tests:__pkg__", "//lib/libarchive:__pkg__", "//usr.bin/tar/tests:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//lib/libarchive/tests:__pkg__"])
 
 load("//lib/libarchive:installation_data.bzl", "MANUALS", "FORMAT_MANUALS")
 exports_files(["libarchive/" + name for name in MANUALS + FORMAT_MANUALS + ["archive.h", "archive_entry.h"]], visibility = ["//lib/libarchive:__pkg__"])
@@ -21,17 +21,17 @@ cc_library(name = "tar_headers", hdrs = glob(["tar/*.h", "libarchive_fe/*.h"]),
 
 exports_files(["tar/bsdtar.1"], visibility = ["//usr.bin/tar:__pkg__", "//usr.bin/tar/tests:__pkg__"])
 
-exports_files(["cpio/bsdcpio.1"], visibility = ["//usr.bin/unzip:__pkg__", "//usr.bin/cpio:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__"])
+exports_files(["cpio/bsdcpio.1"], visibility = ["//usr.bin/unzip:__pkg__", "//usr.bin/cpio:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//lib/libarchive/tests:__pkg__"])
 
-exports_files(["test_list.py", "test_utils/test_main.c", "test_utils/test_utils.c"], visibility = ["//usr.bin/bsdcat/tests:__pkg__", "//usr.bin/tar/tests:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__"])
+exports_files(["test_list.py", "test_utils/test_main.c", "test_utils/test_utils.c"], visibility = ["//usr.bin/bsdcat/tests:__pkg__", "//usr.bin/tar/tests:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//lib/libarchive/tests:__pkg__"])
 
 load("//usr.bin/tar/tests:sources.bzl", TAR_TEST_SOURCES = "TEST_SOURCES", TAR_REFERENCE_FILES = "REFERENCE_FILES")
 exports_files([x.split(":", 1)[1] for x in TAR_TEST_SOURCES + TAR_REFERENCE_FILES], visibility = ["//usr.bin/tar/tests:__pkg__"])
 cc_library(name = "tar_test_headers", hdrs = glob(["tar/test/*.h", "test_utils/*.h", "libarchive_fe/*.h", "tar/*.h"]), includes = ["tar/test", "test_utils", "libarchive_fe", "tar"], visibility = ["//usr.bin/tar/tests:__pkg__"])
 
 load("//usr.bin/cpio/tests:sources.bzl", CPIO_TEST_SOURCES = "TEST_SOURCES", CPIO_REFERENCE_FILES = "REFERENCE_FILES")
-exports_files([x.split(":", 1)[1] for x in CPIO_TEST_SOURCES + CPIO_REFERENCE_FILES], visibility = ["//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__"])
-cc_library(name = "cpio_test_headers", hdrs = glob(["cpio/test/*.h", "test_utils/*.h", "libarchive_fe/*.h", "cpio/*.h"]), includes = ["cpio/test", "test_utils", "libarchive_fe", "cpio"], visibility = ["//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__"])
+exports_files([x.split(":", 1)[1] for x in CPIO_TEST_SOURCES + CPIO_REFERENCE_FILES], visibility = ["//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//lib/libarchive/tests:__pkg__"])
+cc_library(name = "cpio_test_headers", hdrs = glob(["cpio/test/*.h", "test_utils/*.h", "libarchive_fe/*.h", "cpio/*.h"]), includes = ["cpio/test", "test_utils", "libarchive_fe", "cpio"], visibility = ["//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//lib/libarchive/tests:__pkg__"])
 
 exports_files(["unzip/bsdunzip.c", "unzip/cmdline.c", "libarchive_fe/lafe_getline.c", "unzip/bsdunzip.1"], visibility = ["//usr.bin/unzip:__pkg__"])
 cc_library(name = "unzip_headers", hdrs = glob(["unzip/*.h", "libarchive_fe/*.h"]), includes = ["unzip", "libarchive_fe"], visibility = ["//usr.bin/unzip:__pkg__"])
@@ -44,3 +44,13 @@ cc_library(name = "cat_headers", hdrs = glob(["cat/*.h", "libarchive_fe/*.h"]), 
 load("//usr.bin/bsdcat/tests:sources.bzl", CAT_TEST_SOURCES = "TEST_SOURCES", CAT_REFERENCE_FILES = "REFERENCE_FILES")
 exports_files([x.split(":", 1)[1] for x in CAT_TEST_SOURCES + CAT_REFERENCE_FILES], visibility = ["//usr.bin/bsdcat/tests:__pkg__"])
 cc_library(name = "cat_test_headers", hdrs = glob(["cat/test/*.h", "test_utils/*.h", "libarchive_fe/*.h", "cat/*.h"]), includes = ["cat/test", "test_utils", "libarchive_fe", "cat"], visibility = ["//usr.bin/bsdcat/tests:__pkg__"])
+
+load("//lib/libarchive/tests:sources.bzl", LIBRARY_TEST_SOURCES = "TEST_SOURCES", LIBRARY_REFERENCE_FILES = "REFERENCE_FILES")
+exports_files([x.split(":", 1)[1] for x in LIBRARY_TEST_SOURCES + LIBRARY_REFERENCE_FILES] + ["libarchive/test/read_open_memory.c", "libarchive/test/test_fuzz_consumer.h"],
+    visibility = ["//lib/libarchive/tests:__pkg__"])
+cc_library(name = "library_test_headers", hdrs = ["libarchive/test/test.h", "test_utils/test_common.h", "test_utils/test_utils.h"],
+    includes = ["libarchive/test", "test_utils"], visibility = ["//lib/libarchive/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "test_list_test", src = "test_list_test.py", data = ["test_list.py"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])

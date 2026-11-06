@@ -1,5 +1,26 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 libarchive test construction (2026-11-06)
+
+All 356 original translation units, 446 reference files and 450 installation
+records build natively and match independent Make installation/ELF/debug
+contracts. All five library/CLI registries match original source selection and
+grep output (836/73/49/28/18 registrations). Seven generator boundary methods
+pass. Controlled private-header mutation rebuilds exactly three affected sources;
+warm and restored builds execute zero compiles. Final artifacts are byte-restored.
+Three original in-memory bodies pass with zero skips and Make-matching assertion
+counts; 833 libarchive bodies and the original ATF wrapper remain unqualified.
+See LIBARCHIVE-TEST-QUALIFICATION.md for immutable evidence and retained failures.
+
+One more initial missing declaration root closes, leaving four: ATF C tests,
+ATF parent, libbe tests and libxo tests. Nested directories and existing BUILD
+roots still require independent closure. Continue full tests-enabled world
+assembly and remaining parents, independent world/kernel/modules/pkgbase/debug,
+normal-service VM qualification, CPU/RAM/disk-I/O/footprint, bootstrap/cache/
+sandbox/reproducibility and verified combined publication. Fill ARM64/RISC-V
+gaps in shared work. Full-tests guards remain; Make default; BIP excluded;
+no host installation/upgrade/reboot.
+
 ## Original AMD64 Casper fileargs and services dispatcher (2026-11-06)
 
 The original fileargs program matches fresh Make three-record metadata/Kyua/

@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
+load("//contrib/libarchive:test_list.bzl", "archive_test_list")
+load(":sources.bzl", "TEST_SOURCES", "REFERENCE_FILES", "BROKEN_TESTS", "FUZZ_CONSUMER_SOURCES")
+load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//lib/libc:test_policy.bzl", "libc_test_copts")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_DIRECTORY = "/usr/tests/lib/libarchive"
+_OPENSSL = "//tools/build/bazel/config:openssl_enabled"
+archive_test_list(name = "registry", srcs = TEST_SOURCES, exclude = BROKEN_TESTS,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "registry_header", hdrs = [":registry"], strip_include_prefix = "registry")
+[cc_import(name = name + "_interface", shared_library = library, deps = headers)
+ for name, library, headers in [
+    ("z", "//lib/libz:z_shared", ["//sys/contrib/zlib:headers"]),
+    ("bz2", "//lib/libbz2:bz2_shared", ["//lib/libbz2:headers"]),
+    ("lzma", "//lib/liblzma:lzma_shared", ["//contrib/xz:headers"]),
+    ("xml", "//lib/libexpat:bsdxml_shared", ["//lib/libexpat:headers"]),
+    ("zstd", "//lib/libzstd:zstd_shared", ["//sys/contrib/zstd:headers"]),
+    ("crypto", "//secure/lib/libcrypto:crypto_shared", ["//crypto/openssl:headers"]),
+    ("md", "//lib/libmd:md_shared", ["//lib/libmd:headers"]),
+    ("archive", "//lib/libarchive:archive_shared", ["//contrib/libarchive:headers"]),
+]]
+_DEFINES = ["PIC", 'PLATFORM_CONFIG_H=\\"config_freebsd.h\\"'] + select({_OPENSSL: ["WITH_OPENSSL", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": []})
+_HEADERS = [":registry_header", "//contrib/libarchive:internal_headers", "//contrib/libarchive:library_test_headers", "//lib/libarchive:configuration"]
+_LIBRARIES = [":z_interface", ":bz2_interface", ":lzma_interface", ":xml_interface", ":zstd_interface"] + select({_OPENSSL: [":crypto_interface"], "//conditions:default": [":md_interface"]}) + [":archive_interface", "//lib/libc:shared_abi_interface"]
+cc_library(name = "utilities", srcs = ["//contrib/libarchive:test_utils/test_utils.c"], deps = _HEADERS + _LIBRARIES,
+    copts = libc_test_copts(3) + ["-Wno-cast-align"], local_defines = _DEFINES, target_compatible_with = _PLATFORM)
+cc_library(name = "fuzz_cases", srcs = FUZZ_CONSUMER_SOURCES + ["//contrib/libarchive:libarchive/test/test_fuzz_consumer.h"],
+    deps = _HEADERS + _LIBRARIES, copts = libc_test_copts(3), local_defines = _DEFINES, target_compatible_with = _PLATFORM)
+bsd_link_sequence(name = "test_link", deps = _HEADERS + _LIBRARIES, object_groups = [":utilities", ":fuzz_cases"])
+cc_binary(name = "libarchive_test", srcs = [s for s in TEST_SOURCES if s not in FUZZ_CONSUMER_SOURCES] + ["//contrib/libarchive:libarchive/test/read_open_memory.c", "//contrib/libarchive:test_utils/test_main.c"],
+    deps = [":test_link"], copts = libc_test_copts(3), local_defines = _DEFINES,
+    linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
+utility_installation(name = "libarchive_test_install", program = "libarchive_test", manual = None, package = "tests", bindir = _DIRECTORY)
+bsd_script_wrapper(name = "functional_test", body = "functional_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "script_entry", src = ":functional_test", destination = _DIRECTORY + "/functional_test",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+[bsd_install_file(name = "reference_" + str(index), src = source, destination = _DIRECTORY + "/" + source.rsplit("/", 1)[-1],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+ for index, source in enumerate(REFERENCE_FILES)]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["functional_test"], interfaces = {"functional_test": "atf"},
+    metadata = {"functional_test": '{"timeout":"600"}'})
+bsd_install_file(name = "kyuafile_entry", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":libarchive_test_install"], entries = [":script_entry", ":kyuafile_entry"] + [":reference_" + str(i) for i in range(len(REFERENCE_FILES))], visibility = ["//visibility:public"])
+bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":install_manifest"], debug = True)
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

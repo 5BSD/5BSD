@@ -12165,3 +12165,15 @@ metadata checks. DTRACE_DOF_INIT_DISABLE is explicit during these tests; no live
 provider-firing or audit-delivery claim follows. No missing provider is inferred
 from test fixtures. See FILEARGS-TEST-QUALIFICATION.md for immutable controls,
 retained first failure and the remaining whole-system/cross-ABI/service gates.
+
+## Original libarchive test construction (2026-11-06)
+
+All original implementation/provider and test-body sources remain unchanged.
+Native test construction preserves OpenSSL private digest layout, exact original
+registry selection, original disabled fuzz source and BROKEN_TESTS fragments.
+Three original in-memory cases pass with native DSOs and original Make assertion
+controls; this is not full filesystem/compressor/security-policy qualification.
+DTRACE_DOF_INIT_DISABLE is explicit during these host checks. No live provider
+firing, security-audit delivery or new test-fixture probe deficit is claimed.
+LIBARCHIVE-TEST-QUALIFICATION.md records complete installation/registry/cache
+controls and remaining suite, architecture and normal-system acceptance gates.
