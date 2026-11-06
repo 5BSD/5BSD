@@ -45,6 +45,21 @@ profile has TESTS disabled, TESTS_SUPPORT enabled and SENDMAIL enabled.
   separate package archives do not promise shared inodes across those boundaries.
   SHA256 5fe8c2b373895012ddf3c9afdecc8aa17d534b3b3af4608bf404d013f4299e49
 
+Additional qualification passes:
+
+- bazel-world-layout-make-reference-r1-20261106/review.json reruns all 177 selected
+  original Make package families over the complete same native stage. All 445
+  complete package manifests match, with zero differing fields. This is packaging
+  parity on a shared native corpus, not independently Make-built payload bytes.
+  SHA256 8cbcd7ed2e5b3547f3c3761071d6df4a358f6fbb582993ea0bebe607d0b9ace2
+- bazel-world-layout-tests-on-native-r1-20261106/receipt.json passes the bounded
+  TESTS-enabled layout target and its native test. Its independent option review
+  checks both source test prefixes and roots, 2,497 physical directories, 2,048
+  ownership claims and zero unselected claims. It does not compare a complete
+  independent Make TESTS-enabled world.
+  Review: bazel-world-layout-tests-on-review-r1-20261106/review.json
+  SHA256 98d98cf66e30311370b5d6bc6b3b22b559f3927edf95ae9a6640701c97604d9a
+
 Failed layout iterations (leading-zero sticky mode, unresolved dev suffix) and
 the initial VM failure remain in their object-root qualification directories.
 No assertion was weakened to accept those failures. The first VM also failed an
@@ -60,7 +75,7 @@ manual and backend are updated together. Source selection belongs in source
 Bazel declarations, not a host-installed package database or a hand-picked image.
 
 This proves the selected source directory layout, not an independently Make-built
-whole world or a usable installed OS. TESTS-enabled/custom layout selections,
-complete package-manifest parity after this layout change, actual package install,
+whole world or a usable installed OS. independent TESTS-enabled Make layout parity/custom layout selections,
+actual package install,
 new-version upgrades, normal startup/services, native kernel/module acceptance,
 ARM64/RISC-V and bootstrap/cache/sandbox/reproducibility/performance gates remain.

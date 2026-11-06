@@ -5679,3 +5679,8 @@ its unchanged service baseline passed, package installation remains pending.
 Next: finish real install/reinstall and new-layout complete manifest comparison,
 commit the maintained VM qualification suite with actual results, then normal
 startup/new-version upgrade and the remaining full-system/platform/performance gates.
+
+Updated evidence: all 445 complete original Make package manifests match after
+this layout correction (same native corpus, zero differing fields). Bounded
+TESTS-enabled native layout/test also passes, including both test roots. Neither
+result establishes full independent Make-world or normal installed startup.
