@@ -215,8 +215,7 @@ ef_symaddr(elf_file_t ef, GElf_Size symidx)
 		return (0);
 	sym = ef->ef_symtab + symidx;
 
-	if (GELF_ST_BIND(sym->st_info) == STB_LOCAL &&
-	    sym->st_shndx != SHN_UNDEF && sym->st_value != 0)
+	if (sym->st_shndx != SHN_UNDEF && sym->st_value != 0)
 		return (sym->st_value);
 	return (0);
 }

@@ -691,7 +691,14 @@ read_kld(char *filename, char *kldname)
 			if (error != 0)
 				break;
 		}
-		check(elf_read_linker_set(&ef, MDT_SETNAME, &p, &entries));
+		/* A module with no metadata set has nothing to index. */
+		error = elf_read_linker_set(&ef, MDT_SETNAME, &p, &entries);
+		if (error == ENOENT) {
+			error = 0;
+			break;
+		}
+		if (error != 0)
+			break;
 
 		/*
 		 * Do a first pass to find MDT_MODULE.  It is required to be
