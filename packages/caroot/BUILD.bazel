@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "caroot",
+    template = "common.ucl",
+    template_overrides = {"caroot": "caroot.ucl"},
+    subpackages = [],
+    sets = ["minimal", "minimal-jail"],
+    dependencies = {"caroot": ["certctl"]},
+    visibility = ["//packages:__pkg__"],
+)

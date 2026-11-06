@@ -1,5 +1,26 @@
 # Native Bazel completion plan
 
+## All 208 remaining static family declarations match Make (2026-11-06)
+
+The static_family_manifests aggregate adds all static owners not previously
+migrated: 232 of 239 family directories now have native declarations. The seven
+conditional owners remain explicit work. All 489 default and 429 alternate
+manifests match entire decoded original Make metadata, with exact output coverage
+and effective option checks. Shared/local UCL and Make include inputs are hash
+bound and checked unchanged; sixteen independent one-job Make controls use all
+logical CPUs. Native aggregates/source-settings tests pass through the maintained
+frontend. One-time migration generated checked-in declarations; no parser or Make
+invocation is in the production graph. See STATIC-PACKAGE-FAMILIES-QUALIFICATION.md.
+
+This is direct family metadata, not actual world traversal, package archives or
+installed-system qualification. Existing format-5 inputs select the new aggregate
+and the manual is updated; C/backend/stage/signing/publication interfaces are
+unchanged. NEXT: seven conditional owners, actual source-option/architecture family
+selection, full world inventory reconciliation and native pkg creation. Retain
+all independent world/kernel/module/debug/pkgbase/runtime/cross/bootstrap/cache/
+sandbox/reproducibility/resource/combined-publication gates. Make remains default;
+BIP stays out of scope.
+
 ## Nineteen additional capability package families match Make (2026-11-06)
 
 The explicit capability_family_manifests aggregate adds nineteen source-owned

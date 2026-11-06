@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "kyua_dependency", package = "kyua", origin = "base/5BSD-kyua",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "kyua",
+    template = "kyua.ucl",
+    sets = ["devel"],
+    visibility = ["//packages:__pkg__"],
+)

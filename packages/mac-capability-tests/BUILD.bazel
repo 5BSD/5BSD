@@ -1,5 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "mac-capability-tests_dependency", package = "mac-capability-tests", origin = "base/5BSD-mac-capability-tests",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "mac-capability-tests",
+    template = "mac-capability-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    dependencies = {"mac-capability-tests": ["atf", "kyua", "set-base"]},
+    visibility = ["//packages:__pkg__"],
+)

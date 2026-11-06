@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "libjail-tests",
+    template = "libjail-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    dependencies = {"libjail-tests": ["atf", "kyua", "set-base", "runtime"]},
+    visibility = ["//packages:__pkg__"],
+)

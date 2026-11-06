@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bluetooth-tests",
+    template = "bluetooth-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    dependencies = {"bluetooth-tests": ["atf", "kyua", "set-base"]},
+    visibility = ["//packages:__pkg__"],
+)

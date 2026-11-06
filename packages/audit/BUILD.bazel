@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "audit_dependency", package = "audit", origin = "base/5BSD-audit",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "audit",
+    template = "audit.ucl",
+    subpackages = ["dbg", "dev", "lib", "man"],
+    visibility = ["//packages:__pkg__"],
+)

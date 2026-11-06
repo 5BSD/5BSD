@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "liblogcmp-tests",
+    template = "//release/packages:ucl/liblogcmp-tests-all.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"liblogcmp-tests": ["atf", "kyua", "liblogcmp", "set-base"]},
+    visibility = ["//packages:__pkg__"],
+)

@@ -1,5 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "libcapbundle-tests_dependency", package = "libcapbundle-tests", origin = "base/5BSD-libcapbundle-tests",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "libcapbundle-tests",
+    template = "libcapbundle-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    dependencies = {"libcapbundle-tests": ["atf", "kyua", "set-base", "libcapbundle", "switchboardctl"]},
+    visibility = ["//packages:__pkg__"],
+)

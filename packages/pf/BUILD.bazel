@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "pf",
+    template = "pf.ucl",
+    template_overrides = {"pf-dev": "pf-dev.ucl"},
+    subpackages = ["dbg", "dev", "man"],
+    metadata_only = ["pf-dev"],
+    dependencies = {"pf-dev": ["clibs-dev"]},
+    visibility = ["//packages:__pkg__"],
+)

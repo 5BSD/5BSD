@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "rc",
+    template = "common.ucl",
+    template_overrides = {"rc": "rc.ucl"},
+    sets = ["minimal", "minimal-jail"],
+    dependencies = {"rc": ["runtime", "mtree"]},
+    visibility = ["//packages:__pkg__"],
+)

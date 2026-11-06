@@ -20,3 +20,99 @@ exports_files(["ucl/bsdnotify-all.ucl"], visibility = ["//packages/bsdnotify:__p
 exports_files(["ucl/bsdmemory-all.ucl"], visibility = ["//packages/bsdmemory:__pkg__"])
 exports_files(["ucl/libshmring-all.ucl"], visibility = ["//packages/libshmring:__pkg__"])
 exports_files(["ucl/libauditcmp-all.ucl"], visibility = ["//packages/libauditcmp:__pkg__"])
+
+exports_files(["ucl/bsdaudit-tests-all.ucl"], visibility = ["//packages/bsdaudit-tests:__pkg__"])
+
+exports_files(["ucl/bsdcrypto-tests-all.ucl"], visibility = ["//packages/bsdcrypto-tests:__pkg__"])
+
+exports_files(["ucl/bsddevice-tests-all.ucl"], visibility = ["//packages/bsddevice-tests:__pkg__"])
+
+exports_files(["ucl/bsdinstruments-all.ucl"], visibility = ["//packages/bsdinstruments:__pkg__"])
+
+exports_files(["ucl/bsdlog-tests-all.ucl"], visibility = ["//packages/bsdlog-tests:__pkg__"])
+
+exports_files(["ucl/bsdmemory-tests-all.ucl"], visibility = ["//packages/bsdmemory-tests:__pkg__"])
+
+exports_files(["ucl/bsdnetwork-tests-all.ucl"], visibility = ["//packages/bsdnetwork-tests:__pkg__"])
+
+exports_files(["ucl/bsdnotify-tests-all.ucl"], visibility = ["//packages/bsdnotify-tests:__pkg__"])
+
+exports_files(["ucl/bsdtime-tests-all.ucl"], visibility = ["//packages/bsdtime-tests:__pkg__"])
+
+exports_files(["ucl/bsdtrace-all.ucl"], visibility = ["//packages/bsdtrace:__pkg__"])
+
+exports_files(["ucl/bsdtrace-provider-all.ucl"], visibility = ["//packages/bsdtrace-provider:__pkg__"])
+
+exports_files(["ucl/bsdtrace-provider-tests-all.ucl"], visibility = ["//packages/bsdtrace-provider-tests:__pkg__"])
+
+exports_files(["ucl/hwstat-all.ucl"], visibility = ["//packages/hwstat:__pkg__"])
+
+exports_files(["ucl/libauditcmp-tests-all.ucl"], visibility = ["//packages/libauditcmp-tests:__pkg__"])
+
+exports_files(["ucl/libcache-all.ucl"], visibility = ["//packages/libcache:__pkg__"])
+
+exports_files(["ucl/libcache-tests-all.ucl"], visibility = ["//packages/libcache-tests:__pkg__"])
+
+exports_files(["ucl/libcapreclaim-all.ucl"], visibility = ["//packages/libcapreclaim:__pkg__"])
+
+exports_files(["ucl/libcapreclaim-tests-all.ucl"], visibility = ["//packages/libcapreclaim-tests:__pkg__"])
+
+exports_files(["ucl/libcryptocmp-all.ucl"], visibility = ["//packages/libcryptocmp:__pkg__"])
+
+exports_files(["ucl/libcryptocmp-tests-all.ucl"], visibility = ["//packages/libcryptocmp-tests:__pkg__"])
+
+exports_files(["ucl/libcryptodesc-all.ucl"], visibility = ["//packages/libcryptodesc:__pkg__"])
+
+exports_files(["ucl/libcryptodesc-tests-all.ucl"], visibility = ["//packages/libcryptodesc-tests:__pkg__"])
+
+exports_files(["ucl/libdevicecmp-all.ucl"], visibility = ["//packages/libdevicecmp:__pkg__"])
+
+exports_files(["ucl/libdevicecmp-tests-all.ucl"], visibility = ["//packages/libdevicecmp-tests:__pkg__"])
+
+exports_files(["ucl/libextensioncmp-all.ucl"], visibility = ["//packages/libextensioncmp:__pkg__"])
+
+exports_files(["ucl/libfidl-tests-all.ucl"], visibility = ["//packages/libfidl-tests:__pkg__"])
+
+exports_files(["ucl/libfilesystemcmp-all.ucl"], visibility = ["//packages/libfilesystemcmp:__pkg__"])
+
+exports_files(["ucl/liblogcmp-all.ucl"], visibility = ["//packages/liblogcmp:__pkg__"])
+
+exports_files(["ucl/liblogcmp-tests-all.ucl"], visibility = ["//packages/liblogcmp-tests:__pkg__"])
+
+exports_files(["ucl/libnamespacecmp-all.ucl"], visibility = ["//packages/libnamespacecmp:__pkg__"])
+
+exports_files(["ucl/libnetworkcmp-all.ucl"], visibility = ["//packages/libnetworkcmp:__pkg__"])
+
+exports_files(["ucl/libnetworkcmp-tests-all.ucl"], visibility = ["//packages/libnetworkcmp-tests:__pkg__"])
+
+exports_files(["ucl/libnotify-all.ucl"], visibility = ["//packages/libnotify:__pkg__"])
+
+exports_files(["ucl/libnotify-tests-all.ucl"], visibility = ["//packages/libnotify-tests:__pkg__"])
+
+exports_files(["ucl/libpowercmp-all.ucl"], visibility = ["//packages/libpowercmp:__pkg__"])
+
+exports_files(["ucl/libpowercmp-tests-all.ucl"], visibility = ["//packages/libpowercmp-tests:__pkg__"])
+
+exports_files(["ucl/libshmring-tests-all.ucl"], visibility = ["//packages/libshmring-tests:__pkg__"])
+
+exports_files(["ucl/libsysctlcmp-all.ucl"], visibility = ["//packages/libsysctlcmp:__pkg__"])
+
+exports_files(["ucl/libsysctlcmp-tests-all.ucl"], visibility = ["//packages/libsysctlcmp-tests:__pkg__"])
+
+exports_files(["ucl/libtimecmp-all.ucl"], visibility = ["//packages/libtimecmp:__pkg__"])
+
+exports_files(["ucl/libtimecmp-tests-all.ucl"], visibility = ["//packages/libtimecmp-tests:__pkg__"])
+
+exports_files(["ucl/libtracecmp-all.ucl"], visibility = ["//packages/libtracecmp:__pkg__"])
+
+exports_files(["ucl/libtracecmp-tests-all.ucl"], visibility = ["//packages/libtracecmp-tests:__pkg__"])
+
+exports_files(["ucl/libvmcmp-all.ucl"], visibility = ["//packages/libvmcmp:__pkg__"])
+
+exports_files(["ucl/mac-abac-all.ucl"], visibility = ["//packages/mac-abac:__pkg__"])
+
+exports_files(["ucl/mac-abac-tests-all.ucl"], visibility = ["//packages/mac-abac-tests:__pkg__"])
+
+exports_files(["ucl/netmap-tests-all.ucl"], visibility = ["//packages/netmap-tests:__pkg__"])
+
+exports_files(["ucl/oes-tests-all.ucl"], visibility = ["//packages/oes-tests:__pkg__"])

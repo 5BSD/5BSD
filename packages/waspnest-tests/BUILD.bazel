@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "waspnest-tests",
+    template = "waspnest-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    dependencies = {"waspnest-tests": ["atf", "kyua", "mac-capability-tests", "bhyve", "libvmmapi", "flua", "toolchain", "set-base"]},
+    visibility = ["//packages:__pkg__"],
+)

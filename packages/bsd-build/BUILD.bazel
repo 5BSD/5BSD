@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsd-build",
+    template = "bsd-build.ucl",
+    subpackages = ["dbg", "man"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"bsd-build": ["runtime"]},
+    visibility = ["//packages:__pkg__"],
+)

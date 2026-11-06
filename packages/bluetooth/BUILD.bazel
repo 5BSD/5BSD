@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bluetooth",
+    template = "bluetooth.ucl",
+    template_overrides = {"bluetooth": "bluetooth-base.ucl"},
+    subpackages = ["dbg", "dev", "lib", "man"],
+    sets = ["optional"],
+    dependencies = {"bluetooth": ["ppp", "libservice", "switchboard", "switchboardctl", "libextensioncmp", "libfilesystemcmp"]},
+    visibility = ["//packages:__pkg__"],
+)

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "local-unbound",
+    template = "common.ucl",
+    template_overrides = {"local-unbound": "local-unbound.ucl"},
+    subpackages = ["dbg", "dev", "man"],
+    licenses = ["BSD4CLAUSE"],
+    dependencies = {"local-unbound": ["resolvconf"]},
+    visibility = ["//packages:__pkg__"],
+)

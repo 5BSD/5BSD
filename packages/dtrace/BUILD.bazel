@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
@@ -86,3 +87,15 @@ bsd_pkg_create(
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "dtrace_dependency", package = "dtrace", origin = "base/5BSD-dtrace",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "dtrace",
+    template = "dtrace.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["optional"],
+    licenses = ["CDDL-1.0", "BSD2CLAUSE", "BSD3CLAUSE", "MIT", "APACHE20"],
+    license_logic = "multi",
+    dependencies = {"dtrace": ["libnghttp2"]},
+    visibility = ["//packages:__pkg__"],
+)

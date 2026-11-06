@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "capsign-tests",
+    template = "capsign-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"capsign-tests": ["atf", "kyua", "set-base", "capsign", "libcapimage", "openssl"]},
+    visibility = ["//packages:__pkg__"],
+)

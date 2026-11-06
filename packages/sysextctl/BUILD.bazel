@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "sysextctl",
+    template = "sysextctl.ucl",
+    sets = ["base"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"sysextctl": ["libservice", "libextensioncmp"]},
+    visibility = ["//packages:__pkg__"],
+)

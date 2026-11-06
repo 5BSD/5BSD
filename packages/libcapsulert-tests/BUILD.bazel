@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
 load("//tools/build/bazel:bsd_pkg_manifest.bzl", "bsd_pkg_manifests")
@@ -60,3 +61,13 @@ bsd_pkg_create(
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "libcapsulert-tests_dependency", package = "libcapsulert-tests", origin = "base/5BSD-libcapsulert-tests",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "libcapsulert-tests",
+    template = "libcapsulert-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    dependencies = {"libcapsulert-tests": ["atf", "kyua", "set-base", "libcapsulert"]},
+    visibility = ["//packages:__pkg__"],
+)

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsdnetwork-tests",
+    template = "//release/packages:ucl/bsdnetwork-tests-all.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"bsdnetwork-tests": ["atf", "kyua", "bsdnetwork", "switchboardctl", "set-base"]},
+    visibility = ["//packages:__pkg__"],
+)

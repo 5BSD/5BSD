@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsdcrypto-tests",
+    template = "//release/packages:ucl/bsdcrypto-tests-all.ucl",
+    sets = ["tests"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"bsdcrypto-tests": ["atf", "kyua", "bsdcrypto", "switchboardctl", "set-base"]},
+    visibility = ["//packages:__pkg__"],
+)

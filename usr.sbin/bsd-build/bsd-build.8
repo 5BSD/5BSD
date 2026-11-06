@@ -7659,3 +7659,13 @@ These targets do not qualify all capability families, older component package
 creation targets, installed services or system upgrades.
 The existing format-5 frontend selects the aggregate without a new CLI action.
 Full world package coverage and runtime/resource qualification remain open.
+.Pp
+The explicit //packages:static_family_manifests target generates metadata for
+208 additional static package-family declarations.
+Together with the core and capability aggregates, 232 of 239 family directories
+have native declarations; the seven conditional owners remain to be migrated.
+All selected manifests match original Make metadata in two profiles.
+These direct targets do not implement world option/architecture traversal or
+create package archives, install software or qualify runtime behavior.
+Existing format-5 targets/build-settings select the aggregate.
+Make remains production/default pending the full qualification gates.

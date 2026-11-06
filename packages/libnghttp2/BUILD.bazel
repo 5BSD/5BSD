@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "libnghttp2",
+    template = "libnghttp2.ucl",
+    subpackages = ["dbg", "dev"],
+    licenses = ["MIT"],
+    visibility = ["//packages:__pkg__"],
+)

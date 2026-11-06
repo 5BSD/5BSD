@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "mac-abac",
+    template = "//release/packages:ucl/mac-abac-all.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["minimal"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"mac-abac": ["libucl", "rc"]},
+    visibility = ["//packages:__pkg__"],
+)

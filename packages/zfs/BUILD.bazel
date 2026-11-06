@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 load(":components.bzl", "ZFS_MANIFESTS")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
@@ -83,4 +84,14 @@ bsd_pkg_create(
     python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime"],
+)
+
+bsd_pkg_family(
+    name = "family",
+    family = "zfs",
+    template = "zfs.ucl",
+    subpackages = ["dbg", "dev", "lib", "man"],
+    sets = ["minimal"],
+    licenses = ["CDDL-1.0"],
+    visibility = ["//packages:__pkg__"],
 )

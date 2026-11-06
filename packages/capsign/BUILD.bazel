@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "capsign",
+    template = "capsign.ucl",
+    subpackages = ["dbg", "man"],
+    sets = ["minimal", "minimal-jail"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"capsign": ["libcapimage", "libcapbundle", "openssl"]},
+    visibility = ["//packages:__pkg__"],
+)

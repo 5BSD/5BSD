@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "console-tools",
+    template = "console-tools.ucl",
+    sets = ["optional"],
+    visibility = ["//packages:__pkg__"],
+)

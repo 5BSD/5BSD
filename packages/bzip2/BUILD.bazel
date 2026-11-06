@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
 load("//tools/build/bazel:bsd_pkg_manifest.bzl", "bsd_pkg_manifests")
@@ -118,4 +119,13 @@ bsd_python_test(
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_python_runtime"],
     target_compatible_with = ["@platforms//cpu:x86_64"],
     size = "small",
+)
+
+bsd_pkg_family(
+    name = "family",
+    family = "bzip2",
+    template = "bzip2.ucl",
+    subpackages = ["dbg", "dev", "lib", "man"],
+    sets = ["minimal", "minimal-jail"],
+    visibility = ["//packages:__pkg__"],
 )

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsdtrace-tests",
+    template = "bsdtrace-tests.ucl",
+    subpackages = [],
+    sets = ["tests"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"bsdtrace-tests": ["atf", "kyua", "set-base", "bsdtrace"]},
+    visibility = ["//packages:__pkg__"],
+)

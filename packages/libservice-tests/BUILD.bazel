@@ -1,5 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "libservice-tests_dependency", package = "libservice-tests", origin = "base/5BSD-libservice-tests",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "libservice-tests",
+    template = "libservice-tests.ucl",
+    subpackages = ["dbg"],
+    sets = ["tests"],
+    dependencies = {"libservice-tests": ["atf", "kyua", "set-base", "libservice", "libservice-dev", "capsule", "capsulectl", "clang"]},
+    visibility = ["//packages:__pkg__"],
+)

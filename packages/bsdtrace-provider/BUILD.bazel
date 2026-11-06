@@ -1,5 +1,18 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "bsdtrace-provider_dependency", package = "bsdtrace-provider", origin = "base/5BSD-bsdtrace-provider",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsdtrace-provider",
+    template = "//release/packages:ucl/bsdtrace-provider-all.ucl",
+    template_overrides = {"bsdtrace-provider": "bsdtrace-provider.ucl"},
+    subpackages = ["dbg", "man"],
+    sets = ["minimal"],
+    licenses = ["BSD2CLAUSE"],
+    dependencies = {"bsdtrace-provider": ["audit", "libchannel", "libservice", "libtracecmp", "libfidl", "switchboard", "switchboardctl"]},
+    visibility = ["//packages:__pkg__"],
+)

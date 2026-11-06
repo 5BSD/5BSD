@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "sound",
+    template = "sound.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["optional"],
+    dependencies = {"sound": ["bsdconfig"]},
+    visibility = ["//packages:__pkg__"],
+)
