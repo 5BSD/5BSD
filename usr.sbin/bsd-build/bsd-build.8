@@ -7600,3 +7600,12 @@ contains untagged construction state, not package payloads or an existing-system
 update overlay. Current selected AMD64 whole production contribution construction
 passes; installed authentication, account preservation during upgrades and full
 world/package/runtime/performance qualification remain open. Make remains default.
+.Pp
+The native package qualification driver preserves declared file and directory
+flags using standard pkg plist attributes. Temporary build and inspection
+extraction defers flag application; archive flags are validated against declared
+installation metadata. Real pkg fixtures cover schg/uchg files, an immutable
+directory, ordinary payloads and rejection of flag mismatches. Existing directory
+ownership regressions also pass. This is package creation and inspection,
+not installed flag enforcement, complete pkgbase parity or upgrade qualification.
+Existing format-5 test targets select these checks; Make remains default.

@@ -62,7 +62,7 @@ def main():
                 if current.get(key) != previous.get(key):
                     raise ValueError("Make package metadata differs: " + archive.name + ":" + key)
         names = set(current["files"])
-        matches = [name for name, entries in layout["packages"].items() if {e["destination"] for e in entries} == names]
+        matches = [name for name, entries in layout["packages"].items() if {e["destination"] for e in entries if e["type"] != "dir"} == names]
         if len(matches) != 1 or matches[0] in seen:
             raise ValueError("package file partition differs")
         package_name = matches[0]
@@ -90,12 +90,12 @@ def main():
             meta = members[path]
             if (header["uname"], header["gname"], stat.S_IMODE(header["mode"])) != (meta.uname, meta.gname, meta.mode):
                 raise ValueError("archive metadata differs: " + path)
-            archive_headers.check_flags(header, "none")
+            archive_headers.check_flags(header, meta.pax_headers.get("SCHILY.fflags", "none"))
             if header["symlink"] is not None and (not meta.issym() or header["symlink"] != meta.linkname):
                 raise ValueError("archive symlink differs")
         if got != names | set(current.get("directories", {})):
             raise ValueError("archive headers differ from pkg manifest")
-        subprocess.run(["/usr/bin/tar", "-xpf", str(archive), "--no-same-owner", "-C", str(extracted)], check=True)
+        subprocess.run(["/usr/bin/tar", "-xpf", str(archive), "--no-same-owner", "--no-fflags", "-C", str(extracted)], check=True)
         results.append(dict(name=archive.name, sha256=digest(archive), reference_sha256=digest(reference) if reference else None))
     if seen != set(layout["packages"]):
         raise ValueError("missing package")
@@ -108,6 +108,9 @@ def main():
             elif record["type"] == "hardlink":
                 if not file.samefile(extracted / record["link"].lstrip("/")):
                     raise ValueError("extracted hardlink differs")
+            elif record["type"] == "dir":
+                if not file.is_dir() or file.is_symlink():
+                    raise ValueError("extracted directory differs")
             elif file.read_bytes() != tar.extractfile(path.lstrip("/")).read():
                 raise ValueError("extracted payload bytes differ: " + path)
             if record["type"] != "symlink" and stat.S_IMODE(file.stat().st_mode) != int(record["mode"], 8):

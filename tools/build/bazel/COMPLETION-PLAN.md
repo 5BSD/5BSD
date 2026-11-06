@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## Native package driver preserves declared file flags (2026-11-06)
+
+The driver no longer rejects schg-marked base files. It validates source archive
+flags against layout records, uses --no-fflags only for temporary extraction and
+carries flags through pkg's standard fourth plist field for files/directories.
+The maintained package inspector now validates actual flag bits and handles
+explicit directory payloads correctly. No package ownership/file list changed.
+
+The six real-pkg flag fixtures and existing six directory fixtures pass through
+the maintained frontend. Four successful packages have retained emitted fixtures
+and pass independent libarchive/header/partition/extraction inspection; two flag
+mismatches are rejected. See PACKAGE-FLAGS-QUALIFICATION.md for immutable logs,
+frozen BEP outputs, exact scope, failed inspection invocation and prepared root
+construction command forms. These are fixtures, not complete clibs or pkgbase
+parity. uid 1001 lacks sudo/doas; private-jail/installed account checks remain
+pending root or the authorized VM path. No home repository or host install is used.
+
+Next complete native whole-world package partition/manifests/archive creation,
+then package-driven fresh construction and existing-account preservation plus
+normal service/authentication runtime. Existing format-5 frontend/backend package
+helpers and tests are updated; manual records the change; C/signing/publication
+interfaces are unchanged. Keep every remaining whole-world/kernel/module/debug/
+bootstrap/cache/sandbox/reproducibility/resource/cross-target gate and Make default.
+
 ## Seven ncurses raw data differences inspected with actual consumers (2026-11-06)
 
 Retained lossless diffs show only source-path comments in curses.h/terminfo.5

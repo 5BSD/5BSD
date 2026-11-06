@@ -64,6 +64,10 @@ def create(request):
                 record = expected[path]
                 if (member.uname, member.gname, member.mode) != (record["owner"], record["group"], int(record["mode"], 8)):
                     raise ValueError("archive metadata differs from package layout")
+                wanted_flags = record.get("flags", "")
+                archive_flags = member.pax_headers.get("SCHILY.fflags", "")
+                if (wanted_flags or "none") != (archive_flags or "none"):
+                    raise ValueError("archive file flags differ from package layout")
                 kind = record["type"]
                 if kind not in ("file", "dir", "symlink", "hardlink"):
                     raise ValueError("unsupported package layout type")
@@ -117,7 +121,7 @@ def create(request):
                 raise ValueError("directory belongs to undeclared package: " + name)
             owned_directories[name].add(path)
             owned_directories[name].update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
-        subprocess.run([request["tar"], "-xpf", request["archive"], "--no-same-owner", "-C", str(stage)], check=True)
+        subprocess.run([request["tar"], "-xpf", request["archive"], "--no-same-owner", "--no-fflags", "-C", str(stage)], check=True)
         common = [request["pkg"], "-C", str(config), "-R", str(repos), "-o", "PKG_DBDIR=" + str(work / "db")]
         abi = subprocess.run(common + ["-o", "ABI_FILE=" + request["abi_file"], "config", "ABI"], check=True, capture_output=True, text=True).stdout.strip()
         if not abi or any(c.isspace() for c in abi):
@@ -128,8 +132,6 @@ def create(request):
             parents = set(owned_directories[name])
             for record in records:
                 path = record["destination"]
-                if record.get("flags"):
-                    raise ValueError("file flags not qualified")
                 for value in (path, record["owner"], record["group"], record["mode"]):
                     if any(c in value for c in "\n\r(),"):
                         raise ValueError("unsupported plist field")
@@ -138,11 +140,17 @@ def create(request):
                     parents.add(path)
                     continue
                 kind = "config" if "config" in record["tags"] else ""
-                lines.append("@" + kind + "(" + ",".join([record["owner"], record["group"], record["mode"], ""]) + ") " + path)
+                flags = record.get("flags", "")
+                if any(c in flags for c in "\n\r()"):
+                    raise ValueError("unsupported plist flags field")
+                lines.append("@" + kind + "(" + ",".join([record["owner"], record["group"], record["mode"], flags]) + ") " + path)
                 parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
             for path in sorted(parents):
                 meta = dirs[path]
-                lines.append("@dir(" + ",".join([meta.uname, meta.gname, format(meta.mode, "04o"), ""]) + ") " + path)
+                flags = meta.pax_headers.get("SCHILY.fflags", "")
+                if any(c in flags for c in "\n\r()"):
+                    raise ValueError("unsupported plist directory flags field")
+                lines.append("@dir(" + ",".join([meta.uname, meta.gname, format(meta.mode, "04o"), flags]) + ") " + path)
             plist = work / (name + ".plist")
             plist.write_text("\n".join(lines) + "\n")
             subprocess.run(common + ["create", "-f", request["format"], "-T", str(request["threads"]), "-t", str(request["epoch"]),
