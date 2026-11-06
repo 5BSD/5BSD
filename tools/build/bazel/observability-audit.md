@@ -12243,3 +12243,14 @@ access policy, live kernel jail events, probe firing or security audit delivery.
 DOF initialization remains disabled for isolated bodies. Preserve those separate
 runtime checks; no absence-of-probes defect or new audit event is inferred from
 this test wiring. See CAM-CAPSICUM-JAIL-TEST-QUALIFICATION.md.
+
+## Native crypt original body and installation checks (2026-11-06)
+
+Original crypt/provider/test sources are unchanged after the controlled comment
+mutation is byte-restored. Both local hash cases pass; imported salt handling
+retains its original expected failure, with identical Make program/crypt DSO
+results. This does not establish normal login/PAM, password policy or security
+audit delivery. DOF initialization is disabled for isolated cases, so there is no
+live provider-firing or tracing-overhead claim. Preserve those broader checks;
+no new event or instrumentation defect is inferred from this build migration.
+See CRYPT-TEST-QUALIFICATION.md for original outcomes and final artifact hashes.

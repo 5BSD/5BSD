@@ -7420,3 +7420,13 @@ Complete parents match Make with tests enabled (78 file/link records) and disabl
 claims are preserved, including jail's libjail-tests package.
 These use existing format-5 inputs; wider tests-enabled world assembly, normal
 system runtime, package/bootstrap and performance qualification remain separate.
+.Pp
+Explicit AMD64 crypt tests use native ATF/crypt/C runtime dependencies and
+preserve both original installed programs and all three registrations.
+Two original cases pass; the salt case retains its expected failure, matching
+independent Make program and crypt-library execution.
+Complete tests-enabled/disabled parents match fourteen/nine file/link records.
+A controlled source change reruns exactly its own compile; warm/restored builds
+execute none, and original source bytes are restored.
+Existing format-5 inputs select these checks; this does not qualify normal
+login/PAM, full-system performance or reproducible bootstrap.

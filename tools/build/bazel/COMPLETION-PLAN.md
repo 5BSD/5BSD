@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Native crypt tests, complete parent and bounded cache check (2026-11-06)
+
+Both original programs now use native final ABI/runtime dependencies, retain
+WARNS=6/GNU17 and expose the full installed suite archive. All three original
+registrations match Make. The two local cases pass; the imported salt case has
+one original expected failure, exactly matching independent Make program/crypt
+DSO execution. Final reports preserve that distinction instead of counting it
+as a passed original case. Tests-enabled/disabled parent profiles match all
+14/9 file/link records, directory claims, hardlinks, data and three/one ELF/debug
+contracts. No test payload remains when disabled.
+
+A controlled original-source comment change executes exactly its own compile;
+warm and restored phases execute zero. Source is restored and every final
+captured output is byte-identical to the independently compared initial artifacts.
+See CRYPT-TEST-QUALIFICATION.md for receipts, known salt compatibility limitation,
+retained audit errors and scope. Remaining selected library test/world traversal,
+world/kernel/module/pkgbase/debug, service VM, CPU/RAM/disk-I/O/footprint,
+bootstrap/cache/sandbox/reproducibility and combined publication gates remain.
+Make stays default; BIP remains excluded.
+
 ## Original library test traversal and CAM/Capsicum/jail parents (2026-11-06)
 
 The recorded Make tests-off/on traversal reaches 326/442 directories, adding

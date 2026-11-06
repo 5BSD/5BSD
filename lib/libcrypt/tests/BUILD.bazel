@@ -1,24 +1,3 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
-load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
-[cc_binary(name = name, srcs = [source],
-    deps = ["//lib/libcrypt:crypt", "//lib/libcrypt:private_headers", "//lib/atf/libatf-c:atf_c"] + (["//lib/libnetbsd:netbsd_pie"] if name == "crypt_test" else []),
-    dynamic_deps = ["//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared", "//lib/atf/libatf-c:atf_c_shared"],
-    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
- for name, source in [("crypt_tests", "crypt_tests.c"), ("crypt_test", "//contrib/netbsd-tests/lib/libcrypt:t_crypt.c")]]
-[bsd_atf_test(name = "native_" + case, case_name = case, interface = "program", body = ":" + program,
-    runtime_lib = ["//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared", "//lib/atf/libatf-c:atf_c_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
-    runner = "//tools/build/bazel:atf_runner", size = "small")
- for program, cases in [("crypt_tests", ["md5", "invalid"]), ("crypt_test", ["crypt_salts"])] for case in cases]
-test_suite(name = "tests", tests = [":native_md5", ":native_invalid", ":native_crypt_salts"], visibility = ["//visibility:public"])
-
-load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
-[utility_installation(name = "install_" + name, program = name, manual = "", package = "tests",
-    bindir = "/usr/tests/lib/libcrypt") for name in ["crypt_tests", "crypt_test"]]
-bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["crypt_test", "crypt_tests"],
-    interfaces = {n: "atf" for n in ["crypt_test", "crypt_tests"]})
-bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libcrypt/Kyuafile",
-    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
-bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libcrypt:__pkg__"])
+load(":tests.bzl", "crypt_tests")
+crypt_tests()
