@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Build-storage cleanup after test construction (2026-11-06)
+
+Five obsolete isolated execution trees were removed, followed by successful
+standard Bazel clean of the primary /usr/src execution outputs. About 58 GiB is
+available afterward; concurrent filesystem activity means this is not a
+controlled reclaimed-byte measurement. Sources, SDK inputs/materializations,
+original Make controls, qualification captures/test reports and repositories
+remain. Four recent library/test archive captures and final libxo/ATF C test
+report hashes verify after cleanup. Maintenance evidence is retained under
+/usr/obj/usr/src/bazel-storage-cleanup-r{2,3}-20261106.
+
+Removed execution outputs will rebuild when selected. Retained action-cache hits
+remain possible; do not describe the next run as an entirely cold-cache benchmark.
+No frontend, SDK-input, signing, stage or publication requirement changes arise
+from maintenance. Continue remaining ATF C++/parent traversal and the full world/
+package/runtime/performance/cross-architecture gates below. Make remains default.
+
 ## Complete selected AMD64 ATF C/detail test construction (2026-11-06)
 
 All seventeen original C/detail harnesses and two helpers build natively. All
