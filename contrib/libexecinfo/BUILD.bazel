@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(["execinfo.h", "backtrace.c", "symtab.c", "unwind.c", "symtab.h", "backtrace.3"], visibility = ["//lib/libexecinfo:__pkg__"])
-cc_library(name = "headers", hdrs = ["execinfo.h"], strip_include_prefix = ".", visibility = ["//lib/libexecinfo:__pkg__"])
+exports_files(["execinfo.h", "backtrace.c", "symtab.c", "unwind.c", "symtab.h", "backtrace.3"], visibility = ["//lib/libexecinfo:__pkg__", "//lib/libexecinfo/tests:__pkg__"])
+cc_library(name = "headers", hdrs = ["execinfo.h"], strip_include_prefix = ".", visibility = ["//lib/libexecinfo:__pkg__", "//lib/libexecinfo/tests:__pkg__"])

@@ -23,7 +23,7 @@ cc_library(name = "elf_headers", hdrs = ["elf32.h", "elf64.h", "elf_common.h"],
 
 exports_files(["priv.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
 
-cc_library(name = "sbuf_headers", hdrs = ["sbuf.h"], strip_include_prefix = "/sys", visibility = ["//lib/libsbuf:__pkg__", "//usr.bin/mt:__pkg__"])
+cc_library(name = "sbuf_headers", hdrs = ["sbuf.h"], strip_include_prefix = "/sys", visibility = ["//lib/libsbuf:__pkg__", "//usr.bin/mt:__pkg__", "//lib/libsbuf/tests:__pkg__"])
 
 cc_library(name = "iconv_headers", hdrs = ["iconv.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
 

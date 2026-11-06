@@ -12112,3 +12112,16 @@ Actual live DTrace firing/audit delivery remains a separate system gate.
 RISC-V source-selected expected-death results need explicit runner support before
 cross-runtime qualification; AMD64 passing cases do not establish that support.
 See MSUN-TEST-QUALIFICATION.md for evidence and preserved failed attempts.
+
+## librt/libsbuf/libexecinfo/libkvm original tests (2026-11-06)
+
+All twelve original test sources and library implementation/provider sources
+remain unchanged. Native rules preserve helper translation units, declared
+private layouts/headers, original symbol retention for backtraces and ATF user/
+cleanup/deadline metadata. All 33 reviewed host cases pass from installed-form
+executables; no root kernel-memory or real-time scheduling body is run on the
+host. Original fixed-name semaphore operations remain deferred to disposable
+guests. No new component-specific probe requirement is asserted from the absence
+of providers in test fixtures. Live tracing/audit delivery, guest kernel-memory/
+scheduling/IPC cases and cross-ABI execution remain explicit open gates. See
+FOUR-LIBRARY-TEST-QUALIFICATION.md for hash-bound evidence and deferred labels.

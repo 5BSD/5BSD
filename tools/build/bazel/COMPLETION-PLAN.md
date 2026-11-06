@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Four complete selected AMD64 library test constructions (2026-11-06)
+
+librt, libsbuf, libexecinfo and libkvm now provide all twelve original selected
+programs and 28 installation records, matching fresh independent Make metadata,
+Kyua/directory and ELF/debug contracts. libexecinfo retains its original STRIP=
+symbol tables through an explicit maintained installation option. All 33 reviewed
+host cases execute from installation-form binaries and pass; all 48 registrations
+and privilege/cleanup/deadline policies match Make. Fifteen original root/named-
+semaphore cases remain manual guest work, not skips. See
+FOUR-LIBRARY-TEST-QUALIFICATION.md for complete evidence and exact deferred labels.
+This closes four more previously missing sibling BUILD roots; nine discovered
+roots still need declarations, and existing file presence is not qualification.
+
+Continue the remaining base test parents and full tests-enabled world assembly,
+then independent whole installation/kernel/module/debug/pkgbase and normal-service
+VM gates, CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/reproducibility and
+verified combined publication. Address ARM64/RISC-V shared gaps without claiming
+unexecuted profiles. Full-tests guards stay; Make default; BIP excluded.
+
 ## Complete selected AMD64 libm test suite (2026-11-06)
 
 All 47 original programs and 95 installation records match fresh independent

@@ -18,13 +18,15 @@ def utility_debug_directories(package, bindir):
         result[current] = json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=" + package, "dbg"]})
     return result
 
-def utility_installation(name, program, manual, package, bindir = "/usr/bin", man_section = "1", aliases = [], manual_aliases = [], extra_entries = [], binary_owner = "root", binary_group = "wheel", binary_mode = "0555", binary = None, keep_sections = [], binary_flags = ""):
+def utility_installation(name, program, manual, package, bindir = "/usr/bin", man_section = "1", aliases = [], manual_aliases = [], extra_entries = [], binary_owner = "root", binary_group = "wheel", binary_mode = "0555", binary = None, keep_sections = [], binary_flags = "", strip_symbols = True):
     """Install program under its maintained name, optionally from a variant label.
 
     binary changes only the declared source artifact; installed/debug filenames
     and metadata still come from program. Other callers retain :program.
     keep_sections preserves explicitly declared non-allocated payloads while
     stripping, for example CAPIMAGE_MANIFEST signing input in .5bsd.policy.
+    strip_symbols=False preserves the symbol table after separating debug data,
+    matching original STRIP= programs that perform runtime symbol lookup.
     """
     if man_section not in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]:
         fail("man_section must be a manual section from 1 through 9")
@@ -33,8 +35,11 @@ def utility_installation(name, program, manual, package, bindir = "/usr/bin", ma
     bsd_debug_split(name = name + "_debug", src = binary if binary != None else ":" + program,
         binary_name = name + "/" + program, debug_name = name + "/" + program + ".debug",
         objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
-    bsd_strip_binary(name = name + "_stripped", src = ":" + name + "_debug", output = name + "/stripped/" + program,
-        strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs", keep_sections = keep_sections)
+    if strip_symbols:
+        bsd_strip_binary(name = name + "_stripped", src = ":" + name + "_debug", output = name + "/stripped/" + program,
+            strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs", keep_sections = keep_sections)
+    else:
+        native.alias(name = name + "_stripped", actual = ":" + name + "_debug")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     if manual:
         bsd_compress(name = name + "_manual", src = manual, output = name + "/" + program + "." + man_section + ".gz",

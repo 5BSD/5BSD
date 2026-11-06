@@ -7319,3 +7319,13 @@ skips or expected failures; the source-settings helper is a separate target.
 These targets use the existing explicit Bazel-input workflow. ARM64/RISC-V
 math ABI policy and runtime qualification remain open, as do complete-world
 tests and system acceptance. The default system backend is unchanged.
+.Pp
+Explicit librt, libsbuf, libexecinfo and libkvm test targets now provide their
+twelve original selected AMD64 programs. Their 28 installation records and
+ELF/debug contracts match original Make controls. All 33 reviewed host cases
+pass from installation-form executables; fifteen root or named-semaphore cases
+remain disposable-guest work. The maintained installation helper can preserve
+ordinary symbols after separating debug data, matching original STRIP= programs
+such as the backtrace tests. Other consumers retain default symbol stripping.
+This uses existing explicit Bazel-input support and does not change the default
+system backend or establish full installed-system acceptance.

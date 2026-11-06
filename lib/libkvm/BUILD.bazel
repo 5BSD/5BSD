@@ -47,3 +47,6 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+cc_library(name = "test_private_headers", hdrs = ["kvm_private.h"], strip_include_prefix = ".",
+    deps = [":headers"], visibility = ["//lib/libkvm/tests:__pkg__"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_sched.c', 't_sem.c'], visibility = ["//lib/librt/tests:__pkg__"])
