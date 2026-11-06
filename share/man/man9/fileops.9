@@ -71,6 +71,23 @@ does; no default inspects
 A table that does not carry a vnode must not install a
 .Fn vn_*
 member.
+.Pp
+Two tables carry a vnode only on some creation paths: a pseudo-terminal
+master has one when opened through
+.Pa /dev/ptmx
+and none from
+.Xr posix_openpt 2 ;
+a linuxkpi file has one when opened through
+.Xr devfs 4
+and none from
+.Fn fd_install .
+Those tables install the
+.Fn vn_*_opt
+variants, which answer through the vnode when it is present and give the
+type-neutral answer otherwise.
+Installing a plain
+.Fn vn_*
+member there dereferences a null vnode.
 .Ss fo_pathconf
 .Fn fo_pathconf
 answers

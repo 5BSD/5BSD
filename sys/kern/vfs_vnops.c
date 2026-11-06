@@ -551,6 +551,50 @@ vn_openfile_fadvise(struct file *fp, off_t offset, off_t len, int advice,
 }
 
 /*
+ * Pseudo-terminal masters and linuxkpi files carry a vnode only when they
+ * were opened through devfs (/dev/ptmx, a device node); posix_openpt(2) and
+ * fd_install() make them with none.  These answer through the vnode when
+ * it is there and give the type-neutral answer when it is not, which is
+ * what the system calls' f_vnode tests gave them.
+ */
+int
+vn_pathconf_opt(struct file *fp, int name, long *valuep, struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_pathconf(fp, name, valuep, td));
+	return (vn_pathconf(fp, name, valuep, td));
+}
+
+int
+vn_statfs_opt(struct file *fp, struct statfs *buf, struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_statfs(fp, buf, td));
+	return (vn_statfs(fp, buf, td));
+}
+
+int
+vn_fsync_opt(struct file *fp, int mode, struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_fsync(fp, mode, td));
+	return (vn_fsync(fp, mode, td));
+}
+
+int
+vn_setattr_opt(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_setattr(fp, vap, active_cred, td));
+	return (vn_setattr(fp, vap, active_cred, td));
+}
+
+/*
  * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
  * that carries a vnode.  The file context is entered here, not by a
  * per-table wrapper, so FIFOs, pseudo-terminal masters, devfs and linuxkpi

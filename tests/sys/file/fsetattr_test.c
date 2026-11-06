@@ -222,6 +222,41 @@ ATF_TC_BODY(fdescfs_kqueue, tc)
 	close(fd);
 }
 
+/*
+ * A posix_openpt(2) master has no vnode; a /dev/ptmx-opened one sets the
+ * times of the ptmx node (fstat on the master reports the tty, so the
+ * oracle is stat on the node).
+ */
+ATF_TC_WITHOUT_HEAD(pts_master_openpt);
+ATF_TC_BODY(pts_master_openpt, tc)
+{
+	int fd;
+
+	fd = posix_openpt(O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	check_errno(fd, EINVAL);
+	close(fd);
+}
+
+ATF_TC(pts_master_ptmx);
+ATF_TC_HEAD(pts_master_ptmx, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(pts_master_ptmx, tc)
+{
+	struct stat sb;
+	int fd;
+
+	fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ_MSG(0, futimens(fd, times), "futimens: %s",
+	    strerror(errno));
+	ATF_REQUIRE_EQ(0, stat("/dev/ptmx", &sb));
+	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
+	close(fd);
+}
+
 ATF_TC_WITHOUT_HEAD(anonymous_pipe);
 ATF_TC_BODY(anonymous_pipe, tc)
 {
@@ -277,6 +312,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fifo);
 	ATF_TP_ADD_TC(tp, fdescfs_regular_file);
 	ATF_TP_ADD_TC(tp, fdescfs_kqueue);
+	ATF_TP_ADD_TC(tp, pts_master_openpt);
+	ATF_TP_ADD_TC(tp, pts_master_ptmx);
 	ATF_TP_ADD_TC(tp, anonymous_pipe);
 	ATF_TP_ADD_TC(tp, socket);
 	ATF_TP_ADD_TC(tp, shm_fd);

@@ -352,6 +352,15 @@ fo_statfs_t	vn_statfs;
 fo_fsync_t	vn_fsync;
 fo_setattr_t	vn_setattr;
 fo_fadvise_t	vn_fadvise;
+/*
+ * For descriptor types that carry a vnode only on some creation paths
+ * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
+ * is there, the type-neutral default when it is not.
+ */
+fo_pathconf_t	vn_pathconf_opt;
+fo_statfs_t	vn_statfs_opt;
+fo_fsync_t	vn_fsync_opt;
+fo_setattr_t	vn_setattr_opt;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 

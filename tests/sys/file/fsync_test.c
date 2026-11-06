@@ -100,12 +100,24 @@ ATF_TC_BODY(devfs_node, tc)
 	close(fd);
 }
 
-ATF_TC_WITHOUT_HEAD(pts_master);
-ATF_TC_BODY(pts_master, tc)
+/* Only a /dev/ptmx-opened master has a vnode to sync. */
+ATF_TC_WITHOUT_HEAD(pts_master_openpt);
+ATF_TC_BODY(pts_master_openpt, tc)
 {
 	int fd;
 
 	fd = posix_openpt(O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	check_errno(fd, EINVAL);
+	close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(pts_master_ptmx);
+ATF_TC_BODY(pts_master_ptmx, tc)
+{
+	int fd;
+
+	fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
 	ATF_REQUIRE(fd >= 0);
 	check_syncs(fd);
 	close(fd);
@@ -174,7 +186,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, opath_file);
 	ATF_TP_ADD_TC(tp, fifo);
 	ATF_TP_ADD_TC(tp, devfs_node);
-	ATF_TP_ADD_TC(tp, pts_master);
+	ATF_TP_ADD_TC(tp, pts_master_openpt);
+	ATF_TP_ADD_TC(tp, pts_master_ptmx);
 	ATF_TP_ADD_TC(tp, anonymous_pipe);
 	ATF_TP_ADD_TC(tp, socket);
 	ATF_TP_ADD_TC(tp, kqueue_fd);

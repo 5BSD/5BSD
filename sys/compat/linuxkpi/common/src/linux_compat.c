@@ -1862,10 +1862,14 @@ const struct fileops linuxfileops = {
 	.fo_chown = invfo_chown,
 	.fo_sendfile = invfo_sendfile,
 	.fo_cmp = linux_file_kcmp,
-	.fo_pathconf = vn_pathconf,
-	.fo_statfs = vn_statfs,
-	.fo_fsync = vn_fsync,
-	.fo_setattr = vn_setattr,
+	/*
+	 * A file opened through devfs carries its vnode; one made by
+	 * fd_install() has none, so these answer only when it is there.
+	 */
+	.fo_pathconf = vn_pathconf_opt,
+	.fo_statfs = vn_statfs_opt,
+	.fo_fsync = vn_fsync_opt,
+	.fo_setattr = vn_setattr_opt,
 	.fo_flags = DFLAG_PASSABLE,
 };
 

@@ -149,20 +149,29 @@ ATF_TC_BODY(devfs_node, tc)
 }
 
 /*
- * A pseudo-terminal master is not a vnode descriptor but carries the
- * vnode it was opened through, and keeps answering through it.
+ * A pseudo-terminal master carries a vnode only when it was opened through
+ * /dev/ptmx; posix_openpt(2) makes one with no vnode at all.  The first
+ * answers through the ptmx node, the second has no pathconf values.
  */
-ATF_TC_WITHOUT_HEAD(pts_master);
-ATF_TC_BODY(pts_master, tc)
+ATF_TC_WITHOUT_HEAD(pts_master_openpt);
+ATF_TC_BODY(pts_master_openpt, tc)
 {
 	int fd;
 
 	fd = posix_openpt(O_RDWR | O_NOCTTY);
 	ATF_REQUIRE(fd >= 0);
-	ATF_CHECK(fpathconf(fd, _PC_MAX_CANON) >= 0);
-	ATF_CHECK(fpathconf(fd, _PC_MAX_INPUT) >= 0);
-	ATF_CHECK(fpathconf(fd, _PC_VDISABLE) >= 0);
-	ATF_CHECK_EQ(_POSIX_ASYNCHRONOUS_IO, fpathconf(fd, _PC_ASYNC_IO));
+	check_unsupported(fd);
+	close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(pts_master_ptmx);
+ATF_TC_BODY(pts_master_ptmx, tc)
+{
+	int fd;
+
+	fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	check_vnode_oracle(fd, "/dev/ptmx");
 	close(fd);
 }
 
@@ -231,7 +240,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, opath_file);
 	ATF_TP_ADD_TC(tp, fifo);
 	ATF_TP_ADD_TC(tp, devfs_node);
-	ATF_TP_ADD_TC(tp, pts_master);
+	ATF_TP_ADD_TC(tp, pts_master_openpt);
+	ATF_TP_ADD_TC(tp, pts_master_ptmx);
 	ATF_TP_ADD_TC(tp, anonymous_pipe);
 	ATF_TP_ADD_TC(tp, socket);
 	ATF_TP_ADD_TC(tp, kqueue_fd);
