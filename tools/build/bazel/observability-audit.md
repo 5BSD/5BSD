@@ -12274,3 +12274,14 @@ C libutil suite, login/authentication events, audit delivery or live DTrace prob
 firing. DOF initialization is disabled for isolated executions; overhead and
 installed-system service behavior remain separate. See
 LIBUTIL-CXX-TEST-QUALIFICATION.md for original Make parity and exact scope.
+
+## Native original C libutil suite (2026-11-06)
+
+Original test, wrapper and production/provider sources remain unchanged. Twenty
+ATF cases pass; six TAP programs pass with 253 checked assertions and 31 original
+humanize skips retained explicitly. Login list/time failure injection is preserved,
+not a proof of ordinary login/PAM/SSH or audit delivery. DOF initialization remains
+disabled for isolated bodies. Separate trace-only native util/C/sys binding checks
+are retained; they do not establish live probe firing, security audit events or
+performance overhead. Preserve normal-service and installed-system qualification
+as separate gates. See LIBUTIL-TEST-QUALIFICATION.md for exact execution scope.

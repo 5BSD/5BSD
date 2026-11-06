@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Native C libutil suite and shared runtime links (2026-11-06)
+
+All twelve original programs now use native final ATF/util/C ABI providers, with
+original wrapped production sources and GNU17/WARNS=2. Twenty ATF cases and six
+TAP programs pass. Retained TAP databases/stdout show 253 checked assertions and
+31 original humanize skips; program-level success does not erase those skips.
+All 25 suite files and 148/123 positive/negative parent records match Make,
+including directory claims, exact data, hardlinks and thirteen/one ELF/debug
+contracts. Six registered normal/private link pairs share actual input files;
+only output path/private inherited RPATH differs. Native util/C/sys trace receipts
+and copied TAP programs are retained and bound to final report hashes.
+Final twenty ATF adapters execute installed stripped programs; all final captured
+outputs remain byte-identical to the initial independently compared artifacts.
+See LIBUTIL-TEST-QUALIFICATION.md for complete evidence and separate trace/body scope.
+
+Continue remaining selected library tests/full tests-enabled world and complete
+world/kernel/module/pkgbase/debug, normal service/VM, CPU/RAM/disk-I/O/footprint,
+bootstrap/cache/sandbox/reproducibility and combined publication gates. Make
+remains default; cross-target installed runtime remains open; BIP excluded.
+
 ## Native libutil++ test ABI and parent installation (2026-11-06)
 
 All three original C++ programs now use native final ABI/unwinder providers and

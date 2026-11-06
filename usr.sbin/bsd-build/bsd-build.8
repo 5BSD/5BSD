@@ -7447,3 +7447,12 @@ including original test-directory metadata and all seven manuals.
 The internally built library/archive/header are not installed, matching Make.
 Existing format-5 inputs select these checks; the C libutil suite and full-system
 runtime, bootstrap/package and performance qualification remain separate.
+.Pp
+Explicit AMD64 C libutil tests preserve twelve original programs and native
+ATF/util/C runtime inputs. The twenty ATF bodies execute installed stripped programs. Twenty ATF cases and six TAP programs pass; TAP stdout
+retains 253 checked assertions and 31 original skipped assertions.
+Complete tests-enabled/disabled parents match 148/123 Make file/link records.
+Runtime-only TAP links share compiled inputs with no-RPATH installed programs;
+separate native loader traces are retained.
+Existing format-5 inputs select these checks; wrapped login cases do not replace
+normal login/PAM/SSH, complete system runtime, bootstrap or performance gates.
