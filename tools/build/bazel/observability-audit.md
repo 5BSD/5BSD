@@ -12370,3 +12370,15 @@ and definitions remain unchanged; the negative production archive is byte-identi
 Native/Make script bytes and host-interpreter metadata match; no bodies, probe
 registration/firing or new audit-hook coverage are claimed. Mount/chroot/jail
 cases await qualified VM execution. See STAT-PARENT-QUALIFICATION.md.
+
+
+## 2026-11-06 six source-owned archive orders corrected
+
+The six corrected native archive declarations preserve every original member and
+its source order. Twelve normal/no-DTrace original comparisons pass. The traced
+archives retain 55 matching probe schemas and 79 independently validated ordinary
+patched sites, with raw path-keyed aliases retained and every changed alias bound
+to its actual compiled function. No provider or probe body is removed. Prototype
+construction passes but its representation/runtime remains independently
+unqualified. No test bodies, live registration or firing are claimed. See
+LIBRARY-STATIC-ORDER-QUALIFICATION.md and its immutable comparison bindings.

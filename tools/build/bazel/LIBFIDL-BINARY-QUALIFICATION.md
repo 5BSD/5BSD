@@ -48,11 +48,17 @@ All paths below are under /usr/obj/usr/src:
 
 ## Next action and boundaries
 
+The source-order correction now passes both DTrace modes and preserves actual
+probe bindings. See LIBRARY-STATIC-ORDER-QUALIFICATION.md for its twelve-cohort
+comparisons and remaining runtime/static extraction/raw-equivalence limits.
+The earlier failed capture above is retained. The following was the action at
+that earlier checkpoint:
+
 Correct the archive's declared object order using the existing component archive
 rule, preserving feature selection and every member. Then rebuild through the
 maintained build-bsd workflow and repeat the independent archive/DTrace checks.
 Do not change library inputs during the active full-library native/Make controls;
-their source identities must remain stable. The mismatch is not fixed yet.
+their source identities must remain stable. The mismatch was not fixed at that earlier checkpoint.
 
 Full ELF byte/DWARF/ABI equivalence, archive equality, original bodies, full world,
 kernel/module/package/cross-platform/runtime/performance/bootstrap qualification

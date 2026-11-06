@@ -5714,6 +5714,15 @@ See
 .Pa tools/build/bazel/DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md
 for supported relocations, controls and runtime limits.
 .Pp
+The source-owned installed static archive orders for libfidl, liblogcmp,
+libnetworkcmp, libnotify, libtimecmp and libtracecmp are compared independently
+with original Make artifacts in both normal DTrace modes. Existing format-5
+DTrace and section-archive prototype settings select construction variants;
+prototype construction does not qualify its runtime or original representation.
+See
+.Pa tools/build/bazel/LIBRARY-STATIC-ORDER-QUALIFICATION.md
+for exact member/symbol/probe contracts and remaining body/VM requirements.
+.Pp
 The native
 .Pa //usr.bin/stat:install_archive
 parent includes the complete original stat, readlink and mountpoint shell test

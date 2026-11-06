@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## Six original archive orders corrected and checked in both DTrace modes (2026-11-06)
+
+The six recorded source-order gaps are fixed with native component archive
+object_order declarations. Every selected object must occur exactly once; no
+production Make parsing, archive rebuilding workaround or source/provider change
+is added. All six complete parents construct through the maintained frontend in
+normal DTrace, no-DTrace and the existing section-archive prototype modes.
+
+Twelve original Make archive comparisons pass: exact member order in both normal
+modes; all member symbols match without DTrace; ordinary symbols match with DTrace
+and every changed generated alias resolves to an actual validated function/site.
+The traced cohort preserves 55 schemas and 79 patched ordinary sites on both
+sides. Raw differences remain recorded; original bodies/live tracing/static
+extraction and whole-system acceptance remain unqualified. Prototype qualification
+is construction only. See LIBRARY-STATIC-ORDER-QUALIFICATION.md for all bindings.
+
+The existing format-5 API and native archive rule suffice; manual updated, C/
+backend/signing options unchanged. Next fix the remaining installed test linkage,
+original build-tree runtime paths, direct/ordered dynamic dependencies and full
+library generation/directory gaps. Make/default and full-tests guards remain;
+all world/kernel/module/pkgbase/runtime/VM/cross/performance/bootstrap/cache/
+sandbox/publication gates remain open. BIP stays excluded.
+
+
 ## Full library comparison exposes bounded installation gaps; stat parent added (2026-11-06)
 
 The independent complete original Make lib build/install passed, including the

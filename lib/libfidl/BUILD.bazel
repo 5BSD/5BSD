@@ -35,7 +35,14 @@ cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_
 cc_import(name = "section_traced", objects = [":regular_archive_objects"], pic_objects = [":pic_archive_objects"])
 cc_library(name = "fidl", deps = [":headers", "//lib/libchannel:channel", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr", "//lib/msun:m"] + select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced"], "//conditions:default": [":objects", ":internal_objects"]}),
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Installed archive source order is independent of compilation-group order.
+_STATIC_SOURCE_MEMBERS = ['runtime', 'runtime_c', 'coding_errors', 'incoming_message', 'outgoing_message', 'status', 'transport', 'wire_coding_traits', 'wire_decoder', 'wire_encoder', 'transport_channel_host', 'natural_coding_traits', 'natural_decoder', 'natural_encoder', 'handle_close_many', 'internal', 'wire_format_metadata', 'zx_panic_libc', 'utf-utils', 'scalar']
 bsd_component_archive(name = "static_archive", groups = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects", ":internal_objects"]}),
+    object_order = select({
+        _SECTION_TRACE: [name + ".o" for name in _STATIC_SOURCE_MEMBERS],
+        _TRACE: ['runtime.nopic.o', 'runtime_c.nopic.o', 'coding_errors.nopic.o', 'incoming_message.nopic.o', 'outgoing_message.nopic.o', 'status.nopic.o', 'transport.nopic.o', 'wire_coding_traits.nopic.o', 'wire_decoder.nopic.o', 'wire_encoder.nopic.o', 'transport_channel_host.nopic.o', 'natural_coding_traits.nopic.o', 'natural_decoder.nopic.o', 'natural_encoder.nopic.o', 'handle_close_many.nopic.o', 'internal.nopic.o', 'wire_format_metadata.nopic.o', 'zx_panic_libc.nopic.o', 'utf-utils.nopic.o', 'scalar.nopic.o', 'fidl_provider.nopic.o'],
+        "//conditions:default": [name + ".o" for name in _STATIC_SOURCE_MEMBERS],
+    }),
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "fidl_shared", deps = [":fidl"],
     dynamic_deps = ["//lib/libchannel:channel_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libthr:thr_shared", "//lib/msun:m_shared"],

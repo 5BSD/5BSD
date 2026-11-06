@@ -38,6 +38,14 @@ Raw symbol failures remain retained, and static-consumer/live-tracing behavior i
 not proved. See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and
 bazel-library-static-dtrace-review-r1-20261106 for the companion-object bindings.
 
+All six static member-order gaps are now corrected and independently compared
+in both DTrace modes. All member symbols match without DTrace; traced ordinary
+symbols and actual DOF bindings match while raw generated alias differences are
+retained. Three feature-mode construction runs pass. See
+LIBRARY-STATIC-ORDER-QUALIFICATION.md for the twelve comparisons and prototype
+construction limits. Installed test linkage, runtime paths and dynamic dependency
+gaps remain open; this does not establish static-consumer or body execution.
+
 The separate libfidl actual-object check establishes matching 19 schemas and 26
 patched sites on both sides while retaining its archive-order/raw-symbol
 limitations. See LIBFIDL-BINARY-QUALIFICATION.md. The follow-up above qualifies the other four archives' DOF bindings only.
