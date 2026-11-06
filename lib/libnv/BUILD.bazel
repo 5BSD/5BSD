@@ -3,6 +3,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 
 cc_library(
     name = "internal_headers",
+    visibility = ["//lib/libnv/tests:__pkg__"],
     hdrs = ["common_impl.h", "msgio.h"],
     strip_include_prefix = "/lib/libnv",
 )
@@ -62,3 +63,5 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+exports_files(["msgio.c"], visibility = ["//lib/libnv/tests:__pkg__"])

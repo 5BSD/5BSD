@@ -1,5 +1,26 @@
 # Native Bazel completion plan
 
+## Complete selected non-ASan AMD64 libnv construction and runtime (2026-11-06)
+
+All eleven original C/C++ ATF and TAP programs and 23 installation records match
+fresh independent Make metadata, Kyua/directory and ELF/debug contracts. All
+131 ATF registrations match; 129 cases pass, one original ASan-required case
+skips, and one global-sysctl case remains guest work. All six TAP programs pass
+Kyua with retained native libnv/libc/libsys loader receipts/databases. Normal and
+runtime TAP links reuse identical declared object inputs; only the explicit
+private runtime RPATH/output path differs. The original datagram sysctl test
+needs failure/skip/interruption restoration before privileged guest qualification.
+Positive ASan coverage is still open. NV-TEST-QUALIFICATION.md records final
+bindings and the retained initial configured-link-count audit failure.
+This closes one more missing declaration root; eight initially discovered roots
+remain without sibling BUILD files. Existing BUILD presence is not qualification.
+
+Continue remaining base installed-test parents and full tests-enabled world
+composition, independent world/kernel/modules/debug/pkgbase, normal-service VM
+qualification, CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/reproducibility
+and verified combined publication. Fill ARM64/RISC-V gaps alongside shared work.
+Full-tests guards stay; Make default; BIP excluded; no host installation/reboot.
+
 ## Four complete selected AMD64 library test constructions (2026-11-06)
 
 librt, libsbuf, libexecinfo and libkvm now provide all twelve original selected

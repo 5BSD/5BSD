@@ -7329,3 +7329,12 @@ ordinary symbols after separating debug data, matching original STRIP= programs
 such as the backtrace tests. Other consumers retain default symbol stripping.
 This uses existing explicit Bazel-input support and does not change the default
 system backend or establish full installed-system acceptance.
+.Pp
+The explicit non-ASan AMD64 libnv tests now provide all eleven original C/C++
+ATF and TAP programs with Make-matching installation and ELF/debug contracts.
+Of 131 original ATF cases, 129 pass, one preserves its ASan-required skip and
+one global-sysctl case remains disposable-guest work. All six TAP programs pass
+Kyua with verified native consumer-library traces. TAP runtime links reuse the
+installation links' object inputs with an explicit private runtime search path;
+that path is absent from installed payloads. These use existing format-5 inputs
+and do not establish positive ASan or complete installed-system acceptance.

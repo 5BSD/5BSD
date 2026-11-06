@@ -28,3 +28,7 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_nvlist", srcs = ["nvl
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_bsd_nvpair", srcs = ["bsd_nvpair.c"],
     deps = ["//sys/contrib/libnv:codecs_crypto_kernel_cnvlist_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "user_test_headers", hdrs = ["nv_impl.h"], strip_include_prefix = ".",
+    deps = ["//sys/sys:nv_headers"], visibility = ["//lib/libnv/tests:__pkg__"])

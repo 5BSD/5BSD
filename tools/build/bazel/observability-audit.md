@@ -12125,3 +12125,17 @@ guests. No new component-specific probe requirement is asserted from the absence
 of providers in test fixtures. Live tracing/audit delivery, guest kernel-memory/
 scheduling/IPC cases and cross-ABI execution remain explicit open gates. See
 FOUR-LIBRARY-TEST-QUALIFICATION.md for hash-bound evidence and deferred labels.
+
+## Original libnv ATF/TAP tests (2026-11-06)
+
+All eleven original test sources and libnv implementation/provider sources remain
+unchanged. Native test construction retains the msgio translation unit, private
+wire-layout headers, GNU++17/ABI dependencies and selected original NO_ASAN policy.
+The high-FD regression and 128 other ATF cases pass from installed-form binaries;
+one original ASan-required case skips. All six TAP programs pass the actual Kyua
+engine with verified native libnv/libc/libsys trace receipts. This is not ASan,
+live DTrace or security-audit delivery qualification. The unexecuted global
+sysctl case has an original restoration gap on failure/skip/interruption; repair
+and qualify its cleanup before privileged guest acceptance. No component-specific
+probe deficit is inferred solely from test fixtures lacking providers. See
+NV-TEST-QUALIFICATION.md for retained outputs, final bindings and all open scopes.
