@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Original AMD64 Casper fileargs and services dispatcher (2026-11-06)
+
+The original fileargs program matches fresh Make three-record metadata/Kyua/
+directory and ELF/debug contracts. All eleven cleanup-bearing authority cases
+execute from installation-form code with native broker/service libraries and pass,
+no skips/expected failures. The original directory-discovering services parent
+matches a separate Make file/directory control; real SDK Kyua metadata discovery
+sees an added/removed private child without parent changes (11/22/11 cases).
+FILEARGS-TEST-QUALIFICATION.md records final bindings and the retained first
+header-visibility analysis failure. Two more initially missing declaration roots
+are closed; five initially discovered roots remain without sibling BUILD files.
+Other existing/nested roots still need full inventory and qualification.
+
+Continue remaining base test parents and full tests-enabled world assembly,
+independent world/kernel/modules/debug/pkgbase and normal-service VM gates,
+CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/reproducibility and verified
+combined publication. Fill ARM64/RISC-V gaps alongside shared work. Dispatcher
+discovery does not qualify unreviewed sibling suites. Full-tests guards stay;
+Make remains default; BIP excluded; no host installation/upgrade/reboot.
+
 ## Complete selected AMD64 libproc test construction/runtime (2026-11-06)
 
 The original test, dynamic helper and fully static helper now match fresh Make

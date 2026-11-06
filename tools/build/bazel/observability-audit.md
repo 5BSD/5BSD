@@ -12152,3 +12152,16 @@ firing, audit delivery, other-process tracing or additional kernel-policy/ABI
 profiles. No missing provider is inferred from test fixtures themselves. See
 PROC-TEST-QUALIFICATION.md for immutable controls and final source/action/runtime
 bindings; normal-service VM and whole-system observability gates remain open.
+
+## Original Casper fileargs authority tests (2026-11-06)
+
+The original test, libcasper/cap_fileargs implementation and existing DTrace
+provider sources remain unchanged. Native construction preserves required CASPER,
+rights/operation checks, private native headers and all eleven cleanup-bearing
+registrations. All eleven cases pass from installed-form code and real native
+broker/service libraries; none is bypassed with unrestricted inline fallbacks.
+The directory-discovering dispatcher is original data, with added/removed child
+metadata checks. DTRACE_DOF_INIT_DISABLE is explicit during these tests; no live
+provider-firing or audit-delivery claim follows. No missing provider is inferred
+from test fixtures. See FILEARGS-TEST-QUALIFICATION.md for immutable controls,
+retained first failure and the remaining whole-system/cross-ABI/service gates.

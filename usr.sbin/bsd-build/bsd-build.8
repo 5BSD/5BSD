@@ -7347,3 +7347,12 @@ and signal cases pass from installation-form binaries using native libraries.
 The tests debug their own children on the host kernel; other ABIs, kernel-policy
 profiles and normal-system VM execution remain separate qualification gates.
 These use existing format-5 inputs and do not change the default system backend.
+.Pp
+The original AMD64 Casper fileargs test now has Make-matching installation and
+ELF/debug contracts. All eleven authority cases pass from installation-form
+code with native broker/service libraries and original cleanup phases.
+The shared services test directory retains the original filesystem-discovering
+Kyuafile. Added/removed private child fixtures are discovered without parent
+changes; this metadata check does not qualify other service families.
+CASPER remains required by source policy. These use existing format-5 inputs
+and do not change the default backend or establish full system acceptance.

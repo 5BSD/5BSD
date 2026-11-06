@@ -15,7 +15,7 @@ cc_library(
     hdrs = ["nv.h", "cnv.h", "dnv.h"],
     strip_include_prefix = "/sys/sys",
     include_prefix = "sys",
-    visibility = ["//lib/libnv:__pkg__", "//lib/libcasper/libcasper:__pkg__", "//lib/libnv/tests:__pkg__", "//sys/contrib/libnv:__pkg__"],
+    visibility = ["//lib/libnv:__pkg__", "//lib/libcasper/libcasper:__pkg__", "//lib/libnv/tests:__pkg__", "//sys/contrib/libnv:__pkg__", "//lib/libcasper/services/cap_fileargs/tests:__pkg__"],
 )
 
 cc_library(name = "elf_headers", hdrs = ["elf32.h", "elf64.h", "elf_common.h"],
