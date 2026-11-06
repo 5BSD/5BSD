@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 ATF C/detail test construction (2026-11-06)
+
+All seventeen original C/detail harnesses and two helpers build natively. All
+42 installation records, original directories and nineteen ELF/debug contracts
+match fresh independent Make controls. Actual installed-form metadata matches
+214 original registrations; no original bodies execute in this batch. Native
+alwayslink preserves original direct-helper object inclusion, after independent
+comparison detected missing imports under lazy extraction. Private header access
+is explicit. ATF-C-TEST-QUALIFICATION.md records final evidence and exact limits.
+
+One initially missing declaration root remains, the ATF parent. Existing partial
+C++ declarations and nested test-programs still need complete original traversal
+and installation qualification; file presence is not closure. Continue those,
+full tests-enabled world assembly, independent world/kernel/module/pkgbase/debug,
+normal-service VM acceptance, CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/
+reproducibility and verified combined publication. Fill ARM64/RISC-V gaps in
+shared work. Make default; full-tests guards remain; BIP excluded; no host install.
+
 ## Complete selected AMD64 libbe test and parent construction (2026-11-06)
 
 The original helper and root/cleanup shell case now have native construction and

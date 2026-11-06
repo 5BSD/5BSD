@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(['atf-c/build.c', 'atf-c/check.c', 'atf-c/detail/dynstr.c', 'atf-c/detail/env.c', 'atf-c/error.c', 'atf-c/detail/fs.c', 'atf-c/detail/list.c', 'atf-c/detail/map.c', 'atf-c/detail/process.c', 'atf-c/detail/sanity.c', 'atf-c/detail/text.c', 'atf-c/detail/user.c', 'atf-c/utils.c', 'atf-c/tc.c', 'atf-c/tp.c', 'atf-c/detail/tp_main.c'], visibility = ["//lib/atf/libatf-c:__pkg__"])
 cc_library(name = "c_headers", hdrs = ['atf-c.h', 'atf-c/build.h', 'atf-c/check.h', 'atf-c/defs.h', 'atf-c/error.h', 'atf-c/error_fwd.h', 'atf-c/macros.h', 'atf-c/tc.h', 'atf-c/tp.h', 'atf-c/utils.h'], strip_include_prefix = ".", visibility = ["//visibility:public"])
-cc_library(name = "c_private_headers", hdrs = ['config.h', 'atf-c/detail/dynstr.h', 'atf-c/detail/env.h', 'atf-c/detail/fs.h', 'atf-c/detail/list.h', 'atf-c/detail/map.h', 'atf-c/detail/process.h', 'atf-c/detail/sanity.h', 'atf-c/detail/text.h', 'atf-c/detail/user.h'], strip_include_prefix = ".", visibility = ["//lib/atf/libatf-c:__pkg__"])
+cc_library(name = "c_private_headers", hdrs = ['config.h', 'atf-c/detail/dynstr.h', 'atf-c/detail/env.h', 'atf-c/detail/fs.h', 'atf-c/detail/list.h', 'atf-c/detail/map.h', 'atf-c/detail/process.h', 'atf-c/detail/sanity.h', 'atf-c/detail/text.h', 'atf-c/detail/user.h'], strip_include_prefix = ".", visibility = ["//lib/atf/libatf-c:__pkg__", "//lib/atf/libatf-c/tests:__subpackages__"])
 
 exports_files(['atf-c.h', 'atf-c/build.h', 'atf-c/check.h', 'atf-c/defs.h', 'atf-c/error.h', 'atf-c/error_fwd.h', 'atf-c/macros.h', 'atf-c/tc.h', 'atf-c/tp.h', 'atf-c/utils.h', 'atf-c/atf-c.3'], visibility = ["//lib/atf/libatf-c:__pkg__"])
 
@@ -21,3 +21,7 @@ exports_files(["doc/atf-test-program.1"], visibility = ["//share/man/man1:__pkg_
 exports_files(["doc/atf-test-case.7"], visibility = ["//share/man/man7:__pkg__"])
 
 exports_files(["AUTHORS", "COPYING", "NEWS", "README.md"], visibility = ["//share/doc/atf:__pkg__"])
+
+exports_files(["atf-c/atf_c_test.c", "atf-c/build_test.c", "atf-c/check_test.c", "atf-c/error_test.c", "atf-c/macros_test.c", "atf-c/tc_test.c", "atf-c/tp_test.c", "atf-c/utils_test.c", "atf-c/detail/dynstr_test.c", "atf-c/detail/env_test.c", "atf-c/detail/fs_test.c", "atf-c/detail/list_test.c", "atf-c/detail/map_test.c", "atf-c/detail/process_test.c", "atf-c/detail/sanity_test.c", "atf-c/detail/text_test.c", "atf-c/detail/user_test.c", "atf-c/detail/process_helpers.c", "atf-c/detail/version_helper.c", "atf-c/detail/test_helpers.c", "atf-c/macros_h_test.c", "atf-c/unused_test.c"], visibility = ["//lib/atf/libatf-c/tests:__subpackages__"])
+cc_library(name = "c_test_headers", hdrs = ["atf-c/detail/test_helpers.h", "atf-c/h_build.h"], strip_include_prefix = ".",
+    deps = [":c_headers", ":c_private_headers"], visibility = ["//lib/atf/libatf-c/tests:__subpackages__"])

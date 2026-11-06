@@ -12198,3 +12198,13 @@ retains root and cleanup requirements. The original pool-creation/cloning body
 is not executed on the host. No teardown, upgrade workflow, live provider firing
 or audit-delivery claim follows from construction/ELF/metadata parity. See
 LIBBE-TEST-QUALIFICATION.md for retained evidence and the disposable-system gate.
+
+## Original ATF C/detail test construction (2026-11-06)
+
+Original test-body, implementation and provider sources are unchanged. All
+original helper code is retained, including unreferenced direct helper objects
+required by Make, rather than silently dropping it through archive extraction.
+All 214 registrations match actual native/Make metadata, but bodies do not run
+in this batch. No live provider firing, audit delivery or missing test-fixture
+probe deficit is inferred. ATF-C-TEST-QUALIFICATION.md records retained failures,
+final installation/ELF/metadata bindings and open system/cross/runtime gates.
