@@ -7280,3 +7280,14 @@ pass. The remaining 264 cases are unexecuted manual/deferred work requiring
 actual guest environments and global-state controls. A user-owned Bazel fixture
 does not replace installed root ownership. The existing explicit Bazel-input
 qualification interface remains in use; Make stays the default system backend.
+
+.Pp
+Selected AMD64 general libc tests and execve/spawn children include sixty-seven
+original executables, the test DSO and 143 installed records matching Make.
+The login-record program retains fully static fixed-address linking. The ELF
+comparison helper supports explicit --static-program mode; dynamic PIE checks
+remain the default. All 239 case registrations and metadata match. Thirty-six
+selected host cases pass and two retain original architecture skips; 201 cases
+remain unexecuted. Spawn fixture copies preserve original bytes and executable
+modes with declared tools. This uses the existing explicit Bazel-input workflow
+and does not change the default system backend.

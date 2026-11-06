@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_fileactions.c', 't_spawn.c', 't_spawnattr.c', 'h_fileactions.c', 'h_spawn.c', 'h_spawnattr.c', 'h_nonexec.sh'], visibility = ["//lib/libc/tests/gen/posix_spawn:__pkg__"])

@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Complete original AMD64 gen/execve/spawn construction (2026-11-06)
+
+All 67 original executables (64 ATF programs and three helpers), the test DSO and
+143 installed records match independent Make metadata/link/Kyua/script/fixture/
+ELF/debug contracts. The login-record test retains fully static EXEC linkage,
+qualified through explicit static verifier API/CLI checks without weakening
+dynamic defaults. All 239 case metadata listings and adapter policies match.
+Thirty-eight selected host cases yield 36 passes and two original architecture
+skips. Three executable fixture byte/mode checks pass. The remaining 201 cases
+are unexecuted manual/deferred work. See LIBC-GEN-TEST-QUALIFICATION.md for final
+receipts, fixture semantics, skipped coverage and retained first analysis failure.
+
+Next: libc SSP/iconv installation and complete parent traversal, then disposable
+installed-guest cohorts. All full world/pkgbase/cross/bootstrap/cache/sandbox/
+reproducibility/normal-service/performance/publication gates remain open. Make
+stays default, BIP excluded.
+
 ## Complete original AMD64 system-call test construction (2026-11-06)
 
 All 63 selected original programs and 128 installed records match independent

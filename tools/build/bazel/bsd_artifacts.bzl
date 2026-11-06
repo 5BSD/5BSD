@@ -103,3 +103,28 @@ bsd_script_wrapper = rule(
         "redirect": attr.label(executable = True, cfg = "exec", mandatory = True),
     },
 )
+
+
+def _copy_file(ctx):
+    output = ctx.actions.declare_file(ctx.attr.output)
+    ctx.actions.run(
+        executable = ctx.attr.redirect[DefaultInfo].files_to_run,
+        arguments = (["--executable"] if ctx.attr.make_executable else []) + [output.path, ctx.executable.cat.path, ctx.file.src.path],
+        inputs = [ctx.file.src], tools = [ctx.attr.cat[DefaultInfo].files_to_run] + ctx.files.runtime,
+        outputs = [output], env = {"LC_ALL": "C"}, use_default_shell_env = False,
+        mnemonic = "BSDCopyFile",
+    )
+    return [DefaultInfo(files = depset([output]))]
+
+bsd_copy_file = rule(
+    implementation = _copy_file,
+    attrs = {
+        "src": attr.label(allow_single_file = True, mandatory = True),
+        "output": attr.string(mandatory = True),
+        "make_executable": attr.bool(default = False),
+        "cat": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
+        "runtime": attr.label_list(allow_files = True, cfg = "exec"),
+        "redirect": attr.label(executable = True, cfg = "exec", mandatory = True),
+    },
+    doc = "Copy unchanged bytes with declared tools and an explicit executable output mode.",
+)

@@ -41,12 +41,64 @@ class RuntimePathContracts(unittest.TestCase):
         self.tool = self.root / 'readelf'
         self.tool.write_bytes(b'inspection boundary fixture')
 
-    def compare(self, candidate, reference, expected=None):
+    def compare(self, candidate, reference, expected=None, static=False):
         def inspect(args):
             return candidate if Path(args[-1]) == self.candidate else reference
         with patch.object(checker, 'run', side_effect=inspect), patch.object(checker, 'sections', return_value={}):
             return checker.compare_program(self.tool, 'unused', self.candidate,
-                self.reference, self.root, expected_search_paths=expected)
+                self.reference, self.root, expected_search_paths=expected, static=static)
+
+    @staticmethod
+    def static_metadata():
+        lines = [line for line in _BASE.splitlines(True)
+                 if not any(marker in line for marker in ('Requesting program interpreter', '(NEEDED)', '(FLAGS)', '(FLAGS_1)'))]
+        return ''.join(lines).replace('Type: DYN (Shared object file)', 'Type: EXEC (Executable file)')
+
+    def test_static_contract_is_explicit(self):
+        static = self.static_metadata()
+        self.assertEqual(self.compare(static, static, static=True)['linkage'], 'static')
+        with self.assertRaisesRegex(ValueError, 'interpreter'):
+            self.compare(static, static)
+
+    def test_static_rejects_dynamic_program(self):
+        with self.assertRaisesRegex(ValueError, 'static program has dynamic'):
+            self.compare(_BASE, _BASE, static=True)
+
+    def test_static_rejects_dynamic_metadata_on_either_side(self):
+        static = self.static_metadata()
+        for field in (' [Requesting program interpreter: /libexec/ld-elf.so.1]\n',
+                      ' 0x1 (NEEDED) Shared library: [libc.so.7]\n',
+                      ' 0xe (SONAME) Library soname: [bad.so]\n',
+                      ' DYNAMIC 0x0 0x0 0x0 0x1 0x1 RW 0x8\n'):
+            for a, b in [(static+field,static),(static,static+field)]:
+                with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'static program has dynamic'):
+                    self.compare(a, b, static=True)
+
+    def test_static_rejects_wrong_type_or_pie(self):
+        static = self.static_metadata()
+        for wrong in (static.replace('Type: EXEC', 'Type: DYN'),
+                      static+' 0x6ffffffb (FLAGS_1) Flags: PIE\n'):
+            with self.subTest(wrong=wrong), self.assertRaisesRegex(ValueError, 'fixed static executable'):
+                self.compare(wrong, static, static=True)
+
+    def test_static_requires_relro(self):
+        static = self.static_metadata()
+        with self.assertRaisesRegex(ValueError, 'RELRO'):
+            self.compare(static.replace('GNU_RELRO', 'OTHER_SEGMENT'), static, static=True)
+
+    def test_static_rejects_runtime_search_paths(self):
+        static = self.static_metadata()
+        with self.assertRaisesRegex(ValueError, 'unexpected runtime search path'):
+            self.compare(static+_PATH, static, static=True)
+
+    def test_static_cannot_allow_an_explicit_runtime_path(self):
+        static = self.static_metadata()
+        with self.assertRaisesRegex(ValueError, 'static program cannot have runtime search paths'):
+            self.compare(static+_PATH, static+_PATH, ['/usr/tests/lib/libc/tls'], static=True)
+
+    def test_static_cannot_be_used_as_shared_object_mode(self):
+        with self.assertRaisesRegex(ValueError, 'static program has dynamic'):
+            checker.parse_program(self.static_metadata(), program=False, static=True)
 
     def test_default_no_path_contract_is_preserved(self):
         self.assertEqual(self.compare(_BASE, _BASE)['expected_search_paths'], [])

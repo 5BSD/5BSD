@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "isqemu", hdrs = ["isqemu.h"], strip_include_prefix = ".",
-    visibility = ["//lib/libthr/tests:__pkg__"])
+    visibility = ["//lib/libthr/tests:__pkg__", "//lib/libc/tests/gen:__pkg__"])
+
+exports_files(['t_alarm.c', 't_assert.c', 't_basedirname.c', 't_cpuset.c', 't_dir.c', 't_floatunditf.c', 't_fnmatch.c', 't_ftok.c', 't_getcwd.c', 't_getgrent.c', 't_glob.c', 't_humanize_number.c', 't_isnan.c', 't_nice.c', 't_pause.c', 't_raise.c', 't_realpath.c', 't_setdomainname.c', 't_sethostname.c', 't_sleep.c', 't_syslog.c', 't_time.c', 't_ttyname.c', 't_vis.c'], visibility = ["//lib/libc/tests/gen:__pkg__"])

@@ -89,3 +89,6 @@ bsd_install_archive_set(name = "installation_archives", archives = [
     ":rpc_installation_archives", ":osreldate_install_archive",
     ":kernel_header_installation_archives", ":aliases_archive",
 ], visibility = ["//visibility:public"])
+
+cc_library(name = "libc_gen_entropy_headers", hdrs = ["limits.h", "signal.h", "unistd.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libc/tests/gen:__pkg__"])

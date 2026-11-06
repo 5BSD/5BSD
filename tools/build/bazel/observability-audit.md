@@ -12073,3 +12073,14 @@ Nineteen bounded process/private-file cases pass. The 264 deferred global IPC,
 root, networking, resource-limit and wired-memory cases do not establish runtime
 probe firing, audit delivery or safe global-state restoration. Keep those as
 explicit installed-guest and instrumentation qualification gates.
+
+
+## General libc tests and exec/spawn children (2026-11-06)
+
+Original sources/instrumentation remain intact. The login-record test preserves
+its static link; original thread/Blocks/math/utility dependencies and test DSO
+remain explicit. Thirty-six bounded host cases pass with two original architecture
+skips. Login/session-record writes, child exec/spawn, hostname/domain changes,
+syslog and other deferred cases do not yet establish production audit delivery
+or probe firing. Keep those 201 unexecuted cases and their isolation/cleanup as
+explicit installed-guest and instrumentation qualification gates.

@@ -29,7 +29,7 @@ def run(argv):
                           text=True, check=True, env=ENV).stdout
 
 
-def parse_program(text, program=True):
+def parse_program(text, program=True, static=False):
     def field(label):
         values = re.findall(r'^\s*' + re.escape(label) + r':\s*(.+)$', text, re.M)
         if len(values) != 1:
@@ -41,7 +41,10 @@ def parse_program(text, program=True):
     stack = [line.split() for line in text.splitlines() if line.strip().startswith('GNU_STACK ')]
     loads = [line.split() for line in text.splitlines() if line.strip().startswith('LOAD ')]
     sonames = re.findall(r'\(SONAME\)[^\n]*\[([^\]]+)\]', text)
-    if program and len(interp) != 1:
+    if static:
+        if not program or interp or sonames or needed or re.search(r'^\s*DYNAMIC\s', text, re.M):
+            raise ValueError('static program has dynamic linking metadata')
+    if program and not static and len(interp) != 1:
         raise ValueError('program interpreter metadata ambiguous')
     if not program and (interp or len(sonames) != 1):
         raise ValueError('shared object needs one SONAME and no interpreter')
@@ -137,20 +140,25 @@ def sections(objcopy, readelf, artifact, scratch):
     return result
 
 
-def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected_search_paths=None):
+def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected_search_paths=None, static=False):
     records = {}
     for key, path in (('candidate', candidate), ('make_reference', reference)):
         text = run([readelf, '-h', '-l', '-d', '-W', '--dyn-syms', '--version-info', path])
-        records[key] = {'path': str(path), 'sha256': sha(path), 'metadata': parse_program(text),
+        records[key] = {'path': str(path), 'sha256': sha(path), 'metadata': parse_program(text, static=static),
                         'sections': sections(objcopy, readelf, path, scratch)}
     a, b = records['candidate']['metadata'], records['make_reference']['metadata']
     if expected_search_paths is not None and not isinstance(expected_search_paths, (list, tuple)):
         raise ValueError('runtime search path contract must be a list or tuple')
     expected = [] if expected_search_paths is None else list(expected_search_paths)
+    if static and expected:
+        raise ValueError('static program cannot have runtime search paths')
     for label, record in (('candidate', a), ('reference', b)):
-        if record['type'] != 'DYN' or not record['pie']:
+        if static:
+            if record['type'] != 'EXEC' or record['pie']:
+                raise ValueError(label + ': fixed static executable required')
+        elif record['type'] != 'DYN' or not record['pie']:
             raise ValueError(label + ': PIE executable required')
-        if not record['relro'] or not record['now']:
+        if not record['relro'] or (not static and not record['now']):
             raise ValueError(label + ': RELRO and immediate binding required')
         if [value for kind, value in record['search_paths']] != expected:
             raise ValueError(label + ': unexpected runtime search path')
@@ -166,7 +174,7 @@ def compare_program(readelf, objcopy, candidate, reference, scratch, *, expected
                          json.dumps({'candidate': a['needed_order'], 'make': b['needed_order']}))
     sa, sb = records['candidate']['sections'], records['make_reference']['sections']
     differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
-    return {'scope': 'program-metadata-comparison', 'expected_search_paths': expected, 'readelf_sha256': sha(readelf),
+    return {'scope': 'program-metadata-comparison', 'linkage': 'static' if static else 'dynamic', 'expected_search_paths': expected, 'readelf_sha256': sha(readelf),
             **records, 'needed_order_equal': a['needed_order'] == b['needed_order'],
             'byte_identical': sha(candidate) == sha(reference),
             'section_names_equal': sorted(sa) == sorted(sb), 'differing_sections': differing,
@@ -258,9 +266,12 @@ def main():
     selection.add_argument('--qualification', type=Path, help='completed native qualification directory')
     p.add_argument('--target', help='explicit captured target label')
     p.add_argument('--output-suffix', help='unique literal suffix of its captured output name')
+    p.add_argument('--static-program', action='store_true', help='require a fixed static executable with no interpreter or dynamic dependencies')
     p.add_argument('--expected-search-path', action='append', default=[],
                    help='explicit expected program RPATH/RUNPATH value; candidate and Make tags must still agree')
     a = p.parse_args()
+    if a.kind != 'program' and a.static_program:
+        p.error('--static-program requires program comparison')
     if a.kind != 'program' and a.expected_search_path:
         p.error('--expected-search-path requires program comparison')
     if a.qualification is not None:
@@ -274,7 +285,7 @@ def main():
     if a.kind == 'program':
         scratch = a.output.with_suffix('.scratch')
         scratch.mkdir()
-        result = compare_program(a.readelf, a.objcopy, a.candidate, a.make_artifact, scratch, expected_search_paths=a.expected_search_path)
+        result = compare_program(a.readelf, a.objcopy, a.candidate, a.make_artifact, scratch, expected_search_paths=a.expected_search_path, static=a.static_program)
         scratch.rmdir()
     else:
         result = compare_archive(a.nm, a.ar, a.candidate, a.make_artifact)
