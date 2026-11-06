@@ -8,6 +8,8 @@ Relocatable and shared stages are distinct; PREFIX_SYMS remains separate.
 load(":bsd_object_order.bzl", "ordered_objects")
 
 
+BsdModuleLinkInfo = provider(fields = ["recipe"])
+
 def _link(ctx):
     objects = ordered_objects(ctx.files.objects, ctx.attr.object_order)
     if not objects:
@@ -15,6 +17,11 @@ def _link(ctx):
     if len(depset(objects).to_list()) != len(objects):
         fail("duplicate module object inputs")
     output = ctx.actions.declare_file(ctx.attr.output)
+    recipe = ctx.actions.declare_file(ctx.label.name + ".recipe.json")
+    ctx.actions.write(recipe, json.encode(dict(format = 1, output = output.path,
+        ordered_objects = [file.path for file in objects], emulation = ctx.attr.emulation,
+        shared = ctx.attr.shared, linkopts = ctx.attr.linkopts,
+        script = ctx.file.script.path if ctx.file.script else None)) + "\n")
     args = ctx.actions.args()
     args.add_all(["-m", ctx.attr.emulation, "-warn-common", "--build-id=sha1"])
     args.add_all(ctx.attr.linkopts)
@@ -28,7 +35,8 @@ def _link(ctx):
         arguments = [args], inputs = objects + ([ctx.file.script] if ctx.file.script else []),
         tools = ctx.files.linker_inputs, outputs = [output], env = {"LC_ALL": "C"},
         use_default_shell_env = False, mnemonic = "BSDModuleLink")
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), BsdModuleLinkInfo(recipe = recipe),
+            OutputGroupInfo(metadata = depset([recipe]))]
 
 bsd_module_link = rule(implementation = _link, attrs = {
     "objects": attr.label_list(allow_files = True, mandatory = True),

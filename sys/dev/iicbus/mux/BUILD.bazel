@@ -20,7 +20,7 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objec
 load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 
 amd64_generic_module_objects(name = "iicmux_iicmux_module", srcs = ["iicmux.c"],
-    deps = ["//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/iicbus/mux:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus/mux:iicmux_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:gpio_module_context_0', '//sys/dev/iicbus/mux:i2c_module_context_0', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus/mux:iicmux_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "iicmux_iicmux_if_module", srcs = [":iicmux_if_module_source"],
@@ -28,11 +28,11 @@ amd64_generic_module_objects(name = "iicmux_iicmux_if_module", srcs = [":iicmux_
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :iicmux_if_module_source)=iicmux_if.c", "-fdebug-prefix-map=$(execpath :iicmux_if_module_source)=iicmux_if.c"])
 
 amd64_generic_module_objects(name = "ltc430x_ltc430x_module", srcs = ["ltc430x.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/iicbus/mux:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus/mux:iicmux_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/iicbus/mux:i2c_module_context_0', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus/mux:iicmux_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "pca954x_pca954x_module", srcs = ["pca954x.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/iicbus/mux:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus/mux:iicmux_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/iicbus/mux:i2c_module_context_0', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus/mux:iicmux_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
@@ -72,3 +72,6 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ['pca954x.c'],
     deps = ["//sys/dev/iicbus/mux:i2c_module_context_0", "//sys/dev/iicbus/mux:iicmux_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/ofw:mii_family_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/vm:core_kernel_tty_headers", "//sys/" + arch + "/conf:generic_opt_platform_header"],
 ) for arch in ['arm64', 'riscv']]
+
+# FDT-enabled AMD64 uses the same declared source/recipe policy.
+amd64_generic_module_objects(name = 'iic_gpiomux_iic_gpiomux_module', srcs = ['iic_gpiomux.c'], deps = ['//sys/dev/gpio:gpio_if_headers', '//sys/dev/gpio:hardware_module_amdgpio_headers', '//sys/dev/iicbus/mux:i2c_module_context_0', '//sys/dev/iicbus/mux:iicmux_if_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers', '//sys/amd64/conf:generic_opt_platform_header'])

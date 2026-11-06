@@ -887,3 +887,15 @@ config_setting(name = "kernel_tcp_hhook_enabled", flag_values = {":kernel_tcp_hh
 # kern.opts.mk disables gadget examples when USB itself is disabled.
 bool_flag(name = "usb_gadget_examples", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "usb_gadget_examples_enabled", flag_values = {":usb_gadget_examples": "true", ":usb": "true"}, visibility = ["//visibility:public"])
+
+# Kernel FDT is distinct from the userland/libfdt source setting.
+# Auto preserves source GENERIC defaults: off for AMD64, on for ARM64/RISC-V.
+string_flag(name = "kernel_fdt", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
+config_setting(name = "kernel_fdt_yes", flag_values = {":kernel_fdt": "yes"})
+load("//tools/build/bazel:kernel_option_settings.bzl", "KERNEL_OPTION_DEFAULTS", "KERNEL_ARCH_CPUS")
+[config_setting(name = "kernel_fdt_auto_" + arch, flag_values = {":kernel_fdt": "auto"},
+    constraint_values = ["@platforms//cpu:" + KERNEL_ARCH_CPUS[arch]])
+ for arch in sorted(KERNEL_OPTION_DEFAULTS) if KERNEL_OPTION_DEFAULTS[arch]["FDT"] == "yes"]
+selects.config_setting_group(name = "kernel_fdt_enabled", match_any = [":kernel_fdt_yes"] +
+    [":kernel_fdt_auto_" + arch for arch in sorted(KERNEL_OPTION_DEFAULTS) if KERNEL_OPTION_DEFAULTS[arch]["FDT"] == "yes"],
+    visibility = ["//visibility:public"])

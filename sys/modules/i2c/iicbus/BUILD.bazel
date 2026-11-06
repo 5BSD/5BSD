@@ -2,8 +2,8 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 # Original export policy and complete link order.
-amd64_generic_module(module = "iicbus", objects = ["//sys/dev/iicbus:iicbus_iic_recover_bus_module_object_files", "//sys/dev/iicbus:iicbus_iicbus_module_object_files", "//sys/dev/iicbus:iicbus_iicbus_if_module_object_files", "//sys/dev/iicbus:iicbus_acpi_iicbus_module_object_files"],
-    object_order = ["iic_recover_bus.o", "iicbus.o", "iicbus_if.o", "iiconf.o", "acpi_iicbus.o"], export_all = True)
+amd64_generic_module(module = "iicbus", objects = ['//sys/dev/iicbus:iicbus_iic_recover_bus_module_object_files', '//sys/dev/iicbus:iicbus_iicbus_module_object_files', '//sys/dev/iicbus:iicbus_iicbus_if_module_object_files', '//sys/dev/iicbus:iicbus_acpi_iicbus_module_object_files'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/iicbus:iicbus_ofw_iicbus_module_object_files'], "//conditions:default": []}),
+    object_order = ['iic_recover_bus.o', 'iicbus.o', 'iicbus_if.o', 'iiconf.o', 'acpi_iicbus.o'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['ofw_iicbus.o'], "//conditions:default": []}), export_all = True)
 
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
 
@@ -14,3 +14,5 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
     object_order = {'arm64': ['iic_recover_bus.o', 'iicbus.o', 'iicbus_if.o', 'iiconf.o', 'acpi_iicbus.o', 'ofw_iicbus.o'], 'riscv': ['iic_recover_bus.o', 'iicbus.o', 'iicbus_if.o', 'iiconf.o', 'ofw_iicbus.o']}[arch],
     export_all = True,
 ) for arch in ["arm64", "riscv"]]
+
+filegroup(name = "link_recipe", srcs = [":generic_link"], output_group = "metadata", visibility = ["//tools/build/bazel:__pkg__"])

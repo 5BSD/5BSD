@@ -7807,3 +7807,14 @@ ELF/debug CRC checks pass for default and disabled-option profiles. The source-o
 test-framework parent also composes its existing producer; root TESTS selection is
 separate. USB debug macro variants, device runtime and full kernel/pkgbase remain
 unqualified. Existing format-5 build-settings carry these options.
+.Pp
+The string //tools/build/bazel/config:kernel_fdt accepts auto, yes or no and is
+separate from the userland fdt setting. Auto preserves the source GENERIC default;
+explicit values emit native parser overrides. Shared source-owned defaults govern
+selectors and normal configuration actions validate actual generated option headers
+before publishing identity/inventory, even when tests are not requested.
+Native AMD64 I2C/GPIO parents and FDT source alternatives pass original Make
+membership, ordered-object and installation-policy checks plus ELF/debug CRC review.
+Typed module link recipes expose actual selected object Files as build metadata;
+they do not enter installed payloads. Full FDT kernel/boot, custom configurations,
+cross-platform parent composition and complete kernel/pkgbase remain unqualified.

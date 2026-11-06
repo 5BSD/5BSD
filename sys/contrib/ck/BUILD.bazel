@@ -1281,7 +1281,7 @@ bsd_source_headers(name = "cross_routing_module_headers",
 
 # Explicit CK headers for ARM64/RISC-V input-device module consumers.
 bsd_source_headers(name = "cross_input_module_headers",
-    hdrs = ['include/ck_cc.h', 'include/ck_epoch.h', 'include/ck_limits.h', 'include/ck_md.h', 'include/ck_pr.h', 'include/ck_queue.h', 'include/ck_stack.h', 'include/ck_stdbool.h', 'include/ck_stddef.h', 'include/ck_stdint.h', 'include/gcc/aarch64/ck_f_pr.h', 'include/gcc/aarch64/ck_pr.h', 'include/gcc/aarch64/ck_pr_llsc.h', 'include/gcc/ck_cc.h', 'include/gcc/ck_f_pr.h', 'include/gcc/ck_pr.h'],
+    hdrs = ['include/ck_cc.h', 'include/ck_epoch.h', 'include/ck_limits.h', 'include/ck_md.h', 'include/ck_pr.h', 'include/ck_queue.h', 'include/ck_stack.h', 'include/ck_stdbool.h', 'include/ck_stddef.h', 'include/ck_stdint.h', 'include/gcc/aarch64/ck_f_pr.h', 'include/gcc/aarch64/ck_pr.h', 'include/gcc/aarch64/ck_pr_llsc.h', 'include/gcc/ck_cc.h', 'include/gcc/ck_f_pr.h', 'include/gcc/ck_pr.h', 'include/gcc/x86_64/ck_pr.h', 'include/gcc/x86_64/ck_f_pr.h'],
     includes = ["include"],
     visibility = (((((((((((["//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__"]) + ['//sys/dev/gpio:__pkg__']) + ['//sys/dev/cyapa:__pkg__']) + ['//sys/dev/iicbus:__pkg__']) + ['//sys/net:__pkg__']) + ['//sys/dev/wg:__pkg__']) + ['//sys/netinet6:__pkg__']) + ['//sys/netinet:__pkg__']) + ['//sys/netipsec:__pkg__']) + ['//sys/netlink:__pkg__']) + ['//sys/dev/iser:__pkg__']) + ['//sys/dev/mfi:__pkg__'])
 

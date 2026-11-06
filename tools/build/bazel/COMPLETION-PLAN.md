@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## FDT option authority and I2C/GPIO parents pass (2026-11-06)
+
+Three new AMD64 parents compose 45 unique module/debug products under auto/no and
+55 under FDT=yes, including ten added AMD64 producers and three corrected source
+alternatives. Sixteen test targets pass in each final profile. Independent original
+Make parent-export propagation, complete membership/installation attributes and
+ordered object lists plus all 145 selected ELF/debug pairs pass. Final captures
+preserve every reviewed artifact byte for byte. See FDT-MODULE-PARENTS-QUALIFICATION.md.
+
+Auto defaults live in one source-owned declaration shared by selectors/configuration;
+normal parser actions validate the complete actual option-header set before publishing
+identity/inventory. A real wrapper negative check rejects a stale expectation even
+without running a Bazel test. Eighteen parser inventory cases pass across the three
+architectures; they are not full cross builds. Retained failed producers and observers
+are documented; no source C, installation payload or signing/publication policy changed.
+
+NEXT: remaining root/kernel-option selection and optional producers; coherent full
+kernel/GDB/modules/directories/aliases/linker.hints/pkgbase, then normal startup/
+authentication/services and genuine upgrades. FDT-enabled whole-kernel/custom-config
+and all cross/bootstrap/cache/sandbox/reproducibility/debug/resource/hardware/publication
+gates remain open. Make stays production/default; BIP excluded.
+
 ## USB and test-framework parent selection passes (2026-11-06)
 
 New source-owned AMD64 USB and test-framework parents compose 83 actual module/debug

@@ -54,7 +54,7 @@ def kernel_module_artifacts(module, objects, emulation, script = None, linkopts 
         enabled = select({"//tools/build/bazel/config:kernel_debug_enabled": True, "//conditions:default": False}),
         visibility = ["//visibility:public"])
     native.filegroup(name = prefix + "generic_debug", srcs = [":" + prefix + "generic_module"], output_group = "debug_files", visibility = ["//visibility:public"])
-    bsd_kernel_module_product(name = prefix + "module_product", src = ":" + prefix + "generic_module",
+    bsd_kernel_module_product(name = prefix + "module_product", src = ":" + prefix + "generic_module", link = ":" + prefix + "generic_link",
         package = package, aliases = aliases, file_metadata = _FILE_METADATA, alias_metadata = _ALIAS_METADATA,
         visibility = ["//visibility:public"])
 

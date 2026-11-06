@@ -101,15 +101,15 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objec
 load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 
 amd64_generic_module_objects(name = "ads111x_ads111x_module", srcs = ["adc/ads111x.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "ds1307_ds1307_module", srcs = ["rtc/ds1307.c"],
-    deps = ["//sys/dev/iicbus:i2c_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:clock_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:i2c_module_context_2', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "ds13rtc_ds13rtc_module", srcs = ["rtc/ds13rtc.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:clock_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "ds1672_ds1672_module", srcs = ["rtc/ds1672.c"],
@@ -117,19 +117,19 @@ amd64_generic_module_objects(name = "ds1672_ds1672_module", srcs = ["rtc/ds1672.
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "ds3231_ds3231_module", srcs = ["rtc/ds3231.c"],
-    deps = ["//sys/dev/iicbus:i2c_module_context_3", "//sys/kern:bus_if_headers", "//sys/kern:clock_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:i2c_module_context_3', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "htu21_htu21_module", srcs = ["sensor/htu21.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "icee_icee_module", srcs = ["icee.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "if_ic_if_ic_module", srcs = ["if_ic.c"],
-    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:i2c_module_context_0", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:i2c_module_context_0", "//sys/netinet6:usb_net_umb_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers"],
+    deps = ['//sys/vm:usb_net_usie_headers', '//sys/net:i2c_module_context_0', '//sys/contrib/ck:core_kernel_kern_intr_headers', '//sys/netinet:i2c_module_context_0', '//sys/netinet6:usb_net_umb_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/contrib/ck:cross_input_module_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "iic_iic_module", srcs = ["iic.c"],
@@ -141,7 +141,7 @@ amd64_generic_module_objects(name = "iicbb_iicbb_if_module", srcs = [":iicbb_if_
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :iicbb_if_module_source)=iicbb_if.c", "-fdebug-prefix-map=$(execpath :iicbb_if_module_source)=iicbb_if.c"])
 
 amd64_generic_module_objects(name = "iicbb_iicbb_module", srcs = ["iicbb.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbb_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbb_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/contrib/libfdt:mii_family_headers', '//sys/dev/fdt:mii_family_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers', '//sys/net:cross_io_bus_gpiokeys_gpiokeys_module_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "iicbus_iic_recover_bus_module", srcs = ["iic_recover_bus.c"],
@@ -157,7 +157,7 @@ amd64_generic_module_objects(name = "iicbus_iicbus_if_module", srcs = [":iicbus_
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :iicbus_if_module_source)=iicbus_if.c", "-fdebug-prefix-map=$(execpath :iicbus_if_module_source)=iicbus_if.c"])
 
 amd64_generic_module_objects(name = "iicbus_acpi_iicbus_module", srcs = ["acpi_iicbus.c"],
-    deps = ["//sys/contrib/dev/acpica/include:peripheral_devices_kernel_acpi_iicbus_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    deps = ['//sys/contrib/dev/acpica/include:peripheral_devices_kernel_acpi_iicbus_headers', '//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/acpica:acpi_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/amd64/conf:net_kernel_opt_acpi_header'],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "iichid_iichid_module", srcs = ["iichid.c"],
@@ -169,31 +169,31 @@ amd64_generic_module_objects(name = "iicsmb_iicsmb_module", srcs = ["iicsmb.c"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "isl12xx_isl12xx_module", srcs = ["rtc/isl12xx.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:clock_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "max44009_max44009_module", srcs = ["sensor/max44009.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "nxprtc_nxprtc_module", srcs = ["rtc/nxprtc.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:clock_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "pcf8574_pcf8574_module", srcs = ["gpio/pcf8574.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/gpio:hardware_module_amdgpio_headers', '//sys/dev/ofw:hardware_module_adlngpio_headers', '//sys/vm:core_kernel_imgact_shell_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/dev/gpio:gpio_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:cross_io_bus_gpioiic_gpioiic_module_headers', '//sys/dev/ofw:ofw_bus_if_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "pcf8591_pcf8591_module", srcs = ["adc/pcf8591.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "rtc8583_rtc8583_module", srcs = ["rtc/rtc8583.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:clock_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 amd64_generic_module_objects(name = "s35390a_s35390a_module", srcs = ["rtc/s35390a.c"],
-    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:clock_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/amd64/conf:generic_opt_platform_header'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/vm:core_kernel_tty_headers'], "//conditions:default": []}),
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
 
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
@@ -425,3 +425,15 @@ load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
 # Public installed ABI headers follow include/Makefile source groups.
 public_header_installation(name = "public_flat_dev_iicbus_install", directory = "dev/iicbus",
     files = {header: header.split("/")[-1] for header in glob(["*.h"], allow_empty = False)}, enabled = "//tools/build/bazel/config:includes_enabled")
+
+# FDT-enabled AMD64 uses the same declared source/recipe policy.
+amd64_generic_module_objects(name = 'hym8563_hym8563_module', srcs = ['rtc/hym8563.c'], deps = ['//sys/dev/clk:clknode_if_cross_io_bus_headers', '//sys/dev/clk:cross_io_bus_hym8563_hym8563_module_headers', '//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers', '//sys/amd64/conf:generic_opt_platform_header'])
+amd64_generic_module_objects(name = 'rs5c372a_rs5c372a_module', srcs = ['rtc/rs5c372a.c'], deps = ['//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers'])
+amd64_generic_module_objects(name = 'rv3032_rv3032_module', srcs = ['rtc/rv3032.c'], deps = ['//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers', '//sys/amd64/conf:generic_opt_platform_header'])
+amd64_generic_module_objects(name = 'rx8803_rx8803_module', srcs = ['rtc/rx8803.c'], deps = ['//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:clock_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers', '//sys/amd64/conf:generic_opt_platform_header'])
+amd64_generic_module_objects(name = 'tca64xx_tca64xx_module', srcs = ['gpio/tca64xx.c'], deps = ['//sys/dev/gpio:gpio_if_headers', '//sys/dev/gpio:hardware_module_amdgpio_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers', '//sys/amd64/conf:generic_opt_platform_header'])
+amd64_generic_module_objects(name = 'tmp461_tmp461_module', srcs = ['sensor/tmp461.c'], deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers', '//sys/amd64/conf:generic_opt_platform_header'])
+amd64_generic_module_objects(name = 'w83793g_w83793g_module', srcs = ['sensor/w83793g.c'], deps = ['//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers'])
+
+# FDT-dependent source alternatives from the original module recipes.
+amd64_generic_module_objects(name = 'iicbus_ofw_iicbus_module', srcs = ['ofw_iicbus.c'], deps = ['//sys/dev/iicbus:iicbus_if_headers', '//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers', '//sys/dev/iicbus:ofw_iicbus_if_cross_io_bus_headers', '//sys/dev/ofw:mii_family_headers', '//sys/dev/ofw:ofw_bus_if_headers', '//sys/kern:bus_if_headers', '//sys/kern:device_if_headers', '//sys/vm:core_kernel_tty_headers'])

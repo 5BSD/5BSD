@@ -43,7 +43,7 @@ invalid_debug_test = analysistest.make(_failure, expect_failure = True,
 
 def _fixture_product(ctx):
     return [DefaultInfo(files = depset([ctx.file.binary, ctx.file.debug])),
-        BsdKernelModuleInfo(binary = ctx.file.binary, debug = ctx.file.debug,
+        BsdKernelModuleInfo(link_recipe = None, binary = ctx.file.binary, debug = ctx.file.debug,
                             aliases = ["alias.ko"], package = "oes",
                             file_metadata = dict(owner = "root", group = "wheel", mode = "0444", flags = ""),
                             alias_metadata = dict(owner = "root", group = "wheel", mode = "0755"))]

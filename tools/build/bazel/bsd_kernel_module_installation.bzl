@@ -2,10 +2,11 @@
 """Compose base-kernel installation from typed, layout-independent module files."""
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load(":bsd_artifacts.bzl", "BsdDebugInfo")
+load(":bsd_kernel_module.bzl", "BsdModuleLinkInfo")
 load(":bsd_install.bzl", "BsdInstallFileInfo", "install_manifest_result")
 load(":bsd_kernel_installation.bzl", "kernel_installation_directory")
 
-BsdKernelModuleInfo = provider(fields = ["binary", "debug", "aliases", "package", "file_metadata", "alias_metadata"])
+BsdKernelModuleInfo = provider(fields = ["binary", "debug", "aliases", "package", "file_metadata", "alias_metadata", "link_recipe"])
 
 def _product(ctx):
     info = ctx.attr.src[BsdDebugInfo]
@@ -22,10 +23,12 @@ def _product(ctx):
     return [DefaultInfo(files = depset(files)),
             BsdKernelModuleInfo(binary = info.binary, debug = info.debug,
                                 aliases = ctx.attr.aliases, package = ctx.attr.package,
-                                file_metadata = ctx.attr.file_metadata, alias_metadata = ctx.attr.alias_metadata)]
+                                file_metadata = ctx.attr.file_metadata, alias_metadata = ctx.attr.alias_metadata,
+                                link_recipe = ctx.attr.link[BsdModuleLinkInfo].recipe)]
 
 bsd_kernel_module_product = rule(implementation = _product, attrs = {
     "src": attr.label(providers = [BsdDebugInfo], mandatory = True),
+    "link": attr.label(providers = [BsdModuleLinkInfo], mandatory = True),
     "aliases": attr.string_list(), "package": attr.string(mandatory = True),
     "file_metadata": attr.string_dict(mandatory = True),
     "alias_metadata": attr.string_dict(mandatory = True),
@@ -42,7 +45,7 @@ def _selected_members(ctx):
 
 def _module_set(ctx):
     members = _selected_members(ctx)
-    labels, names, files, rows = {}, {}, [], []
+    labels, names, files, rows, recipes = {}, {}, [], [], []
     for member in members:
         label, info = str(member.label), member.product
         if label in labels:
@@ -55,7 +58,10 @@ def _module_set(ctx):
         files.append(info.binary)
         if info.debug != None:
             files.append(info.debug)
+        if info.link_recipe != None:
+            recipes.append(info.link_recipe)
         rows.append(dict(label = label, runtime = info.binary.path,
+            link_recipe = info.link_recipe.path if info.link_recipe != None else None,
             debug = info.debug.path if info.debug != None else None,
             aliases = info.aliases, package = info.package,
             file_metadata = info.file_metadata, alias_metadata = info.alias_metadata))
@@ -63,7 +69,7 @@ def _module_set(ctx):
     ctx.actions.write(inventory, json.encode(dict(format = 1, modules = rows)) + "\n")
     payload = depset(files)
     return [DefaultInfo(files = depset([inventory], transitive = [payload])),
-        OutputGroupInfo(inventory = depset([inventory]), payload = payload),
+        OutputGroupInfo(inventory = depset([inventory]), payload = payload, metadata = depset(recipes)),
         BsdKernelModuleSetInfo(members = members, payload = payload)]
 
 bsd_kernel_module_set = rule(implementation = _module_set, attrs = {

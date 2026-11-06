@@ -8,18 +8,32 @@ def _impl(ctx):
     output = ctx.actions.declare_directory(ctx.label.name + ".generated")
     overrides = ctx.actions.declare_file(ctx.label.name + ".options")
     lines = []
+    expected = {}
     seen = {}
     for setting, option in ctx.attr.option_settings.items():
         if not option or any([c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in option.elems()]) or option in seen:
             fail("unique kernel option identifiers required")
         seen[option] = True
         value = setting[BuildSettingInfo].value
+        if type(value) == "string":
+            if value not in ["auto", "yes", "no"]:
+                fail("kernel option override requires boolean or auto/yes/no setting")
+            if value == "auto":
+                default = ctx.attr.auto_defaults.get(option)
+                if default not in ["yes", "no"]:
+                    fail("auto kernel option requires an explicit source default: " + option)
+                expected[option] = default == "yes"
+                continue
+            value = value == "yes"
         if type(value) != "bool":
-            fail("kernel option override requires a boolean build setting")
+            fail("kernel option override requires boolean or auto/yes/no setting")
+        expected[option] = value
         lines.append("nooptions " + option)
         if value:
             lines.append("options " + option)
     ctx.actions.write(overrides, ('include "' + ctx.file.config.basename + '"\n' + "\n".join(lines) + "\n") if lines else "")
+    expectation = ctx.actions.declare_file(ctx.label.name + ".expected-options.json")
+    ctx.actions.write(expectation, json.encode(expected) + "\n")
     args = ctx.actions.args()
     args.add_all(["-B", ctx.file.runner.path, ctx.executable.tool.path,
                   ctx.file.config.path, ctx.file.source_anchor.path, output.path])
@@ -27,14 +41,15 @@ def _impl(ctx):
     args.add("1" if ctx.attr.debug else "0")
     args.add(overrides.path)
     args.add(manifest.path)
+    args.add(expectation.path)
     args.add_all(ctx.files.libraries)
     ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run,
         arguments = [args],
-        inputs = [ctx.file.runner, ctx.file.config, ctx.file.source_anchor, ctx.file.python_home, overrides] + ctx.files.inputs + ctx.files.runtime + ctx.files.libraries,
+        inputs = [ctx.file.runner, ctx.file.config, ctx.file.source_anchor, ctx.file.python_home, ctx.file._option_validator, overrides, expectation] + ctx.files.inputs + ctx.files.runtime + ctx.files.libraries,
         tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [output, identity, manifest],
         env = {"LC_ALL": "C", "PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1"},
         use_default_shell_env = False, mnemonic = "BSDKernelConfig")
-    return [DefaultInfo(files = depset([output])), OutputGroupInfo(identity = depset([identity]), manifest = depset([manifest]), metadata = depset([overrides]))]
+    return [DefaultInfo(files = depset([output])), OutputGroupInfo(identity = depset([identity]), manifest = depset([manifest]), metadata = depset([overrides, expectation]))]
 
 bsd_kernel_config = rule(implementation = _impl, attrs = {
     "config": attr.label(allow_single_file = True, mandatory = True),
@@ -42,6 +57,8 @@ bsd_kernel_config = rule(implementation = _impl, attrs = {
     "source_anchor": attr.label(allow_single_file = True, mandatory = True, doc = "The kernel conf/files input; its parent's parent identifies the source root."),
     "debug": attr.bool(),
     "option_settings": attr.label_keyed_string_dict(providers = [BuildSettingInfo]),
+    "auto_defaults": attr.string_dict(),
+    "_option_validator": attr.label(allow_single_file = True, default = "//tools/build/bazel:kernel_options.py"),
     "tool": attr.label(executable = True, cfg = "exec", default = "//usr.sbin/config:config"),
     "runner": attr.label(allow_single_file = True, default = "//tools/build/bazel:kernel_config.py"),
     "libraries": attr.label_list(allow_files = True, cfg = "exec"),

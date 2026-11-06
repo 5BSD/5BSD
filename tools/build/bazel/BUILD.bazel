@@ -402,3 +402,23 @@ bsd_host_artifact_test(name = "kernel_tcp_hhook_modules_test", src = "kernel-tcp
                 "//conditions:default": ["--expected", "no"],
             }),
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+bsd_host_artifact_test(name = "kernel_fdt_modules_test", src = "kernel-fdt-modules-test.py",
+    data = ["//sys/amd64/conf:generic_platform_option_header", "//sys/modules/i2c:amd64_inventory",
+            "//sys/modules/i2c/mux:amd64_inventory", "//sys/modules/gpio:amd64_inventory",
+            "//sys/modules/gpio/gpiobus:link_recipe", "//sys/modules/gpio/gpioled:link_recipe",
+            "//sys/modules/i2c/iicbus:link_recipe"],
+    args = ["--header", "$(location //sys/amd64/conf:generic_platform_option_header)",
+            "--i2c", "$(location //sys/modules/i2c:amd64_inventory)",
+            "--mux", "$(location //sys/modules/i2c/mux:amd64_inventory)",
+            "--gpio", "$(location //sys/modules/gpio:amd64_inventory)",
+            "--gpiobus-recipe", "$(location //sys/modules/gpio/gpiobus:link_recipe)",
+            "--gpioled-recipe", "$(location //sys/modules/gpio/gpioled:link_recipe)",
+            "--iicbus-recipe", "$(location //sys/modules/i2c/iicbus:link_recipe)"] + select({
+                "//tools/build/bazel/config:kernel_fdt_enabled": ["--expected", "yes"],
+                "//conditions:default": ["--expected", "no"],
+            }),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+exports_files(["kernel_options.py"])
+bsd_python_test(name = "kernel_options_test", src = "kernel-options-test.py", data = ["kernel_options.py"])

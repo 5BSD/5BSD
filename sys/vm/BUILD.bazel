@@ -301,7 +301,7 @@ bsd_source_headers(name = "core_kernel_sys_process_headers", hdrs = ["_vm_phys.h
 bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_tty_headers", hdrs = ["vm.h"],
-    visibility = ((((((["//sys/kern:__pkg__"]) + ['//sys/dev/gpio:__pkg__']) + ['//sys/dev/iicbus:__pkg__']) + ['//sys/dev/iicbus/mux:__pkg__']) + ['//sys/dev/pwm:__pkg__']) + ['//sys/dev/flash:__pkg__']) + ['//sys/dev/spibus:__pkg__'])
+    visibility = ((((((["//sys/kern:__pkg__"]) + ['//sys/dev/gpio:__pkg__']) + ['//sys/dev/iicbus:__pkg__']) + ['//sys/dev/iicbus/mux:__pkg__']) + ['//sys/dev/pwm:__pkg__']) + ['//sys/dev/flash:__pkg__']) + ['//sys/dev/spibus:__pkg__'] + ["//sys/dev/ofw:__pkg__"])
 bsd_source_headers(name = "core_kernel_tty_info_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h"],
     visibility = ["//sys/kern:__pkg__", "//sys/dev/proto:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/amd64/vmm:__pkg__", "//sys/compat/linux:__pkg__"])
 bsd_source_headers(name = "core_kernel_tty_inq_headers", hdrs = ["uma.h", "uma_align_mask.h"],

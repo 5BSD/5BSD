@@ -9,3 +9,6 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
     object_order = ['iic_gpiomux.o'],
     export_all = False,
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+amd64_generic_module(module = 'iic_gpiomux', object_order = ['iic_gpiomux.o'], export_all = False, objects = ['//sys/dev/iicbus/mux:iic_gpiomux_iic_gpiomux_module_object_files'])

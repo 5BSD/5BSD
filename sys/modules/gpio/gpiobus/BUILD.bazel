@@ -2,8 +2,8 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 # Original export policy and complete link order.
-amd64_generic_module(module = "gpiobus", objects = ["//sys/dev/gpio:gpiobus_gpiobus_module_object_files", "//sys/dev/gpio:gpiobus_gpioc_module_object_files", "//sys/dev/gpio:gpiobus_gpio_if_module_object_files", "//sys/dev/gpio:gpiobus_gpiobus_if_module_object_files", "//sys/dev/gpio:gpiobus_acpi_gpiobus_module_object_files"],
-    object_order = ["gpiobus.o", "gpioc.o", "gpio_if.o", "gpiobus_if.o", "acpi_gpiobus.o"], export_all = True)
+amd64_generic_module(module = "gpiobus", objects = ['//sys/dev/gpio:gpiobus_gpiobus_module_object_files', '//sys/dev/gpio:gpiobus_gpioc_module_object_files', '//sys/dev/gpio:gpiobus_gpio_if_module_object_files', '//sys/dev/gpio:gpiobus_gpiobus_if_module_object_files'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/dev/gpio:gpiobus_ofw_gpiobus_module_object_files'], "//conditions:default": []}) + ['//sys/dev/gpio:gpiobus_acpi_gpiobus_module_object_files'],
+    object_order = ['gpiobus.o', 'gpioc.o', 'gpio_if.o', 'gpiobus_if.o'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['ofw_gpiobus.o'], "//conditions:default": []}) + ['acpi_gpiobus.o'], export_all = True)
 
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
 
@@ -14,3 +14,5 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
     object_order = {'arm64': ['gpiobus.o', 'gpioc.o', 'gpio_if.o', 'gpiobus_if.o', 'ofw_gpiobus.o', 'acpi_gpiobus.o'], 'riscv': ['gpiobus.o', 'gpioc.o', 'gpio_if.o', 'gpiobus_if.o', 'ofw_gpiobus.o']}[arch],
     export_all = True,
 ) for arch in ["arm64", "riscv"]]
+
+filegroup(name = "link_recipe", srcs = [":generic_link"], output_group = "metadata", visibility = ["//tools/build/bazel:__pkg__"])

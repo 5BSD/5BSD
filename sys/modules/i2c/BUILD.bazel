@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = ['//sys/modules/i2c/ads111x:module_product', '//sys/modules/i2c/cyapa:module_product', '//sys/modules/i2c/ds1307:module_product', '//sys/modules/i2c/ds13rtc:module_product', '//sys/modules/i2c/ds1672:module_product', '//sys/modules/i2c/ds3231:module_product', '//sys/modules/i2c/htu21:module_product', '//sys/modules/i2c/icee:module_product', '//sys/modules/i2c/if_ic:module_product', '//sys/modules/i2c/iic:module_product', '//sys/modules/i2c/iicbb:module_product', '//sys/modules/i2c/iicbus:module_product', '//sys/modules/i2c/iicsmb:module_product', '//sys/modules/i2c/isl:module_product', '//sys/modules/i2c/isl12xx:module_product', '//sys/modules/i2c/jedec_dimm:module_product', '//sys/modules/i2c/max44009:module_product', '//sys/modules/i2c/nxprtc:module_product', '//sys/modules/i2c/pcf8574:module_product', '//sys/modules/i2c/pcf8591:module_product', '//sys/modules/i2c/rtc8583:module_product', '//sys/modules/i2c/s35390a:module_product', '//sys/modules/i2c/smb:module_product', '//sys/modules/i2c/smbus:module_product'] + select({"//tools/build/bazel/config:kernel_fdt_enabled": ['//sys/modules/i2c/hym8563:module_product', '//sys/modules/i2c/rs5c372a:module_product', '//sys/modules/i2c/rv3032:module_product', '//sys/modules/i2c/rx8803:module_product', '//sys/modules/i2c/tca64xx:module_product', '//sys/modules/i2c/tmp461:module_product', '//sys/modules/i2c/w83793g:module_product'], "//conditions:default": []}) + ['//sys/modules/i2c/iichid:module_product'],
+    module_sets = ['//sys/modules/i2c/controllers:amd64_modules', '//sys/modules/i2c/mux:amd64_modules'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+filegroup(name = "amd64_inventory", srcs = [":amd64_modules"], output_group = "inventory", visibility = ["//visibility:public"])
