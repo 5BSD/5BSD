@@ -187,8 +187,12 @@ subst_packagesite(const char *abi)
 	else
 		oldval = c[PACKAGESITE].val;
 
-	if ((variable_string = strstr(oldval, "${ABI}")) == NULL)
+	if ((variable_string = strstr(oldval, "${ABI}")) == NULL) {
+		if (c[PACKAGESITE].value == NULL &&
+		    (c[PACKAGESITE].value = strdup(oldval)) == NULL)
+			err(EXIT_FAILURE, "strdup");
 		return;
+	}
 
 	asprintf(&newval, "%.*s%s%s",
 	    (int)(variable_string - oldval), oldval, abi,
@@ -389,6 +393,7 @@ parse_repo(const ucl_object_t *o)
 		repo->name = strdup(reponame);
 		if (repo->name == NULL)
 			err(EXIT_FAILURE, "strdup");
+		repo->enabled = true;
 		newrepo = true;
 	}
 	while ((cur = ucl_iterate_object(o, &it, true))) {
@@ -421,14 +426,12 @@ parse_repo(const ucl_object_t *o)
 			if (repo->pubkey == NULL)
 				err(EXIT_FAILURE, "strdup");
 		} else if (strcasecmp(key, "enabled") == 0) {
-			if ((cur->type != UCL_BOOLEAN) ||
-			    !ucl_object_toboolean(cur)) {
-				if (newrepo)
-					repo_free(repo);
-				else
-					STAILQ_REMOVE(&repositories, repo, repository, next);
-				return;
-			}
+			/*
+			 * Keep a disabled repository: a later file may enable
+			 * it without repeating its URL.
+			 */
+			repo->enabled = cur->type == UCL_BOOLEAN &&
+			    ucl_object_toboolean(cur);
 		}
 	}
 	/* At least we need an url */
@@ -676,6 +679,14 @@ config_bool(pkg_config_key k, bool *val)
 struct repositories *
 config_get_repositories(void)
 {
+	struct repository *repo, *tmp;
+
+	STAILQ_FOREACH_SAFE(repo, &repositories, next, tmp) {
+		if (!repo->enabled) {
+			STAILQ_REMOVE(&repositories, repo, repository, next);
+			repo_free(repo);
+		}
+	}
 	if (STAILQ_EMPTY(&repositories)) {
 		/* Fall back to PACKAGESITE - deprecated - */
 		struct repository *r = calloc(1, sizeof(*r));

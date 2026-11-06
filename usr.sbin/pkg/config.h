@@ -30,6 +30,7 @@
 #define _PKG_CONFIG_H
 
 #include <paths.h>
+#include <stdbool.h>
 #include <sys/queue.h>
 
 #define URL_SCHEME_PREFIX "pkg+"
@@ -77,6 +78,7 @@ struct repository {
 	signature_t signature_type;
 	char *fingerprints;
 	char *pubkey;
+	bool enabled;
 	STAILQ_ENTRY(repository) next;
 };
 STAILQ_HEAD(repositories, repository);
