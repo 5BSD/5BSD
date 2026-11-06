@@ -20,12 +20,14 @@ cc_shared_library(name = "be_shared", deps = [":be"],
 load(":installation.bzl", "library_installation")
 library_installation(name = "install_manifest")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_debug_directories")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
     name = "install_archive",
     visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"],
+    directories = utility_debug_directories("zfs", "/lib"),
     mtree_specs = {
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",

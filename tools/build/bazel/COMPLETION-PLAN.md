@@ -1,5 +1,28 @@
 # Native Bazel completion plan
 
+## Full selected library directory claims reconciled (2026-11-06)
+
+The maintained frontend constructs all 164 selected installation parents plus
+build-only outputs and two tests. Independent full original Make comparison now
+has zero directory package-claim differences (previously 20 over 16 paths).
+There are 323 archives and 617 claims over 353 paths; common file metadata and
+hardlinks still match. All 650 affected file payloads remain byte-identical.
+Utilities-owned libc dummy fixtures retain a separate archive from tests, debug
+ancestors use the existing derivation helper, and suite data directories remain
+source-owned. Removed invalid copied CAM targets from libfetch; its real local
+file/URI test passes. Global tests-off and separate GoogleTest-off captures
+exclude suite paths and tests package claims.
+
+See LIBRARY-DIRECTORY-CLAIMS-QUALIFICATION.md for immutable captures, actual
+runtime scope and audit. The full comparison remains differences-found for three
+account files, two sanitizer test files and seven ncurses data outputs. Existing
+account database generation is separate; inspect correct construction/package
+composition next, without installing prebuilt databases over local accounts.
+Then continue remaining binary/debug/library/world/pkgbase/runtime/VM,
+cross-architecture/bootstrap/cache/sandbox and performance gates. Existing
+format-5 inputs/backend select the fixes; frontend C/signing/publication policy
+is unchanged and the manual is updated. Make and the full-tests guard remain.
+
 ## Four recorded ELF dependency gaps corrected (2026-11-06)
 
 Powercmp/timecmp remove an extra direct thread-library dependency; notify and the

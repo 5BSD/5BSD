@@ -52,6 +52,7 @@ bsd_install_archive(
     name = "install_archive",
     manifests = [":install_manifest", ":kyuafile_manifest"],
     directories = {
+        "/usr/tests/lib/libdiff": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}',
         "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}',
         "/usr/lib/debug/usr/tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}',
         "/usr/lib/debug/usr/tests/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}',

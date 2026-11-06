@@ -1,6 +1,17 @@
 # Full selected library installation comparison
 
-## Results (2026-11-06)
+## Current directory follow-up (2026-11-06)
+
+The subsequent complete comparison has zero directory claim differences after
+source-owned repairs. See LIBRARY-DIRECTORY-CLAIMS-QUALIFICATION.md. The counts
+below describe the original r2 comparison; the three account paths, two additional
+sanitizer files and seven ncurses data differences remain open. Archive-order and
+installed capability-test linkage follow-ups are separately documented in
+LIBRARY-STATIC-ORDER-QUALIFICATION.md, CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md,
+CAPABILITY-INSTALLED-TEST-QUALIFICATION.md and
+LIBRARY-DYNAMIC-DEPENDENCY-QUALIFICATION.md.
+
+## Original results (2026-11-06)
 
 Both the complete selected native lib/ construction and independent original Make
 lib/ build/install control pass. The original libpmc JEVENTS command is observed

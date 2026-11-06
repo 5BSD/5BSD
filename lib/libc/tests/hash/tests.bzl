@@ -65,6 +65,6 @@ def hash_tests():
     bsd_install_file(name = "kyuafile_entry", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
     bsd_install_manifest(name = "install_manifest", manifests = [":h_hash_install"] + select({_OPENSSL: [":sha2_test_install"], "//conditions:default": []}), entries = entries + [":kyuafile_entry"], visibility = ["//visibility:public"])
-    bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":install_manifest"], debug = True)
+    bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":install_manifest"], debug = True, data_subdirectories = ["data"])
     bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
     native.test_suite(name = "runtime_tests", tests = shell_cases + sha_cases)

@@ -7570,3 +7570,15 @@ The tool must be an original native executable with a passed compiler-bound
 reference receipt; its override must be effective, preserve SDK/target/compiler
 identity, and appear as a direct command in completed original metadata recipes.
 This is comparison provenance, not verified boot or production publication.
+.Pp
+The complete selected native library installation now matches original Make
+package directory claims, including shared debug ancestors and source-owned
+suite data directories. Separate package archives preserve utilities-owned
+libc test fixtures without overwriting tests-owned directory claims.
+Existing format-5 tests and googletest settings control suite installation;
+feature-off captures exclude those claims. The real libfetch local-file test
+passes after invalid copied CAM test targets were removed.
+This closes the recorded directory-claim gaps, not full library binary,
+world/package/runtime/cross-target/bootstrap or performance qualification.
+Generated account-file composition, sanitizer control coverage and ncurses data
+comparison remain open. Make remains the production default.

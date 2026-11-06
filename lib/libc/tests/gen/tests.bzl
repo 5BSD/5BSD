@@ -5,9 +5,9 @@ load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_copy_file")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_kyuafile")
-load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive", "bsd_install_archive_set")
 load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
-load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation", "utility_debug_directories")
 load("//lib/libc:test_policy.bzl", "libc_test_copts")
 load("//lib/libc:test_runtime.bzl", "LIBC_TEST_RUNTIME")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
@@ -366,6 +366,7 @@ def gen_tests():
     bsd_copy_file(name = "spawn_fixture", src = "spawnp_enoexec.sh", output = "fixtures/spawnp_enoexec.sh", make_executable = True,
         cat = "@bsd_sdk//toolchain:cat", runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
     entries = []
+    dummy_entries = []
     for name, source, destination, tags in [
         ("dummy", ":dummy_debug", _DIRECTORY + "/libdummy.so.0", ["package=utilities"]),
         ("dummy_symbols", ":dummy_symbols", "/usr/lib/debug" + _DIRECTORY + "/libdummy.so.0.debug", ["package=utilities", "dbg"]),
@@ -373,10 +374,10 @@ def gen_tests():
     ]:
         bsd_install_file(name = name + "_entry", src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0755" if name == "spawn_script" else "0444", install_tags = tags)
-        entries.append(":" + name + "_entry")
+        (entries if name == "spawn_script" else dummy_entries).append(":" + name + "_entry")
     bsd_install_link(name = "dummy_alias", destination = _DIRECTORY + "/libdummy.so", target = "libdummy.so.0", kind = "symlink",
         owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities", "dev"])
-    entries.append(":dummy_alias")
+    dummy_entries.append(":dummy_alias")
     manifests = []
     host = []
     deferred = []
@@ -432,9 +433,20 @@ def gen_tests():
         metadata = {"setdomainname_test": json.encode({"is_exclusive": True})}, subdirectories = ["execve", "posix_spawn"])
     bsd_install_file(name = "kyuafile_entry", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
-    bsd_install_manifest(name = "install_manifest", manifests = manifests, entries = entries + [":kyuafile_entry"], visibility = ["//visibility:public"])
-    bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":install_manifest"], debug = True)
-    bsd_install_archive_set(name = "installation_archives", archives = [":install_archive", "//lib/libc/tests/gen/execve:installation_archives", "//lib/libc/tests/gen/posix_spawn:installation_archives"], visibility = ["//visibility:public"], target_compatible_with = _PLATFORM)
+    bsd_install_manifest(name = "test_install_manifest", manifests = manifests, entries = entries + [":kyuafile_entry"])
+    bsd_install_manifest(name = "dummy_install_manifest", entries = dummy_entries)
+    bsd_install_manifest(name = "install_manifest", manifests = [":test_install_manifest", ":dummy_install_manifest"], visibility = ["//visibility:public"])
+    bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":test_install_manifest"], debug = True)
+    # The shared fixture belongs to utilities; its debug ancestors must coexist
+    # with tests claims without claiming the suite directory for utilities.
+    bsd_install_archive(name = "dummy_install_archive", manifests = [":dummy_install_manifest"],
+        directories = utility_debug_directories("utilities", _DIRECTORY),
+        mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+            "//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+        passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+        python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+        runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+    bsd_install_archive_set(name = "installation_archives", archives = [":install_archive", ":dummy_install_archive", "//lib/libc/tests/gen/execve:installation_archives", "//lib/libc/tests/gen/posix_spawn:installation_archives"], visibility = ["//visibility:public"], target_compatible_with = _PLATFORM)
     native.test_suite(name = "runtime_tests", tests = host)
     native.test_suite(name = "deferred_runtime_tests", tests = deferred, tags = ["manual"])
     for program in _OLD_PROGRAM_ALIASES:
