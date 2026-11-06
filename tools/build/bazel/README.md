@@ -1,5 +1,14 @@
 # Bazel qualification
 
+## Shared module products and native-helper reinstall checkpoint (2026-11-06)
+
+The complete 445-package reinstall repeat now passes with the intended native
+reaper helper and preserved site state. Typed module products also let base and
+standalone layouts share the exact same configured runtime/debug Files. The first
+source-owned FireWire parent, real NewReno and ten configuration/regression targets
+pass. Complete kernel aggregation and normal startup/upgrade remain open. See
+KERNEL-MODULE-PRODUCTS-QUALIFICATION.md and WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md.
+
 ## Complete same-version package reinstall passes (2026-11-06)
 
 All 445 packages pass real installation and reinstall inside a 2GB disk-backed VM,

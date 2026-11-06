@@ -142,3 +142,29 @@ All paths below are relative to /usr/obj/usr/src:
 
 The current reproduction command above uses the corrected plan. No host package
 installation, publication, kernel loading, upgrade or reboot occurred.
+
+## Correctly selected native-helper repeat passes
+
+bazel-world-pkg-install-vm-r4-20261106 is PASS with the actual selected helper SHA256
+90bab493612594a96ec6d7b4b8b856f9557788b8227217dacf2f10a739448a40. All 445 packages
+install and reinstall; both complete 32,512-file/1,369-directory checks report zero
+errors. Inventory, checksums, site configuration/account/data, construction metadata,
+cleanup and poweroff pass. The independent audit verifies helper-selection.json
+against the runner's observed fixture hash. The earlier provenance gap is closed
+for this repeat without relabeling its earlier result.
+
+- bazel-world-pkg-install-review-r2-20261106/review.json SHA256
+  30ef6d703b9e63548b4c8cd6752ead7dcc2789bafa6d6cc595363d70f27a13de
+- install-vm-r4/result.json SHA256
+  9fa67651cedbfdc4f2cb52f0059989725d6ba8fdf8159087b60fa0b0c7769531
+- Its checker-report.json SHA256
+  74ee5aa1882ed6db207c45a37c5bbf6df050041013a765841c55d2f58ce69b58
+- Host-observed elapsed time 729.761 seconds; sampled QEMU peak RSS 2,467,454,976
+  bytes and last CPU sample 1,110.25 seconds, within the enforced 3GB RSS ceiling.
+  These resource observations are not controlled performance acceptance.
+
+No own package-test VM remains live from this run. Normal startup, a real version
+upgrade and actual database-schema compatibility remain unqualified. The installed
+OS test still uses the explicitly selected Make-built kernel and bootstrap PID 1;
+the helper itself is native Bazel output. Signing/verified boot and compromised-root
+protection are not established by this package test.

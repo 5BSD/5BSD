@@ -87,3 +87,7 @@ The independent new-helper probe VMs above remain valid. Exact fixture keys now
 reject that plan, and the corrected install-vm-r4 repeat is pending. See
 WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md for passing payload/state evidence and
 the actual selected-helper hashes. No passing record is relabeled as a new-helper run.
+
+The corrected install-vm-r4 repeat now passes the entire package suite with the
+expected native helper hash, exact payload/state checks, cleanup and shutdown.
+WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md records its independent review and limits.

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_installation")
+
+# Source-owned SUBDIR traversal; leaf owners retain all compilation metadata.
+bsd_kernel_module_installation(name = "amd64_base_installation",
+    modules = ["//sys/modules/firewire/" + module + ":module_product"
+               for module in ["firewire", "fwcam", "fwdv", "fwisound", "sbp", "sbp_targ"]],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

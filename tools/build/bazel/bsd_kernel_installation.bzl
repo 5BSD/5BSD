@@ -5,7 +5,7 @@ load("//tools/build/bazel:bsd_install.bzl", "BsdInstallManifestInfo", "bsd_insta
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 
-def _directory(value, allow_empty = False):
+def kernel_installation_directory(value, allow_empty = False):
     if type(value) != "string":
         fail("kernel directory setting must be a string")
     if not value:
@@ -19,8 +19,8 @@ def _directory(value, allow_empty = False):
 
 
 def _directories(ctx):
-    base = _directory(ctx.attr.base[BuildSettingInfo].value)
-    prefix = _directory(ctx.attr.debug_prefix[BuildSettingInfo].value, allow_empty = True)
+    base = kernel_installation_directory(ctx.attr.base[BuildSettingInfo].value)
+    prefix = kernel_installation_directory(ctx.attr.debug_prefix[BuildSettingInfo].value, allow_empty = True)
     enabled = ctx.attr.debug[BuildSettingInfo].value
     if type(enabled) != "bool":
         fail("kernel debug setting must be boolean")

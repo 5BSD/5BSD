@@ -60,3 +60,11 @@ Frontend review: existing source-settings/target APIs can carry the qualificatio
 maintained native backend, staging/package helpers, tests and manual must change
 with composition semantics. Do not make Bazel production/default before the full
 acceptance gates. BIP stays excluded. No host installation, upgrade or reboot.
+
+Implementation checkpoint: typed layout-independent module products now support
+base/standalone composition with one configured runtime/debug File pair and shared
+source attribute policy. The original six-member FireWire parent is source-owned;
+NewReno and FireWire real ELF/debug checks pass. Conditional all-module traversal,
+full kernel/pkgbase aggregation and linker.hints remain open. See
+KERNEL-MODULE-PRODUCTS-QUALIFICATION.md. The temporary transition implementation
+was replaced before committing because it created an extra configured product.

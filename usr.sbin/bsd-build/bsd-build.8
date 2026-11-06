@@ -7762,3 +7762,13 @@ A complete 445-package installation and same-version reinstall passes, preservin
 site state, but its provenance records the legacy helper selection.
 Normal startup, real version upgrades and coherent native kernel/module package
 composition remain separate acceptance gates.
+.Pp
+Native module_product targets expose layout-independent runtime/debug files,
+aliases, package ownership and the source installation attributes.
+Base-kernel composition consumes those same configured files using the selected
+kernel base/debug directories; it does not change compilation configuration or
+copy payloads to relocate them.
+The first FireWire family and NewReno checks are qualified; complete kernel/module
+selection, installation and package composition remain required.
+The full package reinstall repeat also passes with the intended native VM helper;
+this remains distinct from normal startup or a real version upgrade.

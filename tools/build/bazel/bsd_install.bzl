@@ -96,22 +96,22 @@ def _append_installation_record(entries, seen, record, merge_identical_directori
     seen[path] = record
     entries.append(record)
 
-def _install_manifest(ctx):
+def install_manifest_result(ctx, manifests, entries_to_add = [], merge_identical_directories = False):
+    """Compose manifests and BsdInstallFileInfo entries without copying payloads."""
     entries, payload, seen = [], [], {}
     inherited_payloads = []
-    for target in ctx.attr.manifests:
+    for target in manifests:
         info = target[BsdInstallManifestInfo]
         inherited_payloads.append(info.payload)
         for original in info.records:
-            _append_installation_record(entries, seen, dict(original), ctx.attr.merge_identical_directories)
-    for target in ctx.attr.entries:
-        item = target[BsdInstallFileInfo]
+            _append_installation_record(entries, seen, dict(original), merge_identical_directories)
+    for item in entries_to_add:
         if item.metadata == None:
             continue
         record = dict(item.metadata)
         if item.source != None:
             record["source"] = item.source.path
-        _append_installation_record(entries, seen, record, ctx.attr.merge_identical_directories)
+        _append_installation_record(entries, seen, record, merge_identical_directories)
         if item.source != None:
             payload.append(item.source)
     resolve_hardlinks(seen)
@@ -123,6 +123,11 @@ def _install_manifest(ctx):
     return [DefaultInfo(files = depset([manifest], transitive = [inputs])),
             OutputGroupInfo(manifest = depset([manifest]), payload = inputs),
             BsdInstallManifestInfo(manifest = manifest, payload = inputs, records = entries)]
+
+def _install_manifest(ctx):
+    return install_manifest_result(ctx, ctx.attr.manifests,
+                                   [target[BsdInstallFileInfo] for target in ctx.attr.entries],
+                                   ctx.attr.merge_identical_directories)
 
 bsd_install_manifest = rule(
     implementation = _install_manifest,

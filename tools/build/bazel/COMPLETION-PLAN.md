@@ -12,7 +12,7 @@ or a real version upgrade. See WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md.
 The final provenance audit found that the passing full suite used the legacy
 helper because the new one was supplied under an unused alias. Exact fixture keys
 now reject that mistake. The native reaper's independent positive/expected-timeout
-VM tests pass; a corrected complete repeat is pending. Do not describe the older
+VM tests pass; the corrected complete repeat now passes with the expected native helper hash. Do not describe the older
 passing full suite as new-helper qualification.
 
 The next kernel composition audit is recorded in KERNEL-PACKAGE-COMPOSITION-WORK.md.
@@ -21,7 +21,7 @@ descriptions; 729 was the earlier broader profile. Actual coherent kernel/module
 installation/pkgbase remains open. Original Make joins explicit oes/mac-abac module
 owners into world packages, so native composition must preserve that ownership.
 
-NEXT: finish the corrected-helper repeat; source-owned kernel module selection/
+NEXT: source-owned kernel module selection/
 installation/pkgbase composition; normal startup/login/PAM/SSH/capability services;
 genuine version upgrades; ARM64/RISC-V and independent world/debug/bootstrap/cache/
 sandbox/reproducibility/resource/combined-publication gates. Make remains production/
@@ -5718,3 +5718,21 @@ ATF driver are implemented with root confined to the disposable VM. The current
 2GB retry is live, with final install/reinstall acceptance pending. See
 WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md for exact scope, input paths, resource
 limits, retained failures and the outstanding normal-startup/upgrade gates.
+
+### Shared module products and first base-family composition — 2026-11-06
+
+Complete package reinstall now passes with the intended native reaper helper;
+all 445 packages, both 32,512-file/1,369-directory checks, state and cleanup pass.
+Independent review closes the unused-helper provenance gap without relabeling old
+results. Normal startup and real version upgrades remain separate gates.
+
+Typed module products now compose base installation from the same configured
+runtime/debug Files used by standalone installation, with one source attribute
+policy. A source-owned six-member FireWire parent and real NewReno checks pass.
+Ten native test targets pass, including custom/inline paths and invalid/collision
+rejection; a real debug-disabled branch is separately checked. The configuration
+transition candidate was replaced before commit to avoid its extra configured
+product. See KERNEL-MODULE-PRODUCTS-QUALIFICATION.md. Continue actual source-owned
+conditional module traversal and coherent full kernel/world pkgbase composition;
+all normal startup/upgrade/platform/bootstrap/cache/sandbox/reproducibility/debug/
+resource/hardware/publication gates remain open. Make stays production/default.

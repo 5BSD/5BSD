@@ -2,8 +2,12 @@
 load("//tools/build/bazel:bsd_kernel_module.bzl", "bsd_module_link", "bsd_module_exports")
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_merge")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_product")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
 
+
+_FILE_METADATA = dict(owner = "root", group = "wheel", mode = "0444", flags = "")
+_ALIAS_METADATA = dict(owner = "root", group = "wheel", mode = "0755")
 
 _KERNEL_CTF = select({"//tools/build/bazel/config:kernel_ctf_enabled": True, "//conditions:default": False})
 
@@ -50,20 +54,22 @@ def kernel_module_artifacts(module, objects, emulation, script = None, linkopts 
         enabled = select({"//tools/build/bazel/config:kernel_debug_enabled": True, "//conditions:default": False}),
         visibility = ["//visibility:public"])
     native.filegroup(name = prefix + "generic_debug", srcs = [":" + prefix + "generic_module"], output_group = "debug_files", visibility = ["//visibility:public"])
+    bsd_kernel_module_product(name = prefix + "module_product", src = ":" + prefix + "generic_module",
+        package = package, aliases = aliases, file_metadata = _FILE_METADATA, alias_metadata = _ALIAS_METADATA,
+        visibility = ["//visibility:public"])
 
     bsd_install_file(name = prefix + "install_module", src = ":" + prefix + "generic_module", destination = "/%s.ko" % module,
         destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
-        owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + package])
+        install_tags = ["package=" + package], **_FILE_METADATA)
     bsd_install_file(name = prefix + "install_debug", src = ":" + prefix + "generic_debug", destination = "/%s.ko.debug" % module,
         destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory", "//tools/build/bazel/config:kernel_directory"],
-        owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + package, "dbg"])
+        install_tags = ["package=" + package, "dbg"], **_FILE_METADATA)
     for index, alias in enumerate(aliases):
         bsd_install_link(name = prefix + "install_alias_" + str(index),
             destination = "/" + alias,
             destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
             target = module + ".ko", kind = "symlink",
-            owner = "root", group = "wheel", mode = "0755",
-            install_tags = ["package=" + package])
+            install_tags = ["package=" + package], **_ALIAS_METADATA)
     bsd_install_manifest(name = prefix + "install_manifest",
         entries = [":" + prefix + "install_module"] + [":" + prefix + "install_alias_" + str(index) for index in range(len(aliases))] + select({
             "//tools/build/bazel/config:kernel_debug_enabled": [":" + prefix + "install_debug"],

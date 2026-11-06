@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_installation")
+load(":tests.bzl", "path_test", "custom_path_test", "inline_debug_test", "collision_test", "fixture_product", "invalid_base_test", "invalid_debug_test")
+
+bsd_install_file(name = "module", src = "sample.ko", destination = "/sample.ko",
+    destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=oes"])
+bsd_install_file(name = "debug", src = "sample.ko.debug", destination = "/sample.ko.debug",
+    destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory", "//tools/build/bazel/config:kernel_directory"],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=oes", "dbg"])
+bsd_install_link(name = "alias", destination = "/alias.ko", target = "sample.ko", kind = "symlink",
+    destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=oes"])
+bsd_install_manifest(name = "standalone", entries = [":module", ":debug", ":alias"])
+fixture_product(name = "product", binary = "sample.ko", debug = "sample.ko.debug")
+fixture_product(name = "duplicate_product", binary = "sample.ko", debug = "sample.ko.debug")
+bsd_kernel_module_installation(name = "base", modules = [":product"])
+bsd_kernel_module_installation(name = "collision", modules = [":product", ":duplicate_product"])
+path_test(name = "standalone_test", target_under_test = ":standalone",
+    expected = ["/boot/modules/sample.ko", "/boot/modules/alias.ko", "/usr/lib/debug/boot/modules/sample.ko.debug"])
+path_test(name = "base_test", target_under_test = ":base",
+    expected = ["/boot/kernel/sample.ko", "/boot/kernel/alias.ko", "/usr/lib/debug/boot/kernel/sample.ko.debug"])
+custom_path_test(name = "custom_base_test", target_under_test = ":base",
+    expected = ["/boot/custom/sample.ko", "/boot/custom/alias.ko", "/debug/custom/boot/custom/sample.ko.debug"])
+custom_path_test(name = "custom_standalone_test", target_under_test = ":standalone",
+    expected = ["/third-party/modules/sample.ko", "/third-party/modules/alias.ko", "/debug/custom/third-party/modules/sample.ko.debug"])
+inline_debug_test(name = "inline_debug_test", target_under_test = ":base",
+    expected = ["/boot/inline/sample.ko", "/boot/inline/alias.ko", "/boot/inline/sample.ko.debug"])
+collision_test(name = "collision_test", target_under_test = ":collision")
+
+# Real module producer: no payload copies or metadata rewrites.
+bsd_kernel_module_installation(name = "newreno_base", modules = ["//sys/modules/cc/cc_newreno:module_product"])
+
+invalid_base_test(name = "invalid_base_test", target_under_test = ":base")
+invalid_debug_test(name = "invalid_debug_test", target_under_test = ":base")
