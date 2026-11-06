@@ -75,3 +75,11 @@ Make membership/leaf-install-policy plus all ELF/debug CRC checks pass. Nested
 GEOM selection shares the same actual products. Conditional/source-option parents,
 root selection and full installed kernel/pkgbase remain the next work. See
 STATIC-MODULE-PARENTS-QUALIFICATION.md for exact scope and retained migration inputs.
+
+Architecture/source-option checkpoint: 19 additional parents handle parent-owned
+KMOD plus children and AMD64 branches, with existing DTrace/OFED selectors. The
+combined hierarchy now covers 43 parents / 258 unique modules. Default and disabled
+selector profiles match original Make, all 127 new cohort ELF/debug pairs pass,
+and all 33 common selector products remain identical. Kernel-option-controlled
+parents still need shared source authority; legacy AIC7xxx producers are missing
+and remain explicit optional coverage gaps. See CONDITIONAL-MODULE-PARENTS-QUALIFICATION.md.

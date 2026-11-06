@@ -7779,3 +7779,9 @@ The initial unconditional AMD64 hierarchy covers 24 source parents and 134 uniqu
 modules, with original Make traversal and leaf installation-policy checks.
 Conditional/root selection and complete installed kernel/package qualification
 remain separate gates; these targets do not change the production/default backend.
+.Pp
+Additional AMD64 module parents preserve parent-owned modules and declared children.
+VirtIO DTrace and Chelsio OFED membership use the existing source settings, with
+both enabled and disabled artifact profiles checked against original Make.
+The current typed hierarchy covers 43 parents and 258 unique modules; root and
+kernel-option selection plus complete installed kernel/pkgbase remain unqualified.

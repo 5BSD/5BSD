@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Current architecture/source-option parent checkpoint (2026-11-06)
+
+Nineteen more AMD64 parents now compose 127 actual module/debug pairs, including
+parent-owned modules and the existing VirtIO DTrace/Chelsio OFED selectors. Together
+with the prior static cohort, 43 source parents cover 258 unique module products.
+Thirteen test targets and complete original Make membership/leaf-policy plus actual
+ELF/debug CRC reviews pass. Disabled DTrace/OFED profiles remove exactly two modules
+and preserve all 33 common products byte for byte. See
+CONDITIONAL-MODULE-PARENTS-QUALIFICATION.md for evidence and retained observer errors.
+
+NEXT: kernel-option-dependent parents and shared option authority, remaining root
+traversal and optional gaps (including missing AIC7xxx producers); coherent full
+kernel/GDB/module/directory/alias/linker.hints and pkgbase composition. All normal
+startup/service/upgrade/platform/bootstrap/cache/sandbox/reproducibility/debug/
+resource/hardware/combined-publication gates remain open. Make stays production/
+default, BIP remains excluded, and no host installation or reboot is performed.
+
 ## Current module hierarchy checkpoint (2026-11-06)
 
 Twenty-four unconditional source parents now select and compose 134 unique AMD64

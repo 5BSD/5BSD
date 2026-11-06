@@ -1,5 +1,14 @@
 # Bazel qualification
 
+## Architecture and source-option module parents (2026-11-06)
+
+The source-owned hierarchy now covers 258 unique AMD64 modules across 43 parents.
+The new 19-parent cohort passes original Make membership/installation-policy and
+127 real ELF/debug pair checks; thirteen test targets pass. DTrace/OFED-disabled
+selectors omit exactly the intended modules and preserve all common payloads.
+Root/kernel-option traversal and complete kernel/pkgbase remain open. See
+CONDITIONAL-MODULE-PARENTS-QUALIFICATION.md.
+
 ## Static module hierarchy checkpoint (2026-11-06)
 
 Twenty-four source parents now compose 134 unique AMD64 modules through typed

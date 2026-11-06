@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# AMD64 source traversal, including the parent module where KMOD is defined.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        "//sys/modules/acpi/acpi_asus:module_product",
+        "//sys/modules/acpi/acpi_asus_wmi:module_product",
+        "//sys/modules/acpi/acpi_dock:module_product",
+        "//sys/modules/acpi/acpi_fujitsu:module_product",
+        "//sys/modules/acpi/acpi_hp:module_product",
+        "//sys/modules/acpi/acpi_ibm:module_product",
+        "//sys/modules/acpi/acpi_panasonic:module_product",
+        "//sys/modules/acpi/acpi_sbl_wmi:module_product",
+        "//sys/modules/acpi/acpi_sony:module_product",
+        "//sys/modules/acpi/acpi_system76:module_product",
+        "//sys/modules/acpi/acpi_toshiba:module_product",
+        "//sys/modules/acpi/acpi_video:module_product",
+        "//sys/modules/acpi/acpi_wmi:module_product",
+        "//sys/modules/acpi/aibs:module_product",
+        "//sys/modules/acpi/acpi_einj:module_product",
+        "//sys/modules/acpi/acpi_ged:module_product",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

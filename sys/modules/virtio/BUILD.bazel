@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# AMD64 source traversal, including the parent module where KMOD is defined.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        "//sys/modules/virtio/virtio:module_product",
+        "//sys/modules/virtio/pci:module_product",
+        "//sys/modules/virtio/network:module_product",
+        "//sys/modules/virtio/block:module_product",
+        "//sys/modules/virtio/balloon:module_product",
+        "//sys/modules/virtio/scsi:module_product",
+        "//sys/modules/virtio/random:module_product",
+        "//sys/modules/virtio/console:module_product",
+        "//sys/modules/virtio/gpu:module_product",
+        "//sys/modules/virtio/input:module_product",
+        "//sys/modules/virtio/p9fs:module_product",
+        "//sys/modules/virtio/rtc:module_product",
+        "//sys/modules/virtio/vsock:module_product",
+        "//sys/modules/virtio/sound:module_product",
+        "//sys/modules/virtio/fs:module_product",
+        "//sys/modules/virtio/mem:module_product",
+        "//sys/modules/virtio/iommu:module_product",
+        "//sys/modules/virtio/crypto:module_product",
+        "//sys/modules/virtio/pmem:module_product",
+    ] + select({
+        "//tools/build/bazel/config:dtrace_enabled": [
+            "//sys/modules/virtio/dtrace:module_product",
+        ],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

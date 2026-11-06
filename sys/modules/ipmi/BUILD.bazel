@@ -2,3 +2,18 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "ipmi", objects = ["//sys/dev/ipmi:ipmi_ipmi_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_acpi_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_smbios_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_ssif_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_pci_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_smbus_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_isa_module_object_files"], object_order = ["ipmi.o", "ipmi_kcs.o", "ipmi_smic.o", "ipmi_bt.o", "ipmi_acpi.o", "ipmi_smbios.o", "ipmi_ssif.o", "ipmi_pci.o", "ipmi_smbus.o", "ipmi_isa.o"], export_all = False, package = "kernel")
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# AMD64 source traversal, including the parent module where KMOD is defined.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        ":module_product",
+        "//sys/modules/ipmi/ipmi_linux:module_product",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

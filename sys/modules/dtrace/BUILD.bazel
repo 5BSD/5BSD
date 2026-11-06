@@ -11,3 +11,31 @@ _AMD64_ONLY = ["fasttrap", "systrace_linux"]
  for prefix, modules in [("", _COMMON + _AMD64_ONLY + ["kinst"]),
      ("arm64_", _COMMON + ["kinst"]), ("riscv_", _COMMON + ["kinst"])]
  for name, target in [("generic_modules", "generic_module"), ("generic_debug", "generic_debug"), ("install_manifests", "install_manifest")]]
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# AMD64 source traversal, including the parent module where KMOD is defined.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        "//sys/modules/dtrace/dtaudit:module_product",
+        "//sys/modules/dtrace/dtmalloc:module_product",
+        "//sys/modules/dtrace/dtnfscl:module_product",
+        "//sys/modules/dtrace/dtrace:module_product",
+        "//sys/modules/dtrace/dtraceall:module_product",
+        "//sys/modules/dtrace/dtrace_test:module_product",
+        "//sys/modules/dtrace/hypertrace:module_product",
+        "//sys/modules/dtrace/fbt:module_product",
+        "//sys/modules/dtrace/profile:module_product",
+        "//sys/modules/dtrace/prototype:module_product",
+        "//sys/modules/dtrace/sdt:module_product",
+        "//sys/modules/dtrace/systrace:module_product",
+        "//sys/modules/dtrace/fasttrap:module_product",
+        "//sys/modules/dtrace/systrace_linux:module_product",
+        "//sys/modules/dtrace/kinst:module_product",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
