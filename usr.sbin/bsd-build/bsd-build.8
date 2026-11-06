@@ -7701,3 +7701,16 @@ Both installation profiles match independent Make controls.
 These results do not create whole-world packages or qualify installed systems,
 upgrades, cross-platform behavior, bootstrap or resource performance.
 Make remains the production/default backend.
+.Pp
+The candidate //:world_packages target creates separate native pkgbase archives
+from reconciled source-owned installation providers.
+Each package action consumes its own payload Files and declared generated trees,
+with package-local hardlinks rebuilt from explicit metadata.
+Only source-declared metadata-only packages may be empty.
+The frontend binds build_jobs to --jobs and enables Bazel action resource
+estimates.
+The package_threads setting controls compression threads; zero uses that budget.
+The package_epoch setting defaults to zero and never reads the wall clock.
+These targets create build artifacts and do not publish or install them.
+Whole-system package/runtime, upgrade, bootstrap and performance qualification
+remain required before changing the production/default Make backend.

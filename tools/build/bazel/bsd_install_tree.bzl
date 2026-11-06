@@ -56,7 +56,8 @@ def _archive(ctx):
         OutputGroupInfo(metadata = depset([metadata]), directory_metadata = depset([directories])),
         BsdInstallArchiveInfo(directory_metadata = directories, records = [],
             payload = depset([tree] + ctx.files.files),
-            trees = [struct(prefix = ctx.attr.prefix, tree = tree, metadata = metadata)])]
+            trees = [struct(prefix = ctx.attr.prefix, tree = tree, metadata = metadata,
+                file_tags = ctx.attr.file_tags, directory_tags = ctx.attr.directory_tags, files = ctx.files.files)])]
 
 bsd_install_tree_archive = rule(implementation = _archive, attrs = {
     "tree": attr.label(allow_single_file = True, mandatory = True),

@@ -1,5 +1,40 @@
 # Native Bazel completion plan
 
+## All 445 selected native world pkg archives constructed and inspected (2026-11-06)
+
+The declared world_packages candidate creates actual standard pkg archives through
+separate package-local actions and deterministic per-package plans/indexes. There
+is no production Make invocation, path whitelist or whole-world extraction for
+every package. Generated-tree providers forward tags/additional Files; source
+allowlists remain enforced. Explicit pf-dev metadata-only output is accepted and
+ordinary empty output rejected. Shared pkg staging preserves file/config/flag
+attributes and directory ancestor closure. A linear inode planner preserves links
+within each package; real shared-stage pkg controls agree on cross-package behavior.
+Frontend --jobs now binds build_jobs and enables declared action CPU/memory
+estimates; package_threads/epoch remain explicit inputs. Its manual is updated.
+
+The final maintained 16-job full run passes four Bazel wrappers, including fourteen
+real flag/directory cases, CPU-budget checks and the real hardlink/readonly-directory/
+empty-ancestor regression. Independent host libarchive inspection checks every
+one of 445 packages against 1,280 captured native installation archives: all 32,510
+packaged paths, file/directory/config metadata/flags, hashes, symlinks and thirteen
+cross-package inode relationships pass. Seven generated construction files remain
+separate. The audit found and fixed missing empty-directory ancestors in three
+packages; standard pkg manifest percent-encoding and tar trailing-directory slashes
+are decoded correctly, with no source filename changes or skipped packages.
+Across the correction, 441 package archives remain byte-identical; the remaining
+changes are three directory-only fixes and the maintained manual/hardlink alias.
+See WORLD-PACKAGES-CONSTRUCTION-QUALIFICATION.md for hashes and retained failures.
+
+This is real archive construction and SAME-NATIVE-CORPUS inspection, not independent
+Make-built world bytes, complete Make pkg/shared-stage auto-shlib parity, solver,
+installed-system/upgrade/runtime, kernel/module packages, signing/verified boot or
+publication. NEXT: original maintained Make pkg recipes over the complete captured
+native stage, full manifest/partition comparison, then fresh/upgrade/VM and combined
+base/hardware publication qualification. Keep every world/kernel/module/debug/cross/
+bootstrap/cache/sandbox/reproducibility/CPU/RAM/disk I/O/footprint gate. Make stays
+production/default; BIP stays out of scope.
+
 ## Selected world metadata reconciles; ATF support leak fixed (2026-11-06)
 
 Source-owned world traversal now selects typed option/CPU family providers;

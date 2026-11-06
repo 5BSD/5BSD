@@ -875,3 +875,7 @@ selects.config_setting_group(name = "package_pmc_tests_amd64", match_all = ["//t
 selects.config_setting_group(name = "package_acpi_arm64", match_all = ["//tools/build/bazel/config:acpi_enabled", "@platforms//cpu:aarch64"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "package_bhyve_arm64", match_all = ["//tools/build/bazel/config:bhyve_enabled", "@platforms//cpu:aarch64"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "package_bhyve_riscv64", match_all = ["//tools/build/bazel/config:bhyve_enabled", "@platforms//cpu:riscv64"], visibility = ["//visibility:public"])
+
+# Frontend CPU budget and reproducible pkg archive epoch.
+int_flag(name = "build_jobs", build_setting_default = 1, visibility = ["//visibility:public"])
+int_flag(name = "package_epoch", build_setting_default = 0, visibility = ["//visibility:public"])

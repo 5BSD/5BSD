@@ -88,6 +88,37 @@ def run(driver, pkg, tar, abi_file, osversion_header, output):
                 assert owned['/opt/example/empty']['perm'] == '0750', owned
             results.append(dict(case=case, package_sha256=hashlib.sha256(package.read_bytes()).hexdigest(),
                                 directories=owned))
+        # Transition packages require an explicit declaration, never an empty
+        # ordinary package fallback. Inspect actual pkg output in both cases.
+        empty_archive = root / 'empty.tar'
+        with tarfile.open(empty_archive, 'w') as stream:
+            member = tarfile.TarInfo('.')
+            member.type, member.mode = tarfile.DIRTYPE, 0o755
+            member.uname, member.gname = 'root', 'wheel'
+            stream.addfile(member)
+        policy.write_text(json.dumps(dict(format=1, directories=[])))
+        for case, marked in [('metadata-only', True), ('unmarked-empty', False)]:
+            request = copy.deepcopy(base)
+            request.update(archive=str(empty_archive), packages={'p': []},
+                metadata_only=['p'] if marked else [],
+                outputs={'p': str(root / (case + '-outputs') / 'Test-p-1.pkg')},
+                index=str(root / (case + '-index.json')))
+            Path(request['outputs']['p']).parent.mkdir()
+            try:
+                module.create(request)
+            except ValueError as error:
+                assert not marked and str(error) == 'ordinary package must have payload', str(error)
+                results.append(dict(case=case, rejected=str(error)))
+                continue
+            assert marked
+            package = Path(request['outputs']['p'])
+            with tarfile.open(package) as stream:
+                members = stream.getmembers()
+                metadata = json.load(stream.extractfile('+MANIFEST'))
+                assert metadata['name'] == 'Test-p'
+                assert not metadata.get('files') and not metadata.get('directories')
+                assert all(m.name.startswith('+') for m in members)
+            results.append(dict(case=case, package_sha256=hashlib.sha256(package.read_bytes()).hexdigest()))
     (output / 'receipt.json').write_text(json.dumps(dict(status='passed', driver=str(driver),
         driver_sha256=hashlib.sha256(driver.read_bytes()).hexdigest(), results=results), indent=2) + '\n')
     print('Real pkg directory ownership, empty-directory mode and payload validation passed')

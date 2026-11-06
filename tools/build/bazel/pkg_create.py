@@ -29,10 +29,6 @@ def create(request):
         work = Path(temporary)
         stage = work / "root"
         stage.mkdir()
-        repos = work / "repos"
-        repos.mkdir()
-        config = work / "pkg.conf"
-        config.write_text("{}\n")
         with tarfile.open(request["archive"]) as archive:
             members = archive.getmembers()
             names = {member.name for member in members}
@@ -122,45 +118,71 @@ def create(request):
             owned_directories[name].add(path)
             owned_directories[name].update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
         subprocess.run([request["tar"], "-xpf", request["archive"], "--no-same-owner", "--no-fflags", "-C", str(stage)], check=True)
-        common = [request["pkg"], "-C", str(config), "-R", str(repos), "-o", "PKG_DBDIR=" + str(work / "db")]
-        abi = subprocess.run(common + ["-o", "ABI_FILE=" + request["abi_file"], "config", "ABI"], check=True, capture_output=True, text=True).stdout.strip()
-        if not abi or any(c.isspace() for c in abi):
-            raise ValueError("invalid target ABI")
-        common += ["-o", "ABI=" + abi, "-o", "OSVERSION=" + versions[0], "-o", "ALLOW_BASE_SHLIBS=yes", "-o", "SHLIB_PROVIDE_PATHS_NATIVE=/lib,/usr/lib"]
-        for name, records in request["packages"].items():
-            lines = []
-            parents = set(owned_directories[name])
-            for record in records:
-                path = record["destination"]
-                for value in (path, record["owner"], record["group"], record["mode"]):
-                    if any(c in value for c in "\n\r(),"):
-                        raise ValueError("unsupported plist field")
-                if record["type"] == "dir":
-                    # Directory ownership and ancestor closure are emitted once below.
-                    parents.add(path)
-                    continue
-                kind = "config" if "config" in record["tags"] else ""
-                flags = record.get("flags", "")
-                if any(c in flags for c in "\n\r()"):
-                    raise ValueError("unsupported plist flags field")
-                lines.append("@" + kind + "(" + ",".join([record["owner"], record["group"], record["mode"], flags]) + ") " + path)
+        create_staged(request, stage, dirs, owned_directories, work)
+
+
+def create_staged(request, stage, dirs, owned_directories, work):
+    """Package a caller-validated private stage; dirs contains validated tar metadata."""
+    versions = re.findall(r"^#define\s+__FreeBSD_version\s+(\d+)\s*$", Path(request["osversion_header"]).read_text(), re.M)
+    if len(versions) != 1:
+        raise ValueError("one target OS version definition required")
+    outputs = {name: Path(path) for name, path in request["outputs"].items()}
+    repos = work / "repos"
+    repos.mkdir()
+    config = work / "pkg.conf"
+    config.write_text("{}\n")
+    common = [request["pkg"], "-C", str(config), "-R", str(repos), "-o", "PKG_DBDIR=" + str(work / "db")]
+    abi = subprocess.run(common + ["-o", "ABI_FILE=" + request["abi_file"], "config", "ABI"], check=True, capture_output=True, text=True).stdout.strip()
+    if not abi or any(c.isspace() for c in abi):
+        raise ValueError("invalid target ABI")
+    common += ["-o", "ABI=" + abi, "-o", "OSVERSION=" + versions[0], "-o", "ALLOW_BASE_SHLIBS=yes", "-o", "SHLIB_PROVIDE_PATHS_NATIVE=/lib,/usr/lib"]
+    for name, records in request["packages"].items():
+        lines = []
+        parents = set(owned_directories[name])
+        for record in records:
+            path = record["destination"]
+            for value in (path, record["owner"], record["group"], record["mode"]):
+                if any(c in value for c in "\n\r(),"):
+                    raise ValueError("unsupported plist field")
+            if record["type"] == "dir":
+                # Empty owned directories need the same ancestor closure as files.
+                parents.add(path)
                 parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
-            for path in sorted(parents):
-                meta = dirs[path]
-                flags = meta.pax_headers.get("SCHILY.fflags", "")
-                if any(c in flags for c in "\n\r()"):
-                    raise ValueError("unsupported plist directory flags field")
-                lines.append("@dir(" + ",".join([meta.uname, meta.gname, format(meta.mode, "04o"), flags]) + ") " + path)
-            plist = work / (name + ".plist")
-            plist.write_text("\n".join(lines) + "\n")
-            subprocess.run(common + ["create", "-f", request["format"], "-T", str(request["threads"]), "-t", str(request["epoch"]),
-                "-r", str(stage), "-o", str(work), "-M", request["manifests"][name], "-p", str(plist)], check=True)
-            produced = work / outputs[name].name
-            if not produced.is_file():
-                raise ValueError("pkg did not produce declared output: " + str(produced))
-            os.replace(produced, outputs[name])
-        index = {"format": 1, "packages": [dict(name=path.name, sha256=hashlib.sha256(path.read_bytes()).hexdigest()) for path in outputs.values()]}
-        Path(request["index"]).write_text(json.dumps(index, sort_keys=True, indent=2) + "\n")
+                continue
+            kind = "config" if "config" in record["tags"] else ""
+            flags = record.get("flags", "")
+            if any(c in flags for c in "\n\r()"):
+                raise ValueError("unsupported plist flags field")
+            lines.append("@" + kind + "(" + ",".join([record["owner"], record["group"], record["mode"], flags]) + ") " + path)
+            parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
+        for path in sorted(parents):
+            meta = dirs[path]
+            flags = meta.pax_headers.get("SCHILY.fflags", "")
+            if any(c in flags for c in "\n\r()"):
+                raise ValueError("unsupported plist directory flags field")
+            lines.append("@dir(" + ",".join([meta.uname, meta.gname, format(meta.mode, "04o"), flags]) + ") " + path)
+        plist = work / (name + ".plist")
+        plist.write_text("\n".join(lines) + "\n")
+        metadata_only = name in request.get("metadata_only", [])
+        if metadata_only and (records or owned_directories[name]):
+            raise ValueError("metadata-only package must not have installation claims")
+        if not metadata_only and not any(r["type"] != "dir" for r in records):
+            raise ValueError("ordinary package must have payload")
+        command = common + ["create", "-f", request["format"], "-T", str(request["threads"]), "-t", str(request["epoch"]),
+            "-r", str(stage), "-o", str(work), "-M", request["manifests"][name]]
+        if not metadata_only:
+            command += ["-p", str(plist)]
+        subprocess.run(command, check=True)
+        produced = work / outputs[name].name
+        if not produced.is_file():
+            raise ValueError("pkg did not produce declared output: " + str(produced))
+        os.replace(produced, outputs[name])
+    produced = []
+    for path in outputs.values():
+        with path.open("rb") as stream:
+            produced.append(dict(name=path.name, sha256=hashlib.file_digest(stream, "sha256").hexdigest()))
+    index = {"format": 1, "packages": produced}
+    Path(request["index"]).write_text(json.dumps(index, sort_keys=True, indent=2) + "\n")
 
 
 def main():

@@ -8,10 +8,21 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 from userland_sdk import verify_profile
-from source_graph import setting_arguments, platform_arguments, execution_log_format, action_cache_settings, prepare_action_cache, build_state_directory, validate_sdk_toolchains
+from source_graph import frontend_setting_arguments, setting_arguments, platform_arguments, execution_log_format, action_cache_settings, prepare_action_cache, build_state_directory, validate_sdk_toolchains
 
 
 class SettingsTest(unittest.TestCase):
+    def test_frontend_cpu_budget(self):
+        label = '//tools/build/bazel/config:build_jobs'
+        self.assertEqual(frontend_setting_arguments({}, 16), ['--'+label+'=16'])
+        self.assertEqual(frontend_setting_arguments({label: 16}, 16), ['--'+label+'=16'])
+        for value in [0, -1, True, '16']:
+            with self.assertRaises(ValueError):
+                frontend_setting_arguments({}, value)
+        for value in [8, True, '16']:
+            with self.assertRaises(ValueError):
+                frontend_setting_arguments({label: value}, 16)
+
     def test_scalars(self):
         self.assertEqual(setting_arguments({"//cfg:enabled": True, "//cfg:jobs": 16, "//cfg:name": "two words"}),
             ["--//cfg:enabled=true", "--//cfg:jobs=16", "--//cfg:name=two words"])

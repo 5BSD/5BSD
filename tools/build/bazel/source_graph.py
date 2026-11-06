@@ -38,6 +38,17 @@ def setting_arguments(settings):
 
 
 
+def frontend_setting_arguments(settings, jobs):
+    """Bind native package scheduling to the frontend's explicit CPU budget."""
+    setting_arguments(settings)
+    if type(jobs) is not int or jobs <= 0:
+        raise ValueError('positive frontend jobs required')
+    label = '//tools/build/bazel/config:build_jobs'
+    if label in settings and (type(settings[label]) is not int or settings[label] != jobs):
+        raise ValueError('build_jobs must agree with frontend --jobs')
+    return setting_arguments(dict(settings, **{label: jobs}))
+
+
 def execution_log_format(config):
     """Select Bazel's documented complete log encodings without implicit fallback."""
     value = config.get('execution-log-format', 'json')
@@ -279,7 +290,7 @@ def _qualify(config, args, state):
     cache_policy = action_cache_settings(config)
     log_format = execution_log_format(config)
     log_path = args.output.resolve() / ('execution.' + log_format)
-    settings = setting_arguments(config.get('build-settings', {}))
+    settings = frontend_setting_arguments(config.get('build-settings', {}), args.jobs)
     for key in ('targets','tests'):
         values=config[key]
         if not isinstance(values,list) or len(values)!=len(set(values)) or any(
@@ -356,6 +367,7 @@ def _qualify(config, args, state):
               '--lockfile_mode=error','--repository_disable_download','--repository_cache='+str(staged_cache),
               *platforms, *cache_flags,
               '--jobs='+str(args.jobs),'--compilation_mode=opt','--strip=never',
+              '--experimental_action_resource_set',
               # Extend Bazel defaults so build-only test targets retain runfiles.
               '--output_groups=+metadata,+directory_metadata',
               '--symlink_prefix='+str(out/'bazel-'),'--build_event_json_file='+str(out/'events.json'),
