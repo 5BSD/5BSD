@@ -7582,3 +7582,12 @@ This closes the recorded directory-claim gaps, not full library binary,
 world/package/runtime/cross-target/bootstrap or performance qualification.
 Generated account-file composition, sanitizer control coverage and ncurses data
 comparison remain open. Make remains the production default.
+.Pp
+The existing explicit account_databases and account_install_archive candidates
+construct fresh public-default account databases separately from package payloads.
+Current generated passwd, pwd.db and spwd.db files match the original Make library
+installconfig bytes and required archive ownership/modes.
+This does not integrate those files into finalized world construction or qualify
+existing-account preservation, installed authentication or upgrades.
+Generated account databases remain untagged construction state; ordinary package
+payloads must not replace local account databases.

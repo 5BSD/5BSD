@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Existing fresh-account generator matches original library construction (2026-11-06)
+
+The maintained frontend now builds the existing //etc:account_databases and
+//etc:account_install_archive candidates with current inputs. All three generated
+account outputs match full original Make installconfig bytes and archive modes.
+The audit verifies original receipt/component metadata and immutable captures.
+See LIBRARY-ACCOUNT-CONSTRUCTION-QUALIFICATION.md. No generator change was needed.
+
+The three paths remain absent from the selected library/world payload: source
+composition intentionally separates untagged account construction state from
+package payloads. packages/runtime/runtime.ucl requires replace=false. Next
+integrate complete fresh-system construction and qualify existing-account
+nonreplacement/upgrades plus installed lookups, not add package tags or copy host
+databases to hide the inventory gap. Nondefault accounts/shells, TCSH-disabled
+transformation and cross-target variants also remain. Existing format-5/backend
+facilities cover the bounded build; C/CLI/signing/publication are unchanged and
+the manual is updated. Continue all broader library/world/kernel/package/runtime,
+performance/bootstrap/cache/sandbox/cross-architecture gates; Make remains default.
+
 ## Full selected library directory claims reconciled (2026-11-06)
 
 The maintained frontend constructs all 164 selected installation parents plus
