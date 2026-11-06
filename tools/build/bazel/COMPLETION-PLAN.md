@@ -1,5 +1,42 @@
 # Native Bazel completion plan
 
+## Complete library construction and independent original install in progress (2026-11-06)
+
+After reconciling the 25 recorded directory-policy overwrites, qualification now
+requests every selected installation child parent, the original lib/tests root,
+and all selected build-only outputs. `bazel-library-complete-request-r1-20261106`
+under /usr/obj/usr/src records 164 installation parents plus 36 build-only outputs
+and the source helper. The normal build-bsd bazel-test path constructs these in
+`bazel-library-complete-native-r1-20261106`, using all 16 CPUs and the existing
+explicit format-5 SDK/offline inputs. No child contributions are filtered out.
+
+An independent complete original Make library hierarchy build/install is running
+in `bazel-library-complete-make-r1-20261106`, also with 16 jobs and the recorded
+explicit TESTS/FDT/other component options. It uses ordinary original Make mode,
+without source-directory metadata logs or host installation. These processes were
+confirmed live when this checkpoint was recorded. Inspect their terminal receipts
+and logs before assuming completion or restarting; progress output and observation
+timeouts do not prove success or failure.
+
+The actual tests-enabled aggregate cquery returned an empty archive selection
+because the aggregate is intentionally incompatible. That observation is retained
+in `bazel-library-positive-selection-r1-20261106`. The child request is bound to
+the current source-owned root composition and prior configured child selection;
+`bazel-library-build-only-selection-r1-20261106` records the actual 36 build-only
+outputs. The guard is retained, and this request does not qualify the public full
+aggregate or change the production/default backend.
+
+Next inspect terminal construction results and reconcile the complete captured
+namespace, every file/link/package/directory policy and exact non-ELF data against
+the actual complete original installation. The comparison must account for
+generated tree archives and every selected child. ELF/static archive/debugger,
+original body execution, full world/kernel/module/pkgbase, normal-service VM,
+CPU/RAM/disk-I/O/footprint, bootstrap/output-query/cache/sandbox/reproducibility
+and combined publication remain open. Make remains default; BIP is excluded.
+No C frontend/schema/signing/manual option change is needed for this qualification
+request; it uses the maintained workflow's existing explicit inputs.
+
+
 ## All 25 recorded library directory-policy overwrites reconciled (2026-11-06)
 
 All 25 affected positive/negative parents now match complete independent Make
