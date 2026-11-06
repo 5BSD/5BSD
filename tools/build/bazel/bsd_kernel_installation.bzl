@@ -79,6 +79,7 @@ def kernel_installation(name, kernel, debug, package = "kernel", epoch = 0):
     native.filegroup(name = name + "_metadata", srcs = [":" + name], output_group = "manifest",
         visibility = ["//visibility:public"])
     bsd_install_archive(name = name + "_archive", manifests = [":" + name], epoch = epoch,
+        supplemental_mtree_setting = "//tools/build/bazel/config:kernel_directory_policy",
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
                        "//etc/mtree:BSD.debug.dist": "/usr/lib"},
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",

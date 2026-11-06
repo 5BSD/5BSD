@@ -7842,6 +7842,26 @@ The independent module_inventory.py --leaf-policy audit selects this source tree
 share/mk and captures expanded installation policy, aliases and ordered OBJS plus
 BLOB_OBJS. It is a qualification oracle, not a native build dependency.
 FDT/MMCCAM/TESTS-enabled root branches and alternative module-selection input modes
-remain incomplete; normal boot, complete kernel/pkgbase and performance acceptance
+remain incomplete; normal boot, final kernel pkgbase and performance acceptance
 remain open. Make remains production/default. See
 .Pa tools/build/bazel/ROOT-MODULE-GRAPH-QUALIFICATION.md .
+
+.Ss Native complete AMD64 kernel installation
+The //sys/amd64/conf:complete_install_archive target composes the current kernel,
+722 selected modules, aliases, debug/GDB helpers and generated linker.hints from
+actual declared typed inputs. Its complete_kernel_hints_test compares native
+kldxref directory and explicit modes and checks rejection, atomicity and inputs.
+Default, no-separate-debug with CTF retained, and relocated profiles each pass
+21 selected tests and independent archive/ELF/debug policy inspection.
+.Pp
+The existing kernel_base_directory and kernel_debug_directory settings select
+layout. The label setting //tools/build/bazel/config:kernel_directory_policy
+accepts an explicit supplemental mtree source for new ancestor directories.
+The maintained default supplies no additional policy. Missing ancestor policy
+fails; ownership and permissions are never inferred from the builder filesystem.
+The existing format-5 Bazel input interface needs no additional frontend switch.
+.Pp
+This qualifies installation archives, not final pkgbase, normal startup, upgrades,
+cross/custom completeness or comparative performance. Make stays production/default.
+See
+.Pa tools/build/bazel/KERNEL-INSTALLATION-COMPOSITION-QUALIFICATION.md .

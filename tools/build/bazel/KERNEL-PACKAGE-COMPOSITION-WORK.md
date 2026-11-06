@@ -182,3 +182,35 @@ materialize only those selected ELF files, not the complete installed world. Pro
 explicit and ordinary directory-mode hints agree before merging that generated
 record with the existing kernel/GDB directory policy and typed module manifest.
 This is the next design step, not a completed hints/composition result.
+
+## Complete installation implementation qualified (2026-11-06)
+
+The new native hints rule consumes typed installation records, selects the regular
+ELF names ordinary kldxref would scan, and streams only those payloads into an
+action-private directory for the existing -o API. It declares the native execution
+tool and DSOs, and publishes a normal installation entry for linker.hints. A native
+Bazel test compares directory/explicit/build outputs, alias and ignored-file
+behavior, undeclared-file exclusion, corrupt-input atomicity and input preservation.
+The AMD64 complete installation joins the existing kernel/GDB/directory manifest
+and source-owned module root, then adds generated hints and an installation archive.
+
+The default, no-separate-debug and relocated profiles pass all 21 selected tests
+and independent complete archive/ELF/debug/CTF review. Across all profiles, the
+723 runtime ELFs preserve identical allocated sections and CTF; relocation leaves
+all regular payloads unchanged. Explicit supplemental directory policy supplies
+custom ancestors; absent policy is rejected. See
+KERNEL-INSTALLATION-COMPOSITION-QUALIFICATION.md. The initial request lacked the mandatory
+explicit kernel source revision and was rejected during analysis. The next request
+identifies the dirty source revision and explicitly enables kernel/module CTF, as
+GENERIC requests WITH_CTF for DTrace. Existing format-5 target/settings/test APIs
+carry these changes; frontend C and signing/publication interfaces need no update.
+No normal boot, final pkgbase archives or publication is established by this work.
+
+Final package composition must preserve world-kmod-metadata.awk's non-kernel module
+merge into the oes/mac-abac families and project kernel ownership into the declared
+KERNCONF/flavor package. The original mtree-to-plist.awk still identifies kernel
+debug payloads through a /usr/lib/debug/boot prefix; relocated/debug-prefix tests
+must address that source policy before claiming general package-layout support.
+
+NEXT: final flavored kernel pkgbase families, non-kernel module/world package merge
+and complete package inventory before normal startup/services/upgrades.

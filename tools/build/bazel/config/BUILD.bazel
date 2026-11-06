@@ -923,3 +923,8 @@ selects.config_setting_group(name = "module_inet6_support_enabled", match_all = 
 selects.config_setting_group(name = "module_ip_enabled", match_any = [":module_inet_support_enabled", ":module_inet6_support_enabled"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "module_both_ip_enabled", match_all = [":module_inet_support_enabled", ":module_inet6_support_enabled"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "module_sctp_enabled", match_any = [":kernel_sctp_support_enabled", ":kernel_sctp_enabled"], visibility = ["//visibility:public"])
+
+# Kernel layout extensions require explicit source policy, not inferred ownership.
+filegroup(name = "no_kernel_directory_overrides", visibility = ["//visibility:public"])
+label_flag(name = "kernel_directory_policy", build_setting_default = ":no_kernel_directory_overrides",
+    visibility = ["//visibility:public"])

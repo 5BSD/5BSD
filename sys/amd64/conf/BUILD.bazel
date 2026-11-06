@@ -931,3 +931,27 @@ exports_files(["GENERIC.hints"], visibility = ["//etc:__pkg__"])
 filegroup(name = "generic_global_option_header", srcs = [":opt_global"], visibility = ["//visibility:public"])
 
 filegroup(name = "generic_platform_option_header", srcs = [":opt_platform"], visibility = ["//visibility:public"])
+
+# Complete current-profile kernel installation. Standalone component layouts stay
+# distinct; the source-owned module root already supplies the base-kernel context.
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_linker_hints.bzl", "bsd_linker_hints")
+load("//tools/build/bazel:bsd_linker_hints_test.bzl", "bsd_linker_hints_test")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_manifest(name = "complete_kernel_payload",
+    manifests = [":install_manifest", "//sys/modules:amd64_base_installation"],
+    visibility = ["//visibility:public"])
+bsd_linker_hints(name = "complete_kernel_hints", installation = ":complete_kernel_payload",
+    directory = "//tools/build/bazel/config:kernel_base_directory", visibility = ["//visibility:public"])
+bsd_install_manifest(name = "complete_install_manifest", manifests = [":complete_kernel_payload"],
+    entries = [":complete_kernel_hints"], visibility = ["//visibility:public"])
+bsd_install_archive(name = "complete_install_archive", manifests = [":complete_install_manifest"], epoch = 0,
+    supplemental_mtree_setting = "//tools/build/bazel/config:kernel_directory_policy",
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib"}, passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
+bsd_linker_hints_test(name = "complete_kernel_hints_test", hints = ":complete_kernel_hints",
+    size = "medium", visibility = ["//visibility:public"])

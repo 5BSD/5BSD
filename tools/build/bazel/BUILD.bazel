@@ -422,3 +422,5 @@ bsd_host_artifact_test(name = "kernel_fdt_modules_test", src = "kernel-fdt-modul
 
 exports_files(["kernel_options.py"])
 bsd_python_test(name = "kernel_options_test", src = "kernel-options-test.py", data = ["kernel_options.py"])
+
+exports_files(["linker_hints.py", "linker-hints-test.py"])

@@ -1,5 +1,23 @@
 # Bazel qualification
 
+## Complete current AMD64 kernel installation passes (2026-11-06)
+
+The native complete archive composes the kernel, 722 selected modules, three
+aliases, separate debug/GDB helpers and generated linker.hints. Default,
+no-separate-debug (CTF retained) and relocated kernel/debug profiles each pass
+21 selected test targets, with cache reuse permitted. Independent full archive
+inspection checks original Make membership/installation policy and GDB inventory,
+all declared regular payload bytes, ownership/modes, ELF/CTF and debug CRCs.
+All 723 runtime ELF allocated-section/CTF contracts match across profiles;
+relocation preserves every regular payload byte. Custom ancestor directories
+require explicit kernel_directory_policy mtree input; absent policy fails closed.
+See KERNEL-INSTALLATION-COMPOSITION-QUALIFICATION.md for evidence and limits.
+
+NEXT: final kernel-flavored pkgbase families and non-kernel module/world package
+merge, then normal boot/services and real upgrades. Alternative root profiles,
+custom/cross completeness, bootstrap/cache/sandbox/reproducibility/debug/resource/
+hardware/publication gates remain open. Make remains production/default; BIP excluded.
+
 ## Normal AMD64 root module graph passes (2026-11-06)
 
 Source-owned root selection now builds the complete current 722-module profile.
