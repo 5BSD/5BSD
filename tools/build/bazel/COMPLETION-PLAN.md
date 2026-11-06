@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Current-profile AMD64 kernel build passes (2026-11-06)
+
+The full current-profile AMD64 GENERIC link, CTF merge and runtime/debug split now
+pass through maintained build-bsd with 16 CPUs. Immutable artifact/header/override
+and actual ELF/debug CRC review pass. This refresh uses the new shared TCP option;
+it is distinct from earlier controlled Make parity, normal boot and full installed
+kernel packages. See CURRENT-PROFILE-KERNEL-QUALIFICATION.md.
+
+NEXT: finish root module selection and coherent kernel/module/pkgbase composition,
+then normal startup/authentication/services and real upgrades. Refreshed independent
+Make parity, cross-platform, bootstrap/cache/sandbox/reproducibility/debug/resource/
+hardware/publication gates remain open. Make stays production/default; BIP excluded.
+
 ## Shared kernel-option and TCP module checkpoint (2026-11-06)
 
 TCP_HHOOK now has one typed setting shared by the actual GENERIC parser overrides

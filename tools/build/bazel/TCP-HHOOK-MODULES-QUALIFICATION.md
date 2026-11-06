@@ -76,3 +76,7 @@ coherent kernel/GDB/modules/directories/aliases/linker.hints/pkgbase, fresh full
 kernel build, normal startup/authentication/services, genuine upgrades, cross-platform,
 bootstrap/cache/sandbox/reproducibility/debug/performance/hardware/publication gates
 remain open. No host installation, module loading, upgrade or reboot was performed.
+
+A subsequent fresh full current-profile native kernel link/CTF/debug build passes;
+see CURRENT-PROFILE-KERNEL-QUALIFICATION.md. This closes construction for the
+refreshed profile, not original Make parity, installation or runtime qualification.

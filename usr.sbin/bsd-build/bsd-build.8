@@ -7794,3 +7794,8 @@ ALL_MODULES checks pass; a source-disabled helper explicitly permits an empty
 component manifest while ordinary empty installation remains rejected.
 These checks do not qualify a full installed kernel, runtime or performance.
 Earlier full-kernel evidence retains its original configuration-input scope.
+.Pp
+A fresh full AMD64 GENERIC native link, CTF merge and runtime/debug split passes
+with the shared TCP override; captured ELF and debug-link CRC checks pass.
+Full installed kernel/pkgbase, current independent Make parity and normal boot
+remain separate acceptance gates. The production/default backend stays Make.
