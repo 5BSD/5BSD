@@ -61,8 +61,7 @@ while getopts N opt; do
 done
 
 PKG_ARGS="--rootdir ${ROOTDIR}"
-PKG_ARGS="$PKG_ARGS -o INSTALL_AS_USER=1"
-PKGCMD="/usr/sbin/pkg ${PKG_ARGS}"
+PKGCMD="env INSTALL_AS_USER=yes /usr/sbin/pkg ${PKG_ARGS}"
 
 if [ ! -x /usr/local/sbin/pkg ]; then
 	/etc/rc.d/ldconfig restart

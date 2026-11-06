@@ -131,9 +131,9 @@ vm_install_base() {
 
 	if [ -z "${NOPKGBASE}" ]; then
 		local pkg_cmd
-		pkg_cmd="${PKG_CMD} --rootdir ${DESTDIR} --repo-conf-dir ${PKGBASE_REPO_DIR}
+		pkg_cmd="env INSTALL_AS_USER=yes ${PKG_CMD} --rootdir ${DESTDIR} --repo-conf-dir ${PKGBASE_REPO_DIR}
 			-o ASSUME_ALWAYS_YES=yes -o IGNORE_OSVERSION=yes
-			-o ABI=${PKG_ABI} -o INSTALL_AS_USER=yes "
+			-o ABI=${PKG_ABI} "
 		pkg_cmd="$pkg_cmd -o METALOG=METALOG"
 		$pkg_cmd update
 		selected=$(vm_base_packages_list | vm_extra_filter_base_packages)
@@ -315,9 +315,8 @@ vm_extra_pkg_rmcache() {
 		return 0
 	fi
 
-	${PKG_CMD} \
+	INSTALL_AS_USER=yes ${PKG_CMD} \
 	    -o ASSUME_ALWAYS_YES=yes \
-	    -o INSTALL_AS_USER=yes \
 	    -r ${DESTDIR} \
 	    clean -y -a
 

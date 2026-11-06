@@ -27,6 +27,27 @@ def normalize_function():
     return match.group(0)
 
 
+class PkgUserMode(unittest.TestCase):
+    def test_rootless_mode_reaches_pkg_as_environment(self):
+        # Execute the maintained command assignment with a receiver, without
+        # staging packages, invoking hooks or needing a privileged image root.
+        match=re.search(r'^\s*pkg_cmd=".*?^\s*pkg_cmd="\$pkg_cmd -o METALOG=METALOG"',
+                        VMIMAGE.read_text(),re.MULTILINE|re.DOTALL)
+        self.assertIsNotNone(match)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            receiver=root/'pkg-receiver'
+            receiver.write_text('#!/bin/sh\nprintf "%s\\n" "${INSTALL_AS_USER-unset}"\nprintf "%s\\n" "$@"\n')
+            receiver.chmod(0o700)
+            script='PKG_CMD='+str(receiver)+'\nDESTDIR=/unused-root\nPKGBASE_REPO_DIR=/unused-repos\nPKG_ABI=FreeBSD:16:amd64\n'
+            script+=match.group(0)+'\n$pkg_cmd probe\n'
+            result=subprocess.run(['sh','-c',script],text=True,capture_output=True,check=True)
+            values=result.stdout.splitlines()
+            self.assertEqual(values[0],'yes')
+            self.assertIn('probe',values)
+            self.assertNotIn('INSTALL_AS_USER=yes',values[1:])
+
+
 class ImageRoot(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
