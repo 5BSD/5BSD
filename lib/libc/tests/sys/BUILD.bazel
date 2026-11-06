@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":tests.bzl", "sys_tests")
+sys_tests()

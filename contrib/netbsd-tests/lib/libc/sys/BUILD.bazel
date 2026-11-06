@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['t_access.c', 't_bind.c', 't_chroot.c', 't_clock_gettime.c', 't_clock_nanosleep.c', 't_connect.c', 't_dup.c', 't_fsync.c', 't_getcontext.c', 't_getgroups.c', 't_getitimer.c', 't_getlogin.c', 't_getpid.c', 't_getrusage.c', 't_getsid.c', 't_getsockname.c', 't_gettimeofday.c', 't_issetugid.c', 't_kevent.c', 't_kill.c', 't_link.c', 't_listen.c', 't_mincore.c', 't_mkdir.c', 't_mkfifo.c', 't_mknod.c', 't_mlock.c', 't_mmap.c', 't_mprotect.c', 't_msgctl.c', 't_msgget.c', 't_msgrcv.c', 't_msgsnd.c', 't_msync.c', 't_nanosleep.c', 't_pipe.c', 't_pipe2.c', 't_poll.c', 't_posix_fallocate.c', 't_revoke.c', 't_select.c', 't_setrlimit.c', 't_setuid.c', 't_sigaction.c', 't_sigqueue.c', 't_sigtimedwait.c', 't_socketpair.c', 't_stat.c', 't_timer_create.c', 't_truncate.c', 't_ucontext.c', 't_umask.c', 't_unlink.c', 't_wait.c', 't_wait_noproc.c', 't_wait_noproc_wnohang.c', 't_write.c'], visibility = ["//lib/libc/tests/sys:__pkg__"])
+# The WNOHANG program textually includes the original common implementation.
+cc_library(name = "wait_noproc_text", textual_hdrs = ["t_wait_noproc.c"], includes = ["."],
+    visibility = ["//lib/libc/tests/sys:__pkg__"])

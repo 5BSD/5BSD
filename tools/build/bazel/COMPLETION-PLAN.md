@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Complete original AMD64 system-call test construction (2026-11-06)
+
+All 63 selected original programs and 128 installed records match independent
+Make inventory/metadata/Kyua/fixture/ELF/debug contracts. All 283 case registrations,
+72 cleanup requirements and original users/deadlines match. Nineteen reviewed
+bounded host cases pass without skips. The other 264 cases remain unexecuted
+manual/deferred work; package-owned ownership and global-state tests require
+actual guest installation, not a user-owned Bazel fixture. Configured action
+analysis preserves the textual wait input and both two-source mlock consumers.
+See LIBC-SYS-TEST-QUALIFICATION.md for final receipts, scope and retained diagnostics.
+
+Next: remaining libc gen/ssp/iconv installation and parent traversal, alongside
+resource-bounded disposable-guest runtime cohorts. All independent full world/
+pkgbase/cross/bootstrap/cache/sandbox/reproducibility/normal-service/performance/
+publication gates remain open. Make stays default; BIP excluded.
+
 ## Complete original stdlib construction and bounded host cases (2026-11-06)
 
 Thirty-six original executables, both native dlopen DSOs and seventy-eight

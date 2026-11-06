@@ -12062,3 +12062,14 @@ getopt, sorting, allocator, environment, exit/destructor and threaded plugin cas
 are exercised within the documented host scope. Expected SIGSEGV and original
 unconditional skip are explicit outcomes. System/chroot execution, expensive
 benchmark, production audit delivery and probe firing remain separate gates.
+
+
+## libc AMD64 system-call tests (2026-11-06)
+
+All original test/helper sources remain unchanged, including original textual
+wait inclusion and shared mlock helper. Native ABI/compatibility dependencies,
+fortify opt-out, IPC exclusivity and cleanup/user/deadline metadata are retained.
+Nineteen bounded process/private-file cases pass. The 264 deferred global IPC,
+root, networking, resource-limit and wired-memory cases do not establish runtime
+probe firing, audit delivery or safe global-state restoration. Keep those as
+explicit installed-guest and instrumentation qualification gates.
