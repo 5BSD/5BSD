@@ -3666,32 +3666,8 @@ otruncate(struct thread *td, struct otruncate_args *uap)
 int
 kern_fsync_fp(struct thread *td, struct file *fp, bool fullsync)
 {
-	struct vn_file_context filectx;
-	struct vnode *vp;
-	struct mount *mp;
-	int error;
 
-	MPASS(fp->f_type == DTYPE_VNODE);
-	vp = fp->f_vnode;
-#if 0
-	if (!fullsync)
-		/* XXXKIB: compete outstanding aio writes */;
-#endif
-retry:
-	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
-	if (error != 0)
-		return (error);
-	vn_lock(vp, vn_lktype_write(mp, vp) | LK_RETRY);
-	AUDIT_ARG_VNODE1(vp);
-	vnode_pager_clean_async(vp);
-	vn_file_context_enter(&filectx, fp, NULL, 0);
-	error = fullsync ? VOP_FSYNC(vp, MNT_WAIT, td) : VOP_FDATASYNC(vp, td);
-	vn_file_context_leave(&filectx);
-	VOP_UNLOCK(vp);
-	vn_finished_write(mp);
-	if (error == ERELOOKUP)
-		goto retry;
-	return (error);
+	return (fo_fsync(fp, fullsync ? FO_FSYNC_FULL : FO_FSYNC_DATA, td));
 }
 
 int
@@ -3701,10 +3677,17 @@ kern_fsync(struct thread *td, int fd, bool fullsync)
 	int error;
 
 	AUDIT_ARG_FD(fd);
-	error = getvnode(td, fd, &cap_fsync_rights, &fp);
+	error = fget(td, fd, &cap_fsync_rights, &fp);
 	if (error != 0)
 		return (error);
-	error = kern_fsync_fp(td, fp, fullsync);
+	/*
+	 * fsync(2) and fdatasync(2) never accepted an O_PATH descriptor
+	 * (getvnode() refused it), although aio_fsync(2) and syncfs do.
+	 */
+	if (fp->f_ops == &path_fileops)
+		error = EBADF;
+	else
+		error = kern_fsync_fp(td, fp, fullsync);
 	fdrop(fp, td);
 	return (error);
 }

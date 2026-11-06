@@ -1864,6 +1864,7 @@ const struct fileops linuxfileops = {
 	.fo_cmp = linux_file_kcmp,
 	.fo_pathconf = vn_pathconf,
 	.fo_statfs = vn_statfs,
+	.fo_fsync = vn_fsync,
 	.fo_flags = DFLAG_PASSABLE,
 };
 

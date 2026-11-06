@@ -1377,6 +1377,7 @@ linux_fdatasync(struct thread *td, struct linux_fdatasync_args *uap)
 int
 linux_sync_file_range(struct thread *td, struct linux_sync_file_range_args *uap)
 {
+	struct stat sb;
 	struct file *fp;
 	off_t nbytes, offset;
 	int error;
@@ -1395,9 +1396,15 @@ linux_sync_file_range(struct thread *td, struct linux_sync_file_range_args *uap)
 		error = EINVAL;
 		goto out;
 	}
-	if (fp->f_type != DTYPE_VNODE ||
-	    (fp->f_vnode->v_type != VREG && fp->f_vnode->v_type != VBLK &&
-	    fp->f_vnode->v_type != VDIR && fp->f_vnode->v_type != VLNK)) {
+	/*
+	 * Linux returns ESPIPE for anything that is not a file, directory,
+	 * block device or symlink; ask the descriptor what it is.
+	 */
+	error = fo_stat(fp, &sb, td->td_ucred);
+	if (error != 0)
+		goto out;
+	if (!S_ISREG(sb.st_mode) && !S_ISBLK(sb.st_mode) &&
+	    !S_ISDIR(sb.st_mode) && !S_ISLNK(sb.st_mode)) {
 		error = ESPIPE;
 		goto out;
 	}

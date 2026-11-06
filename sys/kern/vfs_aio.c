@@ -823,35 +823,6 @@ restart:
 }
 
 /*
- * Move all data to a permanent storage device.  This code
- * simulates the fsync and fdatasync syscalls.
- */
-static int
-aio_fsync_vnode(struct thread *td, struct vnode *vp, int op)
-{
-	struct mount *mp;
-	int error;
-
-	for (;;) {
-		error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
-		if (error != 0)
-			break;
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		vnode_pager_clean_async(vp);
-		if (op == LIO_DSYNC)
-			error = VOP_FDATASYNC(vp, td);
-		else
-			error = VOP_FSYNC(vp, MNT_WAIT, td);
-
-		VOP_UNLOCK(vp);
-		vn_finished_write(mp);
-		if (error != ERELOOKUP)
-			break;
-	}
-	return (error);
-}
-
-/*
  * The AIO processing activity for LIO_READ/LIO_WRITE.  This is the code that
  * does the I/O request for the non-bio version of the operations.  The normal
  * vn operations are used, and this code should work in all instances for every
@@ -954,11 +925,13 @@ aio_process_sync(struct kaiocb *job)
 	KASSERT(job->uaiocb.aio_lio_opcode & LIO_SYNC,
 	    ("%s: opcode %d", __func__, job->uaiocb.aio_lio_opcode));
 
+	/*
+	 * The descriptor's own fo_fsync does the work; aio_aqueue() admitted
+	 * only descriptors that can answer it.
+	 */
 	td->td_ucred = job->cred;
-	if (fp->f_vnode != NULL) {
-		error = aio_fsync_vnode(td, fp->f_vnode,
-		    job->uaiocb.aio_lio_opcode);
-	}
+	error = fo_fsync(fp, job->uaiocb.aio_lio_opcode == LIO_DSYNC ?
+	    FO_FSYNC_DATA : FO_FSYNC_FULL, td);
 	td->td_ucred = td_savedcred;
 	if (error)
 		aio_complete(job, -1, error);

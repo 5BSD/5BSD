@@ -205,6 +205,7 @@ static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
 static fo_pathconf_t	pipe_pathconf;
 static fo_statfs_t	pipe_statfs;
+static fo_fsync_t	pipe_fsync;
 
 const struct fileops pipeops = {
 	.fo_read = pipe_read,
@@ -222,6 +223,7 @@ const struct fileops pipeops = {
 	.fo_cmp = file_kcmp_generic,
 	.fo_pathconf = pipe_pathconf,
 	.fo_statfs = pipe_statfs,
+	.fo_fsync = pipe_fsync,
 	.fo_flags = DFLAG_PASSABLE
 };
 
@@ -2086,6 +2088,17 @@ pipe_statfs(struct file *fp, struct statfs *buf, struct thread *td)
 	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
 		return (vn_statfs(fp, buf, td));
 	return (invfo_statfs(fp, buf, td));
+}
+
+static int
+pipe_fsync(struct file *fp, int mode, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_fsync(fp, mode, td));
+	return (invfo_fsync(fp, mode, td));
 }
 
 static int

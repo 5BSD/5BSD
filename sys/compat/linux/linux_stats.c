@@ -479,39 +479,18 @@ linux_newfstatat(struct thread *td, struct linux_newfstatat_args *args)
 int
 linux_syncfs(struct thread *td, struct linux_syncfs_args *args)
 {
-	struct mount *mp;
-	struct vnode *vp;
-	int error, save;
+	struct file *fp;
+	int error;
 
-	error = fgetvp(td, args->fd, &cap_fsync_rights, &vp);
+	error = fget(td, args->fd, &cap_fsync_rights, &fp);
 	if (error != 0)
-		/*
-		 * Linux syncfs() returns only EBADF, however fgetvp()
-		 * can return EINVAL in case of file descriptor does
-		 * not represent a vnode. XXX.
-		 */
 		return (error);
-
-	mp = vp->v_mount;
-	mtx_lock(&mountlist_mtx);
-	error = vfs_busy(mp, MBF_MNTLSTLOCK);
-	if (error != 0) {
-		/* See comment above. */
-		mtx_unlock(&mountlist_mtx);
-		goto out;
-	}
-	if ((mp->mnt_flag & MNT_RDONLY) == 0 &&
-	    vn_start_write(NULL, &mp, V_NOWAIT) == 0) {
-		save = curthread_pflags_set(TDP_SYNCIO);
-		vfs_periodic(mp, MNT_NOWAIT);
-		VFS_SYNC(mp, MNT_NOWAIT);
-		curthread_pflags_restore(save);
-		vn_finished_write(mp);
-	}
-	vfs_unbusy(mp);
-
- out:
-	vrele(vp);
+	/*
+	 * Linux syncfs() returns only EBADF; a descriptor with no
+	 * filesystem behind it returns EINVAL here, as fgetvp() did. XXX.
+	 */
+	error = fo_fsync(fp, FO_FSYNC_FS, td);
+	fdrop(fp, td);
 	return (error);
 }
 

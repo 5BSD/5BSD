@@ -412,6 +412,67 @@ vn_openfile_statfs(struct file *fp, struct statfs *buf, struct thread *td)
 	return (error);
 }
 
+/* FO_FSYNC_FS: flush the filesystem the vnode lives on, Linux syncfs(2). */
+static int
+vn_fsync_fs(struct vnode *vp)
+{
+	struct mount *mp;
+	int error, save;
+
+	mp = vp->v_mount;
+	mtx_lock(&mountlist_mtx);
+	error = vfs_busy(mp, MBF_MNTLSTLOCK);
+	if (error != 0) {
+		mtx_unlock(&mountlist_mtx);
+		return (error);
+	}
+	if ((mp->mnt_flag & MNT_RDONLY) == 0 &&
+	    vn_start_write(NULL, &mp, V_NOWAIT) == 0) {
+		save = curthread_pflags_set(TDP_SYNCIO);
+		vfs_periodic(mp, MNT_NOWAIT);
+		VFS_SYNC(mp, MNT_NOWAIT);
+		curthread_pflags_restore(save);
+		vn_finished_write(mp);
+	}
+	vfs_unbusy(mp);
+	return (0);
+}
+
+/*
+ * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
+ * that carries a vnode.  The file context is entered here, not by a
+ * per-table wrapper, so FIFOs, pseudo-terminal masters, devfs and linuxkpi
+ * files get it too; it was entered unconditionally before.
+ */
+int
+vn_fsync(struct file *fp, int mode, struct thread *td)
+{
+	struct vn_file_context filectx;
+	struct vnode *vp;
+	struct mount *mp;
+	int error;
+
+	vp = fp->f_vnode;
+	if (mode == FO_FSYNC_FS)
+		return (vn_fsync_fs(vp));
+retry:
+	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
+	if (error != 0)
+		return (error);
+	vn_lock(vp, vn_lktype_write(mp, vp) | LK_RETRY);
+	AUDIT_ARG_VNODE1(vp);
+	vnode_pager_clean_async(vp);
+	vn_file_context_enter(&filectx, fp, NULL, 0);
+	error = mode == FO_FSYNC_FULL ? VOP_FSYNC(vp, MNT_WAIT, td) :
+	    VOP_FDATASYNC(vp, td);
+	vn_file_context_leave(&filectx);
+	VOP_UNLOCK(vp);
+	vn_finished_write(mp);
+	if (error == ERELOOKUP)
+		goto retry;
+	return (error);
+}
+
 const struct fileops vnops = {
 	.fo_read = vn_openfile_io_fault,
 	.fo_write = vn_openfile_io_fault,
@@ -432,6 +493,7 @@ const struct fileops vnops = {
 	.fo_cmp = vn_cmp,
 	.fo_pathconf = vn_openfile_pathconf,
 	.fo_statfs = vn_openfile_statfs,
+	.fo_fsync = vn_fsync,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -455,6 +517,7 @@ const struct fileops vnops = {
 	.fo_cmp = vn_cmp, \
 	.fo_pathconf = vn_openfile_pathconf, \
 	.fo_statfs = vn_openfile_statfs, \
+	.fo_fsync = vn_fsync, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

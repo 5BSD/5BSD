@@ -15,6 +15,7 @@ PLAIN_TESTS_C+=	newfileops_on_fork_test
 ATF_TESTS_C+=	fspacectl_test
 ATF_TESTS_C+=	fpathconf_test
 ATF_TESTS_C+=	fstatfs_test
+ATF_TESTS_C+=	fsync_test
 
 PROGS+=		flock_helper
 

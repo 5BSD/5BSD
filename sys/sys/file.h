@@ -162,7 +162,13 @@ typedef int fo_pathconf_t(struct file *fp, int name, long *valuep,
 		    struct thread *td);
 typedef int fo_statfs_t(struct file *fp, struct statfs *buf,
 		    struct thread *td);
+typedef int fo_fsync_t(struct file *fp, int mode, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
+
+/* fo_fsync modes. */
+#define	FO_FSYNC_FULL	0	/* fsync(2): data and metadata */
+#define	FO_FSYNC_DATA	1	/* fdatasync(2): data only */
+#define	FO_FSYNC_FS	2	/* the whole filesystem the file is on */
 typedef	int fo_flags_t;
 
 struct fileops {
@@ -190,7 +196,8 @@ struct fileops {
 	fo_fork_t	*fo_fork;
 	fo_pathconf_t	*fo_pathconf;
 	fo_statfs_t	*fo_statfs;
-	fo_spare_t	*fo_spares[6];	/* Spare slots */
+	fo_fsync_t	*fo_fsync;
+	fo_spare_t	*fo_spares[5];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
@@ -325,6 +332,7 @@ fo_chown_t	invfo_chown;
 fo_sendfile_t	invfo_sendfile;
 fo_pathconf_t	invfo_pathconf;
 fo_statfs_t	invfo_statfs;
+fo_fsync_t	invfo_fsync;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -332,6 +340,7 @@ fo_fill_kinfo_t	vn_fill_kinfo;
 fo_kqfilter_t	vn_kqfilter_opath;
 fo_pathconf_t	vn_pathconf;
 fo_statfs_t	vn_statfs;
+fo_fsync_t	vn_fsync;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -523,6 +532,15 @@ fo_statfs(struct file *fp, struct statfs *buf, struct thread *td)
 	if (fp->f_ops->fo_statfs == NULL)
 		return (invfo_statfs(fp, buf, td));
 	return ((*fp->f_ops->fo_statfs)(fp, buf, td));
+}
+
+static __inline int
+fo_fsync(struct file *fp, int mode, struct thread *td)
+{
+
+	if (fp->f_ops->fo_fsync == NULL)
+		return (invfo_fsync(fp, mode, td));
+	return ((*fp->f_ops->fo_fsync)(fp, mode, td));
 }
 
 static __inline int

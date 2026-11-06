@@ -7,7 +7,8 @@
 .Sh NAME
 .Nm fileops ,
 .Nm fo_pathconf ,
-.Nm fo_statfs
+.Nm fo_statfs ,
+.Nm fo_fsync
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -16,6 +17,8 @@
 .Fn fo_pathconf "struct file *fp" "int name" "long *valuep" "struct thread *td"
 .Ft int
 .Fn fo_statfs "struct file *fp" "struct statfs *buf" "struct thread *td"
+.Ft int
+.Fn fo_fsync "struct file *fp" "int mode" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -125,24 +128,89 @@ returns
 .Er EINVAL ,
 the error a descriptor without a vnode has always received.
 .El
+.Ss fo_fsync
+.Fn fo_fsync
+flushes the file according to
+.Fa mode :
+.Bl -tag -width "FO_FSYNC_FULL" -compact
+.It Dv FO_FSYNC_FULL
+data and metadata, as
+.Xr fsync 2
+and
+.Dv LIO_SYNC ;
+.It Dv FO_FSYNC_DATA
+data only, as
+.Xr fdatasync 2
+and
+.Dv LIO_DSYNC ;
+.It Dv FO_FSYNC_FS
+the whole filesystem the file is on, as Linux
+.Fn syncfs .
+.El
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_fsync
+is the one implementation for the system calls,
+.Xr aio_fsync 2
+and
+.Fn syncfs .
+It suspends writes on the mount, locks the vnode, cleans its pages and
+calls
+.Xr VOP_FSYNC 9
+or
+.Xr VOP_FDATASYNC 9 ,
+retrying on
+.Er ERELOOKUP ;
+for
+.Dv FO_FSYNC_FS
+it busies the mount and runs
+.Xr VFS_SYNC 9 .
+It enters the file context itself, so every table installs it directly.
+Directories, regular files, FIFOs, pseudo-terminal masters, devfs nodes,
+linuxkpi files and
+.Dv O_PATH
+files use it;
+.Xr fsync 2
+and
+.Xr fdatasync 2
+refuse an
+.Dv O_PATH
+descriptor with
+.Er EBADF
+before reaching the table, as they always did, while
+.Xr aio_fsync 2
+and
+.Fn syncfs
+accept one, as they always did.
+.It everything else
+.Fn invfo_fsync
+returns
+.Er EINVAL .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
 value.
 .Sh SEE ALSO
+.Xr aio_fsync 2 ,
+.Xr fdatasync 2 ,
 .Xr fpathconf 2 ,
 .Xr fstatfs 2 ,
+.Xr fsync 2 ,
 .Xr VFS_STATFS 9 ,
+.Xr VFS_SYNC 9 ,
 .Xr vnode 9 ,
+.Xr VOP_FSYNC 9 ,
 .Xr VOP_PATHCONF 9
 .Sh HISTORY
 The
 .Vt "struct fileops"
 table has existed since
 .Bx 4.4 .
-.Fn fo_pathconf
-and
+.Fn fo_pathconf ,
 .Fn fo_statfs
+and
+.Fn fo_fsync
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.
