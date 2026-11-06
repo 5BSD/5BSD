@@ -1,5 +1,33 @@
 # Native Bazel completion plan
 
+## Complete library Make tool prerequisite found; native build continues (2026-11-06)
+
+The first complete original Make control terminated unsuccessfully: libpmc uses
+its normal JEVENTS build-tool command, which was absent from the isolated reference
+object tree. The original generator now passes its own native Make build/install
+reference at /usr/obj/usr/src/bazel-library-jevents-make-r1-20261106. The declared
+executable/receipt/sha256 binding is recorded in
+bazel-library-complete-generator-inputs-r1-20261106/generators.json.
+
+The reference interface now accepts source-named uppercase generator commands,
+including JEVENTS, while rejecting compiler, target/path/environment and feature
+control overrides. Existing provenance, effective selection, unchanged compiler/
+SDK identity, before/after hashes and observed direct metadata recipe checks stay
+in force. Eight host provenance/tamper tests and twenty host option/metadata
+restriction tests pass. The added validation-module
+and directory-metadata dependencies are declared on the Bazel test target.
+Run the maintained Bazel provenance/options tests after the live native build
+finishes. The running library compiler/action inputs are unchanged.
+
+The complete Make control has restarted fresh as
+bazel-library-complete-make-r2-20261106, with --make-meta and the explicit original
+JEVENTS binding. The original failed r1 evidence is retained. The full native
+library run bazel-library-complete-native-r1-20261106 is still active. Both were
+confirmed live at this checkpoint. Inspect terminal receipts/logs before restart;
+this is not completed construction, installation parity or runtime qualification.
+The global tests-enabled library guard and Make production default remain.
+
+
 ## Complete library construction and independent original install in progress (2026-11-06)
 
 After reconciling the 25 recorded directory-policy overwrites, qualification now

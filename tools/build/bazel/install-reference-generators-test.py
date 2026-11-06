@@ -51,6 +51,24 @@ class GeneratorInputs(unittest.TestCase):
         self.info = original; self.refresh()
         self.compiler.write_bytes(b"other compiler")
         with self.assertRaises(ValueError): self.load()
+    def test_source_named_generator_command(self):
+        self.config["generators"] = {"JEVENTS": self.item}
+        self.refresh()
+        records, _ = self.load()
+        self.assertEqual(records["JEVENTS"]["artifact"], str(self.artifact))
+        objects = self.root / "objects"; objects.mkdir()
+        (objects / "events.meta").write_text("CMD " + str(self.artifact) + " x86 arch events.c\n")
+        self.assertEqual(len(gen.audit_recipes(objects, records)["JEVENTS"]), 1)
+
+    def test_reserved_identity_environment_and_option_variables(self):
+        for variable in ["CC", "CXX", "LD", "OBJTOP", "TARGET", "INSTALL", "PATH",
+                         "HOME", "MAKEOBJDIR", "MAKE", "SHELL", "BUILDENV_SHELL",
+                         "BTOOLSPATH", "HOST_OBJTOP", "WITH_TESTS", "WITHOUT_NIS",
+                         "MK_TESTS", "generator", "BAD-NAME"]:
+            self.config["generators"] = {variable: self.item}; self.refresh()
+            with self.subTest(variable=variable), self.assertRaises(ValueError):
+                self.load()
+
     def test_unsafe_variable_path_and_nonexecutable(self):
         self.config["generators"] = {"CC": self.item}; self.refresh()
         with self.assertRaises(ValueError): self.load()

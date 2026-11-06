@@ -4,13 +4,15 @@
 
 install-reference.py accepts --generator-inputs with --make-meta. Format 1 has
 exact top-level keys format and generators. Each generator is keyed by its
-MAKE_ command variable and uses receipt, receipt_sha256, artifact (relative to
+source-named uppercase generator command variable and uses receipt, receipt_sha256, artifact (relative to
 the receipt directory), and artifact_sha256, as the existing library-input
 interface does. Executables must be regular executable original component
 object-tree files under /usr/obj. Receipts must be passed native AMD64 Make
 references from the selected source tree and bind the same compiler file/content.
 Compiler aliases are matched by file identity. Other execution hosts are not yet
-qualified. Overrides must be effective and preserve SDK/target/compiler identity.
+qualified. Compiler, target, path/environment and feature-control variable names
+are rejected. MAKE_ names and ordinary source tool names such as JEVENTS are
+supported. Overrides must be effective and preserve SDK/target/compiler identity.
 Hashes are checked before/after commands. Each tool must appear as a direct
 command in completed original metadata recipes. No filemon exec observation is
 claimed; wrapper commands are rejected rather than inferred.

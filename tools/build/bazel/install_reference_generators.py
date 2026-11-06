@@ -7,6 +7,7 @@ import re
 import shlex
 import stat
 from install_reference_libraries import digest, safe_path, verify
+from install_reference_options import generator_command_variable
 
 
 def load(config_path, execution_architecture, source_root, compiler):
@@ -20,8 +21,8 @@ def load(config_path, execution_architecture, source_root, compiler):
     bindings = {str(config_path): before}
     records = {}
     for variable, item in value["generators"].items():
-        if not re.fullmatch(r"MAKE_[A-Z][A-Z0-9_]*", variable):
-            raise ValueError("generator override must name a MAKE_ command variable")
+        if not generator_command_variable(variable):
+            raise ValueError("generator override must name an uppercase command variable, excluding compiler, path and configuration controls")
         if not isinstance(item, dict) or set(item) != {"receipt", "receipt_sha256", "artifact", "artifact_sha256"}:
             raise ValueError("exact original generator receipt/artifact binding required")
         reference = safe_path(item["receipt"], True)

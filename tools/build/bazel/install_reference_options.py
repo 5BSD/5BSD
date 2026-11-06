@@ -17,6 +17,19 @@ _RESERVED = {
 }
 
 
+
+def generator_command_variable(name):
+    """Accept source-named generator commands without overriding build identity.
+
+    Actual executable provenance, effective selection and use as a recipe
+    command are checked by the generator binding interface. The variable name
+    need not have a project-specific prefix (for example, Make uses JEVENTS).
+    """
+    return (isinstance(name, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is not None
+            and name not in _RESERVED
+            and name not in {"MAKE", "SHELL", "BUILDENV_SHELL", "BTOOLSPATH", "HOST_OBJTOP"}
+            and not name.startswith(("MK_", "WITH_", "WITHOUT_")))
+
 def component_definitions(component, names, *, option_names=(), profile_names=()):
     """Return NAME=1 selectors in component or BOOT_component namespaces.
 

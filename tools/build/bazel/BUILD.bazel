@@ -333,7 +333,7 @@ bsd_host_artifact_test(name = "pxe_boot_test", src = "pxe-boot-test.py",
     size = "small", visibility = ["//visibility:public"])
 
 bsd_python_test(name = "install_reference_generators_test", src = "install-reference-generators-test.py",
-    data = ["install_reference_generators.py", "install_reference_libraries.py"], size = "small", visibility = ["//visibility:public"])
+    data = ["install_reference_generators.py", "install_reference_libraries.py", "install_reference_options.py", "directory_metadata.py"], size = "small", visibility = ["//visibility:public"])
 
 exports_files(["install_tree.py", "zoneinfo_source.py"])
 bsd_python_test(name = "install_tree_test", src = "install_tree_test.py",
