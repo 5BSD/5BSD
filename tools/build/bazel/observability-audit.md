@@ -12220,3 +12220,14 @@ fixed in private runtime links. Body runs explicitly disable DOF initialization;
 metadata loader checks have their own documented environment. No live provider
 firing, audit delivery or new test-fixture probe deficit is claimed. See
 ATF-CXX-TEST-QUALIFICATION.md for retained databases, final bindings and open gates.
+
+## Complete ATF parent and protocol fixtures (2026-11-06)
+
+Original library/provider and test-body sources remain unchanged. Complete native
+parent assembly preserves compiler settings, original supplied registration and
+all deliberate failure/death/timeout helper fixtures. All 333 real SDK-discovered
+case identities match Make; fixtures are not mislabeled as standalone passes.
+Sixteen prior C++ body passes are retained, while remaining bodies and protocol
+outcome handling still need execution qualification. No live provider firing,
+audit delivery or root-integrity proof follows from assembly/discovery. See
+ATF-PARENT-QUALIFICATION.md for complete original profile controls and final hashes.

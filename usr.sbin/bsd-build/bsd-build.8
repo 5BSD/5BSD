@@ -7402,3 +7402,12 @@ native runtime libraries and original 300-second deadlines.
 Runtime-only links share compilation inputs with the normal no-RPATH installed
 programs. Remaining bodies, ATF parent traversal and whole-system qualification
 are separate gates. These use existing format-5 inputs and retain Make as default.
+.Pp
+The complete explicit AMD64 ATF parent now preserves both original profiles:
+tests enabled installs 173 records, while disabled installs 89 production records
+and no test payloads. Both match independent Make inventory, directory package
+claims, hardlinks, exact data bytes and ELF/debug contracts.
+Actual SDK Kyua metadata discovery matches 333 case identities; this does not
+execute all 333 bodies. Original supplied registration and six shell-script
+payloads remain intact. Existing format-5 inputs express both profiles; wider
+world tests, runtime, packaging and performance gates remain open.

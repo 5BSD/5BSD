@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 ATF parent and nested traversal (2026-11-06)
+
+Both original profiles now reconcile independently: tests enabled has eight
+archives/173 records, tests disabled two archives/89 records/no tests payload.
+All file/link metadata, directory package-tag claim sets, original hardlinks and
+non-ELF/non-static-archive bytes match Make. Thirty-six positive and two negative
+ELF/debug contracts pass. Actual SDK Kyua discovery matches 333 unique identities
+and per-program order. Original upstream five-suite registration and unregistered
+protocol helpers remain intact; six shell programs match Make under single-body
+and ordered-fragment script API forms. Final bindings and retained registration/
+listing-audit failures are in ATF-PARENT-QUALIFICATION.md. Sixteen C++ bodies are
+qualified; the other 317 bodies are not executed by assembly or metadata listing.
+
+The last initially missing declaration root is closed, including test-programs.
+This is not full library/world closure: the lib root still selects many library-
+only contributions. Next reconcile every selected original library test edge and
+existing declaration, assemble the full tests-enabled parent/world, and retain
+independent world/kernel/module/pkgbase/debug, normal-service VM, CPU/RAM/disk-I/O/
+footprint, bootstrap/cache/sandbox/reproducibility and combined publication gates.
+Fill ARM64/RISC-V and expected death/exit/timeout runner gaps alongside shared
+work. Make default; wider full-tests guards stay until proven; BIP excluded.
+
 ## Complete selected AMD64 ATF C++/detail construction (2026-11-06)
 
 All twelve original harnesses, version helper and thirty installation records

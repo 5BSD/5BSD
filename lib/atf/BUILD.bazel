@@ -4,9 +4,9 @@ _PRODUCTION = ["//lib/atf/libatf-c:install_archive", "//lib/atf/libatf-c++:insta
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 bsd_install_archive_set(name = "production_installation_archives", archives = _PRODUCTION,
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-# Original lib/atf/tests recursion still needs complete parent reconciliation.
-bsd_install_archive_set(name = "installation_archives", archives = _PRODUCTION,
-    target_compatible_with = _PLATFORM + select({
-        "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
-        "//conditions:default": [],
-    }), visibility = ["//visibility:public"])
+# Original MK_TESTS traversal: each library test subtree and tests/test-programs.
+_TESTS = ["//lib/atf/libatf-c/tests:installation_archives", "//lib/atf/libatf-c++/tests:installation_archives", "//lib/atf/tests:installation_archives"]
+bsd_install_archive_set(name = "installation_archives", archives = _PRODUCTION + select({
+    "//tools/build/bazel/config:tests_enabled": _TESTS,
+    "//conditions:default": [],
+}), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

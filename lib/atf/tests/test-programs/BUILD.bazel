@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//lib/libc:test_policy.bzl", "libc_test_copts", "libc_test_cxx_copts")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_DIRECTORY = "/usr/tests/lib/atf/test-programs"
+_LIBRARIES = [
+    ("atf_cxx", "//lib/atf/libatf-c++:atf_cxx_shared", ["//contrib/atf:cxx_test_headers"]),
+    ("atf_c", "//lib/atf/libatf-c:atf_c_shared", ["//contrib/atf:c_test_headers"]),
+    ("cxx", "//lib/libc++:cxx_shared", ["//contrib/llvm-project/libcxx/include:headers"]),
+    ("cxxrt", "//lib/libcxxrt:cxxrt_shared", []),
+    ("m", "//lib/msun:m_shared", []),
+    ("gcc_s", "//lib/libgcc_s:gcc_s_shared", []),
+]
+[cc_import(name = n + "_interface", shared_library = lib, deps = headers) for n, lib, headers in _LIBRARIES]
+cc_binary(name = "c_helpers", srcs = ["//contrib/atf:test-programs/c_helpers.c"],
+    deps = [":atf_c_interface", "//lib/libc:shared_abi_interface"], copts = libc_test_copts(6),
+    linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
+cc_binary(name = "cpp_helpers", srcs = ["//contrib/atf:test-programs/cpp_helpers.cpp"],
+    deps = [":" + n + "_interface" for n, lib, headers in _LIBRARIES] + ["//lib/libc:shared_abi_interface"],
+    copts = libc_test_cxx_copts(6), linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
+[utility_installation(name = n + "_install", program = n, manual = None, package = "tests", bindir = _DIRECTORY) for n in ["c_helpers", "cpp_helpers"]]
+_SHELLS = ["sh_helpers", "config_test", "expect_test", "meta_data_test", "result_test", "srcdir_test"]
+[bsd_script_wrapper(name = n, body = "//contrib/atf:test-programs/sh_helpers.sh" if n == "sh_helpers" else None,
+    bodies = [] if n == "sh_helpers" else ["//contrib/atf:test-programs/common.sh", "//contrib/atf:test-programs/" + n + ".sh"],
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for n in _SHELLS]
+[bsd_install_file(name = n + "_entry", src = ":" + n, destination = _DIRECTORY + "/" + n,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for n in _SHELLS]
+# Make selects the upstream-supplied suite, not generated helper registrations.
+bsd_install_file(name = "kyuafile_entry", src = "//contrib/atf:test-programs/Kyuafile", destination = _DIRECTORY + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":" + n + "_install" for n in ["c_helpers", "cpp_helpers"]], entries = [":" + n + "_entry" for n in _SHELLS] + [":kyuafile_entry"])
+bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":install_manifest"], debug = True)
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Helpers contain intentional failure/death/timeout protocol fixtures. Their
+# callers must select/configure them; declaration is not a blanket runtime pass.

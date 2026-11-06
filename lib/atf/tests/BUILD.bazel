@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Original tests/Kyuafile discovers installed children from the filesystem.
+bsd_install_file(name = "kyuafile_entry", src = "//tests:Kyuafile", destination = "/usr/tests/lib/atf/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":kyuafile_entry"])
+bsd_test_install_archive(name = "install_archive", directory = "/usr/tests/lib/atf", manifests = [":install_manifest"])
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive", "//lib/atf/tests/test-programs:installation_archives"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

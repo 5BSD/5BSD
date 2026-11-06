@@ -11,7 +11,7 @@ cc_library(name = "cxx_headers", hdrs = ['atf-c++.hpp', 'atf-c++/build.hpp', 'at
 cc_library(name = "cxx_private_headers", deps = [":c_private_headers"], hdrs = ['config.h', 'atf-c++/detail/application.hpp', 'atf-c++/detail/env.hpp', 'atf-c++/detail/exceptions.hpp', 'atf-c++/detail/fs.hpp', 'atf-c++/detail/process.hpp', 'atf-c++/detail/sanity.hpp', 'atf-c++/detail/text.hpp'], strip_include_prefix = ".", visibility = ["//lib/atf/libatf-c++:__pkg__", "//lib/atf/libatf-c++/tests:__pkg__", "//libexec/atf:__subpackages__"])
 
 exports_files(["atf-c++/atf_c++_test.cpp", "atf-c++/build_test.cpp", "atf-c++/check_test.cpp", "atf-c++/macros_test.cpp", "atf-c++/tests_test.cpp", "atf-c++/utils_test.cpp", "atf-c++/detail/application_test.cpp", "atf-c++/detail/env_test.cpp", "atf-c++/detail/exceptions_test.cpp", "atf-c++/detail/fs_test.cpp", "atf-c++/detail/process_test.cpp", "atf-c++/detail/text_test.cpp", "atf-c++/detail/version_helper.cpp", "atf-c++/detail/test_helpers.cpp", "atf-c++/macros_hpp_test.cpp", "atf-c++/unused_test.cpp"], visibility = ["//lib/atf/libatf-c++/tests:__subpackages__"])
-cc_library(name = "cxx_test_headers", hdrs = ["atf-c++/detail/test_helpers.hpp", "atf-c/h_build.h"], strip_include_prefix = ".", deps = [":cxx_private_headers", ":cxx_headers"], visibility = ["//lib/atf/libatf-c++/tests:__subpackages__"])
+cc_library(name = "cxx_test_headers", hdrs = ["atf-c++/detail/test_helpers.hpp", "atf-c/h_build.h"], strip_include_prefix = ".", deps = [":cxx_private_headers", ":cxx_headers"], visibility = ["//lib/atf/libatf-c++/tests:__subpackages__", "//lib/atf/tests/test-programs:__pkg__"])
 
 exports_files(['atf-sh/atf-check.cpp', 'atf-sh/atf-check.1', 'atf-sh/atf-sh.cpp', 'atf-sh/atf-sh.1', 'atf-sh/atf-sh.3', 'atf-sh/libatf-sh.subr'], visibility = ["//libexec/atf:__subpackages__"])
 
@@ -24,4 +24,6 @@ exports_files(["AUTHORS", "COPYING", "NEWS", "README.md"], visibility = ["//shar
 
 exports_files(["atf-c/atf_c_test.c", "atf-c/build_test.c", "atf-c/check_test.c", "atf-c/error_test.c", "atf-c/macros_test.c", "atf-c/tc_test.c", "atf-c/tp_test.c", "atf-c/utils_test.c", "atf-c/detail/dynstr_test.c", "atf-c/detail/env_test.c", "atf-c/detail/fs_test.c", "atf-c/detail/list_test.c", "atf-c/detail/map_test.c", "atf-c/detail/process_test.c", "atf-c/detail/sanity_test.c", "atf-c/detail/text_test.c", "atf-c/detail/user_test.c", "atf-c/detail/process_helpers.c", "atf-c/detail/version_helper.c", "atf-c/detail/test_helpers.c", "atf-c/macros_h_test.c", "atf-c/unused_test.c"], visibility = ["//lib/atf/libatf-c/tests:__subpackages__"])
 cc_library(name = "c_test_headers", hdrs = ["atf-c/detail/test_helpers.h", "atf-c/h_build.h"], strip_include_prefix = ".",
-    deps = [":c_headers", ":c_private_headers"], visibility = ["//lib/atf/libatf-c/tests:__subpackages__"])
+    deps = [":c_headers", ":c_private_headers"], visibility = ["//lib/atf/libatf-c/tests:__subpackages__", "//lib/atf/tests/test-programs:__pkg__"])
+
+exports_files(["test-programs/Kyuafile", "test-programs/c_helpers.c", "test-programs/cpp_helpers.cpp", "test-programs/sh_helpers.sh", "test-programs/common.sh", "test-programs/config_test.sh", "test-programs/expect_test.sh", "test-programs/meta_data_test.sh", "test-programs/result_test.sh", "test-programs/srcdir_test.sh"], visibility = ["//lib/atf/tests/test-programs:__pkg__"])

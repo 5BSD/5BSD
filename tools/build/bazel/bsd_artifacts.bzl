@@ -73,6 +73,9 @@ bsd_strip_binary = rule(
 
 
 def _script_wrapper(ctx):
+    if bool(ctx.file.body) == bool(ctx.files.bodies):
+        fail("provide exactly one body or a nonempty ordered bodies list")
+    bodies = [ctx.file.body] if ctx.file.body else ctx.files.bodies
     output = ctx.actions.declare_file(ctx.label.name)
     prefix = ctx.actions.declare_file(ctx.label.name + ".interpreter")
     if bool(ctx.attr.interpreter) == bool(ctx.attr.interpreter_setting):
@@ -83,8 +86,8 @@ def _script_wrapper(ctx):
     ctx.actions.write(prefix, "#! " + interpreter + "\n")
     ctx.actions.run(
         executable = ctx.attr.redirect[DefaultInfo].files_to_run,
-        arguments = ["--executable", output.path, ctx.executable.cat.path, prefix.path, ctx.file.body.path],
-        inputs = [prefix, ctx.file.body],
+        arguments = ["--executable", output.path, ctx.executable.cat.path, prefix.path] + [f.path for f in bodies],
+        inputs = [prefix] + bodies,
         tools = [ctx.attr.cat[DefaultInfo].files_to_run] + ctx.files.cat_runtime,
         outputs = [output], env = {"LC_ALL": "C"}, use_default_shell_env = False,
         mnemonic = "BSDScriptWrapper",
@@ -95,7 +98,8 @@ bsd_script_wrapper = rule(
     implementation = _script_wrapper,
     executable = True,
     attrs = {
-        "body": attr.label(allow_single_file = True, mandatory = True),
+        "body": attr.label(allow_single_file = True),
+        "bodies": attr.label_list(allow_files = True, doc = "Ordered original script fragments; mutually exclusive with body."),
         "interpreter": attr.string(),
         "interpreter_setting": attr.label(providers = [BuildSettingInfo]),
         "cat": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
