@@ -23,6 +23,7 @@
 - [System Gates](capability/system-gates.md)
 - [Attribute-Based Access Control (mac_abac)](capability/mac-abac.md)
 - [Endpoint Security (OES)](capability/oes.md)
+- [DescriptorQueue (dq)](capability/descriptor-queue.md)
 - [Verified Execution](capability/veriexec.md)
 
 # Part III: The Plane

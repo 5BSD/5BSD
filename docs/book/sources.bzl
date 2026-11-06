@@ -10,6 +10,7 @@ BOOK_FILES = [
     "capability/capability-mode-and-launch.md",
     "capability/coalitions-and-accounting.md",
     "capability/descriptor-protections.md",
+    "capability/descriptor-queue.md",
     "capability/mac-abac.md",
     "capability/mac-capability.md",
     "capability/oes.md",
