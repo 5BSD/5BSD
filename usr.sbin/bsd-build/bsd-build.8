@@ -7901,3 +7901,13 @@ Bazel toolchain-feature correction passes its actual-object regression, with ful
 normal boot requalification pending. Make stays production/default.
 See
 .Pa tools/build/bazel/SYSTEM-IMAGE-BOOT-QUALIFICATION.md .
+
+.Pp
+The normal runtime plan also requires explicit terminal_rows and terminal_columns.
+Its serial driver answers bounded absolute-position/DSR size probes and waits for
+the actual shell prompt before sending commands, preserving normal login-profile
+behavior. It checks actual guest terminal size and drains the serial reader before
+its final diagnostic scan. Fragmented protocol handling is a native Bazel test at
+//tools/test/system-pkg-runtime:serial_terminal_test. Complete image R8 passes all
+five selected test targets; fresh normal VM acceptance remains pending. Earlier
+failed boot and console-harness results are retained rather than relabeled.

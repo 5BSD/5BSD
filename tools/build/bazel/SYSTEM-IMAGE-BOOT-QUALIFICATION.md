@@ -3,9 +3,15 @@
 ## Status — 2026-11-06
 
 Complete current-profile AMD64 disk construction passes with all 447 packages.
-The first normal-boot VM exposes a real kernel startup defect; normal startup,
-console/PAM, SSH and su are not yet qualified. The guard-initialization correction
-passes a native object regression. The complete corrected image is rebuilding.
+The kernel guard-initialization correction passes its actual-object regression
+and the complete corrected image R7. VM R2 then mounts the ZFS root, runs Capsule,
+Switchboard, normal rc and DHCP, starts SSH, and authenticates a root serial login
+through PAM. Its formal runtime check fails because the serial harness sends a
+command before the login profile finishes reading terminal input. The private
+rc.local fixture also leaks strict options into its sourcing rc shell. These are
+not accepted normal-startup results. Both harness/fixture defects are corrected;
+fresh complete image R8 passes its five selected native tests and VM R3 is running.
+SSH/su remain unqualified.
 Make remains the production/default backend; BIP is excluded.
 
 ## Construction contract
@@ -75,6 +81,59 @@ All paths below are under `/usr/obj/usr/src`.
   corrected actual guard object and an actual ordinary kernel allocation object.
   The same test fails on the pre-correction object, which has an executable
   relocation to `__stack_chk_fail` from its guard initializer.
+
+## Corrected image and second VM evidence
+
+`bazel-system-image-native-r7-20261106/receipt.json` passes the full image target
+and four selected tests. Counts remain 447 packages, 33,982 nondirectory records
+and 1,369 directories. The captured image hash is
+`15b823325499645cc3a912ecc94fa1976f3047f1a46984faa4392c672917da0a`;
+report hash is `e6ceacba764a874e73d56566e25348d06b039c89bb389598e96485590fe9b5e6`.
+The report names the actual filesystem, pool, bootfs and dataset policy so the
+runtime checker can require the expected root rather than just listing mounts.
+Construction observations: pkg installation 33.89 s, makefs 6.68 s / 31,648 KiB
+child max RSS, mkimg 7.10 s / 8,180 KiB. Whole Bazel build elapsed 1,017.28 s;
+the retained JVM snapshot shows metadata/hash checks during the long cache-check
+phase. Kernel debug package compression also consumes several minutes with the
+explicit one-thread qualification setting. Comparative performance is still open.
+
+`bazel-system-normal-boot-vm-r2-20261106/result.json` is **failed**, despite reaching
+multiuser startup and a real authenticated root login. Its serial log shows no
+repeat of the guard panic. It also exposes two private-fixture/harness defects:
+
+* rc.local is sourced, so top-level `set -eu` leaks into its caller and causes
+  `eval: rc_debug: parameter not set`. The fixture now contains strict options
+  and provisioning inside a subshell; no base rc script is changed or bypassed.
+* The harness sends its first shell command immediately after the password.
+  The actual login profile runs resizewin, which switches terminal input mode,
+  flushes pending input, and requests cursor position. The queued command is lost
+  before the shell prompt. The check eventually times out; a visible prompt alone
+  is not substituted for its missing command result.
+
+The corrected harness waits for the shell prompt and answers absolute-position/
+DSR terminal-size probes with bounds derived from explicit terminal rows/columns.
+It does not modify login, PAM or resizewin. Unit checks cover every fragmentation
+boundary, byte-at-a-time delivery, exactly-once responses, position bounds and no
+invented response for an unknown cursor. A guest stty/resizewin check must verify
+the resulting actual terminal size. Startup shell errors now fail immediately.
+The R2 VM is stopped and retained as failed evidence. Its 650 samples observe
+915,333,120 bytes maximum QEMU RSS and 428.05 s last observed QEMU CPU time; overlay
+allocation stays below 13 MB. Those are functional-run observations, not peak
+system-memory accounting or comparative disk/CPU performance acceptance.
+
+## Fresh fixture image R8 and third VM
+
+`bazel-system-image-native-r8-20261106/receipt.json` passes all five selected test
+targets, including the new two-case streaming terminal protocol test. The full
+package set and file/directory counts are unchanged. Captured image SHA-256:
+`de684543140b87541c43ab38bb8e05f1997effa64a396d0fe50485100ed61bd7`;
+report SHA-256: `5b03d93bc9cde6f942e45358d74508eaf4bda44ad1ba74b7fc1f1c1f2b57ac7a`.
+
+The plan `bazel-system-normal-boot-plan-r3-20261106.json` retains 2 GB/four-vCPU
+limits and declares 24 terminal rows and 80 columns. The fresh
+`bazel-system-normal-boot-vm-r3-20261106` run is in progress. The driver now drains
+its serial reader before the final failure scan, so late shutdown output cannot
+be omitted from acceptance. No SSH/su or clean-shutdown result is accepted yet.
 
 ## Kernel defect and correction
 

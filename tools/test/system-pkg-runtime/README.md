@@ -23,6 +23,8 @@ resulting immutable qualification capture. Then supply an explicit JSON plan:
   "qemu_data": "/usr/local/share/qemu",
   "cpus": 4,
   "memory_mib": 2048,
+  "terminal_rows": 24,
+  "terminal_columns": 80,
   "deadline_seconds": 900,
   "max_rss_mib": 4096,
   "max_overlay_mib": 8192,
@@ -60,3 +62,12 @@ or disk-throughput qualification. Kernel panic/lock diagnostics fail immediately
 A failed run retains its own overlay and evidence. Reusing that mutated overlay
 as a fresh normal-boot proof is not supported. The guest test is not Secure Boot,
 Veriexec enforcement, real version upgrade/rollback, or all service qualification.
+
+The serial harness answers standard absolute-cursor/DSR size probes using the
+explicit terminal dimensions, with position clamping. It does not invent answers
+for unknown-cursor queries or claim to emulate a full display. It waits for the
+actual login shell prompt before sending commands, so login-profile terminal
+readers cannot consume test input. The actual guest stty/resizewin result must
+match the declared dimensions. Kernel and startup-shell failure diagnostics fail
+qualification immediately. Run `//tools/test/system-pkg-runtime:serial_terminal_test`
+through the normal frontend inputs to test fragmented protocol handling.

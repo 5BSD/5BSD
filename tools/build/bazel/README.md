@@ -1,5 +1,17 @@
 # Bazel qualification
 
+## Corrected kernel reaches normal startup; fixture fixes pending (2026-11-06)
+
+Complete image R7 passes all four selected native tests and all 447 packages.
+The 2 GB guest passes the former panic, mounts ZFS, runs Capsule/Switchboard and
+normal rc, obtains DHCP, starts SSH and authenticates serial root login via PAM.
+Formal runtime qualification still fails: rc.local leaked strict shell options,
+and the harness sent its first command before resizewin/profile input completed.
+The fixture now contains its options, and the harness waits for the prompt and
+answers bounded terminal-size probes. Streaming protocol unit checks and the fresh R8 image pass all five native test
+targets; the R3 normal VM is running. SSH/su/upgrades and all other
+global gates remain open. See SYSTEM-IMAGE-BOOT-QUALIFICATION.md. Make stays default.
+
 ## Complete package image; startup defect found and corrected (2026-11-06)
 
 The complete 447-package BIOS/ZFS disk now builds from the actual native package,
@@ -8,8 +20,8 @@ memdisk root, package-order workaround or missing-path exclusion is used.
 The first normal 2 GB/four-vCPU VM exposed an early guard-initialization panic:
 a source-specific SSP exception removed the local flag but left the toolchain
 feature enabled. The corrected feature opt-out passes a regression inspecting
-actual guard and ordinary protected kernel objects. The full corrected image is
-rebuilding; normal startup/PAM/SSH/su are not yet accepted. See
+actual guard and ordinary protected kernel objects. The corrected full image later passes R7/R8; runtime retries are recorded above.
+Normal startup/PAM/SSH/su acceptance remains pending. See
 SYSTEM-IMAGE-BOOT-QUALIFICATION.md for retained failure, construction evidence,
 resource scope and the remaining global gates. Make stays production/default.
 

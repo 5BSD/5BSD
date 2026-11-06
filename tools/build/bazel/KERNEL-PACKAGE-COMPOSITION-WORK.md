@@ -293,3 +293,23 @@ ROOTLESS-PKG-MODE-CORRECTION.md and SYSTEM-IMAGE-BOOT-QUALIFICATION.md for exact
 scope, retained failed boot and next steps. Existing format-5 frontend selection
 carries the image/guard-test targets; C/default backend changes are not required.
 Make stays production/default and BIP stays excluded.
+
+## R7 normal boot and fixture/terminal corrections — 2026-11-06
+
+Complete corrected image R7 passes four native test targets and contains all 447
+packages. Its normal R2 guest passes guard initialization, mounts ZFS, runs normal
+Capsule/Switchboard/rc, gets DHCP, starts SSH, and authenticates root at the serial
+console. Formal runtime qualification fails: rc.local leaked set -u into its rc
+caller, and early command input was flushed/consumed by resizewin in the real
+login profile. No shell prompt is substituted for the missing command result.
+
+rc.local now confines strict options in a subshell. The harness waits for a real
+shell prompt and answers absolute cursor/DSR size probes from explicit terminal
+dimensions; arbitrary fragmentation, bounds and exactly-once responses are tested.
+It verifies actual guest stty/resizewin size and fails the observed shell error.
+Serial output is drained before final failure acceptance. The fresh full R8 image
+passes five native test targets and retains the complete package/file/directory
+counts. The fresh 2 GB/four-vCPU R3 VM is running; SSH/su, normal shutdown, installed
+metadata, real upgrades and remaining global gates stay open. See
+SYSTEM-IMAGE-BOOT-QUALIFICATION.md. Existing frontend target/settings handle these
+changes; the normal Make backend stays default and BIP remains excluded.

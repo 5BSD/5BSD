@@ -20,11 +20,15 @@ sys.path.insert(0,str(SOURCE/'tools/build/bazel'))
 sys.path.insert(0,str(SOURCE/'tools/test/daemon-runtime'))
 from qualification_artifacts import resolve_many,digest
 from host_resources import HostMonitor
+from serial_terminal import TerminalSizeResponder
+
+FAILURE_DIAGNOSTICS = re.compile(rb"panic:|Fatal trap|lock order reversal|non-sleepable locks held|[A-Za-z_][A-Za-z0-9_]*: parameter not set")
 
 class Console:
-    def __init__(self,process,log,monitor,started,deadline,overlay,disk_limit):
+    def __init__(self,process,log,monitor,started,deadline,overlay,disk_limit,rows,columns):
         self.process,self.monitor,self.started,self.deadline=process,monitor,started,deadline
         self.overlay,self.disk_limit,self.disk_peak=overlay,disk_limit,0
+        self.terminal=TerminalSizeResponder(rows,columns);self.write_lock=threading.Lock()
         self.data=bytearray();self.cursor=0;self.error=None;self.last_sample=0
         self.lock=threading.Condition();self.log=log.open('xb')
         self.thread=threading.Thread(target=self.read,daemon=True);self.thread.start()
@@ -36,14 +40,16 @@ class Console:
                     self.data.extend(chunk)
                     if len(self.data)>32*1024**2:raise ValueError('console exceeds explicit 32 MiB evidence budget')
                     self.lock.notify_all()
+                for reply in self.terminal.feed(chunk):
+                    self.write(reply)
         except Exception as error:self.error=error
     def tick(self,allow_exit=False):
         now=time.monotonic()
         if now-self.started>self.deadline:raise TimeoutError('explicit whole-VM deadline exceeded')
         if self.error:raise self.error
         with self.lock:
-            if re.search(rb"panic:|Fatal trap|lock order reversal|non-sleepable locks held", bytes(self.data)):
-                raise RuntimeError("guest kernel failure; see serial.log")
+            if FAILURE_DIAGNOSTICS.search(bytes(self.data)):
+                raise RuntimeError("guest kernel or startup-shell failure; see serial.log")
         if self.process.poll() is not None:
             if allow_exit:return
             raise RuntimeError('VM exited before the requested check completed')
@@ -63,8 +69,11 @@ class Console:
                     return before,match
                 self.lock.wait(0.2)
         raise TimeoutError('console expectation timed out: '+repr(pattern))
+    def write(self,payload):
+        with self.write_lock:
+            self.process.stdin.write(payload);self.process.stdin.flush()
     def send(self,text):
-        self.process.stdin.write(text.encode()+b'\n');self.process.stdin.flush()
+        self.write(text.encode()+b'\n')
     def command(self,text,seconds=180):
         token='BQL_'+uuid.uuid4().hex
         self.send('{ '+text+'; }; bql_status=$?; printf "\\n'+token+' %s\\n" "$bql_status"')
@@ -72,6 +81,10 @@ class Console:
         status=int(match.group(1))
         if status:raise RuntimeError('guest command failed '+str(status)+': '+text+'\n'+output.decode(errors='replace')[-3000:])
         return output.decode(errors='replace').replace('\r','')
+    def drain(self):
+        self.thread.join(timeout=5)
+        if self.thread.is_alive():raise RuntimeError("serial reader did not drain after VM exit")
+        if self.error:raise self.error
     def close(self):
         self.thread.join(timeout=5);self.log.close()
 
@@ -83,7 +96,7 @@ def main():
     args=parser.parse_args();plan=json.loads(args.plan.read_text())
     required={'format','qualification','target','image_output','report_output','qemu','qemu_img','bios','ssh',
               'qemu_data','cpus','memory_mib','deadline_seconds','max_rss_mib','max_overlay_mib',
-              'console_user','password','ssh_user','user_uid'}
+              'console_user','password','ssh_user','user_uid','terminal_rows','terminal_columns'}
     if set(plan)!=required or type(plan['format']) is not int or plan['format']!=1:
         raise ValueError('exact format-1 VM plan fields required')
     if type(plan['user_uid']) is not int or not 0<plan['user_uid']<2**31:
@@ -93,6 +106,7 @@ def main():
             raise ValueError('invalid guest account name')
     if not plan['password'] or any(ord(c)<32 or ord(c)==127 for c in plan['password']):
         raise ValueError('single-line private fixture password required')
+    TerminalSizeResponder(plan['terminal_rows'],plan['terminal_columns'])
     if not Path(plan['qemu_data']).is_absolute() or not Path(plan['qemu_data']).is_dir():
         raise ValueError('explicit QEMU data directory required')
     out=args.output.resolve()
@@ -106,7 +120,7 @@ def main():
     assert build_report['status']=='passed' and digest(image)==build_report['image_sha256']
     tools={name:Path(plan[name]).resolve(strict=True) for name in ('qemu','qemu_img','bios','ssh')}
     bindings={str(path):digest(path) for path in tools.values()}
-    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py']
+    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py')]
     source_bindings={str(path):digest(path) for path in sources}
     out.mkdir(mode=0o700)
     monitor=HostMonitor(out/'host-resources.jsonl',plan['max_rss_mib'])
@@ -124,7 +138,7 @@ def main():
         '-device','virtio-net-pci,netdev=net0,romfile=']
     report.update(qemu_command=command,ssh_port=port);save()
     started=time.monotonic();process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
-    console=Console(process,out/'serial.log',monitor,started,plan['deadline_seconds'],overlay,plan['max_overlay_mib']*1024**2)
+    console=Console(process,out/'serial.log',monitor,started,plan['deadline_seconds'],overlay,plan['max_overlay_mib']*1024**2,plan['terminal_rows'],plan['terminal_columns'])
     def check(name,operation,validate=None):
         value=operation()
         if validate is not None and not validate(value):
@@ -134,7 +148,13 @@ def main():
         console.expect(rb'BAZEL_SYSTEM_BOOT_READY pid1=',plan['deadline_seconds'])
         console.expect(rb'login:\s*$',180);console.send(plan['console_user'])
         console.expect(rb'Password:\s*$',30);console.send(plan['password'])
+        # A login profile may read terminal replies before the shell can accept
+        # commands. Wait for the actual prompt; never feed a command into it.
+        console.expect(rb'(?:^|[\r\n])[^\r\n]*[#$] $',60)
         check('console-login-pam',lambda:console.command('test "$(id -u)" -eq 0 && echo CONSOLE_ROOT_OK'))
+        assert console.terminal.responses>0,'login profile terminal-size probe was not exercised'
+        size=str(plan['terminal_rows'])+' '+str(plan['terminal_columns'])
+        check('serial-terminal-size',lambda:console.command('test "$(/bin/stty size)" = "'+size+'" && /usr/bin/resizewin -z && echo TERMINAL_SIZE_OK'))
         check('normal-capsule-pid1',lambda:console.command('/usr/bin/procstat -b 1'),
               lambda output:'/sbin/capsule' in output)
         assert build_report['filesystem']=='zfs'
@@ -186,8 +206,8 @@ def main():
             if time.monotonic()>until:raise TimeoutError('normal shutdown did not power off the guest')
             console.tick(allow_exit=True);time.sleep(0.2)
         assert process.returncode==0,process.returncode
-        text=bytes(console.data).decode(errors='replace')
-        assert not re.search(r'panic:|Fatal trap|lock order reversal|non-sleepable locks held',text)
+        console.drain()
+        assert not FAILURE_DIAGNOSTICS.search(bytes(console.data))
         assert digest(image)==build_report['image_sha256'],'immutable backing image changed'
         assert all(digest(Path(path))==expected for path,expected in source_bindings.items()),'runner sources changed during qualification'
         report.update(status='passed',vm_seconds=time.monotonic()-started,overlay_bytes=overlay.stat().st_blocks*512)
@@ -199,7 +219,7 @@ def main():
             try:process.wait(timeout=10)
             except subprocess.TimeoutExpired:process.kill();process.wait()
         console.close();report['host_resources']=monitor.close();report['qemu_exit_status']=process.returncode
-        report['serial_sha256']=digest(out/'serial.log');report['max_observed_overlay_bytes']=console.disk_peak;save()
+        report['serial_sha256']=digest(out/'serial.log');report['max_observed_overlay_bytes']=console.disk_peak;report['terminal_size_replies']=console.terminal.responses;save()
     print(out/'result.json')
 
 if __name__=='__main__':main()
