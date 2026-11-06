@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## USB and test-framework parent selection passes (2026-11-06)
+
+New source-owned AMD64 USB and test-framework parents compose 83 actual module/debug
+pairs. Default, firmware/gadgets-disabled (71), and USB-disabled (79) profiles each
+pass 14 existing tests; independent original Make membership/leaf attributes and
+all actual ELF/debug CRC checks pass. Common configured products stay byte-identical.
+The gadget selector preserves kern.opts.mk's USB dependency. See
+USB-MODULE-PARENT-QUALIFICATION.md for exact scope, including unqualified USB debug
+macro variants. No new runtime/module source or signing/publication policy changed.
+
+NEXT: remaining kernel-option/root selection and optional producers; coherent
+kernel/GDB/modules/directories/aliases/linker.hints/pkgbase, then normal startup,
+authentication/services and genuine upgrades. All cross/bootstrap/cache/sandbox/
+reproducibility/debug/resource/hardware/publication gates remain open. Make stays
+production/default; BIP excluded.
+
 ## Current-profile AMD64 kernel build passes (2026-11-06)
 
 The full current-profile AMD64 GENERIC link, CTF merge and runtime/debug split now

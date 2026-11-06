@@ -7799,3 +7799,11 @@ A fresh full AMD64 GENERIC native link, CTF merge and runtime/debug split passes
 with the shared TCP override; captured ELF and debug-link CRC checks pass.
 Full installed kernel/pkgbase, current independent Make parity and normal boot
 remain separate acceptance gates. The production/default backend stays Make.
+.Pp
+Native AMD64 USB parent selection uses sourceless_ucode and usb_gadget_examples.
+The latter defaults true and is disabled when usb=false, matching kern.opts.mk.
+Original Make parent membership, all selected leaf installation attributes and
+ELF/debug CRC checks pass for default and disabled-option profiles. The source-owned
+test-framework parent also composes its existing producer; root TESTS selection is
+separate. USB debug macro variants, device runtime and full kernel/pkgbase remain
+unqualified. Existing format-5 build-settings carry these options.

@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# AMD64 source traversal; firmware and gadget options retain their source policy.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = ["//sys/modules/usb/usb:module_product"] +
+        ["//sys/modules/usb/ehci:module_product"] +
+        ["//sys/modules/usb/ohci:module_product"] +
+        ["//sys/modules/usb/uhci:module_product"] +
+        ["//sys/modules/usb/xhci:module_product"] +
+        select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/rsu:module_product"], "//conditions:default": []}) +
+        ["//sys/modules/usb/mtw:module_product"] +
+        select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/rum:module_product"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/run:module_product"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/runfw:module_product"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/uath:module_product"], "//conditions:default": []}) +
+        ["//sys/modules/usb/usie:module_product"] +
+        ["//sys/modules/usb/ural:module_product"] +
+        select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/zyd:module_product"], "//conditions:default": []}) +
+        ["//sys/modules/usb/urtw:module_product"] +
+        ["//sys/modules/usb/atp:module_product"] +
+        ["//sys/modules/usb/cfumass:module_product"] +
+        ["//sys/modules/usb/uhid:module_product"] +
+        ["//sys/modules/usb/uhid_snes:module_product"] +
+        ["//sys/modules/usb/ukbd:module_product"] +
+        ["//sys/modules/usb/ums:module_product"] +
+        ["//sys/modules/usb/udbp:module_product"] +
+        ["//sys/modules/usb/uep:module_product"] +
+        ["//sys/modules/usb/wmt:module_product"] +
+        ["//sys/modules/usb/wsp:module_product"] +
+        ["//sys/modules/usb/ugold:module_product"] +
+        ["//sys/modules/usb/uled:module_product"] +
+        ["//sys/modules/usb/usbhid:module_product"] +
+        ["//sys/modules/usb/ucom:module_product"] +
+        ["//sys/modules/usb/u3g:module_product"] +
+        ["//sys/modules/usb/uark:module_product"] +
+        ["//sys/modules/usb/ubsa:module_product"] +
+        ["//sys/modules/usb/ubser:module_product"] +
+        ["//sys/modules/usb/uchcom:module_product"] +
+        ["//sys/modules/usb/ucycom:module_product"] +
+        ["//sys/modules/usb/udbc:module_product"] +
+        ["//sys/modules/usb/ufoma:module_product"] +
+        ["//sys/modules/usb/uftdi:module_product"] +
+        ["//sys/modules/usb/ugensa:module_product"] +
+        ["//sys/modules/usb/uipaq:module_product"] +
+        ["//sys/modules/usb/ulpt:module_product"] +
+        ["//sys/modules/usb/umb:module_product"] +
+        ["//sys/modules/usb/umct:module_product"] +
+        ["//sys/modules/usb/umcs:module_product"] +
+        ["//sys/modules/usb/umodem:module_product"] +
+        ["//sys/modules/usb/umoscom:module_product"] +
+        ["//sys/modules/usb/uplcom:module_product"] +
+        ["//sys/modules/usb/uslcom:module_product"] +
+        ["//sys/modules/usb/uvisor:module_product"] +
+        ["//sys/modules/usb/uvscom:module_product"] +
+        ["//sys/modules/usb/i2ctinyusb:module_product"] +
+        ["//sys/modules/usb/cp2112:module_product"] +
+        ["//sys/modules/usb/udl:module_product"] +
+        ["//sys/modules/usb/uvideo:module_product"] +
+        ["//sys/modules/usb/uether:module_product"] +
+        ["//sys/modules/usb/aue:module_product"] +
+        ["//sys/modules/usb/axe:module_product"] +
+        ["//sys/modules/usb/axge:module_product"] +
+        ["//sys/modules/usb/cdce:module_product"] +
+        ["//sys/modules/usb/cdceem:module_product"] +
+        ["//sys/modules/usb/cue:module_product"] +
+        select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/kue:module_product"], "//conditions:default": []}) +
+        ["//sys/modules/usb/mos:module_product"] +
+        ["//sys/modules/usb/rue:module_product"] +
+        ["//sys/modules/usb/smsc:module_product"] +
+        ["//sys/modules/usb/udav:module_product"] +
+        ["//sys/modules/usb/uhso:module_product"] +
+        ["//sys/modules/usb/ipheth:module_product"] +
+        ["//sys/modules/usb/muge:module_product"] +
+        ["//sys/modules/usb/ure:module_product"] +
+        ["//sys/modules/usb/urndis:module_product"] +
+        ["//sys/modules/usb/usfs:module_product"] +
+        ["//sys/modules/usb/umass:module_product"] +
+        ["//sys/modules/usb/urio:module_product"] +
+        ["//sys/modules/usb/uacpi:module_product"] +
+        ["//sys/modules/usb/quirk:module_product"] +
+        ["//sys/modules/usb/template:module_product"] +
+        select({"//tools/build/bazel/config:usb_gadget_examples_enabled": ["//sys/modules/usb/g_audio:module_product"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:usb_gadget_examples_enabled": ["//sys/modules/usb/g_keyboard:module_product"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:usb_gadget_examples_enabled": ["//sys/modules/usb/g_modem:module_product"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:usb_gadget_examples_enabled": ["//sys/modules/usb/g_mouse:module_product"], "//conditions:default": []}),
+    module_sets = select({"//tools/build/bazel/config:sourceless_ucode_enabled": ["//sys/modules/usb/rsufw:amd64_modules"], "//conditions:default": []}),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
