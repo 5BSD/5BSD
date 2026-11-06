@@ -284,8 +284,7 @@ not a completeness proof. The full object list retains everything the heuristic
 misses. The source scan also retains 3,120 Makefile declarations requiring
 build-graph review. The selected generation is not every possible base build.
 
-Review artifacts are in
-`/home/koryheard/bip-review/compatibility-expanded-20261023/`:
+Review artifacts are in the `compatibility-expanded-20261023` review set:
 `all-installed-objects.tsv`, `installed-programs-and-aliases.json`,
 `source-build-declarations.json`, and `review.json`. These are dated planning
 artifacts, not a runtime protection allowlist or an authenticated inventory.

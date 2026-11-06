@@ -167,8 +167,8 @@ multi-repository updater today. This change records the design only.
 - Parent commit: `ab0cebcd051c7a90e193dc1d7f301796864fa5f3`.
 - Receipts and original index/patches:
   `/usr/obj/usr/src/bip-deferred-20261024T044334Z`.
-- Historical test evidence remains under
-  `/home/koryheard/bip-review/stage-20261022-reviewed`.
+- Historical test evidence was recorded in the
+  `stage-20261022-reviewed` review stage.
 
 The archive captures the **complete shared dirty worktree**, including unrelated
 in-progress work. It was created with a separate Git index; the original branch,
