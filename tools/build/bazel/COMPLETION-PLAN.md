@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Preserve original production/test package directory claims (2026-11-06)
+
+Complete Make controls confirm that libmp/libbsnmp record separate production and
+test package claims for shared debug ancestors. Separate source-owned production
+and optional test archives now preserve both, including original test-directory
+claims. Positive/negative file/link and directory metadata, exact non-ELF data and
+debug separation/name/CRC match Make: libmp 9/6 files and 7/2 directory claims;
+libbsnmp 104/101 files and 8/3 claims. These construction runs execute only the
+source helper. ELF ABI/content, raw static archives and runtime remain separate.
+
+All 231 negative root archive output paths are preserved. The recorded configured
+policy-change audit now has 23 unresolved entries, down from 25; it is not a full
+package inventory. Next reconcile the remaining entries and complete full library/
+world payload/package gates. Keep the full-tests library guard and Make default.
+See LIBRARY-PACKAGE-DIRECTORY-QUALIFICATION.md for original controls, failures,
+actual scope, maintained frontend integration and remaining system gates.
+
+
 ## Complete native Casper parent and original discovery repair (2026-11-06)
 
 Casper now composes all nine previously disconnected original test entry roots.

@@ -12310,3 +12310,13 @@ prove per-body tracing, live provider firing, security audit delivery or overhea
 Whole-system Capsule/service/SSH/PAM, cross-target and resource/performance gates
 remain explicit. See CASPER-PARENT-QUALIFICATION.md for Make payload/metadata
 parity, original discovery evidence and precise execution scope.
+
+## Separate original library package directory claims (2026-11-06)
+
+libmp/libbsnmp production and test archives now preserve distinct original Make
+package claims for shared debug directories and original test-directory claims.
+This changes installation composition only; production/test sources and providers
+are unchanged. Construction executes only the source helper, not original library
+bodies. No new probe firing, audit delivery, service behavior or resource/performance
+claim follows. See LIBRARY-PACKAGE-DIRECTORY-QUALIFICATION.md for metadata evidence
+and the separate ELF/archive/debugger/runtime and whole-system gates.

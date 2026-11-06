@@ -1,11 +1,38 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-bsd_install_archive(name = "install_archive",
-    manifests = ["//lib/libbsnmp/libbsnmp:install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libbsnmp/tests:install_test", "//lib/libbsnmp/tests:install_extra"], "//conditions:default": []}),
-    directories = {"/usr/share/snmp/defs": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsnmp"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsnmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive", "bsd_install_archive_set")
+# Preserve independent original production and test package directory claims.
+_INSTALL_POLICY = {
+    'mtree_specs': {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    'passwd': "//etc:master.passwd",
+    'group': "//etc:group",
+    'mtree': "@bsd_sdk//toolchain:extra_mtree",
+    'epoch': 0,
+    'python': "@bsd_sdk//toolchain:extra_python",
+    'python_home': "@bsd_sdk//toolchain:python-home/runtime.json",
+    'runtime': ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+}
+bsd_install_archive(name = "install_archive", manifests = ["//lib/libbsnmp/libbsnmp:install_manifest"],
+    directories = {"/usr/share/snmp/defs": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsnmp"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsnmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    visibility = ["//visibility:public"], mtree_specs = _INSTALL_POLICY["mtree_specs"],
+    passwd = _INSTALL_POLICY["passwd"],
+    group = _INSTALL_POLICY["group"],
+    mtree = _INSTALL_POLICY["mtree"],
+    epoch = _INSTALL_POLICY["epoch"],
+    python = _INSTALL_POLICY["python"],
+    python_home = _INSTALL_POLICY["python_home"],
+    runtime = _INSTALL_POLICY["runtime"])
+bsd_install_archive(name = "tests_install_archive", manifests = ["//lib/libbsnmp/tests:install_test", "//lib/libbsnmp/tests:install_extra"],
+    directories = {
         d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libbsnmp"]
-    }, "//conditions:default": {}}),
-    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
-    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
-    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
-    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+    } | {"/usr/tests/lib/libbsnmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, mtree_specs = _INSTALL_POLICY["mtree_specs"],
+    passwd = _INSTALL_POLICY["passwd"],
+    group = _INSTALL_POLICY["group"],
+    mtree = _INSTALL_POLICY["mtree"],
+    epoch = _INSTALL_POLICY["epoch"],
+    python = _INSTALL_POLICY["python"],
+    python_home = _INSTALL_POLICY["python_home"],
+    runtime = _INSTALL_POLICY["runtime"])
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({
+    "//tools/build/bazel/config:tests_enabled": [":tests_install_archive"],
+    "//conditions:default": [],
+}), visibility = ["//visibility:public"])

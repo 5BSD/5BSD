@@ -31,26 +31,46 @@ cc_shared_library(name = "mp_shared", deps = [":mp"], shared_lib_name = "libmp.s
 
 load(":installation.bzl", "library_installation")
 library_installation(name = "install_manifest")
-load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive", "bsd_install_archive_set")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
-bsd_install_archive(
-    name = "install_archive",
-    visibility = ["//visibility:public"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libmp/tests:install_manifest"], "//conditions:default": []}),
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libmp"]}, "//conditions:default": {}}),
-    mtree_specs = {
+# Preserve independent original production and test package directory claims.
+_INSTALL_POLICY = {
+    'mtree_specs': {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",
         "//etc/mtree:BSD.include.dist": "/usr/include",
         "//etc/mtree:BSD.debug.dist": "/usr/lib",
     },
-    passwd = "//etc:master.passwd",
-    group = "//etc:group",
-    mtree = "@bsd_sdk//toolchain:extra_mtree",
-    epoch = 0,
-    python = "@bsd_sdk//toolchain:extra_python",
-    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
-    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
-)
+    'passwd': "//etc:master.passwd",
+    'group': "//etc:group",
+    'mtree': "@bsd_sdk//toolchain:extra_mtree",
+    'epoch': 0,
+    'python': "@bsd_sdk//toolchain:extra_python",
+    'python_home': "@bsd_sdk//toolchain:python-home/runtime.json",
+    'runtime': ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+}
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    visibility = ["//visibility:public"], mtree_specs = _INSTALL_POLICY["mtree_specs"],
+    passwd = _INSTALL_POLICY["passwd"],
+    group = _INSTALL_POLICY["group"],
+    mtree = _INSTALL_POLICY["mtree"],
+    epoch = _INSTALL_POLICY["epoch"],
+    python = _INSTALL_POLICY["python"],
+    python_home = _INSTALL_POLICY["python_home"],
+    runtime = _INSTALL_POLICY["runtime"])
+bsd_install_archive(name = "tests_install_archive", manifests = ["//lib/libmp/tests:install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libmp"]} | {"/usr/tests/lib/libmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, mtree_specs = _INSTALL_POLICY["mtree_specs"],
+    passwd = _INSTALL_POLICY["passwd"],
+    group = _INSTALL_POLICY["group"],
+    mtree = _INSTALL_POLICY["mtree"],
+    epoch = _INSTALL_POLICY["epoch"],
+    python = _INSTALL_POLICY["python"],
+    python_home = _INSTALL_POLICY["python_home"],
+    runtime = _INSTALL_POLICY["runtime"])
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({
+    "//tools/build/bazel/config:tests_enabled": [":tests_install_archive"],
+    "//conditions:default": [],
+}), visibility = ["//visibility:public"])
