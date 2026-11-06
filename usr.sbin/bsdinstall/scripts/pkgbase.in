@@ -248,6 +248,7 @@ local function select_packages(pkg, options)
 	for package in rquery:gmatch("[^\n]+") do
 		if package:match("^5BSD%-kernel%-.+") and
 		    not package:match("%-dbg$") and
+		    not package:match("%-man$") and
 		    (not selected_kernel or package == selected_kernel) then
 			kernel_packages[package] = true
 		end

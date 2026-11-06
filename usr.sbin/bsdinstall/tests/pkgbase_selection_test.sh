@@ -52,6 +52,14 @@ unique_kernel_body()
     atf_check -o match:5BSD-kernel-custom -e empty cat calls
     atf_check -o match:5BSD-hw-drm -e empty cat calls
 }
+atf_test_case kernel_manual_is_not_a_kernel
+kernel_manual_is_not_a_kernel_body()
+{
+    setup
+    printf '%s\n' 5BSD-kernel-man >> catalogue
+    atf_check -s exit:0 -o empty -e empty /usr/libexec/flua "$script" --non-interactive
+    atf_check -o match:5BSD-kernel-generic -e empty cat calls
+}
 atf_test_case reject_selection
 reject_selection_body()
 {
@@ -82,6 +90,7 @@ atf_init_test_cases()
 {
     atf_add_test_case explicit_kernel
     atf_add_test_case unique_kernel
+    atf_add_test_case kernel_manual_is_not_a_kernel
     atf_add_test_case reject_selection
     atf_add_test_case jail_omits_hardware
 }
