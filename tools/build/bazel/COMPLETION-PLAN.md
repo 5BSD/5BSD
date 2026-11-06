@@ -12,6 +12,13 @@ cases pass (plus one source-settings helper); no skips. The all-disabled optiona
 profile builds 28 archives/772 records and matches actual Make traversal queries.
 Retained failed audits and exact bounds: LIBC-TEST-PARENT-QUALIFICATION.md.
 
+A directory inventory finds 69 lib/**/tests/Makefile roots: 55 have sibling
+BUILD.bazel files and 14 do not (ATF C/parent, libarchive, libbe, Casper services/
+cap_fileargs, libexecinfo, libkvm, libnv, libproc, librt, libsbuf, libxo, msun).
+Evidence: bazel-library-test-directory-inventory-r1-20261106/inventory.json under
+/usr/obj/usr/src. This is file-presence discovery, not proof that 55 roots are
+complete or that nested children and selected Make reachability are covered.
+
 Drive AMD64 system-wide completion next: compose remaining base installed-test
 parents, independent assembled-world/kernel/module/debug/pkgbase closure, then
 normal-system boot/services and comparative CPU/RAM/disk-I/O/footprint, bootstrap,

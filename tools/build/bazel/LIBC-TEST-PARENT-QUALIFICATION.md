@@ -42,7 +42,8 @@ faulting children with original expected signal behavior.
 
 All 19 original shell cases pass through Bazel. The source-settings helper also
 passes (20 target results, 20 reported passes, no skips/expected failures). Seven
-execute in final r2; thirteen are valid cached results from the first run, whose
+execute in final r2; twelve SSP cases reuse passing first-run results and the
+source-settings helper reuses its earlier qualified result. The first build
 failure is isolated to the missing h_raw unwinder. These are not twenty original
 SSP cases or twenty newly executed tests. Earlier common-helper review independently
 matches all eighteen runtime-independent helpers to the older original reference.
