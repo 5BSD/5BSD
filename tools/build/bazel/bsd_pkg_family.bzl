@@ -2,7 +2,8 @@
 """Source-owned pkgbase family metadata; no payload, creation or publication claim."""
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
-BsdPackageFamilyInfo = provider(fields = ["family", "manifests", "metadata"])
+BsdPackageFamilyInfo = provider(fields = ["family", "manifests", "metadata", "declarations", "prefix", "version"])
+BsdPackageFamilySetInfo = provider(fields = ["catalogue", "manifests", "metadata", "declarations", "prefix", "version"])
 
 def _name(value):
     if not value or any([c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.+,-" for c in value.elems()]):
@@ -95,7 +96,8 @@ def _family(ctx):
         family = family, prefix = prefix, version = version, packages = declarations)) + "\n")
     return [DefaultInfo(files = depset([metadata] + outputs.values())),
         OutputGroupInfo(metadata = depset([metadata]), manifests = depset(outputs.values())),
-        BsdPackageFamilyInfo(family = family, manifests = outputs, metadata = metadata)]
+        BsdPackageFamilyInfo(family = family, manifests = outputs, metadata = metadata,
+            declarations = declarations, prefix = prefix, version = version)]
 
 bsd_pkg_family = rule(implementation = _family, attrs = {
     "family": attr.string(mandatory = True), "base": attr.bool(default = True),
@@ -121,3 +123,36 @@ bsd_pkg_family = rule(implementation = _family, attrs = {
     "runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_flua_runtime"], allow_files = True, cfg = "exec"),
     "_driver": attr.label(default = Label(":pkg_manifest.py"), allow_single_file = True),
 })
+
+def _family_set(ctx):
+    families, manifests, declarations, metadata, inputs = {}, {}, {}, [], []
+    identity = None
+    for target in ctx.attr.families:
+        info = target[BsdPackageFamilyInfo]
+        selected_identity = (info.prefix, info.version)
+        if identity != None and identity != selected_identity:
+            fail("package families have different identities")
+        identity = selected_identity
+        if info.family in families:
+            fail("duplicate selected family: " + info.family)
+        families[info.family] = dict(label = str(target.label), packages = sorted(info.manifests), metadata = info.metadata.path)
+        for name, manifest in info.manifests.items():
+            if name in manifests:
+                fail("duplicate selected package: " + name)
+            manifests[name] = manifest
+            declarations[name] = dict(info.declarations[name], family = info.family, manifest = manifest.path)
+        metadata.append(info.metadata)
+        inputs.append(target[DefaultInfo].files)
+    if identity == None:
+        fail("world package families must not be empty")
+    catalogue = ctx.actions.declare_file(ctx.label.name + ".json")
+    ctx.actions.write(catalogue, json.encode(dict(format = 1, scope = "world-package-family-set",
+        prefix = identity[0], version = identity[1], families = families, packages = declarations)) + "\n")
+    return [DefaultInfo(files = depset([catalogue], transitive = inputs)),
+        OutputGroupInfo(metadata = depset([catalogue])),
+        BsdPackageFamilySetInfo(catalogue = catalogue, manifests = manifests, metadata = metadata,
+            declarations = declarations, prefix = identity[0], version = identity[1])]
+
+bsd_pkg_family_set = rule(implementation = _family_set, attrs = {
+    "families": attr.label_list(providers = [BsdPackageFamilyInfo], mandatory = True),
+}, doc = "Collect explicit selected source families; inventory reconciliation is separate.")

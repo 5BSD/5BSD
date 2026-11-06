@@ -1,20 +1,31 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-# The parent Makefile always installs the ATF discovery Kyuafile, including
-# WITHOUT_TESTS; only the two program-specific test directories are optional.
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory", "bsd_install_manifest")
+# Support tools remain available without installing test discovery state.
 _BASE_DIRS = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=atf","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]} | {
     "/usr/share/atf": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=atf"]}',
-    "/usr/tests/libexec/atf": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}',
 }
-_TEST_DIRS = {"/usr/tests/libexec/atf/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}' for d in ["atf-check", "atf-sh"]}
+_TEST_DIRS = {"/usr/tests/libexec/atf": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'} | {"/usr/tests/libexec/atf/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}' for d in ["atf-check", "atf-sh"]}
+# Component directory ownership comes from actual source installation commands,
+# not every directory carrying a matching tag in the global mtree policy.
+[bsd_install_directory(name = "base_directory_" + str(i), destination = path,
+    owner = "root", group = "wheel", mode = "0755", install_tags = json.decode(value)["tags"])
+    for i, (path, value) in enumerate(_BASE_DIRS.items())]
+[bsd_install_directory(name = "test_directory_" + str(i), destination = path,
+    owner = "root", group = "wheel", mode = "0755", install_tags = json.decode(value)["tags"])
+    for i, (path, value) in enumerate(_TEST_DIRS.items())]
+bsd_install_manifest(name = "directory_claims",
+    entries = [":base_directory_" + str(i) for i in range(len(_BASE_DIRS))] + select({
+        "//tools/build/bazel/config:tests_enabled": [":test_directory_" + str(i) for i in range(len(_TEST_DIRS))],
+        "//conditions:default": [],
+    }))
 bsd_install_archive(
     name = "install_archive",
     visibility = ["//visibility:public"],
-    manifests = ["//libexec/atf/atf-check:install_manifest", "//libexec/atf/atf-sh:install_manifest", "//libexec/atf/atf-sh:support_manifest", "//libexec/atf/atf-pytest-wrapper:install_manifest", "//libexec/atf/tests:install_manifest"] + select({
-        "//tools/build/bazel/config:tests_enabled": ["//libexec/atf/atf-check/tests:install_manifest", "//libexec/atf/atf-sh/tests:install_manifest"],
+    manifests = [":directory_claims", "//libexec/atf/atf-check:install_manifest", "//libexec/atf/atf-sh:install_manifest", "//libexec/atf/atf-sh:support_manifest", "//libexec/atf/atf-pytest-wrapper:install_manifest"] + select({
+        "//tools/build/bazel/config:tests_enabled": ["//libexec/atf/tests:install_manifest", "//libexec/atf/atf-check/tests:install_manifest", "//libexec/atf/atf-sh/tests:install_manifest"],
         "//conditions:default": [],
     }),
-    directories = select({"//tools/build/bazel/config:tests_enabled": _BASE_DIRS | _TEST_DIRS, "//conditions:default": _BASE_DIRS}),
     mtree_specs = {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",

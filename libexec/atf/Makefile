@@ -24,6 +24,9 @@
 # SUCH DAMAGE.
 #
 
-SUBDIR=	atf-check atf-pytest-wrapper atf-sh tests
+.include <src.opts.mk>
+
+SUBDIR=	atf-check atf-pytest-wrapper atf-sh
+SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.subdir.mk>

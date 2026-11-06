@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:world_packages.bzl", "world_package_families")
 # Initial source-owned families; this is not a complete world package endpoint.
 filegroup(name = "core_family_manifests", srcs = [
     "//packages/runtime:family", "//packages/clibs:family", "//packages/utilities:family",
@@ -234,3 +235,5 @@ filegroup(
     srcs = ["//packages/bhyve:family", "//packages/bootloader:family", "//packages/efi-tools:family", "//packages/flua:family", "//packages/libcompat:family", "//packages/sendmail:family", "//packages/libfidl:family"],
     visibility = ["//visibility:public"],
 )
+
+world_package_families()

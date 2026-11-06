@@ -1,5 +1,35 @@
 # Native Bazel completion plan
 
+## Selected world metadata reconciles; ATF support leak fixed (2026-11-06)
+
+Source-owned world traversal now selects typed option/CPU family providers;
+production has no Make parser/query or staged-file scan. The selected catalogue
+rejects duplicate families/packages and inconsistent identities. A declared action
+requires exact complete-world inventory coverage, explicit metadata-only handling
+and nonempty ordinary packages, and hashes all UCL outputs. The final default
+passes with 177 families, 445 manifests, 444 payload packages, pf-dev metadata-only
+and 32,517 file/link paths. All 445 default and 492 tests-profile manifests and
+both entire family sets match original Make traversal/decoded metadata. The
+latter profile does not qualify full tests-enabled world payloads.
+
+The real prior inventory is rejected: ATF's unconditional discovery child installed
+a tests-owned Kyuafile with TESTS disabled. Make and native parents now select it
+only with TESTS; support binaries remain available. Explicit component directory
+claims replace an overbroad global mtree attempt. Fresh Make/native positive and
+negative installation/ELF controls pass (44/32 files, six/three directory claims).
+Retained failures and final immutable bindings are in
+WORLD-PACKAGE-SELECTION-QUALIFICATION.md. Maintained reconciliation rejection
+unit tests and source-settings tests pass. Existing format-5 frontend targets/
+settings select all work; its manual is updated and CLI/backend/stage/signing/
+publication interfaces/defaults remain unchanged.
+
+NEXT: actual whole-world pkg archives from the reconciled providers, transition
+packages and cross-package hardlinks; independent full pkg/install/upgrade/system
+and combined base/hardware publication qualification. Keep world/kernel/module/
+debug/cross/runtime/bootstrap/cache/sandbox/reproducibility/CPU/RAM/disk I/O/disk
+footprint gates open. More option/CPU and whole-world Make directory/content
+controls remain. Make stays production/default; BIP stays out of scope.
+
 ## All 239 source family owners declared; conditional metadata qualified (2026-11-06)
 
 The final seven conditional family owners now have native rules. All 17 default,

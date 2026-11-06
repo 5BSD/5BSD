@@ -7683,3 +7683,21 @@ The libcompat Make declaration now retains its development package when adding
 split manual metadata, preserving the installed static library's package owner.
 Existing format-5 targets/build-settings select this work.
 Make remains default.
+.Pp
+The //packages:world_family_manifests target selects source-owned package
+families through typed options and supported CPU constraints.
+The //:world_package_reconciliation target checks the complete inventory against
+those declarations and consumes every generated UCL manifest as an action input.
+Unselected payloads, empty ordinary packages and metadata-only installation
+claims fail the check.
+Only explicit metadata-only packages may have no payload.
+Existing format-5 targets/build-settings select these targets and the maintained
+world_package_reconciliation_test rejection checks.
+The selected AMD64 default inventory passes; default and tests-enabled metadata
+sets match original Make traversal and complete decoded UCL outputs.
+The corrected ATF parent installs discovery state only when tests are enabled,
+while retaining support tools independently.
+Both installation profiles match independent Make controls.
+These results do not create whole-world packages or qualify installed systems,
+upgrades, cross-platform behavior, bootstrap or resource performance.
+Make remains the production/default backend.
