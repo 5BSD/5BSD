@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":tests.bzl", "failure_test", "fixture", "valid_test")
+
+package(default_visibility = ["//visibility:public"])
+valid_test(name = "valid")
+fixture(name = "cycle_fixture", links = {"/link0": "/link0"}, tags = ["manual"])
+failure_test(name = "cycle", target_under_test = ":cycle_fixture")
+fixture(name = "limit_fixture", links = {"/link" + str(i): "/link" + str(i + 1) for i in range(41)}, tags = ["manual"])
+failure_test(name = "limit", target_under_test = ":limit_fixture")
+test_suite(name = "tests", tests = [":valid", ":cycle", ":limit"])

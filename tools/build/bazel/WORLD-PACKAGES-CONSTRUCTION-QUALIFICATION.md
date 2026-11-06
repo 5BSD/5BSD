@@ -133,6 +133,10 @@ remote/local cache correctness or controlled CPU/RAM/disk performance.
 
 ## Complete original Make package control: metadata gap confirmed
 
+The findings below are retained discovery evidence. The implementation and complete
+matched-epoch passing control are now documented in
+WORLD-PACKAGE-INSPECTION-QUALIFICATION.md; the earlier failed control is unchanged.
+
 The next independent control runs all original packages/Makefile selections and
 share/mk/bsd.pkg.mk package recipes against one complete stage assembled from the
 same immutable r7 native corpus. All 177 families and 445 package targets build;

@@ -9,6 +9,7 @@ import sys
 import tarfile
 import tempfile
 from pkg_create import create_staged
+from package_symlinks import inspection_paths
 
 
 def digest(path):
@@ -26,7 +27,7 @@ def plans(request):
         raise ValueError('world reconciliation input mismatch')
     if set(request['outputs']) != set(catalogue['packages']) or set(gate['packages']) != set(request['outputs']):
         raise ValueError('exact selected package outputs required')
-    records = {}
+    records = dict(inventory['construction'])
     owners = {}
     directories = dict(inventory['shared_directories'])
     for name, entries in inventory['packages'].items():
@@ -80,6 +81,29 @@ def plans(request):
                 if owners[root] != name:
                     cross_links.append(dict(path=path, original_target=root, target_package=owners[root]))
             materialized.append(selected)
+        # Inspection-only records do not acquire ownership or enter the plist.
+        inspected = set()
+        owned_paths = {r['destination'] for r in original}
+        for record in original:
+            if record['type'] == 'symlink':
+                inspected.update(inspection_paths(record['destination'], records))
+        inspection = []
+        inspection_directories = set()
+        for path in sorted(inspected - owned_paths):
+            if path in directories:
+                inspection_directories.add(path)
+                inspection_directories.update(str(p) for p in PurePosixPath(path).parents)
+            record = records.get(path)
+            if record is None:
+                continue  # Explicitly dangling alias; no host fallback.
+            selected = dict(record)
+            if record['type'] in ['file', 'hardlink']:
+                selected.update(type='file', source=records[roots[path]]['source'])
+                selected.pop('link', None)
+            inspection.append(selected)
+            inspection_directories.update(str(p) for p in PurePosixPath(path).parents)
+        if not inspection_directories.issubset(directories):
+            raise ValueError('inspection lacks complete source directory policy')
         required = {'/'}
         for record in materialized:
             path = PurePosixPath(record['destination'])
@@ -92,7 +116,8 @@ def plans(request):
             metadata_only=declaration['metadata_only'], manifest_sha256=gate['manifest_sha256'][name],
             records=sorted(materialized, key=lambda r: r['destination']),
             directories={p: directories[p] for p in sorted(required)},
-            cross_package_hardlinks=cross_links)
+            cross_package_hardlinks=cross_links, inspection_records=inspection,
+            inspection_directories={p: directories[p] for p in sorted(inspection_directories - required)})
         Path(output).write_text(json.dumps(plan, sort_keys=True, indent=2)+'\n')
 
 
@@ -111,7 +136,8 @@ def package(request):
         stage = work/'root'
         stage.mkdir()
         dirs = {}
-        for path, record in sorted(plan['directories'].items(), key=lambda p: len(PurePosixPath(p[0]).parts)):
+        stage_directories = dict(plan['inspection_directories'], **plan['directories'])
+        for path, record in sorted(stage_directories.items(), key=lambda p: len(PurePosixPath(p[0]).parts)):
             normalized = PurePosixPath(path)
             if not path.startswith('/') or '..' in normalized.parts or str(normalized) != path:
                 raise ValueError('canonical directory required')
@@ -124,7 +150,7 @@ def package(request):
             dirs[path] = meta
         owned = set()
         order = dict(dir=0, file=1, hardlink=2, symlink=3)
-        for record in sorted(plan['records'], key=lambda r: (order[r['type']], r['destination'])):
+        for record in sorted(plan['records'] + plan['inspection_records'], key=lambda r: (order[r['type']], r['destination'])):
             path = record['destination']
             if not path.startswith('/') or str(PurePosixPath(path)) != path or '..' in PurePosixPath(path).parts:
                 raise ValueError('canonical payload required')

@@ -379,8 +379,8 @@ bsd_python_test(name = "world_man_option_test", src = "world-man-option-test.py"
 exports_files(["world_package_reconcile.py"], visibility = ["//:__pkg__"])
 bsd_python_test(name = "world_package_reconciliation_test", src = "world-package-reconcile-test.py", data = ["world_package_reconcile.py"])
 
-exports_files(["world_pkg_create.py"], visibility = ["//:__pkg__"])
+exports_files(["world_pkg_create.py", "package_symlinks.py"], visibility = ["//:__pkg__"])
 
 bsd_pkg_create_test(name = "world_pkg_hardlinks_test", src = "world-pkg-hardlinks-test.py",
     driver = ":world_pkg_create.py", runtime = ["@bsd_sdk//toolchain:python_stdlib",
-        "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime", ":pkg_create.py"])
+        "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime", ":pkg_create.py", ":package_symlinks.py"])

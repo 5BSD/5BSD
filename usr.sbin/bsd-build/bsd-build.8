@@ -7712,10 +7712,14 @@ estimates.
 The package_threads setting controls compression threads; zero uses that budget.
 The package_epoch setting defaults to zero and never reads the wall clock.
 These targets create build artifacts and do not publish or install them.
-The complete original Make package comparison currently exposes missing automatic
-shared-library metadata when a package symlink refers to another package's file.
-Three bootloader packages also need explicit per-file epoch policy qualification.
-Native world packages remain qualification candidates until those differences
-are resolved and the complete comparison passes.
+Each package also declares source-derived symlink referents needed for ELF
+inspection; those files acquire no package ownership.
+The qualified SDK pkg must inspect absolute aliases within the target stage.
+The default AMD64 set matches all 445 complete original Make package manifests
+on the same native corpus under matched explicit package epochs.
+The reference stage applies the native package_epoch uniformly, including
+bootloader filesystem timestamps; this does not rewrite bytes inside files.
+This is package metadata qualification, not independently Make-built world or
+installed-system qualification.
 Whole-system package/runtime, upgrade, bootstrap and performance qualification
 remain required before changing the production/default Make backend.

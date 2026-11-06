@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Complete native package manifests match Make with inspection dependencies (2026-11-06)
+
+All 445 full package manifests now match the original Make recipes on the complete
+same native corpus under matched explicit package epochs. Source-derived inspection
+Files/trees and separate inspection records repair missing automatic library
+metadata without changing ownership. The former SDK's pkg followed absolute aliases
+into host ELF; a retained negative control proves it. The already maintained patched
+pkg port passes, and a fresh receipt-bound SDK selects it explicitly without host
+installation. Independent inspection again passes all 32,510 packaged paths and
+thirteen cross-package hardlinks. Seven maintained test targets pass, including
+native Skylib component-order/limit/cycle cases and expanded real-pkg alias cases.
+A test-only follow-up preserves every package/plan/index and installation output
+with zero package actions. See WORLD-PACKAGE-INSPECTION-QUALIFICATION.md for scope,
+epoch normalization, hashes, retained failures and remaining limitations.
+
+NEXT: actual solver/fresh-install/ownership/generated-state/update qualification,
+then VM normal startup/services and kernel/module package integration. Keep every
+independent Make world/debug/cross-platform/bootstrap/cache/sandbox/reproducibility/
+CPU/RAM/disk I/O/footprint/combined-publication gate open. Make stays production/
+default; BIP stays excluded. Existing frontend inputs select the work; provider,
+backend rules/tests/manual are updated without changing CLI or publication defaults.
+
 ## Original Make package control exposes inspection-input gap (2026-11-06)
 
 All 445 original Make package targets now build over a complete shared stage of the

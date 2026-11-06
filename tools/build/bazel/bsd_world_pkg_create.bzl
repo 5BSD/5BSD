@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load(":bsd_pkg_family.bzl", "BsdPackageFamilySetInfo")
 load(":bsd_install.bzl", "resolve_hardlinks")
+load(":package_symlinks.bzl", "inspection_paths")
 load(":bsd_install_archive.bzl", "BsdInstallArchiveSetInfo")
 
 def _package_name(tags, suffixes):
@@ -36,6 +37,24 @@ def _create(ctx):
         if source not in files:
             fail("source record lacks its declared payload File: " + source)
         sources[name][source] = files[source]
+    # Pkg inspects the ELF behind installation aliases. Those referents are
+    # action inputs, even when they are owned by a different package.
+    for path, record in records.items():
+        if record["type"] != "symlink" or not record["tags"]:
+            continue
+        name = _package_name(record["tags"], ctx.attr.suffix_tags)
+        for target in inspection_paths(path, records):
+            referent = records.get(target)
+            if referent != None and referent["type"] in ["file", "hardlink"]:
+                source = records[roots[target]]["source"]
+                if source not in files:
+                    fail("inspection referent lacks its declared File: " + source)
+                sources[name][source] = files[source]
+            for tree in archives.trees:
+                if target == tree.prefix or target.startswith(tree.prefix.rstrip("/") + "/") or target in tree.destinations:
+                    trees[name].append(tree.tree)
+                    for file in tree.files:
+                        sources[name][file.path] = file
     for tree in archives.trees:
         names = depset([_package_name(tags, ctx.attr.suffix_tags) for tags in [tree.file_tags, tree.directory_tags] if tags]).to_list()
         for name in names:
@@ -44,6 +63,7 @@ def _create(ctx):
             trees[name].append(tree.tree)
             for file in tree.files:
                 sources[name][file.path] = file
+    trees = {name: depset(entries).to_list() for name, entries in trees.items()}
     plans = {name: ctx.actions.declare_file(ctx.label.name + "/plans/" + name + ".json") for name in families.manifests}
     plan_request = ctx.actions.declare_file(ctx.label.name + "/plans.inputs.json")
     ctx.actions.write(plan_request, json.encode(dict(inventory = ctx.file.inventory.path,
@@ -102,5 +122,5 @@ bsd_world_pkg_create = rule(implementation = _create, attrs = {
     "python_home": attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = "exec"),
     "runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_pkg_runtime"], allow_files = True, cfg = "exec"),
     "_driver": attr.label(default = Label(":world_pkg_create.py"), allow_single_file = True),
-    "_modules": attr.label_list(default = [Label(":pkg_create.py")], allow_files = True),
+    "_modules": attr.label_list(default = [Label(":pkg_create.py"), Label(":package_symlinks.py")], allow_files = True),
 })
