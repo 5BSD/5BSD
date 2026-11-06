@@ -7310,3 +7310,12 @@ sanitizer-backed helper. Independent ELF/debug-link contracts for 375 common
 executables and five DSOs match a fresh original Make parent. The positive
 sanitizer helper still needs its original Make runtime-present comparison.
 Full-tests world guards remain until other test families are covered.
+.Pp
+The explicit AMD64 libm test targets build all 47 original selected programs
+and preserve floating-point source policy. Their 95 installation records,
+Kyuafile and ELF/debug-link contracts match independent Make construction.
+All 463 original cases pass using declared native runtime libraries, with no
+skips or expected failures; the source-settings helper is a separate target.
+These targets use the existing explicit Bazel-input workflow. ARM64/RISC-V
+math ABI policy and runtime qualification remain open, as do complete-world
+tests and system acceptance. The default system backend is unchanged.

@@ -12098,3 +12098,17 @@ event-delivery proof. No newly identified missing program-specific provider is
 asserted for test fixtures. Positive sanitizer Make parity, complete original
 installed-case execution and live tracing/audit qualification remain open. See
 LIBC-TEST-PARENT-QUALIFICATION.md for retained evidence and exact runtime bounds.
+
+## Complete selected AMD64 libm tests (2026-11-06)
+
+All 47 original test sources and original libm implementation/provider sources
+remain unchanged. Native test compilation preserves -fno-builtin so the original
+cases exercise library functions, AMD64 long-double/rounding definitions and
+specific fe_round policy. All 463 actual original cases pass with native runtime
+libraries. Independent Make ELF symbol/version contracts and both configured
+compile variants are checked. No component-specific DTrace/audit event gap is
+asserted merely because these numerical test fixtures contain no provider.
+Actual live DTrace firing/audit delivery remains a separate system gate.
+RISC-V source-selected expected-death results need explicit runner support before
+cross-runtime qualification; AMD64 passing cases do not establish that support.
+See MSUN-TEST-QUALIFICATION.md for evidence and preserved failed attempts.

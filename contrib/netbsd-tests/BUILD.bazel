@@ -2,4 +2,4 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 # Shared imported test macros; compile contexts declare the actual header input.
 cc_library(name = "test_headers", hdrs = ["h_macros.h"], strip_include_prefix = ".",
-    visibility = ["//lib/libc/tests:__subpackages__"])
+    visibility = ["//lib/libc/tests:__subpackages__", "//lib/msun/tests:__pkg__"])

@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 libm test suite (2026-11-06)
+
+All 47 original programs and 95 installation records match fresh independent
+Make metadata, directory/Kyua and ELF/debug-link contracts. Actual metadata for
+all 463 original cases matches; all 463 execute and pass with native libraries,
+no skips or expected failures. Final 464 target results include one separate
+source-settings helper and are valid cache hits. Both registered compile variants
+retain original FP definitions, -fno-builtin, source aliases and declared headers.
+See MSUN-TEST-QUALIFICATION.md for final bindings and retained first failures.
+This closes msun from the previous missing-library-test-directory inventory;
+13 discovered roots still lack sibling BUILD files, and file presence alone does
+not qualify the other existing roots. RISC-V expected-death ATF handling is a
+concrete shared-runner gap to close with its cross-ABI/math qualification.
+
+Continue AMD64 remaining base installed-test composition, whole installation/
+kernel/modules/debug/pkgbase and normal-service VM gates, then controlled CPU/
+RAM/disk-I-O/footprint, bootstrap/cache/sandbox/reproducibility and publication.
+Fill ARM64/RISC-V gaps alongside shared work without claiming unexecuted ABI
+profiles. Full-tests guards remain. Make default; BIP excluded; no host upgrade.
+
 ## Complete selected AMD64 libc test parent and SSP (2026-11-06)
 
 The complete selected libc test parent now builds 31 installation archives.

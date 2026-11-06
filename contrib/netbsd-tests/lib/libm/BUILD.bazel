@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['t_acos.c', 't_asin.c', 't_atan.c', 't_bit.c', 't_cbrt.c', 't_ceil.c', 't_casinh.c', 't_cos.c', 't_cosh.c', 't_erf.c', 't_exp.c', 't_fmod.c', 't_fe_round.c', 't_hypot.c', 't_infinity.c', 't_ilogb.c', 't_ldexp.c', 't_log.c', 't_pow.c', 't_precision.c', 't_round.c', 't_scalbn.c', 't_sin.c', 't_sinh.c', 't_sqrt.c', 't_tan.c', 't_tanh.c'], visibility = ["//lib/msun/tests:__pkg__"])
+cc_library(name = "headers", hdrs = ["t_libm.h"], strip_include_prefix = ".", visibility = ["//lib/msun/tests:__pkg__"])
