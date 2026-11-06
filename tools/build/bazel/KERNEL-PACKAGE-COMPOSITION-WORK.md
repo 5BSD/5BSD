@@ -214,3 +214,36 @@ must address that source policy before claiming general package-layout support.
 
 NEXT: final flavored kernel pkgbase families, non-kernel module/world package merge
 and complete package inventory before normal startup/services/upgrades.
+
+## Native current AMD64 pkgbase composition qualified (2026-11-06)
+
+The kernel-only native package graph passes 22 selected test targets, including
+actual pkg catalogue/solver checks. Independent review of both actual archives
+passes original Make-generated UCL and pkg serialization parity plus full file,
+alias, ownership/mode/flags and ancestor directory coverage. The retained report
+bazel-kernel-pkgbase-default-review-r3-20261106/review.json has SHA-256
+5c528abd31f8ea36304282f4fba4c697a89b8d340d3045b149ed13268eb375dd.
+It binds bazel-kernel-pkgbase-default-native-r2-20261106. Four original oes/mac-abac
+module records remain in the separate typed world contribution; no payload File
+copies or rewritten installation paths implement package ownership projection.
+
+The source-owned AMD64 system endpoint now composes the selected world family set
+and kernel family set, plus their installation providers, before reconciliation
+and existing per-package actions. Nested family sets reject identity mismatches
+and duplicate family/package names. World construction declarations share one
+source helper. Complete current AMD64 system package creation and the real solver pass all 25
+selected tests. Exhaustive independent archive inspection passes all 447 packages
+and 33,968 file claims, with declared-input path/hash binding for 19,393 Files.
+See SYSTEM-PKGBASE-COMPOSITION-QUALIFICATION.md for final receipts, exact checks,
+Make pkg encoding and source alias corrections. Normal boot/upgrade/publication
+are not established by this result.
+
+The frontend's existing explicit format-5 targets/settings handle these graphs.
+The family rule now explicitly distinguishes the UCL generator family from the
+flavored package family and can bind a template variable to its selected suffix.
+This preserves original kernel UCL comments and generator dependency exceptions;
+it does not invent an automatic kernel debug dependency. Normal Make stays default.
+
+NEXT: full 447-package installed/normal-boot/service and genuine upgrade proof;
+source Make kernel-debug path policy and package variants. Remaining global gates
+stay open. Make stays production/default; BIP excluded.

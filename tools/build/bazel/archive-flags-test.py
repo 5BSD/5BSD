@@ -26,6 +26,8 @@ class ArchiveFlags(unittest.TestCase):
         path=bind('archive_entry_set_pathname',[C.c_void_p,C.c_char_p],None)
         mode=bind('archive_entry_set_mode',[C.c_void_p,C.c_uint],None)
         size=bind('archive_entry_set_size',[C.c_void_p,C.c_int64],None)
+        uid=bind('archive_entry_set_uid',[C.c_void_p,C.c_int64],None)
+        gid=bind('archive_entry_set_gid',[C.c_void_p,C.c_int64],None)
         flags=bind('archive_entry_copy_fflags_text',[C.c_void_p,C.c_char_p],C.c_char_p)
         with tempfile.TemporaryDirectory() as tmp:
             archive=Path(tmp)/'flags.tar';writer=new();entry=entry_new()
@@ -34,12 +36,14 @@ class ArchiveFlags(unittest.TestCase):
                 self.assertEqual(fmt(writer),0)
                 self.assertEqual(opened(writer,str(archive).encode()),0)
                 path(entry,b'payload');mode(entry,stat.S_IFREG|0o444);size(entry,0)
+                uid(entry,2**33+17);gid(entry,2**33+29)
                 self.assertIsNone(flags(entry,b'schg'))
                 self.assertEqual(header(writer,entry),0);self.assertEqual(close(writer),0)
             finally:
                 entry_free(entry);free(writer)
             records=archive_headers.read(archive)
             self.assertEqual(len(records),1)
+            self.assertEqual((records[0]['uid'],records[0]['gid']),(2**33+17,2**33+29))
             self.assertNotEqual(records[0]['fflags'],[0,0])
             archive_headers.check_flags(records[0],'schg')
             with self.assertRaises(ValueError):

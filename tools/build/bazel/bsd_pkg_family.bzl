@@ -3,7 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
 BsdPackageFamilyInfo = provider(fields = ["family", "manifests", "metadata", "declarations", "prefix", "version"])
-BsdPackageFamilySetInfo = provider(fields = ["catalogue", "manifests", "metadata", "declarations", "prefix", "version"])
+BsdPackageFamilySetInfo = provider(fields = ["families", "catalogue", "manifests", "metadata", "declarations", "prefix", "version"])
 
 def _name(value):
     if not value or any([c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.+,-" for c in value.elems()]):
@@ -12,6 +12,7 @@ def _name(value):
 
 def _family(ctx):
     family = _name(ctx.attr.family)
+    generator_family = _name(ctx.attr.generator_family or family)
     version = _name(ctx.attr.version[BuildSettingInfo].value)
     prefix = _name(ctx.attr.prefix[BuildSettingInfo].value)
     debug = ctx.attr.debug_files[BuildSettingInfo].value
@@ -55,6 +56,12 @@ def _family(ctx):
         if type(value) != "string" or not value:
             fail("explicit nonempty UCL setting required: " + key)
         ucl_variables[key] = value
+    flavor_variable = ctx.attr.flavor_variable
+    if flavor_variable:
+        if flavor_variable in ucl_variables:
+            fail("flavor variable also supplied as a UCL variable: " + flavor_variable)
+        # Validate its identifier with the other explicit variables below.
+        ucl_variables[flavor_variable] = ""
     reserved = ["VERSION", "PKG_NAME_PREFIX", "PKG_WWW", "PKG_MAINTAINER", "PKGNAME", "PKGGENNAME", "SRCDIR"]
     for key, value in ucl_variables.items():
         if not key or key in reserved or any([c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789" for c in key.elems()]):
@@ -77,7 +84,9 @@ def _family(ctx):
             fields["deps"] = {dep: dict(origin = "base/" + prefix + "-" + dep, version = version) for dep in dependencies}
         variables = dict(ucl_variables, VERSION = version, PKG_NAME_PREFIX = prefix,
             PKG_WWW = fields["www"], PKG_MAINTAINER = fields["maintainer"], PKGNAME = name,
-            PKGGENNAME = family, SRCDIR = ctx.label.package)
+            PKGGENNAME = generator_family, SRCDIR = ctx.label.package)
+        if flavor_variable:
+            variables[flavor_variable] = name[len(family):]
         output = ctx.actions.declare_file(ctx.label.name + "/" + full_name + ".pkgucl")
         request = ctx.actions.declare_file(ctx.label.name + "/" + full_name + ".inputs.json")
         ctx.actions.write(request, json.encode(dict(fields = fields, variables = variables,
@@ -101,6 +110,8 @@ def _family(ctx):
 
 bsd_pkg_family = rule(implementation = _family, attrs = {
     "family": attr.string(mandatory = True), "base": attr.bool(default = True),
+    "generator_family": attr.string(doc = "Maintained UCL generator family; defaults to the package family."),
+    "flavor_variable": attr.string(doc = "Optional UCL variable bound to the exact selected subpackage suffix, or empty for the base."),
     "subpackages": attr.string_list(default = ["dbg", "man"]), "extra_subpackages": attr.string_list(),
     "template": attr.label(allow_single_file = True, mandatory = True),
     "template_overrides": attr.string_keyed_label_dict(allow_files = True),
@@ -128,20 +139,24 @@ def _family_set(ctx):
     families, manifests, declarations, metadata, inputs = {}, {}, {}, [], []
     identity = None
     for target in ctx.attr.families:
-        info = target[BsdPackageFamilyInfo]
+        leaf = BsdPackageFamilyInfo in target
+        info = target[BsdPackageFamilyInfo] if leaf else target[BsdPackageFamilySetInfo]
         selected_identity = (info.prefix, info.version)
         if identity != None and identity != selected_identity:
             fail("package families have different identities")
         identity = selected_identity
-        if info.family in families:
-            fail("duplicate selected family: " + info.family)
-        families[info.family] = dict(label = str(target.label), packages = sorted(info.manifests), metadata = info.metadata.path)
+        selected_families = {info.family: dict(label = str(target.label),
+            packages = sorted(info.manifests), metadata = info.metadata.path)} if leaf else info.families
+        for name, family in selected_families.items():
+            if name in families:
+                fail("duplicate selected family: " + name)
+            families[name] = family
         for name, manifest in info.manifests.items():
             if name in manifests:
                 fail("duplicate selected package: " + name)
             manifests[name] = manifest
-            declarations[name] = dict(info.declarations[name], family = info.family, manifest = manifest.path)
-        metadata.append(info.metadata)
+            declarations[name] = dict(info.declarations[name], family = info.family, manifest = manifest.path) if leaf else info.declarations[name]
+        metadata.extend([info.metadata] if leaf else info.metadata)
         inputs.append(target[DefaultInfo].files)
     if identity == None:
         fail("world package families must not be empty")
@@ -150,9 +165,9 @@ def _family_set(ctx):
         prefix = identity[0], version = identity[1], families = families, packages = declarations)) + "\n")
     return [DefaultInfo(files = depset([catalogue], transitive = inputs)),
         OutputGroupInfo(metadata = depset([catalogue])),
-        BsdPackageFamilySetInfo(catalogue = catalogue, manifests = manifests, metadata = metadata,
+        BsdPackageFamilySetInfo(families = families, catalogue = catalogue, manifests = manifests, metadata = metadata,
             declarations = declarations, prefix = identity[0], version = identity[1])]
 
 bsd_pkg_family_set = rule(implementation = _family_set, attrs = {
-    "families": attr.label_list(providers = [BsdPackageFamilyInfo], mandatory = True),
+    "families": attr.label_list(providers = [[BsdPackageFamilyInfo], [BsdPackageFamilySetInfo]], mandatory = True),
 }, doc = "Collect explicit selected source families; inventory reconciliation is separate.")

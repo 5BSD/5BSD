@@ -7865,3 +7865,20 @@ This qualifies installation archives, not final pkgbase, normal startup, upgrade
 cross/custom completeness or comparative performance. Make stays production/default.
 See
 .Pa tools/build/bazel/KERNEL-INSTALLATION-COMPOSITION-QUALIFICATION.md .
+
+.Ss Native current AMD64 system pkgbase
+The //:amd64_system_packages candidate composes the selected world and KERNCONF
+package families, preserving explicitly assigned world modules. It creates all
+447 current-profile packages; the real local pkg solver reports no conflicts.
+The format-5 interface can also request its _inventory, _families,
+_payloads and _payload_inventory targets. The latter hashes actual declared
+execution paths, including repository aliases, without installed-tree discovery.
+.Pp
+Independent inspection checks every package payload and configuration marker,
+alias, directory policy and Make-compatible archive ownership encoding.
+Pkg uses reproducible numeric UID/GID placeholders and resolves owner names on
+installation; archive encoding does not replace installed-ownership validation.
+These selected native tests and archives do not establish normal boot, upgrades,
+comparative performance or production publication. Make remains production/default.
+See
+.Pa tools/build/bazel/SYSTEM-PKGBASE-COMPOSITION-QUALIFICATION.md .

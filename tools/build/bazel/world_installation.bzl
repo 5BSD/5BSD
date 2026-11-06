@@ -10,6 +10,10 @@ load(":bsd_world_pkg_create.bzl", "bsd_world_pkg_create")
 load(":bsd_world_layout.bzl", "bsd_world_layout")
 load(":bsd_world_pkg_solver_test.bzl", "bsd_world_pkg_solver_test")
 
+def world_construction_manifests():
+    return ["//etc:account_install_manifest", "//:world_manual_databases_manifest",
+        "//usr.sbin/services_mkdb:construction_manifest", "//usr.bin/login:generated_manifest"]
+
 def world_contributions():
     package_suffixes = ["dbg", "dev", "lib"] + select({
         "//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": [],
@@ -54,7 +58,7 @@ def world_contributions():
 
     bsd_world_package_inventory(name = "world_package_inventory",
         archives = [":fresh_world_contributions"],
-        construction = ["//etc:account_install_manifest", ":world_manual_databases_manifest", "//usr.sbin/services_mkdb:construction_manifest", "//usr.bin/login:generated_manifest"],
+        construction = world_construction_manifests(),
         suffix_tags = package_suffixes, visibility = ["//visibility:public"])
 
     bsd_world_package_reconciliation(name = "world_package_reconciliation",

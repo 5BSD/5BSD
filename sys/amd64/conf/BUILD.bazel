@@ -955,3 +955,7 @@ bsd_install_archive(name = "complete_install_archive", manifests = [":complete_i
     visibility = ["//visibility:public"])
 bsd_linker_hints_test(name = "complete_kernel_hints_test", hints = ":complete_kernel_hints",
     size = "medium", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_kernel_packages.bzl", "kernel_pkgbase")
+kernel_pkgbase(name = "kernel_packages", installation = ":complete_install_archive",
+    configuration = "//sys/amd64/conf:GENERIC")

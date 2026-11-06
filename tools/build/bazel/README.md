@@ -1,5 +1,25 @@
 # Bazel qualification
 
+## Complete current AMD64 pkgbase composition passes (2026-11-06)
+
+`//:amd64_system_packages` creates all 447 selected packages: the existing world
+families plus kernel-generic/kernel-generic-dbg, with explicit oes/mac-abac module
+records merged into their world packages. The real pkg solver reports no conflicts.
+The final system qualification passes 25 selected tests (two executed, 23 cached).
+Independent exhaustive inspection passes all 33,968 file claims, actual payload
+bytes, aliases, directory/mode/flag/config policy and Make-compatible pkg encoding.
+A declared-input digest inventory binds all 19,393 execution paths, including
+external repository aliases, to the captured bytes without mutable path lookup.
+Separate native tests cover the inventory/archive reader and strict full-name
+artifact resolution. See SYSTEM-PKGBASE-COMPOSITION-QUALIFICATION.md.
+
+NEXT: normal boot/services and actual installation/version upgrades with the full
+system set; qualify alternative kernel layouts/debug packaging against corrected
+source Make classification. Cross/custom/root-selection completeness, bootstrap,
+cache/sandbox/reproducibility/resources, hardware and combined publication gates
+remain open. The explicit format-5 frontend carries these candidates; Make remains
+production/default, and BIP is excluded.
+
 ## Complete current AMD64 kernel installation passes (2026-11-06)
 
 The native complete archive composes the kernel, 722 selected modules, three

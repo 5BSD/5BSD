@@ -57,3 +57,6 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 bsd_install_archive_set(name = "sys_world_installation_archives", archives = [],
     target_compatible_with = select({"//tools/build/bazel/config:modules_with_world_enabled": ["@platforms//:incompatible"], "//conditions:default": []}),
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:system_installation.bzl", "system_pkgbase")
+system_pkgbase(name = "amd64_system_packages", kernel_packages = "//sys/amd64/conf:kernel_packages")

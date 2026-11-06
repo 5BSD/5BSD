@@ -19,6 +19,8 @@ def read(path):
     error=bind('archive_error_string',[C.c_void_p],C.c_char_p)
     strings={k:bind('archive_entry_'+k,[C.c_void_p],C.c_char_p) for k in ('pathname','uname','gname','hardlink','symlink')}
     mode=bind('archive_entry_mode',[C.c_void_p],C.c_uint)
+    uid=bind('archive_entry_uid',[C.c_void_p],C.c_int64)
+    gid=bind('archive_entry_gid',[C.c_void_p],C.c_int64)
     fflags=bind('archive_entry_fflags',[C.c_void_p,C.POINTER(C.c_ulong),C.POINTER(C.c_ulong)],None)
     handle=new()
     if not handle:raise RuntimeError('libarchive allocation failed')
@@ -37,6 +39,7 @@ def read(path):
                 value=get(entry)
                 record[key]=value.decode('utf-8') if value is not None else None
             record['mode']=mode(entry)
+            record['uid']=uid(entry);record['gid']=gid(entry)
             set_flags=C.c_ulong();clear_flags=C.c_ulong()
             fflags(entry,C.byref(set_flags),C.byref(clear_flags))
             record['fflags']=[set_flags.value,clear_flags.value]
