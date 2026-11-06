@@ -1010,6 +1010,9 @@ zfs_create_diskpart()
 	# Update fstab(5)
 	local swapsize
 	f_expand_number "$ZFSBOOT_SWAP_SIZE" swapsize
+	# Disk names change with what else is attached; GPT labels do not.
+	local swapdev=/dev/$disk$swappart
+	[ "$ZFSBOOT_PARTITION_SCHEME" = "GPT" ] && swapdev=/dev/gpt/swap$index
 	if [ "$isswapmirror" ]; then
 		# This is not the first disk in the mirror, do nothing
 	elif [ ${swapsize:-0} -eq 0 ]; then
@@ -1026,11 +1029,11 @@ zfs_create_diskpart()
 		isswapmirror=1
 	elif [ "$ZFSBOOT_SWAP_ENCRYPTION" ]; then
 		f_eval_catch $funcname printf "$PRINTF_FSTAB" \
-		             /dev/$disk${swappart}.eli none swap sw 0 0 \
+		             $swapdev.eli none swap sw 0 0 \
 		             $BSDINSTALL_TMPETC/fstab || return $FAILURE
 	else
 		f_eval_catch $funcname printf "$PRINTF_FSTAB" \
-		             /dev/$disk$swappart none swap sw 0 0 \
+		             $swapdev none swap sw 0 0 \
 		             $BSDINSTALL_TMPETC/fstab || return $FAILURE
 	fi
 
