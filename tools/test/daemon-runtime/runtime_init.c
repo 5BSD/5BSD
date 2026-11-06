@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Disposable VM PID 1 only. Never invoke as the host's init. */
 #include <sys/types.h>
+#include <sys/procctl.h>
 #include <sys/sysctl.h>
 #include <sys/mount.h>
 #include <sys/ioctl.h>
@@ -70,9 +71,63 @@ out:
 	return (0);
 }
 
+/* The per-part reaper owns workers even when they create another session. */
+static int
+terminate_part(pid_t child)
+{
+	struct timespec start, now, pause_time = { .tv_nsec = 100000000 };
+	struct procctl_reaper_kill request = {
+		.rk_sig = SIGKILL,
+		.rk_flags = REAPER_KILL_SUBTREE,
+		.rk_subtree = child,
+	};
+	struct procctl_reaper_status status;
+	struct procctl_reaper_pids pids;
+	bool pending;
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (;;) {
+		if (procctl(P_PID, getpid(), PROC_REAP_KILL, &request) == -1 &&
+		    errno != ESRCH) {
+			perror("kill test subtree");
+			return (-1);
+		}
+		if (procctl(P_PID, getpid(), PROC_REAP_STATUS, &status) == -1)
+			return (-1);
+		memset(&pids, 0, sizeof(pids));
+		pids.rp_count = status.rs_descendants + 1;
+		pids.rp_pids = calloc(pids.rp_count, sizeof(*pids.rp_pids));
+		if (pids.rp_pids == NULL)
+			return (-1);
+		if (procctl(P_PID, getpid(), PROC_REAP_GETPIDS, &pids) == -1) {
+			free(pids.rp_pids);
+			return (-1);
+		}
+		pending = false;
+		for (unsigned i = 0; i < pids.rp_count; i++) {
+			const struct procctl_reaper_pidinfo *info = &pids.rp_pids[i];
+			if (!(info->pi_flags & REAPER_PIDINFO_VALID) ||
+			    info->pi_subtree != child)
+				continue;
+			pending = true;
+			/* Orphans become our children after their ancestor exits. */
+			(void)waitpid(info->pi_pid, NULL, WNOHANG);
+		}
+		free(pids.rp_pids);
+		if (!pending)
+			return (0);
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec - start.tv_sec >= 30) {
+			fprintf(stderr, "test subtree %d did not exit\n", child);
+			return (-1);
+		}
+		nanosleep(&pause_time, NULL);
+	}
+}
+
 /* Each body and cleanup gets a separate process group and bounded lifetime. */
 static int
-run_part(const char *program, const char *part, const char *path,
+run_supervised_part(const char *program, const char *part, const char *path,
     const char *result, unsigned timeout)
 {
 	struct timespec start, now, pause_time = { .tv_nsec = 100000000 };
@@ -92,22 +147,48 @@ run_part(const char *program, const char *part, const char *path,
 	for (;;) {
 		pid_t waited = waitpid(child, &status, WNOHANG);
 		if (waited == child) {
-			/* Reap a leaked worker group even after its parent exited. */
-			kill(-child, SIGKILL);
-			return (WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1);
+			int cleaned = terminate_part(child);
+			return (cleaned == 0 && WIFEXITED(status) &&
+			    WEXITSTATUS(status) == 0 ? 0 : -1);
 		}
-		if (waited == -1 && errno != EINTR)
+		if (waited == -1 && errno != EINTR) {
+			(void)terminate_part(child);
 			return (-1);
+		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		if (now.tv_sec - start.tv_sec >= timeout) {
-			kill(-child, SIGKILL);
-			kill(child, SIGKILL);
-			waitpid(child, &status, 0);
+			(void)terminate_part(child);
 			printf("RUNTIME_CASE_FAIL %s:%s timeout=%u\n", program, part, timeout);
 			return (-1);
 		}
 		nanosleep(&pause_time, NULL);
 	}
+}
+
+/* init's descendants share a special subtree; use a dedicated real reaper. */
+static int
+run_part(const char *program, const char *part, const char *path,
+    const char *result, unsigned timeout)
+{
+	pid_t supervisor, waited;
+	int status;
+
+	supervisor = fork();
+	if (supervisor == -1)
+		return (-1);
+	if (supervisor == 0) {
+		if (procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL) == -1) {
+			perror("acquire test reaper");
+			_exit(126);
+		}
+		_exit(run_supervised_part(program, part, path, result, timeout) == 0 ?
+		    0 : 1);
+	}
+	do {
+		waited = waitpid(supervisor, &status, 0);
+	} while (waited == -1 && errno == EINTR);
+	return (waited == supervisor && WIFEXITED(status) &&
+	    WEXITSTATUS(status) == 0 ? 0 : -1);
 }
 
 static int

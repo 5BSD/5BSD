@@ -440,3 +440,12 @@ installed helper behavior with native test artifacts, not an entirely installed
 system or a production boot. The fixture must separately verify the installed
 program/library inventory and dependency closure. Configured executable files
 retain their original basenames under distinct atf-config/<index>/ directories.
+
+Descendant cleanup correction (2026-11-06): every case body/cleanup now runs under
+an acquired OS reaper supervisor. Specific child subtrees are killed and drained
+before cleanup, including workers which call setsid. A 30-second drain failure
+fails the part. The native Bazel runtime_init/runner_probe targets are available
+alongside Make. The session_leak probe requires a normally orphaned session to be
+gone before cleanup; session_timeout deliberately fails its deadline and requires
+successful escaped-session cleanup. Its overall VM must remain FAIL. Real VM
+positive/negative evidence is recorded in tools/build/bazel/RUNTIME-REAPER-QUALIFICATION.md.

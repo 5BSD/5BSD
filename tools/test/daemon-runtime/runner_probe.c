@@ -8,6 +8,7 @@
 #include <sys/uio.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -167,7 +168,73 @@ ATF_TC_BODY(output_disk, tc) {
     ATF_REQUIRE_EQ(0, close(fd));
     puts("OUTPUT_DISK_PASS: first and last blocks written and flushed");
 }
+/* A new session must remain in the test reaper subtree. */
+static void
+escape_session(void)
+{
+    char guest[32], ready;
+    size_t length = sizeof(guest);
+    int descriptors[2];
+    pid_t child;
+    FILE *state;
+
+    ATF_REQUIRE_EQ(0, sysctlbyname("kern.vm_guest", guest, &length, NULL, 0));
+    ATF_REQUIRE(guest[0] != '\0' && strcmp(guest, "none") != 0);
+    ATF_REQUIRE_EQ(0, pipe(descriptors));
+    child = fork();
+    ATF_REQUIRE(child >= 0);
+    if (child == 0) {
+        close(descriptors[0]);
+        if (setsid() == -1 || write(descriptors[1], "R", 1) != 1)
+            _exit(126);
+        close(descriptors[1]);
+        for (;;)
+            pause();
+    }
+    close(descriptors[1]);
+    ATF_REQUIRE_EQ(1, read(descriptors[0], &ready, 1));
+    close(descriptors[0]);
+    state = fopen("escaped-worker", "w");
+    ATF_REQUIRE(state != NULL);
+    ATF_REQUIRE(fprintf(state, "%d\n", child) > 0);
+    ATF_REQUIRE_EQ(0, fclose(state));
+}
+
+static void
+check_escaped_session(void)
+{
+    FILE *state = fopen("escaped-worker", "r");
+    int child;
+    if (state == NULL || fscanf(state, "%d", &child) != 1 || child <= 1)
+        exit(1);
+    fclose(state);
+    errno = 0;
+    if (kill(child, 0) != -1 || errno != ESRCH) {
+        fputs("escaped worker survived subtree cleanup\n", stderr);
+        exit(1);
+    }
+    if (unlink("escaped-worker") != 0)
+        exit(1);
+    puts("RUNNER_PROBE_ESCAPED_SESSION_REAPED");
+}
+
+ATF_TC_WITH_CLEANUP(session_leak);
+ATF_TC_HEAD(session_leak, tc) { atf_tc_set_md_var(tc, "timeout", "10"); }
+ATF_TC_BODY(session_leak, tc) { (void)tc; escape_session(); }
+ATF_TC_CLEANUP(session_leak, tc) { (void)tc; check_escaped_session(); }
+ATF_TC_WITH_CLEANUP(session_timeout);
+ATF_TC_HEAD(session_timeout, tc) { atf_tc_set_md_var(tc, "timeout", "2"); }
+ATF_TC_BODY(session_timeout, tc) {
+    (void)tc;
+    escape_session();
+    for (;;)
+        pause();
+}
+ATF_TC_CLEANUP(session_timeout, tc) { (void)tc; check_escaped_session(); }
+
 ATF_TP_ADD_TCS(tp) {
+    ATF_TP_ADD_TC(tp, session_leak);
+    ATF_TP_ADD_TC(tp, session_timeout);
     ATF_TP_ADD_TC(tp, disk_retention);
     ATF_TP_ADD_TC(tp, readonly_input_disk);
     ATF_TP_ADD_TC(tp, output_disk);

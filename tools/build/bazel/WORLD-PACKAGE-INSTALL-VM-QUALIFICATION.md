@@ -5,7 +5,7 @@
 world-pkg-install-fixture.py consumes immutable qualification outputs and an
 explicit plan. It uses every source installation archive and the actual complete
 package index/catalogue, not a selected executable list. The plan selects pkg,
-makefs, source OSVERSION, epoch, disk sizes, kernel/bootstrap inputs and site-state
+makefs, source OSVERSION, epoch, command_timeout_seconds, disk sizes, kernel/bootstrap inputs and site-state
 fixtures. All source archive paths are checked before extraction. Named source
 accounts determine filesystem UID/GID; host account ownership is never substituted.
 The assembler requires a new standard /usr/obj/usr/src output directory and runs
@@ -30,7 +30,7 @@ versions. The second check requires those local modifications/data to survive an
 native pw to resolve the new account. Construction files must retain their expected
 owners and modes. The driver emits the checker report and checks cleanup unmounts.
 
-## Current evidence: prepared, final VM result pending
+## Initial prepared evidence and failed whole-case timeout
 
 Paths are relative to /usr/obj/usr/src:
 
@@ -45,10 +45,10 @@ Paths are relative to /usr/obj/usr/src:
   5cadae8b2a9b7009115d6aa116087c12bcd5589758dfa42b705a6f91f4630f7d.
 - bazel-world-pkg-vm-request-r2-20261106/fixture-plan.json declares all fixture
   inputs. fixture-r3/vm-command.json records the exact runner invocation.
-- bazel-world-pkg-install-vm-r2-20261106 is the active retry. Its serial.log,
-  host-resources.jsonl and eventual result.json contain the authoritative result.
+- bazel-world-pkg-install-vm-r2-20261106 is the failed retry. Its serial.log,
+  host-resources.jsonl and result.json contain the authoritative result.
   QEMU is subject to a 3GB host RSS ceiling and an 1,800-second outer deadline.
-  Individual checker commands have 600-second deadlines. Resource snapshots are
+  This attempt failed its 900-second whole-case deadline during reinstall. Resource snapshots are
   observations, not controlled I/O or Make performance acceptance.
 
 The first VM attempt (install-vm-r1) failed before package installation: native
@@ -86,6 +86,13 @@ an outer chroot executable only if requested; this checker uses os.chroot instea
 Its existing boundary tests pass. No C CLI, production Make default or signing
 contract changes are needed. Hardware and combined publication remain separate.
 
+The initial r2 retry is terminal FAIL at the case deadline. Its saved interrupted
+report proves the first installation phase and subsequent checksum check, but no
+reinstall result. The corrected acquired-reaper harness passes real escaped-session
+positive/negative tests. A fresh fixture-r4 and install-vm-r3 retry use explicit
+command_timeout_seconds=900, whole-case budget 1800 and outer deadline 2100;
+phase output and timeout logs are retained. See
+[RUNTIME-REAPER-QUALIFICATION.md](RUNTIME-REAPER-QUALIFICATION.md).
 Final installation/reinstallation acceptance remains pending. Even a pass would
 not establish a new-version upgrade, actual database schema compatibility, normal
 Capsule PID1 startup, login/PAM/SSH/service operation, native Bazel kernel boot,

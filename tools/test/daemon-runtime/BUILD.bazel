@@ -1,5 +1,18 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
 # Expose the maintained fixture-boundary regression without migrating PID 1.
 exports_files(["extra_root.py", "extra_root_test.py"], visibility = ["//tools/build/bazel:__pkg__"])
 
 exports_files(["run-vm.py", "atf_metadata.py", "serial_timeline.py", "disk_copy.py", "host_resources.py", "workspace_disk.py", "scratch_disk.py", "scratch_disk_test.py"], visibility = ["//tools/build/bazel:__pkg__"])
+
+
+cc_binary(name = "runtime_init", srcs = ["runtime_init.c"],
+    linkopts = ["-static"], linkstatic = True, testonly = True,
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"])
+
+cc_binary(name = "runner_probe", srcs = ["runner_probe.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True, testonly = True,
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"])

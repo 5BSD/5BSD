@@ -23,6 +23,7 @@ def main():
         raise ValueError('new standard object-root output required')
     plan=json.loads(args.plan.read_text());assert plan['format']==1
     assert type(plan['epoch']) is int and plan['epoch']>=0
+    assert type(plan['command_timeout_seconds']) is int and 0 < plan['command_timeout_seconds'] <= 86400
     receipt=json.loads((q/'receipt.json').read_text());assert receipt['status']=='passed'
     manifest=q/receipt['artifacts']['manifest'];assert digest(manifest)==receipt['artifacts']['sha256']
     targets={t['target']['label']:t['outputs'] for t in json.loads(manifest.read_text())['targets']}
@@ -99,7 +100,7 @@ def main():
     site=plan['site'];config_paths=[path for path,r in records.items() if 'config' in r['tags']];assert site['config'] in config_paths
     assert site['user']['uid'] not in users.values() and site['user']['name'] not in users
     assert site['data'] not in all_files and not any(p.startswith('/.pkg-check') for p in all_files)
-    expected=dict(format=1,abi=abi,osversion=versions[0],pkg_sha256=digest(pkg),packages=sorted(cat['prefix']+'-'+n for n in cat['packages']),archives=archives,files=expected_files,directories={p:attributes(r) for p,r in directories.items()},construction={p:attributes(r) for p,r in construction.items()},inode_groups=inode_groups,config_paths=config_paths,site=site)
+    expected=dict(format=1,command_timeout_seconds=plan['command_timeout_seconds'],abi=abi,osversion=versions[0],pkg_sha256=digest(pkg),packages=sorted(cat['prefix']+'-'+n for n in cat['packages']),archives=archives,files=expected_files,directories={p:attributes(r) for p,r in directories.items()},construction={p:attributes(r) for p,r in construction.items()},inode_groups=inode_groups,config_paths=config_paths,site=site)
     (inputs/'expected.json').write_text(json.dumps(expected,sort_keys=True)+'\n')
     run([makefs,'-t','ffs','-B','little','-s',str(plan['target_mib'])+'m','-o','version=2','-F',metalog,out/'target.ufs',stage],'make-target')
     run([makefs,'-t','ffs','-B','little','-s',str(plan['input_mib'])+'m','-o','version=2',out/'input.ufs',inputs],'make-input')

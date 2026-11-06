@@ -7749,3 +7749,9 @@ Its native ATF driver tests complete package installation and same-version reins
 with site-state preservation inside a disk-backed VM.
 Fixture preparation does not establish a passing installation result, normal
 system startup or a new-version upgrade.
+.Pp
+VM package fixture plans declare command_timeout_seconds explicitly.
+The maintained runtime harness supervises each case under an acquired OS reaper,
+so a descendant creating a new session is still terminated before cleanup.
+Explicit whole-case budgets remain recorded separately from declared ATF timeouts;
+timeouts still fail the test and do not waive payload or state-preservation checks.

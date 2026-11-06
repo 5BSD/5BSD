@@ -27,6 +27,8 @@ def main():
         raise ValueError('requires disposable VM root and separately mounted package inputs')
     expected=json.loads((inputs/'expected.json').read_text())
     assert expected['format']==1
+    command_timeout=expected['command_timeout_seconds']
+    assert type(command_timeout) is int and 0 < command_timeout <= 86400
     work=root/'.pkg-check';tool=work/'pkg-static'
     assert digest(args.pkg)==expected['pkg_sha256']
     shutil.copyfile(args.pkg,tool);tool.chmod(0o555)
@@ -44,20 +46,25 @@ def main():
         os.setgroups([]);os.chroot(root);os.chdir('/');os.setgid(0);os.setuid(0)
     def run(argv,label):
         started=time.monotonic()
+        print('WORLD_PKG_COMMAND_START '+label,flush=True)
         process=subprocess.Popen(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
             start_new_session=True,preexec_fn=enter,
             env={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','HOME':'/root','LC_ALL':'C'})
+        timed_out=False
         try:
-            stdout,stderr=process.communicate(timeout=600)
+            stdout,stderr=process.communicate(timeout=command_timeout)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid,signal.SIGKILL);process.communicate();raise
+            timed_out=True
+            os.killpg(process.pid,signal.SIGKILL)
+            stdout,stderr=process.communicate()
         for kind,data in [('stdout',stdout),('stderr',stderr)]:
             (work/(label+'.'+kind)).write_bytes(data)
         report['commands'].append(dict(argv=argv,status=process.returncode,
-            elapsed_seconds=round(time.monotonic()-started,3),
+            elapsed_seconds=round(time.monotonic()-started,3),timed_out=timed_out,
             stdout_sha256=digest(work/(label+'.stdout')),stderr_sha256=digest(work/(label+'.stderr'))))
         save()
-        assert process.returncode==0,(label,stdout.decode(errors='replace')[-1800:],stderr.decode(errors='replace')[-1800:])
+        print('WORLD_PKG_COMMAND_END '+label+' status='+str(process.returncode)+' timeout='+str(timed_out),flush=True)
+        assert not timed_out and process.returncode==0,(label,stdout.decode(errors='replace')[-1800:],stderr.decode(errors='replace')[-1800:])
         return stdout.decode()
     def verify(label,overrides):
         errors=[];inodes={};observed={}
@@ -87,12 +94,16 @@ def main():
             if {frozenset(g) for g in actual.values()}!={frozenset(g) for g in groups}:
                 errors.append(dict(package=package,error='package-local inode groups'))
         report['checks'].append(dict(phase=label,files=len(observed),directories=len(expected['directories']),overrides=overrides,errors=errors));save()
+        print('WORLD_PKG_VERIFY '+label+' files='+str(len(observed))+' errors='+str(len(errors)),flush=True)
         assert not errors,(label,len(errors),'file/directory/inode discrepancies; inspect report')
         installed=run(common+['query','-a','%n'],label+'-inventory').splitlines()
         assert sorted(installed)==names,'installed inventory differs'
+    save()
+    print('WORLD_PKG_ARCHIVE_VERIFY_START',flush=True)
     try:
         for name,sha in expected['archives'].items():
             assert digest(inputs/'repository'/name)==sha,name
+        print('WORLD_PKG_ARCHIVE_VERIFY_END',flush=True)
         run(common+['update','-f','-r','fixture'],'catalogue')
         run(common+['install','-y','-U','-r','fixture',*names],'install')
         verify('installed',{})

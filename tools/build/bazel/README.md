@@ -1,5 +1,15 @@
 # Bazel qualification
 
+## VM descendant cleanup and interrupted install checkpoint (2026-11-06)
+
+The first complete 445-package install verifies all 32,512 payload paths and 1,369
+directories with no discrepancies; exact inventory and pkg checksums pass. Its
+whole-case timeout interrupts reinstall, so the VM remains FAIL. A dedicated OS
+reaper supervisor fixes leaked separate sessions, with real positive and expected
+negative VM controls. The complete retry uses explicit time budgets and progress
+output; its result remains pending. See
+[RUNTIME-REAPER-QUALIFICATION.md](RUNTIME-REAPER-QUALIFICATION.md).
+
 ## Complete pkg installation VM suite (2026-11-06)
 
 A maintained native driver and package-derived fixture now exercise real complete
