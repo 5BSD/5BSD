@@ -7785,3 +7785,12 @@ VirtIO DTrace and Chelsio OFED membership use the existing source settings, with
 both enabled and disabled artifact profiles checked against original Make.
 The current typed hierarchy covers 43 parents and 258 unique modules; root and
 kernel-option selection plus complete installed kernel/pkgbase remain unqualified.
+.Pp
+The boolean //tools/build/bazel/config:kernel_tcp_hhook defaults to true and
+controls both the actual GENERIC parser override and native cc/khelp selection.
+Shared explicit option declarations serve AMD64, ARM64 and RISC-V configurations.
+Native enabled/disabled/no-debug profiles and independent Make tied/standalone/
+ALL_MODULES checks pass; a source-disabled helper explicitly permits an empty
+component manifest while ordinary empty installation remains rejected.
+These checks do not qualify a full installed kernel, runtime or performance.
+Earlier full-kernel evidence retains its original configuration-input scope.

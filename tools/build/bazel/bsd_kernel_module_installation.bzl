@@ -73,7 +73,7 @@ bsd_kernel_module_set = rule(implementation = _module_set, attrs = {
 
 def _modules(ctx):
     members = _selected_members(ctx)
-    if not members:
+    if not members and not ctx.attr.allow_empty:
         fail("explicit selected kernel module products required")
     base = kernel_installation_directory(ctx.attr._base[BuildSettingInfo].value)
     debug = kernel_installation_directory(ctx.attr._debug[BuildSettingInfo].value, allow_empty = True)
@@ -95,6 +95,7 @@ def _modules(ctx):
     return install_manifest_result(ctx, [], entries)
 
 bsd_kernel_module_installation = rule(implementation = _modules, attrs = {
+    "allow_empty": attr.bool(default = False, doc = "Explicitly permit a source-disabled optional component, not an empty kernel image."),
     "modules": attr.label_list(providers = [BsdKernelModuleInfo]),
     "module_sets": attr.label_list(providers = [BsdKernelModuleSetInfo]),
     "_base": attr.label(default = Label("//tools/build/bazel/config:kernel_base_directory"), providers = [BuildSettingInfo]),

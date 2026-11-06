@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Shared kernel-option and TCP module checkpoint (2026-11-06)
+
+TCP_HHOOK now has one typed setting shared by the actual GENERIC parser overrides
+and source-owned cc/khelp membership. Enabled, disabled and no-debug native profiles
+each pass 14 Bazel tests; independent Make tied/standalone/ALL_MODULES checks and
+all 13 selected debug pairs pass. A reproduced original Make OPT_GLOBAL defect is
+fixed using resolved KERN_OPTS while preserving standalone behavior. Fifteen native
+parser inventory cases pass across AMD64/ARM64/RISC-V; these are not cross kernel
+builds. See TCP-HHOOK-MODULES-QUALIFICATION.md.
+
+NEXT: remaining kernel-option/root traversal and optional producers; coherent kernel/
+module/pkgbase composition and a fresh full current-profile kernel build, then normal
+startup/services and genuine upgrades. All cross/bootstrap/cache/sandbox/reproducibility/
+debug/resource/hardware/publication gates remain open. Make stays production/default;
+BIP is excluded. Earlier full-kernel evidence retains its original input scope.
+
 ## Current architecture/source-option parent checkpoint (2026-11-06)
 
 Nineteen more AMD64 parents now compose 127 actual module/debug pairs, including

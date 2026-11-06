@@ -34,7 +34,7 @@ def _impl(ctx):
         tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [output, identity, manifest],
         env = {"LC_ALL": "C", "PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1"},
         use_default_shell_env = False, mnemonic = "BSDKernelConfig")
-    return [DefaultInfo(files = depset([output])), OutputGroupInfo(identity = depset([identity]), manifest = depset([manifest]))]
+    return [DefaultInfo(files = depset([output])), OutputGroupInfo(identity = depset([identity]), manifest = depset([manifest]), metadata = depset([overrides]))]
 
 bsd_kernel_config = rule(implementation = _impl, attrs = {
     "config": attr.label(allow_single_file = True, mandatory = True),

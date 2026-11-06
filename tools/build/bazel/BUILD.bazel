@@ -390,3 +390,15 @@ exports_files(["private-package-install-test.py", "package_index.py", "world-pkg
 exports_files(["world_layout.py"], visibility = ["//:__pkg__"])
 bsd_python_test(name = "world_layout_test", src = "world-layout-test.py",
     data = ["world_layout.py", "world_package_inventory.py", "directory_metadata.py", "archive_policy.py", "install_archive.py"])
+
+bsd_host_artifact_test(name = "kernel_tcp_hhook_modules_test", src = "kernel-tcp-hhook-modules-test.py",
+    data = ["//sys/amd64/conf:generic_global_option_header", "//sys/modules/cc:amd64_inventory",
+            "//sys/modules/khelp:amd64_inventory", "//sys/modules/khelp:amd64_installation_metadata"],
+    args = ["--header", "$(location //sys/amd64/conf:generic_global_option_header)",
+            "--cc", "$(location //sys/modules/cc:amd64_inventory)",
+            "--helper", "$(location //sys/modules/khelp:amd64_inventory)",
+            "--helper-install", "$(location //sys/modules/khelp:amd64_installation_metadata)"] + select({
+                "//tools/build/bazel/config:kernel_tcp_hhook_enabled": ["--expected", "yes"],
+                "//conditions:default": ["--expected", "no"],
+            }),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

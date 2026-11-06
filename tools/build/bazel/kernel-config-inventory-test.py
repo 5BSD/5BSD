@@ -41,7 +41,7 @@ def main():
     cases = []
     for arch in ('amd64', 'arm64', 'riscv'):
         conf = source / 'sys' / arch / 'conf'
-        for disabled in ((), ('ZSTDIO',), ('NFS_ROOT',), ('ZSTDIO', 'NFS_ROOT')):
+        for disabled in ((), ('ZSTDIO',), ('NFS_ROOT',), ('ZSTDIO', 'NFS_ROOT'), ('TCP_HHOOK',)):
             name = arch + '-' + ('-'.join(disabled) if disabled else 'default')
             dest = out / name
             dest.mkdir()

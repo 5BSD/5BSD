@@ -879,3 +879,7 @@ selects.config_setting_group(name = "package_bhyve_riscv64", match_all = ["//too
 # Frontend CPU budget and reproducible pkg archive epoch.
 int_flag(name = "build_jobs", build_setting_default = 1, visibility = ["//visibility:public"])
 int_flag(name = "package_epoch", build_setting_default = 0, visibility = ["//visibility:public"])
+
+# This option controls the kernel header and hook-dependent module selection.
+bool_flag(name = "kernel_tcp_hhook", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kernel_tcp_hhook_enabled", flag_values = {":kernel_tcp_hhook": "true"}, visibility = ["//visibility:public"])

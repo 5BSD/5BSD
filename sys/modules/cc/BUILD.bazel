@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+bsd_kernel_module_set(name = "amd64_modules", modules = [
+    "//sys/modules/cc/" + name + ":module_product" for name in ["cc_newreno", "cc_cubic", "cc_dctcp", "cc_htcp"]
+] + select({"//tools/build/bazel/config:kernel_tcp_hhook_enabled": [
+    "//sys/modules/cc/" + name + ":module_product" for name in ["cc_cdg", "cc_chd", "cc_hd", "cc_vegas"]
+], "//conditions:default": []}),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+filegroup(name = "amd64_inventory", srcs = [":amd64_modules"], output_group = "inventory", visibility = ["//visibility:public"])

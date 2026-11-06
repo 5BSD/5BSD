@@ -4,11 +4,11 @@ SUBDIR=	cc_newreno \
 	cc_htcp
 
 
-# Do we have the TCP_HHOOK symbol defined? If not, there is no point in
-# building these modules by default.
-# We will default to building these modules if $OPT_GLOBAL does contain
-# the TCP_HHOOK option.
-.if defined(ALL_MODULES) || ${OPT_GLOBAL:UTCP_HHOOK:MTCP_HHOOK} != ""
+# Tied builds use the configured kernel's resolved options. Standalone builds
+# retain the full family, and ALL_MODULES explicitly requests every producer.
+.include <kmod.opts.mk>
+
+.if defined(ALL_MODULES) || !defined(KERNBUILDDIR) || ${KERN_OPTS:MTCP_HHOOK} != ""
 SUBDIR+= \
 	cc_cdg \
 	cc_chd \

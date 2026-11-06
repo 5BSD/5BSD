@@ -1,5 +1,21 @@
 # Bazel qualification
 
+## Shared kernel-option and TCP module checkpoint (2026-11-06)
+
+TCP_HHOOK now has one typed setting shared by the actual GENERIC parser overrides
+and source-owned cc/khelp membership. Enabled, disabled and no-debug native profiles
+each pass 14 Bazel tests; independent Make tied/standalone/ALL_MODULES checks and
+all 13 selected debug pairs pass. A reproduced original Make OPT_GLOBAL defect is
+fixed using resolved KERN_OPTS while preserving standalone behavior. Fifteen native
+parser inventory cases pass across AMD64/ARM64/RISC-V; these are not cross kernel
+builds. See TCP-HHOOK-MODULES-QUALIFICATION.md.
+
+NEXT: remaining kernel-option/root traversal and optional producers; coherent kernel/
+module/pkgbase composition and a fresh full current-profile kernel build, then normal
+startup/services and genuine upgrades. All cross/bootstrap/cache/sandbox/reproducibility/
+debug/resource/hardware/publication gates remain open. Make stays production/default;
+BIP is excluded. Earlier full-kernel evidence retains its original input scope.
+
 ## Architecture and source-option module parents (2026-11-06)
 
 The source-owned hierarchy now covers 258 unique AMD64 modules across 43 parents.
@@ -31,8 +47,8 @@ KERNEL-MODULE-PRODUCTS-QUALIFICATION.md and WORLD-PACKAGE-INSTALL-VM-QUALIFICATI
 All 445 packages pass real installation and reinstall inside a 2GB disk-backed VM,
 with all 32,512 payload paths and 1,369 directories verified twice. Site config,
 account and data survive. A provenance audit records that the full suite used the
-legacy helper; exact fixture keys now reject the unused alias, and a corrected
-new-helper repeat is pending. Normal startup/new-version upgrades remain open.
+legacy helper; exact fixture keys reject the unused alias. The corrected repeat
+also passes with the intended native helper, as recorded above. Normal startup/new-version upgrades remain open.
 See WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md and KERNEL-PACKAGE-COMPOSITION-WORK.md.
 
 ## VM descendant cleanup and interrupted install checkpoint (2026-11-06)

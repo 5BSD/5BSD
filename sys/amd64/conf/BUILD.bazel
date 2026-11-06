@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_kernel_config.bzl", "bsd_kernel_config")
+load("//tools/build/bazel:kernel_option_settings.bzl", "KERNEL_OPTION_SETTINGS")
 # Configuration sources remain ordinary inputs, including DEFAULTS and includes.
 filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.bazel"]), visibility = ["//visibility:public"])
 [bsd_kernel_config(
     name = name, config = "GENERIC", debug = debug,
-    option_settings = {"//tools/build/bazel/config:kernel_zstdio": "ZSTDIO",
-        "//tools/build/bazel/config:kernel_nfs_root": "NFS_ROOT"},
+    option_settings = KERNEL_OPTION_SETTINGS,
     inputs = [":configuration_inputs", "//sys/conf:configuration_inputs"],
     source_anchor = "//sys/conf:files",
     python = "@bsd_sdk//toolchain:extra_python",
@@ -927,3 +927,5 @@ bsd_tree_file(name = "opt_bhyve_snapshot", tree = ":generic_config", member = "o
 cc_library(name = "final_drivers_module_opt_bhyve_snapshot_header", hdrs = [":opt_bhyve_snapshot"], strip_include_prefix = "generic_options", visibility = ["//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm:__pkg__"])
 
 exports_files(["GENERIC.hints"], visibility = ["//etc:__pkg__"])
+
+filegroup(name = "generic_global_option_header", srcs = [":opt_global"], visibility = ["//visibility:public"])
