@@ -1012,7 +1012,9 @@ zfs_create_diskpart()
 	f_expand_number "$ZFSBOOT_SWAP_SIZE" swapsize
 	# Disk names change with what else is attached; GPT labels do not.
 	local swapdev=/dev/$disk$swappart
-	[ "$ZFSBOOT_PARTITION_SCHEME" = "GPT" ] && swapdev=/dev/gpt/swap$index
+	case "$ZFSBOOT_PARTITION_SCHEME" in
+	GPT*) swapdev=/dev/gpt/swap$index ;;
+	esac
 	if [ "$isswapmirror" ]; then
 		# This is not the first disk in the mirror, do nothing
 	elif [ ${swapsize:-0} -eq 0 ]; then
