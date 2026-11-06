@@ -12333,3 +12333,16 @@ firing, audit delivery, normal service behavior or resource/performance coverage
 The restored libservice worker-contract source fixture is installed from declared
 sources and compared against the original selected fixture inventory. See
 LIBRARY-DIRECTORY-POLICY-COMPLETION.md for exact limitations and system gates.
+
+
+## 2026-11-06 libfidl static provider independent-object comparison
+
+The actual native and original Make archive provider/runtime members validate
+with dtrace-dof-inventory.py's amd64 ET_REL resolver: one provider, 19 matching
+schemas, 19 actual relocation bindings and 26 ordinary patched sites each.
+Generated path-derived identifiers differ and remain visible in the report;
+no symbol rewriting or alias normalization is used to claim raw parity. Archive
+member ordering differs and awaits correction after live full-library controls.
+This establishes metadata/site coverage only, not live registration/firing or
+static-consumer behavior. Evidence: bazel-library-fidl-dtrace-review-r1-20261106
+under /usr/obj/usr/src. See LIBFIDL-BINARY-QUALIFICATION.md for companion ELF results.

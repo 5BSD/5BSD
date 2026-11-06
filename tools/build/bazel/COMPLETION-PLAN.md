@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## Independent libfidl ELF comparison exposes archive order gap (2026-11-06)
+
+While the complete native and original Make library builds remain live, an
+independent comparison of the earlier complete GoogleTest-disabled libfidl parent
+passes the shared library and four installed test ELF metadata contracts. The
+static archive fails: internal.c is placed after scalar.cc instead of after
+handle_close_many.cc. Correct declared ordering after the live source-bound
+controls exit; no running library inputs have been changed.
+
+Both actual static DTrace providers independently validate against runtime's own
+compiled objects: one provider, 19 matching schemas, 19 DOF relocation bindings
+and 26 ordinary patched sites on each side. Raw generated DTrace identifiers
+still differ with object paths; raw symbol/archive equivalence is not claimed.
+No bodies or live probes execute. See LIBFIDL-BINARY-QUALIFICATION.md for immutable
+evidence, exact limitations and the pending correction.
+
+The complete namespace/metadata/non-ELF comparison is queued behind the two
+actual existing process identities in
+bazel-library-complete-comparison-queue-r1-20261106. It requires both passed
+terminal receipts and verifies original component metadata against its receipt.
+That comparison and the already queued maintained Bazel validation are pending,
+not successful results. Make remains default and the full-tests guard remains.
+
+
 ## Complete library Make tool prerequisite found; native build continues (2026-11-06)
 
 The first complete original Make control terminated unsuccessfully: libpmc uses
