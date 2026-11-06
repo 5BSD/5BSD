@@ -46,4 +46,4 @@ bsd_library_installation_archives(
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
 
-exports_files(["capimage.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+exports_files(["capimage.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__", "//lib/libcapimage/tests:__pkg__"])

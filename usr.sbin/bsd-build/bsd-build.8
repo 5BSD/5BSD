@@ -5714,6 +5714,15 @@ See
 .Pa tools/build/bazel/DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md
 for supported relocations, controls and runtime limits.
 .Pp
+The native libcapbundle, libcapimage and libcapsulert parents retain original
+dynamic installed test ABI. Make uses its maintained test-execution library path
+instead of embedding object directories in installed ELF. Existing format-5
+inputs select complete installation and the original safe host body targets.
+Privileged/kernel and shell-format execution remains separately qualified.
+See
+.Pa tools/build/bazel/CAPABILITY-INSTALLED-TEST-QUALIFICATION.md
+for actual body/metadata/runtime/debug controls and remaining VM/system gates.
+.Pp
 The native libcapreclaim parent installs its original dynamic PIE test ABI.
 The existing format-5 test interface runs all 28 original cases against the
 stripped installed body with explicit native runtime libraries. The static host

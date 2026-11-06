@@ -12394,3 +12394,15 @@ The original destroy provider records names rather than destroying system
 resources. Host functional execution explicitly disables DOF initialization;
 this is not daemon reclamation, live tracing or kernel/VM acceptance. See
 CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md for immutable results and limits.
+
+
+## 2026-11-06 capability parser/image installed test ABI
+
+All 204 selected safe original host body targets pass with native runtime (179
+capbundle C, 11 capsulert C, 13 capimage ATF and one original plain client). The
+211 C-program metadata identities retain eight privileged/kernel cases for VM;
+the capbundle shell-format suite is not executed here. The actual stripped plain
+client's original syscall wrapper/mock-kernel fixture is retained; no production
+trust or handle kernel enforcement claim is made. ATF functional runs disable DOF
+initialization explicitly. Production library tars/probe inputs are unchanged.
+See CAPABILITY-INSTALLED-TEST-QUALIFICATION.md for captured bodies and limits.

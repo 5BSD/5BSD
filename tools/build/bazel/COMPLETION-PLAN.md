@@ -1,5 +1,30 @@
 # Native Bazel completion plan
 
+## Remaining nine recorded installed static substitutions reconciled (2026-11-06)
+
+Seven libcapbundle and two libcapimage installed C tests now retain original
+native dynamic PIE ABI. Both libcapsulert tests use native ABI precedence too;
+original Make removes embedded object-tree RPATHs and uses TESTS_LD_LIBRARY_PATH.
+All 204 selected original host body targets pass (203 ATF, one plain), no skips.
+All 211 original C-program ATF metadata identities match; eight capimage kernel/
+root cases and 17 capbundle shell-format bodies remain unexecuted in this cohort.
+
+Complete comparisons match 70 component file/link records and 22 directory claims.
+All 14 program/library ELF contracts, two raw archive symbol/member comparisons
+and 28 native/original debug checks pass. Existing raw capsulert DTrace keys remain
+visible; all three production tars are unchanged. Captured body identities and
+native startup dependency resolution are checked. Both actual stripped plain
+clients also execute successfully. See CAPABILITY-INSTALLED-TEST-QUALIFICATION.md.
+
+All ten static-substitution gaps from the recorded 23-parent cohort are now
+reconciled, including earlier capreclaim. This does not establish whole-tree
+binary/body coverage. Next correct direct/ordered DSO dependencies and full-library
+generation/directory gaps, then recheck the complete selected graph. Existing
+format-5/frontend/backend/signing contracts suffice; manual updated. Full-tests
+root guards, Make default and all world/kernel/module/pkgbase/VM/cross/performance/
+bootstrap/cache/sandbox/reproducibility/publication gates remain. BIP stays out.
+
+
 ## libcapreclaim installs and exercises its original dynamic test ABI (2026-11-06)
 
 Installation now selects the native dynamic PIE test, preserving original ATF/

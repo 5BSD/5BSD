@@ -38,13 +38,20 @@ Raw symbol failures remain retained, and static-consumer/live-tracing behavior i
 not proved. See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and
 bazel-library-static-dtrace-review-r1-20261106 for the companion-object bindings.
 
+The remaining nine recorded static substitutions and original test RPATHs are
+now reconciled. Three full installation parents and all 11 affected dynamic test
+programs match original controls; 204 safe host body targets pass. Eight capimage
+kernel/root cases and 17 capbundle shell-format bodies remain unexecuted here.
+See CAPABILITY-INSTALLED-TEST-QUALIFICATION.md. All ten initial cohort static
+substitutions are closed including capreclaim; direct/ordered DSO and broader
+full-library/system gates remain open. Historical initial findings are retained.
+
 The libcapreclaim installed-test linkage gap is now fixed: the dynamic native
 installation matches Make, all 28 original bodies pass with declared native
 runtime, and full original metadata/ELF/debug/package controls pass. The separate
 static host candidate is retained as an additional variant. See
-CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md. Nine originally identified static installed
-test programs remain in libcapbundle/libcapimage; historical counts above are
-retained as the initial cohort findings.
+CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md. Those nine later fixes are recorded in the follow-up above; historical counts
+remain the initial cohort findings.
 
 All six static member-order gaps are now corrected and independently compared
 in both DTrace modes. All member symbols match without DTrace; traced ordinary

@@ -1,19 +1,33 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
+load("//lib/libc:test_policy.bzl", "libc_test_copts")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
 cc_binary(name = "capimage_test", srcs = ["capimage_test.c"], deps = ["//lib/libcapimage:capimage", "//lib/atf/libatf-c:atf_c"], linkstatic = True, linkopts = ["-static"], visibility = ["//visibility:public"])
 cc_binary(name = "capimage_handle_client_test", srcs = ["capimage_handle_client_test.c"], deps = ["//lib/libcapimage:capimage"], copts = ["-UNDEBUG"], linkstatic = True, linkopts = ["-static", "-Wl,--wrap=mac_syscall"], visibility = ["//visibility:public"])
-bsd_program_test(name = "native_handle_client", program = ":capimage_handle_client_test", size = "small")
+bsd_program_test(name = "native_handle_client", program = ":capimage_handle_client_test_installed", interface = "plain", runtime_lib = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libcapimage:capimage_shared', '//secure/lib/libcrypto:crypto_shared', '//lib/libthr:thr_shared', '//lib/libc:c_shared', '//lib/libsys:sys_shared'], runner = "//tools/build/bazel:program_test_runner", size = "small")
 _HOST = ['elf_probe_reads', 'elf_native', 'elf_locators', 'handle_arguments', 'personal_integrity', 'appended_policy', 'unsigned_note', 'roundtrip', 'tamper', 'trust', 'bounds', 'detached', 'reproducible']
 _LIVE = ['handle_tmpfs_unsupported', 'signed_mmap_lifetime', 'handle_mapping_and_rights', 'handle_unsigned_and_bad', 'handle_policy_and_alias', 'handle_fork_lifetime', 'handle_fd_exhaustion']
-[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":capimage_test", runner = "//tools/build/bazel:atf_runner", size = "small", tags = ["manual", "requires-matching-kernel"] if case in _LIVE else ["manual", "requires-root"] if case == "system_trust" else []) for case in _HOST + _LIVE + ["system_trust"]]
+[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":install_test_stripped", runtime_lib = ['//lib/atf/libatf-c:atf_c_shared', '//lib/libcapimage:capimage_shared', '//secure/lib/libcrypto:crypto_shared', '//lib/libthr:thr_shared', '//lib/libc:c_shared', '//lib/libsys:sys_shared'], test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"}, runner = "//tools/build/bazel:atf_runner", size = "small", tags = ["manual", "requires-matching-kernel"] if case in _LIVE else ["manual", "requires-root"] if case == "system_trust" else []) for case in _HOST + _LIVE + ["system_trust"]]
 test_suite(name = "host_tests", tests = [":" + case for case in _HOST] + [":native_handle_client"], visibility = ["//visibility:public"])
 test_suite(name = "live_tests", tests = [":" + case for case in _LIVE] + [":system_trust"], tags = ["manual"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
-utility_installation(name = "install_test", program = "capimage_test", manual = "", package = "libcapimage-tests", bindir = "/usr/tests/lib/libcapimage")
-utility_installation(name = "install_handle_test", program = "capimage_handle_client_test", manual = "", package = "libcapimage-tests", bindir = "/usr/tests/lib/libcapimage")
+# Original installed tests use native dynamic libraries. The plain wrapped
+# client also compiles capimage.c directly, matching the original Make SRCS.
+cc_import(name = "installed_atf_abi", shared_library = "//lib/atf/libatf-c:atf_c_shared", deps = ["//contrib/atf:c_headers"])
+cc_import(name = "installed_capimage_abi", shared_library = "//lib/libcapimage:capimage_shared", deps = ["//lib/libcapimage:headers"])
+cc_import(name = "installed_crypto_abi", shared_library = "//secure/lib/libcrypto:crypto_shared", deps = ["//crypto/openssl:headers"])
+bsd_link_sequence(name = "installed_link", deps = [":installed_atf_abi", ":installed_capimage_abi", ":installed_crypto_abi", "//lib/libc:shared_abi_interface"])
+cc_binary(name = "capimage_test_installed", srcs = ["capimage_test.c"], deps = [":installed_link"],
+    copts = ["-fpie"] + libc_test_copts(6), defines = ["PIC"], linkopts = ["-pie", "-nodefaultlibs"])
+bsd_link_sequence(name = "installed_handle_link", deps = [":installed_capimage_abi", ":installed_crypto_abi", "//lib/libc:shared_abi_interface"])
+cc_binary(name = "capimage_handle_client_test_installed", srcs = ["capimage_handle_client_test.c", "//lib/libcapimage:capimage.c"],
+    deps = [":installed_handle_link"], copts = ["-fpie"] + libc_test_copts(6) + ["-UNDEBUG"], defines = ["PIC"],
+    linkopts = ["-pie", "-nodefaultlibs", "-Wl,--wrap=mac_syscall"])
+utility_installation(name = "install_test", program = "capimage_test", binary = ":capimage_test_installed", manual = "", package = "libcapimage-tests", bindir = "/usr/tests/lib/libcapimage")
+utility_installation(name = "install_handle_test", program = "capimage_handle_client_test", binary = ":capimage_handle_client_test_installed", manual = "", package = "libcapimage-tests", bindir = "/usr/tests/lib/libcapimage")
 bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["capimage_handle_client_test", "capimage_test"], interfaces = {"capimage_test": "atf", "capimage_handle_client_test": "plain"})
 bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libcapimage/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcapimage-tests"])
 bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libcapimage:__pkg__"])

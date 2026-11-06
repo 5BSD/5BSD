@@ -14,43 +14,36 @@ CFLAGS.manifest_activation_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.manifest_activation_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.manifest_activation_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.manifest_activation_test+=	capbundle
-LDFLAGS.manifest_activation_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 ATF_TESTS_C+=	management_test
 CFLAGS.management_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.management_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.management_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.management_test+=	capbundle
-LDFLAGS.management_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 
 ATF_TESTS_C+=	manifest_attributes_test
 CFLAGS.manifest_attributes_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.manifest_attributes_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.manifest_attributes_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.manifest_attributes_test+=	capbundle
-LDFLAGS.manifest_attributes_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 ATF_TESTS_C+=	manifest_launch_test
 CFLAGS.manifest_launch_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.manifest_launch_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.manifest_launch_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.manifest_launch_test+=	capbundle
-LDFLAGS.manifest_launch_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 ATF_TESTS_C+=	manifest_policy_test
 CFLAGS.manifest_policy_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.manifest_policy_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.manifest_policy_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.manifest_policy_test+=	capbundle
-LDFLAGS.manifest_policy_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 ATF_TESTS_C+=	sysctl_isolate_test
 CFLAGS.sysctl_isolate_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.sysctl_isolate_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.sysctl_isolate_test+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS.sysctl_isolate_test+=	-I${SRCTOP}/sys
 LIBADD.sysctl_isolate_test+=	capbundle
-LDFLAGS.sysctl_isolate_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 CFLAGS.api_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.api_test+=	-I${SRCTOP}/lib/libcapsulert
 LIBADD.api_test+=	capbundle
-LDFLAGS.api_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 
 SCRIPTS+=	switchboardctl
 SCRIPTSDIR_switchboardctl=	${TESTSDIR}
@@ -62,5 +55,8 @@ ${.OBJDIR}/switchboardctl: ${.CURDIR}/switchboardctl
 all: ${.OBJDIR}/switchboardctl
 CLEANFILES+=	switchboardctl
 .endif
+
+# Build-tree lookup belongs to test execution, never the installed ELF.
+TESTS_LD_LIBRARY_PATH+= ${OBJTOP}/lib/libcapbundle
 
 .include <bsd.test.mk>
