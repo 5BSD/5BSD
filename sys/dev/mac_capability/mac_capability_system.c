@@ -846,11 +846,25 @@ sys_jail_uio_call(const void *req, size_t reqlen, void *reply,
  * MACF hooks
  * ---------------------------------------------------------------- */
 
+/*
+ * Enforcing the kld gates refuses every load that does not come through the
+ * claim holder, including firmware modules a driver requests from a kernel
+ * thread, so it is opt-in until those loads have a path of their own.
+ */
+static SYSCTL_NODE(_kern, OID_AUTO, mac_capability_system,
+    CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "mac_capability system gates");
+
+static int sys_kld_gate_enforce = 0;
+SYSCTL_INT(_kern_mac_capability_system, OID_AUTO, kld_gate, CTLFLAG_RDTUN,
+    &sys_kld_gate_enforce, 0, "Enforce the kldload and kldunload gates");
+
 static int
 sys_mac_kld_check_load(struct ucred *cred, struct vnode *vp __unused,
     struct label *vplabel __unused)
 {
 
+	if (!sys_kld_gate_enforce)
+		return (0);
 	return (sys_check_gate(cred, SYS_GATE_KLDLOAD, "kldload"));
 }
 
@@ -858,6 +872,8 @@ static int
 sys_mac_kld_check_unload(struct ucred *cred)
 {
 
+	if (!sys_kld_gate_enforce)
+		return (0);
 	return (sys_check_gate(cred, SYS_GATE_KLDUNLOAD, "kldunload"));
 }
 

@@ -379,6 +379,21 @@ fails with
 once the limit is reached.
 .It Va kern.mac_capability_system.auth_count
 Current number of authorization entries (read-only).
+.It Va kern.mac_capability_system.kld_gate
+Loader tunable.
+When 0, the default, the
+.Dv SYS_GATE_KLDLOAD
+and
+.Dv SYS_GATE_KLDUNLOAD
+gates are not enforced and
+.Xr kldload 2
+and
+.Xr kldunload 2
+follow their ordinary privilege checks.
+Set it to 1 to enforce them.
+Enforcing refuses firmware modules that drivers request after boot, so such
+firmware must then be preloaded from
+.Xr loader.conf 5 .
 .El
 .Sh DTRACE PROBES
 The following DTrace probes are provided under the
