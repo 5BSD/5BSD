@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 cc_binary(name = "services_mkdb", srcs = ["services_mkdb.c", "uniq.c", "extern.h"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load(":database.bzl", "services_database")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
 config_setting(name = "amd64", constraint_values = ["@platforms//cpu:x86_64"])
 services_database(name = "database", src = "services", output = "services.db",
     byte_order = select({":amd64": "little"}),
@@ -13,6 +13,9 @@ services_database(name = "database", src = "services", output = "services.db",
 bsd_install_file(name = "config", src = "services", destination = "/etc/services", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
 # Make's generated database record has no package tag.
 bsd_install_file(name = "database_file", src = ":database", destination = "/var/db/services.db", owner = "root", group = "wheel", mode = "0644", install_tags = [])
+bsd_install_manifest(name = "construction_manifest", entries = select({
+    "//tools/build/bazel/config:servicesdb_enabled": [":database_file"], "//conditions:default": [],
+}), visibility = ["//:__pkg__"])
 utility_installation(name = "install_manifest", program = "services_mkdb", manual = "services_mkdb.8", package = "runtime", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":config"] + select({"//tools/build/bazel/config:servicesdb_enabled": [":database_file"], "//conditions:default": []}))
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

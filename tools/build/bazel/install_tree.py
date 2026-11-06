@@ -87,7 +87,7 @@ def main():
     selected = set(request.get('directory_packages', []))
     directories = [r for r in resolved['records'] if r['type'] == 'dir' and any(
         tag.startswith('package=') and tag[8:] in selected for tag in r.get('tags', []))]
-    args.directories.write_text(json.dumps(dict(format=1, directories=directories), sort_keys=True) + '\n')
+    args.directories.write_text(json.dumps(dict(format=1, directories=directories, physical_directories=[r for r in resolved['records'] if r['type'] == 'dir']), sort_keys=True) + '\n')
     args.metadata.write_text(json.dumps(request, sort_keys=True) + '\n')
 
 

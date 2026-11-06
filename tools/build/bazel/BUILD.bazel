@@ -369,3 +369,7 @@ bsd_python_test(name = "elf_runtime_path_test", src = "elf-runtime-path-test.py"
 
 bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-test.py",
     data = ["installed-atf-check.py"], runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
+
+exports_files(["world_package_inventory.py"], visibility = ["//:__pkg__"])
+
+bsd_python_test(name = "world_package_inventory_test", src = "world-package-inventory-test.py", data = ["world_package_inventory.py"])

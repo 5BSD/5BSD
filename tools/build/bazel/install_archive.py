@@ -104,7 +104,7 @@ def main():
         selected = set(request.get("directory_packages", []))
         directories = [r for r in request["records"] if r["type"] == "dir" and
                        any(t.startswith("package=") and t[len("package="):] in selected for t in r.get("tags", []))]
-        args.directory_metadata.write_text(json.dumps(dict(format=1, directories=directories), sort_keys=True) + "\n")
+        args.directory_metadata.write_text(json.dumps(dict(format=1, directories=directories, physical_directories=[r for r in request["records"] if r["type"] == "dir"]), sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":

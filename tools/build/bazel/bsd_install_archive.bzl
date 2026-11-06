@@ -5,7 +5,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
 BsdInstallArchiveInfo = provider(fields = ["directory_metadata", "records", "payload", "trees"])
 # A collection preserves output groups but is not a single package archive.
-BsdInstallArchiveSetInfo = provider(fields = ["records", "payload", "trees"])
+BsdInstallArchiveSetInfo = provider(fields = ["records", "payload", "trees", "directory_metadata"])
 
 def _archive(ctx):
     epoch = ctx.attr.epoch
@@ -116,14 +116,16 @@ bsd_install_archive = rule(
 )
 
 def _archive_set(ctx):
-    records, payloads, trees = [], [], []
+    records, payloads, trees, directory_metadata = [], [], [], []
     for target in ctx.attr.archives:
         info = target[BsdInstallArchiveInfo] if BsdInstallArchiveInfo in target else target[BsdInstallArchiveSetInfo]
         records.extend(info.records)
         payloads.append(info.payload)
         trees.extend(info.trees)
+        directory_metadata.append(depset([info.directory_metadata]) if BsdInstallArchiveInfo in target else info.directory_metadata)
     return [
-        BsdInstallArchiveSetInfo(records = records, payload = depset(transitive = payloads), trees = trees),
+        BsdInstallArchiveSetInfo(records = records, payload = depset(transitive = payloads), trees = trees,
+            directory_metadata = depset(transitive = directory_metadata)),
         DefaultInfo(files = depset(transitive = [target[DefaultInfo].files for target in ctx.attr.archives])),
         OutputGroupInfo(
             metadata = depset(transitive = [target[OutputGroupInfo].metadata for target in ctx.attr.archives]),

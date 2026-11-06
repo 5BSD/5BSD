@@ -4,6 +4,7 @@ load(":bsd_install_archive.bzl", "bsd_install_archive_set")
 load(":bsd_man_database.bzl", "bsd_man_database")
 load(":bsd_install.bzl", "bsd_install_manifest")
 load(":bsd_script_installation.bzl", "script_install_archive")
+load(":bsd_world_package_inventory.bzl", "bsd_world_package_inventory")
 
 def world_contributions():
     bsd_install_archive_set(name = "world_contributions", archives = [
@@ -35,6 +36,13 @@ def world_contributions():
     bsd_install_archive_set(name = "fresh_world_contributions",
         archives = [":finalized_world_contributions", "//etc:account_install_archive"],
         visibility = ["//visibility:public"])
+
+    bsd_world_package_inventory(name = "world_package_inventory",
+        archives = [":fresh_world_contributions"],
+        construction = ["//etc:account_install_manifest", ":world_manual_databases_manifest", "//usr.sbin/services_mkdb:construction_manifest", "//usr.bin/login:generated_manifest"],
+        suffix_tags = ["dbg", "dev", "lib"] + select({
+            "//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": [],
+        }), visibility = ["//visibility:public"])
 
     # Make also constructs internal library variants that are not installed.
     native.filegroup(name = "world_contribution_products", srcs = [

@@ -1,5 +1,34 @@
 # Native Bazel completion plan
 
+## Complete native world package inventory; MAN=false gap found (2026-11-06)
+
+The maintained whole-world inventory accounts for 32,518 file/link paths,
+1,202 physical directories, 445 package buckets, seven source-declared generated
+files and 13 cross-package hardlinks. Generated zoneinfo metadata and every source
+resolved physical-directory sidecar are declared action inputs. No path scan,
+package-file whitelist or unknown untagged-file fallback is used.
+
+Every source record/claim matches the retained full native capture; all physical
+permissions match actual tar headers. All 445 file/config/directory partitions
+match the real maintained Make plist generator on the SAME NATIVE CORPUS.
+1,279 archive payloads remain byte-identical; the only other archive differs solely
+in the maintained manual, verified against source. Seven unit methods plus twelve
+real pkg fixture cases pass; unchanged libmd component-layout construction passes.
+See WORLD-PACKAGE-INVENTORY-QUALIFICATION.md for exact scopes, retained failures,
+immutable evidence and the new provider/metadata interface.
+
+The disabled profile removes manual indexes and services DB correctly but leaves
+13689 manual payload paths. The final audit remains differences-found.
+NEXT: fix MAN inclusion at source-owned utility/manual rules and qualify both
+settings; do not filter the final inventory. Then port complete source family
+metadata/dependencies and connect actual whole-world pkg creation, package-driven
+construction/account preservation and normal installed service tests.
+
+Existing format-5 frontend targets/backend providers/serializers/tests and manual
+cover this change; C/CLI/signing/publication/defaults remain unchanged. All
+independent whole-world/kernel/module/debug/pkgbase/cross/bootstrap/cache/sandbox/
+reproducibility/resource/runtime/combined-publication gates remain; Make is default.
+
 ## Native package driver preserves declared file flags (2026-11-06)
 
 The driver no longer rejects schg-marked base files. It validates source archive
