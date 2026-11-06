@@ -5714,6 +5714,13 @@ See
 .Pa tools/build/bazel/DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md
 for supported relocations, controls and runtime limits.
 .Pp
+The selected powercmp/timecmp/notify library and sysdecode test ELF dependency
+sets/order are compared against original Make artifacts. Existing format-5
+inputs exercise complete installation parents and the installed sysdecode case
+with declared native runtime. See
+.Pa tools/build/bazel/LIBRARY-DYNAMIC-DEPENDENCY-QUALIFICATION.md
+for exact contracts and remaining service/kernel/VM/performance requirements.
+.Pp
 The native libcapbundle, libcapimage and libcapsulert parents retain original
 dynamic installed test ABI. Make uses its maintained test-execution library path
 instead of embedding object directories in installed ELF. Existing format-5

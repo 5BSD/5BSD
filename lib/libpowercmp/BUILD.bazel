@@ -27,10 +27,10 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "headers", hdrs = ["powercmp.h", "powercmp_protocol.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 cc_library(name = "objects", srcs = ["powercmp.c", "powercmp_legacy.c"], copts = ["-fPIC"], deps = [":headers", ":generated_headers", "//lib/libservice:headers", "//lib/libfidl:headers"], linkstatic = True, target_compatible_with = _PLATFORM)
-cc_library(name = "powercmp", deps = [":objects", ":generated_bindings", "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_library(name = "powercmp", deps = [":objects", ":generated_bindings", "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":objects", ":generated_bindings"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "powercmp_shared", deps = [":powercmp"],
-    dynamic_deps = ["//lib/libservice:service_shared", "//lib/libfidl:fidl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libthr:thr_shared"],
+    dynamic_deps = ["//lib/libservice:service_shared", "//lib/libfidl:fidl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"],
     shared_lib_name = "libpowercmp.so.1", user_link_flags = ["-Wl,-soname,libpowercmp.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
 

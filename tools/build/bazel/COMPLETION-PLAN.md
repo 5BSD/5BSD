@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## Four recorded ELF dependency gaps corrected (2026-11-06)
+
+Powercmp/timecmp remove an extra direct thread-library dependency; notify and the
+sysdecode test retain original load order. Standard native declarations own the
+fix, without linker filtering or binary editing. All four complete parent/Make
+comparisons match: 185 component paths, 41 directory claims, all four original
+needed-set/order gaps, 12 ELF and two raw archive contracts. The two traced raw
+archive differences remain recorded with unchanged actual object bytes and prior
+DOF/order evidence. All four own archives are unchanged; 24 debug controls pass.
+
+The exact installed sysdecode case passes with native sysdecode/ATF/libc/libsys;
+original metadata/body identity and actual loader resolution match. No production
+service API, kernel policy enforcement, live tracing or full-system acceptance is
+claimed. Warm BEP counters record 56 executed/2,355 created actions, one C compile;
+controlled cache/resource/performance gates remain open. See
+LIBRARY-DYNAMIC-DEPENDENCY-QUALIFICATION.md for immutable evidence and scope.
+
+Existing frontend format-5/backends/signing interfaces suffice; manual updated.
+Next reconcile full-library generation/directory policy and inspect the remaining
+ncurses/positive-runtime differences, then repeat the complete selected comparison.
+Keep full-tests guards, Make default and all world/kernel/module/pkgbase/VM/cross/
+bootstrap/cache/sandbox/reproducibility/performance/publication gates. BIP stays out.
+
+
 ## Remaining nine recorded installed static substitutions reconciled (2026-11-06)
 
 Seven libcapbundle and two libcapimage installed C tests now retain original

@@ -38,6 +38,14 @@ Raw symbol failures remain retained, and static-consumer/live-tracing behavior i
 not proved. See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and
 bazel-library-static-dtrace-review-r1-20261106 for the companion-object bindings.
 
+The four recorded ELF direct/ordered dependency gaps now match original Make:
+powercmp/timecmp no longer add direct libthr, and notify/sysdecode retain original
+load order. All four complete parents, installed ELF contracts, 24 debug checks
+and the original installed sysdecode body/native runtime checks pass. Raw traced
+archive differences remain visible with unchanged object bytes. See
+LIBRARY-DYNAMIC-DEPENDENCY-QUALIFICATION.md. These close this cohort's identified
+dependency gaps, not unreviewed whole-tree ABI/runtime or full installation gaps.
+
 The remaining nine recorded static substitutions and original test RPATHs are
 now reconciled. Three full installation parents and all 11 affected dynamic test
 programs match original controls; 204 safe host body targets pass. Eight capimage

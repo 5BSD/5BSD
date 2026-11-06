@@ -12406,3 +12406,13 @@ client's original syscall wrapper/mock-kernel fixture is retained; no production
 trust or handle kernel enforcement claim is made. ATF functional runs disable DOF
 initialization explicitly. Production library tars/probe inputs are unchanged.
 See CAPABILITY-INSTALLED-TEST-QUALIFICATION.md for captured bodies and limits.
+
+
+## 2026-11-06 original dynamic dependency graph restored
+
+Powercmp/timecmp direct dependencies and notify/sysdecode load order now match
+actual original Make ELF, without source/probe rewriting or linker filtering.
+Own object archives remain byte-identical to prior captures, including traced
+notify/timecmp providers. The actual installed sysdecode rights-formatting case
+passes with native runtime; kernel policy, service endpoints and live tracing are
+not established. See LIBRARY-DYNAMIC-DEPENDENCY-QUALIFICATION.md.

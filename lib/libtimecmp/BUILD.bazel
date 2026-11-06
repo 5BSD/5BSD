@@ -48,7 +48,7 @@ cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects =
 cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"])
 cc_import(name = "section_traced", objects = [":regular_archive_objects"],
     pic_objects = [":pic_archive_objects"])
-cc_library(name = "timecmp", deps = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced"], "//conditions:default": [":objects"]}) + [":headers", ":generated_bindings", "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_library(name = "timecmp", deps = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced"], "//conditions:default": [":objects"]}) + [":headers", ":generated_bindings", "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 # Installed archive source order is independent of compilation-group order.
 _STATIC_SOURCE_MEMBERS = ['timecmp', 'timecmp_legacy', 'natural_types', 'common_types', 'bsd']
 bsd_component_archive(name = "static_archive", groups = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects"]}) + [":generated_bindings"], object_order = select({
@@ -58,7 +58,7 @@ bsd_component_archive(name = "static_archive", groups = select({_SECTION_TRACE: 
     }),
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "timecmp_shared", deps = [":timecmp"],
-    dynamic_deps = ["//lib/libservice:service_shared", "//lib/libfidl:fidl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libthr:thr_shared"],
+    dynamic_deps = ["//lib/libservice:service_shared", "//lib/libfidl:fidl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"],
     shared_lib_name = "libtimecmp.so.1", user_link_flags = ["-Wl,-soname,libtimecmp.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
 load(":installation.bzl", "library_installation")
