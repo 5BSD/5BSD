@@ -7712,5 +7712,10 @@ estimates.
 The package_threads setting controls compression threads; zero uses that budget.
 The package_epoch setting defaults to zero and never reads the wall clock.
 These targets create build artifacts and do not publish or install them.
+The complete original Make package comparison currently exposes missing automatic
+shared-library metadata when a package symlink refers to another package's file.
+Three bootloader packages also need explicit per-file epoch policy qualification.
+Native world packages remain qualification candidates until those differences
+are resolved and the complete comparison passes.
 Whole-system package/runtime, upgrade, bootstrap and performance qualification
 remain required before changing the production/default Make backend.

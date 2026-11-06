@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Original Make package control exposes inspection-input gap (2026-11-06)
+
+All 445 original Make package targets now build over a complete shared stage of the
+same captured native world. Full decoded manifests match for 355; 87 have missing
+or incomplete shared-library requirements (utilities-dev also differs in ignored
+providers). Three bootloader packages differ only in nonzero per-file timestamps
+versus explicit native package_epoch=0 normalization. No fields were excluded.
+A real-pkg libmagic-dev control reproduces the native gap and becomes fully equal
+to Make after adding only its source-declared library referent for inspection;
+the extra library is not included in that package's payload. This is diagnosis,
+not a production fix. See WORLD-PACKAGES-CONSTRUCTION-QUALIFICATION.md for hashes.
+
+NEXT: declare source-derived symlink inspection dependencies in native package
+actions, cover chains/directory/absolute/dangling/cyclic links and generated trees,
+verify rooted pkg inspection without host reads, and preserve package ownership
+and cache granularity. Resolve/qualify explicit epoch semantics. Add real-pkg
+regressions and repeat all 445 complete manifest comparisons. Do not replace
+missing metadata with hardcoded SONAMEs, a global shared stage, host lookups or
+ignored comparison fields. Retain every broader world/kernel/module/runtime/cross/
+bootstrap/cache/sandbox/reproducibility/CPU/RAM/disk/publication gate. Make stays
+production/default; BIP stays excluded. No host installation or publication occurred.
+
 ## All 445 selected native world pkg archives constructed and inspected (2026-11-06)
 
 The declared world_packages candidate creates actual standard pkg archives through

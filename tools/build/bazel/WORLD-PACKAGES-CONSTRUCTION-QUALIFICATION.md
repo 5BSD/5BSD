@@ -131,6 +131,70 @@ still require the shared-stage Make control and actual installed-system tests.
 It does not certify raw DWARF contents, bootstrap reproducibility, sandbox isolation,
 remote/local cache correctness or controlled CPU/RAM/disk performance.
 
+## Complete original Make package control: metadata gap confirmed
+
+The next independent control runs all original packages/Makefile selections and
+share/mk/bsd.pkg.mk package recipes against one complete stage assembled from the
+same immutable r7 native corpus. All 177 families and 445 package targets build;
+444 payload plists come from the maintained mtree-to-plist.awk with complete_dirs,
+and pf-dev uses the original explicit metadata-only rule. Source options, source
+include closures, generated UCL documents, target ABI, SDK pkg/flua and outputs are
+bound in the retained review. Sixteen family workers each use one Make/pkg thread.
+The reference uses uncompressed tar transport, an isolated pkg configuration/database
+and the normal repository pathname; it calls explicit package targets, never
+stagepackages, publication or host installation. SOURCE_DATE_EPOCH=0 is explicit.
+
+Every complete decoded +MANIFEST is compared without ignored fields. Results:
+
+- 355 manifests match completely.
+- 87 differ in shlibs_required: 86 development packages omit the field entirely;
+  toolchain has an incomplete list. utilities-dev also differs in
+  shlibs_provided_ignore. These are genuine candidate metadata defects.
+- The other three are bootloader, bootloader-dbg and bootloader-dev. Their only
+  file metadata differences are mtime on 115, two and one paths respectively:
+  the original native boot archive's 1704067200 versus the private writer's
+  package_epoch=0 normalization (pkg omits zero mtime). SOURCE_DATE_EPOCH alone
+  does not make the shared stage's nonzero file times equivalent. Resolve and
+  explicitly qualify this epoch policy; do not silently ignore the field.
+
+A bounded real-pkg diagnosis reconstructs libmagic-dev's isolated stage using its
+captured plan and the same Make plist/UCL. Its full manifest reproduces the native
+result. Adding only the source-inventoried /usr/lib/libmagic.so.4 as an inspection
+input makes the entire manifest equal the original shared-stage Make result.
+The extra file is absent from the plist/package payload. This proves the immediate
+missing-input mechanism; it does not implement or qualify the general fix.
+
+Required implementation: derive symlink referent inspection dependencies from
+source installation providers, declare their Files/trees in Bazel, and materialize
+only those dependencies alongside the package payload. Handle link chains, relative
+and absolute links, directory links, dangling links/cycles and generated trees
+explicitly. Inspection content must never become package ownership. Preserve the
+source-input allowlist and package cache boundaries; never consult the host
+installation or copy the full world into each package action. Check the pkg tool's
+rooted link-following semantics as part of this work, rather than assuming that
+-r alone prevents host symlink resolution. Extend the real-pkg regression and run
+all 445 manifest comparisons again before claiming package metadata parity.
+
+This control is SAME-NATIVE-CORPUS package metadata evidence, not independently
+Make-built world bytes, installed numeric ownership, solver/install/upgrade/service
+execution, kernel/module packages or performance qualification. The earlier payload
+inspection remains valid; it did not test these automatic metadata fields. Native
+world packages remain qualification candidates. Make remains production/default.
+
+Evidence (relative to /usr/obj/usr/src):
+
+- bazel-world-packages-make-reference-r1-20261106/review.json
+  SHA256 32dc9bb78262eed355951d32cc809a99d4ef9bd18b134021f152542e69281c05
+- bazel-world-packages-make-reference-r1-20261106/stage.json
+  SHA256 fd627b4bd3a4a74a67b45f302f2a3710e5d42b5c29de34dd2af7ee438ca28d9d
+- bazel-world-packages-metadata-diagnosis-r1-20261106/review.json
+  SHA256 8613c8e53276883d3d872d384f7996f7481d1dd0b15a0e9aa8df725e5c3dacd2
+
+The reference retains both staging/package audit scripts, every Make stdout/stderr,
+complete decoded UCL and package manifests, actual reference packages and input
+bindings. The diagnosis retains its audit script, both actual control packages,
+complete manifests and the exact supplemental source-inventory binding.
+
 ## Discovered fixes and retained failures
 
 - First analysis lacked a narrow export for the new driver; it was declared.
@@ -186,9 +250,9 @@ Additional retained evidence:
 
 ## Next required work
 
-Run original maintained Make package recipes over a complete captured native stage
-and compare every produced manifest/partition, including automatic shared-library
-metadata. Then qualify solver/fresh install, generated-state construction and local
+Fix and qualify the inspection-dependency and epoch gaps found by the complete
+original Make package comparison above. Repeat every produced manifest comparison
+without field exclusions. Then qualify solver/fresh install, generated-state construction and local
 account/service-data preservation during upgrades. Integrate native kernel/modules,
 separate hardware packaging and verified combined repository publication under the
 standard /usr/obj/usr/src/repo, using /usr/obj/5BSD-ports.
