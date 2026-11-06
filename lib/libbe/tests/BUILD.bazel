@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//lib/libc:test_policy.bzl", "libc_test_copts")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_DIRECTORY = "/usr/tests/lib/libbe"
+_LIBRARIES = [
+    ("zfs", "//cddl/lib/libzfs:zfs_shared"),
+    ("spl", "//cddl/lib/libspl:spl_shared"),
+    ("nvpair", "//cddl/lib/libnvpair:nvpair_shared"),
+    ("be", "//lib/libbe:be_shared"),
+    ("thr", "//lib/libthr:thr_shared"),
+]
+[cc_import(name = name + "_interface", shared_library = label) for name, label in _LIBRARIES]
+cc_binary(name = "target_prog", srcs = ["target_prog.c"],
+    deps = [":" + name + "_interface" for name, label in _LIBRARIES] + ["//lib/libbe:test_headers", "//lib/libc:shared_abi_interface"],
+    local_defines = ["IN_BASE", "HAVE_RPC_TYPES", "HAVE_ISSETUGID", "HAVE_STRLCAT", "HAVE_STRLCPY"],
+    copts = libc_test_copts(6) + ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
+    linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
+utility_installation(name = "helper_install", program = "target_prog", manual = None, package = "tests", bindir = _DIRECTORY)
+bsd_script_wrapper(name = "be_create", body = "be_create.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "script_entry", src = ":be_create", destination = _DIRECTORY + "/be_create",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["be_create"], interfaces = {"be_create": "atf"})
+bsd_install_file(name = "kyuafile_entry", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":helper_install"], entries = [":script_entry", ":kyuafile_entry"])
+bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":install_manifest"], debug = True)
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Original case requires root, creates/destroys a private ZFS pool and has cleanup.
+# It belongs to disposable-system qualification, not automatic host execution.

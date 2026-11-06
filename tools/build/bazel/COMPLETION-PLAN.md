@@ -1,5 +1,26 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 libbe test and parent construction (2026-11-06)
+
+The original helper and root/cleanup shell case now have native construction and
+all four installed test records. The complete tests-enabled library parent builds
+two archives, matching all 45 original Make records, recorded directories,
+manual hardlink identities and 39 exact non-ELF/non-archive payloads. Helper and
+production DSO ELF/debug contracts match. Actual installed-script metadata is
+identical; the privileged pool-creation body remains disposable-system work.
+The one passing source-settings helper is not original libbe body execution.
+LIBBE-TEST-QUALIFICATION.md records final bindings and exact scope.
+
+Two initially missing declaration roots remain: ATF C tests and ATF parent,
+including nested detail/test-programs traversal. Continue those and complete
+tests-enabled world assembly, independent world/kernel/module/pkgbase/debug,
+normal-service VM acceptance, CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/
+reproducibility and verified combined publication, filling ARM64/RISC-V gaps
+alongside shared work. Full-world tests guards remain until closure; Make default;
+BIP excluded; no host installation/upgrade/reboot. Available storage is close to
+the qualification cache's 10 GiB free-space floor; inspect/reclaim reproducible
+build data before larger builds, preserving retained qualification evidence.
+
 ## Complete selected AMD64 libxo test and parent construction (2026-11-06)
 
 All eleven original core programs, test encoder and 206 saved output/error files

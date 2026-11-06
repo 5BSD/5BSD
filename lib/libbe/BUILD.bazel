@@ -40,3 +40,12 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+# Header-only context for the original test consumer; no implementation archives.
+cc_library(name = "test_headers", hdrs = ["be.h"], strip_include_prefix = ".",
+    deps = ["//sys/contrib/openzfs:spl_headers"], visibility = ["//lib/libbe/tests:__pkg__"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//lib/libbe/tests:installation_archives"],
+    "//conditions:default": [],
+}), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

@@ -210,7 +210,7 @@ _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:unbound_enabled": ["
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:usb_enabled": ["//lib/libusbhid:install_archive", "//lib/libusb:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ofed_enabled": ["//lib/ofed:installation_archives"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:veriexec_enabled": ["//lib/libveriexec:install_archive"], "//conditions:default": []})
-_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ["//lib/libbe:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ["//lib/libbe:installation_archives"], "//conditions:default": []})
 # AMD64 vgl is selected independently of the optional feature knobs.
 _ARCHIVES = _ARCHIVES + ["//lib/libvgl:install_archive"]
 _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:toolchain_enabled": ["//lib/libpe:static_archive", "//lib/libpe:pie_archive"], "//conditions:default": []})

@@ -12189,3 +12189,12 @@ text cases through duplicate XP names; resetting the per-invocation format and
 restoring stale references from existing explicit-text expectations repairs both
 build systems. No new live DTrace firing or audit-delivery evidence is claimed.
 See LIBXO-TEST-QUALIFICATION.md for final bindings and open system/cross gates.
+
+## Original libbe boot-environment test construction (2026-11-06)
+
+Original helper, shell body, implementation and provider sources are unchanged.
+The native helper preserves explicit ZFS/library ABI dependencies; metadata
+retains root and cleanup requirements. The original pool-creation/cloning body
+is not executed on the host. No teardown, upgrade workflow, live provider firing
+or audit-delivery claim follows from construction/ELF/metadata parity. See
+LIBBE-TEST-QUALIFICATION.md for retained evidence and the disposable-system gate.
