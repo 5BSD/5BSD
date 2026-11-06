@@ -186,6 +186,10 @@ options 	NETDUMP			# netdump(4) client support
 
 # Pseudo devices.
 device		crypto		# core crypto support
+
+# system.Crypto (bsdcrypto) is a core capability provider, so /dev/crypto must
+# always be present, as on amd64.
+device		cryptodev		# /dev/crypto (userland OpenCrypto access)
 device		loop		# Network loopback
 device		ether		# Ethernet support
 device		vlan		# 802.1Q VLAN support

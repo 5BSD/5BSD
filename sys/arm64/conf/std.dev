@@ -53,6 +53,10 @@ device		vt_simplefb
 
 # Pseudo devices.
 device		crypto			# core crypto support
+
+# system.Crypto (bsdcrypto) is a core capability provider, so /dev/crypto must
+# always be present, as on amd64.
+device		cryptodev		# /dev/crypto (userland OpenCrypto access)
 device		armv8_rng		# Armv8.5 rndr RNG
 device		loop			# Network loopback
 device		ether			# Ethernet support
