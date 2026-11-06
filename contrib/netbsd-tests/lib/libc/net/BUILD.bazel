@@ -1,2 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["gen_ether_subr"], visibility = ["//lib/libc/tests/net:__pkg__"])
+exports_files([
+    "t_getprotoent.c", "t_ether_aton.c", "t_nsdispatch.sh", "t_protoent.sh",
+    "t_servent.sh", "h_nsd_recurse.c", "h_protoent.c", "h_servent.c",
+    "h_dns_server.c", "hosts", "resolv.conf",
+], visibility = ["//lib/libc/tests/net:__pkg__"])

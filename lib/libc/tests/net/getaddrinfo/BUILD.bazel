@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":tests.bzl", "getaddrinfo_tests")
+getaddrinfo_tests()

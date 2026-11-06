@@ -19,3 +19,6 @@ bsd_script_output(
         "//lib/msun:m_shared",
     ],
 )
+
+load(":tests.bzl", "network_tests")
+network_tests()

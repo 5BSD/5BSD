@@ -12040,3 +12040,14 @@ Original script and kernel extraction source remain unchanged. Only declared
 Bazel generator inputs/output calling convention change; no probes, audit hooks
 or test expectations are altered. Network programs and their runtime/probe/audit
 behavior are not yet qualified by this generator comparison.
+
+
+## libc network/getaddrinfo tests (2026-11-06)
+
+All original C/C++ and helper sources remain unchanged; generated extraction
+source and shell transformations match Make. No probe/audit macros, events or
+production sources are removed by this contribution. Thirty-seven bounded host
+cases cover address conversions, threaded NSS recursion and public protocol/
+service database behavior. Original VNET jail lifecycle and live DNS/timeout
+cases remain separate open runtime checks, as do audit delivery and probe firing.
+This test construction does not qualify network service instrumentation.

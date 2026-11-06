@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Complete original network/getaddrinfo construction (2026-11-06)
+
+All thirteen original programs, including two C++20 programs, four shell suites,
+two configuration fixtures and twenty-six expected-output fixtures now build and
+install. Sixty records, exact scripts/data/Kyua, thirteen ELF/dependency/hardening
+contracts and split-debug checks match independent original Make. Forty original
+C/C++ case metadata listings match; thirty-seven selected host cases pass without
+skips. Native compiler-runtime ordering was corrected after a real ELF mismatch;
+ATF shell dirname is explicit. Final outputs retain all six independently reviewed
+installation hashes. See LIBC-NET-TEST-QUALIFICATION.md for receipts and retained
+failed attempts. Six resolver C and fourteen VNET shell cases remain unexecuted.
+
+Next: remaining libc families/test-parent traversal and disposable guest network
+coverage. Keep all independent whole-world/pkgbase/cross/bootstrap/cache/sandbox/
+reproducibility/runtime/performance/publication gates; Make default, BIP excluded.
+
 ## Network generator groundwork (2026-11-05)
 
 Original gen_ether_subr now runs as a declared native action using explicit
