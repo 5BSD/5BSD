@@ -1,5 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "bsdnetwork_dependency", package = "bsdnetwork", origin = "base/5BSD-bsdnetwork",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsdnetwork",
+    template = "//release/packages:ucl/bsdnetwork-all.ucl",
+    template_overrides = {"bsdnetwork": "bsdnetwork.ucl"},
+    sets = ["minimal"],
+    dependencies = {"bsdnetwork": ["bsdaudit", "libauditcmp", "libcasper", "libchannel", "libfidl", "libnotify", "libsysctlcmp", "libnetworkcmp", "libservice", "switchboard", "switchboardctl", "libfilesystemcmp"]},
+    visibility = ["//packages:__pkg__"],
+)

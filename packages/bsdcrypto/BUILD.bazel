@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsdcrypto",
+    template = "//release/packages:ucl/bsdcrypto-all.ucl",
+    template_overrides = {"bsdcrypto": "bsdcrypto.ucl"},
+    subpackages = ["dbg"],
+    sets = ["minimal"],
+    dependencies = {"bsdcrypto": ["bsdaudit", "libauditcmp", "libchannel", "libcryptocmp", "libcryptodesc", "libfidl", "libservice", "switchboard", "switchboardctl", "libextensioncmp"]},
+    visibility = ["//packages:__pkg__"],
+)

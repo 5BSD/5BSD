@@ -53,7 +53,8 @@ def _family(ctx):
         if any([c < " " for c in value.elems()]):
             fail("UCL variable contains control characters: " + key)
     outputs, declarations = {}, {}
-    all_templates = depset(templates.values()).to_list()
+    # A base override can include the default even when no subpackage selects it.
+    all_templates = depset([ctx.file.template] + templates.values()).to_list()
     for name in names:
         full_name = prefix + "-" + name
         fields = dict(name = full_name, origin = "base/" + full_name, categories = ["base"], prefix = "/",

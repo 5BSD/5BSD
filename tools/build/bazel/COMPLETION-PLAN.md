@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Nineteen additional capability package families match Make (2026-11-06)
+
+The explicit capability_family_manifests aggregate adds nineteen source-owned
+service/library families, including Capsule, Switchboard, OpenES and BSD service
+packages. All 47 default and 45 alternate manifests match full original Make
+metadata. Exact coverage and effective Make options are checked. Both maintained
+frontend captures/source-settings tests pass with 16 jobs. The alternate capture
+exposed a default-template include omitted when only the base override is selected;
+the generic rule now declares its default template unconditionally. No sandbox
+weakening or template/path fallback was used. See
+CAPABILITY-PACKAGE-FAMILIES-QUALIFICATION.md for evidence and retained failures.
+
+There are now 24 source-owned families in these two explicit aggregates, not
+complete world metadata or package/archive/runtime qualification. Older component
+package targets remain separate. Existing format-5 frontend inputs select these
+targets; its manual is updated, and C/backend/stage/signing/publication contracts
+are unchanged. NEXT: remaining source-owned family declarations, including optional
+libfidl SDK tools with explicit target ports versions, full inventory/metadata
+reconciliation and actual whole-world pkg creation. Keep all world/kernel/module/
+debug/cross/bootstrap/cache/sandbox/reproducibility/resource/runtime/combined-repo
+gates and Make production/default. BIP stays out of scope.
+
 ## First five source-owned package families match Make metadata (2026-11-06)
 
 The explicit //packages:core_family_manifests aggregate builds runtime, clibs,

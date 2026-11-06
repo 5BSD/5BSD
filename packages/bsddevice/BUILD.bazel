@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bsddevice",
+    template = "//release/packages:ucl/bsddevice-all.ucl",
+    template_overrides = {"bsddevice": "bsddevice.ucl"},
+    subpackages = ["dbg"],
+    sets = ["minimal"],
+    dependencies = {"bsddevice": ["libchannel", "libdevicecmp", "libfidl", "libservice", "switchboard", "switchboardctl"]},
+    visibility = ["//packages:__pkg__"],
+)

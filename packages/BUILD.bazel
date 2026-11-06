@@ -4,3 +4,10 @@ filegroup(name = "core_family_manifests", srcs = [
     "//packages/runtime:family", "//packages/clibs:family", "//packages/utilities:family",
     "//packages/toolchain:family", "//packages/bsdlog:family",
 ], visibility = ["//visibility:public"])
+
+# Migrated capability service/library metadata; not complete world coverage.
+filegroup(
+    name = "capability_family_manifests",
+    srcs = ["//packages/capsule:family", "//packages/capsulectl:family", "//packages/switchboard:family", "//packages/switchboardctl:family", "//packages/oes:family", "//packages/bsdaudit:family", "//packages/bsdcrypto:family", "//packages/bsddevice:family", "//packages/bsdnetwork:family", "//packages/bsdnotify:family", "//packages/bsdmemory:family", "//packages/libcapsulert:family", "//packages/libcapability:family", "//packages/libcapbundle:family", "//packages/libchannel:family", "//packages/libservice:family", "//packages/libucl:family", "//packages/libshmring:family", "//packages/libauditcmp:family"],
+    visibility = ["//visibility:public"],
+)

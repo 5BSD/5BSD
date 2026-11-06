@@ -10,3 +10,13 @@ bsd_pkg_dependency(name = "set-base_dependency", package = "set-base", origin = 
 exports_files(["ucl/libchannel-tests-all.ucl"], visibility = ["//packages/libchannel-tests:__pkg__"])
 
 exports_files(["ucl/bsdlog-all.ucl"], visibility = ["//packages/bsdlog:__pkg__"])
+
+exports_files(["ucl/oes-all.ucl"], visibility = ["//packages/oes:__pkg__"])
+exports_files(["ucl/bsdaudit-all.ucl"], visibility = ["//packages/bsdaudit:__pkg__"])
+exports_files(["ucl/bsdcrypto-all.ucl"], visibility = ["//packages/bsdcrypto:__pkg__"])
+exports_files(["ucl/bsddevice-all.ucl"], visibility = ["//packages/bsddevice:__pkg__"])
+exports_files(["ucl/bsdnetwork-all.ucl"], visibility = ["//packages/bsdnetwork:__pkg__"])
+exports_files(["ucl/bsdnotify-all.ucl"], visibility = ["//packages/bsdnotify:__pkg__"])
+exports_files(["ucl/bsdmemory-all.ucl"], visibility = ["//packages/bsdmemory:__pkg__"])
+exports_files(["ucl/libshmring-all.ucl"], visibility = ["//packages/libshmring:__pkg__"])
+exports_files(["ucl/libauditcmp-all.ucl"], visibility = ["//packages/libauditcmp:__pkg__"])

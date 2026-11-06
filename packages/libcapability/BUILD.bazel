@@ -1,5 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "libcapability_dependency", package = "libcapability", origin = "base/5BSD-libcapability",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "libcapability",
+    template = "libcapability.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["optional"],
+    visibility = ["//packages:__pkg__"],
+)

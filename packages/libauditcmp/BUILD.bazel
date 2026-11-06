@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "libauditcmp",
+    template = "//release/packages:ucl/libauditcmp-all.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["minimal", "minimal-jail"],
+    license_logic = "multi",
+    dependencies = {"libauditcmp": ["libservice", "libfidl", "clibs"], "libauditcmp-dev": ["libservice-dev", "libfidl-dev", "clibs-dev"]},
+    visibility = ["//packages:__pkg__"],
+)

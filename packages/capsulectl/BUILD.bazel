@@ -1,5 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "capsulectl_dependency", package = "capsulectl", origin = "base/5BSD-capsulectl",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "capsulectl",
+    template = "capsulectl.ucl",
+    sets = ["minimal"],
+    dependencies = {"capsulectl": ["libservice"]},
+    visibility = ["//packages:__pkg__"],
+)

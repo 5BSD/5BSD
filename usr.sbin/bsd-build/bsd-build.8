@@ -7647,3 +7647,15 @@ This does not cover all world families or create, install or publish packages.
 The SDK interpreter is a Make-built bootstrap input; bootstrap, runtime and
 performance qualification remain open.
 Make remains production/default.
+.Pp
+The explicit //packages:capability_family_manifests target adds metadata for
+nineteen capability service and library families, including Capsule,
+Switchboard,
+OpenES, BSD service daemons and supporting libraries.
+The family rule declares its default template even when only an override is
+selected, preserving included common templates with debug subpackages disabled.
+Both selected profiles match original Make metadata for every declared package.
+These targets do not qualify all capability families, older component package
+creation targets, installed services or system upgrades.
+The existing format-5 frontend selects the aggregate without a new CLI action.
+Full world package coverage and runtime/resource qualification remain open.

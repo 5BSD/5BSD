@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Library package family; test payloads belong to the separate libchannel-tests family.
@@ -87,3 +88,12 @@ bsd_pkg_create(
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "libchannel_dependency", package = "libchannel", origin = "base/5BSD-libchannel",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "libchannel",
+    template = "//release/packages:ucl/libchannel-all.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["minimal", "minimal-jail"],
+    visibility = ["//packages:__pkg__"],
+)

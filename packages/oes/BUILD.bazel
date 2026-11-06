@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "oes",
+    template = "//release/packages:ucl/oes-all.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["minimal"],
+    license_logic = "multi",
+    dependencies = {"oes": ["libservice", "libfidl", "clibs"]},
+    visibility = ["//packages:__pkg__"],
+)

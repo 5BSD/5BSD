@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Library package family; test payloads belong to the separate libcapsulert-tests family.
@@ -89,3 +90,12 @@ bsd_pkg_dependency(name = "libcapsulert_dependency", package = "libcapsulert", o
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
 bsd_pkg_dependency(name = "libcapsulert-dev_dependency", package = "libcapsulert-dev", origin = "base/5BSD-libcapsulert-dev",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "libcapsulert",
+    template = "libcapsulert.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["minimal", "minimal-jail"],
+    visibility = ["//packages:__pkg__"],
+)

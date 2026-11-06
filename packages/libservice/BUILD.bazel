@@ -1,5 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
 
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "libservice-dev_dependency", package = "libservice-dev", origin = "base/5BSD-libservice-dev",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+bsd_pkg_family(
+    name = "family",
+    family = "libservice",
+    template = "libservice.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    sets = ["minimal", "minimal-jail"],
+    dependencies = {"libservice": ["libcapability", "libchannel"]},
+    visibility = ["//packages:__pkg__"],
+)
