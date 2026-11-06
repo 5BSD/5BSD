@@ -1,5 +1,31 @@
 # Native Bazel completion plan
 
+## Complete native Casper parent and original discovery repair (2026-11-06)
+
+Casper now composes all nine previously disconnected original test entry roots.
+Complete positive/negative parents match Make's 155/130 file/link records, all
+22/1 directory claims and 17/9 ELF/split-debug contracts. Original root Kyua
+discovery omitted the services subtree; the existing supplied-Kyuafile mechanism
+now includes its unchanged automatic dispatcher. Both installations list 65 cases
+across eight programs with matching per-program order and all 63 ATF metadata
+records. No production or test C bodies changed.
+
+Thirteen original ATF cases and two TAP programs pass; TAP retains 387 checked
+assertions without skips. The source helper is separate. Fifty original cases
+remain unexecuted here, including network and root/exclusive sysctl checks.
+The refreshed Make traversal preserves 326/442 directories and 66 entry roots;
+configured reachability is now 66/66, not a completion percentage or proof of
+complete payload/runtime coverage. All 231 negative archive output paths remain.
+See CASPER-PARENT-QUALIFICATION.md for exact captures and remaining gates.
+
+Next reconcile 25 recorded explicit directory-policy changes with original Make
+package claims, then finish complete library/world payload and runtime coverage.
+The global tests-enabled library guard and Make production default remain.
+World/kernel/modules/pkgbase/debug, normal-service VM, CPU/RAM/disk-I/O/footprint,
+bootstrap/output-query/cache/sandbox/reproducibility and verified combined
+base/hardware publication remain open. BIP stays excluded.
+
+
 ## Actual selected library test composition and fourteen missing parent edges (2026-11-06)
 
 The configured graph, not declaration presence, exposed fourteen existing test

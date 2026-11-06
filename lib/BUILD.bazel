@@ -43,7 +43,7 @@ _ARCHIVES = [
     "//lib/libcryptocmp:install_archive",
     "//lib/libdevicecmp:install_archive",
     "//lib/libcapsicum:installation_archives",
-    "//lib/libcasper:production_installation_archives",
+    "//lib/libcasper:installation_archives",
     "//lib/libchannel:install_archive",
     "//lib/libcompat:install_archive",
     "//lib/libcrypt:install_archive",

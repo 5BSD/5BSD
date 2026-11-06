@@ -12296,3 +12296,17 @@ their original body/probe/audit scope. No new live probe firing, audit delivery,
 service behavior or overhead is inferred from the larger construction. Casper and
 directory package-claim reconciliation remain explicit. See
 LIBRARY-TEST-PARENT-WIRING.md for actual graphs, captures and guard failure.
+
+## Native Casper complete installed test parent (2026-11-06)
+
+Native Casper/service sources and their DTrace providers are unchanged. Two
+original broker connection cases, eleven fileargs cases and two account TAP
+programs pass with native runtime bindings; TAP checks 387 assertions with no
+skips. Fifty original cases remain unexecuted. The root discovery correction uses
+a supplied original Kyua controller and includes the unchanged service dispatcher;
+it does not alter instrumentation or authentication semantics. DOF initialization
+is disabled for isolated execution, and separate trace-only loader checks do not
+prove per-body tracing, live provider firing, security audit delivery or overhead.
+Whole-system Capsule/service/SSH/PAM, cross-target and resource/performance gates
+remain explicit. See CASPER-PARENT-QUALIFICATION.md for Make payload/metadata
+parity, original discovery evidence and precise execution scope.

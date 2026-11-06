@@ -109,3 +109,6 @@ bsd_install_archive(
 
 load("//lib/libcasper:production.bzl", "casper_production_archive")
 casper_production_archive(name = "production_install_archive")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [":production_install_archive"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libcasper/services/cap_net/tests:installation_archives"], "//conditions:default": []}), visibility = ["//visibility:public"])

@@ -1,5 +1,9 @@
 # Selected library test parent wiring — AMD64
 
+This records the fourteen-parent checkpoint. Subsequent Casper integration reaches
+66/66 original entry roots and qualifies its own complete payload; see
+CASPER-PARENT-QUALIFICATION.md. The global library guard remains.
+
 ## What changed and what the counts mean
 
 The actual configured library composition selected production-only child labels

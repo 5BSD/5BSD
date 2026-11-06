@@ -1,0 +1,5 @@
+-- SPDX-License-Identifier: BSD-2-Clause
+syntax(2)
+test_suite("FreeBSD")
+atf_test_program{name="cap_main_test"}
+include("services/Kyuafile")

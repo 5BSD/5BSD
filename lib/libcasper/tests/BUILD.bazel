@@ -3,23 +3,27 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-cc_binary(name = "cap_main_test", srcs = ["cap_main_test.c"],
-    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libcasper/libcasper:casper", "//lib/libnv:nv"],
-    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libnv:nv_shared"],
-    local_defines = ["WITH_CASPER"], copts = ["-fPIE"], linkopts = ["-pie"],
-    target_compatible_with = _PLATFORM)
-[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":cap_main_test",
+load("@rules_cc//cc:defs.bzl", "cc_import")
+load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
+load("//lib/libc:test_policy.bzl", "libc_test_copts")
+cc_import(name = "atf_abi", shared_library = "//lib/atf/libatf-c:atf_c_shared", deps = ["//contrib/atf:c_headers"])
+cc_import(name = "casper_abi", shared_library = "//lib/libcasper/libcasper:casper_shared", deps = ["//lib/libcasper/libcasper:headers"])
+cc_import(name = "nv_abi", shared_library = "//lib/libnv:nv_shared", deps = ["//sys/sys:nv_headers"])
+bsd_link_sequence(name = "cap_main_link", deps = [":atf_abi", ":casper_abi", ":nv_abi", "//lib/libc:shared_abi_interface"])
+cc_binary(name = "cap_main_test", srcs = ["cap_main_test.c"], deps = [":cap_main_link"], defines = ["PIC", "WITH_CASPER"],
+    copts = libc_test_copts(6), linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
+[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":install_manifest_stripped",
     runner = "//tools/build/bazel:atf_runner",
     runtime_lib = ["//lib/libcasper/libcasper:casper_shared", "//lib/libnv:nv_shared",
         "//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"],
-    size = "medium") for case in ["many_connections", "connection_churn"]]
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"}, tags = ["external", "no-remote"],
+    body_timeout_seconds = 300, timeout = "long", size = "medium") for case in ["many_connections", "connection_churn"]]
 test_suite(name = "tests", tests = [":many_connections", ":connection_churn"], visibility = ["//visibility:public"])
 
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["cap_main_test"], interfaces = {"cap_main_test": "atf"})
-bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+bsd_install_file(name = "install_kyuafile", src = "Kyuafile",
     destination = "/usr/tests/lib/libcasper/Kyuafile", owner = "root", group = "wheel",
     mode = "0444", install_tags = ["package=tests"])
 utility_installation(name = "install_manifest", program = "cap_main_test", manual = None,
