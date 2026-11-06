@@ -7629,3 +7629,21 @@ preservation pass, with separate original Make libmd/gzip installation controls.
 This closes the recorded MAN inclusion gap, not complete independent world,
 pkgbase, installed-system, cross-target or resource qualification. Existing
 format-5 inputs select the setting; Make remains the production default.
+.Pp
+The explicit //packages:core_family_manifests target generates source-owned
+runtime, clibs, utilities, toolchain and bsdlog package-family UCL metadata
+using the maintained Lua generator.
+Existing format-5 targets and build-settings
+select it through bazel-test.
+Typed package_name_prefix, package_maintainer and
+package_www settings allow package identity overrides; package_version remains
+required.
+The debug_files setting currently controls only family metadata,
+not complete world debug payload selection.
+Existing tests, split_manpages and
+llvm_binutils settings control the declared family variants and dependencies.
+Two metadata profiles match all original Make manifests for these five families.
+This does not cover all world families or create, install or publish packages.
+The SDK interpreter is a Make-built bootstrap input; bootstrap, runtime and
+performance qualification remain open.
+Make remains production/default.

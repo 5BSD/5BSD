@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+bsd_pkg_family(
+    name = "family", family = "runtime", template = "common.ucl",
+    template_overrides = {"runtime": "runtime.ucl"},
+    ucl_variables = select({"@platforms//cpu:x86_64": {"CAP_MKDB_ENDIAN": "-l"}, "@platforms//cpu:aarch64": {"CAP_MKDB_ENDIAN": "-l"}, "@platforms//cpu:riscv64": {"CAP_MKDB_ENDIAN": "-l"}}),
+    subpackages = ["dbg", "dev", "man"],
+    vital = ["runtime"],
+    sets = ['minimal', 'minimal-jail'],
+    dependencies = {"runtime": ["switchboardctl", "libtimecmp", "libpowercmp", "libsysctlcmp", "libfidl", "libservice", "libchannel", "libucl", "libfilesystemcmp"]},
+    visibility = ["//packages:__pkg__"],
+)

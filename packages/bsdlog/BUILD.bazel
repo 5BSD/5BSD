@@ -3,3 +3,12 @@
 load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
 bsd_pkg_dependency(name = "bsdlog_dependency", package = "bsdlog", origin = "base/5BSD-bsdlog",
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+bsd_pkg_family(
+    name = "family", family = "bsdlog", template = "//release/packages:ucl/bsdlog-all.ucl",
+    sets = ['minimal'],
+    template_overrides = {"bsdlog": "bsdlog.ucl"},
+    dependencies = {"bsdlog": ["bsdaudit", "libauditcmp", "libcasper", "libchannel", "libfidl", "liblogcmp", "libservice", "libucl", "libshmring", "switchboard", "switchboardctl", "libfilesystemcmp"]},
+    visibility = ["//packages:__pkg__"],
+)

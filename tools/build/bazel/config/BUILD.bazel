@@ -841,3 +841,11 @@ config_setting(name = "rescue_enabled", flag_values = {":rescue": "true"}, visib
 # SSP test traversal; toolchain stack-protector policy is qualified separately.
 bool_flag(name = "ssp", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "ssp_enabled", flag_values = {":ssp": "true"}, visibility = ["//visibility:public"])
+
+# Pkgbase identity defaults mirror bsd.pkg.pre.mk; downstream builders may override.
+string_flag(name = "package_name_prefix", build_setting_default = "5BSD", visibility = ["//visibility:public"])
+string_flag(name = "package_maintainer", build_setting_default = "re@5bsd.org", visibility = ["//visibility:public"])
+string_flag(name = "package_www", build_setting_default = "https://github.com/5BSD/5BSD", visibility = ["//visibility:public"])
+bool_flag(name = "debug_files", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "debug_files_enabled", flag_values = {":debug_files": "true"}, visibility = ["//visibility:public"])
+selects.config_setting_group(name = "tests_and_debug_files_enabled", match_all = [":tests_enabled", ":debug_files_enabled"], visibility = ["//visibility:public"])

@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## First five source-owned package families match Make metadata (2026-11-06)
+
+The explicit //packages:core_family_manifests aggregate builds runtime, clibs,
+utilities, toolchain and bsdlog family metadata using declared native rules and
+the maintained Lua UCL generator. Typed package identity inputs are configurable.
+Two profiles pass the maintained frontend and source-settings test. All 14 default
+and 15 alternate manifests match complete decoded original Make metadata,
+including scripts/dependencies/sets/vital properties. Exact family coverage and
+effective Make options are checked. The comparison exposed seven unsupported
+lib32 variants; they and the invented compatibility flag were removed because
+source LIB32 is unconditionally broken. See CORE-PACKAGE-FAMILIES-QUALIFICATION.md.
+
+This is five families, not all 445 world buckets or package archive construction.
+The debug_files flag controls only family metadata for now; global debug payload
+selection remains open. Make-built static SDK flua does not close bootstrap.
+Existing format-5 frontend inputs handle the additive flags/targets; the manual
+is updated and stage/signing/publication contracts remain unchanged. NEXT:
+complete the remaining source-owned family declarations, reconcile them with the
+whole selected inventory and connect native whole-world pkg creation. Retain all
+world/kernel/module/debug/cross/bootstrap/cache/sandbox/reproducibility/resource/
+runtime/combined-publication gates. Make remains default; BIP stays out of scope.
+
 ## MAN=false source inclusion fixed and qualified (2026-11-06)
 
 Manual files/aliases are explicitly marked at their source-owned installation

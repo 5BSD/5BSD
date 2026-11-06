@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+bsd_pkg_family(
+    name = "family", family = "utilities", template = "common.ucl",
+    template_overrides = {"utilities": "utilities.ucl"},
+    ucl_variables = select({"@platforms//cpu:x86_64": {"CAP_MKDB_ENDIAN": "-l"}, "@platforms//cpu:aarch64": {"CAP_MKDB_ENDIAN": "-l"}, "@platforms//cpu:riscv64": {"CAP_MKDB_ENDIAN": "-l"}}),
+    subpackages = ["dbg", "dev", "man"],
+    extra_subpackages = select({"//tools/build/bazel/config:tests_enabled": ["tests"], "//conditions:default": []}) + select({"//tools/build/bazel/config:tests_and_debug_files_enabled": ["tests-dbg"], "//conditions:default": []}),
+    sets = ['minimal', 'minimal-jail'],
+    visibility = ["//packages:__pkg__"],
+)

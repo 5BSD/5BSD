@@ -8,3 +8,5 @@ bsd_pkg_dependency(name = "set-base_dependency", package = "set-base", origin = 
     version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
 
 exports_files(["ucl/libchannel-tests-all.ucl"], visibility = ["//packages/libchannel-tests:__pkg__"])
+
+exports_files(["ucl/bsdlog-all.ucl"], visibility = ["//packages/bsdlog:__pkg__"])

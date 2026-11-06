@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Initial source-owned families; this is not a complete world package endpoint.
+filegroup(name = "core_family_manifests", srcs = [
+    "//packages/runtime:family", "//packages/clibs:family", "//packages/utilities:family",
+    "//packages/toolchain:family", "//packages/bsdlog:family",
+], visibility = ["//visibility:public"])
