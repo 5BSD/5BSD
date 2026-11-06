@@ -1,27 +1,32 @@
 # Native Bazel completion plan
 
-## Current checkpoint: full install phase passes, reinstall retry pending (2026-11-06)
+## Current checkpoint: complete same-version pkg reinstall passes (2026-11-06)
 
-All 445 selected default AMD64 pkgbase archives build natively. Complete manifest
-parity against original Make packaging on the same native corpus and source-derived
-layout checks pass. The first real VM installation phase verifies all 32,512 files,
-1,369 directories, exact installed inventory and pkg checksums. The entire run
-remains FAIL: its 900-second case deadline interrupted reinstallation. No complete
-reinstall or normal installed-system acceptance is claimed.
+All 445 selected default AMD64 pkgbase packages now pass actual installation and
+same-version force reinstall in a 2GB disk-backed VM. Both phases verify all
+32,512 files and 1,369 directories with zero discrepancies; exact inventory, pkg
+checksums, site SSH configuration/account/data and generated metadata pass. Cleanup
+and poweroff pass. This is a bootstrapped-target chroot test, not normal startup
+or a real version upgrade. See WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md.
 
-A real cleanup bug is fixed: dedicated acquired reapers contain descendants that
-create separate sessions. Native harness/probe builds and actual normal-exit/
-expected-timeout VM regressions pass. The first direct-init attempt correctly
-failed its regression and is retained. See RUNTIME-REAPER-QUALIFICATION.md.
-The new complete package retry uses a new source-derived fixture, phase output,
-explicit command timeout and measured whole-case budget; final result is pending.
+The final provenance audit found that the passing full suite used the legacy
+helper because the new one was supplied under an unused alias. Exact fixture keys
+now reject that mistake. The native reaper's independent positive/expected-timeout
+VM tests pass; a corrected complete repeat is pending. Do not describe the older
+passing full suite as new-helper qualification.
 
-NEXT: finish same-version reinstall/state preservation; normal native system
-startup and login/PAM/SSH/capability services; genuine version upgrades; kernel/
-module installation/pkgbase closure; ARM64/RISC-V and independent world/debug/
-bootstrap/cache/sandbox/reproducibility/resource/combined-publication gates.
-Make remains production/default; BIP remains excluded. No host installation,
-upgrade, kernel/module loading or reboot is authorized or performed.
+The next kernel composition audit is recorded in KERNEL-PACKAGE-COMPOSITION-WORK.md.
+The matching TESTS-disabled profile selects 722 modules, all with native source
+descriptions; 729 was the earlier broader profile. Actual coherent kernel/module
+installation/pkgbase remains open. Original Make joins explicit oes/mac-abac module
+owners into world packages, so native composition must preserve that ownership.
+
+NEXT: finish the corrected-helper repeat; source-owned kernel module selection/
+installation/pkgbase composition; normal startup/login/PAM/SSH/capability services;
+genuine version upgrades; ARM64/RISC-V and independent world/debug/bootstrap/cache/
+sandbox/reproducibility/resource/combined-publication gates. Make remains production/
+default; BIP remains excluded. No host installation, upgrade, kernel/module loading
+or reboot is authorized or performed.
 
 ## Complete world dependency/conflict solver test passes (2026-11-06)
 

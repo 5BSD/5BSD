@@ -79,3 +79,11 @@ payload, state-preservation, failure or cleanup assertion. It is not performance
 acceptance. The retry remains pending. Normal startup, new-version upgrades and
 all full-system/platform/bootstrap/cache/sandbox/reproducibility/performance gates
 remain open. BIP remains excluded.
+
+Final provenance audit update: install-vm-r3 passes all installation/reinstallation
+checks, but its plan staged the new helper under an unused alias, leaving the
+legacy helper selected. It does not establish full-suite reaper qualification.
+The independent new-helper probe VMs above remain valid. Exact fixture keys now
+reject that plan, and the corrected install-vm-r4 repeat is pending. See
+WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md for passing payload/state evidence and
+the actual selected-helper hashes. No passing record is relabeled as a new-helper run.

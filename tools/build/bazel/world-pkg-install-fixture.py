@@ -22,6 +22,12 @@ def main():
     if out.exists() or not out.is_relative_to('/usr/obj/usr/src'):
         raise ValueError('new standard object-root output required')
     plan=json.loads(args.plan.read_text());assert plan['format']==1
+    # Exact interface consumed by run-vm.py, not the installed-world inventory.
+    required_fixtures={'tools/test/daemon-runtime/runtime_init',
+        'lib/libservice/tests/libservice_api_test',
+        'usr.sbin/BSDFilesystem/tests/namespace_test'}
+    if set(plan['bootstrap']['daemon_fixtures'])!=required_fixtures:
+        raise ValueError('exact VM harness fixture destinations required; unused aliases are not accepted')
     assert type(plan['epoch']) is int and plan['epoch']>=0
     assert type(plan['command_timeout_seconds']) is int and 0 < plan['command_timeout_seconds'] <= 86400
     receipt=json.loads((q/'receipt.json').read_text());assert receipt['status']=='passed'

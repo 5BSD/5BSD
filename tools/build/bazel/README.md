@@ -1,5 +1,14 @@
 # Bazel qualification
 
+## Complete same-version package reinstall passes (2026-11-06)
+
+All 445 packages pass real installation and reinstall inside a 2GB disk-backed VM,
+with all 32,512 payload paths and 1,369 directories verified twice. Site config,
+account and data survive. A provenance audit records that the full suite used the
+legacy helper; exact fixture keys now reject the unused alias, and a corrected
+new-helper repeat is pending. Normal startup/new-version upgrades remain open.
+See WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md and KERNEL-PACKAGE-COMPOSITION-WORK.md.
+
 ## VM descendant cleanup and interrupted install checkpoint (2026-11-06)
 
 The first complete 445-package install verifies all 32,512 payload paths and 1,369

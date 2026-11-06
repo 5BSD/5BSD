@@ -66,14 +66,14 @@ build-bsd bazel-test workflow. Then use the maintained assembler:
 
 ```sh
 /usr/local/bin/python3.12 /usr/src/tools/build/bazel/world-pkg-install-fixture.py \
-  --qualification /usr/obj/usr/src/bazel-world-pkg-layout-native-r4-20261106 \
-  --plan /usr/obj/usr/src/bazel-world-pkg-vm-request-r2-20261106/fixture-plan.json \
+  --qualification /usr/obj/usr/src/bazel-world-pkg-runtime-reaper-native-r1-20261106 \
+  --plan /usr/obj/usr/src/bazel-world-pkg-vm-request-r4-20261106/fixture-plan.json \
   --output /usr/obj/usr/src/NEW-fixture
 ```
 
 Use the existing tools/test/daemon-runtime/run-vm.py runner with the generated
 bootstrap tree, source/input disk hashes, a fresh work directory and the desired
-explicit resource limits; the retained vm-command.json is the exact tested model.
+explicit resource limits; the retained fixture-r5/vm-command.json is the exact current retry model.
 Changing inputs requires new output directories and fresh hashes, not reuse of an
 old passing receipt. No host mount, host package installation or publication occurs.
 
@@ -93,10 +93,52 @@ positive/negative tests. A fresh fixture-r4 and install-vm-r3 retry use explicit
 command_timeout_seconds=900, whole-case budget 1800 and outer deadline 2100;
 phase output and timeout logs are retained. See
 [RUNTIME-REAPER-QUALIFICATION.md](RUNTIME-REAPER-QUALIFICATION.md).
-Final installation/reinstallation acceptance remains pending. Even a pass would
+At that checkpoint installation/reinstallation acceptance remained pending. Even a pass would
 not establish a new-version upgrade, actual database schema compatibility, normal
 Capsule PID1 startup, login/PAM/SSH/service operation, native Bazel kernel boot,
 Secure Boot, verified boot or compromised-root protection. The fixture kernel is
 an explicitly selected matching Make-built GENERIC-NODEBUG kernel. Those complete
 system, architecture, bootstrap/cache/sandbox/reproducibility and performance gates
 remain required. BIP remains out of scope.
+
+## Passing install/reinstall and helper provenance audit
+
+install-vm-r3 is PASS, with all 445 packages installed and force reinstalled.
+Both passes check all 32,512 payload paths and 1,369 directories with zero errors;
+exact installed inventory, pkg checksums, local SSH configuration, the added account,
+construction metadata and the data sentinel pass. Cleanup and guest poweroff pass.
+This remains a same-version reinstall into a bootstrapped target, not a version
+upgrade, normal startup or actual database-schema migration.
+
+The independent final audit found that this run used the legacy Make-built helper:
+fixture-plan r3 added a new helper under unused key runtime_init while retaining
+the actual tools/test/daemon-runtime/runtime_init entry. This does not invalidate
+payload/state checks, but does not qualify the new reaper helper with the complete
+suite. Its separate normal/timeout regressions remain valid. The assembler now
+requires the exact three fixture destinations consumed by the VM harness, rejecting
+unused aliases before creating output. These are bootstrap test interfaces, not a
+hand-maintained list of programs in the installed world. The actual invalid plan
+is rejected in world-pkg-unused-helper-review-r1; the old plan/result are retained.
+
+All paths below are relative to /usr/obj/usr/src:
+
+- bazel-world-pkg-install-review-r1-20261106/review.json independently checks exact
+  complete package arguments, all report/check results, expected fixture inputs,
+  serial hashes, read-only input/source invariance, clean shutdown and resource
+  bounds. It explicitly records the legacy-helper limitation.
+  SHA256 a6baea2b2af6217d3cad4cb03f6e242b3f473662a9bc19a8bc9319d8f34d7413
+- install-vm-r3/result.json SHA256
+  710d68f41b671d824c6b0c0ad28ce80b089618ec1e389daee8bbcb1e433098d8
+- The extracted checker-report.json SHA256
+  2a98373743d3db359ccb29f13ea0e4f4973a1fae399584108976a4497e9a1217
+- Elapsed host-observed VM time is 592.265 seconds. Sampled peak QEMU RSS is
+  2,456,690,688 bytes (3GB enforced ceiling); last sampled CPU time 1,066.23 seconds.
+  These exclude host page cache and between-sample peaks and are not controlled
+  performance acceptance. Input/target disks stay disk-backed with 2GB guest RAM.
+- New fixture-plan r4 and fixture-r5 correct the helper destination. Its
+  helper-selection.json binds the actual runner helper to immutable native SHA256
+  90bab493612594a96ec6d7b4b8b856f9557788b8227217dacf2f10a739448a40.
+  The complete install-vm-r4 repeat is pending with that correctly selected helper.
+
+The current reproduction command above uses the corrected plan. No host package
+installation, publication, kernel loading, upgrade or reboot occurred.
