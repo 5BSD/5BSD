@@ -53,6 +53,7 @@ add_testcase()
 {
 	local tc=${1}
 	local tc_escaped
+	local xo_fmt=
 
 	oldIFS=$IFS
 	IFS='.'

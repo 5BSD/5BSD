@@ -14,14 +14,12 @@ bsd_install_archive_set(
     target_compatible_with = _PLATFORM,
     visibility = ["//visibility:public"],
 )
-# The original installed functional suite and fixtures remain to be migrated.
-# Production coverage must not silently stand in for tests-enabled installation.
 bsd_install_archive_set(
     name = "installation_archives",
-    archives = _PRODUCTION,
-    target_compatible_with = _PLATFORM + select({
-        "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
+    archives = _PRODUCTION + select({
+        "//tools/build/bazel/config:tests_enabled": ["//lib/libxo/tests:installation_archives"],
         "//conditions:default": [],
     }),
+    target_compatible_with = _PLATFORM,
     visibility = ["//visibility:public"],
 )

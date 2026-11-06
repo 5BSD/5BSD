@@ -1,5 +1,26 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 libxo test and parent construction (2026-11-06)
+
+All eleven original core programs, test encoder and 206 saved output/error files
+build natively. All 233 test records and twelve ELF/debug contracts match Make.
+The complete tests-enabled production/test parent builds four archives and
+matches all 324 Make records and 293 non-ELF/non-archive payload bytes, including
+manual hardlinks. All 92 non-encoder bodies pass; eleven absolute-path encoder
+cases remain disposable-system work. A shared original harness fix makes all
+103 registrations unique and exposes four stale default-text references; five
+references are corrected from existing explicit-text expectations, after source
+review and unchanged native/Make output identity. Retained failures and final
+bindings are in LIBXO-TEST-QUALIFICATION.md.
+
+One more initial missing declaration root closes, leaving three: ATF C tests,
+ATF parent and libbe tests. Nested/existing roots still require closure. Continue
+full tests-enabled world assembly, independent world/kernel/module/pkgbase/debug,
+normal-service VM acceptance, CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/
+reproducibility and verified combined publication, filling ARM64/RISC-V gaps
+alongside shared work. Full-world tests guards stay where children are incomplete;
+Make remains default; BIP excluded; no host installation/upgrade/reboot.
+
 ## Complete selected AMD64 libarchive test construction (2026-11-06)
 
 All 356 original translation units, 446 reference files and 450 installation

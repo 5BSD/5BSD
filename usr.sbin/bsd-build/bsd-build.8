@@ -7366,3 +7366,13 @@ Three original in-memory cases pass with no skips and Make-matching assertion
 counts. The remaining 833 library cases, ATF wrapper, other architectures and
 full installed-system acceptance remain separate gates. Existing format-5 inputs
 express these targets; the production backend and signing policy do not change.
+.Pp
+The explicit AMD64 libxo tests provide all eleven original core programs,
+206 saved output/error files and the test encoder at its original installed path.
+All 233 test records and twelve ELF/debug contracts match Make; the complete
+tests-enabled libxo parent matches 324 installation records.
+All 92 non-encoder cases pass with native tools/libraries and declared locales.
+Eleven encoder cases still require a disposable installed system to exercise
+the absolute plugin path. A shared harness repair removes duplicate case names;
+stale default-text references now match existing explicit-text expectations.
+These use existing format-5 inputs and do not establish full system acceptance.

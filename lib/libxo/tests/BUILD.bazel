@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load(":sources.bzl", "PROGRAMS", "REFERENCE_FILES")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_DIRECTORY = "/usr/tests/lib/libxo"
+# Original WARNS=1. Optimization, SSP, debug and target ABI belong to the toolchain.
+_COPTS = ['-pipe',
+ '-fno-common',
+ '-fPIE',
+ '-std=gnu17',
+ '-Wno-format-zero-length',
+ '-Wsystem-headers',
+ '-Werror',
+ '-Wno-pointer-sign',
+ '-Wdate-time',
+ '-Wno-empty-body',
+ '-Wno-string-plus-int',
+ '-Wno-unused-const-variable',
+ '-Wno-error=unused-but-set-parameter',
+ '-Wno-error=cast-function-type-mismatch',
+ '-Wno-tautological-compare',
+ '-Wno-unused-value',
+ '-Wno-parentheses-equality',
+ '-Wno-unused-function',
+ '-Wno-enum-conversion',
+ '-Wno-unused-local-typedef',
+ '-Wno-address-of-packed-member',
+ '-Wno-switch',
+ '-Wno-switch-enum',
+ '-Wno-knr-promoted-parameter',
+ '-Wno-parentheses',
+ '-Qunused-arguments']
+cc_import(name = "xo_interface", shared_library = "//lib/libxo/libxo:xo_shared", deps = ["//contrib/libxo:core_test_headers"])
+cc_import(name = "util_interface", shared_library = "//lib/libutil:util_shared")
+[cc_binary(name = program, srcs = ["//contrib/libxo:tests/core/" + program + ".c"],
+    deps = [":xo_interface", ":util_interface", "//lib/libc:shared_abi_interface", "//lib/libxo/libxo:configuration"],
+    copts = _COPTS, linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
+ for program in PROGRAMS]
+[utility_installation(name = program + "_install", program = program, manual = None, package = "tests", bindir = _DIRECTORY)
+ for program in PROGRAMS]
+bsd_script_wrapper(name = "functional_test", body = "functional_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "script_entry", src = ":functional_test", destination = _DIRECTORY + "/functional_test",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+[bsd_install_file(name = "reference_" + str(index), src = "//contrib/libxo:tests/core/saved/" + source, destination = _DIRECTORY + "/" + source,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+ for index, source in enumerate(REFERENCE_FILES)]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["functional_test"], interfaces = {"functional_test": "atf"})
+bsd_install_file(name = "kyuafile_entry", src = ":kyuafile", destination = _DIRECTORY + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":" + n + "_install" for n in PROGRAMS],
+    entries = [":script_entry", ":kyuafile_entry"] + [":reference_" + str(i) for i in range(len(REFERENCE_FILES))], visibility = ["//visibility:public"])
+bsd_test_install_archive(name = "install_archive", directory = _DIRECTORY, manifests = [":install_manifest"], debug = True)
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive", "//lib/libxo/tests/encoder:install_archive"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# The encoder's absolute installed discovery path needs disposable-system tests.
+# All remaining original saved-output cases use the same maintained shell body as Make.
+_NON_ENCODER_CASES = [n[:-4].replace(".", "__") for n in REFERENCE_FILES if n.endswith(".out") and not n.endswith(".E.out")]
+_TOOLS = ["//bin/sh:sh", "//bin/cat:cat", "//bin/rm:rm", "//bin/test:test", "//usr.bin/env:env", "//usr.bin/find:find",
+    "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff",
+    "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check"]
+_LIBS = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared"]
+[bsd_atf_test(name = "native_" + case, case_name = case, body = "functional_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner",
+    runtime_bin = _TOOLS, runtime_lib = _LIBS,
+    data = [":" + n + "_install_stripped" for n in PROGRAMS] + ["//contrib/libxo:tests/core/saved/" + n for n in REFERENCE_FILES],
+    locale_files = {"//share/ctypedef:C.UTF-8": "en_US.UTF-8/LC_CTYPE", "//share/colldef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_COLLATE", "//share/monetdef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_MONETARY", "//share/msgdef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_MESSAGES", "//share/numericdef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_NUMERIC", "//share/timedef:en_US.UTF-8": "en_US.UTF-8/LC_TIME"},
+    body_timeout_seconds = 300,
+    target_compatible_with = _PLATFORM,
+    size = "small", timeout = "long") for case in _NON_ENCODER_CASES]
+test_suite(name = "tests_non_encoder", tests = [":native_" + case for case in _NON_ENCODER_CASES], visibility = ["//visibility:public"])

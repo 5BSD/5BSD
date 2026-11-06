@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-cc_library(name = "configuration", hdrs = ["xo_config.h"], strip_include_prefix = ".", visibility = ["//usr.bin/xo:__pkg__"])
+cc_library(name = "configuration", hdrs = ["xo_config.h"], strip_include_prefix = ".", visibility = ["//usr.bin/xo:__pkg__", "//lib/libxo/tests:__subpackages__"])
 cc_library(name = "xo", srcs = ["//contrib/libxo:libxo/libxo.c", "//contrib/libxo:libxo/xo_encoder.c", "//contrib/libxo:libxo/xo_syslog.c"],
     deps = ["//contrib/libxo:headers", "//lib/libutil:util"],
     implementation_deps = [":configuration", "//contrib/libxo:internal_headers"],

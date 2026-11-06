@@ -12177,3 +12177,15 @@ DTRACE_DOF_INIT_DISABLE is explicit during these host checks. No live provider
 firing, security-audit delivery or new test-fixture probe deficit is claimed.
 LIBARCHIVE-TEST-QUALIFICATION.md records complete installation/registry/cache
 controls and remaining suite, architecture and normal-system acceptance gates.
+
+## Original libxo tests and encoders (2026-11-06)
+
+Implementation and provider sources remain unchanged. The native test graph
+preserves the actual dynamically loaded encoder and its original absolute
+installed symlink rather than replacing discovery for host tests. All 92
+non-encoder saved-output bodies pass; eleven encoder runtime cases remain
+installed-system work. An original shared harness bug concealed four default
+text cases through duplicate XP names; resetting the per-invocation format and
+restoring stale references from existing explicit-text expectations repairs both
+build systems. No new live DTrace firing or audit-delivery evidence is claimed.
+See LIBXO-TEST-QUALIFICATION.md for final bindings and open system/cross gates.

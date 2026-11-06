@@ -1,38 +1,38 @@
-Item        Total Sold    In Stock    On Order  SKU
-gum               1412          54          10  GRO-000-415
-rope                85           4           2  HRD-000-212
-ladder               0           2           1  HRD-000-517
-bolt              4123         144          42  HRD-000-632
-water               17          14           2  GRO-000-2331
-
-
-Item 'gum':
-   Total sold: 1412.0
-   In stock: 54
-   On order: 10
-   SKU: GRO-000-415
-Item 'rope':
-   Total sold: 85.0
-   In stock: 4
-   On order: 2
-   SKU: HRD-000-212
-Item 'ladder':
-   Total sold: 0
-   In stock: 2
-   On order: 1
-   SKU: HRD-000-517
-Item 'bolt':
-   Total sold: 4123.0
-   In stock: 144
-   On order: 42
-   SKU: HRD-000-632
-Item 'water':
-   Total sold: 17.0
-   In stock: 14
-   On order: 2
-   SKU: GRO-000-2331
-Item 'fish':
-   Total sold: 1321.0
-   In stock: 45
-   On order: 1
-   SKU: GRO-000-533
+em0  em0  We are {emit}{ting} some braces
+abcdef
+abcdef: Bad file descriptor
+improper use of profanity; ten yard penalty; first down
+length abcdef
+close -1 returned Bad file descriptor good
+close -1 returned Bad fi good
+improper use of profanity; ten yard penalty; first down
+      20      30      40 file
+0 bytes
+1 byte
+2 bytes
+3 bytes
+4 bytes
+Low/warn granularity:	155 mAh
+10/20/30 mbufs <&> in use (current/cache/total)
+50 miles from Boston
+64k left out of 640kb
+64k left out of 640kilobytes
+beforeworkingafter:
+string: 1011
+1010 packets here/there/everywhere
+1010 packets here/there/everywhere
+(                     15/20/125)
+(                     15/20/125)
+(15/20/125                     )
+(15/20/125                     )
+Humanize: 21, 57 K, 96M, 44M, 1.2G
+one two three
+(null)
+1:  1000 2:test5000     3:  ten-longx 4:xtest      
+this is an error
+two more errors
+this is an warning
+two more warnings
+V1/V2 packets: 10
+0004 tries
+improper use of profanity; ten yard penalty; first down

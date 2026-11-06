@@ -36,7 +36,7 @@ def bsd_tap_installation(name, directory, programs, fixtures = [], metadata = {}
     bsd_install_manifest(name = name + "_manifest", entries = entries, visibility = ["//visibility:public"])
     bsd_test_install_archive(name = name + "_archive", directory = directory, manifests = [":" + name + "_manifest"])
 
-def bsd_test_install_archive(name, directory, manifests, debug = False):
+def bsd_test_install_archive(name, directory, manifests, debug = False, visibility = ["//usr.bin:__subpackages__"]):
     """Archive a suite; compiled debug payloads require their ancestor policy."""
     directories = {directory: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]})}
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"}
@@ -49,4 +49,4 @@ def bsd_test_install_archive(name, directory, manifests, debug = False):
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
         python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
         runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
-        visibility = ["//usr.bin:__subpackages__"])
+        visibility = visibility)

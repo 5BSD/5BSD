@@ -46,3 +46,10 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 exports_files(["encoder/csv/enc_csv.c"], visibility = ["//lib/libxo/encoder/csv:__pkg__"])
 bsd_source_headers(name = "csv_headers", hdrs = ["libxo/xo.h", "libxo/xo_encoder.h", "libxo/xo_buf.h"],
     includes = ["libxo"], visibility = ["//lib/libxo/encoder/csv:__pkg__"])
+
+load("//lib/libxo/tests:sources.bzl", CORE_PROGRAMS = "PROGRAMS", CORE_REFERENCE_FILES = "REFERENCE_FILES")
+exports_files(["tests/core/" + n + ".c" for n in CORE_PROGRAMS] + ["tests/core/saved/" + n for n in CORE_REFERENCE_FILES],
+    visibility = ["//lib/libxo/tests:__pkg__"])
+exports_files(["encoder/test/enc_test.c"], visibility = ["//lib/libxo/tests/encoder:__pkg__"])
+bsd_source_headers(name = "core_test_headers", hdrs = ["libxo/xo.h", "libxo/xo_encoder.h", "libxo/xo_humanize.h", "libxo/xo_wcwidth.h"], includes = ["libxo"],
+    visibility = ["//lib/libxo/tests:__subpackages__"])

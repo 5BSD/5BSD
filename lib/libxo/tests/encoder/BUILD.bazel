@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+load("//lib/libc:test_policy.bzl", "libc_test_copts")
+cc_import(name = "xo_interface", shared_library = "//lib/libxo/libxo:xo_shared")
+cc_library(name = "encoder_objects", srcs = ["//contrib/libxo:encoder/test/enc_test.c"],
+    deps = ["//contrib/libxo:core_test_headers", "//lib/libxo/libxo:configuration", ":xo_interface"],
+    copts = [f for f in libc_test_copts(6) if f not in ["-fPIE", "-Wno-uninitialized"]],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], linkstatic = True)
+cc_shared_library(name = "encoder", deps = [":encoder_objects"],
+    shared_lib_name = "libenc_test.so", user_link_flags = ["-Wl,-soname,libenc_test.so", "-Wl,-x", "-Wl,--fatal-warnings,--warn-shared-textrel"])
+bsd_debug_split(name = "debug_split", src = ":encoder", binary_name = "installed/libenc_test.so", debug_name = "installed/libenc_test.so.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
+bsd_strip_binary(name = "stripped", src = ":debug_split", output = "stripped/libenc_test.so",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
+filegroup(name = "debug_file", srcs = [":debug_split"], output_group = "debug_files")
+bsd_install_file(name = "plugin_file", src = ":stripped", destination = "/usr/tests/lib/libxo/libenc_test.so",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_file(name = "symbols_file", src = ":debug_file", destination = "/usr/lib/debug/usr/tests/lib/libxo/libenc_test.so.debug",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests", "dbg"])
+bsd_install_link(name = "plugin_link", destination = "/usr/lib/libxo/encoder/test.enc", target = "/usr/tests/lib/libxo/libenc_test.so",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":plugin_file", ":symbols_file", ":plugin_link"])
+bsd_test_install_archive(name = "install_archive", directory = "/usr/tests/lib/libxo", manifests = [":install_manifest"], debug = True, visibility = ["//lib/libxo/tests:__pkg__"])
