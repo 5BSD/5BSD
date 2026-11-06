@@ -5700,6 +5700,13 @@ The independent
 inspector accepts
 .Fl Fl relocatable-metadata
 for explicit amd64 object metadata and symbol-relative patched-site checks.
+Repeated
+.Fl Fl symbol-object
+inputs select explicit companion archive objects for relocatable metadata.
+Each external probe alias must have exactly one actual matching definition;
+ambiguous definitions and duplicate input paths are rejected. The existing
+.Fl Fl symbols
+single-file interface remains available. These forms are mutually exclusive.
 Its default linked-image requirement is unchanged; this mode cannot claim
 linked load addresses or live probe firing.
 The existing format-5 target/test API runs its regression.

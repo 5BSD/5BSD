@@ -31,10 +31,17 @@ Evidence under /usr/obj/usr/src:
 | Ordered dynamic dependencies | 2 | libnotify DSO and libsysdecode test: dependency sets match but load order differs. Preserve source-owned ordering and interposition behavior. |
 | Path-derived DTrace symbols | 4 | libcapsulert, libchannel, libservice, libshmring archives: all observed changed symbol records are generated $dtrace<key> aliases. Raw comparisons remain failed. Validate actual DOF/function/relocation/site correspondence before accepting semantic equivalence; do not strip these symbols or weaken the comparator. |
 
+Follow-up actual-member validation now passes for the four DTrace archives:
+5 provider records, 46 matching schemas and 63 independently validated ordinary
+sites on each side; all non-DTrace member symbols and archive orders match.
+Raw symbol failures remain retained, and static-consumer/live-tracing behavior is
+not proved. See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and
+bazel-library-static-dtrace-review-r1-20261106 for the companion-object bindings.
+
 The separate libfidl actual-object check establishes matching 19 schemas and 26
 patched sites on both sides while retaining its archive-order/raw-symbol
-limitations. See LIBFIDL-BINARY-QUALIFICATION.md. This does not qualify the other
-four archives' DOF bindings. No original bodies execute in this cohort comparison.
+limitations. See LIBFIDL-BINARY-QUALIFICATION.md. The follow-up above qualifies the other four archives' DOF bindings only.
+No original bodies execute in these comparisons.
 
 ## Ordering and integration
 

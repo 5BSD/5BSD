@@ -1,5 +1,57 @@
 # Explicit relocatable DTrace metadata inspection
 
+## Explicit archive companion objects (2026-11-06)
+
+Repeated `--symbol-object CODE` inputs now select multiple actual companion
+objects for `--relocatable-metadata`. They are mutually exclusive with the existing
+single-file `--symbols` option; linked inspection and linked site validation keep
+their existing interfaces. Empty selections, duplicate canonical paths and
+ambiguous matching alias definitions fail. Defined provider symbols still bind
+to their own object. No alias names or executable bytes are rewritten.
+
+Each undefined function alias must resolve uniquely across the explicitly supplied
+actual object symbol tables. Existing binding/type/visibility/function bounds,
+relocation and patched-site checks apply to that actual owner. The report binds
+all companion object hashes and each selected owner's hash. The old single-file
+`symbols` report field remains available for one companion; multi-object reports
+use `symbol_objects`. This is offline inspection, with no runtime overhead.
+
+Thirty host regression methods pass, including multi-object exact matching,
+ambiguous definitions, duplicate/empty selections, tampered actual code, repeated
+CLI arguments, incompatible CLI modes and the existing single-object controls.
+The normal maintained Bazel test is queued behind the active full-library frontend
+in bazel-reference-tool-variables-request-r1-20261106; it has not passed yet.
+Existing BUILD data dependencies already declare the inspector. The frontend
+manual documents the new diagnostic option; the C/frontend schema/signing and
+production compiler action inputs are unchanged.
+
+The actual four archives flagged by the independent binary comparison now pass
+schema and patched-site inspection against every actual companion member on both
+native and original Make sides:
+
+| Component | Provider records | Probe schemas | Ordinary sites | Enabled sites |
+| --- | ---: | ---: | ---: | ---: |
+| libcapsulert | 1 | 3 | 3 | 0 |
+| libchannel | 1 | 19 | 24 | 0 |
+| libservice | 2 | 7 | 9 | 0 |
+| libshmring | 1 | 17 | 27 | 0 |
+
+All four original/native archive member orders match. All changed member symbol
+records are generated DTrace aliases, and each is present in the corresponding
+actual validated DOF bindings. Every non-DTrace member symbol matches. The report
+retains all raw differences rather than altering the strict archive comparator.
+It does not recompute path hashes or establish raw byte/symbol equality, final
+static-consumer extraction, registration or live firing. Other binary mismatches
+from the 23-parent cohort remain open.
+
+Evidence: /usr/obj/usr/src/bazel-library-static-dtrace-review-r1-20261106 contains
+the audit source, captured native archives, exact extracted original/native
+members, full DOF inventories and hash-bound comparison report. The original
+failing strict comparisons remain in
+bazel-library-directory-binary-review-r1-20261106. Make remains default; BIP is
+excluded. Full-system gates remain unchanged.
+
+
 ## Interface and scope
 
 `dtrace-dof-inventory.py --relocatable-metadata --binary OBJECT [--symbols CODE]`

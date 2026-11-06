@@ -18,7 +18,14 @@ class RelocatableDof:
     """Resolve amd64 ET_REL DOF sites against actual function symbols and bytes."""
     def __init__(self, path, symbols=None):
         self.object = self.read(path)
-        self.symbols = self.object if symbols is None else self.read(symbols)
+        if isinstance(symbols, (list, tuple)):
+            if not symbols or any(not isinstance(p, Path) for p in symbols):
+                raise ValueError('nonempty explicit symbol object paths required')
+            if len({p.resolve(strict=True) for p in symbols}) != len(symbols):
+                raise ValueError('duplicate symbol object path')
+            self.symbol_sources = [self.read(p) for p in symbols]
+        else:
+            self.symbol_sources = [self.object if symbols is None else self.read(symbols)]
         self.bindings = []
 
     @staticmethod
@@ -86,15 +93,16 @@ class RelocatableDof:
         if (relocation['kind'], user_kind) not in ((24, 2), (1, 1)) or relocation['addend']:
             raise ValueError('unsupported DOF ELF/user relocation semantics')
         reference = relocation['symbol']
-        owner = self.symbols if reference['section'] == 0 else self.object
+        owners = self.symbol_sources if reference['section'] == 0 else [self.object]
         alias = re.fullmatch(r'\$dtrace([0-9]*)\.(.+)', reference['name'])
         if alias is None or alias[2] != function:
             raise ValueError('DOF relocation does not name its actual function alias')
-        matches = [symbol for table in owner['tables'].values() for symbol in table
+        matches = [(owner, symbol) for owner in owners
+                   for table in owner['tables'].values() for symbol in table
                    if symbol['name'] == reference['name'] and symbol['section'] not in (0, 0xfff1)]
         if len(matches) != 1:
             raise ValueError('DOF function requires one defined matching object symbol')
-        symbol = matches[0]
+        owner, symbol = matches[0]
         # dt_link.c gives strong aliases a per-object key; weak aliases retain
         # one shared name so the linker can merge them. Both must stay hidden.
         expected_binding = 1 if alias[1] else 2
@@ -263,8 +271,13 @@ def inventory(path, relocatable=False, symbols=None):
             raise ValueError('unconsumed DOF ELF relocation')
         result['relocatable_metadata'] = {
             'scope': 'amd64 ET_REL schemas, symbol-relative locations and patched bytes; no load addresses, registration or live firing',
-            'symbols': {'path': resolver.symbols['path'], 'sha256': resolver.symbols['sha256']},
+            'symbol_objects': [{'path': obj['path'], 'sha256': obj['sha256']}
+                               for obj in resolver.symbol_sources],
             'bindings': resolver.bindings}
+        if len(resolver.symbol_sources) == 1:
+            obj = resolver.symbol_sources[0]
+            result['relocatable_metadata']['symbols'] = {
+                'path': obj['path'], 'sha256': obj['sha256']}
     return result
 
 
@@ -332,11 +345,17 @@ if __name__ == '__main__':
     p.add_argument('--check-amd64-sites', action='store_true')
     p.add_argument('--relocatable-metadata', action='store_true',
                    help='inspect amd64 ET_REL metadata with actual object symbol/site bindings; no load addresses')
-    p.add_argument('--symbols', type=Path)
+    symbol_selection = p.add_mutually_exclusive_group()
+    symbol_selection.add_argument('--symbols', type=Path)
+    symbol_selection.add_argument('--symbol-object', type=Path, action='append',
+                                  help='explicit companion object; repeat for archive members in relocatable mode')
     a = p.parse_args()
     if a.relocatable_metadata and a.check_amd64_sites:
         p.error('relocatable metadata does not establish linked load addresses')
-    result = inventory(a.binary, relocatable=a.relocatable_metadata, symbols=a.symbols)
+    if a.symbol_object and not a.relocatable_metadata:
+        p.error('--symbol-object requires --relocatable-metadata')
+    result = inventory(a.binary, relocatable=a.relocatable_metadata,
+                       symbols=a.symbol_object if a.symbol_object else a.symbols)
     if a.check_amd64_sites:
         result['site_checks'] = validate_amd64_sites(a.binary, a.symbols or a.binary, result)
     with a.output.open('x') as stream:

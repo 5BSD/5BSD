@@ -12346,3 +12346,17 @@ member ordering differs and awaits correction after live full-library controls.
 This establishes metadata/site coverage only, not live registration/firing or
 static-consumer behavior. Evidence: bazel-library-fidl-dtrace-review-r1-20261106
 under /usr/obj/usr/src. See LIBFIDL-BINARY-QUALIFICATION.md for companion ELF results.
+
+
+## 2026-11-06 four static archive providers bound to actual companion members
+
+libcapsulert/libchannel/libservice/libshmring native and original Make archives
+validate 5 provider records, 46 matching probe schemas and 63 ordinary patched
+sites on each side. The inspector accepts explicit actual companion objects and
+rejects ambiguous definitions/duplicate inputs. Each changed generated alias
+belongs to an actual validated binding; every non-DTrace symbol and archive
+member order matches. Raw strict symbol failures remain retained, not normalized
+away. No final static extraction, registration or live firing claim is made.
+Thirty host regressions pass; maintained Bazel validation is queued, not passed.
+See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and the hash-bound actual members
+in /usr/obj/usr/src/bazel-library-static-dtrace-review-r1-20261106.

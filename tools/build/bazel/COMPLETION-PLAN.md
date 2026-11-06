@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Four flagged static DTrace archives inspected against actual members (2026-11-06)
+
+The independent inspector now accepts explicit repeated companion objects and
+rejects ambiguous definitions and duplicate inputs while preserving all existing
+relocation/function/site checks. Thirty host regressions pass; its normal Bazel
+regression is added to the already queued frontend validation and remains pending.
+The manual is updated; existing BUILD data, format-5 and C/frontend inputs suffice.
+No active library compiler/action or original Make-control input is changed.
+
+Actual native/Make libcapsulert, libchannel, libservice and libshmring archives
+validate five provider records, 46 matching schemas and 63 patched ordinary sites
+on each side. All non-DTrace member symbols and archive orders match. Every raw
+changed alias occurs in an actual validated DOF/function binding. Original strict
+symbol failures are retained; raw equivalence, path-hash recomputation, static
+extraction and live tracing remain unqualified. Other installation/linkage/order
+mismatches remain open. See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and
+bazel-library-static-dtrace-review-r1-20261106 under /usr/obj/usr/src.
+
+
 ## Real binary comparison finds additional gaps in 23 library parents (2026-11-06)
 
 The entire previously completed positive 23-parent directory cohort now has an

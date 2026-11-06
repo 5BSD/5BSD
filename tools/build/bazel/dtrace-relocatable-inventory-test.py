@@ -140,6 +140,67 @@ class RelocatableInventoryTests(unittest.TestCase):
                                    symbols=self.object('code.o'))
         self.assertEqual(len(result['relocatable_metadata']['bindings']), 1)
 
+    def test_multiple_real_companions_resolve_exact_alias(self):
+        code = self.object('code.o')
+        other = self.object('other.o', alias='$dtrace124.fn')
+        result = checker.inventory(self.object(defined=False), relocatable=True,
+                                   symbols=[other, code])
+        metadata = result['relocatable_metadata']
+        self.assertEqual(len(metadata['symbol_objects']), 2)
+        self.assertNotIn('symbols', metadata)
+        self.assertEqual(metadata['bindings'][0]['symbol_source_sha256'],
+                         checker.RelocatableDof.read(code)['sha256'])
+
+    def test_ambiguous_companion_alias_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'one defined matching object symbol'):
+            checker.inventory(self.object(defined=False), relocatable=True,
+                              symbols=[self.object('left.o'), self.object('right.o')])
+
+    def test_duplicate_companion_path_is_rejected(self):
+        code = self.object('code.o')
+        with self.assertRaisesRegex(ValueError, 'duplicate symbol object path'):
+            checker.inventory(self.object(defined=False), relocatable=True,
+                              symbols=[code, code])
+
+    def test_empty_companion_selection_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'nonempty explicit symbol object paths'):
+            checker.inventory(self.object(defined=False), relocatable=True, symbols=[])
+
+    def test_multiple_companions_do_not_hide_bad_actual_code(self):
+        with self.assertRaisesRegex(ValueError, 'bounded NOP/RET'):
+            checker.inventory(self.object(defined=False), relocatable=True,
+                              symbols=[self.object('bad.o', bad_patch=True),
+                                       self.object('other.o', alias='$dtrace124.fn')])
+
+    def test_cli_accepts_explicit_companion_objects(self):
+        provider = self.object(defined=False)
+        code = self.object('code.o')
+        other = self.object('other.o', alias='$dtrace124.fn')
+        output = self.root / 'result.json'
+        result = subprocess.run([sys.executable, str(Path(checker.__file__)),
+            '--binary', str(provider), '--output', str(output),
+            '--relocatable-metadata', '--symbol-object', str(other),
+            '--symbol-object', str(code)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.is_file())
+
+    def test_cli_rejects_companion_objects_without_relocatable_mode(self):
+        result = subprocess.run([sys.executable, str(Path(checker.__file__)),
+            '--binary', str(self.object()), '--output', str(self.root / 'result.json'),
+            '--symbol-object', str(self.object('code.o'))], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('requires --relocatable-metadata', result.stderr)
+        self.assertFalse((self.root / 'result.json').exists())
+
+    def test_cli_rejects_mixed_symbol_selection(self):
+        code = self.object('code.o')
+        result = subprocess.run([sys.executable, str(Path(checker.__file__)),
+            '--binary', str(self.object()), '--output', str(self.root / 'result.json'),
+            '--relocatable-metadata', '--symbols', str(code),
+            '--symbol-object', str(code)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse((self.root / 'result.json').exists())
+
     def test_companion_with_different_alias_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'one defined matching object symbol'):
             checker.inventory(self.object(defined=False), relocatable=True,
