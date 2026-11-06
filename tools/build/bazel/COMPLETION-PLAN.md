@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 libc test parent and SSP (2026-11-06)
+
+The complete selected libc test parent now builds 31 installation archives.
+A fresh original Make parent confirms all 870 original records against 872 native
+records, exact 106 scripts/fixtures/Kyuafiles and original directory contracts.
+All 375 common executables and five DSOs pass independent ELF/debug-link review.
+The two additions are the native-built sanitizer helper and its debug file;
+independent positive-runtime Make comparison remains open. All 19 original SSP
+cases pass (plus one source-settings helper); no skips. The all-disabled optional
+profile builds 28 archives/772 records and matches actual Make traversal queries.
+Retained failed audits and exact bounds: LIBC-TEST-PARENT-QUALIFICATION.md.
+
+Drive AMD64 system-wide completion next: compose remaining base installed-test
+parents, independent assembled-world/kernel/module/debug/pkgbase closure, then
+normal-system boot/services and comparative CPU/RAM/disk-I/O/footprint, bootstrap,
+cache/sandbox/reproducibility and combined publication. Fill ARM64/RISC-V gaps in
+shared work as encountered; neither cross platform nor AMD64 system acceptance
+is complete. Do not remove the full-tests guards until their whole scope is
+covered. Make stays production/default; BIP excluded; no host upgrade/reboot.
+
 ## Original AMD64 iconv installation (2026-11-06)
 
 The program, separate debug file and Kyuafile now match all three original Make

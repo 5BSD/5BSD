@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['h_fgets.c', 'h_getcwd.c', 'h_gets.c', 'h_memcpy.c', 'h_memmove.c', 'h_memset.c', 'h_raw.c', 'h_read.c', 'h_readlink.c', 'h_snprintf.c', 'h_sprintf.c', 'h_stpcpy.c', 'h_stpncpy.c', 'h_strcat.c', 'h_strcpy.c', 'h_strncat.c', 'h_strncpy.c', 'h_vsnprintf.c', 'h_vsprintf.c', 't_ssp.sh'], visibility = ["//lib/libc/tests/ssp:__pkg__"])

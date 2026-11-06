@@ -7299,3 +7299,14 @@ independent Make installation; actual metadata for its one case also matches.
 The case body requires installed Citrus resources and is not qualified by this
 construction run. The existing iconvctl_runtime_program fixture name is an alias
 to the installed program. This does not change the default system backend.
+.Pp
+The explicit libc test-parent installation target composes all selected child
+archives and the original parent Kyuafile. Its conditional iconv, locales and
+ssp settings control test-root traversal. Full and all-disabled parent profiles
+are qualified for construction and installation metadata; this does not establish
+whole-toolchain stack-protector policy or execution of all installed tests.
+All 19 original SSP shell cases pass with native runtime libraries, including the
+sanitizer-backed helper. Independent ELF/debug-link contracts for 375 common
+executables and five DSOs match a fresh original Make parent. The positive
+sanitizer helper still needs its original Make runtime-present comparison.
+Full-tests world guards remain until other test families are covered.

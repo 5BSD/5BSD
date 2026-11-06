@@ -12084,3 +12084,17 @@ skips. Login/session-record writes, child exec/spawn, hostname/domain changes,
 syslog and other deferred cases do not yet establish production audit delivery
 or probe firing. Keep those 201 unexecuted cases and their isolation/cleanup as
 explicit installed-guest and instrumentation qualification gates.
+
+## Libc SSP and complete test-parent composition (2026-11-06)
+
+All original SSP helpers and shell source remain unchanged. The native graph
+preserves stack-protector/bounds instrumentation on h_raw and runs all nineteen
+original success/fault shell cases with actual native libraries. An explicit
+native unwinder fixes the first link failure; it is not a signal shim. Parent
+composition adds no new syscall, service or event-delivery implementation.
+Independent fresh Make comparisons cover 375 executables and five DSOs including
+original ELF symbol/version contracts; this is not live DTrace firing or audit
+event-delivery proof. No newly identified missing program-specific provider is
+asserted for test fixtures. Positive sanitizer Make parity, complete original
+installed-case execution and live tracing/audit qualification remain open. See
+LIBC-TEST-PARENT-QUALIFICATION.md for retained evidence and exact runtime bounds.

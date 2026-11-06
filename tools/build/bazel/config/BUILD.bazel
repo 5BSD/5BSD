@@ -837,3 +837,7 @@ selects.config_setting_group(name = "stand_userboot_alias_enabled", match_any = 
 # Make's MK_RESCUE controls both recovery installation and internal products.
 bool_flag(name = "rescue", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "rescue_enabled", flag_values = {":rescue": "true"}, visibility = ["//visibility:public"])
+
+# SSP test traversal; toolchain stack-protector policy is qualified separately.
+bool_flag(name = "ssp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ssp_enabled", flag_values = {":ssp": "true"}, visibility = ["//visibility:public"])
