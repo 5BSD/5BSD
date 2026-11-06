@@ -30,7 +30,7 @@ utility_installation(name = "install_manifest", program = "ln", manual = "ln.1",
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_manifest")
 bsd_compress(name = "symlink_manual", src = "symlink.7", output = "symlink.7.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "symlink_manual_file", src = ":symlink_manual", destination = "/usr/share/man/man7/symlink.7.gz",
+bsd_install_file(manual = True, name = "symlink_manual_file", src = ":symlink_manual", destination = "/usr/share/man/man7/symlink.7.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 bsd_install_manifest(name = "extra_manual_manifest", entries = [":symlink_manual_file"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

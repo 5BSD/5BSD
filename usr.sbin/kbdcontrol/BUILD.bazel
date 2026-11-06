@@ -9,8 +9,8 @@ cc_library(name = "headers", hdrs = ["lex.h", "path.h"], strip_include_prefix = 
 bsd_compress(name = "manual5", src = "kbdmap.5", output = "kbdmap.5.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=console-tools-man"], "//conditions:default": ["package=console-tools"]})
-bsd_install_file(name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/kbdmap.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
-bsd_install_link(name = "manual5_alias", destination = "/usr/share/man/man5/keymap.5.gz", target = "/usr/share/man/man5/kbdmap.5.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_file(manual = True, name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/kbdmap.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_link(manual = True, name = "manual5_alias", destination = "/usr/share/man/man5/keymap.5.gz", target = "/usr/share/man/man5/kbdmap.5.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
 # Installed system program; Make's reduced BOOTSTRAPPING variant is separate.
 cc_binary(name = "kbdcontrol", srcs = ["kbdcontrol.c", ":lexer"], deps = [":headers"], local_defines = ["COMPAT_FREEBSD13"], dynamic_deps = [], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 utility_installation(name = "install_manifest", program = "kbdcontrol", manual = "kbdcontrol.1", package = "console-tools", bindir = "/usr/sbin", man_section = "1", aliases = [], extra_entries = [":install_manual5", ":manual5_alias"])

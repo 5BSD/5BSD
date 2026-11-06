@@ -5,7 +5,7 @@ load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
 _NIS = "//tools/build/bazel/config:nis_enabled"
 bsd_install_link(name = "yp_command", destination = "/usr/bin/yppasswd", target = "passwd", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=runtime"])
-bsd_install_link(name = "yp_manual", destination = "/usr/share/man/man1/yppasswd.1.gz", target = "/usr/share/man/man1/passwd.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
+bsd_install_link(manual = True, name = "yp_manual", destination = "/usr/share/man/man1/yppasswd.1.gz", target = "/usr/share/man/man1/passwd.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 utility_installation(name = "install_manifest", program = 'passwd', manual = 'passwd.1', package = 'runtime', bindir = "/usr/bin", binary_mode = "4555", binary_flags = "schg", extra_entries = select({_NIS: [":yp_command", ":yp_manual"], "//conditions:default": []}))
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 

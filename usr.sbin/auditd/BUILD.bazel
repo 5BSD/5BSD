@@ -15,7 +15,7 @@ _MANUALS = ['audit.log.5', 'audit_class.5', 'audit_control.5', 'audit_event.5', 
 [bsd_compress(name = "manual_" + name, src = "//contrib/openbsm:man/" + name,
     output = "manuals/" + name + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for name in _MANUALS]
-[bsd_install_file(name = "install_manual_" + name, src = ":manual_" + name,
+[bsd_install_file(manual = True, name = "install_manual_" + name, src = ":manual_" + name,
     destination = "/usr/share/man/man5/" + name + ".gz", owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=audit-man"], "//conditions:default": ["package=audit"]})) for name in _MANUALS]
 utility_installation(name = "install_manifest", program = "auditd", manual = "//contrib/openbsm:bin/auditd/auditd.8",

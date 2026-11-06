@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd November 4, 2026
+.Dd November 6, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -7619,3 +7619,13 @@ Make plist generation on the same native corpus; this is not complete pkgbase
 manifest, dependency, archive or installation parity.
 A disabled-MAN profile still contains manual payloads; that configuration gate
 remains failed pending fixes at the owning installation rules. Make remains default.
+.Pp
+The native typed MAN setting now controls explicitly declared manual files and
+aliases at their installation owners. Disabled entries contribute no payload or
+metadata; ordinary files retain their previous behavior. The maintained
+world_man_option_test checks the complete world inventory in either setting.
+Current selected AMD64 enabled/disabled world records and ordinary payload
+preservation pass, with separate original Make libmd/gzip installation controls.
+This closes the recorded MAN inclusion gap, not complete independent world,
+pkgbase, installed-system, cross-target or resource qualification. Existing
+format-5 inputs select the setting; Make remains the production default.

@@ -61,7 +61,7 @@ utility_installation(name = "program_install", keep_sections = [".5bsd.policy"],
 bsd_compress(name = "tzfs_manual", src = "tzfs.conf.5", output = "tzfs.conf.5.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "tzfs_manual_install", src = ":tzfs_manual", destination = "/usr/share/man/man5/tzfs.conf.5.gz",
+bsd_install_file(manual = True, name = "tzfs_manual_install", src = ":tzfs_manual", destination = "/usr/share/man/man5/tzfs.conf.5.gz",
     owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 bsd_install_manifest(name = "bundle_install_manifest", entries = [":bundle_install", ":unit_install", ":config_install", ":tzfs_manual_install"])

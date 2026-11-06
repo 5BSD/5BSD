@@ -11,14 +11,14 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("//contrib/pkgconf:libpkgconf/libpkgconf.h", "/usr/include/private/pkgconf/libpkgconf.h", ["package=pkgconf", "dev"]),
-        ("//contrib/pkgconf:libpkgconf/stdinc.h", "/usr/include/private/pkgconf/stdinc.h", ["package=pkgconf", "dev"]),
-        ("//contrib/pkgconf:libpkgconf/iter.h", "/usr/include/private/pkgconf/iter.h", ["package=pkgconf", "dev"]),
-        ("//contrib/pkgconf:libpkgconf/bsdstubs.h", "/usr/include/private/pkgconf/bsdstubs.h", ["package=pkgconf", "dev"]),
-        ("//contrib/pkgconf:libpkgconf/libpkgconf-api.h", "/usr/include/private/pkgconf/libpkgconf-api.h", ["package=pkgconf", "dev"]),
-        (":static_archive", "/usr/lib/libprivatepkgconf.a", ["package=pkgconf", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libprivatepkgconf.so.5", ["package=pkgconf"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libprivatepkgconf.so.5.debug", ["package=pkgconf", "dbg"]),
+        ("//contrib/pkgconf:libpkgconf/libpkgconf.h", "/usr/include/private/pkgconf/libpkgconf.h", ["package=pkgconf", "dev"], False),
+        ("//contrib/pkgconf:libpkgconf/stdinc.h", "/usr/include/private/pkgconf/stdinc.h", ["package=pkgconf", "dev"], False),
+        ("//contrib/pkgconf:libpkgconf/iter.h", "/usr/include/private/pkgconf/iter.h", ["package=pkgconf", "dev"], False),
+        ("//contrib/pkgconf:libpkgconf/bsdstubs.h", "/usr/include/private/pkgconf/bsdstubs.h", ["package=pkgconf", "dev"], False),
+        ("//contrib/pkgconf:libpkgconf/libpkgconf-api.h", "/usr/include/private/pkgconf/libpkgconf-api.h", ["package=pkgconf", "dev"], False),
+        (":static_archive", "/usr/lib/libprivatepkgconf.a", ["package=pkgconf", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libprivatepkgconf.so.5", ["package=pkgconf"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libprivatepkgconf.so.5.debug", ["package=pkgconf", "dbg"], False),
     ]
     for manual in ["pkg.m4.7", "pc.5", "pkgconf-personality.5"]:
         section = manual[-1]
@@ -27,11 +27,11 @@ def library_installation(name):
             output = name + "/" + manual + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         files.append((":" + target, "/usr/share/man/man" + section + "/" + manual + ".gz",
-            select({"//tools/build/bazel/config:split_manpages_enabled": ["package=pkgconf-man"], "//conditions:default": ["package=pkgconf-dev" if manual == "pkg.m4.7" else "package=pkgconf"]})))
+            select({"//tools/build/bazel/config:split_manpages_enabled": ["package=pkgconf-man"], "//conditions:default": ["package=pkgconf-dev" if manual == "pkg.m4.7" else "package=pkgconf"]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libprivatepkgconf.so", target = "libprivatepkgconf.so.5",

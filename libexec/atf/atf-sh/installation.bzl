@@ -6,10 +6,10 @@ def shell_support(name):
     bsd_install_file(name = name + "_subr", src = "//contrib/atf:atf-sh/libatf-sh.subr", destination = "/usr/share/atf/libatf-sh.subr", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=atf"])
     bsd_compress(name = name + "_manual", src = "//contrib/atf:atf-sh/atf-sh.3", output = name + "/atf-sh.3.gz", arguments = ["-cn"],
         compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-    bsd_install_file(name = name + "_man", src = ":" + name + "_manual", destination = "/usr/share/man/man3/atf-sh.3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
+    bsd_install_file(manual = True, name = name + "_man", src = ":" + name + "_manual", destination = "/usr/share/man/man3/atf-sh.3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
     entries = [":" + name + "_subr", ":" + name + "_man"]
     for alias in _MANUAL_ALIASES:
         target = name + "_" + alias.replace(".", "_")
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".gz", target = "/usr/share/man/man3/atf-sh.3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".gz", target = "/usr/share/man/man3/atf-sh.3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])

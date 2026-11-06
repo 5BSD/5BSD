@@ -6,8 +6,8 @@ cc_binary(name = "fifolog_create", srcs = ["fifolog_create.c"], deps = ["//lib/l
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link")
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})
 bsd_compress(name = "manual", src = "fifolog.1", output = "fifolog.1.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "manual_file", src = ":manual", destination = "/usr/share/man/man1/fifolog.1.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
-[bsd_install_link(name = "manual_" + tool, destination = "/usr/share/man/man1/fifolog_" + tool + ".1.gz", target = "/usr/share/man/man1/fifolog.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS) for tool in ["create", "reader", "writer"]]
+bsd_install_file(manual = True, name = "manual_file", src = ":manual", destination = "/usr/share/man/man1/fifolog.1.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+[bsd_install_link(manual = True, name = "manual_" + tool, destination = "/usr/share/man/man1/fifolog_" + tool + ".1.gz", target = "/usr/share/man/man1/fifolog.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS) for tool in ["create", "reader", "writer"]]
 utility_installation(name = "install_manifest", program = "fifolog_create", manual = None, package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":manual_file", ":manual_create", ":manual_reader", ":manual_writer"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

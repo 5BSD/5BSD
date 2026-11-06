@@ -27,7 +27,7 @@ bsd_install_link(name = "ranlib_alias", destination = "/usr/bin/llvm-ranlib", ta
 bsd_compress(name = "ranlib_manual", src = "llvm-ranlib.1", output = "llvm-ranlib.1.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "ranlib_manual_file", src = ":ranlib_manual", destination = "/usr/share/man/man1/llvm-ranlib.1.gz",
+bsd_install_file(manual = True, name = "ranlib_manual_file", src = ":ranlib_manual", destination = "/usr/share/man/man1/llvm-ranlib.1.gz",
     owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clang-man"], "//conditions:default": ["package=clang"]}))
 utility_installation(name = "install_manifest", program = "llvm-ar", binary = ":llvm_ar_installed",

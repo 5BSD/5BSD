@@ -10,8 +10,8 @@ def module_installation(name, module, manuals = None, package = "pam", manual_so
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":" + name + "_stripped", "/usr/lib/" + module + ".so.6", ["package=" + package]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/" + module + ".so.6.debug", ["package=" + package, "dbg"]),
+        (":" + name + "_stripped", "/usr/lib/" + module + ".so.6", ["package=" + package], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/" + module + ".so.6.debug", ["package=" + package, "dbg"], False),
     ]
     selected_manuals = manuals if manuals != None else [module + ".8"]
     for manual in manual_sources:
@@ -26,11 +26,11 @@ def module_installation(name, module, manuals = None, package = "pam", manual_so
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         files.append((":" + target, "/usr/share/man/man" + section + "/" + manual + ".gz",
-            select({"//tools/build/bazel/config:split_manpages_enabled": ["package=" + package + "-man"], "//conditions:default": ["package=" + package]})))
+            select({"//tools/build/bazel/config:split_manpages_enabled": ["package=" + package + "-man"], "//conditions:default": ["package=" + package]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/" + module + ".so", target = module + ".so.6",

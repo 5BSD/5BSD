@@ -1,5 +1,12 @@
 # Native whole-world package inventory
 
+## Subsequent MAN correction
+
+MAN-OPTION-QUALIFICATION.md records the subsequent source-owned MAN fix,
+complete enabled/disabled world preservation checks, maintained whole-world
+regression guard and original Make component controls. The failed-MAN results
+below describe the earlier discovery and remain retained as counterexamples.
+
 ## Qualified default-profile inventory (2026-11-06)
 
 The source-owned //:world_package_inventory target consumes the complete selected

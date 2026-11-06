@@ -4,7 +4,7 @@ bsd_install_file(name = "script", src = "krb5-config.sh", destination = "/usr/bi
     owner = "root", group = "wheel", mode = "0555", install_tags = ["package=kerberos", "dev"])
 bsd_compress(name = "manual", src = "//crypto/krb5/src/man:krb5-config.man", output = "krb5-config.1.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "manual_file", src = ":manual", destination = "/usr/share/man/man1/krb5-config.1.gz",
+bsd_install_file(manual = True, name = "manual_file", src = ":manual", destination = "/usr/share/man/man1/krb5-config.1.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=kerberos-man"], "//conditions:default": ["package=kerberos"]}))
 bsd_install_manifest(name = "install_manifest", entries = [":script", ":manual_file"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

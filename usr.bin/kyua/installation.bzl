@@ -18,6 +18,6 @@ def kyua_installation(name):
     for manual in ['kyua-about.1', 'kyua-config.1', 'kyua-db-exec.1', 'kyua-db-migrate.1', 'kyua-debug.1', 'kyua-help.1', 'kyua-list.1', 'kyua-report-html.1', 'kyua-report-junit.1', 'kyua-report.1', 'kyua-test.1', 'kyua.1', 'kyua.conf.5', 'kyuafile.5']:
         target = name + "_manual_" + manual
         bsd_compress(name = target, src = "//contrib/kyua:doc/" + manual, output = name + "/" + manual + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + manual[-1] + "/" + manual + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=kyua-man"], "//conditions:default": ["package=kyua"]}))
+        bsd_install_file(manual = True, name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + manual[-1] + "/" + manual + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=kyua-man"], "//conditions:default": ["package=kyua"]}))
         entries.append(":" + target + "_file")
     utility_installation(name = name, program = "kyua", manual = None, package = "kyua", extra_entries = entries + select({"//tools/build/bazel/config:examples_enabled": examples, "//conditions:default": []}))

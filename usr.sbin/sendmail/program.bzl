@@ -22,7 +22,7 @@ def sendmail_program(name, srcs, deps, shared = [], defines = [], bindir = "/usr
         bsd_compress(name = target, src = "//contrib/sendmail:src/" + manual, output = manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + manual.rsplit(".", 1)[1] + "/" + manual + ".gz",
+        bsd_install_file(manual = True, name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + manual.rsplit(".", 1)[1] + "/" + manual + ".gz",
             owner = "root", group = "wheel", mode = "0444", install_tags = select({
                 "//tools/build/bazel/config:split_manpages_enabled": ["package=" + package + "-man"], "//conditions:default": ["package=" + package]}))
         entries.append(":" + target + "_file")

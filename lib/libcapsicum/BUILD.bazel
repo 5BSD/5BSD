@@ -13,7 +13,7 @@ bsd_install_file(name = "install_header", src = "capsicum_helpers.h", destinatio
 bsd_compress(name = "manual", src = "capsicum_helpers.3", output = "capsicum_helpers.3.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities-dev"]})
-bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man3/capsicum_helpers.3.gz",
+bsd_install_file(manual = True, name = "install_manual", src = ":manual", destination = "/usr/share/man/man3/capsicum_helpers.3.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
 _MANUAL_ALIASES = [
     'caph_enter.3',
@@ -30,7 +30,7 @@ _MANUAL_ALIASES = [
     'caph_cache_tzdata.3',
     'caph_cache_catpages.3',
 ]
-[bsd_install_link(name = "install_" + alias.replace(".", "_"), destination = "/usr/share/man/man3/" + alias + ".gz",
+[bsd_install_link(manual = True, name = "install_" + alias.replace(".", "_"), destination = "/usr/share/man/man3/" + alias + ".gz",
     target = "/usr/share/man/man3/capsicum_helpers.3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
  for alias in _MANUAL_ALIASES]
 bsd_install_manifest(name = "install_manifest", entries = [":install_header", ":install_manual"] + [":install_" + alias.replace(".", "_") for alias in _MANUAL_ALIASES], visibility = ["//visibility:public"])

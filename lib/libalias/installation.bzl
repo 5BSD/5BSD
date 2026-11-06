@@ -11,24 +11,24 @@ def alias_installation(library, shared, main = False):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = "symbols", srcs = [":debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/lib" + library + ".a", ["package=libalias", "dev"], "0444"),
-        (":stripped", "/lib/" + soname, ["package=libalias"], "0444"),
-        (":symbols", "/usr/lib/debug/lib/" + soname + ".debug", ["package=libalias", "dbg"], "0444"),
+        (":static_archive", "/usr/lib/lib" + library + ".a", ["package=libalias", "dev"], "0444", False),
+        (":stripped", "/lib/" + soname, ["package=libalias"], "0444", False),
+        (":symbols", "/usr/lib/debug/lib/" + soname + ".debug", ["package=libalias", "dbg"], "0444", False),
     ]
     extra = []
     if main:
-        files += [("//sys/netinet/libalias:alias.h", "/usr/include/alias.h", ["package=libalias", "dev"], "0444"),
-                  ("libalias.conf", "/etc/libalias.conf", ["package=libalias", "config"], "0644")]
+        files += [("//sys/netinet/libalias:alias.h", "/usr/include/alias.h", ["package=libalias", "dev"], "0444", False),
+                  ("libalias.conf", "/etc/libalias.conf", ["package=libalias", "config"], "0644", False)]
         bsd_compress(name = "manual", src = "//sys/netinet/libalias:libalias.3", output = "libalias.3.gz", arguments = ["-cn"],
             compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        files.append((":manual", "/usr/share/man/man3/libalias.3.gz", select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libalias-man"], "//conditions:default": ["package=libalias-dev"]}), "0444"))
+        files.append((":manual", "/usr/share/man/man3/libalias.3.gz", select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libalias-man"], "//conditions:default": ["package=libalias-dev"]}), "0444", True))
         bsd_install_link(name = "library_link", destination = "/usr/lib/libalias.so", target = "../../lib/libalias.so.7", kind = "symlink",
             owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libalias", "dev"])
         extra.append(":library_link")
     entries = []
-    for source, destination, tags, mode in files:
+    for source, destination, tags, mode, is_manual in files:
         name = "file_" + destination.replace("/", "_")
-        bsd_install_file(name = name, src = source, destination = destination, owner = "root", group = "wheel", mode = mode, install_tags = tags)
+        bsd_install_file(manual = is_manual, name = name, src = source, destination = destination, owner = "root", group = "wheel", mode = mode, install_tags = tags)
         entries.append(":" + name)
     bsd_install_manifest(name = "install_manifest", entries = entries + extra)
     bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],

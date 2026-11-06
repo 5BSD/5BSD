@@ -10,11 +10,11 @@ _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["packa
 [bsd_compress(name = name + "_gzip", src = source, output = source + ".gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
  for name, source in [("nextboot", "nextboot.8"), ("boot", "boot_i386.8")]]
-[bsd_install_file(name = name + "_manual", src = ":" + name + "_gzip", destination = "/usr/share/man/man8/" + filename + ".gz",
+[bsd_install_file(manual = True, name = name + "_manual", src = ":" + name + "_gzip", destination = "/usr/share/man/man8/" + filename + ".gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
  for name, filename in [("nextboot", "nextboot.8"), ("boot", "boot_i386.8")]]
 bsd_install_link(name = "nextboot_alias", destination = "/sbin/nextboot", target = "/sbin/reboot", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=runtime"])
-bsd_install_link(name = "boot_alias", destination = "/usr/share/man/man8/boot.8.gz", target = "/usr/share/man/man8/boot_i386.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_link(manual = True, name = "boot_alias", destination = "/usr/share/man/man8/boot.8.gz", target = "/usr/share/man/man8/boot_i386.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "reboot", manual = "reboot.8",
     package = "runtime", bindir = "/sbin", man_section = "8", aliases = ["halt", "fastboot", "fasthalt"], extra_entries = [":nextboot_alias", ":nextboot_manual", ":boot_manual", ":boot_alias"])

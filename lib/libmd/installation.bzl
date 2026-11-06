@@ -118,21 +118,21 @@ def libmd_installation(name):
     entries = [":" + name + "_debug_lib_dir"]
     native.filegroup(name = name + "_debug_artifact", srcs = [":md_debug"], output_group = "debug_files")
     files = [
-        ("archive", ":md", "/usr/lib/libmd.a", ["dev", "package=runtime"]),
-        ("shared", ":md_install", "/lib/libmd.so.7", ["package=runtime"]),
-        ("debug", ":" + name + "_debug_artifact", "/usr/lib/debug/lib/libmd.so.7.debug", ["dbg", "package=runtime"]),
+        ("archive", ":md", "/usr/lib/libmd.a", ["dev", "package=runtime"], False),
+        ("shared", ":md_install", "/lib/libmd.so.7", ["package=runtime"], False),
+        ("debug", ":" + name + "_debug_artifact", "/usr/lib/debug/lib/libmd.so.7.debug", ["dbg", "package=runtime"], False),
     ]
     for header, source in HEADERS.items():
-        files.append(("header_" + header, source, "/usr/include/" + header, ["dev", "package=runtime"]))
+        files.append(("header_" + header, source, "/usr/include/" + header, ["dev", "package=runtime"], False))
     man_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"],
         "//conditions:default": ["package=runtime-dev"],
     })
     for manual in MANUALS:
-        files.append(("manual_" + manual, ":" + manual.removesuffix(".3") + "_manual_gzip", "/usr/share/man/man3/" + manual + ".gz", man_tags))
-    for suffix, source, destination, tags in files:
+        files.append(("manual_" + manual, ":" + manual.removesuffix(".3") + "_manual_gzip", "/usr/share/man/man3/" + manual + ".gz", man_tags, True))
+    for suffix, source, destination, tags, is_manual in files:
         target = name + "_" + suffix
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
                          owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     target = name + "_shared_link"
@@ -142,7 +142,7 @@ def libmd_installation(name):
     entries.append(":" + target)
     for source, destination in MANUAL_LINKS:
         target = name + "_alias_" + destination
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + destination + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + destination + ".gz",
                          target = "/usr/share/man/man3/" + source + ".gz", kind = "hardlink",
                          owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
         entries.append(":" + target)

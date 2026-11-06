@@ -52,7 +52,7 @@ _FILES = [(":manual5", "/usr/share/man/man5/switchboard.5.gz", True)] + [
     (name, "/Capabilities/Config/switchboard/" + name, False) for name in ["rc_adopt.conf", "boot-authority.ucl", "service-authority.ucl", "root-query.ucl", "root-load.ucl"]] + [
     ("examples/" + name, "/usr/share/examples/switchboard/" + name, False)
     for name in ["timer-activation.ucl", "path-activation.ucl", "socket-activation.ucl"]]
-[bsd_install_file(name = "install_file_" + destination.replace("/", "_"), src = source,
+[bsd_install_file(manual = manual, name = "install_file_" + destination.replace("/", "_"), src = source,
     destination = destination, owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=switchboard-man"],
         "//conditions:default": ["package=switchboard"]}) if manual else ["package=switchboard"])

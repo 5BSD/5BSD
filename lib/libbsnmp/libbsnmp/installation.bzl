@@ -12,24 +12,24 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libbsnmp.a", ["package=bsnmp", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libbsnmp.so.7", ["package=bsnmp"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libbsnmp.so.7.debug", ["package=bsnmp", "dbg"]),
+        (":static_archive", "/usr/lib/libbsnmp.a", ["package=bsnmp", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libbsnmp.so.7", ["package=bsnmp"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libbsnmp.so.7.debug", ["package=bsnmp", "dbg"], False),
     ]
-    files += [("//contrib/bsnmp/lib:" + header, "/usr/include/bsnmp/" + header, ["package=bsnmp", "dev"])
+    files += [("//contrib/bsnmp/lib:" + header, "/usr/include/bsnmp/" + header, ["package=bsnmp", "dev"], False)
               for header in ["asn1.h", "snmp.h", "snmpagent.h", "snmpclient.h"]]
-    files.append(("//contrib/bsnmp/lib:tc.def", "/usr/share/snmp/defs/tc.def", ["package=bsnmp"]))
+    files.append(("//contrib/bsnmp/lib:tc.def", "/usr/share/snmp/defs/tc.def", ["package=bsnmp"], False))
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bsnmp-man"], "//conditions:default": ["package=bsnmp-dev"]})
     for manual in ["asn1.3", "bsnmpagent.3", "bsnmpclient.3", "bsnmplib.3"]:
         target = name + "_manual_" + manual
         bsd_compress(name = target, src = "//contrib/bsnmp/lib:" + manual, output = name + "/" + manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        files.append((":" + target, "/usr/share/man/man3/" + manual + ".gz", man_tags))
+        files.append((":" + target, "/usr/share/man/man3/" + manual + ".gz", man_tags, True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libbsnmp.so", target = "libbsnmp.so.7",
@@ -135,7 +135,7 @@ def library_installation(name):
     for original, names in aliases.items():
         for alias in names:
             target = name + "_alias_" + alias
-            bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+            bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
                 target = "/usr/share/man/man3/" + original + ".gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
             entries.append(":" + target)
     bsd_install_manifest(name = name, entries = entries + [":" + name + "_link"], visibility = ["//visibility:public"])

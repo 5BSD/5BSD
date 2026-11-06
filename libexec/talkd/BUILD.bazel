@@ -10,7 +10,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_man
 bsd_compress(name = "manual", src = "talkd.8", output = "talkd.8.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/talkd.8.gz",
+bsd_install_file(manual = True, name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/talkd.8.gz",
     owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"],
         "//conditions:default": ["package=utilities"]}))

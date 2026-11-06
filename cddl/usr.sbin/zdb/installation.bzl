@@ -24,12 +24,12 @@ def zdb_installation(name):
         target = name + "_manual_" + manual
         bsd_compress(name = target, src = "//sys/contrib/openzfs:man/man" + section + "/" + manual, output = name + "/" + manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + section + "/" + manual + ".gz",
+        bsd_install_file(manual = True, name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + section + "/" + manual + ".gz",
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target + "_file")
     for source, alias in MANUAL_LINKS:
         target = name + "_alias_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man" + alias.split(".")[-1] + "/" + alias + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man" + alias.split(".")[-1] + "/" + alias + ".gz",
             target = "/usr/share/man/man" + source.split(".")[-1] + "/" + source + ".gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)

@@ -29,7 +29,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 bsd_install_file(name = "config", src = "newsyslog.conf", destination = "/etc/newsyslog.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=newsyslog", "config"])
 bsd_compress(name = "manual5", src = "newsyslog.conf.5", output = "newsyslog.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/newsyslog.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=newsyslog-man"], "//conditions:default": ["package=newsyslog"]}))
+bsd_install_file(manual = True, name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/newsyslog.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=newsyslog-man"], "//conditions:default": ["package=newsyslog"]}))
 utility_installation(name = "install_manifest", program = "newsyslog", manual = "newsyslog.8", package = "newsyslog", bindir = "/usr/sbin", man_section = "8", extra_entries = [":config", ":install_manual5"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest", "//usr.sbin/newsyslog/newsyslog.conf.d:install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/newsyslog/tests:install_manifest"], "//conditions:default": []}),

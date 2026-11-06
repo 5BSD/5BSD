@@ -61,7 +61,7 @@ cc_binary(name = "bhyve", deps = _LINK_ONLY + select({_TRACE: [":traced"], "//co
 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 bsd_compress(name = "config_manual_gzip", src = "bhyve_config.5", output = "bhyve_config.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual", src = ":config_manual_gzip", destination = "/usr/share/man/man5/bhyve_config.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bhyve-man"], "//conditions:default": ["package=bhyve"]}))
+bsd_install_file(manual = True, name = "config_manual", src = ":config_manual_gzip", destination = "/usr/share/man/man5/bhyve_config.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bhyve-man"], "//conditions:default": ["package=bhyve"]}))
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "bhyve", manual = "bhyve.8", package = "bhyve", bindir = "/usr/sbin", man_section = "8", extra_entries = [":config_manual"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

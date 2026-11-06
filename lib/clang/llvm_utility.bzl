@@ -45,7 +45,7 @@ def llvm_utility(name, srcs, options, manual, deps = [], aliases = {}, generated
             bsd_compress(name = alias + "_manual", src = alias_manual, output = alias + ".1.gz",
                 arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
                 runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-            bsd_install_file(name = alias + "_manual_file", src = ":" + alias + "_manual", destination = "/usr/share/man/man1/" + alias + ".1.gz",
+            bsd_install_file(manual = True, name = alias + "_manual_file", src = ":" + alias + "_manual", destination = "/usr/share/man/man1/" + alias + ".1.gz",
                 owner = "root", group = "wheel", mode = "0444",
                 install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clang-man"], "//conditions:default": ["package=clang"]}))
             entries.append(":" + alias + "_manual_file")

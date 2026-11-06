@@ -21,7 +21,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 bsd_compress(name = "format_manual", src = "config.5", output = "config.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_format_manual", src = ":format_manual", destination = "/usr/share/man/man5/config.5.gz",
+bsd_install_file(manual = True, name = "install_format_manual", src = ":format_manual", destination = "/usr/share/man/man5/config.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=toolchain-man"], "//conditions:default": ["package=toolchain"]}))
 utility_installation(name = "install_manifest", program = "config", manual = "config.8", man_section = "8", package = "toolchain", bindir = "/usr/sbin", extra_entries = [":install_format_manual"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

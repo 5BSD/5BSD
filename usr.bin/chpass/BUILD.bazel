@@ -10,7 +10,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
 _BASE_ALIASES = ["chfn", "chsh"]
 _YP_ALIASES = ["ypchfn", "ypchpass", "ypchsh"]
 [bsd_install_link(name = "command_" + n, destination = "/usr/bin/" + n, target = "chpass", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities"]) for n in _BASE_ALIASES + _YP_ALIASES]
-[bsd_install_link(name = "manual_" + n, destination = "/usr/share/man/man1/" + n + ".1.gz", target = "/usr/share/man/man1/chpass.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444",
+[bsd_install_link(manual = True, name = "manual_" + n, destination = "/usr/share/man/man1/" + n + ".1.gz", target = "/usr/share/man/man1/chpass.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})) for n in _YP_ALIASES]
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "chpass", manual = "chpass.1", package = "utilities", binary_mode = "4555", binary_flags = "schg", manual_aliases = _BASE_ALIASES, extra_entries = [":command_" + n for n in _BASE_ALIASES] + select({_NIS: [":command_" + n for n in _YP_ALIASES] + [":manual_" + n for n in _YP_ALIASES], "//conditions:default": []}))

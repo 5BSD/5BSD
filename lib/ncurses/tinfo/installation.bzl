@@ -40,14 +40,14 @@ def library_manual_installation(name):
         bsd_compress(name = target, src = ":manual_" + manual.replace(".", "_"), output = name + "/" + manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
             runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + manual.rsplit(".", 1)[1] + "/" + manual + ".gz",
+        bsd_install_file(manual = True, name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + manual.rsplit(".", 1)[1] + "/" + manual + ".gz",
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target + "_file")
     for manual, alias in MANUAL_LINKS:
         target = name + "_alias_" + alias.replace(".", "_")
         tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=ncurses-man"],
             "//conditions:default": ["package=ncurses-dev"] if manual in DEVELOPMENT_MANUALS else ["package=ncurses"]})
-        bsd_install_link(name = target, destination = "/usr/share/man/man" + alias.rsplit(".", 1)[1] + "/" + alias + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man" + alias.rsplit(".", 1)[1] + "/" + alias + ".gz",
             target = "/usr/share/man/man" + manual.rsplit(".", 1)[1] + "/" + manual + ".gz",
             kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)

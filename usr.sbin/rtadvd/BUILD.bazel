@@ -8,7 +8,7 @@ exports_files(["control.c", "control_client.c", "if.c", "timer_subr.c"], visibil
 cc_binary(name = "rtadvd", srcs = ['rtadvd.c', 'rrenum.c', 'advcap.c', 'if.c', 'config.c', 'timer.c', 'timer_subr.c', 'control.c', 'control_server.c'], deps = ['//lib/libutil:util', ':headers'], dynamic_deps = ['//lib/libutil:util_shared'], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 bsd_compress(name = "manual5", src = "rtadvd.conf.5", output = "rtadvd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/rtadvd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
+bsd_install_file(manual = True, name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/rtadvd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 utility_installation(name = "install_manifest", program = "rtadvd", manual = "rtadvd.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":install_manual5"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

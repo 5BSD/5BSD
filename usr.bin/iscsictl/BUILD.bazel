@@ -17,7 +17,7 @@ cc_binary(name = "iscsictl", srcs = _SOURCES,
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 bsd_compress(name = "configuration_manual", src = "iscsi.conf.5", output = "iscsi.conf.5.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "configuration_manual_file", src = ":configuration_manual", destination = "/usr/share/man/man5/iscsi.conf.5.gz",
+bsd_install_file(manual = True, name = "configuration_manual_file", src = ":configuration_manual", destination = "/usr/share/man/man5/iscsi.conf.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=iscsi-man"], "//conditions:default": ["package=iscsi"]}))
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = 'iscsictl', manual = 'iscsictl.8', package = 'iscsi', bindir = "/usr/bin", man_section = '8', extra_entries = [":configuration_manual_file"])

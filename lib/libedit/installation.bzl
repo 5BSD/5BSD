@@ -36,12 +36,12 @@ def library_installation(name):
     bsd_compress(name = name + "_manual", src = "//contrib/libedit:editline.3", output = name + "/editline.3.gz",
         arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
         runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-    bsd_install_file(name = name + "_man", src = ":" + name + "_manual", destination = "/usr/share/man/man3/editline.3.gz",
+    bsd_install_file(manual = True, name = name + "_man", src = ":" + name + "_manual", destination = "/usr/share/man/man3/editline.3.gz",
         owner = "root", group = "wheel", mode = "0444", install_tags = tags)
     entries.append(":" + name + "_man")
     for alias in _MANUAL_ALIASES:
         target = name + "_man_" + alias.replace(".", "_")
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".gz",
             target = "/usr/share/man/man3/editline.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
@@ -49,6 +49,6 @@ def library_installation(name):
         target = name + "_" + manual.replace(".", "_")
         tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]})
         bsd_compress(name = target, src = "//contrib/libedit:" + manual, output = name + "/" + manual + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + section + "/" + manual + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
+        bsd_install_file(manual = True, name = target + "_file", src = ":" + target, destination = "/usr/share/man/man" + section + "/" + manual + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target + "_file")
     bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])

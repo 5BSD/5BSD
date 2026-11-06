@@ -36,12 +36,12 @@ def library_installation(name):
     bsd_compress(name = name + "_manual", src = "//contrib/atf:atf-c++/atf-c++.3", output = name + "/atf-c++.3.gz",
         arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
         runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-    bsd_install_file(name = name + "_man", src = ":" + name + "_manual", destination = "/usr/share/man/man3/atf-c++.3.gz",
+    bsd_install_file(manual = True, name = name + "_man", src = ":" + name + "_manual", destination = "/usr/share/man/man3/atf-c++.3.gz",
         owner = "root", group = "wheel", mode = "0444", install_tags = tags)
     entries.append(":" + name + "_man")
     for alias in _MANUAL_ALIASES:
         target = name + "_man_" + alias.replace(".", "_")
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".gz",
             target = "/usr/share/man/man3/atf-c++.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)

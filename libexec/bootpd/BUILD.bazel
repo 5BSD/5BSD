@@ -31,7 +31,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_man
 bsd_compress(name = "bootptab_manual", src = "bootptab.5", output = "bootptab.5.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_bootptab_manual", src = ":bootptab_manual", destination = "/usr/share/man/man5/bootptab.5.gz",
+bsd_install_file(manual = True, name = "install_bootptab_manual", src = ":bootptab_manual", destination = "/usr/share/man/man5/bootptab.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"],
         "//conditions:default": ["package=utilities"]}))

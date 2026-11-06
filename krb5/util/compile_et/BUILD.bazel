@@ -11,7 +11,7 @@ bsd_install_file(name = "install_script", src = ":script", destination = "/usr/b
 bsd_compress(name = "manual", src = "//crypto/krb5/src/util/et:compile_et.1",
     output = "compile_et.1.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man1/compile_et.1.gz",
+bsd_install_file(manual = True, name = "install_manual", src = ":manual", destination = "/usr/share/man/man1/compile_et.1.gz",
     owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=kerberos-man"], "//conditions:default": ["package=kerberos"]}))
 bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_manual"], visibility = ["//visibility:public"])

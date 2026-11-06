@@ -7,7 +7,7 @@ cc_binary(name = "w", srcs = ["w.c", "pr_time.c", "proc_compare.c", "extern.h", 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
 bsd_install_link(name = "uptime_link", destination = "/usr/bin/uptime", target = "/usr/bin/w", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=utilities"])
 bsd_compress(name = "uptime_manual", src = "uptime.1", output = "uptime.1.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "uptime_manual_file", src = ":uptime_manual", destination = "/usr/share/man/man1/uptime.1.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
+bsd_install_file(manual = True, name = "uptime_manual_file", src = ":uptime_manual", destination = "/usr/share/man/man1/uptime.1.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "w", manual = "w.1", package = "utilities", extra_entries = [":uptime_link", ":uptime_manual_file"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

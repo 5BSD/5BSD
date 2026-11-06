@@ -35,7 +35,7 @@ bsd_install_file(name = "configuration", src = "locate.rc", destination = "/etc/
 bsd_compress(name = "update_manual", src = "locate.updatedb.8", output = "locate.updatedb.8.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})
-bsd_install_file(name = "update_manual_file", src = ":update_manual", destination = "/usr/share/man/man8/locate.updatedb.8.gz",
+bsd_install_file(manual = True, name = "update_manual_file", src = ":update_manual", destination = "/usr/share/man/man8/locate.updatedb.8.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
-bsd_install_link(name = "update_manual_alias", destination = "/usr/share/man/man8/updatedb.8.gz", target = "/usr/share/man/man8/locate.updatedb.8.gz",
+bsd_install_link(manual = True, name = "update_manual_alias", destination = "/usr/share/man/man8/updatedb.8.gz", target = "/usr/share/man/man8/locate.updatedb.8.gz",
     kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)

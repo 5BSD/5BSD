@@ -6,7 +6,7 @@ cc_binary(name = "watchdogd", srcs = ["watchdogd.c"], deps = ["//lib/libutil:uti
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
 bsd_install_link(name = "watchdog_link", destination = "/usr/sbin/watchdog", target = "/usr/sbin/watchdogd", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=utilities"])
 bsd_compress(name = "watchdog_manual_gz", src = "watchdog.8", output = "watchdog.8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "watchdog_manual", src = ":watchdog_manual_gz", destination = "/usr/share/man/man8/watchdog.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
+bsd_install_file(manual = True, name = "watchdog_manual", src = ":watchdog_manual_gz", destination = "/usr/share/man/man8/watchdog.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 utility_installation(name = "install_manifest", program = "watchdogd", manual = "watchdogd.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":watchdog_link", ":watchdog_manual"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

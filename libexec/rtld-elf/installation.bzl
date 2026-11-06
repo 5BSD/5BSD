@@ -28,10 +28,10 @@ def rtld_installation():
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clibs-man"],
         "//conditions:default": ["package=clibs"]})
-    bsd_install_file(name = "install_manual_file", src = ":install_manual", destination = "/usr/share/man/man1/rtld.1.gz",
+    bsd_install_file(manual = True, name = "install_manual_file", src = ":install_manual", destination = "/usr/share/man/man1/rtld.1.gz",
         owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
     for name in ["ld-elf.so.1", "ld.so"]:
-        bsd_install_link(name = "install_manual_" + name, destination = "/usr/share/man/man1/" + name + ".1.gz",
+        bsd_install_link(manual = True, name = "install_manual_" + name, destination = "/usr/share/man/man1/" + name + ".1.gz",
             target = "/usr/share/man/man1/rtld.1.gz", kind = "hardlink", owner = "root", group = "wheel",
             mode = "0444", install_tags = man_tags)
     bsd_install_manifest(name = "install_manifest", entries = [":install_" + n for n in [

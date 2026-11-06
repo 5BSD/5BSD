@@ -59,12 +59,12 @@ def library_installation(name, library, headers, manuals, aliases):
         bsd_compress(name = target, src = ":" + target + "_configured", output = name + "/" + manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
             runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = target + "_file", src = ":" + target, destination = "/usr/share/man/man3/" + manual + ".gz",
+        bsd_install_file(manual = True, name = target + "_file", src = ":" + target, destination = "/usr/share/man/man3/" + manual + ".gz",
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target + "_file")
     for manual, alias in aliases:
         target = name + "_alias_" + alias.replace(".", "_")
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".gz", target = "/usr/share/man/man3/" + manual + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".gz", target = "/usr/share/man/man3/" + manual + ".gz",
             kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])

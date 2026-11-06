@@ -12,20 +12,20 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("devctl.h", "/usr/include/devctl.h", ["package=utilities", "dev"]),
-        (":static_archive", "/usr/lib/libdevctl.a", ["package=utilities", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libdevctl.so.5", ["package=utilities"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libdevctl.so.5.debug", ["package=utilities", "dbg"]),
+        ("devctl.h", "/usr/include/devctl.h", ["package=utilities", "dev"], False),
+        (":static_archive", "/usr/lib/libdevctl.a", ["package=utilities", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libdevctl.so.5", ["package=utilities"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libdevctl.so.5.debug", ["package=utilities", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "devctl.3",
         output = name + "/devctl.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/devctl.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities-dev"]})))
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities-dev"]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libdevctl.so", target = "libdevctl.so.5",

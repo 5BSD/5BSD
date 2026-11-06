@@ -12,29 +12,29 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("filesystemcmp.h", "/usr/include/filesystemcmp.h", ["package=libfilesystemcmp", "dev"]),
-        (":static_archive", "/usr/lib/libfilesystemcmp.a", ["package=libfilesystemcmp", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libfilesystemcmp.so.1", ["package=libfilesystemcmp"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libfilesystemcmp.so.1.debug", ["package=libfilesystemcmp", "dbg"]),
+        ("filesystemcmp.h", "/usr/include/filesystemcmp.h", ["package=libfilesystemcmp", "dev"], False),
+        (":static_archive", "/usr/lib/libfilesystemcmp.a", ["package=libfilesystemcmp", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libfilesystemcmp.so.1", ["package=libfilesystemcmp"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libfilesystemcmp.so.1.debug", ["package=libfilesystemcmp", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "libfilesystemcmp.3",
         output = name + "/libfilesystemcmp.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/libfilesystemcmp.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libfilesystemcmp-man"], "//conditions:default": ["package=libfilesystemcmp-dev"]})))
-    files.append(("filesystemcmp.fidl", "/usr/share/fidl/filesystemcmp.fidl", ["package=libfilesystemcmp-dev"]))
-    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libfilesystemcmp/fuchsia/" + n, ["package=libfilesystemcmp"]) for n in ["LICENSE", "PATENTS"]]
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libfilesystemcmp-man"], "//conditions:default": ["package=libfilesystemcmp-dev"]}), True))
+    files.append(("filesystemcmp.fidl", "/usr/share/fidl/filesystemcmp.fidl", ["package=libfilesystemcmp-dev"], False))
+    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libfilesystemcmp/fuchsia/" + n, ["package=libfilesystemcmp"], False) for n in ["LICENSE", "PATENTS"]]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libfilesystemcmp.so", target = "libfilesystemcmp.so.1",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libfilesystemcmp", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/libfilesystemcmp.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libfilesystemcmp-man"], "//conditions:default": ["package=libfilesystemcmp-dev"]}))

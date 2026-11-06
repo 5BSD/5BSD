@@ -27,13 +27,13 @@ def manual_entries(name, pages, package = "utilities", aliases = [], sources = {
         bsd_compress(name = item + "_gzip", src = source, output = item + "/" + page + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = item, src = select({compressed: ":" + item + "_gzip", "//conditions:default": source}),
+        bsd_install_file(name = item, manual = True, src = select({compressed: ":" + item + "_gzip", "//conditions:default": source}),
             destination = select({compressed: _path(page) + ".gz", "//conditions:default": _path(page)}),
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + item)
     for index, (source, alias) in enumerate(aliases):
         item = name + "_alias_" + str(index)
-        bsd_install_link(name = item, destination = select({compressed: _path(alias) + ".gz", "//conditions:default": _path(alias)}),
+        bsd_install_link(name = item, manual = True, destination = select({compressed: _path(alias) + ".gz", "//conditions:default": _path(alias)}),
             target = select({compressed: _path(source) + ".gz", "//conditions:default": _path(source)}),
             kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + item)

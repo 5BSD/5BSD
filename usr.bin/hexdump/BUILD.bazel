@@ -34,7 +34,7 @@ bsd_install_link(name = "od_link", destination = "/usr/bin/od", target = "/usr/b
 bsd_compress(name = "od_manual_gzip", src = "od.1", output = "od.1.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "od_manual", src = ":od_manual_gzip", destination = "/usr/share/man/man1/od.1.gz",
+bsd_install_file(manual = True, name = "od_manual", src = ":od_manual_gzip", destination = "/usr/share/man/man1/od.1.gz",
     owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 

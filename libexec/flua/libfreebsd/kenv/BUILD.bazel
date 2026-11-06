@@ -13,7 +13,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 bsd_compress(name = "manual", src = "freebsd.kenv.3lua", output = "freebsd.kenv.3lua.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "manual_file", src = ":manual", destination = "/usr/share/man/man3lua/freebsd.kenv.3lua.gz",
+bsd_install_file(manual = True, name = "manual_file", src = ":manual", destination = "/usr/share/man/man3lua/freebsd.kenv.3lua.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=flua-man"],
         "//conditions:default": ["package=flua-dev"]}))

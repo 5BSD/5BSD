@@ -3,8 +3,8 @@
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link")
 
-def openssl_file(name, source, destination, tags, mode = "0444"):
-    bsd_install_file(name = name, src = source, destination = destination,
+def openssl_file(name, source, destination, tags, mode = "0444", manual = False):
+    bsd_install_file(name = name, src = source, destination = destination, manual = manual,
         owner = "root", group = "wheel", mode = mode, install_tags = tags)
     return ":" + name
 
@@ -34,10 +34,10 @@ def openssl_manual_entries(name, manuals, aliases, development = False):
         bsd_compress(name = target, src = source, output = name + "/" + manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        entries.append(openssl_file(target + "_file", ":" + target, _manpath(manual), tags))
+        entries.append(openssl_file(target + "_file", ":" + target, _manpath(manual), tags, manual = True))
     for alias, original in aliases:
         target = name + "_alias_" + alias
-        bsd_install_link(name = target, destination = _manpath(alias), target = _manpath(original),
+        bsd_install_link(manual = True, name = target, destination = _manpath(alias), target = _manpath(original),
             kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     return entries

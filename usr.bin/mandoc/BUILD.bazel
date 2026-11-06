@@ -10,11 +10,11 @@ _MANUALS = ['mandoc.db.5', 'eqn.7', 'mandoc_char.7', 'tbl.7', 'man.7', 'mdoc.7',
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=mandoc-man"], "//conditions:default": ["package=mandoc"]})
 [bsd_compress(name = "compressed_" + n, src = "//contrib/mandoc:" + n, output = n + ".gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for n in _MANUALS]
-[bsd_install_file(name = "manual_" + n, src = ":compressed_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz",
+[bsd_install_file(manual = True, name = "manual_" + n, src = ":compressed_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS) for n in _MANUALS]
 _OPTIONAL_MANUALS = ["apropos.1", "makewhatis.8"]
 [bsd_install_link(name = "alias_" + n, destination = "/usr/bin/" + n, target = "/usr/bin/mandoc", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=mandoc"]) for n in ["whatis", "makewhatis", "apropos"]]
-bsd_install_link(name = "whatis_manual", destination = "/usr/share/man/man1/whatis.1.gz", target = "/usr/share/man/man1/apropos.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_link(manual = True, name = "whatis_manual", destination = "/usr/share/man/man1/whatis.1.gz", target = "/usr/share/man/man1/apropos.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
 bsd_install_file(name = "trigger", src = "mandoc.ucl", destination = "/usr/share/pkg/triggers/mandoc.ucl", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=mandoc"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "mandoc", manual = "//contrib/mandoc:mandoc.1", package = "mandoc", manual_aliases = ["mdocml"],

@@ -115,6 +115,7 @@ def main():
         # Physical parent policy does not itself grant package ownership.
         records.extend(dict(record, tags=[]) for record in policy['physical_directories'])
     result = inventory(records, request['construction'], request['suffix_tags'])
+    result['configuration'] = request['configuration']
     result['expanded_trees'] = trees
     Path(sys.argv[2]).write_text(json.dumps(result, sort_keys=True, indent=2) + '\n')
 

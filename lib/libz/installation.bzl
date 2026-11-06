@@ -9,12 +9,12 @@ def zlib_installation(name):
         owner = "root", group = "wheel", mode = "0755", install_tags = ["package=zlib", "dbg"])
     entries = [":" + name + "_debug_lib_dir"]
     files = [
-        ("archive", ":" + name + "_archive", "/usr/lib/libz.a", ["package=zlib", "dev"]),
-        ("shared", ":stripped", "/lib/libz.so.6", ["package=zlib"]),
-        ("symbols", ":" + name + "_debug", "/usr/lib/debug/lib/libz.so.6.debug", ["package=zlib", "dbg"]),
-        ("pkgconfig", ":pkgconfig", "/usr/libdata/pkgconfig/zlib.pc", ["package=zlib", "dev"]),
-        ("zlib_h", "//sys/contrib/zlib:zlib.h", "/usr/include/zlib.h", ["package=zlib", "dev"]),
-        ("zconf_h", "//sys/contrib/zlib:zconf.h", "/usr/include/zconf.h", ["package=zlib", "dev"]),
+        ("archive", ":" + name + "_archive", "/usr/lib/libz.a", ["package=zlib", "dev"], False),
+        ("shared", ":stripped", "/lib/libz.so.6", ["package=zlib"], False),
+        ("symbols", ":" + name + "_debug", "/usr/lib/debug/lib/libz.so.6.debug", ["package=zlib", "dbg"], False),
+        ("pkgconfig", ":pkgconfig", "/usr/libdata/pkgconfig/zlib.pc", ["package=zlib", "dev"], False),
+        ("zlib_h", "//sys/contrib/zlib:zlib.h", "/usr/include/zlib.h", ["package=zlib", "dev"], False),
+        ("zconf_h", "//sys/contrib/zlib:zconf.h", "/usr/include/zconf.h", ["package=zlib", "dev"], False),
     ]
     man_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=zlib-man"],
@@ -25,18 +25,18 @@ def zlib_installation(name):
         bsd_compress(name = compressed, src = source, output = manual + ".3.gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        files.append(("manual_" + manual, ":" + compressed, "/usr/share/man/man3/" + manual + ".3.gz", man_tags))
-    for suffix, source, destination, tags in files:
+        files.append(("manual_" + manual, ":" + compressed, "/usr/share/man/man3/" + manual + ".3.gz", man_tags, True))
+    for suffix, source, destination, tags, is_manual in files:
         entry = name + "_file_" + suffix
-        bsd_install_file(name = entry, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = entry, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + entry)
-    for suffix, destination, target, kind, mode, tags in [
-        ("shared", "/usr/lib/libz.so", "../../lib/libz.so.6", "symlink", "0755", ["package=zlib", "dev"]),
-        ("manual", "/usr/share/man/man3/zdopen.3.gz", "/usr/share/man/man3/zopen.3.gz", "hardlink", "0444", man_tags),
+    for suffix, destination, target, kind, mode, tags, is_manual in [
+        ("shared", "/usr/lib/libz.so", "../../lib/libz.so.6", "symlink", "0755", ["package=zlib", "dev"], False),
+        ("manual", "/usr/share/man/man3/zdopen.3.gz", "/usr/share/man/man3/zopen.3.gz", "hardlink", "0444", man_tags, True),
     ]:
         entry = name + "_link_" + suffix
-        bsd_install_link(name = entry, destination = destination, target = target,
+        bsd_install_link(manual = is_manual, name = entry, destination = destination, target = target,
             kind = kind, owner = "root", group = "wheel", mode = mode, install_tags = tags)
         entries.append(":" + entry)
     bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])

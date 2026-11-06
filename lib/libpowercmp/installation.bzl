@@ -12,31 +12,31 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("powercmp.h", "/usr/include/powercmp.h", ["package=libpowercmp", "dev"]),
-        ("powercmp_protocol.h", "/usr/include/powercmp_protocol.h", ["package=libpowercmp", "dev"]),
+        ("powercmp.h", "/usr/include/powercmp.h", ["package=libpowercmp", "dev"], False),
+        ("powercmp_protocol.h", "/usr/include/powercmp_protocol.h", ["package=libpowercmp", "dev"], False),
 
-        (":static_archive", "/usr/lib/libpowercmp.a", ["package=libpowercmp", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libpowercmp.so.1", ["package=libpowercmp"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libpowercmp.so.1.debug", ["package=libpowercmp", "dbg"]),
+        (":static_archive", "/usr/lib/libpowercmp.a", ["package=libpowercmp", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libpowercmp.so.1", ["package=libpowercmp"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libpowercmp.so.1.debug", ["package=libpowercmp", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "libpowercmp.3",
         output = name + "/libpowercmp.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/libpowercmp.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libpowercmp-man"], "//conditions:default": ["package=libpowercmp-dev"]})))
-    files.append(("powercmp.fidl", "/usr/share/fidl/powercmp.fidl", ["package=libpowercmp-dev"]))
-    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libpowercmp/fuchsia/" + n, ["package=libpowercmp"]) for n in ["LICENSE", "PATENTS"]]
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libpowercmp-man"], "//conditions:default": ["package=libpowercmp-dev"]}), True))
+    files.append(("powercmp.fidl", "/usr/share/fidl/powercmp.fidl", ["package=libpowercmp-dev"], False))
+    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libpowercmp/fuchsia/" + n, ["package=libpowercmp"], False) for n in ["LICENSE", "PATENTS"]]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libpowercmp.so", target = "libpowercmp.so.1",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libpowercmp", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/libpowercmp.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libpowercmp-man"], "//conditions:default": ["package=libpowercmp-dev"]}))

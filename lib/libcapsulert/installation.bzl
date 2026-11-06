@@ -12,27 +12,27 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libcapsulert.a", ["package=libcapsulert", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libcapsulert.so.1", ["package=libcapsulert"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libcapsulert.so.1.debug", ["package=libcapsulert", "dbg"]),
+        (":static_archive", "/usr/lib/libcapsulert.a", ["package=libcapsulert", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libcapsulert.so.1", ["package=libcapsulert"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libcapsulert.so.1.debug", ["package=libcapsulert", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "libcapsulert.3",
         output = name + "/libcapsulert.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/libcapsulert.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libcapsulert-man"], "//conditions:default": ["package=libcapsulert-dev"]})))
-    files += [(h, "/usr/include/" + h, ["package=libcapsulert", "dev"]) for h in ['capsulert.h', 'claim_parse.h', 'capsule_ctl.h', 'switchboard_ctl.h', 'capsule_svc_proto.h', 'switchboard_svc_proto.h', 'bsdfilesystem_proto.h', 'storage_namespace.h', 'filesystem_policy.h']]
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libcapsulert-man"], "//conditions:default": ["package=libcapsulert-dev"]}), True))
+    files += [(h, "/usr/include/" + h, ["package=libcapsulert", "dev"], False) for h in ['capsulert.h', 'claim_parse.h', 'capsule_ctl.h', 'switchboard_ctl.h', 'capsule_svc_proto.h', 'switchboard_svc_proto.h', 'bsdfilesystem_proto.h', 'storage_namespace.h', 'filesystem_policy.h']]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libcapsulert.so", target = "libcapsulert.so.1",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libcapsulert", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/libcapsulert.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libcapsulert-man"], "//conditions:default": ["package=libcapsulert-dev"]}))

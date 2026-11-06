@@ -46,7 +46,7 @@ bsd_install_file(name = "config", src = "dhclient.conf", destination = "/etc/dhc
 bsd_install_file(name = "script", src = "dhclient-script", destination = "/sbin/dhclient-script", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=dhclient"])
 _MANUALS = ["dhclient.conf.5", "dhclient.leases.5", "dhcp-options.5", "dhclient-script.8"]
 [bsd_compress(name = "gzip_" + str(i), src = filename, output = filename + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for i, filename in enumerate(_MANUALS)]
-[bsd_install_file(name = "man_" + str(i), src = ":gzip_" + str(i), destination = "/usr/share/man/man" + filename[-1] + "/" + filename + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=dhclient-man"], "//conditions:default": ["package=dhclient"]})) for i, filename in enumerate(_MANUALS)]
+[bsd_install_file(manual = True, name = "man_" + str(i), src = ":gzip_" + str(i), destination = "/usr/share/man/man" + filename[-1] + "/" + filename + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=dhclient-man"], "//conditions:default": ["package=dhclient"]})) for i, filename in enumerate(_MANUALS)]
 
 # The maintained plain test exercises the production option parser directly.
 filegroup(name = "option_test_sources", srcs = ["alloc.c", "convert.c", "hash.c", "options.c", "tables.c", "parse.c", "conflex.c", "tree.c"], visibility = ["//sbin/dhclient/tests:__pkg__"])

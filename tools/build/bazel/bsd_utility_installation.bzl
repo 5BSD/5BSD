@@ -59,7 +59,7 @@ def utility_installation(name, program, manual, package, bindir = "/usr/bin", ma
         files.append(("manual_file", ":" + name + "_manual", "/usr/share/man/man" + man_section + "/" + program + "." + man_section + ".gz", "0444", man_tags))
     for suffix, source, destination, mode, tags in files:
         target = name + "_" + suffix
-        bsd_install_file(name = target, src = source, destination = destination, owner = binary_owner if suffix != "manual_file" else "root",
+        bsd_install_file(name = target, src = source, destination = destination, manual = suffix == "manual_file", owner = binary_owner if suffix != "manual_file" else "root",
             group = binary_group if suffix != "manual_file" else "wheel", mode = mode, flags = binary_flags if suffix == "binary" else "", install_tags = tags)
         entries.append(":" + target)
     if len(depset(aliases).to_list()) != len(aliases):
@@ -83,7 +83,7 @@ def utility_installation(name, program, manual, package, bindir = "/usr/bin", ma
         if not alias or alias in [".", "..", program] or "/" in alias:
             fail("manual alias must be a distinct basename")
         manual_alias = name + "_manual_alias_" + str(all_manual_aliases.index(alias))
-        bsd_install_link(name = manual_alias,
+        bsd_install_link(name = manual_alias, manual = True,
             destination = "/usr/share/man/man" + man_section + "/" + alias + "." + man_section + ".gz",
             target = "/usr/share/man/man" + man_section + "/" + program + "." + man_section + ".gz",
             kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)

@@ -16,7 +16,7 @@ _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["packa
 [bsd_compress(name = "manual_" + page, src = "freebsd__" + page + ".3", output = "manuals/freebsd__" + page + ".3.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for page in _MANUALS]
-[bsd_install_file(name = "install_" + page, src = ":manual_" + page,
+[bsd_install_file(manual = True, name = "install_" + page, src = ":manual_" + page,
     destination = "/usr/share/man/man3/freebsd::" + page + ".3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS) for page in _MANUALS]
 bsd_install_manifest(name = "install_manifest", entries = [":install_" + page for page in _MANUALS])
 

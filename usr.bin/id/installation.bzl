@@ -12,7 +12,7 @@ def identity_aliases(name, base_entries):
         bsd_compress(name = target + "_compressed", src = alias + ".1", output = target + ".1.gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = target + "_manual", src = ":" + target + "_compressed",
+        bsd_install_file(manual = True, name = target + "_manual", src = ":" + target + "_compressed",
             destination = "/usr/share/man/man1/" + alias + ".1.gz", owner = "root", group = "wheel",
             mode = "0444", install_tags = tags)
         entries += [":" + target, ":" + target + "_manual"]

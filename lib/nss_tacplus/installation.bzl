@@ -12,15 +12,15 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":" + name + "_stripped", "/usr/lib/nss_tacplus.so.1", ["package=utilities"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/nss_tacplus.so.1.debug", ["package=utilities", "dbg"]),
+        (":" + name + "_stripped", "/usr/lib/nss_tacplus.so.1", ["package=utilities"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/nss_tacplus.so.1.debug", ["package=utilities", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "nss_tacplus.8", output = name + "/nss_tacplus.8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-    files.append((":" + name + "_manual", "/usr/share/man/man8/nss_tacplus.8.gz", ["package=utilities"]))
+    files.append((":" + name + "_manual", "/usr/share/man/man8/nss_tacplus.8.gz", ["package=utilities"], True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/nss_tacplus.so", target = "nss_tacplus.so.1",

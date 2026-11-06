@@ -12,9 +12,9 @@ bsd_install_file(name = "helper", src = "//crypto/krb5/src/kadmin/cli:k5srvutil.
 bsd_compress(name = "helper_manual", src = "//crypto/krb5/src/man:k5srvutil.man", output = "k5srvutil.1.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "helper_manual_file", src = ":helper_manual", destination = "/usr/share/man/man1/k5srvutil.1.gz",
+bsd_install_file(manual = True, name = "helper_manual_file", src = ":helper_manual", destination = "/usr/share/man/man1/k5srvutil.1.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
-bsd_install_link(name = "local_manual_alias", destination = "/usr/share/man/man8/kadmin.local.8.gz",
+bsd_install_link(manual = True, name = "local_manual_alias", destination = "/usr/share/man/man8/kadmin.local.8.gz",
     target = "/usr/share/man/man1/kadmin.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
 utility_installation(name = "install_manifest", program = "kadmin", manual = "//crypto/krb5/src/man:kadmin.man", package = "kerberos",
     extra_entries = [":helper", ":helper_manual_file", ":local_manual_alias"])

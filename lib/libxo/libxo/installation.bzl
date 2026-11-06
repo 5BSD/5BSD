@@ -14,12 +14,12 @@ def xo_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libxo.a", ["package=runtime", "dev"]),
-        (":" + name + "_stripped", "/lib/libxo.so.0", ["package=runtime"]),
-        (":" + name + "_symbols", "/usr/lib/debug/lib/libxo.so.0.debug", ["package=runtime", "dbg"]),
+        (":static_archive", "/usr/lib/libxo.a", ["package=runtime", "dev"], False),
+        (":" + name + "_stripped", "/lib/libxo.so.0", ["package=runtime"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/lib/libxo.so.0.debug", ["package=runtime", "dbg"], False),
     ]
     for header in ["xo.h", "xo_encoder.h"]:
-        files.append(("//contrib/libxo:libxo/" + header, "/usr/include/libxo/" + header, ["package=runtime", "dev"]))
+        files.append(("//contrib/libxo:libxo/" + header, "/usr/include/libxo/" + header, ["package=runtime", "dev"], False))
     for manual in MANUALS + NONDEV_MANUALS:
         target = name + "_manual_" + manual
         bsd_compress(name = target, src = "//contrib/libxo:libxo/" + manual,
@@ -28,16 +28,16 @@ def xo_installation(name):
             runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"],
             "//conditions:default": ["package=runtime" if manual in NONDEV_MANUALS else "package=runtime-dev"]})
-        files.append((":" + target, _manpath(manual), tags))
+        files.append((":" + target, _manpath(manual), tags, True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     for original, alias in MANUAL_LINKS:
         target = name + "_alias_" + alias
-        bsd_install_link(name = target, destination = _manpath(alias), target = _manpath(original),
+        bsd_install_link(manual = True, name = target, destination = _manpath(alias), target = _manpath(original),
             kind = "hardlink", owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"],
                 "//conditions:default": ["package=runtime-dev"]}))

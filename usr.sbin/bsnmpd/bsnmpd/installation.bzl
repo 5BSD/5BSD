@@ -13,18 +13,18 @@ def daemon_installation():
         arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bsnmp-man"], "//conditions:default": ["package=bsnmp-dev"]})
     files = [
-        ("snmpd.config", "/etc/snmpd.config", "0600", ["package=bsnmp", "config"]),
-        (":module_manual", "/usr/share/man/man3/snmpmod.3.gz", "0444", man_tags),
-        ("//contrib/bsnmp/snmpd:tree.def", "/usr/share/snmp/defs/tree.def", "0444", ["package=bsnmp"]),
-    ] + [("//contrib/bsnmp/snmpd:" + name, "/usr/share/snmp/mibs/" + name, "0444", ["package=bsnmp"]) for name in ["FOKUS-MIB.txt", "BEGEMOT-MIB.txt", "BEGEMOT-SNMPD.txt"]]
+        ("snmpd.config", "/etc/snmpd.config", "0600", ["package=bsnmp", "config"], False),
+        (":module_manual", "/usr/share/man/man3/snmpmod.3.gz", "0444", man_tags, True),
+        ("//contrib/bsnmp/snmpd:tree.def", "/usr/share/snmp/defs/tree.def", "0444", ["package=bsnmp"], False),
+    ] + [("//contrib/bsnmp/snmpd:" + name, "/usr/share/snmp/mibs/" + name, "0444", ["package=bsnmp"], False) for name in ["FOKUS-MIB.txt", "BEGEMOT-MIB.txt", "BEGEMOT-SNMPD.txt"]]
     entries = []
-    for source, destination, mode, tags in files:
+    for source, destination, mode, tags, is_manual in files:
         name = "file_" + destination.replace("/", "_")
-        bsd_install_file(name = name, src = source, destination = destination, mode = mode, owner = "root", group = "wheel", install_tags = tags)
+        bsd_install_file(manual = is_manual, name = name, src = source, destination = destination, mode = mode, owner = "root", group = "wheel", install_tags = tags)
         entries.append(":" + name)
     for alias in ALIASES:
         name = "alias_" + alias
-        bsd_install_link(name = name, destination = "/usr/share/man/man3/" + alias + ".3.gz", target = "/usr/share/man/man3/snmpmod.3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+        bsd_install_link(manual = True, name = name, destination = "/usr/share/man/man3/" + alias + ".3.gz", target = "/usr/share/man/man3/snmpmod.3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
         entries.append(":" + name)
     bsd_install_manifest(name = "install_data", entries = entries)
     bsd_install_archive(name = "install_archive", manifests = [":install_program", ":install_data"],

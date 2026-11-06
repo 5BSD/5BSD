@@ -218,7 +218,7 @@ _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:sendmail_enabled": [
 bsd_compress(name = "nvram_manual_gz", src = "nvram/nvram.8", output = "nvram.8.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "nvram_manual", src = ":nvram_manual_gz",
+bsd_install_file(manual = True, name = "nvram_manual", src = ":nvram_manual_gz",
     destination = "/usr/share/man/man8/nvram.8.gz", owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"],
         "//conditions:default": ["package=utilities"]}))

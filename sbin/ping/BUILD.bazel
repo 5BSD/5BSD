@@ -26,7 +26,7 @@ bsd_install_archive(name = "program_install_archive", manifests = [":install_man
 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
 bsd_install_link(name = "ping6_link", destination = "/sbin/ping6", target = "/sbin/ping", kind = "hardlink", owner = "root", group = "wheel", mode = "4555", install_tags = ["package=runtime"])
-bsd_install_link(name = "ping6_manual", destination = "/usr/share/man/man8/ping6.8.gz", target = "/usr/share/man/man8/ping.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
+bsd_install_link(manual = True, name = "ping6_manual", destination = "/usr/share/man/man8/ping6.8.gz", target = "/usr/share/man/man8/ping.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 
 exports_files(["utils.c", "utils.h"], visibility = ["//sbin/ping/tests:__pkg__"])
 

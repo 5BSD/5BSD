@@ -10,7 +10,7 @@ bsd_install_link(name = "fuser_link", destination = "/usr/bin/fuser", target = "
     kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=utilities"])
 bsd_compress(name = "fuser_manual", src = "fuser.1", output = "fuser.1.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "fuser_manual_install", src = ":fuser_manual", destination = "/usr/share/man/man1/fuser.1.gz",
+bsd_install_file(manual = True, name = "fuser_manual_install", src = ":fuser_manual", destination = "/usr/share/man/man1/fuser.1.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "fstat", manual = "fstat.1", package = "utilities", extra_entries = [":fuser_link", ":fuser_manual_install"])

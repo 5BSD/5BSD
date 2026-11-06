@@ -10,7 +10,7 @@ cc_binary(name = "blacklistd", srcs = ["//contrib/blocklist:bin/blacklistd.c", "
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
 bsd_install_file(name = "configuration", src = "blacklistd.conf", destination = "/etc/blacklistd.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=blocklist", "config"])
 bsd_compress(name = "config_manual_gz", src = "//contrib/blocklist:bin/blacklistd.conf.5", output = "blacklistd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/blacklistd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=blocklist-man"], "//conditions:default": ["package=blocklist"]}))
+bsd_install_file(manual = True, name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/blacklistd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=blocklist-man"], "//conditions:default": ["package=blocklist"]}))
 utility_installation(name = "install_manifest", program = "blacklistd", manual = "//contrib/blocklist:bin/blacklistd.8", package = "blocklist", bindir = "/usr/sbin", man_section = "8", extra_entries = [":configuration", ":config_manual"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

@@ -12,31 +12,31 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("sysctlcmp.h", "/usr/include/sysctlcmp.h", ["package=libsysctlcmp", "dev"]),
-        ("sysctlcmp_protocol.h", "/usr/include/sysctlcmp_protocol.h", ["package=libsysctlcmp", "dev"]),
-        ("sysctlcmp_server.h", "/usr/include/sysctlcmp_server.h", ["package=libsysctlcmp", "dev"]),
-        (":static_archive", "/usr/lib/libsysctlcmp.a", ["package=libsysctlcmp", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libsysctlcmp.so.1", ["package=libsysctlcmp"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libsysctlcmp.so.1.debug", ["package=libsysctlcmp", "dbg"]),
+        ("sysctlcmp.h", "/usr/include/sysctlcmp.h", ["package=libsysctlcmp", "dev"], False),
+        ("sysctlcmp_protocol.h", "/usr/include/sysctlcmp_protocol.h", ["package=libsysctlcmp", "dev"], False),
+        ("sysctlcmp_server.h", "/usr/include/sysctlcmp_server.h", ["package=libsysctlcmp", "dev"], False),
+        (":static_archive", "/usr/lib/libsysctlcmp.a", ["package=libsysctlcmp", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libsysctlcmp.so.1", ["package=libsysctlcmp"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libsysctlcmp.so.1.debug", ["package=libsysctlcmp", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "libsysctlcmp.3",
         output = name + "/libsysctlcmp.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/libsysctlcmp.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libsysctlcmp-man"], "//conditions:default": ["package=libsysctlcmp-dev"]})))
-    files.append(("sysctlcmp.fidl", "/usr/share/fidl/sysctlcmp.fidl", ["package=libsysctlcmp-dev"]))
-    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libsysctlcmp/fuchsia/" + n, ["package=libsysctlcmp"]) for n in ["LICENSE", "PATENTS"]]
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libsysctlcmp-man"], "//conditions:default": ["package=libsysctlcmp-dev"]}), True))
+    files.append(("sysctlcmp.fidl", "/usr/share/fidl/sysctlcmp.fidl", ["package=libsysctlcmp-dev"], False))
+    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libsysctlcmp/fuchsia/" + n, ["package=libsysctlcmp"], False) for n in ["LICENSE", "PATENTS"]]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libsysctlcmp.so", target = "libsysctlcmp.so.1",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libsysctlcmp", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/libsysctlcmp.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libsysctlcmp-man"], "//conditions:default": ["package=libsysctlcmp-dev"]}))

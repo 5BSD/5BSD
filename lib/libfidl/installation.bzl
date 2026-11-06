@@ -12,15 +12,15 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libfidl_bsd.a", ["package=libfidl", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libfidl_bsd.so.1", ["package=libfidl"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libfidl_bsd.so.1.debug", ["package=libfidl", "dbg"]),
+        (":static_archive", "/usr/lib/libfidl_bsd.a", ["package=libfidl", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libfidl_bsd.so.1", ["package=libfidl"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libfidl_bsd.so.1.debug", ["package=libfidl", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "libfidl_bsd.3",
         output = name + "/libfidl_bsd.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/libfidl_bsd.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libfidl-man"], "//conditions:default": ["package=libfidl-dev"]})))
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libfidl-man"], "//conditions:default": ["package=libfidl-dev"]}), True))
     for source, destination in FIDL_INSTALL_HEADERS:
         if source.startswith("contrib/fuchsia/"):
             label = "@fuchsia_runtime_src//:" + source.removeprefix("contrib/fuchsia/")
@@ -28,17 +28,17 @@ def library_installation(name):
             label = source.removeprefix("lib/libfidl/")
         else:
             fail("unrecognized FIDL header owner: " + source)
-        files.append((label, "/usr/include/" + destination, ["package=libfidl", "dev"]))
+        files.append((label, "/usr/include/" + destination, ["package=libfidl", "dev"], False))
     files += [
-        ("fidl.pc", "/usr/libdata/pkgconfig/fidl.pc", ["package=libfidl-dev"]),
-        ("//lib/libfidl/tests:zx.fidl", "/usr/share/fidl/zx.fidl", ["package=libfidl-dev"]),
-        ("@fuchsia_runtime_src//:LICENSE", "/usr/share/licenses/libfidl/LICENSE", ["package=libfidl"]),
-        ("@fuchsia_runtime_src//:PATENTS", "/usr/share/licenses/libfidl/PATENTS", ["package=libfidl"]),
+        ("fidl.pc", "/usr/libdata/pkgconfig/fidl.pc", ["package=libfidl-dev"], False),
+        ("//lib/libfidl/tests:zx.fidl", "/usr/share/fidl/zx.fidl", ["package=libfidl-dev"], False),
+        ("@fuchsia_runtime_src//:LICENSE", "/usr/share/licenses/libfidl/LICENSE", ["package=libfidl"], False),
+        ("@fuchsia_runtime_src//:PATENTS", "/usr/share/licenses/libfidl/PATENTS", ["package=libfidl"], False),
     ]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libfidl_bsd.so", target = "libfidl_bsd.so.1",

@@ -12,26 +12,26 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_link_script", "/usr/lib/libcrypt.a", ["package=runtime", "dev"]),
-        (":shared_link_script", "/usr/lib/libcrypt.so", ["package=runtime", "dev"]),
-        (":static_archive", "/usr/lib/libcrypt_real.a", ["package=runtime", "dev"]),
-        (":" + name + "_stripped", "/lib/libcrypt.so.5", ["package=runtime"]),
-        (":" + name + "_symbols", "/usr/lib/debug/lib/libcrypt.so.5.debug", ["package=runtime", "dbg"]),
+        (":static_link_script", "/usr/lib/libcrypt.a", ["package=runtime", "dev"], False),
+        (":shared_link_script", "/usr/lib/libcrypt.so", ["package=runtime", "dev"], False),
+        (":static_archive", "/usr/lib/libcrypt_real.a", ["package=runtime", "dev"], False),
+        (":" + name + "_stripped", "/lib/libcrypt.so.5", ["package=runtime"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/lib/libcrypt.so.5.debug", ["package=runtime", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "crypt.3",
         output = name + "/crypt.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/crypt.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime-dev"]})))
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime-dev"]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", flags = "schg" if destination == "/lib/libcrypt.so.5" else "", install_tags = tags)
         entries.append(":" + target)
     for alias in ["crypt_get_format", "crypt_r", "crypt_set_format"]:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/crypt.3.gz", kind = "hardlink", owner = "root", group = "wheel",
             mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime-dev"]}))
         entries.append(":" + target)

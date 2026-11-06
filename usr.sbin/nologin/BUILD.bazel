@@ -7,7 +7,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_lin
 # Preserve Make's static linkage: login environments may contain loader variables.
 bsd_install_link(name = "compat_link", destination = "/sbin/nologin", target = "../usr/sbin/nologin", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities"])
 bsd_compress(name = "file_manual_gz", src = "nologin.5", output = "nologin.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "file_manual", src = ":file_manual_gz", destination = "/usr/share/man/man5/nologin.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
+bsd_install_file(manual = True, name = "file_manual", src = ":file_manual_gz", destination = "/usr/share/man/man5/nologin.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 utility_installation(name = "install_manifest", program = "nologin", manual = "nologin.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":compat_link", ":file_manual"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

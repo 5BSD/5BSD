@@ -12,24 +12,24 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libcom_err.a", ["package=kerberos", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libcom_err.so.122", ["package=kerberos", "lib"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libcom_err.so.122.debug", ["package=kerberos", "dbg"]),
+        (":static_archive", "/usr/lib/libcom_err.a", ["package=kerberos", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libcom_err.so.122", ["package=kerberos", "lib"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libcom_err.so.122.debug", ["package=kerberos", "dbg"], False),
     ]
     files += [
-        ("//crypto/krb5/src/util/et:com_err.h", "/usr/include/com_err.h", ["package=kerberos", "dev"]),
-        ("//crypto/krb5/src/util/et:et_c.awk", "/usr/share/et/et_c.awk", ["package=kerberos", "dev"]),
-        ("//crypto/krb5/src/util/et:et_h.awk", "/usr/share/et/et_h.awk", ["package=kerberos", "dev"]),
+        ("//crypto/krb5/src/util/et:com_err.h", "/usr/include/com_err.h", ["package=kerberos", "dev"], False),
+        ("//crypto/krb5/src/util/et:et_c.awk", "/usr/share/et/et_c.awk", ["package=kerberos", "dev"], False),
+        ("//crypto/krb5/src/util/et:et_h.awk", "/usr/share/et/et_h.awk", ["package=kerberos", "dev"], False),
     ]
     bsd_compress(name = name + "_manual", src = "//crypto/krb5/src/util/et:com_err.3",
         output = name + "/com_err.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/com_err.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=kerberos-man"], "//conditions:default": ["package=kerberos-dev"]})))
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=kerberos-man"], "//conditions:default": ["package=kerberos-dev"]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libcom_err.so", target = "libcom_err.so.122",

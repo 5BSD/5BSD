@@ -16,7 +16,7 @@ bsd_install_file(name = "install_config", src = "gettytab", destination = "/etc/
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
  for name in ["gettytab", "ttys"]]
-[bsd_install_file(name = "install_" + name, src = ":manual_" + name,
+[bsd_install_file(manual = True, name = "install_" + name, src = ":manual_" + name,
     destination = "/usr/share/man/man5/" + name + ".5.gz", owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"],
         "//conditions:default": ["package=runtime"]})) for name in ["gettytab", "ttys"]]

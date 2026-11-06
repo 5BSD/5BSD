@@ -12,27 +12,27 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("channel.h", "/usr/include/channel.h", ["package=libchannel", "dev"]),
-        (":static_archive", "/usr/lib/libchannel.a", ["package=libchannel", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libchannel.so.1", ["package=libchannel"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libchannel.so.1.debug", ["package=libchannel", "dbg"]),
+        ("channel.h", "/usr/include/channel.h", ["package=libchannel", "dev"], False),
+        (":static_archive", "/usr/lib/libchannel.a", ["package=libchannel", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libchannel.so.1", ["package=libchannel"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libchannel.so.1.debug", ["package=libchannel", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "libchannel.3",
         output = name + "/libchannel.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/libchannel.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libchannel-man"], "//conditions:default": ["package=libchannel-dev"]})))
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libchannel-man"], "//conditions:default": ["package=libchannel-dev"]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libchannel.so", target = "libchannel.so.1",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libchannel", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/libchannel.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libchannel-man"], "//conditions:default": ["package=libchannel-dev"]}))

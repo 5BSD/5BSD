@@ -114,7 +114,7 @@ _FUNCTIONS = [f for f in ZSH_FUNCTIONS if f.split("/")[-1] not in ["run-help", "
 [bsd_compress(name = "manual_" + m, src = ":combined_manual" if m == "zshall" else "//contrib/zsh:Doc/" + m + ".1",
     output = m + ".1.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for m in _MANUALS]
-[bsd_install_file(name = "install_manual_" + m, src = ":manual_" + m, destination = "/usr/share/man/man1/" + m + ".1.gz",
+[bsd_install_file(manual = True, name = "install_manual_" + m, src = ":manual_" + m, destination = "/usr/share/man/man1/" + m + ".1.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]})) for m in _MANUALS]
 utility_installation(name = "install_manifest", program = "zsh", manual = None, package = "runtime", bindir = "/bin",
     extra_entries = [":function_" + str(i) for i in range(len(_FUNCTIONS))] +

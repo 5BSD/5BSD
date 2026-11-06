@@ -13,7 +13,7 @@ bsd_install_file(name = "reference_introduced", src = "introduced", destination 
 bsd_compress(name = "manual", src = "base-accounts.8", output = "base-accounts.8.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/base-accounts.8.gz",
+bsd_install_file(manual = True, name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/base-accounts.8.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 bsd_install_manifest(name = "install_manifest", entries = [":install_program", ":reference_group", ":reference_master_passwd",

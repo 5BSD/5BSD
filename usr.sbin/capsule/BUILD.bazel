@@ -49,7 +49,7 @@ bsd_install_file(name = "install_loader", src = "capsule-loader.conf", destinati
     owner = "root", group = "wheel", mode = "0444", install_tags = ["package=capsule"])
 bsd_compress(name = "manual5", src = "capsule.conf.5", output = "capsule.conf.5.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/capsule.conf.5.gz",
+bsd_install_file(manual = True, name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/capsule.conf.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=capsule-man"], "//conditions:default": ["package=capsule"]}))
 _EXAMPLES = ["desktop.conf", "server.conf", "embedded.conf", "broker.conf", "dynamic_claims.d"]
 [bsd_install_file(name = "install_example_" + name, src = "examples/" + name,

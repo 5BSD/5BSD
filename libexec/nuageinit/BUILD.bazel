@@ -5,7 +5,7 @@ bsd_install_file(name = "script", src = "nuageinit", destination = "/usr/libexec
 bsd_compress(name = "manual", src = "nuageinit.7", output = "nuageinit.7.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "manual_file", src = ":manual", destination = "/usr/share/man/man7/nuageinit.7.gz",
+bsd_install_file(manual = True, name = "manual_file", src = ":manual", destination = "/usr/share/man/man7/nuageinit.7.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=nuageinit-man"],
         "//conditions:default": ["package=nuageinit"]}))

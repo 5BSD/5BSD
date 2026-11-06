@@ -19,7 +19,7 @@ bsd_install_file(
     destination = "/usr/libexec/zfs/zfs_prepare_disk", owner = "root", group = "wheel",
     mode = "0555", install_tags = ["package=zfs"],
 )
-bsd_install_file(
+bsd_install_file(manual = True,
     name = "manual_install", src = ":manual_gz",
     destination = "/usr/share/man/man8/zfs_prepare_disk.8.gz", owner = "root", group = "wheel",
     mode = "0444", install_tags = select({

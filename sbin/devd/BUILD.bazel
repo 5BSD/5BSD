@@ -43,7 +43,7 @@ cc_binary(name = "devd", deps = select({_TRACE: [":traced"], "//conditions:defau
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 bsd_compress(name = "config_manual", src = "devd.conf.5", output = "devd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/devd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=devd-man"], "//conditions:default": ["package=devd"]}))
+bsd_install_file(manual = True, name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/devd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=devd-man"], "//conditions:default": ["package=devd"]}))
 utility_installation(name = "install_manifest", program = "devd", manual = "devd.8", package = "devd", bindir = "/sbin", man_section = "8", extra_entries = [":config_manual_file"])
 # Platform matches the executable's currently supported amd64 target.
 # power_profile.conf is architecture-selected by Make, independent of MK_ACPI.

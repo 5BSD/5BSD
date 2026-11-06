@@ -71,7 +71,7 @@ bsd_compress(name = "manual_gzip", src = "libsa.3", output = "libsa.3.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual", src = select({"//tools/build/bazel/config:mancompress_enabled": ":manual_gzip", "//conditions:default": "libsa.3"}),
+bsd_install_file(manual = True, name = "install_manual", src = select({"//tools/build/bazel/config:mancompress_enabled": ":manual_gzip", "//conditions:default": "libsa.3"}),
     destination = select({"//tools/build/bazel/config:mancompress_enabled": "/usr/share/man/man3/libsa.3.gz", "//conditions:default": "/usr/share/man/man3/libsa.3"}), owner = "root", group = "wheel",
     mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=bootloader-man"],

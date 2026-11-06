@@ -15,28 +15,28 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-                ("networkcmp.h", "/usr/include/networkcmp.h", ["package=libnetworkcmp", "dev"]),
-        ("networkcmp_protocol.h", "/usr/include/networkcmp_protocol.h", ["package=libnetworkcmp", "dev"]),
-        ("networkcmp_server.h", "/usr/include/networkcmp_server.h", ["package=libnetworkcmp", "dev"]),
-        ("network_state.h", "/usr/include/network_state.h", ["package=libnetworkcmp", "dev"]),
-        ("network_state_protocol.h", "/usr/include/network_state_protocol.h", ["package=libnetworkcmp", "dev"]),
+                ("networkcmp.h", "/usr/include/networkcmp.h", ["package=libnetworkcmp", "dev"], False),
+        ("networkcmp_protocol.h", "/usr/include/networkcmp_protocol.h", ["package=libnetworkcmp", "dev"], False),
+        ("networkcmp_server.h", "/usr/include/networkcmp_server.h", ["package=libnetworkcmp", "dev"], False),
+        ("network_state.h", "/usr/include/network_state.h", ["package=libnetworkcmp", "dev"], False),
+        ("network_state_protocol.h", "/usr/include/network_state_protocol.h", ["package=libnetworkcmp", "dev"], False),
 
-        (":static_archive", "/usr/lib/libnetworkcmp.a", ["package=libnetworkcmp", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libnetworkcmp.so.1", ["package=libnetworkcmp"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libnetworkcmp.so.1.debug", ["package=libnetworkcmp", "dbg"]),
+        (":static_archive", "/usr/lib/libnetworkcmp.a", ["package=libnetworkcmp", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libnetworkcmp.so.1", ["package=libnetworkcmp"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libnetworkcmp.so.1.debug", ["package=libnetworkcmp", "dbg"], False),
     ]
     for manual in MANUAL_ALIASES:
         bsd_compress(name = name + "_manual_" + manual, src = manual + ".3",
             output = name + "/" + manual + ".3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         files.append((":" + name + "_manual_" + manual, "/usr/share/man/man3/" + manual + ".3.gz",
-            select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libnetworkcmp-man"], "//conditions:default": ["package=libnetworkcmp-dev"]})))
-    files.append(("networkcmp.fidl", "/usr/share/fidl/networkcmp.fidl", ["package=libnetworkcmp-dev"]))
-    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libnetworkcmp/fuchsia/" + n, ["package=libnetworkcmp"]) for n in ["LICENSE", "PATENTS"]]
+            select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libnetworkcmp-man"], "//conditions:default": ["package=libnetworkcmp-dev"]}), True))
+    files.append(("networkcmp.fidl", "/usr/share/fidl/networkcmp.fidl", ["package=libnetworkcmp-dev"], False))
+    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libnetworkcmp/fuchsia/" + n, ["package=libnetworkcmp"], False) for n in ["LICENSE", "PATENTS"]]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libnetworkcmp.so", target = "libnetworkcmp.so.1",
@@ -44,7 +44,7 @@ def library_installation(name):
     for manual in MANUAL_ALIASES:
         for alias in MANUAL_ALIASES[manual]:
             target = name + "_manual_" + alias
-            bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+            bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
                 target = "/usr/share/man/man3/" + manual + ".3.gz", kind = "hardlink",
                 owner = "root", group = "wheel", mode = "0444",
                 install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libnetworkcmp-man"], "//conditions:default": ["package=libnetworkcmp-dev"]}))

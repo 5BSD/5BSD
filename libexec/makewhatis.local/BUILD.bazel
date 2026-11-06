@@ -5,7 +5,7 @@ bsd_install_file(name = "script", src = "makewhatis.local.sh", destination = "/u
 bsd_compress(name = "manual", src = "makewhatis.local.8", output = "makewhatis.local.8.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "manual_file", src = ":manual", destination = "/usr/share/man/man8/makewhatis.local.8.gz",
+bsd_install_file(manual = True, name = "manual_file", src = ":manual", destination = "/usr/share/man/man8/makewhatis.local.8.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=mandoc-man"],
         "//conditions:default": ["package=mandoc"]}))

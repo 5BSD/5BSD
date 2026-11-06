@@ -34,11 +34,11 @@ _MAN_TAGS = select({
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
  for manual in MANUALS]
-[bsd_install_file(name = "install_" + manual.replace(".", "_"),
+[bsd_install_file(manual = True, name = "install_" + manual.replace(".", "_"),
     src = ":manual_" + manual.replace(".", "_"), destination = "/usr/share/man/man3/" + manual + ".gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
  for manual in MANUALS]
-[bsd_install_link(name = "install_" + alias.replace(".", "_"),
+[bsd_install_link(manual = True, name = "install_" + alias.replace(".", "_"),
     destination = "/usr/share/man/man3/" + alias + ".gz", target = "/usr/share/man/man3/" + original + ".gz",
     kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
  for original, alias in MANUAL_LINKS]

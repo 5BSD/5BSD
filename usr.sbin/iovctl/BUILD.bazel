@@ -5,7 +5,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 bsd_compress(name = "manual5", src = "iovctl.conf.5", output = "iovctl.conf.5.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/iovctl.conf.5.gz",
+bsd_install_file(manual = True, name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/iovctl.conf.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 cc_binary(name = "iovctl", srcs = ["iovctl.c", "parse.c", "validate.c", "iovctl.h"], deps = ["//lib/libnv:nv", "//lib/libucl:ucl", "//lib/msun:m"], dynamic_deps = ["//lib/libnv:nv_shared", "//lib/libucl:ucl_shared", "//lib/msun:m_shared"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 utility_installation(name = "install_manifest", program = "iovctl", manual = "iovctl.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":install_manual5"])

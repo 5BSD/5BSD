@@ -432,11 +432,11 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libsys.a", ["package=clibs", "dev"], ""),
-        (":pic_archive", "/usr/lib/libsys_pic.a", ["package=clibs", "dev"], ""),
-        (":" + name + "_stripped", "/lib/libsys.so.7", ["package=clibs"], "schg"),
-        (":" + name + "_symbols", "/usr/lib/debug/lib/libsys.so.7.debug", ["package=clibs", "dbg"], ""),
-    ] + [(header, "/usr/include/" + header, ["package=clibs", "dev"], "") for header in ["libsys.h", "_libsys.h"]]
+        (":static_archive", "/usr/lib/libsys.a", ["package=clibs", "dev"], "", False),
+        (":pic_archive", "/usr/lib/libsys_pic.a", ["package=clibs", "dev"], "", False),
+        (":" + name + "_stripped", "/lib/libsys.so.7", ["package=clibs"], "schg", False),
+        (":" + name + "_symbols", "/usr/lib/debug/lib/libsys.so.7.debug", ["package=clibs", "dbg"], "", False),
+    ] + [(header, "/usr/include/" + header, ["package=clibs", "dev"], "", False) for header in ["libsys.h", "_libsys.h"]]
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clibs-man"],
         "//conditions:default": ["package=clibs-dev"]})
     for manual in MANUALS:
@@ -446,11 +446,11 @@ def library_installation(name):
             output = "manuals/" + manual + ".gz", arguments = ["-cn"],
             compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
             runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        files.append((":" + compressed, "/usr/share/man/man" + manual.split(".")[-1] + "/" + manual + ".gz", man_tags, ""))
+        files.append((":" + compressed, "/usr/share/man/man" + manual.split(".")[-1] + "/" + manual + ".gz", man_tags, "", True))
     entries = []
-    for source, destination, tags, flags in files:
+    for source, destination, tags, flags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags, flags = flags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libsys.so", target = "../../lib/libsys.so.7",
@@ -458,7 +458,7 @@ def library_installation(name):
     entries.append(":" + name + "_link")
     for source, destination in MANUAL_LINKS:
         target = name + "_alias_" + destination
-        bsd_install_link(name = target, destination = "/usr/share/man/man" + destination.split(".")[-1] + "/" + destination + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man" + destination.split(".")[-1] + "/" + destination + ".gz",
             target = "/usr/share/man/man" + source.split(".")[-1] + "/" + source + ".gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
         entries.append(":" + target)

@@ -12,30 +12,30 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("namespacecmp.h", "/usr/include/namespacecmp.h", ["package=libnamespacecmp", "dev"]),
+        ("namespacecmp.h", "/usr/include/namespacecmp.h", ["package=libnamespacecmp", "dev"], False),
 
-        (":static_archive", "/usr/lib/libnamespacecmp.a", ["package=libnamespacecmp", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libnamespacecmp.so.1", ["package=libnamespacecmp"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libnamespacecmp.so.1.debug", ["package=libnamespacecmp", "dbg"]),
+        (":static_archive", "/usr/lib/libnamespacecmp.a", ["package=libnamespacecmp", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libnamespacecmp.so.1", ["package=libnamespacecmp"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libnamespacecmp.so.1.debug", ["package=libnamespacecmp", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "libnamespacecmp.3",
         output = name + "/libnamespacecmp.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/libnamespacecmp.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libnamespacecmp-man"], "//conditions:default": ["package=libnamespacecmp-dev"]})))
-    files.append(("namespacecmp.fidl", "/usr/share/fidl/namespacecmp.fidl", ["package=libnamespacecmp-dev"]))
-    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libnamespacecmp/fuchsia/" + n, ["package=libnamespacecmp"]) for n in ["LICENSE", "PATENTS"]]
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libnamespacecmp-man"], "//conditions:default": ["package=libnamespacecmp-dev"]}), True))
+    files.append(("namespacecmp.fidl", "/usr/share/fidl/namespacecmp.fidl", ["package=libnamespacecmp-dev"], False))
+    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/libnamespacecmp/fuchsia/" + n, ["package=libnamespacecmp"], False) for n in ["LICENSE", "PATENTS"]]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libnamespacecmp.so", target = "libnamespacecmp.so.1",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libnamespacecmp", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/libnamespacecmp.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libnamespacecmp-man"], "//conditions:default": ["package=libnamespacecmp-dev"]}))

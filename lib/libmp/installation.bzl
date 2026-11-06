@@ -12,18 +12,18 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libmp.a", ["package=utilities", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libmp.so.7", ["package=utilities"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libmp.so.7.debug", ["package=utilities", "dbg"]),
+        (":static_archive", "/usr/lib/libmp.a", ["package=utilities", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libmp.so.7", ["package=utilities"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libmp.so.7.debug", ["package=utilities", "dbg"], False),
     ]
-    files.append(("mp.h", "/usr/include/mp.h", ["package=utilities", "dev"]))
+    files.append(("mp.h", "/usr/include/mp.h", ["package=utilities", "dev"], False))
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities-dev"]})
     bsd_compress(name = name + "_manual", src = "libmp.3", output = name + "/libmp.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-    files.append((":" + name + "_manual", "/usr/share/man/man3/libmp.3.gz", man_tags))
+    files.append((":" + name + "_manual", "/usr/share/man/man3/libmp.3.gz", man_tags, True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libmp.so", target = "libmp.so.7",

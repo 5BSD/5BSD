@@ -15,7 +15,7 @@ cc_binary(name = "auditdistd", srcs = ["//contrib/openbsm:bin/auditdistd/auditdi
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 bsd_compress(name = "config_manual_gz", src = "//contrib/openbsm:bin/auditdistd/auditdistd.conf.5", output = "auditdistd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/auditdistd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=audit-man"], "//conditions:default": ["package=audit"]}))
+bsd_install_file(manual = True, name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/auditdistd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=audit-man"], "//conditions:default": ["package=audit"]}))
 utility_installation(name = "install_manifest", program = "auditdistd", manual = "//contrib/openbsm:bin/auditdistd/auditdistd.8", package = "audit", bindir = "/usr/sbin", man_section = "8", extra_entries = [":config_manual"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

@@ -6,7 +6,7 @@ config_setting(name = "heimdal_flags", flag_values = {"//tools/build/bazel/confi
 selects.config_setting_group(name = "heimdal", match_all = [":heimdal_flags", "//tools/build/bazel/config:kerberos_support_enabled"])
 bsd_install_file(name = "server_config", src = "//crypto/openssh:sshd_config", destination = "/etc/ssh/sshd_config", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=ssh", "config"])
 bsd_compress(name = "config_manual", src = "//crypto/openssh:sshd_config.5", output = "manuals/sshd_config.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/sshd_config.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=ssh-man"], "//conditions:default": ["package=ssh"]}))
+bsd_install_file(manual = True, name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/sshd_config.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=ssh-man"], "//conditions:default": ["package=ssh"]}))
 bsd_install_file(name = "moduli", src = "//crypto/openssh:moduli", destination = "/etc/ssh/moduli", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=ssh", "config"])
 ssh_program(
     name = "sshd",

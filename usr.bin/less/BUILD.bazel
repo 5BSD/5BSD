@@ -18,7 +18,7 @@ _ALIASES = ["bzless", "xzless", "lzless", "zstdless"]
 bsd_compress(name = "lesskey_manual", src = "//contrib/less:lesskey.nro", output = "lesskey.5.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "lesskey_manual_file", src = ":lesskey_manual", destination = "/usr/share/man/man5/lesskey.5.gz",
+bsd_install_file(manual = True, name = "lesskey_manual_file", src = ":lesskey_manual", destination = "/usr/share/man/man5/lesskey.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 utility_installation(name = "install_manifest", program = "less", manual = "//contrib/less:less.nro", package = "runtime",

@@ -28,7 +28,7 @@ def script_installation(name, scripts, manuals, package, files = {}):
         bsd_compress(name = item, src = manual, output = name + "/" + manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = item + "_file", src = ":" + item,
+        bsd_install_file(name = item + "_file", src = ":" + item, manual = True,
             destination = "/usr/share/man/man" + manual.rsplit(".", 1)[1] + "/" + manual + ".gz",
             owner = "root", group = "wheel", mode = "0444", install_tags = select({
                 "//tools/build/bazel/config:split_manpages_enabled": ["package=" + package + "-man"],

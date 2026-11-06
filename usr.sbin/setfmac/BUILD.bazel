@@ -6,7 +6,7 @@ cc_binary(name = "setfmac", srcs = ["setfmac.c"], copts = ["-fPIE"], linkopts = 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
 bsd_install_link(name = "setfsmac_link", destination = "/usr/sbin/setfsmac", target = "/usr/sbin/setfmac", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=utilities"])
 bsd_compress(name = "setfsmac_manual_gz", src = "setfsmac.8", output = "setfsmac.8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "setfsmac_manual", src = ":setfsmac_manual_gz", destination = "/usr/share/man/man8/setfsmac.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
+bsd_install_file(manual = True, name = "setfsmac_manual", src = ":setfsmac_manual_gz", destination = "/usr/share/man/man8/setfsmac.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 utility_installation(name = "install_manifest", program = "setfmac", manual = "setfmac.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", extra_entries = [":setfsmac_link", ":setfsmac_manual"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

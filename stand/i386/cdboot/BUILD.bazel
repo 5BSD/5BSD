@@ -28,6 +28,6 @@ bsd_install_file(name = "install_binary", src = ":cdboot", destination = "/boot/
 bsd_compress(name = "manual", src = "cdboot.8", output = "cdboot.8.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/cdboot.8.gz",
+bsd_install_file(manual = True, name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/cdboot.8.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bootloader"])
 bsd_install_manifest(name = "install_manifest", entries = [':install_binary', ':install_manual'], visibility = ["//stand/i386:__pkg__"])

@@ -26,7 +26,7 @@ def gzip_installation(name):
             redirect = "@bsd_sdk//toolchain:stdout_redirect",
             runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         entry = name + "_manual_" + manual
-        bsd_install_file(name = entry, src = ":" + compressed,
+        bsd_install_file(manual = True, name = entry, src = ":" + compressed,
             destination = "/usr/share/man/man1/" + manual + ".1.gz",
             owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
         entries.append(":" + entry)
@@ -36,7 +36,7 @@ def gzip_installation(name):
     ]:
         for alias, original in links.items():
             entry = name + "_" + kind + "_link_" + alias
-            bsd_install_link(name = entry, destination = prefix + alias + suffix,
+            bsd_install_link(manual = kind == "man", name = entry, destination = prefix + alias + suffix,
                 target = prefix + original + suffix, kind = "hardlink",
                 owner = "root", group = "wheel", mode = mode, install_tags = tags)
             entries.append(":" + entry)

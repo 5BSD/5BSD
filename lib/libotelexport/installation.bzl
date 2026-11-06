@@ -14,11 +14,11 @@ def library_installation(name):
     entries = []
     for manual, aliases in MANUALS.items():
         bsd_compress(name = name + "_" + manual + "_compressed", src = manual + ".3", output = name + "/" + manual + ".3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = name + "_" + manual + "_manual", src = ":" + name + "_" + manual + "_compressed", destination = "/usr/share/man/man3/" + manual + ".3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+        bsd_install_file(manual = True, name = name + "_" + manual + "_manual", src = ":" + name + "_" + manual + "_compressed", destination = "/usr/share/man/man3/" + manual + ".3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
         entries.append(":" + name + "_" + manual + "_manual")
         for alias in aliases:
             target = name + "_" + alias
-            bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz", target = "/usr/share/man/man3/" + manual + ".3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+            bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz", target = "/usr/share/man/man3/" + manual + ".3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
             entries.append(":" + target)
     bsd_install_file(name = name + "_otlp_license", src = "//contrib/opentelemetry-proto:LICENSE", destination = "/usr/share/licenses/opentelemetry-proto/LICENSE", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=utilities"])
     entries.append(":" + name + "_otlp_license")

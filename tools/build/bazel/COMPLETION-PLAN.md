@@ -1,5 +1,32 @@
 # Native Bazel completion plan
 
+## MAN=false source inclusion fixed and qualified (2026-11-06)
+
+Manual files/aliases are explicitly marked at their source-owned installation
+entries. Typed MAN controls their provider contribution and payload dependencies;
+no final inventory/path filter is used. Shared/custom helpers and mixed tables
+are corrected, with source AST review of all 257 changed BUILD/Starlark files.
+The current enabled/disabled complete native world captures pass: 32,518/14,546
+file/link paths, zero disabled manual paths, identical ordinary metadata and
+13,397 byte-identical ordinary file payloads. 1,279 prior enabled archives remain
+byte-identical; the sole other archive changes only its maintained manual.
+
+Fresh original Make libmd/gzip installations match all paths, metadata, links,
+directory claims and nonbinary contents in both settings (126/17 and 24/12 paths).
+Gzip's independently discovered /usr/bin utilities directory claim is repaired.
+The maintained whole-world MAN guard passes in both profiles; enabled package/
+ownership regressions also pass. See MAN-OPTION-QUALIFICATION.md for exact
+profile differences (servicesdb is independently disabled), scopes, retained
+failures, source review, immutable archives and the final passed audit.
+
+Existing format-5 frontend MAN input, source-owned backends and maintained tests/
+manual cover this work; C/CLI/signing/publication/defaults are unchanged. NEXT:
+complete native package family templates/dependencies and whole-world pkg archive
+creation from the qualified inventory, then package-driven fresh construction,
+existing-account preservation and normal installed service tests. Retain all
+independent world/kernel/modules/debug/cross/bootstrap/cache/sandbox/reproducibility/
+resource/runtime and combined base/hardware publication gates. Make remains default.
+
 ## Complete native world package inventory; MAN=false gap found (2026-11-06)
 
 The maintained whole-world inventory accounts for 32,518 file/link paths,

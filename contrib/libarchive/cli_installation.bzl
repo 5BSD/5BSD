@@ -22,10 +22,10 @@ def archive_cli_installation(name, program, alias, package, manual):
         ("manual_file", ":" + name + "_manual", "/usr/share/man/man1/" + program + ".1.gz", "0444", man_tags),
     ]:
         target = name + "_" + suffix
-        bsd_install_file(name = target, src = source, destination = destination, owner = "root", group = "wheel", mode = mode, install_tags = tags)
+        bsd_install_file(manual = suffix == "manual_file", name = target, src = source, destination = destination, owner = "root", group = "wheel", mode = mode, install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_alias", destination = "/usr/bin/" + alias, target = program,
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=" + package])
-    bsd_install_link(name = name + "_manual_alias", destination = "/usr/share/man/man1/" + alias + ".1.gz",
+    bsd_install_link(manual = True, name = name + "_manual_alias", destination = "/usr/share/man/man1/" + alias + ".1.gz",
         target = "/usr/share/man/man1/" + program + ".1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
     bsd_install_manifest(name = name, entries = entries + [":" + name + "_alias", ":" + name + "_manual_alias"], visibility = ["//visibility:public"])

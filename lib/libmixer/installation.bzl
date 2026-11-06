@@ -12,27 +12,27 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("mixer.h", "/usr/include/mixer.h", ["package=sound", "dev"]),
-        (":static_archive", "/usr/lib/libmixer.a", ["package=sound", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libmixer.so.5", ["package=sound"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libmixer.so.5.debug", ["package=sound", "dbg"]),
+        ("mixer.h", "/usr/include/mixer.h", ["package=sound", "dev"], False),
+        (":static_archive", "/usr/lib/libmixer.a", ["package=sound", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libmixer.so.5", ["package=sound"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libmixer.so.5.debug", ["package=sound", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "mixer.3",
         output = name + "/mixer.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/mixer.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=sound-man"], "//conditions:default": ["package=sound-dev"]})))
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=sound-man"], "//conditions:default": ["package=sound-dev"]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libmixer.so", target = "libmixer.so.5",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=sound", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/mixer.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=sound-man"], "//conditions:default": ["package=sound-dev"]}))

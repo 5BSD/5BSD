@@ -10,11 +10,13 @@ def _manifest(ctx):
         fail("GEOM class directory must be a normalized absolute directory")
     filename = "geom_" + ctx.attr.cls + ".so"
     records = []
-    for source, destination, tags in [
+    files = [
         (ctx.file.binary, directory + "/" + filename, ["package=geom"]),
         (ctx.file.debug, "/usr/lib/debug" + directory + "/" + filename + ".debug", ["package=geom", "dbg"]),
-        (ctx.file.manual, "/usr/share/man/man8/g" + ctx.attr.cls + ".8.gz", ["package=geom-man"] if ctx.attr.split_manpages[BuildSettingInfo].value else ["package=geom"]),
-    ]:
+    ]
+    if ctx.attr.man_enabled[BuildSettingInfo].value:
+        files.append((ctx.file.manual, "/usr/share/man/man8/g" + ctx.attr.cls + ".8.gz", ["package=geom-man"] if ctx.attr.split_manpages[BuildSettingInfo].value else ["package=geom"]))
+    for source, destination, tags in files:
         records.append(dict(source = source.path, destination = destination, owner = "root", group = "wheel", mode = "0444", tags = tags, type = "file", flags = ""))
     prefix = "/usr/lib/debug"
     for part in directory[1:].split("/"):
@@ -22,12 +24,13 @@ def _manifest(ctx):
         records.append(dict(destination = prefix, owner = "root", group = "wheel", mode = "0755", tags = ["package=geom", "dbg"], type = "dir"))
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(output, json.encode(dict(format = 1, files = records)) + "\n")
-    payload = depset([ctx.file.binary, ctx.file.debug, ctx.file.manual])
+    payload = depset([source for source, _, _ in files])
     return [DefaultInfo(files = depset([output], transitive = [payload])), BsdInstallManifestInfo(manifest = output, payload = payload, records = records)]
 
 _plugin_manifest = rule(implementation = _manifest, attrs = {
     "directory": attr.label(mandatory = True), "split_manpages": attr.label(mandatory = True),
     "cls": attr.string(mandatory = True),
+    "man_enabled": attr.label(default = Label("//tools/build/bazel/config:man"), providers = [BuildSettingInfo]),
     "binary": attr.label(allow_single_file = True, mandatory = True),
     "debug": attr.label(allow_single_file = True, mandatory = True),
     "manual": attr.label(allow_single_file = True, mandatory = True),

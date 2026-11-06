@@ -10,18 +10,18 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":" + name + "_stripped", "/lib/libssp.so.0", ["package=clibs"]),
-        (":" + name + "_symbols", "/usr/lib/debug/lib/libssp.so.0.debug", ["package=clibs", "dbg"]),
+        (":" + name + "_stripped", "/lib/libssp.so.0", ["package=clibs"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/lib/libssp.so.0.debug", ["package=clibs", "dbg"], False),
     ]
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clibs-man"], "//conditions:default": ["package=clibs-dev"]})
     for manual in ["ssp.3", "__builtin_object_size.3"]:
         target = name + "_manual_" + manual
         bsd_compress(name = target, src = manual, output = name + "/" + manual + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        files.append((":" + target, "/usr/share/man/man3/" + manual + ".gz", man_tags))
+        files.append((":" + target, "/usr/share/man/man3/" + manual + ".gz", man_tags, True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libssp.so", target = "../../lib/libssp.so.0",

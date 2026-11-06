@@ -7,7 +7,7 @@ cc_binary(name = "sysconf", srcs = ["sysconf.c", "sysconf_edit_assign.c", "sysco
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
 _MANUALS = ["sysconf-generic", "sysconf-loader", "sysconf-make", "sysconf-rc", "sysconf-src", "sysconf-sysctl", "sysconf-targets"]
 [bsd_compress(name = n + "_compressed", src = n + ".8", output = n + ".8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for n in _MANUALS]
-[bsd_install_file(name = n + "_manual", src = ":" + n + "_compressed", destination = "/usr/share/man/man8/" + n + ".8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})) for n in _MANUALS]
+[bsd_install_file(manual = True, name = n + "_manual", src = ":" + n + "_compressed", destination = "/usr/share/man/man8/" + n + ".8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})) for n in _MANUALS]
 utility_installation(name = "install_manifest", program = "sysconf", manual = "sysconf.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":" + n + "_manual" for n in _MANUALS])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/sysconf/tests:install_manifest"], "//conditions:default": []}),

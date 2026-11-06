@@ -13,10 +13,10 @@ def library_installation(name):
     bsd_strip_binary(name = name + "_stripped", src = ":" + name + "_debug", output = name + "/stripped/libcap_net.so.1",
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
-    files = [('cap_net.h', '/usr/include/casper/cap_net.h', ['package=libcasper', 'dev'])]
+    files = [('cap_net.h', '/usr/include/casper/cap_net.h', ['package=libcasper', 'dev'], False)]
     binary_files = [
-        (":" + name + "_stripped", "/lib/libcap_net.so.1", ["package=libcasper"]),
-        (":" + name + "_symbols", "/usr/lib/debug/lib/libcap_net.so.1.debug", ["package=libcasper", "dbg"]),
+        (":" + name + "_stripped", "/lib/libcap_net.so.1", ["package=libcasper"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/lib/libcap_net.so.1.debug", ["package=libcasper", "dbg"], False),
     ]
     for manual in MANUALS:
         target = name + "_manual_" + manual
@@ -26,20 +26,20 @@ def library_installation(name):
             runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libcasper-man"],
             "//conditions:default": ["package=libcasper-dev"]})
-        files.append((":" + target, _manpath(manual), tags))
+        files.append((":" + target, _manpath(manual), tags, True))
     entries = []
     binary_entries = []
-    for source, destination, tags in files + binary_files:
+    for source, destination, tags, is_manual in files + binary_files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
-        if (source, destination, tags) in binary_files:
+        if (source, destination, tags, is_manual) in binary_files:
             binary_entries.append(":" + target)
         else:
             entries.append(":" + target)
     for original, alias in MANUAL_LINKS:
         target = name + "_alias_" + alias
-        bsd_install_link(name = target, destination = _manpath(alias), target = _manpath(original),
+        bsd_install_link(manual = True, name = target, destination = _manpath(alias), target = _manpath(original),
             kind = "hardlink", owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libcasper-man"],
                 "//conditions:default": ["package=libcasper-dev"]}))

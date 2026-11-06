@@ -2,6 +2,8 @@
 load(":bsd_kyua_metadata.bzl", "kyua_metadata_fields")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 """Typed installation payloads. No writes to the host installation tree."""
+# A disabled optional entry carries neither source nor metadata. Manifests must
+# skip it before composing payload dependencies and checking hardlink closure.
 BsdInstallFileInfo = provider(fields = ["source", "metadata"])
 BsdInstallManifestInfo = provider(fields = ["manifest", "payload", "records"])
 
@@ -19,6 +21,8 @@ def _install_destination(destination, settings):
 
 def _install_file(ctx):
     destination = _install_destination(ctx.attr.destination, ctx.attr.destination_prefixes)
+    if ctx.attr.manual and not ctx.attr._man[BuildSettingInfo].value:
+        return [BsdInstallFileInfo(source = None, metadata = None), DefaultInfo(files = depset())]
     metadata = {
         "destination": destination,
         "owner": ctx.attr.owner,
@@ -34,6 +38,8 @@ def _install_file(ctx):
 bsd_install_file = rule(
     implementation = _install_file,
     attrs = {
+        "manual": attr.bool(default = False, doc = "Source-owned manual payload/alias controlled by MAN."),
+        "_man": attr.label(default = Label("//tools/build/bazel/config:man"), providers = [BuildSettingInfo]),
         "src": attr.label(allow_single_file = True, mandatory = True),
         "flags": attr.string(),
         "destination": attr.string(mandatory = True),
@@ -100,6 +106,8 @@ def _install_manifest(ctx):
             _append_installation_record(entries, seen, dict(original), ctx.attr.merge_identical_directories)
     for target in ctx.attr.entries:
         item = target[BsdInstallFileInfo]
+        if item.metadata == None:
+            continue
         record = dict(item.metadata)
         if item.source != None:
             record["source"] = item.source.path
@@ -173,6 +181,8 @@ def _install_link(ctx):
     destination = _install_destination(ctx.attr.destination, ctx.attr.destination_prefixes)
     if ctx.attr.kind == "hardlink" and (not ctx.attr.target.startswith("/") or ".." in ctx.attr.target.split("/")):
         fail("hardlink target must be an installation destination")
+    if ctx.attr.manual and not ctx.attr._man[BuildSettingInfo].value:
+        return [BsdInstallFileInfo(source = None, metadata = None), DefaultInfo(files = depset())]
     metadata = {"destination": destination, "owner": ctx.attr.owner,
                 "group": ctx.attr.group, "mode": ctx.attr.mode,
                 "tags": ctx.attr.install_tags, "type": ctx.attr.kind, "link": ctx.attr.target}
@@ -181,6 +191,8 @@ def _install_link(ctx):
 bsd_install_link = rule(
     implementation = _install_link,
     attrs = {
+        "manual": attr.bool(default = False, doc = "Source-owned manual payload/alias controlled by MAN."),
+        "_man": attr.label(default = Label("//tools/build/bazel/config:man"), providers = [BuildSettingInfo]),
         "destination": attr.string(mandatory = True),
         "destination_prefixes": attr.label_list(providers = [BuildSettingInfo], doc = "Ordered configured directory prefixes; empty strings are allowed."),
         "target": attr.string(mandatory = True),

@@ -173,7 +173,7 @@ bsd_compress(
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
 )
 
-bsd_install_file(
+bsd_install_file(manual = True,
     name = "manual_entry",
     src = ":manual_gzip",
     destination = "/usr/share/man/man1/bzip2.1.gz",
@@ -208,7 +208,7 @@ bsd_install_link(
     install_tags = ["package=bzip2"],
 )
 
-bsd_install_link(
+bsd_install_link(manual = True,
     name = "bunzip2_manual_entry",
     destination = "/usr/share/man/man1/bunzip2.1.gz",
     target = "/usr/share/man/man1/bzip2.1.gz",
@@ -222,7 +222,7 @@ bsd_install_link(
     }),
 )
 
-bsd_install_link(
+bsd_install_link(manual = True,
     name = "bzcat_manual_entry",
     destination = "/usr/share/man/man1/bzcat.1.gz",
     target = "/usr/share/man/man1/bzip2.1.gz",
@@ -236,7 +236,7 @@ bsd_install_link(
     }),
 )
 
-bsd_install_link(
+bsd_install_link(manual = True,
     name = "bzip2recover_manual_entry",
     destination = "/usr/share/man/man1/bzip2recover.1.gz",
     target = "/usr/share/man/man1/bzip2.1.gz",

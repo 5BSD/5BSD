@@ -19,17 +19,17 @@ def module_installation(module, binary, manual, definitions, major = "6", mibs =
             compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bsnmp-man"], "//conditions:default": ["package=bsnmp-dev"]})
     files = [
-        (":stripped", "/usr/lib/" + soname, ["package=bsnmp"]),
-        (":symbols", "/usr/lib/debug/usr/lib/" + soname + ".debug", ["package=bsnmp", "dbg"]),
-    ] + [(source, "/usr/share/snmp/defs/" + name, ["package=bsnmp"]) for source, name in definitions.items()]
-    files += [(source, "/usr/share/snmp/mibs/" + name, ["package=bsnmp"]) for source, name in mibs.items()]
-    files += [(source, "/usr/include/bsnmp/" + name, ["package=bsnmp", "dev"]) for source, name in headers.items()]
+        (":stripped", "/usr/lib/" + soname, ["package=bsnmp"], False),
+        (":symbols", "/usr/lib/debug/usr/lib/" + soname + ".debug", ["package=bsnmp", "dbg"], False),
+    ] + [(source, "/usr/share/snmp/defs/" + name, ["package=bsnmp"], False) for source, name in definitions.items()]
+    files += [(source, "/usr/share/snmp/mibs/" + name, ["package=bsnmp"], False) for source, name in mibs.items()]
+    files += [(source, "/usr/include/bsnmp/" + name, ["package=bsnmp", "dev"], False) for source, name in headers.items()]
     if manual:
-        files.append((":manual", "/usr/share/man/man3/snmp_" + module + ".3.gz", man_tags))
+        files.append((":manual", "/usr/share/man/man3/snmp_" + module + ".3.gz", man_tags, True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         name = "file_" + destination.replace("/", "_")
-        bsd_install_file(name = name, src = source, destination = destination, owner = "root", group = "wheel", mode = "0444", install_tags = tags)
+        bsd_install_file(manual = is_manual, name = name, src = source, destination = destination, owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + name)
     bsd_install_link(name = "module_link", destination = "/usr/lib/snmp_" + module + ".so", target = soname,
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bsnmp"])

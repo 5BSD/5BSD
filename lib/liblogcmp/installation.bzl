@@ -12,32 +12,32 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("logcmp.h", "/usr/include/logcmp.h", ["package=liblogcmp", "dev"]),
-        ("logcmp_protocol.h", "/usr/include/logcmp_protocol.h", ["package=liblogcmp", "dev"]),
-        ("logcmp_server.h", "/usr/include/logcmp_server.h", ["package=liblogcmp", "dev"]),
+        ("logcmp.h", "/usr/include/logcmp.h", ["package=liblogcmp", "dev"], False),
+        ("logcmp_protocol.h", "/usr/include/logcmp_protocol.h", ["package=liblogcmp", "dev"], False),
+        ("logcmp_server.h", "/usr/include/logcmp_server.h", ["package=liblogcmp", "dev"], False),
 
-        (":static_archive", "/usr/lib/liblogcmp.a", ["package=liblogcmp", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/liblogcmp.so.1", ["package=liblogcmp"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/liblogcmp.so.1.debug", ["package=liblogcmp", "dbg"]),
+        (":static_archive", "/usr/lib/liblogcmp.a", ["package=liblogcmp", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/liblogcmp.so.1", ["package=liblogcmp"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/liblogcmp.so.1.debug", ["package=liblogcmp", "dbg"], False),
     ]
     bsd_compress(name = name + "_manual", src = "liblogcmp.3",
         output = name + "/liblogcmp.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
         redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     files.append((":" + name + "_manual", "/usr/share/man/man3/liblogcmp.3.gz",
-        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=liblogcmp-man"], "//conditions:default": ["package=liblogcmp-dev"]})))
-    files.append(("logcmp.fidl", "/usr/share/fidl/logcmp.fidl", ["package=liblogcmp-dev"]))
-    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/liblogcmp/fuchsia/" + n, ["package=liblogcmp"]) for n in ["LICENSE", "PATENTS"]]
+        select({"//tools/build/bazel/config:split_manpages_enabled": ["package=liblogcmp-man"], "//conditions:default": ["package=liblogcmp-dev"]}), True))
+    files.append(("logcmp.fidl", "/usr/share/fidl/logcmp.fidl", ["package=liblogcmp-dev"], False))
+    files += [("//contrib/fuchsia:" + n, "/usr/share/licenses/liblogcmp/fuchsia/" + n, ["package=liblogcmp"], False) for n in ["LICENSE", "PATENTS"]]
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/liblogcmp.so", target = "liblogcmp.so.1",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=liblogcmp", "dev"])
     for alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/liblogcmp.3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=liblogcmp-man"], "//conditions:default": ["package=liblogcmp-dev"]}))

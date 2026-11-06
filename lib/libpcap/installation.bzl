@@ -13,12 +13,12 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        (":static_archive", "/usr/lib/libpcap.a", ["package=utilities", "dev"]),
-        (":" + name + "_stripped", "/lib/libpcap.so.8", ["package=utilities"]),
-        (":" + name + "_symbols", "/usr/lib/debug/lib/libpcap.so.8.debug", ["package=utilities", "dbg"]),
+        (":static_archive", "/usr/lib/libpcap.a", ["package=utilities", "dev"], False),
+        (":" + name + "_stripped", "/lib/libpcap.so.8", ["package=utilities"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/lib/libpcap.so.8.debug", ["package=utilities", "dbg"], False),
     ]
     for header in HEADERS:
-        files.append(("//contrib/libpcap:" + header, "/usr/include/" + header, ["package=utilities", "dev"]))
+        files.append(("//contrib/libpcap:" + header, "/usr/include/" + header, ["package=utilities", "dev"], False))
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities-dev"]})
     for page, source, nodev in MANUALS:
         target = name + "_manual_" + page
@@ -28,18 +28,18 @@ def library_installation(name):
         bsd_compress(name = target + "_gz", src = ":" + target, output = name + "/" + page + ".gz", arguments = ["-cn"],
             compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}) if nodev else man_tags
-        files.append((":" + target + "_gz", "/usr/share/man/man" + page[-1] + "/" + page + ".gz", tags))
+        files.append((":" + target + "_gz", "/usr/share/man/man" + page[-1] + "/" + page + ".gz", tags, True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libpcap.so", target = "../../lib/libpcap.so.8",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities", "dev"])
     for source, alias in MANUAL_ALIASES:
         target = name + "_alias_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man" + alias[-1] + "/" + alias + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man" + alias[-1] + "/" + alias + ".gz",
             target = "/usr/share/man/man" + source[-1] + "/" + source + ".gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
         entries.append(":" + target)

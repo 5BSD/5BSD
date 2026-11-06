@@ -30,7 +30,7 @@ cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_
 cc_binary(name = "inetd", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}) + nis_runtime_deps(),
     dynamic_deps = ["//lib/libutil:util_shared"] + select({_WRAP: ["//lib/libwrap:wrap_shared"], "//conditions:default": []}) + ["//lib/libipsec:ipsec_shared"], linkopts = ["-pie"] + nis_runtime_linkopts(), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_install_file(name = "extra", src = "inetd.conf", destination = "/etc/inetd.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=inetd", "config"])
-bsd_install_link(name = "config_manual", destination = "/usr/share/man/man5/inetd.conf.5.gz", target = "/usr/share/man/man8/inetd.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=inetd-man"], "//conditions:default": ["package=inetd"]}))
+bsd_install_link(manual = True, name = "config_manual", destination = "/usr/share/man/man5/inetd.conf.5.gz", target = "/usr/share/man/man8/inetd.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=inetd-man"], "//conditions:default": ["package=inetd"]}))
 utility_installation(name = "install_manifest", program = "inetd", manual = "inetd.8", man_section = "8", package = "inetd", bindir = "/usr/sbin", extra_entries = [":extra", ":config_manual"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

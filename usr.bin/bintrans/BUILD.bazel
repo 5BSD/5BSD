@@ -7,9 +7,9 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", 
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})
 bsd_compress(name = "format_manual", src = "uuencode.format.5", output = "uuencode.format.5.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "format_manual_file", src = ":format_manual", destination = "/usr/share/man/man5/uuencode.format.5.gz",
+bsd_install_file(manual = True, name = "format_manual_file", src = ":format_manual", destination = "/usr/share/man/man5/uuencode.format.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
-bsd_install_link(name = "format_manual_alias", destination = "/usr/share/man/man5/uuencode.5.gz", target = "/usr/share/man/man5/uuencode.format.5.gz",
+bsd_install_link(manual = True, name = "format_manual_alias", destination = "/usr/share/man/man5/uuencode.5.gz", target = "/usr/share/man/man5/uuencode.format.5.gz",
     kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
 utility_installation(name = "install_manifest", program = "bintrans", manual = "bintrans.1", package = "utilities", aliases = ["uuencode", "uudecode", "b64encode", "b64decode", "base64"], extra_entries = [":format_manual_file", ":format_manual_alias"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

@@ -13,7 +13,7 @@ cc_binary(name = "hcsecd", srcs = ["hcsecd.c", ":lexer", ":parser_source"], deps
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
 bsd_install_file(name = "config", src = "hcsecd.conf", destination = "/etc/bluetooth/hcsecd.conf", owner = "root", group = "wheel", mode = "0600", install_tags = ["package=bluetooth", "config"])
 bsd_compress(name = "config_manual_gz", src = "hcsecd.conf.5", output = "hcsecd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/hcsecd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bluetooth-man"], "//conditions:default": ["package=bluetooth"]}))
+bsd_install_file(manual = True, name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/hcsecd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bluetooth-man"], "//conditions:default": ["package=bluetooth"]}))
 utility_installation(name = "install_manifest", program = "hcsecd", manual = "hcsecd.8", package = "bluetooth", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":config", ":config_manual"])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

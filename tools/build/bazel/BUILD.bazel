@@ -373,3 +373,5 @@ bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-te
 exports_files(["world_package_inventory.py"], visibility = ["//:__pkg__"])
 
 bsd_python_test(name = "world_package_inventory_test", src = "world-package-inventory-test.py", data = ["world_package_inventory.py"])
+
+bsd_python_test(name = "world_man_option_test", src = "world-man-option-test.py", data = ["//:world_package_inventory"])

@@ -59,7 +59,7 @@ bsd_install_file(name = "syslog_config", src = "syslog.conf", destination = "/et
 bsd_compress(name = "manual5", src = "syslog.conf.5", output = "syslog.conf.5.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual", src = ":manual5", destination = "/usr/share/man/man5/syslog.conf.5.gz",
+bsd_install_file(manual = True, name = "config_manual", src = ":manual5", destination = "/usr/share/man/man5/syslog.conf.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=syslogd-man"],
         "//conditions:default": ["package=syslogd"],

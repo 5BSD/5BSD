@@ -16,7 +16,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 _EXAMPLES = "//tools/build/bazel/config:examples_enabled"
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=hostapd-man"], "//conditions:default": ["package=hostapd"]})
 bsd_compress(name = "config_manual", src = "hostapd.conf.5", output = "install_manifest/hostapd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual_entry", src = ":config_manual", destination = "/usr/share/man/man5/hostapd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_file(manual = True, name = "config_manual_entry", src = ":config_manual", destination = "/usr/share/man/man5/hostapd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
 bsd_install_file(name = "example_0", src = "//contrib/wpa:hostapd/hostapd.conf", destination = "/usr/share/examples/hostapd/hostapd.conf", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=hostapd"])
 bsd_install_file(name = "example_1", src = "//contrib/wpa:hostapd/hostapd.eap_user", destination = "/usr/share/examples/hostapd/hostapd.eap_user", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=hostapd"])
 bsd_install_file(name = "example_2", src = "//contrib/wpa:hostapd/hostapd.wpa_psk", destination = "/usr/share/examples/hostapd/hostapd.wpa_psk", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=hostapd"])

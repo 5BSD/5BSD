@@ -15,7 +15,7 @@ def bsd_command_installation(name, program, manual, package, aliases = [], manua
         runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=" + package + "-man"],
         "//conditions:default": ["package=" + package]})
-    bsd_install_file(name = "manual_entry", src = ":manual", destination = "/usr/share/man/man1/" + program + ".1.gz",
+    bsd_install_file(manual = True, name = "manual_entry", src = ":manual", destination = "/usr/share/man/man1/" + program + ".1.gz",
         owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
     entries = [":manual_entry"]
     for kind, names, prefix, suffix, mode, tags in [
@@ -24,7 +24,7 @@ def bsd_command_installation(name, program, manual, package, aliases = [], manua
     ]:
         for alias in names:
             entry = kind + "_link_" + alias
-            bsd_install_link(name = entry, destination = prefix + alias + suffix,
+            bsd_install_link(manual = kind == "man", name = entry, destination = prefix + alias + suffix,
                 target = prefix + program + suffix, kind = "hardlink", owner = "root",
                 group = "wheel", mode = mode, install_tags = tags)
             entries.append(":" + entry)

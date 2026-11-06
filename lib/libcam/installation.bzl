@@ -12,11 +12,11 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("camlib.h", "/usr/include/camlib.h", ["package=runtime", "dev"]),
-        ("scsi_wrap.h", "/usr/include/scsi_wrap.h", ["package=runtime", "dev"]),
-        (":static_archive", "/usr/lib/libcam.a", ["package=runtime", "dev"]),
-        (":" + name + "_stripped", "/lib/libcam.so.7", ["package=runtime"]),
-        (":" + name + "_symbols", "/usr/lib/debug/lib/libcam.so.7.debug", ["package=runtime", "dbg"]),
+        ("camlib.h", "/usr/include/camlib.h", ["package=runtime", "dev"], False),
+        ("scsi_wrap.h", "/usr/include/scsi_wrap.h", ["package=runtime", "dev"], False),
+        (":static_archive", "/usr/lib/libcam.a", ["package=runtime", "dev"], False),
+        (":" + name + "_stripped", "/lib/libcam.so.7", ["package=runtime"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/lib/libcam.so.7.debug", ["package=runtime", "dbg"], False),
     ]
     man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime-dev"]})
     for manual in MANUALS:
@@ -24,18 +24,18 @@ def library_installation(name):
         bsd_compress(name = target, src = manual, output = name + "/" + manual + ".gz",
             arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
             redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        files.append((":" + target, "/usr/share/man/man3/" + manual + ".gz", man_tags))
+        files.append((":" + target, "/usr/share/man/man3/" + manual + ".gz", man_tags, True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libcam.so", target = "../../lib/libcam.so.7",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=runtime", "dev"])
     for source, alias in MANUAL_LINKS:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".gz",
             target = "/usr/share/man/man3/" + source + ".gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime-dev"]}))

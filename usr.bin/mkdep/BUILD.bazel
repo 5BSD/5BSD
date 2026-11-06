@@ -5,7 +5,7 @@ bsd_install_file(name = "script_install", src = "mkdep.gcc.sh", destination = "/
 bsd_compress(name = "manual", src = "mkdep.1", output = "mkdep.1.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "manual_install", src = ":manual", destination = "/usr/share/man/man1/mkdep.1.gz",
+bsd_install_file(manual = True, name = "manual_install", src = ":manual", destination = "/usr/share/man/man1/mkdep.1.gz",
     owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
 bsd_install_manifest(name = "install_manifest", entries = [":script_install", ":manual_install"], visibility = ["//visibility:public"])

@@ -4,7 +4,7 @@ _MANUALS = ['man.1', 'manpath.1', 'man.conf.5']
 _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=mandoc-man"], "//conditions:default": ["package=mandoc"]})
 [bsd_compress(name = "compressed_" + n, src = "" + n, output = n + ".gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for n in _MANUALS]
-[bsd_install_file(name = "manual_" + n, src = ":compressed_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz",
+[bsd_install_file(manual = True, name = "manual_" + n, src = ":compressed_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS) for n in _MANUALS]
 bsd_install_file(name = "script", src = "man.sh", destination = "/usr/bin/man", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=mandoc"])
 bsd_install_link(name = "manpath", destination = "/usr/bin/manpath", target = "/usr/bin/man", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=mandoc"])

@@ -18,7 +18,7 @@ _ALIASES = [
 [bsd_install_link(name = alias + "_binary", destination = "/usr/bin/" + alias, target = binary,
     kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=toolchain"])
  for alias, binary, manual in _ALIASES]
-[bsd_install_link(name = alias + "_manual", destination = "/usr/share/man/man1/" + alias + ".1.gz",
+[bsd_install_link(manual = True, name = alias + "_manual", destination = "/usr/share/man/man1/" + alias + ".1.gz",
     target = "/usr/share/man/man1/" + manual + ".1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444",
     install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=toolchain-man"], "//conditions:default": ["package=toolchain"]}))
  for alias, binary, manual in _ALIASES]

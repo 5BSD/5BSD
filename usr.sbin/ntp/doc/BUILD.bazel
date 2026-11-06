@@ -14,7 +14,7 @@ _MANUALS = list(MANUAL_TEMPLATES) + ["ntpdate.8", "ntptime.8"]
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
  for name in _MANUALS]
-[bsd_install_file(name = "manual_" + name, src = ":compressed_" + name,
+[bsd_install_file(manual = True, name = "manual_" + name, src = ":compressed_" + name,
     destination = "/usr/share/man/man" + name[-1] + "/" + name + ".gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=ntp-man"], "//conditions:default": ["package=ntp"]}))

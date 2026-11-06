@@ -16,23 +16,23 @@ def digest_installation(name):
         "//conditions:default": ["package=runtime"],
     })
     files = [
-        ("binary", ":stripped", "/sbin/md5", "0555", ["package=runtime"]),
-        ("symbols", ":" + name + "_debug", "/usr/lib/debug/sbin/md5.debug", "0444", ["dbg", "package=runtime"]),
-        ("manual", ":manual", "/usr/share/man/man1/md5.1.gz", "0444", man_tags),
+        ("binary", ":stripped", "/sbin/md5", "0555", ["package=runtime"], False),
+        ("symbols", ":" + name + "_debug", "/usr/lib/debug/sbin/md5.debug", "0444", ["dbg", "package=runtime"], False),
+        ("manual", ":manual", "/usr/share/man/man1/md5.1.gz", "0444", man_tags, True),
     ]
     entries = []
-    for suffix, source, destination, mode, tags in files:
+    for suffix, source, destination, mode, tags, is_manual in files:
         target = name + "_" + suffix
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = mode, install_tags = tags)
         entries.append(":" + target)
     for alias in ALIASES:
-        for suffix, destination, source, mode, tags in [
-            ("bin", "/sbin/" + alias, "/sbin/md5", "0555", ["package=runtime"]),
-            ("man", "/usr/share/man/man1/" + alias + ".1.gz", "/usr/share/man/man1/md5.1.gz", "0444", man_tags),
+        for suffix, destination, source, mode, tags, is_manual in [
+            ("bin", "/sbin/" + alias, "/sbin/md5", "0555", ["package=runtime"], False),
+            ("man", "/usr/share/man/man1/" + alias + ".1.gz", "/usr/share/man/man1/md5.1.gz", "0444", man_tags, True),
         ]:
             target = name + "_" + suffix + "_" + alias
-            bsd_install_link(name = target, destination = destination, target = source,
+            bsd_install_link(manual = is_manual, name = target, destination = destination, target = source,
                 kind = "hardlink", owner = "root", group = "wheel", mode = mode, install_tags = tags)
             entries.append(":" + target)
     bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])

@@ -12,27 +12,27 @@ def library_installation(name):
         strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
     native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
     files = [
-        ("libservice.h", "/usr/include/libservice.h", ["package=libservice", "dev"]),
-        ("libservice_session.h", "/usr/include/libservice_session.h", ["package=libservice", "dev"]),
-        ("service_runtime.h", "/usr/include/service_runtime.h", ["package=libservice", "dev"]),
-        (":static_archive", "/usr/lib/libservice.a", ["package=libservice", "dev"]),
-        (":" + name + "_stripped", "/usr/lib/libservice.so.2", ["package=libservice"]),
-        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libservice.so.2.debug", ["package=libservice", "dbg"]),
+        ("libservice.h", "/usr/include/libservice.h", ["package=libservice", "dev"], False),
+        ("libservice_session.h", "/usr/include/libservice_session.h", ["package=libservice", "dev"], False),
+        ("service_runtime.h", "/usr/include/service_runtime.h", ["package=libservice", "dev"], False),
+        (":static_archive", "/usr/lib/libservice.a", ["package=libservice", "dev"], False),
+        (":" + name + "_stripped", "/usr/lib/libservice.so.2", ["package=libservice"], False),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libservice.so.2.debug", ["package=libservice", "dbg"], False),
     ]
     for manual in ["libservice", "service_runtime"]:
         bsd_compress(name = name + "_manual_" + manual, src = manual + ".3", output = name + "/" + manual + ".3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        files.append((":" + name + "_manual_" + manual, "/usr/share/man/man3/" + manual + ".3.gz", select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libservice-man"], "//conditions:default": ["package=libservice-dev"]})))
+        files.append((":" + name + "_manual_" + manual, "/usr/share/man/man3/" + manual + ".3.gz", select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libservice-man"], "//conditions:default": ["package=libservice-dev"]}), True))
     entries = []
-    for source, destination, tags in files:
+    for source, destination, tags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
-        bsd_install_file(name = target, src = source, destination = destination,
+        bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags)
         entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libservice.so", target = "libservice.so.2",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libservice", "dev"])
     for manual, alias in MANUAL_ALIASES:
         target = name + "_manual_" + alias
-        bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
+        bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz",
             target = "/usr/share/man/man3/" + manual + ".3.gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444",
             install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libservice-man"], "//conditions:default": ["package=libservice-dev"]}))

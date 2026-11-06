@@ -66,6 +66,6 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
 bsd_compress(name = "config_manual", src = "jail.conf.5", output = "jail.conf.5.gz",
     arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
     redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-bsd_install_file(name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/jail.conf.5.gz",
+bsd_install_file(manual = True, name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/jail.conf.5.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=jail-man"], "//conditions:default": ["package=jail"]}))

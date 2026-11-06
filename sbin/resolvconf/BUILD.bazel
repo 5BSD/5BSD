@@ -9,7 +9,7 @@ _FILES = [("resolvconf", "/sbin/resolvconf", "0555")] + [(n, "/libexec/resolvcon
 [bsd_install_file(name = "install_" + n, src = ":generated_" + n, destination = dest, owner = "root", group = "wheel", mode = mode, install_tags = ["package=resolvconf"]) for n, dest, mode in _FILES]
 _MANUALS = ["resolvconf.conf.5", "resolvconf.8"]
 [bsd_compress(name = "gzip_" + n, src = ":generated_" + n, output = n + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for n in _MANUALS]
-[bsd_install_file(name = "install_" + n, src = ":gzip_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=resolvconf-man"], "//conditions:default": ["package=resolvconf"]})) for n in _MANUALS]
+[bsd_install_file(manual = True, name = "install_" + n, src = ":gzip_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=resolvconf-man"], "//conditions:default": ["package=resolvconf"]})) for n in _MANUALS]
 bsd_install_manifest(name = "install_manifest", entries = [":install_" + n for n in _TEMPLATES], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest"],
