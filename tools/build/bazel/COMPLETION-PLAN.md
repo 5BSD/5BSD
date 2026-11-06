@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 ATF C++/detail construction (2026-11-06)
+
+All twelve original harnesses, version helper and thirty installation records
+match independent Make metadata/Kyua/directory and thirteen ELF/debug contracts.
+All 101 native/Make registrations match. Sixteen original environment/exception/
+text bodies pass with eight native loader bindings; eighty-five bodies remain.
+Normal/runtime links share actual object/input sets and differ only in output
+and inherited private RPATH. The original 300-second deadlines are preserved.
+ATF-CXX-TEST-QUALIFICATION.md records final bindings, the missing-unwinder link
+failure and the correctly rejected host-libsys loader resolution.
+
+Continue the final initially missing ATF parent and nested test-programs, using
+the already built independent complete Make parent control. Then finish selected
+tests-enabled world traversal/assembly, independent world/kernel/module/pkgbase/
+debug, normal-service VM acceptance, CPU/RAM/disk-I/O/footprint, bootstrap/cache/
+sandbox/reproducibility and verified combined publication, filling ARM64/RISC-V
+gaps in shared work. Full-world tests guards stay until closure; Make default;
+BIP excluded; no host installation/upgrade/reboot.
+
 ## Build-storage cleanup after test construction (2026-11-06)
 
 Five obsolete isolated execution trees were removed, followed by successful

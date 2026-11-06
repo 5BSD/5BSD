@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/atf/libatf-c++/tests:tests.bzl", "original_cpp_tests")
+original_cpp_tests(detail = True)

@@ -12208,3 +12208,15 @@ All 214 registrations match actual native/Make metadata, but bodies do not run
 in this batch. No live provider firing, audit delivery or missing test-fixture
 probe deficit is inferred. ATF-C-TEST-QUALIFICATION.md records retained failures,
 final installation/ELF/metadata bindings and open system/cross/runtime gates.
+
+## Original ATF C++/detail tests (2026-11-06)
+
+Original body, implementation and provider sources remain unchanged. Native
+construction preserves exception unwinding through explicit native libgcc_s,
+original compiler settings and direct helper-object inclusion. All sixteen
+selected environment/exception/text bodies pass. Loader checks bind all eight
+named native libraries; a transitive host-libsys resolution was rejected and
+fixed in private runtime links. Body runs explicitly disable DOF initialization;
+metadata loader checks have their own documented environment. No live provider
+firing, audit delivery or new test-fixture probe deficit is claimed. See
+ATF-CXX-TEST-QUALIFICATION.md for retained databases, final bindings and open gates.

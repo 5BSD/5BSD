@@ -24,7 +24,7 @@ def libc_test_copts(warnings = 2):
 
 
 def libc_test_cxx_copts(warnings = 2, standard = "gnu++17"):
-    if standard not in ["gnu++17", "c++20"]:
+    if standard not in ["gnu++17", "gnu++20", "c++20"]:
         fail("unsupported libc test C++ standard")
     c_only = ["-std=gnu17", "-Wno-pointer-sign", "-Wstrict-prototypes", "-Wmissing-prototypes", "-Wnested-externs", "-Wold-style-definition"]
     return [flag for flag in libc_test_copts(warnings) if flag not in c_only] + [
