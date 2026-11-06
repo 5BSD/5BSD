@@ -768,7 +768,7 @@ dialog_menu_layout()
 zfs_create_diskpart()
 {
 	local funcname=zfs_create_diskpart
-	local disk="$1" index="$2"
+	local disk="$1" index="$2" position="$2"
 	local efibootpart
 
 	# Check arguments
@@ -903,7 +903,9 @@ zfs_create_diskpart()
 			f_eval_catch $funcname newfs_msdos "$NEWFS_ESP"\
 			             "$efibootpart" \
 			             || return $FAILURE
-			if [ $index -eq 0 ]; then
+			# index may have moved past labels on other disks; the
+			# first disk of the pool still owns /boot/efi.
+			if [ $position -eq 0 ]; then
 				f_eval_catch $funcname printf "$PRINTF_FSTAB" \
 					$efibootpart /boot/efi msdosfs \
 					rw 2 2 "$BSDINSTALL_TMPETC/fstab" \

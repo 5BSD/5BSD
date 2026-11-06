@@ -55,8 +55,23 @@ capability_runtime_is_ephemeral_body()
 	    'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0' "$zfsboot"
 }
 
+atf_test_case first_disk_owns_the_esp
+first_disk_owns_the_esp_body()
+{
+	zfsboot="/usr/libexec/bsdinstall/zfsboot"
+
+	# A label on another disk moves the index, not the disk's place in the
+	# pool.  The first disk must still get /boot/efi or bootconfig silently
+	# installs no loader.
+	atf_check -s exit:0 -o ignore grep -F \
+	    'if [ $position -eq 0 ]; then' "$zfsboot"
+	atf_check -s exit:1 -o empty grep -F \
+	    'if [ $index -eq 0 ]; then' "$zfsboot"
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case first_disk_owns_the_esp
 	atf_add_test_case installer_places_zfs_requirement_at_partitioning
 	atf_add_test_case third_party_software_has_separate_dataset
 	atf_add_test_case capability_runtime_is_ephemeral
