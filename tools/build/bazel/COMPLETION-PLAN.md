@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## Original library test traversal and CAM/Capsicum/jail parents (2026-11-06)
+
+The recorded Make tests-off/on traversal reaches 326/442 directories, adding
+116 directories through 66 test entry edges. The declaration inventory identified
+three test roots without installation contributions: CAM, Capsicum and jail.
+All five original programs now build with native dependencies; twenty actual
+case metadata records match Make and seven host-safe original bodies pass.
+Thirteen CAM privilege/device cases remain unexecuted.
+
+Both complete parent profiles reconcile: tests on has 78 file/link records and
+seven ELF/debug contracts, tests off 65 and two contracts with no test payloads.
+All directory package-claim sets, hardlinks, non-ELF data and test registration
+match Make. Jail preserves its libjail-tests package and both runtime/test claims
+on shared ancestors. Production debug-directory omissions/incorrect assumptions
+were caught and repaired against actual installed paths. See
+CAM-CAPSICUM-JAIL-TEST-QUALIFICATION.md for final evidence and retained failures.
+
+Continue the remaining selected library test contributions and full tests-enabled
+world assembly. Declaration presence alone does not establish payload coverage;
+retain the wider guard until its actual selected closure is verified. Full
+world/kernel/module/pkgbase/debug, runtime/VM, CPU/RAM/disk I/O/footprint,
+bootstrap/cache/sandbox/reproducibility and combined publication gates remain.
+Make stays default, ARM64/RISC-V remain in scope, and BIP remains excluded.
+
 ## Complete selected AMD64 ATF parent and nested traversal (2026-11-06)
 
 Both original profiles now reconcile independently: tests enabled has eight

@@ -36,12 +36,12 @@ def bsd_tap_installation(name, directory, programs, fixtures = [], metadata = {}
     bsd_install_manifest(name = name + "_manifest", entries = entries, visibility = ["//visibility:public"])
     bsd_test_install_archive(name = name + "_archive", directory = directory, manifests = [":" + name + "_manifest"])
 
-def bsd_test_install_archive(name, directory, manifests, debug = False, visibility = ["//usr.bin:__subpackages__"]):
-    """Archive a suite; compiled debug payloads require their ancestor policy."""
-    directories = {directory: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]})}
+def bsd_test_install_archive(name, directory, manifests, debug = False, visibility = ["//usr.bin:__subpackages__"], package = "tests"):
+    """Archive a suite with its original package and split-debug directory claims."""
+    directories = {directory: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=" + package]})}
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"}
     if debug:
-        directories.update(utility_debug_directories("tests", directory))
+        directories.update(utility_debug_directories(package, directory))
         mtree_specs["//etc/mtree:BSD.debug.dist"] = "/usr/lib"
     bsd_install_archive(name = name, manifests = manifests,
         directories = directories,

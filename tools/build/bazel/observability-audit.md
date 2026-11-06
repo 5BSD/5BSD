@@ -12231,3 +12231,15 @@ Sixteen prior C++ body passes are retained, while remaining bodies and protocol
 outcome handling still need execution qualification. No live provider firing,
 audit delivery or root-integrity proof follows from assembly/discovery. See
 ATF-PARENT-QUALIFICATION.md for complete original profile controls and final hashes.
+
+## CAM, Capsicum and jail original test contributions (2026-11-06)
+
+Original test/library implementation sources are unchanged. All five original
+programs and twenty registration metadata records match Make. Seven original
+host-safe bodies pass, including monotonic Capsicum stream restrictions and jail
+metadata validation. Thirteen CAM privilege/device cases remain unexecuted;
+CAM/Capsicum/jail assembly or userland metadata parsing does not prove device
+access policy, live kernel jail events, probe firing or security audit delivery.
+DOF initialization remains disabled for isolated bodies. Preserve those separate
+runtime checks; no absence-of-probes defect or new audit event is inferred from
+this test wiring. See CAM-CAPSICUM-JAIL-TEST-QUALIFICATION.md.
