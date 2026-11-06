@@ -914,7 +914,7 @@ vm_handle_hypertrace_ecall(struct vcpu *vcpu, struct vm_exit *vme)
 	};
 	hypertrace_args_t args;
 	uint64_t result, value;
-	int error;
+	int error __diagused;
 
 	value = 0;
 	result = SBI_ERR_NOT_SUPPORTED;

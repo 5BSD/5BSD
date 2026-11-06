@@ -1119,7 +1119,7 @@ vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 	struct vm_hdl handle;
 	hypertrace_args_t args;
 	uint64_t fid, id, argptr, tid, result;
-	int error, i;
+	int error __diagused, i;
 
 	hypctx = vcpu_get_cookie(vcpu);
 
