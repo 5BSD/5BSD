@@ -227,3 +227,10 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+# Conditional family metadata; this does not select actual world traversal.
+filegroup(
+    name = "conditional_family_manifests",
+    srcs = ["//packages/bhyve:family", "//packages/bootloader:family", "//packages/efi-tools:family", "//packages/flua:family", "//packages/libcompat:family", "//packages/sendmail:family", "//packages/libfidl:family"],
+    visibility = ["//visibility:public"],
+)

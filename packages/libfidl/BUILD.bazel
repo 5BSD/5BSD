@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "libfidl",
+    template = "//release/packages:ucl/libfidl-all.ucl",
+    subpackages = ["dbg", "dev", "man"],
+    extra_subpackages = select({"//tools/build/bazel/config:fidl_sdk_enabled": ["tools"], "//conditions:default": []}),
+    template_overrides = select({"//tools/build/bazel/config:fidl_sdk_enabled": {"libfidl-tools": "//release/packages:ucl/libfidl-tools.ucl"}, "//conditions:default": {}}),
+    licenses = ["BSD2CLAUSE", "BSD3CLAUSE"] + select({"//tools/build/bazel/config:fidl_sdk_enabled": ["ICU"], "//conditions:default": []}),
+    license_logic = "multi",
+    dependencies = {"libfidl": ["libchannel", "clibs"], "libfidl-dev": ["libchannel-dev", "clibs-dev"]},
+    ucl_setting_variables = select({"//tools/build/bazel/config:fidl_sdk_enabled": {
+        "FIDL_PYTHON_VERSION": "//tools/build/bazel/config:fidl_python_version",
+        "FIDL_RE2_VERSION": "//tools/build/bazel/config:fidl_re2_version",
+    }, "//conditions:default": {}}),
+    visibility = ["//packages:__pkg__"],
+)

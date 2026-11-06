@@ -46,8 +46,16 @@ def _family(ctx):
             fail("package property for inactive or unknown package: " + name)
     if "set" in ctx.attr.annotations:
         fail("declare family sets through the sets input")
+    ucl_variables = dict(ctx.attr.ucl_variables)
+    for key, target in ctx.attr.ucl_setting_variables.items():
+        if key in ucl_variables:
+            fail("duplicate UCL variable: " + key)
+        value = target[BuildSettingInfo].value
+        if type(value) != "string" or not value:
+            fail("explicit nonempty UCL setting required: " + key)
+        ucl_variables[key] = value
     reserved = ["VERSION", "PKG_NAME_PREFIX", "PKG_WWW", "PKG_MAINTAINER", "PKGNAME", "PKGGENNAME", "SRCDIR"]
-    for key, value in ctx.attr.ucl_variables.items():
+    for key, value in ucl_variables.items():
         if not key or key in reserved or any([c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789" for c in key.elems()]):
             fail("invalid or reserved UCL variable: " + key)
         if any([c < " " for c in value.elems()]):
@@ -66,7 +74,7 @@ def _family(ctx):
         dependencies = ctx.attr.dependencies.get(name, [])
         if dependencies:
             fields["deps"] = {dep: dict(origin = "base/" + prefix + "-" + dep, version = version) for dep in dependencies}
-        variables = dict(ctx.attr.ucl_variables, VERSION = version, PKG_NAME_PREFIX = prefix,
+        variables = dict(ucl_variables, VERSION = version, PKG_NAME_PREFIX = prefix,
             PKG_WWW = fields["www"], PKG_MAINTAINER = fields["maintainer"], PKGNAME = name,
             PKGGENNAME = family, SRCDIR = ctx.label.package)
         output = ctx.actions.declare_file(ctx.label.name + "/" + full_name + ".pkgucl")
@@ -98,6 +106,7 @@ bsd_pkg_family = rule(implementation = _family, attrs = {
     "dependencies": attr.string_list_dict(), "vital": attr.string_list(), "metadata_only": attr.string_list(),
     "sets": attr.string_list(default = ["optional", "optional-jail"]),
     "annotations": attr.string_dict(), "ucl_variables": attr.string_dict(),
+    "ucl_setting_variables": attr.string_keyed_label_dict(providers = [BuildSettingInfo]),
     "licenses": attr.string_list(default = ["BSD2CLAUSE"]), "license_logic": attr.string(default = "single"),
     "version": attr.label(default = "//tools/build/bazel/config:package_version", providers = [BuildSettingInfo]),
     "prefix": attr.label(default = "//tools/build/bazel/config:package_name_prefix", providers = [BuildSettingInfo]),

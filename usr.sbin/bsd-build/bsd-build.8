@@ -7669,3 +7669,17 @@ These direct targets do not implement world option/architecture traversal or
 create package archives, install software or qualify runtime behavior.
 Existing format-5 targets/build-settings select the aggregate.
 Make remains production/default pending the full qualification gates.
+.Pp
+The explicit //packages:conditional_family_manifests target covers the final
+seven conditional package-family owners.
+All 239 existing family directories now have native declarations.
+Three AMD64 metadata profiles match original Make; actual world traversal and
+complete package creation remain open.
+The fidl_sdk metadata setting requires explicit fidl_python_version and
+fidl_re2_version inputs from selected target packages.
+Missing either version fails analysis.
+These flags select metadata and do not establish optional SDK payload staging.
+The libcompat Make declaration now retains its development package when adding
+split manual metadata, preserving the installed static library's package owner.
+Existing format-5 targets/build-settings select this work.
+Make remains default.

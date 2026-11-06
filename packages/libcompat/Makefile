@@ -9,7 +9,7 @@ COMPAT_PKGS=	dev
 PKG_NO_BASE=
 
 .if ${MK_MANSPLITPKG} != "no"
-SUBPACKAGES=	man
+SUBPACKAGES+=	man
 .endif
 
 .include <bsd.pkg.mk>

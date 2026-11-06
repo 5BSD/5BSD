@@ -849,3 +849,10 @@ string_flag(name = "package_www", build_setting_default = "https://github.com/5B
 bool_flag(name = "debug_files", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "debug_files_enabled", flag_values = {":debug_files": "true"}, visibility = ["//visibility:public"])
 selects.config_setting_group(name = "tests_and_debug_files_enabled", match_all = [":tests_enabled", ":debug_files_enabled"], visibility = ["//visibility:public"])
+
+# Family metadata inputs for the optional, separately staged FIDL SDK.
+bool_flag(name = "fidl_sdk", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "fidl_sdk_enabled", flag_values = {":fidl_sdk": "true"}, visibility = ["//visibility:public"])
+string_flag(name = "fidl_python_version", build_setting_default = "", visibility = ["//visibility:public"])
+string_flag(name = "fidl_re2_version", build_setting_default = "", visibility = ["//visibility:public"])
+config_setting(name = "package_unsplit_manuals_enabled", flag_values = {":man": "true", ":split_manpages": "false"}, visibility = ["//visibility:public"])

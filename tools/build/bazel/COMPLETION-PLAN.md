@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## All 239 source family owners declared; conditional metadata qualified (2026-11-06)
+
+The final seven conditional family owners now have native rules. All 17 default,
+17 alternate and nine minimal-profile manifests match complete original Make
+metadata. Actual target-ABI Python/RE2 package archives supply explicit optional
+FIDL SDK dependency versions. Missing either version is rejected independently
+by native analysis and original Make, with expected failures retained. The shared
+rule accepts declared typed UCL settings; no host-version fallback or parser clone.
+The review found and fixed a real original Make bug: split libcompat manuals
+replaced dev despite the independently installed static archive's dev ownership.
+Make and Bazel now retain dev while adding man. See
+CONDITIONAL-PACKAGE-FAMILIES-QUALIFICATION.md for scopes, exact evidence and failures.
+
+This closes family declaration coverage (239/239), not actual world traversal,
+selected metadata/payload reconciliation or package archive creation. Optional SDK
+and debug flags here control metadata only; cross-CPU branches remain to qualify.
+Existing format-5 frontend inputs handle these targets/flags and its manual is
+updated; C/backend/stage/signing/publication interfaces are unchanged. NEXT:
+migrate source-option/architecture package traversal, require full selected-world
+metadata/inventory reconciliation and construct native whole-world pkg archives.
+Retain every independent world/kernel/module/debug/pkgbase/upgrade/runtime/cross/
+bootstrap/cache/sandbox/reproducibility/resource/combined-publication gate. Make
+remains default; BIP stays out of scope.
+
 ## All 208 remaining static family declarations match Make (2026-11-06)
 
 The static_family_manifests aggregate adds all static owners not previously

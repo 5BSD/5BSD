@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "bhyve",
+    template = "bhyve.ucl",
+    dependencies = select({"@platforms//cpu:x86_64": {"bhyve": ["acpi"]}, "//conditions:default": {}}),
+    visibility = ["//packages:__pkg__"],
+)

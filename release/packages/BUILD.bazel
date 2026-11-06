@@ -116,3 +116,5 @@ exports_files(["ucl/mac-abac-tests-all.ucl"], visibility = ["//packages/mac-abac
 exports_files(["ucl/netmap-tests-all.ucl"], visibility = ["//packages/netmap-tests:__pkg__"])
 
 exports_files(["ucl/oes-tests-all.ucl"], visibility = ["//packages/oes-tests:__pkg__"])
+
+exports_files(["ucl/libfidl-all.ucl", "ucl/libfidl-tools.ucl"], visibility = ["//packages/libfidl:__pkg__"])

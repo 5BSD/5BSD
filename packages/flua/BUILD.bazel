@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family")
+
+bsd_pkg_family(
+    name = "family",
+    family = "flua",
+    template = "flua.ucl",
+    subpackages = ["dbg"] + select({"//tools/build/bazel/config:boot_split_manpages_enabled": ["man"], "//tools/build/bazel/config:package_unsplit_manuals_enabled": ["dev"], "//conditions:default": []}),
+    visibility = ["//packages:__pkg__"],
+)
