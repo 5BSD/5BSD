@@ -1,5 +1,33 @@
 # Native Bazel completion plan
 
+## Full library comparison exposes bounded installation gaps; stat parent added (2026-11-06)
+
+The independent complete original Make lib build/install passed, including the
+actual original JEVENTS metadata recipe audit. The complete 164-parent comparison
+now covers 322 archives and 12,467 native versus 12,468 original paths. Common
+file/link metadata and original hardlink identities have zero mismatches; 10,097
+non-ELF data files match exactly. It remains differences-found: 3 derived account
+files absent, 2 native h_raw paths requiring a positive original UBSan control,
+7 ncurses data differences and 20 missing package claims over 16 directory paths.
+The first audit's immediate-hardlink-chain assertion was corrected generically;
+its failed evidence is retained. See LIBRARY-COMPLETE-INSTALLATION-GAPS.md.
+All six independent original DTrace-disabled archive-order controls also pass.
+
+The next userland inventory gap, stat, now includes every original stat/readlink/
+mountpoint test script and Kyuafile through the normal tests feature. Complete
+positive/negative Make comparison matches 11/7 paths and 3/2 directory claims;
+production-only tar is byte-identical before/after. All three installed ELF
+metadata contracts and both stat debug separation/name/CRC controls pass.
+All 26 original metadata identities match under the recorded host ATF interpreter;
+no bodies run. See STAT-PARENT-QUALIFICATION.md. The existing format-5 frontend is
+used and the manual updated; C/schema/signing inputs need no changes.
+
+Return to the recorded library installation and binary corrections now that the
+source-bound controls have exited. Preserve all original evidence, feature
+variants and root guards. Make remains default; all whole-system/runtime/VM/
+cross/performance/bootstrap/cache/sandbox/publication gates remain. BIP stays out.
+
+
 ## Complete selected lib construction and queued regressions passed (2026-11-06)
 
 The normal frontend full selected AMD64 lib hierarchy run passed all 164

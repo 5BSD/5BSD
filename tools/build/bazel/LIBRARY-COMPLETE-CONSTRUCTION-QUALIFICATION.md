@@ -48,13 +48,12 @@ actual four-archive DOF checks remain separate evidence.
 ## Still active and required
 
 The independent full original Make control
-bazel-library-complete-make-r2-20261106 is still active at this checkpoint. Its
-terminal build/install receipt and actual generator recipe checks are pending.
-The complete namespace/package/directory/non-ELF comparison is queued behind its
-actual existing process in
-bazel-library-complete-comparison-queue-r1-20261106. No comparison success is claimed.
-Original no-DTrace controls for all six archive-order gaps are being prepared by
-bazel-library-no-dtrace-make-controls-r1-20261106; inspect terminal receipts.
+bazel-library-complete-make-r2-20261106 has now passed, including the actual
+original JEVENTS recipe check. The complete comparison found recorded installation
+gaps; see LIBRARY-COMPLETE-INSTALLATION-GAPS.md and
+bazel-library-complete-review-r2-20261106. All six original no-DTrace controls in
+bazel-library-no-dtrace-make-controls-r1-20261106 also pass. No full comparison
+success is claimed.
 
 Known binary gaps remain as documented in LIBRARY-BINARY-COMPARISON-GAPS.md:
 installed test linkage, original build-tree runtime paths, archive source ordering,

@@ -5715,6 +5715,17 @@ See
 for supported relocations, controls and runtime limits.
 .Pp
 The native
+.Pa //usr.bin/stat:install_archive
+parent includes the complete original stat, readlink and mountpoint shell test
+installation when the existing format-5 tests setting is enabled.
+Tests-disabled production payload is unchanged. Complete original installation,
+ELF metadata and debug-link controls are recorded separately from original test
+body and privileged VM execution, which remain unqualified.
+See
+.Pa tools/build/bazel/STAT-PARENT-QUALIFICATION.md
+for evidence and scope.
+.Pp
+The native
 .Pa //lib/libpam/pam.d:install_manifest
 and
 .Pa //lib/libpam/pam.d:install_archive

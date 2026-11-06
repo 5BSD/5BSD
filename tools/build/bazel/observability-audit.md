@@ -12360,3 +12360,13 @@ away. No final static extraction, registration or live firing claim is made.
 Thirty host regressions pass; maintained Bazel validation is queued, not passed.
 See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and the hash-bound actual members
 in /usr/obj/usr/src/bazel-library-static-dtrace-review-r1-20261106.
+
+
+## 2026-11-06 complete stat test installation
+
+All three original shell suites (26 metadata cases) now belong to stat's selected
+native parent. Production stat/readlink/mountpoint source, DTrace provider rules
+and definitions remain unchanged; the negative production archive is byte-identical.
+Native/Make script bytes and host-interpreter metadata match; no bodies, probe
+registration/firing or new audit-hook coverage are claimed. Mount/chroot/jail
+cases await qualified VM execution. See STAT-PARENT-QUALIFICATION.md.

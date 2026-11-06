@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+
+# Complete original ATF_TESTS_SH inventory. Bodies remain source-owned.
+_PROGRAMS = ["mountpoint_test", "readlink_test", "stat_test"]
+[bsd_script_wrapper(name = program, body = program + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect") for program in _PROGRAMS]
+[bsd_install_file(name = "install_" + program, src = ":" + program,
+    destination = "/usr/tests/usr.bin/stat/" + program,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for program in _PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _PROGRAMS,
+    interfaces = {program: "atf" for program in _PROGRAMS})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.bin/stat/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest",
+    entries = [":install_" + program for program in _PROGRAMS] + [":install_kyuafile"],
+    visibility = ["//usr.bin/stat:__pkg__"])
