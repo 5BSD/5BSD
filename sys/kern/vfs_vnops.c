@@ -68,6 +68,7 @@
 #include <sys/rwlock.h>
 #include <sys/sleepqueue.h>
 #include <sys/stat.h>
+#include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/unistd.h>
 #include <sys/user.h>
@@ -365,6 +366,52 @@ vn_openfile_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
 	return (error);
 }
 
+/*
+ * fstatfs(2) on any descriptor that carries a vnode.  The mount reference,
+ * the MAC check and kern_do_statfs() (busy, VFS_STATFS, prison
+ * enforcement) all need the mount, so they run here; the system call keeps
+ * only the descriptor audit.
+ */
+int
+vn_statfs(struct file *fp, struct statfs *buf, struct thread *td)
+{
+	struct mount *mp;
+	struct vnode *vp;
+	int error;
+
+	vp = fp->f_vnode;
+#ifdef AUDIT
+	if (AUDITING_TD(td)) {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
+	}
+#endif
+	mp = vfs_ref_from_vp(vp);
+#ifdef MAC
+	if (mp != NULL) {
+		error = mac_mount_check_stat(td->td_ucred, mp);
+		if (error != 0) {
+			vfs_rel(mp);
+			return (error);
+		}
+	}
+#endif
+	return (kern_do_statfs(td, mp, buf));
+}
+
+static int
+vn_openfile_statfs(struct file *fp, struct statfs *buf, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_statfs(fp, buf, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
 const struct fileops vnops = {
 	.fo_read = vn_openfile_io_fault,
 	.fo_write = vn_openfile_io_fault,
@@ -384,6 +431,7 @@ const struct fileops vnops = {
 	.fo_fspacectl = vn_openfile_fspacectl,
 	.fo_cmp = vn_cmp,
 	.fo_pathconf = vn_openfile_pathconf,
+	.fo_statfs = vn_openfile_statfs,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -406,6 +454,7 @@ const struct fileops vnops = {
 	.fo_fspacectl = vn_openfile_fspacectl, \
 	.fo_cmp = vn_cmp, \
 	.fo_pathconf = vn_openfile_pathconf, \
+	.fo_statfs = vn_openfile_statfs, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

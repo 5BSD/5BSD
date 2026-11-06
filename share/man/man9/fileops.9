@@ -6,13 +6,16 @@
 .Os
 .Sh NAME
 .Nm fileops ,
-.Nm fo_pathconf
+.Nm fo_pathconf ,
+.Nm fo_statfs
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
 .In sys/file.h
 .Ft int
 .Fn fo_pathconf "struct file *fp" "int name" "long *valuep" "struct thread *td"
+.Ft int
+.Fn fo_statfs "struct file *fp" "struct statfs *buf" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -95,12 +98,41 @@ instead.
 returns
 .Er EOPNOTSUPP .
 .El
+.Ss fo_statfs
+.Fn fo_statfs
+answers
+.Xr fstatfs 2
+by filling
+.Fa buf .
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_statfs
+references the vnode's mount, runs the MAC mount-stat check, and calls
+.Fn kern_do_statfs ,
+which busies the mount, calls
+.Xr VFS_STATFS 9
+and applies jail
+.Xr statfs 2
+enforcement.
+All of it needs the mount, so none of it is left in the system call.
+Directories, regular files,
+.Dv O_PATH
+files, FIFOs, pseudo-terminal masters, devfs nodes and linuxkpi files all
+use it.
+.It everything else
+.Fn invfo_statfs
+returns
+.Er EINVAL ,
+the error a descriptor without a vnode has always received.
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
 value.
 .Sh SEE ALSO
 .Xr fpathconf 2 ,
+.Xr fstatfs 2 ,
+.Xr VFS_STATFS 9 ,
 .Xr vnode 9 ,
 .Xr VOP_PATHCONF 9
 .Sh HISTORY
@@ -109,6 +141,8 @@ The
 table has existed since
 .Bx 4.4 .
 .Fn fo_pathconf
+and
+.Fn fo_statfs
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

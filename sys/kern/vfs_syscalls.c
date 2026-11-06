@@ -376,34 +376,15 @@ int
 kern_fstatfs(struct thread *td, int fd, struct statfs *buf)
 {
 	struct file *fp;
-	struct mount *mp;
-	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
-	error = getvnode_path(td, fd, &cap_fstatfs_rights, NULL, &fp);
+	error = fget(td, fd, &cap_fstatfs_rights, &fp);
 	if (error != 0)
 		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-	mp = vfs_ref_from_vp(vp);
+	error = fo_statfs(fp, buf, td);
 	fdrop(fp, td);
-#ifdef MAC
-	if (mp != NULL) {
-		error = mac_mount_check_stat(td->td_ucred, mp);
-		if (error != 0) {
-			vfs_rel(mp);
-			return (error);
-		}
-	}
-#endif
-	return (kern_do_statfs(td, mp, buf));
+	return (error);
 }
 
 /*

@@ -204,6 +204,7 @@ static fo_chmod_t	pipe_chmod;
 static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
 static fo_pathconf_t	pipe_pathconf;
+static fo_statfs_t	pipe_statfs;
 
 const struct fileops pipeops = {
 	.fo_read = pipe_read,
@@ -220,6 +221,7 @@ const struct fileops pipeops = {
 	.fo_fill_kinfo = pipe_fill_kinfo,
 	.fo_cmp = file_kcmp_generic,
 	.fo_pathconf = pipe_pathconf,
+	.fo_statfs = pipe_statfs,
 	.fo_flags = DFLAG_PASSABLE
 };
 
@@ -2072,6 +2074,18 @@ pipe_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
 		return (EINVAL);
 	*valuep = PIPE_BUF;
 	return (0);
+}
+
+/* A FIFO lives on a filesystem; an anonymous pipe does not. */
+static int
+pipe_statfs(struct file *fp, struct statfs *buf, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_statfs(fp, buf, td));
+	return (invfo_statfs(fp, buf, td));
 }
 
 static int
