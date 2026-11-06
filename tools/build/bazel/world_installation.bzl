@@ -7,6 +7,7 @@ load(":bsd_script_installation.bzl", "script_install_archive")
 load(":bsd_world_package_inventory.bzl", "bsd_world_package_inventory")
 load(":bsd_world_package_reconciliation.bzl", "bsd_world_package_reconciliation")
 load(":bsd_world_pkg_create.bzl", "bsd_world_pkg_create")
+load(":bsd_world_pkg_solver_test.bzl", "bsd_world_pkg_solver_test")
 
 def world_contributions():
     bsd_install_archive_set(name = "world_contributions", archives = [
@@ -56,6 +57,10 @@ def world_contributions():
         suffix_tags = ["dbg", "dev", "lib"] + select({
             "//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": [],
         }), visibility = ["//visibility:public"])
+
+    bsd_world_pkg_solver_test(name = "world_package_solver_test", packages = ":world_packages",
+        families = "//packages:world_family_manifests", abi_file = "//usr.bin/uname:uname",
+        size = "large", timeout = "long", visibility = ["//visibility:public"])
 
     # Make also constructs internal library variants that are not installed.
     native.filegroup(name = "world_contribution_products", srcs = [

@@ -1,5 +1,26 @@
 # Native Bazel completion plan
 
+## Complete world dependency/conflict solver test passes (2026-11-06)
+
+The maintained //:world_package_solver_test derives its complete package set from
+native outputs/index and selected family metadata. The real SDK pkg imports a
+private unsigned file:// catalogue and dry-runs all 445 packages with an exact plan,
+zero conflicts and zero installed packages. Eight requested test targets pass.
+Effective database/cache paths are probed against the real pkg before mutation.
+The root-shell helper's incorrect explicit-path relocation assumption is fixed;
+it also rejects Lua scripts and uses pkg inventory queries. Its actual privileged
+add/check/delete remains unexecuted. Copied archives/private databases are scratch,
+not retained test output duplicates. See WORLD-PACKAGE-SOLVER-QUALIFICATION.md for
+hash-bound commands, independent catalogue/probe review and retained failures.
+
+NEXT: disposable disk-backed VM fresh install/update/ownership/generated-state and
+real package-script tests, with target account identities; then normal startup/
+services and native kernel/module package integration. This dry-run is not system
+installation or normal boot proof. Keep all broader world/debug/cross/bootstrap/
+cache/sandbox/reproducibility/resource/combined-publication gates. Existing
+frontend target/test inputs select the work; CLI/default/publication contracts do
+not change. Make stays production/default; BIP stays excluded.
+
 ## Complete native package manifests match Make with inspection dependencies (2026-11-06)
 
 All 445 full package manifests now match the original Make recipes on the complete

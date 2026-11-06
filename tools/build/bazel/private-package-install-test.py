@@ -8,8 +8,17 @@ import json
 import os
 from pathlib import Path
 import shutil
-import sqlite3
 import subprocess
+
+
+
+def pkg_command(pkg, root, config, repositories):
+    """Explicit pkg overrides are host paths, even with -r relocation."""
+    return [str(pkg), "-r", str(root), "-C", str(config), "-R", str(repositories),
+            "-o", "PKG_DBDIR=" + str(root / "var/db/pkg"),
+            "-o", "PKG_CACHEDIR=" + str(root / "var/cache/pkg"),
+            "-o", "RUN_SCRIPTS=no", "-o", "PKG_ENABLE_PLUGINS=no",
+            "-o", "PKG_TRIGGERS_ENABLE=no", "-o", "REPO_AUTOUPDATE=no", "-o", "SYSLOG=no"]
 
 
 def main():
@@ -32,7 +41,7 @@ def main():
     payload_paths = set()
     for archive in archives:
         manifest = json.loads(subprocess.check_output(["/usr/bin/tar", "-xOf", str(archive), "+MANIFEST"]))
-        if manifest.get("scripts"):
+        if manifest.get("scripts") or manifest.get("lua_scripts"):
             raise ValueError("this qualification does not permit package scripts")
         for path in manifest.get("files", {}):
             if not path.startswith("/") or ".." in Path(path).parts:
@@ -47,6 +56,8 @@ def main():
     out.mkdir()
     root = out / "root"
     root.mkdir()
+    for directory in (root / "var/db/pkg", root / "var/cache/pkg"):
+        directory.mkdir(parents=True)
     repo = out / "empty-repositories"
     repo.mkdir()
     inputs = out / "inputs"
@@ -61,8 +72,7 @@ def main():
         hashes[archive.name] = hashlib.sha256(target.read_bytes()).hexdigest()
         copied.append(target)
     # Every mutating invocation has an explicit alternate installation root.
-    command = [str(pkg), "-r", str(root), "-C", str(config), "-R", str(repo),
-               "-o", "PKG_DBDIR=/var/db/pkg", "-o", "PKG_CACHEDIR=/var/cache/pkg", "-o", "RUN_SCRIPTS=no", "-o", "PKG_ENABLE_PLUGINS=no"]
+    command = pkg_command(pkg, root, config, repo)
     commands = []
     def run(arguments, label):
         argv = command + arguments
@@ -74,6 +84,11 @@ def main():
         if result.returncode:
             raise RuntimeError(label + " failed; see private logs")
         return result.stdout
+    # Check effective config before any mutating package command. -r relocates
+    # defaults; explicit -o paths must already include the private root.
+    for key, path in [("PKG_DBDIR", root / "var/db/pkg"), ("PKG_CACHEDIR", root / "var/cache/pkg")]:
+        if run(["config", key], "config-" + key).strip() != str(path):
+            raise ValueError("pkg path escaped private root: " + key)
     run(["add", "-I", *map(str, copied)], "add")
     if set(run(["query", "%n"], "query").splitlines()) != names:
         raise ValueError("installed package inventory differs")
@@ -87,9 +102,8 @@ def main():
             if not path.exists() and not path.is_symlink():
                 raise ValueError("installed payload missing: " + name)
     run(["delete", "-a", "-y"], "delete")
-    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
-        if connection.execute("select count(*) from packages").fetchone()[0] != 0:
-            raise ValueError("private database still contains packages")
+    if run(["query", "-a", "%n"], "post-delete-inventory").strip():
+        raise ValueError("private database still contains packages")
     for manifest in manifests:
         for name in manifest["files"]:
             path = root / name.lstrip("/")

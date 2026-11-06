@@ -384,3 +384,5 @@ exports_files(["world_pkg_create.py", "package_symlinks.py"], visibility = ["//:
 bsd_pkg_create_test(name = "world_pkg_hardlinks_test", src = "world-pkg-hardlinks-test.py",
     driver = ":world_pkg_create.py", runtime = ["@bsd_sdk//toolchain:python_stdlib",
         "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime", ":pkg_create.py", ":package_symlinks.py"])
+
+exports_files(["private-package-install-test.py", "package_index.py", "world-pkg-solver-test.py"], visibility = ["//:__pkg__"])

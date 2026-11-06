@@ -3102,7 +3102,10 @@ Use frozen indexed snapshots for separate root-shell installation tests.
 .Pp
 The separate private-package-install-test.py helper requires an OS root shell
 and confines package add/check/delete qualification to a fresh /usr/obj root.
-It rejects package scripts and disables plugins and script execution.
+It rejects shell and Lua package scripts and disables plugins and script execution.
+Explicit database and cache overrides include the full private root pathname;
+-r relocates defaults, not these explicit overrides.
+The helper checks effective pkg paths before mutating package state.
 A prepared helper or successful build does not establish installation qualification;
 inspect its completed receipt separately.
 Package cache, solver, installation and performance qualification remain separate.
@@ -7723,3 +7726,12 @@ This is package metadata qualification, not independently Make-built world or
 installed-system qualification.
 Whole-system package/runtime, upgrade, bootstrap and performance qualification
 remain required before changing the production/default Make backend.
+.Pp
+The //:world_package_solver_test target creates a private unsigned local fixture
+catalogue from every selected world package and checks the complete pkg dry-run
+plan for dependency resolution and zero conflicts.
+It verifies the actual private database/cache paths and empty installed inventory.
+This test does not install packages, execute package scripts or publish a repository.
+Its default AMD64 qualification covers 445 selected packages.
+Privileged installation, account/state construction, upgrades and normal VM
+startup remain separate qualification gates.

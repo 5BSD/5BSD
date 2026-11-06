@@ -7757,8 +7757,12 @@ checksums, registered inventory and deletion within a fresh /usr/obj test root.
 Every pkg invocation specifies -r, an isolated database/cache, empty repository
 configuration and disabled plugins/scripts; input manifests containing scripts
 are rejected. It requires OS root and never substitutes a home-directory stage.
-The test was syntax-checked only. This session is uid 1001 and has no sudo/doas;
-privileged add/check/delete has NOT been run. No host packages were installed.
+Update 2026-11-06: its exact path-construction function is now exercised against
+actual pkg config through //:world_package_solver_test. Explicit database/cache
+overrides include the full private root; -r relocates defaults only. Both shell
+and Lua scripts are rejected. See WORLD-PACKAGE-SOLVER-QUALIFICATION.md.
+This session is uid 1001 and has no sudo/doas; privileged add/check/delete has NOT
+been run. No host packages were installed.
 From a root shell, the prepared command is:
 
 ```sh
