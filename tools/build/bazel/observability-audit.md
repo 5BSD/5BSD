@@ -12139,3 +12139,16 @@ sysctl case has an original restoration gap on failure/skip/interruption; repair
 and qualify its cleanup before privileged guest acceptance. No component-specific
 probe deficit is inferred solely from test fixtures lacking providers. See
 NV-TEST-QUALIFICATION.md for retained outputs, final bindings and all open scopes.
+
+## Original libproc tests and helpers (2026-11-06)
+
+All original test/helper and libproc implementation/provider sources remain
+unchanged. Native construction preserves dynamic/static execution, helper -O0,
+retained symbol tables and local/weak/strong aliases. Native transitive static
+providers avoid concealing library link dependencies behind bare archive imports.
+All ten installed-form original mapping/symbol/breakpoint/signal cases pass while
+debugging only their own children. This does not qualify live DTrace provider
+firing, audit delivery, other-process tracing or additional kernel-policy/ABI
+profiles. No missing provider is inferred from test fixtures themselves. See
+PROC-TEST-QUALIFICATION.md for immutable controls and final source/action/runtime
+bindings; normal-service VM and whole-system observability gates remain open.

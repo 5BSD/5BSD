@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Complete selected AMD64 libproc test construction/runtime (2026-11-06)
+
+The original test, dynamic helper and fully static helper now match fresh Make
+seven-record metadata/Kyua/directory and dynamic/static ELF/debug contracts.
+Original -O0 and STRIP= behavior, local/weak/strong aliases and native transitive
+static-link providers are retained. All ten original installed-form mapping/
+symbol/breakpoint/signal cases execute and pass; no skips/expected failures.
+Source-settings is one separate cached helper result. See
+PROC-TEST-QUALIFICATION.md for final artifact bindings and exact limits.
+One more missing declaration root is closed; seven initially discovered roots
+remain without sibling BUILD files, with nested traversal/existing roots still
+requiring independent qualification rather than file-presence assumptions.
+
+Continue remaining base test parents, full tests-enabled world assembly,
+independent world/kernel/modules/debug/pkgbase closure and normal-service VM
+qualification, then CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/
+reproducibility and verified combined publication. Keep fixing ARM64/RISC-V gaps
+in shared work. Full-tests guards stay; Make default; BIP excluded; no host install.
+
 ## Complete selected non-ASan AMD64 libnv construction and runtime (2026-11-06)
 
 All eleven original C/C++ ATF and TAP programs and 23 installation records match

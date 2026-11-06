@@ -7338,3 +7338,12 @@ Kyua with verified native consumer-library traces. TAP runtime links reuse the
 installation links' object inputs with an explicit private runtime search path;
 that path is absent from installed payloads. These use existing format-5 inputs
 and do not establish positive ASan or complete installed-system acceptance.
+.Pp
+Explicit AMD64 libproc test targets preserve the original dynamic/static child
+helpers, per-source optimization and ordinary symbols needed for process symbol
+lookup. Their seven installed records and dynamic/static ELF/debug contracts
+match independent Make controls. All ten original mapping, symbol, breakpoint
+and signal cases pass from installation-form binaries using native libraries.
+The tests debug their own children on the host kernel; other ABIs, kernel-policy
+profiles and normal-system VM execution remain separate qualification gates.
+These use existing format-5 inputs and do not change the default system backend.
