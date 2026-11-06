@@ -313,3 +313,24 @@ counts. The fresh 2 GB/four-vCPU R3 VM is running; SSH/su, normal shutdown, inst
 metadata, real upgrades and remaining global gates stay open. See
 SYSTEM-IMAGE-BOOT-QUALIFICATION.md. Existing frontend target/settings handle these
 changes; the normal Make backend stays default and BIP remains excluded.
+
+## Normal complete-package baseline accepted — 2026-11-06
+
+R9 image construction and five native test targets pass. R5 normal BIOS/ZFS VM
+passes all 12 console/PAM/terminal/Capsule/signal-protection/root/package/SSH/su
+checks and normal shutdown with unchanged backing/runner bindings. Independent
+review confirms the exact pathname/PAM rows and expected payload changes, with
+all kernel payload bytes unchanged. See SYSTEM-IMAGE-BOOT-QUALIFICATION.md and
+bazel-system-normal-boot-review-r1-20261106 under the standard object root.
+
+procstat's old kill(pid,0) guard discarded processes whose signal permission was
+denied. It now skips only ESRCH; kernel MAC policy is unchanged. The new ATF source
+cross-UID case/wrapper/helper is built and the final wrapper bytes verified, but
+the ATF case itself remains unexecuted. The SSH failure in R4 was a case-sensitive
+harness assumption about canonical UsePAM output; full effective config is now
+recorded and must actually say yes before real password/PAM tests proceed.
+
+Next: all installed metadata and legitimate firstboot deltas, real version/BE
+upgrade/rollback/removal, then the remaining optional/custom/cross/bootstrap/
+source-isolation/cache/sandbox/reproducibility/performance/hardware/publication
+gates. Make stays production/default and BIP remains excluded.

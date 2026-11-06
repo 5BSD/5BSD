@@ -51,7 +51,8 @@ procstat_bin(struct procstat *prstat, struct kinfo_proc *kipp)
 		xo_emit("{T:/%5s %-16s %8s %s}\n", "PID", "COMM", "OSREL",
 		    "PATH");
 
-	if (kill(kipp->ki_pid, 0) == -1)
+	/* A visible process may be protected from signals, including signal 0. */
+	if (kill(kipp->ki_pid, 0) == -1 && errno == ESRCH)
 		return;
 	if (procstat_getpathname(prstat, kipp, pathname, sizeof(pathname))
 	    != 0 || strlen(pathname) == 0)

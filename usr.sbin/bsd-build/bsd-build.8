@@ -7911,3 +7911,15 @@ its final diagnostic scan. Fragmented protocol handling is a native Bazel test a
 //tools/test/system-pkg-runtime:serial_terminal_test. Complete image R8 passes all
 five selected test targets; fresh normal VM acceptance remains pending. Earlier
 failed boot and console-harness results are retained rather than relabeled.
+
+.Pp
+The R9 complete-package image and R5 normal 2 GB/four-vCPU VM now pass 12 checks,
+including actual console/PAM, Capsule pathname with signal-probe denial preserved,
+ZFS root, 447 installed packages, effective PAM-enabled/running sshd, and positive/
+negative SSH and su. Normal poweroff and unchanged backing/runner bindings pass.
+The base procstat utility now distinguishes nonexistent processes from denied
+signal permission without changing MAC policy. The SSH checker records full
+canonical effective configuration and requires UsePAM=yes before authentication.
+These selected-profile results do not establish exhaustive installed metadata,
+actual version/BE upgrades, cross/custom completeness or comparative performance.
+Make remains production/default; see the qualification document for exact evidence.

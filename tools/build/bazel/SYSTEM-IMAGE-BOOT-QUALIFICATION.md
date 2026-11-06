@@ -2,17 +2,14 @@
 
 ## Status — 2026-11-06
 
-Complete current-profile AMD64 disk construction passes with all 447 packages.
-The kernel guard-initialization correction passes its actual-object regression
-and the complete corrected image R7. VM R2 then mounts the ZFS root, runs Capsule,
-Switchboard, normal rc and DHCP, starts SSH, and authenticates a root serial login
-through PAM. Its formal runtime check fails because the serial harness sends a
-command before the login profile finishes reading terminal input. The private
-rc.local fixture also leaks strict options into its sourcing rc shell. These are
-not accepted normal-startup results. Both harness/fixture defects are corrected;
-fresh complete image R8 passes its five selected native tests and VM R3 is running.
-SSH/su remain unqualified.
-Make remains the production/default backend; BIP is excluded.
+The complete current-profile AMD64 package image now passes normal boot and all
+12 requested functional checks in a 2 GB/four-vCPU VM, including console/PAM,
+terminal sizing, exact Capsule PID 1 identity, preserved signal denial, expected
+ZFS root, all 447 installed packages, effective PAM-enabled sshd, positive/negative
+password SSH and positive/negative su. Normal guest shutdown and unchanged
+backing-image/runner bindings pass. Earlier failures remain preserved below.
+Installed-tree completeness, actual version/BE upgrades and the other global gates
+remain open. Make remains the production/default backend; BIP is excluded.
 
 ## Construction contract
 
@@ -135,6 +132,51 @@ limits and declares 24 terminal rows and 80 columns. The fresh
 its serial reader before the final failure scan, so late shutdown output cannot
 be omitted from acceptance. No SSH/su or clean-shutdown result is accepted yet.
 
+## Accepted normal-boot baseline: R9 image and R5 VM
+
+`bazel-system-image-native-r9-20261106/receipt.json` passes five selected test
+targets and the full 447-package image with 33,982 nondirectory records and 1,369
+directories. Image SHA-256:
+`3fe82e3c89cdf02fcbefb9bf063d1513934be441f22de9316bbfa144470b7011`;
+construction report SHA-256:
+`0ca576b3ff28c2ff25ff5edc8863b9f0625cc26144865187cecebc4961bfdef0`.
+
+R3 passes console/PAM and actual terminal sizing, then exposes procstat's
+`kill(pid, 0)` existence check: it drops visible signal-protected processes on any
+error. The corrected base utility skips only ESRCH. MAC signal/visibility policy
+is untouched. R4 then verifies the exact Capsule pathname and continued signal
+probe denial, ZFS root and all package records. Its SSH check fails because the
+harness expects lowercase `usepam`; this tree's source and maintained SSH tests
+use canonical `UsePAM`. The harness now retains the full `sshd -T` output, matches
+the keyword case-insensitively, requires exactly one `yes` value, and checks the
+running daemon separately. PAM is not disabled or bypassed.
+
+`bazel-system-normal-boot-vm-r5-20261106/result.json` is **passed**. Result SHA-256:
+`c54f7dbba711934dded96c4b9558f7a8cc7e84a01bfc4a617ce25b49b491057e`.
+All 12 checks pass, followed by actual ACPI poweroff / QEMU exit 0 and the final
+serial diagnostic, immutable backing-byte and unchanged runner-source checks.
+No init, rc, login, PAM or SSH implementation is replaced by a test shim.
+Independent review checks the exact `1 capsule 1600027 /sbin/capsule` row and
+`UsePAM yes`, authenticating UID 2001 over SSH and UID 0 through su, and rejection
+of each wrong password. It confirms all kernel payload hashes unchanged between
+R8 and R9; regular payload changes are procstat/aliases/debug, maintained manuals
+and the generated private package database. Review record:
+`bazel-system-normal-boot-review-r1-20261106/review.json`.
+
+The configured guest has 2,048 MiB RAM and four vCPUs. Whole run 160.70 s; 150
+QEMU-process samples observe max RSS 1,046,007,808 bytes, last CPU 166.45 s and
+maximum allocated overlay 6,705,664 bytes. One actual terminal-size reply is used.
+The serial log ends with synced buffers and normal poweroff. Sampling excludes
+between-sample peaks, host page cache and other processes. This is not a controlled
+comparison against Make, a disk throughput result or all-base/service coverage.
+
+The new source ATF case exercises a live root-owned process read by a different
+UID despite denied signal permission, with explicit process-visibility policy
+prerequisites. The final source wrapper and native while1 helper are captured in
+`bazel-procstat-visibility-native-r1-20261106`; the wrapper is verified byte-for-byte
+against the final maintained source. That ATF case has **not run** yet. The mandatory
+VM protected-PID1 path/read/signal checks provide the exercised regression here.
+
 ## Kernel defect and correction
 
 `sys/conf/files` explicitly removes stack-protector flags for
@@ -175,8 +217,8 @@ builds this image and its tests. No new build backend, signing authority or defa
 switch is needed. The normal Make world/kernel/packages/image flow stays default.
 The VM driver consumes the resulting hash-bound frontend capture.
 
-Next: complete corrected normal startup and authentication; installed ownership/
-flags/links/config coverage; real version upgrade into a new boot environment,
+Next: complete installed ownership/flags/links/config coverage after normal
+firstboot; real version upgrade into a new boot environment,
 rollback and removal; target package scripts/firstboot completeness. Independent
 fresh Make compilation parity, optional/custom/cross completeness, bootstrap,
 sandbox/cache/reproducibility, comparative CPU/RAM/disk I/O, hardware and verified

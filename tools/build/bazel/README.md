@@ -1,5 +1,27 @@
 # Bazel qualification
 
+## Complete AMD64 package image passes normal startup and authentication (2026-11-06)
+
+Image R9 passes its full 447-package construction and five native test targets.
+Fresh normal VM R5 passes 12 checks: console/PAM, actual terminal size, exact
+Capsule PID 1, preserved signal denial, expected ZFS root, installed package count,
+PAM-enabled/running SSH, and positive/negative SSH and su. It then powers off
+normally with unchanged backing bytes and runner bindings. Two GB guest RAM,
+four vCPUs; sampled QEMU RSS is about 998 MiB. See
+SYSTEM-IMAGE-BOOT-QUALIFICATION.md for hashes, actual logs and retained failures.
+
+A real procstat compatibility bug was corrected: denied signal permission does
+not mean a visible process vanished. Only ESRCH now suppresses its binary row.
+The generic cross-UID ATF case is added/built, with final wrapper bytes verified;
+it is not yet executed. No MAC permission or PID 1 protection was weakened.
+
+NEXT: exhaustive installed-file metadata/content and legitimate mutable changes;
+actual new-version boot-environment upgrade, rollback and old-environment removal.
+All base/service/application and optional/custom/cross completeness, fresh Make
+compilation parity, source snapshot/native bootstrap/reproducibility, cache/sandbox,
+comparative CPU/RAM/disk I/O, hardware and verified combined publication remain
+open. Make stays production/default; BIP remains excluded.
+
 ## Corrected kernel reaches normal startup; fixture fixes pending (2026-11-06)
 
 Complete image R7 passes all four selected native tests and all 447 packages.

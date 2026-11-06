@@ -157,12 +157,23 @@ def main():
         check('serial-terminal-size',lambda:console.command('test "$(/bin/stty size)" = "'+size+'" && /usr/bin/resizewin -z && echo TERMINAL_SIZE_OK'))
         check('normal-capsule-pid1',lambda:console.command('/usr/bin/procstat -b 1'),
               lambda output:'/sbin/capsule' in output)
+        check('protected-pid1-signal-probe',lambda:console.command(
+            'probe_output=$(/bin/kill -0 1 2>&1); probe_status=$?; '
+            'test "$probe_status" -eq 1 && printf "%s\\n" "$probe_output" | '
+            '/usr/bin/grep -E "Permission denied|Operation not permitted"'))
         assert build_report['filesystem']=='zfs'
         bootfs=build_report['bootfs'];assert re.fullmatch(r'[A-Za-z0-9_/-]+',bootfs)
         check('zfs-root',lambda:console.command('/sbin/mount -p; /sbin/zfs list; /sbin/bectl list -H'),
               lambda output:any(line.split()[:3]==[bootfs,'/','zfs'] for line in output.splitlines()))
         count=check('installed-packages',lambda:console.command('test "$(/root/pkg-static query -a %n | /usr/bin/wc -l | /usr/bin/tr -d " ")" -eq '+str(build_report['packages'])+' && echo PACKAGE_COUNT_OK'))
-        check('sshd-pam-enabled',lambda:console.command('/usr/sbin/sshd -T | /usr/bin/grep "^usepam yes$" && /usr/sbin/service sshd status'))
+        def pam_enabled(output):
+            values=[]
+            for line in output.splitlines():
+                fields=line.split()
+                if fields and fields[0].lower()=='usepam':values.append(fields[1:])
+            return values==[['yes']]
+        check('sshd-pam-enabled',lambda:console.command('/usr/sbin/sshd -T'),pam_enabled)
+        check('sshd-running',lambda:console.command('/usr/sbin/service sshd status'))
         keytext=console.command('/bin/cat /etc/ssh/ssh_host_ed25519_key.pub')
         keys=re.findall(r'^ssh-ed25519 [A-Za-z0-9+/=]+',keytext,re.M);assert len(keys)==1
         known=out/'known_hosts';known.write_text('[127.0.0.1]:'+str(port)+' '+keys[0]+'\n')
