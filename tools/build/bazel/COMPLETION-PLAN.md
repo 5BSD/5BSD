@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## Complete selected lib construction and queued regressions passed (2026-11-06)
+
+The normal frontend full selected AMD64 lib hierarchy run passed all 164
+installation parents, 36 build-only outputs and the source helper. All 201 labels
+are captured with no incompatible targets: 683 unique files, 2,142,741,312 bytes.
+The complete public tests-enabled aggregate remains guarded. No original library
+bodies run; this is construction, not independent whole-system qualification.
+
+The subsequent maintained frontend regression also passes: source settings (28),
+generator provenance (8), original option/metadata restrictions (20) and multi-object
+DTrace inspection (30), totaling 86 actual unit methods across four reported Bazel
+wrapper cases. This supersedes earlier pending regression entries. See
+LIBRARY-COMPLETE-CONSTRUCTION-QUALIFICATION.md for exact manifests and receipts.
+
+The complete original Make control remains active. The queued full installation
+comparison and original JEVENTS recipe audit await its terminal receipt. Six
+original no-DTrace component controls are running separately to support the
+archive-order corrections. Preserve these live controls' source identities;
+prepared source patches are not applied or qualified yet. All known installation/
+linkage/order gaps and full world/kernel/module/pkgbase/runtime/cross/performance/
+bootstrap/cache/sandbox/publication gates remain. Make remains default; BIP stays
+excluded. Existing frontend format-5/capture interfaces are used unchanged.
+
+
 ## Four flagged static DTrace archives inspected against actual members (2026-11-06)
 
 The independent inspector now accepts explicit repeated companion objects and

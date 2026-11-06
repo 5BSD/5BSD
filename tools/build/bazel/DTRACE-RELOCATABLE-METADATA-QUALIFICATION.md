@@ -19,8 +19,10 @@ use `symbol_objects`. This is offline inspection, with no runtime overhead.
 Thirty host regression methods pass, including multi-object exact matching,
 ambiguous definitions, duplicate/empty selections, tampered actual code, repeated
 CLI arguments, incompatible CLI modes and the existing single-object controls.
-The normal maintained Bazel test is queued behind the active full-library frontend
-in bazel-reference-tool-variables-request-r1-20261106; it has not passed yet.
+The normal maintained Bazel test now passes all 30 methods in
+bazel-reference-tool-variables-native-r1-20261106. Its captured log distinguishes
+the actual unit methods from the single Bazel wrapper case. The same frontend
+run also passes source settings and generator/options regressions.
 Existing BUILD data dependencies already declare the inspector. The frontend
 manual documents the new diagnostic option; the C/frontend schema/signing and
 production compiler action inputs are unchanged.
