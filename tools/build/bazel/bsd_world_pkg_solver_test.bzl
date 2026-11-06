@@ -46,6 +46,6 @@ bsd_world_pkg_solver_test = rule(implementation = _test, test = True, attrs = {
     "pkg": attr.label(default = "@bsd_sdk//toolchain:extra_pkg", executable = True, allow_single_file = True, cfg = config.exec("test")),
     "python": attr.label(default = "@bsd_sdk//toolchain:extra_python", executable = True, allow_single_file = True, cfg = config.exec("test")),
     "python_home": attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = config.exec("test")),
-    "runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_pkg_runtime", Label(":package_index.py")], allow_files = True, cfg = config.exec("test")),
+    "runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_pkg_runtime", Label(":package_index.py"), Label(":pkg_relocated.py")], allow_files = True, cfg = config.exec("test")),
     "_driver": attr.label(default = Label(":world-pkg-solver-test.py"), allow_single_file = True),
 }, exec_groups = {"test": exec_group(exec_compatible_with = ["@platforms//os:freebsd", "@bsd_sdk//toolchain:selected_sdk"])})

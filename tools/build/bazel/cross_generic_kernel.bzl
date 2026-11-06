@@ -42,7 +42,7 @@ def cross_generic_kernel_objects(arch, name, srcs, deps = [], copts = [],
             select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}) +
             ["-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] + copts,
         local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
-        features = features,
+        features = features + ([] if stack_protector else ["-bsd_ssp"]),
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + policy.cpu,
             "//tools/build/bazel/kernel_toolchain:kernel"])
     bsd_ctf_library(name = name + "_ctf", library = ":" + name + "_objects",

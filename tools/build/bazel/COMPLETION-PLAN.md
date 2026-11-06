@@ -1,5 +1,18 @@
 # Native Bazel completion plan
 
+## Complete package image; startup defect found and corrected (2026-11-06)
+
+The complete 447-package BIOS/ZFS disk now builds from the actual native package,
+inventory, construction and source directory contracts. No init/rc substitution,
+memdisk root, package-order workaround or missing-path exclusion is used.
+The first normal 2 GB/four-vCPU VM exposed an early guard-initialization panic:
+a source-specific SSP exception removed the local flag but left the toolchain
+feature enabled. The corrected feature opt-out passes a regression inspecting
+actual guard and ordinary protected kernel objects. The full corrected image is
+rebuilding; normal startup/PAM/SSH/su are not yet accepted. See
+SYSTEM-IMAGE-BOOT-QUALIFICATION.md for retained failure, construction evidence,
+resource scope and the remaining global gates. Make stays production/default.
+
 ## Complete current AMD64 pkgbase composition passes (2026-11-06)
 
 `//:amd64_system_packages` creates all 447 selected packages: the existing world

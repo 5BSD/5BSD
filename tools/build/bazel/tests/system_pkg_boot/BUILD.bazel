@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+exports_files(["image.json"], visibility = ["//:__pkg__", "//tools/build/bazel:__pkg__"])
+bsd_install_file(name = "rcconf", src = "rc.conf", destination = "/etc/rc.conf", owner = "root", group = "wheel", mode = "0644", install_tags = [])
+bsd_install_file(name = "loaderconf", src = "loader.conf", destination = "/boot/loader.conf", owner = "root", group = "wheel", mode = "0644", install_tags = [])
+bsd_install_file(name = "fstab_entry", src = "fstab", destination = "/etc/fstab", owner = "root", group = "wheel", mode = "0644", install_tags = [])
+bsd_install_file(name = "local", src = "rc.local", destination = "/etc/rc.local", owner = "root", group = "wheel", mode = "0644", install_tags = [])
+bsd_install_file(name = "firstboot_entry", src = "firstboot", destination = "/firstboot", owner = "root", group = "wheel", mode = "0644", install_tags = [])
+bsd_install_file(name = "sshd", src = "sshd.fragment", destination = "/etc/ssh/sshd_config", owner = "root", group = "wheel", mode = "0644", install_tags = [])
+bsd_install_file(name = "guest_pkg", src = "@bsd_sdk//toolchain:extra_pkg", destination = "/root/pkg-static", owner = "root", group = "wheel", mode = "0555", install_tags = [])
+bsd_install_manifest(name = "site", entries = [":guest_pkg", ":rcconf", ":loaderconf", ":fstab_entry", ":local", ":firstboot_entry", ":sshd"], visibility = ["//:__pkg__"])

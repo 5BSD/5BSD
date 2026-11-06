@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "filesystem": "zfs",
+  "size_bytes": 8589934592,
+  "epoch": 0,
+  "pool": "zroot",
+  "bootfs": "zroot/ROOT/default",
+  "datasets": [
+    {
+      "name": "zroot",
+      "properties": {
+        "mountpoint": "none"
+      }
+    },
+    {
+      "name": "zroot/ROOT",
+      "properties": {
+        "mountpoint": "none"
+      }
+    },
+    {
+      "name": "zroot/ROOT/default",
+      "properties": {
+        "mountpoint": "/",
+        "canmount": "noauto"
+      }
+    },
+    {
+      "name": "zroot/home",
+      "properties": {
+        "mountpoint": "/home"
+      }
+    },
+    {
+      "name": "zroot/tmp",
+      "properties": {
+        "mountpoint": "/tmp",
+        "setuid": "off"
+      }
+    },
+    {
+      "name": "zroot/usr",
+      "properties": {
+        "mountpoint": "/usr",
+        "canmount": "off"
+      }
+    },
+    {
+      "name": "zroot/usr/local",
+      "properties": {
+        "mountpoint": "/usr/local"
+      }
+    },
+    {
+      "name": "zroot/var",
+      "properties": {
+        "mountpoint": "/var",
+        "canmount": "off"
+      }
+    },
+    {
+      "name": "zroot/var/log",
+      "properties": {
+        "mountpoint": "/var/log",
+        "exec": "off",
+        "setuid": "off"
+      }
+    },
+    {
+      "name": "zroot/var/tmp",
+      "properties": {
+        "mountpoint": "/var/tmp",
+        "exec": "off",
+        "setuid": "off"
+      }
+    }
+  ],
+  "bootcode": {
+    "pmbr": "/boot/pmbr",
+    "stage2": "/boot/gptzfsboot"
+  },
+  "generated_files": {
+    "/var/db/pkg/local.sqlite": {
+      "owner": "root",
+      "group": "wheel",
+      "mode": "0644",
+      "flags": "",
+      "producer": "pkg-local-database"
+    }
+  },
+  "site_operations": {
+    "/etc/rc.conf": "create",
+    "/boot/loader.conf": "create",
+    "/etc/fstab": "create",
+    "/etc/rc.local": "create",
+    "/firstboot": "create",
+    "/etc/ssh/sshd_config": "prepend",
+    "/root/pkg-static": "create"
+  },
+  "boot_mode": "bios",
+  "repository_name": "5BSD-base"
+}

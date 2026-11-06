@@ -247,3 +247,49 @@ it does not invent an automatic kernel debug dependency. Normal Make stays defau
 NEXT: full 447-package installed/normal-boot/service and genuine upgrade proof;
 source Make kernel-debug path policy and package variants. Remaining global gates
 stay open. Make stays production/default; BIP excluded.
+
+## Normal image construction in progress (2026-11-06)
+
+A native bsd_pkg_image rule now consumes the actual complete package outputs,
+family/inventory/hash contracts, typed construction Files and explicit site/pool
+policy. It stages all packages in a private INSTALL_AS_USER root, supplies declared
+construction outputs, reconciles the full completed tree, and drives native makefs
+and mkimg for a disk-backed ZFS BIOS image. It does not replace init or /etc/rc,
+mount the host, load a guest image into RAM or run target package hooks on the host.
+The private boot fixture provisions accounts through actual guest pw during normal
+rc.local and keeps PAM enabled for SSH. No normal boot result exists yet.
+
+Initial analysis caught two site target/source name collisions. The first execution
+caught an unsupported pkg add -y option. A subsequent explicit mode query established
+that INSTALL_AS_USER is an environment interface, not a pkg configuration key.
+The new action and maintained release vmimage.subr now use that documented interface;
+source supplied database outputs remain required. Image policy/path unit checks pass.
+The current full image retry is not accepted until construction and VM checks pass.
+Existing format-5 target/settings handling carries the image target; no production
+frontend backend/default, signing or publication switch is introduced.
+
+## Complete image construction and real startup correction — 2026-11-06
+
+R6 complete-image construction passes all 447 packages, 33,982 nondirectory
+records (including construction/site/generated state) and 1,369 directories.
+The real solver handles dependency cycles; all source-declared empty scaffolding
+is materialized before exact completed-tree reconciliation. No omitted-path list
+or forced installation order is used. Source-derived ownership enters makefs
+through numeric METALOG; installed runtime ownership remains a separate gate.
+
+The first ordinary 2 GB/four-vCPU BIOS/ZFS VM reaches the native kernel but panics
+in guard initialization. The source-specific stack_protector=False declaration
+removed the local flag but not hosted toolchain bsd_ssp. The macro now explicitly
+disables that feature for this exception; ordinary protected objects are unchanged.
+The actual-object relocation regression fails before correction and passes through
+the frontend afterward. Full corrected image R7 is still rebuilding. Normal
+startup, PAM/SSH/su and upgrades remain unqualified. The runtime driver and plan
+retain source/tool/image bindings and enforce explicit sampled resource budgets.
+
+Maintained release/hardware/database callers now pass pkg rootless mode through
+the actual environment interface. The real hardware suite passes all 45 cases
+across the main run and one explicit-module follow-up. See
+ROOTLESS-PKG-MODE-CORRECTION.md and SYSTEM-IMAGE-BOOT-QUALIFICATION.md for exact
+scope, retained failed boot and next steps. Existing format-5 frontend selection
+carries the image/guard-test targets; C/default backend changes are not required.
+Make stays production/default and BIP stays excluded.

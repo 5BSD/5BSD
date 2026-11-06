@@ -7882,3 +7882,22 @@ These selected native tests and archives do not establish normal boot, upgrades,
 comparative performance or production publication. Make remains production/default.
 See
 .Pa tools/build/bazel/SYSTEM-PKGBASE-COMPOSITION-QUALIFICATION.md .
+
+.Ss Native complete package image qualification
+The explicit format-5 target //:amd64_system_boot_test_image consumes the complete
+native package set, typed installation/construction Files, payload hashes and an
+explicit BIOS/ZFS image/site policy. It uses pkg's real solver, rootless environment
+interface and private database/cache, then reconciles the complete staged tree
+against source-derived directory and payload policy before native makefs/mkimg.
+It does not replace normal rc/init or load the filesystem image into memory.
+.Pp
+This is a private qualification fixture with explicit guest test credentials,
+serial/DHCP/SSH configuration and an SDK pkg tool. It is not production media.
+The maintained tools/test/system-pkg-runtime/run.py driver consumes its captured
+image/report with an explicit plan for normal startup/PAM/SSH/su and resource
+checks. Construction alone is not runtime, verified boot or upgrade evidence.
+The first VM found a kernel guard-initialization defect; the source-specific
+Bazel toolchain-feature correction passes its actual-object regression, with full
+normal boot requalification pending. Make stays production/default.
+See
+.Pa tools/build/bazel/SYSTEM-IMAGE-BOOT-QUALIFICATION.md .

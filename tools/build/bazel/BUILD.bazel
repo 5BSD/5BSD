@@ -430,3 +430,16 @@ bsd_python_test(name = "payload_inventory_test", src = "payload-inventory-test.p
 
 bsd_python_test(name = "archive_flags_test", src = "archive-flags-test.py",
     data = ["archive_headers.py", "install_archive.py", "archive_policy.py", "directory_metadata.py"])
+
+exports_files(["pkg_image.py"])
+
+bsd_python_test(name = "pkg_image_policy_test", src = "pkg-image-policy-test.py",
+    data = ["pkg_image.py", "pkg_relocated.py", "//tools/build/bazel/tests/system_pkg_boot:image.json"])
+
+exports_files(["pkg_relocated.py"], visibility = ["//:__pkg__", "//sys:__subpackages__"])
+
+bsd_python_test(name = "kernel_stack_protector_test", src = "kernel-stack-protector-test.py",
+    data = ["//sys/kern:generic_core_stack_protector_object_files", "//sys/kern:generic_core_kern_malloc_object_files"],
+    args = ["--initializer", "$(location //sys/kern:generic_core_stack_protector_object_files)",
+            "--control", "$(location //sys/kern:generic_core_kern_malloc_object_files)"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
