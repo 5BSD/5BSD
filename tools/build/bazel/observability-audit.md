@@ -12264,3 +12264,13 @@ do not prove live provider firing, audit delivery or tracing overhead. Native
 library/test installation metadata and debug contracts match Make independently;
 complete system instrumentation/runtime and resource checks remain separate.
 See LIBMD-SYSTEM-TEST-QUALIFICATION.md for the distinct portable/native boundary.
+
+## libutil++ native original wrapper cases (2026-11-06)
+
+All four unchanged original cases pass with native final ABI providers: string
+formatting/va_list, FILE ownership and pidfile lifecycle. Original libutil provider
+and test source is retained. These C++ wrapper checks do not establish the larger
+C libutil suite, login/authentication events, audit delivery or live DTrace probe
+firing. DOF initialization is disabled for isolated executions; overhead and
+installed-system service behavior remain separate. See
+LIBUTIL-CXX-TEST-QUALIFICATION.md for original Make parity and exact scope.

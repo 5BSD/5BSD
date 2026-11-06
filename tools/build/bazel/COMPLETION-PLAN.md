@@ -1,5 +1,21 @@
 # Native Bazel completion plan
 
+## Native libutil++ test ABI and parent installation (2026-11-06)
+
+All three original C++ programs now use native final ABI/unwinder providers and
+original GNU++17/WARNS=6. Four original cases pass with native runfiles. Complete
+suite/positive parent/negative parent controls match all 7/14/7 file records,
+original directory claims and data; three executable ELF/debug contracts match
+Make. The missing test-directory package claim is corrected. Original internal
+archive/header non-installation and seven manual files are preserved. See
+LIBUTIL-CXX-TEST-QUALIFICATION.md for actual evidence and limits.
+
+The larger C libutil suite remains separate and next. Continue all remaining
+selected library tests/full tests-enabled world, world/kernel/module/pkgbase/debug,
+service/VM, CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/reproducibility and
+combined publication gates. Make remains default; cross-target installed runtime
+remains open; BIP remains excluded.
+
 ## Native libmd installed tests and original parent profiles (2026-11-06)
 
 All fourteen original digest drivers now have a normal native system installation
