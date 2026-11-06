@@ -2550,14 +2550,18 @@ int
 linux_kern_fadvise(struct thread *td, int fd, off_t offset, off_t len,
     int linux_advice)
 {
+	struct stat sb;
 	struct file *fp;
 	int advice, error;
 
 	error = fget(td, fd, &cap_posix_fadvise_rights, &fp);
 	if (error != 0)
 		return (error);
-	if (fp->f_type == DTYPE_PIPE ||
-	    (fp->f_type == DTYPE_VNODE && fp->f_vnode->v_type == VFIFO)) {
+	/* Pipes and FIFOs are ESPIPE; every other non-file is a no-op. */
+	error = fo_stat(fp, &sb, td->td_ucred);
+	if (error != 0)
+		goto out;
+	if (S_ISFIFO(sb.st_mode)) {
 		error = ESPIPE;
 		goto out;
 	}
@@ -2571,7 +2575,7 @@ linux_kern_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 		goto out;
 	}
 	AUDIT_ARG_VALUE(advice);
-	if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VREG) {
+	if (!S_ISREG(sb.st_mode)) {
 		error = 0;
 		goto out;
 	}
@@ -2856,6 +2860,7 @@ linux_copy_file_range(struct thread *td, struct linux_copy_file_range_args
 int
 linux_readahead(struct thread *td, struct linux_readahead_args *args)
 {
+	struct stat sb;
 	struct file *fp;
 	off_t len;
 	int error;
@@ -2863,7 +2868,8 @@ linux_readahead(struct thread *td, struct linux_readahead_args *args)
 	error = fget_read(td, args->fd, &cap_no_rights, &fp);
 	if (error != 0)
 		return (EBADF);
-	if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VREG)
+	error = fo_stat(fp, &sb, td->td_ucred);
+	if (error == 0 && !S_ISREG(sb.st_mode))
 		error = EINVAL;
 	fdrop(fp, td);
 	if (error != 0)

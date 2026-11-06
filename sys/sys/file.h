@@ -166,6 +166,8 @@ typedef int fo_statfs_t(struct file *fp, struct statfs *buf,
 typedef int fo_fsync_t(struct file *fp, int mode, struct thread *td);
 typedef int fo_setattr_t(struct file *fp, struct vattr *vap,
 		    struct ucred *active_cred, struct thread *td);
+typedef int fo_fadvise_t(struct file *fp, off_t offset, off_t len,
+		    int advice, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
 
 /* fo_fsync modes. */
@@ -201,7 +203,8 @@ struct fileops {
 	fo_statfs_t	*fo_statfs;
 	fo_fsync_t	*fo_fsync;
 	fo_setattr_t	*fo_setattr;
-	fo_spare_t	*fo_spares[4];	/* Spare slots */
+	fo_fadvise_t	*fo_fadvise;
+	fo_spare_t	*fo_spares[3];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
@@ -338,6 +341,7 @@ fo_pathconf_t	invfo_pathconf;
 fo_statfs_t	invfo_statfs;
 fo_fsync_t	invfo_fsync;
 fo_setattr_t	invfo_setattr;
+fo_fadvise_t	invfo_fadvise;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -347,6 +351,7 @@ fo_pathconf_t	vn_pathconf;
 fo_statfs_t	vn_statfs;
 fo_fsync_t	vn_fsync;
 fo_setattr_t	vn_setattr;
+fo_fadvise_t	vn_fadvise;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -561,6 +566,20 @@ fo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	if (fp->f_ops->fo_setattr == NULL)
 		return (invfo_setattr(fp, vap, active_cred, td));
 	return ((*fp->f_ops->fo_setattr)(fp, vap, active_cred, td));
+}
+
+/*
+ * posix_fadvise(2) with an already validated range and advice.  The
+ * descriptor decides whether it has anything to advise about.
+ */
+static __inline int
+fo_fadvise(struct file *fp, off_t offset, off_t len, int advice,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_fadvise == NULL)
+		return (invfo_fadvise(fp, offset, len, advice, td));
+	return ((*fp->f_ops->fo_fadvise)(fp, offset, len, advice, td));
 }
 
 static __inline int

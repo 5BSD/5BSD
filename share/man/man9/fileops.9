@@ -9,7 +9,8 @@
 .Nm fo_pathconf ,
 .Nm fo_statfs ,
 .Nm fo_fsync ,
-.Nm fo_setattr
+.Nm fo_setattr ,
+.Nm fo_fadvise
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -22,6 +23,8 @@
 .Fn fo_fsync "struct file *fp" "int mode" "struct thread *td"
 .Ft int
 .Fn fo_setattr "struct file *fp" "struct vattr *vap" "struct ucred *active_cred" "struct thread *td"
+.Ft int
+.Fn fo_fadvise "struct file *fp" "off_t offset" "off_t len" "int advice" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -237,6 +240,39 @@ before reaching the table, as they always did.
 returns
 .Er EINVAL .
 .El
+.Ss fo_fadvise
+.Fn fo_fadvise
+applies a
+.Xr posix_fadvise 2
+hint to the byte range
+.Fa offset
+and
+.Fa len .
+The system call validates the range and the advice, records the audit
+argument, and refuses a descriptor without
+.Dv DFLAG_SEEKABLE
+with
+.Er ESPIPE
+before the table is consulted.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_fadvise
+keeps the sequential, random and no-reuse regions in the file's
+.Va f_advice ,
+which
+.Fn vn_read
+and
+.Fn vn_write
+consult, and passes the will-need and do-not-need hints to
+.Xr VOP_ADVISE 9 .
+Only a regular file has anything to advise about; directories and devices
+return
+.Er ENODEV .
+.It everything else
+.Fn invfo_fadvise
+returns
+.Er ENODEV .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
@@ -249,10 +285,12 @@ value.
 .Xr fstatfs 2 ,
 .Xr fsync 2 ,
 .Xr futimens 2 ,
+.Xr posix_fadvise 2 ,
 .Xr fdescfs 4 ,
 .Xr VFS_STATFS 9 ,
 .Xr VFS_SYNC 9 ,
 .Xr vnode 9 ,
+.Xr VOP_ADVISE 9 ,
 .Xr VOP_FSYNC 9 ,
 .Xr VOP_PATHCONF 9 ,
 .Xr VOP_SETATTR 9
@@ -263,9 +301,10 @@ table has existed since
 .Bx 4.4 .
 .Fn fo_pathconf ,
 .Fn fo_statfs ,
-.Fn fo_fsync
-and
+.Fn fo_fsync ,
 .Fn fo_setattr
+and
+.Fn fo_fadvise
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

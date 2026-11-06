@@ -5056,9 +5056,6 @@ int
 kern_posix_fadvise_fp(struct thread *td, struct file *fp, off_t offset,
     off_t len, int advice)
 {
-	struct fadvise_info *fa, *new;
-	struct vnode *vp;
-	off_t end;
 	int error;
 
 	error = kern_posix_fadvise_validate(offset, len, advice);
@@ -5067,11 +5064,27 @@ kern_posix_fadvise_fp(struct thread *td, struct file *fp, off_t offset,
 	AUDIT_ARG_FILE(td->td_proc, fp);
 	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0)
 		return (ESPIPE);
-	if (fp->f_type != DTYPE_VNODE)
-		return (ENODEV);
+	return (fo_fadvise(fp, offset, len, advice, td));
+}
+
+/*
+ * The fadvise(2) regions a vnode file keeps in f_advice, consulted by
+ * vn_read() and vn_write(), plus VOP_ADVISE for the hints the filesystem
+ * acts on itself.  Only regular files have anything to advise about.
+ */
+int
+vn_fadvise(struct file *fp, off_t offset, off_t len, int advice,
+    struct thread *td)
+{
+	struct fadvise_info *fa, *new;
+	struct vnode *vp;
+	off_t end;
+	int error;
+
 	vp = fp->f_vnode;
 	if (vp->v_type != VREG)
 		return (ENODEV);
+	error = 0;
 	switch (advice) {
 	case POSIX_FADV_SEQUENTIAL:
 	case POSIX_FADV_RANDOM:

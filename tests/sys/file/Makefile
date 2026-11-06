@@ -17,6 +17,7 @@ ATF_TESTS_C+=	fpathconf_test
 ATF_TESTS_C+=	fstatfs_test
 ATF_TESTS_C+=	fsync_test
 ATF_TESTS_C+=	fsetattr_test
+ATF_TESTS_C+=	fadvise_test
 
 PROGS+=		flock_helper
 

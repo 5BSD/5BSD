@@ -6185,6 +6185,15 @@ invfo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	return (EINVAL);
 }
 
+/* posix_fadvise(2) on something that is not a file: no device to advise. */
+int
+invfo_fadvise(struct file *fp, off_t offset, off_t len, int advice,
+    struct thread *td)
+{
+
+	return (ENODEV);
+}
+
 int
 invfo_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
     struct uio *trl_uio, off_t offset, size_t nbytes, off_t *sent, int flags,

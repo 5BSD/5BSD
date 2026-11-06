@@ -537,6 +537,19 @@ vn_openfile_setattr(struct file *fp, struct vattr *vap,
 	return (error);
 }
 
+static int
+vn_openfile_fadvise(struct file *fp, off_t offset, off_t len, int advice,
+    struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_fadvise(fp, offset, len, advice, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
 /*
  * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
  * that carries a vnode.  The file context is entered here, not by a
@@ -594,6 +607,7 @@ const struct fileops vnops = {
 	.fo_statfs = vn_openfile_statfs,
 	.fo_fsync = vn_fsync,
 	.fo_setattr = vn_openfile_setattr,
+	.fo_fadvise = vn_openfile_fadvise,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -619,6 +633,7 @@ const struct fileops vnops = {
 	.fo_statfs = vn_openfile_statfs, \
 	.fo_fsync = vn_fsync, \
 	.fo_setattr = vn_openfile_setattr, \
+	.fo_fadvise = vn_openfile_fadvise, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

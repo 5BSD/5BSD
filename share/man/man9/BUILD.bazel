@@ -1165,6 +1165,7 @@ _man_aliases = [
     ('fetch.9', 'fueword.9'),
     ('fetch.9', 'fueword32.9'),
     ('fetch.9', 'fueword64.9'),
+    ('fileops.9', 'fo_fadvise.9'),
     ('fileops.9', 'fo_fsync.9'),
     ('fileops.9', 'fo_pathconf.9'),
     ('fileops.9', 'fo_setattr.9'),
