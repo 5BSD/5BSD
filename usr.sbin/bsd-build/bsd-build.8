@@ -7742,3 +7742,10 @@ The default AMD64 layout matches 904 original Make directory definitions;
 NLS aliases are selected by the NLS option.
 This layout comparison and package payload inspection do not establish normal
 startup, actual installation or upgrade qualification.
+.Pp
+The maintained world-pkg-install-fixture.py helper consumes captured native world
+and package outputs plus an explicit fixture plan to prepare disposable VM disks.
+Its native ATF driver tests complete package installation and same-version reinstall
+with site-state preservation inside a disk-backed VM.
+Fixture preparation does not establish a passing installation result, normal
+system startup or a new-version upgrade.

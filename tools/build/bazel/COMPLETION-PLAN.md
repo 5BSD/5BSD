@@ -5684,3 +5684,9 @@ Updated evidence: all 445 complete original Make package manifests match after
 this layout correction (same native corpus, zero differing fields). Bounded
 TESTS-enabled native layout/test also passes, including both test roots. Neither
 result establishes full independent Make-world or normal installed startup.
+
+Maintained VM suite checkpoint: complete package-derived disk assembly and native
+ATF driver are implemented with root confined to the disposable VM. The current
+2GB retry is live, with final install/reinstall acceptance pending. See
+WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md for exact scope, input paths, resource
+limits, retained failures and the outstanding normal-startup/upgrade gates.

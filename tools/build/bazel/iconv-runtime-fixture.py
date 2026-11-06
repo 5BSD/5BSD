@@ -284,8 +284,11 @@ def main():
     shutil.copytree(sdk / 'python-home', runtime / 'python-home')
     put(sdk / 'bin/extra_python', runtime / 'python', 0o555)
     put(Path(plan['checker']), runtime / Path(plan['checker']).name, 0o444)
-    chroot = next(entry for entry in plan['files'] if entry['destination'] == 'usr/sbin/chroot')
-    put(artifact(chroot['target']), extra / 'usr/sbin/chroot', 0o555)
+    # Some VM checkers enter the target root with os.chroot rather than an
+    # outer chroot executable. Stage that tool only when explicitly requested.
+    for entry in plan['files']:
+        if entry['destination'] == 'usr/sbin/chroot':
+            put(artifact(entry['target']), extra / 'usr/sbin/chroot', 0o555)
     # Stage only boot inputs; the VM harness independently verifies the kernel.
     boot_root = output / 'boot-root'
     copy_boot(Path(plan['boot_directory']), boot_root / 'boot')

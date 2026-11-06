@@ -1,5 +1,14 @@
 # Bazel qualification
 
+## Complete pkg installation VM suite (2026-11-06)
+
+A maintained native driver and package-derived fixture now exercise real complete
+installation and same-version reinstall with site configuration/account/data
+preservation inside a 2GB disk-backed VM. Fixture preparation and driver/native
+tests pass; the final VM result is pending. This does not test normal startup or
+new-version upgrades. See
+[WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md](WORLD-PACKAGE-INSTALL-VM-QUALIFICATION.md).
+
 ## Complete source directory layout checkpoint (2026-11-06)
 
 Native world packages now include source-derived distrib-dirs, with exact original
