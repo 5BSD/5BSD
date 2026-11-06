@@ -451,3 +451,7 @@ bsd_source_headers(name = "bios_simp_headers", hdrs = ['intake.h'], visibility =
 bsd_source_headers(name = 'kboot_loader_headers', hdrs = ['intake.h'], visibility = ["//stand/kboot/kboot:__pkg__"])
 
 bsd_source_headers(name = 'userboot_entry_headers', hdrs = ['intake.h'], visibility = ['//stand/userboot/userboot:__pkg__'])
+
+# Netgraph's source policy tests existence, not the file's contents.
+filegroup(name = "rc4_module_selection_source", srcs = glob(["rc4/rc4.c"], allow_empty = True),
+    visibility = ["//sys/modules/netgraph:__pkg__"])

@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Shared explicit overrides for native GENERIC configuration and source selectors."""
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+
 KERNEL_OPTION_SETTINGS = {
+    Label("//tools/build/bazel/config:kernel_ipsec_support"): "IPSEC_SUPPORT",
+    Label("//tools/build/bazel/config:kernel_tcp_signature"): "TCP_SIGNATURE",
     Label("//tools/build/bazel/config:kernel_fdt"): "FDT",
     Label("//tools/build/bazel/config:kernel_zstdio"): "ZSTDIO",
     Label("//tools/build/bazel/config:kernel_nfs_root"): "NFS_ROOT",
@@ -10,8 +15,23 @@ KERNEL_OPTION_SETTINGS = {
 # Source-owned GENERIC defaults used by analysis-time selectors. Configuration
 # generation verifies these against the actual parser headers before consumption.
 KERNEL_OPTION_DEFAULTS = {
-    "amd64": {"FDT": "no"},
-    "arm64": {"FDT": "yes"},
-    "riscv": {"FDT": "yes"},
+    "amd64": {"IPSEC_SUPPORT": "yes", "TCP_SIGNATURE": "no", "FDT": "no"},
+    "arm64": {"IPSEC_SUPPORT": "yes", "TCP_SIGNATURE": "no", "FDT": "yes"},
+    "riscv": {"IPSEC_SUPPORT": "yes", "TCP_SIGNATURE": "no", "FDT": "yes"},
 }
 KERNEL_ARCH_CPUS = {"amd64": "x86_64", "arm64": "aarch64", "riscv": "riscv64"}
+
+def kernel_option_setting(name, option):
+    """Declare auto/yes/no selectors from the same checked source defaults."""
+    string_flag(name = name, build_setting_default = "auto", values = ["auto", "yes", "no"],
+        visibility = ["//visibility:public"])
+    for value in ["yes", "no"]:
+        native.config_setting(name = name + "_" + value, flag_values = {":" + name: value})
+    for arch in sorted(KERNEL_OPTION_DEFAULTS):
+        native.config_setting(name = name + "_auto_" + arch,
+            flag_values = {":" + name: "auto"},
+            constraint_values = ["@platforms//cpu:" + KERNEL_ARCH_CPUS[arch]])
+    for value, suffix in [("yes", "enabled"), ("no", "disabled")]:
+        selects.config_setting_group(name = name + "_" + suffix, match_any = [":" + name + "_" + value] +
+            [":" + name + "_auto_" + arch for arch in sorted(KERNEL_OPTION_DEFAULTS)
+             if KERNEL_OPTION_DEFAULTS[arch][option] == value], visibility = ["//visibility:public"])

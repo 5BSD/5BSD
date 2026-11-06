@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+bsd_kernel_module_set(name = "crypt_mppc", modules = select({
+    "//tools/build/bazel/config:crypt_enabled": ["//sys/modules/netgraph/mppc:module_product"],
+    "//conditions:default": [],
+}), source_availability = "//sys/crypto:rc4_module_selection_source")
+bsd_kernel_module_set(name = "amd64_modules", modules = ['//sys/modules/netgraph/async:module_product', '//sys/modules/netgraph/bpf:module_product', '//sys/modules/netgraph/bridge:module_product', '//sys/modules/netgraph/car:module_product', '//sys/modules/netgraph/checksum:module_product', '//sys/modules/netgraph/deflate:module_product', '//sys/modules/netgraph/device:module_product', '//sys/modules/netgraph/eiface:module_product', '//sys/modules/netgraph/ether:module_product', '//sys/modules/netgraph/gif:module_product', '//sys/modules/netgraph/gif_demux:module_product', '//sys/modules/netgraph/hub:module_product', '//sys/modules/netgraph/iface:module_product', '//sys/modules/netgraph/ip_input:module_product', '//sys/modules/netgraph/ksocket:module_product', '//sys/modules/netgraph/l2tp:module_product', '//sys/modules/netgraph/macfilter:module_product', '//sys/modules/netgraph/nat:module_product', '//sys/modules/netgraph/netflow:module_product', '//sys/modules/netgraph/netgraph:module_product', '//sys/modules/netgraph/one2many:module_product', '//sys/modules/netgraph/patch:module_product', '//sys/modules/netgraph/pipe:module_product', '//sys/modules/netgraph/ppp:module_product', '//sys/modules/netgraph/pppoe:module_product', '//sys/modules/netgraph/socket:module_product', '//sys/modules/netgraph/split:module_product', '//sys/modules/netgraph/tag:module_product', '//sys/modules/netgraph/tcpmss:module_product', '//sys/modules/netgraph/tee:module_product', '//sys/modules/netgraph/tty:module_product', '//sys/modules/netgraph/UI:module_product', '//sys/modules/netgraph/vjc:module_product', '//sys/modules/netgraph/vlan:module_product', '//sys/modules/netgraph/vlan_rotate:module_product'],
+    module_sets = [":crypt_mppc"] + select({
+        "//tools/build/bazel/config:module_bluetooth_enabled": ["//sys/modules/netgraph/bluetooth:amd64_modules"],
+        "//conditions:default": [],
+    }), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

@@ -45,6 +45,10 @@ def _selected_members(ctx):
 
 def _module_set(ctx):
     members = _selected_members(ctx)
+    if any([not file.is_source for file in ctx.files.source_availability]):
+        fail("module selection availability requires source-only files")
+    if ctx.attr.source_availability != None and not ctx.files.source_availability:
+        members = []
     labels, names, files, rows, recipes = {}, {}, [], [], []
     for member in members:
         label, info = str(member.label), member.product
@@ -73,6 +77,7 @@ def _module_set(ctx):
         BsdKernelModuleSetInfo(members = members, payload = payload)]
 
 bsd_kernel_module_set = rule(implementation = _module_set, attrs = {
+    "source_availability": attr.label(allow_files = True, doc = "Optional source-file group; an empty group excludes this optional family."),
     "modules": attr.label_list(providers = [BsdKernelModuleInfo]),
     "module_sets": attr.label_list(providers = [BsdKernelModuleSetInfo]),
 })

@@ -7818,3 +7818,15 @@ membership, ordered-object and installation-policy checks plus ELF/debug CRC rev
 Typed module link recipes expose actual selected object Files as build metadata;
 they do not enter installed payloads. Full FDT kernel/boot, custom configurations,
 cross-platform parent composition and complete kernel/pkgbase remain unqualified.
+.Pp
+Native AMD64 Netgraph and TCP parents preserve source option selection and actual
+kernel IPSEC_SUPPORT/TCP_SIGNATURE conditions. The kernel_ipsec_support and
+kernel_tcp_signature settings accept auto, yes or no through existing format-5
+build-settings. Auto defaults share the native parser's checked source authority.
+Optional MPPC also follows declared RC4 source availability; generated selection
+sources are rejected. Four option profiles pass original Make membership,
+installation and ordered-object checks plus ELF/debug CRC inspection. Empty TCP
+selection is permitted only when both IP support source options are disabled.
+This does not qualify full root traversal, normal boot or alternative ALL_MODULES
+and custom-kernel profiles. See
+.Pa tools/build/bazel/NETWORK-MODULE-PARENTS-QUALIFICATION.md .

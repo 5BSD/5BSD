@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("//tools/build/bazel:bsd_install.bzl", "BsdInstallManifestInfo")
-load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "BsdKernelModuleInfo")
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "BsdKernelModuleInfo", "BsdKernelModuleSetInfo")
 
 def _paths(ctx):
     env = analysistest.begin(ctx)
@@ -51,3 +51,11 @@ fixture_product = rule(implementation = _fixture_product, attrs = {
     "binary": attr.label(allow_single_file = True, mandatory = True),
     "debug": attr.label(allow_single_file = True, mandatory = True),
 })
+
+def _selected_count(ctx):
+    env = analysistest.begin(ctx)
+    info = analysistest.target_under_test(env)[BsdKernelModuleSetInfo]
+    asserts.equals(env, ctx.attr.expected, len(info.members))
+    asserts.equals(env, ctx.attr.expected * 2, len(info.payload.to_list()))
+    return analysistest.end(env)
+source_selection_test = analysistest.make(_selected_count, attrs = {"expected": attr.int(mandatory = True)})

@@ -890,12 +890,11 @@ config_setting(name = "usb_gadget_examples_enabled", flag_values = {":usb_gadget
 
 # Kernel FDT is distinct from the userland/libfdt source setting.
 # Auto preserves source GENERIC defaults: off for AMD64, on for ARM64/RISC-V.
-string_flag(name = "kernel_fdt", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
-config_setting(name = "kernel_fdt_yes", flag_values = {":kernel_fdt": "yes"})
-load("//tools/build/bazel:kernel_option_settings.bzl", "KERNEL_OPTION_DEFAULTS", "KERNEL_ARCH_CPUS")
-[config_setting(name = "kernel_fdt_auto_" + arch, flag_values = {":kernel_fdt": "auto"},
-    constraint_values = ["@platforms//cpu:" + KERNEL_ARCH_CPUS[arch]])
- for arch in sorted(KERNEL_OPTION_DEFAULTS) if KERNEL_OPTION_DEFAULTS[arch]["FDT"] == "yes"]
-selects.config_setting_group(name = "kernel_fdt_enabled", match_any = [":kernel_fdt_yes"] +
-    [":kernel_fdt_auto_" + arch for arch in sorted(KERNEL_OPTION_DEFAULTS) if KERNEL_OPTION_DEFAULTS[arch]["FDT"] == "yes"],
-    visibility = ["//visibility:public"])
+load("//tools/build/bazel:kernel_option_settings.bzl", "kernel_option_setting")
+kernel_option_setting(name = "kernel_fdt", option = "FDT")
+kernel_option_setting(name = "kernel_ipsec_support", option = "IPSEC_SUPPORT")
+kernel_option_setting(name = "kernel_tcp_signature", option = "TCP_SIGNATURE")
+
+# Module parents consume source options independently of root-family selection.
+config_setting(name = "module_bluetooth_enabled", flag_values = {":bluetooth": "true"}, visibility = ["//visibility:public"])
+selects.config_setting_group(name = "tcp_md5_module_enabled", match_all = [":ip_enabled", ":kernel_ipsec_support_enabled", ":kernel_tcp_signature_disabled"], visibility = ["//visibility:public"])

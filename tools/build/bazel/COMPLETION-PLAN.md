@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Netgraph/TCP module parent selection passes (2026-11-06)
+
+Four AMD64 profiles compose 47/38/46/43 unique products and each pass 19 test targets.
+Independent original Make export-aware membership, leaf/install policy and exact
+ordered link inputs match; all 174 selected ELF/debug pairs pass. IPsec/signature
+selectors share checked native GENERIC option authority. Optional MPPC follows
+source crypt and precise RC4 source availability, with present/absent/generated
+predicate analysis tests. See NETWORK-MODULE-PARENTS-QUALIFICATION.md for evidence
+and limits; this is not normal boot or fresh Make machine-code parity.
+
+NEXT: source-owned root selection and coherent kernel/GDB/modules/directories/
+aliases/linker.hints/pkgbase, then normal startup/services and genuine upgrades.
+Custom/ALL_MODULES/cross, bootstrap/cache/sandbox/reproducibility/debug/resources/
+hardware/publication gates remain open. Make stays production/default; BIP excluded.
+
 ## FDT option authority and I2C/GPIO parents pass (2026-11-06)
 
 Three new AMD64 parents compose 45 unique module/debug products under auto/no and

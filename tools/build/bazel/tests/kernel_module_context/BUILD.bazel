@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
 load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_installation", "bsd_kernel_module_set")
-load(":tests.bzl", "path_test", "custom_path_test", "inline_debug_test", "collision_test", "fixture_product", "invalid_base_test", "invalid_debug_test")
+load(":tests.bzl", "path_test", "custom_path_test", "inline_debug_test", "collision_test", "fixture_product", "invalid_base_test", "invalid_debug_test", "source_selection_test")
 
 bsd_install_file(name = "module", src = "sample.ko", destination = "/sample.ko",
     destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
@@ -48,3 +48,13 @@ bsd_kernel_module_set(name = "empty_set")
 bsd_kernel_module_installation(name = "empty_installation", module_sets = [":empty_set"])
 collision_test(name = "empty_installation_test", target_under_test = ":empty_installation",
     expected = "explicit selected kernel module products required")
+
+# Analysis-only source-availability fixtures; these are not runtime ELF evidence.
+filegroup(name = "absent_selection_source", srcs = [])
+filegroup(name = "present_selection_source", srcs = ["sample.ko"])
+bsd_kernel_module_set(name = "source_absent", modules = [":product"], source_availability = ":absent_selection_source")
+bsd_kernel_module_set(name = "source_present", modules = [":product"], source_availability = ":present_selection_source")
+source_selection_test(name = "source_absent_test", target_under_test = ":source_absent", expected = 0)
+source_selection_test(name = "source_present_test", target_under_test = ":source_present", expected = 1)
+bsd_kernel_module_set(name = "generated_selection_source", modules = [":product"], source_availability = ":standalone")
+collision_test(name = "generated_selection_source_test", target_under_test = ":generated_selection_source", expected = "module selection availability requires source-only files")
