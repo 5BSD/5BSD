@@ -146,3 +146,10 @@ publication, guest services or resource/cache/sandbox performance. Existing
 format-5 targets/tests fully express the refreshed request; no C frontend,
 staging/signing or production backend change is required. Make stays default.
 No host installation, upgrade, reboot or BIP change occurred.
+
+## Fresh-account extension (2026-11-06)
+
+See WORLD-ACCOUNT-FINALIZATION-QUALIFICATION.md. A separate fresh_world_contributions
+aggregate adds the existing source-owned account archive; world_contribution_products
+now requests that fresh closure. The finalized aggregate remains unchanged.
+Fresh construction is not an account migration or an existing-system overlay.

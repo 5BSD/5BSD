@@ -1,5 +1,41 @@
 # Native Bazel completion plan
 
+## Seven ncurses raw data differences inspected with actual consumers (2026-11-06)
+
+Retained lossless diffs show only source-path comments in curses.h/terminfo.5
+and generator-banner comments in the five pkg-config files. No production source
+was changed to insert a false banner or absolute checkout path. All 17 host
+consumer comparisons pass: identical preprocessed C, rendered manual and selected
+isolated pkgconf version/link queries. See NCURSES-GENERATED-DATA-REVIEW.md for
+hash-bound artifacts, actual commands and host-tool/common-header limitations.
+The full installation audit still reports the seven raw-byte differences; this
+is bounded consumer evidence, not native whole ABI/runtime or cross-target proof.
+No frontend C/backend/signing/publication change is needed for this evidence;
+Make remains default and all broader qualification gates remain open.
+
+## Fresh-world account construction is connected and built (2026-11-06)
+
+The source-owned fresh_world_contributions target extends the existing finalized
+world with the separate untagged account archive. world_contribution_products
+now includes that fresh construction closure. Maintained frontend construction
+passes with all 16 CPUs; source-settings and manual-database tests pass.
+The hash-bound full inventory verifies 1280 archives,
+32518 nondirectory paths and 1211 claims over
+789 directory paths with no collisions. All existing finalized
+outputs remain unchanged within the same capture; exactly one account archive
+and its two metadata files are added. All three actual account members match
+original Make bytes and numeric archive ownership/modes.
+
+See WORLD-ACCOUNT-FINALIZATION-QUALIFICATION.md. Initial visibility failure is
+retained; access was granted only to the root composer. Existing format-5 input
+selection, maintained world backend and manual cover the change; C/CLI/signing/
+publication/defaults remain unchanged. This output is fresh construction, not an
+existing-system overlay or account migration. Next qualify package-driven stage
+construction/nonreplacement and installed login/PAM/SSH; preserve replace=false.
+Independent complete world/library binary/debug/pkgbase parity, sanitizer control,
+raw ncurses data differences, cross-target/kernel/module/runtime/VM and bootstrap/
+cache/sandbox/resource gates remain open. Make remains production default.
+
 ## Existing fresh-account generator matches original library construction (2026-11-06)
 
 The maintained frontend now builds the existing //etc:account_databases and

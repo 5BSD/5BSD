@@ -16,6 +16,7 @@ def account_installation():
         entries.append(":" + name + "_install")
     bsd_install_manifest(name = "account_install_manifest", entries = entries, visibility = ["//lib/libc:__pkg__"])
     bsd_install_archive(name = "account_install_archive", manifests = [":account_install_manifest"],
+        visibility = ["//:__pkg__"],
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/"},
         passwd = ":master.passwd", group = ":group",
         mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,

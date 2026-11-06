@@ -1,6 +1,13 @@
 # Library fresh-account construction follow-up
 
-## Result (2026-11-06)
+## Current integration follow-up
+
+WORLD-ACCOUNT-FINALIZATION-QUALIFICATION.md records the subsequent explicit
+fresh-world composition and full selected production contribution build.
+Account migration, nonreplacement during upgrades and installed authentication
+remain open. The separate library payload intentionally remains unchanged.
+
+## Original bounded result (2026-11-06)
 
 The existing source-owned //etc:account_databases and
 //etc:account_install_archive construct through build-bsd bazel-test with the

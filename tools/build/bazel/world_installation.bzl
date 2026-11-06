@@ -30,9 +30,15 @@ def world_contributions():
     bsd_install_archive_set(name = "finalized_world_contributions", archives = [":world_contributions", ":world_manual_databases_archive"],
         visibility = ["//visibility:public"])
 
+    # Fresh-system state is separate from package payloads and upgrades. These
+    # databases use declared source defaults, never an existing system's accounts.
+    bsd_install_archive_set(name = "fresh_world_contributions",
+        archives = [":finalized_world_contributions", "//etc:account_install_archive"],
+        visibility = ["//visibility:public"])
+
     # Make also constructs internal library variants that are not installed.
     native.filegroup(name = "world_contribution_products", srcs = [
-        ":finalized_world_contributions", "//lib:production_libraries", "//usr.sbin:production_programs",
+        ":fresh_world_contributions", "//lib:production_libraries", "//usr.sbin:production_programs",
     ] + select({"//tools/build/bazel/config:rescue_enabled": ["//rescue:production_products"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:boot_enabled": ["//stand:production_products"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:cddl_enabled": ["//cddl:production_products"], "//conditions:default": []}) +
