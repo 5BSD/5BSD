@@ -1,5 +1,20 @@
 # Native Bazel completion plan
 
+## Original AMD64 iconv installation (2026-11-06)
+
+The program, separate debug file and Kyuafile now match all three original Make
+installation records and directory policy. Dynamic ELF/debug-link contracts and
+actual one-case ATF metadata listings match. Independent comparison rejected the
+first libc-before-ATF dependency order; the declared final-consumer sequence now
+matches original Make. The old VM fixture target remains an alias. The original
+case body needs real installed Citrus resources and is not executed here. See
+LIBC-ICONV-TEST-QUALIFICATION.md for retained failed/final evidence and scope.
+
+Next: SSP construction and complete libc test-parent traversal, followed by
+installed-guest cohorts. Complete world/pkgbase/cross/bootstrap/cache/sandbox/
+reproducibility/normal-service/performance/publication gates remain open. Make
+stays default; BIP excluded.
+
 ## Complete original AMD64 gen/execve/spawn construction (2026-11-06)
 
 All 67 original executables (64 ATF programs and three helpers), the test DSO and

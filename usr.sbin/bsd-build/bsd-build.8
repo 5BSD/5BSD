@@ -7291,3 +7291,11 @@ selected host cases pass and two retain original architecture skips; 201 cases
 remain unexecuted. Spawn fixture copies preserve original bytes and executable
 modes with declared tools. This uses the existing explicit Bazel-input workflow
 and does not change the default system backend.
+.Pp
+The original AMD64 iconv test installation is available through explicit
+Bazel-input targets, including its Kyuafile and separate debug file.
+Its three installed records and dynamic ELF/debug-link contracts match the
+independent Make installation; actual metadata for its one case also matches.
+The case body requires installed Citrus resources and is not qualified by this
+construction run. The existing iconvctl_runtime_program fixture name is an alias
+to the installed program. This does not change the default system backend.
