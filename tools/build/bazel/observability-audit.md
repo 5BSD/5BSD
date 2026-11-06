@@ -12285,3 +12285,14 @@ disabled for isolated bodies. Separate trace-only native util/C/sys binding chec
 are retained; they do not establish live probe firing, security audit events or
 performance overhead. Preserve normal-service and installed-system qualification
 as separate gates. See LIBUTIL-TEST-QUALIFICATION.md for exact execution scope.
+
+## Selected library test parent composition (2026-11-06)
+
+Fourteen existing test contributions become reachable through the selected library
+parents; no test or provider implementation source changes. Configured reachability
+is 57/66 recorded original test entry roots, not runtime coverage. The construction
+run executes only a source helper; earlier byte-identical test archives retain
+their original body/probe/audit scope. No new live probe firing, audit delivery,
+service behavior or overhead is inferred from the larger construction. Casper and
+directory package-claim reconciliation remain explicit. See
+LIBRARY-TEST-PARENT-WIRING.md for actual graphs, captures and guard failure.

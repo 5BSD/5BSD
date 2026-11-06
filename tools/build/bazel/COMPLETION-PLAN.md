@@ -1,5 +1,31 @@
 # Native Bazel completion plan
 
+## Actual selected library test composition and fourteen missing parent edges (2026-11-06)
+
+The configured graph, not declaration presence, exposed fourteen existing test
+contributions disconnected by production-only parent selection. They are now
+connected, including libdiff's tests-only contribution and the original lib/tests
+root. Configured entry-root reachability rises from 43 to 57 of the recorded 66;
+the nine missing roots are all Casper recursion/service tests. All 231 negative
+root archive output paths remain exactly equal. All 597 original traversal Make
+include hashes remain current; expanded Make declarations now cover all 116
+selected nested test/helper directories. These are graph/declaration counts,
+not payload completeness or a percentage of the migration.
+
+All fourteen changed parents and lib/tests construct successfully through the
+normal frontend, producing 59 archives. Only the source helper executes here.
+Forty-one test archives from ten components remain byte-identical to their prior
+captures, retaining each earlier scope/limitation. An actual full-tests root
+request is still rejected by the guard. See LIBRARY-TEST-PARENT-WIRING.md.
+
+Next finish Casper's nine missing entry roots, reconcile 25 recorded changes in
+explicit production/test directory policy against completed Make install records,
+and preserve distinct package claims where required. Then finish complete library/
+world payload and runtime qualification. Full world/kernel/module/pkgbase/debug,
+normal-service VM, CPU/RAM/disk-I/O/footprint, bootstrap/cache/sandbox/reproducibility
+and combined publication gates remain. Keep both full-tests guards and Make default
+until their actual requirements pass. BIP stays excluded.
+
 ## Native C libutil suite and shared runtime links (2026-11-06)
 
 All twelve original programs now use native final ATF/util/C ABI providers, with

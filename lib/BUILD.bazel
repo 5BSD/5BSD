@@ -6,8 +6,8 @@ load("@bazel_skylib//lib:selects.bzl", "selects")
 # supply scheduling; Make's bootstrap .WAIT barriers are not a second graph.
 # Internal libraries build archives and do not acquire installed payloads.
 _ARCHIVES = [
-    "//lib/csu:production_installation_archives",
-    "//lib/libc:install_archive",
+    "//lib/csu:installation_archives",
+    "//lib/libc:installation_archives",
     "//lib/libc_nonshared:production_install_archive",
     "//lib/libcompiler_rt:install_archive",
     "//lib/libc++:install_archive",
@@ -17,13 +17,13 @@ _ARCHIVES = [
     "//lib/libssp:install_archive",
     "//lib/libssp_nonshared:install_archive",
     "//lib/libsys:install_archive",
-    "//lib/msun:install_archive",
+    "//lib/msun:installation_archives",
     "//lib/libsqlite3:install_archive",
     "//lib/geom:installation_archives",
     "//lib/lib9p:install_archive",
     "//lib/libabsl:install_archive",
     "//lib/libalias:installation_archives",
-    "//lib/libarchive:production_install_archive",
+    "//lib/libarchive:installation_archives",
     "//lib/libauditcmp:install_archive",
     "//lib/libbegemot:install_archive",
     "//lib/libblocksruntime:install_archive",
@@ -56,7 +56,7 @@ _ARCHIVES = [
     "//lib/libedit:install_archive",
     "//lib/libelftc:production_install_archive",
     "//lib/libevent1:install_archive",
-    "//lib/libexecinfo:install_archive",
+    "//lib/libexecinfo:installation_archives",
     "//lib/libexpat:production_install_archive",
     "//lib/libfetch:install_archive",
     "//lib/libfidl:install_archive",
@@ -68,7 +68,7 @@ _ARCHIVES = [
     "//lib/libjail:installation_archives",
     "//lib/libkiconv:install_archive",
     "//lib/libkldelf:install_archive",
-    "//lib/libkvm:install_archive",
+    "//lib/libkvm:installation_archives",
     "//lib/liblogcmp:install_archive",
     "//lib/libnotify:install_archive",
     "//lib/liblzma:production_install_archive",
@@ -86,7 +86,7 @@ _ARCHIVES = [
     "//lib/libfilesystemcmp:install_archive",
     "//lib/libnamespacecmp:install_archive",
     "//lib/libvmcmp:install_archive",
-    "//lib/libnv:install_archive",
+    "//lib/libnv:installation_archives",
     "//lib/liboes:install_archive",
     "//lib/libotelexport:install_archive",
     "//lib/protobuf:production_installation_archives",
@@ -95,14 +95,14 @@ _ARCHIVES = [
     "//lib/libpathconv:install_archive",
     "//lib/libpcap:install_archive",
     "//lib/libpjdlog:install_archive",
-    "//lib/libproc:production_install_archive",
+    "//lib/libproc:installation_archives",
     "//lib/libprocstat:production_install_archive",
-    "//lib/libregex:install_archive",
+    "//lib/libregex:installation_archives",
     "//lib/librpcsvc:install_archive",
     "//lib/librss:install_archive",
-    "//lib/librt:install_archive",
+    "//lib/librt:installation_archives",
     "//lib/librtld_db:production_install_archive",
-    "//lib/libsbuf:install_archive",
+    "//lib/libsbuf:installation_archives",
     "//lib/libservice:install_archive",
     "//lib/libshmring:install_archive",
     "//lib/libstdbuf:install_archive",
@@ -120,7 +120,7 @@ _ARCHIVES = [
     "//lib/libutil++:install_archive",
     "//lib/libuvmem:install_archive",
     "//lib/libwrap:install_archive",
-    "//lib/libxo:production_installation_archives",
+    "//lib/libxo:installation_archives",
     "//lib/liby:install_archive",
     "//lib/libyaml:install_archive",
     "//lib/libz:production_install_archive",
@@ -193,7 +193,7 @@ _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ldns_enabled": ["//l
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pkgconf_enabled": ["//lib/libpkgconf:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:stats_enabled": ["//lib/libstats:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:efi_enabled": ["//lib/libefivar:install_archive"], "//conditions:default": []})
-_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:googletest_enabled": ["//lib/googletest:production_install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:googletest_enabled": ["//lib/googletest:installation_archives"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:netgraph_enabled": ["//lib/libnetgraph:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pmc_enabled": ["//lib/libipt:install_archive", "//lib/libpmc:install_archive"], "//conditions:default": []})
@@ -219,6 +219,11 @@ _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:pmc_enabled": ["
 _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:sendmail_enabled": ["//lib/libsm:static_archive", "//lib/libsm:pie_archive", "//lib/libsmdb:static_archive", "//lib/libsmdb:pie_archive", "//lib/libsmutil:static_archive", "//lib/libsmutil:pie_archive"], "//conditions:default": []})
 _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:telnet_enabled": ["//lib/libtelnet:static_archive", "//lib/libtelnet:pie_archive"], "//conditions:default": []})
 _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:tests_support_enabled": ["//lib/liblutok:static_archive", "//lib/liblutok:pie_archive"], "//conditions:default": []})
+
+_ARCHIVES = _ARCHIVES + ["//lib/libdiff:installation_archives"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//lib/tests:install_archive"],
+    "//conditions:default": [],
+})
 
 # Existing children contain incomplete installed-test and other-ABI closures.
 # Do not silently present a production-only subset as full installation.

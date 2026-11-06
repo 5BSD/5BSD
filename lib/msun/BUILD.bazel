@@ -76,3 +76,10 @@ exports_files(["src/s_scalbn.c"], visibility = ["//lib/libc/amd64/gen:__pkg__", 
 exports_files(['src/s_fabs.c', 'src/s_fabsf.c', 'src/s_fabsl.c', 'src/s_fmax.c', 'src/s_fmaxf.c', 'src/s_logb.c', 'src/s_logbf.c', 'src/s_scalbnf.c', 'src/s_fmaxl.c', 'src/s_logbl.c', 'src/s_scalbnl.c'], visibility = ["//lib/libgcc_s:__pkg__"])
 
 exports_files(["arm/fenv.h"], visibility = ["//include:__pkg__"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Preserve the original selected library payload and optional test traversal.
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//lib/msun/tests:installation_archives"],
+    "//conditions:default": [],
+}), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

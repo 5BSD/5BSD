@@ -81,3 +81,10 @@ cc_binary(name = "timer_fully_static_program", srcs = ["timer_test.c"],
 bsd_compare_test(name = "timer_fully_static", program = ":timer_fully_static_program",
     expected = "timer_empty.out", expected_stderr = "timer_empty.out",
     runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Preserve the original selected library payload and optional test traversal.
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//lib/librt/tests:installation_archives"],
+    "//conditions:default": [],
+}), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
