@@ -12382,3 +12382,15 @@ to its actual compiled function. No provider or probe body is removed. Prototype
 construction passes but its representation/runtime remains independently
 unqualified. No test bodies, live registration or firing are claimed. See
 LIBRARY-STATIC-ORDER-QUALIFICATION.md and its immutable comparison bindings.
+
+
+## 2026-11-06 libcapreclaim actual installed dynamic body
+
+All 28 original callback/descriptor cases pass against the exact stripped
+installation artifact with native component/ATF/libc/libsys runtime. Actual
+original/native metadata and case-report identities match; loader traces accept
+only those four captured DSOs. No implementation/test/probe source was rewritten.
+The original destroy provider records names rather than destroying system
+resources. Host functional execution explicitly disables DOF initialization;
+this is not daemon reclamation, live tracing or kernel/VM acceptance. See
+CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md for immutable results and limits.

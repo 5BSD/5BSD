@@ -38,6 +38,14 @@ Raw symbol failures remain retained, and static-consumer/live-tracing behavior i
 not proved. See DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md and
 bazel-library-static-dtrace-review-r1-20261106 for the companion-object bindings.
 
+The libcapreclaim installed-test linkage gap is now fixed: the dynamic native
+installation matches Make, all 28 original bodies pass with declared native
+runtime, and full original metadata/ELF/debug/package controls pass. The separate
+static host candidate is retained as an additional variant. See
+CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md. Nine originally identified static installed
+test programs remain in libcapbundle/libcapimage; historical counts above are
+retained as the initial cohort findings.
+
 All six static member-order gaps are now corrected and independently compared
 in both DTrace modes. All member symbols match without DTrace; traced ordinary
 symbols and actual DOF bindings match while raw generated alias differences are

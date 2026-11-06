@@ -1,5 +1,29 @@
 # Native Bazel completion plan
 
+## libcapreclaim installs and exercises its original dynamic test ABI (2026-11-06)
+
+Installation now selects the native dynamic PIE test, preserving original ATF/
+component/libc ABI precedence and C warning policy. The separate static host
+candidate is no longer shipped. All 28 original cases pass against the exact
+stripped installed body using declared native ATF/component/libc/libsys runfiles;
+no skips. Exact original/native registration metadata matches all 28 executed
+identities. Explicit loader traces resolve only those four captured DSOs.
+
+Complete original installation matches 11 paths and seven directory claims;
+shared/test ELF and archive symbol/member contracts pass. Both native/original
+library/program debug checks pass, and production library tar is unchanged.
+See CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md for captures, the repeat-run cache scope
+and callback-fixture/host-loader/tracing limits. This fixes one of the ten recorded
+static-versus-dynamic installed-test gaps, not the remaining nine or system gates.
+
+Existing frontend format-5/capture and installation interfaces suffice; manual
+updated, C/backend/signing contracts unchanged. Next correct the remaining
+libcapbundle/libcapimage installation variants, original build-tree test paths,
+direct/ordered dynamic dependencies and full-library generation/directory gaps.
+Keep full-tests guards, Make default, and all world/kernel/module/pkgbase/runtime/
+VM/cross/performance/bootstrap/cache/sandbox/publication gates. BIP stays out.
+
+
 ## Six original archive orders corrected and checked in both DTrace modes (2026-11-06)
 
 The six recorded source-order gaps are fixed with native component archive

@@ -5714,6 +5714,13 @@ See
 .Pa tools/build/bazel/DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md
 for supported relocations, controls and runtime limits.
 .Pp
+The native libcapreclaim parent installs its original dynamic PIE test ABI.
+The existing format-5 test interface runs all 28 original cases against the
+stripped installed body with explicit native runtime libraries. The static host
+candidate remains separate. See
+.Pa tools/build/bazel/CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md
+for original installation/binary/debug controls and host/VM/tracing scope.
+.Pp
 The source-owned installed static archive orders for libfidl, liblogcmp,
 libnetworkcmp, libnotify, libtimecmp and libtracecmp are compared independently
 with original Make artifacts in both normal DTrace modes. Existing format-5
