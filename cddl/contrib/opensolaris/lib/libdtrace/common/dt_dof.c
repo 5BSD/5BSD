@@ -1049,8 +1049,12 @@ dt_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 	if (!(flags & DTRACE_D_STRIP)) {
 		(void) dof_add_usect(ddo, _dtrace_version, DOF_SECT_COMMENTS,
 		    sizeof (char), 0, 0, strlen(_dtrace_version) + 1);
-		(void) dof_add_usect(ddo, &dtp->dt_uts, DOF_SECT_UTSNAME,
-		    sizeof (char), 0, 0, sizeof (struct utsname));
+		/* Objects linked by dtrace -G must not record the build host. */
+		if (!(flags & DTRACE_D_PROBES)) {
+			(void) dof_add_usect(ddo, &dtp->dt_uts,
+			    DOF_SECT_UTSNAME, sizeof (char), 0, 0,
+			    sizeof (struct utsname));
+		}
 	}
 
 	/*
