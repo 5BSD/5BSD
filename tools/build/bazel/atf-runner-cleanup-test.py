@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Exercise the runner's phase lifecycle with a controlled ATF protocol fixture."""
 import os
+import signal
 from pathlib import Path
 import subprocess
 import tempfile
@@ -215,6 +216,51 @@ esac
                 run, report = self.exercise(result=result, xml=True)
                 self.assertNotEqual(run.returncode, 0)
                 self.assertIsNone(report)
+
+    def test_matching_expected_signal_is_explicit_expected_failure(self):
+        for result in ('expected_signal(%d): deliberate' % signal.SIGTERM,
+                       'expected_signal: deliberate'):
+            with self.subTest(result=result):
+                run, report = self.exercise(signal=True, result=result, xml=True)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(report.find('testsuite').get('skipped'), '1')
+                self.assertEqual(report.find('.//skipped').get('message'),
+                                 'expected_failure: deliberate')
+                self.assertNotIn(': passed', run.stdout)
+
+    def test_expected_signal_must_match_actual_wait_status(self):
+        for options in (dict(signal=True, result='expected_signal(%d): wrong' % signal.SIGINT),
+                        dict(result='expected_signal: no signal'),
+                        dict(body_exit=15, result='expected_signal: normal exit')):
+            with self.subTest(options=options):
+                run, report = self.exercise(xml=True, **options)
+                self.assertNotEqual(run.returncode, 0)
+                self.assertIsNone(report)
+
+    def test_expected_signal_requires_valid_reason_and_number(self):
+        for result in ('expected_signal(0): invalid', 'expected_signal(-1): invalid',
+                       'expected_signal(+15): invalid', 'expected_signal( 15): invalid',
+                       'expected_signal(9999999999999999999999999): invalid',
+                       'expected_signal(15x): invalid', 'expected_signal(15): ',
+                       'expected_signal: ', 'expected_signal(15): bad\x01byte',
+                       'expected_signal(15): first\npassed'):
+            with self.subTest(result=result):
+                run, report = self.exercise(signal=True, result=result, xml=True)
+                self.assertNotEqual(run.returncode, 0)
+                self.assertIsNone(report)
+
+    def test_expected_signal_does_not_mask_cleanup_failure(self):
+        run, report = self.exercise(signal=True, cleanup_exit=1,
+                                    result='expected_signal: deliberate', xml=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIsNone(report)
+        self.assertIn('cleanup failed', run.stderr)
+
+    def test_expected_signal_without_xml_fails_closed(self):
+        run, markers = self.exercise(signal=True, result='expected_signal: deliberate')
+        self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(markers, 1)
+        self.assertIn('requires XML reporting', run.stderr)
 
     def test_expected_failure_does_not_mask_crash_or_cleanup_failure(self):
         for options in (dict(signal=True), dict(body_exit=1), dict(cleanup_exit=1)):

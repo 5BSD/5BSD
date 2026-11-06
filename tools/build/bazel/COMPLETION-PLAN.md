@@ -1,5 +1,25 @@
 # Native Bazel completion plan
 
+## Complete original stdlib construction and bounded host cases (2026-11-06)
+
+Thirty-six original executables, both native dlopen DSOs and seventy-eight
+installation records now match independent Make metadata/ELF/debug/Kyua/script
+contracts. All 136 C/C++ case registrations/metadata and two custom deadlines
+match. Five declared monetary/numeric payloads match original Make. Of 132
+selected stdlib cases, 130 pass, one original expected signal failure and one
+unconditional original skip remain explicit. Both getopt cases and all thirty
+locale cases run. The native supervisor validates real expected signals with
+thirty lifecycle regression methods. Final combined 171-target reports retain
+169 pass entries, one expected failure and one skip. Six system/benchmark cases
+remain unexecuted. See LIBC-STDLIB-TEST-QUALIFICATION.md for exact scope, receipts,
+original exceptions and retained failed attempts. Network outputs remain stable
+through shared C++ policy consolidation. Plugins/runtime data are consumer-scoped.
+
+Next: remaining libc gen/sys/ssp contributions and test-parent traversal;
+disposable-guest system/network cases and resource-bounded benchmarks. All full
+world/pkgbase/cross/bootstrap/cache/sandbox/reproducibility/normal-runtime/
+performance/publication gates remain open. Make stays default; BIP excluded.
+
 ## Complete original network/getaddrinfo construction (2026-11-06)
 
 All thirteen original programs, including two C++20 programs, four shell suites,

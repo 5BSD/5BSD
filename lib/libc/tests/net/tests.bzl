@@ -9,7 +9,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_man
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
-load("//lib/libc:test_policy.bzl", "libc_test_copts")
+load("//lib/libc:test_policy.bzl", "libc_test_copts", "libc_test_cxx_copts")
 load("//lib/libc:test_runtime.bzl", "LIBC_TEST_RUNTIME")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 _SOURCE = "//contrib/netbsd-tests/lib/libc/net:"
@@ -55,7 +55,7 @@ def network_tests():
         bsd_link_sequence(name = program + "_link", deps = deps)
         copts = libc_test_copts(2)
         if cxx:
-            copts = [flag for flag in copts if flag not in ["-std=gnu17", "-Wno-pointer-sign"]] + ["-nostdinc++", "-std=c++20", "-Wno-c++20-extensions", "-Wno-c++23-lambda-attributes", "-Wno-nullability-completeness"]
+            copts = libc_test_cxx_copts(2, "c++20")
         cc_binary(name = program, srcs = sources, deps = [":" + program + "_link"], copts = copts,
             defines = [] if cxx else ["PIC"], linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
         utility_installation(name = program + "_install", program = program, manual = None, package = "tests", bindir = _DIRECTORY)

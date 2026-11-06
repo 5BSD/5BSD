@@ -255,6 +255,34 @@ xml_text(FILE *stream, const char *text)
 	}
 }
 
+/*
+ * The ATF result declares an expected crash before the body triggers it.
+ * Accept only a real matching signal; ordinary failures cannot mask a crash.
+ */
+static const char *
+expected_signal_reason(const char *line, int status)
+{
+	const char *number;
+	char *end;
+	long signo;
+
+	if (status < 0 || !WIFSIGNALED(status))
+		return (NULL);
+	if (strncmp(line, "expected_signal: ", 17) == 0)
+		return (line + 17);
+	if (strncmp(line, "expected_signal(", 16) != 0)
+		return (NULL);
+	number = line + 16;
+	if (*number < '0' || *number > '9')
+		return (NULL);
+	errno = 0;
+	signo = strtol(number, &end, 10);
+	if (errno != 0 || signo <= 0 || signo >= NSIG ||
+	    strncmp(end, "): ", 3) != 0 || WTERMSIG(status) != signo)
+		return (NULL);
+	return (end + 3);
+}
+
 static int
 report_result(const char *test_case, const char *outcome, const char *reason)
 {
@@ -318,6 +346,7 @@ main(int argc, char **argv)
 	const char *stdin_mode = getenv("BSD_ATF_STDIN_TTY");
 	int stdin_tty = stdin_mode != NULL && strcmp(stdin_mode, "1") == 0;
 	int use_loader = loader != NULL && strcmp(loader, "1") == 0;
+	int matched_signal = 0;
 	int shell_interface;
 	char temporary[PATH_MAX];
 	int status, cleanup_status = 0;
@@ -473,6 +502,9 @@ main(int argc, char **argv)
 		} else if (strncmp(line, "skipped: ", 9) == 0) {
 			outcome = "skipped";
 			reason = line + 9;
+		} else if ((reason = expected_signal_reason(line, status)) != NULL) {
+			outcome = "expected_failure";
+			matched_signal = 1;
 		}
 		/* Reject empty reasons and control bytes, including embedded NULs. */
 		if (reason != NULL && *reason == '\0')
@@ -482,7 +514,7 @@ main(int argc, char **argv)
 				outcome = NULL;
 	}
 	fclose(stream);
-	if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+	if (!matched_signal && (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)) {
 		fprintf(stderr, "ATF case %s failed (wait status %d): %s\n",
 		    test_case, status, line != NULL ? line : "no result");
 		free(line);

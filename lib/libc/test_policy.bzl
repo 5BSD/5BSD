@@ -21,3 +21,12 @@ def libc_test_copts(warnings = 2):
             "-Wchar-subscripts", "-Wnested-externs", "-Wold-style-definition",
             "-Wno-pointer-sign", "-Wdate-time", "-Wmissing-variable-declarations", "-Wthread-safety"] + _WARN_END[3:] + ["-Qunused-arguments"]
     return ["-pipe", "-fno-common", "-fPIE", "-std=gnu17", "-Wno-format-zero-length"] + _WARN_BEGIN + (_WARN4 if warnings == 4 else (_WARN3 if warnings == 3 else [])) + _WARN_END + (_WARN_LOW if warnings <= 3 else []) + (_WARN2 if warnings == 2 else []) + ["-Qunused-arguments"]
+
+
+def libc_test_cxx_copts(warnings = 2, standard = "gnu++17"):
+    if standard not in ["gnu++17", "c++20"]:
+        fail("unsupported libc test C++ standard")
+    c_only = ["-std=gnu17", "-Wno-pointer-sign", "-Wstrict-prototypes", "-Wmissing-prototypes", "-Wnested-externs", "-Wold-style-definition"]
+    return [flag for flag in libc_test_copts(warnings) if flag not in c_only] + [
+        "-nostdinc++", "-std=" + standard, "-Wno-c++20-extensions",
+        "-Wno-c++23-lambda-attributes", "-Wno-nullability-completeness"]

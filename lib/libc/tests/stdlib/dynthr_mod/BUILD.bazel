@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["dynthr_mod.c"], visibility = ["//lib/libc/tests/stdlib:__pkg__"])

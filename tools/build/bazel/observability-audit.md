@@ -12051,3 +12051,14 @@ cases cover address conversions, threaded NSS recursion and public protocol/
 service database behavior. Original VNET jail lifecycle and live DNS/timeout
 cases remain separate open runtime checks, as do audit delivery and probe firing.
 This test construction does not qualify network service instrumentation.
+
+
+## libc stdlib and dlopen test libraries (2026-11-06)
+
+Original test/helper/plugin sources remain unchanged. Native thread/Blocks/C++
+link dependencies and library loading preserve source instrumentation; no probes,
+audit events or callbacks are removed to obtain passing tests. Original locale,
+getopt, sorting, allocator, environment, exit/destructor and threaded plugin cases
+are exercised within the documented host scope. Expected SIGSEGV and original
+unconditional skip are explicit outcomes. System/chroot execution, expensive
+benchmark, production audit delivery and probe firing remain separate gates.

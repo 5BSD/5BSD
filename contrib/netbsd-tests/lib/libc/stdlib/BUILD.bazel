@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_abs.c', 't_atoi.c', 't_div.c', 't_getenv.c', 't_exit.c', 't_hsearch.c', 't_posix_memalign.c', 't_random.c', 't_strtod.c', 't_strtol.c', 'h_getopt.c', 'h_getopt_long.c', 't_getopt.sh'], visibility = ["//lib/libc/tests/stdlib:__pkg__"])
