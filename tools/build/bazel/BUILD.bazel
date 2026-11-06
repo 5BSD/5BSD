@@ -386,3 +386,7 @@ bsd_pkg_create_test(name = "world_pkg_hardlinks_test", src = "world-pkg-hardlink
         "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime", ":pkg_create.py", ":package_symlinks.py"])
 
 exports_files(["private-package-install-test.py", "package_index.py", "world-pkg-solver-test.py"], visibility = ["//:__pkg__"])
+
+exports_files(["world_layout.py"], visibility = ["//:__pkg__"])
+bsd_python_test(name = "world_layout_test", src = "world-layout-test.py",
+    data = ["world_layout.py", "world_package_inventory.py", "directory_metadata.py", "archive_policy.py", "install_archive.py"])

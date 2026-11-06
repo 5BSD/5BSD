@@ -6,3 +6,12 @@ exports_files(["BSD.tests.dist"])
 exports_files(["BSD.var.dist"])
 
 exports_files(["BSD.sendmail.dist"], visibility = ["//etc:__pkg__"])
+
+load("//tools/build/bazel:bsd_world_layout.bzl", "bsd_mtree_spec")
+bsd_mtree_spec(name = "root_layout", src = "BSD.root.dist", prefixes = ["/"], visibility = ["//visibility:public"])
+bsd_mtree_spec(name = "var_layout", src = "BSD.var.dist", prefixes = ["/var"], visibility = ["//visibility:public"])
+bsd_mtree_spec(name = "usr_layout", src = "BSD.usr.dist", prefixes = ["/usr"], visibility = ["//visibility:public"])
+bsd_mtree_spec(name = "include_layout", src = "BSD.include.dist", prefixes = ["/usr/include"], visibility = ["//visibility:public"])
+bsd_mtree_spec(name = "debug_layout", src = "BSD.debug.dist", prefixes = ["/usr/lib"], visibility = ["//visibility:public"])
+bsd_mtree_spec(name = "tests_layout", src = "BSD.tests.dist", prefixes = ["/usr/tests", "/usr/lib/debug/usr/tests"], visibility = ["//visibility:public"])
+bsd_mtree_spec(name = "sendmail_layout", src = "BSD.sendmail.dist", prefixes = ["/"], visibility = ["//visibility:public"])

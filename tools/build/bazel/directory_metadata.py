@@ -11,15 +11,16 @@ def absolute(value):
     return str(p)
 
 
-def normalize(attrs):
+def normalize(attrs, *, allow_flags=False):
     if attrs.get('type') != 'dir' or not attrs.get('uname') or not attrs.get('gname'):
         raise ValueError('named-owner directory policy required')
-    if not re.fullmatch('[0-7]{3,4}', attrs.get('mode','')):
+    if not re.fullmatch('0?[0-7]{3,4}', attrs.get('mode','')):
         raise ValueError('unsupported directory mode')
-    if attrs.get('flags','none') not in ('','none'):
+    flags=attrs.get('flags','none') or 'none'
+    if flags!='none' and (not allow_flags or flags not in ('schg','uchg')):
         raise ValueError('directory file flags need explicit graph support')
     return {'type':'dir','uname':attrs['uname'],'gname':attrs['gname'],
-            'mode':int(attrs['mode'],8),'tags':sorted(set(filter(None,attrs.get('tags','').split(',')))), 'flags':'none'}
+            'mode':int(attrs['mode'],8),'tags':sorted(set(filter(None,attrs.get('tags','').split(',')))), 'flags':flags}
 
 
 def records(text):

@@ -39,6 +39,13 @@ def etc_distribution():
         bsd_install_link(name = "distribution_link_" + name, destination = destination, target = target,
             kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=" + package])
         group.append(":distribution_link_" + name)
+    # etc/Makefile distrib-dirs NLS_ALIASES; keep the source table declarative.
+    nls = []
+    for alias, target in [("POSIX", "C"), ("en_US.US_ASCII", "C")]:
+        name = "distribution_nls_" + alias
+        bsd_install_link(name = name, destination = "/usr/share/nls/" + alias, target = target,
+            kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities"])
+        nls.append(":" + name)
     gss = {}
     for variant, files in [("mit", ["mech"]), ("heimdal", ["mech", "qop"])]:
         gss[variant] = []
@@ -61,6 +68,7 @@ def etc_distribution():
             owner = "root", group = "wheel", mode = "0755", install_tags = ["package=" + package])
         common.append(":" + name)
     bsd_install_manifest(name = "distribution_manifest", entries = common + mtree[:5] +
+        select({"//tools/build/bazel/config:nls_enabled": nls, "//conditions:default": []}) +
         select({"//tools/build/bazel/config:sendmail_enabled": sendmail + [mtree[5]], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:tests_enabled": [mtree[6]], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:mail_enabled": mail, "//conditions:default": []}) +

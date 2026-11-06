@@ -7,9 +7,13 @@ load(":bsd_script_installation.bzl", "script_install_archive")
 load(":bsd_world_package_inventory.bzl", "bsd_world_package_inventory")
 load(":bsd_world_package_reconciliation.bzl", "bsd_world_package_reconciliation")
 load(":bsd_world_pkg_create.bzl", "bsd_world_pkg_create")
+load(":bsd_world_layout.bzl", "bsd_world_layout")
 load(":bsd_world_pkg_solver_test.bzl", "bsd_world_pkg_solver_test")
 
 def world_contributions():
+    package_suffixes = ["dbg", "dev", "lib"] + select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": [],
+    })
     bsd_install_archive_set(name = "world_contributions", archives = [
         "//lib:production_installation_archives", "//libexec:installation_archives",
         "//bin:installation_archives", "//sbin:installation_archives",
@@ -34,18 +38,24 @@ def world_contributions():
     bsd_install_archive_set(name = "finalized_world_contributions", archives = [":world_contributions", ":world_manual_databases_archive"],
         visibility = ["//visibility:public"])
 
+    bsd_world_layout(name = "world_directory_layout", families = "//packages:world_family_manifests",
+        suffix_tags = package_suffixes,
+        specs = ["//etc/mtree:root_layout", "//etc/mtree:var_layout", "//etc/mtree:usr_layout",
+            "//etc/mtree:include_layout", "//etc/mtree:debug_layout"] +
+            select({"//tools/build/bazel/config:tests_enabled": ["//etc/mtree:tests_layout"], "//conditions:default": []}) +
+            select({"//tools/build/bazel/config:sendmail_enabled": ["//etc/mtree:sendmail_layout"], "//conditions:default": []}),
+        visibility = ["//visibility:public"])
+
     # Fresh-system state is separate from package payloads and upgrades. These
     # databases use declared source defaults, never an existing system's accounts.
     bsd_install_archive_set(name = "fresh_world_contributions",
-        archives = [":finalized_world_contributions", "//etc:account_install_archive"],
+        archives = [":finalized_world_contributions", "//etc:account_install_archive", ":world_directory_layout"],
         visibility = ["//visibility:public"])
 
     bsd_world_package_inventory(name = "world_package_inventory",
         archives = [":fresh_world_contributions"],
         construction = ["//etc:account_install_manifest", ":world_manual_databases_manifest", "//usr.sbin/services_mkdb:construction_manifest", "//usr.bin/login:generated_manifest"],
-        suffix_tags = ["dbg", "dev", "lib"] + select({
-            "//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": [],
-        }), visibility = ["//visibility:public"])
+        suffix_tags = package_suffixes, visibility = ["//visibility:public"])
 
     bsd_world_package_reconciliation(name = "world_package_reconciliation",
         inventory = ":world_package_inventory", families = "//packages:world_family_manifests",
@@ -54,9 +64,7 @@ def world_contributions():
     bsd_world_pkg_create(name = "world_packages", families = "//packages:world_family_manifests",
         archives = ":fresh_world_contributions", inventory = ":world_package_inventory",
         reconciliation = ":world_package_reconciliation", abi_file = "//usr.bin/uname:uname",
-        suffix_tags = ["dbg", "dev", "lib"] + select({
-            "//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": [],
-        }), visibility = ["//visibility:public"])
+        suffix_tags = package_suffixes, visibility = ["//visibility:public"])
 
     bsd_world_pkg_solver_test(name = "world_package_solver_test", packages = ":world_packages",
         families = "//packages:world_family_manifests", abi_file = "//usr.bin/uname:uname",

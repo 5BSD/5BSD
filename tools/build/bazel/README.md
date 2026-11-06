@@ -1,5 +1,15 @@
 # Bazel qualification
 
+## Complete source directory layout checkpoint (2026-11-06)
+
+Native world packages now include source-derived distrib-dirs, with exact original
+Make comparison of 904 physical directories and 454 unique ownership claims.
+Two omitted source NLS aliases are declared with enabled/disabled checks.
+All eleven native tests and independent inspection of all 445 packages / 32,512
+payload paths pass. Real VM installation remains pending; normal startup and
+full-system gates are open. See
+[WORLD-DIRECTORY-LAYOUT-QUALIFICATION.md](WORLD-DIRECTORY-LAYOUT-QUALIFICATION.md).
+
 ## Native loader font/help checkpoint (2026-11-04)
 
 Source-built cfg=exec vtfontcvt and the maintained AWK algorithm now generate the

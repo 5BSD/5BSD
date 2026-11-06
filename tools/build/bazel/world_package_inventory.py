@@ -21,7 +21,9 @@ def directory_claim(record):
     result = dict(record)
     result['flags'] = record.get('flags', '') or 'none'
     result['mode'] = format(int(record['mode'], 8), '04o')
-    result['tags'] = sorted(record['tags'])
+    # The claim key already resolves the package. Literal foo-dev and
+    # package=foo,dev spellings describe the same directory ownership.
+    result.pop('tags')
     return result
 
 

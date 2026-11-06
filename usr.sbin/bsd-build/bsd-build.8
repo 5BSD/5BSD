@@ -7735,3 +7735,10 @@ This test does not install packages, execute package scripts or publish a reposi
 Its default AMD64 qualification covers 445 selected packages.
 Privileged installation, account/state construction, upgrades and normal VM
 startup remain separate qualification gates.
+.Pp
+The native world directory layout consumes source mtree specifications and selected
+package owners, preserving physical directories separately from ownership claims.
+The default AMD64 layout matches 904 original Make directory definitions;
+NLS aliases are selected by the NLS option.
+This layout comparison and package payload inspection do not establish normal
+startup, actual installation or upgrade qualification.

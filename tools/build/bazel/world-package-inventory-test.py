@@ -37,6 +37,12 @@ class Inventory(unittest.TestCase):
         self.assertEqual(len(got['packages']['runtime']), 1)
         self.assertEqual(got['summary']['directory_record_occurrences'], 4)
 
+    def test_equivalent_directory_package_spellings(self):
+        a=record('/usr/include',kind='dir',tags=['package=clibs','dev'])
+        b=record('/usr/include','clibs-dev',kind='dir')
+        got=inventory([a,b],[],['dev'])
+        self.assertEqual(len(got['packages']['clibs-dev']),1)
+
     def test_conflicting_directory_or_duplicate_file_fails(self):
         directory = record('/usr/lib', kind='dir')
         file = record('/usr/lib/data')

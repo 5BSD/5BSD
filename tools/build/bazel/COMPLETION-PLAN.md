@@ -5665,3 +5665,17 @@ installed ATF/plain/TAP/Googletest examples: its actual tests-enabled request fa
 explicitly and retains FAILED.json. Continue those tests, zoneinfo/locale/world
 composition and outstanding package/bootstrap/runtime/resource qualification.
 See SHARE-EXAMPLES-QUALIFICATION.md for evidence and limits.
+
+### Source distrib-dirs correction — 2026-11-06
+
+The first privileged full-package fixture exposed missing /dev before installation.
+Fix the actual native world composition, not the fixture: complete source MTREES
+now generate an archive and typed ownership sidecar. Exact original Make checks
+pass for 904 physical definitions and 454 unique claims. Two original NLS aliases
+are now declared and pass enabled/disabled metadata comparison. All eleven native
+tests and independent inspection of all 445 archives / 32,512 payload paths pass.
+See WORLD-DIRECTORY-LAYOUT-QUALIFICATION.md. The disk-backed 2GB VM retry is live;
+its unchanged service baseline passed, package installation remains pending.
+Next: finish real install/reinstall and new-layout complete manifest comparison,
+commit the maintained VM qualification suite with actual results, then normal
+startup/new-version upgrade and the remaining full-system/platform/performance gates.
