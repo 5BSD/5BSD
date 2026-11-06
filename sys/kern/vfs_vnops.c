@@ -67,6 +67,7 @@
 #include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sleepqueue.h>
+#include <sys/sdt.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
@@ -438,6 +439,104 @@ vn_fsync_fs(struct vnode *vp)
 	return (0);
 }
 
+SDT_PROBE_DECLARE(vfs, , , chflags);
+
+/*
+ * Set times and flags on any descriptor that carries a vnode.  Mode, owner
+ * and size have their own fileops and are refused.  The checks the system
+ * calls used to make before calling setfflags()/setutimes() live here now:
+ * the vnode audit record, the device flag privilege, the MAC checks, and
+ * setutimes()'s birth-time adjustment.
+ */
+int
+vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
+{
+	struct vattr cur;
+	struct vnode *vp;
+	struct mount *mp;
+	bool settimes;
+	int error;
+
+	if (vap->va_mode != (mode_t)VNOVAL || vap->va_uid != VNOVAL ||
+	    vap->va_gid != VNOVAL || vap->va_size != VNOVAL)
+		return (EINVAL);
+	settimes = vap->va_atime.tv_sec != VNOVAL ||
+	    vap->va_mtime.tv_sec != VNOVAL;
+	vp = fp->f_vnode;
+#ifdef AUDIT
+	if (AUDITING_TD(td)) {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
+	}
+#endif
+	if (vap->va_flags != VNOVAL) {
+		/*
+		 * Prevent non-root users from setting flags on devices.  When
+		 * a device is reused, users can retain ownership of the device
+		 * if they are allowed to set flags and programs assume that
+		 * chown can't fail when done as root.
+		 */
+		if (VN_ISDEV(vp)) {
+			error = priv_check_cred(active_cred, PRIV_VFS_CHFLAGS_DEV);
+			if (error != 0)
+				return (error);
+		}
+	}
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = 0;
+	if (vap->va_flags != VNOVAL)
+		error = mac_vnode_check_setflags(active_cred, vp, vap->va_flags);
+	if (error == 0 && settimes)
+		error = mac_vnode_check_setutimes(active_cred, vp,
+		    vap->va_atime, vap->va_mtime);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		return (error);
+#endif
+	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
+	if (error != 0)
+		return (error);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	/*
+	 * utimes(2) and futimens(2) set two times; a new modification time
+	 * earlier than the birth time pulls the birth time back with it.
+	 */
+	if (settimes && vap->va_birthtime.tv_sec == VNOVAL &&
+	    VOP_GETATTR(vp, &cur, active_cred) == 0 &&
+	    timespeccmp(&vap->va_mtime, &cur.va_birthtime, <))
+		vap->va_birthtime = vap->va_mtime;
+	error = VOP_SETATTR(vp, vap, active_cred);
+#ifdef MAC
+	if (error == 0) {
+		if (vap->va_flags != VNOVAL)
+			mac_vnode_notify_setflags(active_cred, vp, vap->va_flags);
+		if (settimes)
+			mac_vnode_notify_setutimes(active_cred, vp);
+	}
+#endif
+	VOP_UNLOCK(vp);
+	vn_finished_write(mp);
+	if (vap->va_flags != VNOVAL)
+		SDT_PROBE3(vfs, , , chflags, vap->va_flags, active_cred, error);
+	return (error);
+}
+
+static int
+vn_openfile_setattr(struct file *fp, struct vattr *vap,
+    struct ucred *active_cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_setattr(fp, vap, active_cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
 /*
  * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
  * that carries a vnode.  The file context is entered here, not by a
@@ -494,6 +593,7 @@ const struct fileops vnops = {
 	.fo_pathconf = vn_openfile_pathconf,
 	.fo_statfs = vn_openfile_statfs,
 	.fo_fsync = vn_fsync,
+	.fo_setattr = vn_openfile_setattr,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -518,6 +618,7 @@ const struct fileops vnops = {
 	.fo_pathconf = vn_openfile_pathconf, \
 	.fo_statfs = vn_openfile_statfs, \
 	.fo_fsync = vn_fsync, \
+	.fo_setattr = vn_openfile_setattr, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

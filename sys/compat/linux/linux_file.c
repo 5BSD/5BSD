@@ -395,6 +395,9 @@ linux_openat2(struct thread *td, struct linux_openat2_args *args)
 _Static_assert(sizeof(struct l_file_attr) == LINUX_FILE_ATTR_SIZE_VER0,
     "struct l_file_attr layout");
 
+static int linux_fileattr_fget(struct thread *td, int fd,
+    const cap_rights_t *rightsp, struct file **fpp);
+
 static int
 linux_fileattr_stat(struct thread *td, l_int dfd, const char *filename,
     l_uint at_flags, struct stat *sb)
@@ -413,10 +416,9 @@ linux_fileattr_stat(struct thread *td, l_int dfd, const char *filename,
 
 		if ((at_flags & LINUX_AT_EMPTY_PATH) == 0 || fd < 0)
 			return (EFAULT);
-		/* Linux fd_empty() rejects O_PATH descriptors here. */
-		error = getvnode(td, fd, &cap_fstat_rights, &fp);
+		error = linux_fileattr_fget(td, fd, &cap_fstat_rights, &fp);
 		if (error != 0)
-			return (error == EINVAL ? EOPNOTSUPP : error);
+			return (error);
 		error = fo_stat(fp, sb, td->td_ucred);
 		fdrop(fp, td);
 		return (error);
@@ -428,9 +430,9 @@ linux_fileattr_stat(struct thread *td, l_int dfd, const char *filename,
 		struct file *fp;
 
 		/* getname_maybe_null() takes the same fd_empty() route as NULL. */
-		error = getvnode(td, fd, &cap_fstat_rights, &fp);
+		error = linux_fileattr_fget(td, fd, &cap_fstat_rights, &fp);
 		if (error != 0)
-			return (error == EINVAL ? EOPNOTSUPP : error);
+			return (error);
 		error = fo_stat(fp, sb, td->td_ucred);
 		fdrop(fp, td);
 		return (error);
@@ -503,37 +505,48 @@ linux_file_getattr(struct thread *td, struct linux_file_getattr_args *args)
 	return (linux_fileattr_copyout(&fattr, args->fattr, args->size));
 }
 
+/*
+ * Linux fd_empty() refuses O_PATH descriptors (EBADF) and filesystems
+ * without fileattr operations report EOPNOTSUPP: a descriptor with no
+ * settable attributes is the latter.
+ */
+static int
+linux_fileattr_fget(struct thread *td, int fd, const cap_rights_t *rightsp,
+    struct file **fpp)
+{
+	struct file *fp;
+	int error;
+
+	error = fget(td, fd, rightsp, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_ops == &path_fileops)
+		error = EBADF;
+	else if (fp->f_ops->fo_setattr == NULL)
+		error = EOPNOTSUPP;
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
+	}
+	*fpp = fp;
+	return (0);
+}
+
 static int
 linux_fileattr_fsetflags(struct thread *td, int fd, u_long flags)
 {
+	struct vattr vattr;
 	struct file *fp;
-	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_FFLAGS(flags);
-	error = getvnode(td, fd, &cap_fchflags_rights, &fp);
+	error = linux_fileattr_fget(td, fd, &cap_fchflags_rights, &fp);
 	if (error != 0)
-		return (error == EINVAL ? EOPNOTSUPP : error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-#ifdef MAC
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	error = mac_vnode_check_setflags(td->td_ucred, vp, flags);
-	VOP_UNLOCK(vp);
-	if (error != 0)
-		goto out;
-#endif
-	error = setfflags(td, vp, flags);
-#ifdef MAC
-out:
-#endif
+		return (error);
+	VATTR_NULL(&vattr);
+	vattr.va_flags = flags;
+	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 	fdrop(fp, td);
 	return (error);
 }

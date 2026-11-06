@@ -8,7 +8,8 @@
 .Nm fileops ,
 .Nm fo_pathconf ,
 .Nm fo_statfs ,
-.Nm fo_fsync
+.Nm fo_fsync ,
+.Nm fo_setattr
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -19,6 +20,8 @@
 .Fn fo_statfs "struct file *fp" "struct statfs *buf" "struct thread *td"
 .Ft int
 .Fn fo_fsync "struct file *fp" "int mode" "struct thread *td"
+.Ft int
+.Fn fo_setattr "struct file *fp" "struct vattr *vap" "struct ucred *active_cred" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -187,30 +190,82 @@ accept one, as they always did.
 returns
 .Er EINVAL .
 .El
+.Ss fo_setattr
+.Fn fo_setattr
+sets the access, modification and birth times and the file flags given in
+.Fa vap ;
+a field holding
+.Dv VNOVAL
+is left alone.
+Mode, owner and size have their own operations
+.Pq Fn fo_chmod , Fn fo_chown , Fn fo_truncate
+and are refused with
+.Er EINVAL .
+It answers
+.Xr futimens 2 ,
+.Xr futimes 2 ,
+.Xr fchflags 2 ,
+Linux file attribute flags, and attribute changes made through
+.Pa /dev/fd/N ,
+which
+.Xr fdescfs 4
+splits across the four operations.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_setattr
+carries the checks the system calls used to make themselves: the vnode
+audit record, the privilege to set flags on a device, the MAC flag and time
+checks and notifications, and the birth-time adjustment of
+.Xr utimes 2 .
+It then suspends writes on the mount, locks the vnode and calls
+.Xr VOP_SETATTR 9 .
+Directories, regular files, FIFOs, pseudo-terminal masters, devfs nodes,
+linuxkpi files and
+.Dv O_PATH
+files use it;
+.Xr futimens 2 ,
+.Xr futimes 2
+and
+.Xr fchflags 2
+refuse an
+.Dv O_PATH
+descriptor with
+.Er EBADF
+before reaching the table, as they always did.
+.It everything else
+.Fn invfo_setattr
+returns
+.Er EINVAL .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
 value.
 .Sh SEE ALSO
 .Xr aio_fsync 2 ,
+.Xr fchflags 2 ,
 .Xr fdatasync 2 ,
 .Xr fpathconf 2 ,
 .Xr fstatfs 2 ,
 .Xr fsync 2 ,
+.Xr futimens 2 ,
+.Xr fdescfs 4 ,
 .Xr VFS_STATFS 9 ,
 .Xr VFS_SYNC 9 ,
 .Xr vnode 9 ,
 .Xr VOP_FSYNC 9 ,
-.Xr VOP_PATHCONF 9
+.Xr VOP_PATHCONF 9 ,
+.Xr VOP_SETATTR 9
 .Sh HISTORY
 The
 .Vt "struct fileops"
 table has existed since
 .Bx 4.4 .
 .Fn fo_pathconf ,
-.Fn fo_statfs
-and
+.Fn fo_statfs ,
 .Fn fo_fsync
+and
+.Fn fo_setattr
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

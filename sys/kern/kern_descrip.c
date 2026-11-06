@@ -6095,6 +6095,7 @@ const struct fileops path_fileops = {
 	.fo_pathconf = vn_pathconf,
 	.fo_statfs = vn_statfs,
 	.fo_fsync = vn_fsync,
+	.fo_setattr = vn_setattr,
 	.fo_flags = DFLAG_PASSABLE,
 };
 
@@ -6171,6 +6172,14 @@ invfo_statfs(struct file *fp, struct statfs *buf, struct thread *td)
 /* What getvnode() returned for a descriptor with no vnode. */
 int
 invfo_fsync(struct file *fp, int mode, struct thread *td)
+{
+
+	return (EINVAL);
+}
+
+int
+invfo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
 {
 
 	return (EINVAL);

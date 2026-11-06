@@ -581,12 +581,18 @@ fdesc_getattr(struct vop_getattr_args *ap)
 	return (0);
 }
 
+/*
+ * Attributes set on /dev/fd/N go to descriptor N's own fileops: size to
+ * fo_truncate, mode to fo_chmod, owner to fo_chown, times and flags to
+ * fo_setattr.  A descriptor with no settable attributes keeps the old
+ * behaviour: every change is silently dropped except chflags(2), which is
+ * refused.
+ */
 static int
 fdesc_setattr(struct vop_setattr_args *ap)
 {
 	struct vattr *vap = ap->a_vap;
-	struct vnode *vp;
-	struct mount *mp;
+	struct vattr rest;
 	struct file *fp;
 	struct thread *td = curthread;
 	cap_rights_t rights;
@@ -600,39 +606,41 @@ fdesc_setattr(struct vop_setattr_args *ap)
 		return (EACCES);
 
 	fd = VTOFDESC(ap->a_vp)->fd_fd;
-
-	/*
-	 * Allow setattr where there is an underlying vnode.
-	 * For O_PATH descriptors, disallow truncate.
-	 */
-	if (vap->va_size != VNOVAL) {
-		error = getvnode(td, fd,
-		    cap_rights_init_one(&rights, CAP_EXTATTR_SET), &fp);
-	} else {
-		error = getvnode_path(td, fd,
-		    cap_rights_init_one(&rights, CAP_EXTATTR_SET), NULL, &fp);
-	}
-	if (error) {
-		/*
-		 * getvnode() returns EINVAL if the file descriptor is not
-		 * backed by a vnode.  Silently drop all changes except
-		 * chflags(2) in this case.
-		 */
-		if (error == EINVAL) {
-			if (vap->va_flags != VNOVAL)
-				error = EOPNOTSUPP;
-			else
-				error = 0;
-		}
+	error = fget(td, fd, cap_rights_init_one(&rights, CAP_EXTATTR_SET),
+	    &fp);
+	if (error != 0)
 		return (error);
+	if (fp->f_ops->fo_setattr == NULL) {
+		fdrop(fp, td);
+		return (vap->va_flags != VNOVAL ? EOPNOTSUPP : 0);
 	}
-	vp = fp->f_vnode;
-	if ((error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH)) == 0) {
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		error = VOP_SETATTR(vp, ap->a_vap, ap->a_cred);
-		VOP_UNLOCK(vp);
-		vn_finished_write(mp);
+	/* O_PATH descriptors were never allowed to truncate. */
+	if (vap->va_size != VNOVAL && fp->f_ops == &path_fileops) {
+		error = EBADF;
+		goto out;
 	}
+	if (vap->va_size != VNOVAL) {
+		error = fo_truncate(fp, vap->va_size, ap->a_cred, td);
+		if (error != 0)
+			goto out;
+	}
+	if (vap->va_mode != (mode_t)VNOVAL) {
+		error = fo_chmod(fp, vap->va_mode, ap->a_cred, td);
+		if (error != 0)
+			goto out;
+	}
+	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL) {
+		error = fo_chown(fp, vap->va_uid, vap->va_gid, ap->a_cred, td);
+		if (error != 0)
+			goto out;
+	}
+	rest = *vap;
+	rest.va_size = VNOVAL;
+	rest.va_mode = (mode_t)VNOVAL;
+	rest.va_uid = VNOVAL;
+	rest.va_gid = VNOVAL;
+	error = fo_setattr(fp, &rest, ap->a_cred, td);
+out:
 	fdrop(fp, td);
 	return (error);
 }

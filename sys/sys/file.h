@@ -90,6 +90,7 @@ struct kaiocb;
 struct kinfo_file;
 struct statfs;
 struct ucred;
+struct vattr;
 
 #define	FOF_OFFSET	0x01	/* Use the offset in uio argument */
 #define	FOF_NOLOCK	0x02	/* Do not take FOFFSET_LOCK */
@@ -163,6 +164,8 @@ typedef int fo_pathconf_t(struct file *fp, int name, long *valuep,
 typedef int fo_statfs_t(struct file *fp, struct statfs *buf,
 		    struct thread *td);
 typedef int fo_fsync_t(struct file *fp, int mode, struct thread *td);
+typedef int fo_setattr_t(struct file *fp, struct vattr *vap,
+		    struct ucred *active_cred, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
 
 /* fo_fsync modes. */
@@ -197,7 +200,8 @@ struct fileops {
 	fo_pathconf_t	*fo_pathconf;
 	fo_statfs_t	*fo_statfs;
 	fo_fsync_t	*fo_fsync;
-	fo_spare_t	*fo_spares[5];	/* Spare slots */
+	fo_setattr_t	*fo_setattr;
+	fo_spare_t	*fo_spares[4];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
@@ -333,6 +337,7 @@ fo_sendfile_t	invfo_sendfile;
 fo_pathconf_t	invfo_pathconf;
 fo_statfs_t	invfo_statfs;
 fo_fsync_t	invfo_fsync;
+fo_setattr_t	invfo_setattr;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -341,6 +346,7 @@ fo_kqfilter_t	vn_kqfilter_opath;
 fo_pathconf_t	vn_pathconf;
 fo_statfs_t	vn_statfs;
 fo_fsync_t	vn_fsync;
+fo_setattr_t	vn_setattr;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -541,6 +547,20 @@ fo_fsync(struct file *fp, int mode, struct thread *td)
 	if (fp->f_ops->fo_fsync == NULL)
 		return (invfo_fsync(fp, mode, td));
 	return ((*fp->f_ops->fo_fsync)(fp, mode, td));
+}
+
+/*
+ * Set the times and flags in *vap (VNOVAL leaves a field alone).  Mode,
+ * owner and size have their own operations and are refused here.
+ */
+static __inline int
+fo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_setattr == NULL)
+		return (invfo_setattr(fp, vap, active_cred, td));
+	return ((*fp->f_ops->fo_setattr)(fp, vap, active_cred, td));
 }
 
 static __inline int

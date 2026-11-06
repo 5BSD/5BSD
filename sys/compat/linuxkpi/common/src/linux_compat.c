@@ -1865,6 +1865,7 @@ const struct fileops linuxfileops = {
 	.fo_pathconf = vn_pathconf,
 	.fo_statfs = vn_statfs,
 	.fo_fsync = vn_fsync,
+	.fo_setattr = vn_setattr,
 	.fo_flags = DFLAG_PASSABLE,
 };
 

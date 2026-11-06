@@ -2834,43 +2834,26 @@ struct fchflags_args {
 int
 sys_fchflags(struct thread *td, struct fchflags_args *uap)
 {
+	struct vattr vattr;
 	struct file *fp;
-	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(uap->fd);
 	AUDIT_ARG_FFLAGS(uap->flags);
-	error = getvnode(td, uap->fd, &cap_fchflags_rights,
-	    &fp);
+	/* We can't support the value matching VNOVAL. */
+	if (uap->flags == VNOVAL)
+		return (EOPNOTSUPP);
+	error = fget(td, uap->fd, &cap_fchflags_rights, &fp);
 	if (error != 0)
 		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-	/*
-	 * Prevent non-root users from setting flags on devices.  When
-	 * a device is reused, users can retain ownership of the device
-	 * if they are allowed to set flags and programs assume that
-	 * chown can't fail when done as root.
-	 */
-	if (VN_ISDEV(vp)) {
-		error = priv_check(td, PRIV_VFS_CHFLAGS_DEV);
-		if (error != 0)
-			goto out;
-	}
-#ifdef MAC
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	error = mac_vnode_check_setflags(td->td_ucred, vp, uap->flags);
-	VOP_UNLOCK(vp);
-	if (error != 0)
+	/* getvnode() never accepted an O_PATH descriptor here. */
+	if (fp->f_ops == &path_fileops) {
+		error = EBADF;
 		goto out;
-#endif
-	error = setfflags(td, vp, uap->flags);
+	}
+	VATTR_NULL(&vattr);
+	vattr.va_flags = uap->flags;
+	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 out:
 	fdrop(fp, td);
 	return (error);
@@ -3435,43 +3418,48 @@ sys_futimes(struct thread *td, struct futimes_args *uap)
 	return (kern_futimes(td, uap->fd, uap->tptr, UIO_USERSPACE));
 }
 
+/*
+ * futimes(2) and futimens(2): the descriptor sets its own times.  Neither
+ * ever accepted an O_PATH descriptor (getvnode() refused it).
+ */
+static int
+kern_fsetutimes(struct thread *td, int fd, const struct timespec *ts,
+    bool nullflag)
+{
+	struct vattr vattr;
+	struct file *fp;
+	int error;
+
+	error = fget(td, fd, &cap_futimes_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_ops == &path_fileops) {
+		error = EBADF;
+		goto out;
+	}
+	VATTR_NULL(&vattr);
+	vattr.va_atime = ts[0];
+	vattr.va_mtime = ts[1];
+	if (nullflag)
+		vattr.va_vaflags |= VA_UTIMES_NULL;
+	error = fo_setattr(fp, &vattr, td->td_ucred, td);
+out:
+	fdrop(fp, td);
+	return (error);
+}
+
 int
 kern_futimes(struct thread *td, int fd, const struct timeval *tptr,
     enum uio_seg tptrseg)
 {
 	struct timespec ts[2];
-	struct file *fp;
-	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
 	error = getutimes(tptr, tptrseg, ts);
 	if (error != 0)
 		return (error);
-	error = getvnode(td, fd, &cap_futimes_rights, &fp);
-	if (error != 0)
-		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-#ifdef MAC
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
-	VOP_UNLOCK(vp);
-	if (error != 0)
-		goto out;
-#endif
-	error = setutimes(td, vp, ts, 2, tptr == NULL);
-#ifdef MAC
-out:
-#endif
-	fdrop(fp, td);
-	return (error);
+	return (kern_fsetutimes(td, fd, ts, tptr == NULL));
 }
 
 int
@@ -3486,8 +3474,6 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
     enum uio_seg tptrseg)
 {
 	struct timespec ts[2];
-	struct file *fp;
-	struct vnode *vp;
 	int error, flags;
 
 	AUDIT_ARG_FD(fd);
@@ -3496,30 +3482,7 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
 		return (error);
 	if (flags & UTIMENS_EXIT)
 		return (0);
-	error = getvnode(td, fd, &cap_futimes_rights, &fp);
-	if (error != 0)
-		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-#ifdef MAC
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
-	VOP_UNLOCK(vp);
-	if (error != 0)
-		goto out;
-#endif
-	error = setutimes(td, vp, ts, 2, flags & UTIMENS_NULL);
-#ifdef MAC
-out:
-#endif
-	fdrop(fp, td);
-	return (error);
+	return (kern_fsetutimes(td, fd, ts, (flags & UTIMENS_NULL) != 0));
 }
 
 int

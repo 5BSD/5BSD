@@ -1164,6 +1164,7 @@ MLINKS+=fetch.9 fubyte.9 \
 	fetch.9 fueword64.9
 MLINKS+=fileops.9 fo_fsync.9 \
 	fileops.9 fo_pathconf.9 \
+	fileops.9 fo_setattr.9 \
 	fileops.9 fo_statfs.9
 MLINKS+=firmware.9 firmware_get.9 \
 	firmware.9 firmware_put.9 \
