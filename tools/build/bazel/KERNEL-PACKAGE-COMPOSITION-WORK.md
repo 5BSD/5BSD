@@ -152,3 +152,33 @@ NEXT: source-owned root selection and coherent kernel/GDB/modules/directories/
 aliases/linker.hints/pkgbase, then normal startup/services and genuine upgrades.
 Custom/ALL_MODULES/cross, bootstrap/cache/sandbox/reproducibility/debug/resources/
 hardware/publication gates remain open. Make stays production/default; BIP excluded.
+
+## Normal AMD64 root module graph passes (2026-11-06)
+
+Source-owned root selection now builds the complete current 722-module profile.
+Default, nineteen-features-disabled (468) and ACPI-off/Veriexec-on (726) profiles each
+pass 20 test targets. Complete original source Make traversal, leaf/base-install
+policy and exact ordered OBJS+BLOB_OBJS match; all 1,916 selected ELF/debug pairs
+pass. Actual VMM and amdsmu header dependencies are fixed. Shared checked kernel
+options and native device directives preserve tied source selection. A focused
+Bazel follow-up passes the final 13-case Make-audit regression and option tests.
+Iwlwifi ACPI objects, CTF paths and flags now follow the actual device option;
+configured compile-action checks cover every linked object.
+See ROOT-MODULE-GRAPH-QUALIFICATION.md for hash-bound evidence and retained failures.
+
+NEXT: coherent current-profile kernel/GDB/modules/directories/aliases/linker.hints/
+pkgbase. FDT/MMCCAM/TESTS root branches still require missing parent/producers;
+MODULES_OVERRIDE/EXTRA/WITHOUT_MODULES/ALL_MODULES are not implemented. These and
+custom/cross, normal boot/services/upgrades, bootstrap/cache/sandbox/reproducibility/
+debug/resources/hardware/publication remain open. Make stays default; BIP excluded.
+
+Next composition should reuse the existing native kldxref -o explicit-input mode.
+Its implementation requires regular files together in the output directory and
+rejects symlink inputs. The original default FTS_PHYSICAL traversal likewise skips
+installation aliases; compare identical real kernel/module payloads in basename
+order (the original compare() uses strcmp), then separately preserve aliases in
+the installation manifest. Declare the native execution tool and runtime libraries;
+materialize only those selected ELF files, not the complete installed world. Prove
+explicit and ordinary directory-mode hints agree before merging that generated
+record with the existing kernel/GDB directory policy and typed module manifest.
+This is the next design step, not a completed hints/composition result.

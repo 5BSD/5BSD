@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Normal AMD64 root module graph passes (2026-11-06)
+
+Source-owned root selection now builds the complete current 722-module profile.
+Default, nineteen-features-disabled (468) and ACPI-off/Veriexec-on (726) profiles each
+pass 20 test targets. Complete original source Make traversal, leaf/base-install
+policy and exact ordered OBJS+BLOB_OBJS match; all 1,916 selected ELF/debug pairs
+pass. Actual VMM and amdsmu header dependencies are fixed. Shared checked kernel
+options and native device directives preserve tied source selection. A focused
+Bazel follow-up passes the final 13-case Make-audit regression and option tests.
+Iwlwifi ACPI objects, CTF paths and flags now follow the actual device option;
+configured compile-action checks cover every linked object.
+See ROOT-MODULE-GRAPH-QUALIFICATION.md for hash-bound evidence and retained failures.
+
+NEXT: coherent current-profile kernel/GDB/modules/directories/aliases/linker.hints/
+pkgbase. FDT/MMCCAM/TESTS root branches still require missing parent/producers;
+MODULES_OVERRIDE/EXTRA/WITHOUT_MODULES/ALL_MODULES are not implemented. These and
+custom/cross, normal boot/services/upgrades, bootstrap/cache/sandbox/reproducibility/
+debug/resources/hardware/publication remain open. Make stays default; BIP excluded.
+
 ## Netgraph/TCP module parent selection passes (2026-11-06)
 
 Four AMD64 profiles compose 47/38/46/43 unique products and each pass 19 test targets.

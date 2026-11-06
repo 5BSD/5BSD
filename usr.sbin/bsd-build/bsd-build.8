@@ -7830,3 +7830,18 @@ selection is permitted only when both IP support source options are disabled.
 This does not qualify full root traversal, normal boot or alternative ALL_MODULES
 and custom-kernel profiles. See
 .Pa tools/build/bazel/NETWORK-MODULE-PARENTS-QUALIFICATION.md .
+.Ss Native normal AMD64 root module graph
+The //sys/modules:amd64_modules and amd64_base_installation targets compose typed
+source-owned root selections. The current 722-module world/kernel profile and two
+option variants pass complete original Make selection, installation and link-order
+checks plus actual ELF/debug CRC inspection. Module support follows source choices
+and actual tied kernel headers. Checked kernel option settings preserve source
+GENERIC defaults; explicit DEV_ACPI overrides use native device directives.
+.Pp
+The independent module_inventory.py --leaf-policy audit selects this source tree's
+share/mk and captures expanded installation policy, aliases and ordered OBJS plus
+BLOB_OBJS. It is a qualification oracle, not a native build dependency.
+FDT/MMCCAM/TESTS-enabled root branches and alternative module-selection input modes
+remain incomplete; normal boot, complete kernel/pkgbase and performance acceptance
+remain open. Make remains production/default. See
+.Pa tools/build/bazel/ROOT-MODULE-GRAPH-QUALIFICATION.md .

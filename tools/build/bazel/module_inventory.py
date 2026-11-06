@@ -113,11 +113,18 @@ def module_description(src, relative, kmod):
     }
 
 
-def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, env_conf, jobs=1):
+LEAF_POLICY_KEYS = ("KMODOWN", "KMODGRP", "KMODMODE", "KMODTAGS", "KMODDBGTAGS", "SYMLINKS", "${OBJS}", "${BLOB_OBJS}")
+
+
+def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, env_conf, jobs=1, leaf_policy=False):
     src = Path(src).resolve(strict=True)
     modules_root = src / "sys/modules"
     kernel_build_dir = Path(kernel_build_dir).resolve(strict=True)
     options = " ".join(kernel_options(kernel_build_dir))
+    kcsan = "\n".join(line for line in (kernel_build_dir / "opt_global.h").read_text().splitlines()
+                      if "KCSAN" in line) if (kernel_build_dir / "opt_global.h").is_file() else ""
+    query_keys = ["SUBDIR", "KMOD", "MACHINE", "MACHINE_ARCH"] + ([key if key.startswith("${") else "${" + key + "}" for key in LEAF_POLICY_KEYS] if leaf_policy else [])
+    source_queries = []
     queue = [(Path(), {})]
     visited = {}
     contexts = []
@@ -129,19 +136,24 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
     def query(item):
         relative, inherited = item
         command = [
-            make, "-C", str(modules_root / relative), "SRCTOP=" + str(src),
+            make, "-C", str(modules_root / relative), "-m", str(src / "share/mk"), "SRCTOP=" + str(src),
             # kern.post.mk supplies these before module Makefiles are parsed.
             # Some leaves use SYSDIR in .PATH before including bsd.kmod.mk.
             "SYSDIR=" + str(src / "sys"), "MODULE_TIED=yes",
             "TARGET=" + target, "TARGET_ARCH=" + target_arch,
             "MACHINE=" + target, "MACHINE_ARCH=" + target_arch,
-            "KERNBUILDDIR=" + str(kernel_build_dir), "KERN_OPTS=" + options,
+            "KERNBUILDDIR=" + str(kernel_build_dir), "KERN_OPTS=" + options, "KCSAN_ENABLED=" + kcsan,
             "SRCCONF=" + srconf, "__MAKE_CONF=" + make_conf,
-            "SRC_ENV_CONF=" + env_conf, "-V", "SUBDIR", "-V", "KMOD",
-            "-V", "MACHINE", "-V", "MACHINE_ARCH", "-V", EXPORT_QUERY,
+            "SRC_ENV_CONF=" + env_conf,
+        ] + (["KMODDIR=/boot/kernel", "KERN_DEBUGDIR=/usr/lib/debug", "DEBUG_FLAGS=-g"] if leaf_policy else []) + [
+            arg for key in query_keys + [EXPORT_QUERY] for arg in ["-V", key]
         ]
-        return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              env=dict(os.environ, **inherited))
+        result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=dict(os.environ, **inherited))
+        if leaf_policy:
+            result.source_query = dict(argv=command, stdout=result.stdout, stderr=result.stderr,
+                                       status=result.returncode, inherited=inherited)
+        return result
 
     # Each Make query is read-only and independent once its parent has selected
     # the directory. Keep traversal, duplicate detection and diagnostics here;
@@ -162,17 +174,19 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
                 batch.append((relative, inherited))
             queue = []
             for (relative, inherited), result in zip(batch, workers.map(query, batch)):
+                if leaf_policy:
+                    source_queries.append(dict(dir=relative.as_posix(), **result.source_query))
                 if result.returncode:
                     errors.append({"dir": relative.as_posix(), "error": result.stderr.strip()[-1000:]})
                     continue
                 try:
-                    lines = result.stdout.split("\n", 4)
-                    if len(lines) != 5:
+                    lines = result.stdout.split("\n", len(query_keys))
+                    if len(lines) != len(query_keys) + 1:
                         raise ValueError("expected SUBDIR, KMOD, MACHINE, MACHINE_ARCH and exported-variable output")
                     if lines[2:4] != [target, target_arch]:
                         raise ValueError("queried machine/architecture differs from requested target")
                     children, kmod = parse_make_query("\n".join(lines[:2]) + "\n")
-                    exports = parse_make_exports(lines[4])
+                    exports = parse_make_exports(lines[-1])
                     child_context = dict(inherited, **exports)
                     contexts.append({"dir": relative.as_posix(),
                         "inherited_names": sorted(inherited), "exported_names": sorted(exports),
@@ -182,6 +196,8 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
                     continue
                 if kmod:
                     record = module_description(src, relative, kmod)
+                    if leaf_policy:
+                        record["make_policy"] = dict(zip(LEAF_POLICY_KEYS, lines[4:-1], strict=True))
                     records.append(record)
                     if record["build_inventory_error"]:
                         errors.append({"dir": relative.as_posix(), "error": record["build_inventory_error"]})
@@ -200,7 +216,10 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
     direct_targets = sum(record["direct_module_macro"] for record in records)
     build_files = sum(record["build_file"] for record in records)
     return {
-        "format": 3,
+        **({"source_queries": sorted(source_queries, key=lambda row: row["dir"])} if leaf_policy else {}),
+        "format": 4 if leaf_policy else 3,
+        "source_make_path": str(src / "share/mk"),
+        "kcsan_enabled": kcsan,
         "query_jobs": jobs,
         "exported_make_contexts": sorted(contexts, key=lambda row: row["dir"]),
         "status": "complete" if not errors else "incomplete",
@@ -235,6 +254,7 @@ def main():
     parser.add_argument("--src-conf", default="/dev/null")
     parser.add_argument("--make-conf", default="/dev/null")
     parser.add_argument("--source-env-conf", default="/dev/null")
+    parser.add_argument("--leaf-policy", action="store_true", help="capture original leaf installation/link policy and full source query transcripts")
     parser.add_argument("--output", required=True)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="maximum independent read-only Make queries (default: logical CPU count)")
@@ -243,7 +263,7 @@ def main():
         parser.error("--jobs must be positive")
     report = audit(args.src, args.make, args.target, args.target_arch,
                    args.kernel_build_dir, args.src_conf, args.make_conf,
-                   args.source_env_conf, args.jobs)
+                   args.source_env_conf, args.jobs, args.leaf_policy)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

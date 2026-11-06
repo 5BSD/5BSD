@@ -28,9 +28,17 @@ def _impl(ctx):
         if type(value) != "bool":
             fail("kernel option override requires boolean or auto/yes/no setting")
         expected[option] = value
-        lines.append("nooptions " + option)
-        if value:
-            lines.append("options " + option)
+        device = ctx.attr.device_options.get(option)
+        if device != None:
+            if not device or any([c not in "abcdefghijklmnopqrstuvwxyz0123456789_" for c in device.elems()]):
+                fail("invalid native kernel device identifier")
+            lines.append("nodevice " + device)
+            if value:
+                lines.append("device " + device)
+        else:
+            lines.append("nooptions " + option)
+            if value:
+                lines.append("options " + option)
     ctx.actions.write(overrides, ('include "' + ctx.file.config.basename + '"\n' + "\n".join(lines) + "\n") if lines else "")
     expectation = ctx.actions.declare_file(ctx.label.name + ".expected-options.json")
     ctx.actions.write(expectation, json.encode(expected) + "\n")
@@ -58,6 +66,7 @@ bsd_kernel_config = rule(implementation = _impl, attrs = {
     "debug": attr.bool(),
     "option_settings": attr.label_keyed_string_dict(providers = [BuildSettingInfo]),
     "auto_defaults": attr.string_dict(),
+    "device_options": attr.string_dict(doc = "Option symbols backed by native device directives."),
     "_option_validator": attr.label(allow_single_file = True, default = "//tools/build/bazel:kernel_options.py"),
     "tool": attr.label(executable = True, cfg = "exec", default = "//usr.sbin/config:config"),
     "runner": attr.label(allow_single_file = True, default = "//tools/build/bazel:kernel_config.py"),

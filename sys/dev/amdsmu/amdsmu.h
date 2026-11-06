@@ -15,6 +15,7 @@
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
 
+#include <machine/bus.h>
 #include <machine/cpu.h>
 #include <machine/md_var.h>
 #include <machine/cputypes.h>
