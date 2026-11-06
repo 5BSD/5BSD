@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
 
 # Generate from source headers; stdout mode avoids Make-specific dependency files.
@@ -106,11 +107,13 @@ sysdecode_installation(name = "install_manifest")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
-bsd_install_archive(
-    name = "install_archive",
+bsd_library_installation_archives(
+    name = "installation_archives", production_name = "install_archive", test_name = "tests_install_archive",
+    production_manifests = [":install_manifest"],
+    test_manifests = select({"//tools/build/bazel/config:tests_enabled": ["//lib/libsysdecode/tests:install_manifest"], "//conditions:default": []}),
+    production_directories = {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}'},
+    test_directories = {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib/libsysdecode': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/tests/lib/libsysdecode': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]}'},
     visibility = ["//lib:__pkg__"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libsysdecode/tests:install_manifest"], "//conditions:default": []}),
-    directories = select({"//tools/build/bazel/config:tests_enabled": {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib/libsysdecode': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/tests/lib/libsysdecode': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]}'}, "//conditions:default": {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}'}}),
     mtree_specs = {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",

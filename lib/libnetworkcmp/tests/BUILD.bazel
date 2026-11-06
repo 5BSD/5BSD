@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+# Original source-including tests consume the component archive lazily. Its
+# production dependency graph would force duplicate client/provider objects and
+# override the scripted fixture's own service functions.
+cc_import(name = "component_archive", static_library = "//lib/libnetworkcmp:static_archive",
+    deps = ["//lib/libnetworkcmp:headers", "//lib/libnetworkcmp:generated_headers"])
 [cc_binary(name = name, srcs = sources,
-    deps = ["//lib/libnetworkcmp:networkcmp", "//lib/libnetworkcmp:test_source_headers",
-        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr", "//lib/libservice:service",
-        "//lib/atf/libatf-c:atf_c"] + (["//lib/libservice:bootstrap_headers"] if name == "networkcmp_test" else []),
+    deps = [":component_archive", "//lib/libnetworkcmp:test_source_headers",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr",
+        "//lib/atf/libatf-c:atf_c"] + (["//lib/libservice:service"] if name == "networkcmp_test" else []) + (["//lib/libservice:bootstrap_headers"] if name == "networkcmp_test" else []),
     linkstatic = True, linkopts = ["-static"])
  for name, sources in {
     "networkcmp_test": ["networkcmp_test.c", "networkcmp_test_impl.c"],

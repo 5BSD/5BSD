@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
@@ -73,17 +74,15 @@ bsd_install_archive(
 
 # Complete test installation follows both maintained feature settings.
 config_setting(name = "gtest_install_enabled", flag_values = {"//tools/build/bazel/config:tests": "true", "//tools/build/bazel/config:googletest": "true"})
-bsd_install_archive(
-    name = "install_archive",
-    visibility = ["//lib:__pkg__"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libfidl/tests:install_" + name for name in ["c_binding_test", "c_wire_test", "sync_call_bench", "ipc_bench", "extra"]], "//conditions:default": []}) + select({":gtest_install_enabled": ["//lib/libfidl/tests:install_runtime_test"], "//conditions:default": []}),
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} |
-        {"/usr/include/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dev"]}' for d in FIDL_INCLUDE_DIRECTORIES} |
-        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-dev"]}' for d in ["/usr/libdata/pkgconfig", "/usr/share/fidl"]} |
-        {"/usr/share/licenses/libfidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl"]}'} | select({"//tools/build/bazel/config:tests_enabled":
+bsd_library_installation_archives(
+    name = "installation_archives", production_name = "install_archive", test_name = "tests_install_archive",
+    production_manifests = [":install_manifest"],
+    test_manifests = select({"//tools/build/bazel/config:tests_enabled": ["//lib/libfidl/tests:install_" + name for name in ["c_binding_test", "c_wire_test", "sync_call_bench", "ipc_bench", "extra"]], "//conditions:default": []}) + select({":gtest_install_enabled": ["//lib/libfidl/tests:install_runtime_test"], "//conditions:default": []}),
+    production_directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | {"/usr/include/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dev"]}' for d in FIDL_INCLUDE_DIRECTORIES} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-dev"]}' for d in ["/usr/libdata/pkgconfig", "/usr/share/fidl"]} | {"/usr/share/licenses/libfidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl"]}'},
+    test_directories = select({"//tools/build/bazel/config:tests_enabled":
         {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests"]}' for d in ["/usr/tests/lib/libfidl", "/usr/share/licenses/libfidl-tests", "/usr/share/licenses/libfidl-tests/fuchsia"]} |
-        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libfidl"]}, "//conditions:default": {}}) |
-        select({":gtest_install_enabled": {"/usr/share/licenses/libfidl-tests/googletest": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests"]}'}, "//conditions:default": {}}),
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libfidl"]}, "//conditions:default": {}}) | select({":gtest_install_enabled": {"/usr/share/licenses/libfidl-tests/googletest": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests"]}'}, "//conditions:default": {}}),
+    visibility = ["//lib:__pkg__"],
     mtree_specs = {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",

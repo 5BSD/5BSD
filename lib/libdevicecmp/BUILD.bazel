@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 exports_files(["devicecmp.fidl"])
 bsd_fidl_ir(name = "device_ir", schemas = ["//lib/libfidl/tests:zx.fidl", "devicecmp.fidl"], available = "bsd:1",
@@ -63,11 +64,13 @@ bsd_install_archive(
 
 
 load("//lib/libdevicecmp/tests:installation.bzl", TEST_MANIFESTS = "MANIFESTS", TEST_DIRECTORIES = "DIRECTORIES")
-bsd_install_archive(
-    name = "install_archive",
+bsd_library_installation_archives(
+    name = "installation_archives", production_name = "install_archive", test_name = "tests_install_archive",
+    production_manifests = [":install_manifest"],
+    test_manifests = select({"//tools/build/bazel/config:tests_enabled": TEST_MANIFESTS, "//conditions:default": []}),
+    production_directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libdevicecmp"]}' for d in ["/usr/share/licenses/libdevicecmp", "/usr/share/licenses/libdevicecmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libdevicecmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libdevicecmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    test_directories = select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}),
     visibility = ["//lib:__pkg__"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": TEST_MANIFESTS, "//conditions:default": []}),
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libdevicecmp"]}' for d in ["/usr/share/licenses/libdevicecmp", "/usr/share/licenses/libdevicecmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libdevicecmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libdevicecmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}),
     mtree_specs = {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",

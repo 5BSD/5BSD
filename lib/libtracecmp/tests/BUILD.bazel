@@ -1,17 +1,24 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+# Original source-including tests consume the component archive lazily. Its
+# production dependency graph would force duplicate client/provider objects and
+# override the scripted fixture's own service functions.
+cc_import(name = "component_archive", static_library = "//lib/libtracecmp:static_archive",
+    deps = ["//lib/libtracecmp:headers", "//lib/libtracecmp:generated_headers"])
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
 # libdtrace's libproc dependency requires libcxxrt precedence over libc++.
 # Keep this explicit at the final static consumer boundary; cc_binary owns linking.
-bsd_link_sequence(name = "static_dependencies", deps = [
+[bsd_link_sequence(name = group, deps = [
     "//lib/atf/libatf-c:atf_c", "//cddl/lib/libdtrace:dtrace",
-    "//lib/libtracecmp:tracecmp", "//lib/libtracecmp:test_source_headers",
-    "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libchannel:channel"])
+    ":component_archive", "//lib/libtracecmp:test_source_headers"] +
+    (["//lib/libservice:service"] if group == "static_dependencies" else []) +
+    ["//lib/libfidl:fidl", "//lib/libchannel:channel"])
+ for group in ["static_dependencies", "fixture_dependencies"]]
 
 [cc_binary(name = name, srcs = [name + ".c", "tracecmp_test_impl.c"] +
         (["//lib/libtracecmp:tracecmp_legacy.c"] if name == "tracecmp_test" else ["fake_service.c", "fake_service.h"]),
-    deps = [":static_dependencies"] + (["//lib/libthr:thr"] if name == "client_lifecycle_test" else []),
+    deps = [":static_dependencies" if name == "tracecmp_test" else ":fixture_dependencies"] + (["//lib/libthr:thr"] if name == "client_lifecycle_test" else []),
     local_defines = ["TRACECMP_TESTING"] if name == "tracecmp_test" else [],
     linkstatic = True, linkopts = ["-static"])
  for name in ["tracecmp_test", "client_lifecycle_test"]]

@@ -1,5 +1,8 @@
 # Library package directory claims — first two corrections
 
+This is the first two-library checkpoint. All 25 recorded cases are subsequently
+reconciled in LIBRARY-DIRECTORY-POLICY-COMPLETION.md; whole-system gates remain.
+
 ## Original policy and source composition
 
 Independent complete Make installs of libmp and libbsnmp each record two claims

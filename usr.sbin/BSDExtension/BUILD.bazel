@@ -66,7 +66,8 @@ bsd_install_archive(name = "daemon_install_archive", visibility = ["//usr.sbin:_
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
 
 
-exports_files(["bsdextension.c", "kerneldir.c", "policy.c", "reclaim.c", "rootload.c"], visibility = ["//usr.sbin/BSDExtension/tests:__pkg__"])
+exports_files(["bsdextension.c", "kerneldir.c", "policy.c", "reclaim.c"], visibility = ["//usr.sbin/BSDExtension/tests:__pkg__"])
+exports_files(["rootload.c"], visibility = ["//usr.sbin/BSDExtension/tests:__pkg__", "//lib/libservice/tests:__pkg__"])
 cc_library(name = "test_headers",
     hdrs = ["bsdextension.h", "bsdextension_reclaim.h", "bsdextension_probes.h", "trace_pressure.h"],
     textual_hdrs = ["bsdextension.c"], strip_include_prefix = ".",

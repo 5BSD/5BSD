@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 exports_files(["sysctlcmp.fidl"])
 bsd_fidl_ir(name = "sysctl_ir", schemas = ["sysctlcmp.fidl"], available = "bsd:1",
@@ -63,11 +64,12 @@ bsd_install_archive(
 )
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
-bsd_install_archive(
-    name = "install_archive",
-    visibility = ["//lib:__pkg__"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libsysctlcmp/tests:install_sysctlcmp_test", "//lib/libsysctlcmp/tests:install_client_strings_test", "//lib/libsysctlcmp/tests:install_extra"], "//conditions:default": []}),
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp"]}' for d in ["/usr/share/licenses/libsysctlcmp", "/usr/share/licenses/libsysctlcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+bsd_library_installation_archives(
+    name = "installation_archives", production_name = "install_archive", test_name = "tests_install_archive",
+    production_manifests = [":install_manifest"],
+    test_manifests = select({"//tools/build/bazel/config:tests_enabled": ["//lib/libsysctlcmp/tests:install_sysctlcmp_test", "//lib/libsysctlcmp/tests:install_client_strings_test", "//lib/libsysctlcmp/tests:install_extra"], "//conditions:default": []}),
+    production_directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp"]}' for d in ["/usr/share/licenses/libsysctlcmp", "/usr/share/licenses/libsysctlcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    test_directories = select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/share/licenses/libsysctlcmp-tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests"]}',
         "/usr/share/licenses/libsysctlcmp-tests/fuchsia": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests"]}',
         "/usr/tests/lib/libsysctlcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests"]}',
@@ -76,6 +78,7 @@ bsd_install_archive(
         "/usr/lib/debug/usr/tests/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests","dbg"]}',
         "/usr/lib/debug/usr/tests/lib/libsysctlcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests","dbg"]}',
     }, "//conditions:default": {}}),
+    visibility = ["//lib:__pkg__"],
     mtree_specs = {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",

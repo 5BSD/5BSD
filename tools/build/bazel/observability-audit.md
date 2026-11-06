@@ -12320,3 +12320,16 @@ are unchanged. Construction executes only the source helper, not original librar
 bodies. No new probe firing, audit delivery, service behavior or resource/performance
 claim follows. See LIBRARY-PACKAGE-DIRECTORY-QUALIFICATION.md for metadata evidence
 and the separate ELF/archive/debugger/runtime and whole-system gates.
+
+## Complete recorded library directory-policy batch (2026-11-06)
+
+All 25 affected parents preserve original production/test package directory claims.
+Their native construction retains providers; only source helpers execute in these
+runs. Four source-including test link boundaries now match original Make lazy
+archive/service selection without provider removal or duplicate-symbol flags.
+Five scripted fixture service-symbol sets match their original programs. This is
+construction/symbol/installation evidence, not original body execution, live probe
+firing, audit delivery, normal service behavior or resource/performance coverage.
+The restored libservice worker-contract source fixture is installed from declared
+sources and compared against the original selected fixture inventory. See
+LIBRARY-DIRECTORY-POLICY-COMPLETION.md for exact limitations and system gates.

@@ -1,3 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Declared installed fixtures for the worker-authority contract test.
-PROVIDER_SOURCES = {'//usr.sbin/BSDAudit:auditcmp.c': 'srctree/usr.sbin/BSDAudit/auditcmp.c', '//usr.sbin/BSDCrypto:bsdcrypto.c': 'srctree/usr.sbin/BSDCrypto/bsdcrypto.c', '//usr.sbin/BSDDevice:bsddevice.c': 'srctree/usr.sbin/BSDDevice/bsddevice.c', '//usr.sbin/BSDFilesystem:request.c': 'srctree/usr.sbin/BSDFilesystem/request.c', '//usr.sbin/BSDLog:logcmp.c': 'srctree/usr.sbin/BSDLog/logcmp.c', '//usr.sbin/BSDLog:storage.c': 'srctree/usr.sbin/BSDLog/storage.c', '//usr.sbin/BSDNetwork:networkcmp.c': 'srctree/usr.sbin/BSDNetwork/networkcmp.c', '//usr.sbin/BSDNotify:bsdnotify.c': 'srctree/usr.sbin/BSDNotify/bsdnotify.c', '//usr.sbin/BSDTrace:tracecmp.c': 'srctree/usr.sbin/BSDTrace/tracecmp.c', '//usr.sbin/BSDVM:bsdvm.c': 'srctree/usr.sbin/BSDVM/bsdvm.c'}
+# Source-owned installed fixtures for the worker-authority contract test.
+# Qualification reconciles this inventory with the original Make source selection.
+PROVIDER_SOURCES = {
+    '//usr.sbin/BSDAudit:auditcmp.c': 'srctree/usr.sbin/BSDAudit/auditcmp.c',
+    '//usr.sbin/BSDCrypto:bsdcrypto.c': 'srctree/usr.sbin/BSDCrypto/bsdcrypto.c',
+    '//usr.sbin/BSDDevice:bsddevice.c': 'srctree/usr.sbin/BSDDevice/bsddevice.c',
+    '//usr.sbin/BSDExtension:rootload.c': 'srctree/usr.sbin/BSDExtension/rootload.c',
+    '//usr.sbin/BSDFilesystem:request.c': 'srctree/usr.sbin/BSDFilesystem/request.c',
+    '//usr.sbin/BSDLog:logcmp.c': 'srctree/usr.sbin/BSDLog/logcmp.c',
+    '//usr.sbin/BSDLog:storage.c': 'srctree/usr.sbin/BSDLog/storage.c',
+    '//usr.sbin/BSDNetwork:networkcmp.c': 'srctree/usr.sbin/BSDNetwork/networkcmp.c',
+    '//usr.sbin/BSDNotify:bsdnotify.c': 'srctree/usr.sbin/BSDNotify/bsdnotify.c',
+    '//usr.sbin/BSDTrace:tracecmp.c': 'srctree/usr.sbin/BSDTrace/tracecmp.c',
+    '//usr.sbin/BSDVM:bsdvm.c': 'srctree/usr.sbin/BSDVM/bsdvm.c',
+}

@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Original tests compile the client directly; the protocol fixture supplies its
+# own discovery/budget functions and consumes only the generated archive members.
+# Preserve the explicit service dependency for the API test.
 [cc_binary(name = name, srcs = [name + ".c", "//lib/libcryptocmp:cryptocmp.c"] +
         (["fake_service.c", "fake_service.h"] if name == "client_protocol_test" else []),
-    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libcryptocmp:cryptocmp", "//lib/libcryptocmp:generated_headers",
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libcryptocmp:headers", "//lib/libcryptocmp:generated_bindings",
+        "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libcryptocmp:generated_headers",
         "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr"] +
         (["//lib/libservice:service"] if name == "cryptocmp_api_test" else []),
     linkstatic = True, linkopts = ["-static"])

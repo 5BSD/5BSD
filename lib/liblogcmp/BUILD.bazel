@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 exports_files(["logcmp.fidl"])
 bsd_fidl_ir(name = "log_ir", schemas = ["//lib/libfidl/tests:zx.fidl", "logcmp.fidl"], available = "bsd:1",
@@ -84,11 +85,12 @@ cc_library(name = "test_private_headers", hdrs = ["logcmp_wakeup.h", "logcmp_pro
     visibility = ["//lib/liblogcmp/tests:__pkg__", "//usr.sbin/BSDLog/tests:__pkg__"])
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
-bsd_install_archive(
-    name = "install_archive",
-    visibility = ["//lib:__pkg__"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/liblogcmp/tests:install_logcmp_test", "//lib/liblogcmp/tests:install_client_lifecycle_test", "//lib/liblogcmp/tests:install_extra"], "//conditions:default": []}),
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp"]}' for d in ["/usr/share/licenses/liblogcmp", "/usr/share/licenses/liblogcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+bsd_library_installation_archives(
+    name = "installation_archives", production_name = "install_archive", test_name = "tests_install_archive",
+    production_manifests = [":install_manifest"],
+    test_manifests = select({"//tools/build/bazel/config:tests_enabled": ["//lib/liblogcmp/tests:install_logcmp_test", "//lib/liblogcmp/tests:install_client_lifecycle_test", "//lib/liblogcmp/tests:install_extra"], "//conditions:default": []}),
+    production_directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp"]}' for d in ["/usr/share/licenses/liblogcmp", "/usr/share/licenses/liblogcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    test_directories = select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/share/licenses/liblogcmp-tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-tests"]}',
         "/usr/share/licenses/liblogcmp-tests/fuchsia": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-tests"]}',
         "/usr/tests/lib/liblogcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-tests"]}',
@@ -97,6 +99,7 @@ bsd_install_archive(
         "/usr/lib/debug/usr/tests/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-tests","dbg"]}',
         "/usr/lib/debug/usr/tests/lib/liblogcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=liblogcmp-tests","dbg"]}',
     }, "//conditions:default": {}}),
+    visibility = ["//lib:__pkg__"],
     mtree_specs = {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",

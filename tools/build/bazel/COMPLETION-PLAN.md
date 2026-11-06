@@ -1,5 +1,31 @@
 # Native Bazel completion plan
 
+## All 25 recorded library directory-policy overwrites reconciled (2026-11-06)
+
+All 25 affected positive/negative parents now match complete independent Make
+controls: 876/694 component file/link records and 260/102 distinct directory
+package claims. Exact non-ELF data and debug separation/name/CRC match; full ELF,
+static archive members, DWARF and body execution remain separate. A shared native
+archive-composition macro preserves source-owned feature selectors and independent
+production/test claims. All 25 production archives are byte-identical across test
+modes. The negative root still selects the same 231 archive output paths.
+
+The complete batch exposed and fixed original-test linkage drift in cryptocmp,
+networkcmp, notify and tracecmp without duplicate-symbol suppression or provider
+removal. Five scripted fixture service-symbol sets match Make. libservice's omitted
+worker source fixture is restored. libfidl's GoogleTest-disabled alternative also
+matches its actual original control (120 records, 29 directory claims).
+
+The recorded explicit policy-overwrite audit is now zero, not whole-library
+completion. Only source helpers execute during construction. Next finish complete
+selected library/world payload and package reconciliation, retaining the global
+full-tests guard and Make production default. Remaining runtime/VM, ELF/archive/
+debugger, kernel/module/cross-target/pkgbase, CPU/RAM/disk-I/O/footprint, bootstrap/
+output-query/cache/sandbox/reproducibility and combined publication gates remain.
+See LIBRARY-DIRECTORY-POLICY-COMPLETION.md for captures and failed checks. BIP stays
+excluded; existing maintained frontend inputs select this work.
+
+
 ## Preserve original production/test package directory claims (2026-11-06)
 
 Complete Make controls confirm that libmp/libbsnmp record separate production and

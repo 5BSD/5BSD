@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(name = "headers", hdrs = ["bsd_cache.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
@@ -17,13 +18,15 @@ library_installation(name = "install_manifest")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
-bsd_install_archive(
-    name = "install_archive",
-    visibility = ["//visibility:public"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libcache/tests:install_test", "//lib/libcache/tests:install_extra"], "//conditions:default": []}),
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcache","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+bsd_library_installation_archives(
+    name = "installation_archives", production_name = "install_archive", test_name = "tests_install_archive",
+    production_manifests = [":install_manifest"],
+    test_manifests = select({"//tools/build/bazel/config:tests_enabled": ["//lib/libcache/tests:install_test", "//lib/libcache/tests:install_extra"], "//conditions:default": []}),
+    production_directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcache","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    test_directories = select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/tests/lib/libcache": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcache-tests"]}',
     } | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcache-tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libcache"]}, "//conditions:default": {}}),
+    visibility = ["//visibility:public"],
     mtree_specs = {
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_library_installation_archives")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 exports_files(["auditcmp.fidl"])
 bsd_fidl_ir(name = "audit_ir", schemas = ["auditcmp.fidl"], available = "bsd:1",
@@ -61,11 +62,12 @@ bsd_install_archive(
 exports_files(["auditcmp.c", "auditcmp_legacy.c"], visibility = ["//lib/libauditcmp/tests:__pkg__"])
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
-bsd_install_archive(
-    name = "install_archive",
-    visibility = ["//lib:__pkg__"],
-    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libauditcmp/tests:install_auditcmp_test", "//lib/libauditcmp/tests:install_client_lifecycle_test", "//lib/libauditcmp/tests:install_extra"], "//conditions:default": []}),
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp"]}' for d in ["/usr/share/licenses/libauditcmp", "/usr/share/licenses/libauditcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+bsd_library_installation_archives(
+    name = "installation_archives", production_name = "install_archive", test_name = "tests_install_archive",
+    production_manifests = [":install_manifest"],
+    test_manifests = select({"//tools/build/bazel/config:tests_enabled": ["//lib/libauditcmp/tests:install_auditcmp_test", "//lib/libauditcmp/tests:install_client_lifecycle_test", "//lib/libauditcmp/tests:install_extra"], "//conditions:default": []}),
+    production_directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp"]}' for d in ["/usr/share/licenses/libauditcmp", "/usr/share/licenses/libauditcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    test_directories = select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/share/licenses/libauditcmp-tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp-tests"]}',
         "/usr/share/licenses/libauditcmp-tests/fuchsia": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp-tests"]}',
         "/usr/tests/lib/libauditcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp-tests"]}',
@@ -74,6 +76,7 @@ bsd_install_archive(
         "/usr/lib/debug/usr/tests/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp-tests","dbg"]}',
         "/usr/lib/debug/usr/tests/lib/libauditcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libauditcmp-tests","dbg"]}',
     }, "//conditions:default": {}}),
+    visibility = ["//lib:__pkg__"],
     mtree_specs = {
         "//etc/mtree:BSD.tests.dist": "/usr/tests",
         "//etc/mtree:BSD.root.dist": "/",

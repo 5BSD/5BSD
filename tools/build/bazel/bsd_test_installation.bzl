@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Installation archives for declared BSD test programs and fixtures."""
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
-load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive", "bsd_install_archive_set")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_debug_directories")
 
 def bsd_tap_installation(name, directory, programs, fixtures = [], metadata = {}):
@@ -50,3 +50,24 @@ def bsd_test_install_archive(name, directory, manifests, debug = False, visibili
         python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
         runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
         visibility = visibility)
+
+
+def bsd_library_installation_archives(name, production_name, test_name,
+                                    production_manifests, test_manifests,
+                                    production_directories, test_directories,
+                                    visibility, **kwargs):
+    """Keep original library/test package claims in separate native archives.
+
+    Duplicate paths with distinct package tags belong to different archives.
+    The complete parent selects tests; the production output name and provider
+    remain available to individual package consumers. Feature-dependent test
+    manifests and directory policies stay declared by the owning BUILD file.
+    """
+    bsd_install_archive(name = production_name, manifests = production_manifests,
+        directories = production_directories, visibility = visibility, **kwargs)
+    bsd_install_archive(name = test_name, manifests = test_manifests,
+        directories = test_directories, **kwargs)
+    bsd_install_archive_set(name = name, archives = [":" + production_name] + select({
+        "//tools/build/bazel/config:tests_enabled": [":" + test_name],
+        "//conditions:default": [],
+    }), visibility = visibility)
