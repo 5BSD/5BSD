@@ -73,7 +73,7 @@ _ARCHIVES = [
     "//lib/libnotify:install_archive",
     "//lib/liblzma:production_install_archive",
     "//lib/libmemstat:install_archive",
-    "//lib/libmd:production_install_archive",
+    "//lib/libmd:installation_archives",
     "//lib/libmt:install_archive",
     "//lib/lib80211:install_archive",
     "//lib/libnghttp2:install_archive",

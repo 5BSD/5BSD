@@ -499,3 +499,10 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+cc_library(name = "test_headers", deps = _HEADERS, visibility = ["//lib/libmd/tests:__pkg__"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [":production_install_archive"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//lib/libmd/tests:installation_archives"],
+    "//conditions:default": [],
+}), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

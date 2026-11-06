@@ -1,5 +1,23 @@
 # Native Bazel completion plan
 
+## Native libmd installed tests and original parent profiles (2026-11-06)
+
+All fourteen original digest drivers now have a normal native system installation
+closure, separate from the retained portable testonly candidate artifacts.
+All 44 test files and fourteen original registrations match Make; all fourteen
+actual shell cases pass with native drivers and declared original tools/runtime.
+The source helper is a fifteenth reported pass. Complete parent profiles match
+170/126 file/link records with tests enabled/disabled, including all directory
+package claims, hardlinks, exact data and fifteen/one ELF/debug contracts. No test
+payload remains when disabled. Earlier helper source ASTs and digest order remain
+unchanged; fresh cross-target legacy qualification is not claimed.
+
+See LIBMD-SYSTEM-TEST-QUALIFICATION.md for actual evidence, retained errors and
+limits. Continue remaining selected library tests/full tests-enabled world,
+world/kernel/module/pkgbase/debug, normal service/VM, CPU/RAM/disk-I/O/footprint,
+bootstrap/cache/sandbox/reproducibility and combined publication gates. Make
+remains default; native installed ARM64/RISC-V runtime remains open; BIP excluded.
+
 ## Native crypt tests, complete parent and bounded cache check (2026-11-06)
 
 Both original programs now use native final ABI/runtime dependencies, retain

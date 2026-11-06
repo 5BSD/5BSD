@@ -12254,3 +12254,13 @@ audit delivery. DOF initialization is disabled for isolated cases, so there is n
 live provider-firing or tracing-overhead claim. Preserve those broader checks;
 no new event or instrumentation defect is inferred from this build migration.
 See CRYPT-TEST-QUALIFICATION.md for original outcomes and final artifact hashes.
+
+## Native installed libmd digest cases (2026-11-06)
+
+All fourteen unchanged original generated shell cases pass against native installed
+drivers and original references. Test/provider sources and generated test semantics
+are preserved. DOF initialization is disabled for isolated cases: digest outputs
+do not prove live provider firing, audit delivery or tracing overhead. Native
+library/test installation metadata and debug contracts match Make independently;
+complete system instrumentation/runtime and resource checks remain separate.
+See LIBMD-SYSTEM-TEST-QUALIFICATION.md for the distinct portable/native boundary.

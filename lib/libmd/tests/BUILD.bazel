@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
-load(":installation.bzl", "libmd_test_installation")
+load(":installation.bzl", "libmd_test_installation", "libmd_system_tests", "DRIVERS")
 # Maintained digest driver and reference inventory. No Make query at build time.
 
 cc_binary(
@@ -654,7 +654,8 @@ bsd_compare_test(
 
 test_suite(name = "stripped_tests", tests = [':md4_stripped_test', ':md5_stripped_test', ':rmd160_stripped_test', ':sha0_stripped_test', ':sha1_stripped_test', ':sha224_stripped_test', ':sha256_stripped_test', ':sha384_stripped_test', ':sha512_stripped_test', ':sha512t224_stripped_test', ':sha512t256_stripped_test', ':skein256_stripped_test', ':skein512_stripped_test', ':skein1024_stripped_test'])
 
-libmd_test_installation(name = "install_manifest", digests = ['md4', 'md5', 'rmd160', 'sha0', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512t224', 'sha512t256', 'skein256', 'skein512', 'skein1024'])
+libmd_test_installation(name = "install_manifest", digests = DRIVERS.keys())
+libmd_system_tests()
 
 # Host inspection does not execute foreign digest drivers.
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
