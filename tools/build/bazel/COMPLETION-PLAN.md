@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Real binary comparison finds additional gaps in 23 library parents (2026-11-06)
+
+The entire previously completed positive 23-parent directory cohort now has an
+independent original Make binary-contract comparison. Eight parents pass all
+contracts tested; 77 individual contracts pass (13 archives, 20 DSOs, 44 programs).
+Twenty-six checks fail across 15 parents: 10 static-versus-dynamic installed tests,
+2 runtime-path differences, 6 archive-order differences, 2 extra libthr dependencies,
+2 dependency-order differences and 4 raw path-derived DTrace symbol differences.
+No parent or failure is omitted. Runtime paths in original libcapsulert tests
+also expose an OBJTOP-dependent installation policy to correct, rather than copy.
+
+See LIBRARY-BINARY-COMPARISON-GAPS.md and
+bazel-library-directory-binary-review-r1-20261106 under /usr/obj/usr/src for the
+complete evidence and ordered fixes. Directory/package coverage and successful
+construction do not close these binary gaps. Preserve running full-library
+controls' source identities; apply component corrections after they terminate.
+Make/default and full-tests guards remain. No bodies execute in this comparison.
+
+
 ## Independent libfidl ELF comparison exposes archive order gap (2026-11-06)
 
 While the complete native and original Make library builds remain live, an
