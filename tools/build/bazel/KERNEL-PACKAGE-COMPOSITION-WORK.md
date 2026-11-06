@@ -68,3 +68,10 @@ NewReno and FireWire real ELF/debug checks pass. Conditional all-module traversa
 full kernel/pkgbase aggregation and linker.hints remain open. See
 KERNEL-MODULE-PRODUCTS-QUALIFICATION.md. The temporary transition implementation
 was replaced before committing because it created an extra configured product.
+
+Hierarchy checkpoint: 24 unconditional source parents now use typed module sets,
+covering 134 unique modules. Thirteen native test targets and independent original
+Make membership/leaf-install-policy plus all ELF/debug CRC checks pass. Nested
+GEOM selection shares the same actual products. Conditional/source-option parents,
+root selection and full installed kernel/pkgbase remain the next work. See
+STATIC-MODULE-PARENTS-QUALIFICATION.md for exact scope and retained migration inputs.

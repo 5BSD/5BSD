@@ -1,5 +1,13 @@
 # Bazel qualification
 
+## Static module hierarchy checkpoint (2026-11-06)
+
+Twenty-four source parents now compose 134 unique AMD64 modules through typed
+hierarchical sets. Thirteen native test targets pass; independent Make membership,
+all leaf installation-policy checks and all actual ELF/debug pairs pass. Conditional
+parents, root selection and complete kernel packages remain open. See
+STATIC-MODULE-PARENTS-QUALIFICATION.md.
+
 ## Shared module products and native-helper reinstall checkpoint (2026-11-06)
 
 The complete 445-package reinstall repeat now passes with the intended native

@@ -1,9 +1,20 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_installation")
 
-# Source-owned SUBDIR traversal; leaf owners retain all compilation metadata.
-bsd_kernel_module_installation(name = "amd64_base_installation",
-    modules = ["//sys/modules/firewire/" + module + ":module_product"
-               for module in ["firewire", "fwcam", "fwdv", "fwisound", "sbp", "sbp_targ"]],
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# Source-owned unconditional SUBDIR traversal; no runtime Make queries.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        "//sys/modules/firewire/firewire:module_product",
+        "//sys/modules/firewire/fwcam:module_product",
+        "//sys/modules/firewire/fwdv:module_product",
+        "//sys/modules/firewire/fwisound:module_product",
+        "//sys/modules/firewire/sbp:module_product",
+        "//sys/modules/firewire/sbp_targ:module_product",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])

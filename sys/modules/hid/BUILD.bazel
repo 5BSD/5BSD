@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# Source-owned unconditional SUBDIR traversal; no runtime Make queries.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        "//sys/modules/hid/hid:module_product",
+        "//sys/modules/hid/hidbus:module_product",
+        "//sys/modules/hid/hidmap:module_product",
+        "//sys/modules/hid/hidquirk:module_product",
+        "//sys/modules/hid/hidraw:module_product",
+        "//sys/modules/hid/vhid:module_product",
+        "//sys/modules/hid/appleir:module_product",
+        "//sys/modules/hid/bcm5974:module_product",
+        "//sys/modules/hid/hconf:module_product",
+        "//sys/modules/hid/hcons:module_product",
+        "//sys/modules/hid/hgame:module_product",
+        "//sys/modules/hid/hidwacom:module_product",
+        "//sys/modules/hid/hkbd:module_product",
+        "//sys/modules/hid/hms:module_product",
+        "//sys/modules/hid/hmt:module_product",
+        "//sys/modules/hid/hpen:module_product",
+        "//sys/modules/hid/hrfkill:module_product",
+        "//sys/modules/hid/hsctrl:module_product",
+        "//sys/modules/hid/ietp:module_product",
+        "//sys/modules/hid/ps4dshock:module_product",
+        "//sys/modules/hid/ps5dsense:module_product",
+        "//sys/modules/hid/u2f:module_product",
+        "//sys/modules/hid/xb360gp:module_product",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

@@ -54,3 +54,30 @@ filegroup(name = "install_manifests", srcs = [
     "//sys/modules/geom/geom_part/geom_part_gpt:install_manifest",
     "//sys/modules/geom/geom_part/geom_part_mbr:install_manifest",
 ], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# Source-owned unconditional SUBDIR traversal; no runtime Make queries.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        "//sys/modules/geom/geom_eli:module_product",
+        "//sys/modules/geom/geom_flashmap:module_product",
+        "//sys/modules/geom/geom_gate:module_product",
+        "//sys/modules/geom/geom_label:module_product",
+        "//sys/modules/geom/geom_linux_lvm:module_product",
+        "//sys/modules/geom/geom_mirror:module_product",
+        "//sys/modules/geom/geom_multipath:module_product",
+        "//sys/modules/geom/geom_nop:module_product",
+        "//sys/modules/geom/geom_raid:module_product",
+        "//sys/modules/geom/geom_uzip:module_product",
+        "//sys/modules/geom/geom_zoned:module_product",
+    ],
+    module_sets = [
+        "//sys/modules/geom/geom_part:amd64_modules",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

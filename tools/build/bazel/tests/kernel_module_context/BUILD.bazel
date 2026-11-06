@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
-load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_installation")
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_installation", "bsd_kernel_module_set")
 load(":tests.bzl", "path_test", "custom_path_test", "inline_debug_test", "collision_test", "fixture_product", "invalid_base_test", "invalid_debug_test")
 
 bsd_install_file(name = "module", src = "sample.ko", destination = "/sample.ko",
@@ -34,3 +34,17 @@ bsd_kernel_module_installation(name = "newreno_base", modules = ["//sys/modules/
 
 invalid_base_test(name = "invalid_base_test", target_under_test = ":base")
 invalid_debug_test(name = "invalid_debug_test", target_under_test = ":base")
+
+# Nested source traversal preserves the same declared product and rejects repeats.
+bsd_kernel_module_set(name = "child_set", modules = [":product"])
+bsd_kernel_module_set(name = "parent_set", module_sets = [":child_set"])
+bsd_kernel_module_installation(name = "nested", module_sets = [":parent_set"])
+path_test(name = "nested_test", target_under_test = ":nested",
+    expected = ["/boot/kernel/sample.ko", "/boot/kernel/alias.ko", "/usr/lib/debug/boot/kernel/sample.ko.debug"])
+bsd_kernel_module_set(name = "repeated_set", modules = [":product"], module_sets = [":child_set"])
+collision_test(name = "repeated_set_test", target_under_test = ":repeated_set",
+    expected = "duplicate selected kernel module")
+bsd_kernel_module_set(name = "empty_set")
+bsd_kernel_module_installation(name = "empty_installation", module_sets = [":empty_set"])
+collision_test(name = "empty_installation_test", target_under_test = ":empty_installation",
+    expected = "explicit selected kernel module products required")

@@ -79,3 +79,11 @@ original aggregate installation/package ownership and bytes independently. Full
 normal startup/services, genuine version upgrades, cross-platform, debugger source
 lookup, bootstrap, cache/sandbox/reproducibility and controlled CPU/RAM/disk I/O/
 footprint/combined-publication acceptance remain required.
+
+## Hierarchy extension
+
+The next source-owned expansion qualifies 24 unconditional parents and 134 unique
+actual modules, including nested GEOM partition selection. Original Make parent
+membership and all leaf installation attributes plus actual ELF/debug CRC pairs
+pass. See STATIC-MODULE-PARENTS-QUALIFICATION.md. This extends the first six-member
+FireWire checkpoint; it does not complete root/conditional module selection.

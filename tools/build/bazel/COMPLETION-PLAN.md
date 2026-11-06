@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Current module hierarchy checkpoint (2026-11-06)
+
+Twenty-four unconditional source parents now select and compose 134 unique AMD64
+modules using typed hierarchical sets. Thirteen test targets pass, including real
+nested selection, duplicate rejection and empty module-installation rejection.
+Original Make parent membership, every leaf's installation policy and all 134
+ELF/debug CRC pairs pass independent review. This expands source-owned composition;
+it does not mean only 134 modules have compiler support, or that the full kernel
+is packaged. See STATIC-MODULE-PARENTS-QUALIFICATION.md.
+
+NEXT: explicit conditional/source-option parents and root module traversal; coherent
+kernel/GDB/module/directory/alias/linker.hints installation and pkgbase; then normal
+startup/services and genuine upgrades. Preserve all architecture/bootstrap/cache/
+sandbox/reproducibility/debug/resource/hardware/combined-publication gates. Existing
+format-5 frontend APIs suffice; backend/source/test/manual changes are together.
+Make remains production/default; BIP remains excluded.
+
 ## Current checkpoint: complete same-version pkg reinstall passes (2026-11-06)
 
 All 445 selected default AMD64 pkgbase packages now pass actual installation and

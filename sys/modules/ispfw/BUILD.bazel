@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+
+# Source-owned unconditional SUBDIR traversal; no runtime Make queries.
+bsd_kernel_module_set(name = "amd64_modules",
+    modules = [
+        "//sys/modules/ispfw/ispfw:module_product",
+        "//sys/modules/ispfw/isp_2400:module_product",
+        "//sys/modules/ispfw/isp_2500:module_product",
+        "//sys/modules/ispfw/isp_2600:module_product",
+        "//sys/modules/ispfw/isp_2700:module_product",
+        "//sys/modules/ispfw/isp_2800:module_product",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
