@@ -54,6 +54,8 @@
 #include <sys/sx.h>
 #include <sys/taskqueue.h>
 #include <sys/vnode.h>
+
+#include <security/mac/mac_framework.h>
 #include <sys/conf.h>
 #include <sys/event.h>
 #include <sys/mount.h>
@@ -823,35 +825,6 @@ restart:
 }
 
 /*
- * Move all data to a permanent storage device.  This code
- * simulates the fsync and fdatasync syscalls.
- */
-static int
-aio_fsync_vnode(struct thread *td, struct vnode *vp, int op)
-{
-	struct mount *mp;
-	int error;
-
-	for (;;) {
-		error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
-		if (error != 0)
-			break;
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		vnode_pager_clean_async(vp);
-		if (op == LIO_DSYNC)
-			error = VOP_FDATASYNC(vp, td);
-		else
-			error = VOP_FSYNC(vp, MNT_WAIT, td);
-
-		VOP_UNLOCK(vp);
-		vn_finished_write(mp);
-		if (error != ERELOOKUP)
-			break;
-	}
-	return (error);
-}
-
-/*
  * The AIO processing activity for LIO_READ/LIO_WRITE.  This is the code that
  * does the I/O request for the non-bio version of the operations.  The normal
  * vn operations are used, and this code should work in all instances for every
@@ -901,16 +874,27 @@ aio_process_rw(struct kaiocb *job)
 		fof_flags = ((job->ioflags & KAIOCB_IO_FOFFSET) != 0 ?
 		    0 : FOF_OFFSET) | job->compat_foflags;
 		if (opcode == LIO_READ || opcode == LIO_READV) {
-			if (job->uiop->uio_resid == 0)
-				error = 0;
-			else
-				error = fo_read(fp, job->uiop, fp->f_cred,
-				    fof_flags, td);
+			error = 0;
+			if (job->uiop->uio_resid != 0) {
+#ifdef MAC
+				error = mac_file_check_read(td->td_ucred,
+				    fp->f_cred, fp);
+#endif
+				if (error == 0)
+					error = fo_read(fp, job->uiop,
+					    fp->f_cred, fof_flags, td);
+			}
 		} else {
 			if (fp->f_type == DTYPE_VNODE)
 				bwillwrite();
-			error = fo_write(fp, job->uiop, fp->f_cred,
-			    fof_flags | FOF_NOSIGPIPE, td);
+			error = 0;
+#ifdef MAC
+			error = mac_file_check_write(td->td_ucred, fp->f_cred,
+			    fp);
+#endif
+			if (error == 0)
+				error = fo_write(fp, job->uiop, fp->f_cred,
+				    fof_flags | FOF_NOSIGPIPE, td);
 		}
 	}
 	msgrcv_end = td->td_ru.ru_msgrcv;
@@ -954,11 +938,18 @@ aio_process_sync(struct kaiocb *job)
 	KASSERT(job->uaiocb.aio_lio_opcode & LIO_SYNC,
 	    ("%s: opcode %d", __func__, job->uaiocb.aio_lio_opcode));
 
+	/*
+	 * The descriptor's own fo_fsync does the work; aio_aqueue() admitted
+	 * only descriptors that can answer it.
+	 */
 	td->td_ucred = job->cred;
-	if (fp->f_vnode != NULL) {
-		error = aio_fsync_vnode(td, fp->f_vnode,
-		    job->uaiocb.aio_lio_opcode);
-	}
+	error = 0;
+#ifdef MAC
+	error = mac_file_check_fsync(td->td_ucred, fp);
+#endif
+	if (error == 0)
+		error = fo_fsync(fp, job->uaiocb.aio_lio_opcode == LIO_DSYNC ?
+		    FO_FSYNC_DATA : FO_FSYNC_FULL, td);
 	td->td_ucred = td_savedcred;
 	if (error)
 		aio_complete(job, -1, error);
@@ -1224,7 +1215,8 @@ aio_daemon(void *_id)
 	p = td->td_proc;
 	myvm = vmspace_acquire_ref(p);
 
-	KASSERT(p->p_textvp == NULL, ("kthread has a textvp"));
+	KASSERT((p->p_flag & P_KPROC) != 0,
+	    ("aio daemon is not a kernel process"));
 
 	/*
 	 * Allocate and ready the aio control info.  There is one aiop structure

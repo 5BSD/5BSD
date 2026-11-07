@@ -102,6 +102,7 @@ _RUNTIME_SUITES = {
             "devfs",
             "empty_dir",
             "empty_fs",
+            "file_flags",
             "file_extend",
             "file_sizes",
             "hard_links",

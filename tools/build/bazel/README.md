@@ -1,5 +1,166 @@
 # Bazel qualification
 
+## Real BE upgrade exposes capability-service restart failure (2026-11-07)
+
+`bazel-system-upgrade-vm-r1-20261107` completes the signed network upgrade of all
+447 packages in an inactive ZFS BE, boots its new kernel, passes positive/negative
+SSH and su, rolls back with shared-file persistence, and deletes the unused BE
+(reclaiming 2,805,727,232 bytes). This is useful mechanism evidence, **not an
+accepted full-system upgrade qualification**: the new boot logs existing runtime
+containers and failed capability-service launches. The old automatic gate omitted
+those diagnostics and incorrectly reports overall `passed`.
+
+`bazel-system-upgrade-acceptance-review-r1-20261107/review.json` preserves both
+original result/serial hashes and rejects that upgrade log under the strengthened
+service-failure gate; the earlier normal-boot R8 log still passes that gate.
+Historical result files are unchanged. Runtime cleanup now reports failed
+unlink/rmdir/fdopendir operations instead of hiding them. The cleanup cause remains
+unproven; root starts read-only and cleanup precedes rc, which is a hypothesis to
+verify, not a license to move cleanup after live services or adopt old directories.
+
+NEXT: capture the cleanup errno on the real upgraded boot, fix its lifecycle at
+the production boundary, and check required services from installed manifests,
+including useful operations rather than process existence alone. Diagnostic
+rejection alone does not prove all services healthy. Cross-platform completion,
+fresh Make parity, native bootstrap/reproducibility, sandbox/cache/performance,
+hardware and combined publication remain open. Make stays production/default;
+BIP remains excluded. No host upgrade or installation was performed.
+
+
+## Current AMD64 baseline audit and real firstboot proofs pass (2026-11-07)
+
+Complete R10 image / fresh 2 GB VM R8 passes 14 checks, including normal
+console/PAM/SSH/su, exact declared firstboot account/group transitions, actual
+live-versus-rebuilt password DB records, and all 33,982 baseline file / 1,369
+directory content/ownership/mode/security-flag/symlink checks. All buffers sync
+and QEMU powers off normally; backing/source/input hashes remain unchanged.
+Raw diagnostics remain visible: only 23 archive bookkeeping changes, five proven
+account payload changes and one consumed marker are reconciled. Timestamps,
+hardlink inode identity and runtime-added objects remain outside this audit.
+
+The actual next-version 447-package set and newly stamped kernel also build and
+pass the selected solver/SSP tests; all archive identities/versions and the changed
+kernel bytes are independently reviewed. NEXT: actual boot-environment upgrade,
+rollback and old-BE removal. Other configured/cross completeness, fresh Make
+compilation parity, native bootstrap/source snapshot/reproducibility, sandbox/cache/
+controlled CPU/RAM/disk I/O, hardware and combined publication gates remain open.
+See INSTALLED-TREE-AUDIT-QUALIFICATION.md. Make stays default; BIP is excluded.
+
+## Complete installed audit exposes image flag loss (2026-11-07)
+
+Fresh normal VM R6 repeats all 12 startup/authentication checks, then its complete
+35,351-object audit fails. Native makefs ZFS ignored declared flags, dropping all
+13 schg declarations and adding uarch. The constructor now maps supported input
+flags and rejects unsupported bits. Native build and rootless read-only zdb
+inspection pass; the new imported-image ATF case and corrected full-image runtime
+still need qualification. Firstboot account/marker differences remain explicit,
+without blanket configuration exclusions. See INSTALLED-TREE-AUDIT-QUALIFICATION.md.
+Make remains default; full migration and installed audit are not complete.
+
+## Complete AMD64 package image passes normal startup and authentication (2026-11-06)
+
+Image R9 passes its full 447-package construction and five native test targets.
+Fresh normal VM R5 passes 12 checks: console/PAM, actual terminal size, exact
+Capsule PID 1, preserved signal denial, expected ZFS root, installed package count,
+PAM-enabled/running SSH, and positive/negative SSH and su. It then powers off
+normally with unchanged backing bytes and runner bindings. Two GB guest RAM,
+four vCPUs; sampled QEMU RSS is about 998 MiB. See
+SYSTEM-IMAGE-BOOT-QUALIFICATION.md for hashes, actual logs and retained failures.
+
+A real procstat compatibility bug was corrected: denied signal permission does
+not mean a visible process vanished. Only ESRCH now suppresses its binary row.
+The generic cross-UID ATF case is added/built, with final wrapper bytes verified;
+it is not yet executed. No MAC permission or PID 1 protection was weakened.
+
+NEXT: exhaustive installed-file metadata/content and legitimate mutable changes;
+actual new-version boot-environment upgrade, rollback and old-environment removal.
+All base/service/application and optional/custom/cross completeness, fresh Make
+compilation parity, source snapshot/native bootstrap/reproducibility, cache/sandbox,
+comparative CPU/RAM/disk I/O, hardware and verified combined publication remain
+open. Make stays production/default; BIP remains excluded.
+
+## Corrected kernel reaches normal startup; fixture fixes pending (2026-11-06)
+
+Complete image R7 passes all four selected native tests and all 447 packages.
+The 2 GB guest passes the former panic, mounts ZFS, runs Capsule/Switchboard and
+normal rc, obtains DHCP, starts SSH and authenticates serial root login via PAM.
+Formal runtime qualification still fails: rc.local leaked strict shell options,
+and the harness sent its first command before resizewin/profile input completed.
+The fixture now contains its options, and the harness waits for the prompt and
+answers bounded terminal-size probes. Streaming protocol unit checks and the fresh R8 image pass all five native test
+targets; the R3 normal VM is running. SSH/su/upgrades and all other
+global gates remain open. See SYSTEM-IMAGE-BOOT-QUALIFICATION.md. Make stays default.
+
+## Complete package image; startup defect found and corrected (2026-11-06)
+
+The complete 447-package BIOS/ZFS disk now builds from the actual native package,
+inventory, construction and source directory contracts. No init/rc substitution,
+memdisk root, package-order workaround or missing-path exclusion is used.
+The first normal 2 GB/four-vCPU VM exposed an early guard-initialization panic:
+a source-specific SSP exception removed the local flag but left the toolchain
+feature enabled. The corrected feature opt-out passes a regression inspecting
+actual guard and ordinary protected kernel objects. The corrected full image later passes R7/R8; runtime retries are recorded above.
+Normal startup/PAM/SSH/su acceptance remains pending. See
+SYSTEM-IMAGE-BOOT-QUALIFICATION.md for retained failure, construction evidence,
+resource scope and the remaining global gates. Make stays production/default.
+
+## Complete current AMD64 pkgbase composition passes (2026-11-06)
+
+`//:amd64_system_packages` creates all 447 selected packages: the existing world
+families plus kernel-generic/kernel-generic-dbg, with explicit oes/mac-abac module
+records merged into their world packages. The real pkg solver reports no conflicts.
+The final system qualification passes 25 selected tests (two executed, 23 cached).
+Independent exhaustive inspection passes all 33,968 file claims, actual payload
+bytes, aliases, directory/mode/flag/config policy and Make-compatible pkg encoding.
+A declared-input digest inventory binds all 19,393 execution paths, including
+external repository aliases, to the captured bytes without mutable path lookup.
+Separate native tests cover the inventory/archive reader and strict full-name
+artifact resolution. See SYSTEM-PKGBASE-COMPOSITION-QUALIFICATION.md.
+
+NEXT: normal boot/services and actual installation/version upgrades with the full
+system set; qualify alternative kernel layouts/debug packaging against corrected
+source Make classification. Cross/custom/root-selection completeness, bootstrap,
+cache/sandbox/reproducibility/resources, hardware and combined publication gates
+remain open. The explicit format-5 frontend carries these candidates; Make remains
+production/default, and BIP is excluded.
+
+## Complete current AMD64 kernel installation passes (2026-11-06)
+
+The native complete archive composes the kernel, 722 selected modules, three
+aliases, separate debug/GDB helpers and generated linker.hints. Default,
+no-separate-debug (CTF retained) and relocated kernel/debug profiles each pass
+21 selected test targets, with cache reuse permitted. Independent full archive
+inspection checks original Make membership/installation policy and GDB inventory,
+all declared regular payload bytes, ownership/modes, ELF/CTF and debug CRCs.
+All 723 runtime ELF allocated-section/CTF contracts match across profiles;
+relocation preserves every regular payload byte. Custom ancestor directories
+require explicit kernel_directory_policy mtree input; absent policy fails closed.
+See KERNEL-INSTALLATION-COMPOSITION-QUALIFICATION.md for evidence and limits.
+
+NEXT: final kernel-flavored pkgbase families and non-kernel module/world package
+merge, then normal boot/services and real upgrades. Alternative root profiles,
+custom/cross completeness, bootstrap/cache/sandbox/reproducibility/debug/resource/
+hardware/publication gates remain open. Make remains production/default; BIP excluded.
+
+## Normal AMD64 root module graph passes (2026-11-06)
+
+Source-owned root selection now builds the complete current 722-module profile.
+Default, nineteen-features-disabled (468) and ACPI-off/Veriexec-on (726) profiles each
+pass 20 test targets. Complete original source Make traversal, leaf/base-install
+policy and exact ordered OBJS+BLOB_OBJS match; all 1,916 selected ELF/debug pairs
+pass. Actual VMM and amdsmu header dependencies are fixed. Shared checked kernel
+options and native device directives preserve tied source selection. A focused
+Bazel follow-up passes the final 13-case Make-audit regression and option tests.
+Iwlwifi ACPI objects, CTF paths and flags now follow the actual device option;
+configured compile-action checks cover every linked object.
+See ROOT-MODULE-GRAPH-QUALIFICATION.md for hash-bound evidence and retained failures.
+
+NEXT: coherent current-profile kernel/GDB/modules/directories/aliases/linker.hints/
+pkgbase. FDT/MMCCAM/TESTS root branches still require missing parent/producers;
+MODULES_OVERRIDE/EXTRA/WITHOUT_MODULES/ALL_MODULES are not implemented. These and
+custom/cross, normal boot/services/upgrades, bootstrap/cache/sandbox/reproducibility/
+debug/resources/hardware/publication remain open. Make stays default; BIP excluded.
+
 ## Netgraph/TCP module parent selection passes (2026-11-06)
 
 Four AMD64 profiles compose 47/38/46/43 unique products and each pass 19 test targets.

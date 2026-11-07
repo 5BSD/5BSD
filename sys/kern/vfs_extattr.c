@@ -261,13 +261,51 @@ sys_extattr_set_fd(struct thread *td, struct extattr_set_fd_args *uap)
 	    attrname, uap->data, uap->nbytes));
 }
 
+static int extattr_get_vp(struct vnode *vp, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, struct thread *td);
+static int extattr_delete_vp(struct vnode *vp, int attrnamespace,
+    const char *attrname, struct thread *td);
+static int extattr_list_vp(struct vnode *vp, int attrnamespace,
+    struct uio *auiop, struct thread *td);
+
+/*
+ * The extended attribute operations of a vnode file.  Each extattr_*_vp()
+ * helper locks the vnode and runs its own MAC check.
+ */
+int
+vn_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
+    void *data, size_t nbytes, struct uio *auio, struct thread *td)
+{
+	struct vnode *vp;
+
+	vp = fp->f_vnode;
+	switch (op) {
+	case FO_EXTATTR_SET:
+		return (extattr_set_vp(vp, attrnamespace, attrname, data,
+		    nbytes, td));
+	case FO_EXTATTR_GET:
+		return (extattr_get_vp(vp, attrnamespace, attrname, data,
+		    nbytes, td));
+	case FO_EXTATTR_DELETE:
+		return (extattr_delete_vp(vp, attrnamespace, attrname, td));
+	case FO_EXTATTR_LIST:
+		return (extattr_list_vp(vp, attrnamespace, auio, td));
+	default:
+		return (EINVAL);
+	}
+}
+
+/*
+ * The kern_extattr_*_fp() helpers are the descriptor forms the Linux xattr
+ * layer calls with a held file; they dispatch the file's own fo_extattr.
+ */
 int
 kern_extattr_set_fp(struct thread *td, struct file *fp, int attrnamespace,
     const char *attrname, void *data, size_t nbytes)
 {
 
-	return (extattr_set_vp(fp->f_vnode, attrnamespace, attrname, data,
-	    nbytes, td));
+	return (fo_extattr(fp, FO_EXTATTR_SET, attrnamespace, attrname, data,
+	    nbytes, NULL, td));
 }
 
 int
@@ -282,8 +320,8 @@ kern_extattr_set_fd(struct thread *td, int fd, int attrnamespace,
 	AUDIT_ARG_VALUE(attrnamespace);
 	AUDIT_ARG_TEXT(attrname);
 
-	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_SET), NULL, &fp);
+	error = fget(td, fd, cap_rights_init_one(&rights, CAP_EXTATTR_SET),
+	    &fp);
 	if (error)
 		return (error);
 
@@ -465,8 +503,8 @@ kern_extattr_get_fp(struct thread *td, struct file *fp, int attrnamespace,
     const char *attrname, void *data, size_t nbytes)
 {
 
-	return (extattr_get_vp(fp->f_vnode, attrnamespace, attrname, data,
-	    nbytes, td));
+	return (fo_extattr(fp, FO_EXTATTR_GET, attrnamespace, attrname, data,
+	    nbytes, NULL, td));
 }
 
 int
@@ -481,8 +519,8 @@ kern_extattr_get_fd(struct thread *td, int fd, int attrnamespace,
 	AUDIT_ARG_VALUE(attrnamespace);
 	AUDIT_ARG_TEXT(attrname);
 
-	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_GET), NULL, &fp);
+	error = fget(td, fd, cap_rights_init_one(&rights, CAP_EXTATTR_GET),
+	    &fp);
 	if (error)
 		return (error);
 
@@ -634,7 +672,8 @@ kern_extattr_delete_fp(struct thread *td, struct file *fp, int attrnamespace,
     const char *attrname)
 {
 
-	return (extattr_delete_vp(fp->f_vnode, attrnamespace, attrname, td));
+	return (fo_extattr(fp, FO_EXTATTR_DELETE, attrnamespace, attrname,
+	    NULL, 0, NULL, td));
 }
 
 int
@@ -649,8 +688,8 @@ kern_extattr_delete_fd(struct thread *td, int fd, int attrnamespace,
 	AUDIT_ARG_VALUE(attrnamespace);
 	AUDIT_ARG_TEXT(attrname);
 
-	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_DELETE), NULL, &fp);
+	error = fget(td, fd, cap_rights_init_one(&rights, CAP_EXTATTR_DELETE),
+	    &fp);
 	if (error)
 		return (error);
 
@@ -815,7 +854,8 @@ kern_extattr_list_fp(struct thread *td, struct file *fp, int attrnamespace,
     struct uio *auiop)
 {
 
-	return (extattr_list_vp(fp->f_vnode, attrnamespace, auiop, td));
+	return (fo_extattr(fp, FO_EXTATTR_LIST, attrnamespace, NULL, NULL, 0,
+	    auiop, td));
 }
 
 int
@@ -828,8 +868,8 @@ kern_extattr_list_fd(struct thread *td, int fd, int attrnamespace,
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_VALUE(attrnamespace);
-	error = getvnode_path(td, fd,
-	    cap_rights_init_one(&rights, CAP_EXTATTR_LIST), NULL, &fp);
+	error = fget(td, fd, cap_rights_init_one(&rights, CAP_EXTATTR_LIST),
+	    &fp);
 	if (error)
 		return (error);
 

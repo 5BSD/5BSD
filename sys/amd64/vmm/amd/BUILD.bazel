@@ -41,7 +41,7 @@ bsd_source_headers(name = "vmm_module_context_9", hdrs = ["nested_svm_npt.h", "n
 bsd_source_headers(name = "vmm_module_context_10", hdrs = ["nested_svm_npt.h", "nested_svm_npt_runtime.h"], includes = ["."],
     visibility = ["//sys/amd64/vmm/amd:__pkg__"])
 
-bsd_source_headers(name = "vmm_module_context_11", hdrs = ["nested_svm_npt.h", "nested_svm_npt_root.h", "nested_svm_npt_runtime.h", "npt.h"], includes = ["."],
+bsd_source_headers(name = "vmm_module_context_11", hdrs = ["nested_svm_npt.h", "nested_svm_npt_root.h", "nested_svm_npt_runtime.h", "npt.h", "vmcb.h"], includes = ["."],
     visibility = ["//sys/amd64/vmm/amd:__pkg__"])
 
 bsd_source_headers(name = "vmm_module_context_12", hdrs = ["nested_svm_operand.h"], includes = ["."],

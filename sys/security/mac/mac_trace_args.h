@@ -904,6 +904,41 @@
 	    (policy)->mpc_name, 3, \
 	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct file *)(a1), (uint64_t)(int)(a2) }))
 
+#define MAC_HOOK_ARGS_file_check_fcntl(policy, a0, a1, a2, a3, a4) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_check_fcntl", \
+	    (policy)->mpc_name, 5, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct file *)(a1), (uint64_t)(int)(a2), (uint64_t)(int)(a3), (uint64_t)(intptr_t)(a4) }))
+
+#define MAC_HOOK_ARGS_file_check_lock(policy, a0, a1, a2, a3, a4) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_check_lock", \
+	    (policy)->mpc_name, 5, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct file *)(a1), (uint64_t)(int)(a2), (uint64_t)(int)(a3), (uint64_t)(uintptr_t)(struct flock *)(a4) }))
+
+#define MAC_HOOK_ARGS_file_check_read(policy, a0, a1, a2) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_check_read", \
+	    (policy)->mpc_name, 3, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct ucred *)(a1), (uint64_t)(uintptr_t)(struct file *)(a2) }))
+
+#define MAC_HOOK_ARGS_file_check_write(policy, a0, a1, a2) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_check_write", \
+	    (policy)->mpc_name, 3, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct ucred *)(a1), (uint64_t)(uintptr_t)(struct file *)(a2) }))
+
+#define MAC_HOOK_ARGS_file_check_stat(policy, a0, a1, a2) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_check_stat", \
+	    (policy)->mpc_name, 3, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct ucred *)(a1), (uint64_t)(uintptr_t)(struct file *)(a2) }))
+
+#define MAC_HOOK_ARGS_file_check_setattr(policy, a0, a1, a2, a3) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_check_setattr", \
+	    (policy)->mpc_name, 4, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct file *)(a1), (uint64_t)(int)(a2), (uint64_t)(uintptr_t)(struct vattr *)(a3) }))
+
+#define MAC_HOOK_ARGS_file_check_fsync(policy, a0, a1) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_check_fsync", \
+	    (policy)->mpc_name, 2, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct file *)(a1) }))
+
 #define MAC_HOOK_ARGS_socket_check_accept(policy, a0, a1, a2) \
 	SDT_PROBE4(mac_framework, , , hook__args, "socket_check_accept", \
 	    (policy)->mpc_name, 3, \

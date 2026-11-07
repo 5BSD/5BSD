@@ -464,10 +464,12 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 			error = EINVAL;
 			goto done;
 		}
-		/* Private vnode writes are COW and need no writable file right.
-		 * Add that allowance before intersecting the explicit PROT_MAX
-		 * ceiling; a file operation must never widen the combined limit. */
-		if (fp->f_type == DTYPE_VNODE && (flags & MAP_SHARED) == 0)
+		/* Private writes to a DFLAG_PRIVWRITE file are COW and need no
+		 * writable file right.  Add that allowance before intersecting
+		 * the explicit PROT_MAX ceiling; a file operation must never
+		 * widen the combined limit. */
+		if ((fp->f_ops->fo_flags & DFLAG_PRIVWRITE) != 0 &&
+		    (flags & MAP_SHARED) == 0)
 			cap_maxprot |= VM_PROT_WRITE;
 		if (check_fp_fn != NULL) {
 			error = check_fp_fn(fp, prot, max_prot & cap_maxprot,
@@ -1685,6 +1687,18 @@ vm_mmap_file(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 		error = kern_mmap_racct_check(td, map, size);
 		if (error != 0)
 			return (error);
+	}
+
+	/*
+	 * The protection must fit the maximum the caller derived from the
+	 * descriptor's rights and open mode: vm_map_insert() asserts it, and
+	 * the vnode path refuses it the same way.  A private PROT_WRITE
+	 * mapping of a shm descriptor without CAP_MMAP_W reached the
+	 * assertion before this.
+	 */
+	if ((prot & ~maxprot) != 0) {
+		return (EXTERROR(EACCES, "prot %#x exceeds maxprot %#x", prot,
+		    maxprot));
 	}
 
 	/*

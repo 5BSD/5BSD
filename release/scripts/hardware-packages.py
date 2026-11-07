@@ -28,6 +28,10 @@ package_closure = importlib.util.module_from_spec(_closure_spec)
 _closure_spec.loader.exec_module(package_closure)
 
 
+# Reserved default pkg repository catalogues, never installable package archives.
+REPOSITORY_CATALOGUES = frozenset(('data.pkg', 'packagesite.pkg', 'files.pkg', 'meta.pkg'))
+
+
 def run(*args, **kwargs):
     try:
         return subprocess.run([str(a) for a in args], check=True, text=True, **kwargs)
@@ -97,7 +101,7 @@ def create(pkg, output, meta, payload=None):
 def inventory(directory):
     result = {}
     for p in sorted(directory.glob('*.pkg')):
-        if p.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg'):
+        if p.name in REPOSITORY_CATALOGUES:
             continue  # pkg repository catalogues are not package archives.
         m = manifest(p)
         if m['name'] in result:
@@ -427,16 +431,16 @@ def verify_catalogue_public_key(repository, public_key, pkg, abi, osversion=None
             '-o', 'ABI=' + abi, '-o', 'OSVERSION=' + str(osversion),
             '-o', 'PKG_DBDIR=' + str(work / 'db'),
             '-o', 'PKG_CACHEDIR=' + str(work / 'cache'),
-            '-o', 'PKG_ENABLE_PLUGINS=no', '-o', 'REPO_AUTOUPDATE=no',
-            '-o', 'INSTALL_AS_USER=yes']
+            '-o', 'PKG_ENABLE_PLUGINS=no', '-o', 'REPO_AUTOUPDATE=no']
+        pkg_env = dict(os.environ, INSTALL_AS_USER='yes')
         result = run(*command, 'update', '-f', '-r', 'bsd_build_verify',
-                     capture_output=True)
+                     capture_output=True, env=pkg_env)
         # Some pkg versions return success after removing an invalidly signed
         # catalogue. Never interpret that exit status as verification evidence.
         if result.stderr:
             raise ValueError('pkg catalogue verification diagnostic: ' + result.stderr.strip())
         result = run(*command, 'rquery', '-U', '-r', 'bsd_build_verify',
-                     '%n-%v', capture_output=True)
+                     '%n-%v', capture_output=True, env=pkg_env)
         if result.stderr:
             raise ValueError('pkg catalogue query diagnostic: ' + result.stderr.strip())
         expected = sorted(meta['name'] + '-' + meta['version']
@@ -448,7 +452,7 @@ def verify_catalogue_public_key(repository, public_key, pkg, abi, osversion=None
             # archive hash, not merely its unauthenticated manifest name.
             # The private cache is removed on both success and failure.
             result = run(*command, 'fetch', '-U', '-y', '-a', '-r',
-                         'bsd_build_verify', capture_output=True)
+                         'bsd_build_verify', capture_output=True, env=pkg_env)
             if result.stderr:
                 raise ValueError('pkg archive verification diagnostic: ' + result.stderr.strip())
 
@@ -513,7 +517,7 @@ def add_bootstrap_package(source, expected, candidate, info):
     """
     source = Path(source)
     if (not re.fullmatch(r'[0-9a-fA-F]{64}', expected or '') or
-            source.suffix != '.pkg' or source.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg') or
+            source.suffix != '.pkg' or source.name in REPOSITORY_CATALOGUES or
             source.is_symlink() or not source.is_file()):
         raise ValueError('bootstrap pkg requires a regular .pkg archive and SHA256')
     if 'pkg' in inventory(candidate):
@@ -575,7 +579,7 @@ def add_application_packages(selection_path, candidate, info):
         sources.add(value)
         source = Path(value)
         if (source.is_symlink() or not source.is_file() or source.suffix != '.pkg' or
-                source.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg')):
+                source.name in REPOSITORY_CATALOGUES):
             raise ValueError('application requires a regular .pkg archive')
         target = candidate / source.name
         if target.exists() or target.is_symlink():
@@ -747,11 +751,12 @@ def install_live_firmware(media, repository, pkg, info, kldxref, public_key=None
             if info.get('osversion'):
                 target_options += ['-o', 'OSVERSION=' + str(info['osversion'])]
             run(pkg, '-r', media, *target_options,
-                '-o', 'INSTALL_AS_USER=yes', '-o', 'METALOG=METALOG',
+                '-o', 'METALOG=METALOG',
                 '-o', 'PKG_DBDIR=' + str(media / 'var/db/pkg'),
                 '-o', 'PKG_CACHEDIR=' + str(media / 'var/cache/pkg'),
                 '-o', 'REPOS_DIR=' + config,
-                'install', '-y', '-r', '5BSD-base', *live)
+                'install', '-y', '-r', '5BSD-base', *live,
+                env=dict(os.environ, INSTALL_AS_USER='yes'))
 
     # INSTALL_AS_USER suppresses pkg scripts, including kldxref. Build the
     # module index explicitly so the live kernel can locate firmware names.

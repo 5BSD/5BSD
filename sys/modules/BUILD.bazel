@@ -1,0 +1,486 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Normal AMD64 traversal from this directory's source-owned module policy.
+# Root conditions select typed parent sets or actual leaf products; no Make action
+# or captured global inventory participates in the native graph.
+# FDT/MMCCAM/TESTS-enabled roots and alternate module-selection input modes
+# remain incomplete; see ROOT-MODULE-GRAPH-QUALIFICATION.md in tools/build/bazel.
+load("//tools/build/bazel:bsd_kernel_module_installation.bzl", "bsd_kernel_module_set", "bsd_kernel_module_installation")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+
+selects.config_setting_group(name = "policy_autofs", match_all = ["//tools/build/bazel/config:autofs_enabled"])
+selects.config_setting_group(name = "policy_bhyve_kernel_smp", match_all = ["//tools/build/bazel/config:bhyve_enabled", "//tools/build/bazel/config:kernel_smp_enabled"])
+selects.config_setting_group(name = "policy_crypt", match_all = ["//tools/build/bazel/config:crypt_enabled"])
+selects.config_setting_group(name = "policy_crypt_module_ip", match_all = ["//tools/build/bazel/config:crypt_enabled", "//tools/build/bazel/config:module_ip_enabled"])
+selects.config_setting_group(name = "policy_cuse", match_all = ["//tools/build/bazel/config:cuse_enabled"])
+selects.config_setting_group(name = "policy_dtrace", match_all = ["//tools/build/bazel/config:dtrace_enabled"])
+selects.config_setting_group(name = "policy_dtrace_kernel_kdtrace_hooks", match_all = ["//tools/build/bazel/config:dtrace_enabled", "//tools/build/bazel/config:kernel_kdtrace_hooks_enabled"])
+selects.config_setting_group(name = "policy_dummynet", match_all = ["//tools/build/bazel/config:dummynet_enabled"])
+selects.config_setting_group(name = "policy_efi", match_all = ["//tools/build/bazel/config:efi_enabled"])
+selects.config_setting_group(name = "policy_iscsi", match_all = ["//tools/build/bazel/config:iscsi_enabled"])
+selects.config_setting_group(name = "policy_kernel_ddb_kernel_mac", match_all = ["//tools/build/bazel/config:kernel_ddb_enabled", "//tools/build/bazel/config:kernel_mac_enabled"])
+selects.config_setting_group(name = "policy_kernel_dev_acpi", match_all = ["//tools/build/bazel/config:kernel_dev_acpi_enabled"])
+selects.config_setting_group(name = "policy_kernel_fdt", match_all = ["//tools/build/bazel/config:kernel_fdt_enabled"])
+selects.config_setting_group(name = "policy_kernel_fib_algo_module_inet6_support", match_all = ["//tools/build/bazel/config:kernel_fib_algo_enabled", "//tools/build/bazel/config:module_inet6_support_enabled"])
+selects.config_setting_group(name = "policy_kernel_fib_algo_module_inet_support", match_all = ["//tools/build/bazel/config:kernel_fib_algo_enabled", "//tools/build/bazel/config:module_inet_support_enabled"])
+selects.config_setting_group(name = "policy_kernel_ipsec_disabled_kernel_ipsec_support_module_ip", match_all = ["//tools/build/bazel/config:kernel_ipsec_disabled", "//tools/build/bazel/config:kernel_ipsec_support_enabled", "//tools/build/bazel/config:module_ip_enabled"])
+selects.config_setting_group(name = "policy_kernel_kcsan_disabled_module_sourceless_host", match_all = ["//tools/build/bazel/config:kernel_kcsan_disabled", "//tools/build/bazel/config:module_sourceless_host_enabled"])
+selects.config_setting_group(name = "policy_kernel_mac", match_all = ["//tools/build/bazel/config:kernel_mac_enabled"])
+selects.config_setting_group(name = "policy_kernel_mac_module_veriexec", match_all = ["//tools/build/bazel/config:kernel_mac_enabled", "//tools/build/bazel/config:module_veriexec_enabled"])
+selects.config_setting_group(name = "policy_kernel_mac_tests", match_all = ["//tools/build/bazel/config:kernel_mac_enabled", "//tools/build/bazel/config:tests_enabled"])
+selects.config_setting_group(name = "policy_kernel_mmccam", match_all = ["//tools/build/bazel/config:kernel_mmccam_enabled"])
+selects.config_setting_group(name = "policy_kernel_vimage", match_all = ["//tools/build/bazel/config:kernel_vimage_enabled"])
+selects.config_setting_group(name = "policy_module_both_ip", match_all = ["//tools/build/bazel/config:module_both_ip_enabled"])
+selects.config_setting_group(name = "policy_module_both_ip_ofed", match_all = ["//tools/build/bazel/config:module_both_ip_enabled", "//tools/build/bazel/config:ofed_enabled"])
+selects.config_setting_group(name = "policy_module_inet_support", match_all = ["//tools/build/bazel/config:module_inet_support_enabled"])
+selects.config_setting_group(name = "policy_module_ip", match_all = ["//tools/build/bazel/config:module_ip_enabled"])
+selects.config_setting_group(name = "policy_module_ip_module_sctp", match_all = ["//tools/build/bazel/config:module_ip_enabled", "//tools/build/bazel/config:module_sctp_enabled"])
+selects.config_setting_group(name = "policy_module_ip_pf", match_all = ["//tools/build/bazel/config:module_ip_enabled", "//tools/build/bazel/config:pf_enabled"])
+selects.config_setting_group(name = "policy_module_zfs", match_all = ["//tools/build/bazel/config:module_zfs_enabled"])
+selects.config_setting_group(name = "policy_netgraph", match_all = ["//tools/build/bazel/config:netgraph_enabled"])
+selects.config_setting_group(name = "policy_ofed", match_all = ["//tools/build/bazel/config:ofed_enabled"])
+selects.config_setting_group(name = "policy_sourceless_ucode", match_all = ["//tools/build/bazel/config:sourceless_ucode_enabled"])
+selects.config_setting_group(name = "policy_tests", match_all = ["//tools/build/bazel/config:tests_enabled"])
+selects.config_setting_group(name = "policy_usb", match_all = ["//tools/build/bazel/config:usb_enabled"])
+
+bsd_kernel_module_set(
+    name = "amd64_modules",
+    modules = [
+        "//sys/modules/accf_data:module_product",
+        "//sys/modules/accf_dns:module_product",
+        "//sys/modules/accf_http:module_product",
+        "//sys/modules/accf_tls:module_product",
+        "//sys/modules/acl_nfs4:module_product",
+        "//sys/modules/acl_posix1e:module_product",
+        "//sys/modules/adlngpio:module_product",
+        "//sys/modules/ahci:module_product",
+        "//sys/modules/alc:module_product",
+        "//sys/modules/ale:module_product",
+        "//sys/modules/alq:module_product",
+        "//sys/modules/amd_ecc_inject:module_product",
+        "//sys/modules/amdgpio:module_product",
+        "//sys/modules/amdsbwd:module_product",
+        "//sys/modules/amdsmn:module_product",
+        "//sys/modules/amdsmu:module_product",
+        "//sys/modules/amdtemp:module_product",
+        "//sys/modules/apple_bce:module_product",
+        "//sys/modules/aq:module_product",
+        "//sys/modules/arcmsr:module_product",
+        "//sys/modules/asmc:module_product",
+        "//sys/modules/ath:module_product",
+        "//sys/modules/ath_dfs:module_product",
+        "//sys/modules/ath_hal:module_product",
+        "//sys/modules/ath_hal_ar5210:module_product",
+        "//sys/modules/ath_hal_ar5211:module_product",
+        "//sys/modules/ath_hal_ar5212:module_product",
+        "//sys/modules/ath_hal_ar5416:module_product",
+        "//sys/modules/ath_hal_ar9300:module_product",
+        "//sys/modules/ath_main:module_product",
+        "//sys/modules/ath_rate:module_product",
+        "//sys/modules/backlight:module_product",
+        "//sys/modules/bge:module_product",
+        "//sys/modules/bridgestp:module_product",
+        "//sys/modules/bwi:module_product",
+        "//sys/modules/bwn:module_product",
+        "//sys/modules/bytgpio:module_product",
+        "//sys/modules/cam:module_product",
+        "//sys/modules/ccp:module_product",
+        "//sys/modules/cd9660:module_product",
+        "//sys/modules/cd9660_iconv:module_product",
+        "//sys/modules/chromebook_platform:module_product",
+        "//sys/modules/chvgpio:module_product",
+        "//sys/modules/ciss:module_product",
+        "//sys/modules/coreboot:module_product",
+        "//sys/modules/coretemp:module_product",
+        "//sys/modules/cpuctl:module_product",
+        "//sys/modules/cpufreq:module_product",
+        "//sys/modules/ctl:module_product",
+        "//sys/modules/dcons:module_product",
+        "//sys/modules/dcons_crom:module_product",
+        "//sys/modules/dpms:module_product",
+        "//sys/modules/dttransport:module_product",
+        "//sys/modules/dummymbuf:module_product",
+        "//sys/modules/e6000sw:module_product",
+        "//sys/modules/em:module_product",
+        "//sys/modules/ena:module_product",
+        "//sys/modules/enic:module_product",
+        "//sys/modules/et:module_product",
+        "//sys/modules/etherswitch:module_product",
+        "//sys/modules/evdev:module_product",
+        "//sys/modules/ext2fs:module_product",
+        "//sys/modules/fdescfs:module_product",
+        "//sys/modules/filemon:module_product",
+        "//sys/modules/firmware:module_product",
+        "//sys/modules/ftgpio:module_product",
+        "//sys/modules/ftwd:module_product",
+        "//sys/modules/fusefs:module_product",
+        "//sys/modules/gve:module_product",
+        "//sys/modules/hfsts:module_product",
+        "//sys/modules/hptiop:module_product",
+        "//sys/modules/hwpmc:module_product",
+        "//sys/modules/hwt:module_product",
+        "//sys/modules/iavf:module_product",
+        "//sys/modules/ice:module_product",
+        "//sys/modules/ichwd:module_product",
+        "//sys/modules/if_bridge:module_product",
+        "//sys/modules/if_disc:module_product",
+        "//sys/modules/if_edsc:module_product",
+        "//sys/modules/if_epair:module_product",
+        "//sys/modules/if_geneve:module_product",
+        "//sys/modules/if_infiniband:module_product",
+        "//sys/modules/if_lagg:module_product",
+        "//sys/modules/if_ovpn:module_product",
+        "//sys/modules/if_tuntap:module_product",
+        "//sys/modules/if_vether:module_product",
+        "//sys/modules/if_vlan:module_product",
+        "//sys/modules/if_vxlan:module_product",
+        "//sys/modules/iflib:module_product",
+        "//sys/modules/igc:module_product",
+        "//sys/modules/imgact_binmisc:module_product",
+        "//sys/modules/intel_pmc:module_product",
+        "//sys/modules/intelspi:module_product",
+        "//sys/modules/io:module_product",
+        "//sys/modules/ioat:module_product",
+        "//sys/modules/ip6_mroute_mod:module_product",
+        "//sys/modules/ip_mroute_mod:module_product",
+        "//sys/modules/isci:module_product",
+        "//sys/modules/isp:module_product",
+        "//sys/modules/itwd:module_product",
+        "//sys/modules/iwlwifi:module_product",
+        "//sys/modules/iwm:module_product",
+        "//sys/modules/iwn:module_product",
+        "//sys/modules/iwx:module_product",
+        "//sys/modules/ix:module_product",
+        "//sys/modules/ixl:module_product",
+        "//sys/modules/ixv:module_product",
+        "//sys/modules/jme:module_product",
+        "//sys/modules/kbdmux:module_product",
+        "//sys/modules/kgssapi:module_product",
+        "//sys/modules/kgssapi_krb5:module_product",
+        "//sys/modules/krpc:module_product",
+        "//sys/modules/ksyms:module_product",
+        "//sys/modules/libiconv:module_product",
+        "//sys/modules/lindebugfs:module_product",
+        "//sys/modules/linprocfs:module_product",
+        "//sys/modules/linsysfs:module_product",
+        "//sys/modules/linux64:module_product",
+        "//sys/modules/linux_common:module_product",
+        "//sys/modules/linux_ntsync:module_product",
+        "//sys/modules/linuxkpi:module_product",
+        "//sys/modules/linuxkpi_hdmi:module_product",
+        "//sys/modules/linuxkpi_video:module_product",
+        "//sys/modules/linuxkpi_wlan:module_product",
+        "//sys/modules/mana:module_product",
+        "//sys/modules/md:module_product",
+        "//sys/modules/mdio:module_product",
+        "//sys/modules/mem:module_product",
+        "//sys/modules/mgb:module_product",
+        "//sys/modules/mii:module_product",
+        "//sys/modules/miiproxy:module_product",
+        "//sys/modules/mlx4:module_product",
+        "//sys/modules/mlx5:module_product",
+        "//sys/modules/mlxfw:module_product",
+        "//sys/modules/mmc:module_product",
+        "//sys/modules/mmcsd:module_product",
+        "//sys/modules/mpi3mr:module_product",
+        "//sys/modules/mpr:module_product",
+        "//sys/modules/mps:module_product",
+        "//sys/modules/mpt:module_product",
+        "//sys/modules/mqueue:module_product",
+        "//sys/modules/msdosfs:module_product",
+        "//sys/modules/msdosfs_iconv:module_product",
+        "//sys/modules/msk:module_product",
+        "//sys/modules/my:module_product",
+        "//sys/modules/nctgpio:module_product",
+        "//sys/modules/ncthwm:module_product",
+        "//sys/modules/netlink:module_product",
+        "//sys/modules/nfe:module_product",
+        "//sys/modules/nfscl:module_product",
+        "//sys/modules/nfscommon:module_product",
+        "//sys/modules/nfsd:module_product",
+        "//sys/modules/nfslockd:module_product",
+        "//sys/modules/nfssvc:module_product",
+        "//sys/modules/nlsysevent:module_product",
+        "//sys/modules/nmdm:module_product",
+        "//sys/modules/ntsync:module_product",
+        "//sys/modules/nullfs:module_product",
+        "//sys/modules/nvd:module_product",
+        "//sys/modules/nvdimm:module_product",
+        "//sys/modules/nvme:module_product",
+        "//sys/modules/nvram:module_product",
+        "//sys/modules/oce:module_product",
+        "//sys/modules/ocs_fc:module_product",
+        "//sys/modules/oes:module_product",
+        "//sys/modules/ossl:module_product",
+        "//sys/modules/otus:module_product",
+        "//sys/modules/p2sb:module_product",
+        "//sys/modules/p9fs:module_product",
+        "//sys/modules/pchtherm:module_product",
+        "//sys/modules/pms:module_product",
+        "//sys/modules/proto:module_product",
+        "//sys/modules/pseudofs:module_product",
+        "//sys/modules/pt:module_product",
+        "//sys/modules/puc:module_product",
+        "//sys/modules/pvpanic:module_product",
+        "//sys/modules/qat_c2xxx:module_product",
+        "//sys/modules/qat_c2xxxfw:module_product",
+        "//sys/modules/qlxgb:module_product",
+        "//sys/modules/qlxge:module_product",
+        "//sys/modules/rc4:module_product",
+        "//sys/modules/re:module_product",
+        "//sys/modules/rge:module_product",
+        "//sys/modules/rtsx:module_product",
+        "//sys/modules/rtw88:module_product",
+        "//sys/modules/rtwn:module_product",
+        "//sys/modules/rtwn_pci:module_product",
+        "//sys/modules/s3:module_product",
+        "//sys/modules/safexcel:module_product",
+        "//sys/modules/scc:module_product",
+        "//sys/modules/sdhci:module_product",
+        "//sys/modules/sdhci_acpi:module_product",
+        "//sys/modules/sdhci_pci:module_product",
+        "//sys/modules/sdio:module_product",
+        "//sys/modules/sem:module_product",
+        "//sys/modules/send:module_product",
+        "//sys/modules/sfxge:module_product",
+        "//sys/modules/sge:module_product",
+        "//sys/modules/sgx:module_product",
+        "//sys/modules/sgx_linux:module_product",
+        "//sys/modules/siftr:module_product",
+        "//sys/modules/smartpqi:module_product",
+        "//sys/modules/snp:module_product",
+        "//sys/modules/speaker:module_product",
+        "//sys/modules/sume:module_product",
+        "//sys/modules/superio:module_product",
+        "//sys/modules/tarfs:module_product",
+        "//sys/modules/tglhgpio:module_product",
+        "//sys/modules/tmpfs:module_product",
+        "//sys/modules/tpm:module_product",
+        "//sys/modules/tws:module_product",
+        "//sys/modules/uart:module_product",
+        "//sys/modules/ufs:module_product",
+        "//sys/modules/ufshci:module_product",
+        "//sys/modules/uinput:module_product",
+        "//sys/modules/unionfs:module_product",
+        "//sys/modules/vesa:module_product",
+        "//sys/modules/viawd:module_product",
+        "//sys/modules/video:module_product",
+        "//sys/modules/videomode:module_product",
+        "//sys/modules/vkbd:module_product",
+        "//sys/modules/vmd:module_product",
+        "//sys/modules/vsock:module_product",
+        "//sys/modules/vte:module_product",
+        "//sys/modules/wbwd:module_product",
+        "//sys/modules/wdatwd:module_product",
+        "//sys/modules/wlan:module_product",
+        "//sys/modules/wlan_acl:module_product",
+        "//sys/modules/wlan_amrr:module_product",
+        "//sys/modules/wlan_ccmp:module_product",
+        "//sys/modules/wlan_gcmp:module_product",
+        "//sys/modules/wlan_rssadapt:module_product",
+        "//sys/modules/wlan_tkip:module_product",
+        "//sys/modules/wlan_wep:module_product",
+        "//sys/modules/wlan_xauth:module_product",
+        "//sys/modules/x86bios:module_product",
+        "//sys/modules/xdr:module_product",
+        "//sys/modules/xz:module_product",
+        "//sys/modules/zlib:module_product",
+    ]
+    + select({":policy_autofs": [
+        "//sys/modules/autofs:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_bhyve_kernel_smp": [
+        "//sys/modules/vmm:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_crypt": [
+        "//sys/modules/aesni:module_product",
+        "//sys/modules/blake2:module_product",
+        "//sys/modules/crypto:module_product",
+        "//sys/modules/cryptodev:module_product",
+        "//sys/modules/padlock:module_product",
+        "//sys/modules/random_fortuna:module_product",
+        "//sys/modules/random_other:module_product",
+        "//sys/modules/rdrand_rng:module_product",
+        "//sys/modules/rdseed_rng:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_crypt_module_ip": [
+        "//sys/modules/if_wg:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_cuse": [
+        "//sys/modules/cuse:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_dtrace": [
+        "//sys/modules/opensolaris:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_dummynet": [
+        "//sys/modules/dummynet:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_efi": [
+        "//sys/modules/efirt:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_iscsi": [
+        "//sys/modules/cfiscsi:module_product",
+        "//sys/modules/iscsi:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_ddb_kernel_mac": [
+        "//sys/modules/mac_ddb:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_dev_acpi": [
+        "//sys/modules/rtw89:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_fdt": [
+        "//sys/modules/fdt:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_fib_algo_module_inet6_support": [
+        "//sys/modules/dpdk_lpm6:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_fib_algo_module_inet_support": [
+        "//sys/modules/dpdk_lpm4:module_product",
+        "//sys/modules/fib_dxr:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_ipsec_disabled_kernel_ipsec_support_module_ip": [
+        "//sys/modules/ipsec:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_kcsan_disabled_module_sourceless_host": [
+        "//sys/modules/hpt27xx:module_product",
+        "//sys/modules/hptmv:module_product",
+        "//sys/modules/hptnr:module_product",
+        "//sys/modules/hptrr:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_mac": [
+        "//sys/modules/mac_abac:module_product",
+        "//sys/modules/mac_do:module_product",
+        "//sys/modules/mac_ntpd:module_product",
+        "//sys/modules/mac_pimd:module_product",
+        "//sys/modules/mac_portacl:module_product",
+        "//sys/modules/mac_priority:module_product",
+        "//sys/modules/mac_test:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_mac_module_veriexec": [
+        "//sys/modules/mac_veriexec:module_product",
+        "//sys/modules/mac_veriexec_sha1:module_product",
+        "//sys/modules/mac_veriexec_sha256:module_product",
+        "//sys/modules/mac_veriexec_sha384:module_product",
+        "//sys/modules/mac_veriexec_sha512:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_mac_tests": [
+        "//sys/modules/mac_test_hooks:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_mmccam": [
+        "//sys/modules/linuxkpi_sdio:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_kernel_vimage": [
+        "//sys/modules/wtap:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_module_both_ip": [
+        "//sys/modules/mlx4en:module_product",
+        "//sys/modules/mlx5en:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_module_both_ip_ofed": [
+        "//sys/modules/irdma:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_module_inet_support": [
+        "//sys/modules/if_me:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_module_ip": [
+        "//sys/modules/carp:module_product",
+        "//sys/modules/if_enc:module_product",
+        "//sys/modules/if_gif:module_product",
+        "//sys/modules/if_gre:module_product",
+        "//sys/modules/toecore:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_module_ip_module_sctp": [
+        "//sys/modules/sctp:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_module_ip_pf": [
+        "//sys/modules/pf:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_module_zfs": [
+        "//sys/modules/zfs:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_ofed": [
+        "//sys/modules/ibcore:module_product",
+        "//sys/modules/ipoib:module_product",
+        "//sys/modules/iser:module_product",
+        "//sys/modules/mlx4ib:module_product",
+        "//sys/modules/mlx5ib:module_product",
+        "//sys/modules/mthca:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_sourceless_ucode": [
+        "//sys/modules/bce:module_product",
+        "//sys/modules/bxe:module_product",
+        "//sys/modules/ice_ddp:module_product",
+        "//sys/modules/lio:module_product",
+        "//sys/modules/qlxgbe:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_tests": [
+        "//sys/modules/ktest:module_product",
+    ], "//conditions:default": []})
+    + select({":policy_usb": [
+        "//sys/modules/rtwn_usb:module_product",
+        "//sys/modules/thunderbolt:module_product",
+    ], "//conditions:default": []}),
+    module_sets = [
+        "//sys/modules/aac:amd64_modules",
+        "//sys/modules/aacraid:amd64_modules",
+        "//sys/modules/acpi:amd64_modules",
+        "//sys/modules/axgbe:amd64_modules",
+        "//sys/modules/bhnd:amd64_modules",
+        "//sys/modules/bios:amd64_modules",
+        "//sys/modules/bnxt:amd64_modules",
+        "//sys/modules/cc:amd64_modules",
+        "//sys/modules/firewire:amd64_modules",
+        "//sys/modules/flash:amd64_modules",
+        "//sys/modules/geom:amd64_modules",
+        "//sys/modules/gpio:amd64_modules",
+        "//sys/modules/hid:amd64_modules",
+        "//sys/modules/hyperv:amd64_modules",
+        "//sys/modules/i2c:amd64_modules",
+        "//sys/modules/ipmi:amd64_modules",
+        "//sys/modules/khelp:amd64_modules",
+        "//sys/modules/libalias:amd64_modules",
+        "//sys/modules/mfi:amd64_modules",
+        "//sys/modules/mrsas:amd64_modules",
+        "//sys/modules/mxge:amd64_modules",
+        "//sys/modules/ntb:amd64_modules",
+        "//sys/modules/nvmf:amd64_modules",
+        "//sys/modules/ow:amd64_modules",
+        "//sys/modules/pwm:amd64_modules",
+        "//sys/modules/qat:amd64_modules",
+        "//sys/modules/sound:amd64_modules",
+        "//sys/modules/spi:amd64_modules",
+        "//sys/modules/sysvipc:amd64_modules",
+        "//sys/modules/tcp:amd64_modules",
+        "//sys/modules/virtio:amd64_modules",
+        "//sys/modules/vmware:amd64_modules",
+    ]
+    + select({":policy_dtrace_kernel_kdtrace_hooks": [
+        "//sys/modules/dtrace:amd64_modules",
+    ], "//conditions:default": []})
+    + select({":policy_netgraph": [
+        "//sys/modules/netgraph:amd64_modules",
+    ], "//conditions:default": []})
+    + select({":policy_ofed": [
+        "//sys/modules/rdma:amd64_modules",
+    ], "//conditions:default": []})
+    + select({":policy_sourceless_ucode": [
+        "//sys/modules/cxgb:amd64_modules",
+        "//sys/modules/cxgbe:amd64_modules",
+        "//sys/modules/ispfw:amd64_modules",
+        "//sys/modules/iwnfw:amd64_modules",
+        "//sys/modules/otusfw:amd64_modules",
+        "//sys/modules/qatfw:amd64_modules",
+        "//sys/modules/qlnx:amd64_modules",
+        "//sys/modules/rtwnfw:amd64_modules",
+    ], "//conditions:default": []})
+    + select({":policy_tests": [
+        "//sys/modules/tests:amd64_modules",
+    ], "//conditions:default": []})
+    + select({":policy_usb": [
+        "//sys/modules/usb:amd64_modules",
+    ], "//conditions:default": []}),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+bsd_kernel_module_installation(name = "amd64_base_installation", module_sets = [":amd64_modules"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

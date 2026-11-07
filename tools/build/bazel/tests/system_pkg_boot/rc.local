@@ -1,0 +1,16 @@
+#!/bin/sh
+# Private VM qualification: provision once through actual target account tools.
+# rc.local is sourced: keep strict options inside this subshell.
+(
+    set -eu
+    if [ ! -e /var/db/bazel-qualification-provisioned ]; then
+        printf '%s\n' 'BazelVMQual1!' | /usr/sbin/pw usermod root -s /bin/sh -h 0
+        if ! /usr/sbin/pw usershow bazeltest >/dev/null 2>&1; then
+            printf '%s\n' 'BazelVMQual1!' | /usr/sbin/pw useradd bazeltest -u 2001 -g nogroup -G wheel -s /bin/sh -m -h 0
+        fi
+        /usr/bin/touch /var/db/bazel-qualification-provisioned
+    fi
+    printf 'BAZEL_SYSTEM_BOOT_READY pid1='
+    /bin/ps -p 1 -o comm=
+    /usr/bin/uname -a
+)

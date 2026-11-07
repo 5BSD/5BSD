@@ -12,13 +12,7 @@ import subprocess
 
 
 
-def pkg_command(pkg, root, config, repositories):
-    """Explicit pkg overrides are host paths, even with -r relocation."""
-    return [str(pkg), "-r", str(root), "-C", str(config), "-R", str(repositories),
-            "-o", "PKG_DBDIR=" + str(root / "var/db/pkg"),
-            "-o", "PKG_CACHEDIR=" + str(root / "var/cache/pkg"),
-            "-o", "RUN_SCRIPTS=no", "-o", "PKG_ENABLE_PLUGINS=no",
-            "-o", "PKG_TRIGGERS_ENABLE=no", "-o", "REPO_AUTOUPDATE=no", "-o", "SYSLOG=no"]
+from pkg_relocated import root_command as pkg_command
 
 
 def main():

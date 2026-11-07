@@ -7830,3 +7830,145 @@ selection is permitted only when both IP support source options are disabled.
 This does not qualify full root traversal, normal boot or alternative ALL_MODULES
 and custom-kernel profiles. See
 .Pa tools/build/bazel/NETWORK-MODULE-PARENTS-QUALIFICATION.md .
+.Ss Native normal AMD64 root module graph
+The //sys/modules:amd64_modules and amd64_base_installation targets compose typed
+source-owned root selections. The current 722-module world/kernel profile and two
+option variants pass complete original Make selection, installation and link-order
+checks plus actual ELF/debug CRC inspection. Module support follows source choices
+and actual tied kernel headers. Checked kernel option settings preserve source
+GENERIC defaults; explicit DEV_ACPI overrides use native device directives.
+.Pp
+The independent module_inventory.py --leaf-policy audit selects this source tree's
+share/mk and captures expanded installation policy, aliases and ordered OBJS plus
+BLOB_OBJS. It is a qualification oracle, not a native build dependency.
+FDT/MMCCAM/TESTS-enabled root branches and alternative module-selection input modes
+remain incomplete; normal boot, final kernel pkgbase and performance acceptance
+remain open. Make remains production/default. See
+.Pa tools/build/bazel/ROOT-MODULE-GRAPH-QUALIFICATION.md .
+
+.Ss Native complete AMD64 kernel installation
+The //sys/amd64/conf:complete_install_archive target composes the current kernel,
+722 selected modules, aliases, debug/GDB helpers and generated linker.hints from
+actual declared typed inputs. Its complete_kernel_hints_test compares native
+kldxref directory and explicit modes and checks rejection, atomicity and inputs.
+Default, no-separate-debug with CTF retained, and relocated profiles each pass
+21 selected tests and independent archive/ELF/debug policy inspection.
+.Pp
+The existing kernel_base_directory and kernel_debug_directory settings select
+layout. The label setting //tools/build/bazel/config:kernel_directory_policy
+accepts an explicit supplemental mtree source for new ancestor directories.
+The maintained default supplies no additional policy. Missing ancestor policy
+fails; ownership and permissions are never inferred from the builder filesystem.
+The existing format-5 Bazel input interface needs no additional frontend switch.
+.Pp
+This qualifies installation archives, not final pkgbase, normal startup, upgrades,
+cross/custom completeness or comparative performance. Make stays production/default.
+See
+.Pa tools/build/bazel/KERNEL-INSTALLATION-COMPOSITION-QUALIFICATION.md .
+
+.Ss Native current AMD64 system pkgbase
+The //:amd64_system_packages candidate composes the selected world and KERNCONF
+package families, preserving explicitly assigned world modules. It creates all
+447 current-profile packages; the real local pkg solver reports no conflicts.
+The format-5 interface can also request its _inventory, _families,
+_payloads and _payload_inventory targets. The latter hashes actual declared
+execution paths, including repository aliases, without installed-tree discovery.
+.Pp
+Independent inspection checks every package payload and configuration marker,
+alias, directory policy and Make-compatible archive ownership encoding.
+Pkg uses reproducible numeric UID/GID placeholders and resolves owner names on
+installation; archive encoding does not replace installed-ownership validation.
+These selected native tests and archives do not establish normal boot, upgrades,
+comparative performance or production publication. Make remains production/default.
+See
+.Pa tools/build/bazel/SYSTEM-PKGBASE-COMPOSITION-QUALIFICATION.md .
+
+.Ss Native complete package image qualification
+The explicit format-5 target //:amd64_system_boot_test_image consumes the complete
+native package set, typed installation/construction Files, payload hashes and an
+explicit BIOS/ZFS image/site policy. It uses pkg's real solver, rootless environment
+interface and private database/cache, then reconciles the complete staged tree
+against source-derived directory and payload policy before native makefs/mkimg.
+It does not replace normal rc/init or load the filesystem image into memory.
+.Pp
+This is a private qualification fixture with explicit guest test credentials,
+serial/DHCP/SSH configuration and an SDK pkg tool. It is not production media.
+The maintained tools/test/system-pkg-runtime/run.py driver consumes its captured
+image/report with an explicit plan for normal startup/PAM/SSH/su and resource
+checks. Construction alone is not runtime, verified boot or upgrade evidence.
+The first VM found a kernel guard-initialization defect; the source-specific
+Bazel toolchain-feature correction passes its actual-object regression, with full
+normal boot requalification pending. Make stays production/default.
+See
+.Pa tools/build/bazel/SYSTEM-IMAGE-BOOT-QUALIFICATION.md .
+
+.Pp
+The normal runtime plan also requires explicit terminal_rows and terminal_columns.
+Its serial driver answers bounded absolute-position/DSR size probes and waits for
+the actual shell prompt before sending commands, preserving normal login-profile
+behavior. It checks actual guest terminal size and drains the serial reader before
+its final diagnostic scan. Fragmented protocol handling is a native Bazel test at
+//tools/test/system-pkg-runtime:serial_terminal_test. Complete image R8 passes all
+five selected test targets; fresh normal VM acceptance remains pending. Earlier
+failed boot and console-harness results are retained rather than relabeled.
+
+.Pp
+The R9 complete-package image and R5 normal 2 GB/four-vCPU VM now pass 12 checks,
+including actual console/PAM, Capsule pathname with signal-probe denial preserved,
+ZFS root, 447 installed packages, effective PAM-enabled/running sshd, and positive/
+negative SSH and su. Normal poweroff and unchanged backing/runner bindings pass.
+The base procstat utility now distinguishes nonexistent processes from denied
+signal permission without changing MAC policy. The SSH checker records full
+canonical effective configuration and requires UsePAM=yes before authentication.
+These selected-profile results do not establish exhaustive installed metadata,
+actual version/BE upgrades, cross/custom completeness or comparative performance.
+Make remains production/default; see the qualification document for exact evidence.
+.Pp
+The complete-package runtime driver also accepts a format-2 VM plan with
+metalog_output selecting the captured image METALOG and an explicit
+audit_deadline_seconds within the whole-VM deadline.
+It requires complete baseline record coverage and streams a hash-bound
+specification into the actual guest's read-only mtree over authenticated SSH.
+It compares types, numeric ownership, modes, flags, symlink text and regular-file
+SHA-256.  Declared empty directories are checked and their undeclared contents
+are pruned using inventory-derived mtree ignore records.  Acceptance requires
+exit zero and an empty diagnostic log, including missing-path diagnostics.
+It does not compare timestamps, extra runtime files or hardlink inode
+identity.  Every baseline difference fails and is retained for review, including
+legitimate firstboot changes.  Format-1 startup evidence does not establish this
+additional audit.  The maintained format-5 target/test interface carries
+//tools/test/system-pkg-runtime:installed_audit_test without a new frontend option.
+.Pp
+The runtime driver's format-3 plan adds firstboot_policy and
+firstboot_deadline_seconds.  Its explicit policy binds account baselines and the
+fixture producer to image payload hashes, declares exact account/group changes
+and consumed empty markers, and selects a captured native database comparator.
+Both positive and negative authentication must pass before password changes are
+accepted.  Live password databases must match actual private pwd_mkdb regeneration
+by logical keys and values; live state is never rebuilt in place.
+The complete original mtree audit is retained.  Only independently proven content
+changes and marker removals, plus explicitly selected ZFS uarch bookkeeping, are
+reconciled.  Other security flags, modes, ownership, links and content remain
+exact.  Native comparator/account/diagnostic tests run through the existing
+format-5 targets/tests interface.  This is runtime fixture qualification, not BIP
+or a production mutability policy.
+.Pp
+The complete-package VM driver accepts format 4 with an explicit upgrade_policy.
+It uses a complete captured package set and a signed private qualification
+repository; preparation reuses maintained pkg catalogue/archive verification and
+rejects the wrong public key.  Target ABI/OSVERSION and test keys are inputs.
+No combined publication or latest advancement is performed.
+The VM scenario clones, mounts and upgrades an inactive BE with actual pkg,
+boots the changed kernel, verifies authentication and shared data, rolls back,
+then removes the unused environment and checks space reclamation.
+The default fixture follows ZFS bootfs rather than pinning a root dataset.
+This is not host installation, application database schema rollback, BIP,
+exhaustive upgraded metadata or comparative performance qualification.
+
+.Pp
+Complete-package runtime qualification also rejects logged capability-service
+launch and runtime-container cleanup failures.
+The native format-5 targets/tests interface accepts
+//tools/test/system-pkg-runtime:startup_diagnostics_test.
+This diagnostic gate does not establish complete service health; Make remains
+the production system backend until all qualification gates pass.

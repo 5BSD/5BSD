@@ -231,8 +231,9 @@ mac_grantbylabel_priv_grant(struct ucred *cred, int priv)
 		break;
 	}
 
-	label = (gbl_label_t)(SLOT(curproc->p_textvp->v_label) |
-	    SLOT(curproc->p_label));
+	/* A process whose image is not a vnode has an unlabeled image. */
+	label = (gbl_label_t)((curproc->p_textvp != NULL ?
+	    SLOT(curproc->p_textvp->v_label) : 0) | SLOT(curproc->p_label));
 
 	/*
 	 * We look at the extra privs granted
@@ -303,7 +304,8 @@ mac_grantbylabel_priv_grant(struct ucred *cred, int priv)
 		 * We need to check parent label for this one.
 		 */
 		PROC_LOCK(curproc);
-		label = (gbl_label_t)SLOT(curproc->p_pptr->p_textvp->v_label);
+		label = (gbl_label_t)(curproc->p_pptr->p_textvp != NULL ?
+		    SLOT(curproc->p_pptr->p_textvp->v_label) : 0);
 		if (label & GBL_VERIEXEC) {
 			rc = 0;
 			/*
@@ -346,6 +348,9 @@ mac_grantbylabel_proc_check_resource(struct ucred *cred,
 {
 	gbl_label_t gbl;
 
+	/* No vnode image: nothing to label lazily. */
+	if (proc->p_textvp == NULL)
+		return 0;
 	if (!SLOT(proc->p_textvp->v_label)) {
 		gbl = gbl_get_vlabel(proc->p_textvp, cred);
 		if (gbl == 0)
@@ -415,8 +420,8 @@ cleanup_file:
 			}
 			proc_locked = 1;
 		}
-		gbl_args.gbl = (SLOT(proc->p_textvp->v_label) |
-		    SLOT(proc->p_label));
+		gbl_args.gbl = ((proc->p_textvp != NULL ?
+		    SLOT(proc->p_textvp->v_label) : 0) | SLOT(proc->p_label));
 		if (proc_locked)
 			PROC_UNLOCK(proc);
 		break;

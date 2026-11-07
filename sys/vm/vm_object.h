@@ -368,6 +368,42 @@ bool vm_object_mightbedirty(vm_object_t object);
 bool vm_object_mightbedirty_(vm_object_t object);
 void vm_object_init (void);
 int  vm_object_kvme_type(vm_object_t object, struct vnode **vpp);
+
+/*
+ * What an observer learns about the object behind a mapping, filled by the
+ * object's pager (pgo_kinfo): the path by which the object is known and,
+ * when vk_attr_valid is set, the file attributes kinfo_vmentry carries.
+ * vk_path may point into vk_freepath, which vm_object_kinfo_release()
+ * frees; either may be NULL.
+ */
+struct vm_object_kinfo {
+	char		*vk_path;
+	char		*vk_freepath;
+	int		 vk_vn_type;	/* KF_VTYPE_* */
+	bool		 vk_attr_valid;
+	uint16_t	 vk_mode;
+	uint64_t	 vk_fileid;
+	uint64_t	 vk_fsid;
+	uint64_t	 vk_size;
+	uint64_t	 vk_rdev;
+};
+/*
+ * What vm_object_kinfo_hold() took under the object lock so the report can
+ * run unlocked: the object's vnode, referenced (any pager that answers
+ * pgo_getvp, including tmpfs), or else the object itself, referenced (a
+ * pager with pgo_kinfo).  vm_object_kinfo_release() drops it; the report's
+ * vk_freepath is the caller's to free.
+ */
+struct vm_object_kinfo_hold {
+	vm_object_t	 kh_obj;
+	struct vnode	*kh_vp;
+};
+bool vm_object_kinfo_hold(vm_object_t object, struct vm_object_kinfo_hold *kh);
+void vm_object_kinfo(struct vm_object_kinfo_hold *kh,
+    struct vm_object_kinfo *ki, struct thread *td);
+void vm_object_kinfo_release(struct vm_object_kinfo_hold *kh);
+void vm_object_kinfo_vnode(struct vnode *vp, struct vm_object_kinfo *ki,
+    struct thread *td);
 void vm_object_madvise(vm_object_t, vm_pindex_t, vm_pindex_t, int);
 boolean_t vm_object_page_clean(vm_object_t object, vm_ooffset_t start,
     vm_ooffset_t end, int flags);

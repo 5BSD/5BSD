@@ -4041,7 +4041,8 @@ linux_ioctl_generic(struct thread *td, struct linux_ioctl_args *args)
 		error = fget(td, args->fd, &rights, &fp);
 		if (error != 0)
 			return (error);
-		if (fp->f_type != DTYPE_VNODE) {
+		/* A descriptor with no settable attributes has no flags. */
+		if (fp->f_ops->fo_setattr == NULL) {
 			fdrop(fp, td);
 			return (ENOTTY);
 		}

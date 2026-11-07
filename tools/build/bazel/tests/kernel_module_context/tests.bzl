@@ -17,7 +17,14 @@ def _paths(ctx):
     asserts.equals(env, 2, len(target[BsdInstallManifestInfo].payload.to_list()))
     return analysistest.end(env)
 
-path_test = analysistest.make(_paths, attrs = {"expected": attr.string_list(mandatory = True)})
+# These fixtures assert the default layout independently of the caller's build
+# settings. The custom and inline fixtures below exercise their own explicit
+# layouts; real complete-installation targets retain the caller's settings.
+path_test = analysistest.make(_paths, config_settings = {
+    str(Label("//tools/build/bazel/config:kernel_base_directory")): "/boot/kernel",
+    str(Label("//tools/build/bazel/config:kernel_directory")): "/boot/modules",
+    str(Label("//tools/build/bazel/config:kernel_debug_directory")): "/usr/lib/debug",
+}, attrs = {"expected": attr.string_list(mandatory = True)})
 custom_path_test = analysistest.make(_paths, config_settings = {
     str(Label("//tools/build/bazel/config:kernel_base_directory")): "/boot/custom",
     str(Label("//tools/build/bazel/config:kernel_directory")): "/third-party/modules",

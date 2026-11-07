@@ -87,6 +87,7 @@ struct thread;
 struct timespec;
 struct ucred;
 struct vattr;
+struct flock;
 struct vfsconf;
 struct vfsoptlist;
 struct vnode;
@@ -537,6 +538,88 @@ mac_file_check_mmap(struct ucred *cred, struct file *fp, int fd, int prot,
 }
 int	mac_file_check_receive(struct ucred *cred, struct file *fp);
 void	mac_file_notify_close(struct ucred *cred, struct file *fp, int fd);
+/*
+ * Checks at the fileops boundary, on the descriptor itself whatever its
+ * type (docs/macf-new-hooks.md 3.4, 3.6, 3.9-3.13).  The hot ones carry a
+ * fast-path flag so an unregistered hook costs a predicted branch.
+ */
+int	mac_file_check_fcntl_impl(struct ucred *cred, struct file *fp, int fd,
+	    int cmd, intptr_t arg);
+#ifdef MAC
+extern bool mac_file_check_fcntl_fp_flag;
+#else
+#define mac_file_check_fcntl_fp_flag false
+#endif
+#define mac_file_check_fcntl_enabled() \
+	__predict_false(mac_file_check_fcntl_fp_flag)
+static inline int
+mac_file_check_fcntl(struct ucred *cred, struct file *fp, int fd, int cmd,
+    intptr_t arg)
+{
+
+	if (mac_file_check_fcntl_enabled())
+		return (mac_file_check_fcntl_impl(cred, fp, fd, cmd, arg));
+	return (0);
+}
+int	mac_file_check_lock(struct ucred *cred, struct file *fp, int fd,
+	    int op, struct flock *fl);
+int	mac_file_check_read_impl(struct ucred *active_cred,
+	    struct ucred *file_cred, struct file *fp);
+#ifdef MAC
+extern bool mac_file_check_read_fp_flag;
+#else
+#define mac_file_check_read_fp_flag false
+#endif
+#define mac_file_check_read_enabled() \
+	__predict_false(mac_file_check_read_fp_flag)
+static inline int
+mac_file_check_read(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	if (mac_file_check_read_enabled())
+		return (mac_file_check_read_impl(active_cred, file_cred, fp));
+	return (0);
+}
+int	mac_file_check_write_impl(struct ucred *active_cred,
+	    struct ucred *file_cred, struct file *fp);
+#ifdef MAC
+extern bool mac_file_check_write_fp_flag;
+#else
+#define mac_file_check_write_fp_flag false
+#endif
+#define mac_file_check_write_enabled() \
+	__predict_false(mac_file_check_write_fp_flag)
+static inline int
+mac_file_check_write(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	if (mac_file_check_write_enabled())
+		return (mac_file_check_write_impl(active_cred, file_cred, fp));
+	return (0);
+}
+int	mac_file_check_stat_impl(struct ucred *active_cred,
+	    struct ucred *file_cred, struct file *fp);
+#ifdef MAC
+extern bool mac_file_check_stat_fp_flag;
+#else
+#define mac_file_check_stat_fp_flag false
+#endif
+#define mac_file_check_stat_enabled() \
+	__predict_false(mac_file_check_stat_fp_flag)
+static inline int
+mac_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	if (mac_file_check_stat_enabled())
+		return (mac_file_check_stat_impl(active_cred, file_cred, fp));
+	return (0);
+}
+int	mac_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
+	    struct vattr *vap);
+int	mac_file_check_fsync(struct ucred *cred, struct file *fp);
 int	mac_execve_enter(struct image_params *imgp, struct mac *mac_p);
 void	mac_execve_exit(struct image_params *imgp);
 void	mac_execve_interpreter_enter(struct vnode *interpvp,

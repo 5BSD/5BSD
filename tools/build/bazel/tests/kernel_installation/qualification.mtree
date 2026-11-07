@@ -1,0 +1,9 @@
+# Explicit site-owned ancestors for the relocated installation qualification.
+. type=dir uname=root gname=wheel mode=0755
+    debug type=dir uname=root gname=wheel mode=0755
+        qualification type=dir uname=root gname=wheel mode=0755
+            boot type=dir uname=root gname=wheel mode=0755
+            ..
+        ..
+    ..
+..

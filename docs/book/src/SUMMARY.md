@@ -14,6 +14,7 @@
 - [Coalitions and Accounting](capability/coalitions-and-accounting.md)
 - [Capability Mode and the Born-Sandboxed Launch](capability/capability-mode-and-launch.md)
 - [Descriptor and Process Protections](capability/descriptor-protections.md)
+- [Descriptor Operations](capability/descriptor-operations.md)
 - [The Authority Model](capability/authority-model.md)
 - [BSD Integrity Protection (BIP) and User Authorization](capability/system-security.md)
 - [Hardened-System Compatibility Matrix](capability/system-security-compatibility.md)

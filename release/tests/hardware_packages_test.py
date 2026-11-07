@@ -100,6 +100,18 @@ class HardwarePackages(unittest.TestCase):
                stdout=subprocess.DEVNULL)
         return self.inputs / (name + '-' + version + '.pkg')
 
+    def test_inventory_with_real_file_catalogue(self):
+        self.package('5BSD-catalogue-test', {'/bin/test': 'payload'})
+        hw.run(PKG, '-C', '/dev/null', '-o', 'PKG_ENABLE_PLUGINS=no',
+               'repo', '-l', self.inputs)
+        self.assertTrue((self.inputs / 'files.pkg').is_file())
+        self.assertEqual(set(hw.inventory(self.inputs)), {'5BSD-catalogue-test'})
+        # Only reserved catalogue names are excluded. Corrupt package archives
+        # remain errors; do not filter by whether +MANIFEST happens to exist.
+        (self.inputs / '5BSD-corrupt-1.pkg').write_bytes(b'not a package archive')
+        with self.assertRaises(subprocess.CalledProcessError):
+            hw.inventory(self.inputs)
+
     def test_signed_catalogue_literal_repository_paths(self):
         # pkg's file transport consumes literal paths, including percent signs.
         target = self.base / 'FreeBSD:16:amd64 space %23 # repository'
@@ -709,7 +721,7 @@ class HardwarePackages(unittest.TestCase):
         db = root / 'var/db/pkg'; db.mkdir(parents=True)
         config = conf / 'test.conf'
         config.write_text('5BSD-hardware: { url: "file://' + str(old) + '", enabled: yes }')
-        cmd = [PKG, '-r', str(root), '-o', 'INSTALL_AS_USER=yes',
+        cmd = ['/usr/bin/env', 'INSTALL_AS_USER=yes', PKG, '-r', str(root),
                '-o', 'PKG_DBDIR=' + str(db), '-o', 'REPOS_DIR=' + str(conf),
                '-o', 'PKG_CACHEDIR=' + str(root / 'cache'),
                '-o', 'ABI=' + ABI, '-o', 'OSVERSION=' + OSVERSION]
@@ -868,7 +880,7 @@ class HardwarePackages(unittest.TestCase):
         conf = root / 'etc/pkg'
         conf.mkdir(parents=True)
         (conf / 'test.conf').write_text('test: { url: "file://' + str(repo) + '", enabled: yes }')
-        cmd = [PKG, '-r', str(root), '-o', 'INSTALL_AS_USER=yes',
+        cmd = ['/usr/bin/env', 'INSTALL_AS_USER=yes', PKG, '-r', str(root),
             '-o', 'PKG_DBDIR=' + str(root / 'var/db/pkg'),
             '-o', 'PKG_CACHEDIR=' + str(root / 'var/cache/pkg'),
             '-o', 'REPOS_DIR=' + str(conf), '-o', 'ABI=' + ABI, '-o', 'OSVERSION=' + OSVERSION]
@@ -961,7 +973,7 @@ class HardwarePackages(unittest.TestCase):
         (conf / 'test.conf').write_text('test: { url: "file://' + str(repo) + '", enabled: yes }')
         db = root / 'var/db/pkg'
         db.mkdir(parents=True)
-        cmd = [PKG, '-r', str(root), '-o', 'INSTALL_AS_USER=yes', '-o', 'PKG_DBDIR=' + str(db),
+        cmd = ['/usr/bin/env', 'INSTALL_AS_USER=yes', PKG, '-r', str(root), '-o', 'PKG_DBDIR=' + str(db),
                '-o', 'REPOS_DIR=' + str(conf), '-o', 'PKG_CACHEDIR=' + str(root / 'cache'),
                '-o', 'ABI=' + ABI, '-o', 'OSVERSION=' + OSVERSION]
         hw.run(*cmd, 'update', '-f')
@@ -989,7 +1001,7 @@ class HardwarePackages(unittest.TestCase):
         (conf / 'test.conf').write_text('test: { url: "file://' + str(repo) + '", enabled: yes }')
         db = root / 'var/db/pkg'
         db.mkdir(parents=True)
-        cmd = [PKG, '-r', str(root), '-o', 'INSTALL_AS_USER=yes', '-o', 'PKG_DBDIR=' + str(db),
+        cmd = ['/usr/bin/env', 'INSTALL_AS_USER=yes', PKG, '-r', str(root), '-o', 'PKG_DBDIR=' + str(db),
                '-o', 'REPOS_DIR=' + str(conf), '-o', 'PKG_CACHEDIR=' + str(root / 'cache'),
                '-o', 'ABI=' + ABI, '-o', 'OSVERSION=' + OSVERSION]
         hw.run(*cmd, 'update', '-f')

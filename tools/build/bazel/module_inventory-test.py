@@ -185,6 +185,43 @@ class ModuleInventoryTests(unittest.TestCase):
             self.assertEqual(len(result["errors"]), 1)
             self.assertIn("conflicting exported Make contexts", result["errors"][0]["error"])
 
+    def test_leaf_policy_uses_source_make_path_and_kernel_context(self):
+        make = shutil.which("make")
+        if not make or subprocess.run([make, "-V", "MAKE_VERSION"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            self.skipTest("BSD Make required")
+        with tempfile.TemporaryDirectory() as temp:
+            src = Path(temp)
+            root = src / "sys/modules"
+            child = root / "selected"
+            child.mkdir(parents=True)
+            (root / "Makefile").write_text("SUBDIR=selected\n")
+            (child / "Makefile").write_text('.include <source_policy.mk>\n')
+            mk = src / "share/mk"
+            mk.mkdir(parents=True)
+            (mk / "sys.mk").write_text("# Minimal query-only Make fixture; no build rules.\n")
+            (mk / "source_policy.mk").write_text(
+                'KMOD=selected\nKMODOWN=root\nKMODGRP=wheel\nKMODMODE=0444\n'
+                'KMODTAGS=package=kernel\nKMODDBGTAGS=package=kernel,dbg\n'
+                'SYMLINKS=selected.ko ${KMODDIR}/alias.ko\nOBJS=second.o first.o\nBLOB_OBJS=prebuilt.o\n'
+                '.if empty(KCSAN_ENABLED) || ${DEBUG_FLAGS} != "-g"\n'
+                '.error selected kernel/debug context was not supplied\n.endif\n')
+            kernel = src / "kernel"
+            kernel.mkdir()
+            (kernel / "opt_global.h").write_text("#define KCSAN 1\n")
+            result = audit(src, make, "amd64", "amd64", kernel,
+                           "/dev/null", "/dev/null", "/dev/null", jobs=2, leaf_policy=True)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["format"], 4)
+            policy = result["modules"][0]["make_policy"]
+            self.assertEqual(policy["${OBJS}"], "second.o first.o")
+            self.assertEqual(policy["${BLOB_OBJS}"], "prebuilt.o")
+            self.assertEqual(policy["SYMLINKS"], "selected.ko /boot/kernel/alias.ko")
+            self.assertEqual(policy["KMODTAGS"], "package=kernel")
+            self.assertEqual(result["kcsan_enabled"], "#define KCSAN 1")
+            self.assertEqual(len(result["source_queries"]), 2)
+            self.assertTrue(all(str(mk) in q["argv"] for q in result["source_queries"]))
+
     def test_description_distinguishes_partial_build_file(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

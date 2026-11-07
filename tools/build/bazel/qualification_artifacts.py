@@ -20,13 +20,16 @@ def relative(value):
     return Path(value)
 
 
-def resolve_many(qualification, selections):
+def resolve_many(qualification, selections, *, exact=False):
     """Resolve a nonempty batch against one verified receipt/manifest snapshot.
 
+    Select by suffix by default, or by full captured output name with exact=True.
     Every payload is still independently checked. Metadata is parsed once, and
     rechecked after selection so concurrent metadata changes cannot be rebound.
     No process-global cache or mutable bazel-bin lookup is used.
     """
+    if type(exact) is not bool:
+        raise ValueError("exact output selection must be boolean")
     selections = list(selections)
     if not selections:
         raise ValueError('at least one artifact selection required')
@@ -51,8 +54,20 @@ def resolve_many(qualification, selections):
     manifest = json.loads(manifest_bytes)
     if type(manifest.get('format')) is not int or manifest['format'] != 1:
         raise ValueError('unsupported artifact manifest format')
+    # Large installation inventories contain short names such as LICENSE that
+    # also suffix-match unrelated outputs. An explicit full-name index preserves
+    # ambiguity rejection without quadratic scans over every captured payload.
+    named_outputs = None
+    if exact:
+        named_outputs = {}
+        labels = {target for target, _ in selections}
+        for entry in manifest['targets']:
+            label = entry['target']['label']
+            if label in labels:
+                for output in entry['outputs']:
+                    named_outputs.setdefault((label, output['name']), []).append(output)
     result = [_resolve_selection(root, capture, manifest, receipt_sha256,
-              manifest_sha256, target, suffix) for target, suffix in selections]
+              manifest_sha256, target, suffix, named_outputs) for target, suffix in selections]
     if (digest(receipt_path) != receipt_sha256 or
             digest(manifest_path) != manifest_sha256):
         raise ValueError('qualification capture metadata changed during resolution')
@@ -64,7 +79,7 @@ def resolve(qualification, target, output_suffix):
     return resolve_many(qualification, [(target, output_suffix)])[0]
 
 
-def _resolve_selection(root, capture, manifest, receipt_sha256, manifest_sha256, target, output_suffix):
+def _resolve_selection(root, capture, manifest, receipt_sha256, manifest_sha256, target, output_suffix, named_outputs=None):
     """Return the captured file and its receipt/manifest/content binding.
 
     Output selection is mandatory even for one-output targets. Duplicate target
@@ -78,8 +93,8 @@ def _resolve_selection(root, capture, manifest, receipt_sha256, manifest_sha256,
                 if entry['target']['label'] == target]
     if len(selected) != 1:
         raise ValueError('one target configuration required: ' + target)
-    outputs = [entry for entry in selected[0]['outputs']
-               if entry['name'].endswith(output_suffix)]
+    outputs = (named_outputs.get((target, output_suffix), []) if named_outputs is not None else
+               [entry for entry in selected[0]['outputs'] if entry['name'].endswith(output_suffix)])
     if len(outputs) != 1:
         raise ValueError('one selected captured output required: ' + target)
     entry = outputs[0]

@@ -66,6 +66,33 @@ class CapturedArtifactsTest(unittest.TestCase):
         self.assertEqual(result[0][1]['manifest_sha256'], result[1][1]['manifest_sha256'])
         self.assertEqual(result[1][1]['sha256'], artifacts.digest(other))
 
+    def test_exact_batch_resolves_full_names_without_suffix_fallback(self):
+        nested = dict(self.output, name='nested/' + self.output['name'])
+        self.manifest['targets'][0]['outputs'].append(nested)
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, 'one selected captured output'):
+            artifacts.resolve_many(self.root, [('//component:archive', self.output['name'])])
+        result = artifacts.resolve_many(self.root,
+            [('//component:archive', self.output['name']), ('//component:archive', nested['name'])], exact=True)
+        self.assertEqual([b['output_name'] for _, b in result], [self.output['name'], nested['name']])
+        with self.assertRaisesRegex(ValueError, 'one selected captured output'):
+            artifacts.resolve_many(self.root, [('//component:archive', '.a')], exact=True)
+
+    def test_exact_batch_still_rejects_duplicate_complete_output_names(self):
+        self.manifest['targets'][0]['outputs'].append(dict(self.output))
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, 'one selected captured output'):
+            artifacts.resolve_many(self.root, [('//component:archive', self.output['name'])], exact=True)
+
+    def test_exact_batch_still_rejects_corrupt_captured_bytes(self):
+        self.payload.write_bytes(b'x' * self.payload.stat().st_size)
+        with self.assertRaisesRegex(ValueError, 'content mismatch'):
+            artifacts.resolve_many(self.root, [('//component:archive', self.output['name'])], exact=True)
+
+    def test_exact_selection_requires_a_boolean(self):
+        with self.assertRaisesRegex(ValueError, 'must be boolean'):
+            artifacts.resolve_many(self.root, [('//component:archive', self.output['name'])], exact='yes')
+
     def test_batch_rejects_corrupt_later_output(self):
         other = self.second_output()
         other.write_bytes(b'x' * other.stat().st_size)

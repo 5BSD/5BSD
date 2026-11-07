@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_family.bzl", "bsd_pkg_family_set")
+load("//tools/build/bazel:bsd_kernel_packages.bzl", "bsd_kernel_package_installation")
+load(":tests.bzl", "failure_test", "fixture_archive")
+bsd_pkg_family_set(name = "duplicate_nested_family", families = [
+    "//sys/amd64/conf:kernel_packages_families", "//sys/amd64/conf:kernel_packages_family"])
+failure_test(name = "duplicate_nested_family_test", target_under_test = ":duplicate_nested_family",
+    diagnostic = "duplicate selected family: kernel-generic")
+fixture_archive(name = "fixture", metadata = "directories.json")
+bsd_kernel_package_installation(name = "mismatched_configuration", installation = ":fixture",
+    configuration = "SAMPLE", kernconf = "OTHER", kind = "kernel")
+failure_test(name = "mismatched_configuration_test", target_under_test = ":mismatched_configuration",
+    diagnostic = "kernel package configuration differs from its declared source filename")

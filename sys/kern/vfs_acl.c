@@ -61,6 +61,8 @@
 #include <security/mac/mac_framework.h>
 
 SDT_PROVIDER_DECLARE(vfs);
+SDT_PROVIDER_DECLARE(fd);
+SDT_PROBE_DECLARE(fd, , , refused);
 /* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
 SDT_PROBE_DEFINE2(vfs, , , acl__get__start,
     "struct vnode *", "acl_type_t");
@@ -445,23 +447,65 @@ kern___acl_set_path(struct thread *td, const char *path,
 }
 
 /*
+ * The ACL operations of a vnode file.  Each vacl_* helper locks the vnode
+ * and runs its own MAC check and audit record.
+ */
+int
+vn_acl(struct file *fp, int op, int type, struct acl *aclp, struct thread *td)
+{
+
+	switch (op) {
+	case FO_ACL_GET:
+		return (vacl_get_acl(td, fp->f_vnode, type, aclp));
+	case FO_ACL_SET:
+		return (vacl_set_acl(td, fp->f_vnode, type, aclp));
+	case FO_ACL_DELETE:
+		return (vacl_delete(td, fp->f_vnode, type));
+	case FO_ACL_CHECK:
+		return (vacl_aclcheck(td, fp->f_vnode, type, aclp));
+	default:
+		return (EINVAL);
+	}
+}
+
+/*
+ * The __acl_*_fd(2) family.  Get and check accept an O_PATH descriptor; set
+ * and delete refuse one with EBADF; all four refused a descriptor with no
+ * vnode with EINVAL, which invfo_acl keeps giving.
+ */
+static int
+kern_acl_fd(struct thread *td, int fd, const cap_rights_t *rightsp, int op,
+    acl_type_t type, struct acl *aclp)
+{
+	struct file *fp;
+	int error;
+
+	AUDIT_ARG_FD(fd);
+	error = fget(td, fd, rightsp, &fp);
+	if (error != 0)
+		return (error);
+	/* getvnode() never accepted an O_PATH descriptor for a change. */
+	if ((op == FO_ACL_SET || op == FO_ACL_DELETE) &&
+	    (fp->f_flag & O_PATH) != 0) {
+		SDT_PROBE4(fd, , , refused, "acl", fp, 0, EBADF);
+		error = EBADF;
+	} else
+		error = fo_acl(fp, op, type, aclp, td);
+	fdrop(fp, td);
+	return (error);
+}
+
+/*
  * Given a file descriptor, get an ACL for it.
  */
 int
 sys___acl_get_fd(struct thread *td, struct __acl_get_fd_args *uap)
 {
-	struct file *fp;
 	cap_rights_t rights;
-	int error;
 
-	AUDIT_ARG_FD(uap->filedes);
-	error = getvnode_path(td, uap->filedes,
-	    cap_rights_init_one(&rights, CAP_ACL_GET), NULL, &fp);
-	if (error == 0) {
-		error = vacl_get_acl(td, fp->f_vnode, uap->type, uap->aclp);
-		fdrop(fp, td);
-	}
-	return (error);
+	return (kern_acl_fd(td, uap->filedes,
+	    cap_rights_init_one(&rights, CAP_ACL_GET), FO_ACL_GET, uap->type,
+	    uap->aclp));
 }
 
 /*
@@ -470,22 +514,11 @@ sys___acl_get_fd(struct thread *td, struct __acl_get_fd_args *uap)
 int
 sys___acl_set_fd(struct thread *td, struct __acl_set_fd_args *uap)
 {
-	struct file *fp;
 	cap_rights_t rights;
-	int error;
 
-	AUDIT_ARG_FD(uap->filedes);
-	error = getvnode_path(td, uap->filedes,
-	    cap_rights_init_one(&rights, CAP_ACL_SET), NULL, &fp);
-	if (error == 0) {
-		if (fp->f_ops == &path_fileops) {
-			fdrop(fp, td);
-			return (EBADF);
-		}
-		error = vacl_set_acl(td, fp->f_vnode, uap->type, uap->aclp);
-		fdrop(fp, td);
-	}
-	return (error);
+	return (kern_acl_fd(td, uap->filedes,
+	    cap_rights_init_one(&rights, CAP_ACL_SET), FO_ACL_SET, uap->type,
+	    uap->aclp));
 }
 
 /*
@@ -526,27 +559,16 @@ kern___acl_delete_path(struct thread *td, const char *path,
 }
 
 /*
- * Given a file path, delete an ACL from it.
+ * Given a file descriptor, delete an ACL from it.
  */
 int
 sys___acl_delete_fd(struct thread *td, struct __acl_delete_fd_args *uap)
 {
-	struct file *fp;
 	cap_rights_t rights;
-	int error;
 
-	AUDIT_ARG_FD(uap->filedes);
-	error = getvnode_path(td, uap->filedes,
-	    cap_rights_init_one(&rights, CAP_ACL_DELETE), NULL, &fp);
-	if (error == 0) {
-		if (fp->f_ops == &path_fileops) {
-			fdrop(fp, td);
-			return (EBADF);
-		}
-		error = vacl_delete(td, fp->f_vnode, uap->type);
-		fdrop(fp, td);
-	}
-	return (error);
+	return (kern_acl_fd(td, uap->filedes,
+	    cap_rights_init_one(&rights, CAP_ACL_DELETE), FO_ACL_DELETE,
+	    uap->type, NULL));
 }
 
 /*
@@ -593,18 +615,11 @@ kern___acl_aclcheck_path(struct thread *td, const char *path, acl_type_t type,
 int
 sys___acl_aclcheck_fd(struct thread *td, struct __acl_aclcheck_fd_args *uap)
 {
-	struct file *fp;
 	cap_rights_t rights;
-	int error;
 
-	AUDIT_ARG_FD(uap->filedes);
-	error = getvnode_path(td, uap->filedes,
-	    cap_rights_init_one(&rights, CAP_ACL_CHECK), NULL, &fp);
-	if (error == 0) {
-		error = vacl_aclcheck(td, fp->f_vnode, uap->type, uap->aclp);
-		fdrop(fp, td);
-	}
-	return (error);
+	return (kern_acl_fd(td, uap->filedes,
+	    cap_rights_init_one(&rights, CAP_ACL_CHECK), FO_ACL_CHECK,
+	    uap->type, uap->aclp));
 }
 
 struct acl *

@@ -114,6 +114,7 @@
 #include <sys/proc.h>
 #include <sys/vnode.h>
 #include <sys/uio.h>
+#include <sys/unistd.h>
 #include <sys/user.h>
 #include <sys/event.h>
 
@@ -202,6 +203,8 @@ struct pipeasync {
 static fo_chmod_t	pipe_chmod;
 static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
+static fo_pathconf_t	pipe_pathconf;
+static fo_advlock_t	pipe_advlock;
 
 const struct fileops pipeops = {
 	.fo_read = pipe_read,
@@ -217,7 +220,22 @@ const struct fileops pipeops = {
 	.fo_sendfile = invfo_sendfile,
 	.fo_fill_kinfo = pipe_fill_kinfo,
 	.fo_cmp = file_kcmp_generic,
-	.fo_flags = DFLAG_PASSABLE
+	/*
+	 * This table serves FIFOs, which carry their vnode, and anonymous
+	 * pipes, which carry none: a sometimes-vnode table, so the members a
+	 * vnode answers are the vn_*_opt variants.  The two it answers for
+	 * itself are pathconf (PIPE_BUF) and advlock (flock(2) is EOPNOTSUPP
+	 * on an anonymous pipe; a FIFO's goes to its vnode).
+	 */
+	.fo_pathconf = pipe_pathconf,
+	.fo_statfs = vn_statfs_opt,
+	.fo_fsync = vn_fsync_opt,
+	.fo_setattr = vn_setattr_opt,
+	.fo_readdir = vn_readdir_opt,
+	.fo_acl = vn_acl_opt,
+	.fo_extattr = vn_extattr_opt,
+	.fo_advlock = pipe_advlock,
+	.fo_flags = DFLAG_PASSABLE | DFLAG_FLOCK	/* FIFOs; not RECLOCK */
 };
 
 static void	filt_pipedetach(struct knote *kn);
@@ -2051,6 +2069,45 @@ pipe_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	} else
 		error = invfo_chown(fp, uid, gid, active_cred, td);
 	return (error);
+}
+
+/*
+ * A FIFO answers as its vnode does; an anonymous pipe knows only
+ * _PC_PIPE_BUF.
+ */
+static int
+pipe_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_pathconf(fp, name, valuep, td));
+	if (name != _PC_PIPE_BUF)
+		return (EINVAL);
+	*valuep = PIPE_BUF;
+	return (0);
+}
+
+/*
+ * A FIFO takes flock(2) locks on its vnode.  An anonymous pipe takes none
+ * and answers flock(2) with its own EOPNOTSUPP; the fcntl(2) record locks
+ * (refused ahead of the table, the FIFO table having no DFLAG_RECLOCK) and
+ * the POSIX unlock a close owes get the default EBADF for both.
+ */
+static int
+pipe_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
+    struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if ((flags & F_FLOCK) != 0) {
+		if ((cpipe->pipe_type & PIPE_TYPE_NAMED) != 0)
+			return (vn_advlock(fp, id, op, fl, flags, td));
+		return (EOPNOTSUPP);
+	}
+	return (invfo_advlock(fp, id, op, fl, flags, td));
 }
 
 static int

@@ -87,7 +87,7 @@ def _archive(ctx):
         use_default_shell_env = False,
         mnemonic = "BSDInstallArchive",
     )
-    return [DefaultInfo(files = depset([archive])), OutputGroupInfo(metadata = depset([request]), directory_metadata = depset([directory_metadata])), BsdInstallArchiveInfo(directory_metadata = directory_metadata, records = records, payload = depset(transitive = payloads), trees = [])]
+    return [DefaultInfo(files = depset([archive])), OutputGroupInfo(metadata = depset([request]), directory_metadata = depset([directory_metadata]), payload = depset(transitive = payloads)), BsdInstallArchiveInfo(directory_metadata = directory_metadata, records = records, payload = depset(transitive = payloads), trees = [])]
 
 bsd_install_archive = rule(
     implementation = _archive,
@@ -130,6 +130,7 @@ def _archive_set(ctx):
         OutputGroupInfo(
             metadata = depset(transitive = [target[OutputGroupInfo].metadata for target in ctx.attr.archives]),
             directory_metadata = depset(transitive = [target[OutputGroupInfo].directory_metadata for target in ctx.attr.archives]),
+            payload = depset([tree.tree for tree in trees], transitive = payloads),
         ),
     ]
 

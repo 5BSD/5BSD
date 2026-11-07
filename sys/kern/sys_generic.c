@@ -352,6 +352,11 @@ dofileread(struct thread *td, int fd, struct file *fp, struct uio *auio,
 
 	AUDIT_ARG_FD(fd);
 
+#ifdef MAC
+	error = mac_file_check_read(td->td_ucred, fp->f_cred, fp);
+	if (error != 0)
+		return (error);
+#endif
 	/* Finish zero length reads right here */
 	if (auio->uio_resid == 0) {
 		td->td_retval[0] = 0;
@@ -639,7 +644,16 @@ kern_filewrite(struct thread *td, int fd, struct file *fp, struct uio *auio,
 	int error;
 #ifdef KTRACE
 	struct uio *ktruio;
+#endif
 
+#ifdef MAC
+	error = mac_file_check_write(td->td_ucred, fp->f_cred, fp);
+	if (error != 0) {
+		*cntp = 0;
+		return (error);
+	}
+#endif
+#ifdef KTRACE
 	ktruio = fd != -1 && KTRPOINT(td, KTR_GENIO) ? cloneuio(auio) : NULL;
 #endif
 	cnt = auio->uio_resid;
@@ -680,6 +694,19 @@ kern_ftruncate(struct thread *td, int fd, off_t length)
 		fdrop(fp, td);
 		return (EXTERROR(EINVAL, "non-writable"));
 	}
+#ifdef MAC
+	{
+		struct vattr va;
+
+		VATTR_NULL(&va);
+		va.va_size = length;
+		error = mac_file_check_setattr(td->td_ucred, fp, fd, &va);
+		if (error != 0) {
+			fdrop(fp, td);
+			return (error);
+		}
+	}
+#endif
 	error = fo_truncate(fp, length, td->td_ucred, td);
 	fdrop(fp, td);
 	return (error);

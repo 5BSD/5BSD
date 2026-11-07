@@ -118,3 +118,5 @@ exports_files(["ucl/netmap-tests-all.ucl"], visibility = ["//packages/netmap-tes
 exports_files(["ucl/oes-tests-all.ucl"], visibility = ["//packages/oes-tests:__pkg__"])
 
 exports_files(["ucl/libfidl-all.ucl", "ucl/libfidl-tools.ucl"], visibility = ["//packages/libfidl:__pkg__"])
+
+exports_files(["ucl/kernel-all.ucl"], visibility = ["//sys/amd64/conf:__pkg__"])

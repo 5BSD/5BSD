@@ -55,6 +55,8 @@
 #include <sys/unistd.h>
 #include <sys/vnode.h>
 
+#include <security/mac/mac_framework.h>
+
 #include <fs/fdescfs/fdesc.h>
 
 #define	NFDCACHE 4
@@ -581,12 +583,27 @@ fdesc_getattr(struct vop_getattr_args *ap)
 	return (0);
 }
 
+/*
+ * Attributes set on /dev/fd/N go to descriptor N's own fileops: size to
+ * fo_truncate, mode to fo_chmod, owner to fo_chown, times and flags to
+ * fo_setattr.  A table with no fo_setattr member has no settable attributes
+ * and keeps the old behaviour: every change is silently dropped except
+ * chflags(2), which is refused.  A table with one answers for its
+ * descriptor: an anonymous pipe or a pseudo-terminal master opened with
+ * posix_openpt(2) now reports EINVAL where the lack of a vnode once meant
+ * "dropped".
+ *
+ * The fdesc vnode contributes only the descriptor number, so its lock is
+ * dropped while the descriptor's fileops run: they lock the file's own
+ * vnode, and holding the fdesc lock over that orders fdescfs before every
+ * other filesystem, the reverse of what unmounting fdescfs (covered vnode,
+ * then fdesc root) establishes.
+ */
 static int
 fdesc_setattr(struct vop_setattr_args *ap)
 {
 	struct vattr *vap = ap->a_vap;
-	struct vnode *vp;
-	struct mount *mp;
+	struct vnode *vp = ap->a_vp;
 	struct file *fp;
 	struct thread *td = curthread;
 	cap_rights_t rights;
@@ -596,44 +613,34 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	/*
 	 * Can't mess with the root vnode
 	 */
-	if (VTOFDESC(ap->a_vp)->fd_type == Froot)
+	if (VTOFDESC(vp)->fd_type == Froot)
 		return (EACCES);
 
-	fd = VTOFDESC(ap->a_vp)->fd_fd;
-
-	/*
-	 * Allow setattr where there is an underlying vnode.
-	 * For O_PATH descriptors, disallow truncate.
-	 */
-	if (vap->va_size != VNOVAL) {
-		error = getvnode(td, fd,
-		    cap_rights_init_one(&rights, CAP_EXTATTR_SET), &fp);
-	} else {
-		error = getvnode_path(td, fd,
-		    cap_rights_init_one(&rights, CAP_EXTATTR_SET), NULL, &fp);
-	}
-	if (error) {
-		/*
-		 * getvnode() returns EINVAL if the file descriptor is not
-		 * backed by a vnode.  Silently drop all changes except
-		 * chflags(2) in this case.
-		 */
-		if (error == EINVAL) {
-			if (vap->va_flags != VNOVAL)
-				error = EOPNOTSUPP;
-			else
-				error = 0;
-		}
+	fd = VTOFDESC(vp)->fd_fd;
+	error = fget(td, fd, cap_rights_init_one(&rights, CAP_EXTATTR_SET),
+	    &fp);
+	if (error != 0)
 		return (error);
+	/*
+	 * fdescfs's own answer for a type without the member, what getvnode()'s
+	 * EINVAL always became here: chflags(2) is refused, every other change
+	 * is silently dropped.
+	 */
+	if (fp->f_ops->fo_setattr == NULL) {
+		fdrop(fp, td);
+		return (vap->va_flags != VNOVAL ? EOPNOTSUPP : 0);
 	}
-	vp = fp->f_vnode;
-	if ((error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH)) == 0) {
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		error = VOP_SETATTR(vp, ap->a_vap, ap->a_cred);
-		VOP_UNLOCK(vp);
-		vn_finished_write(mp);
-	}
+	VOP_UNLOCK(vp);
+#ifdef MAC
+	error = mac_file_check_setattr(ap->a_cred, fp, fd, vap);
+	if (error != 0)
+		goto out;
+#endif
+	/* The descriptor sets the whole vattr; its answer stands. */
+	error = fo_setattr(fp, vap, ap->a_cred, td);
+out:
 	fdrop(fp, td);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	return (error);
 }
 

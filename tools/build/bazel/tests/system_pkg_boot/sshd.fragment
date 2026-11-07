@@ -1,0 +1,4 @@
+# Private VM qualification only: exercise real password/PAM authentication.
+PermitRootLogin yes
+PasswordAuthentication yes
+UsePAM yes

@@ -103,6 +103,8 @@ static void vnode_pager_update_writecount(vm_object_t, vm_offset_t,
 static void vnode_pager_release_writecount(vm_object_t, vm_offset_t,
     vm_offset_t);
 static void vnode_pager_getvp(vm_object_t, struct vnode **, bool *);
+static boolean_t vnode_pager_sync(vm_object_t, vm_ooffset_t, vm_size_t,
+    boolean_t, boolean_t);
 
 const struct pagerops vnodepagerops = {
 	.pgo_kvme_type = KVME_TYPE_VNODE,
@@ -117,7 +119,115 @@ const struct pagerops vnodepagerops = {
 	.pgo_set_writeable_dirty = vm_object_set_writeable_dirty_,
 	.pgo_mightbedirty = vm_object_mightbedirty_,
 	.pgo_getvp = vnode_pager_getvp,
+	.pgo_sync = vnode_pager_sync,
 };
+
+/*
+ * What a vnode-backed object reports to the observers of a mapping: the
+ * vnode's path, type and attributes.  The vnode is referenced by
+ * vm_object_kinfo_hold() under the object lock (vnode objects and tmpfs
+ * objects alike, through pgo_getvp); here only the vnode lock is taken.
+ */
+void
+vm_object_kinfo_vnode(struct vnode *vp, struct vm_object_kinfo *ki,
+    struct thread *td)
+{
+	struct vattr va;
+
+	vn_fullpath(vp, &ki->vk_path, &ki->vk_freepath);
+	ki->vk_vn_type = vntype_to_kinfo(vp->v_type);
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	if (VOP_GETATTR(vp, &va, td->td_ucred) == 0) {
+		ki->vk_fileid = va.va_fileid;
+		ki->vk_fsid = va.va_fsid;
+		ki->vk_mode = MAKEIMODE(va.va_type, va.va_mode);
+		ki->vk_size = va.va_size;
+		ki->vk_rdev = va.va_rdev;
+		ki->vk_attr_valid = true;
+	}
+	VOP_UNLOCK(vp);
+}
+
+static int old_msync;
+SYSCTL_INT(_vm, OID_AUTO, old_msync, CTLFLAG_RW, &old_msync, 0,
+    "Use old (insecure) msync behavior");
+
+/*
+ * msync(2) on a vnode object: clean the range's dirty pages under the vnode
+ * lock, fsync the file when the whole mapping is synced, and invalidate on
+ * request.  Entered and left with the object write-locked.
+ *
+ * We cannot lock the vnode and then wait for paging to complete without
+ * deadlocking against vm_fault.  Instead we simply call
+ * vm_object_page_remove() and allow it to block internally on a
+ * page-by-page basis when it encounters pages undergoing async I/O.
+ */
+static boolean_t
+vnode_pager_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
+    boolean_t syncio, boolean_t invalidate)
+{
+	struct vnode *vp;
+	struct mount *mp;
+	int error, flags, fsync_after;
+	boolean_t res;
+
+	VM_OBJECT_ASSERT_WLOCKED(object);
+	res = TRUE;
+	error = 0;
+	if (vm_object_mightbedirty(object) != 0 &&
+	    ((vp = object->handle)->v_vflag & VV_NOSYNC) == 0) {
+		VM_OBJECT_WUNLOCK(object);
+		(void)vn_start_write(vp, &mp, V_WAIT);
+		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+		if (syncio && !invalidate && offset == 0 &&
+		    atop(size) == object->size) {
+			/*
+			 * If syncing the whole mapping of the file,
+			 * it is faster to schedule all the writes in
+			 * async mode, also allowing the clustering,
+			 * and then wait for i/o to complete.
+			 */
+			flags = 0;
+			fsync_after = TRUE;
+		} else {
+			flags = (syncio || invalidate) ? OBJPC_SYNC : 0;
+			flags |= invalidate ? (OBJPC_SYNC | OBJPC_INVAL) : 0;
+			fsync_after = FALSE;
+		}
+		VM_OBJECT_WLOCK(object);
+		res = vm_object_page_clean(object, offset, offset + size,
+		    flags);
+		VM_OBJECT_WUNLOCK(object);
+		if (fsync_after) {
+			for (;;) {
+				error = VOP_FSYNC(vp, MNT_WAIT, curthread);
+				if (error != ERELOOKUP)
+					break;
+
+				/*
+				 * Allow SU/bufdaemon to handle more
+				 * dependencies in the meantime.
+				 */
+				VOP_UNLOCK(vp);
+				vn_finished_write(mp);
+
+				(void)vn_start_write(vp, &mp, V_WAIT);
+				vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+			}
+		}
+		VOP_UNLOCK(vp);
+		vn_finished_write(mp);
+		if (error != 0)
+			res = FALSE;
+		VM_OBJECT_WLOCK(object);
+	}
+	if (invalidate) {
+		vm_object_page_remove(object, OFF_TO_IDX(offset),
+		    OFF_TO_IDX(offset + size + PAGE_MASK),
+		    old_msync ? 0 : OBJPR_CLEANONLY);
+	}
+	return (res);
+}
 
 static struct domainset *vnode_domainset = NULL;
 

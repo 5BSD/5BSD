@@ -12,6 +12,9 @@ def amd64_generic_kernel_objects(name, srcs, deps = [], copts = [], warning_flag
         deps = early_deps + AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
         copts = pre_copts + flags + ["-fno-common"] + warnings + AMD64_KERNEL_DEBUG_FLAGS + copts,
         local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
+        # Removing the explicit flag alone leaves the hosted toolchain default.
+        # The source compile-with exception must also opt out of that feature.
+        features = [] if stack_protector else ["-bsd_ssp"],
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
     bsd_ctf_library(name = name + "_ctf", library = ":" + name + "_objects",
         converter = "//cddl/usr.bin/ctfconvert:ctfconvert",

@@ -716,6 +716,17 @@ static const struct fileops ptsdev_ops = {
 	.fo_sendfile	= invfo_sendfile,
 	.fo_fill_kinfo	= ptsdev_fill_kinfo,
 	.fo_cmp		= file_kcmp_generic,
+	/*
+	 * A master opened through /dev/ptmx carries that vnode; one from
+	 * posix_openpt(2) carries none, so these answer only when it is there.
+	 */
+	.fo_pathconf	= vn_pathconf_opt,
+	.fo_statfs	= vn_statfs_opt,
+	.fo_fsync	= vn_fsync_opt,
+	.fo_setattr	= vn_setattr_opt,
+	.fo_readdir	= vn_readdir_opt,
+	.fo_acl		= vn_acl_opt,
+	.fo_extattr	= vn_extattr_opt,
 	.fo_flags	= DFLAG_PASSABLE,
 };
 

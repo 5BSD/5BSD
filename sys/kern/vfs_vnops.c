@@ -67,7 +67,9 @@
 #include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sleepqueue.h>
+#include <sys/sdt.h>
 #include <sys/stat.h>
+#include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/unistd.h>
 #include <sys/user.h>
@@ -335,6 +337,493 @@ vn_openfile_sendfile(struct file *fp, int sockfd, struct uio *hdr, struct uio *t
 	return (error);
 }
 
+/*
+ * fpathconf(2) on any descriptor that carries a vnode.  Besides vnops this
+ * is installed by FIFOs, pseudo-terminal masters, devfs, linuxkpi and O_PATH
+ * files, so each answers as its vnode does.
+ */
+int
+vn_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+	struct vnode *vp;
+	int error;
+
+	vp = fp->f_vnode;
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = VOP_PATHCONF(vp, name, valuep);
+	VOP_UNLOCK(vp);
+	return (error);
+}
+
+static int
+vn_openfile_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_pathconf(fp, name, valuep, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/*
+ * fstatfs(2) on any descriptor that carries a vnode.  The mount reference,
+ * the MAC check and kern_do_statfs() (busy, VFS_STATFS, prison
+ * enforcement) all need the mount, so they run here; the system call keeps
+ * only the descriptor audit.
+ */
+int
+vn_statfs(struct file *fp, struct statfs *buf, struct thread *td)
+{
+	struct mount *mp;
+	struct vnode *vp;
+	int error;
+
+	vp = fp->f_vnode;
+#ifdef AUDIT
+	if (AUDITING_TD(td)) {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
+	}
+#endif
+	mp = vfs_ref_from_vp(vp);
+#ifdef MAC
+	if (mp != NULL) {
+		error = mac_mount_check_stat(td->td_ucred, mp);
+		if (error != 0) {
+			vfs_rel(mp);
+			return (error);
+		}
+	}
+#endif
+	return (kern_do_statfs(td, mp, buf));
+}
+
+static int
+vn_openfile_statfs(struct file *fp, struct statfs *buf, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_statfs(fp, buf, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/* FO_FSYNC_FS: flush the filesystem the vnode lives on, Linux syncfs(2). */
+static int
+vn_fsync_fs(struct vnode *vp)
+{
+	struct mount *mp;
+	int error, save;
+
+	mp = vp->v_mount;
+	mtx_lock(&mountlist_mtx);
+	error = vfs_busy(mp, MBF_MNTLSTLOCK);
+	if (error != 0) {
+		mtx_unlock(&mountlist_mtx);
+		return (error);
+	}
+	if ((mp->mnt_flag & MNT_RDONLY) == 0 &&
+	    vn_start_write(NULL, &mp, V_NOWAIT) == 0) {
+		save = curthread_pflags_set(TDP_SYNCIO);
+		vfs_periodic(mp, MNT_NOWAIT);
+		VFS_SYNC(mp, MNT_NOWAIT);
+		curthread_pflags_restore(save);
+		vn_finished_write(mp);
+	}
+	vfs_unbusy(mp);
+	return (0);
+}
+
+SDT_PROBE_DECLARE(vfs, , , chflags);
+
+/*
+ * Set attributes on any descriptor that carries a vnode: the whole vattr.
+ * Size, mode and owner go through the descriptor's own direct operations
+ * (file_setattr_direct: fo_truncate, fo_chmod, fo_chown, so the table's
+ * answers stand, vn_chmod's MAC check and audit record included); times
+ * and flags through VOP_SETATTR with the checks the system calls used to
+ * make before setfflags()/setutimes(): the vnode audit record, the device
+ * flag privilege, the MAC checks, and setutimes()'s birth-time adjustment.
+ * fdescfs sets attributes on /dev/fd/N with one call.
+ */
+int
+vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
+{
+	struct vattr cur, rest;
+	struct vnode *vp;
+	struct mount *mp;
+	bool settimes;
+	int error;
+
+	error = file_setattr_direct(fp, vap, active_cred, td);
+	if (error != 0)
+		return (error);
+	vp = fp->f_vnode;
+	settimes = vap->va_atime.tv_sec != VNOVAL ||
+	    vap->va_mtime.tv_sec != VNOVAL;
+	if (!settimes && vap->va_birthtime.tv_sec == VNOVAL &&
+	    vap->va_flags == VNOVAL)
+		return (0);
+#ifdef AUDIT
+	if (AUDITING_TD(td)) {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
+	}
+#endif
+	if (vap->va_flags != VNOVAL) {
+		/*
+		 * Prevent non-root users from setting flags on devices.  When
+		 * a device is reused, users can retain ownership of the device
+		 * if they are allowed to set flags and programs assume that
+		 * chown can't fail when done as root.
+		 */
+		if (VN_ISDEV(vp)) {
+			error = priv_check_cred(active_cred, PRIV_VFS_CHFLAGS_DEV);
+			if (error != 0)
+				return (error);
+		}
+	}
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = 0;
+	if (vap->va_flags != VNOVAL)
+		error = mac_vnode_check_setflags(active_cred, vp, vap->va_flags);
+	if (error == 0 && settimes)
+		error = mac_vnode_check_setutimes(active_cred, vp,
+		    vap->va_atime, vap->va_mtime);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		return (error);
+#endif
+	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
+	if (error != 0)
+		return (error);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	/*
+	 * utimes(2) and futimens(2) set two times; a new modification time
+	 * earlier than the birth time pulls the birth time back with it.
+	 */
+	if (settimes && vap->va_birthtime.tv_sec == VNOVAL &&
+	    VOP_GETATTR(vp, &cur, active_cred) == 0 &&
+	    timespeccmp(&vap->va_mtime, &cur.va_birthtime, <))
+		vap->va_birthtime = vap->va_mtime;
+	/* Size, mode and owner went to their operations; VOP_SETATTR the rest. */
+	rest = *vap;
+	rest.va_size = VNOVAL;
+	rest.va_mode = (mode_t)VNOVAL;
+	rest.va_uid = VNOVAL;
+	rest.va_gid = VNOVAL;
+	error = VOP_SETATTR(vp, &rest, active_cred);
+#ifdef MAC
+	if (error == 0) {
+		if (vap->va_flags != VNOVAL)
+			mac_vnode_notify_setflags(active_cred, vp, vap->va_flags);
+		if (settimes)
+			mac_vnode_notify_setutimes(active_cred, vp);
+	}
+#endif
+	VOP_UNLOCK(vp);
+	vn_finished_write(mp);
+	if (vap->va_flags != VNOVAL)
+		SDT_PROBE3(vfs, , , chflags, vap->va_flags, active_cred, error);
+	return (error);
+}
+
+static int
+vn_openfile_setattr(struct file *fp, struct vattr *vap,
+    struct ucred *active_cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_setattr(fp, vap, active_cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_fadvise(struct file *fp, off_t offset, off_t len, int advice,
+    struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_fadvise(fp, offset, len, advice, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/*
+ * The sometimes-vnode tables: a FIFO carries its vnode and an anonymous
+ * pipe none (pipeops); pseudo-terminal masters and linuxkpi files carry one
+ * only when opened through devfs (/dev/ptmx, a device node), none from
+ * posix_openpt(2) or fd_install().  These answer through the vnode when it
+ * is there and give the type-neutral answer when it is not, which is what
+ * the system calls' f_vnode tests gave them.
+ */
+int
+vn_pathconf_opt(struct file *fp, int name, long *valuep, struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_pathconf(fp, name, valuep, td));
+	return (vn_pathconf(fp, name, valuep, td));
+}
+
+int
+vn_statfs_opt(struct file *fp, struct statfs *buf, struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_statfs(fp, buf, td));
+	return (vn_statfs(fp, buf, td));
+}
+
+int
+vn_fsync_opt(struct file *fp, int mode, struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_fsync(fp, mode, td));
+	return (vn_fsync(fp, mode, td));
+}
+
+int
+vn_setattr_opt(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_setattr(fp, vap, active_cred, td));
+	return (vn_setattr(fp, vap, active_cred, td));
+}
+
+int
+vn_readdir_opt(struct file *fp, struct uio *uio, off_t *basep,
+    struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_readdir(fp, uio, basep, td));
+	return (vn_readdir(fp, uio, basep, td));
+}
+
+int
+vn_acl_opt(struct file *fp, int op, int type, struct acl *aclp,
+    struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_acl(fp, op, type, aclp, td));
+	return (vn_acl(fp, op, type, aclp, td));
+}
+
+static int
+vn_openfile_acl(struct file *fp, int op, int type, struct acl *aclp,
+    struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_acl(fp, op, type, aclp, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+int
+vn_extattr_opt(struct file *fp, int op, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, struct uio *auio,
+    struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_extattr(fp, op, attrnamespace, attrname, data,
+		    nbytes, auio, td));
+	return (vn_extattr(fp, op, attrnamespace, attrname, data, nbytes,
+	    auio, td));
+}
+
+static int
+vn_openfile_extattr(struct file *fp, int op, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, struct uio *auio,
+    struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_extattr(fp, op, attrnamespace, attrname, data, nbytes, auio,
+	    td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/*
+ * The fcntl(2) commands a vnode file answers for itself: read-ahead
+ * (F_READAHEAD, with F_RDAHEAD's size already converted), F_ISUNIONSTACK,
+ * and the kernel-private F_GET_RW_HINT/F_SET_RW_HINT behind the Linux
+ * read/write life-time hints kept in v_write_hint.
+ */
+int
+vn_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
+{
+	struct vnode *vp;
+	struct mount *mp;
+	int bsize, error;
+
+	vp = fp->f_vnode;
+	switch (cmd) {
+	case F_READAHEAD:
+		if (vp->v_type != VREG)
+			return (ENOTTY);
+		/*
+		 * Exclusive lock synchronizes against f_seqcount reads and
+		 * writes in sequential_heuristic().
+		 */
+		error = vn_lock(vp, LK_EXCLUSIVE);
+		if (error != 0)
+			return (error);
+		if (arg >= 0) {
+			bsize = vp->v_mount->mnt_stat.f_iosize;
+			arg = MIN(arg, INT_MAX - bsize + 1);
+			fp->f_seqcount[UIO_READ] = MIN(IO_SEQMAX,
+			    (arg + bsize - 1) / bsize);
+			atomic_set_int(&fp->f_flag, FRDAHEAD);
+		} else {
+			atomic_clear_int(&fp->f_flag, FRDAHEAD);
+		}
+		VOP_UNLOCK(vp);
+		return (0);
+
+	case F_ISUNIONSTACK:
+		/*
+		 * Since we don't prevent dooming the vnode even non-null mp
+		 * found can become immediately stale. This is tolerable since
+		 * mount points are type-stable (providing safe memory access)
+		 * and any vfs op on this vnode going forward will return an
+		 * error (meaning return value in this case is meaningless).
+		 */
+		mp = atomic_load_ptr(&vp->v_mount);
+		if (__predict_false(mp == NULL))
+			return (EBADF);
+		td->td_retval[0] = (mp->mnt_kern_flag & MNTK_UNIONFS) != 0 ||
+		    (mp->mnt_flag & MNT_UNION) != 0;
+		return (0);
+
+	case F_GET_RW_HINT:
+		td->td_retval[0] = atomic_load_short(&vp->v_write_hint);
+		return (0);
+
+	case F_SET_RW_HINT:
+		error = vn_lock(vp, LK_SHARED | LK_RETRY);
+		if (error == 0) {
+			error = VOP_ACCESS(vp, VADMIN, td->td_ucred, td);
+			VOP_UNLOCK(vp);
+		}
+		if (error == 0)
+			atomic_store_short(&vp->v_write_hint, (uint16_t)arg);
+		return (error);
+
+	default:
+		return (EINVAL);
+	}
+}
+
+static int
+vn_openfile_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_fcntl(fp, cmd, arg, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+SDT_PROBE_DECLARE(fd, , , advlock__start);
+SDT_PROBE_DECLARE(fd, , , advlock__done);
+
+/*
+ * Advisory locks on a vnode file: flock(2), the fcntl(2) record locks and
+ * the unlock every close owes POSIX locks.  Open-file-description locks need
+ * the filesystem's support, checked under the vnode lock so that a doomed
+ * vnode is excluded.  Enters the file context itself, so the tables install
+ * it directly.
+ */
+int
+vn_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
+    struct thread *td)
+{
+	struct vn_file_context ctx;
+	struct vnode *vp;
+	int error;
+
+	vp = fp->f_vnode;
+	if ((flags & F_OFD) != 0) {
+		error = vn_lock(vp, LK_SHARED | LK_RETRY);
+		if (error != 0)
+			return (error);
+		if (vp->v_mount == NULL ||
+		    (vp->v_mount->mnt_vfc->vfc_flags & VFCF_OFDLOCKS) == 0)
+			error = EOPNOTSUPP;
+		VOP_UNLOCK(vp);
+		if (error != 0)
+			return (error);
+	}
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	SDT_PROBE3(fd, , , advlock__start, (vp), (op), (flags));
+	error = VOP_ADVLOCK(vp, id, op, fl, flags);
+	SDT_PROBE3(fd, , , advlock__done, (vp), (op), (error));
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/*
+ * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
+ * that carries a vnode.  The file context is entered here, not by a
+ * per-table wrapper, so FIFOs, pseudo-terminal masters, devfs and linuxkpi
+ * files get it too; it was entered unconditionally before.
+ */
+int
+vn_fsync(struct file *fp, int mode, struct thread *td)
+{
+	struct vn_file_context filectx;
+	struct vnode *vp;
+	struct mount *mp;
+	int error;
+
+	vp = fp->f_vnode;
+	if (mode == FO_FSYNC_FS)
+		return (vn_fsync_fs(vp));
+retry:
+	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
+	if (error != 0)
+		return (error);
+	vn_lock(vp, vn_lktype_write(mp, vp) | LK_RETRY);
+	AUDIT_ARG_VNODE1(vp);
+	vnode_pager_clean_async(vp);
+	vn_file_context_enter(&filectx, fp, NULL, 0);
+	error = mode == FO_FSYNC_FULL ? VOP_FSYNC(vp, MNT_WAIT, td) :
+	    VOP_FDATASYNC(vp, td);
+	vn_file_context_leave(&filectx);
+	VOP_UNLOCK(vp);
+	vn_finished_write(mp);
+	if (error == ERELOOKUP)
+		goto retry;
+	return (error);
+}
+
 const struct fileops vnops = {
 	.fo_read = vn_openfile_io_fault,
 	.fo_write = vn_openfile_io_fault,
@@ -353,7 +842,19 @@ const struct fileops vnops = {
 	.fo_fallocate = vn_openfile_fallocate,
 	.fo_fspacectl = vn_openfile_fspacectl,
 	.fo_cmp = vn_cmp,
-	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
+	.fo_pathconf = vn_openfile_pathconf,
+	.fo_statfs = vn_openfile_statfs,
+	.fo_fsync = vn_fsync,
+	.fo_setattr = vn_openfile_setattr,
+	.fo_fadvise = vn_openfile_fadvise,
+	.fo_readdir = vn_readdir,
+	.fo_copy_file_range = vn_copy_range,
+	.fo_acl = vn_openfile_acl,
+	.fo_extattr = vn_openfile_extattr,
+	.fo_fcntl = vn_openfile_fcntl,
+	.fo_advlock = vn_advlock,
+	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_PRIVWRITE |
+	    DFLAG_FLOCK | DFLAG_RECLOCK
 };
 
 #define VN_OPENFILEOPS(extra) { \
@@ -374,7 +875,19 @@ const struct fileops vnops = {
 	.fo_fallocate = vn_openfile_fallocate, \
 	.fo_fspacectl = vn_openfile_fspacectl, \
 	.fo_cmp = vn_cmp, \
-	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
+	.fo_pathconf = vn_openfile_pathconf, \
+	.fo_statfs = vn_openfile_statfs, \
+	.fo_fsync = vn_fsync, \
+	.fo_setattr = vn_openfile_setattr, \
+	.fo_fadvise = vn_openfile_fadvise, \
+	.fo_readdir = vn_readdir, \
+	.fo_copy_file_range = vn_copy_range, \
+	.fo_acl = vn_openfile_acl, \
+	.fo_extattr = vn_openfile_extattr, \
+	.fo_fcntl = vn_openfile_fcntl, \
+	.fo_advlock = vn_advlock, \
+	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | DFLAG_PRIVWRITE | \
+	    DFLAG_FLOCK | DFLAG_RECLOCK | (extra) \
 }
 
 static const struct fileops vn_openfileops[6] = {
@@ -3203,6 +3716,18 @@ vn_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
 	struct vnode *vp;
 
 	vp = fp->f_vnode;
+#ifdef MAC
+	{
+		int error;
+
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		error = mac_vnode_check_setmode(active_cred, vp,
+		    mode & ALLPERMS);
+		VOP_UNLOCK(vp);
+		if (error != 0)
+			return (error);
+	}
+#endif
 #ifdef AUDIT
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
@@ -3218,6 +3743,17 @@ vn_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	struct vnode *vp;
 
 	vp = fp->f_vnode;
+#ifdef MAC
+	{
+		int error;
+
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		error = mac_vnode_check_setowner(active_cred, vp, uid, gid);
+		VOP_UNLOCK(vp);
+		if (error != 0)
+			return (error);
+	}
+#endif
 #ifdef AUDIT
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);

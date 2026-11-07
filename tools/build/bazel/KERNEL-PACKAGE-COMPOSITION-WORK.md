@@ -152,3 +152,185 @@ NEXT: source-owned root selection and coherent kernel/GDB/modules/directories/
 aliases/linker.hints/pkgbase, then normal startup/services and genuine upgrades.
 Custom/ALL_MODULES/cross, bootstrap/cache/sandbox/reproducibility/debug/resources/
 hardware/publication gates remain open. Make stays production/default; BIP excluded.
+
+## Normal AMD64 root module graph passes (2026-11-06)
+
+Source-owned root selection now builds the complete current 722-module profile.
+Default, nineteen-features-disabled (468) and ACPI-off/Veriexec-on (726) profiles each
+pass 20 test targets. Complete original source Make traversal, leaf/base-install
+policy and exact ordered OBJS+BLOB_OBJS match; all 1,916 selected ELF/debug pairs
+pass. Actual VMM and amdsmu header dependencies are fixed. Shared checked kernel
+options and native device directives preserve tied source selection. A focused
+Bazel follow-up passes the final 13-case Make-audit regression and option tests.
+Iwlwifi ACPI objects, CTF paths and flags now follow the actual device option;
+configured compile-action checks cover every linked object.
+See ROOT-MODULE-GRAPH-QUALIFICATION.md for hash-bound evidence and retained failures.
+
+NEXT: coherent current-profile kernel/GDB/modules/directories/aliases/linker.hints/
+pkgbase. FDT/MMCCAM/TESTS root branches still require missing parent/producers;
+MODULES_OVERRIDE/EXTRA/WITHOUT_MODULES/ALL_MODULES are not implemented. These and
+custom/cross, normal boot/services/upgrades, bootstrap/cache/sandbox/reproducibility/
+debug/resources/hardware/publication remain open. Make stays default; BIP excluded.
+
+Next composition should reuse the existing native kldxref -o explicit-input mode.
+Its implementation requires regular files together in the output directory and
+rejects symlink inputs. The original default FTS_PHYSICAL traversal likewise skips
+installation aliases; compare identical real kernel/module payloads in basename
+order (the original compare() uses strcmp), then separately preserve aliases in
+the installation manifest. Declare the native execution tool and runtime libraries;
+materialize only those selected ELF files, not the complete installed world. Prove
+explicit and ordinary directory-mode hints agree before merging that generated
+record with the existing kernel/GDB directory policy and typed module manifest.
+This is the next design step, not a completed hints/composition result.
+
+## Complete installation implementation qualified (2026-11-06)
+
+The new native hints rule consumes typed installation records, selects the regular
+ELF names ordinary kldxref would scan, and streams only those payloads into an
+action-private directory for the existing -o API. It declares the native execution
+tool and DSOs, and publishes a normal installation entry for linker.hints. A native
+Bazel test compares directory/explicit/build outputs, alias and ignored-file
+behavior, undeclared-file exclusion, corrupt-input atomicity and input preservation.
+The AMD64 complete installation joins the existing kernel/GDB/directory manifest
+and source-owned module root, then adds generated hints and an installation archive.
+
+The default, no-separate-debug and relocated profiles pass all 21 selected tests
+and independent complete archive/ELF/debug/CTF review. Across all profiles, the
+723 runtime ELFs preserve identical allocated sections and CTF; relocation leaves
+all regular payloads unchanged. Explicit supplemental directory policy supplies
+custom ancestors; absent policy is rejected. See
+KERNEL-INSTALLATION-COMPOSITION-QUALIFICATION.md. The initial request lacked the mandatory
+explicit kernel source revision and was rejected during analysis. The next request
+identifies the dirty source revision and explicitly enables kernel/module CTF, as
+GENERIC requests WITH_CTF for DTrace. Existing format-5 target/settings/test APIs
+carry these changes; frontend C and signing/publication interfaces need no update.
+No normal boot, final pkgbase archives or publication is established by this work.
+
+Final package composition must preserve world-kmod-metadata.awk's non-kernel module
+merge into the oes/mac-abac families and project kernel ownership into the declared
+KERNCONF/flavor package. The original mtree-to-plist.awk still identifies kernel
+debug payloads through a /usr/lib/debug/boot prefix; relocated/debug-prefix tests
+must address that source policy before claiming general package-layout support.
+
+NEXT: final flavored kernel pkgbase families, non-kernel module/world package merge
+and complete package inventory before normal startup/services/upgrades.
+
+## Native current AMD64 pkgbase composition qualified (2026-11-06)
+
+The kernel-only native package graph passes 22 selected test targets, including
+actual pkg catalogue/solver checks. Independent review of both actual archives
+passes original Make-generated UCL and pkg serialization parity plus full file,
+alias, ownership/mode/flags and ancestor directory coverage. The retained report
+bazel-kernel-pkgbase-default-review-r3-20261106/review.json has SHA-256
+5c528abd31f8ea36304282f4fba4c697a89b8d340d3045b149ed13268eb375dd.
+It binds bazel-kernel-pkgbase-default-native-r2-20261106. Four original oes/mac-abac
+module records remain in the separate typed world contribution; no payload File
+copies or rewritten installation paths implement package ownership projection.
+
+The source-owned AMD64 system endpoint now composes the selected world family set
+and kernel family set, plus their installation providers, before reconciliation
+and existing per-package actions. Nested family sets reject identity mismatches
+and duplicate family/package names. World construction declarations share one
+source helper. Complete current AMD64 system package creation and the real solver pass all 25
+selected tests. Exhaustive independent archive inspection passes all 447 packages
+and 33,968 file claims, with declared-input path/hash binding for 19,393 Files.
+See SYSTEM-PKGBASE-COMPOSITION-QUALIFICATION.md for final receipts, exact checks,
+Make pkg encoding and source alias corrections. Normal boot/upgrade/publication
+are not established by this result.
+
+The frontend's existing explicit format-5 targets/settings handle these graphs.
+The family rule now explicitly distinguishes the UCL generator family from the
+flavored package family and can bind a template variable to its selected suffix.
+This preserves original kernel UCL comments and generator dependency exceptions;
+it does not invent an automatic kernel debug dependency. Normal Make stays default.
+
+NEXT: full 447-package installed/normal-boot/service and genuine upgrade proof;
+source Make kernel-debug path policy and package variants. Remaining global gates
+stay open. Make stays production/default; BIP excluded.
+
+## Normal image construction in progress (2026-11-06)
+
+A native bsd_pkg_image rule now consumes the actual complete package outputs,
+family/inventory/hash contracts, typed construction Files and explicit site/pool
+policy. It stages all packages in a private INSTALL_AS_USER root, supplies declared
+construction outputs, reconciles the full completed tree, and drives native makefs
+and mkimg for a disk-backed ZFS BIOS image. It does not replace init or /etc/rc,
+mount the host, load a guest image into RAM or run target package hooks on the host.
+The private boot fixture provisions accounts through actual guest pw during normal
+rc.local and keeps PAM enabled for SSH. No normal boot result exists yet.
+
+Initial analysis caught two site target/source name collisions. The first execution
+caught an unsupported pkg add -y option. A subsequent explicit mode query established
+that INSTALL_AS_USER is an environment interface, not a pkg configuration key.
+The new action and maintained release vmimage.subr now use that documented interface;
+source supplied database outputs remain required. Image policy/path unit checks pass.
+The current full image retry is not accepted until construction and VM checks pass.
+Existing format-5 target/settings handling carries the image target; no production
+frontend backend/default, signing or publication switch is introduced.
+
+## Complete image construction and real startup correction — 2026-11-06
+
+R6 complete-image construction passes all 447 packages, 33,982 nondirectory
+records (including construction/site/generated state) and 1,369 directories.
+The real solver handles dependency cycles; all source-declared empty scaffolding
+is materialized before exact completed-tree reconciliation. No omitted-path list
+or forced installation order is used. Source-derived ownership enters makefs
+through numeric METALOG; installed runtime ownership remains a separate gate.
+
+The first ordinary 2 GB/four-vCPU BIOS/ZFS VM reaches the native kernel but panics
+in guard initialization. The source-specific stack_protector=False declaration
+removed the local flag but not hosted toolchain bsd_ssp. The macro now explicitly
+disables that feature for this exception; ordinary protected objects are unchanged.
+The actual-object relocation regression fails before correction and passes through
+the frontend afterward. Full corrected image R7 is still rebuilding. Normal
+startup, PAM/SSH/su and upgrades remain unqualified. The runtime driver and plan
+retain source/tool/image bindings and enforce explicit sampled resource budgets.
+
+Maintained release/hardware/database callers now pass pkg rootless mode through
+the actual environment interface. The real hardware suite passes all 45 cases
+across the main run and one explicit-module follow-up. See
+ROOTLESS-PKG-MODE-CORRECTION.md and SYSTEM-IMAGE-BOOT-QUALIFICATION.md for exact
+scope, retained failed boot and next steps. Existing format-5 frontend selection
+carries the image/guard-test targets; C/default backend changes are not required.
+Make stays production/default and BIP stays excluded.
+
+## R7 normal boot and fixture/terminal corrections — 2026-11-06
+
+Complete corrected image R7 passes four native test targets and contains all 447
+packages. Its normal R2 guest passes guard initialization, mounts ZFS, runs normal
+Capsule/Switchboard/rc, gets DHCP, starts SSH, and authenticates root at the serial
+console. Formal runtime qualification fails: rc.local leaked set -u into its rc
+caller, and early command input was flushed/consumed by resizewin in the real
+login profile. No shell prompt is substituted for the missing command result.
+
+rc.local now confines strict options in a subshell. The harness waits for a real
+shell prompt and answers absolute cursor/DSR size probes from explicit terminal
+dimensions; arbitrary fragmentation, bounds and exactly-once responses are tested.
+It verifies actual guest stty/resizewin size and fails the observed shell error.
+Serial output is drained before final failure acceptance. The fresh full R8 image
+passes five native test targets and retains the complete package/file/directory
+counts. The fresh 2 GB/four-vCPU R3 VM is running; SSH/su, normal shutdown, installed
+metadata, real upgrades and remaining global gates stay open. See
+SYSTEM-IMAGE-BOOT-QUALIFICATION.md. Existing frontend target/settings handle these
+changes; the normal Make backend stays default and BIP remains excluded.
+
+## Normal complete-package baseline accepted — 2026-11-06
+
+R9 image construction and five native test targets pass. R5 normal BIOS/ZFS VM
+passes all 12 console/PAM/terminal/Capsule/signal-protection/root/package/SSH/su
+checks and normal shutdown with unchanged backing/runner bindings. Independent
+review confirms the exact pathname/PAM rows and expected payload changes, with
+all kernel payload bytes unchanged. See SYSTEM-IMAGE-BOOT-QUALIFICATION.md and
+bazel-system-normal-boot-review-r1-20261106 under the standard object root.
+
+procstat's old kill(pid,0) guard discarded processes whose signal permission was
+denied. It now skips only ESRCH; kernel MAC policy is unchanged. The new ATF source
+cross-UID case/wrapper/helper is built and the final wrapper bytes verified, but
+the ATF case itself remains unexecuted. The SSH failure in R4 was a case-sensitive
+harness assumption about canonical UsePAM output; full effective config is now
+recorded and must actually say yes before real password/PAM tests proceed.
+
+Next: all installed metadata and legitimate firstboot deltas, real version/BE
+upgrade/rollback/removal, then the remaining optional/custom/cross/bootstrap/
+source-isolation/cache/sandbox/reproducibility/performance/hardware/publication
+gates. Make stays production/default and BIP remains excluded.

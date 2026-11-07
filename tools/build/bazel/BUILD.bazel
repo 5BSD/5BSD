@@ -385,7 +385,7 @@ bsd_pkg_create_test(name = "world_pkg_hardlinks_test", src = "world-pkg-hardlink
     driver = ":world_pkg_create.py", runtime = ["@bsd_sdk//toolchain:python_stdlib",
         "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime", ":pkg_create.py", ":package_symlinks.py"])
 
-exports_files(["private-package-install-test.py", "package_index.py", "world-pkg-solver-test.py"], visibility = ["//:__pkg__"])
+exports_files(["private-package-install-test.py", "package_index.py", "world-pkg-solver-test.py"], visibility = ["//:__pkg__", "//sys:__subpackages__"])
 
 exports_files(["world_layout.py"], visibility = ["//:__pkg__"])
 bsd_python_test(name = "world_layout_test", src = "world-layout-test.py",
@@ -422,3 +422,26 @@ bsd_host_artifact_test(name = "kernel_fdt_modules_test", src = "kernel-fdt-modul
 
 exports_files(["kernel_options.py"])
 bsd_python_test(name = "kernel_options_test", src = "kernel-options-test.py", data = ["kernel_options.py"])
+
+exports_files(["linker_hints.py", "linker-hints-test.py"])
+
+exports_files(["payload_inventory.py"])
+bsd_python_test(name = "payload_inventory_test", src = "payload-inventory-test.py", data = ["payload_inventory.py"])
+
+bsd_python_test(name = "archive_flags_test", src = "archive-flags-test.py",
+    data = ["archive_headers.py", "install_archive.py", "archive_policy.py", "directory_metadata.py"])
+
+exports_files(["pkg_image.py"])
+
+bsd_python_test(name = "pkg_image_policy_test", src = "pkg-image-policy-test.py",
+    data = ["pkg_image.py", "pkg_relocated.py", "//tools/build/bazel/tests/system_pkg_boot:image.json"])
+
+exports_files(["pkg_relocated.py"], visibility = ["//:__pkg__", "//sys:__subpackages__"])
+
+bsd_python_test(name = "kernel_stack_protector_test", src = "kernel-stack-protector-test.py",
+    data = ["//sys/kern:generic_core_stack_protector_object_files", "//sys/kern:generic_core_kern_malloc_object_files"],
+    args = ["--initializer", "$(location //sys/kern:generic_core_stack_protector_object_files)",
+            "--control", "$(location //sys/kern:generic_core_kern_malloc_object_files)"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+exports_files(["qualification_artifacts.py"], visibility = ["//tools/test/system-pkg-runtime:__pkg__"])

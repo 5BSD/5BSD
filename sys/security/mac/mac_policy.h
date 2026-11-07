@@ -102,6 +102,7 @@ struct sysctl_req;
 struct thread;
 struct ucred;
 struct vattr;
+struct flock;
 struct vfsconf;
 struct vfsoptlist;
 struct vnode;
@@ -804,6 +805,20 @@ typedef int	(*mpo_file_check_mmap_t)(struct ucred *cred,
 		    vm_offset_t addr, vm_size_t size);
 typedef void	(*mpo_file_notify_close_t)(struct ucred *cred,
 		    struct file *fp, int fd);
+typedef int	(*mpo_file_check_fcntl_t)(struct ucred *cred,
+		    struct file *fp, int fd, int cmd, intptr_t arg);
+typedef int	(*mpo_file_check_lock_t)(struct ucred *cred,
+		    struct file *fp, int fd, int op, struct flock *fl);
+typedef int	(*mpo_file_check_read_t)(struct ucred *active_cred,
+		    struct ucred *file_cred, struct file *fp);
+typedef int	(*mpo_file_check_write_t)(struct ucred *active_cred,
+		    struct ucred *file_cred, struct file *fp);
+typedef int	(*mpo_file_check_stat_t)(struct ucred *active_cred,
+		    struct ucred *file_cred, struct file *fp);
+typedef int	(*mpo_file_check_setattr_t)(struct ucred *cred,
+		    struct file *fp, int fd, struct vattr *vap);
+typedef int	(*mpo_file_check_fsync_t)(struct ucred *cred,
+		    struct file *fp);
 
 
 
@@ -1115,6 +1130,13 @@ struct mac_policy_ops {
 	mpo_file_check_ioctl_t			mpo_file_check_ioctl;
 	mpo_file_check_mmap_t			mpo_file_check_mmap;
 	mpo_file_notify_close_t			mpo_file_notify_close;
+	mpo_file_check_fcntl_t			mpo_file_check_fcntl;
+	mpo_file_check_lock_t			mpo_file_check_lock;
+	mpo_file_check_read_t			mpo_file_check_read;
+	mpo_file_check_write_t			mpo_file_check_write;
+	mpo_file_check_stat_t			mpo_file_check_stat;
+	mpo_file_check_setattr_t		mpo_file_check_setattr;
+	mpo_file_check_fsync_t			mpo_file_check_fsync;
 
 	mpo_socket_check_accept_t		mpo_socket_check_accept;
 	mpo_socket_check_bind_t			mpo_socket_check_bind;

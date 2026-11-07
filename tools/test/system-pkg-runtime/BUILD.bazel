@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "serial_terminal_test", src = "serial-terminal-test.py",
+    data = ["serial_terminal.py"], visibility = ["//visibility:public"])
+bsd_python_test(name = "installed_audit_test", src = "installed-audit-test.py",
+    data = ["installed_audit.py"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "db_compare", srcs = ["db_compare.c"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+bsd_python_test(name = "db_compare_test", src = "db-compare-test.py",
+    data = [":db_compare", "//usr.sbin/pwd_mkdb:pwd_mkdb", "//etc:shells", "//tools/build/bazel:generate_accounts.py"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"], visibility = ["//visibility:public"])
+bsd_python_test(name = "firstboot_accounts_test", src = "firstboot-accounts-test.py",
+    data = ["firstboot_accounts.py"], visibility = ["//visibility:public"])
+bsd_python_test(name = "mtree_reconcile_test", src = "mtree-reconcile-test.py",
+    data = ["mtree_reconcile.py"], visibility = ["//visibility:public"])
+bsd_python_test(name = "upgrade_policy_test", src = "upgrade-policy-test.py",
+    data = ["upgrade_runtime.py", "//tools/build/bazel:qualification_artifacts.py"], visibility = ["//visibility:public"])
+
+bsd_python_test(name = "startup_diagnostics_test", src = "startup-diagnostics-test.py",
+    data = ["startup_diagnostics.py"], visibility = ["//visibility:public"])

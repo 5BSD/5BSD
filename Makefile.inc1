@@ -3662,6 +3662,7 @@ _cddl_lib_libspl= cddl/lib/libspl
 _cddl_lib_libdtrace= cddl/lib/libdtrace
 .endif
 
+cddl/lib/libspl__L: lib/libthr__L
 cddl/lib/libavl__L: cddl/lib/libspl__L
 cddl/lib/libnvpair__L: cddl/lib/libspl__L
 

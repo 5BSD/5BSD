@@ -562,6 +562,10 @@ kern_reroot(void)
 	 * (the temporary copy of init(8)) busy.
 	 */
 	vp = curproc->p_textvp;
+	if (vp == NULL) {
+		/* init(8) running from an image that is not a vnode. */
+		return (EOPNOTSUPP);
+	}
 	error = vn_lock(vp, LK_SHARED);
 	if (error != 0)
 		return (error);

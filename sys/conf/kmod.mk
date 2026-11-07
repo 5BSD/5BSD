@@ -316,6 +316,7 @@ beforebuild: ${_ILINKS}
 .if ${MK_REPRODUCIBLE_PATHS} != "no"
 PREFIX_SYSDIR=/usr/src/sys
 CFLAGS+= -ffile-prefix-map=${SYSDIR}=${PREFIX_SYSDIR}
+CFLAGS+= -ffile-prefix-map=${SYSDIR:H}=${PREFIX_SYSDIR:H}
 .if defined(KERNBUILDDIR)
 PREFIX_KERNBUILDDIR=/usr/obj/usr/src/${MACHINE}.${MACHINE_CPUARCH}/sys/${KERNBUILDDIR:T}
 PREFIX_OBJDIR=${PREFIX_KERNBUILDDIR}/modules/usr/src/sys/modules/${.OBJDIR:T}

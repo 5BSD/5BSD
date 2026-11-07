@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 load("//tools/build/bazel:bsd_kernel_config.bzl", "bsd_kernel_config")
-load("//tools/build/bazel:kernel_option_settings.bzl", "KERNEL_OPTION_SETTINGS", "KERNEL_OPTION_DEFAULTS")
+load("//tools/build/bazel:kernel_option_settings.bzl", "KERNEL_OPTION_SETTINGS", "KERNEL_OPTION_DEFAULTS", "KERNEL_DEVICE_OPTIONS")
 
 # These are target configuration inputs; config itself runs on the build host.
 filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.bazel"]),
@@ -9,7 +9,7 @@ filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.ba
 
 [bsd_kernel_config(
     name = name, config = "GENERIC", debug = debug,
-    option_settings = KERNEL_OPTION_SETTINGS, auto_defaults = KERNEL_OPTION_DEFAULTS["arm64"],
+    option_settings = KERNEL_OPTION_SETTINGS, device_options = KERNEL_DEVICE_OPTIONS, auto_defaults = KERNEL_OPTION_DEFAULTS["arm64"],
     inputs = [":configuration_inputs", "//sys/conf:configuration_inputs"],
     source_anchor = "//sys/conf:files",
     python = "@bsd_sdk//toolchain:extra_python",

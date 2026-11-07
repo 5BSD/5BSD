@@ -66,6 +66,43 @@ binary_info_body()
 	atf_check -o match:"$line_re" tail -n 1 procstat.out
 }
 
+atf_test_case binary_info_unsignalable cleanup
+binary_info_unsignalable_head()
+{
+	atf_set "descr" "Binary metadata remains readable when signal permission is denied"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "su procstat sysctl"
+}
+binary_info_unsignalable_body()
+{
+	[ "$(sysctl -n security.bsd.see_other_uids)" = 1 ] ||
+	    atf_skip "System policy disables cross-UID process visibility"
+	unprivileged_user=$(atf_config_get unprivileged_user nobody)
+	id "${unprivileged_user}" >/dev/null 2>&1 ||
+	    atf_skip "Unprivileged test account is unavailable"
+	start_program
+	echo "$PROG_PID" >program.pid
+
+	# A different UID cannot signal the live root-owned child. Process
+	# visibility is a separate policy: require it before exercising -b.
+	atf_check -s exit:1 -e ignore su -m "${unprivileged_user}" \
+	    -c "/bin/kill -0 $PROG_PID"
+	atf_check -o save:visible.out su -m "${unprivileged_user}" \
+	    -c "procstat -b $PROG_PID"
+	read -r pid command osrel pathname <<EOF
+$(tail -n 1 visible.out)
+EOF
+	atf_check_equal "$pid" "$PROG_PID"
+	atf_check_equal "$command" "$PROG_COMM"
+	atf_check_equal "$pathname" "$PROG_PATH"
+}
+binary_info_unsignalable_cleanup()
+{
+	if [ -f program.pid ]; then
+		kill "$(cat program.pid)" 2>/dev/null || :
+	fi
+}
+
 atf_test_case command_line_arguments
 command_line_arguments_head()
 {
@@ -155,6 +192,7 @@ kernel_stacks_body()
 atf_init_test_cases()
 {
 	atf_add_test_case binary_info
+	atf_add_test_case binary_info_unsignalable
 	atf_add_test_case command_line_arguments
 	atf_add_test_case environment
 	atf_add_test_case file_descriptor

@@ -2104,7 +2104,18 @@ static const struct fileops devfs_ops_f = {
 	.fo_fill_kinfo = vn_fill_kinfo,
 	.fo_mmap =	devfs_mmap_f,
 	.fo_cmp =	devfs_cmp_f,
-	.fo_flags =	DFLAG_PASSABLE | DFLAG_SEEKABLE
+	.fo_pathconf =	vn_pathconf,
+	.fo_statfs =	vn_statfs,
+	.fo_fsync =	vn_fsync,
+	.fo_setattr =	vn_setattr,
+	.fo_fadvise =	vn_fadvise,
+	.fo_readdir =	vn_readdir,
+	.fo_acl =	vn_acl,
+	.fo_extattr =	vn_extattr,
+	.fo_fcntl =	vn_fcntl,
+	.fo_advlock =	vn_advlock,
+	.fo_flags =	DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_PRIVWRITE |
+			DFLAG_FLOCK | DFLAG_RECLOCK
 };
 
 static const struct fileops devfs_ops_nonpassable_f = {
@@ -2123,7 +2134,18 @@ static const struct fileops devfs_ops_nonpassable_f = {
 	.fo_fill_kinfo = vn_fill_kinfo,
 	.fo_mmap =	devfs_mmap_f,
 	.fo_cmp =	devfs_cmp_f,
-	.fo_flags =	DFLAG_SEEKABLE
+	.fo_pathconf =	vn_pathconf,
+	.fo_statfs =	vn_statfs,
+	.fo_fsync =	vn_fsync,
+	.fo_setattr =	vn_setattr,
+	.fo_fadvise =	vn_fadvise,
+	.fo_readdir =	vn_readdir,
+	.fo_acl =	vn_acl,
+	.fo_extattr =	vn_extattr,
+	.fo_fcntl =	vn_fcntl,
+	.fo_advlock =	vn_advlock,
+	.fo_flags =	DFLAG_SEEKABLE | DFLAG_PRIVWRITE | DFLAG_FLOCK |
+			DFLAG_RECLOCK
 };
 
 /* Vops for non-CHR vnodes in /dev. */

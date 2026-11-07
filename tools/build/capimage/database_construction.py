@@ -89,7 +89,7 @@ def construct(pkg, sqlite, inventory, contract, abi, osversion, work, timeout, p
     argv = ['-C', '/inputs/pkg.conf', '-R', '/repos']
     for option in ['ABI=' + abi, 'OSVERSION=' + str(osversion), 'PKG_DBDIR=/var/db/pkg',
                    'PKG_CACHEDIR=/var/cache/pkg', 'PKG_ENABLE_PLUGINS=no', 'PKG_TRIGGERS_ENABLE=no',
-                   'RUN_SCRIPTS=no', 'REPO_AUTOUPDATE=no', 'SYSLOG=no', 'INSTALL_AS_USER=yes']:
+                   'RUN_SCRIPTS=no', 'REPO_AUTOUPDATE=no', 'SYSLOG=no']:
         argv.extend(['-o', option])
     argv.extend(['install', '--register-only', '--local-only', '--yes', *selected])
     report = dict(format=1, scope='trusted-builder-database-construction', result='RUNNING',
@@ -107,7 +107,8 @@ def construct(pkg, sqlite, inventory, contract, abi, osversion, work, timeout, p
         with construction.private_jail(root) as jid:
             with (work / 'registration.log').open('xb') as log:
                 subprocess.run([str(pkg), '-j', jid, *argv], check=True,
-                    env=dict(construction.ENVIRONMENT, PKG_INSTALL_EPOCH=str(contract['install_epoch'])),
+                    env=dict(construction.ENVIRONMENT, INSTALL_AS_USER='yes',
+                             PKG_INSTALL_EPOCH=str(contract['install_epoch'])),
                     stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                     close_fds=True, umask=0o022, timeout=timeout)
         database = root / 'var/db/pkg/local.sqlite'
