@@ -533,6 +533,10 @@ bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["uipc_v
 amd64_generic_kernel_objects(name = "generic_core_coredump_vnode", srcs = ["coredump_vnode.c"],
     deps = ["//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/vm:core_kernel_coredump_vnode_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_exec_image_vnode", srcs = ["exec_image_vnode.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 amd64_generic_kernel_objects(name = "generic_core_imgact_elf", srcs = ["imgact_elf.c"],
     deps = ["//sys/vm:core_kernel_imgact_elf_headers", "//sys/amd64/conf:core_kernel_opt_capsicum_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
@@ -951,6 +955,7 @@ load("//tools/build/bazel:cross_generic_kernel.bzl", "cross_generic_kernel_objec
 cross_generic_kernel_objects(arch = "arm64", name = "generic_core",
     srcs = [
         "coredump_vnode.c",
+        "exec_image_vnode.c",
         "imgact_elf.c",
         "imgact_shell.c",
         "init_main.c",
@@ -1229,6 +1234,7 @@ cross_generic_kernel_objects(arch = "arm64", name = "generic_ticks_assembly",
 cross_generic_kernel_objects(arch = "riscv", name = "generic_core",
     srcs = [
         "coredump_vnode.c",
+        "exec_image_vnode.c",
         "imgact_elf.c",
         "imgact_shell.c",
         "init_main.c",
