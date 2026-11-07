@@ -347,6 +347,8 @@ dtrace_getarg(int arg, int aframes __unused)
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
 		return (0);
 	}
+	if (arg == 5 && dtrace_error_arg[curcpu].active)
+		return (dtrace_error_arg[curcpu].illval);
 	/*
 	 * We only handle invop providers here.
 	 */
