@@ -5203,17 +5203,13 @@ int
 kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
     off_t *outoffp, size_t len, unsigned int flags)
 {
-	struct vn_file_context filectx;
 	struct file *infp, *infp1, *outfp, *outfp1;
-	struct vnode *invp, *outvp;
 	int error;
 	size_t retlen;
-	void *rl_rcookie, *rl_wcookie;
 	off_t inoff, outoff, savinoff, savoutoff;
 	bool foffsets_locked, foffsets_set;
 
 	infp = outfp = NULL;
-	rl_rcookie = rl_wcookie = NULL;
 	foffsets_locked = false;
 	foffsets_set = false;
 	error = 0;
@@ -5240,7 +5236,8 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		error = EBADF;
 		goto out;
 	}
-	if (infp->f_vnode == NULL) {
+	/* Only descriptor types that can copy ranges take part. */
+	if (infp->f_ops->fo_copy_file_range == NULL) {
 		error = EINVAL;
 		goto out;
 	}
@@ -5252,7 +5249,7 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		error = EBADF;
 		goto out;
 	}
-	if (outfp->f_vnode == NULL) {
+	if (outfp->f_ops->fo_copy_file_range == NULL) {
 		error = EINVAL;
 		goto out;
 	}
@@ -5289,8 +5286,6 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 	savinoff = inoff;
 	savoutoff = outoff;
 
-	invp = infp->f_vnode;
-	outvp = outfp->f_vnode;
 	/* Sanity check the f_flag bits. */
 	if ((outfp->f_flag & (FWRITE | FAPPEND)) != FWRITE ||
 	    (infp->f_flag & FREAD) == 0) {
@@ -5303,7 +5298,7 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 
 	/*
-	 * Make sure that the ranges we check and lock below are valid.  Note
+	 * Make sure that the ranges checked and locked below are valid.  Note
 	 * that len is clamped to SSIZE_MAX above.
 	 */
 	if (inoff < 0 || outoff < 0) {
@@ -5311,43 +5306,10 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 	}
 
-	/*
-	 * If infp and outfp refer to the same file, the byte ranges cannot
-	 * overlap.
-	 */
-	if (invp == outvp) {
-		if ((inoff <= outoff && inoff + len > outoff) ||
-		    (inoff > outoff && outoff + len > inoff)) {
-			error = EINVAL;
-			goto out;
-		}
-		rangelock_may_recurse(&invp->v_rl);
-	}
-
-	/* Range lock the byte ranges for both invp and outvp. */
-	for (;;) {
-		rl_wcookie = vn_rangelock_wlock(outvp, outoff, outoff + len);
-		rl_rcookie = vn_rangelock_tryrlock(invp, inoff, inoff + len);
-		if (rl_rcookie != NULL)
-			break;
-		vn_rangelock_unlock(outvp, rl_wcookie);
-		rl_rcookie = vn_rangelock_rlock(invp, inoff, inoff + len);
-		vn_rangelock_unlock(invp, rl_rcookie);
-	}
-
 	retlen = len;
-	vn_file_context_enter(&filectx, infp, outfp, 0);
-	SDT_PROBE3(vfs, , , copy__range__start, (invp), (outvp), (retlen));
-	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &retlen,
-	    flags, infp->f_cred, outfp->f_cred, td);
-	SDT_PROBE4(vfs, , , copy__range__done,
-	    (invp), (outvp), (retlen), (error));
-	vn_file_context_leave(&filectx);
+	error = fo_copy_file_range(infp, &inoff, outfp, &outoff, &retlen,
+	    flags, td);
 out:
-	if (rl_rcookie != NULL)
-		vn_rangelock_unlock(invp, rl_rcookie);
-	if (rl_wcookie != NULL)
-		vn_rangelock_unlock(outvp, rl_wcookie);
 	if ((foffsets_locked || foffsets_set) &&
 	    (error == EINTR || error == ERESTART)) {
 		inoff = savinoff;
@@ -5371,6 +5333,69 @@ out:
 	if (infp != NULL)
 		fdrop(infp, td);
 	td->td_retval[0] = retlen;
+	return (error);
+}
+
+/*
+ * copy_file_range(2) between two vnode files: the same-file overlap check,
+ * the byte-range locks on both vnodes, and vn_copy_file_range() inside the
+ * file context.  Offsets and length are written back whatever the result,
+ * as the system call then restores them on EINTR.
+ */
+int
+vn_copy_range(struct file *infp, off_t *inoffp, struct file *outfp,
+    off_t *outoffp, size_t *lenp, unsigned int flags, struct thread *td)
+{
+	struct vn_file_context filectx;
+	struct vnode *invp, *outvp;
+	void *rl_rcookie, *rl_wcookie;
+	off_t inoff, outoff;
+	size_t len;
+	int error;
+
+	/* The partner must be a vnode file too. */
+	if (outfp->f_vnode == NULL)
+		return (EINVAL);
+	invp = infp->f_vnode;
+	outvp = outfp->f_vnode;
+	inoff = *inoffp;
+	outoff = *outoffp;
+	len = *lenp;
+
+	/*
+	 * If infp and outfp refer to the same file, the byte ranges cannot
+	 * overlap.
+	 */
+	if (invp == outvp) {
+		if ((inoff <= outoff && inoff + len > outoff) ||
+		    (inoff > outoff && outoff + len > inoff))
+			return (EINVAL);
+		rangelock_may_recurse(&invp->v_rl);
+	}
+
+	/* Range lock the byte ranges for both invp and outvp. */
+	for (;;) {
+		rl_wcookie = vn_rangelock_wlock(outvp, outoff, outoff + len);
+		rl_rcookie = vn_rangelock_tryrlock(invp, inoff, inoff + len);
+		if (rl_rcookie != NULL)
+			break;
+		vn_rangelock_unlock(outvp, rl_wcookie);
+		rl_rcookie = vn_rangelock_rlock(invp, inoff, inoff + len);
+		vn_rangelock_unlock(invp, rl_rcookie);
+	}
+
+	vn_file_context_enter(&filectx, infp, outfp, 0);
+	SDT_PROBE3(vfs, , , copy__range__start, (invp), (outvp), (len));
+	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &len,
+	    flags, infp->f_cred, outfp->f_cred, td);
+	SDT_PROBE4(vfs, , , copy__range__done, (invp), (outvp), (len),
+	    (error));
+	vn_file_context_leave(&filectx);
+	vn_rangelock_unlock(invp, rl_rcookie);
+	vn_rangelock_unlock(outvp, rl_wcookie);
+	*inoffp = inoff;
+	*outoffp = outoff;
+	*lenp = len;
 	return (error);
 }
 

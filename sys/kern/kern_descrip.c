@@ -6204,6 +6204,14 @@ invfo_readdir(struct file *fp, struct uio *uio, off_t *basep,
 }
 
 int
+invfo_copy_file_range(struct file *infp, off_t *inoffp, struct file *outfp,
+    off_t *outoffp, size_t *lenp, unsigned int flags, struct thread *td)
+{
+
+	return (EINVAL);
+}
+
+int
 invfo_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
     struct uio *trl_uio, off_t offset, size_t nbytes, off_t *sent, int flags,
     struct thread *td)

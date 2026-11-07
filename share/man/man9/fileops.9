@@ -11,7 +11,8 @@
 .Nm fo_fsync ,
 .Nm fo_setattr ,
 .Nm fo_fadvise ,
-.Nm fo_readdir
+.Nm fo_readdir ,
+.Nm fo_copy_file_range
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -28,6 +29,8 @@
 .Fn fo_fadvise "struct file *fp" "off_t offset" "off_t len" "int advice" "struct thread *td"
 .Ft int
 .Fn fo_readdir "struct file *fp" "struct uio *uio" "off_t *basep" "struct thread *td"
+.Ft int
+.Fn fo_copy_file_range "struct file *infp" "off_t *inoffp" "struct file *outfp" "off_t *outoffp" "size_t *lenp" "unsigned int flags" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -329,12 +332,45 @@ masters and linuxkpi files reach it and get
 returns
 .Er EINVAL .
 .El
+.Ss fo_copy_file_range
+.Fn fo_copy_file_range
+answers
+.Xr copy_file_range 2 ,
+dispatched on the input file's table.
+.Fa lenp
+carries the requested length in and the copied length out; the offsets
+are updated whatever the result.
+The system call validates the flags, clamps the length, takes both files'
+offset locks, checks the open modes and refuses negative offsets; it
+consults the table only when both descriptors install the operation, and
+returns
+.Er EINVAL
+otherwise, which is what descriptors without a vnode received.
+.Bl -tag -width "vnode files"
+.It vnode files
+.Fn vn_copy_range
+refuses overlapping ranges of one file, range-locks both vnodes, and runs
+.Fn vn_copy_file_range
+inside the file context.
+Only
+.Va vnops
+installs it: FIFOs, devices and pseudo-terminal masters were refused by
+.Fn vn_copy_file_range
+and keep the same
+.Er EINVAL
+through the default.
+.It everything else
+.Fn invfo_copy_file_range
+returns
+.Er EINVAL .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
 value.
 .Sh SEE ALSO
 .Xr aio_fsync 2 ,
+.Xr copy_file_range 2 ,
 .Xr fchflags 2 ,
 .Xr fdatasync 2 ,
 .Xr fpathconf 2 ,
@@ -361,9 +397,10 @@ table has existed since
 .Fn fo_statfs ,
 .Fn fo_fsync ,
 .Fn fo_setattr ,
-.Fn fo_fadvise
-and
+.Fn fo_fadvise ,
 .Fn fo_readdir
+and
+.Fn fo_copy_file_range
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

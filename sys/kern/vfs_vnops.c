@@ -663,6 +663,7 @@ const struct fileops vnops = {
 	.fo_setattr = vn_openfile_setattr,
 	.fo_fadvise = vn_openfile_fadvise,
 	.fo_readdir = vn_readdir,
+	.fo_copy_file_range = vn_copy_range,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -690,6 +691,7 @@ const struct fileops vnops = {
 	.fo_setattr = vn_openfile_setattr, \
 	.fo_fadvise = vn_openfile_fadvise, \
 	.fo_readdir = vn_readdir, \
+	.fo_copy_file_range = vn_copy_range, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 
