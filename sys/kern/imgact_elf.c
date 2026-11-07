@@ -951,6 +951,12 @@ fail:
 		exec_unmap_first_page(imgp);
 
 	if (nd->ni_vp) {
+		/*
+		 * exec_check_permissions() opened the interpreter; close it
+		 * as do_execve() closes the image, before the text flag goes.
+		 */
+		if (imgp->opened)
+			VOP_CLOSE(nd->ni_vp, FREAD, td->td_ucred, td);
 		if (imgp->textset)
 			VOP_UNSET_TEXT_CHECKED(nd->ni_vp);
 		vput(nd->ni_vp);
