@@ -1119,6 +1119,9 @@ fasttrap_enable_callbacks(void)
 		ASSERT(dtrace_return_probe_ptr == NULL);
 		dtrace_pid_probe_ptr = &fasttrap_pid_probe;
 		dtrace_return_probe_ptr = &fasttrap_return_probe;
+#ifdef __aarch64__
+		dtrace_sendsig_ptr = &fasttrap_sendsig;
+#endif
 	}
 	ASSERT(dtrace_pid_probe_ptr == &fasttrap_pid_probe);
 	ASSERT(dtrace_return_probe_ptr == &fasttrap_return_probe);
@@ -1140,6 +1143,9 @@ fasttrap_disable_callbacks(void)
 		dtrace_sync();
 		dtrace_pid_probe_ptr = NULL;
 		dtrace_return_probe_ptr = NULL;
+#ifdef __aarch64__
+		dtrace_sendsig_ptr = NULL;
+#endif
 	}
 	mutex_exit(&fasttrap_count_mtx);
 }

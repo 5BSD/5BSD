@@ -67,6 +67,8 @@ typedef int (*dtrace_pid_probe_ptr_t)(struct trapframe *);
 extern	dtrace_pid_probe_ptr_t	dtrace_pid_probe_ptr;
 typedef int (*dtrace_return_probe_ptr_t)(struct trapframe *);
 extern	dtrace_return_probe_ptr_t	dtrace_return_probe_ptr;
+typedef void (*dtrace_sendsig_ptr_t)(struct thread *, struct trapframe *);
+extern	dtrace_sendsig_ptr_t	dtrace_sendsig_ptr;
 
 /* Virtual time hook function type. */
 typedef	void (*dtrace_vtime_switch_func_t)(struct thread *);

@@ -35,9 +35,61 @@
 extern "C" {
 #endif
 
+/*
+ * brk #0xdd0 marks a tracepoint.  brk #0xdd1 ends the out-of-line sequence
+ * in a thread's scratch space, as an absolute branch back to the program
+ * would have to clobber a register.  The immediates are BRK_IMM_FASTTRAP_*
+ * in machine/armreg.h.
+ */
+#define	FASTTRAP_SUNWDTRACE_SIZE	64
+#define	FASTTRAP_INSTR			0xd421ba00
+#define	FASTTRAP_RET_INSTR		0xd421ba20
+
 typedef uint32_t	fasttrap_instr_t;
 
-/* XXX: Place for AArch64 fasttrap headers */
+typedef struct fasttrap_machtp {
+	fasttrap_instr_t	ftmt_orig;	/* original instruction */
+	fasttrap_instr_t	ftmt_instr;	/* instruction to run out of line */
+	uintptr_t		ftmt_dest;	/* branch target or adr value */
+	uint8_t			ftmt_type;	/* emulation type */
+	uint8_t			ftmt_reg;	/* tested or written register */
+	uint8_t			ftmt_cond;	/* b.cond condition */
+	uint8_t			ftmt_bit;	/* tbz/tbnz bit */
+	uint8_t			ftmt_invert;	/* cbnz/tbnz */
+	uint8_t			ftmt_size;	/* literal size in bytes */
+} fasttrap_machtp_t;
+
+#define	ftt_orig	ftt_mtp.ftmt_orig
+#define	ftt_instr	ftt_mtp.ftmt_instr
+#define	ftt_dest	ftt_mtp.ftmt_dest
+#define	ftt_type	ftt_mtp.ftmt_type
+#define	ftt_reg		ftt_mtp.ftmt_reg
+#define	ftt_cond	ftt_mtp.ftmt_cond
+#define	ftt_bit		ftt_mtp.ftmt_bit
+#define	ftt_invert	ftt_mtp.ftmt_invert
+#define	ftt_size	ftt_mtp.ftmt_size
+
+#define	FASTTRAP_T_COMMON	0x00	/* execute out of line */
+#define	FASTTRAP_T_NOP		0x01
+#define	FASTTRAP_T_B		0x02
+#define	FASTTRAP_T_BL		0x03
+#define	FASTTRAP_T_BCOND	0x04
+#define	FASTTRAP_T_CBZ		0x05
+#define	FASTTRAP_T_TBZ		0x06
+#define	FASTTRAP_T_ADR		0x07
+#define	FASTTRAP_T_RET		0x08	/* br and ret */
+#define	FASTTRAP_T_BLR		0x09
+#define	FASTTRAP_T_LDR_LIT	0x0a	/* out of line, literal copied */
+#define	FASTTRAP_T_RET_AUTH	0x0b	/* out of line autixsp, then ret */
+
+struct thread;
+struct trapframe;
+extern void fasttrap_sendsig(struct thread *, struct trapframe *);
+
+#define	FASTTRAP_AFRAMES		3
+#define	FASTTRAP_RETURN_AFRAMES		4
+#define	FASTTRAP_ENTRY_AFRAMES		3
+#define	FASTTRAP_OFFSET_AFRAMES		3
 
 #ifdef	__cplusplus
 }

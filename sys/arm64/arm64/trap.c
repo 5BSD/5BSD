@@ -292,6 +292,24 @@ tag_check_abort(struct thread *td, struct trapframe *frame, uint64_t esr,
 	userret(td, frame);
 }
 
+#ifdef KDTRACE_HOOKS
+static int
+(*trap_user_dtrace(uint64_t exception, uint64_t esr))(struct trapframe *)
+{
+
+	if (exception != EXCP_BRK)
+		return (NULL);
+
+	switch (esr & BRK_IMM_MASK) {
+	case BRK_IMM_FASTTRAP_PROBE:
+		return (atomic_load_ptr(&dtrace_pid_probe_ptr));
+	case BRK_IMM_FASTTRAP_RETURN:
+		return (atomic_load_ptr(&dtrace_return_probe_ptr));
+	}
+	return (NULL);
+}
+#endif
+
 /*
  * It is unsafe to access the stack canary value stored in "td" until
  * kernel map translation faults are handled, see the pmap_klookup() call below.
@@ -712,6 +730,9 @@ do_el0_sync(struct thread *td, struct trapframe *frame)
 	uint64_t esr, far;
 	int dfsc;
 	bool skip_userret;
+#ifdef KDTRACE_HOOKS
+	int (*hook)(struct trapframe *);
+#endif
 
 	/* Check we have a sane environment when entering from userland */
 	KASSERT((uintptr_t)get_pcpu() >= VM_MIN_KERNEL_ADDRESS,
@@ -734,6 +755,10 @@ do_el0_sync(struct thread *td, struct trapframe *frame)
 		if (bp_harden != NULL)
 			bp_harden();
 	}
+#ifdef KDTRACE_HOOKS
+	/* The fasttrap provider syncs with interrupts to drop these hooks. */
+	hook = trap_user_dtrace(exception, esr);
+#endif
 	intr_enable();
 
 	CTR4(KTR_TRAP, "%s: exception=%lu, elr=0x%lx, esr=0x%lx",
@@ -800,6 +825,10 @@ do_el0_sync(struct thread *td, struct trapframe *frame)
 		break;
 	case EXCP_BRKPT_EL0:
 	case EXCP_BRK:
+#ifdef KDTRACE_HOOKS
+		if (hook != NULL && hook(frame) == 0)
+			break;
+#endif
 		call_trapsignal(td, SIGTRAP, TRAP_BRKPT, (void *)frame->tf_elr,
 		    exception);
 		break;

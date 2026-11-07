@@ -13,6 +13,10 @@ CFLAGS+=	${OPENZFS_CFLAGS}
 CFLAGS+=	-I${SYSDIR}/cddl/contrib/opensolaris/uts/intel
 .PATH:		${SYSDIR}/cddl/contrib/opensolaris/uts/intel/dtrace
 .endif
+.if ${MACHINE_CPUARCH} == "aarch64"
+CFLAGS+=	-I${SYSDIR}/cddl/contrib/opensolaris/uts/aarch64
+.PATH:		${SYSDIR}/cddl/contrib/opensolaris/uts/aarch64/dtrace
+.endif
 
 .PATH:		${SYSDIR}/contrib/openzfs/module/zfs
 SRCS+=		u8_textprep.c

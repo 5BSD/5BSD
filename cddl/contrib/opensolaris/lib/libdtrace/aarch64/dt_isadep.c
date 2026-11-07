@@ -68,9 +68,65 @@ dt_pid_create_return_probe(struct ps_prochandle *P, dtrace_hdl_t *dtp,
     fasttrap_probe_spec_t *ftp, const GElf_Sym *symp, uint64_t *stret)
 {
 
-	dt_dprintf("%s: unimplemented\n", __func__);
+	uint32_t *text;
+	uintptr_t dest, pc;
+	size_t i, n;
+	int64_t disp;
 
-	return (DT_PROC_ERR);
+	if (symp->st_size == 0 || (symp->st_size & 3) != 0)
+		return (DT_PROC_ERR);
+
+	if ((text = malloc(symp->st_size)) == NULL) {
+		dt_dprintf("malloc() failed\n");
+		return (DT_PROC_ERR);
+	}
+
+	if (Pread(P, text, symp->st_size, symp->st_value) != symp->st_size) {
+		dt_dprintf("Pread() failed\n");
+		free(text);
+		return (DT_PROC_ERR);
+	}
+
+	ftp->ftps_type = DTFTP_RETURN;
+	ftp->ftps_pc = (uintptr_t)symp->st_value;
+	ftp->ftps_size = (size_t)symp->st_size;
+	ftp->ftps_noffs = 0;
+
+	n = symp->st_size / 4;
+	for (i = 0; i < n; i++) {
+		pc = symp->st_value + i * 4;
+
+		if ((text[i] & 0xfc000000) == 0x14000000) {
+			/* A b out of the function is a tail call. */
+			disp = (int64_t)((uint64_t)text[i] << 38) >> 36;
+			dest = pc + disp;
+			if (dest >= symp->st_value &&
+			    dest < symp->st_value + symp->st_size)
+				continue;
+		} else if ((text[i] & 0xfffffc1f) != 0xd65f0000 &&
+		    text[i] != 0xd65f0bff && text[i] != 0xd65f0fff &&
+		    (text[i] & 0xfffffc1f) != 0xd61f0000) {
+			/*
+			 * Not ret, retaa, retab or br.  A br may stay within
+			 * the function, which the kernel checks when it runs.
+			 */
+			continue;
+		}
+
+		dt_dprintf("return at offset %zx\n", i * 4);
+		ftp->ftps_offs[ftp->ftps_noffs++] = i * 4;
+	}
+
+	free(text);
+	if (ftp->ftps_noffs > 0) {
+		if (ioctl(dtp->dt_ftfd, FASTTRAPIOC_MAKEPROBE, ftp) != 0) {
+			dt_dprintf("fasttrap probe creation ioctl failed: %s\n",
+			    strerror(errno));
+			return (dt_set_errno(dtp, errno));
+		}
+	}
+
+	return (ftp->ftps_noffs);
 }
 
 /*ARGSUSED*/

@@ -55,6 +55,7 @@ dtrace_fault_func_t		dtrace_fault_func;
 dtrace_doubletrap_func_t	dtrace_doubletrap_func;
 dtrace_pid_probe_ptr_t		dtrace_pid_probe_ptr;
 dtrace_return_probe_ptr_t	dtrace_return_probe_ptr;
+dtrace_sendsig_ptr_t		dtrace_sendsig_ptr;
 
 bool __read_frequently		systrace_enabled;
 systrace_probe_func_t 		systrace_probe_func;
