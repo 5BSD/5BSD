@@ -535,6 +535,100 @@ and the ledger gains the fileops-table audit of 6.1.1 (D66). The ledger,
 not this chapter, is the count of record; the count is authoritative only
 for the command recorded beside it.
 
+### 6.4 Stage 0 as a subsystem (D83)
+
+What stage 0 leaves behind is not a list of patches but a layer with a
+contract, and it is presented as one — the way Capsicum is "rights on
+descriptors, checked at `fget`" and MACF is "policies behind named
+entry points". Its name is **descriptor operations**; its one rule is:
+
+> A system call that takes a file descriptor dispatches through the
+> descriptor's `struct fileops` and nothing else. It never tests `f_type`,
+> never follows `f_vnode`, and never names a table except to ask what the
+> table declares about itself.
+
+Everything below follows from that rule.
+
+**Vocabulary**
+
+| Term | Meaning | Where |
+|---|---|---|
+| member | a `fo_*` slot of `struct fileops`; the dispatcher `fo_X()` is the only caller | `sys/sys/file.h` |
+| default | `invfo_X`, what a NULL member answers: the errno the operation always gave a descriptor of no particular type | `kern/kern_descrip.c` |
+| vnode body | `vn_X(fp)`, the operation on `fp->f_vnode`, moved from the system call; installed by `vnops`, the per-open vnode tables, both devfs tables and `path_fileops` | `kern/vfs_vnops.c` |
+| sometimes-vnode | a table whose descriptors carry a vnode on some creation paths only; it installs `vn_X_opt`, which answers through the vnode when present and with the default otherwise. `pipeops` (FIFO vs pipe), `ptsdev_ops` (`/dev/ptmx` vs `posix_openpt`), `linuxfileops` (devfs vs `fd_install`) — **one idiom**; a table keeps its own function only where it has its own answer (`pipe_pathconf`'s `PIPE_BUF`, `pipe_advlock`'s `EOPNOTSUPP` to `flock(2)`) | the three tables |
+| capability flag | a `DFLAG_*` bit in `fo_flags`, the table's declaration about itself: `DFLAG_PRIVWRITE` (private mappings are copy-on-write), `DFLAG_FLOCK`, `DFLAG_RECLOCK` (takes `flock(2)` / record locks). A system call that must refuse before touching its arguments consults the flag; nothing else may be inferred from a table's identity | `sys/sys/file.h` |
+| open-mode flag | `fp->f_flag & O_PATH`: the descriptor was opened as a path. The refusals `getvnode()` used to make for `O_PATH` test this flag of the *descriptor*, not the table's identity (`f_ops == &path_fileops` is not written by this layer) | the system calls |
+| image source | `imgp->is_ops`, how exec reaches the image it activates; `IS_*` wrappers; the vnode backend is `kern/exec_image_vnode.c` | `sys/sys/imgact.h` |
+| pager seam | `pgo_sync`, `pgo_kinfo`: how `msync(2)` and the mapping observers reach a mapping's object | `sys/vm/vm_pager.h` |
+| boundary check | `mac_file_check_*`: a MAC entry point on the descriptor, whatever its type, beside the vnode entry points | `docs/macf-new-hooks.md` §3 |
+| ledger | the regenerable list of every remaining reach past the table, classified | `docs/descriptor-completeness-ledger.md` |
+
+**Idioms, one each**
+
+- *The default answers.* No system call probes `fo_X == NULL` to decide
+  anything the default could decide by being called; `copy_file_range(2)`
+  dispatches and the default's `EINVAL` comes back where the vnode body's
+  own type test stood. The two places that must know before dispatch —
+  the record-lock commands and `flock(2)`, which set `P_ADVLOCK`,
+  `FHASLOCK`, `FHASOFDLOCK` ahead of the request — consult the capability
+  flags. The close paths skip a table whose `fo_advlock` is NULL because
+  there is nothing to unlock, which is a statement about the member, not a
+  probe of the type.
+- *Bridges speak their own vocabulary.* fdescfs and the Linux layer give
+  the fileop's answer; where their ABI demands another errno (`ENOTTY`
+  for a Linux ioctl on a type without the operation) the bridge maps the
+  *table's lack of a member*, never a returned errno.
+- *`fo_setattr` is the whole `vattr`.* Size, mode and owner have direct
+  operations, and every `fo_setattr` body applies them through those first
+  (`file_setattr_direct`: `fo_truncate`, `fo_chmod`, `fo_chown`), so the
+  table's answers stand — `badfo_*` for `O_PATH`, a pty master's `EINVAL`,
+  `vn_chmod`'s MAC check and audit record. The vnode body then does times
+  and flags through `VOP_SETATTR`; `invfo_setattr` returns `EINVAL` for
+  them. fdescfs makes one call; for a table without the member it keeps
+  `getvnode()`'s answer (`chflags` `EOPNOTSUPP`, all else silently dropped),
+  mapping the lack of the member, not an errno. (The quality-pass review,
+  D84, caught the first draft routing mode and owner through `setfmode`/
+  `setfown` — past the MAC and audit steps of `vn_chmod`/`vn_chown` — and
+  reaching a `/dev/ptmx` master's device node; the table is the route.)
+- *`O_PATH` is the descriptor's flag.* An anonymous pipe reopened `O_PATH`
+  through Linux `/proc/PID/fd/N` carries `pipeops`; the layer's refusals now
+  treat it as `O_PATH` (EBADF where it got the pipe's EINVAL), the Linux
+  answer. Upstream's five `path_fileops` identity tests (`F_SETFL`, `FEXEC`
+  in `fget`, aio, Linux mmap, `getvnode()`) predate the layer and stay.
+- *MAC checks precede dispatch*, for every type, as `read`/`write` always
+  did; `copy_file_range` on a policy-denied socket gets the policy's errno.
+- *Sometimes-vnode is `vn_X_opt`.* Nothing else inspects `f_vnode`.
+
+**Observability (DTrace)**
+
+The layer is traceable from the moment it lands, under the existing `fd`
+provider beside `fd:::install`/`dup`/`close`/`advlock*`:
+
+| Probe | Arguments | Fires when |
+|---|---|---|
+| `fd:::invfo` | `const char *member`, `struct file *fp`, `int errno` | a default answers for a descriptor whose table has no member |
+| `fd:::refused` | `const char *syscall`, `struct file *fp`, `int why`, `int errno` | a system call refuses a descriptor by capability flag (`why` = the `DFLAG_*` bit) or by `O_PATH` (`why` = 0) before looking at its arguments |
+| `proc:::exec__image__open` | `struct image_params *imgp`, `int form` | an image source is constructed (form: path lookup 0, interpreter vnode 1, `fexecve` 2, interpreter loader 3) |
+| `proc:::exec__image__close` | `struct image_params *imgp`, `int released` | an image source is closed |
+
+`mac_framework:::*` already traces every `mac_file_check_*` (hook-args
+probes generated from `mac_policy.h`), and `vfs:::chflags` the flags
+path. Stage 1 adds the `dq` provider for the queue itself (7.x).
+
+**Documents of record**
+
+`fileops(9)` (the contract, every member, the flags, the idioms),
+`image_source(9)` (the exec contract), this chapter's handbook companion
+"Descriptor Operations" (`capability/descriptor-operations.md`: what the
+layer is, how to add a member, how to read the ledger, the probes),
+`docs/macf-new-hooks.md` §3 (the boundary checks), and the ledger.
+
+**Tests of record** `tests/sys/file/*_test` (one per member: the fd form
+against the path form on every descriptor type, the refusal order, the
+bridges), `tests/sys/vm/msync_pager_test`, `sys/kern/execve`, and a probe
+presence test (`fileops_dtrace_test`). All run in the plane-on guest.
+
 ## 7. The queue and its objects
 
 ### 7.1 `/dev/dq`
@@ -1348,6 +1442,8 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D79 | 2026-11-07 | Series review ("not yet") adopted. Fixed: `pgo_kinfo` observers take the object's **vnode** under the object lock and `vref` it (any pager answering `pgo_getvp`, so tmpfs mappings keep their path and the unreferenced-handle race is gone; `vm_object_kinfo_hold` yields a `{obj, vp}` hold, the object route only for pagers with `pgo_kinfo`); `fdesc_setattr` calls `fo_setattr` only for what the fileops left and maps its `EINVAL` to the old drop rule; `DFLAG_FLOCK`/`DFLAG_RECLOCK` table flags restore the refusal-before-arguments order for every type (pipes and FIFOs included) and `FHASLOCK`/`FHASOFDLOCK` come off again on `EOPNOTSUPP`; `path_fileops` gets an advlock that answers only the close-time POSIX unlock; `image_source_old` carries the displaced `p_image` file and path; `is_path`'s dead arm is an assertion; fchflags' `VNOVAL` refusal moved back behind the descriptor; `copy_file_range`'s type probe moved back behind the mode checks; Linux `F_SET_RW_HINT` fetches the descriptor first, `getdents` keeps `EINVAL` for types with no entries, `fileattr` maps `EINVAL`→`EOPNOTSUPP`; `mac_file_check_read` precedes the zero-length shortcut; shm gets `DFLAG_PRIVWRITE` (its private mappings are COW too) with the `vm_mmap_file` refusal as backstop (`EXTERROR`); the msync test proves write-back through `mincore(2)` on a non-tmpfs file. Declared, not reverted: Linux type gates classify through `fo_stat` (a MAC stat denial now answers where `ESPIPE`/0 did; fallocate on a kqueue, which reports `S_IFIFO`, is `ESPIPE` not `ENODEV`); `F_SET_RW_HINT`'s `EFAULT`/`EINVAL` now precede `EACCES`; an OFD request on a filesystem without `VFCF_OFDLOCKS` validates its arguments before `EOPNOTSUPP`; `flock(pipe, 0)` is `EBADF` (pipes share the FIFO table); the per-open vnode tables enter the file context for the new members (fuse/inotify see the per-open identity, 6.1); `fchmod`/`fchown`'s vnode MAC check moved into `vn_chmod`/`vn_chown` (so `/dev/fd/N` chmod/chown is now checked too); `fcntl(badfd, badcmd)` is `EBADF` under a policy registering `file_check_fcntl`; a 0-byte `read(2)` consults the policy | series review 2026-11-07 (21 findings) | observer paths and error order are where "byte-identical" claims failed; the suites oracle common errnos, not order or write-back |
 | D81 | 2026-11-07 | Cleanup of the fix-up's warts before stage 1 builds on it: `fchflags` refuses `VNOVAL` plainly once the descriptor is known (a type without attributes answers `EOPNOTSUPP` to that one value instead of `EINVAL` — declared) rather than probing `fo_setattr` with an empty `vattr`; `fdesc_setattr` no longer swallows `EINVAL` from the fileops (a real `EINVAL`, e.g. truncating a FIFO through `/dev/fd/N`, must propagate): a table without `fo_setattr` keeps the drop rule, a table with one answers for its instance, so attribute changes through `/dev/fd/N` on an anonymous pipe or a `posix_openpt` master report `EINVAL` where the missing vnode once meant "dropped" (declared); `is_close` takes a `bool release`; the rw-hint commands are kernel-private `F_GET_RW_HINT`/`F_SET_RW_HINT` in `fcntl.h`, the GET result in `td_retval` (no pointer through `intptr_t`); `invfo_advlock` returns `EBADF` only, an anonymous pipe answers `flock(2)`'s `EOPNOTSUPP` itself, so the lock mechanisms are two with distinct roles (table flags for the system calls' refusal, member presence for the close paths); the exec core calls its source through `IS_*` wrappers like `VOP_*`. Left as is, on purpose: the fourteen `IS_UNLOCK`/`IS_LOCK` pairs in the core (vnode sleeping rules; stage 3 may add a sleep-prepare op), the `vattr` built for `mac_file_check_setattr`, the `error = 0; #ifdef MAC … #endif if (error == 0)` idiom (the alternatives duplicate the call or split an `if` across `#endif`) | self-review of the fix-up | a capability probe disguised as an operation and an errno swallowed at a bridge are the kind of thing a kernel reviewer rejects on sight |
 | D82 | 2026-11-07 | Second independent review of the fix-up and cleanup: no kernel correctness defect; fixed: the msync test leaked its `/var/tmp` file (the cleanup process never saw the `mkstemp` name — unlink right after creation) and could leave `vm.old_msync` flipped (restored from a file by an ATF cleanup); Linux `file_setattr` no longer maps the fileop's `EINVAL` to `EOPNOTSUPP` (it also converted devfs's own `EINVAL`), so both Linux setflags entry points give the descriptor's answer; `copy_file_range`'s type probe sits after the `len == 0` return, as the vnode body's own test did; `IS_RELEASE_OLD` wrapper. Declared: through `/dev/fd/N`, `chflags` on an anonymous pipe or `posix_openpt` master is `EINVAL` (bridge once said `EOPNOTSUPP`), and `chmod`/`chown`/`truncate` on a `/dev/ptmx` master or devfs-opened linuxkpi file is `EINVAL` (their tables have no such ops; the base ran `VOP_SETATTR` on the devfs node); `fchflags(devfd, -1)` is `EOPNOTSUPP` before the device privilege check (base `EPERM`); `copy_file_range` with a kqueue/socket/shm input and a bad output is `EBADF` (base `EINVAL`); Linux `FS_IOC_SETFLAGS` on pipes/pty masters is the fileop's `EINVAL` (base `ENOTTY`); `linux_pread` ignores an `fo_stat` error. D81's example was wrong: a FIFO truncate through `/dev/fd/N` is 0 before and after (filesystems ignore `va_size` on `VFIFO`); the propagating `EINVAL` is the anonymous pipe's. Inherited and now declared: `vm.objects` withholds cdev paths from jails and linprocfs names device mappings (D74) | second review 2026-11-07 (16 findings) | the bridge behaviours (fdescfs, Linux compat) are where "the descriptor answers" and "as before" part ways; declare, do not map |
+| D83 | 2026-11-07 | Stage 0 presented as one subsystem, "descriptor operations" (6.4): one rule, a vocabulary (member, default, vnode body, sometimes-vnode, capability flag, open-mode flag, image source, pager seam, boundary check, ledger), one idiom per situation (the default answers — no `fo_X == NULL` probes except the lock flags that must precede side effects; `O_PATH` is the descriptor's `f_flag`, never a table identity; `fo_setattr` is the whole `vattr`; sometimes-vnode is `vn_X_opt` everywhere, `pipeops` included), DTrace probes `fd:::invfo`, `fd:::refused`, `proc:::exec__image__open/close`, and the documents and tests of record (`fileops(9)`, `image_source(9)`, the handbook chapter, the ledger) | user: "a kernel subsystem of record, DTrace-integrated, explainable" | a layer with a name and a contract is reviewable; a list of patches is not |
+| D84 | 2026-11-07 | Quality-pass review (12 findings) adopted: size/mode/owner in `fo_setattr` go through the table's direct operations (`file_setattr_direct`), never `setfmode`/`setfown`/`vn_truncate` directly (two regressions: skipped `vn_chmod`/`vn_chown` MAC and audit; a `/dev/ptmx` master's `/dev/fd/N` chmod reaching the device node); fdescfs keeps upstream's silent drop for a table without the member (the first draft's "the default decomposes" would have applied chmod to shm through `/dev/fd/N`, a behaviour change the pass had no mandate for); `O_PATH` pipes (Linux `/proc` reopen) and the MAC-before-dispatch order recorded as deliberate; upstream's `path_fileops` identity tests left; man-page fixes (`.Fn A , Fn B`, NAME list, a false veriexec claim) | review | behaviour fidelity is the stage-0 contract; "the descriptor answers" never means "the helper answers" |
 | D80 | 2026-11-07 | Stage 0 landed on `dev` as merge `45dffd334d8` (31 commits over `46b84718217`; `dev` had moved by 14 unrelated commits, merge clean). The merged GENERIC, built from `/usr/src`, booted the plane-on guest and passed `sys/file`, `sys/vm`, `sys/kern/execve` 200/201 (run 13; the broken case is the pre-existing `devctl_device_test` metadata). Ledger of record `f788bbd974a`: 283 references, no open category-A row. Nothing installed, no reboot | run 13 | stage 0 complete; stage 1a starts from this design |
 
 ### 20.1 Origin
