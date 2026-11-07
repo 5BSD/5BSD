@@ -97,12 +97,77 @@ struct image_params {
 #define IMGP_ASLR_SHARED_PAGE	0x1
 	uint32_t imgp_flags;
 	struct vnode *interpreter_vp;	/* vnode of the interpreter */
+	const struct image_source_ops *is_ops;	/* NULL until the source is constructed */
+	void *is_data;			/* the backend's private state */
+	struct label *interpvplabel;	/* label of the #! interpreter's script */
 };
 
+/*
+ * The process image state that is_install displaced; released by
+ * is_release_old after the process lock and the image lock are dropped.
+ * Written by the backend, opaque to the exec core.
+ */
+struct image_source_old {
+	struct vnode	*iso_textvp;
+	struct vnode	*iso_textdvp;
+	char		*iso_binname;
+};
+
+/*
+ * Image source: how the exec core reaches the image it is activating.
+ * The vnode backend (kern/exec_image_vnode.c) is the code that used to be
+ * inline in do_execve() and the ELF activator.  Lock preconditions: the
+ * image is locked for is_check, is_read, every is_mac phase,
+ * is_authority_prepare, is_install and is_accessed; is_mac TRANSITION and
+ * RELABEL additionally run under PROC_LOCK and must not sleep.
+ */
+struct cap_authority;
+struct proc;
+struct image_source_ops {
+	void (*is_lock)(const struct image_params *);
+	void (*is_unlock)(const struct image_params *);
+	void (*is_assert_locked)(const struct image_params *, const char *);
+	int  (*is_check)(struct image_params *);	/* exec_check_permissions */
+	int  (*is_first_page)(struct image_params *);	/* references imgp->object, maps page 0 */
+	int  (*is_read)(const struct image_params *, void *, size_t, off_t);
+	int  (*is_map_cow)(const struct image_params *);	/* extra MAP_* flags for vm_map_fixed */
+	void (*is_map_text)(const struct image_params *, vm_object_t);	/* text reference per mapping */
+	void (*is_unset_text)(struct image_params *);
+	int  (*is_path)(struct image_params *, char **retbuf, char **freebuf);
+	int  (*is_commname)(struct image_params *, char *buf, size_t len);
+	bool (*is_nosuid)(struct image_params *);
+	int  (*is_mac)(struct image_params *, int phase, struct ucred *oldcred,
+		    struct ucred *newcred);
+	struct cap_authority *(*is_authority_prepare)(struct image_params *,
+		    struct proc *);			/* NULL when nosuid */
+	void (*is_authority_exec)(struct image_params *, struct proc *,
+		    struct cap_authority *selected);
+	void (*is_install)(struct image_params *, struct proc *,
+		    struct image_source_old *);	/* under PROC_LOCK */
+	void (*is_release_old)(struct image_params *,
+		    struct image_source_old *);	/* after PROC_UNLOCK and is_close */
+	void (*is_accessed)(struct image_params *);	/* VOP_UPDATE_ATIME */
+	void (*is_close)(struct image_params *, int error);	/* close; vput when error */
+};
+
+/* is_mac phases.  The will_* phases return the MAC hook's answer. */
+#define	IS_MAC_WILL_TRANSITION	1
+#define	IS_MAC_WILL_RELABEL	2
+#define	IS_MAC_TRANSITION	3
+#define	IS_MAC_RELABEL		4
+#define	IS_MAC_INTERP_ENTER	5	/* mac_execve_interpreter_enter */
+
 #ifdef _KERNEL
+struct nameidata;
 struct sysentvec;
 struct thread;
 struct vmspace;
+struct vnode;
+
+/* The vnode image source, kern/exec_image_vnode.c. */
+void	exec_image_vnode_from_namei(struct image_params *, struct nameidata *);
+void	exec_image_vnode_from_vnode(struct image_params *, struct vnode *);
+void	exec_image_vnode_init(struct image_params *, struct vnode *);
 
 int	exec_alloc_args(struct image_args *);
 int	exec_args_add_arg(struct image_args *args, const char *argp,

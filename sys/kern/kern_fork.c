@@ -45,6 +45,7 @@
 #include <sys/eventhandler.h>
 #include <sys/exterrvar.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
@@ -633,6 +634,7 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 
 	p2->p_textvp = p1->p_textvp;
 	p2->p_textdvp = p1->p_textdvp;
+	p2->p_image = p1->p_image;
 	p2->p_fd = fd;
 	p2->p_fdtol = fdtol;
 	p2->p_pd = pd;
@@ -656,7 +658,8 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 
 	/*
 	 * Bump references to the text vnode and directory, and copy
-	 * the hardlink name.
+	 * the hardlink name.  Hold the image file and copy the presented
+	 * path of a non-vnode image the same way.
 	 */
 	if (p2->p_textvp != NULL)
 		vrefact(p2->p_textvp);
@@ -664,6 +667,14 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 		vrefact(p2->p_textdvp);
 	p2->p_binname = p1->p_binname == NULL ? NULL :
 	    strdup(p1->p_binname, M_PARGS);
+	if (p2->p_image.pi_fp != NULL && !fhold(p2->p_image.pi_fp)) {
+		/* The image's reference count is saturated: no image. */
+		p2->p_image.pi_kind = PI_KIND_NONE;
+		p2->p_image.pi_fp = NULL;
+		p2->p_image.pi_path = NULL;
+	}
+	if (p2->p_image.pi_path != NULL)
+		p2->p_image.pi_path = strdup(p1->p_image.pi_path, M_PARGS);
 
 	/*
 	 * Set up linkage for kernel based threading.

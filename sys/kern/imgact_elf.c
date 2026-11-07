@@ -611,7 +611,7 @@ __elfN(map_insert)(const struct image_params *imgp, vm_map_t map,
 	struct sf_buf *sf;
 	vm_offset_t off;
 	vm_size_t sz;
-	int error, locked, rv;
+	int error, rv;
 
 	if (start != trunc_page(start)) {
 		rv = __elfN(map_partial)(map, object, offset, start,
@@ -660,16 +660,14 @@ __elfN(map_insert)(const struct image_params *imgp, vm_map_t map,
 		vm_object_reference(object);
 		rv = vm_map_fixed(map, object, offset, start, end - start,
 		    prot, VM_PROT_ALL, cow | MAP_CHECK_EXCL |
-		    (object != NULL ? MAP_VN_EXEC : 0));
+		    (object != NULL ? imgp->is_ops->is_map_cow(imgp) : 0));
 		if (rv != KERN_SUCCESS) {
-			locked = VOP_ISLOCKED(imgp->vp);
-			VOP_UNLOCK(imgp->vp);
+			imgp->is_ops->is_unlock(imgp);
 			vm_object_deallocate(object);
-			vn_lock(imgp->vp, locked | LK_RETRY);
+			imgp->is_ops->is_lock(imgp);
 			return (rv);
 		} else if (object != NULL) {
-			MPASS(imgp->vp->v_object == object);
-			VOP_SET_TEXT_CHECKED(imgp->vp);
+			imgp->is_ops->is_map_text(imgp, object);
 		}
 	}
 	return (KERN_SUCCESS);
@@ -788,7 +786,7 @@ __elfN(load_sections)(const struct image_params *imgp, const Elf_Ehdr *hdr,
 	bool first;
 	int error, i;
 
-	ASSERT_VOP_LOCKED(imgp->vp, __func__);
+	imgp->is_ops->is_assert_locked(imgp, __func__);
 
 	base_addr = 0;
 	first = true;
@@ -884,25 +882,21 @@ __elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
 	imgp->interpreted = IMGACT_INTERP_ELF; /* ignored by do_execve */
 
 	NDINIT(nd, LOOKUP, ndflags, UIO_SYSSPACE, file);
-	if ((error = namei(nd)) != 0) {
-		nd->ni_vp = NULL;
+	if ((error = namei(nd)) != 0)
 		goto fail;
-	}
 	NDFREE_PNBUF(nd);
-	imgp->vp = nd->ni_vp;
+	exec_image_vnode_init(imgp, nd->ni_vp);
 
 	/*
 	 * Check permissions, modes, uid, etc on the file, and "open" it.
 	 */
-	error = exec_check_permissions(imgp);
+	error = imgp->is_ops->is_check(imgp);
 	if (error)
 		goto fail;
 
-	error = exec_map_first_page(imgp);
+	error = imgp->is_ops->is_first_page(imgp);
 	if (error)
 		goto fail;
-
-	imgp->object = nd->ni_vp->v_object;
 
 	hdr = (const Elf_Ehdr *)imgp->image_header;
 	if ((error = __elfN(check_header)(hdr)) != 0)
@@ -924,14 +918,12 @@ __elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
 	    aligned(imgp->image_header + hdr->e_phoff, Elf_Addr)) {
 		phdr = (const Elf_Phdr *)(imgp->image_header + hdr->e_phoff);
 	} else {
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		phdr = m_phdrs = malloc(hdr->e_phnum * sizeof(Elf_Phdr),
 		    M_TEMP, M_WAITOK | M_ZERO);
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
-		error = vn_rdwr(UIO_READ, imgp->vp, m_phdrs,
-		    hdr->e_phnum * sizeof(Elf_Phdr), hdr->e_phoff,
-		    UIO_SYSSPACE, IO_NODELOCKED, imgp->td->td_ucred,
-		    NOCRED, NULL, imgp->td);
+		imgp->is_ops->is_lock(imgp);
+		error = imgp->is_ops->is_read(imgp, m_phdrs,
+		    hdr->e_phnum * sizeof(Elf_Phdr), hdr->e_phoff);
 		if (error != 0)
 			goto fail;
 	}
@@ -950,17 +942,16 @@ fail:
 	if (imgp->firstpage)
 		exec_unmap_first_page(imgp);
 
-	if (nd->ni_vp) {
+	if (imgp->is_ops != NULL) {
 		/*
-		 * exec_check_permissions() opened the interpreter; close it
-		 * as do_execve() closes the image, before the text flag goes.
+		 * is_check opened the interpreter; close it as do_execve()
+		 * closes the image, before the text flag goes.  Its
+		 * reference is never installed, so it is dropped here.
 		 */
-		if (imgp->opened)
-			VOP_CLOSE(nd->ni_vp, FREAD, td->td_ucred, td);
-		if (imgp->textset)
-			VOP_UNSET_TEXT_CHECKED(nd->ni_vp);
-		vput(nd->ni_vp);
+		imgp->is_ops->is_close(imgp, ENOEXEC);
 	}
+	if (imgp->object != NULL)
+		vm_object_deallocate(imgp->object);
 	free(m_phdrs, M_TEMP);
 	free(tempdata, M_TEMP);
 
@@ -1093,7 +1084,7 @@ __elfN(get_interp)(struct image_params *imgp, const Elf_Phdr *phdr,
 
 	KASSERT(phdr->p_type == PT_INTERP,
 	    ("%s: p_type %u != PT_INTERP", __func__, phdr->p_type));
-	ASSERT_VOP_LOCKED(imgp->vp, __func__);
+	imgp->is_ops->is_assert_locked(imgp, __func__);
 
 	/* Path to interpreter */
 	if (phdr->p_filesz < 2 || phdr->p_filesz > MAXPATHLEN) {
@@ -1115,15 +1106,13 @@ __elfN(get_interp)(struct image_params *imgp, const Elf_Phdr *phdr,
 		 */
 		interp = malloc(interp_name_len + 1, M_TEMP, M_NOWAIT);
 		if (interp == NULL) {
-			VOP_UNLOCK(imgp->vp);
+			imgp->is_ops->is_unlock(imgp);
 			interp = malloc(interp_name_len + 1, M_TEMP, M_WAITOK);
-			vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+			imgp->is_ops->is_lock(imgp);
 		}
 
-		error = vn_rdwr(UIO_READ, imgp->vp, interp,
-		    interp_name_len, phdr->p_offset,
-		    UIO_SYSSPACE, IO_NODELOCKED, imgp->td->td_ucred,
-		    NOCRED, NULL, imgp->td);
+		error = imgp->is_ops->is_read(imgp, interp, interp_name_len,
+		    phdr->p_offset);
 		if (error != 0) {
 			free(interp, M_TEMP);
 			uprintf("i/o error PT_INTERP %d\n", error);
@@ -1257,14 +1246,12 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	    aligned(imgp->image_header + hdr->e_phoff, Elf_Addr)) {
 		phdr = (const Elf_Phdr *)(imgp->image_header + hdr->e_phoff);
 	} else {
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		phdr = m_phdrs = malloc(hdr->e_phnum * sizeof(Elf_Phdr),
 		    M_TEMP, M_WAITOK | M_ZERO);
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
-		error = vn_rdwr(UIO_READ, imgp->vp, m_phdrs,
-		    hdr->e_phnum * sizeof(Elf_Phdr), hdr->e_phoff,
-		    UIO_SYSSPACE, IO_NODELOCKED, imgp->td->td_ucred,
-		    NOCRED, NULL, imgp->td);
+		imgp->is_ops->is_lock(imgp);
+		error = imgp->is_ops->is_read(imgp, m_phdrs,
+		    hdr->e_phnum * sizeof(Elf_Phdr), hdr->e_phoff);
 		if (error != 0)
 			goto ret;
 	}
@@ -1392,7 +1379,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 * The VV_TEXT flag prevents modifications to the executable while
 	 * the vnode is unlocked.
 	 */
-	VOP_UNLOCK(imgp->vp);
+	imgp->is_ops->is_unlock(imgp);
 
 	/*
 	 * Decide whether to enable randomization of user mappings.  First,
@@ -1412,7 +1399,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		if ((brand_info->flags & BI_CAN_EXEC_DYN) == 0) {
 			uprintf("Cannot execute shared object\n");
 			error = ENOEXEC;
-			(void)vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+			imgp->is_ops->is_lock(imgp);
 			goto ret;
 		}
 		/*
@@ -1492,7 +1479,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		    maxv / 2, maxalign, &imgp->et_dyn_addr);
 	}
 
-	vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+	imgp->is_ops->is_lock(imgp);
 	if (error != 0)
 		goto ret;
 
@@ -1535,7 +1522,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		sv->sv_protect(imgp, SVP_IMAGE);
 
 	if (interp != NULL) {
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		if ((map->flags & MAP_ASLR) != 0) {
 			/* Assume that interpreter fits into 1/4 of AS */
 			maxv1 = maxv / 2 + addr / 2;
@@ -1554,7 +1541,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 				SDT_PROBE2(imgact, , , interp, interp,
 				    imgp->entry_addr);
 		}
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 		if (error != 0)
 			goto ret;
 	} else
@@ -1569,9 +1556,9 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 */
 	elf_auxargs = malloc(sizeof(Elf_Auxargs), M_TEMP, M_NOWAIT);
 	if (elf_auxargs == NULL) {
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		elf_auxargs = malloc(sizeof(Elf_Auxargs), M_TEMP, M_WAITOK);
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 	}
 	elf_auxargs->execfd = -1;
 	elf_auxargs->phdr = proghdr + imgp->et_dyn_addr;
@@ -1599,7 +1586,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	    imgp->entry_addr, brand_info->brand);
 
 ret:
-	ASSERT_VOP_LOCKED(imgp->vp, "skipped relock");
+	imgp->is_ops->is_assert_locked(imgp, "skipped relock");
 	if (free_interp)
 		free(interp, M_TEMP);
 	free(m_phdrs, M_TEMP);
@@ -2933,18 +2920,17 @@ __elfN(parse_notes)(const struct image_params *imgp, const Elf_Note *checknote,
 	/* We need some limit, might as well use PAGE_SIZE. */
 	if (pnote == NULL || pnote->p_filesz > PAGE_SIZE)
 		return (false);
-	ASSERT_VOP_LOCKED(imgp->vp, "parse_notes");
+	imgp->is_ops->is_assert_locked(imgp, "parse_notes");
 	if (pnote->p_offset > PAGE_SIZE ||
 	    pnote->p_filesz > PAGE_SIZE - pnote->p_offset) {
 		buf = malloc(pnote->p_filesz, M_TEMP, M_NOWAIT);
 		if (buf == NULL) {
-			VOP_UNLOCK(imgp->vp);
+			imgp->is_ops->is_unlock(imgp);
 			buf = malloc(pnote->p_filesz, M_TEMP, M_WAITOK);
-			vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+			imgp->is_ops->is_lock(imgp);
 		}
-		error = vn_rdwr(UIO_READ, imgp->vp, buf, pnote->p_filesz,
-		    pnote->p_offset, UIO_SYSSPACE, IO_NODELOCKED,
-		    imgp->td->td_ucred, NOCRED, NULL, imgp->td);
+		error = imgp->is_ops->is_read(imgp, buf, pnote->p_filesz,
+		    pnote->p_offset);
 		if (error != 0) {
 			uprintf("i/o error PT_NOTE\n");
 			goto retf;

@@ -3726,6 +3726,7 @@ kern/clock_if.m			standard
 kern/coredump_vnode.c		standard
 kern/cpufreq_if.m		standard
 kern/device_if.m		standard
+kern/exec_image_vnode.c		standard
 kern/imgact_binmisc.c		optional imgact_binmisc
 kern/imgact_elf.c		standard
 kern/imgact_shell.c		standard

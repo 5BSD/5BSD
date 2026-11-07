@@ -115,7 +115,6 @@ exec_shell_imgact(struct image_params *imgp)
 	const char *ihp, *interpb, *interpe, *maxp, *optb, *opte, *fname;
 	int error, offset;
 	size_t length;
-	struct vattr vattr;
 	struct sbuf *sname;
 
 	/* a shell script? */
@@ -135,17 +134,14 @@ exec_shell_imgact(struct image_params *imgp)
 	 * At this point we have the first page of the file mapped.
 	 * However, we don't know how far into the page the contents are
 	 * valid -- the actual file might be much shorter than the page.
-	 * So find out the file size.
+	 * The image source's is_check recorded the file size in imgp->attr.
 	 */
-	error = VOP_GETATTR(imgp->vp, &vattr, imgp->proc->p_ucred);
-	if (error)
-		return (error);
 
 	/*
 	 * Copy shell name and arguments from image_header into a string
 	 * buffer.
 	 */
-	maxp = &image_header[MIN(vattr.va_size, MAXSHELLCMDLEN)];
+	maxp = &image_header[MIN(imgp->attr->va_size, MAXSHELLCMDLEN)];
 	ihp = &image_header[2];
 
 	/*

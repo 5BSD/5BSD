@@ -2093,6 +2093,19 @@ proc_get_binpath(struct proc *p, char *binname, char **retbuf,
 
 	vp = p->p_textvp;
 	if (vp == NULL) {
+		/*
+		 * A non-vnode image reports the path its source presented
+		 * at exec.  Copy it out under the lock; the caller frees
+		 * binname before it reads retbuf, so hand it back as freebuf.
+		 */
+		if (p->p_image.pi_path != NULL) {
+			strlcpy(binname, p->p_image.pi_path, MAXPATHLEN);
+			PROC_UNLOCK(p);
+			*freebuf = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+			strlcpy(*freebuf, binname, MAXPATHLEN);
+			*retbuf = *freebuf;
+			return (0);
+		}
 		PROC_UNLOCK(p);
 		*retbuf = "";
 		*freebuf = NULL;
