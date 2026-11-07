@@ -565,7 +565,13 @@ the table is consulted; whether the table takes locks at all is the table's
 business.
 The close-time unlock skips a table that has no
 .Fn fo_advlock
-member; the system calls let the default answer.
+member, and
+.Xr fcntl 2
+refuses such a descriptor with
+.Er EBADF
+before it looks at the lock argument, as the type test did;
+.Xr flock 2
+lets the default answer.
 .Bl -tag -width "devfs nodes"
 .It vnode files
 .Fn vn_advlock

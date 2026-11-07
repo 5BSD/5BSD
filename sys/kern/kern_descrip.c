@@ -786,6 +786,15 @@ revert_flags:
 		error = fget_unlocked(td, fd, &cap_flock_rights, &fp);
 		if (error != 0)
 			break;
+		/*
+		 * A descriptor whose table takes no locks is refused before
+		 * the lock argument is looked at, as the type test was.
+		 */
+		if (fp->f_ops->fo_advlock == NULL) {
+			error = EBADF;
+			fdrop(fp, td);
+			break;
+		}
 		if ((flg & F_OFD) != 0 && flp->l_pid != 0) {
 			error = EINVAL;
 			fdrop(fp, td);
@@ -901,6 +910,11 @@ revert_flags:
 		error = fget_unlocked(td, fd, &cap_flock_rights, &fp);
 		if (error != 0)
 			break;
+		if (fp->f_ops->fo_advlock == NULL) {
+			error = EBADF;
+			fdrop(fp, td);
+			break;
+		}
 		flp = (struct flock *)arg;
 		if (flp->l_type != F_RDLCK && flp->l_type != F_WRLCK &&
 		    flp->l_type != F_UNLCK) {
