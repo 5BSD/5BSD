@@ -100,9 +100,15 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 
 	/*
 	 * Instrumenting certain exception handling functions can lead to FBT
-	 * recursion, so exclude from instrumentation.
+	 * recursion, so exclude from instrumentation.  The other exception
+	 * entry points, and fork_trampoline, run while sp_el0 holds the user
+	 * stack pointer instead of the thread's stack canary: a probe there
+	 * faults on the canary load in every function it calls, the fault
+	 * handler included, until the kernel stack overflows.
 	 */
-	 if (strcmp(name, "handle_el1h_sync") == 0 ||
+	if (strncmp(name, "handle_el", 9) == 0 ||
+	    strcmp(name, "handle_empty_exception") == 0 ||
+	    strcmp(name, "fork_trampoline") == 0 ||
 	    strcmp(name, "do_el1h_sync") == 0)
 		return (0);
 
