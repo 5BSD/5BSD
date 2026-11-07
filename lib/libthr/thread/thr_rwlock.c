@@ -203,6 +203,7 @@ rwlock_rdlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 	ret = _thr_rwlock_tryrdlock(&prwlock->lock, flags);
 	if (ret == 0) {
 		curthread->rdlock_count++;
+		TRACE_PLOCKSTAT_RW__ACQUIRE(rwlock, 0);
 		return (ret);
 	}
 
@@ -210,6 +211,7 @@ rwlock_rdlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 		(abstime->tv_nsec >= 1000000000 || abstime->tv_nsec < 0)))
 		return (EINVAL);
 
+	TRACE_PLOCKSTAT_RW__BLOCK(rwlock, 0);
 	for (;;) {
 		/* goto kernel and lock it */
 		TRACE_THREADWAIT_RWLOCK__START(rwlock, 0);
@@ -224,8 +226,12 @@ rwlock_rdlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 			break;
 		}
 	}
-	if (ret == 0)
+	TRACE_PLOCKSTAT_RW__BLOCKED(rwlock, 0, ret == 0);
+	if (ret == 0) {
 		curthread->rdlock_count++;
+		TRACE_PLOCKSTAT_RW__ACQUIRE(rwlock, 0);
+	} else
+		TRACE_PLOCKSTAT_RW__ERROR(rwlock, 0, ret);
 	return (ret);
 }
 
@@ -277,8 +283,10 @@ _Tthr_rwlock_tryrdlock(pthread_rwlock_t *rwlock)
 	}
 
 	ret = _thr_rwlock_tryrdlock(&prwlock->lock, flags);
-	if (ret == 0)
+	if (ret == 0) {
 		curthread->rdlock_count++;
+		TRACE_PLOCKSTAT_RW__ACQUIRE(rwlock, 0);
+	}
 	return (ret);
 }
 
@@ -296,8 +304,10 @@ _Tthr_rwlock_trywrlock(pthread_rwlock_t *rwlock)
 
 	curthread = _get_curthread();
 	ret = _thr_rwlock_trywrlock(&prwlock->lock);
-	if (ret == 0)
+	if (ret == 0) {
 		prwlock->owner = TID(curthread);
+		TRACE_PLOCKSTAT_RW__ACQUIRE(rwlock, 1);
+	}
 	return (ret);
 }
 
@@ -319,6 +329,7 @@ rwlock_wrlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 	ret = _thr_rwlock_trywrlock(&prwlock->lock);
 	if (ret == 0) {
 		prwlock->owner = TID(curthread);
+		TRACE_PLOCKSTAT_RW__ACQUIRE(rwlock, 1);
 		return (ret);
 	}
 
@@ -326,6 +337,7 @@ rwlock_wrlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 	    (abstime->tv_nsec >= 1000000000 || abstime->tv_nsec < 0)))
 		return (EINVAL);
 
+	TRACE_PLOCKSTAT_RW__BLOCK(rwlock, 1);
 	for (;;) {
 		/* goto kernel and lock it */
 		TRACE_THREADWAIT_RWLOCK__START(rwlock, 1);
@@ -346,6 +358,11 @@ rwlock_wrlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 			break;
 		}
 	}
+	TRACE_PLOCKSTAT_RW__BLOCKED(rwlock, 1, ret == 0);
+	if (ret == 0)
+		TRACE_PLOCKSTAT_RW__ACQUIRE(rwlock, 1);
+	else
+		TRACE_PLOCKSTAT_RW__ERROR(rwlock, 1, ret);
 	return (ret);
 }
 
@@ -393,6 +410,9 @@ _Tthr_rwlock_unlock(pthread_rwlock_t *rwlock)
 	ret = _thr_rwlock_unlock(&prwlock->lock);
 	if (ret == 0 && (state & URWLOCK_WRITE_OWNER) == 0)
 		curthread->rdlock_count--;
+	if (ret == 0)
+		TRACE_PLOCKSTAT_RW__RELEASE(rwlock,
+		    (state & URWLOCK_WRITE_OWNER) != 0);
 
 	return (ret);
 }
