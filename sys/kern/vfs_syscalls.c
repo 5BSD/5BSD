@@ -2848,19 +2848,16 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 		error = EBADF;
 		goto out;
 	}
-	VATTR_NULL(&vattr);
 	/*
-	 * We can't support the value matching VNOVAL.  The refusal came
-	 * after the descriptor was known to carry attributes: ask the
-	 * fileop for nothing first, so a type without attributes keeps its
-	 * EINVAL and a file gets EOPNOTSUPP.
+	 * We can't support the value matching VNOVAL; refused once the
+	 * descriptor is known, as before (a type with no attributes used to
+	 * answer EINVAL to it instead).
 	 */
 	if (uap->flags == VNOVAL) {
-		error = fo_setattr(fp, &vattr, td->td_ucred, td);
-		if (error == 0)
-			error = EOPNOTSUPP;
+		error = EOPNOTSUPP;
 		goto out;
 	}
+	VATTR_NULL(&vattr);
 	vattr.va_flags = uap->flags;
 #ifdef MAC
 	error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &vattr);

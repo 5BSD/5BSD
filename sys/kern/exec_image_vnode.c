@@ -474,11 +474,12 @@ exec_image_vnode_accessed(struct image_params *imgp)
 }
 
 /*
- * Close the image.  On error the reference is dropped with the lock; on
- * success the reference now belongs to p_textvp and only the lock goes.
+ * Close the image.  When the reference is to be released (an error, or an
+ * image that was never installed) it is dropped with the lock; otherwise
+ * the reference now belongs to p_textvp and only the lock goes.
  */
 static void
-exec_image_vnode_close(struct image_params *imgp, int error)
+exec_image_vnode_close(struct image_params *imgp, bool release)
 {
 	struct exec_image_vnode *eiv;
 	struct thread *td;
@@ -493,7 +494,7 @@ exec_image_vnode_close(struct image_params *imgp, int error)
 		VOP_UNSET_TEXT_CHECKED(imgp->vp);
 		imgp->textset = false;
 	}
-	if (error != 0)
+	if (release)
 		vput(imgp->vp);
 	else
 		VOP_UNLOCK(imgp->vp);

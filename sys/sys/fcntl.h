@@ -338,6 +338,14 @@ typedef	__pid_t		pid_t;
 #define	F_NOINTR	0x100		/* Ignore signals when waiting */
 #define	F_FIRSTOPEN	0x200		/* First right to advlock file */
 #define	F_OFD		0x400		/* Description-owned record lock */
+
+/*
+ * Kernel-private fcntl(2) commands, dispatched through fo_fcntl() by the
+ * compatibility layers only; sys_fcntl() never passes them.  Numbered
+ * above every user command.
+ */
+#define	F_GET_RW_HINT	0x1000		/* read/write life-time hint, in retval */
+#define	F_SET_RW_HINT	0x1001		/* set it; arg is the hint */
 #endif
 
 /*

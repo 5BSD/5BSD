@@ -145,9 +145,8 @@ ATF_TC_BODY(regular_file_flags, tc)
 }
 
 /*
- * The VNOVAL flag value is refused after the descriptor is consulted, as
- * it always was: EOPNOTSUPP on a file, EINVAL on a type with no
- * attributes, EBADF on a closed descriptor.
+ * The VNOVAL flag value is refused after the descriptor is consulted:
+ * EOPNOTSUPP on an open descriptor, EBADF on a closed one.
  */
 ATF_TC_WITHOUT_HEAD(flags_vnoval);
 ATF_TC_BODY(flags_vnoval, tc)
@@ -163,10 +162,11 @@ ATF_TC_BODY(flags_vnoval, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, fchflags(fd, (u_long)-1));
 	ATF_CHECK_EQ(EBADF, errno);
+	/* A type without attributes: refused the same way, once consulted. */
 	ATF_REQUIRE_EQ(0, pipe(fds));
 	errno = 0;
 	ATF_CHECK_EQ(-1, fchflags(fds[0], (u_long)-1));
-	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(EOPNOTSUPP, errno);
 	close(fds[0]);
 	close(fds[1]);
 }
@@ -225,14 +225,16 @@ ATF_TC_CLEANUP(fdescfs_opath, tc)
 }
 
 /*
- * Through fdescfs, a descriptor whose fileops have no attributes keeps the
- * old answers: times silently dropped, chflags refused, chmod applied by
- * the type that has one (a pipe) and dropped otherwise.
+ * Through fdescfs, a table with no fo_setattr member (sockets) keeps the old
+ * answers: times silently dropped, chflags refused, chmod dropped.  A table
+ * that has the member answers for its descriptor: an anonymous pipe and a
+ * posix_openpt(2) master report EINVAL for times and flags, and chmod goes
+ * to the type's own fo_chmod (EINVAL for both: pipe_chmod takes only
+ * unidirectional pipes, a pty master has none).
  */
 static void
-check_fdesc_dropped(const char *path, bool chmod_applies, int fd)
+check_fdesc_dropped(const char *path)
 {
-	struct stat sb;
 
 	ATF_CHECK_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
 	    "utimensat(%s): %s", path, strerror(errno));
@@ -241,10 +243,22 @@ check_fdesc_dropped(const char *path, bool chmod_applies, int fd)
 	ATF_CHECK_EQ(EOPNOTSUPP, errno);
 	ATF_CHECK_EQ_MSG(0, chmod(path, 0600), "chmod(%s): %s", path,
 	    strerror(errno));
-	if (chmod_applies) {
-		ATF_REQUIRE_EQ(0, fstat(fd, &sb));
-		ATF_CHECK_EQ(0600, sb.st_mode & ACCESSPERMS);
-	}
+}
+
+static void
+check_fdesc_refused(const char *path, int chmod_result, int chmod_errno)
+{
+
+	errno = 0;
+	ATF_CHECK_EQ(-1, utimensat(AT_FDCWD, path, times, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, chflags(path, UF_NODUMP));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(chmod_result, chmod(path, 0600));
+	if (chmod_result != 0)
+		ATF_CHECK_EQ(chmod_errno, errno);
 }
 
 ATF_TC_WITH_CLEANUP(fdescfs_no_attributes);
@@ -258,21 +272,21 @@ ATF_TC_BODY(fdescfs_no_attributes, tc)
 	int fds[2], fd;
 
 	mount_fdesc(tc);
-	/* A pipe has a chmod, but its fstat does not report the mode. */
-	ATF_REQUIRE_EQ(0, pipe(fds));
-	snprintf(path, sizeof(path), "fdesc/%d", fds[0]);
-	check_fdesc_dropped(path, false, fds[0]);
-	close(fds[0]);
-	close(fds[1]);
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	ATF_REQUIRE(fd >= 0);
 	snprintf(path, sizeof(path), "fdesc/%d", fd);
-	check_fdesc_dropped(path, false, fd);
+	check_fdesc_dropped(path);
 	close(fd);
+	/* pipe(2) makes bidirectional pipes, whose chmod is EINVAL too. */
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	snprintf(path, sizeof(path), "fdesc/%d", fds[0]);
+	check_fdesc_refused(path, -1, EINVAL);
+	close(fds[0]);
+	close(fds[1]);
 	fd = posix_openpt(O_RDWR | O_NOCTTY);
 	ATF_REQUIRE(fd >= 0);
 	snprintf(path, sizeof(path), "fdesc/%d", fd);
-	check_fdesc_dropped(path, false, fd);
+	check_fdesc_refused(path, -1, EINVAL);
 	close(fd);
 }
 ATF_TC_CLEANUP(fdescfs_no_attributes, tc)

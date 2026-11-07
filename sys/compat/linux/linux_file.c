@@ -2335,10 +2335,12 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
-		error = fo_fcntl(fp, FO_FCNTL_GET_RW_HINT, (intptr_t)&hint, td);
+		error = fo_fcntl(fp, F_GET_RW_HINT, 0, td);
 		fdrop(fp, td);
 		if (error != 0)
 			return (error == EBADF ? EINVAL : error);
+		hint = td->td_retval[0];
+		td->td_retval[0] = 0;
 		return (copyout(&hint, PTRIN(args->arg), sizeof(hint)));
 	case LINUX_F_SET_RW_HINT:
 		error = fget(td, args->fd, &cap_no_rights, &fp);
@@ -2352,8 +2354,7 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		if (error == 0 && hint > LINUX_RWH_WRITE_LIFE_EXTREME)
 			error = EINVAL;
 		if (error == 0)
-			error = fo_fcntl(fp, FO_FCNTL_SET_RW_HINT, (intptr_t)hint,
-			    td);
+			error = fo_fcntl(fp, F_SET_RW_HINT, (intptr_t)hint, td);
 		fdrop(fp, td);
 		return (error == EBADF ? EINVAL : error);
 

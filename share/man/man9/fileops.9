@@ -533,9 +533,10 @@ and
 from
 .Xr fcntl 2 ,
 and the kernel-private
-.Dv FO_FCNTL_GET_RW_HINT
+.Dv F_GET_RW_HINT
 and
-.Dv FO_FCNTL_SET_RW_HINT
+.Dv F_SET_RW_HINT
+.Pq Xr fcntl 2 commands that only the kernel issues
 behind the Linux read/write life-time hints.
 A command that yields a value stores it in
 .Va td_retval[0] ,
@@ -636,15 +637,18 @@ which takes
 requests to the vnode and refuses the rest as a pipe does.
 .It everything else
 .Fn invfo_advlock
-returns what the type tests gave a descriptor that takes no locks:
-.Er EOPNOTSUPP
-to
+returns
+.Er EBADF ,
+what the type tests gave the record locks and the close-time unlock of a
+descriptor that takes no locks;
 .Xr flock 2
-.Pq Dv F_FLOCK ,
-.Er EBADF
-to the
-.Xr fcntl 2
-record locks.
+never reaches it, having refused a table without
+.Dv DFLAG_FLOCK
+first.
+An anonymous pipe reaches the FIFO table and answers
+.Xr flock 2
+with its own
+.Er EOPNOTSUPP .
 Pseudo-terminal masters and linuxkpi files do not install the member: the
 type tests these system calls used to make refused them, and they stay
 refused.
