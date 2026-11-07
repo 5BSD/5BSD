@@ -111,6 +111,8 @@ struct image_source_old {
 	struct vnode	*iso_textvp;
 	struct vnode	*iso_textdvp;
 	char		*iso_binname;
+	struct file	*iso_fp;	/* the displaced p_image file, if any */
+	char		*iso_path;	/* and its presented path */
 };
 
 /*

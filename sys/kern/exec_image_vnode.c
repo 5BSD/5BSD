@@ -39,6 +39,7 @@
 #include <sys/dirent.h>
 #include <sys/exec.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/imgact.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -326,8 +327,9 @@ exec_image_vnode_unset_text(struct image_params *imgp)
 /*
  * The fname form resolves through the parent and the hardlink name, with
  * the image unlocked around the lookup as do_execve() did; without a
- * parent it leaves the path alone.  The other forms resolve the vnode
- * itself, before it is locked.
+ * parent it leaves the path alone.  The other forms resolved their path
+ * at construction, before the vnode was locked, and never come here:
+ * vn_fullpath() on the locked image would relock it on a namecache miss.
  */
 static int
 exec_image_vnode_path(struct image_params *imgp, char **retbuf,
@@ -338,8 +340,7 @@ exec_image_vnode_path(struct image_params *imgp, char **retbuf,
 	int error;
 
 	eiv = exec_image_vnode_data(imgp);
-	if (!eiv->eiv_fname)
-		return (vn_fullpath(imgp->vp, retbuf, freebuf));
+	MPASS(eiv->eiv_fname);
 	if (eiv->eiv_dvp == NULL)
 		return (0);
 	VOP_UNLOCK(imgp->vp);
@@ -439,6 +440,9 @@ exec_image_vnode_install(struct image_params *imgp, struct proc *p,
 	old->iso_binname = p->p_binname;
 	p->p_binname = eiv->eiv_binname;
 	eiv->eiv_binname = NULL;
+	/* Whatever image this one displaces, its state goes with the old. */
+	old->iso_fp = p->p_image.pi_fp;
+	old->iso_path = p->p_image.pi_path;
 	p->p_image.pi_kind = PI_KIND_VNODE;
 	p->p_image.pi_fp = NULL;
 	p->p_image.pi_path = NULL;
@@ -457,6 +461,9 @@ exec_image_vnode_release_old(struct image_params *imgp,
 	if (old->iso_textdvp != NULL)
 		vrele(old->iso_textdvp);
 	free(old->iso_binname, M_PARGS);
+	if (old->iso_fp != NULL)
+		fdrop(old->iso_fp, curthread);
+	free(old->iso_path, M_PARGS);
 }
 
 static void
