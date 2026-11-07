@@ -1116,7 +1116,7 @@ exec_fail:
 	 * displaced, now that the process lock and the image lock are gone.
 	 */
 	if (installed_ops != NULL)
-		installed_ops->is_release_old(imgp, &old_image);
+		IS_RELEASE_OLD(installed_ops, imgp, &old_image);
 #ifdef KTRACE
 	ktr_io_params_free(kiop);
 #endif

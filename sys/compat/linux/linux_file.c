@@ -546,10 +546,10 @@ linux_fileattr_fsetflags(struct thread *td, int fd, u_long flags)
 		return (error);
 	VATTR_NULL(&vattr);
 	vattr.va_flags = flags;
+	/* The descriptor's own answer, as the FS_IOC_SETFLAGS ioctl gives. */
 	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 	fdrop(fp, td);
-	/* A type with no attributes (pipes, pty masters): as getvnode() gave. */
-	return (error == EINVAL ? EOPNOTSUPP : error);
+	return (error);
 }
 
 int

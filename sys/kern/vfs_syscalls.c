@@ -5303,19 +5303,21 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 	}
 
+	/* If len == 0, just return 0. */
+	if (len == 0)
+		goto out;
+
 	/*
-	 * Only descriptor types that can copy ranges take part; the vnode
-	 * test this replaces stood here, after the mode checks.
+	 * Only descriptor types that can copy ranges take part.  The vnode
+	 * body's own type test stood after the zero-length return; the
+	 * descriptor checks that stood ahead of the mode checks now follow
+	 * them (D82).
 	 */
 	if (infp->f_ops->fo_copy_file_range == NULL ||
 	    outfp->f_ops->fo_copy_file_range == NULL) {
 		error = EINVAL;
 		goto out;
 	}
-
-	/* If len == 0, just return 0. */
-	if (len == 0)
-		goto out;
 
 	/*
 	 * Make sure that the ranges checked and locked below are valid.  Note

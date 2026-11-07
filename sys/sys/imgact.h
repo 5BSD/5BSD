@@ -187,6 +187,8 @@ struct image_source_ops {
 	((imgp)->is_ops->is_install((imgp), (p), (old)))
 #define	IS_ACCESSED(imgp)	((imgp)->is_ops->is_accessed(imgp))
 #define	IS_CLOSE(imgp, release)	((imgp)->is_ops->is_close((imgp), (release)))
+/* After IS_CLOSE the source is gone; the ops saved at install release. */
+#define	IS_RELEASE_OLD(ops, imgp, old)	((ops)->is_release_old((imgp), (old)))
 
 #ifdef _KERNEL
 struct nameidata;
