@@ -4,12 +4,17 @@
  * OES file events on a served descriptor (D89): a NOTIFY client sees
  * FILE_READ, FILE_STAT and FILE_CLOSE carrying the presented identity
  * (OES_FILE_META_PRESENTED), and one DQ_REPLY per controller reply with a
- * count and never content (D41).  A read of a real file produces no file
- * event (D18: the hooks return at once for anything but DTYPE_DQ).
+ * count and never content (D41).  The stage 1b operations on a writable
+ * served object raise FILE_WRITE, FILE_SETATTR, FILE_FSYNC, FILE_LOCK,
+ * FILE_IOCTL and FILE_MMAP with their payloads.  The same operations on a
+ * real file produce no file event (D18: the hooks return at once for
+ * anything but DTYPE_DQ).
  */
 
 #include <sys/param.h>
+#include <sys/filio.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -33,12 +38,34 @@
 static unsigned char data[DATA_LEN];
 static char oracle_path[DQT_PATH_MAX];
 
+static long	now_ms(void);
+
 static const oes_event_type_t served_events[] = {
 	OES_EVENT_NOTIFY_FILE_READ,
 	OES_EVENT_NOTIFY_FILE_STAT,
 	OES_EVENT_NOTIFY_FILE_CLOSE,
 	OES_EVENT_NOTIFY_DQ_REPLY,
+	OES_EVENT_NOTIFY_FILE_WRITE,
+	OES_EVENT_NOTIFY_FILE_SETATTR,
+	OES_EVENT_NOTIFY_FILE_FSYNC,
+	OES_EVENT_NOTIFY_FILE_LOCK,
+	OES_EVENT_NOTIFY_FILE_IOCTL,
+	OES_EVENT_NOTIFY_FILE_MMAP,
 };
+
+/* The stage 1b events, in the order child_ops runs their operations. */
+static const oes_event_type_t ops_events[] = {
+	OES_EVENT_NOTIFY_FILE_WRITE,
+	OES_EVENT_NOTIFY_FILE_SETATTR,
+	OES_EVENT_NOTIFY_FILE_FSYNC,
+	OES_EVENT_NOTIFY_FILE_LOCK,
+	OES_EVENT_NOTIFY_FILE_IOCTL,
+	OES_EVENT_NOTIFY_FILE_MMAP,
+};
+#define	NOPS		nitems(ops_events)
+#define	OPS_MODE	0640
+#define	OPS_LOCK_START	16
+#define	OPS_LOCK_LEN	32
 
 /* What a child did; the pipe carries the results. */
 struct req_arg {
@@ -67,6 +94,78 @@ child_read_stat(void *arg, void *result)
 	 * descriptor, while a process exit (fdescfree) never calls it.
 	 */
 	(void)close(a->fd);
+}
+
+/*
+ * One of each stage 1b operation, on a descriptor open for writing.  Each
+ * result is the system call's, so the parent can tell an operation that
+ * never reached its hook from an event that went missing.
+ */
+struct ops_res {
+	struct dqt_rr	 r[NOPS];
+	struct dqt_rr	 unlock;
+};
+
+static void
+child_ops(void *arg, void *result)
+{
+	struct req_arg *a = arg;
+	struct ops_res *r = result;
+	struct flock fl;
+	void *p;
+	int n;
+
+#define	RR(i, call) do {						\
+	r->r[i].rv = (call);						\
+	r->r[i].err = r->r[i].rv == -1 ? errno : 0;			\
+} while (0)
+	RR(0, pwrite(a->fd, "w", 1, 0));
+	RR(1, fchmod(a->fd, OPS_MODE));
+	RR(2, fsync(a->fd));
+	memset(&fl, 0, sizeof(fl));
+	fl.l_type = F_WRLCK;
+	fl.l_whence = SEEK_SET;
+	fl.l_start = OPS_LOCK_START;
+	fl.l_len = OPS_LOCK_LEN;
+	RR(3, fcntl(a->fd, F_SETLK, &fl));
+	fl.l_type = F_UNLCK;
+	r->unlock.rv = fcntl(a->fd, F_SETLK, &fl);
+	r->unlock.err = r->unlock.rv == -1 ? errno : 0;
+	RR(4, ioctl(a->fd, FIONREAD, &n));
+	p = mmap(NULL, getpagesize(), PROT_READ, MAP_SHARED, a->fd, 0);
+	r->r[5].rv = p == MAP_FAILED ? -1 : 0;
+	r->r[5].err = p == MAP_FAILED ? errno : 0;
+	if (p != MAP_FAILED)
+		(void)munmap(p, getpagesize());
+#undef RR
+}
+
+/* The first message of each stage 1b event from pid. */
+static void
+collect_ops(oes_client_t *client, oes_message_t *got[NOPS], pid_t pid,
+    int ms)
+{
+	const oes_message_t *msg;
+	long start;
+	size_t i, have;
+
+	start = now_ms();
+	for (have = 0; have < NOPS && now_ms() - start < ms;) {
+		if (oes_read_event(client, &msg, false) != 0) {
+			if (errno != EAGAIN)
+				atf_tc_fail("oes_read_event: %s", strerror(errno));
+			dqt_msleep(10);
+			continue;
+		}
+		if (msg->em_process.ep_pid != pid)
+			continue;
+		for (i = 0; i < NOPS; i++) {
+			if (msg->em_event == ops_events[i] && got[i] == NULL) {
+				got[i] = oes_message_copy(msg);
+				have++;
+			}
+		}
+	}
 }
 
 static oes_client_t *
@@ -280,6 +379,143 @@ ATF_TC_BODY(served_file_events, tc)
 	(void)close(oracle);
 }
 
+ATF_TC(served_ops_events);
+ATF_TC_HEAD(served_ops_events, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "write, fchmod, fsync, a record lock, an "
+	    "ioctl and mmap on a writable served object reach an OES NOTIFY "
+	    "client as FILE_WRITE/SETATTR/FSYNC/LOCK/IOCTL/MMAP with the "
+	    "presented identity and the operation's detail");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(served_ops_events, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct dq_policy pol;
+	struct req_arg a;
+	struct ops_res r;
+	struct dqt_child ch;
+	oes_message_t *got[NOPS];
+	const oes_event_file_setattr_t *sa;
+	const oes_event_file_lock_t *lk;
+	const oes_event_mmap_t *mm;
+	oes_client_t *client;
+	size_t i;
+	int backing, status;
+
+	dqt_fill(data, sizeof(data), 113);
+	backing = dqt_make_oracle("backing", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	(void)close(backing);
+	backing = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(backing != -1);
+	dqt_init(&c);
+	dqt_policy_write(&pol);
+	pol.dp_ioctl = DQ_EVENT;
+	pol.dp_mmap_shared_write = DQ_ALLOW;
+	o = dqt_mint_backing(&c, backing, oracle_path, &pol, DQ_MINT_F_WRITE);
+	client = client_or_skip();
+
+	a.fd = o->fd;
+	dqt_spawn(&ch, child_ops, &a);
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	for (i = 0; i < NOPS; i++)
+		ATF_CHECK_MSG(r.r[i].rv != -1, "operation %zu (event %#x): %s",
+		    i, ops_events[i], strerror(r.r[i].err));
+	ATF_CHECK_MSG(r.unlock.rv != -1, "unlock: %s", strerror(r.unlock.err));
+
+	memset(got, 0, sizeof(got));
+	collect_ops(client, got, ch.pid, EVENT_WAIT_MS);
+	for (i = 0; i < NOPS; i++)
+		ATF_REQUIRE_MSG(got[i] != NULL, "no event %#x from %d",
+		    ops_events[i], ch.pid);
+
+	check_presented(got[0], &got[0]->em_event_data.rw.file, &o->ident);
+
+	sa = &got[1]->em_event_data.file_setattr;
+	check_presented(got[1], &sa->file, &o->ident);
+	ATF_CHECK_EQ(OES_FILE_SETATTR_MODE, sa->mask);
+	ATF_CHECK_EQ(OPS_MODE, sa->mode & ALLPERMS);
+
+	check_presented(got[2], &got[2]->em_event_data.fsync.file, &o->ident);
+
+	lk = &got[3]->em_event_data.file_lock;
+	check_presented(got[3], &lk->file, &o->ident);
+	ATF_CHECK_EQ(F_SETLK, lk->op);
+	ATF_CHECK_EQ(F_WRLCK, lk->type);
+	ATF_CHECK_EQ(SEEK_SET, lk->whence);
+	ATF_CHECK_EQ(OPS_LOCK_START, lk->start);
+	ATF_CHECK_EQ(OPS_LOCK_LEN, lk->len);
+
+	check_presented(got[4], &got[4]->em_event_data.file_ioctl.file,
+	    &o->ident);
+	ATF_CHECK_EQ((uint64_t)FIONREAD, got[4]->em_event_data.file_ioctl.cmd);
+
+	mm = &got[5]->em_event_data.mmap;
+	check_presented(got[5], &mm->file, &o->ident);
+	ATF_CHECK_EQ(PROT_READ, mm->prot);
+	ATF_CHECK((mm->flags & MAP_SHARED) != 0);
+	ATF_CHECK_EQ((uint64_t)getpagesize(), mm->len);
+
+	for (i = 0; i < NOPS; i++)
+		oes_message_free(got[i]);
+	oes_client_destroy(client);
+	dqt_fini(&c);
+	(void)close(backing);
+}
+
+ATF_TC(real_file_no_ops_events);
+ATF_TC_HEAD(real_file_no_ops_events, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the same stage 1b operations on a "
+	    "real file raise none of the served-descriptor events (D18)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(real_file_no_ops_events, tc)
+{
+	struct req_arg a;
+	struct ops_res r;
+	struct dqt_child ch;
+	oes_message_t *got[NOPS];
+	oes_client_t *client;
+	size_t i;
+	int fd, q, status;
+
+	q = dqt_open_queue();	/* skip when the device is absent */
+	dqt_fill(data, sizeof(data), 114);
+	fd = dqt_make_oracle("real", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	(void)close(fd);
+	fd = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(fd != -1);
+	client = client_or_skip();
+
+	a.fd = fd;
+	dqt_spawn(&ch, child_ops, &a);
+	status = dqt_wait(&ch, &r, sizeof(r));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	/* Every operation must have run, or the negative proves nothing. */
+	for (i = 0; i < NOPS; i++)
+		ATF_REQUIRE_MSG(r.r[i].rv != -1, "operation %zu on a real "
+		    "file: %s", i, strerror(r.r[i].err));
+
+	memset(got, 0, sizeof(got));
+	collect_ops(client, got, ch.pid, NO_EVENT_MS);
+	for (i = 0; i < NOPS; i++) {
+		ATF_CHECK_MSG(got[i] == NULL, "event %#x for a real file",
+		    ops_events[i]);
+		if (got[i] != NULL)
+			oes_message_free(got[i]);
+	}
+	oes_client_destroy(client);
+	(void)close(fd);
+	(void)close(q);
+}
+
 ATF_TC(real_file_no_events);
 ATF_TC_HEAD(real_file_no_events, tc)
 {
@@ -332,5 +568,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, served_file_events);
 	ATF_TP_ADD_TC(tp, real_file_no_events);
+	ATF_TP_ADD_TC(tp, served_ops_events);
+	ATF_TP_ADD_TC(tp, real_file_no_ops_events);
 	return (atf_no_error());
 }

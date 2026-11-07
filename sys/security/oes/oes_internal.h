@@ -365,8 +365,8 @@ bool	oes_event_is_valid(oes_event_type_t ev);
  * and validate cache keys.
  *
  * AUTH: bits 1-34 (EXEC..RELABEL), 41-42 (SWAPON, SWAPOFF),
- *   43-44 (FILE_READ, FILE_STAT)
- * NOTIFY: bits 1-4,6-9,11,13-63 (low), 64-70 (high)
+ *   43-50 (FILE_READ, FILE_STAT, FILE_WRITE..FILE_MMAP)
+ * NOTIFY: bits 1-4,6-9,11,13-63 (low), 64-76 (high)
  *   Gaps at bits 0, 5, 10, 12 (no NOTIFY events defined there)
  */
 #define OES_VALID_AUTH_LO	OES_AUTH_EVENT_MASK_LO

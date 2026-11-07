@@ -46,6 +46,41 @@ _Static_assert(sizeof(oes_event_presented_t) <=
     "presented payload exceeds the event union");
 _Static_assert(OES_FILE_META_PRESENTED == 0x40,
     "presented meta flag value changed");
+/* Served-descriptor stage 1b payloads, inside the same v2 union. */
+_Static_assert(sizeof(oes_event_file_setattr_t) == 280,
+    "file setattr payload wire size changed");
+_Static_assert(offsetof(oes_event_file_setattr_t, mask) == 208 &&
+    offsetof(oes_event_file_setattr_t, mode) == 212 &&
+    offsetof(oes_event_file_setattr_t, uid) == 216 &&
+    offsetof(oes_event_file_setattr_t, gid) == 220 &&
+    offsetof(oes_event_file_setattr_t, flags) == 224 &&
+    offsetof(oes_event_file_setattr_t, size) == 232 &&
+    offsetof(oes_event_file_setattr_t, atime) == 240 &&
+    offsetof(oes_event_file_setattr_t, mtime) == 256 &&
+    offsetof(oes_event_file_setattr_t, vaflags) == 272,
+    "file setattr payload layout changed");
+_Static_assert(sizeof(oes_event_file_lock_t) == 240,
+    "file lock payload wire size changed");
+_Static_assert(offsetof(oes_event_file_lock_t, op) == 208 &&
+    offsetof(oes_event_file_lock_t, type) == 212 &&
+    offsetof(oes_event_file_lock_t, start) == 216 &&
+    offsetof(oes_event_file_lock_t, len) == 224 &&
+    offsetof(oes_event_file_lock_t, whence) == 232 &&
+    offsetof(oes_event_file_lock_t, pid) == 236,
+    "file lock payload layout changed");
+_Static_assert(sizeof(oes_event_file_ioctl_t) == 216 &&
+    offsetof(oes_event_file_ioctl_t, cmd) == 208,
+    "file ioctl payload layout changed");
+_Static_assert(sizeof(oes_event_mmap_t) == 232,
+    "mmap payload (shared by MMAP and FILE_MMAP) changed");
+_Static_assert(sizeof(oes_event_file_setattr_t) <=
+    sizeof(((oes_message_t *)0)->em_event_data),
+    "file setattr payload exceeds the event union");
+_Static_assert(OES_FILE_SETATTR_MODE == 0x01 &&
+    OES_FILE_SETATTR_UID == 0x02 && OES_FILE_SETATTR_GID == 0x04 &&
+    OES_FILE_SETATTR_FLAGS == 0x08 && OES_FILE_SETATTR_ATIME == 0x10 &&
+    OES_FILE_SETATTR_MTIME == 0x20 && OES_FILE_SETATTR_SIZE == 0x40,
+    "file setattr mask bits changed");
 _Static_assert(sizeof(oes_thread_t) == 40,
     "thread v1 wire size changed");
 _Static_assert(offsetof(oes_process_t, ep_audit_flags) == 256,

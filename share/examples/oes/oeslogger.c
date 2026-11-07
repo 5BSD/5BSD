@@ -777,6 +777,8 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 	/* --- MMAP --- */
 	case OES_EVENT_AUTH_MMAP:
 	case OES_EVENT_NOTIFY_MMAP:
+	case OES_EVENT_AUTH_FILE_MMAP:
+	case OES_EVENT_NOTIFY_FILE_MMAP:
 		obj_open(fp, depth, "event_data", false);
 		emit_file(fp, depth + 1, "file", msg,
 		    &msg->em_event_data.mmap.file, true);
@@ -863,6 +865,8 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 	case OES_EVENT_NOTIFY_WRITE:
 	case OES_EVENT_AUTH_FILE_READ:
 	case OES_EVENT_NOTIFY_FILE_READ:
+	case OES_EVENT_AUTH_FILE_WRITE:
+	case OES_EVENT_NOTIFY_FILE_WRITE:
 		obj_open(fp, depth, "event_data", false);
 		emit_file(fp, depth + 1, "file", msg,
 		    &msg->em_event_data.rw.file, false);
@@ -1013,6 +1017,76 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 		break;
 
 	/* --- NOTIFY-only events below (no AUTH equivalent) --- */
+
+	/* --- Served-descriptor stage 1b operations --- */
+	case OES_EVENT_AUTH_FILE_FSYNC:
+	case OES_EVENT_NOTIFY_FILE_FSYNC:
+		obj_open(fp, depth, "event_data", false);
+		emit_file(fp, depth + 1, "file", msg,
+		    &msg->em_event_data.fsync.file, false);
+		obj_close(fp, depth, false, false);
+		break;
+
+	case OES_EVENT_AUTH_FILE_SETATTR:
+	case OES_EVENT_NOTIFY_FILE_SETATTR: {
+		const oes_event_file_setattr_t *sa =
+		    &msg->em_event_data.file_setattr;
+
+		obj_open(fp, depth, "event_data", false);
+		emit_file(fp, depth + 1, "file", msg, &sa->file, true);
+		json_kv_uint(fp, depth + 1, "mask", sa->mask, true);
+		if (sa->mask & OES_FILE_SETATTR_MODE)
+			json_kv_uint(fp, depth + 1, "mode", sa->mode, true);
+		if (sa->mask & OES_FILE_SETATTR_UID)
+			json_kv_uint(fp, depth + 1, "uid", sa->uid, true);
+		if (sa->mask & OES_FILE_SETATTR_GID)
+			json_kv_uint(fp, depth + 1, "gid", sa->gid, true);
+		if (sa->mask & OES_FILE_SETATTR_FLAGS)
+			json_kv_uint(fp, depth + 1, "flags", sa->flags, true);
+		if (sa->mask & OES_FILE_SETATTR_SIZE)
+			json_kv_uint(fp, depth + 1, "size", sa->size, true);
+		if (sa->mask & OES_FILE_SETATTR_ATIME) {
+			json_kv_int(fp, depth + 1, "atime_sec",
+			    sa->atime.tv_sec, true);
+			json_kv_int(fp, depth + 1, "atime_nsec",
+			    sa->atime.tv_nsec, true);
+		}
+		if (sa->mask & OES_FILE_SETATTR_MTIME) {
+			json_kv_int(fp, depth + 1, "mtime_sec",
+			    sa->mtime.tv_sec, true);
+			json_kv_int(fp, depth + 1, "mtime_nsec",
+			    sa->mtime.tv_nsec, true);
+		}
+		json_kv_uint(fp, depth + 1, "vattr_flags", sa->vaflags, false);
+		obj_close(fp, depth, false, false);
+		break;
+	}
+
+	case OES_EVENT_AUTH_FILE_LOCK:
+	case OES_EVENT_NOTIFY_FILE_LOCK: {
+		const oes_event_file_lock_t *lk = &msg->em_event_data.file_lock;
+
+		obj_open(fp, depth, "event_data", false);
+		emit_file(fp, depth + 1, "file", msg, &lk->file, true);
+		json_kv_int(fp, depth + 1, "op", lk->op, true);
+		json_kv_int(fp, depth + 1, "type", lk->type, true);
+		json_kv_int(fp, depth + 1, "start", lk->start, true);
+		json_kv_int(fp, depth + 1, "len", lk->len, true);
+		json_kv_int(fp, depth + 1, "whence", lk->whence, true);
+		json_kv_int(fp, depth + 1, "pid", lk->pid, false);
+		obj_close(fp, depth, false, false);
+		break;
+	}
+
+	case OES_EVENT_AUTH_FILE_IOCTL:
+	case OES_EVENT_NOTIFY_FILE_IOCTL:
+		obj_open(fp, depth, "event_data", false);
+		emit_file(fp, depth + 1, "file", msg,
+		    &msg->em_event_data.file_ioctl.file, true);
+		json_kv_uint(fp, depth + 1, "cmd",
+		    msg->em_event_data.file_ioctl.cmd, false);
+		obj_close(fp, depth, false, false);
+		break;
 
 	/* --- FILE_CLOSE (served descriptor; the vnode CLOSE has no payload) --- */
 	case OES_EVENT_NOTIFY_FILE_CLOSE:
