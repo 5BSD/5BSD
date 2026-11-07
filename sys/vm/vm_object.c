@@ -1100,7 +1100,7 @@ rescan:
 			vm_page_xunbusy(p);
 			continue;
 		}
-		if (object->type == OBJT_VNODE) {
+		if (vm_pager_has_flag(object, PGO_WRITEBACK)) {
 			n = vm_object_page_clean_flush(&pages, p, pagerflags,
 			    flags, &allclean, &eio);
 			pctrie_iter_reset(&pages);
@@ -1141,9 +1141,11 @@ rescan:
 	/*
 	 * Leave updating cleangeneration for tmpfs objects to tmpfs
 	 * scan.  It needs to update mtime, which happens for other
-	 * filesystems during page writeouts.
+	 * filesystems during page writeouts.  Only a pager that writes back
+	 * (PGO_WRITEBACK: vnode objects and the DescriptorQueue pager) had
+	 * its pages flushed above.
 	 */
-	if (allclean && object->type == OBJT_VNODE)
+	if (allclean && vm_pager_has_flag(object, PGO_WRITEBACK))
 		object->cleangeneration = curgeneration;
 	return (res);
 }

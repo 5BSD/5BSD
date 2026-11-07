@@ -1036,7 +1036,9 @@ retry:
 					VM_OBJECT_WLOCK(object);
 				}
 				if ((object->flags & OBJ_SWAP) != 0 ||
-				    object->type == OBJT_VNODE) {
+				    object->type == OBJT_VNODE ||
+				    vm_pager_has_flag(object,
+				    PGO_RESIDENT_LOOKUP)) {
 					pindex = OFF_TO_IDX(current->offset +
 					    (addr - current->start));
 					m = vm_page_lookup(object, pindex);

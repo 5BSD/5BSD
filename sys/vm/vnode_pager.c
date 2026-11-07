@@ -108,6 +108,7 @@ static boolean_t vnode_pager_sync(vm_object_t, vm_ooffset_t, vm_size_t,
 
 const struct pagerops vnodepagerops = {
 	.pgo_kvme_type = KVME_TYPE_VNODE,
+	.pgo_flags =	PGO_WRITEBACK,
 	.pgo_alloc =	vnode_pager_alloc,
 	.pgo_dealloc =	vnode_pager_dealloc,
 	.pgo_getpages =	vnode_pager_getpages,
