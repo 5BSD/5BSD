@@ -470,8 +470,8 @@ members in the order `fo_pathconf`, `fo_statfs`, `fo_fsync`, `fo_setattr`,
 - `inv` — the member is NULL and the `fo_*` dispatcher in `sys/file.h` calls
   `invfo_*`, which returns the errno the removed type test gave that system
   call: `pathconf` `EOPNOTSUPP`; `fadvise` `ENODEV`; `fcntl` `EBADF`;
-  `advlock` `EOPNOTSUPP` to `flock(2)` and `EBADF` to `fcntl(2)` and the
-  close-time unlock (D73); `statfs`, `fsync`, `setattr`, `readdir`,
+  `advlock` `EBADF` (`flock(2)` never reaches it, refusing a table without
+  `DFLAG_FLOCK` first; D73, D81); `statfs`, `fsync`, `setattr`, `readdir`,
   `copy_file_range`, `acl`, `extattr` `EINVAL`;
 - `bad` — `badfo_*` (`EBADF`). No table installs a `badfo_*` for any of the
   eleven: `badfileops` leaves them NULL (so they would dispatch to `invfo_*`),
@@ -501,10 +501,10 @@ side-effect free as the type test was:
 - `copy_file_range(2)` probes `fo_copy_file_range == NULL` on either side →
   `EINVAL` (`vfs_syscalls.c:5313`), after the `FREAD`/`FWRITE`/`FAPPEND`
   checks where the vnode test stood (`f134444e4b1`);
-- `fdesc_setattr` probes `fo_setattr == NULL` (`fdesc_vnops.c:622`, D29) and
-  applies the old drop rule to each fileop's answer, see below; the Linux
-  fileattr calls probe `fo_setattr == NULL` (`linux_file.c:525`) and map a
-  returned `EINVAL` to `EOPNOTSUPP` (`:552`), the Linux `FS_IOC_SETFLAGS`
+- `fdesc_setattr` probes `fo_setattr == NULL` (`fdesc_vnops.c:622`, D29) for
+  the old drop rule and otherwise lets each fileop's answer stand, see below;
+  the Linux fileattr calls probe `fo_setattr == NULL` (`linux_file.c:525`) and
+  return the fileop's answer unmapped (D82), the Linux `FS_IOC_SETFLAGS`
   ioctl probes it for `ENOTTY` (`linux_ioctl.c:4045`), Linux `getdents`
   probes `fo_readdir == NULL` for `EINVAL` (`linux_file.c:782`) and Linux
   `F_SET_RW_HINT` probes `fo_fcntl == NULL` for `EINVAL` before the `copyin`
@@ -527,8 +527,13 @@ with no `fo_setattr` member (sockets, kqueues, shm) has no settable
 attributes and keeps the old drop rule: the change is dropped (`0`), except
 that `va_flags` → `EOPNOTSUPP`. A table with the member answers for its
 descriptor: an anonymous pipe or a `posix_openpt(2)` master reports `EINVAL`
-for times and flags where the missing vnode once meant "dropped" (declared,
-D81). A FIFO or `/dev/ptmx` master carries a vnode and its `vn_*` run.
+for times and flags where the missing vnode once meant "dropped", `EINVAL`
+for `chflags(2)` where the bridge once said `EOPNOTSUPP` (declared, D81,
+D82). A FIFO carries a vnode and its `vn_*` run for every attribute; a
+`/dev/ptmx` master or a devfs-opened linuxkpi file carries one too, but
+their tables answer `fo_truncate`/`fo_chmod`/`fo_chown` with `invfo_*`
+(`EINVAL`, as `fchmod(2)` on them always did), so only times and flags
+reach the node through `vn_setattr_opt` (D82).
 
 Three table flags say what the type does on its own; the flags column reads
 `PRIVWRITE / FLOCK / RECLOCK`:
