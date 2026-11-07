@@ -54,7 +54,7 @@ ATF_TC_BODY(directory, tc)
 		if (n == 0)
 			break;
 		for (p = buf; p < buf + n; p += d->d_reclen) {
-			d = (struct dirent *)p;
+			d = (struct dirent *)(void *)p;
 			if (d->d_fileno == 0)
 				continue;
 			if (strcmp(d->d_name, ".") == 0)
