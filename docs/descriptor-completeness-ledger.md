@@ -12,7 +12,11 @@ re-run at HEAD after the five commits that followed the series review
 (`3cbf72440bd` observers' vnode hold, `dbe69afe001` displaced image state,
 `80f7f749378` lock-taking flags and the fdescfs drop rule, `f134444e4b1` the
 last type tests), which converted every category-A row the previous ledger
-left open.
+left open; and it is re-run once more at `a4bfad81171`, the quality pass that
+presents stage 0 as one subsystem (D83, D84: `pipeops` on `vn_*_opt`, the
+`O_PATH` tests on `f_flag`, the `copy_file_range` probe gone, `fo_setattr`
+the whole `vattr` through `file_setattr_direct`, the DTrace probes), which
+changes no classification.
 
 ## Generation
 
@@ -27,9 +31,9 @@ cd /usr/src/sys && git grep -n -E \
 | | |
 |---|---|
 | Source tree | `5BSD`, branch `descriptor/completeness` |
-| Commit | `f134444e4b124d22ccc552031ba8ef4aa344db58` |
+| Commit | `a4bfad81171e2bf0f6a1590a8b35e968a4b517fd` |
 | Date | 2026-11-07 |
-| Total hits | 283 (one row each; every hit appears in exactly one table). The `1f8c7358a4d` ledger had 292 (11 hits retired, 2 new, see "Rows changed since `1f8c7358a4d`"), the `46b84718217` ledger 392 |
+| Total hits | 286 (one row each; every hit appears in exactly one table). The `f134444e4b1` ledger had 283 (1 hit retired, 4 new, 1 reworded, see "Rows changed since `f134444e4b1`"), the `1f8c7358a4d` ledger 292, the `46b84718217` ledger 392 |
 | Lines mentioning `DTYPE_VNODE` | 40, of which 37 are `f_type` tests (comparisons, `case` arms, one `MPASS`) and 3 are not tests: `kern/kern_descrip.c:3464` and `kern/vfs_syscalls.c:1067` pass the constant to `finit()`, `kern/tty_pts.c:681` is a comment. The four tests gone since `1f8c7358a4d` are `linux_pread`, `linux_fallocate_check`, the Linux `FS_IOC_SETFLAGS` gate and `zfs_file_fsync` (`f134444e4b1`) |
 | Lines mentioning `DTYPE_FIFO` | 6, all `f_type` tests; no line tests both constants any more (the `sys_flock` line that did went with `fo_advlock`, `89435f70abc`) |
 | `p_textvp` hits | 33: 28 `p_image` consumers outside the exec backend (6.2), 3 in `kern/exec_image_vnode.c` (`is_install` and the `is_close` comment), 2 comments in `kern/kern_exec.c` |
@@ -94,12 +98,11 @@ Categories:
 - **F observer** — reporting, audit and MAC paths that switch on `f_type`.
 - **G driver** — code outside the core that needs a real vnode.
 
-## A — fileop (35 rows)
+## A — fileop (37 rows)
 
 | file:line | function | what it does with the vnode | disposition |
 |---|---|---|---|
 | `compat/linux/linux_file.c:217`⁽ᵀ⁾ | `linux_common_open` | attempts `fo_ioctl(TIOCSCTTY)` only when the new fd is a vnode | keep (6.1.1, by decision): the `TIOCSCTTY` attempt is made for `DTYPE_VNODE` only, never for a FIFO or any other type; the test stays a type test and fails safe for `DTYPE_DQ`. Stays: `SESS_LEADER`/`P_CONTROLT` test under `proctree_lock`, `cap_ioctl_rights` |
-| `compat/linux/linux_file.c:551` | `linux_fileattr_fsetflags` | comment: a type with no attributes (pipes, pty masters) gets `EOPNOTSUPP`, as `getvnode()` gave | done (`fo_setattr`, `ed6f7f051a3`; the `EINVAL`→`EOPNOTSUPP` mapping of the Linux fileattr calls restored by `f134444e4b1`, the probe itself is `:525`, not matched); comment only. Stays: `linux_fileattr_fget`, `cap_fchflags_rights`, `AUDIT_ARG_FFLAGS` |
 | `compat/linux/linux_file.c:783` | `linux_getdents_error` | comment: `EINVAL` for a table without `fo_readdir` (no directory entries), as `getvnode()` said; otherwise `fo_stat` `S_ISDIR` → `ENOTDIR` | done (`fo_readdir`, `f6e5f5d0922`; the `EINVAL` for a type with no directory entries restored by `f134444e4b1`, the probe is `:782`, not matched); comment only. Stays: `path_fileops` `EBADF` |
 | `compat/linux/linux_quota.c:77`⁽ᴺ⁾ | `linux_quotactl_fd_impl` | `vp->v_mount` → `vfs_busy` → `vfs_quota()`; `ENOSYS` if NULL | deferred by decision (D64): no fileop yields a `struct mount`; stays `ENOSYS` for non-vnode files and the vnode path is unchanged |
 | `compat/linux/linux_stats.c:492` | `linux_syncfs` | comment: a descriptor with no filesystem returns `EINVAL`, as `fgetvp()` did | done (`fo_fsync` mode `FO_FSYNC_FS`, `78f8f643b0b`): the body is `fo_fsync`; the comment records the preserved errno (`invfo_fsync` → `EINVAL`). Comment only |
@@ -109,30 +112,33 @@ Categories:
 | `compat/linux/linux_xattr.c:338` | `removexattr` | `xattr_getvnode` for `kern_extattr_delete_fp` | done (`fo_extattr` delete, `13ff5fd675e`). Stays: `CAP_EXTATTR_DELETE`, `xattr_to_extattr`, `error_to_xattrerror` |
 | `compat/linux/linux_xattr.c:509` | `getxattr` | `xattr_getvnode`; the size probe and `ERANGE` run through `kern_extattr_get_fp` | done (`fo_extattr` get, `13ff5fd675e`): `linux_extattr_get_vp` remains for the path forms only. Stays: `CAP_EXTATTR_GET`, `EPERM`/`EOPNOTSUPP`→`ENOATTR` |
 | `compat/linux/linux_xattr.c:603` | `setxattr` | `xattr_getvnode` for `kern_extattr_get_fp`/`set_fp` | done (`fo_extattr` get+set, `13ff5fd675e`). Stays: `CAP_EXTATTR_GET`/`SET` by flags, `XATTR_CREATE`/`REPLACE` semantics |
-| `kern/kern_descrip.c:6130` | `invfo_statfs` | comment: what `getvnode_path()` returned for a descriptor with no vnode | done (`fo_statfs`, `2abedb674e0`): the type-neutral refusal lives in `invfo_*` (D73); comment only |
-| `kern/kern_descrip.c:6138` | `invfo_fsync` | comment: what `getvnode()` returned | done (`fo_fsync`, `78f8f643b0b`); comment only |
-| `kern/kern_descrip.c:6163` | `invfo_readdir` | comment: what `getvnode()` returned | done (`fo_readdir`, `f6e5f5d0922`); comment only |
-| `kern/kern_descrip.c:6180` | `invfo_acl` | comment: what `getvnode_path()` returned | done (`fo_acl`, `d2e949eeb1d`); comment only |
+| `kern/kern_descrip.c:6153` | `invfo_statfs` | comment: what `getvnode_path()` returned for a descriptor with no vnode | done (`fo_statfs`, `2abedb674e0`): the type-neutral refusal lives in `invfo_*` (D73); comment only |
+| `kern/kern_descrip.c:6162` | `invfo_fsync` | comment: what `getvnode()` returned | done (`fo_fsync`, `78f8f643b0b`); comment only |
+| `kern/kern_descrip.c:6202` | `invfo_setattr` | comment: times and flags on a descriptor whose table lacks the member get what `getvnode()` returned (`EINVAL`), after `file_setattr_direct` has run size, mode and owner through their own operations | done (`fo_setattr`, D83/D84, `a4bfad81171`); comment only |
+| `kern/kern_descrip.c:6230` | `invfo_readdir` | comment: what `getvnode()` returned | done (`fo_readdir`, `f6e5f5d0922`); comment only |
+| `kern/kern_descrip.c:6249` | `invfo_acl` | comment: what `getvnode_path()` returned | done (`fo_acl`, `d2e949eeb1d`); comment only |
 | `kern/sys_generic.c:331`⁽ᴺ⁾ | `kern_preadv` | negative offset allowed only for a `VCHR` vnode | deferred (unchanged since `46b84718217`, no decision row): `fo_flags` bit (`DFLAG_NEGOFFSET`, set by devfs) or `fo_stat` `S_ISCHR`; NULL-safe already and the `EINVAL` is right for served files. Stays: `DFLAG_SEEKABLE` `ESPIPE` |
 | `kern/sys_generic.c:530`⁽ᴺ⁾ | `kern_pwritev` | same negative-offset `VCHR` test | as `:331` |
 | `kern/sys_generic.c:584`⁽ᴺ⁾ | `kern_rwv` | same negative-offset `VCHR` test for `preadv`/`pwritev` | as `:331` |
-| `kern/vfs_acl.c:457` | `vn_acl` | `vacl_get_acl(fp->f_vnode)` for `FO_ACL_GET` | done (`fo_acl`, `d2e949eeb1d`): this is the `fo_acl` vnode body, installed in `vnops`/`vn_openfileops` (through `vn_openfile_acl`), `path_fileops`, both devfs tables, `pipe_acl` (FIFO) and `vn_acl_opt` (pts, linuxkpi). `kern_acl_fd` keeps `AUDIT_ARG_FD`, the per-op right and the O_PATH `EBADF` for set/delete |
-| `kern/vfs_acl.c:459` | `vn_acl` | `vacl_set_acl(fp->f_vnode)` for `FO_ACL_SET` | done (`fo_acl`, `d2e949eeb1d`) |
-| `kern/vfs_acl.c:461` | `vn_acl` | `vacl_delete(fp->f_vnode)` for `FO_ACL_DELETE` | done (`fo_acl`, `d2e949eeb1d`) |
-| `kern/vfs_acl.c:463` | `vn_acl` | `vacl_aclcheck(fp->f_vnode)` for `FO_ACL_CHECK` | done (`fo_acl`, `d2e949eeb1d`) |
+| `kern/vfs_acl.c:459` | `vn_acl` | `vacl_get_acl(fp->f_vnode)` for `FO_ACL_GET` | done (`fo_acl`, `d2e949eeb1d`): this is the `fo_acl` vnode body, installed in `vnops`/`vn_openfileops` (through `vn_openfile_acl`), `path_fileops`, both devfs tables, `pipe_acl` (FIFO) and `vn_acl_opt` (pts, linuxkpi). `kern_acl_fd` keeps `AUDIT_ARG_FD`, the per-op right and the O_PATH `EBADF` for set/delete |
+| `kern/vfs_acl.c:461` | `vn_acl` | `vacl_set_acl(fp->f_vnode)` for `FO_ACL_SET` | done (`fo_acl`, `d2e949eeb1d`) |
+| `kern/vfs_acl.c:463` | `vn_acl` | `vacl_delete(fp->f_vnode)` for `FO_ACL_DELETE` | done (`fo_acl`, `d2e949eeb1d`) |
+| `kern/vfs_acl.c:465` | `vn_acl` | `vacl_aclcheck(fp->f_vnode)` for `FO_ACL_CHECK` | done (`fo_acl`, `d2e949eeb1d`) |
+| `kern/vfs_acl.c:487` | `kern_acl_fd` | comment: `getvnode()` never accepted an `O_PATH` descriptor for an ACL change; the test is `f_flag & O_PATH` (`fd:::refused`) | done (`fo_acl`, `d2e949eeb1d`; the flag test and probe `a4bfad81171`); comment only |
 | `kern/vfs_aio.c:1705`⁽ᴺ⁾ | `aio_aqueue` | `EINVAL` for `LIO_SYNC` on a file without a vnode | keep (6.1.1, by decision): any `f_vnode`-carrying file is accepted and its `fo_fsync` runs `vn_fsync` (D63); the sync itself is `fo_fsync` since `78f8f643b0b` (`aio_fsync_vnode` is gone). Stays: per-opcode `cap_*` rights |
 | `kern/vfs_aio.c:1713`⁽ᴺ⁾ | `aio_aqueue` | negative offset allowed only for a `VCHR` vnode | deferred, as `kern/sys_generic.c:331` |
 | `kern/vfs_extattr.c:281` | `vn_extattr` | `vp = fp->f_vnode`, then `extattr_{set,get,delete,list}_vp` by `FO_EXTATTR_*` | done (`fo_extattr`, `13ff5fd675e`): the `fo_extattr` vnode body; each `extattr_*_vp` locks and runs its own MAC check as before |
-| `kern/vfs_syscalls.c:2846` | `sys_fchflags` | comment: `getvnode()` never accepted an O_PATH descriptor here | done (`fo_setattr`, `ed6f7f051a3`): the `f_ops == &path_fileops → EBADF` test that follows replaces `getvnode` (D71); comment only. The `VNOVAL` refusal comes after the descriptor is consulted, plainly: `EOPNOTSUPP` for any open descriptor (`f134444e4b1`, D81; a type without attributes once answered `EINVAL` to that one value) |
+| `kern/vfs_syscalls.c:2848` | `sys_fchflags` | comment: `getvnode()` never accepted an O_PATH descriptor here | done (`fo_setattr`, `ed6f7f051a3`): the `f_ops == &path_fileops → EBADF` test that follows replaces `getvnode` (D71); comment only. The `VNOVAL` refusal comes after the descriptor is consulted, plainly: `EOPNOTSUPP` for any open descriptor (`f134444e4b1`, D81; a type without attributes once answered `EINVAL` to that one value) |
 | `kern/vfs_syscalls.c:3434` | `kern_fsetutimes` | comment: `futimes`/`futimens` never accepted O_PATH (`getvnode()` refused it) | done (`fo_setattr` times, `ed6f7f051a3`; D71); comment only |
-| `kern/vfs_syscalls.c:3670` | `kern_fsync` | comment: `fsync`/`fdatasync` never accepted O_PATH, `aio_fsync` and `syncfs` do | done (`fo_fsync`, `78f8f643b0b`); the `MPASS(f_type == DTYPE_VNODE)` the old `:3693` row said to remove is gone (D64); comment only |
-| `kern/vfs_syscalls.c:4408` | `kern_getdirentries` | comment: `getvnode()` refused O_PATH and write-only files | done (`fo_readdir`, `f6e5f5d0922`): the `path_fileops`/`FREAD` test that follows replaces `getvnode`; comment only |
-| `kern/vfs_syscalls.c:4448` | `vn_readdir` | `vp = fp->f_vnode`; `VV_UNLINKED`, shared lock, `ENOTDIR`/`EBADF`, `AUDIT_ARG_VNODE1`, `mac_vnode_check_readdir`, `VOP_READDIR` | done (`fo_readdir`, `f6e5f5d0922`): the `fo_readdir` vnode body (receives `fp`) |
-| `kern/vfs_syscalls.c:4485` | `vn_readdir` | union mount: rewrites `fp->f_vnode` to the covered vnode and restarts | done (`fo_readdir`, `f6e5f5d0922`): inside the body, which takes `fp` and may update it (4.1) |
-| `kern/vfs_syscalls.c:5116` | `vn_fadvise` | `vp = fp->f_vnode`; `ENODEV` unless `VREG`; `f_advice` regions; `VOP_ADVISE` | done (`fo_fadvise`, `46faa406ece`): the `fo_fadvise` vnode body; `F_READAHEAD`/`F_RDAHEAD` went to `fo_fcntl` instead (D72) |
-| `kern/vfs_syscalls.c:5388`⁽ᴺ⁾ | `vn_copy_range` | `EINVAL` if the output file has no vnode | done (`fo_copy_file_range`, `af05b50fe6f`): the body's partner test; `kern_copy_file_range` already refuses a table without the member on either side with `EINVAL` (`:5313`, after the `FREAD`/`FWRITE`/`FAPPEND` checks where the vnode test stood, `f134444e4b1`) |
-| `kern/vfs_syscalls.c:5390` | `vn_copy_range` | `invp = infp->f_vnode` for the overlap check, range locks, `vn_copy_file_range` | done (`fo_copy_file_range`, `af05b50fe6f`): vnode body |
-| `kern/vfs_syscalls.c:5391` | `vn_copy_range` | `outvp = outfp->f_vnode` | done (`fo_copy_file_range`, `af05b50fe6f`): vnode body |
+| `kern/vfs_syscalls.c:3447` | `kern_fsetutimes` | comment at the refusal itself: `getvnode()` never accepted an `O_PATH` descriptor here; the test is `f_flag & O_PATH` (`fd:::refused`) | done (`a4bfad81171`); comment only |
+| `kern/vfs_syscalls.c:3672` | `kern_fsync` | comment: `fsync`/`fdatasync` never accepted O_PATH, `aio_fsync` and `syncfs` do | done (`fo_fsync`, `78f8f643b0b`); the `MPASS(f_type == DTYPE_VNODE)` the old `:3693` row said to remove is gone (D64); comment only |
+| `kern/vfs_syscalls.c:4411` | `kern_getdirentries` | comment: `getvnode()` refused O_PATH and write-only files | done (`fo_readdir`, `f6e5f5d0922`): the `path_fileops`/`FREAD` test that follows replaces `getvnode`; comment only |
+| `kern/vfs_syscalls.c:4452` | `vn_readdir` | `vp = fp->f_vnode`; `VV_UNLINKED`, shared lock, `ENOTDIR`/`EBADF`, `AUDIT_ARG_VNODE1`, `mac_vnode_check_readdir`, `VOP_READDIR` | done (`fo_readdir`, `f6e5f5d0922`): the `fo_readdir` vnode body (receives `fp`) |
+| `kern/vfs_syscalls.c:4489` | `vn_readdir` | union mount: rewrites `fp->f_vnode` to the covered vnode and restarts | done (`fo_readdir`, `f6e5f5d0922`): inside the body, which takes `fp` and may update it (4.1) |
+| `kern/vfs_syscalls.c:5120` | `vn_fadvise` | `vp = fp->f_vnode`; `ENODEV` unless `VREG`; `f_advice` regions; `VOP_ADVISE` | done (`fo_fadvise`, `46faa406ece`): the `fo_fadvise` vnode body; `F_READAHEAD`/`F_RDAHEAD` went to `fo_fcntl` instead (D72) |
+| `kern/vfs_syscalls.c:5386`⁽ᴺ⁾ | `vn_copy_range` | `EINVAL` if the output file has no vnode | done (`fo_copy_file_range`, `af05b50fe6f`): the body's partner test; `kern_copy_file_range` already refuses a table without the member on either side with `EINVAL` (`:5313`, after the `FREAD`/`FWRITE`/`FAPPEND` checks where the vnode test stood, `f134444e4b1`) |
+| `kern/vfs_syscalls.c:5388` | `vn_copy_range` | `invp = infp->f_vnode` for the overlap check, range locks, `vn_copy_file_range` | done (`fo_copy_file_range`, `af05b50fe6f`): vnode body |
+| `kern/vfs_syscalls.c:5389` | `vn_copy_range` | `outvp = outfp->f_vnode` | done (`fo_copy_file_range`, `af05b50fe6f`): vnode body |
 
 Rows of the `1f8c7358a4d` ledger whose hit is gone (the site was converted and
 nothing at it matches the command any more; the disposition is recorded here
@@ -146,7 +152,7 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `contrib/openzfs/module/os/freebsd/zfs/zfs_file_os.c:285`⁽ᵀ⁾, `:288` | `zfs_file_fsync` | done (`fo_fsync(fp, FO_FSYNC_FULL, curthread)`, `f134444e4b1`): `EINVAL` from a type without `fo_fsync`, as the type test gave; `zfs_file_open` binds `vnops`, so the ZFS path is `vn_fsync` as before |
 | `kern/vfs_syscalls.c:3000`⁽ᴺ⁾, `:3168`⁽ᴺ⁾ | `sys_fchmod`, `sys_fchown` | done (`fo_chmod`/`fo_chown`, `80f7f749378` / `f134444e4b1`): `mac_vnode_check_setmode`/`mac_vnode_check_setowner` moved into `vn_chmod`/`vn_chown` in `kern/vfs_vnops.c` (`:3699`, `:3726`; shared-locked, ahead of the `AUDIT_ARG_VNODE1` as before), which the command excludes, and the syscall copies were removed. `mac_file_check_setattr` (`b54dbcac342`, D76) stays in the syscalls; a chmod/chown through `/dev/fd/N` (`fdesc_setattr` → `fo_chmod`/`fo_chown`) is now MAC-checked too |
 
-## B — resolution (33 rows)
+## B — resolution (34 rows)
 
 | file:line | function | what it does with the vnode | disposition |
 |---|---|---|---|
@@ -158,30 +164,31 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `dev/mac_capability/mac_capability_capprotect.c:504` | `cp_call` | `vp->v_type != VDIR` → `ENOTDIR` | as `:501` |
 | `fs/fdescfs/fdesc_vnops.c:269`⁽ᵀ⁾ | `fdesc_get_ino_alloc` | `/dev/fd/N` with `traverse`/`FMNT_NODUP` hands out the fd's vnode | ENOTDIR for non-vnode (fdescfs): a non-vnode fd keeps its fdesc node and reopens through `fdesc_open`/`dupfdopen`; `/dev/fd/N/child` on a served `N` → `ENOTDIR` (D29) |
 | `fs/fdescfs/fdesc_vnops.c:270` | `fdesc_get_ino_alloc` | `vget(a->fp->f_vnode)` | as `:269` |
+| `fs/fdescfs/fdesc_vnops.c:625` | `fdesc_setattr` | comment: for a table without `fo_setattr`, fdescfs keeps the answer `getvnode()`'s `EINVAL` always became here (`chflags` `EOPNOTSUPP`, every other change dropped); the probe itself is `:629`, not matched | A by subject (the fdescfs bridge of `fo_setattr`, D29/D81/D84), listed here among the fdescfs rows; comment only |
 | `fs/fdescfs/fdesc_vnops.c:375`⁽ᵀ⁾ | `fdesc_lookup` | `/dev/fd/N/child` requires a `VDIR` vnode | ENOTDIR for non-vnode (already; D29). Stays: `UF_RESOLVE_BENEATH`/`UF_LOOKUP_CAPMODE` `ENOTCAPABLE` |
 | `fs/fdescfs/fdesc_vnops.c:396`⁽ᵀ⁾ | `fdesc_lookup` | `NOXDEV`: non-vnode or foreign mount → `EXDEV`/`ELOOP` | ENOTDIR/EXDEV for non-vnode (already short-circuits on the type test) |
 | `fs/fdescfs/fdesc_vnops.c:397` | `fdesc_lookup` | `f_vnode->v_mount != dvp->v_mount` | as `:396` |
-| `kern/kern_descrip.c:2028` | `filecaps_restrict` | comment: a dropped ioctl list "see `fgetvp_lookup()`" | comment only; keep (documents the `fgetvp_lookup` filecaps contract) |
-| `kern/kern_descrip.c:3779` | `fgetvp_lookup_smr` (CAPABILITIES) | lockless dirfd → start vnode for `cache_fplookup` (definition) | `fgetvp_lookup` choke point (D7); the dq `RESOLVE` hook lands here, stage 1. `UF_LOOKUP_CAPMODE`, `FSEARCH`, `UF_RESOLVE_BENEATH`, filecaps copy stay |
-| `kern/kern_descrip.c:3817`⁽ᴺ⁾ | `fgetvp_lookup_smr` (CAPABILITIES) | `vp = fp->f_vnode`; `vp == NULL` → `EAGAIN` (falls back to the locked path) | as `:3779`; NULL already handled |
-| `kern/kern_descrip.c:3852` | `fgetvp_lookup_smr` (!CAPABILITIES) | same, without filecaps (definition) | as `:3779` |
-| `kern/kern_descrip.c:3880`⁽ᴺ⁾ | `fgetvp_lookup_smr` (!CAPABILITIES) | `vp == NULL \|\| v_type != VDIR` → `EAGAIN` | as `:3779`; NULL already handled |
-| `kern/kern_descrip.c:3900` | `fgetvp_lookup` | locked dirfd → start vnode for `namei` (definition) | `fgetvp_lookup` choke point (D7). `CAP_LOOKUP`, capmode `ENOTCAPABLE`, filecaps stay |
-| `kern/kern_descrip.c:3933`⁽ᴺ⁾ | `fgetvp_lookup` | `vp = fp->f_vnode`; `vp == NULL` → `ENOTDIR` | as `:3900`; today's `ENOTDIR` is where stage 1 inserts the attachment's answer |
-| `kern/kern_descrip.c:4709`⁽ᵀ⁾ | `chroot_refuse_vdir_fds` | refuses `chroot` while a directory vnode is open | non-vnode fds skipped (already); a served directory must count by presented kind (`fo_stat` `S_ISDIR`), stage 1 |
-| `kern/kern_descrip.c:4710` | `chroot_refuse_vdir_fds` | `vp->v_type == VDIR` → `EPERM` | as `:4709` |
+| `kern/kern_descrip.c:2042` | `filecaps_restrict` | comment: a dropped ioctl list "see `fgetvp_lookup()`" | comment only; keep (documents the `fgetvp_lookup` filecaps contract) |
+| `kern/kern_descrip.c:3793` | `fgetvp_lookup_smr` (CAPABILITIES) | lockless dirfd → start vnode for `cache_fplookup` (definition) | `fgetvp_lookup` choke point (D7); the dq `RESOLVE` hook lands here, stage 1. `UF_LOOKUP_CAPMODE`, `FSEARCH`, `UF_RESOLVE_BENEATH`, filecaps copy stay |
+| `kern/kern_descrip.c:3831`⁽ᴺ⁾ | `fgetvp_lookup_smr` (CAPABILITIES) | `vp = fp->f_vnode`; `vp == NULL` → `EAGAIN` (falls back to the locked path) | as `:3779`; NULL already handled |
+| `kern/kern_descrip.c:3866` | `fgetvp_lookup_smr` (!CAPABILITIES) | same, without filecaps (definition) | as `:3779` |
+| `kern/kern_descrip.c:3894`⁽ᴺ⁾ | `fgetvp_lookup_smr` (!CAPABILITIES) | `vp == NULL \|\| v_type != VDIR` → `EAGAIN` | as `:3779`; NULL already handled |
+| `kern/kern_descrip.c:3914` | `fgetvp_lookup` | locked dirfd → start vnode for `namei` (definition) | `fgetvp_lookup` choke point (D7). `CAP_LOOKUP`, capmode `ENOTCAPABLE`, filecaps stay |
+| `kern/kern_descrip.c:3947`⁽ᴺ⁾ | `fgetvp_lookup` | `vp = fp->f_vnode`; `vp == NULL` → `ENOTDIR` | as `:3900`; today's `ENOTDIR` is where stage 1 inserts the attachment's answer |
+| `kern/kern_descrip.c:4725`⁽ᵀ⁾ | `chroot_refuse_vdir_fds` | refuses `chroot` while a directory vnode is open | non-vnode fds skipped (already); a served directory must count by presented kind (`fo_stat` `S_ISDIR`), stage 1 |
+| `kern/kern_descrip.c:4726` | `chroot_refuse_vdir_fds` | `vp->v_type == VDIR` → `EPERM` | as `:4709` |
 | `kern/vfs_cache.c:4695` | `cache_fplookup_dirfd` | calls `fgetvp_lookup_smr` for the lockless start vnode | `cache_fplookup_dirfd` choke point (D7); aborts to the locked path on error |
 | `kern/vfs_lookup.c:417` | `namei_setup` | calls `fgetvp_lookup` for a dirfd start vnode | `namei_setup` choke point (D7). Stays: `AUDIT_ARG_ATFD1/2`, `ENOTDIR`/`OPENNAMED` test that follows |
-| `kern/vfs_syscalls.c:740` | `sys_fchdir` | `getvnode_path()` for the new cwd fd | cwd stays a real vnode (D9); non-vnode → `EINVAL` (already). Stays: `AUDIT_ARG_FD`, `cap_fchdir_rights`, `UF_RESOLVE_BENEATH` `ENOTCAPABLE`. Served cwd recorded in the attachment, stage 1 |
-| `kern/vfs_syscalls.c:748` | `sys_fchdir` | `vrefact`, `vn_lock`, `AUDIT_ARG_VNODE1`, `change_dir` | as `:740` |
-| `kern/vfs_syscalls.c:907` | `sys_fchroot` | `getvnode_path()` for the new root fd | root stays a real vnode (D9); non-vnode → `EINVAL` (already). Stays: `cap_fchroot_rights`, `UF_RESOLVE_BENEATH` `ENOTCAPABLE` |
-| `kern/vfs_syscalls.c:914` | `sys_fchroot` | `vrefact`, `vn_lock`, `kern_chroot` | as `:907`; `namei_handle_root` consults the attachment, stage 1 |
-| `kern/vfs_syscalls.c:1917` | `kern_funlinkat` | `getvnode_path()` for the fd whose vnode the path must name | compare by object id: fd and looked-up object compared through the file, not `f_vnode`. Stays: `cap_no_rights` fetch, `EPERM`/`EIDRM` ordering |
-| `kern/vfs_syscalls.c:1940` | `kern_funlinkat` | `fp->f_vnode != vp` → `EDEADLK` | compare by object id |
-| `kern/vfs_syscalls.c:1941` | `kern_funlinkat` | `VN_IS_DOOMED(fp->f_vnode)` → `EBADF` | compare by object id (doomed test becomes the fileop's revoked state) |
-| `kern/vfs_syscalls.c:4124` | `kern_frmdirat` | `getvnode()` with `CAP_LOOKUP` for the directory fd | compare by object id. Stays: `CAP_LOOKUP`, `VV_ROOT` `EBUSY` ordering |
-| `kern/vfs_syscalls.c:4158` | `kern_frmdirat` | `fp->f_vnode != vp` → `EDEADLK` | compare by object id |
-| `kern/vfs_syscalls.c:4159` | `kern_frmdirat` | `VN_IS_DOOMED(fp->f_vnode)` → `EBADF` | compare by object id |
+| `kern/vfs_syscalls.c:742` | `sys_fchdir` | `getvnode_path()` for the new cwd fd | cwd stays a real vnode (D9); non-vnode → `EINVAL` (already). Stays: `AUDIT_ARG_FD`, `cap_fchdir_rights`, `UF_RESOLVE_BENEATH` `ENOTCAPABLE`. Served cwd recorded in the attachment, stage 1 |
+| `kern/vfs_syscalls.c:750` | `sys_fchdir` | `vrefact`, `vn_lock`, `AUDIT_ARG_VNODE1`, `change_dir` | as `:740` |
+| `kern/vfs_syscalls.c:909` | `sys_fchroot` | `getvnode_path()` for the new root fd | root stays a real vnode (D9); non-vnode → `EINVAL` (already). Stays: `cap_fchroot_rights`, `UF_RESOLVE_BENEATH` `ENOTCAPABLE` |
+| `kern/vfs_syscalls.c:916` | `sys_fchroot` | `vrefact`, `vn_lock`, `kern_chroot` | as `:907`; `namei_handle_root` consults the attachment, stage 1 |
+| `kern/vfs_syscalls.c:1919` | `kern_funlinkat` | `getvnode_path()` for the fd whose vnode the path must name | compare by object id: fd and looked-up object compared through the file, not `f_vnode`. Stays: `cap_no_rights` fetch, `EPERM`/`EIDRM` ordering |
+| `kern/vfs_syscalls.c:1942` | `kern_funlinkat` | `fp->f_vnode != vp` → `EDEADLK` | compare by object id |
+| `kern/vfs_syscalls.c:1943` | `kern_funlinkat` | `VN_IS_DOOMED(fp->f_vnode)` → `EBADF` | compare by object id (doomed test becomes the fileop's revoked state) |
+| `kern/vfs_syscalls.c:4127` | `kern_frmdirat` | `getvnode()` with `CAP_LOOKUP` for the directory fd | compare by object id. Stays: `CAP_LOOKUP`, `VV_ROOT` `EBUSY` ordering |
+| `kern/vfs_syscalls.c:4161` | `kern_frmdirat` | `fp->f_vnode != vp` → `EDEADLK` | compare by object id |
+| `kern/vfs_syscalls.c:4162` | `kern_frmdirat` | `VN_IS_DOOMED(fp->f_vnode)` → `EBADF` | compare by object id |
 | `security/audit/audit_bsm_klib.c:513` | `audit_canon_path` | `fgetvp()` of the dirfd to canonicalise a relative path | dirfd start for path canonicalisation; non-vnode → empty `cpath` (already). The `namei_setup` choke point is the authority; audit of a served dirfd uses the presented path (`is_path`/`fo_fill_kinfo`), stage 1 |
 
 ## C — exec (81 rows)
@@ -192,44 +199,44 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `dev/mac_capability/mac_capability_authority.c:274` | `cap_authority_runs_pinned_image` | `a->executable[i] == p->p_textvp` | p_image consumer (guarded by `:272`) |
 | `dev/mac_capability/mac_capability_authority.c:1012` | `constrain_authority` | `fgetvp_exec()` of each executable fd, `VREG` test, `VOP_SET_TEXT` pin | pinned authority is a vnode by design (D13); non-vnode → `EINVAL` (already, from `fgetvp_exec`). The dq `is_authority(EXEC)` still calls `cap_authority_exec(p, NULL, NULL)` (6.2.2 item 2); stage 3 |
 | `kern/coredump_vnode.c:521` | `coredump_vnode` | `vn_fullpath_global(p->p_textvp)` for the devctl notification | p_image consumer; tolerates NULL (`vn_fullpath_global` returns `EINVAL` for a NULL vnode → `goto out2`, notification skipped). No fallback needed (`7b587d57f55` survey) |
-| `kern/exec_image_vnode.c:95` | `exec_image_vnode_setup` | `imgp->vp = vp` as the backend installs `is_ops`/`is_data` | vnode backend, by design: construction (`exec_image_vnode_from_namei`, `_from_vnode`, `_init`); `imgp->vp` is the backend's field (6.2.2 item 10) |
-| `kern/exec_image_vnode.c:185` | `exec_image_vnode_lock` | `vn_lock(imgp->vp, LK_SHARED \| LK_RETRY)` | vnode backend, by design: `is_lock` |
-| `kern/exec_image_vnode.c:192` | `exec_image_vnode_unlock` | `VOP_UNLOCK(imgp->vp)` | vnode backend, by design: `is_unlock` |
-| `kern/exec_image_vnode.c:200` | `exec_image_vnode_assert_locked` | `ASSERT_VOP_LOCKED(imgp->vp)` | vnode backend, by design: `is_assert_locked` |
-| `kern/exec_image_vnode.c:205` | `exec_check_permissions` | comment: called with `imgp->vp` locked | vnode backend, by design: `is_check` (comment) |
-| `kern/exec_image_vnode.c:213` | `exec_check_permissions` | `vp = imgp->vp`; `VOP_GETATTR`, `MNT_NOEXEC`/mode/`VREG` tests, `VOP_ACCESS`, `VOP_SET_TEXT`, `VOP_OPEN` | vnode backend, by design: `is_check`; exported by name for `__elfN(load_interp_file)` and veriexec (6.2.3) |
-| `kern/exec_image_vnode.c:226` | `exec_check_permissions` | `mac_vnode_check_exec(imgp->vp)` | vnode backend, by design: `is_check` (the dq backend calls `mac_file_check_exec`, stage 3) |
-| `kern/exec_image_vnode.c:286` | `exec_image_vnode_first_page` | `imgp->object = imgp->vp->v_object`, referenced | vnode backend, by design: `is_first_page` (references for both callers; the interpreter loader now deallocates, 6.2.2 item 4) |
-| `kern/exec_image_vnode.c:298` | `exec_image_vnode_read` | `vn_rdwr(UIO_READ, imgp->vp, ...)` | vnode backend, by design: `is_read` |
-| `kern/exec_image_vnode.c:313` | `exec_image_vnode_map_text` | `MPASS(imgp->vp->v_object == object)` | vnode backend, by design: `is_map_text` (kept, 6.2.2 item 9) |
-| `kern/exec_image_vnode.c:314` | `exec_image_vnode_map_text` | `VOP_SET_TEXT_CHECKED(imgp->vp)` per mapped section | vnode backend, by design: `is_map_text` |
-| `kern/exec_image_vnode.c:322` | `exec_image_vnode_unset_text` | `VOP_UNSET_TEXT_CHECKED(imgp->vp)` if `textset` | vnode backend, by design: `is_unset_text` |
-| `kern/exec_image_vnode.c:346` | `exec_image_vnode_path` | `VOP_UNLOCK(imgp->vp)` around `vn_fullpath_hardlink` | vnode backend, by design: `is_path`. The `vn_fullpath(imgp->vp)` arm for the binmisc and `fexecve` forms (the `1f8c7358a4d` ledger's `:342`) is an `MPASS(eiv_fname)` since `dbe69afe001`: those forms resolve their path at construction, before the vnode is locked, and `vn_fullpath` on the locked image would relock it on a namecache miss |
-| `kern/exec_image_vnode.c:348` | `exec_image_vnode_path` | `vn_fullpath_hardlink(imgp->vp, dvp, binname)` for the fname form | vnode backend, by design: `is_path` (no parent → path left unresolved, 6.2.3) |
-| `kern/exec_image_vnode.c:350` | `exec_image_vnode_path` | `vn_lock(imgp->vp)` after the lookup | vnode backend, by design: `is_path` |
-| `kern/exec_image_vnode.c:365` | `exec_image_vnode_commname` | `vn_commname(imgp->vp)` for the non-fname forms | vnode backend, by design: `is_commname` |
-| `kern/exec_image_vnode.c:372` | `exec_image_vnode_nosuid` | `v_mount->mnt_flag & MNT_NOSUID` | vnode backend, by design: `is_nosuid` (the dq backend returns true, D13/D19) |
-| `kern/exec_image_vnode.c:382` | `exec_image_vnode_mac` | `mac_vnode_execve_will_transition(imgp->vp)` | vnode backend, by design: `is_mac` phase `WILL_TRANSITION` |
-| `kern/exec_image_vnode.c:385` | `exec_image_vnode_mac` | `mac_vnode_execve_will_relabel(imgp->vp)` | vnode backend, by design: `is_mac` phase `WILL_RELABEL` |
-| `kern/exec_image_vnode.c:388` | `exec_image_vnode_mac` | `mac_vnode_execve_transition(imgp->vp)` | vnode backend, by design: `is_mac` phase `TRANSITION` |
-| `kern/exec_image_vnode.c:392` | `exec_image_vnode_mac` | `mac_vnode_execve_relabel(imgp->vp)` | vnode backend, by design: `is_mac` phase `RELABEL` |
-| `kern/exec_image_vnode.c:396` | `exec_image_vnode_mac` | `mac_execve_interpreter_enter(imgp->vp, &interpvplabel)` | vnode backend, by design: `is_mac` phase `INTERP_ENTER` (`#!` re-interpret) |
-| `kern/exec_image_vnode.c:410` | `exec_image_vnode_authority_prepare` | `MNT_NOSUID` gates `cap_authority_exec_prepare` | vnode backend, by design: `is_authority_prepare` (skipped for dq, 6.2.2 item 2) |
-| `kern/exec_image_vnode.c:411` | `exec_image_vnode_authority_prepare` | `cap_authority_exec_prepare(p, imgp->vp)` | vnode backend, by design: `is_authority_prepare` |
-| `kern/exec_image_vnode.c:420` | `exec_image_vnode_authority_exec` | `cap_authority_exec(p, imgp->vp, selected)` | vnode backend, by design: `is_authority_exec` |
-| `kern/exec_image_vnode.c:435` | `exec_image_vnode_install` | `old->iso_textvp = p->p_textvp` | vnode backend, by design: `is_install` (displaced state is a typed `struct image_source_old`, released through the ops saved at install, 6.2.3). Since `dbe69afe001` the displaced `p_image.pi_fp`/`pi_path` go with it (`iso_fp`, `iso_path`) and `is_release_old` drops them after the locks, so a served image displaced by a vnode exec no longer leaks its file reference |
-| `kern/exec_image_vnode.c:436` | `exec_image_vnode_install` | `p->p_textvp = imgp->vp`; `p_image.pi_kind = PI_KIND_VNODE` | vnode backend, by design: `is_install` (`p_textvp` stays valid for vnode images; `pi_fp`/`pi_path` NULL) |
-| `kern/exec_image_vnode.c:473` | `exec_image_vnode_accessed` | `VOP_UPDATE_ATIME(imgp->vp)` | vnode backend, by design: `is_accessed` |
-| `kern/exec_image_vnode.c:478` | `exec_image_vnode_close` | comment: on success the reference belongs to `p_textvp`, only the lock goes | vnode backend, by design: `is_close` (comment) |
-| `kern/exec_image_vnode.c:489` | `exec_image_vnode_close` | `VOP_CLOSE(imgp->vp, FREAD)` if `opened` | vnode backend, by design: `is_close` (the interpreter loader now reaches this too, `3f32c41a036`) |
-| `kern/exec_image_vnode.c:493` | `exec_image_vnode_close` | `VOP_UNSET_TEXT_CHECKED(imgp->vp)` if `textset` | vnode backend, by design: `is_close` |
-| `kern/exec_image_vnode.c:497` | `exec_image_vnode_close` | `vput(imgp->vp)` when `error != 0` | vnode backend, by design: `is_close` (nonzero `error` means "drop the reference", 6.2.3) |
-| `kern/exec_image_vnode.c:499` | `exec_image_vnode_close` | `VOP_UNLOCK(imgp->vp)` on success | vnode backend, by design: `is_close` |
-| `kern/exec_image_vnode.c:508` | `exec_image_vnode_close` | `imgp->vp = NULL` with `is_ops`/`is_data` | vnode backend, by design: `is_close` clears the construction state; nothing reads `vp` afterwards (6.2.3) |
-| `kern/kern_descrip.c:5519`⁽ᴺ⁾ | `kern_proc_filedesc_out` | `textvp = p->p_textvp`, `vrefact` if non-NULL, reported as `KF_FD_TYPE_TEXT` | p_image consumer; tolerates NULL (explicit test; a served image reports through `fo_fill_kinfo`, stage 3) |
-| `kern/kern_exec.c:597` | `do_execve` (`fexecve` form) | `fgetvp_exec()` yields `newtextvp` for `exec_image_vnode_from_vnode` | construction site (`1f8c7358a4d`): the stage-0 `fexecve` requirement that the descriptor be a vnode (`EINVAL` otherwise, 6.2.2 item 12). Stage 3 selects the dq constructor from `fp->f_ops` here. Stays: `AUDIT_ARG_FD`, `cap_fexecve_rights`, the `O_EXEC`/`O_RDONLY` note |
-| `kern/kern_exec.c:973` | `do_execve` | comment: install the image as the process's, `p_textvp` (and `p_image`) | done (`is_install`, `1f8c7358a4d`); comment only. The install itself is `imgp->is_ops->is_install` at `:978` |
-| `kern/kern_exec.c:1071` | `do_execve` (`exec_fail_dealloc`) | comment: `is_close` keeps the reference `p_textvp` owns on success | done (`is_close`, `1f8c7358a4d`); comment only. `is_ops != NULL` is the construction discriminator (6.2.2 item 3) |
+| `kern/exec_image_vnode.c:105` | `exec_image_vnode_setup` | `imgp->vp = vp` as the backend installs `is_ops`/`is_data` | vnode backend, by design: construction (`exec_image_vnode_from_namei`, `_from_vnode`, `_init`); `imgp->vp` is the backend's field (6.2.2 item 10) |
+| `kern/exec_image_vnode.c:198` | `exec_image_vnode_lock` | `vn_lock(imgp->vp, LK_SHARED \| LK_RETRY)` | vnode backend, by design: `is_lock` |
+| `kern/exec_image_vnode.c:205` | `exec_image_vnode_unlock` | `VOP_UNLOCK(imgp->vp)` | vnode backend, by design: `is_unlock` |
+| `kern/exec_image_vnode.c:213` | `exec_image_vnode_assert_locked` | `ASSERT_VOP_LOCKED(imgp->vp)` | vnode backend, by design: `is_assert_locked` |
+| `kern/exec_image_vnode.c:218` | `exec_check_permissions` | comment: called with `imgp->vp` locked | vnode backend, by design: `is_check` (comment) |
+| `kern/exec_image_vnode.c:226` | `exec_check_permissions` | `vp = imgp->vp`; `VOP_GETATTR`, `MNT_NOEXEC`/mode/`VREG` tests, `VOP_ACCESS`, `VOP_SET_TEXT`, `VOP_OPEN` | vnode backend, by design: `is_check`; exported by name for `__elfN(load_interp_file)` and veriexec (6.2.3) |
+| `kern/exec_image_vnode.c:239` | `exec_check_permissions` | `mac_vnode_check_exec(imgp->vp)` | vnode backend, by design: `is_check` (the dq backend calls `mac_file_check_exec`, stage 3) |
+| `kern/exec_image_vnode.c:299` | `exec_image_vnode_first_page` | `imgp->object = imgp->vp->v_object`, referenced | vnode backend, by design: `is_first_page` (references for both callers; the interpreter loader now deallocates, 6.2.2 item 4) |
+| `kern/exec_image_vnode.c:311` | `exec_image_vnode_read` | `vn_rdwr(UIO_READ, imgp->vp, ...)` | vnode backend, by design: `is_read` |
+| `kern/exec_image_vnode.c:326` | `exec_image_vnode_map_text` | `MPASS(imgp->vp->v_object == object)` | vnode backend, by design: `is_map_text` (kept, 6.2.2 item 9) |
+| `kern/exec_image_vnode.c:327` | `exec_image_vnode_map_text` | `VOP_SET_TEXT_CHECKED(imgp->vp)` per mapped section | vnode backend, by design: `is_map_text` |
+| `kern/exec_image_vnode.c:335` | `exec_image_vnode_unset_text` | `VOP_UNSET_TEXT_CHECKED(imgp->vp)` if `textset` | vnode backend, by design: `is_unset_text` |
+| `kern/exec_image_vnode.c:359` | `exec_image_vnode_path` | `VOP_UNLOCK(imgp->vp)` around `vn_fullpath_hardlink` | vnode backend, by design: `is_path`. The `vn_fullpath(imgp->vp)` arm for the binmisc and `fexecve` forms (the `1f8c7358a4d` ledger's `:342`) is an `MPASS(eiv_fname)` since `dbe69afe001`: those forms resolve their path at construction, before the vnode is locked, and `vn_fullpath` on the locked image would relock it on a namecache miss |
+| `kern/exec_image_vnode.c:361` | `exec_image_vnode_path` | `vn_fullpath_hardlink(imgp->vp, dvp, binname)` for the fname form | vnode backend, by design: `is_path` (no parent → path left unresolved, 6.2.3) |
+| `kern/exec_image_vnode.c:363` | `exec_image_vnode_path` | `vn_lock(imgp->vp)` after the lookup | vnode backend, by design: `is_path` |
+| `kern/exec_image_vnode.c:378` | `exec_image_vnode_commname` | `vn_commname(imgp->vp)` for the non-fname forms | vnode backend, by design: `is_commname` |
+| `kern/exec_image_vnode.c:385` | `exec_image_vnode_nosuid` | `v_mount->mnt_flag & MNT_NOSUID` | vnode backend, by design: `is_nosuid` (the dq backend returns true, D13/D19) |
+| `kern/exec_image_vnode.c:395` | `exec_image_vnode_mac` | `mac_vnode_execve_will_transition(imgp->vp)` | vnode backend, by design: `is_mac` phase `WILL_TRANSITION` |
+| `kern/exec_image_vnode.c:398` | `exec_image_vnode_mac` | `mac_vnode_execve_will_relabel(imgp->vp)` | vnode backend, by design: `is_mac` phase `WILL_RELABEL` |
+| `kern/exec_image_vnode.c:401` | `exec_image_vnode_mac` | `mac_vnode_execve_transition(imgp->vp)` | vnode backend, by design: `is_mac` phase `TRANSITION` |
+| `kern/exec_image_vnode.c:405` | `exec_image_vnode_mac` | `mac_vnode_execve_relabel(imgp->vp)` | vnode backend, by design: `is_mac` phase `RELABEL` |
+| `kern/exec_image_vnode.c:409` | `exec_image_vnode_mac` | `mac_execve_interpreter_enter(imgp->vp, &interpvplabel)` | vnode backend, by design: `is_mac` phase `INTERP_ENTER` (`#!` re-interpret) |
+| `kern/exec_image_vnode.c:423` | `exec_image_vnode_authority_prepare` | `MNT_NOSUID` gates `cap_authority_exec_prepare` | vnode backend, by design: `is_authority_prepare` (skipped for dq, 6.2.2 item 2) |
+| `kern/exec_image_vnode.c:424` | `exec_image_vnode_authority_prepare` | `cap_authority_exec_prepare(p, imgp->vp)` | vnode backend, by design: `is_authority_prepare` |
+| `kern/exec_image_vnode.c:433` | `exec_image_vnode_authority_exec` | `cap_authority_exec(p, imgp->vp, selected)` | vnode backend, by design: `is_authority_exec` |
+| `kern/exec_image_vnode.c:448` | `exec_image_vnode_install` | `old->iso_textvp = p->p_textvp` | vnode backend, by design: `is_install` (displaced state is a typed `struct image_source_old`, released through the ops saved at install, 6.2.3). Since `dbe69afe001` the displaced `p_image.pi_fp`/`pi_path` go with it (`iso_fp`, `iso_path`) and `is_release_old` drops them after the locks, so a served image displaced by a vnode exec no longer leaks its file reference |
+| `kern/exec_image_vnode.c:449` | `exec_image_vnode_install` | `p->p_textvp = imgp->vp`; `p_image.pi_kind = PI_KIND_VNODE` | vnode backend, by design: `is_install` (`p_textvp` stays valid for vnode images; `pi_fp`/`pi_path` NULL) |
+| `kern/exec_image_vnode.c:486` | `exec_image_vnode_accessed` | `VOP_UPDATE_ATIME(imgp->vp)` | vnode backend, by design: `is_accessed` |
+| `kern/exec_image_vnode.c:492` | `exec_image_vnode_close` | comment: when the source was installed the reference belongs to `p_textvp`, only the lock goes (reworded, `a4bfad81171`) | vnode backend, by design: `is_close` (comment) |
+| `kern/exec_image_vnode.c:504` | `exec_image_vnode_close` | `VOP_CLOSE(imgp->vp, FREAD)` if `opened` | vnode backend, by design: `is_close` (the interpreter loader now reaches this too, `3f32c41a036`) |
+| `kern/exec_image_vnode.c:508` | `exec_image_vnode_close` | `VOP_UNSET_TEXT_CHECKED(imgp->vp)` if `textset` | vnode backend, by design: `is_close` |
+| `kern/exec_image_vnode.c:512` | `exec_image_vnode_close` | `vput(imgp->vp)` when `error != 0` | vnode backend, by design: `is_close` (nonzero `error` means "drop the reference", 6.2.3) |
+| `kern/exec_image_vnode.c:514` | `exec_image_vnode_close` | `VOP_UNLOCK(imgp->vp)` on success | vnode backend, by design: `is_close` |
+| `kern/exec_image_vnode.c:523` | `exec_image_vnode_close` | `imgp->vp = NULL` with `is_ops`/`is_data` | vnode backend, by design: `is_close` clears the construction state; nothing reads `vp` afterwards (6.2.3) |
+| `kern/kern_descrip.c:5535`⁽ᴺ⁾ | `kern_proc_filedesc_out` | `textvp = p->p_textvp`, `vrefact` if non-NULL, reported as `KF_FD_TYPE_TEXT` | p_image consumer; tolerates NULL (explicit test; a served image reports through `fo_fill_kinfo`, stage 3) |
+| `kern/kern_exec.c:598` | `do_execve` (`fexecve` form) | `fgetvp_exec()` yields `newtextvp` for `exec_image_vnode_from_vnode` | construction site (`1f8c7358a4d`): the stage-0 `fexecve` requirement that the descriptor be a vnode (`EINVAL` otherwise, 6.2.2 item 12). Stage 3 selects the dq constructor from `fp->f_ops` here. Stays: `AUDIT_ARG_FD`, `cap_fexecve_rights`, the `O_EXEC`/`O_RDONLY` note |
+| `kern/kern_exec.c:974` | `do_execve` | comment: install the image as the process's, `p_textvp` (and `p_image`) | done (`is_install`, `1f8c7358a4d`); comment only. The install itself is `imgp->is_ops->is_install` at `:978` |
+| `kern/kern_exec.c:1072` | `do_execve` (`exec_fail_dealloc`) | comment: `is_close` keeps the reference `p_textvp` owns on success | done (`is_close`, `1f8c7358a4d`); comment only. `is_ops != NULL` is the construction discriminator (6.2.2 item 3) |
 | `kern/kern_exit.c:518`⁽ᴺ⁾ | `exit1` | `p_textvp != NULL` before release | p_image consumer; tolerates NULL (explicit test). `p_image.pi_fp` is dropped beside it (`1f8c7358a4d`) |
 | `kern/kern_exit.c:519` | `exit1` | `vrele(p->p_textvp)` | p_image consumer (guarded by `:518`) |
 | `kern/kern_exit.c:520` | `exit1` | `p->p_textvp = NULL` | p_image consumer (guarded by `:518`) |
@@ -297,29 +304,29 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `contrib/openzfs/module/os/freebsd/zfs/zfs_file_os.c:139`⁽ᵀ⁾ | `zfs_file_write_impl` | `bwillwrite()` hint before `fo_write` | keep (hint only; the I/O goes through `fo_write`) |
 | `contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c:3103` | `zfshandle_op_mount` | binds the mounted root vnode to the anchor descriptor, `finit_vnode` with `zfshandle_anon_dir_fileops()` | keep (`finit_open` equivalent; the table is a `vnops` copy, see the fileops audit) |
 | `fs/pseudofs/pseudofs_vnops.c:980`⁽ᴺ⁾ | `pfs_read` | snapshot read: `ctx->fp->f_vnode == vn` identifies the owning file | keep (vnode op checking its own `vn_file_context`; pointer comparison) |
-| `kern/kern_descrip.c:3200`⁽ᵀ⁾ | `is_unsafe` | `fdsetugidsafety`: non-vnode is never procfs-dependent | keep (`VV_PROCDEP` is a vnode property; non-vnode correctly "safe") |
-| `kern/kern_descrip.c:3203` | `is_unsafe` | `vp->v_vflag & VV_PROCDEP` | keep |
-| `kern/kern_descrip.c:3464` | `finit_vnode` | initialises a vnode-backed file with `DTYPE_VNODE` | keep (not a test) |
-| `kern/kern_descrip.c:4411` | `_fgetvp` | `fget` + `f_vnode` → referenced vnode (definition) | keep (helper; the dq RESOLVE never flows through it) |
-| `kern/kern_descrip.c:4421`⁽ᴺ⁾ | `_fgetvp` | `f_vnode == NULL` → `EINVAL` | keep |
-| `kern/kern_descrip.c:4424` | `_fgetvp` | `*vpp = fp->f_vnode; vrefact` | keep |
-| `kern/kern_descrip.c:4433` | `fgetvp` | wrapper, no flags (definition) | keep |
-| `kern/kern_descrip.c:4437` | `fgetvp` | calls `_fgetvp` | keep |
-| `kern/kern_descrip.c:4441` | `fgetvp_rights` | `fget_cap` + vnode + filecaps (definition) | keep |
-| `kern/kern_descrip.c:4455`⁽ᴺ⁾ | `fgetvp_rights` | `f_vnode == NULL` → `EINVAL` | keep |
-| `kern/kern_descrip.c:4461` | `fgetvp_rights` | `*vpp = fp->f_vnode; vrefact` | keep |
-| `kern/kern_descrip.c:4473` | `fgetvp_read` | wrapper, `FREAD` (definition) | keep |
-| `kern/kern_descrip.c:4477` | `fgetvp_read` | calls `_fgetvp` | keep |
-| `kern/kern_descrip.c:4481` | `fgetvp_exec` | wrapper, `FEXEC` (definition) | keep (its callers are classified individually: C rows `kern_exec.c:597`, `mac_capability_authority.c:1012`) |
-| `kern/kern_descrip.c:4485` | `fgetvp_exec` | calls `_fgetvp` | keep |
-| `kern/kern_descrip.c:4490` | `fgetvp_write` (`#ifdef notyet`) | wrapper, `FWRITE` (definition) | keep (not compiled) |
-| `kern/kern_descrip.c:4494` | `fgetvp_write` (`#ifdef notyet`) | calls `_fgetvp` | keep (not compiled) |
-| `kern/kern_descrip.c:5136`⁽ᵀ⁾ | `descrip_check_write_mp` | `ffs_suspend`: refuses while a write fd on the mount is open | keep (mount-internal; a served file is never on the mount) |
-| `kern/kern_descrip.c:5139` | `descrip_check_write_mp` | `vp->v_mount == mp` → `EDEADLK` | keep |
-| `kern/kern_descrip.c:6035`⁽ᵀ⁾ | `path_close` | `MPASS(f_type == DTYPE_VNODE)` for O_PATH files | keep |
-| `kern/kern_descrip.c:6037` | `path_close` | `vrele(fp->f_vnode)` | keep |
-| `kern/sys_pipe.c:1982`⁽ᴺ⁾ | `pipe_close` | FIFO opened through `vn_open`: delegate to `vnops.fo_close` | keep (the 6.1.1 delegation pattern; NULL-safe) |
-| `kern/sys_pipe.c:2186`⁽ᵀ⁾ | `pipe_fill_kinfo` | FIFO: delegate to `vn_fill_kinfo` | keep (the 6.1.1 delegation pattern `pipeops` → `vn_*` for FIFOs; the eight stage-0 members of `pipeops` follow it, see the fileops audit) |
+| `kern/kern_descrip.c:3214`⁽ᵀ⁾ | `is_unsafe` | `fdsetugidsafety`: non-vnode is never procfs-dependent | keep (`VV_PROCDEP` is a vnode property; non-vnode correctly "safe") |
+| `kern/kern_descrip.c:3217` | `is_unsafe` | `vp->v_vflag & VV_PROCDEP` | keep |
+| `kern/kern_descrip.c:3478` | `finit_vnode` | initialises a vnode-backed file with `DTYPE_VNODE` | keep (not a test) |
+| `kern/kern_descrip.c:4425` | `_fgetvp` | `fget` + `f_vnode` → referenced vnode (definition) | keep (helper; the dq RESOLVE never flows through it) |
+| `kern/kern_descrip.c:4435`⁽ᴺ⁾ | `_fgetvp` | `f_vnode == NULL` → `EINVAL` | keep |
+| `kern/kern_descrip.c:4438` | `_fgetvp` | `*vpp = fp->f_vnode; vrefact` | keep |
+| `kern/kern_descrip.c:4447` | `fgetvp` | wrapper, no flags (definition) | keep |
+| `kern/kern_descrip.c:4451` | `fgetvp` | calls `_fgetvp` | keep |
+| `kern/kern_descrip.c:4455` | `fgetvp_rights` | `fget_cap` + vnode + filecaps (definition) | keep |
+| `kern/kern_descrip.c:4469`⁽ᴺ⁾ | `fgetvp_rights` | `f_vnode == NULL` → `EINVAL` | keep |
+| `kern/kern_descrip.c:4475` | `fgetvp_rights` | `*vpp = fp->f_vnode; vrefact` | keep |
+| `kern/kern_descrip.c:4487` | `fgetvp_read` | wrapper, `FREAD` (definition) | keep |
+| `kern/kern_descrip.c:4491` | `fgetvp_read` | calls `_fgetvp` | keep |
+| `kern/kern_descrip.c:4495` | `fgetvp_exec` | wrapper, `FEXEC` (definition) | keep (its callers are classified individually: C rows `kern_exec.c:597`, `mac_capability_authority.c:1012`) |
+| `kern/kern_descrip.c:4499` | `fgetvp_exec` | calls `_fgetvp` | keep |
+| `kern/kern_descrip.c:4504` | `fgetvp_write` (`#ifdef notyet`) | wrapper, `FWRITE` (definition) | keep (not compiled) |
+| `kern/kern_descrip.c:4508` | `fgetvp_write` (`#ifdef notyet`) | calls `_fgetvp` | keep (not compiled) |
+| `kern/kern_descrip.c:5152`⁽ᵀ⁾ | `descrip_check_write_mp` | `ffs_suspend`: refuses while a write fd on the mount is open | keep (mount-internal; a served file is never on the mount) |
+| `kern/kern_descrip.c:5155` | `descrip_check_write_mp` | `vp->v_mount == mp` → `EDEADLK` | keep |
+| `kern/kern_descrip.c:6051`⁽ᵀ⁾ | `path_close` | `MPASS(f_type == DTYPE_VNODE)` for O_PATH files | keep |
+| `kern/kern_descrip.c:6053` | `path_close` | `vrele(fp->f_vnode)` | keep |
+| `kern/sys_pipe.c:1983`⁽ᴺ⁾ | `pipe_close` | FIFO opened through `vn_open`: delegate to `vnops.fo_close` | keep (the 6.1.1 delegation pattern; NULL-safe) |
+| `kern/sys_pipe.c:2118`⁽ᵀ⁾ | `pipe_fill_kinfo` | FIFO: delegate to `vn_fill_kinfo` | keep (the 6.1.1 delegation pattern `pipeops` → `vn_*` for FIFOs; the eight stage-0 members of `pipeops` follow it, see the fileops audit) |
 | `kern/tty_pts.c:681` | `ptsdev_close` | comment: `/dev/ptmx` open switches `DTYPE_VNODE` → `DTYPE_PTS` | keep (comment) |
 | `kern/tty_pts.c:685`⁽ᴺ⁾ | `ptsdev_close` | `vnops.fo_close` to drop the `vn_open` use count if `f_vnode != NULL` | keep (NULL-safe; the 6.1.1 delegation pattern; this is the "sometimes-vnode" test D72 generalised into `vn_*_opt`) |
 | `kern/vfs_aio.c:888`⁽ᵀ⁾ | `aio_process_rw` | `bwillwrite()` hint before `fo_write` on a vnode | keep (hint only; the I/O already goes through `fo_write`; `mac_file_check_write` added beside it by `b54dbcac342`) |
@@ -329,14 +336,14 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `kern/vfs_subr.c:500` | `sysctl_ftry_reclaim_vnode` | `getvnode()` for `debug.try_reclaim_vnode` | keep (vnode debugging sysctl; `EINVAL` for non-vnode already) |
 | `kern/vfs_subr.c:503` | `sysctl_ftry_reclaim_vnode` | `vn_lock` + `vgone` | keep |
 | `kern/vfs_subr.c:6835` | `filt_vfsdump` | `EVFILT_VNODE` knote's `kn_fp->f_vnode` for `kinfo_knote` | keep (`vfs_kqfilter` is a `VOP`; the knote exists only for a vnode) |
-| `kern/vfs_syscalls.c:1056` | `finit_open` | stores the opened vnode in `f_vnode` for any `f_type` | keep (`vn_open` result; this is what gives FIFOs, ptys and devfs files their `f_vnode`, 6.1.1) |
-| `kern/vfs_syscalls.c:1067` | `finit_open` | O_PATH files: `finit(... DTYPE_VNODE, NULL, &path_fileops)` | keep (not a test); `path_fileops` carries eight of the eleven members now (seven `vn` and `path_advlock`, see the fileops audit) |
-| `kern/vfs_syscalls.c:4564` | `getvnode_path` | comment: variant allowing O_PATH | keep |
-| `kern/vfs_syscalls.c:4569` | `getvnode_path` | `fget` then vnode presence check (definition) | keep (helper; its callers are classified individually: 13 remain, all B, E, F or G) |
-| `kern/vfs_syscalls.c:4591`⁽ᴺ⁾ | `getvnode_path` | `f_vnode == NULL \|\| f_ops == &badfileops` → `EINVAL` | keep |
-| `kern/vfs_syscalls.c:4607` | `getvnode` | `getvnode_path` + O_PATH filter (definition) | keep |
-| `kern/vfs_syscalls.c:4612` | `getvnode` | calls `getvnode_path` | keep |
-| `kern/vfs_syscalls.c:4617` | `getvnode` | comment: filters O_PATH because most callers do not call `fo_` methods | keep; stage 0 removed every A caller of `getvnode`, so the comment's premise now describes the B, E, F and G callers only |
+| `kern/vfs_syscalls.c:1058` | `finit_open` | stores the opened vnode in `f_vnode` for any `f_type` | keep (`vn_open` result; this is what gives FIFOs, ptys and devfs files their `f_vnode`, 6.1.1) |
+| `kern/vfs_syscalls.c:1069` | `finit_open` | O_PATH files: `finit(... DTYPE_VNODE, NULL, &path_fileops)` | keep (not a test); `path_fileops` carries eight of the eleven members now (seven `vn` and `path_advlock`, see the fileops audit) |
+| `kern/vfs_syscalls.c:4568` | `getvnode_path` | comment: variant allowing O_PATH | keep |
+| `kern/vfs_syscalls.c:4573` | `getvnode_path` | `fget` then vnode presence check (definition) | keep (helper; its callers are classified individually: 13 remain, all B, E, F or G) |
+| `kern/vfs_syscalls.c:4595`⁽ᴺ⁾ | `getvnode_path` | `f_vnode == NULL \|\| f_ops == &badfileops` → `EINVAL` | keep |
+| `kern/vfs_syscalls.c:4611` | `getvnode` | `getvnode_path` + O_PATH filter (definition) | keep |
+| `kern/vfs_syscalls.c:4616` | `getvnode` | calls `getvnode_path` | keep |
+| `kern/vfs_syscalls.c:4621` | `getvnode` | comment: filters O_PATH because most callers do not call `fo_` methods | keep; stage 0 removed every A caller of `getvnode`, so the comment's premise now describes the B, E, F and G callers only |
 | `ufs/ffs/ffs_alloc.c:3322` | `sysctl_ffs_fsck` | `getvnode()` with `CAP_FSCK` for `vfs.ffs.*` fsck sysctls | keep (UFS-only; `EINVAL` for non-vnode already) |
 | `ufs/ffs/ffs_alloc.c:3325` | `sysctl_ffs_fsck` | `VREG`/`VDIR` test, then UFS mount ops | keep |
 
@@ -358,12 +365,12 @@ so the "open" list of that ledger closes with a commit against every entry):
 | `dev/mac_capability/mac_capability_isolation.c:2395`⁽ᴺ⁾ | `fi_do_query` (`FI_OP_QUERY`) | looks up a claim by vnode | NULL-safe already (`EINVAL`) |
 | `dev/mac_capability/mac_capability_isolation.c:3331`⁽ᴺ⁾ | `fi_call` (`FI_OP_MINT`) | `EINVAL` unless the fd has a vnode | NULL-safe already (`EINVAL`) |
 | `dev/mac_capability/mac_capability_isolation.c:3335` | `fi_call` (`FI_OP_MINT`) | `fi_claim_lookup(fds[0]->f_vnode)` | guarded by `:3331`; no change |
-| `fs/fdescfs/fdesc_vnops.c:809`⁽ᵀ⁾ | `fdesc_readlink` | `case DTYPE_VNODE:` → `vn_fullpath` | add DTYPE_DQ arm with the presented path, stage 1; the `default:` `anon_inode:[unknown]` arm already covers an unknown type |
-| `fs/fdescfs/fdesc_vnops.c:810` | `fdesc_readlink` | `vp = fp->f_vnode` | as `:809` |
-| `kern/kern_descrip.c:5299`⁽ᴺ⁾ | `sysctl_kern_file` | `xf_vnode = (uintptr_t)fp->f_vnode` | NULL-safe already (pointer copy; 0 for served files) |
-| `kern/kern_descrip.c:5770`⁽ᵀ⁾ | `file_type_to_name` | ddb name for `DTYPE_VNODE` | add DTYPE_DQ arm when `DTYPE_DQ` is reserved; it was not reserved in stage 0 (no `DTYPE_DQ` in `sys/file.h` at HEAD), so this moves to stage 1 |
-| `kern/kern_descrip.c:5776`⁽ᵀ⁾ | `file_type_to_name` | ddb name for `DTYPE_FIFO` | no change (the FIFO name stays; the `DTYPE_DQ` arm is added beside it, `:5770`) |
-| `kern/kern_descrip.c:5851`⁽ᴺ⁾ | `db_print_file` | prints `fp->f_vnode` as a pointer | NULL-safe already |
+| `fs/fdescfs/fdesc_vnops.c:769`⁽ᵀ⁾ | `fdesc_readlink` | `case DTYPE_VNODE:` → `vn_fullpath` | add DTYPE_DQ arm with the presented path, stage 1; the `default:` `anon_inode:[unknown]` arm already covers an unknown type |
+| `fs/fdescfs/fdesc_vnops.c:770` | `fdesc_readlink` | `vp = fp->f_vnode` | as `:809` |
+| `kern/kern_descrip.c:5315`⁽ᴺ⁾ | `sysctl_kern_file` | `xf_vnode = (uintptr_t)fp->f_vnode` | NULL-safe already (pointer copy; 0 for served files) |
+| `kern/kern_descrip.c:5786`⁽ᵀ⁾ | `file_type_to_name` | ddb name for `DTYPE_VNODE` | add DTYPE_DQ arm when `DTYPE_DQ` is reserved; it was not reserved in stage 0 (no `DTYPE_DQ` in `sys/file.h` at HEAD), so this moves to stage 1 |
+| `kern/kern_descrip.c:5792`⁽ᵀ⁾ | `file_type_to_name` | ddb name for `DTYPE_FIFO` | no change (the FIFO name stays; the `DTYPE_DQ` arm is added beside it, `:5770`) |
+| `kern/kern_descrip.c:5867`⁽ᴺ⁾ | `db_print_file` | prints `fp->f_vnode` as a pointer | NULL-safe already |
 | `security/audit/audit_arg.c:682`⁽ᵀ⁾ | `audit_arg_file` | `case DTYPE_VNODE:` → `audit_arg_vnode1` | add DTYPE_DQ arm recording the presented identity (principle 4), stage 1; the switch has a `default:` so a served file is skipped until then |
 | `security/audit/audit_arg.c:683`⁽ᵀ⁾ | `audit_arg_file` | `case DTYPE_FIFO:` shares the vnode arm (FIFOs carry `f_vnode`) | no change for FIFOs; the DTYPE_DQ arm is added beside it (`:682`) |
 | `security/audit/audit_arg.c:687` | `audit_arg_file` | `vp = fp->f_vnode; vn_lock; audit_arg_vnode1` | as `:682` |
@@ -447,13 +454,15 @@ members in the order `fo_pathconf`, `fo_statfs`, `fo_fsync`, `fo_setattr`,
   tables; `path_fileops` for its seven; `pipeops` for `fo_advlock` through
   `pipe_advlock`, see `vn/pipe`);
 - `vn/opt` — `vn_*_opt`, which runs `vn_*` when `f_vnode != NULL` and
-  `invfo_*` otherwise: the two *sometimes-vnode* tables, pseudo-terminal
+  `invfo_*` otherwise: the three *sometimes-vnode* tables, FIFOs and
+  anonymous pipes (`pipeops`, since `a4bfad81171`, D83), pseudo-terminal
   masters (`/dev/ptmx` carries the vnode, `posix_openpt(2)` does not) and
   linuxkpi files (devfs open carries it, `fd_install()` does not), D72. These
   are the only members anywhere that inspect `f_vnode`;
-- `vn/pipe` — `pipeops` only: `pipe_*` branching on `PIPE_TYPE_NAMED`, `vn_*`
-  for a FIFO, today's pipe answer otherwise (`pathconf` `PIPE_BUF` for
-  `_PC_PIPE_BUF` else `EINVAL`, the rest `invfo_*`). `pipe_advlock` admits
+- `vn/pipe` — `pipeops`'s two own answers, `pipe_pathconf` (`PIPE_BUF` for
+  `_PC_PIPE_BUF` else `EINVAL`; a FIFO's other names go to its vnode) and
+  `pipe_advlock`; until `a4bfad81171` the six vnode-answered members were
+  `pipe_*` copies branching on `PIPE_TYPE_NAMED`, now `vn/opt`. `pipe_advlock` admits
   `F_FLOCK` only: a FIFO takes `flock(2)` through `vn_advlock`, an anonymous
   pipe answers it with its own `EOPNOTSUPP`, and both give `fcntl(2)` record
   locks and the close-time unlock `invfo_advlock`'s `EBADF` (D72, D73, D81);
@@ -498,11 +507,11 @@ side-effect free as the type test was:
 - `closef`/`fdclearlocks` still probe the member (`fo_advlock == NULL` →
   skip, `:3042`, `:3384`, D73); `path_fileops` now has one, so the close-time
   POSIX unlock runs for an `O_PATH` close again (finding 8);
-- `copy_file_range(2)` probes `fo_copy_file_range == NULL` on either side →
-  `EINVAL` (`vfs_syscalls.c:5313`), after the `FREAD`/`FWRITE`/`FAPPEND`
-  checks where the vnode test stood (`f134444e4b1`);
-- `fdesc_setattr` probes `fo_setattr == NULL` (`fdesc_vnops.c:622`, D29) for
-  the old drop rule and otherwise lets each fileop's answer stand, see below;
+- `copy_file_range(2)` no longer probes (`a4bfad81171`, D83): the input table
+  answers, `vn_copy_range` refuses a partner without a vnode and
+  `invfo_copy_file_range` gives `EINVAL`, both where the vnode test stood;
+- `fdesc_setattr` probes `fo_setattr == NULL` (`fdesc_vnops.c:629`, D29) for
+  the old drop rule and otherwise makes one `fo_setattr` call (D84), see below;
   the Linux fileattr calls probe `fo_setattr == NULL` (`linux_file.c:525`) and
   return the fileop's answer unmapped (D82), the Linux `FS_IOC_SETFLAGS`
   ioctl probes it for `ENOTTY` (`linux_ioctl.c:4045`), Linux `getdents`
@@ -589,7 +598,7 @@ seven of the eleven; the structure now carries four spares again (D72, KBI).
 | `kqueueops` | `kern/kern_event.c:186` | `DTYPE_KQUEUE` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `jaildesc_ops` | `kern/kern_jaildesc.c:71` | `DTYPE_JAILDESC` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `eventfdops` | `kern/sys_eventfd.c:93` | `DTYPE_EVENTFD` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
-| `pipeops` | `kern/sys_pipe.c:215` | `DTYPE_PIPE`; `DTYPE_FIFO` (`fifo_vnops.c`) | sometimes (FIFO via `finit_open`; `pipe_close`/`pipe_fill_kinfo`/`pipe_chmod`/`pipe_chown`/`pipe_stat`/`pipe_truncate`/`pipe_kqfilter` already delegate) | vn/pipe | vn/pipe | vn/pipe | vn/pipe | inv (never reached: `ESPIPE` first) | vn/pipe (`ENOTDIR` from the FIFO vnode) | inv | vn/pipe | vn/pipe | inv | vn/pipe (`F_FLOCK` only) | no / yes / no (`DFLAG_FLOCK` for FIFOs; an anonymous pipe passes the probe and gets `EOPNOTSUPP` from `pipe_advlock`, `FHASLOCK` cleared again) |
+| `pipeops` | `kern/sys_pipe.c:215` | `DTYPE_PIPE`; `DTYPE_FIFO` (`fifo_vnops.c`) | sometimes (FIFO via `finit_open`; `pipe_close`/`pipe_fill_kinfo`/`pipe_chmod`/`pipe_chown`/`pipe_stat`/`pipe_truncate`/`pipe_kqfilter` already delegate) | vn/pipe (`pipe_pathconf`) | vn/opt | vn/opt | vn/opt | inv (never reached: `ESPIPE` first) | vn/opt (`ENOTDIR` from the FIFO vnode) | inv | vn/opt | vn/opt | inv | vn/pipe (`F_FLOCK` only) | no / yes / no (`DFLAG_FLOCK` for FIFOs; an anonymous pipe passes the probe and gets `EOPNOTSUPP` from `pipe_advlock`, `FHASLOCK` cleared again) |
 | `procdesc_ops` | `kern/sys_procdesc.c:122` | `DTYPE_PROCDESC` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `socketops` | `kern/sys_socket.c:111` | `DTYPE_SOCKET` | no | own (`soo_pathconf`, `:410`) | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
 | `timerfdops` | `kern/sys_timerfd.c:425` | `DTYPE_TIMERFD` | no | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | inv | no / no / no |
@@ -608,7 +617,8 @@ seven of the eleven; the structure now carries four spares again (D72, KBI).
 Tables that carry a vnode without being `vnops` and therefore install explicit
 members: `devfs_ops_f` and `devfs_ops_nonpassable_f` (all eleven, `vn`),
 `path_fileops` (eight: seven `vn` and its own `path_advlock`), `pipeops`
-(eight, `vn/pipe`), `ptsdev_ops` and `linuxfileops` (seven, `vn/opt`) — six,
+(eight: six `vn/opt` and its own `pipe_pathconf`/`pipe_advlock`, `a4bfad81171`),
+`ptsdev_ops` and `linuxfileops` (seven, `vn/opt`) — six,
 as 6.1.1 lists. Corrections to the `46b84718217` audit, which was written
 before the code: `ptsdev_ops` and `linuxfileops` are sometimes-vnode tables
 and take `vn/opt`, not `vn` (D72, found by the first plane-on VM run,
@@ -628,14 +638,36 @@ the copy and needed no edit.
 
 | category | rows | already NULL-safe ⁽ᴺ⁾ | done in stage 0 (row remains) | open or deferred | keep (no change) |
 |---|---|---|---|---|---|
-| A fileop | 35 | 7 | 28 (comments recording the preserved errno — two of them new, `linux_file.c:551,783`, `f134444e4b1` — and the moved bodies `vn_acl`, `vn_extattr`, `vn_readdir`, `vn_fadvise`, `vn_copy_range`, `xattr_getvnode`) | 5, all by decision (`linux_quota.c:77` D64; `sys_generic.c:331,530,584`, `vfs_aio.c:1713` negative-offset `VCHR`, no D-row). The 10 the `1f8c7358a4d` ledger left open without a decision are done and their hits gone (`80f7f749378`, `f134444e4b1`; listed under "Rows changed since `1f8c7358a4d`" and after the A table) | 2 (`linux_file.c:217` gate, `vfs_aio.c:1705` acceptance, 6.1.1) |
-| B resolution | 33 | 3 | 0 | 33 (resolution is stage 1, D7; today's `EINVAL`/`ENOTDIR`/`EAGAIN` are the fail-closed defaults) | 0 |
+| A fileop | 37 | 7 | 30 (comments recording the preserved errno — `linux_file.c:783`, `f134444e4b1`; `kern_descrip.c:6202`, `vfs_acl.c:487`, `vfs_syscalls.c:3447`, `a4bfad81171` — and the moved bodies `vn_acl`, `vn_extattr`, `vn_readdir`, `vn_fadvise`, `vn_copy_range`, `xattr_getvnode`) | 5, all by decision (`linux_quota.c:77` D64; `sys_generic.c:331,530,584`, `vfs_aio.c:1713` negative-offset `VCHR`, no D-row). The 10 the `1f8c7358a4d` ledger left open without a decision are done and their hits gone (`80f7f749378`, `f134444e4b1`; listed under "Rows changed since `1f8c7358a4d`" and after the A table) | 2 (`linux_file.c:217` gate, `vfs_aio.c:1705` acceptance, 6.1.1) |
+| B resolution | 34 | 3 | 1 (`fdesc_vnops.c:625`, the fdescfs `fo_setattr` bridge's comment, `a4bfad81171`) | 33 (resolution is stage 1, D7; today's `EINVAL`/`ENOTDIR`/`EAGAIN` are the fail-closed defaults) | 0 |
 | C exec | 81 | 15 | 49 (34 vnode-backend rows, 3 `kern_exec.c` construction rows, 12 `p_textvp` rows given a fallback or a `p_image` twin: `7b587d57f55` ×10, `1f8c7358a4d` ×2) | 16 (veriexec and authority work on a vnode by design; the explicit served-image denial, D28, and the dq `fexecve` constructor are stage 3) | 16 (`p_textvp` consumers that tolerated NULL already) |
 | D vm | 14 | 3 | 2 (`kern_sendfile.c:666,667` `sendfile_src`, `99a5b22a9e7`) | 10 (`linux_socket.c` ×8, `linux_misc.c` ×2: dq arm, stage 1b) | 2 (`mac_vfs.c:701,738`, reached only from `vn_mmap`) |
 | E vfs-internal | 46 | 6 | 0 | 0 | 46 |
 | F observer | 41 | 14 | 0 | 40 (`DTYPE_DQ` arms and presented identity, stage 1, D18/D22; `kern_descrip.c:5754` joins them because `DTYPE_DQ` was not reserved in stage 0) | 1 (`kern_descrip.c:5760`) |
 | G driver | 33 | 6 | 0 | 0 | 33 |
-| **total** | **283** | **54** | **79** | **104** | **100** |
+| **total** | **286** | **54** | **82** | **104** | **100** |
+
+Rows changed since `f134444e4b1` (1 hit gone, 4 new, 1 reworded, 283 → 286;
+110 rows moved to new line numbers with the same classification; no
+classification changed):
+
+- A, 1 retired: `linux_file.c:551`, the `linux_fileattr_fsetflags` comment,
+  went with the series clean-up (`483df4d4696`, D81). 3 added, all comments
+  recording the errno `getvnode()` gave at a refusal the quality pass
+  rewrote: `kern_descrip.c:6202` (`invfo_setattr`, now running the direct
+  operations first), `vfs_acl.c:487` and `vfs_syscalls.c:3447` (the `O_PATH`
+  refusals, now `f_flag & O_PATH` with `fd:::refused`). `a4bfad81171`.
+- B, 1 added: `fdesc_vnops.c:625`, the comment on fdescfs's answer for a
+  table without `fo_setattr` (listed with the fdescfs rows, A by subject).
+- C, 1 reworded: `exec_image_vnode.c:478` → `:492` (`is_close` comment).
+- The `copy_file_range` `fo_X == NULL` probe (`vfs_syscalls.c:5313-5314`) is
+  gone: the vnode body's own partner test and the default answer (D83).
+  `pipeops` installs `vn_*_opt` for its six vnode-answered members in place
+  of the `vn/pipe` branching copies; `pipe_pathconf` and `pipe_advlock`
+  remain its own.
+- `kern_descrip.c` (+14 to +17), `vfs_syscalls.c` (+2 to +5, −12 after the
+  probe), `sys_pipe.c` (−73 after the removed bodies), `exec_image_vnode.c`
+  (+11 to +14) moved.
 
 Rows changed since `1f8c7358a4d` (11 hits gone, 2 new, 292 → 283; 103 rows
 moved to new line numbers with the same classification):
@@ -731,6 +763,6 @@ is unchanged by this regeneration.
 | `vn_fullpath(fp->...)` | matched (`->f_vnode`) | both occurrences (`linprocfs.c:2404`, `filemon_wrapper.c:186`) are rows above; no alias form found |
 | `ctx->fp->f_data` (`fs/pseudofs/pseudofs_vnops.c:982,989`) | not in the regex | `vn_file_context` giving a `VOP` its owning file; vnode-internal |
 | `fo_flags & DFLAG_SEEKABLE` | not in the regex | not vnode-reaching, but the negative-offset `VCHR` tests (`sys_generic.c`, `vfs_aio.c:1713`) sit next to it; a `DFLAG_NEGOFFSET`-style bit would retire them. `DFLAG_PRIVWRITE` (`20dbcc341de`) is the precedent: `vm_mmap.c:470` was retired by exactly this move |
-| `fo_X == NULL` probes (`kern_descrip.c:3042,3384`, `vfs_syscalls.c:5313-5314`, `fdesc_vnops.c:622`, `linux_file.c:525,782,2347`, `linux_ioctl.c:4045`, `linux_xattr.c:148`) and `fo_flags & DFLAG_(RECLOCK\|FLOCK)` probes (`kern_descrip.c:810,946,4546`) | not in the regex | new in stage 0: the system calls that keep a refusal ahead of the table (D73, D74). `80f7f749378` turned the `fcntl(2)` record-lock probes at `kern_descrip.c:809,938` into flag probes and added the `flock(2)` one; `f134444e4b1` moved the `copy_file_range` probe after the mode checks and added the `FS_IOC_SETFLAGS`, `getdents` and `F_SET_RW_HINT` ones. Not vnode-reaching; listed so the fileops audit's "probe first" notes can be re-verified |
+| `fo_X == NULL` probes (`kern_descrip.c:3056,3398`, `fdesc_vnops.c:629`, `linux_file.c:525,782,2349`, `linux_ioctl.c:4045`, `linux_xattr.c:148`) and `fo_flags & DFLAG_(RECLOCK\|FLOCK)` probes (`kern_descrip.c:819,957,4560`) | not in the regex | new in stage 0: the system calls that keep a refusal ahead of the table (D73, D74). `80f7f749378` turned the `fcntl(2)` record-lock probes at `kern_descrip.c:809,938` into flag probes and added the `flock(2)` one; `f134444e4b1` moved the `copy_file_range` probe after the mode checks and added the `FS_IOC_SETFLAGS`, `getdents` and `F_SET_RW_HINT` ones; `a4bfad81171` removed the `copy_file_range` probe (the table answers, D83) and left the close paths' "nothing to unlock" and the bridges' own mappings as the only member probes. Not vnode-reaching; listed so the fileops audit's "probe first" notes can be re-verified |
 | `mac_file_check_*` call sites (`b54dbcac342`) and `mac_capability` channel receive (`fdbc6085418`) | not in the regex | stage-0 security changes at the fileops boundary, on the descriptor whatever its type; they reach no vnode and belong to `docs/macf-new-hooks.md`, not this ledger |
 | `struct fileops` definitions built by macro or filled at run time (`LEASE_FILEOPS`, `pfs_snapshotops`, `tmpfs_fnops`, `zfshandle_anon_dir_ops`) | the fileops pattern requires `= {` on the declaration line | listed by hand in the fileops audit; a second pattern `struct fileops[[:space:]]+[a-z_]+;` (forward declarations) finds them |
