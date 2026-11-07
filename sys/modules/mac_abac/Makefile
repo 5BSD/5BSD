@@ -2,7 +2,7 @@
 
 PACKAGE=	mac-abac
 KMOD=	mac_abac
-SRCS=	vnode_if.h \
+SRCS=	vnode_if.h opt_dq.h \
 	abac_cred.c \
 	abac_kenv.c \
 	abac_label.c \

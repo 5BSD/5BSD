@@ -19,9 +19,12 @@
 #include <sys/condvar.h>
 #include <sys/event.h>
 #include <sys/file.h>
+#include <sys/fcntl.h>
 #include <sys/filedesc.h>
+#include <sys/ioccom.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
@@ -62,8 +65,6 @@ RB_GENERATE(dq_object_tree, dq_object, o_tree, dq_object_cmp);
 
 TAILQ_HEAD(dq_event_list, dq_event_k);
 
-static void	dq_event_hold(struct dq_event_k *ev);
-static void	dq_event_rele(struct dq_event_k *ev);
 static void	dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev,
 		    int error, struct dq_event_list *freed);
 static void	dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o,
@@ -92,9 +93,11 @@ dq_queue_create(struct thread *td, struct file *fp)
 	LIST_INIT(&q->q_observers);
 	for (i = 0; i < DQ_REQUESTER_HASH; i++)
 		LIST_INIT(&q->q_requesters[i]);
+	for (i = 0; i < DQ_IDHASH; i++)
+		LIST_INIT(&q->q_idhash[i]);
 	knlist_init_mtx(&q->q_sel.si_note, &q->q_mtx);
 	q->q_depth = dq_queue_depth;
-	q->q_stats.ds_version = DQ_API_VERSION;
+	q->q_stats.ds2_size = sizeof(struct dq_stats2);
 
 	mtx_lock(&dq_mtx);
 	q->q_gid = ++dq_next_gid;
@@ -215,6 +218,113 @@ dq_caller_holds_queue(struct dq_queue *q, struct thread *td)
  * Objects
  */
 
+/*
+ * The identity index (N6): one bucket per (di_dev, di_ino) hash, under
+ * q_mtx, maintained at mint, at an identity change (SETIDENT, a GETATTR
+ * reply) and at retire.
+ */
+static struct dq_object_idlist *
+dq_idbucket(struct dq_queue *q, uint64_t dev, uint64_t ino)
+{
+	uint64_t h;
+
+	h = (dev * 0x9e3779b97f4a7c15ULL) ^ ino;
+	h ^= h >> 32;
+	return (&q->q_idhash[h % DQ_IDHASH]);
+}
+
+static void
+dq_object_unhash_locked(struct dq_queue *q, struct dq_object *o)
+{
+
+	DQ_LOCK_ASSERT(q);
+	if (o->o_hashed) {
+		LIST_REMOVE(o, o_idlink);
+		o->o_hashed = false;
+	}
+}
+
+static void
+dq_object_hash_locked(struct dq_queue *q, struct dq_object *o, uint64_t dev,
+    uint64_t ino)
+{
+
+	DQ_LOCK_ASSERT(q);
+	dq_object_unhash_locked(q, o);
+	o->o_hdev = dev;
+	o->o_hino = ino;
+	LIST_INSERT_HEAD(dq_idbucket(q, dev, ino), o, o_idlink);
+	o->o_hashed = true;
+}
+
+#define	DQ_SIBLINGS_FOREACH(s, q, o)					\
+	LIST_FOREACH((s), dq_idbucket((q), (o)->o_hdev, (o)->o_hino),	\
+	    o_idlink)							\
+		if ((s)->o_hdev == (o)->o_hdev && (s)->o_hino == (o)->o_hino)
+
+/*
+ * Replace an object's identity (SETIDENT, a GETATTR reply) and keep the
+ * index in step when the key changed.  hint, when non-zero, is raised on
+ * the object's knotes.
+ */
+static void
+dq_object_set_ident_locked(struct dq_queue *q, struct dq_object *o,
+    const struct dq_ident_file *di, long hint)
+{
+
+	DQ_LOCK_ASSERT(q);
+	DQO_LOCK(o);
+	o->o_ident = *di;
+	if (hint != 0)
+		dq_file_knote(o, hint);
+	DQO_UNLOCK(o);
+	if (o->o_hashed && (o->o_hdev != di->di_dev || o->o_hino != di->di_ino))
+		dq_object_hash_locked(q, o, di->di_dev, di->di_ino);
+}
+
+void
+dq_object_set_ident(struct dq_object *o, const struct dq_ident_file *di,
+    long hint)
+{
+	struct dq_queue *q;
+
+	q = o->o_queue;
+	DQ_LOCK(q);
+	dq_object_set_ident_locked(q, o, di, hint);
+	DQ_UNLOCK(q);
+}
+
+/*
+ * Record that a LOCK of this kind was posted (D14), so the close-time
+ * UNLOCK_ALL is posted.  B4: a POSIX owner is the process, and a process's
+ * POSIX locks on a file are released by its close of any descriptor of
+ * that file, so the bit goes on every object of the same identity on the
+ * queue; the controller shares POSIX owners per identity and releases them
+ * whichever sibling closes.  flock and OFD locks belong to one open file
+ * and stay on the object.
+ */
+void
+dq_object_mark_locked(struct dq_object *o, u_int bit)
+{
+	struct dq_queue *q;
+	struct dq_object *s;
+
+	q = o->o_queue;
+	DQ_LOCK(q);
+	if (bit == DQ_LOCKED_POSIX && o->o_hashed) {
+		DQ_SIBLINGS_FOREACH(s, q, o) {
+			DQO_LOCK(s);
+			s->o_locked |= bit;
+			DQO_UNLOCK(s);
+		}
+	} else {
+		DQO_LOCK(o);
+		o->o_locked |= bit;
+		DQO_UNLOCK(o);
+	}
+	DQ_UNLOCK(q);
+}
+
 void
 dq_object_hold(struct dq_object *o)
 {
@@ -251,7 +361,7 @@ dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
 		q->q_bytes -= ev->ev_size;
 	} else {
 		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
-		q->q_stats.ds_inflight--;
+		q->q_stats.ds2_inflight--;
 	}
 	ev->ev_linked = false;
 	ev->ev_state = DQ_EV_FAILED;
@@ -285,7 +395,7 @@ dq_object_revoke_locked(struct dq_queue *q, struct dq_object *o, int why,
 	}
 	wakeup(&o->o_inflight);
 	wakeup(&q->q_requesters);
-	q->q_stats.ds_objects_revoked++;
+	q->q_stats.ds2_objects_revoked++;
 	SDT_PROBE3(dq, , , revoke, q, o, why);
 }
 
@@ -334,14 +444,16 @@ dq_object_retire(struct dq_object *o, struct thread *td)
 	rangelock_destroy(&o->o_rl);
 
 	DQ_LOCK(q);
-	KASSERT(o->o_inflight == 0, ("dq: closing an object with events"));
+	KASSERT(o->o_inflight == 0 && o->o_locks == 0,
+	    ("dq: closing an object with events"));
 	post_close = (q->q_flags & DQ_Q_CLOSING) == 0 &&
 	    (o->o_policy.dp_events & DQ_EVENTS_CLOSE) != 0;
 	if (!o->o_retired) {
 		RB_REMOVE(dq_object_tree, &q->q_objects, o);
+		dq_object_unhash_locked(q, o);
 		o->o_retired = true;
 		q->q_nobjects--;
-		q->q_stats.ds_objects_live--;
+		q->q_stats.ds2_objects_live--;
 	}
 	DQ_UNLOCK(q);
 
@@ -351,17 +463,45 @@ dq_object_retire(struct dq_object *o, struct thread *td)
 }
 
 /*
+ * B7: an object has one struct file, so NOTE_OPEN at install and
+ * NOTE_CLOSE at close can reach no knote on the object itself; they are
+ * raised on the other objects of the same identity (di_dev, di_ino) on the
+ * queue, which is how a vnode's other opens see them.  Only the identity's
+ * index bucket is walked; q_mtx, then each sibling's o_mtx in turn.
+ */
+void
+dq_object_knote_siblings(struct dq_object *o, long hint)
+{
+	struct dq_queue *q;
+	struct dq_object *s;
+
+	q = o->o_queue;
+	DQ_LOCK(q);
+	if (o->o_hashed) {
+		DQ_SIBLINGS_FOREACH(s, q, o) {
+			if (s == o)
+				continue;
+			DQO_LOCK(s);
+			if (s->o_state == DQ_OBJ_LIVE)
+				dq_file_knote(s, hint);
+			DQO_UNLOCK(s);
+		}
+	}
+	DQ_UNLOCK(q);
+}
+
+/*
  * Events
  */
 
-static void
+void
 dq_event_hold(struct dq_event_k *ev)
 {
 
 	refcount_acquire(&ev->ev_refs);
 }
 
-static void
+void
 dq_event_rele(struct dq_event_k *ev)
 {
 
@@ -369,18 +509,52 @@ dq_event_rele(struct dq_event_k *ev)
 		return;
 	KASSERT(!ev->ev_linked, ("dq: freeing a linked event"));
 	cv_destroy(&ev->ev_cv);
-	if (ev->ev_reply != NULL)
-		free(ev->ev_reply, M_DQ);
+	dq_data_rele(ev->ev_reply);
 	if (ev->ev_object != NULL)
 		dq_object_rele(ev->ev_object);
 	free(ev, M_DQ);
 }
 
+/*
+ * Reply data (D101).  The waiter, dq_event_rele (a reply nobody took), the
+ * observer read and the observer drain at close are the releases.
+ */
+static struct dq_data *
+dq_data_alloc(size_t len)
+{
+	struct dq_data *dd;
+	size_t alloc;
+
+	alloc = roundup2(len, 8);
+	dd = malloc(sizeof(*dd) + alloc, M_DQ, M_WAITOK);
+	refcount_init(&dd->dd_refs, 1);
+	dd->dd_len = len;
+	if (alloc != len)
+		bzero(dd->dd_bytes + len, alloc - len);
+	return (dd);
+}
+
 void
-dq_reply_free(void *reply)
+dq_data_hold(struct dq_data *dd)
 {
 
-	free(reply, M_DQ);
+	refcount_acquire(&dd->dd_refs);
+}
+
+void
+dq_data_rele(struct dq_data *dd)
+{
+
+	if (dd == NULL || !refcount_release(&dd->dd_refs))
+		return;
+	free(dd, M_DQ);
+}
+
+void
+dq_reply_free(struct dq_data *reply)
+{
+
+	dq_data_rele(reply);
 }
 
 /*
@@ -427,6 +601,7 @@ dq_event_alloc(struct dq_object *o, uint32_t op, const void *body,
 	struct dq_event_k *ev;
 	struct timespec ts;
 
+	KASSERT((bodylen & 7) == 0, ("dq: unpadded body %zu", bodylen));
 	ev = malloc(offsetof(struct dq_event_k, ev_hdr) +
 	    sizeof(struct dq_event) + bodylen, M_DQ, M_WAITOK | M_ZERO);
 	refcount_init(&ev->ev_refs, 1);
@@ -458,17 +633,28 @@ dq_event_alloc(struct dq_object *o, uint32_t op, const void *body,
  * Append to the pending list.  The sequence number is taken before the
  * depth test so a drop leaves a visible gap (design 8.6).  Returns EIO on
  * a full queue; the list reference is taken on success.
+ *
+ * UNLOCK_ALL and INTERRUPT are exempt from the depth: losing one would
+ * leave a lock held for a closed file or a cancelled request running at
+ * the controller.  Both are bounded by events that already happened (one
+ * per close of a locking owner, one per abandoned waiter), so the overrun
+ * is bounded too; it is counted in ds2_overdepth.
  */
 static int
 dq_event_enqueue_locked(struct dq_queue *q, struct dq_event_k *ev)
 {
+	uint32_t op;
 
 	DQ_LOCK_ASSERT(q);
 	ev->ev_hdr.de_seq = ++q->q_seq;
 	if (q->q_count >= q->q_depth) {
-		q->q_stats.ds_events_dropped++;
-		SDT_PROBE2(dq, , , event__drop, q, ev->ev_hdr.de_op);
-		return (EIO);
+		op = ev->ev_hdr.de_op;
+		if (op != DQ_OP_UNLOCK_ALL && op != DQ_OP_INTERRUPT) {
+			q->q_stats.ds2_events_dropped++;
+			SDT_PROBE2(dq, , , event__drop, q, op);
+			return (EIO);
+		}
+		q->q_stats.ds2_overdepth++;
 	}
 	if (ev->ev_waited)
 		ev->ev_hdr.de_id = ++q->q_next_id;
@@ -479,7 +665,7 @@ dq_event_enqueue_locked(struct dq_queue *q, struct dq_event_k *ev)
 	q->q_bytes += ev->ev_size;
 	if (q->q_count > q->q_highwater)
 		q->q_highwater = q->q_count;
-	q->q_stats.ds_events_posted++;
+	q->q_stats.ds2_events_posted++;
 	SDT_PROBE2(dq, , , event__post, q, ev);
 	selwakeup(&q->q_sel);
 	KNOTE_LOCKED(&q->q_sel.si_note, 0);
@@ -529,7 +715,7 @@ dq_deadline(const struct dq_policy *pol)
 
 int
 dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
-    size_t bodylen, struct thread *td, void **replyp, size_t *replylenp,
+    size_t bodylen, struct thread *td, int flags, struct dq_data **replyp,
     int *errnop)
 {
 	struct dq_queue *q;
@@ -538,24 +724,29 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	struct dq_interrupt_body ib;
 	sbintime_t deadline;
 	int error;
-	bool interrupt, drop_list_ref;
+	bool interrupt, drop_list_ref, lock;
 
 	q = o->o_queue;
 	*replyp = NULL;
-	*replylenp = 0;
 	*errnop = 0;
 	interrupt = drop_list_ref = false;
+	lock = (flags & DQ_POST_LOCK) != 0;
 
 	if (dq_caller_holds_queue(q, td))
 		return (EDEADLK);
 
 	ev = dq_event_alloc(o, op, body, bodylen, td);
 	ev->ev_waited = true;
-	newrq = malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
+	ev->ev_lock = lock;
+	newrq = lock ? NULL : malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
 
-	DQO_LOCK(o);
-	deadline = dq_deadline(&o->o_policy);
-	DQO_UNLOCK(o);
+	if ((flags & DQ_POST_NODEADLINE) != 0) {
+		deadline = 0;
+	} else {
+		DQO_LOCK(o);
+		deadline = dq_deadline(&o->o_policy);
+		DQO_UNLOCK(o);
+	}
 	ev->ev_deadline = deadline;
 	rq = NULL;
 
@@ -572,6 +763,14 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 			goto out_locked;
 		}
 		DQO_UNLOCK(o);
+		/*
+		 * B6: a LOCK is bounded by the queue depth alone.  A blocked
+		 * SETLKW is a legitimate long wait on a real file; counting
+		 * it against the in-flight quotas would let lockers starve
+		 * readers.
+		 */
+		if (lock)
+			break;
 		if (o->o_inflight >= dq_max_inflight_per_object) {
 			error = msleep(&o->o_inflight, &q->q_mtx, PCATCH,
 			    "dqinfl", 0);
@@ -592,15 +791,21 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	error = dq_event_enqueue_locked(q, ev);
 	if (error != 0)
 		goto out_locked;
-	if (rq == NULL) {
-		rq = newrq;
-		newrq = NULL;
-		rq->rq_key = ev->ev_requester;
-		LIST_INSERT_HEAD(&q->q_requesters[rq->rq_key % DQ_REQUESTER_HASH],
-		    rq, rq_link);
+	if (lock) {
+		o->o_locks++;
+		q->q_stats.ds2_locks++;
+	} else {
+		if (rq == NULL) {
+			rq = newrq;
+			newrq = NULL;
+			rq->rq_key = ev->ev_requester;
+			LIST_INSERT_HEAD(
+			    &q->q_requesters[rq->rq_key % DQ_REQUESTER_HASH],
+			    rq, rq_link);
+		}
+		rq->rq_inflight++;
+		o->o_inflight++;
 	}
-	rq->rq_inflight++;
-	o->o_inflight++;
 
 	error = 0;
 	while (ev->ev_state == DQ_EV_PENDING || ev->ev_state == DQ_EV_DELIVERED) {
@@ -619,8 +824,7 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	 */
 	switch (ev->ev_state) {
 	case DQ_EV_REPLIED:
-		*replyp = ev->ev_reply;
-		*replylenp = ev->ev_replylen;
+		*replyp = ev->ev_reply;	/* the reply's own reference */
 		*errnop = ev->ev_errno;
 		ev->ev_reply = NULL;
 		error = 0;
@@ -638,7 +842,7 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		drop_list_ref = true;
 		if (error == EWOULDBLOCK) {
 			ev->ev_state = DQ_EV_FAILED;
-			q->q_stats.ds_deadline_misses++;
+			q->q_stats.ds2_deadline_misses++;
 			SDT_PROBE2(dq, , , event__deadline, q, ev);
 			error = EIO;
 		} else {
@@ -648,7 +852,7 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	case DQ_EV_DELIVERED:
 		KASSERT(error != 0, ("dq: delivered event with no error"));
 		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
-		q->q_stats.ds_inflight--;
+		q->q_stats.ds2_inflight--;
 		ev->ev_linked = false;
 		drop_list_ref = true;
 		/*
@@ -658,21 +862,25 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		interrupt = true;
 		if (error == EWOULDBLOCK) {
 			ev->ev_state = DQ_EV_FAILED;
-			q->q_stats.ds_deadline_misses++;
+			q->q_stats.ds2_deadline_misses++;
 			SDT_PROBE2(dq, , , event__deadline, q, ev);
 			error = EIO;
 		} else {
 			ev->ev_state = DQ_EV_INTERRUPTED;
-			q->q_stats.ds_interrupts++;
+			q->q_stats.ds2_interrupts++;
 			SDT_PROBE2(dq, , , event__interrupt, q, ev);
 		}
 		break;
 	default:
 		panic("dq: event %p in state %d", ev, ev->ev_state);
 	}
-	o->o_inflight--;
-	wakeup(&o->o_inflight);
-	dq_requester_release_locked(q, ev->ev_requester);
+	if (lock) {
+		o->o_locks--;
+	} else {
+		o->o_inflight--;
+		wakeup(&o->o_inflight);
+		dq_requester_release_locked(q, ev->ev_requester);
+	}
 out_locked:
 	DQ_UNLOCK(q);
 	if (newrq != NULL)
@@ -688,8 +896,12 @@ out_locked:
 }
 
 /*
- * Post a record that needs no answer (CLOSE, INTERRUPT).  It carries no
- * id, is never waited for and is dropped on a closing or full queue.
+ * Post a record that needs no answer (CLOSE, INTERRUPT, UNLOCK_ALL).  It
+ * carries no id and is never waited for.  The allocation sleeps (M_WAITOK;
+ * every caller holds no dq lock, fo_close included), so a record is lost
+ * only on a closing queue, where the controller is gone, or, for CLOSE
+ * alone, on a full one (documented); INTERRUPT and UNLOCK_ALL bypass the
+ * depth (dq_event_enqueue_locked).
  */
 void
 dq_event_post_nowait(struct dq_queue *q, struct dq_object *o, uint32_t op,
@@ -812,11 +1024,11 @@ dq_queue_read(struct dq_queue *q, struct uio *uio, int ioflag)
 			q->q_count--;
 			q->q_bytes -= ev->ev_size;
 			ev->ev_state = DQ_EV_DELIVERED;
-			q->q_stats.ds_events_delivered++;
+			q->q_stats.ds2_events_delivered++;
 			SDT_PROBE2(dq, , , event__deliver, q, ev);
 			if (ev->ev_waited) {
 				RB_INSERT(dq_inflight_tree, &q->q_inflight, ev);
-				q->q_stats.ds_inflight++;
+				q->q_stats.ds2_inflight++;
 			} else {
 				ev->ev_linked = false;
 				TAILQ_INSERT_TAIL(&freed, ev, ev_link);
@@ -914,12 +1126,12 @@ dq_mint_reason(struct dq_mint_args *args, int reason, int error)
 int
 dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 {
-	struct dq_object *o;
+	struct dq_object *o, *s;
 	int error, reason;
 
 	args->dm_object = 0;
 	args->dm_fd = -1;
-	if (args->dm_version != DQ_API_VERSION || args->dm_pad0 != 0)
+	if (args->dm_version != DQ_API_VERSION)
 		return (dq_mint_reason(args, DQ_REASON_VERSION, EINVAL));
 	if (args->dm_kind != DQ_KIND_FILE)
 		return (dq_mint_reason(args, DQ_REASON_KIND, EINVAL));
@@ -928,6 +1140,14 @@ dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 		error = dq_policy_validate(&args->dm_policy, &reason);
 	if (error != 0)
 		return (dq_mint_reason(args, reason, error));
+	/*
+	 * D95: the access mode is fixed at mint as open(2) fixes it; a
+	 * writable descriptor needs a policy that serves writes.
+	 */
+	if ((args->dm_flags & ~DQ_MINT_F_WRITE) != 0 ||
+	    ((args->dm_flags & DQ_MINT_F_WRITE) != 0 &&
+	    args->dm_policy.dp_write != DQ_EVENT))
+		return (dq_mint_reason(args, DQ_REASON_FLAGS, EINVAL));
 
 	o = malloc(sizeof(*o), M_DQ, M_WAITOK | M_ZERO);
 	mtx_init(&o->o_mtx, "dq object", NULL, MTX_DEF);
@@ -953,12 +1173,25 @@ dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 	}
 	o->o_id = ++q->q_next_object;
 	RB_INSERT(dq_object_tree, &q->q_objects, o);
+	dq_object_hash_locked(q, o, o->o_ident.di_dev, o->o_ident.di_ino);
+	/*
+	 * B4: a sibling's POSIX locks are the process's on this file too, so
+	 * a close through this new object owes their UNLOCK_ALL.  o is not
+	 * yet visible to anyone else; o_mtx is not needed for it.
+	 */
+	DQ_SIBLINGS_FOREACH(s, q, o) {
+		if (s != o && (s->o_locked & DQ_LOCKED_POSIX) != 0) {
+			o->o_locked |= DQ_LOCKED_POSIX;
+			break;
+		}
+	}
 	q->q_nobjects++;
-	q->q_stats.ds_objects_live++;
-	q->q_stats.ds_objects_total++;
+	q->q_stats.ds2_objects_live++;
+	q->q_stats.ds2_objects_total++;
 	DQ_UNLOCK(q);
 
-	error = dq_file_install(td, o, &args->dm_policy, &args->dm_fd);
+	error = dq_file_install(td, o, &args->dm_policy, args->dm_flags,
+	    &args->dm_fd);
 	if (error == 0) {
 		args->dm_object = o->o_id;
 		SDT_PROBE2(dq, , , mint, q, o);
@@ -987,6 +1220,147 @@ dq_queue_mint_observer(struct dq_queue *q, struct dq_observer_args *args,
 }
 
 /*
+ * N5: the errnos a controller may answer, per operation.  A regular file
+ * never answers EPIPE to write(2), so dofilewrite must never raise SIGPIPE
+ * on a controller's word; anything outside the list reaches the requester
+ * as EIO and is counted.  READ and GETATTR keep their 1a behaviour (no
+ * list).
+ */
+static bool
+dq_reply_errno_allowed(uint32_t op, int error)
+{
+
+	switch (op) {
+	case DQ_OP_WRITE:
+		return (error == EIO || error == ENOSPC || error == EDQUOT ||
+		    error == EFBIG || error == EACCES || error == EPERM ||
+		    error == EROFS || error == EINTR || error == EAGAIN ||
+		    error == ENXIO || error == EINVAL || error == ESTALE);
+	case DQ_OP_SETATTR:
+		return (error == EPERM || error == EROFS || error == EINVAL ||
+		    error == EOPNOTSUPP || error == EIO || error == EFBIG ||
+		    error == EDQUOT || error == ENOSPC || error == EACCES ||
+		    error == ESTALE);
+	case DQ_OP_FSYNC:
+		return (error == EIO || error == EINVAL || error == ENOSPC ||
+		    error == EDQUOT || error == ESTALE);
+	case DQ_OP_FALLOCATE:
+		return (error == ENOSPC || error == EFBIG || error == EINVAL ||
+		    error == EIO || error == EOPNOTSUPP || error == EDQUOT);
+	case DQ_OP_FSPACECTL:
+		return (error == ENOSPC || error == EFBIG || error == EINVAL ||
+		    error == EIO || error == EOPNOTSUPP || error == ENODEV);
+	case DQ_OP_LOCK:
+		return (error == EAGAIN || error == EDEADLK || error == ENOLCK ||
+		    error == EINVAL || error == EIO || error == EINTR);
+	case DQ_OP_IOCTL:
+		return (error == ENOTTY || error == EINVAL || error == EIO ||
+		    error == EPERM || error == EACCES || error == ENXIO);
+	default:
+		return (true);
+	}
+}
+
+/*
+ * The reply body against the operation (design 8.2): a wrong size or an
+ * impossible value is EINVAL to the controller and the event stays in
+ * flight.  An errno carries no body except where the row says so.
+ */
+static int
+dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
+    size_t len)
+{
+	const char *body;
+	const struct dq_read_body *rb;
+	const struct dq_write_body *wb;
+	const struct dq_write_reply *wr;
+	const struct dq_fspacectl_body *sb;
+	const struct dq_fspacectl_reply *sr;
+	const struct dq_lock_body *lb;
+	const struct dq_lock_reply *lr;
+	const struct dq_ioctl_body *ib;
+	uint64_t end;
+	int reason;
+
+	body = (const char *)&ev->ev_hdr + sizeof(struct dq_event);
+	switch (ev->ev_hdr.de_op) {
+	case DQ_OP_READ:
+		rb = (const struct dq_read_body *)body;
+		if (len > rb->dr_len || (rerrno != 0 && len != 0))
+			return (EINVAL);
+		return (0);
+	case DQ_OP_GETATTR:
+		if (rerrno != 0)
+			return (len == 0 ? 0 : EINVAL);
+		if (len != sizeof(struct dq_ident_file) ||
+		    dq_ident_validate(ev->ev_object->o_kind, buf, &reason) != 0)
+			return (EINVAL);
+		return (0);
+	case DQ_OP_WRITE:
+		if (rerrno != 0)
+			return (len == 0 ? 0 : EINVAL);
+		if (len != sizeof(*wr))
+			return (EINVAL);
+		wb = (const struct dq_write_body *)body;
+		wr = buf;
+		/* N2: the count fits the request and the offset the file. */
+		if (wr->dwr_written > wb->dw_len || wr->dwr_offset > OFF_MAX ||
+		    wr->dwr_written > (uint64_t)OFF_MAX - wr->dwr_offset)
+			return (EINVAL);
+		/* Only an append lets the controller choose where. */
+		if ((wb->dw_flags & DQ_WRITE_F_APPEND) == 0 &&
+		    wr->dwr_offset != wb->dw_offset)
+			return (EINVAL);
+		return (0);
+	case DQ_OP_SETATTR:
+	case DQ_OP_FSYNC:
+	case DQ_OP_FALLOCATE:
+		return (len == 0 ? 0 : EINVAL);
+	case DQ_OP_FSPACECTL:
+		if (rerrno != 0)
+			return (len == 0 ? 0 : EINVAL);
+		if (len != sizeof(*sr))
+			return (EINVAL);
+		sb = (const struct dq_fspacectl_body *)body;
+		sr = buf;
+		/*
+		 * The invariant vn_fallocate panics on: the remaining range
+		 * ends where the request ended and starts no earlier.  The
+		 * kernel validated offset + len <= OFF_MAX before posting.
+		 */
+		end = sb->dsc_offset + sb->dsc_len;
+		if (sr->dscr_offset < sb->dsc_offset || sr->dscr_offset > end ||
+		    sr->dscr_len != end - sr->dscr_offset)
+			return (EINVAL);
+		return (0);
+	case DQ_OP_LOCK:
+		lb = (const struct dq_lock_body *)body;
+		if (rerrno != 0 || lb->dl_op != DQ_LOCK_GETLK)
+			return (len == 0 ? 0 : EINVAL);
+		if (len != sizeof(*lr))
+			return (EINVAL);
+		lr = buf;
+		/* As fusefs validates a server's lock before copying it out. */
+		if (lr->dlr_type == F_UNLCK)
+			return (0);
+		if ((lr->dlr_type != F_RDLCK && lr->dlr_type != F_WRLCK) ||
+		    lr->dlr_start < 0 || lr->dlr_len < 0 ||
+		    (lr->dlr_len != 0 && lr->dlr_len - 1 > OFF_MAX - lr->dlr_start) ||
+		    lr->dlr_pid < -1)
+			return (EINVAL);
+		return (0);
+	case DQ_OP_IOCTL:
+		ib = (const struct dq_ioctl_body *)body;
+		/* N6: out[] only for an IOC_OUT command that succeeded. */
+		if (rerrno == 0 && (ib->dio_cmd & IOC_OUT) != 0)
+			return (len == IOCPARM_LEN(ib->dio_cmd) ? 0 : EINVAL);
+		return (len == 0 ? 0 : EINVAL);
+	default:
+		return (EINVAL);
+	}
+}
+
+/*
  * A reply: copy the data in before any lock, find the event among those
  * delivered, check the body against the operation, hand it to the waiter.
  */
@@ -995,23 +1369,22 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 {
 	struct dq_event_k key, *ev;
 	struct dq_object *o;
-	struct dq_read_body *rb;
+	struct dq_data *dd;
 	struct file *fp;
-	void *buf;
 	size_t len;
 	uint32_t op;
-	int error, reason;
+	int error, rerrno;
 
 	if (r->dr_version != DQ_API_VERSION || r->dr_pad0 != 0 ||
 	    r->dr_errno < 0 || r->dr_errno > ELAST || r->dr_len > dq_max_io)
 		return (EINVAL);
 	len = r->dr_len;
-	buf = NULL;
+	dd = NULL;
 	if (len != 0) {
-		buf = malloc(len, M_DQ, M_WAITOK);
-		error = copyin(r->dr_data, buf, len);
+		dd = dq_data_alloc(len);
+		error = copyin(r->dr_data, dd->dd_bytes, len);
 		if (error != 0) {
-			free(buf, M_DQ);
+			dq_data_rele(dd);
 			return (error);
 		}
 	}
@@ -1020,53 +1393,50 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	DQ_LOCK(q);
 	ev = RB_FIND(dq_inflight_tree, &q->q_inflight, &key);
 	if (ev == NULL) {
-		q->q_stats.ds_late_replies++;
+		q->q_stats.ds2_late_replies++;
 		SDT_PROBE2(dq, , , reply__late, q, r->dr_id);
 		DQ_UNLOCK(q);
-		if (buf != NULL)
-			free(buf, M_DQ);
+		dq_data_rele(dd);
 		return (ESRCH);
 	}
 	KASSERT(ev->ev_state == DQ_EV_DELIVERED, ("dq: inflight event state"));
 	op = ev->ev_hdr.de_op;
 	o = ev->ev_object;
-	error = 0;
-	switch (op) {
-	case DQ_OP_READ:
-		rb = (struct dq_read_body *)((char *)&ev->ev_hdr +
-		    sizeof(struct dq_event));
-		if (len > rb->dr_len || (r->dr_errno != 0 && len != 0))
-			error = EINVAL;
-		break;
-	case DQ_OP_GETATTR:
-		if (r->dr_errno == 0) {
-			if (len != sizeof(struct dq_ident_file) ||
-			    dq_ident_validate(o->o_kind, buf, &reason) != 0)
-				error = EINVAL;
-		} else if (len != 0)
-			error = EINVAL;
-		break;
-	default:
-		error = EINVAL;
-		break;
-	}
+	error = dq_reply_validate(ev, r->dr_errno,
+	    dd != NULL ? dd->dd_bytes : NULL, len);
 	if (error != 0) {
 		DQ_UNLOCK(q);
-		if (buf != NULL)
-			free(buf, M_DQ);
+		dq_data_rele(dd);
 		return (error);
 	}
+	rerrno = r->dr_errno;
+	if (rerrno != 0 && !dq_reply_errno_allowed(op, rerrno)) {
+		rerrno = EIO;
+		q->q_stats.ds2_bad_replies++;
+	}
+	/*
+	 * A regular file never accepts zero bytes of a non-empty write
+	 * without an error; dofilewrite would report a 0-byte write, which
+	 * callers loop on.  It is EIO to the requester.
+	 */
+	if (op == DQ_OP_WRITE && rerrno == 0 &&
+	    ((const struct dq_write_reply *)dd->dd_bytes)->dwr_written == 0 &&
+	    ((const struct dq_write_body *)((const char *)&ev->ev_hdr +
+	    sizeof(struct dq_event)))->dw_len != 0) {
+		rerrno = EIO;
+		q->q_stats.ds2_bad_replies++;
+	}
 	RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
-	q->q_stats.ds_inflight--;
-	q->q_stats.ds_replies++;
+	q->q_stats.ds2_inflight--;
+	q->q_stats.ds2_replies++;
 	ev->ev_linked = false;
-	ev->ev_reply = buf;
-	ev->ev_replylen = len;
-	ev->ev_errno = r->dr_errno;
+	ev->ev_reply = dd;	/* the waiter takes this reference */
+	ev->ev_errno = rerrno;
 	ev->ev_state = DQ_EV_REPLIED;
 	cv_signal(&ev->ev_cv);
 	SDT_PROBE4(dq, , , event__reply, q, ev, r->dr_errno, len);
-	dq_observer_fanout_reply(q, r->dr_id, r->dr_errno, len);
+	/* Observers and the policies see what the controller said. */
+	dq_observer_fanout_reply(q, r->dr_id, r->dr_errno, dd);
 
 	/* D89: tell the policies, with the object's file held, no lock. */
 	fp = NULL;
@@ -1106,17 +1476,16 @@ dq_queue_setident(struct dq_queue *q, struct dq_setident_args *args)
 		DQ_UNLOCK(q);
 		return (error);
 	}
-	DQO_LOCK(o);
-	o->o_ident = args->dsi_ident;
-	dq_file_knote(o, NOTE_ATTRIB);
-	DQO_UNLOCK(o);
+	dq_object_set_ident_locked(q, o, &args->dsi_ident, NOTE_ATTRIB);
 	DQ_UNLOCK(q);
 	return (0);
 }
 
 /*
  * After the mint only what the descriptor's installed state does not fix
- * may change: the deadline, the optional events and the cache mode.
+ * may change: the deadline, the optional events, the cache mode and
+ * dp_ioctl (no installed state depends on it; dp_write fixed FWRITE and
+ * dp_mmap_shared_write depends on dp_write).
  */
 int
 dq_queue_setpolicy(struct dq_queue *q, struct dq_setpolicy_args *args)
@@ -1142,13 +1511,14 @@ dq_queue_setpolicy(struct dq_queue *q, struct dq_setpolicy_args *args)
 	cur = &o->o_policy;
 	if (new->dp_write != cur->dp_write || new->dp_exec != cur->dp_exec ||
 	    new->dp_mmap_shared_write != cur->dp_mmap_shared_write ||
-	    new->dp_lock != cur->dp_lock || new->dp_ioctl != cur->dp_ioctl ||
+	    new->dp_lock != cur->dp_lock ||
 	    memcmp(&new->dp_rights, &cur->dp_rights, sizeof(cap_rights_t)) != 0) {
 		DQO_UNLOCK(o);
 		DQ_UNLOCK(q);
 		return (EINVAL);
 	}
 	cur->dp_cache = new->dp_cache;
+	cur->dp_ioctl = new->dp_ioctl;
 	cur->dp_deadline_ms = new->dp_deadline_ms;
 	cur->dp_events = new->dp_events;
 	DQO_UNLOCK(o);
@@ -1157,19 +1527,86 @@ dq_queue_setpolicy(struct dq_queue *q, struct dq_setpolicy_args *args)
 }
 
 void
-dq_queue_stats(struct dq_queue *q, struct dq_stats *st)
+dq_queue_stats2(struct dq_queue *q, struct dq_stats2 *st)
 {
 
 	DQ_LOCK(q);
 	*st = q->q_stats;
-	st->ds_version = DQ_API_VERSION;
-	st->ds_queue_id = q->q_gid;
-	st->ds_queue_depth = q->q_depth;
-	st->ds_queue_current = q->q_count;
-	st->ds_queue_highwater = q->q_highwater;
-	st->ds_queue_bytes = q->q_bytes;
-	st->ds_observers = q->q_nobservers;
+	st->ds2_size = sizeof(*st);
+	st->ds2_queue_id = q->q_gid;
+	st->ds2_queue_depth = q->q_depth;
+	st->ds2_queue_current = q->q_count;
+	st->ds2_queue_highwater = q->q_highwater;
+	st->ds2_queue_bytes = q->q_bytes;
+	st->ds2_observers = q->q_nobservers;
 	DQ_UNLOCK(q);
+}
+
+/* The frozen 1a struct (B8): a projection of the full counters. */
+void
+dq_queue_stats(struct dq_queue *q, struct dq_stats *st)
+{
+	struct dq_stats2 st2;
+
+	dq_queue_stats2(q, &st2);
+	bzero(st, sizeof(*st));
+	st->ds_version = DQ_API_VERSION;
+	st->ds_queue_id = st2.ds2_queue_id;
+	st->ds_events_posted = st2.ds2_events_posted;
+	st->ds_events_delivered = st2.ds2_events_delivered;
+	st->ds_events_dropped = st2.ds2_events_dropped;
+	st->ds_replies = st2.ds2_replies;
+	st->ds_late_replies = st2.ds2_late_replies;
+	st->ds_interrupts = st2.ds2_interrupts;
+	st->ds_deadline_misses = st2.ds2_deadline_misses;
+	st->ds_objects_live = st2.ds2_objects_live;
+	st->ds_objects_total = st2.ds2_objects_total;
+	st->ds_objects_revoked = st2.ds2_objects_revoked;
+	st->ds_inflight = st2.ds2_inflight;
+	st->ds_queue_depth = st2.ds2_queue_depth;
+	st->ds_queue_current = st2.ds2_queue_current;
+	st->ds_queue_highwater = st2.ds2_queue_highwater;
+	st->ds_queue_bytes = st2.ds2_queue_bytes;
+	st->ds_observers = st2.ds2_observers;
+}
+
+/*
+ * PUSH (D100): the controller raises an EVFILT_VNODE note for what happened
+ * elsewhere.  Only the notes the filter knows are accepted; NOTE_REVOKE is
+ * the REVOKE ioctl's (a pushed one would end the knotes of a live object).
+ * A revoked object's knotes already report EOF; the raise is harmless.
+ */
+#define	DQ_PUSH_NOTES	(NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | \
+	NOTE_LINK | NOTE_RENAME | NOTE_OPEN | NOTE_CLOSE | NOTE_CLOSE_WRITE | \
+	NOTE_READ)
+int
+dq_queue_push(struct dq_queue *q, const struct dq_push_args *args)
+{
+	struct dq_object key, *o;
+
+	if (args->dp_version != DQ_API_VERSION || args->dp_pad0 != 0)
+		return (EINVAL);
+	switch (args->dp_op) {
+	case DQ_PUSH_NOTIFY_VNODE:
+		if (args->dp_note == 0 || (args->dp_note & ~DQ_PUSH_NOTES) != 0)
+			return (EINVAL);
+		break;
+	default:
+		return (EINVAL);	/* INVALIDATE is stage 1b-ii */
+	}
+	key.o_id = args->dp_object;
+	DQ_LOCK(q);
+	o = RB_FIND(dq_object_tree, &q->q_objects, &key);
+	if (o == NULL) {
+		DQ_UNLOCK(q);
+		return (ESRCH);
+	}
+	DQO_LOCK(o);
+	dq_file_knote(o, args->dp_note);
+	DQO_UNLOCK(o);
+	q->q_stats.ds2_pushes++;
+	DQ_UNLOCK(q);
+	return (0);
 }
 
 /* A controller may lower its depth below the system bound, never raise it. */

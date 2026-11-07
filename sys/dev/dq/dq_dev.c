@@ -230,8 +230,13 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		st = (struct dq_stats *)data;
 		dq_queue_stats(q, st);
 		return (0);
+	case DQ_IOC_GET_STATS2:
+		dq_queue_stats2(q, (struct dq_stats2 *)data);
+		return (0);
 	case DQ_IOC_SET_QUEUE_DEPTH:
 		return (dq_queue_set_depth(q, *(uint32_t *)data));
+	case DQ_IOC_PUSH:
+		return (dq_queue_push(q, (const struct dq_push_args *)data));
 	case FIONBIO:
 	case FIOASYNC:
 		return (0);
@@ -279,6 +284,7 @@ dq_init(void)
 {
 
 	mtx_init(&dq_mtx, "dq", NULL, MTX_DEF);
+	dq_file_init();		/* the lock-owner hash key */
 	dq_cdev = make_dev(&dq_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600, "dq");
 	if (dq_cdev == NULL) {
 		mtx_destroy(&dq_mtx);

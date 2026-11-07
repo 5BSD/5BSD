@@ -44,8 +44,13 @@ and the
 links from an
 .Em identity
 the controller presented, and turns
-.Xr read 2
-into
+.Xr read 2 ,
+.Xr write 2 ,
+the attribute calls,
+.Xr fsync 2 ,
+the space calls, the advisory locks and (when asked) the
+.Xr ioctl 2
+commands a regular file does not answer itself into
 .Em events
 the controller reads from its
 .Em queue
@@ -54,16 +59,18 @@ The process holding such a descriptor, the
 .Em requester ,
 sees a regular file.
 The controller never sees the requester's memory: an event carries an
-offset and a length, a reply carries bytes.
+offset and a length, or the bytes the requester wrote; a reply carries
+bytes.
 .Pp
 The interface is the installed header
 .In dev/dq/dq.h ,
 fixed width, native byte order, LP64 only and additive, and the
 .Xr libdq 3
 library wraps it.
-This page describes the device as built in stage 1a (the
+This page describes the device as built in stage 1b-i (the
 .Dv DQ_KIND_FILE
-kind, read-only), and names every answer that differs from a real file.
+kind, read-only or writable, without mappings), and names every answer
+that differs from a real file.
 .Ss Opening the device
 .Pa /dev/dq
 is created mode 0600, owner root, group wheel.
@@ -78,7 +85,7 @@ without that privilege, with
 before that when the node's mode refuses the caller; a 32-bit process is
 refused with
 .Er EOPNOTSUPP .
-In stage 1a the device permission is the authority; delivery of a
+In stage 1 the device permission is the authority; delivery of a
 rights-limited queue descriptor through the capability plane arrives with
 the
 .Li BSDDescriptorQueue
@@ -105,7 +112,13 @@ of
 .Dv DQ_API_VERSION ,
 whose
 .Va de_size
-is the whole record, header and body; records are packed back to back in a
+is the whole record, header and body, always a multiple of 8: a body with
+a variable payload (the data of a
+.Dv DQ_OP_WRITE ,
+the argument of a
+.Dv DQ_OP_IOCTL )
+is padded with zeros and its length field counts the payload alone.
+Records are packed back to back in a
 .Xr read 2
 buffer.
 .Va de_op
@@ -125,8 +138,8 @@ nonce;
 with pid 0 when a kernel process such as an aio daemon posted it), and
 .Va de_time
 the monotonic time of the post.
-Stage 1a posts:
-.Bl -tag -width "DQ_OP_INTERRUPT" -offset indent
+The operations:
+.Bl -tag -width "DQ_OP_UNLOCK_ALL" -offset indent
 .It Dv DQ_OP_READ
 Body
 .Vt struct dq_read_body :
@@ -163,7 +176,142 @@ of a delivered event whose requester gave up (a signal or
 .Dv SIGKILL
 while waiting).
 No reply; the controller's own reply to that id is late.
+.It Dv DQ_OP_WRITE
+Body
+.Vt struct dq_write_body :
+.Va dw_offset ,
+.Va dw_len
+(at most
+.Va kern.dq.max_io )
+and
+.Va dw_flags ,
+followed by the
+.Va dw_len
+bytes.
+The reply is an errno and, when it is 0, one
+.Vt struct dq_write_reply :
+.Va dwr_written
+(at most
+.Va dw_len ;
+less is a short write) and
+.Va dwr_offset ,
+where the bytes went.
+See
+.Sx Writes .
+.It Dv DQ_OP_SETATTR
+Body
+.Vt struct dq_setattr_body ;
+reply an errno.
+See
+.Sx Attributes .
+.It Dv DQ_OP_FSYNC
+Body
+.Vt struct dq_fsync_body :
+.Va dfs_mode ,
+the
+.Fn fo_fsync
+mode word: 0 for
+.Xr fsync 2 ,
+1 for
+.Xr fdatasync 2 ,
+2 for a whole-filesystem sync (the Linux
+.Fn syncfs ) .
+Reply an errno.
+Posted whenever the object's policy has
+.Va dp_write
+.Dv DQ_EVENT ,
+whatever the descriptor's own access mode (another descriptor may have
+written); under
+.Dv DQ_DENY
+nothing can be dirty and the answer is 0 without an event.
+.It Dv DQ_OP_FALLOCATE
+Body
+.Vt struct dq_fallocate_body :
+.Va dfa_offset ,
+.Va dfa_len
+.Pq Xr posix_fallocate 2 .
+Reply an errno; on success the presented size grows to
+.Va dfa_offset No + Va dfa_len
+if it was smaller and
+.Dv NOTE_WRITE
+(with
+.Dv NOTE_EXTEND
+when it grew) fires.
+No
+.Dv RLIMIT_FSIZE
+is applied, as for a vnode.
+.It Dv DQ_OP_FSPACECTL
+Body
+.Vt struct dq_fspacectl_body :
+.Va dsc_cmd
+.Pq Dv SPACECTL_DEALLOC ,
+.Va dsc_flags ,
+.Va dsc_offset ,
+.Va dsc_len
+.Pq Xr fspacectl 2 .
+The reply is an errno and, when it is 0, one
+.Vt struct dq_fspacectl_reply ,
+the range left undone:
+.Va dscr_offset
+at least
+.Va dsc_offset
+and
+.Va dscr_offset No + Va dscr_len
+equal to
+.Va dsc_offset No + Va dsc_len
+(a finished request answers the end and 0).
+.Dv NOTE_WRITE
+fires on success.
+.It Dv DQ_OP_LOCK
+Body
+.Vt struct dq_lock_body .
+The reply is an errno, and for
+.Dv DQ_LOCK_GETLK
+with errno 0 one
+.Vt struct dq_lock_reply .
+See
+.Sx Locks .
+.It Dv DQ_OP_UNLOCK_ALL
+Body
+.Vt struct dq_unlock_all_body :
+.Va dua_kind
+and
+.Va dua_owner .
+No reply,
+.Va de_id
+0.
+Every lock of that kind the owner holds on the object is gone.
+.It Dv DQ_OP_IOCTL
+Body
+.Vt struct dq_ioctl_body :
+.Va dio_cmd
+and
+.Va dio_len ,
+followed by the input.
+The reply is an errno and the output.
+See
+.Sx Ioctls on a served file .
 .El
+.Pp
+The calls of a requester and the events they post:
+.Bl -column "posix_fallocate(2), fspacectl(2)" "DQ_OP_FALLOCATE, FSPACECTL" -offset indent
+.It Sy Call Ta Sy Event
+.It Xr read 2 , Xr pread 2 , Xr readv 2 , Xr aio_read 2 Ta Dv DQ_OP_READ
+.It Xr write 2 , Xr pwrite 2 , Xr writev 2 , Xr aio_write 2 Ta Dv DQ_OP_WRITE
+.It Xr ftruncate 2 , Xr fchmod 2 , Xr fchown 2 Ta Dv DQ_OP_SETATTR
+.It Xr futimens 2 , Xr fchflags 2 , Pa /dev/fd/N Ta Dv DQ_OP_SETATTR
+.It Xr fsync 2 , Xr fdatasync 2 , Xr aio_fsync 2 Ta Dv DQ_OP_FSYNC
+.It Xr posix_fallocate 2 , Xr fspacectl 2 Ta Dv DQ_OP_FALLOCATE , FSPACECTL
+.It Xr fcntl 2 locks, Xr flock 2 Ta Dv DQ_OP_LOCK
+.It Xr close 2 , Xr _exit 2 Ta Dv DQ_OP_UNLOCK_ALL , CLOSE
+.It Xr ioctl 2 , Dv F_SETOWN Ta Dv DQ_OP_IOCTL
+.It Xr fstat 2 Ta Dv DQ_OP_GETATTR
+.El
+.Pp
+.Dv DQ_OP_READ_ASYNC
+and
+.Dv DQ_OP_WRITE_ASYNC
+are the page operations of the pager (stage 1b-ii) and are not posted.
 .Pp
 The controller answers with
 .Dv DQ_IOC_REPLY
@@ -187,12 +335,105 @@ and with
 for a wrong version or padding, an errno outside the kernel's range, a
 length above
 .Va kern.dq.max_io ,
-a
-.Dv DQ_OP_READ
-body longer than asked or with a nonzero errno, a
-.Dv DQ_OP_GETATTR
-body that is not one valid identity, or a reply to an operation that takes
+a body the operation does not take, or a reply to an operation that takes
+none; a refused reply leaves the event in flight, so the controller can
+answer it correctly.
+The body rules:
+.Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
+.It Dv DQ_OP_READ
+at most
+.Va dr_len
+bytes; none with an errno.
+.It Dv DQ_OP_GETATTR
+exactly one valid
+.Vt struct dq_ident_file
+with errno 0; none with an errno.
+.It Dv DQ_OP_WRITE
+exactly one
+.Vt struct dq_write_reply
+with errno 0, with
+.Va dwr_written
+at most
+.Va dw_len ,
+.Va dwr_offset
+at most
+.Dv OFF_MAX
+and their sum at most
+.Dv OFF_MAX ,
+and, unless
+.Dv DQ_WRITE_F_APPEND
+is set,
+.Va dwr_offset
+equal to
+.Va dw_offset ;
+none with an errno.
+A
+.Va dwr_written
+of 0 with errno 0 for a chunk of at least one byte is accepted and
+reaches the requester as
+.Er EIO
+(a regular file never answers a write with 0 bytes and no error).
+.It Dv DQ_OP_SETATTR , FSYNC , FALLOCATE
 none.
+.It Dv DQ_OP_FSPACECTL
+exactly one
+.Vt struct dq_fspacectl_reply
+with errno 0 meeting the range rule above; none with an errno.
+.It Dv DQ_OP_LOCK
+exactly one
+.Vt struct dq_lock_reply
+for a successful
+.Dv DQ_LOCK_GETLK ,
+whose
+.Va dlr_type
+is
+.Dv F_UNLCK ,
+or
+.Dv F_RDLCK
+or
+.Dv F_WRLCK
+with a nonnegative start and length, an end within
+.Dv OFF_MAX
+and a pid of at least -1; none otherwise.
+.It Dv DQ_OP_IOCTL
+exactly
+.Fn IOCPARM_LEN dio_cmd
+bytes for a successful command with
+.Dv IOC_OUT
+set; none otherwise.
+.El
+.Pp
+The errno a controller may answer is allow-listed per operation.
+Any other errno reaches the requester as
+.Er EIO
+and is counted in
+.Va ds2_bad_replies ,
+so that, for instance, a controller's
+.Er EPIPE
+can never make
+.Xr write 2
+raise
+.Dv SIGPIPE :
+.Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
+.It Dv DQ_OP_READ , GETATTR
+any errno.
+.It Dv DQ_OP_WRITE
+.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS , EINTR ,
+.Er EAGAIN , ENXIO , EINVAL , ESTALE .
+.It Dv DQ_OP_SETATTR
+.Er EPERM , EROFS , EINVAL , EOPNOTSUPP , EIO , EFBIG , EDQUOT , ENOSPC ,
+.Er EACCES , ESTALE .
+.It Dv DQ_OP_FSYNC
+.Er EIO , EINVAL , ENOSPC , EDQUOT , ESTALE .
+.It Dv DQ_OP_FALLOCATE
+.Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , EDQUOT .
+.It Dv DQ_OP_FSPACECTL
+.Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , ENODEV .
+.It Dv DQ_OP_LOCK
+.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
+.It Dv DQ_OP_IOCTL
+.Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
+.El
 .Ss Reading the queue
 .Xr read 2
 on the queue copies whole records, as many as fit, in order, and never
@@ -270,6 +511,33 @@ record a signal does
 always breaks a wait.
 When a reply and a signal race, the state decides: a reply that landed
 first is consumed and no interruption is recorded.
+.Pp
+A
+.Dv DQ_OP_LOCK
+wait has no deadline, whatever the policy says: a blocked
+.Dv F_SETLKW
+is a legitimate wait of any length on a real file.
+Lock waits are counted apart from the in-flight bounds (a blocked locker
+never holds a slot readers and writers need) and bounded by the queue
+depth alone; a signal ends one as any other wait, with
+.Dv DQ_OP_INTERRUPT .
+.Dv DQ_OP_UNLOCK_ALL ,
+.Dv DQ_OP_CLOSE
+and
+.Dv DQ_OP_INTERRUPT
+carry
+.Va de_id
+0, take no reply and are never waited for.
+.Dv DQ_OP_UNLOCK_ALL
+and
+.Dv DQ_OP_INTERRUPT
+are never dropped: they are queued beyond the depth when the queue is
+full (a lost one would leave a lock held or a waiter granted for good),
+and each such enqueue counts in
+.Va ds2_overdepth .
+A
+.Dv DQ_OP_CLOSE
+on a full queue is dropped like any other event.
 .Ss Identity
 A
 .Vt struct dq_ident_file
@@ -364,30 +632,44 @@ names a slot beyond
 .It Dv DQ_REASON_POLICY , DQ_REASON_RIGHTS
 see
 .Sx Policy .
+.It Dv DQ_REASON_FLAGS
+.Va dm_flags
+holds a bit other than
+.Dv DQ_MINT_F_WRITE ,
+or
+.Dv DQ_MINT_F_WRITE
+with a policy whose
+.Va dp_write
+is not
+.Dv DQ_EVENT .
 .El
 .Ss Policy
 A
 .Vt struct dq_policy
 accompanies each object.
-Stage 1a accepts
+Stage 1b-i accepts
 .Va dp_cache
 .Dv DQ_CACHE_NONE
-(no page cache, which is stage 1b; the only switch for whether
+(no page cache, which is stage 1b-ii; the only switch for whether
 .Xr fstat 2
 posts is
 .Dv DQ_EVENTS_GETATTR )
 or
 .Dv DQ_CACHE_ATTR ;
-.Va dp_write ,
-.Va dp_exec ,
-.Va dp_mmap_shared_write
-and
+.Va dp_write
+.Dv DQ_DENY
+or
+.Dv DQ_EVENT ;
 .Va dp_ioctl
+.Dv DQ_DENY
+or
+.Dv DQ_EVENT ;
+.Va dp_exec
+and
+.Va dp_mmap_shared_write
 .Dv DQ_DENY ;
 .Va dp_lock
-.Dv DQ_EVENT
-(accepted; nothing posts, see
-.Sx STAGE 1A ) ;
+.Dv DQ_EVENT ;
 .Va dp_deadline_ms
 at least
 .Dv DQ_DEADLINE_DEFAULT ;
@@ -416,10 +698,34 @@ would should pass
 .Dv DQ_IOC_SETPOLICY
 may later change
 .Va dp_cache ,
+.Va dp_ioctl ,
 .Va dp_deadline_ms
 and
 .Va dp_events
-only; the other fields and the rights must equal the minted values.
+only; the other fields and the rights must equal the minted values
+.Po
+.Va dp_write
+fixed the descriptor's access mode
+.Pc .
+.Pp
+The access mode of the minted descriptor is fixed at the mint, as
+.Xr open 2
+fixes it: it is
+.Dv FREAD
+unless
+.Va dm_flags
+holds
+.Dv DQ_MINT_F_WRITE ,
+which installs it
+.Dv FREAD | FWRITE
+and needs
+.Va dp_write
+.Dv DQ_EVENT .
+A policy of
+.Dv DQ_EVENT
+without the flag serves writes through no descriptor yet, but its
+descriptors post
+.Dv DQ_OP_FSYNC .
 .Ss Ioctls
 All on the queue descriptor, group
 .Ql j :
@@ -498,11 +804,71 @@ See
 The queue's counters, its kernel-wide id
 .Va ds_queue_id
 and its depth; also answered by an observer descriptor.
+The structure is frozen (its size is in the command word); new counters
+are in
+.Dv DQ_IOC_GET_STATS2 .
 .It Dv DQ_IOC_SET_QUEUE_DEPTH Vt uint32_t
 Lower the depth to 1..
 .Va kern.dq.queue_depth ;
 .Er EINVAL
 otherwise.
+.It Dv DQ_IOC_PUSH Vt "struct dq_push_args"
+With
+.Va dp_op
+.Dv DQ_PUSH_NOTIFY_VNODE ,
+raise
+.Va dp_note
+on the object's
+.Dv EVFILT_VNODE
+knotes for what happened elsewhere: any combination of
+.Dv NOTE_DELETE , NOTE_WRITE , NOTE_EXTEND , NOTE_ATTRIB , NOTE_LINK ,
+.Dv NOTE_RENAME , NOTE_OPEN , NOTE_CLOSE , NOTE_CLOSE_WRITE
+and
+.Dv NOTE_READ ,
+counted in
+.Va ds2_pushes .
+A note of 0, one with
+.Dv NOTE_REVOKE
+(the
+.Dv DQ_IOC_REVOKE
+ioctl's) or an unknown bit, a wrong version, nonzero padding and any other
+.Va dp_op
+.Po
+.Dv DQ_PUSH_INVALIDATE
+is stage 1b-ii
+.Pc
+are
+.Er EINVAL ;
+an unknown object is
+.Er ESRCH .
+Attributes changed elsewhere travel with
+.Dv DQ_IOC_SETIDENT ,
+which raises
+.Dv NOTE_ATTRIB
+itself.
+.It Dv DQ_IOC_GET_STATS2 Vt "struct dq_stats2"
+Everything
+.Vt struct dq_stats
+holds plus
+.Va ds2_locks
+.Pq Dv DQ_OP_LOCK No events posted ,
+.Va ds2_pushes ,
+.Va ds2_bad_replies
+(reply errnos outside the operation's allow-list),
+.Va ds2_overdepth
+(records queued beyond the depth, see
+.Sx Waiting, deadlines and interruption )
+and the stage 1b-ii
+counters
+.Va ds2_async_pending ,
+.Va ds2_async_bytes
+and
+.Va ds2_async_deadlines ,
+0 for now.
+The kernel writes
+.Va ds2_size
+.Pq 320 .
+Also answered by an observer descriptor.
 .El
 .Pp
 .Dv FIONBIO
@@ -565,7 +931,20 @@ mints, forks, and the child holds the object and not the queue.
 A process whose descriptor table holds the queue is refused every operation
 on the queue's objects that would post an event with
 .Er EDEADLK
-.Pq Xr read 2 , Xr pread 2 , Xr readv 2 , Xr aio_read 2 , and Xr fstat 2 under Dv DQ_EVENTS_GETATTR ;
+(the reads and writes, the attribute, sync and space calls of
+.Sx Events and replies ,
+the locks, the event ioctls, and
+.Xr fstat 2
+under
+.Dv DQ_EVENTS_GETATTR ) ;
+it is the first check of each such operation, made before any lock or
+offset is taken, so the controller is refused at once rather than left
+waiting on a range one of its own requesters holds while that requester
+waits on the controller; only what the generic layer refuses before the
+operation is reached comes first (a read-only object's
+.Xr write 2
+is still
+.Er EBADF ) ;
 the test is by the queue's file in the caller's table, so a
 .Xr dup 2
 or a
@@ -601,18 +980,43 @@ for every reply, with
 .Va de_object
 0 and a zeroed
 .Va de_caller .
-Lengths are always visible; data bodies are removed unless the observer
-was minted with
-.Dv DQ_OBS_F_DATA ,
-and in stage 1a no event carries data and reply bytes belong to the
-waiter, so the two forms deliver the same records.
+Data bodies are removed unless the observer was minted with
+.Dv DQ_OBS_F_DATA :
+.Bl -bullet -offset indent
+.It
+a
+.Dv DQ_OP_WRITE
+copy on a data observer is the whole event, header, body and bytes; on
+any other observer it is the header alone, flagged
+.Dv DQ_EVENT_F_NODATA ;
+.It
+a
+.Dv DQ_OP_REPLY
+record on a data observer is the header, the
+.Vt struct dq_reply_record
+and the reply's
+.Va drr_len
+bytes padded to 8; on any other observer it is the header and the record,
+with
+.Va drr_len
+kept and
+.Dv DQ_EVENT_F_NODATA
+set when the reply carried bytes;
+.It
+every other body (a read's offset and length, an ioctl's argument, a lock)
+is copied whole to both.
+.El
+.Pp
+The bytes are shared with the waiter rather than copied (a reference to
+the event or to the reply buffer), so a data observer costs no copy under
+the queue lock.
 The descriptor answers
 .Xr read 2
 with the queue's batching rules,
 .Xr poll 2 ,
 .Xr kqueue 2
 .Pq Dv EVFILT_READ , records in Va data ,
-.Dv DQ_IOC_GET_STATS
+.Dv DQ_IOC_GET_STATS , DQ_IOC_GET_STATS2
 and
 .Xr fcntl 2
 .Dv F_GETFL
@@ -620,7 +1024,11 @@ and
 .Dv F_SETFL
 (its rights are
 .Dv CAP_READ , CAP_EVENT , CAP_FSTAT , CAP_IOCTL
-limited to that command and
+limited to the stats commands,
+.Dv FIONBIO
+and
+.Dv FIOASYNC ,
+and
 .Dv CAP_FCNTL
 limited to those two, so any other ioctl or fcntl, and
 .Xr write 2 ,
@@ -649,10 +1057,394 @@ installs a metadata-only observer of a queue in the caller, rights-limited
 and locked exactly like an ioctl-minted one, and names it in a
 .Vt struct dqo_subscribe_reply
 (a framework reply descriptor would carry full rights).
-In stage 1a it admits a credential that may open the device.
-.Sh STAGE 1A
-A stage 1a object is read-only and the mutating operations answer what a
-read-only descriptor on a real file answers, or the value given here.
+In stage 1 it admits a credential that may open the device.
+.Ss Writes
+A descriptor minted with
+.Dv DQ_MINT_F_WRITE
+turns
+.Xr write 2 ,
+.Xr pwrite 2 ,
+.Xr writev 2 ,
+.Xr pwritev 2
+and, where
+.Xr aio 4
+accepts the descriptor,
+.Xr aio_write 2
+into
+.Dv DQ_OP_WRITE
+events, one per
+.Va kern.dq.max_io
+chunk, in order, each waited for before the next and each carrying its
+bytes.
+.Va dw_flags
+is computed as a vnode computes its I/O flags:
+.Dv DQ_WRITE_F_APPEND
+for an
+.Dv O_APPEND
+descriptor (and a
+.Xr pwrite 2
+on one),
+.Dv DQ_WRITE_F_SYNC
+for
+.Dv O_SYNC ,
+.Dv DQ_WRITE_F_DSYNC
+for
+.Dv O_DSYNC
+when
+.Dv O_SYNC
+is not also set.
+Under
+.Dv DQ_WRITE_F_APPEND
+.Va dw_offset
+is advisory: the end of file is the controller's, and the reply's
+.Va dwr_offset
+says where the bytes went.
+The implicit file offset of a
+.Xr write 2
+becomes
+.Va dwr_offset No + Va dwr_written ;
+a positioned write leaves it alone.
+On success the presented size grows to the end of the written range if it
+was smaller and
+.Dv NOTE_WRITE ,
+with
+.Dv NOTE_EXTEND
+when it grew, fires; the controller may
+.Dv DQ_IOC_SETIDENT
+the rest (times, blocks) at any time.
+.Pp
+A write takes the object's range lock as a vnode write does: the whole
+file for an appending or implicit-offset write, the written range
+otherwise.
+A write of length 0 posts nothing and returns 0 after the checks.
+A short reply ends the call with that count and posts no further chunk.
+.Dv RLIMIT_FSIZE
+applies as for a vnode: a write that crosses the limit is clamped to it
+(the clamped tail is not posted), and one that starts at or past it fails
+with
+.Er EFBIG
+and
+.Dv SIGXFSZ ;
+for an append the limit is measured at the presented size, the best the
+kernel knows before the controller names its end of file.
+A failure after some chunks were accepted returns the error and the count
+is lost, except for
+.Er EINTR ,
+.Er ERESTART
+and
+.Er EWOULDBLOCK ,
+which make it a short write of the accepted bytes, as
+.Fn dofilewrite
+does.
+No rollback of accepted chunks is possible: a failing chunk does not undo
+the earlier ones (a vnode's all-or-nothing
+.Dv IO_UNIT
+is a property of each filesystem, and a served file has none); a declared
+difference.
+.Ss Attributes
+.Xr fchmod 2 ,
+.Xr fchown 2 ,
+.Xr futimens 2
+.Pq and Xr futimes 2 ,
+.Xr fchflags 2 ,
+.Xr ftruncate 2
+and the whole-attribute path of an
+.Xr fdescfs 4
+.Pa /dev/fd/ Ns Ar N
+post
+.Dv DQ_OP_SETATTR .
+Ownership governs, not the access mode: every object posts it, read-only
+ones included, except
+.Xr ftruncate 2 ,
+which the generic layer refuses with
+.Er EINVAL
+on a descriptor without
+.Dv FWRITE .
+.Va dsa_mask
+names the fields to set
+.Pq Dv DQ_SETATTR_MODE , UID , GID , SIZE , FLAGS , ATIME , MTIME , BIRTHTIME ;
+.Dv DQ_SETATTR_F_UTIMES_NULL
+marks times set to now by a caller that needed only write permission.
+An empty change
+.Pq Fn fchown fd -1 -1
+posts nothing.
+.Pp
+Before posting, the kernel applies to the presented identity and the
+requester's credential the rules a vnode applies, so the controller is
+asked only what it alone can decide (a read-only backing store, a stale
+state):
+.Bl -bullet -offset indent
+.It
+mode, owner and flags need the owner or
+.Dv PRIV_VFS_ADMIN
+.Pq Er EPERM ;
+times need the same, or write permission when they are set to now;
+.It
+the sticky bit on a regular file needs
+.Dv PRIV_VFS_STICKYFILE
+.Pq Er EFTYPE ;
+a set-group-id bit outside the caller's groups needs
+.Dv PRIV_VFS_SETGID ;
+a set-user-id bit by a non-owner needs
+.Dv PRIV_VFS_ADMIN ;
+and a served identity never carries set-id bits, so either is then
+.Er EPERM ;
+.It
+giving the file away, or to a group the caller is not in, needs
+.Dv PRIV_VFS_CHOWN
+.Pq Er EPERM ;
+.It
+flags outside the settable set are
+.Er EOPNOTSUPP ;
+without
+.Dv PRIV_VFS_SYSFLAGS
+any change of a system flag, or any change while
+.Dv SF_NOUNLINK , SF_IMMUTABLE
+or
+.Dv SF_APPEND
+is set, is
+.Er EPERM ;
+with it, the same under a securelevel above 0;
+.Dv SF_SNAPSHOT
+never toggles;
+.It
+an immutable or append-only identity refuses every other attribute
+.Pq Er EPERM ,
+and a snapshot refuses size and times, and any mode with a write or
+execute bit
+.Pq Er EPERM , as Fn ufs_chmod .
+.El
+.Pp
+Two declared differences from
+.Xr ufs 4
+in how a whole attribute change is applied:
+setting an immutable or append-only flag together with another attribute
+in one change is refused with
+.Er EPERM ,
+where ufs sets the flags and silently skips the rest; and in the
+whole-attribute path
+.Pq Xr fdescfs 4
+size, mode and owner are applied before flags and times (each by its own
+operation, as every operations table does), so clearing an immutable flag
+and changing the mode in one change fails on the immutable flag still
+set.
+.Pp
+On success the requested fields become the identity, a modification time
+earlier than the birth time pulls the birth time back with it (the body
+then carries
+.Dv DQ_SETATTR_BIRTHTIME ) ,
+the change time is now and
+.Dv NOTE_ATTRIB
+fires.
+.Xr ftruncate 2
+holds the whole range lock and applies
+.Dv RLIMIT_FSIZE
+after the attribute checks, so a refused truncation raises no
+.Dv SIGXFSZ .
+.Ss Locks
+The operations table carries
+.Dv DFLAG_RECLOCK
+and
+.Dv DFLAG_FLOCK :
+.Xr fcntl 2
+.Dv F_SETLK , F_SETLKW , F_GETLK ,
+the
+.Dv F_OFD_*
+commands and
+.Xr flock 2
+are
+.Dv DQ_OP_LOCK
+events, whatever the policy's
+.Va dp_write
+(a read lock is the read-only descriptor's right; a write lock on one is
+the generic layer's
+.Er EBADF ) .
+The body names
+.Va dl_op
+.Pq Dv DQ_LOCK_GETLK , SETLK , SETLKW , UNLCK ,
+.Va dl_kind
+.Pq Dv DQ_LOCK_POSIX , FLOCK , OFD ,
+.Va dl_type
+.Pq Dv F_RDLCK , F_WRLCK , F_UNLCK ,
+the range normalised as
+.Xr lockf 9
+normalises it (from the start of the file;
+.Dv SEEK_END
+resolved from the presented size; a negative length folded; a length of 0
+to the end of the file), the owner and the pid.
+A negative start is
+.Er EINVAL
+and an end past
+.Dv OFF_MAX
+.Er EOVERFLOW ,
+both before any event; an
+.Dv F_UNLCK
+by the user is a waited
+.Dv DQ_LOCK_UNLCK .
+.Pp
+Owners are what
+.Xr lockf 9
+uses: for a POSIX lock the process leader, named by its pid in both
+.Va dl_owner
+and
+.Va dl_pid ;
+for a
+.Xr flock 2
+or OFD lock the open file, named by a keyed hash of it (stable across
+.Xr dup 2
+and
+.Xr fork 2 ,
+distinct per open, never a kernel address) with
+.Va dl_pid
+-1.
+A blocked
+.Dv DQ_LOCK_SETLKW
+waits without a deadline; a signal ends it with
+.Er EINTR
+and posts
+.Dv DQ_OP_INTERRUPT ,
+and the controller must then not grant it.
+The pid a
+.Dv DQ_LOCK_GETLK
+reply names is the controller's to give; one that proxies through OFD
+locks, as
+.Xr libdq 3 Ap s
+.Fn dq_serve_file
+does, answers -1 where a real file names the POSIX owner (a declared
+difference of that controller, not of the device).
+Deadlock detection between owners is the controller's
+.Pq Er EDEADLK ;
+the kernel's own
+.Er EDEADLK
+is the rule for a process holding the queue.
+.Pp
+Release follows the real file.
+A process holds one set of POSIX locks per file, however many opens of it
+it has: on a served file the file is the identity, so a
+.Dv DQ_OP_LOCK
+of kind
+.Dv DQ_LOCK_POSIX
+on one object marks every object of the same
+.Va di_dev
+and
+.Va di_ino
+on the queue (its siblings), and closing a descriptor of any of them, or
+exiting, posts
+.Dv DQ_OP_UNLOCK_ALL
+with
+.Dv DQ_LOCK_POSIX
+and the leader's pid on the object closed: the owner's POSIX locks on
+the identity are gone, whichever object they were taken through.
+A controller keeps POSIX owners per identity accordingly
+.Po
+.Xr libdq 3 Ap s
+.Fn dq_serve_file
+does
+.Pc .
+.Xr flock 2
+and OFD locks are released at the last reference to the open file:
+.Dv DQ_OP_UNLOCK_ALL
+with that kind and the open's owner.
+Both are posted without waiting, from close paths that may run without a
+thread, and only when a
+.Dv DQ_OP_LOCK
+of that kind was ever posted on the object, so an object that never
+locked costs its closes nothing.
+.Ss Ioctls on a served file
+.Dv FIONREAD ,
+.Dv FIONBIO ,
+.Dv FIOASYNC ,
+.Dv FIOSEEKDATA
+and
+.Dv FIOSEEKHOLE
+are answered locally from the identity, and
+.Dv FIOBMAP2
+is
+.Er EOPNOTSUPP .
+Every other command, the
+.Dv FIOSETOWN
+and
+.Dv FIOGETOWN
+of
+.Dv F_SETOWN
+and
+.Dv F_GETOWN
+included, is
+.Er ENOTTY
+under
+.Va dp_ioctl
+.Dv DQ_DENY
+and a
+.Dv DQ_OP_IOCTL
+event under
+.Dv DQ_EVENT .
+The event carries what the generic layer copied in: for an
+.Dv IOC_IN
+command its
+.Fn IOCPARM_LEN cmd
+argument bytes, for an
+.Dv IOC_VOID
+command of int size the integer, and nothing for an
+.Dv IOC_VOID
+command of size 0 or an
+.Dv IOC_OUT
+command alone; a raw pointer value is never shipped.
+For a successful
+.Dv IOC_OUT
+command the reply carries exactly
+.Fn IOCPARM_LEN cmd
+bytes, which are copied out to the caller.
+The kernel cannot tell from a command number whether its argument embeds
+pointers: a controller refuses what it cannot serve with
+.Er ENOTTY ,
+which is also what a regular file answers for an unknown command.
+.Ss kqueue notes
+.Dv EVFILT_VNODE
+on a served file reports what a vnode's operations raise:
+.Bl -tag -width "NOTE_CLOSE_WRITE" -offset indent
+.It Dv NOTE_READ
+a successful read.
+.It Dv NOTE_WRITE
+a successful write, allocation or deallocation
+.Pq Xr posix_fallocate 2 , Xr fspacectl 2 ;
+with
+.Dv NOTE_EXTEND
+when the presented size grew.
+.It Dv NOTE_ATTRIB
+a successful attribute change or truncation, and
+.Dv DQ_IOC_SETIDENT .
+.It Dv NOTE_REVOKE
+.Dv DQ_IOC_REVOKE
+or the queue closing; the knote then reports
+.Dv EV_EOF .
+.It Dv NOTE_OPEN , NOTE_CLOSE , NOTE_CLOSE_WRITE
+a mint, and a last close (by a descriptor with
+.Dv FWRITE ,
+.Dv NOTE_CLOSE_WRITE ) .
+An object has one open file, so these can reach no knote on the object
+itself; they fire on the
+.Em sibling
+objects, those presenting the same
+.Va di_dev
+and
+.Va di_ino
+on the same queue, which is how a vnode's other opens see them.
+Objects of other identities and of other queues see nothing.
+.El
+.Pp
+What happened elsewhere (a delete, link or rename, a write by another
+client) the controller raises with
+.Dv DQ_IOC_PUSH .
+.Dv EVFILT_READ
+reports the presented size minus the offset;
+.Dv EVFILT_WRITE
+is always ready.
+.Sh READ-ONLY OBJECTS
+A descriptor minted without
+.Dv DQ_MINT_F_WRITE
+answers the mutating data operations as a read-only descriptor on a real
+file does, and the operations no stage serves yet answer a declared value.
+None posts an event.
 Every row is pinned by
 .Pa tests/sys/dq/dq_stage1a_test .
 .Bl -tag -width "ioctl(FIOBMAP2)" -offset indent
@@ -665,18 +1457,30 @@ and the generic layer refuses before the fileop.
 .Er EINVAL ,
 the generic layer's answer for every non-writable descriptor.
 .It Xr fchmod 2 , Xr fchown 2 , Xr futimens 2 , Xr fchflags 2
-.Er EPERM ,
-the non-owner's answer, until
-.Dv SETATTR
-events arrive.
-.It Xr fsync 2 , Xr fdatasync 2 , Xr posix_fadvise 2
-0; nothing is dirty and every valid advice is accepted.
+served as
+.Dv DQ_OP_SETATTR
+.Pq ownership governs, see Sx Attributes ;
+the kernel's own refusals (set-id bits, a non-owner, a system flag
+without privilege) come first and post nothing.
+.It Xr fsync 2 , Xr fdatasync 2
+0 without an event under
+.Va dp_write
+.Dv DQ_DENY ;
+an event under
+.Dv DQ_EVENT .
+.Xr posix_fadvise 2
+accepts every valid advice.
+.It Xr fcntl 2 write locks
+.Er EBADF ,
+as on a read-only real file; read locks and
+.Xr flock 2
+are events (see
+.Sx Locks ) .
 .It Xr mmap 2
 .Er ENODEV ;
-the pager is stage 1b.
-.It Xr aio_read 2
-.Er EOPNOTSUPP
-unless
+the pager is stage 1b-ii.
+.It Xr aio_read 2 , Xr aio_write 2 , Xr aio_fsync 2
+refused unless
 .Va vfs.aio.enable_unsafe
 is set:
 .Xr aio 4
@@ -688,18 +1492,6 @@ with the requester's credential.
 .Er EINVAL .
 .It ACLs, extended attributes
 .Er EOPNOTSUPP .
-.It Xr fcntl 2 record locks, Xr flock 2
-.Er EBADF
-and
-.Er EOPNOTSUPP :
-the operations table lacks
-.Dv DFLAG_RECLOCK
-and
-.Dv DFLAG_FLOCK ,
-so the generic layer refuses before any event; the accepted
-.Va dp_lock
-.Dv DQ_EVENT
-posts nothing yet.
 .It Xr fcntl 2 Dv F_READAHEAD , F_RDAHEAD , F_ISUNIONSTACK
 0, as a regular file.
 The kernel-private read/write hint commands reached through the Linux
@@ -710,21 +1502,20 @@ compatibility layer answer 0 and
 .It Xr getdirentries 2
 .Er ENOTDIR ,
 the generic layer's answer for every non-directory.
-.It Xr ioctl 2 Dv FIONREAD , FIONBIO , FIOASYNC , FIOSEEKDATA , FIOSEEKHOLE
-Local: size minus offset (with the int truncation a vnode applies), 0, 0,
-and one data extent covering the whole file.
+.It Xr ioctl 2
+see
+.Sx Ioctls on a served file ;
+under
+.Dv DQ_DENY
+every command but the local ones is
+.Er ENOTTY ,
+.Dv FIODTYPE
+included.
 .It ioctl(FIOBMAP2)
 .Er EOPNOTSUPP ;
 a real file runs
 .Dv VOP_BMAP .
 A declared difference.
-.It Xr ioctl 2 , other commands
-.Er ENOTTY ,
-.Dv FIODTYPE
-included:
-.Va dp_ioctl
-is
-.Dv DQ_DENY .
 .It Xr lseek 2
 Local:
 .Dv SEEK_SET ,
@@ -743,20 +1534,6 @@ and
 answers the size.
 .It Xr poll 2 , Xr select 2
 Always ready for the standard events, as a regular file.
-.It Xr kqueue 2
-.Dv EVFILT_READ
-reports size minus offset
-.Pq ready when positive or under Dv NOTE_FILE_POLL ;
-.Dv EVFILT_WRITE
-is always ready with
-.Va data
-0;
-.Dv EVFILT_VNODE
-supports
-.Dv NOTE_ATTRIB
-.Pq Dv DQ_IOC_SETIDENT
-and
-.Dv NOTE_REVOKE .
 .It Xr fstatfs 2
 The identity's statfs, unfiltered: no mount exists for
 .Fn prison_enforce_statfs
@@ -765,12 +1542,80 @@ A declared difference.
 .It Xr mac_get_fd 3
 .Er EINVAL :
 the label system calls dispatch on the file type and have no arm for a
-served file.
-A stage 1a difference.
+served file, which carries no label of its own (see
+.Sx MAC ) .
 .It Va f_cred
 The controller's credential, see
 .Sx Delivery of a minted descriptor .
 .El
+.Sh STAGE 1B
+Stage 1b-i serves writes, attributes, sync, space, locks, ioctls and
+kqueue notes as described above.
+What it moved from stage 1a's pins: the write family on a writable
+object, the attribute calls on every object, locks (no longer
+.Er EBADF
+and
+.Er EOPNOTSUPP
+from a table without lock flags), event ioctls, and
+.Xr fsync 2
+under
+.Dv DQ_EVENT .
+Declared differences that remain:
+.Bl -bullet -offset indent
+.It
+No rollback across the chunks of a large write (see
+.Sx Writes ) .
+.It
+A mapping keeps the open file alive, so once mappings exist (stage 1b-ii)
+the
+.Xr flock 2
+and OFD release,
+.Dv DQ_OP_CLOSE
+and
+.Dv NOTE_CLOSE
+happen at the last
+.Xr munmap 2
+when a mapping outlives the descriptor, where a vnode releases at the last
+close.
+Mapping lifetime,
+.Xr mmap 2 ,
+.Xr msync 2 ,
+.Xr sendfile 2 ,
+.Dv DQ_CACHE_DATA ,
+.Dv DQ_PUSH_INVALIDATE
+and the
+.Dv DQ_OP_READ_ASYNC
+and
+.Dv DQ_OP_WRITE_ASYNC
+page operations are stage 1b-ii.
+.It
+.Dv O_TRUNC
+at open is a vnode's alone (served files are not opened by path yet).
+.It
+The controller's word is the end of file of an append; the kernel applies
+.Dv RLIMIT_FSIZE
+to an append at the presented size.
+.El
+.Sh MAC
+.Xr posix_fallocate 2
+and
+.Xr fspacectl 2
+run
+.Fn mac_file_check_write
+at the boundary for every descriptor type (a vnode is then checked twice,
+as
+.Xr read 2
+and
+.Xr write 2
+already are), and the Linux write and
+.Dv FS_IOC_SETFLAGS
+paths run the file hooks the native calls run.
+A served object carries no label: under
+.Xr mac_abac 4
+its read, write, stat, mmap and setattr checks evaluate the requester's
+label against the label of the controller's credential captured when the
+queue was opened, the label a POSIX shared memory object created by the
+controller would have carried.
 .Sh SYSCTL VARIABLES
 All under
 .Va kern.dq ,
@@ -847,11 +1692,18 @@ a complete controller
 .El
 .Sh SEE ALSO
 .Xr cap_xfer_limit 2 ,
+.Xr fcntl 2 ,
+.Xr flock 2 ,
+.Xr fspacectl 2 ,
+.Xr posix_fallocate 2 ,
 .Xr libdq 3 ,
+.Xr aio 4 ,
 .Xr fdescfs 4 ,
+.Xr mac_abac 4 ,
 .Xr mac_capability 4 ,
 .Xr oes 4 ,
 .Xr fileops 9 ,
+.Xr lockf 9 ,
 .Xr mac 9
 .Pp
 .Pa docs/book/src/capability/descriptor-queue.md

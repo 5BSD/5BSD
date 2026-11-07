@@ -27,7 +27,30 @@
 .Nm dq_observe_connect ,
 .Nm dq_observe_list_queues ,
 .Nm dq_observe_list_objects ,
-.Nm dq_observe_subscribe
+.Nm dq_observe_subscribe ,
+.Nm dq_get_stats2 ,
+.Nm dq_mint_file_flags ,
+.Nm dq_push_vnode_note ,
+.Nm dq_event_read ,
+.Nm dq_event_write ,
+.Nm dq_event_setattr ,
+.Nm dq_event_fsync ,
+.Nm dq_event_fallocate ,
+.Nm dq_event_fspacectl ,
+.Nm dq_event_lock ,
+.Nm dq_event_unlock_all ,
+.Nm dq_event_ioctl ,
+.Nm dq_event_interrupt ,
+.Nm dq_event_reply_record ,
+.Nm dq_reply_write ,
+.Nm dq_reply_fspacectl ,
+.Nm dq_reply_lock ,
+.Nm dq_reply_ioctl ,
+.Nm dq_reply_errno_allowed ,
+.Nm dq_serve_state_create ,
+.Nm dq_serve_state_destroy ,
+.Nm dq_serve_state_owners ,
+.Nm dq_serve_file
 .Nd DescriptorQueue controller library
 .Sh LIBRARY
 DescriptorQueue controller library
@@ -93,6 +116,69 @@ DescriptorQueue controller library
 .Fc
 .Ft int
 .Fn dq_observe_subscribe "int svc" "uint64_t queue"
+.Ft int
+.Fn dq_get_stats2 "int fd" "struct dq_stats2 *st"
+.Ft int
+.Fo dq_mint_file_flags
+.Fa "int q" "const struct dq_ident_file *ident" "const struct dq_policy *pol"
+.Fa "uint32_t flags" "uint64_t *object" "int *fd" "int *reason"
+.Fc
+.Ft int
+.Fn dq_push_vnode_note "int q" "uint64_t object" "uint32_t note"
+.Ft int
+.Fn dq_event_read "const struct dq_event *ev" "const struct dq_read_body **body"
+.Ft int
+.Fo dq_event_write
+.Fa "const struct dq_event *ev" "const struct dq_write_body **body"
+.Fa "const void **data" "size_t *len"
+.Fc
+.Ft int
+.Fn dq_event_setattr "const struct dq_event *ev" "const struct dq_setattr_body **body"
+.Ft int
+.Fn dq_event_fsync "const struct dq_event *ev" "const struct dq_fsync_body **body"
+.Ft int
+.Fn dq_event_fallocate "const struct dq_event *ev" "const struct dq_fallocate_body **body"
+.Ft int
+.Fn dq_event_fspacectl "const struct dq_event *ev" "const struct dq_fspacectl_body **body"
+.Ft int
+.Fn dq_event_lock "const struct dq_event *ev" "const struct dq_lock_body **body"
+.Ft int
+.Fn dq_event_unlock_all "const struct dq_event *ev" "const struct dq_unlock_all_body **body"
+.Ft int
+.Fo dq_event_ioctl
+.Fa "const struct dq_event *ev" "const struct dq_ioctl_body **body"
+.Fa "const void **in" "size_t *len"
+.Fc
+.Ft int
+.Fn dq_event_interrupt "const struct dq_event *ev" "const struct dq_interrupt_body **body"
+.Ft int
+.Fo dq_event_reply_record
+.Fa "const struct dq_event *ev" "const struct dq_reply_record **rr"
+.Fa "const void **data" "size_t *len"
+.Fc
+.Ft int
+.Fn dq_reply_write "int q" "uint64_t id" "uint64_t written" "uint64_t offset"
+.Ft int
+.Fn dq_reply_fspacectl "int q" "uint64_t id" "uint64_t offset" "uint64_t len"
+.Ft int
+.Fn dq_reply_lock "int q" "uint64_t id" "const struct dq_lock_reply *lr"
+.Ft int
+.Fo dq_reply_ioctl
+.Fa "int q" "uint64_t id" "int error" "const void *out" "size_t len"
+.Fc
+.Ft int
+.Fn dq_reply_errno_allowed "uint32_t op" "int error"
+.Ft "struct dq_serve_state *"
+.Fn dq_serve_state_create "void"
+.Ft void
+.Fn dq_serve_state_destroy "struct dq_serve_state *st"
+.Ft int
+.Fn dq_serve_state_owners "const struct dq_serve_state *st"
+.Ft int
+.Fo dq_serve_file
+.Fa "int q" "const struct dq_event *ev" "const void *body" "size_t bodylen"
+.Fa "int backing_fd" "const struct dq_serve_opts *opts"
+.Fc
 .Sh DESCRIPTION
 The
 .Nm
@@ -148,6 +234,19 @@ with the
 of the queue, or of the queue an observer descriptor
 .Fa fd
 watches.
+.Fn dq_get_stats2
+fills the extended
+.Vt struct dq_stats2
+.Pq Dv DQ_IOC_GET_STATS2 :
+the same counters plus
+.Va ds2_locks ,
+.Va ds2_pushes ,
+.Va ds2_bad_replies
+(replies whose errno the operation's allow-list refused, which the
+requester saw as
+.Er EIO )
+and the stage 1b-ii page counters; the kernel writes
+.Va ds2_size .
 .Pp
 .Fn dq_set_queue_depth
 lowers the number of unread events the queue holds;
@@ -164,12 +263,12 @@ counts a drop and leaves a gap in
 .Fn dq_policy_default
 fills
 .Fa pol
-with the policy stage 1a of
-.Xr dq 4
-accepts:
+with the default policy of
+.Xr dq 4 ,
+a read-only object:
 .Va dp_cache
 .Dv DQ_CACHE_NONE
-(no page cache, which is stage 1b; whether
+(no page cache, which is stage 1b-ii; whether
 .Xr fstat 2
 posts is decided by
 .Dv DQ_EVENTS_GETATTR
@@ -194,11 +293,19 @@ and
 which is what
 .Xr open 2
 returns.
-A controller narrows the rights or adds
+A controller narrows the rights, adds
 .Dv DQ_EVENTS_GETATTR
 and
-.Dv DQ_EVENTS_CLOSE
-before minting.
+.Dv DQ_EVENTS_CLOSE ,
+sets
+.Va dp_write
+to
+.Dv DQ_EVENT
+to serve writes and
+.Va dp_ioctl
+to
+.Dv DQ_EVENT
+to serve ioctls before minting.
 .Pp
 .Fn dq_ident_from_stat
 fills every field of
@@ -287,15 +394,48 @@ when the queue is closing, and those of
 .Xr open 2
 for the descriptor table.
 .Pp
+.Fn dq_mint_file_flags
+is
+.Fn dq_mint_file
+with
+.Va dm_flags :
+.Dv DQ_MINT_F_WRITE
+installs the descriptor readable and writable, as
+.Xr open 2
+with
+.Dv O_RDWR
+would, and needs a policy with
+.Va dp_write
+.Dv DQ_EVENT ;
+without it, or with any other bit, the call fails with
+.Er EINVAL
+and
+.Dv DQ_REASON_FLAGS .
+.Fn dq_mint_file
+mints read-only and remains for callers that predate the flag.
+.Pp
 .Fn dq_mint_observer
 mints an observer descriptor of the queue and returns it.
-It receives a copy of every event and every reply posted on the queue,
-with reply data removed and lengths kept;
+It receives a copy of every event and every reply posted on the queue.
+Without
 .Dv DQ_OBS_F_DATA
-asks for data bodies where a stage carries them.
+data is removed and lengths kept: a
+.Dv DQ_OP_WRITE
+copy is the header alone and a
+.Dv DQ_OP_REPLY
+record the header and its
+.Vt struct dq_reply_record ,
+each flagged
+.Dv DQ_EVENT_F_NODATA
+when bytes were removed.
+With it a write copy carries its bytes and a reply record is followed by
+the reply's bytes padded to 8
+.Pq Fn dq_event_reply_record .
 The descriptor is readable, pollable, answers
 .Dv DQ_IOC_GET_STATS
-.Pq Fn dq_get_stats
+and
+.Dv DQ_IOC_GET_STATS2
+.Pq Fn dq_get_stats , Fn dq_get_stats2
 and nothing else, and is locked close-on-exec, close-on-fork and
 non-transferable.
 .Er EINVAL
@@ -335,6 +475,7 @@ for an unknown object.
 .Fn dq_set_policy
 changes
 .Va dp_cache ,
+.Va dp_ioctl ,
 .Va dp_deadline_ms
 and
 .Va dp_events
@@ -343,8 +484,7 @@ The fields the installed descriptor fixes,
 .Va dp_write ,
 .Va dp_exec ,
 .Va dp_mmap_shared_write ,
-.Va dp_lock ,
-.Va dp_ioctl
+.Va dp_lock
 and
 .Va dp_rights ,
 must equal the minted values or the call fails with
@@ -352,6 +492,32 @@ must equal the minted values or the call fails with
 so does a policy outside the accepted set.
 .Er ESRCH
 for an unknown object.
+.Pp
+.Fn dq_push_vnode_note
+raises
+.Fa note
+on the object's
+.Dv EVFILT_VNODE
+knotes
+.Pq Dv DQ_IOC_PUSH , DQ_PUSH_NOTIFY_VNODE
+for what happened outside the requester's view: any combination of
+.Dv NOTE_DELETE , NOTE_WRITE , NOTE_EXTEND , NOTE_ATTRIB , NOTE_LINK ,
+.Dv NOTE_RENAME , NOTE_OPEN , NOTE_CLOSE , NOTE_CLOSE_WRITE
+and
+.Dv NOTE_READ .
+.Er EINVAL
+for 0, for
+.Dv NOTE_REVOKE
+.Pq use Fn dq_revoke
+and for an unknown bit,
+.Er ESRCH
+for an unknown object.
+The kernel raises the notes of the object's own operations itself, and
+.Dv NOTE_OPEN
+and
+.Dv NOTE_CLOSE
+on the other objects of the same identity on the queue
+.Pq Xr dq 4 .
 .Ss Events
 .Fn dq_read_events
 performs one
@@ -392,13 +558,58 @@ Each returns
 when no further whole record follows, that is when fewer than a header's
 bytes remain or
 .Va de_size
-is smaller than a header or extends past
+is smaller than a header, not a multiple of 8, or extends past
 .Fa len .
 .Fn dq_event_body
 returns the body that follows the header and stores its length in
 .Fa *bodylen
 when that is not
-.Dv NULL .
+.Dv NULL ;
+the length includes the padding of a variable payload.
+.Pp
+The typed accessors
+.Fn dq_event_read ,
+.Fn dq_event_write ,
+.Fn dq_event_setattr ,
+.Fn dq_event_fsync ,
+.Fn dq_event_fallocate ,
+.Fn dq_event_fspacectl ,
+.Fn dq_event_lock ,
+.Fn dq_event_unlock_all ,
+.Fn dq_event_ioctl
+and
+.Fn dq_event_interrupt
+check that the record is of their operation and holds its fixed body, and
+point
+.Fa *body
+at it.
+.Fn dq_event_write
+and
+.Fn dq_event_ioctl
+also check that the payload the body's length field counts
+.Pq Va dw_len , dio_len
+lies within the record, and return it in
+.Fa *data
+or
+.Fa *in
+.Pq Dv NULL No for none
+and
+.Fa *len ,
+without the padding.
+.Fn dq_event_reply_record
+does the same for an observer's
+.Dv DQ_OP_REPLY
+record:
+.Fa *len
+is the reply's length and
+.Fa *data
+its bytes, or
+.Dv NULL
+when the record carries none
+.Pq Dv DQ_EVENT_F_NODATA , or a reply without a body .
+Each returns 0, or -1 with
+.Er EINVAL
+for a record of another operation or one too short for its body.
 .Pp
 .Fn dq_reply
 answers the event
@@ -423,18 +634,106 @@ is 0.
 Any nonzero
 .Fa error
 takes an empty body.
+The other bodies have their helpers:
+.Fn dq_reply_write
+answers a
+.Dv DQ_OP_WRITE
+with the count taken
+.Pq at most Va dw_len ; less is a short write
+and the offset the bytes went to (for
+.Dv DQ_WRITE_F_APPEND
+the controller's end of file; the requester's implicit offset becomes
+.Fa offset
++
+.Fa written ) ;
+.Fn dq_reply_fspacectl
+answers a
+.Dv DQ_OP_FSPACECTL
+with the range left undone, whose
+.Fa offset
+is at least
+.Va dsc_offset
+and whose end is
+.Va dsc_offset No + Va dsc_len
+(a finished request answers that end and 0);
+.Fn dq_reply_lock
+answers a
+.Dv DQ_LOCK_GETLK
+with the blocking lock, or
+.Va dlr_type
+.Dv F_UNLCK ;
+.Fn dq_reply_ioctl
+answers a
+.Dv DQ_OP_IOCTL
+with
+.Fa error
+and
+.Fa out Ns Bq Fa len ,
+where
+.Fa len
+must be
+.Fn IOCPARM_LEN dio_cmd
+for a successful
+.Dv IOC_OUT
+command and 0 otherwise.
+A successful
+.Dv DQ_OP_SETATTR ,
+.Dv DQ_OP_FSYNC ,
+.Dv DQ_OP_FALLOCATE ,
+other
+.Dv DQ_OP_LOCK
+operations, and every error, take no body:
+.Fn dq_reply
+with
+.Fa len
+0.
+.Pp
 .Er ESRCH
 means the id is not in flight: unknown, already answered, abandoned by an
 interrupted or timed-out requester, or revoked (counted in
 .Va ds_late_replies ) .
 .Er EINVAL
-is returned for a body longer than asked, a body with a nonzero error, a
-malformed identity, an errno outside the kernel's range, a length above
+is returned for a body the operation does not take (longer than asked,
+of the wrong size, present with an error, or breaking the operation's rule
+in
+.Xr dq 4 ) ,
+a malformed identity, an errno outside the kernel's range, a length above
 .Va kern.dq.max_io ,
-or a reply to an event that takes none.
+or a reply to an event that takes none; the event then stays in flight and
+can be answered again.
 .Er EFAULT
 for an unreadable
 .Fa data .
+.Pp
+The errno a controller may answer is allow-listed per operation; any other
+reaches the requester as
+.Er EIO
+and is counted in
+.Va ds2_bad_replies .
+.Fn dq_reply_errno_allowed
+returns nonzero when
+.Fa error
+reaches the requester as itself:
+.Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
+.It Dv DQ_OP_READ , GETATTR
+any errno.
+.It Dv DQ_OP_WRITE
+.Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS , EINTR ,
+.Er EAGAIN , ENXIO , EINVAL , ESTALE .
+.It Dv DQ_OP_SETATTR
+.Er EPERM , EROFS , EINVAL , EOPNOTSUPP , EIO , EFBIG , EDQUOT , ENOSPC ,
+.Er EACCES , ESTALE .
+.It Dv DQ_OP_FSYNC
+.Er EIO , EINVAL , ENOSPC , EDQUOT , ESTALE .
+.It Dv DQ_OP_FALLOCATE
+.Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , EDQUOT .
+.It Dv DQ_OP_FSPACECTL
+.Er ENOSPC , EFBIG , EINVAL , EIO , EOPNOTSUPP , ENODEV .
+.It Dv DQ_OP_LOCK
+.Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
+.It Dv DQ_OP_IOCTL
+.Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
+.El
 .Pp
 .Fn dq_dispatch
 performs one
@@ -448,10 +747,193 @@ The handler returns 0 to continue or nonzero to stop.
 returns the number of records handed to the handler, or -1 with the errno
 of the read.
 Records needing no answer
-.Pq Dv DQ_OP_CLOSE , Dv DQ_OP_INTERRUPT
+.Pq Dv DQ_OP_CLOSE , DQ_OP_INTERRUPT , DQ_OP_UNLOCK_ALL
 carry
 .Va de_id
 0.
+.Ss Serving a backing file
+.Fn dq_serve_file
+answers one event from a real file open on
+.Fa backing_fd ,
+so a controller that serves a file it holds, with or without changes of
+its own in a handler around it, need not write the operations itself:
+.Bl -tag -width "DQ_OP_UNLOCK_ALL" -offset indent
+.It Dv DQ_OP_READ
+.Xr pread 2 ;
+a short read is the end of the file.
+.It Dv DQ_OP_GETATTR
+.Xr fstat 2 ,
+.Xr fstatfs 2
+and
+.Xr fpathconf 2
+of the backing file through
+.Fn dq_ident_from_stat ,
+keeping the presented path; needs
+.Va so_ident ,
+else
+.Er EIO .
+.It Dv DQ_OP_WRITE
+.Xr pwrite 2
+at
+.Va dw_offset ,
+or at the backing file's end under
+.Dv DQ_WRITE_F_APPEND ,
+reported through
+.Fn dq_reply_write ;
+.Dv DQ_WRITE_F_SYNC
+and
+.Dv DQ_WRITE_F_DSYNC
+are followed by
+.Xr fsync 2
+and
+.Xr fdatasync 2 .
+.It Dv DQ_OP_SETATTR
+the masked fields only, in the order that lets them all apply:
+.Xr ftruncate 2 ,
+.Xr fchmod 2 ,
+.Xr fchown 2 ,
+.Xr futimens 2
+.Pq Dv UTIME_OMIT No for a time not in the mask ,
+.Xr fchflags 2
+last (an immutable flag set first would refuse the rest).
+The birth time has no setter; the kernel applied it to the identity.
+.It Dv DQ_OP_FSYNC
+.Xr fdatasync 2
+for
+.Dv DQ_FSYNC_DATA ,
+.Xr fsync 2
+otherwise.
+.It Dv DQ_OP_FALLOCATE
+.Xr posix_fallocate 2 .
+.It Dv DQ_OP_FSPACECTL
+.Xr fspacectl 2 ,
+answering the range it left.
+.It Dv DQ_OP_LOCK
+each owner gets its own open of the backing file
+.Po
+.Xr openat 2
+with
+.Dv O_EMPTY_PATH ,
+close-on-exec and close-on-fork, so a forked requester never holds a copy
+.Pc ,
+read-write where allowed, on which every kind is applied as an OFD lock
+.Pq Dv F_OFD_SETLK , F_OFD_GETLK :
+the backing file's lock table then decides between owners as it would
+between processes.
+A flock or OFD owner is an open file, so it is one object's
+.Pq Va de_object , dl_kind , dl_owner .
+A POSIX owner is a process, which holds one set of locks per file however
+many opens it has, so it is shared by every object of the same identity
+.Pq Va di_dev , di_ino No of Va so_ident , or of the backing file without one
+on the queue: one process never conflicts with itself through two
+objects of one file, and an
+.Dv DQ_OP_UNLOCK_ALL
+of its POSIX locks from any of them releases them all.
+Only
+.Dv DQ_LOCK_SETLK
+and
+.Dv DQ_LOCK_SETLKW
+create an owner; a
+.Dv DQ_LOCK_GETLK
+by an owner that holds nothing asks through a temporary open closed at
+once, and an
+.Dv DQ_LOCK_UNLCK
+by one is answered 0.
+A
+.Dv DQ_LOCK_SETLKW
+blocks in a thread of its own, which answers when the lock is granted;
+when that reply finds the event no longer in flight
+.Pq Er ESRCH : No the requester gave up and its Dv DQ_OP_INTERRUPT No raced the grant
+the grant is undone by unlocking the requested range for the owner,
+which also drops what the owner held in that range before (an abandoned
+upgrade leaves the range unlocked, where a real file would keep the old
+lock).
+Without
+.Va so_state
+every lock is
+.Er ENOLCK .
+A
+.Dv DQ_LOCK_GETLK
+answer carries
+.Va dlr_pid
+-1: the routine does not track which owner holds the blocker (a declared
+difference from a real file, which names a POSIX owner's pid).
+.It Dv DQ_OP_UNLOCK_ALL
+closes that owner's open, which releases its locks, and cancels its
+blocked waits.
+.It Dv DQ_OP_IOCTL
+the
+.Va so_ioctl
+handler, called with the backing descriptor, the body, the input and a
+zeroed buffer of
+.Fn IOCPARM_LEN dio_cmd
+bytes for an
+.Dv IOC_OUT
+command; it returns 0 after filling the output, or an errno.
+Without a handler every command is
+.Er ENOTTY ,
+the answer of a regular file
+.Pq Dv FIODTYPE No included
+and the one a command whose argument embeds pointers must get.
+.It Dv DQ_OP_INTERRUPT
+cancels the blocked
+.Dv DQ_LOCK_SETLKW
+the record names, so a lock is never granted to a gone waiter.
+.It Dv DQ_OP_CLOSE
+drops the object's flock and OFD owners and cancels their waits; POSIX
+owners belong to the identity and go with
+.Dv DQ_OP_UNLOCK_ALL .
+.El
+.Pp
+Any other operation with a reply token is answered
+.Er EIO ,
+as is a record too short for its body.
+A backing errno the operation's allow-list refuses is sent as
+.Er EIO .
+.Pp
+.Fa opts
+may be
+.Dv NULL .
+Its members are
+.Va so_state ,
+the lock state, one per queue (shared by every object served from it),
+from
+.Fn dq_serve_state_create
+.Po
+.Fn dq_serve_state_destroy
+cancels the blocked waits and closes the owners;
+.Fn dq_serve_state_owners
+counts the owners open
+.Pc ;
+.Va so_ident ,
+the controller's copy of the identity, refreshed from the backing file
+and sent with
+.Fn dq_set_ident
+after every successful
+.Dv DQ_OP_SETATTR ,
+and, under
+.Dv DQ_SERVE_F_SYNC_IDENT
+in
+.Va so_flags ,
+after every
+.Dv DQ_OP_WRITE ,
+.Dv DQ_OP_FALLOCATE
+and
+.Dv DQ_OP_FSPACECTL ,
+so that the presented times and block count are the backing file's;
+.Va so_ioctl
+and its
+.Va so_arg .
+.Fn dq_serve_file
+returns 0 once the record is answered or needed no answer, and -1 with
+the errno of the reply when that failed.
+.Fa body
+and
+.Fa bodylen
+are those
+.Fn dq_dispatch
+hands a handler, accepted so the routine is a handler's tail call; the
+record itself is what is read.
 .Ss The dq.observe service
 .Fn dq_observe_connect
 opens
@@ -517,8 +999,20 @@ returns a record count, or -1.
 and
 .Fn dq_event_body
 return pointers into the caller's buffer.
+.Fn dq_reply_errno_allowed
+returns nonzero or 0.
+.Fn dq_serve_state_create
+returns a state, or
+.Dv NULL
+with
+.Va errno
+set;
+.Fn dq_serve_state_owners
+returns a count.
 .Fn dq_policy_default
-returns nothing.
+and
+.Fn dq_serve_state_destroy
+return nothing.
 The other functions return 0 on success and -1 with
 .Va errno
 set on failure.
@@ -567,11 +1061,43 @@ handler(int q, const struct dq_event *ev, const void *body,
 }
 .Ed
 .Pp
+A controller that serves a real file writable, every event answered from
+it by
+.Fn dq_serve_file :
+.Bd -literal -offset indent
+struct dq_serve_opts opts = { 0 };
+
+backing = open(path, O_RDWR);
+dq_policy_default(&pol);
+pol.dp_write = DQ_EVENT;
+pol.dp_events = DQ_EVENTS_CLOSE;
+opts.so_state = dq_serve_state_create();
+opts.so_ident = &ident;
+if (dq_mint_file_flags(q, &ident, &pol, DQ_MINT_F_WRITE, &object,
+    &fd, &reason) == -1)
+	err(1, "mint (reason %d)", reason);
+
+static int
+serve(int q, const struct dq_event *ev, const void *body,
+    size_t bodylen, void *arg)
+{
+	if (dq_serve_file(q, ev, body, bodylen, backing, &opts) == -1)
+		warn("dq_serve_file");
+	return (ev->de_op == DQ_OP_CLOSE);
+}
+.Ed
+.Pp
 .Pa /usr/share/examples/dq/dqserve.c
-is a complete controller.
+is a complete controller: a read-only redacting server, and with
+.Fl w
+a writable one built on
+.Fn dq_serve_file .
 .Sh SEE ALSO
+.Xr fcntl 2 ,
+.Xr flock 2 ,
 .Xr ioctl 2 ,
 .Xr read 2 ,
+.Xr write 2 ,
 .Xr libcapability 3 ,
 .Xr dq 4
 .Sh HISTORY

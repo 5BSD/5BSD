@@ -93,7 +93,7 @@ dq_observer_create(struct dq_queue *q, u_int flags)
 	return (ob);
 }
 
-/* Read-only, GET_STATS only, never transferable, locked across fork/exec. */
+/* Read-only, the stats ioctls only, never transferable, locked across fork/exec. */
 int
 dq_observer_install(struct thread *td, struct dq_observer *ob, int *fdp)
 {
@@ -114,17 +114,29 @@ dq_observer_install(struct thread *td, struct dq_observer *ob, int *fdp)
 	cap_rights_init(&fcaps.fc_rights, CAP_READ, CAP_EVENT, CAP_IOCTL,
 	    CAP_FCNTL, CAP_FSTAT, CAP_KQUEUE_EVENT);
 	fcaps.fc_fcntls = CAP_FCNTL_GETFL | CAP_FCNTL_SETFL;	/* O_NONBLOCK */
-	fcaps.fc_ioctls = malloc(3 * sizeof(u_long), M_FILECAPS, M_WAITOK);
+	fcaps.fc_ioctls = malloc(4 * sizeof(u_long), M_FILECAPS, M_WAITOK);
 	fcaps.fc_ioctls[0] = DQ_IOC_GET_STATS;
-	fcaps.fc_ioctls[1] = FIONBIO;
-	fcaps.fc_ioctls[2] = FIOASYNC;
-	fcaps.fc_nioctls = 3;
+	fcaps.fc_ioctls[1] = DQ_IOC_GET_STATS2;
+	fcaps.fc_ioctls[2] = FIONBIO;
+	fcaps.fc_ioctls[3] = FIOASYNC;
+	fcaps.fc_nioctls = 4;
 	finit(fp, FREAD, DTYPE_DEV, ob, &dq_observer_fileops);
 	error = finstall_prop(td, fp, fdp, O_CLOEXEC | O_CLOFORK, &fcaps, &prop);
 	if (error != 0)
 		filecaps_free(&fcaps);
 	fdrop(fp, td);	/* on failure dq_observer_close runs */
 	return (error);
+}
+
+/* No dq lock held: the event release may free the object. */
+static void
+dq_observer_rec_free(struct dq_obs_rec *rec)
+{
+
+	if (rec->or_ev != NULL)
+		dq_event_rele(rec->or_ev);
+	dq_data_rele(rec->or_data);
+	free(rec, M_DQ);
 }
 
 static void
@@ -137,8 +149,9 @@ dq_observer_free(struct dq_observer *ob)
 	knlist_clear(&ob->ob_sel.si_note, 0);
 	knlist_destroy(&ob->ob_sel.si_note);
 	seldrain(&ob->ob_sel);
+	/* The drain at close: the last release of what the records held. */
 	TAILQ_FOREACH_SAFE(rec, &ob->ob_pending, or_link, tmp)
-		free(rec, M_DQ);
+		dq_observer_rec_free(rec);
 	sx_destroy(&ob->ob_rdsx);
 	free(ob, M_DQ);
 	dq_queue_rele(q);
@@ -192,35 +205,51 @@ dq_observer_unlink_all(struct dq_queue *q)
 }
 
 /*
- * Fan-out, under q_mtx: M_NOWAIT copies, a failure or a full observer is
+ * Fan-out, under q_mtx: M_NOWAIT records, a failure or a full observer is
  * a counted drop.  ob_seq advances either way so the observer sees a gap.
+ * The inline body (body, bodylen) is copied; a data body is never copied
+ * here (D101): a WRITE record holds the event (ev) and reads its body from
+ * it, a REPLY record holds the reply buffer (data) as a second piece,
+ * padded to 8 from the buffer's own zero tail.  stripped says the record
+ * had a data body it does not carry (DQ_EVENT_F_NODATA, lengths kept).
  */
 static void
 dq_observer_deliver_locked(struct dq_queue *q, struct dq_observer *ob,
     const struct dq_event *hdr, const void *body, size_t bodylen,
-    bool strip)
+    struct dq_event_k *ev, struct dq_data *data, bool stripped)
 {
 	struct dq_obs_rec *rec;
 	size_t size;
 
 	DQ_LOCK_ASSERT(q);
 	ob->ob_seq++;
-	size = sizeof(struct dq_event) + (strip ? 0 : bodylen);
+	size = sizeof(struct dq_event) + bodylen;
+	if (ev != NULL)
+		size += ev->ev_size - sizeof(struct dq_event);
+	if (data != NULL)
+		size += roundup2(data->dd_len, 8);
 	rec = (ob->ob_count < ob->ob_depth) ?
-	    malloc(offsetof(struct dq_obs_rec, or_hdr) + size, M_DQ,
-	    M_NOWAIT) : NULL;
+	    malloc(offsetof(struct dq_obs_rec, or_hdr) + sizeof(struct dq_event) +
+	    bodylen, M_DQ, M_NOWAIT) : NULL;
 	if (rec == NULL) {
 		ob->ob_drops++;
 		return;
 	}
 	rec->or_size = size;
+	rec->or_inline = bodylen;
+	rec->or_ev = ev;
+	if (ev != NULL)
+		dq_event_hold(ev);
+	rec->or_data = data;
+	if (data != NULL)
+		dq_data_hold(data);
 	rec->or_hdr = *hdr;
 	rec->or_hdr.de_size = size;
 	rec->or_hdr.de_seq = ob->ob_seq;
 	rec->or_hdr.de_flags |= DQ_EVENT_F_OBSERVED;
-	if (strip && bodylen != 0)
+	if (stripped)
 		rec->or_hdr.de_flags |= DQ_EVENT_F_NODATA;
-	if (!strip && bodylen != 0)
+	if (bodylen != 0)
 		memcpy((char *)&rec->or_hdr + sizeof(struct dq_event), body,
 		    bodylen);
 	TAILQ_INSERT_TAIL(&ob->ob_pending, rec, or_link);
@@ -231,12 +260,11 @@ dq_observer_deliver_locked(struct dq_queue *q, struct dq_observer *ob,
 }
 
 /*
- * Events: in stage 1a no event body carries requester data (READ asks
- * for an offset and a length), so events are copied whole; the data flag
- * matters for replies and for later stages' WRITE bodies.
+ * Events: a WRITE body carries requester data, which only a data observer
+ * sees (by holding the event, N7); every other body is copied whole.
  */
 void
-dq_observer_fanout_event(struct dq_queue *q, const struct dq_event_k *ev)
+dq_observer_fanout_event(struct dq_queue *q, struct dq_event_k *ev)
 {
 	struct dq_observer *ob;
 	const void *body;
@@ -250,21 +278,33 @@ dq_observer_fanout_event(struct dq_queue *q, const struct dq_event_k *ev)
 	data_body = ev->ev_hdr.de_op == DQ_OP_WRITE ||
 	    ev->ev_hdr.de_op == DQ_OP_WRITE_ASYNC;
 	LIST_FOREACH(ob, &q->q_observers, ob_link) {
-		dq_observer_deliver_locked(q, ob, &ev->ev_hdr, body, bodylen,
-		    data_body && (ob->ob_flags & DQ_OBS_F_DATA) == 0);
+		if (!data_body)
+			dq_observer_deliver_locked(q, ob, &ev->ev_hdr, body,
+			    bodylen, NULL, NULL, false);
+		else if ((ob->ob_flags & DQ_OBS_F_DATA) != 0)
+			dq_observer_deliver_locked(q, ob, &ev->ev_hdr, NULL, 0,
+			    ev, NULL, false);
+		else {
+			/*
+			 * Without the data right: the fixed body (offset,
+			 * length, flags) is kept, the bytes are not (D41).
+			 */
+			dq_observer_deliver_locked(q, ob, &ev->ev_hdr, body,
+			    MIN(bodylen, sizeof(struct dq_write_body)), NULL,
+			    NULL, bodylen > sizeof(struct dq_write_body));
+		}
 	}
 }
 
 /*
  * Replies are recorded as DQ_OP_REPLY with the id, errno and length; the
- * data itself travels only to an observer minted with DQ_OBS_F_DATA, and
- * in stage 1a not even then (the reply buffer belongs to the waiter; a
- * data observer is a 1b item once the pager shares pages).  Lengths are
+ * data itself follows the record only on an observer minted with
+ * DQ_OBS_F_DATA (a reference to the waiter's buffer, D101).  Lengths are
  * always visible (D41).
  */
 void
 dq_observer_fanout_reply(struct dq_queue *q, uint64_t id, int error,
-    size_t len)
+    struct dq_data *data)
 {
 	struct dq_observer *ob;
 	struct dq_event hdr;
@@ -282,9 +322,53 @@ dq_observer_fanout_reply(struct dq_queue *q, uint64_t id, int error,
 	hdr.de_time.tv_nsec = ts.tv_nsec;
 	rr.drr_id = id;
 	rr.drr_errno = error;
-	rr.drr_len = len;
-	LIST_FOREACH(ob, &q->q_observers, ob_link)
-		dq_observer_deliver_locked(q, ob, &hdr, &rr, sizeof(rr), false);
+	rr.drr_len = data != NULL ? data->dd_len : 0;
+	LIST_FOREACH(ob, &q->q_observers, ob_link) {
+		if ((ob->ob_flags & DQ_OBS_F_DATA) != 0)
+			dq_observer_deliver_locked(q, ob, &hdr, &rr, sizeof(rr),
+			    NULL, data, false);
+		else
+			dq_observer_deliver_locked(q, ob, &hdr, &rr, sizeof(rr),
+			    NULL, NULL, data != NULL);
+	}
+}
+
+/*
+ * Copy one record: the header and inline body, then the held event's body
+ * or the held reply data.  A fault in a later piece restores the uio to
+ * the start of the record (N7), so the observer never sees a partial one.
+ */
+static int
+dq_observer_copyout(struct dq_obs_rec *rec, struct uio *uio,
+    struct iovec *iovsave)
+{
+	struct iovec *iovbase;
+	ssize_t resid;
+	off_t offset;
+	int error, iovcnt;
+
+	iovbase = uio->uio_iov;
+	iovcnt = uio->uio_iovcnt;
+	resid = uio->uio_resid;
+	offset = uio->uio_offset;
+	memcpy(iovsave, iovbase, (size_t)iovcnt * sizeof(*iovsave));
+	error = uiomove(&rec->or_hdr, sizeof(struct dq_event) + rec->or_inline,
+	    uio);
+	if (error == 0 && rec->or_ev != NULL)
+		error = uiomove((char *)&rec->or_ev->ev_hdr +
+		    sizeof(struct dq_event),
+		    rec->or_ev->ev_size - sizeof(struct dq_event), uio);
+	if (error == 0 && rec->or_data != NULL)
+		error = uiomove(rec->or_data->dd_bytes,
+		    roundup2(rec->or_data->dd_len, 8), uio);
+	if (error != 0) {
+		memcpy(iovbase, iovsave, (size_t)iovcnt * sizeof(*iovsave));
+		uio->uio_iov = iovbase;
+		uio->uio_iovcnt = iovcnt;
+		uio->uio_resid = resid;
+		uio->uio_offset = offset;
+	}
+	return (error);
 }
 
 void
@@ -307,14 +391,19 @@ dq_observer_read(struct file *fp, struct uio *uio,
 {
 	struct dq_observer *ob = fp->f_data;
 	struct dq_queue *q = ob->ob_queue;
-	struct dq_obs_rec *rec;
+	struct dq_obs_rec *rec, *tmp;
+	struct iovec *iovsave;
+	TAILQ_HEAD(, dq_obs_rec) freed;
 	int error;
 	bool copied;
 
 	if (uio->uio_resid < (ssize_t)sizeof(struct dq_event))
 		return (EINVAL);
+	TAILQ_INIT(&freed);
 	copied = false;
 	error = 0;
+	iovsave = malloc((size_t)uio->uio_iovcnt * sizeof(*iovsave), M_DQ,
+	    M_WAITOK);
 	sx_xlock(&ob->ob_rdsx);
 	DQ_LOCK(q);
 	while (TAILQ_EMPTY(&ob->ob_pending)) {
@@ -337,7 +426,7 @@ dq_observer_read(struct file *fp, struct uio *uio,
 		TAILQ_REMOVE(&ob->ob_pending, rec, or_link);
 		ob->ob_count--;
 		DQ_UNLOCK(q);
-		error = uiomove(&rec->or_hdr, rec->or_size, uio);
+		error = dq_observer_copyout(rec, uio, iovsave);
 		DQ_LOCK(q);
 		if (error != 0) {
 			/* Put it back: the reader is serialized by ob_rdsx. */
@@ -347,12 +436,16 @@ dq_observer_read(struct file *fp, struct uio *uio,
 				error = 0;
 			break;
 		}
-		free(rec, M_DQ);
+		TAILQ_INSERT_TAIL(&freed, rec, or_link);
 		copied = true;
 	}
 out:
 	DQ_UNLOCK(q);
 	sx_xunlock(&ob->ob_rdsx);
+	free(iovsave, M_DQ);
+	/* The observer read's release of the held events and buffers. */
+	TAILQ_FOREACH_SAFE(rec, &freed, or_link, tmp)
+		dq_observer_rec_free(rec);
 	return (error);
 }
 
@@ -365,6 +458,9 @@ dq_observer_ioctl(struct file *fp, u_long com, void *data,
 	switch (com) {
 	case DQ_IOC_GET_STATS:
 		dq_queue_stats(ob->ob_queue, data);
+		return (0);
+	case DQ_IOC_GET_STATS2:
+		dq_queue_stats2(ob->ob_queue, data);
 		return (0);
 	case FIONBIO:
 	case FIOASYNC:

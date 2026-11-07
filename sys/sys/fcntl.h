@@ -338,6 +338,15 @@ typedef	__pid_t		pid_t;
 #define	F_NOINTR	0x100		/* Ignore signals when waiting */
 #define	F_FIRSTOPEN	0x200		/* First right to advlock file */
 #define	F_OFD		0x400		/* Description-owned record lock */
+/*
+ * F_CLOSEUNLCK: the F_UNLCK of every POSIX lock the process owns on the
+ * file that close(2) and exit owe it (closef, fdclearlocks and the fcntl
+ * close race), as distinct from a user's F_UNLCK.  A table whose lock state
+ * lives outside the kernel answers it without waiting; vn_advlock strips it
+ * before VOP_ADVLOCK.  Outside 0x010-0x400 (the lockf flags) and 0x8000
+ * (F_INTR, lockf.h).
+ */
+#define	F_CLOSEUNLCK	0x800
 
 /*
  * Kernel-private fcntl(2) commands, dispatched through fo_fcntl() by the

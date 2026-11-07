@@ -648,6 +648,33 @@ filesystem without open-file-description locks \(em the
 or
 .Dv FHASOFDLOCK
 flag set ahead of the request comes off again, since no lock can be held.
+.Pp
+The close-time unlock carries the kernel-private flag
+.Dv F_CLOSEUNLCK
+in
+.Fa flags
+beside
+.Dv F_POSIX ,
+with
+.Fa op
+.Dv F_UNLCK
+and the whole file as the range:
+.Fn closef ,
+.Fn fdclearlocks
+and the
+.Xr fcntl 2
+close-race recheck pass it, a user's
+.Dv F_UNLCK
+never does.
+A table whose lock state lives outside the kernel (a served file, whose
+locks the controller holds) uses it to release every POSIX lock of the
+owner without waiting for an answer, and only when it ever took a lock for
+that owner kind; a table that keeps its locks in
+.Xr lockf 9
+ignores it, and
+.Fn vn_advlock
+strips it before
+.Xr VOP_ADVLOCK 9 .
 .Bl -tag -width "devfs nodes"
 .It vnode files
 .Fn vn_advlock

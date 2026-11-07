@@ -284,8 +284,9 @@ ATF_TC_BODY(mint_reasons_identity, tc)
 ATF_TC(mint_reasons_policy);
 ATF_TC_HEAD(mint_reasons_policy, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "a policy outside the stage 1a set is "
-	    "DQ_REASON_POLICY; a rights version mismatch DQ_REASON_RIGHTS");
+	atf_tc_set_md_var(tc, "descr", "a policy outside the stage 1b-i set is "
+	    "DQ_REASON_POLICY, a rights version mismatch DQ_REASON_RIGHTS, a bad "
+	    "dm_flags DQ_REASON_FLAGS");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(mint_reasons_policy, tc)
@@ -307,9 +308,42 @@ ATF_TC_BODY(mint_reasons_policy, tc)
 	p.dp_cache = DQ_CACHE_ATTR;
 	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
 	(void)close(fd);
+	/* Stage 1b-i: served writes are accepted, read-only or writable. */
 	p = f.pol;
 	p.dp_write = DQ_EVENT;
-	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "write EVENT");
+	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
+	(void)close(fd);
+	{
+		int reason = -1;
+
+		ATF_CHECK_EQ(0, dq_mint_file_flags(f.c.q, &f.ident, &p,
+		    DQ_MINT_F_WRITE, &object, &fd, &reason));
+		ATF_CHECK_EQ(DQ_REASON_NONE, reason);
+		ATF_CHECK_EQ(O_RDWR, fcntl(fd, F_GETFL) & O_ACCMODE);
+		(void)close(fd);
+		/* DQ_MINT_F_WRITE needs dp_write == DQ_EVENT. */
+		p = f.pol;
+		reason = -1;
+		errno = 0;
+		ATF_CHECK_EQ(-1, dq_mint_file_flags(f.c.q, &f.ident, &p,
+		    DQ_MINT_F_WRITE, &object, &fd, &reason));
+		ATF_CHECK_EQ(EINVAL, errno);
+		ATF_CHECK_EQ(DQ_REASON_FLAGS, reason);
+		/* Unknown dm_flags bits, with and without a write policy. */
+		reason = -1;
+		errno = 0;
+		ATF_CHECK_EQ(-1, dq_mint_file_flags(f.c.q, &f.ident, &p,
+		    DQ_MINT_F_WRITE << 1, &object, &fd, &reason));
+		ATF_CHECK_EQ(EINVAL, errno);
+		ATF_CHECK_EQ(DQ_REASON_FLAGS, reason);
+		p.dp_write = DQ_EVENT;
+		reason = -1;
+		errno = 0;
+		ATF_CHECK_EQ(-1, dq_mint_file_flags(f.c.q, &f.ident, &p,
+		    DQ_MINT_F_WRITE | 0x80000000u, &object, &fd, &reason));
+		ATF_CHECK_EQ(EINVAL, errno);
+		ATF_CHECK_EQ(DQ_REASON_FLAGS, reason);
+	}
 	p = f.pol;
 	p.dp_write = DQ_ALLOW;
 	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "write ALLOW");
@@ -329,7 +363,11 @@ ATF_TC_BODY(mint_reasons_policy, tc)
 	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "lock ALLOW");
 	p = f.pol;
 	p.dp_ioctl = DQ_EVENT;
-	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "ioctl EVENT");
+	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
+	(void)close(fd);
+	p = f.pol;
+	p.dp_ioctl = DQ_ALLOW;
+	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "ioctl ALLOW");
 	p = f.pol;
 	p.dp_deadline_ms = DQ_DEADLINE_DEFAULT - 1;
 	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "deadline below default");

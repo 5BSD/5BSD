@@ -5,7 +5,8 @@ cc_library(name = "headers", hdrs = ["abac_dtrace.h", "mac_abac.h"],
     deps = ["//sys/security/mac:policy_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 _KERNEL_SOURCES = ["abac_cred.c", "abac_kenv.c", "abac_label.c", "abac_match.c", "abac_pipe.c", "abac_posixsem.c", "abac_posixshm.c", "abac_proc.c", "abac_rules.c", "abac_socket.c", "abac_syscall.c", "abac_system.c", "abac_sysv.c", "abac_vnode.c", "mac_abac.c"]
-_KERNEL_DEPS = [":headers"]
+# opt_dq.h and dq_kern.h: the served-file hooks are compiled under DEV_DQ.
+_KERNEL_DEPS = [":headers", "//sys/amd64/conf:generic_opt_dq_header", "//sys/dev/dq:kernel_headers"]
 amd64_generic_module_objects(srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
 amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
 
@@ -19,5 +20,5 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 [cross_generic_module_objects(
     arch = arch,
     srcs = _KERNEL_SOURCES,
-    deps = [":headers"],
+    deps = [":headers", "//sys/" + arch + "/conf:generic_opt_dq_header", "//sys/dev/dq:kernel_headers"],
 ) for arch in ["arm64", "riscv"]]

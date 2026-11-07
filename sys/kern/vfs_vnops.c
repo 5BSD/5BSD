@@ -770,6 +770,22 @@ vn_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
 	int error;
 
 	vp = fp->f_vnode;
+	/*
+	 * F_CLOSEUNLCK marks the unlock-all a close owes the process, for a
+	 * table that keeps its lock state elsewhere (a served file posts an
+	 * UNLOCK_ALL instead of a waited unlock).  A vnode's lock manager
+	 * does not need the distinction, so the bit is stripped before
+	 * VOP_ADVLOCK.  Verified harmless even unstripped: lf_advlock copies
+	 * a_flags into lo_flags and lf_flags and tests only F_REMOTE,
+	 * F_FLOCK, F_OFD, F_WAIT, F_NOINTR and F_INTR (0x8000, lockf.h);
+	 * lf_owner_matches masks F_OFD alone; vop_stdadvlock tests
+	 * F_FIRSTOPEN; nlm_advlock builds its own flags.  Nothing else reads
+	 * them.
+	 */
+	KASSERT((flags & F_CLOSEUNLCK) == 0 ||
+	    (op == F_UNLCK && (flags & F_POSIX) != 0),
+	    ("vn_advlock: F_CLOSEUNLCK with op %d flags %#x", op, flags));
+	flags &= ~F_CLOSEUNLCK;
 	if ((flags & F_OFD) != 0) {
 		error = vn_lock(vp, LK_SHARED | LK_RETRY);
 		if (error != 0)
@@ -3608,23 +3624,31 @@ vn_rlimit_trunc(u_quad_t size, struct thread *td)
 	return (EFBIG);
 }
 
-static int
-vn_rlimit_fsizex1(const struct vnode *vp, struct uio *uio, off_t maxfsz,
-    bool adj, struct thread *td)
+/*
+ * The vnode-free core of the write size limits, for a regular file at
+ * offset with *resid bytes to write: the filesystem's maximum file size
+ * (maxfsz, 0 for none) and RLIMIT_FSIZE, each clamping *resid when adj is
+ * set and the offset is below the limit, else EFBIG (with SIGXFSZ for the
+ * resource limit, except for ktrace writes that asked not to be signalled).
+ * Accounting and kernel writes (no thread, TDP2_ACCT) are not limited.
+ * Factored out of vn_rlimit_fsizex1, unchanged, so a descriptor type
+ * without a vnode (a served file, dev/dq) applies exactly the rules a
+ * vnode applies.
+ */
+int
+rlimit_fsize_check(off_t offset, ssize_t *resid, off_t maxfsz, bool adj,
+    struct thread *td)
 {
 	off_t lim;
 	bool ktr_write;
 
-	if (vp->v_type != VREG)
-		return (0);
-
 	/*
 	 * Handle file system maximum file size.
 	 */
-	if (maxfsz != 0 && uio->uio_offset + uio->uio_resid > maxfsz) {
-		if (!adj || uio->uio_offset >= maxfsz)
+	if (maxfsz != 0 && offset + *resid > maxfsz) {
+		if (!adj || offset >= maxfsz)
 			return (EFBIG);
-		uio->uio_resid = maxfsz - uio->uio_offset;
+		*resid = maxfsz - offset;
 	}
 
 	/*
@@ -3644,21 +3668,32 @@ vn_rlimit_fsizex1(const struct vnode *vp, struct uio *uio, off_t maxfsz,
 	/*
 	 * Is the limit reached?
 	 */
-	if (__predict_true((uoff_t)uio->uio_offset + uio->uio_resid <= lim))
+	if (__predict_true((uoff_t)offset + *resid <= lim))
 		return (0);
 
 	/*
 	 * Prepared filesystems can handle writes truncated to the
 	 * file size limit.
 	 */
-	if (adj && (uoff_t)uio->uio_offset < lim) {
-		uio->uio_resid = lim - (uoff_t)uio->uio_offset;
+	if (adj && (uoff_t)offset < lim) {
+		*resid = lim - (uoff_t)offset;
 		return (0);
 	}
 
 	if (!ktr_write || ktr_filesize_limit_signal)
 		vn_send_sigxfsz(td->td_proc);
 	return (EFBIG);
+}
+
+static int
+vn_rlimit_fsizex1(const struct vnode *vp, struct uio *uio, off_t maxfsz,
+    bool adj, struct thread *td)
+{
+
+	if (vp->v_type != VREG)
+		return (0);
+	return (rlimit_fsize_check(uio->uio_offset, &uio->uio_resid, maxfsz,
+	    adj, td));
 }
 
 /*

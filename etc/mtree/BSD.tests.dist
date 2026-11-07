@@ -599,6 +599,8 @@
         ..
         libdiff
         ..
+        libdq
+        ..
         libexecinfo
         ..
         libkvm

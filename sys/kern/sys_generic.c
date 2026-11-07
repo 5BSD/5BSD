@@ -961,6 +961,16 @@ kern_posix_fallocate_fp(struct thread *td, struct file *fp, off_t offset,
 		return (ESPIPE);
 	if ((fp->f_flag & FWRITE) == 0)
 		return (EBADF);
+#ifdef MAC
+	/*
+	 * A write to the file by another name, checked at the boundary for
+	 * every descriptor type as read and write are (D83); a vnode is then
+	 * checked again inside vn_fallocate, as it is for write (D94).
+	 */
+	error = mac_file_check_write(td->td_ucred, fp->f_cred, fp);
+	if (error != 0)
+		return (error);
+#endif
 	error = fo_fallocate(fp, offset, len, td);
 	return (error);
 }
@@ -1036,6 +1046,12 @@ kern_fspacectl_fp(struct thread *td, struct file *fp, int cmd,
 		return (ESPIPE);
 	if ((fp->f_flag & FWRITE) == 0)
 		return (EBADF);
+#ifdef MAC
+	/* As for fallocate: a write, checked at the boundary (D94). */
+	error = mac_file_check_write(td->td_ucred, fp->f_cred, fp);
+	if (error != 0)
+		return (error);
+#endif
 	error = fo_fspacectl(fp, cmd, &rmsr.r_offset, &rmsr.r_len, flags,
 	    td->td_ucred, td);
 	if (rmsr.r_len != rqsr->r_len && (error == ERESTART ||

@@ -811,6 +811,29 @@ caught by the `EDEADLK` scan and waits out the deadline.
 descriptor table under `FILEDESC_SLOCK` once per posted event; nothing
 else in 1a is paid per operation beyond the event itself.
 
+### 7.7 Stage 1b-i as built (2026-11-07)
+
+Served writes, attributes, fsync, fallocate, fspacectl, locks, ioctls,
+kqueue notes and data observers (D93-D101 as amended by D105), with the
+boundary MAC calls `fallocate`, `fspacectl` and the Linux bridges lacked
+and abac checks against the controller's label. Plan reviewed twice before
+code; the built series reviewed independently ("not yet", five blocking
+items, all adopted — D106).
+
+**What the VM runs found (plane on, WITNESS).** Run 10 (new kernel, 1a
+tests): only 1a pins the series moves. Runs 11-13: test and library
+defects only, each traced — an fspacectl range overlapping the bytes it
+checked, per-owner opens inherited across `fork` (an OFD lock lives while
+any descriptor of its open file does: owner opens are now close-on-fork),
+an abac-labelled result pipe (labels follow their creator; the labelled
+controller runs in its own child because abac never relabels downward), a
+dtrace count including the harness's own write, a NULL policy, a recorder
+cap, and two expectations written before POSIX ownership spanned sibling
+opens. Run 14: 280/282 — all 119 dq and libdq cases and the stage 0
+`sys/file` suite pass; the non-passes are the pre-existing
+`devctl_device_test` metadata break and the baselined OES socket-poll
+failure.
+
 ## 8. Wire protocol
 
 Fixed-width, native byte order, `DQ_API_VERSION` 1, additive like
@@ -844,7 +867,7 @@ so an aiod or kernel thread never appears as the requester (D24).
 |---|---|---|
 | `READ` | `offset`, `len ≤ kern.dq.max_io` | errno, `data[len']` (short = EOF at `offset+len'`) |
 | `READ_ASYNC` | as `READ`, from `getpages_async` (sendfile) | as `READ`; completion runs the `sfio` callback |
-| `WRITE` | `offset`, `data` | errno, `written` |
+| `WRITE` | `offset`, `len`, `flags` (`APPEND`, `SYNC`, `DSYNC`), `data` | errno, `written`, `offset` (the offset the controller wrote at — for an append the authoritative EOF is the controller's; D95) |
 | `WRITE_ASYNC` | from `putpages` | errno; completion marks pages clean. From laundry, close and queue teardown it is never waited for (I11); from `msync(MS_SYNC)` via `pgo_sync` the calling thread waits, interruptibly and deadline-bounded, so `MS_SYNC` keeps its durability meaning (D42) |
 | `GETATTR` / `SETATTR` | — / `mask`, attrs | identity / errno; the kernel updates the identity on success |
 | `FSYNC`, `FALLOCATE`, `FSPACECTL` | `mode` / range | errno |
@@ -971,7 +994,7 @@ fileid, fsid, mode, size from the identity), `update/release_writecount`,
 
 **Cache contract (D11).** Pages exist while mapped, wired (exec text,
 sendfile in flight) or cached under `dp_cache = DATA`. They are dropped by
-`INVALIDATE`, `REVOKE`, queue close and object close, each via
+`REVOKE`, queue close and object close, each via
 `vm_object_page_remove` with `pmap_remove_all`, so a mapping observes the
 change on its next access (wired pages are handled there too,
 `vm_object.c:2059-2068`). `dp_cache = NONE` means no page cache: `read`
@@ -981,6 +1004,12 @@ it does not mean "no pages".
 `vm_fault.c:2372`, `vm_pageout.c:552,902,1659,1941`, `vm_page.c:2888,3025`,
 `vm_meter.c:240`, `vm_object.c:246,970,2574`) are each reviewed in stage
 1b and the decision per site recorded in the ledger (*open*).
+`INVALIDATE {offset, len}` on a live object uses `OBJPR_CLEANONLY`: clean pages
+are dropped so the next access faults, dirty `MAP_SHARED` pages the controller
+has not seen survive and are written back; data is lost only at revoke and
+close (D105 B2). Pending async page operations are completed with an error
+before any `vm_object_page_remove` or `vm_object_terminate`, which sleep on
+busy pages and paging-in-progress (D105 B1/B2).
 
 Each object has its own VM object; two objects presenting the same
 identity never share pages, so per-requester redaction cannot leak through
@@ -1410,8 +1439,9 @@ stage 0 lands.
 |---|---|
 | 0 | descriptor completeness (4.1, 6): 11 fileops; ledger; image source and `p_image`; `mac_file_*` hooks incl. `receive` on channel installation; `pgo_sync`/`pgo_kinfo`; `sendfile_getobj` seam |
 | 1a | `/dev/dq`, queue, `MINT FILE`, `READ`, `GETATTR`, identity, `REVOKE`, lifecycle, `INTERRUPT`, deadlines, observer queue, `dq.observe`, OES file events (read/stat/close, `DQ_REPLY`; open with `RESOLVE`, D89), the `mac_file_notify_reply` hook — **built 2026-11-07, 7.6** |
-| 1b | writes, `SETATTR`, `FSYNC`, dq pager (full ops), `mmap`, `sendfile`, cache `DATA`, locks, ioctl, kqueue notes, observer data bodies, `mac_dq`, isolation/abac file hooks |
-| 1c | attachment in `pwddesc`, four choke points, `RESOLVE` incl. `SOCKET`, `DIR`/`SYMLINK`, `READDIR`, virtual cwd/root, I5(b) refusals, `attached` trailer, inotify, launcher example |
+| 1b-i | writes, `SETATTR`, `FSYNC`, `FALLOCATE`/`FSPACECTL`, locks, ioctl, kernel-raised and pushed kqueue notes, observer data bodies, the boundary MAC calls `fallocate`/`fspacectl`/Linux writes lacked, abac checks against the controller's label (D93-D101, D105) |
+| 1b-ii | the dq pager, `mmap`, `msync`, `sendfile`, cache `DATA`, `INVALIDATE`, `WRITE_ASYNC`/`READ_ASYNC` with queue-owned deadlines, `max_inflight_bytes` (D102-D105) |
+| 1c | `mac_dq` (I6 `receive`/`inherit`, I5(b) refusals, label lifecycle: D93), attachment in `pwddesc`, four choke points, `RESOLVE` incl. `SOCKET`, `DIR`/`SYMLINK`, `READDIR`, virtual cwd/root, I5(b) refusals, `attached` trailer, inotify, launcher example |
 | 2 | sockets |
 | 3 | exec from a descriptor |
 | 4 | global attachment (11.5), `BSDDescriptorQueue` provider |
@@ -1544,6 +1574,21 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D89 | 2026-11-07 | OES file events for served descriptors (14): `AUTH_FILE_READ 0x002B`, `AUTH_FILE_STAT 0x002C` (NOTIFY `0x1043`, `0x1044`), `NOTIFY_FILE_CLOSE 0x1045`, `NOTIFY_DQ_REPLY 0x1046`, within the subscription bitmap's 128-per-class bound; `FILE_OPEN` waits for a requester-side open (`RESOLVE`, 1c) — `MINT` is not an open. OES implements `mpo_file_check_read/stat`, `mpo_file_notify_close` and the new `mpo_file_notify_reply`, each returning at once unless `f_type == DTYPE_DQ` (the documented served-mark use; registering the fast-path hooks turns them on system-wide). Payload from `dq_file_ident()` with `OES_FILE_META_PRESENTED`, object id and controller nonce; `NOTIFY_DQ_REPLY` carries a count, never content (D41). New MAC hook `mac_file_notify_reply(controller, fp, op, error, count)` (`MAC_POLICY_PERFORM`, `docs/macf-new-hooks.md` 3.14), posted from the reply path with the object's file held | plan | the audit trail needs the controller's answers, not their bytes |
 | D90 | 2026-11-07 | `dq.observe` is a `mac_capability` service (`MINTABLE`) registered by the device: `co_connect` admits a `PRIV_DRIVER` credential (the device's rule, D85) until stage 4's capsule admission under `system.dq.observe`; `co_call` ops `LIST_QUEUES`, `LIST_OBJECTS`, `SUBSCRIBE` (an observer descriptor in `reply_fds`, metadata-only, D41). Queues carry a kernel-wide id. The I9 row "uid-0 shell without the capability sees nothing" is therefore deferred to stage 4, not satisfied in 1a | plan | observation stays a capability (D21) even before the plane delivers it |
 | D91 | 2026-11-07 | Independent review of the stage 1a plan ("not yet", 19 items, then "code may begin") adopted in full: the fileop owns `foffset_lock_uio` (section 9 corrected); ABI constants and padding (`DQ_MNAMELEN` 1024, `f_nvnodelistsize`, explicit pads, `dp_rights_version` + `cap_rights_is_valid`, distinct `DENY/EVENT/ALLOW`, dense `DQ_PC_*` pathconf index with `dq_pc_names[]`, ioctl group `'j'`); `fo_close` with `td == NULL`; `de_caller` from `td_ucred` with the `P_KPROC`/no-thread rule, never `f_cred`; the `EDEADLK` scan only in operations that post, `FILEDESC_SLOCK` before `q_mtx`; `DEV_DQ opt_dq.h` with `device dq`; the waiter reads the event state before the wake reason; one reader at a time on a queue, dequeue after a successful copy, re-check after relock; observer records `M_NOWAIT`; `fhold` may fail before the reply hook; `SEEK_HOLE` past the end is `ENXIO`; the fileops table answers verified against the real file (`fo_cmp`, `EVFILT_WRITE`, `poll_no_poll`, `FIODTYPE`, `vn_fcntl`, `bzero` + `PAGE_SIZE` floor in `fstat`) | plan review 2026-11-07 | a design that names its locks and errnos can be reviewed before it is code |
+| D92 | 2026-11-07 | Stage 1a landed on `dev` as merge `b46b705b57a` (six commits `578eabbfcf9`..`fc4a63722fc` over the stage 0 quality pass). The merged GENERIC, built from `/usr/src`, booted the plane-on guest and passed `sys/dq` (70/70) and `sys/file`, 231/232 (run 9; the broken case is the pre-existing `devctl_device_test` metadata). Nothing installed on the host, no reboot. Later stages keep landing in order as each is built, reviewed and run | run 9 | stage 1a complete; stage 1b starts from 7.6 |
+| D93 | 2026-11-07 | `mac_dq` moves to 1c (its content is the attachment's); isolation implements nothing for served files in 1b (claims are keyed by vnode; `fi_do_claim` refuses an fd without one) until stage 4 defines queue claims; abac checks served files through `mpo_file_check_read/write/stat/mmap/setattr`, gated on `DTYPE_DQ`, against the controller credential's label via `dq_file_cred()` — no stored label, D22 stands (D105 B9) | 1b plan + review | the posixshm precedent without a label slot |
+| D94 | 2026-11-07 | Boundary MAC gaps closed for every type: `mac_file_check_write` before `fo_fallocate`/`fo_fspacectl` and at the three Linux `fo_write` callers, `mac_file_check_setattr` at Linux `FS_IOC_SETFLAGS`; `O_TRUNC` at open stays vnode-only (declared) | 1b plan | the stage 0 rule: checks precede dispatch |
+| D95 | 2026-11-07 | Writes: `WRITE {offset, len, flags, data}` → `{errno, written, offset}`, the controller's offset validated (`written ≤ len`, no overflow) and applied only on the implicit-offset path; `vn_io_fault`'s range-lock rule (whole file for non-positioned or appending writes); chunked at `max_io` with `dofilewrite`'s count rule (no rollback across chunks, declared); `di_size` extended and `NOTE_WRITE`/`EXTEND` raised by the kernel; `RLIMIT_FSIZE` through a vnode-free `rlimit_fsize_check()` factored from `vn_rlimit_fsizex1` (`maxfsz = 0`), truncate through `vn_rlimit_trunc`, fallocate unchecked as `vn_fallocate`; `FWRITE` fixed at mint by `DQ_MINT_F_WRITE` | 1b plan + review | the serialization a real file has, in front of the queue |
+| D96 | 2026-11-07 | `SETATTR {mask, attrs}`: the kernel applies the DAC and privilege rules a vnode applies, from the identity and `td_ucred` — `vaccess(VREG, …, VADMIN)`, utimes `VWRITE_ATTRIBUTES` or `VWRITE` with `UTIMES_NULL`, `ufs_chmod`'s sticky/setgid/setuid rules, chown's `PRIV_VFS_CHOWN`, chflags exactly as `ufs_setattr` (unknown bits `EOPNOTSUPP`, `SF_*` with `PRIV_VFS_SYSFLAGS` and `securelevel_gt`, `SF_SNAPSHOT`, immutable/append refusals on the new flags), set-id bits `EPERM` (I3) — then posts; on success the kernel applies the fields to the identity (birthtime pull-back, `ctime` now) and raises `NOTE_ATTRIB`; `fchmod`/`fchown` post the same event with one field; `dp_write = DENY` still posts | 1b plan + review | shm's shape: the object enforces what it can see |
+| D97 | 2026-11-07 | `FSYNC {mode}` posts whenever `dp_write = EVENT`, whatever this fd's `FWRITE` (an `O_RDONLY` vnode fd flushes); `DENY` answers 0 without an event; with `DATA` (ii) dirty pages are written back and waited for first (D42) | 1b plan + review | |
+| D98 | 2026-11-07 | Locks (D14 concrete): `fo_advlock` with `DFLAG_FLOCK|RECLOCK`; `LOCK {op, kind, type, start, len, owner, pid}` → errno (+ the lock for `GETLK`, validated); owner from the `id` argument — the leader's pid for `F_POSIX`, `SipHash24(boot key, &fp)` for flock/OFD — never the thread's pid; `LOCK` waits have no deadline and are outside `o_inflight` (blocked lockers never block readers); a signal posts `INTERRUPT`; the controller does POSIX deadlock detection, dq's `EDEADLK` is its own rule; close-time unlocks arrive with the new kernel-private `F_CLOSEUNLCK` flag from `closef`/`fdclearlocks`/the fcntl race recheck, posted as `UNLOCK_ALL` without waiting and only for a kind the object ever locked; flock/OFD release at the last reference in `dq_close` (which a mapping defers to the last `munmap`, declared); an explicit `F_UNLCK` is a waited `LOCK` | 1b plan + review | `lf_advlock` masks every flag test, `vn_advlock` strips the bit |
+| D99 | 2026-11-07 | `IOCTL {cmd, len, in[]}` → `{errno, out[]}` with `in` the generic layer's post-copyin buffer (`IOCPARM_LEN`; the int for `IOC_VOID` of int size; no payload for `IOC_VOID` size 0, the pointer value never ships), `out` exactly `IOCPARM_LEN` on `IOC_OUT` success; `FIOSETOWN`/`F_SETOWN` are events; the kernel cannot see pointer-embedding commands, so **the controller refuses what it cannot serve with `ENOTTY`** (8.2 amended) | 1b plan + review | |
+| D100 | 2026-11-07 | kqueue notes (D27 concrete): kernel-raised `NOTE_READ`, `WRITE`/`EXTEND` (write, fallocate, fspacectl, async completion), `ATTRIB` (setattr, truncate, `SETIDENT`), `REVOKE`; `NOTE_OPEN` at install and `CLOSE`/`CLOSE_WRITE` at close raised on the **sibling objects of the same identity on the queue** (an object has one `struct file`, whose knotes are detached before its close); `DELETE`/`LINK`/`RENAME` and others' changes pushed by `DQ_IOC_PUSH {NOTIFY_VNODE}`; inotify on a served file is an open item for 1c | 1b plan + review | the VOP post-hooks raise `OPEN`/`CLOSE` to a vnode's other opens |
+| D101 | 2026-11-07 | Observer data bodies: a refcounted reply buffer shared by the waiter and `DQ_OBS_F_DATA` observers (no second copy under `q_mtx`); observer `WRITE` records hold the event; two-piece observer records restore the uio on a fault | 1b plan + review | |
+| D102 | 2026-11-07 | The pager (D12 concrete, ii): own dynamic type, `OBJ_COLORED` only; `VM_PAGER_ERROR` on a served read failure (`FAIL` zero-fills), `BAD` past EOF; readahead clamped to 0; `getpages_async` calls `iodone` on every path and leaves requested pages busy; `putpages` through `dq_event_post_async` (M_NOWAIT, no scan, no quota sleeps, own `o_async` count and `q_async_bytes` bound; `AGAIN` on allocation failure/full queue/bounds, `ERROR` when closing or revoked), `PEND` for every page, data copied with the object lock dropped through `pmap_quick_enter_page`; un-waited async events carry a queue-enforced deadline (per-queue callout → dq taskqueue completion under the object write lock; always set, the default when the policy says 0); an `o_closing` gate set under the object lock before pending async work is completed at close/revoke/queue close, then `vm_object_page_remove`, then deallocate (I11 holds: dq waits only on its own completions); `object->size` maintained with the identity (`dq_object_setsize`, the `shm_dotruncate_locked` shape); `vm_object_page_clean` gains a `PGO_WRITEBACK` pager flag (vnode and dq only) so `dq_pager_sync` reuses it; `kern_mincore` learns the type; `vm_page_scan_contig`/`reclaim_run` leave dq pages unrelocatable and `vm_map_protect` charges nothing (declared). D59 amended: no racct (`racct_add_cred` enforces nothing and `RACCT_VMEM` is not sloppy); the bound is `kern.dq.max_inflight_bytes` at the post, visible in `GET_STATS2`; a sloppy `RACCT_DQPEND` is an open item | 1b plan + review | the VM code as it is, not as the design assumed |
+| D103 | 2026-11-07 | `mmap` (ii) in `shm_mmap`'s shape: `maxprot` from `FREAD`/`FWRITE`/`dp_mmap_shared_write`, private mappings COW with `DFLAG_PRIVWRITE`, own writecount, `vm_mmap_file(..., fp)` so the mapping holds the file; the fault wait abandons only on `SIGKILL`/`P_WEXIT`/deadline, continuing with non-catching bounded slices after a caught signal (I12) | 1b plan + review | |
+| D104 | 2026-11-07 | `sendfile` (ii): `vn_sendfile` split into `sendfile_getobj` + an exported `sendfile_send`; `dq_sendfile` builds its own `sendfile_src` (object, size, getsize, release) and calls `mac_file_check_read` itself (the syscall runs no file hook); the `f_type` switch in `sendfile_getobj` gains no arm | 1b plan + review | the table answers |
+| D105 | 2026-11-07 | Stage 1b plan reviewed twice ("not yet", ten blocking and fifteen items; then "code may begin" after three corrections): the items above are the adopted set; also `dq_stats`/`GET_STATS` frozen with `DQ_IOC_GET_STATS2` (the size is in the ioctl word), reply errnos allow-listed per op (a controller's `EPIPE` must never raise `SIGPIPE`), `F_SET_RW_HINT` stays `EPERM`, `copy_file_range` stays the default, `dp_mmap_shared_write = ALLOW` refused until ii | plan review 2026-11-07 | a pager design has to be checked against the VM code's locks before it is code |
+| D106 | 2026-11-07 | Built-series review of 1b-i ("not yet") adopted: the `EDEADLK` rule runs before any offset or range lock in every operation that posts (a controller touching its own served file could sleep uninterruptibly behind a requester's write lock); Linux splice and sendfile check reads too; `UNLOCK_ALL` and `INTERRUPT` are never dropped for depth (`ds2_overdepth`), since a lost unlock leaks a controller-side lock under a pid that gets reused; POSIX lock ownership spans every open of the same identity on the queue, as on a real file (siblings indexed by `(di_dev, di_ino)` per queue, which also bounds the note walk); libdq's `GETLK` creates no owner. Also: a non-append `WRITE` reply must echo its offset; a zero-byte success is `EIO`; allow-lists widened (`EDQUOT`, `ENOSPC`, `ESTALE`, `EACCES` where real files return them); the snapshot chmod rule; `RLIMIT_FSIZE` on truncate after the attribute checks. Declared: an immutable or append flag combined with other attributes in one `vattr` is `EPERM` (ufs ignores the rest); `file_setattr_direct` applies size, mode and owner before flags | built-series review 2026-11-07 | |
 
 ### 20.1 Origin
 
@@ -1590,3 +1635,10 @@ system call.
     `oes_client_is_muted_by_token()` could decide from the captured
     pid/genid without the lock; that changes OES mute semantics and is an
     OES change, recorded here for its owner.
+
+11. A sloppy racct resource (`RACCT_DQPEND`) for pending served writes, so
+    rctl can see and bound them; until then `kern.dq.max_inflight_bytes` and
+    `GET_STATS2` are the bound and the view (D102, D59 amended).
+12. inotify on a served *file* (`IN_MODIFY`/`ACCESS`/`ATTRIB`/`CLOSE`):
+    watches live on directories, which `RESOLVE` serves in 1c; the file
+    events must be raised there against the served parent.

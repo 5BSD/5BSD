@@ -546,6 +546,14 @@ linux_fileattr_fsetflags(struct thread *td, int fd, u_long flags)
 		return (error);
 	VATTR_NULL(&vattr);
 	vattr.va_flags = flags;
+#ifdef MAC
+	/* The boundary check fchflags(2) makes (D94). */
+	error = mac_file_check_setattr(td->td_ucred, fp, fd, &vattr);
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
+	}
+#endif
 	/* The descriptor's own answer, as the FS_IOC_SETFLAGS ioctl gives. */
 	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 	fdrop(fp, td);
@@ -3190,6 +3198,12 @@ linux_splice_common(struct thread *td, int fd_in, off_t *off_inp,
 	auio.uio_segflg = UIO_SYSSPACE;
 	auio.uio_rw = UIO_READ;
 	auio.uio_td = td;
+#ifdef MAC
+	/* The boundary check kern_fileread makes for every read (D94). */
+	error = mac_file_check_read(td->td_ucred, fin->f_cred, fin);
+	if (error != 0)
+		goto out;
+#endif
 	error = fo_read(fin, &auio, td->td_ucred,
 	    inflags | (in_pipe ? pipeflag : 0), td);
 	got = chunk - auio.uio_resid;
@@ -3205,6 +3219,12 @@ linux_splice_common(struct thread *td, int fd_in, off_t *off_inp,
 	auio.uio_offset = outflags != 0 ? off_out : -1;
 	auio.uio_resid = got;
 	auio.uio_rw = UIO_WRITE;
+#ifdef MAC
+	/* The boundary check kern_filewrite makes for every write (D94). */
+	error = mac_file_check_write(td->td_ucred, fout->f_cred, fout);
+	if (error != 0)
+		goto out;
+#endif
 	error = fo_write(fout, &auio, td->td_ucred,
 	    outflags | (out_pipe ? pipeflag : 0), td);
 	got -= auio.uio_resid;
@@ -3358,6 +3378,12 @@ linux_tee(struct thread *td, struct linux_tee_args *args)
 	auio.uio_segflg = UIO_SYSSPACE;
 	auio.uio_rw = UIO_WRITE;
 	auio.uio_td = td;
+#ifdef MAC
+	/* The boundary check kern_filewrite makes for every write (D94). */
+	error = mac_file_check_write(td->td_ucred, fout->f_cred, fout);
+	if (error != 0)
+		goto out;
+#endif
 	error = fo_write(fout, &auio, td->td_ucred, 0, td);
 	if (want != auio.uio_resid) {
 		td->td_retval[0] = want - auio.uio_resid;
