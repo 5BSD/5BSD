@@ -1,5 +1,24 @@
 # Native Bazel completion plan
 
+## Current AMD64 baseline audit and real firstboot proofs pass (2026-11-07)
+
+Complete R10 image / fresh 2 GB VM R8 passes 14 checks, including normal
+console/PAM/SSH/su, exact declared firstboot account/group transitions, actual
+live-versus-rebuilt password DB records, and all 33,982 baseline file / 1,369
+directory content/ownership/mode/security-flag/symlink checks. All buffers sync
+and QEMU powers off normally; backing/source/input hashes remain unchanged.
+Raw diagnostics remain visible: only 23 archive bookkeeping changes, five proven
+account payload changes and one consumed marker are reconciled. Timestamps,
+hardlink inode identity and runtime-added objects remain outside this audit.
+
+The actual next-version 447-package set and newly stamped kernel also build and
+pass the selected solver/SSP tests; all archive identities/versions and the changed
+kernel bytes are independently reviewed. NEXT: actual boot-environment upgrade,
+rollback and old-BE removal. Other configured/cross completeness, fresh Make
+compilation parity, native bootstrap/source snapshot/reproducibility, sandbox/cache/
+controlled CPU/RAM/disk I/O, hardware and combined publication gates remain open.
+See INSTALLED-TREE-AUDIT-QUALIFICATION.md. Make stays default; BIP is excluded.
+
 ## Complete installed audit exposes image flag loss (2026-11-07)
 
 Fresh normal VM R6 repeats all 12 startup/authentication checks, then its complete

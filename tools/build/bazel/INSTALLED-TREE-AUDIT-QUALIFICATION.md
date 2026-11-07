@@ -142,3 +142,56 @@ targets (13 cases: DB comparison, accounts, mtree reconciliation and complete
 specification coverage), and captures the real comparator executable. Actual
 format-3 VM qualification remains pending. No reconciled runtime pass is claimed yet. Existing maintained
 frontend target/test inputs carry all helpers; the C backend/default is unchanged.
+
+## Accepted format-3 runtime: R10 image and R8 VM
+
+`bazel-system-normal-boot-vm-r8-20261107/result.json` is **passed**, SHA-256
+`dd47842c44dd1858cd625d8e2039c6116d24b6ec32f28011fe5fd1ecc890e1e8`.
+The same complete 447-package R10 image now passes all 14 checks: the earlier
+12 normal startup/authentication checks, actual firstboot transition proofs,
+and the complete 33,982-file/1,369-directory baseline audit. It then syncs all
+buffers and powers off normally (QEMU exit 0); backing bytes and every runner,
+policy, baseline/producer and helper binding remain unchanged.
+
+Raw mtree exit status remains 2 and its full 1,751-byte diagnostic log is retained,
+SHA-256 `5fcb5c75d62dfdbe9850613161c7e12b6a332133eb2a3a2c06464ca5d6c01061`.
+The explicit reconciliation covers exactly 23 uarch bookkeeping changes, five
+independently validated account file hashes and one independently absent firstboot
+marker. No security-flag, owner/mode, symlink or unrelated content change is
+accepted. The complete original specification is retained, not shortened.
+
+The real guest snapshot contains 30 accounts and 42 groups, with exact declared
+fields/memberships and public projection. Both live DBs equal the actual private
+pwd_mkdb rebuild: 90 logical records each. Independent review derives that count
+from the actual local-account snapshot (name/ordinal/unique-UID keys and version
+record), checks all snapshot hashes against the proof, all 14 named checks,
+source/log bindings and normal shutdown. Record:
+`bazel-system-installed-audit-review-r1-20261107/review.json`.
+Firstboot proof SHA-256:
+`2207e284c08a8d8655d4285ac8c464b312f6345d9a65258dcd2dc66c5a27a82d`;
+serial SHA-256:
+`e5f0b6cdca3ce5aa17327d2c413d9a7caa78435863604921274bb521ff6a3f72`.
+
+The VM retains 2,048 MiB RAM/four vCPUs and disk-backed ZFS. Total driver run
+441.08 s (including final hashes); 421 QEMU samples observe maximum RSS
+2,417,192,960 bytes and last CPU 490.99 s. Maximum allocated overlay is
+17,621,504 bytes. These are functional-run observations under concurrent host
+compilation, not a controlled CPU, RAM or disk-I/O comparison. The audit excludes
+timestamps, extra runtime objects and hardlink inode identity; those and broader
+profile/service/cross/bootstrap/performance/publication gates remain open.
+BIP and verified-boot qualification are outside this result; Make stays default.
+
+## Actual next-version package candidate prepared
+
+`bazel-system-upgrade-native-r1-20261107/receipt.json` passes the full system
+package target and both selected tests (real pkg solver and kernel SSP regression).
+The declared package version is `16.0.qual.20261107`; the kernel revision input is
+`212d25780db9`. Independent review at
+`bazel-system-upgrade-review-r1-20261107/review.json` verifies all 447 captured
+package manifest names/versions and actual archive hashes, then reads the actual
+kernel ELF through the maintained complete archive reader. It finds the new
+version stamp and a changed kernel SHA-256:
+`6ba5fcdd17aad4f7b4b179cddd721ba25bab66b51aefac77c95666f3542a3f98`.
+This is a real package/kernel candidate for upcoming BE tests, not evidence that
+it has been installed, booted, upgraded, rolled back or published. No host upgrade,
+repository latest advancement or reboot was performed.
