@@ -313,7 +313,7 @@ def main():
             console.tick(allow_exit=True);time.sleep(0.2)
         assert process.returncode==0,process.returncode
         console.drain()
-        assert not FAILURE_DIAGNOSTICS.search(bytes(console.data))
+        reject_failures(bytes(console.data))
         assert digest(image)==build_report['image_sha256'],'immutable backing image changed'
         assert all(digest(Path(path))==expected for path,expected in source_bindings.items()),'runner sources changed during qualification'
         report.update(status='passed',vm_seconds=time.monotonic()-started,overlay_bytes=overlay.stat().st_blocks*512)
