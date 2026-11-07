@@ -102,10 +102,10 @@ Enforced by the kernel, not by controller policy. Each has tests (section
 
 | File | Change |
 |---|---|
-| `sys/sys/file.h` | 11 new `fileops` members in `fo_spares` (no size change): `fo_advlock`, `fo_fsync`, `fo_setattr`, `fo_pathconf`, `fo_statfs`, `fo_fadvise`, `fo_readdir`, `fo_copy_file_range`, `fo_acl`, `fo_extattr`, `fo_fcntl`; `DTYPE_DQ` reserved |
+| `sys/sys/file.h` | 11 new `fileops` members after `fo_fork`: `fo_pathconf`, `fo_statfs`, `fo_fsync`, `fo_setattr`, `fo_fadvise`, `fo_readdir`, `fo_copy_file_range`, `fo_acl`, `fo_extattr`, `fo_fcntl`, `fo_advlock`; `fo_spares[4]` kept, so `struct fileops` grows (the spare slots were fewer than the members; every table in the tree is initialised by designator and recompiled with the kernel, so the growth is a KBI change and nothing else — D72); the `fo_*` inline dispatchers fall back to `invfo_*` for a NULL member, so out-of-tree tables keep working; `DTYPE_DQ` reserved |
 | `sys/kern/vfs_vnops.c` | the vnode implementations (`vn_advlock`, `vn_fsync`, …) built from the bodies moved out of the syscalls, each inside `vn_file_context_enter/leave` exactly as the per-open fileops are today; installed in `vnops`, `vn_openfileops`, and explicitly in the vnode-carrying tables of 6.1.1; `invfo_*` defaults only for types with no vnode |
-| `sys/fs/fifofs/fifo_vnops.c`, `sys/kern/sys_pipe.c` (`pipeops`), `sys/kern/tty_pts.c` (`ptsdev_ops`), `sys/fs/devfs/devfs_vnops.c` (`devfs_ops_f`, `devfs_ops_nonpassable_f`), `sys/compat/linuxkpi/common/src/linux_compat.c` (`linuxfileops`) | the new members installed per 6.1.1 so today's behaviour on FIFOs, ptys, ttys and DRM fds is unchanged |
-| `sys/kern/kern_descrip.c` | `F_SETLK*`/`F_GETLK*`/`flock`/`closef`/`fdclearlocks` call `fo_advlock`; the race-with-close recheck (`:915-947`), `P_ADVLOCK`, `FHASLOCK`/`FHASOFDLOCK`, the `l_pid` half of `fcntl_ofd_check`, `FREAD`/`FWRITE` and `SEEK_CUR` handling stay in the syscall; `fpathconf` → `fo_pathconf`; `F_READAHEAD`/`F_RDAHEAD` → `fo_fadvise`; `F_ISUNIONSTACK` → `fo_fcntl` (D64); `mac_file_check_fcntl` call; `path_fileops` gain the members listed in 6.1.1 so today's `O_PATH` behaviour is kept |
+| `sys/kern/sys_pipe.c` (`pipeops`), `sys/kern/tty_pts.c` (`ptsdev_ops`), `sys/fs/devfs/devfs_vnops.c` (`devfs_ops_f`, `devfs_ops_nonpassable_f`), `sys/compat/linuxkpi/common/src/linux_compat.c` (`linuxfileops`) | the new members installed per 6.1.1 so today's behaviour on FIFOs, ptys, ttys and DRM fds is unchanged. `pipeops` serves both pipes and FIFOs and branches on `PIPE_TYPE_NAMED` (`pipe_pathconf`, `pipe_statfs`, …, `pipe_advlock` which admits `F_FLOCK` only); `ptsdev_ops` and `linuxfileops` are *sometimes-vnode* tables — a master from `posix_openpt(2)` or a linuxkpi file from `fd_install()` carries no vnode, one opened through `/dev/ptmx` or a devfs node does — so they install the `vn_*_opt` variants, which delegate to the vnode when present and to `invfo_*` otherwise (found by a plane-on VM panic in `fpathconf_test:pts_master`, D72); `fifo_vnops.c` is untouched, FIFOs having no table of their own |
+| `sys/kern/kern_descrip.c` | `F_SETLK*`/`F_GETLK*`/`flock`/`closef`/`fdclearlocks` call `fo_advlock`; the race-with-close recheck (`:915-947`), `P_ADVLOCK`, `FHASLOCK`/`FHASOFDLOCK`, the `l_pid` half of `fcntl_ofd_check`, `FREAD`/`FWRITE` and `SEEK_CUR` handling stay in the syscall, the `VFCF_OFDLOCKS` half moves into `vn_advlock` (it needs the vnode lock); `flock(2)` and the close paths probe `fo_advlock == NULL` for the old `EOPNOTSUPP`/skip, `fcntl(2)` lets `invfo_advlock` answer `EBADF`; `fpathconf` → `fo_pathconf`; `F_READAHEAD`/`F_RDAHEAD` → `fo_fcntl` (not `fo_fadvise`: read-ahead sets per-open state, `f_seqcount`/`FRDAHEAD`, not advice on a range — D72); `F_ISUNIONSTACK` → `fo_fcntl` (D64); `mac_file_check_fcntl` call; `path_fileops` gain the members listed in 6.1.1 so today's `O_PATH` behaviour is kept, and omit `fo_advlock`/`fo_fadvise`/`fo_readdir`/`fo_copy_file_range`, which `O_PATH` never answered |
 | `sys/kern/vfs_syscalls.c` | `fstatfs`, `fchflags`, `futimes`, `futimens`, `fsync`, `fdatasync`, `posix_fadvise`, `copy_file_range`, `getdirentries` call the fileops; audit, `mac_mount_check_stat`, `vn_start_write`, `ERELOOKUP` retry and the union-mount `f_vnode` rewrite stay (the fileop takes `struct file *` and may update it) |
 | `sys/kern/vfs_acl.c`, `vfs_extattr.c` | `_fd` variants call `fo_acl`/`fo_extattr` |
 | `sys/kern/vfs_aio.c` | `LIO_SYNC` through `fo_fsync` |
@@ -212,18 +212,18 @@ lists what stays in the syscall so "moved code" is auditable.
 
 | Fileop | Vnode body from | Stays in the syscall |
 |---|---|---|
-| `fo_advlock(fp, id, op, fl, flags, td)` | `kern_fcntl` lock cases, `sys_flock`, `vn_open_vnode_advlock` | fd re-fetch and `F_UNLCK`-on-mismatch recheck; `P_ADVLOCK`; `FHASLOCK`/`FHASOFDLOCK`; the `l_pid != 0 → EINVAL` half of `fcntl_ofd_check` (its `VFCF_OFDLOCKS` mount test dereferences the vnode's mount and moves into `vn_advlock`); `FREAD`/`FWRITE`; `SEEK_CUR`; `CAP_FLOCK` |
+| `fo_advlock(fp, id, op, fl, flags, td)` | `kern_fcntl` lock cases, `sys_flock`, `closef`, `fdclearlocks` (`vn_open_vnode_advlock` and the `vn_closefile` unlock stay on the vnode they hold: at open the file has no table yet, at close it has `badfileops` — D72) | fd re-fetch and `F_UNLCK`-on-mismatch recheck; `P_ADVLOCK`; `FHASLOCK`/`FHASOFDLOCK`; the `l_pid != 0 → EINVAL` half of `fcntl_ofd_check` (its `VFCF_OFDLOCKS` mount test dereferences the vnode's mount and moves into `vn_advlock`); `FREAD`/`FWRITE`; `SEEK_CUR`; `CAP_FLOCK` |
 | `fo_fsync(fp, mode, td)` | `kern_fsync_fp`; mode `FSYNC_FS` for Linux `syncfs` (`vfs_periodic` + `VFS_SYNC`) | `CAP_FSYNC`; `AUDIT_ARG_VNODE1` moves into the vnode body |
 | `fo_setattr(fp, vap, td)` | `setutimes`, `setfflags` | `CAP_FUTIMES`/`CAP_FCHFLAGS`; audit in the vnode body |
 | `fo_pathconf(fp, name, valp, td)` | `kern_fpathconf` vnode arm | `CAP_FPATHCONF`; pipe and socket fileops return today's fixed values |
 | `fo_statfs(fp, sfp, td)` | `kern_fstatfs`: the whole of `kern_do_statfs` — `VFS_STATFS`, `mac_mount_check_stat`, `prison_enforce_statfs` — runs inside the vnode body because all three need the referenced mount; the dq body runs `mac_file_check_stat` | `CAP_FSTATFS`. Linux `quotactl_fd` needs a `struct mount` no fileop yields and stays `ENOSYS` for non-vnode files |
 | `fo_setattr` on `path_fileops` | `fdesc_setattr` non-size path (`fdesc_vnops.c:612`) | `kern_futimes`, `kern_futimens`, `sys_fchflags` keep today's `EBADF` for `O_PATH` fds (`getvnode` rejects them at `vfs_syscalls.c:3470,3518,2862`): they test `f_ops == &path_fileops → EBADF` before calling the fileop (D71) |
-| `fo_fadvise(fp, off, len, advice, td)` | `kern_posix_fadvise`, `F_READAHEAD` | `DFLAG_SEEKABLE`; `AUDIT_ARG_FILE` |
+| `fo_fadvise(fp, off, len, advice, td)` | `kern_posix_fadvise`, Linux `readahead(2)` | `DFLAG_SEEKABLE`; `AUDIT_ARG_FILE` |
 | `fo_readdir(fp, uio, basep, ncookies, cookies, td)` | `kern_getdirentries` | `CAP_READ`; the union rewrite stays inside the vnode body, which receives `fp` |
 | `fo_copy_file_range(infp, inoff, outfp, outoff, len, flags, td)` | `kern_copy_file_range` | `CAP_READ`/`CAP_WRITE`; mismatched pair → `EINVAL` as today |
 | `fo_acl(fp, op, type, aclp, td)` | `vacl_*` | `CAP_ACL_*` |
 | `fo_extattr(fp, op, ns, name, uio, td)` | `extattr_*_vp` | `CAP_EXTATTR_*` |
-| `fo_fcntl(fp, cmd, arg, td)` | Linux rw-hint cases | all generic `fcntl` handling |
+| `fo_fcntl(fp, cmd, arg, td)` | `F_READAHEAD`/`F_RDAHEAD` (D72), `F_ISUNIONSTACK` (D64), Linux rw-hint cases as the kernel-private `FO_FCNTL_{GET,SET}_RW_HINT` | all generic `fcntl` handling; the `O_PATH` refusal of read-ahead; the rw-hint `copyin`/`copyout` and range check |
 
 `fo_chmod`/`fo_chown`: `mac_vnode_check_setmode/setowner` move into
 `vn_chmod`/`vn_chown` (vnode checks on a vnode operation); non-vnode
@@ -263,13 +263,21 @@ receive these calls on descriptors that are not `vnops`: FIFOs
 preserves every one of them (D63): each moved vnode body is a `vn_*(fp)`
 operating on `fp->f_vnode`, and it is **installed explicitly** in those
 tables for the members their descriptors answer today — `pipeops` members
-delegate to `vn_*` when `f_vnode != NULL` and give today's pipe answer
-otherwise; `ptsdev_ops`, `devfs_ops_f`, `devfs_ops_nonpassable_f` and
-`linuxfileops` take `vn_*` for every member they lack; `path_fileops`
-takes `fo_statfs`, `fo_pathconf`, `fo_setattr` (non-size), `fo_acl`
-(get/check) and `fo_extattr` (all four), matching `getvnode_path`'s
-acceptance today. No default fileop inspects `f_vnode`: the delegation is
-explicit per table, so the ledger can count it. The ledger gains a
+branch on `PIPE_TYPE_NAMED`, delegating to `vn_*` for a FIFO and giving
+today's pipe answer otherwise; `devfs_ops_f` and `devfs_ops_nonpassable_f`
+take `vn_*` for every member they lack; `ptsdev_ops` and `linuxfileops`
+are *sometimes-vnode* tables (a `posix_openpt(2)` master or an
+`fd_install()`ed linuxkpi file has no vnode, one opened through `/dev/ptmx`
+or a devfs node has) and take `vn_*_opt`, which delegates when
+`f_vnode != NULL` and returns `invfo_*` otherwise (D72); `path_fileops`
+takes `fo_pathconf`, `fo_statfs`, `fo_setattr` (non-size), `fo_acl`,
+`fo_extattr`, `fo_fcntl` and `fo_fsync`, with the system calls that
+refused `O_PATH` before (`fsync`, `fchflags`, `futimes`, ACL set/delete,
+read-ahead) still testing `f_ops == &path_fileops → EBADF` ahead of the
+table (D71), matching `getvnode`/`getvnode_path`'s acceptance today. No
+`invfo_*` default inspects `f_vnode`; the only code that does is `vn_*_opt`,
+installed explicitly in the two sometimes-vnode tables, so the ledger can
+count every delegation. The ledger gains a
 fileops-table audit (every `struct fileops` definition, which members are
 `vn_*`, which are own, which are `invfo_*`/`badfo_*`) beside the call-site
 tables, and stage 0 has a test row running every new fileop on a FIFO, a
@@ -940,7 +948,7 @@ the same backend; of a real file, the same predicate.
 | `execve`, `fexecve` | stage 3 | yes with `ALLOW`; `EACCES` before stage 3 |
 | `fstat`/`stat`/`lstat`/`fstatat`, `fstatfs`/`statfs`, `fpathconf`/`pathconf` | identity | yes, incl. `st_dev/ino/gen` |
 | `F_KINFO`, `procstat -f`, `procstat -v`, `/proc/self/maps`, `realpath`, `/dev/fd/N` readlink, `getcwd` | `fo_fill_kinfo`, `pgo_kinfo`, attachment | yes |
-| `fcntl` flags/dup/readahead; `F_GETFL` | generic / `fo_fadvise` | yes (no served bit exists in `f_flag`) |
+| `fcntl` flags/dup/readahead; `F_GETFL` | generic / `fo_fcntl` | yes (no served bit exists in `f_flag`) |
 | `flock`, `F_SETLK*`, `F_OFD_*`, `O_EXLOCK` | `LOCK` events; the controller can proxy to the real file's locks | yes |
 | `fchmod`, `fchown`, `futimens`, `fchflags` (any `dp_write`) | `SETATTR` | yes |
 | `ioctl` | `IOCTL`/`ENOTTY` | yes for the ioctls a regular file answers; pointer-embedding ioctls are `ENOTTY` |
@@ -1138,6 +1146,7 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D69 | 2026-11-06 | Queue refcounted independently of `cdevpriv`; `dr_*` released with `fdrop`; `CLOSE` on a dead queue is a no-op | kernel final pass N5 | use-after-free at `pddrop` after controller exit |
 | D70 | 2026-11-06 | `mac_file_check_inherit` at `fork1`/`fdcopy` and `fdcloseexec`; refusal leaves the slot empty as `O_CLOFORK` does | kernel final pass N4, R4 | plain `fork()` by a controller |
 | D71 | 2026-11-06 | `DFLAG_PRIVWRITE` also on `devfs_ops_f`/`_nonpassable_f`; `futimes`/`futimens`/`fchflags` keep `EBADF` for `O_PATH` despite `path_fileops.fo_setattr` | kernel confirmation pass R1, R2 | two regressions the N1 fix would have introduced |
+| D72 | 2026-11-07 | Stage-0 implementation findings: `struct fileops` grows (the spares were fewer than the eleven members); `ptsdev_ops` and `linuxfileops` are *sometimes-vnode* tables and install `vn_*_opt` (delegate when `f_vnode != NULL`, `invfo_*` otherwise); `F_READAHEAD`/`F_RDAHEAD` go through `fo_fcntl`, not `fo_fadvise` (per-open state, not range advice); the `VFCF_OFDLOCKS` half of `fcntl_ofd_check` moves into `vn_advlock`; FIFO locks go through `pipe_advlock`, which admits `F_FLOCK` only; `vn_open_vnode_advlock` stays on the vnode (the file has no table yet at open time) | stage-0 build; plane-on VM run 1 panic in `fpathconf_test:pts_master` | `posix_openpt(2)` masters and `fd_install()` linuxkpi files carry no vnode; read-ahead sets `f_seqcount`/`FRDAHEAD` |
 
 ### 20.1 Origin
 
