@@ -2840,9 +2840,6 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 
 	AUDIT_ARG_FD(uap->fd);
 	AUDIT_ARG_FFLAGS(uap->flags);
-	/* We can't support the value matching VNOVAL. */
-	if (uap->flags == VNOVAL)
-		return (EOPNOTSUPP);
 	error = fget(td, uap->fd, &cap_fchflags_rights, &fp);
 	if (error != 0)
 		return (error);
@@ -2852,6 +2849,18 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 		goto out;
 	}
 	VATTR_NULL(&vattr);
+	/*
+	 * We can't support the value matching VNOVAL.  The refusal came
+	 * after the descriptor was known to carry attributes: ask the
+	 * fileop for nothing first, so a type without attributes keeps its
+	 * EINVAL and a file gets EOPNOTSUPP.
+	 */
+	if (uap->flags == VNOVAL) {
+		error = fo_setattr(fp, &vattr, td->td_ucred, td);
+		if (error == 0)
+			error = EOPNOTSUPP;
+		goto out;
+	}
 	vattr.va_flags = uap->flags;
 #ifdef MAC
 	error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &vattr);
@@ -2996,17 +3005,6 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 	if (error != 0)
 		return (error);
 #ifdef MAC
-	{
-		struct vnode *vp = fp->f_vnode;
-		if (vp != NULL) {
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			error = mac_vnode_check_setmode(td->td_ucred, vp,
-			    uap->mode & ALLPERMS);
-			VOP_UNLOCK(vp);
-			if (error != 0)
-				goto out;
-		}
-	}
 	{
 		struct vattr va;
 
@@ -3164,17 +3162,6 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 	if (error != 0)
 		return (error);
 #ifdef MAC
-	{
-		struct vnode *vp = fp->f_vnode;
-		if (vp != NULL) {
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			error = mac_vnode_check_setowner(td->td_ucred, vp,
-			    uap->uid, uap->gid);
-			VOP_UNLOCK(vp);
-			if (error != 0)
-				goto out;
-		}
-	}
 	{
 		struct vattr va;
 
@@ -5271,21 +5258,12 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		error = EBADF;
 		goto out;
 	}
-	/* Only descriptor types that can copy ranges take part. */
-	if (infp->f_ops->fo_copy_file_range == NULL) {
-		error = EINVAL;
-		goto out;
-	}
 	error = fget_write(td, outfd,
 	    outoffp != NULL ? &cap_pwrite_rights : &cap_write_rights, &outfp);
 	if (error != 0)
 		goto out;
 	if (outfp->f_ops == &badfileops) {
 		error = EBADF;
-		goto out;
-	}
-	if (outfp->f_ops->fo_copy_file_range == NULL) {
-		error = EINVAL;
 		goto out;
 	}
 
@@ -5325,6 +5303,16 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 	if ((outfp->f_flag & (FWRITE | FAPPEND)) != FWRITE ||
 	    (infp->f_flag & FREAD) == 0) {
 		error = EBADF;
+		goto out;
+	}
+
+	/*
+	 * Only descriptor types that can copy ranges take part; the vnode
+	 * test this replaces stood here, after the mode checks.
+	 */
+	if (infp->f_ops->fo_copy_file_range == NULL ||
+	    outfp->f_ops->fo_copy_file_range == NULL) {
+		error = EINVAL;
 		goto out;
 	}
 

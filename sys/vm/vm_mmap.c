@@ -1696,8 +1696,10 @@ vm_mmap_file(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 	 * mapping of a shm descriptor without CAP_MMAP_W reached the
 	 * assertion before this.
 	 */
-	if ((prot & ~maxprot) != 0)
-		return (EACCES);
+	if ((prot & ~maxprot) != 0) {
+		return (EXTERROR(EACCES, "prot %#x exceeds maxprot %#x", prot,
+		    maxprot));
+	}
 
 	/*
 	 * We currently can only deal with page aligned file offsets.

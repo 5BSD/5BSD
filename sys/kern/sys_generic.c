@@ -352,16 +352,16 @@ dofileread(struct thread *td, int fd, struct file *fp, struct uio *auio,
 
 	AUDIT_ARG_FD(fd);
 
-	/* Finish zero length reads right here */
-	if (auio->uio_resid == 0) {
-		td->td_retval[0] = 0;
-		return (0);
-	}
 #ifdef MAC
 	error = mac_file_check_read(td->td_ucred, fp->f_cred, fp);
 	if (error != 0)
 		return (error);
 #endif
+	/* Finish zero length reads right here */
+	if (auio->uio_resid == 0) {
+		td->td_retval[0] = 0;
+		return (0);
+	}
 	auio->uio_rw = UIO_READ;
 	auio->uio_offset = offset;
 	auio->uio_td = td;

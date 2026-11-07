@@ -6,7 +6,8 @@
  * descriptors with no vnode return EINVAL, as getvnode() did; an O_PATH
  * descriptor returns EBADF from the system calls, as getvnode() did.  The
  * FIFO case is the regression test for the MPASS(f_type == DTYPE_VNODE)
- * that fsync(fifo) used to hit under INVARIANTS.
+ * that fsync(fifo) used to hit under INVARIANTS; the answers it and the
+ * pty cases check are the ones a non-INVARIANTS kernel gave.
  */
 
 #include <sys/param.h>

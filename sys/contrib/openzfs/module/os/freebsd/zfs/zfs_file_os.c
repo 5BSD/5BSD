@@ -282,10 +282,8 @@ drop:
 int
 zfs_file_fsync(zfs_file_t *fp, int flags)
 {
-	if (fp->f_type != DTYPE_VNODE)
-		return (EINVAL);
-
-	return (zfs_vop_fsync(fp->f_vnode));
+	/* The descriptor's own fsync; EINVAL from a type that has none. */
+	return (fo_fsync(fp, FO_FSYNC_FULL, curthread));
 }
 
 /*

@@ -116,7 +116,7 @@ ATF_TC_BODY(generic_checks, tc)
 ATF_TC_WITHOUT_HEAD(not_a_file);
 ATF_TC_BODY(not_a_file, tc)
 {
-	int file, fds[2], sock, shm, fifo;
+	int file, fds[2], sock, shm, fifo, fd;
 
 	file = make_file("file", "0123456789abcdef", 16);
 	ATF_REQUIRE_EQ(0, pipe(fds));
@@ -153,6 +153,37 @@ ATF_TC_BODY(not_a_file, tc)
 	ATF_CHECK_EQ(-1, copy_file_range(file, NULL, fifo, NULL, 4, 0));
 	ATF_CHECK_EQ(EINVAL, errno);
 	close(fifo);
+
+	/* The mode checks come first: an O_PATH input has no FREAD. */
+	fd = open("file", O_PATH);
+	ATF_REQUIRE(fd >= 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, copy_file_range(fd, NULL, file, NULL, 4, 0));
+	ATF_CHECK_EQ(EBADF, errno);
+	close(fd);
+
+	/* Readable types with no range copy: EINVAL after the mode checks. */
+	fd = open("/dev/zero", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, copy_file_range(fd, NULL, file, NULL, 4, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(fd);
+	fd = kqueue();
+	ATF_REQUIRE(fd >= 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, copy_file_range(fd, NULL, file, NULL, 4, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(fd);
+	fd = posix_openpt(O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, copy_file_range(fd, NULL, file, NULL, 4, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, copy_file_range(file, NULL, fd, NULL, 4, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(fd);
 	close(file);
 }
 

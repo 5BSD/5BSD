@@ -287,7 +287,8 @@ const struct fileops shm_ops = {
 	.fo_fallocate = shm_fallocate,
 	.fo_fspacectl = shm_fspacectl,
 	.fo_cmp = file_kcmp_generic,
-	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE,
+	/* Private mappings are copy-on-write here too (shm_mmap). */
+	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_PRIVWRITE,
 };
 
 FEATURE(posix_shm, "POSIX shared memory");

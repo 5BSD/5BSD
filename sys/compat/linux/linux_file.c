@@ -548,7 +548,8 @@ linux_fileattr_fsetflags(struct thread *td, int fd, u_long flags)
 	vattr.va_flags = flags;
 	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 	fdrop(fp, td);
-	return (error);
+	/* A type with no attributes (pipes, pty masters): as getvnode() gave. */
+	return (error == EINVAL ? EOPNOTSUPP : error);
 }
 
 int
@@ -778,6 +779,8 @@ linux_getdents_error(struct thread *td, int fd, int err)
 		return (error);
 	if (fp->f_ops == &path_fileops)
 		error = EBADF;
+	else if (fp->f_ops->fo_readdir == NULL)
+		error = EINVAL;	/* no directory entries, as getvnode() said */
 	else
 		error = fo_stat(fp, &sb, td->td_ucred);
 	if (error == 0 && !S_ISDIR(sb.st_mode))
@@ -1434,6 +1437,7 @@ int
 linux_pread(struct thread *td, struct linux_pread_args *uap)
 {
 	struct file *fp;
+	struct stat sb;
 	off_t offset;
 	int error;
 
@@ -1445,7 +1449,7 @@ linux_pread(struct thread *td, struct linux_pread_args *uap)
 		error = fget(td, uap->fd, &cap_pread_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (fp->f_type == DTYPE_VNODE && fp->f_vnode->v_type == VDIR)
+		if (fo_stat(fp, &sb, td->td_ucred) == 0 && S_ISDIR(sb.st_mode))
 			error = EISDIR;
 		fdrop(fp, td);
 	}
@@ -2337,15 +2341,19 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 			return (error == EBADF ? EINVAL : error);
 		return (copyout(&hint, PTRIN(args->arg), sizeof(hint)));
 	case LINUX_F_SET_RW_HINT:
-		error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
-		if (error != 0)
-			return (error);
-		if (hint > LINUX_RWH_WRITE_LIFE_EXTREME)
-			return (EINVAL);
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
-		error = fo_fcntl(fp, FO_FCNTL_SET_RW_HINT, (intptr_t)hint, td);
+		if (fp->f_ops->fo_fcntl == NULL) {
+			fdrop(fp, td);
+			return (EINVAL);
+		}
+		error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
+		if (error == 0 && hint > LINUX_RWH_WRITE_LIFE_EXTREME)
+			error = EINVAL;
+		if (error == 0)
+			error = fo_fcntl(fp, FO_FCNTL_SET_RW_HINT, (intptr_t)hint,
+			    td);
 		fdrop(fp, td);
 		return (error == EBADF ? EINVAL : error);
 
@@ -2719,27 +2727,23 @@ linux_dup3(struct thread *td, struct linux_dup3_args *args)
 static int
 linux_fallocate_check(struct file *fp)
 {
+	struct stat sb;
 	int error;
 
-	error = 0;
-	switch (fp->f_type) {
-	case DTYPE_VNODE:
-		if (fp->f_vnode->v_type == VFIFO)
-			error = ESPIPE;
-		else if (fp->f_vnode->v_type == VDIR)
-			error = EISDIR;
-		else if (fp->f_vnode->v_type != VREG)
-			error = ENODEV;
-		break;
-	case DTYPE_SHM:
-		break;
-	case DTYPE_PIPE:
+	/*
+	 * The descriptor's own stat answers for its type: a FIFO or pipe is
+	 * ESPIPE, a directory EISDIR, anything but a regular file (shm
+	 * objects report one) ENODEV.
+	 */
+	error = fo_stat(fp, &sb, curthread->td_ucred);
+	if (error != 0)
+		return (error);
+	if (S_ISFIFO(sb.st_mode))
 		error = ESPIPE;
-		break;
-	default:
+	else if (S_ISDIR(sb.st_mode))
+		error = EISDIR;
+	else if (!S_ISREG(sb.st_mode))
 		error = ENODEV;
-		break;
-	}
 	if (error == 0 && (fp->f_flag & FWRITE) == 0)
 		error = EBADF;
 	return (error);

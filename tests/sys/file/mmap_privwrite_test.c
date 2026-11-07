@@ -3,9 +3,9 @@
  *
  * A MAP_PRIVATE mapping of a descriptor without the CAP_MMAP_W right may be
  * PROT_WRITE when the descriptor's fileops carry DFLAG_PRIVWRITE (the
- * writes are copy-on-write and never reach the file): vnode files and devfs
- * nodes.  Other types need the right even for a private mapping, and a
- * MAP_SHARED PROT_WRITE mapping always needs a writable descriptor.
+ * writes are copy-on-write and never reach the object): vnode files, devfs
+ * nodes and shm objects.  A MAP_SHARED PROT_WRITE mapping always needs the
+ * right and a writable descriptor.
  */
 
 #include <sys/param.h>
@@ -91,7 +91,10 @@ ATF_TC_BODY(devfs_node, tc)
 	close(fd);
 }
 
-/* shm has no DFLAG_PRIVWRITE: without CAP_MMAP_W no mapping is writable. */
+/*
+ * shm private mappings are copy-on-write too and carry DFLAG_PRIVWRITE:
+ * a private write needs no CAP_MMAP_W, a shared one still does.
+ */
 ATF_TC_WITHOUT_HEAD(shm);
 ATF_TC_BODY(shm, tc)
 {
@@ -102,7 +105,7 @@ ATF_TC_BODY(shm, tc)
 	ATF_REQUIRE_EQ(0, ftruncate(fd, PAGE_SIZE));
 	check_private_write(fd);
 	limit_to_read(fd);
-	check_write_refused(fd, MAP_PRIVATE, EACCES);
+	check_private_write(fd);
 	check_write_refused(fd, MAP_SHARED, ENOTCAPABLE);
 	close(fd);
 }
