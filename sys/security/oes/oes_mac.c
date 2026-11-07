@@ -485,6 +485,10 @@ struct oes_vnode_event_info {
 	int			dq_op;		/* DQ_REPLY: DQ_OP_* answered */
 	int			dq_error;	/* DQ_REPLY: errno in the reply */
 	size_t			dq_count;	/* DQ_REPLY: payload length */
+	int			lock_op;	/* FILE_LOCK: F_GETLK/F_SETLK/... */
+	struct flock		*flock;		/* FILE_LOCK: the request */
+	vm_offset_t		map_addr;	/* FILE_MMAP: requested address */
+	vm_size_t		map_size;	/* FILE_MMAP: length */
 	bool			nosleep;	/* Use non-blocking delivery */
 };
 
@@ -1310,6 +1314,8 @@ oes_event_primary_path(const struct oes_pending *ep)
 	case OES_EVENT_NOTIFY_WRITE:
 	case OES_EVENT_AUTH_FILE_READ:
 	case OES_EVENT_NOTIFY_FILE_READ:
+	case OES_EVENT_AUTH_FILE_WRITE:
+	case OES_EVENT_NOTIFY_FILE_WRITE:
 		return (oes_msg_string(msg, msg->em_event_data.rw.file.ef_path_off));
 	case OES_EVENT_AUTH_STAT:
 	case OES_EVENT_NOTIFY_STAT:
@@ -1320,6 +1326,21 @@ oes_event_primary_path(const struct oes_pending *ep)
 		return (oes_msg_string(msg, msg->em_event_data.close.file.ef_path_off));
 	case OES_EVENT_NOTIFY_DQ_REPLY:
 		return (oes_msg_string(msg, msg->em_event_data.dq_reply.file.ef_path_off));
+	case OES_EVENT_AUTH_FILE_SETATTR:
+	case OES_EVENT_NOTIFY_FILE_SETATTR:
+		return (oes_msg_string(msg, msg->em_event_data.file_setattr.file.ef_path_off));
+	case OES_EVENT_AUTH_FILE_FSYNC:
+	case OES_EVENT_NOTIFY_FILE_FSYNC:
+		return (oes_msg_string(msg, msg->em_event_data.fsync.file.ef_path_off));
+	case OES_EVENT_AUTH_FILE_LOCK:
+	case OES_EVENT_NOTIFY_FILE_LOCK:
+		return (oes_msg_string(msg, msg->em_event_data.file_lock.file.ef_path_off));
+	case OES_EVENT_AUTH_FILE_IOCTL:
+	case OES_EVENT_NOTIFY_FILE_IOCTL:
+		return (oes_msg_string(msg, msg->em_event_data.file_ioctl.file.ef_path_off));
+	case OES_EVENT_AUTH_FILE_MMAP:
+	case OES_EVENT_NOTIFY_FILE_MMAP:
+		return (oes_msg_string(msg, msg->em_event_data.mmap.file.ef_path_off));
 	case OES_EVENT_AUTH_POLL:
 	case OES_EVENT_NOTIFY_POLL:
 		return (oes_msg_string(msg, msg->em_event_data.poll.file.ef_path_off));
@@ -1453,6 +1474,8 @@ oes_event_primary_file(const struct oes_pending *ep)
 	case OES_EVENT_NOTIFY_WRITE:
 	case OES_EVENT_AUTH_FILE_READ:
 	case OES_EVENT_NOTIFY_FILE_READ:
+	case OES_EVENT_AUTH_FILE_WRITE:
+	case OES_EVENT_NOTIFY_FILE_WRITE:
 		return (&msg->em_event_data.rw.file);
 	case OES_EVENT_AUTH_STAT:
 	case OES_EVENT_NOTIFY_STAT:
@@ -1463,6 +1486,21 @@ oes_event_primary_file(const struct oes_pending *ep)
 		return (&msg->em_event_data.close.file);
 	case OES_EVENT_NOTIFY_DQ_REPLY:
 		return (&msg->em_event_data.dq_reply.file);
+	case OES_EVENT_AUTH_FILE_SETATTR:
+	case OES_EVENT_NOTIFY_FILE_SETATTR:
+		return (&msg->em_event_data.file_setattr.file);
+	case OES_EVENT_AUTH_FILE_FSYNC:
+	case OES_EVENT_NOTIFY_FILE_FSYNC:
+		return (&msg->em_event_data.fsync.file);
+	case OES_EVENT_AUTH_FILE_LOCK:
+	case OES_EVENT_NOTIFY_FILE_LOCK:
+		return (&msg->em_event_data.file_lock.file);
+	case OES_EVENT_AUTH_FILE_IOCTL:
+	case OES_EVENT_NOTIFY_FILE_IOCTL:
+		return (&msg->em_event_data.file_ioctl.file);
+	case OES_EVENT_AUTH_FILE_MMAP:
+	case OES_EVENT_NOTIFY_FILE_MMAP:
+		return (&msg->em_event_data.mmap.file);
 	case OES_EVENT_AUTH_POLL:
 	case OES_EVENT_NOTIFY_POLL:
 		return (&msg->em_event_data.poll.file);
@@ -2569,6 +2607,49 @@ oes_event_invalidates_namespace(oes_event_type_t event)
 	}
 }
 
+/*
+ * A setattr request names only the attributes it changes; the rest are
+ * VNOVAL (VATTR_NULL), which becomes a clear bit in mask and a 0 field.
+ */
+static void
+oes_fill_file_setattr(oes_event_file_setattr_t *sa, const struct vattr *vap)
+{
+
+	if (vap == NULL)
+		return;
+	if (vap->va_mode != (mode_t)VNOVAL) {
+		sa->mask |= OES_FILE_SETATTR_MODE;
+		sa->mode = vap->va_mode;
+	}
+	if (vap->va_uid != (uid_t)VNOVAL) {
+		sa->mask |= OES_FILE_SETATTR_UID;
+		sa->uid = vap->va_uid;
+	}
+	if (vap->va_gid != (gid_t)VNOVAL) {
+		sa->mask |= OES_FILE_SETATTR_GID;
+		sa->gid = vap->va_gid;
+	}
+	if (vap->va_flags != (u_long)VNOVAL) {
+		sa->mask |= OES_FILE_SETATTR_FLAGS;
+		sa->flags = vap->va_flags;
+	}
+	if (vap->va_size != (u_quad_t)VNOVAL) {
+		sa->mask |= OES_FILE_SETATTR_SIZE;
+		sa->size = vap->va_size;
+	}
+	if (vap->va_atime.tv_sec != VNOVAL) {
+		sa->mask |= OES_FILE_SETATTR_ATIME;
+		sa->atime.tv_sec = vap->va_atime.tv_sec;
+		sa->atime.tv_nsec = vap->va_atime.tv_nsec;
+	}
+	if (vap->va_mtime.tv_sec != VNOVAL) {
+		sa->mask |= OES_FILE_SETATTR_MTIME;
+		sa->mtime.tv_sec = vap->va_mtime.tv_sec;
+		sa->mtime.tv_nsec = vap->va_mtime.tv_nsec;
+	}
+	sa->vaflags = vap->va_vaflags;
+}
+
 static bool
 oes_event_invalidates_file(oes_event_type_t event)
 {
@@ -2583,6 +2664,12 @@ oes_event_invalidates_file(oes_event_type_t event)
 	case OES_EVENT_AUTH_SETACL:
 	case OES_EVENT_AUTH_DELETEACL:
 	case OES_EVENT_AUTH_RELABEL:
+	/*
+	 * A presented identity may repeat a real file's ino/dev (libdq builds
+	 * it from stat(2)), so a served change drops decisions on that token.
+	 */
+	case OES_EVENT_AUTH_FILE_WRITE:
+	case OES_EVENT_AUTH_FILE_SETATTR:
 		return (true);
 	default:
 		return (false);
@@ -3008,6 +3095,68 @@ oes_generate_vnode_event(oes_event_type_t event,
 			pr->count = info->dq_count;
 			break;
 		}
+		case OES_EVENT_AUTH_FILE_WRITE:
+		case OES_EVENT_NOTIFY_FILE_WRITE:
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(
+				    &ep->ep_msg.em_event_data.rw.file, info->fp,
+				    &st, &ep->ep_msg, NULL, NULL);
+			break;
+		case OES_EVENT_AUTH_FILE_SETATTR:
+		case OES_EVENT_NOTIFY_FILE_SETATTR:
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(
+				    &ep->ep_msg.em_event_data.file_setattr.file,
+				    info->fp, &st, &ep->ep_msg, NULL, NULL);
+			oes_fill_file_setattr(
+			    &ep->ep_msg.em_event_data.file_setattr, vap);
+			break;
+		case OES_EVENT_AUTH_FILE_FSYNC:
+		case OES_EVENT_NOTIFY_FILE_FSYNC:
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(
+				    &ep->ep_msg.em_event_data.fsync.file, info->fp,
+				    &st, &ep->ep_msg, NULL, NULL);
+			break;
+		case OES_EVENT_AUTH_FILE_LOCK:
+		case OES_EVENT_NOTIFY_FILE_LOCK: {
+			oes_event_file_lock_t *lk =
+			    &ep->ep_msg.em_event_data.file_lock;
+
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(&lk->file, info->fp,
+				    &st, &ep->ep_msg, NULL, NULL);
+			lk->op = info->lock_op;
+			if (info->flock != NULL) {
+				lk->type = info->flock->l_type;
+				lk->start = info->flock->l_start;
+				lk->len = info->flock->l_len;
+				lk->whence = info->flock->l_whence;
+				lk->pid = info->flock->l_pid;
+			}
+			break;
+		}
+		case OES_EVENT_AUTH_FILE_IOCTL:
+		case OES_EVENT_NOTIFY_FILE_IOCTL:
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(
+				    &ep->ep_msg.em_event_data.file_ioctl.file,
+				    info->fp, &st, &ep->ep_msg, NULL, NULL);
+			ep->ep_msg.em_event_data.file_ioctl.cmd = info->ioctl_cmd;
+			break;
+		case OES_EVENT_AUTH_FILE_MMAP:
+		case OES_EVENT_NOTIFY_FILE_MMAP: {
+			oes_event_mmap_t *mm = &ep->ep_msg.em_event_data.mmap;
+
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(&mm->file, info->fp,
+				    &st, &ep->ep_msg, NULL, NULL);
+			mm->addr = info->map_addr;
+			mm->len = info->map_size;
+			mm->prot = prot;
+			mm->flags = mmap_flags;
+			break;
+		}
 		default:
 			break;
 		}
@@ -3315,6 +3464,104 @@ oes_mac_file_notify_reply(struct ucred *controller, struct file *fp, int op,
 	info.dq_count = count;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_DQ_REPLY, &info);
+}
+
+/*
+ * Stage 1b operations on served descriptors.  write, ioctl and mmap are
+ * framework fast paths like read and stat, so the served-mark test is again
+ * the first statement; setattr, fsync and lock are ordinary hooks but follow
+ * the same rule so that no other descriptor type pays for an event.  The
+ * framework calls each of them with no lock held, so AUTH may sleep.
+ */
+static int
+oes_mac_file_check_write(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(active_cred);
+	info.fp = fp;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_WRITE, &info));
+}
+
+static int
+oes_mac_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
+    struct vattr *vap)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(cred);
+	info.fp = fp;
+	info.vap = vap;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_SETATTR, &info));
+}
+
+static int
+oes_mac_file_check_fsync(struct ucred *cred, struct file *fp)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(cred);
+	info.fp = fp;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_FSYNC, &info));
+}
+
+static int
+oes_mac_file_check_lock(struct ucred *cred, struct file *fp, int fd, int op,
+    struct flock *fl)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(cred);
+	info.fp = fp;
+	info.lock_op = op;
+	info.flock = fl;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_LOCK, &info));
+}
+
+static int
+oes_mac_file_check_ioctl(struct ucred *cred, struct file *fp, int fd,
+    u_long cmd)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(cred);
+	info.fp = fp;
+	info.ioctl_cmd = cmd;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_IOCTL, &info));
+}
+
+static int
+oes_mac_file_check_mmap(struct ucred *cred, struct file *fp, int fd, int prot,
+    int flags, vm_offset_t addr, vm_size_t size)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(cred);
+	info.fp = fp;
+	info.prot = prot;
+	info.mmap_flags = flags;
+	info.map_addr = addr;
+	info.map_size = size;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_MMAP, &info));
 }
 
 /*
@@ -4518,13 +4765,20 @@ static struct mac_policy_ops oes_mac_ops = {
 	.mpo_vnode_check_close = oes_mac_vnode_check_close,
 
 	/*
-	 * Served descriptors (dq(4)) - sleepable; the read/stat hooks are
-	 * framework fast paths and return at once for any other file type.
+	 * Served descriptors (dq(4)) - sleepable; read, stat, write, ioctl
+	 * and mmap are framework fast paths, and every one of these returns
+	 * at once for any other file type.
 	 */
 	.mpo_file_check_read = oes_mac_file_check_read,
 	.mpo_file_check_stat = oes_mac_file_check_stat,
 	.mpo_file_notify_close = oes_mac_file_notify_close,
 	.mpo_file_notify_reply = oes_mac_file_notify_reply,
+	.mpo_file_check_write = oes_mac_file_check_write,
+	.mpo_file_check_setattr = oes_mac_file_check_setattr,
+	.mpo_file_check_fsync = oes_mac_file_check_fsync,
+	.mpo_file_check_lock = oes_mac_file_check_lock,
+	.mpo_file_check_ioctl = oes_mac_file_check_ioctl,
+	.mpo_file_check_mmap = oes_mac_file_check_mmap,
 	.mpo_vnode_check_create = oes_mac_vnode_check_create,
 	.mpo_vnode_check_unlink = oes_mac_vnode_check_unlink,
 	.mpo_vnode_check_rename_from = oes_mac_vnode_check_rename_from,

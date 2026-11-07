@@ -164,19 +164,53 @@ controller have no vnode, so the vnode hooks never see them.
 For those descriptors only, the policy implements the descriptor-level hooks
 .Fn mac_file_check_read ,
 .Fn mac_file_check_stat ,
+.Fn mac_file_check_write ,
+.Fn mac_file_check_setattr ,
+.Fn mac_file_check_fsync ,
+.Fn mac_file_check_lock ,
+.Fn mac_file_check_ioctl ,
+.Fn mac_file_check_mmap ,
 .Fn mac_file_notify_close
 and
 .Fn mac_file_notify_reply ,
-generating
+generating the AUTH events
 .Dv OES_EVENT_AUTH_FILE_READ ,
-.Dv OES_EVENT_AUTH_FILE_STAT
-.Pq with NOTIFY counterparts ,
+.Dv _FILE_STAT ,
+.Dv _FILE_WRITE ,
+.Dv _FILE_SETATTR ,
+.Dv _FILE_FSYNC ,
+.Dv _FILE_LOCK ,
+.Dv _FILE_IOCTL
+and
+.Dv _FILE_MMAP ,
+each with its NOTIFY counterpart, and the NOTIFY-only
 .Dv OES_EVENT_NOTIFY_FILE_CLOSE
 and
 .Dv OES_EVENT_NOTIFY_DQ_REPLY .
 The file object in these messages is the identity the controller presents and
 carries
 .Dv OES_FILE_META_PRESENTED .
+.Dv FILE_SETATTR
+reports the requested changes in
+.Vt oes_event_file_setattr_t ,
+whose
+.Va mask
+of
+.Dv OES_FILE_SETATTR_*
+bits names the mode, owner, group, flags, size and access or modification
+times present;
+.Dv FILE_LOCK
+reports the request and its
+.Vt struct flock
+fields in
+.Vt oes_event_file_lock_t ;
+.Dv FILE_IOCTL
+reports the command in
+.Vt oes_event_file_ioctl_t ;
+.Dv FILE_MMAP
+uses the
+.Dv MMAP
+payload with the requested address and length filled.
 A
 .Dv NOTIFY_DQ_REPLY
 message is attributed to the controller process and reports the answered

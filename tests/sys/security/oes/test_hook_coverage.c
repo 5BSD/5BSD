@@ -21,6 +21,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
@@ -30,6 +31,7 @@
 #include <unistd.h>
 
 #include <dev/dq/dq.h>
+#include <libdq.h>
 #include <security/oes/oes.h>
 #include "test_common.h"
 
@@ -759,120 +761,122 @@ test_cred_events(void)
 }
 
 /*
- * Served descriptors (dq(4)): mpo_file_check_read, mpo_file_check_stat,
- * mpo_file_notify_close and mpo_file_notify_reply.  The child is the
- * controller: it mints one object, fstats and closes it itself (the kernel
- * exempts those from the controller deadlock rule), and lets a grandchild do
- * the read so that the controller can answer it from the queue.  The queue is
- * opened O_CLOFORK so the grandchild does not count as holding the queue.
- * The read and the reply come from different processes, so the events are
- * matched by type alone; nothing but a dq descriptor can produce them.
+ * Served descriptors (dq(4)): every mpo_file_* hook OES implements.  The
+ * child is the controller: it mints one writable object presenting a real
+ * backing file and answers every event with libdq's dq_serve_file(), while
+ * a grandchild, the requester, runs each operation once; the controller
+ * then fstats and closes its own copy.  The queue is O_CLOFORK (dq_open), so
+ * the grandchild does not hold it.  Requester and controller are different
+ * processes, so events are matched by type alone; nothing but a dq
+ * descriptor can produce them.
  */
-static int dq_mint_errno;
-static int dq_mint_reason;
+#define	DQ_BACKING	TEST_DIR "/dqbacking"
+
+struct dq_serve_ctx {
+	int			 backing;
+	struct dq_serve_opts	 opts;
+};
 
 static int
-dq_mint_test_object(int qfd)
+dq_serve_cb(int q, const struct dq_event *ev, const void *body,
+    size_t bodylen, void *arg)
 {
-	struct dq_mint_args mint;
-	const char *path = "/dq-oes-hook-test";
+	struct dq_serve_ctx *ctx = arg;
 
-	memset(&mint, 0, sizeof(mint));
-	mint.dm_version = DQ_API_VERSION;
-	mint.dm_kind = DQ_KIND_FILE;
-	mint.dm_ident.di_dev = 0x5bd;
-	mint.dm_ident.di_ino = 42;
-	mint.dm_ident.di_mode = S_IFREG | 0644;
-	mint.dm_ident.di_nlink = 1;
-	mint.dm_ident.di_size = 4096;
-	mint.dm_ident.di_blocks = 8;
-	mint.dm_ident.di_blksize = getpagesize();
-	mint.dm_ident.di_pathlen = strlen(path);
-	strlcpy(mint.dm_ident.di_path, path, sizeof(mint.dm_ident.di_path));
-	strlcpy(mint.dm_ident.di_statfs.ds_fstypename, "dq",
-	    sizeof(mint.dm_ident.di_statfs.ds_fstypename));
-	strlcpy(mint.dm_ident.di_statfs.ds_mntfromname, "dq",
-	    sizeof(mint.dm_ident.di_statfs.ds_mntfromname));
-	strlcpy(mint.dm_ident.di_statfs.ds_mntonname, "/",
-	    sizeof(mint.dm_ident.di_statfs.ds_mntonname));
-	mint.dm_ident.di_statfs.ds_namemax = 255;
-	mint.dm_policy.dp_cache = DQ_CACHE_ATTR;
-	mint.dm_policy.dp_write = DQ_DENY;
-	mint.dm_policy.dp_exec = DQ_DENY;
-	mint.dm_policy.dp_mmap_shared_write = DQ_DENY;
-	mint.dm_policy.dp_lock = DQ_EVENT;
-	mint.dm_policy.dp_ioctl = DQ_DENY;
-	mint.dm_policy.dp_deadline_ms = 2000;
-	mint.dm_policy.dp_rights_version = CAP_RIGHTS_VERSION;
-	cap_rights_init(&mint.dm_policy.dp_rights, CAP_READ, CAP_SEEK,
-	    CAP_FSTAT, CAP_EVENT);
-	if (ioctl(qfd, DQ_IOC_MINT, &mint) < 0) {
-		dq_mint_errno = errno;
-		dq_mint_reason = mint.dm_reason;
-		return (-1);
-	}
-	return (mint.dm_fd);
+	(void)dq_serve_file(q, ev, body, bodylen, ctx->backing, &ctx->opts);
+	return (0);
 }
 
-/* Answer the first READ on the queue with four bytes; anything else EIO. */
+/* Every operation with a served-descriptor event, once. */
 static void
-dq_serve_one_read(int qfd)
+dq_requester_ops(int fd)
 {
-	union {
-		struct dq_event ev;
-		char buf[4096];
-	} u;
-	struct dq_reply reply;
-	struct pollfd pfd;
-	ssize_t n;
+	struct flock fl;
+	struct stat sb;
+	char buf[16];
+	void *p;
+	int n;
 
-	pfd.fd = qfd;
-	pfd.events = POLLIN;
-	if (poll(&pfd, 1, 2000) <= 0)
-		return;
-	n = read(qfd, &u, sizeof(u));
-	if (n < (ssize_t)sizeof(struct dq_event) || u.ev.de_id == 0)
-		return;
-	memset(&reply, 0, sizeof(reply));
-	reply.dr_version = DQ_API_VERSION;
-	reply.dr_id = u.ev.de_id;
-	if (u.ev.de_op == DQ_OP_READ) {
-		reply.dr_errno = 0;
-		reply.dr_len = 4;
-		reply.dr_data = "abcd";
-	} else {
-		reply.dr_errno = EIO;
+	(void)read(fd, buf, sizeof(buf));
+	(void)fstat(fd, &sb);
+	(void)pwrite(fd, "w", 1, 0);
+	(void)fchmod(fd, 0640);
+	(void)fsync(fd);
+	memset(&fl, 0, sizeof(fl));
+	fl.l_type = F_WRLCK;
+	fl.l_whence = SEEK_SET;
+	fl.l_len = 1;
+	if (fcntl(fd, F_SETLK, &fl) == 0) {
+		fl.l_type = F_UNLCK;
+		(void)fcntl(fd, F_SETLK, &fl);
 	}
-	(void)ioctl(qfd, DQ_IOC_REPLY, &reply);
+	(void)ioctl(fd, FIONREAD, &n);
+	p = mmap(NULL, getpagesize(), PROT_READ, MAP_SHARED, fd, 0);
+	if (p != MAP_FAILED)
+		(void)munmap(p, getpagesize());
 }
 
+/*
+ * Exit status: 0 ok, 2 open /dev/dq, 3 backing file, 4 mint (errno in the
+ * pipe is not worth it: dm_reason is reported as 64 + reason on EINVAL).
+ */
 static void action_dq_session(void) {
-	struct stat sb;
+	struct dq_ident_file ident;
+	struct dq_policy pol;
+	struct dq_serve_ctx ctx;
+	struct pollfd pfd;
+	struct statfs sfs;
+	struct stat st;
+	char path[PATH_MAX], fill[8192];
+	uint64_t object;
 	pid_t reader;
-	int qfd, fd;
+	int fd, q, reason, i;
 
-	qfd = open("/dev/dq", O_RDWR | O_CLOEXEC | O_CLOFORK);
-	if (qfd < 0)
+	q = dq_open();
+	if (q < 0)
 		_exit(2);
-	fd = dq_mint_test_object(qfd);
-	if (fd < 0) {
-		/* Only the exit status crosses back to the test process. */
-		_exit(dq_mint_errno == EINVAL ? 64 + dq_mint_reason : 3);
-	}
-	(void)fstat(fd, &sb);
+	memset(fill, 'b', sizeof(fill));
+	ctx.backing = open(DQ_BACKING, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (ctx.backing < 0 ||
+	    write(ctx.backing, fill, sizeof(fill)) != sizeof(fill) ||
+	    realpath(DQ_BACKING, path) == NULL ||
+	    fstat(ctx.backing, &st) != 0 || fstatfs(ctx.backing, &sfs) != 0 ||
+	    dq_ident_from_stat(&ident, path, &st, &sfs, ctx.backing) != 0)
+		_exit(3);
+	dq_policy_default(&pol);
+	pol.dp_write = DQ_EVENT;
+	pol.dp_ioctl = DQ_EVENT;
+	pol.dp_mmap_shared_write = DQ_ALLOW;
+	reason = 0;
+	if (dq_mint_file_flags(q, &ident, &pol, DQ_MINT_F_WRITE, &object, &fd,
+	    &reason) != 0)
+		_exit(errno == EINVAL ? 64 + reason : 4);
+
+	memset(&ctx.opts, 0, sizeof(ctx.opts));
+	ctx.opts.so_state = dq_serve_state_create();
+	ctx.opts.so_ident = &ident;
+
 	reader = fork();
 	if (reader == 0) {
-		char buf[16];
-
-		(void)read(fd, buf, sizeof(buf));
+		dq_requester_ops(fd);
 		_exit(0);
 	}
-	if (reader > 0) {
-		dq_serve_one_read(qfd);
-		waitpid(reader, NULL, 0);
+	/* Serve until the requester is done; bounded so a hang is a FAIL. */
+	for (i = 0; reader > 0 && i < 100; i++) {
+		if (waitpid(reader, NULL, WNOHANG) == reader)
+			break;
+		pfd.fd = q;
+		pfd.events = POLLIN;
+		if (poll(&pfd, 1, 50) > 0)
+			(void)dq_dispatch(q, dq_serve_cb, &ctx);
 	}
+	(void)fstat(fd, &st);
 	close(fd);
-	close(qfd);
+	if (ctx.opts.so_state != NULL)
+		dq_serve_state_destroy(ctx.opts.so_state);
+	close(q);
+	close(ctx.backing);
+	unlink(DQ_BACKING);
 }
 
 /*
@@ -912,6 +916,7 @@ test_dq_event(const char *name, oes_event_type_t event)
 		else
 			snprintf(reason, sizeof(reason), "controller child: %s",
 			    code == 2 ? "open /dev/dq failed" :
+			    code == 3 ? "backing file setup failed" :
 			    "DQ_IOC_MINT failed");
 		FAIL(name, reason);
 		return (-1);
@@ -935,6 +940,12 @@ test_dq_events(void)
 		{ "NOTIFY_FILE_READ", OES_EVENT_NOTIFY_FILE_READ },
 		{ "NOTIFY_DQ_REPLY", OES_EVENT_NOTIFY_DQ_REPLY },
 		{ "NOTIFY_FILE_CLOSE", OES_EVENT_NOTIFY_FILE_CLOSE },
+		{ "NOTIFY_FILE_WRITE", OES_EVENT_NOTIFY_FILE_WRITE },
+		{ "NOTIFY_FILE_SETATTR", OES_EVENT_NOTIFY_FILE_SETATTR },
+		{ "NOTIFY_FILE_FSYNC", OES_EVENT_NOTIFY_FILE_FSYNC },
+		{ "NOTIFY_FILE_LOCK", OES_EVENT_NOTIFY_FILE_LOCK },
+		{ "NOTIFY_FILE_IOCTL", OES_EVENT_NOTIFY_FILE_IOCTL },
+		{ "NOTIFY_FILE_MMAP", OES_EVENT_NOTIFY_FILE_MMAP },
 	};
 	size_t i;
 	int qfd;

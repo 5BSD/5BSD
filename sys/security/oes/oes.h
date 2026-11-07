@@ -50,10 +50,10 @@ typedef enum {
  * Canonical subscription bitmaps for all currently defined event types.
  * Bit positions are (event & 0x0FFF), split into low/high 64-bit words.
  */
-#define OES_AUTH_EVENT_MASK_LO		0x1E07FFFFFFFEULL
+#define OES_AUTH_EVENT_MASK_LO		0x7FE07FFFFFFFEULL
 #define OES_AUTH_EVENT_MASK_HI		0x0ULL
 #define OES_NOTIFY_EVENT_MASK_LO	0xFFFFFFFFFFFFEBFEULL
-#define OES_NOTIFY_EVENT_MASK_HI	0x7FULL
+#define OES_NOTIFY_EVENT_MASK_HI	0x1FFFULL
 
 /*
  * Event coverage notes:
@@ -61,7 +61,8 @@ typedef enum {
  * - NOTIFY_CLOSE: implemented via the mac_vnode_check_close hook added to the
  *   MAC framework.  A close cannot be denied, so this event is NOTIFY-only.
  *
- * - FILE_READ, FILE_STAT, NOTIFY_FILE_CLOSE, NOTIFY_DQ_REPLY: generated from
+ * - FILE_READ, FILE_STAT, FILE_WRITE, FILE_SETATTR, FILE_FSYNC, FILE_LOCK,
+ *   FILE_IOCTL, FILE_MMAP, NOTIFY_FILE_CLOSE, NOTIFY_DQ_REPLY: generated from
  *   the mac_file_* hooks for descriptors served by a DescriptorQueue
  *   controller (dq(4)); the file object is the identity the controller
  *   presents (OES_FILE_META_PRESENTED), and there is no vnode behind it.
@@ -438,11 +439,15 @@ typedef struct {
 	char		name[64];	/* Module name */
 } oes_event_kldload_t;
 
-/* OES_EVENT_*_MMAP */
+/*
+ * OES_EVENT_*_MMAP and OES_EVENT_*_FILE_MMAP.  The vnode hook does not see
+ * the request's address or length, so MMAP leaves them 0; the descriptor
+ * hook behind FILE_MMAP does, and fills them.
+ */
 typedef struct {
 	oes_file_t	file;		/* File being mapped (if any) */
-	uint64_t	addr;		/* Reserved (addr unavailable from MAC hook) */
-	uint64_t	len;		/* Reserved (len unavailable from MAC hook) */
+	uint64_t	addr;		/* FILE_MMAP: requested address; else 0 */
+	uint64_t	len;		/* FILE_MMAP: mapping length; else 0 */
 	int		prot;		/* Protection flags */
 	int		flags;		/* Mmap flags */
 } oes_event_mmap_t;
@@ -653,6 +658,57 @@ typedef struct {
 } oes_event_presented_t;
 
 /*
+ * OES_EVENT_*_FILE_SETATTR: one attribute change on a served descriptor
+ * (fchmod, fchown, fchflags, futimens/futimes, ftruncate, or a setattr
+ * through fdescfs).  The vnode SETMODE/SETOWNER/SETFLAGS/SETUTIMES events
+ * carry one kind each; a served descriptor has a single hook, so mask
+ * says which of the fields below the request changes and the others are 0.
+ */
+typedef struct {
+	oes_file_t	file;		/* Presented identity (META_PRESENTED) */
+	uint32_t	mask;		/* OES_FILE_SETATTR_* */
+	uint32_t	mode;		/* New mode (permission bits) */
+	uint32_t	uid;		/* New owner uid */
+	uint32_t	gid;		/* New owner gid */
+	uint64_t	flags;		/* New file flags (chflags) */
+	uint64_t	size;		/* New size (ftruncate) */
+	oes_timespec_t	atime;		/* New access time */
+	oes_timespec_t	mtime;		/* New modification time */
+	uint32_t	vaflags;	/* VA_UTIMES_NULL etc. from the request */
+	uint32_t	pad;		/* Must be zero */
+} oes_event_file_setattr_t;
+
+#define	OES_FILE_SETATTR_MODE	0x00000001
+#define	OES_FILE_SETATTR_UID	0x00000002
+#define	OES_FILE_SETATTR_GID	0x00000004
+#define	OES_FILE_SETATTR_FLAGS	0x00000008
+#define	OES_FILE_SETATTR_ATIME	0x00000010
+#define	OES_FILE_SETATTR_MTIME	0x00000020
+#define	OES_FILE_SETATTR_SIZE	0x00000040
+
+/*
+ * OES_EVENT_*_FILE_LOCK: an advisory lock request on a served descriptor
+ * (fcntl F_GETLK/F_SETLK/F_SETLKW and the OFD forms, flock(2)).  op is the
+ * request: F_GETLK, F_SETLK, F_SETLKW, or F_UNLCK for any unlock; the rest
+ * is the struct flock as the caller gave it (start is relative to whence).
+ */
+typedef struct {
+	oes_file_t	file;		/* Presented identity (META_PRESENTED) */
+	int32_t		op;		/* F_GETLK, F_SETLK, F_SETLKW or F_UNLCK */
+	int32_t		type;		/* l_type: F_RDLCK, F_WRLCK, F_UNLCK */
+	int64_t		start;		/* l_start */
+	int64_t		len;		/* l_len, 0 = to end of file */
+	int32_t		whence;		/* l_whence */
+	int32_t		pid;		/* l_pid (remote/OFD requests), else 0 */
+} oes_event_file_lock_t;
+
+/* OES_EVENT_*_FILE_IOCTL: an ioctl(2) on a served descriptor. */
+typedef struct {
+	oes_file_t	file;		/* Presented identity (META_PRESENTED) */
+	uint64_t	cmd;		/* ioctl command word */
+} oes_event_file_ioctl_t;
+
+/*
  * Main message structure
  *
  * Clients read these from the oes fd. Messages are variable-length:
@@ -745,6 +801,10 @@ typedef struct {
 		oes_event_proc_sched_t	proc_sched;
 		oes_event_file_t	close;		/* FILE_CLOSE */
 		oes_event_presented_t	dq_reply;
+		oes_event_file_setattr_t file_setattr;
+		oes_event_file_t	fsync;		/* FILE_FSYNC */
+		oes_event_file_lock_t	file_lock;
+		oes_event_file_ioctl_t	file_ioctl;
 		uint8_t			_reserved[128]; /* Future expansion */
 	} em_event_data;
 } oes_message_t;

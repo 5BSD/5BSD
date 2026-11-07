@@ -86,4 +86,9 @@ SRCS.test_oeslogger_output=	test_oeslogger_output.c liboes.c
 SRCS.test_descendants_client=	test_descendants_client.c liboes.c
 SRCS.test_nested_descendants=	test_nested_descendants.c liboes.c
 
+# The served-descriptor events need a dq(4) controller: libdq mints a
+# writable object and dq_serve_file() answers it from a backing file.
+CFLAGS.test_hook_coverage+=	-I${SRCTOP}/lib/libdq
+LIBADD.test_hook_coverage+=	dq
+
 .include <bsd.test.mk>

@@ -25,9 +25,9 @@ mount and kld, turn kernel operations into events of two kinds.
 | AUTH | sleepable MAC check hooks, before the operation | the originating thread sleeps in the hook until every subscribed AUTH client answers or the deadline passes | allow or deny |
 | NOTIFY | check hooks, event handlers and the framework's close hook, after the decision | never blocks the originating thread | observe |
 
-There are 106 event types, generated from the X-macro table in
-`sys/security/oes/oes_event_table.h`: 38 AUTH events in the range
-`0x0001` to `0x0FFF` and 68 NOTIFY events in `0x1001` to `0x1FFF`. The
+There are 118 event types, generated from the X-macro table in
+`sys/security/oes/oes_event_table.h`: 44 AUTH events in the range
+`0x0001` to `0x0FFF` and 74 NOTIFY events in `0x1001` to `0x1FFF`. The
 `0x1000` bit tells them apart (`OES_EVENT_IS_AUTH`). Most AUTH events have
 a NOTIFY counterpart; when they do, the NOTIFY is queued only after the
 combined authorization decision and carries that decision in `em_result`
@@ -43,18 +43,29 @@ the system call later succeeded.
 | memory | `MMAP`, `MPROTECT` | |
 | system | `MOUNT`, `KLDLOAD`, `SWAPON`, `SWAPOFF` | `UNMOUNT`, `KLDUNLOAD`, `REBOOT`, `SYSCTL`, `KENV`, `MOUNT_STAT` |
 | sockets and pipes | | `SOCKET_CREATE`, `_CONNECT`, `_BIND`, `_LISTEN`, `_ACCEPT`, `_SEND`, `_RECEIVE`, `_STAT`, `_POLL`, `PIPE_READ`, `_WRITE`, `_STAT`, `_POLL`, `_IOCTL` |
-| served descriptors (dq(4)) | `FILE_READ`, `FILE_STAT` | `FILE_CLOSE`, `DQ_REPLY` |
+| served descriptors (dq(4)) | `FILE_READ`, `FILE_STAT`, `FILE_WRITE`, `FILE_SETATTR`, `FILE_FSYNC`, `FILE_LOCK`, `FILE_IOCTL`, `FILE_MMAP` | `FILE_CLOSE`, `DQ_REPLY` |
 
 The served-descriptor events come from the descriptor-level
-`mac_file_check_read`, `mac_file_check_stat`, `mac_file_notify_close` and
-`mac_file_notify_reply` hooks, and only for descriptors a DescriptorQueue
+`mac_file_check_read`, `_stat`, `_write`, `_setattr`, `_fsync`, `_lock`,
+`_ioctl` and `_mmap`, `mac_file_notify_close` and `mac_file_notify_reply`
+hooks, and only for descriptors a DescriptorQueue
 controller serves (`fp->f_type == DTYPE_DQ`): such a descriptor has no
 vnode, so the vnode hooks never see it, and every other descriptor type
 returns from these hooks before any work is done. The file object in these
 messages is the identity the controller presents, marked
 `OES_FILE_META_PRESENTED`, with the presented path, inode, device,
 filesystem type and timestamps; the mute and cache tokens are built from
-the presented inode and device. `DQ_REPLY` is attributed to the controller
+the presented inode and device. Read, stat, write, ioctl and mmap are
+framework fast paths, so the served-descriptor test is the first statement
+of each hook. The operation's detail follows the vnode events: `FILE_WRITE`
+and `FILE_FSYNC` carry the file only; `FILE_SETATTR` carries one
+`oes_event_file_setattr_t` whose `mask` of `OES_FILE_SETATTR_*` bits names
+which of mode, uid, gid, flags, size, atime and mtime the request sets
+(fchmod, fchown, fchflags, futimens, ftruncate); `FILE_LOCK` carries the
+request (`F_GETLK`, `F_SETLK`, `F_SETLKW` or `F_UNLCK`) and the `struct
+flock` type, start, length, whence and pid; `FILE_IOCTL` the command word;
+and `FILE_MMAP` the `MMAP` payload with protection, flags, and the address
+and length the vnode event cannot see. `DQ_REPLY` is attributed to the controller
 process and reports the answered operation, its errno, the object id, the
 controller's identity nonce and the reply length (`oes_event_presented_t`);
 it never carries reply data.
