@@ -1052,6 +1052,7 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 #elif defined(DT_LINK_RISCV)
 #define	DT_OP_NOP		0x00000013 /* addi x0, x0, 0 */
 #define	DT_OP_RET		0x00008067 /* jalr x0, x1, 0 */
+#define	DT_OP_LI_A0_0		0x00000513 /* addi a0, x0, 0 */
 #define	DT_OP_IS_AUIPC(op)	(((op) & 0x7f) == 0x17)
 #define	DT_OP_IS_JALR(op)	(((op) & 0x707f) == 0x67)
 #define	DT_OP_JALR_CALL		0x000080e7 /* jalr x1, x1, 0 */
@@ -1092,7 +1093,8 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 	 * invocation. Check to see if the present instruction sequence matches
 	 * the one we would install below.
 	 */
-	if (ip[0] == DT_OP_NOP && (ip[1] == DT_OP_NOP || ip[1] == DT_OP_RET))
+	if ((ip[0] == DT_OP_NOP || ip[0] == DT_OP_LI_A0_0) &&
+	    (ip[1] == DT_OP_NOP || ip[1] == DT_OP_RET))
 		return (0);
 
 	/*
@@ -1104,15 +1106,14 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 		return (-1);
 
 	/*
-	 * On riscv, we do not have to differentiate between regular probes and
-	 * is-enabled probes. Calls are to be converted into a no-op whereas
-	 * tail calls should become a return.
+	 * Calls are converted into no-ops, or for an is-enabled probe into
+	 * clearing its result, whereas tail calls should also return.
 	 */
 	if (ip[1] == DT_OP_JALR_CALL) {
-		ip[0] = DT_OP_NOP;
+		ip[0] = isenabled ? DT_OP_LI_A0_0 : DT_OP_NOP;
 		ip[1] = DT_OP_NOP;
 	} else {
-		ip[0] = DT_OP_NOP;
+		ip[0] = isenabled ? DT_OP_LI_A0_0 : DT_OP_NOP;
 		ip[1] = DT_OP_RET;
 	}
 

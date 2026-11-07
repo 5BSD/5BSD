@@ -384,6 +384,9 @@ do_trap_user(struct trapframe *frame)
 	uint64_t exception;
 	struct thread *td;
 	struct pcb *pcb;
+#ifdef KDTRACE_HOOKS
+	int (*hook)(struct trapframe *);
+#endif
 
 	td = curthread;
 	pcb = td->td_pcb;
@@ -404,6 +407,11 @@ do_trap_user(struct trapframe *frame)
 		intr_irq_handler(frame, INTR_ROOT_IRQ);
 		return;
 	}
+#ifdef KDTRACE_HOOKS
+	/* The fasttrap provider syncs with interrupts to drop this hook. */
+	hook = exception == SCAUSE_BREAKPOINT ?
+	    atomic_load_ptr(&dtrace_pid_probe_ptr) : NULL;
+#endif
 	intr_enable();
 
 	CTR4(KTR_TRAP, "%s: exception=%lu, sepc=%#lx, stval=%#lx", __func__,
@@ -461,6 +469,12 @@ do_trap_user(struct trapframe *frame)
 		userret(td, frame);
 		break;
 	case SCAUSE_BREAKPOINT:
+#ifdef KDTRACE_HOOKS
+		if (hook != NULL && hook(frame) == 0) {
+			userret(td, frame);
+			break;
+		}
+#endif
 		call_trapsignal(td, SIGTRAP, TRAP_BRKPT, (void *)frame->tf_sepc,
 		    exception);
 		userret(td, frame);

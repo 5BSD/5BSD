@@ -41,6 +41,8 @@
 #include "riscv.h"
 #include "vmm_fence.h"
 
+extern int vmm_hypercalls_enabled;
+
 static int
 vmm_sbi_handle_rfnc(struct vcpu *vcpu, struct hypctx *hypctx)
 {
@@ -200,7 +202,8 @@ vmm_sbi_ecall(struct vcpu *vcpu)
 
 	switch (sbi_extension_id) {
 	case SBI_EXT_ID_BASE:
-		if (hypctx->guest_regs.hyp_a[6] !=
+		if (vmm_hypercalls_enabled == 0 ||
+		    hypctx->guest_regs.hyp_a[6] !=
 		    SBI_BASE_PROBE_EXTENSION ||
 		    hypctx->guest_regs.hyp_a[0] != SBI_EXT_ID_HYPERTRACE)
 			return (false);

@@ -17,6 +17,10 @@ CFLAGS+=	-I${SYSDIR}/cddl/contrib/opensolaris/uts/intel
 CFLAGS+=	-I${SYSDIR}/cddl/contrib/opensolaris/uts/aarch64
 .PATH:		${SYSDIR}/cddl/contrib/opensolaris/uts/aarch64/dtrace
 .endif
+.if ${MACHINE_CPUARCH} == "riscv"
+CFLAGS+=	-I${SYSDIR}/cddl/contrib/opensolaris/uts/riscv
+.PATH:		${SYSDIR}/cddl/contrib/opensolaris/uts/riscv/dtrace
+.endif
 
 .PATH:		${SYSDIR}/contrib/openzfs/module/zfs
 SRCS+=		u8_textprep.c

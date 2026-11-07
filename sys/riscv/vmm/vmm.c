@@ -46,6 +46,7 @@
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 
 #include <vm/vm.h>
 #include <vm/vm_object.h>
@@ -90,6 +91,13 @@ static VMM_STAT(VCPU_TOTAL_RUNTIME, "vcpu total runtime");
 VMM_STAT(VMEXIT_COUNT, "total number of vm exits");
 VMM_STAT(VMEXIT_IRQ, "number of vmexits for an irq");
 VMM_STAT(VMEXIT_UNHANDLED, "number of vmexits for an unhandled exception");
+
+SYSCTL_DECL(_hw_vmm);
+
+int vmm_hypercalls_enabled = 1;
+SYSCTL_INT(_hw_vmm, OID_AUTO, hypercalls_enabled, CTLFLAG_RWTUN,
+    &vmm_hypercalls_enabled, 0,
+    "Enable hypercalls on all guests");
 
 static void
 vcpu_cleanup(struct vcpu *vcpu, bool destroy)
@@ -1005,7 +1013,8 @@ restart:
 			break;
 		case VM_EXITCODE_ECALL:
 			vcpu->nextpc = vme->pc + vme->inst_length;
-			if (vme->u.ecall.args[7] == SBI_EXT_ID_HYPERTRACE) {
+			if (vmm_hypercalls_enabled != 0 &&
+			    vme->u.ecall.args[7] == SBI_EXT_ID_HYPERTRACE) {
 				vm_handle_hypertrace_ecall(vcpu, vme);
 				retu = false;
 			} else

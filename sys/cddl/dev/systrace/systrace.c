@@ -56,11 +56,16 @@
 #include <cddl/dev/dtrace/dtrace_cddl.h>
 
 #ifdef LINUX_SYSTRACE
-#ifdef __aarch64__
+#if defined(__aarch64__)
 #include <arm64/linux/linux.h>
 #include <arm64/linux/linux_proto.h>
 #include <arm64/linux/linux_syscalls.c>
 #include <arm64/linux/linux_systrace_args.c>
+#elif defined(__riscv)
+#include <riscv/linux/linux.h>
+#include <riscv/linux/linux_proto.h>
+#include <riscv/linux/linux_syscalls.c>
+#include <riscv/linux/linux_systrace_args.c>
 #else
 #include <amd64/linux/linux.h>
 #include <amd64/linux/linux_proto.h>

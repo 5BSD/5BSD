@@ -15,7 +15,7 @@ SUBDIR.${MK_ZFS}+= \
 	zfsd
 
 .if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386" || \
-    ${MACHINE_CPUARCH} == "aarch64"
+    ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "riscv"
 _bsdinstruments= bsdinstruments
 _dtrace=	dtrace
 _dwatch=	dwatch
@@ -23,7 +23,7 @@ _lockstat=	lockstat
 _plockstat=	plockstat
 .endif
 
-.if ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "riscv"
+.if ${MACHINE_CPUARCH} == "arm"
 _bsdinstruments= bsdinstruments
 _dtrace=	dtrace
 _dwatch=	dwatch

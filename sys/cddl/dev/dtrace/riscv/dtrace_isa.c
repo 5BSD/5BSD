@@ -374,6 +374,9 @@ dtrace_getarg(int arg, int aframes __unused)
 	uintptr_t p;
 	uint64_t val;
 
+	if (arg == 5 && dtrace_error_arg[curcpu].active)
+		return (dtrace_error_arg[curcpu].illval);
+
 	if (arg < 0 || (tf = curthread->t_dtrace_trapframe) == NULL) {
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
 		return (0);
