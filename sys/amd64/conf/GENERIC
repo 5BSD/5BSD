@@ -360,6 +360,7 @@ device		efirtc			# EFI RTC
 # via sys/conf/files; these are the optional statically-compiled policies).
 options 	OES			# OpenEndpointSecurity
 options 	MAC_ABAC		# Attribute-based access control MAC policy
+device		dq			# DescriptorQueue: controller-served descriptors
 
 # Verified-execution enforcement compiled into the trusted kernel rather than a
 # late-loadable policy.  Inactive unless a verified manifest is supplied and

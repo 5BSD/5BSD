@@ -47,6 +47,7 @@
 #include <sys/mutex.h>
 #include <sys/malloc.h>
 #include <sys/file.h>	/* Must come after sys/malloc.h */
+#include <sys/user.h>
 #include <sys/mount.h>
 #include <sys/namei.h>
 #include <sys/proc.h>
@@ -743,16 +744,17 @@ fdesc_reclaim(struct vop_reclaim_args *ap)
 static int
 fdesc_readlink(struct vop_readlink_args *va)
 {
-	struct vnode *vp, *vn;
+	struct vnode *vn;
 	struct thread *td;
 	struct uio *uio;
 	struct file *fp;
-	char *freepath, *fullpath;
+	struct filedesc *fdp;
+	struct kinfo_file *kif;
+	const char *fullpath;
 	size_t pathlen;
 	int lockflags, fd_fd;
 	int error;
 
-	freepath = NULL;
 	vn = va->a_vp;
 	if (VTOFDESC(vn)->fd_type != Fdesc)
 		panic("fdesc_readlink: not fdescfs link");
@@ -765,22 +767,39 @@ fdesc_readlink(struct vop_readlink_args *va)
 	if (error != 0)
 		goto out;
 
-	switch (fp->f_type) {
-	case DTYPE_VNODE:
-		vp = fp->f_vnode;
-		error = vn_fullpath(vp, &fullpath, &freepath);
-		break;
-	default:
-		fullpath = "anon_inode:[unknown]";
-		break;
+	/*
+	 * The link's target is whatever the descriptor presents as its path
+	 * (fo_fill_kinfo, as F_KINFO and procstat see it): a vnode's full
+	 * path, a served object's presented path, and for the descriptor
+	 * types that have none the Linux-style anonymous inode.  A vnode
+	 * whose path cannot be resolved keeps answering ENOENT.
+	 * vn_fill_kinfo expects the caller's filedesc lock, as
+	 * kern_proc_filedesc_out holds it.
+	 */
+	kif = malloc(sizeof(*kif), M_TEMP, M_WAITOK | M_ZERO);
+	fdp = td->td_proc->p_fd;
+	FILEDESC_SLOCK(fdp);
+	error = fo_fill_kinfo(fp, kif, fdp);
+	FILEDESC_SUNLOCK(fdp);
+	if (error == 0) {
+		/*
+		 * Other tables put other strings in kf_path (a socket's
+		 * domain, "pts/N", a shm name): only a presented vnode's path
+		 * is a link target.
+		 */
+		if (kif->kf_type != KF_TYPE_VNODE)
+			fullpath = "anon_inode:[unknown]";
+		else if (kif->kf_path[0] != '\0')
+			fullpath = kif->kf_path;
+		else
+			error = ENOENT;
 	}
 	if (error == 0) {
 		uio = va->a_uio;
 		pathlen = strlen(fullpath);
-		error = uiomove(fullpath, pathlen, uio);
+		error = uiomove(__DECONST(char *, fullpath), pathlen, uio);
 	}
-	if (freepath != NULL)
-		free(freepath, M_TEMP);
+	free(kif, M_TEMP);
 	fdrop(fp, td);
 
 out:

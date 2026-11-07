@@ -25,6 +25,7 @@ def kernel_header_installation():
         "//sys/vm:public_flat_vm_install_archive",
         "//sys/dev/ciss:public_flat_dev_ciss_install_archive",
         "//sys/dev/filemon:public_flat_dev_filemon_install_archive",
+        "//sys/dev/dq:public_group_dq_install_archive",
         "//sys/dev/firewire:public_flat_dev_firewire_install_archive",
         "//sys/dev/hwpmc:public_flat_dev_hwpmc_install_archive",
         "//sys/dev/ic:public_flat_dev_ic_install_archive",

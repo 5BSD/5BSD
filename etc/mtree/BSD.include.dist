@@ -207,6 +207,8 @@
         ..
         coreboot
         ..
+        dq
+        ..
         evdev
         ..
         filemon
