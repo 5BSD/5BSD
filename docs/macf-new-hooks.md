@@ -722,6 +722,34 @@ typedef int (*mpo_file_check_fsync_t)(struct ucred *cred, struct file *fp);
 int mac_file_check_fsync(struct ucred *cred, struct file *fp);
 ```
 
+### 3.14 mac_file_notify_reply
+
+- **XNU name:** none
+- **5BSD name:** `mac_file_notify_reply`
+- **Category:** notify
+- **Call site:** `sys/dev/dq/dq_queue.c`, the controller's `DQ_IOC_REPLY`
+  path, after the reply has been accepted for a served descriptor
+  (DescriptorQueue stage 1a, `docs/book/src/capability/descriptor-queue.md`
+  D89).  **Implemented 2026-11-07.**
+- **Lock context:** No locks held (the object's `struct file` is held by
+  the caller for the duration)
+- **Can sleep:** YES
+- **Composition macro:** `MAC_POLICY_PERFORM` (sleepable)
+- **Fast-path flag:** No
+- **Arguments:** `controller` is the credential of the process that
+  answered (the queue owner), not of the requester; `op` is the
+  subsystem's operation code (`DQ_OP_*`); `error` the answer; `count` the
+  number of bytes the answer carried.  Content never reaches a policy
+  (D41).  OES turns it into `OES_EVENT_NOTIFY_DQ_REPLY`.
+
+```c
+typedef void (*mpo_file_notify_reply_t)(struct ucred *controller,
+    struct file *fp, int op, int error, size_t count);
+
+void mac_file_notify_reply(struct ucred *controller, struct file *fp,
+    int op, int error, size_t count);
+```
+
 ---
 
 ## 4. Vnode Notification Hooks

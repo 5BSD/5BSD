@@ -819,6 +819,8 @@ typedef int	(*mpo_file_check_setattr_t)(struct ucred *cred,
 		    struct file *fp, int fd, struct vattr *vap);
 typedef int	(*mpo_file_check_fsync_t)(struct ucred *cred,
 		    struct file *fp);
+typedef void	(*mpo_file_notify_reply_t)(struct ucred *controller,
+		    struct file *fp, int op, int error, size_t count);
 
 
 
@@ -1137,6 +1139,7 @@ struct mac_policy_ops {
 	mpo_file_check_stat_t			mpo_file_check_stat;
 	mpo_file_check_setattr_t		mpo_file_check_setattr;
 	mpo_file_check_fsync_t			mpo_file_check_fsync;
+	mpo_file_notify_reply_t			mpo_file_notify_reply;
 
 	mpo_socket_check_accept_t		mpo_socket_check_accept;
 	mpo_socket_check_bind_t			mpo_socket_check_bind;
