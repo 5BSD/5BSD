@@ -464,10 +464,12 @@ kern_mmap(struct thread *td, const struct mmap_req *mrp)
 			error = EINVAL;
 			goto done;
 		}
-		/* Private vnode writes are COW and need no writable file right.
-		 * Add that allowance before intersecting the explicit PROT_MAX
-		 * ceiling; a file operation must never widen the combined limit. */
-		if (fp->f_type == DTYPE_VNODE && (flags & MAP_SHARED) == 0)
+		/* Private writes to a DFLAG_PRIVWRITE file are COW and need no
+		 * writable file right.  Add that allowance before intersecting
+		 * the explicit PROT_MAX ceiling; a file operation must never
+		 * widen the combined limit. */
+		if ((fp->f_ops->fo_flags & DFLAG_PRIVWRITE) != 0 &&
+		    (flags & MAP_SHARED) == 0)
 			cap_maxprot |= VM_PROT_WRITE;
 		if (check_fp_fn != NULL) {
 			error = check_fp_fn(fp, prot, max_prot & cap_maxprot,

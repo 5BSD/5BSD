@@ -839,7 +839,7 @@ const struct fileops vnops = {
 	.fo_extattr = vn_openfile_extattr,
 	.fo_fcntl = vn_openfile_fcntl,
 	.fo_advlock = vn_advlock,
-	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
+	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_PRIVWRITE
 };
 
 #define VN_OPENFILEOPS(extra) { \
@@ -871,7 +871,8 @@ const struct fileops vnops = {
 	.fo_extattr = vn_openfile_extattr, \
 	.fo_fcntl = vn_openfile_fcntl, \
 	.fo_advlock = vn_advlock, \
-	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
+	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | DFLAG_PRIVWRITE | \
+	    (extra) \
 }
 
 static const struct fileops vn_openfileops[6] = {

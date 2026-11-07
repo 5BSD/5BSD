@@ -256,6 +256,8 @@ struct fileops {
 #define DFLAG_VNODE_OPENFILE 0x08 /* per-open vnode lifetime */
 #define DFLAG_VNODE_NOSHAREDMAP 0x10 /* only private mappings allowed */
 #define DFLAG_VNODE_STREAM 0x20 /* no shared file offset */
+#define	DFLAG_PRIVWRITE	0x40	/* private mappings are copy-on-write and
+				   need no write right on the descriptor */
 #endif /* _KERNEL */
 
 #if defined(_KERNEL) || defined(_WANT_FILE)
