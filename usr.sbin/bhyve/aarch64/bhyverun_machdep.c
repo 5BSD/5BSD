@@ -110,7 +110,7 @@ bhyve_usage(int code)
 	progname = getprogname();
 
 	fprintf(stderr,
-	    "Usage: %s [-CDHhSW]\n"
+	    "Usage: %s [-CDdHhSW]\n"
 	    "       %*s [-c [[cpus=]numcpus][,sockets=n][,cores=n][,threads=n]]\n"
 	    "       %*s [-k config_file] [-m mem] [-o var=value]\n"
 	    "       %*s [-p vcpuN[-vcpuM]]:hostcpuX[-hostcpuY]\n"
@@ -118,6 +118,7 @@ bhyve_usage(int code)
 	    "       -C: include guest memory in core file\n"
 	    "       -c: number of CPUs and/or topology specification\n"
 	    "       -D: destroy on power-off\n"
+	    "       -d: enable HyperTrace\n"
 	    "       -G: start a debug server\n"
 	    "       -h: help\n"
 	    "       -k: key=value flat config file\n"
@@ -141,9 +142,12 @@ bhyve_optparse(int argc, char **argv)
 	const char *optstr;
 	int c;
 
-	optstr = "hCDMNSWk:f:o:p:G:c:s:m:U:";
+	optstr = "dhCDMNSWk:f:o:p:G:c:s:m:U:";
 	while ((c = getopt(argc, argv, optstr)) != -1) {
 		switch (c) {
+		case 'd':
+			set_config_bool("enable_hypertrace", true);
+			break;
 		case 'c':
 			if (bhyve_topology_parse(optarg) != 0) {
 				errx(EX_USAGE, "invalid cpu topology '%s'",

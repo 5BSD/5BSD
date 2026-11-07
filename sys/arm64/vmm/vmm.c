@@ -41,6 +41,7 @@
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 
 #include <vm/vm.h>
 #include <vm/vm_object.h>
@@ -275,6 +276,13 @@ vmm_priv_getreg(const void *handle, int reg, uint64_t *value)
 		return (EINVAL);
 	return (vm_get_register(vhdl->vcpu, reg, value));
 }
+
+SYSCTL_DECL(_hw_vmm);
+
+static int hypercalls_enabled = 1;
+SYSCTL_INT(_hw_vmm, OID_AUTO, hypercalls_enabled, CTLFLAG_RWTUN,
+    &hypercalls_enabled, 0,
+    "Enable hypercalls on all guests");
 
 static int vm_hypertrace_copyin(struct vcpu *, struct vm_guest_paging *,
     uint64_t, void *, size_t);
@@ -1126,7 +1134,7 @@ vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 	if ((hypctx_read_sys_reg(hypctx, HOST_ESR_EL2) & ESR_ELx_ISS_MASK) != 0)
 		return (1);
 	fid = hypctx_read_sys_reg(hypctx, GPR_X(0));
-	if (fid == BHYVE_HYPERTRACE_QUERY) {
+	if (hypercalls_enabled != 0 && fid == BHYVE_HYPERTRACE_QUERY) {
 		error = vm_set_register(vcpu, VM_REG_GUEST_X0,
 		    BHYVE_HYPERTRACE_VERSION);
 		KASSERT(error == 0, ("%s: query result: %d", __func__, error));
@@ -1136,7 +1144,7 @@ vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 		*retu = false;
 		return (0);
 	}
-	if (fid == BHYVE_HYPERTRACE_PROBE) {
+	if (hypercalls_enabled != 0 && fid == BHYVE_HYPERTRACE_PROBE) {
 		id = hypctx_read_sys_reg(hypctx, GPR_X(1));
 		argptr = hypctx_read_sys_reg(hypctx, GPR_X(2));
 		tid = hypctx_read_sys_reg(hypctx, GPR_X(3));

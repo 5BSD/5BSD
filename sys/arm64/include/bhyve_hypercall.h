@@ -9,6 +9,7 @@
 
 #include <sys/systm.h>
 #include <sys/types.h>
+#include <dev/psci/psci.h>
 #include <dev/psci/smccc.h>
 
 #define BHYVE_HYPERTRACE_SIGNATURE 0x48545243U
@@ -28,8 +29,11 @@ bhyve_hypercalls_enabled(void)
 {
 	struct arm_smccc_res res;
 
-	/* Never execute HVC on a bare-metal kernel. */
-	if (vm_guest != VM_GUEST_BHYVE)
+	/*
+	 * Never execute HVC on a bare-metal kernel.  A PSCI conduit of HVC
+	 * means a hypervisor takes the call, and any other returns an error.
+	 */
+	if (!psci_present || psci_callfn != arm_smccc_hvc)
 		return (0);
 	arm_smccc_invoke_1(arm_smccc_hvc, BHYVE_HYPERTRACE_QUERY, &res);
 	return (res.a0 == BHYVE_HYPERTRACE_VERSION &&
