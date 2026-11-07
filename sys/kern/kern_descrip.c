@@ -630,6 +630,22 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 
 	AUDIT_ARG_FD(cmd);
 	AUDIT_ARG_CMD(cmd);
+#ifdef MAC
+	/*
+	 * The policy sees every command on the descriptor before the cases
+	 * below take their own references; the extra lookup is paid only
+	 * while a policy registers the hook.
+	 */
+	if (mac_file_check_fcntl_enabled()) {
+		error = fget_unlocked(td, fd, &cap_no_rights, &fp);
+		if (error != 0)
+			return (error);
+		error = mac_file_check_fcntl(td->td_ucred, fp, fd, cmd, arg);
+		fdrop(fp, td);
+		if (error != 0)
+			return (error);
+	}
+#endif
 	switch (cmd) {
 	case F_DUPFD:
 		tmp = arg;
@@ -795,6 +811,15 @@ revert_flags:
 			fdrop(fp, td);
 			break;
 		}
+#ifdef MAC
+		error = mac_file_check_lock(td->td_ucred, fp, fd,
+		    flp->l_type == F_UNLCK || flp->l_type == F_UNLCKSYS ?
+		    F_UNLCK : (flg & F_WAIT) != 0 ? F_SETLKW : F_SETLK, flp);
+		if (error != 0) {
+			fdrop(fp, td);
+			break;
+		}
+#endif
 		if ((flg & F_OFD) != 0 && flp->l_pid != 0) {
 			error = EINVAL;
 			fdrop(fp, td);
@@ -922,6 +947,13 @@ revert_flags:
 			fdrop(fp, td);
 			break;
 		}
+#ifdef MAC
+		error = mac_file_check_lock(td->td_ucred, fp, fd, F_GETLK, flp);
+		if (error != 0) {
+			fdrop(fp, td);
+			break;
+		}
+#endif
 		if ((flg & F_OFD) != 0 && flp->l_pid != 0) {
 			error = EINVAL;
 			fdrop(fp, td);
@@ -1776,6 +1808,13 @@ kern_fstat(struct thread *td, int fd, struct stat *sbp)
 		return (error);
 
 	AUDIT_ARG_FILE(td->td_proc, fp);
+#ifdef MAC
+	error = mac_file_check_stat(td->td_ucred, fp->f_cred, fp);
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
+	}
+#endif
 
 	sbp->st_filerev = 0;
 	sbp->st_bsdflags = 0;
@@ -4498,18 +4537,26 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	lf.l_whence = SEEK_SET;
 	lf.l_start = 0;
 	lf.l_len = 0;
-	if (uap->how & LOCK_UN) {
+	if ((uap->how & LOCK_UN) != 0)
 		lf.l_type = F_UNLCK;
-		atomic_clear_int(&fp->f_flag, FHASLOCK);
-		error = fo_advlock(fp, (caddr_t)fp, F_UNLCK, &lf, F_FLOCK, td);
-		goto done;
-	}
-	if (uap->how & LOCK_EX)
+	else if ((uap->how & LOCK_EX) != 0)
 		lf.l_type = F_WRLCK;
-	else if (uap->how & LOCK_SH)
+	else if ((uap->how & LOCK_SH) != 0)
 		lf.l_type = F_RDLCK;
 	else {
 		error = EBADF;
+		goto done;
+	}
+#ifdef MAC
+	error = mac_file_check_lock(td->td_ucred, fp, uap->fd,
+	    lf.l_type == F_UNLCK ? F_UNLCK :
+	    (uap->how & LOCK_NB) != 0 ? F_SETLK : F_SETLKW, &lf);
+	if (error != 0)
+		goto done;
+#endif
+	if (lf.l_type == F_UNLCK) {
+		atomic_clear_int(&fp->f_flag, FHASLOCK);
+		error = fo_advlock(fp, (caddr_t)fp, F_UNLCK, &lf, F_FLOCK, td);
 		goto done;
 	}
 	atomic_set_int(&fp->f_flag, FHASLOCK);

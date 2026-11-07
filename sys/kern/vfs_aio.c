@@ -54,6 +54,8 @@
 #include <sys/sx.h>
 #include <sys/taskqueue.h>
 #include <sys/vnode.h>
+
+#include <security/mac/mac_framework.h>
 #include <sys/conf.h>
 #include <sys/event.h>
 #include <sys/mount.h>
@@ -872,16 +874,27 @@ aio_process_rw(struct kaiocb *job)
 		fof_flags = ((job->ioflags & KAIOCB_IO_FOFFSET) != 0 ?
 		    0 : FOF_OFFSET) | job->compat_foflags;
 		if (opcode == LIO_READ || opcode == LIO_READV) {
-			if (job->uiop->uio_resid == 0)
-				error = 0;
-			else
-				error = fo_read(fp, job->uiop, fp->f_cred,
-				    fof_flags, td);
+			error = 0;
+			if (job->uiop->uio_resid != 0) {
+#ifdef MAC
+				error = mac_file_check_read(td->td_ucred,
+				    fp->f_cred, fp);
+#endif
+				if (error == 0)
+					error = fo_read(fp, job->uiop,
+					    fp->f_cred, fof_flags, td);
+			}
 		} else {
 			if (fp->f_type == DTYPE_VNODE)
 				bwillwrite();
-			error = fo_write(fp, job->uiop, fp->f_cred,
-			    fof_flags | FOF_NOSIGPIPE, td);
+			error = 0;
+#ifdef MAC
+			error = mac_file_check_write(td->td_ucred, fp->f_cred,
+			    fp);
+#endif
+			if (error == 0)
+				error = fo_write(fp, job->uiop, fp->f_cred,
+				    fof_flags | FOF_NOSIGPIPE, td);
 		}
 	}
 	msgrcv_end = td->td_ru.ru_msgrcv;
@@ -930,8 +943,13 @@ aio_process_sync(struct kaiocb *job)
 	 * only descriptors that can answer it.
 	 */
 	td->td_ucred = job->cred;
-	error = fo_fsync(fp, job->uaiocb.aio_lio_opcode == LIO_DSYNC ?
-	    FO_FSYNC_DATA : FO_FSYNC_FULL, td);
+	error = 0;
+#ifdef MAC
+	error = mac_file_check_fsync(td->td_ucred, fp);
+#endif
+	if (error == 0)
+		error = fo_fsync(fp, job->uaiocb.aio_lio_opcode == LIO_DSYNC ?
+		    FO_FSYNC_DATA : FO_FSYNC_FULL, td);
 	td->td_ucred = td_savedcred;
 	if (error)
 		aio_complete(job, -1, error);

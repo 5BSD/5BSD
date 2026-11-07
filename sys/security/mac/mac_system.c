@@ -269,6 +269,114 @@ mac_file_notify_close(struct ucred *cred, struct file *fp, int fd)
 	MAC_CHECK_PROBE2(file_notify_close, 0, cred, fp);
 }
 
+/*
+ * The fileops-boundary checks (docs/macf-new-hooks.md 3.4, 3.6,
+ * 3.9-3.13).  Every call site holds no lock, so all of them may sleep.
+ */
+MAC_CHECK_PROBE_DEFINE4(file_check_fcntl, "struct ucred *",
+    "struct file *", "int", "int");
+
+int
+mac_file_check_fcntl_impl(struct ucred *cred, struct file *fp, int fd,
+    int cmd, intptr_t arg)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_fcntl, cred, fp, fd, cmd, arg);
+	MAC_CHECK_PROBE4(file_check_fcntl, error, cred, fp, fd, cmd);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE4(file_check_lock, "struct ucred *",
+    "struct file *", "int", "struct flock *");
+
+int
+mac_file_check_lock(struct ucred *cred, struct file *fp, int fd, int op,
+    struct flock *fl)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_lock, cred, fp, fd, op, fl);
+	MAC_CHECK_PROBE4(file_check_lock, error, cred, fp, op, fl);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(file_check_read, "struct ucred *",
+    "struct ucred *", "struct file *");
+
+int
+mac_file_check_read_impl(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_read, active_cred, file_cred, fp);
+	MAC_CHECK_PROBE3(file_check_read, error, active_cred, file_cred, fp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(file_check_write, "struct ucred *",
+    "struct ucred *", "struct file *");
+
+int
+mac_file_check_write_impl(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_write, active_cred, file_cred, fp);
+	MAC_CHECK_PROBE3(file_check_write, error, active_cred, file_cred, fp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(file_check_stat, "struct ucred *",
+    "struct ucred *", "struct file *");
+
+int
+mac_file_check_stat_impl(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_stat, active_cred, file_cred, fp);
+	MAC_CHECK_PROBE3(file_check_stat, error, active_cred, file_cred, fp);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE3(file_check_setattr, "struct ucred *",
+    "struct file *", "struct vattr *");
+
+int
+mac_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
+    struct vattr *vap)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_setattr, cred, fp, fd, vap);
+	MAC_CHECK_PROBE3(file_check_setattr, error, cred, fp, vap);
+
+	return (error);
+}
+
+MAC_CHECK_PROBE_DEFINE2(file_check_fsync, "struct ucred *",
+    "struct file *");
+
+int
+mac_file_check_fsync(struct ucred *cred, struct file *fp)
+{
+	int error;
+
+	MAC_POLICY_CHECK(file_check_fsync, cred, fp);
+	MAC_CHECK_PROBE2(file_check_fsync, error, cred, fp);
+
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE2(pts_check_open, "struct ucred *", "int");
 
 int

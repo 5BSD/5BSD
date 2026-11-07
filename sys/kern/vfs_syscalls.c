@@ -2853,6 +2853,11 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 	}
 	VATTR_NULL(&vattr);
 	vattr.va_flags = uap->flags;
+#ifdef MAC
+	error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &vattr);
+	if (error != 0)
+		goto out;
+#endif
 	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 out:
 	fdrop(fp, td);
@@ -3001,6 +3006,15 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 			if (error != 0)
 				goto out;
 		}
+	}
+	{
+		struct vattr va;
+
+		VATTR_NULL(&va);
+		va.va_mode = uap->mode;
+		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
+		if (error != 0)
+			goto out;
 	}
 #endif
 	error = fo_chmod(fp, uap->mode, td->td_ucred, td);
@@ -3160,6 +3174,16 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 			if (error != 0)
 				goto out;
 		}
+	}
+	{
+		struct vattr va;
+
+		VATTR_NULL(&va);
+		va.va_uid = uap->uid;
+		va.va_gid = uap->gid;
+		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
+		if (error != 0)
+			goto out;
 	}
 #endif
 	error = fo_chown(fp, uap->uid, uap->gid, td->td_ucred, td);
@@ -3442,6 +3466,11 @@ kern_fsetutimes(struct thread *td, int fd, const struct timespec *ts,
 	vattr.va_mtime = ts[1];
 	if (nullflag)
 		vattr.va_vaflags |= VA_UTIMES_NULL;
+#ifdef MAC
+	error = mac_file_check_setattr(td->td_ucred, fp, fd, &vattr);
+	if (error != 0)
+		goto out;
+#endif
 	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 out:
 	fdrop(fp, td);
@@ -3629,7 +3658,13 @@ otruncate(struct thread *td, struct otruncate_args *uap)
 int
 kern_fsync_fp(struct thread *td, struct file *fp, bool fullsync)
 {
+#ifdef MAC
+	int error;
 
+	error = mac_file_check_fsync(td->td_ucred, fp);
+	if (error != 0)
+		return (error);
+#endif
 	return (fo_fsync(fp, fullsync ? FO_FSYNC_FULL : FO_FSYNC_DATA, td));
 }
 
@@ -5307,6 +5342,14 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 	}
 
 	retlen = len;
+#ifdef MAC
+	error = mac_file_check_read(td->td_ucred, infp->f_cred, infp);
+	if (error == 0)
+		error = mac_file_check_write(td->td_ucred, outfp->f_cred,
+		    outfp);
+	if (error != 0)
+		goto out;
+#endif
 	error = fo_copy_file_range(infp, &inoff, outfp, &outoff, &retlen,
 	    flags, td);
 out:

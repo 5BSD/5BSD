@@ -3487,6 +3487,166 @@
       }
     ]
   },
+  "file_check_fcntl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "cmd",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "arg",
+        "type": "intptr_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "file_check_lock": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "op",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "fl",
+        "type": "struct flock *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "file_check_read": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "file_check_write": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "file_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "file_check_setattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "vap",
+        "type": "struct vattr *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "file_check_fsync": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      }
+    ]
+  },
   "socket_check_accept": {
     "result": "int",
     "arguments": [

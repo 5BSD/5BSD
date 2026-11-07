@@ -55,6 +55,8 @@
 #include <sys/unistd.h>
 #include <sys/vnode.h>
 
+#include <security/mac/mac_framework.h>
+
 #include <fs/fdescfs/fdesc.h>
 
 #define	NFDCACHE 4
@@ -622,6 +624,11 @@ fdesc_setattr(struct vop_setattr_args *ap)
 		return (vap->va_flags != VNOVAL ? EOPNOTSUPP : 0);
 	}
 	VOP_UNLOCK(vp);
+#ifdef MAC
+	error = mac_file_check_setattr(ap->a_cred, fp, fd, vap);
+	if (error != 0)
+		goto out;
+#endif
 	/* O_PATH descriptors were never allowed to truncate. */
 	if (vap->va_size != VNOVAL && fp->f_ops == &path_fileops) {
 		error = EBADF;

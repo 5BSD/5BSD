@@ -42,6 +42,8 @@
 #include <sys/syscallsubr.h>
 #include <sys/tty.h>
 #include <sys/vnode.h>
+
+#include <security/mac/mac_framework.h>
 #ifdef KTRACE
 #include <sys/ktrace.h>
 #endif
@@ -489,7 +491,12 @@ linux_syncfs(struct thread *td, struct linux_syncfs_args *args)
 	 * Linux syncfs() returns only EBADF; a descriptor with no
 	 * filesystem behind it returns EINVAL here, as fgetvp() did. XXX.
 	 */
-	error = fo_fsync(fp, FO_FSYNC_FS, td);
+	error = 0;
+#ifdef MAC
+	error = mac_file_check_fsync(td->td_ucred, fp);
+#endif
+	if (error == 0)
+		error = fo_fsync(fp, FO_FSYNC_FS, td);
 	fdrop(fp, td);
 	return (error);
 }

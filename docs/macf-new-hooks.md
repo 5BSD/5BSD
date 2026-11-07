@@ -441,11 +441,15 @@ int mac_file_check_receive(struct ucred *cred, struct file *fp);
 - **5BSD name:** `mac_file_check_fcntl`
 - **Category:** check
 - **Call site:** `sys/kern/kern_descrip.c`, `kern_fcntl()`, before the
-  switch statement (~line 584-591)
+  switch statement, after the audit arguments. **Implemented 2026-11-07.**
+  The cases each take their own reference, so the prologue does an
+  `fget_unlocked(cap_no_rights)` for the check and drops it; that lookup is
+  paid only while a policy registers the hook (see fast-path flag).
 - **Lock context:** No locks held at entry
 - **Can sleep:** YES
 - **Composition macro:** `MAC_POLICY_CHECK` (sleepable)
-- **Fast-path flag:** No
+- **Fast-path flag:** YES (`FPFLAG_RARE`) — not for the check's cost but to
+  skip the extra descriptor lookup when no policy wants the hook
 
 ```c
 typedef int (*mpo_file_check_fcntl_t)(struct ucred *cred, struct file *fp,
@@ -498,8 +502,14 @@ int mac_file_check_ioctl(struct ucred *cred, struct file *fp, int fd,
 - **XNU name:** `mac_file_check_lock`
 - **5BSD name:** `mac_file_check_lock`
 - **Category:** check
-- **Call site:** `sys/kern/kern_descrip.c`, in the F_SETLK/F_SETLKW
-  handling of `kern_fcntl()` (~line 729-737), before `VOP_ADVLOCK()`
+- **Call site:** `sys/kern/kern_descrip.c`: the `F_SETLK`/`F_SETLKW`/
+  `F_OFD_*` case and the `F_GETLK`/`F_OFD_GETLK` case of `kern_fcntl()`,
+  right after the `fo_advlock == NULL → EBADF` probe, and `sys_flock()`
+  after the lock type is derived from `how`; all before `fo_advlock()`.
+  **Implemented 2026-11-07.** `op` is `F_SETLK`, `F_SETLKW`, `F_GETLK` or
+  `F_UNLCK` (`flock(2)` maps `LOCK_NB` to `F_SETLK`, blocking to `F_SETLKW`,
+  `LOCK_UN` to `F_UNLCK`; `fl` is then the whole-file lock with the
+  `l_type` that `how` asked for).
 - **Lock context:** No locks held (file has a reference but no lock)
 - **Can sleep:** YES
 - **Composition macro:** `MAC_POLICY_CHECK` (sleepable)
@@ -576,6 +586,141 @@ void mac_file_notify_close(struct ucred *cred, struct file *fp, int fd);
 - Fires before the file's VOP_CLOSE, so the file is still valid.
 - Policies tracking per-fd state (audit logs, reference maps) use this
   to clean up.
+
+---
+
+### 3.9 mac_file_check_read
+
+- **XNU name:** none (XNU checks reads on the vnode; 5BSD adds the
+  descriptor-level check so a non-vnode descriptor is covered)
+- **5BSD name:** `mac_file_check_read`
+- **Category:** check
+- **Call site:** `sys/kern/sys_generic.c` `dofileread()` (read, pread,
+  readv, preadv) before the `fo_read`; `sys/kern/vfs_aio.c`
+  `aio_process_rw()` before the `fo_read`; `sys/kern/vfs_syscalls.c`
+  `kern_copy_file_range()` on the input descriptor. **Implemented
+  2026-11-07.** `sendfile(2)` keeps `mac_vnode_check_read` on its vnode
+  source; the served source of descriptor-queue stage 1b calls this hook.
+- **Lock context:** No locks held
+- **Can sleep:** YES
+- **Composition macro:** `MAC_POLICY_CHECK` (sleepable)
+- **Fast-path flag:** YES — every read(2) passes here
+
+```c
+typedef int (*mpo_file_check_read_t)(struct ucred *active_cred,
+    struct ucred *file_cred, struct file *fp);
+
+int mac_file_check_read(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp);
+```
+
+**Notes:**
+- Mirrors `mac_vnode_check_read`'s two credentials: `active_cred` is the
+  caller's, `file_cred` the descriptor's (`fp->f_cred`).
+- Fires for every descriptor type; a policy that only cares about vnodes
+  should keep using the vnode hook.
+
+---
+
+### 3.10 mac_file_check_write
+
+- **XNU name:** none
+- **5BSD name:** `mac_file_check_write`
+- **Category:** check
+- **Call site:** `sys/kern/sys_generic.c` `kern_filewrite()` (write,
+  pwrite, writev, pwritev, and every kernel caller of it) before the
+  ktrace clone and the `fo_write`; `sys/kern/vfs_aio.c` `aio_process_rw()`
+  before the `fo_write`; `sys/kern/vfs_syscalls.c` `kern_copy_file_range()`
+  on the output descriptor. **Implemented 2026-11-07.**
+- **Lock context:** No locks held
+- **Can sleep:** YES
+- **Composition macro:** `MAC_POLICY_CHECK` (sleepable)
+- **Fast-path flag:** YES
+
+```c
+typedef int (*mpo_file_check_write_t)(struct ucred *active_cred,
+    struct ucred *file_cred, struct file *fp);
+
+int mac_file_check_write(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp);
+```
+
+---
+
+### 3.11 mac_file_check_stat
+
+- **XNU name:** none (XNU: `mac_vnode_check_stat`)
+- **5BSD name:** `mac_file_check_stat`
+- **Category:** check
+- **Call site:** `sys/kern/kern_descrip.c` `kern_fstat()` after the audit
+  argument, before `fo_stat`. **Implemented 2026-11-07.** Path-based stat
+  stays on the vnode hook.
+- **Lock context:** No locks held
+- **Can sleep:** YES
+- **Composition macro:** `MAC_POLICY_CHECK` (sleepable)
+- **Fast-path flag:** YES — fstat(2) is frequent
+
+```c
+typedef int (*mpo_file_check_stat_t)(struct ucred *active_cred,
+    struct ucred *file_cred, struct file *fp);
+
+int mac_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp);
+```
+
+---
+
+### 3.12 mac_file_check_setattr
+
+- **XNU name:** none (XNU: the `mac_vnode_check_set*` family)
+- **5BSD name:** `mac_file_check_setattr`
+- **Category:** check
+- **Call site:** every descriptor-addressed attribute change, before the
+  fileop: `sys_fchmod` (`va_mode`), `sys_fchown` (`va_uid`/`va_gid`),
+  `kern_ftruncate` (`va_size`, in `sys/kern/sys_generic.c`),
+  `kern_fsetutimes` (`va_atime`/`va_mtime`, `VA_UTIMES_NULL`),
+  `sys_fchflags` (`va_flags`), and `fdesc_setattr` for `/dev/fd/N` with
+  the whole requested `vattr`. **Implemented 2026-11-07.**
+- **Lock context:** No locks held (`fdesc_setattr` drops the fdesc vnode
+  lock first)
+- **Can sleep:** YES
+- **Composition macro:** `MAC_POLICY_CHECK` (sleepable)
+- **Fast-path flag:** No
+
+```c
+typedef int (*mpo_file_check_setattr_t)(struct ucred *cred, struct file *fp,
+    int fd, struct vattr *vap);
+
+int mac_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
+    struct vattr *vap);
+```
+
+**Notes:**
+- One hook for every attribute: the policy reads which `vattr` fields are
+  not `VNOVAL`, as a filesystem's `VOP_SETATTR` does. The system calls that
+  take a single attribute build a `vattr` holding only it.
+
+---
+
+### 3.13 mac_file_check_fsync
+
+- **XNU name:** none
+- **5BSD name:** `mac_file_check_fsync`
+- **Category:** check
+- **Call site:** `sys/kern/vfs_syscalls.c` `kern_fsync_fp()` (fsync,
+  fdatasync), `sys/kern/vfs_aio.c` `aio_process_sync()`, and
+  `sys/compat/linux/linux_stats.c` `linux_syncfs()`, before the `fo_fsync`.
+  **Implemented 2026-11-07.**
+- **Lock context:** No locks held
+- **Can sleep:** YES
+- **Composition macro:** `MAC_POLICY_CHECK` (sleepable)
+- **Fast-path flag:** No
+
+```c
+typedef int (*mpo_file_check_fsync_t)(struct ucred *cred, struct file *fp);
+
+int mac_file_check_fsync(struct ucred *cred, struct file *fp);
+```
 
 ---
 

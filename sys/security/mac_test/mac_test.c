@@ -2056,6 +2056,92 @@ test_file_notify_close(struct ucred *cred, struct file *fp, int fd)
 	COUNTER_INC(file_notify_close);
 }
 
+COUNTER_DECL(file_check_fcntl);
+static int
+test_file_check_fcntl(struct ucred *cred, struct file *fp, int fd, int cmd,
+    intptr_t arg)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_fcntl);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_lock);
+static int
+test_file_check_lock(struct ucred *cred, struct file *fp, int fd, int op,
+    struct flock *fl)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_lock);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_read);
+static int
+test_file_check_read(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	LABEL_CHECK(active_cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(file_cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_read);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_write);
+static int
+test_file_check_write(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	LABEL_CHECK(active_cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(file_cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_write);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_stat);
+static int
+test_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	LABEL_CHECK(active_cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(file_cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_stat);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_setattr);
+static int
+test_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
+    struct vattr *vap)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_setattr);
+
+	return (0);
+}
+
+COUNTER_DECL(file_check_fsync);
+static int
+test_file_check_fsync(struct ucred *cred, struct file *fp)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_check_fsync);
+
+	return (0);
+}
+
 COUNTER_DECL(system_check_kas_info);
 static int
 test_system_check_kas_info(struct ucred *cred, struct proc *p)
@@ -4005,6 +4091,13 @@ static struct mac_policy_ops test_ops =
 	.mpo_file_check_ioctl = test_file_check_ioctl,
 	.mpo_file_check_mmap = test_file_check_mmap,
 	.mpo_file_notify_close = test_file_notify_close,
+	.mpo_file_check_fcntl = test_file_check_fcntl,
+	.mpo_file_check_lock = test_file_check_lock,
+	.mpo_file_check_read = test_file_check_read,
+	.mpo_file_check_write = test_file_check_write,
+	.mpo_file_check_stat = test_file_check_stat,
+	.mpo_file_check_setattr = test_file_check_setattr,
+	.mpo_file_check_fsync = test_file_check_fsync,
 
 	.mpo_socket_check_accept = test_socket_check_accept,
 	.mpo_socket_check_bind = test_socket_check_bind,
