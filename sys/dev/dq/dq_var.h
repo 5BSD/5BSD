@@ -28,12 +28,53 @@
  * sibling's o_mtx in turn, never two o_mtx at once.  Reply data (struct dq_data) and WRITE events
  * are refcounted and shared between the waiter and the observer records
  * that hold them; the last release happens with no dq lock held.
+ *
+ * Pages (stage 1b-ii).  The VM object write lock of an object's pager
+ * object (o_object) comes before q_mtx and o_mtx: vm_pageout_flush enters
+ * dq_pager_putpages with it held, and the async post takes q_mtx (and
+ * o_mtx inside it) under it.  So the VM object lock is never taken with
+ * q_mtx or o_mtx held: an async completion (controller reply, deadline,
+ * revoke, close) unlinks its event under q_mtx, hands it to dq_taskq, and
+ * the task takes the VM object lock with no dq lock held.  The reply ioctl
+ * never takes a VM object lock.  o_closing is written with the VM object
+ * write lock and o_mtx both held (read under either).  Waits for dq's own
+ * completions (o_async_cv on o_mtx) and for the VM-object users count
+ * (o_vmusers) are the only sleeps close, revoke and queue close add; the
+ * task never waits for anything but the VM object lock and page busy, so
+ * nothing in fo_close, pgo_dealloc, the page daemon or
+ * vm_object_terminate waits for the controller (I11).  The per-queue
+ * callout runs with q_mtx held (callout_init_mtx) and only hands expired
+ * events to the task.  The task queue's own mutex ("dq_taskq") is a leaf:
+ * taskqueue_enqueue runs under q_mtx (reply, deadline, revoke, close) and
+ * under the VM object lock (pgo_dealloc), and nothing dq owns is taken
+ * with it held (tasks run without it; the deferred close's timeout callout
+ * only re-enqueues).  So: dq_mtx -> q_mtx -> o_mtx, VM object -> q_mtx,
+ * and q_mtx or VM object -> dq_taskq's mutex, with no cycle.
+ *
+ * What a dq_taskq task may sleep on (two threads serve every queue's
+ * completions, so a task never waits for dq_taskq work, for the controller
+ * or for memory).  The completion (dq_async_complete) takes the VM object
+ * write lock (its holders never wait while holding it: putpages posts
+ * without waiting, msync, a shrink and vm_page_busy_sleep drop it before
+ * they sleep) and q_mtx/o_mtx; its INTERRUPT is M_NOWAIT and counted in
+ * ds2_task_drops when it fails.  The deferred close (dq_object_destroy_task)
+ * re-arms itself instead of waiting, allocates its CLOSE M_NOWAIT (re-arming
+ * on failure) and frees pages with vm_page_tryxbusy (re-arming on a busy
+ * page).  The sleeps that remain are bounded and wait on nothing dq queues:
+ * vm_object_deallocate's terminate waits for paging in progress when the
+ * creation reference was the last, and by then o_async is 0 and o_closing
+ * refuses new posts, so only the page daemon's momentary pip can remain;
+ * knlist_clear (in the retire and the final queue release, also reached
+ * from the pgo_dealloc release task) sleeps while a kevent scan has one of
+ * the object's knotes in flux, which ends without dq; seldrain only wakes.
  */
 
 #ifndef _DEV_DQ_DQ_VAR_H_
 #define	_DEV_DQ_DQ_VAR_H_
 
 #include <sys/param.h>
+#include <sys/_task.h>
+#include <sys/callout.h>
 #include <sys/condvar.h>
 #include <sys/file.h>
 #include <sys/lock.h>
@@ -70,11 +111,22 @@ extern u_int dq_max_inflight_per_object;
 extern u_int dq_max_inflight_per_requester;
 extern u_int dq_max_objects;
 extern int dq_default_deadline_ms;
+extern u_int dq_max_inflight_bytes;
+
+/* The page deadline when neither the policy nor the default sets one. */
+#define	DQ_PAGE_DEADLINE_MS	30000
+
+struct taskqueue;
+extern struct taskqueue *dq_taskq;	/* async completions (dq_dev.c) */
+extern int dq_pager_type;		/* the dq pager's objtype, or -1 */
 
 struct dq_queue;
 struct dq_object;
 struct dq_observer;
 struct dq_event_k;
+struct dq_async;
+struct vm_object;
+struct vm_page;
 int	dq_event_cmp(const struct dq_event_k *, const struct dq_event_k *);
 int	dq_object_cmp(const struct dq_object *, const struct dq_object *);
 
@@ -115,6 +167,9 @@ struct dq_event_k {
 	struct dq_data		*ev_reply;	/* reply data; the waiter takes
 						   the reference */
 	bool			 ev_lock;	/* a LOCK: counted in o_locks */
+	struct dq_async		*ev_async;	/* READ_ASYNC/WRITE_ASYNC */
+	bool			 ev_pagein;	/* a pager READ (DQ_POST_FAULT):
+						   a shrink may fail it */
 	sbintime_t		 ev_deadline;	/* 0 = none */
 	struct dq_object	*ev_object;	/* held; NULL for queue-level */
 	uint64_t		 ev_requester;	/* per-requester quota key */
@@ -164,6 +219,36 @@ struct dq_observer {
 	struct selinfo		 ob_sel;	/* knlist on q_mtx */
 };
 
+/*
+ * An asynchronous page operation (B1-B3): a READ_ASYNC filling sendfile's
+ * busy pages or a WRITE_ASYNC carrying share-busied dirty pages.  It owns
+ * the event's allocation reference.  While da_posted it is on q_async
+ * (under q_mtx) and its event is pending or delivered; a reply, the
+ * deadline, a revoke or a close unlinks both and enqueues da_task, which
+ * finishes the pages (dq_async_complete) and frees it.
+ */
+struct dq_async {
+	TAILQ_ENTRY(dq_async)	 da_link;	/* q_async while posted */
+	struct task		 da_task;
+	struct dq_event_k	*da_ev;
+	struct vm_object	*da_obj;
+	sbintime_t		 da_deadline;
+	size_t			 da_len;	/* bytes charged to q_async_bytes */
+	bool			 da_write;
+	bool			 da_posted;	/* on q_async */
+	bool			 da_listref;	/* the task drops the list ref */
+	bool			 da_interrupt;	/* failed after delivery */
+	bool			 da_shrink;	/* failed by a shrink, which
+						   waits for it (o_shrinkwait) */
+	off_t			 da_offset;
+	uint64_t		 da_invalgen;	/* o_invalgen at the post */
+	void			(*da_iodone)(void *, struct vm_page **, int,
+				    int);
+	void			*da_arg;
+	int			 da_count;
+	struct vm_page		*da_pages[];
+};
+
 enum dq_object_state {
 	DQ_OBJ_LIVE = 1,
 	DQ_OBJ_REVOKED,
@@ -201,6 +286,56 @@ struct dq_object {
 	uint64_t		 o_hdev;	/* indexed di_dev, under q_mtx */
 	uint64_t		 o_hino;	/* indexed di_ino, under q_mtx */
 	bool			 o_hashed;	/* on q_idhash */
+	/*
+	 * Pages (D102).  o_object is the pager object, created at mint with
+	 * handle = o; it holds a reference on o, dropped from dq_taskq after
+	 * pgo_dealloc (o_rele_task), and o holds a VM reference on it until
+	 * dq_close (o_vmdropped).  Controller-side users (revoke, queue
+	 * close, INVALIDATE, SETIDENT) count themselves in o_vmusers so the
+	 * close does not drop that reference under them.
+	 */
+	struct vm_object	*o_object;
+	bool			 o_closing;	/* B2: no new page I/O; VM object
+						   lock and o_mtx to write */
+	bool			 o_vmdropped;	/* o_mtx: dq_close dropped the VM
+						   reference */
+	bool			 o_again;	/* VM object lock: putpages said
+						   AGAIN (msync retries) */
+	u_int			 o_vmusers;	/* o_mtx */
+	u_int			 o_async;	/* o_mtx: async ops posted, not
+						   completed */
+	u_int			 o_awrites;	/* o_mtx: of which WRITE_ASYNC */
+	uint64_t		 o_async_done;	/* o_mtx: completions */
+	uint64_t		 o_async_errs;	/* o_mtx: failed write completions */
+	/*
+	 * o_mtx: the byte ranges of the last DQ_ERRRING failed write-backs,
+	 * by o_async_errs at the failure, so a flush reports only failures
+	 * inside its own range (N8 of the review).
+	 */
+#define	DQ_ERRRING		8
+	struct dq_errrec {
+		uint64_t	 er_gen;
+		off_t		 er_start;
+		off_t		 er_end;
+	}			 o_errring[DQ_ERRRING];
+	uint64_t		 o_invalgen;	/* o_mtx: INVALIDATEs; a page-in
+						   that saw it change re-reads */
+	struct cv		 o_async_cv;	/* o_mtx: a completion */
+	off_t			 o_vmsize;	/* the size object->size follows
+						   and the pager serves (B10);
+						   VM object lock and o_mtx to
+						   write, either to read */
+	u_int			 o_shrinkwait;	/* o_mtx: async ops a shrink
+						   failed and waits for */
+	bool			 o_closed;	/* last close: no new page-ins;
+						   write-back continues (VM
+						   object lock and o_mtx) */
+	u_long			 o_writemappings; /* atomic: bytes mapped
+						   shared and writable */
+	struct task		 o_rele_task;	/* pgo_dealloc's release */
+	struct timeout_task	 o_destroy;	/* deferred close (dq_taskq) */
+	struct dq_event_k	*o_closeev;	/* its CLOSE, allocated ahead */
+	sbintime_t		 o_destroy_deadline; /* the destroy task's */
 };
 #define	DQ_IDHASH		64
 
@@ -235,6 +370,12 @@ struct dq_queue {
 	struct selinfo		 q_sel;		/* knlist on q_mtx */
 	struct dq_stats2	 q_stats;	/* GET_STATS is a projection */
 	LIST_ENTRY(dq_queue)	 q_all;		/* dq_queues, under dq_mtx */
+	/* Async page operations (B1, B3), under q_mtx. */
+	TAILQ_HEAD(, dq_async)	 q_async;	/* posted, oldest first */
+	uint64_t		 q_async_bytes;
+	u_int			 q_nasync;
+	struct callout		 q_callout;	/* earliest da_deadline; q_mtx */
+	sbintime_t		 q_callout_at;	/* 0: not armed */
 };
 
 #define	DQ_LOCK(q)		mtx_lock(&(q)->q_mtx)
@@ -276,13 +417,21 @@ bool	dq_caller_holds_queue(struct dq_queue *q, struct thread *td);
 void	dq_object_hold(struct dq_object *o);
 void	dq_object_rele(struct dq_object *o);
 void	dq_object_retire(struct dq_object *o, struct thread *td);
+void	dq_object_retire_ev(struct dq_object *o, struct thread *td,
+	    struct dq_event_k *closeev);
 void	dq_object_knote_siblings(struct dq_object *o, long hint);
 void	dq_object_mark_locked(struct dq_object *o, u_int bit);
+void	dq_object_cut(struct dq_object *o, off_t newsize, off_t pagecut);
 void	dq_object_set_ident(struct dq_object *o,
 	    const struct dq_ident_file *di, long hint);
 
 void	dq_event_hold(struct dq_event_k *ev);
 void	dq_event_rele(struct dq_event_k *ev);
+struct dq_event_k *dq_event_alloc_flags(struct dq_object *o, uint32_t op,
+	    const void *body, size_t bodylen, struct thread *td, bool kcaller,
+	    int mflags);
+int	dq_event_enqueue_locked(struct dq_queue *q, struct dq_event_k *ev);
+sbintime_t dq_page_deadline(struct dq_object *o);
 void	dq_data_hold(struct dq_data *dd);
 void	dq_data_rele(struct dq_data *dd);
 
@@ -298,12 +447,56 @@ void	dq_data_rele(struct dq_data *dd);
  */
 #define	DQ_POST_NODEADLINE	0x1
 #define	DQ_POST_LOCK		0x2
+/*
+ * DQ_POST_FAULT (B4): the wait of a page fault.  The deadline is always
+ * set (dq_page_deadline); a caught signal does not abandon the wait unless
+ * the process is being killed or is exiting: after the first interrupted
+ * sleep the waiter continues in non-catching 100 ms slices, re-testing
+ * SIGKILL, P_WEXIT and the event on every wake, so a fault during SIGCHLD
+ * or SIGALRM is not SIGBUS (I12).  Abandonment posts INTERRUPT.
+ */
+#define	DQ_POST_FAULT		0x4
 int	dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, int flags,
 	    struct dq_data **replyp, int *errnop);
 void	dq_event_post_nowait(struct dq_queue *q, struct dq_object *o,
 	    uint32_t op, const void *body, size_t bodylen, struct thread *td);
 void	dq_reply_free(struct dq_data *reply);
+
+/* dq_async.c */
+int	dq_async_post(struct dq_object *o, struct vm_object *obj,
+	    struct vm_page **ma, int count, off_t offset, size_t len,
+	    bool write, void (*iodone)(void *, struct vm_page **, int, int),
+	    void *arg);
+void	dq_async_fail_locked(struct dq_queue *q, struct dq_async *da);
+void	dq_async_replied_locked(struct dq_queue *q, struct dq_async *da);
+void	dq_async_timeout(void *arg);
+void	dq_async_queue_init(struct dq_queue *q);
+bool	dq_async_wait(struct dq_object *o, sbintime_t deadline, bool all);
+void	dq_object_cancel_async(struct dq_object *o);
+bool	dq_object_vm_hold(struct dq_object *o, struct vm_object **objp);
+void	dq_object_vm_drop(struct dq_object *o);
+void	dq_object_vm_teardown(struct dq_object *o, bool close);
+void	dq_object_setsize(struct dq_object *o, off_t newsize);
+void	dq_object_close_deferred(struct dq_object *o);
+void	dq_async_cut_locked(struct dq_queue *q, struct dq_object *o,
+	    off_t newsize);
+void	dq_object_invalidate(struct dq_object *o, off_t offset, off_t len);
+
+/* dq_pager.c */
+int	dq_pager_register(void);
+int	dq_object_vm_create(struct dq_object *o);
+boolean_t dq_pager_flush(struct dq_object *o, struct vm_object *obj,
+	    vm_ooffset_t offset, vm_size_t size, boolean_t syncio,
+	    boolean_t invalidate);
+void	dq_pager_write_resident(struct dq_object *o, off_t offset,
+	    const char *data, size_t len);
+void	dq_pager_fill_run(struct vm_page **ma, int count, const char *data,
+	    size_t dlen);
+void	dq_pager_zero_past(struct dq_object *o, struct vm_page **ma, int count,
+	    off_t off);
+uint64_t dq_object_invalgen(struct dq_object *o);
+off_t	dq_object_vmsize(struct dq_object *o);
 
 /* dq_file.c */
 extern const struct fileops dq_fileops;

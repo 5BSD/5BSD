@@ -715,6 +715,8 @@ _INPUT_ROWS = [
     ('', '{"source":"dev/dq/dq_file.c","origin":"kernel","object":"dq_file.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/dq/dq_observer.c","origin":"kernel","object":"dq_observer.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/dq/dq_observe.c","origin":"kernel","object":"dq_observe.o","flags":0,"compile_with":null,"depends":null}'),
+    ('', '{"source":"dev/dq/dq_pager.c","origin":"kernel","object":"dq_pager.o","flags":0,"compile_with":null,"depends":null}'),
+    ('', '{"source":"dev/dq/dq_async.c","origin":"kernel","object":"dq_async.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/efidev/efidev.c","origin":"kernel","object":"efidev.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/efidev/efirt.c","origin":"kernel","object":"efirt.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"dev/efidev/efirtc.c","origin":"kernel","object":"efirtc.o","flags":0,"compile_with":null,"depends":null}'),

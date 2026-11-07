@@ -15,6 +15,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/callout.h>
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
 #include <sys/event.h>
@@ -39,6 +40,10 @@
 #include <sys/tree.h>
 #include <sys/ucred.h>
 #include <sys/uio.h>
+
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/vm_object.h>
 
 #include <security/mac/mac_framework.h>
 #include <dev/mac_capability/mac_capability_label.h>
@@ -96,6 +101,7 @@ dq_queue_create(struct thread *td, struct file *fp)
 	for (i = 0; i < DQ_IDHASH; i++)
 		LIST_INIT(&q->q_idhash[i]);
 	knlist_init_mtx(&q->q_sel.si_note, &q->q_mtx);
+	dq_async_queue_init(q);
 	q->q_depth = dq_queue_depth;
 	q->q_stats.ds2_size = sizeof(struct dq_stats2);
 
@@ -126,6 +132,8 @@ dq_queue_rele(struct dq_queue *q)
 	KASSERT(TAILQ_EMPTY(&q->q_pending) && RB_EMPTY(&q->q_inflight),
 	    ("dq: freeing a queue with events"));
 	KASSERT(RB_EMPTY(&q->q_objects), ("dq: freeing a queue with objects"));
+	KASSERT(TAILQ_EMPTY(&q->q_async) && q->q_nasync == 0,
+	    ("dq: freeing a queue with page operations"));
 	knlist_clear(&q->q_sel.si_note, 0);
 	knlist_destroy(&q->q_sel.si_note);
 	seldrain(&q->q_sel);
@@ -138,22 +146,44 @@ dq_queue_rele(struct dq_queue *q)
 /*
  * The controller closed its last descriptor to the queue: fail closed.
  * Every object is revoked, every waiter woken with EIO, every reader and
- * observer told; nothing here waits for anyone (I11).  The memory stays
- * until the last object and observer drop their references, so an object
- * fileop that runs afterwards finds DQ_Q_CLOSING and answers EIO.
+ * observer told; the controller is waited for by nothing (I11).  Pending
+ * page operations are completed with an error by dq_taskq, the deadline
+ * callout is drained without q_mtx, and each object's pages are removed
+ * after its own completions (B2): dq's own work, the only wait here.  The
+ * memory stays until the last object and observer drop their references,
+ * so an object fileop that runs afterwards finds DQ_Q_CLOSING and answers
+ * EIO.
  */
 void
 dq_queue_close(struct dq_queue *q)
 {
 	struct dq_event_list freed;
 	struct dq_event_k *ev, *evtmp;
-	struct dq_object *o;
+	struct dq_object *o, **objs;
+	struct dq_async *da;
+	u_int i, n, nobjs;
 
 	TAILQ_INIT(&freed);
 	DQ_LOCK(q);
-	q->q_flags |= DQ_Q_CLOSING;
-	RB_FOREACH(o, dq_object_tree, &q->q_objects)
+	q->q_flags |= DQ_Q_CLOSING;	/* no mint from here on */
+	nobjs = q->q_nobjects;
+	DQ_UNLOCK(q);
+	objs = nobjs != 0 ? malloc(nobjs * sizeof(*objs), M_DQ, M_WAITOK) :
+	    NULL;
+	n = 0;
+	DQ_LOCK(q);
+	RB_FOREACH(o, dq_object_tree, &q->q_objects) {
 		dq_object_revoke_locked(q, o, 1, &freed);
+		if (n < nobjs) {
+			dq_object_hold(o);
+			objs[n++] = o;
+		}
+	}
+	/* Anything left (an object mid-close): its completion is the task's. */
+	while ((da = TAILQ_FIRST(&q->q_async)) != NULL)
+		dq_async_fail_locked(q, da);
+	callout_stop(&q->q_callout);
+	q->q_callout_at = 0;
 	/* Queue-level records (CLOSE, INTERRUPT) left unread. */
 	TAILQ_FOREACH_SAFE(ev, &q->q_pending, ev_link, evtmp)
 		dq_event_fail_locked(q, ev, EIO, &freed);
@@ -166,6 +196,12 @@ dq_queue_close(struct dq_queue *q)
 
 	TAILQ_FOREACH_SAFE(ev, &freed, ev_link, evtmp)
 		dq_event_rele(ev);
+	callout_drain(&q->q_callout);
+	for (i = 0; i < n; i++) {
+		dq_object_vm_teardown(objs[i], false);
+		dq_object_rele(objs[i]);
+	}
+	free(objs, M_DQ);
 
 	mtx_lock(&dq_mtx);
 	LIST_REMOVE(q, q_all);
@@ -292,6 +328,7 @@ dq_object_set_ident(struct dq_object *o, const struct dq_ident_file *di,
 	DQ_LOCK(q);
 	dq_object_set_ident_locked(q, o, di, hint);
 	DQ_UNLOCK(q);
+	dq_object_setsize(o, di->di_size);	/* B10 */
 }
 
 /*
@@ -340,7 +377,10 @@ dq_object_rele(struct dq_object *o)
 	if (!refcount_release(&o->o_refs))
 		return;
 	KASSERT(o->o_retired, ("dq: freeing an object still on its queue"));
+	KASSERT(o->o_async == 0 && o->o_vmusers == 0,
+	    ("dq: freeing an object with page operations"));
 	q = o->o_queue;
+	cv_destroy(&o->o_async_cv);
 	mtx_destroy(&o->o_mtx);
 	free(o, M_DQ);
 	dq_queue_rele(q);
@@ -355,6 +395,11 @@ dq_event_fail_locked(struct dq_queue *q, struct dq_event_k *ev, int error,
 	DQ_LOCK_ASSERT(q);
 	if (!ev->ev_linked)
 		return;
+	/* A page operation has no waiter: its completion is the task's. */
+	if (ev->ev_async != NULL) {
+		dq_async_fail_locked(q, ev->ev_async);
+		return;
+	}
 	if (ev->ev_state == DQ_EV_PENDING) {
 		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
 		q->q_count--;
@@ -415,9 +460,13 @@ dq_queue_revoke(struct dq_queue *q, uint64_t object)
 		return (ESRCH);
 	}
 	dq_object_revoke_locked(q, o, 0, &freed);
+	dq_object_hold(o);
 	DQ_UNLOCK(q);
 	TAILQ_FOREACH_SAFE(ev, &freed, ev_link, evtmp)
 		dq_event_rele(ev);
+	/* The pages go too (D11): a mapping now faults SIGBUS. */
+	dq_object_vm_teardown(o, false);
+	dq_object_rele(o);
 	return (0);
 }
 
@@ -428,6 +477,19 @@ dq_queue_revoke(struct dq_queue *q, uint64_t object)
  */
 void
 dq_object_retire(struct dq_object *o, struct thread *td)
+{
+
+	dq_object_retire_ev(o, td, NULL);
+}
+
+/*
+ * As dq_object_retire, with the CLOSE record already allocated (closeev,
+ * consumed; NULL to allocate here, which may sleep).  The deferred close
+ * on dq_taskq allocates it M_NOWAIT beforehand.
+ */
+void
+dq_object_retire_ev(struct dq_object *o, struct thread *td,
+    struct dq_event_k *closeev)
 {
 	struct dq_queue *q;
 	bool post_close;
@@ -457,9 +519,61 @@ dq_object_retire(struct dq_object *o, struct thread *td)
 	}
 	DQ_UNLOCK(q);
 
-	if (post_close)
+	if (post_close && closeev == NULL)
 		dq_event_post_nowait(q, o, DQ_OP_CLOSE, NULL, 0, td);
+	else if (post_close) {
+		DQ_LOCK(q);
+		if ((q->q_flags & DQ_Q_CLOSING) == 0)
+			(void)dq_event_enqueue_locked(q, closeev);
+		DQ_UNLOCK(q);
+	}
+	if (closeev != NULL)
+		dq_event_rele(closeev);
 	SDT_PROBE2(dq, , , object__close, q, o);
+}
+
+/*
+ * A shrink (B10 as amended): the controller said the bytes past newsize
+ * are gone, so every page operation that would hold a page the shrink
+ * removes or zeroes is completed with EIO through the normal paths instead
+ * of being slept on: async operations reaching past newsize (their
+ * completion is waited for by the shrink: dq's own work), and pager READs
+ * (a fault's or a DATA miss's waited event) whose run reaches a page at or
+ * past pagecut, the first page the shrink removes.  A fault so failed sees
+ * the new size and answers VM_PAGER_BAD (SIGBUS), as a real truncate
+ * gives.  The caller (SETIDENT, SETATTR) never waits for the controller.
+ */
+void
+dq_object_cut(struct dq_object *o, off_t newsize, off_t pagecut)
+{
+	struct dq_event_list freed;
+	struct dq_event_k *ev, *evtmp;
+	const struct dq_read_body *rb;
+	struct dq_queue *q;
+
+	q = o->o_queue;
+	TAILQ_INIT(&freed);
+	DQ_LOCK(q);
+	dq_async_cut_locked(q, o, newsize);
+	TAILQ_FOREACH_SAFE(ev, &q->q_pending, ev_link, evtmp) {
+		if (ev->ev_object != o || !ev->ev_pagein)
+			continue;
+		rb = (const struct dq_read_body *)((const char *)&ev->ev_hdr +
+		    sizeof(struct dq_event));
+		if (rb->dr_offset + rb->dr_len > (uint64_t)pagecut)
+			dq_event_fail_locked(q, ev, EIO, &freed);
+	}
+	RB_FOREACH_SAFE(ev, dq_inflight_tree, &q->q_inflight, evtmp) {
+		if (ev->ev_object != o || !ev->ev_pagein)
+			continue;
+		rb = (const struct dq_read_body *)((const char *)&ev->ev_hdr +
+		    sizeof(struct dq_event));
+		if (rb->dr_offset + rb->dr_len > (uint64_t)pagecut)
+			dq_event_fail_locked(q, ev, EIO, &freed);
+	}
+	DQ_UNLOCK(q);
+	TAILQ_FOREACH_SAFE(ev, &freed, ev_link, evtmp)
+		dq_event_rele(ev);
 }
 
 /*
@@ -565,7 +679,7 @@ dq_reply_free(struct dq_data *reply)
  * stage 1a is the controller's.
  */
 static void
-dq_caller_fill(struct dq_caller *dc, struct thread *td)
+dq_caller_fill(struct dq_caller *dc, struct thread *td, bool kcaller)
 {
 	struct ucred *cred;
 	struct proc *p;
@@ -577,6 +691,20 @@ dq_caller_fill(struct dq_caller *dc, struct thread *td)
 		td = curthread;
 	cred = td->td_ucred;
 	p = td->td_proc;
+	/*
+	 * kcaller: a page write-back, which is the kernel's (the page daemon,
+	 * msync, fsync), posted under the VM object lock where no process
+	 * lock may be taken; the credential's ids are still reported.
+	 */
+	if (kcaller) {
+		dc->dc_flags |= DQ_CALLER_F_KERNEL;
+		dc->dc_uid = cred->cr_ruid;
+		dc->dc_euid = cred->cr_uid;
+		dc->dc_gid = cred->cr_rgid;
+		dc->dc_egid = cred->cr_gid;
+		dc->dc_jid = cred->cr_prison->pr_id;
+		return;
+	}
 	if (nothread || p == NULL || (p->p_flag & P_KPROC) != 0) {
 		dc->dc_flags |= DQ_CALLER_F_KERNEL;
 	} else {
@@ -594,16 +722,22 @@ dq_caller_fill(struct dq_caller *dc, struct thread *td)
 	dc->dc_nonce = mac_capability_proc_nonce(cred);
 }
 
-static struct dq_event_k *
-dq_event_alloc(struct dq_object *o, uint32_t op, const void *body,
-    size_t bodylen, struct thread *td)
+/*
+ * An event with its body (copied from body unless NULL: the caller fills
+ * it).  mflags M_NOWAIT for the page write-back path, which may return NULL.
+ */
+struct dq_event_k *
+dq_event_alloc_flags(struct dq_object *o, uint32_t op, const void *body,
+    size_t bodylen, struct thread *td, bool kcaller, int mflags)
 {
 	struct dq_event_k *ev;
 	struct timespec ts;
 
 	KASSERT((bodylen & 7) == 0, ("dq: unpadded body %zu", bodylen));
 	ev = malloc(offsetof(struct dq_event_k, ev_hdr) +
-	    sizeof(struct dq_event) + bodylen, M_DQ, M_WAITOK | M_ZERO);
+	    sizeof(struct dq_event) + bodylen, M_DQ, mflags | M_ZERO);
+	if (ev == NULL)
+		return (NULL);
 	refcount_init(&ev->ev_refs, 1);
 	ev->ev_state = DQ_EV_PENDING;
 	cv_init(&ev->ev_cv, "dqwait");
@@ -616,17 +750,26 @@ dq_event_alloc(struct dq_object *o, uint32_t op, const void *body,
 		ev->ev_object = o;
 		ev->ev_hdr.de_object = o->o_id;
 	}
-	dq_caller_fill(&ev->ev_hdr.de_caller, td);
+	dq_caller_fill(&ev->ev_hdr.de_caller, td, kcaller);
 	ev->ev_requester = ev->ev_hdr.de_caller.dc_nonce != 0 ?
 	    ev->ev_hdr.de_caller.dc_nonce :
 	    ((uint64_t)1 << 63) | (uint64_t)ev->ev_hdr.de_caller.dc_pid;
 	nanouptime(&ts);
 	ev->ev_hdr.de_time.tv_sec = ts.tv_sec;
 	ev->ev_hdr.de_time.tv_nsec = ts.tv_nsec;
-	if (bodylen != 0)
+	if (bodylen != 0 && body != NULL)
 		memcpy((char *)&ev->ev_hdr + sizeof(struct dq_event), body,
 		    bodylen);
 	return (ev);
+}
+
+static struct dq_event_k *
+dq_event_alloc(struct dq_object *o, uint32_t op, const void *body,
+    size_t bodylen, struct thread *td)
+{
+
+	return (dq_event_alloc_flags(o, op, body, bodylen, td, false,
+	    M_WAITOK));
 }
 
 /*
@@ -640,7 +783,7 @@ dq_event_alloc(struct dq_object *o, uint32_t op, const void *body,
  * per close of a locking owner, one per abandoned waiter), so the overrun
  * is bounded too; it is counted in ds2_overdepth.
  */
-static int
+int
 dq_event_enqueue_locked(struct dq_queue *q, struct dq_event_k *ev)
 {
 	uint32_t op;
@@ -713,6 +856,53 @@ dq_deadline(const struct dq_policy *pol)
 	return (sbinuptime() + (sbintime_t)ms * SBT_1MS);
 }
 
+/*
+ * B4: a page fault abandons its wait only when the process is being killed
+ * or is exiting.  Called with no dq lock held.
+ */
+static bool
+dq_fault_abandon(struct thread *td)
+{
+	struct proc *p;
+	bool dying;
+
+	if (curproc_sigkilled())
+		return (true);
+	p = td->td_proc;
+	PROC_LOCK(p);
+	dying = (p->p_flag & P_WEXIT) != 0;
+	PROC_UNLOCK(p);
+	return (dying);
+}
+
+#define	DQ_FAULT_SLICE	(100 * SBT_1MS)
+
+/*
+ * A quota sleep before the post.  A syscall's is interruptible; a fault's
+ * (DQ_POST_FAULT) is a non-catching slice bounded by the deadline: 0 to
+ * look again, EIO at the deadline, EINTR when the process is dying.
+ * Called and returns with q_mtx held.
+ */
+static int
+dq_post_quota_sleep(struct dq_queue *q, void *chan, const char *wmesg,
+    struct thread *td, int flags, sbintime_t deadline)
+{
+	sbintime_t now;
+	bool dying;
+
+	if ((flags & DQ_POST_FAULT) == 0)
+		return (msleep(chan, &q->q_mtx, PCATCH, wmesg, 0));
+	now = sbinuptime();
+	if (now >= deadline)
+		return (EIO);
+	(void)msleep_sbt(chan, &q->q_mtx, 0, wmesg,
+	    MIN(deadline, now + DQ_FAULT_SLICE), 0, C_ABSOLUTE);
+	DQ_UNLOCK(q);
+	dying = dq_fault_abandon(td);
+	DQ_LOCK(q);
+	return (dying ? EINTR : 0);
+}
+
 int
 dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
     size_t bodylen, struct thread *td, int flags, struct dq_data **replyp,
@@ -722,25 +912,39 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
 	struct dq_interrupt_body ib;
-	sbintime_t deadline;
+	sbintime_t deadline, now;
 	int error;
-	bool interrupt, drop_list_ref, lock;
+	bool interrupt, drop_list_ref, lock, fault, catching, dying;
 
 	q = o->o_queue;
 	*replyp = NULL;
 	*errnop = 0;
 	interrupt = drop_list_ref = false;
 	lock = (flags & DQ_POST_LOCK) != 0;
+	fault = (flags & DQ_POST_FAULT) != 0;
+	KASSERT(!fault || (td == curthread && !lock),
+	    ("dq: fault wait flags %#x", flags));
 
-	if (dq_caller_holds_queue(q, td))
+	/*
+	 * A fault takes no FILEDESC lock: it may run under a filesystem's
+	 * vnode lock (a write(2) whose buffer maps a served file), and
+	 * vnode -> filedesc would invert the order kinfo export takes.  A
+	 * controller faulting on its own served object waits out the page
+	 * deadline and gets SIGBUS instead of EDEADLK.
+	 */
+	if (!fault && dq_caller_holds_queue(q, td))
 		return (EDEADLK);
 
 	ev = dq_event_alloc(o, op, body, bodylen, td);
 	ev->ev_waited = true;
 	ev->ev_lock = lock;
+	ev->ev_pagein = fault && op == DQ_OP_READ;
 	newrq = lock ? NULL : malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
 
-	if ((flags & DQ_POST_NODEADLINE) != 0) {
+	if (fault) {
+		/* A page never waits forever (B1, B4). */
+		deadline = dq_page_deadline(o);
+	} else if ((flags & DQ_POST_NODEADLINE) != 0) {
 		deadline = 0;
 	} else {
 		DQO_LOCK(o);
@@ -762,6 +966,21 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 			error = EIO;
 			goto out_locked;
 		}
+		/*
+		 * A page-in past the pager's size is refused here, under the
+		 * locks a shrink fails page-ins under (dq_object_cut), so one
+		 * that read the old size cannot slip in after it.
+		 */
+		if (ev->ev_pagein) {
+			const struct dq_read_body *prb = body;
+
+			if (prb->dr_offset + prb->dr_len >
+			    (uint64_t)round_page(o->o_vmsize)) {
+				DQO_UNLOCK(o);
+				error = EIO;
+				goto out_locked;
+			}
+		}
 		DQO_UNLOCK(o);
 		/*
 		 * B6: a LOCK is bounded by the queue depth alone.  A blocked
@@ -772,16 +991,16 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 		if (lock)
 			break;
 		if (o->o_inflight >= dq_max_inflight_per_object) {
-			error = msleep(&o->o_inflight, &q->q_mtx, PCATCH,
-			    "dqinfl", 0);
+			error = dq_post_quota_sleep(q, &o->o_inflight, "dqinfl",
+			    td, flags, deadline);
 			if (error != 0)
 				goto out_locked;
 			continue;
 		}
 		rq = dq_requester_find_locked(q, ev->ev_requester);
 		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
-			error = msleep(&q->q_requesters, &q->q_mtx, PCATCH,
-			    "dqreq", 0);
+			error = dq_post_quota_sleep(q, &q->q_requesters, "dqreq",
+			    td, flags, deadline);
 			if (error != 0)
 				goto out_locked;
 			continue;
@@ -808,12 +1027,48 @@ dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 	}
 
 	error = 0;
+	catching = true;
 	while (ev->ev_state == DQ_EV_PENDING || ev->ev_state == DQ_EV_DELIVERED) {
+		if (fault && !catching) {
+			/*
+			 * B4: a caught signal is pending, so every catching
+			 * sleep would return at once; sleep without catching,
+			 * in slices, and look at the process on each wake.
+			 */
+			now = sbinuptime();
+			if (now >= deadline) {
+				error = EWOULDBLOCK;
+				break;
+			}
+			(void)cv_timedwait_sbt(&ev->ev_cv, &q->q_mtx,
+			    MIN(deadline, now + DQ_FAULT_SLICE), 0, C_ABSOLUTE);
+			if (ev->ev_state != DQ_EV_PENDING &&
+			    ev->ev_state != DQ_EV_DELIVERED)
+				break;
+			DQ_UNLOCK(q);
+			dying = dq_fault_abandon(td);
+			DQ_LOCK(q);
+			if (dying) {
+				error = EINTR;
+				break;
+			}
+			continue;
+		}
 		if (deadline == 0)
 			error = cv_wait_sig(&ev->ev_cv, &q->q_mtx);
 		else
 			error = cv_timedwait_sig_sbt(&ev->ev_cv, &q->q_mtx,
 			    deadline, 0, C_ABSOLUTE);
+		if (fault && (error == EINTR || error == ERESTART)) {
+			DQ_UNLOCK(q);
+			dying = dq_fault_abandon(td);
+			DQ_LOCK(q);
+			if (dying)
+				break;
+			catching = false;
+			error = 0;
+			continue;
+		}
 		if (error != 0)
 			break;
 	}
@@ -1160,6 +1415,20 @@ dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 	o->o_policy = args->dm_policy;
 	rangelock_init(&o->o_rl);
 	knlist_init_mtx(&o->o_sel.si_note, &o->o_mtx);
+	cv_init(&o->o_async_cv, "dqasync");
+	/*
+	 * The pager object (D102), in every cache mode: pages exist while
+	 * mapped, wired or cached.  Created before the object is visible so
+	 * a revoke always finds it.
+	 */
+	error = dq_object_vm_create(o);
+	if (error != 0) {
+		o->o_retired = true;
+		knlist_destroy(&o->o_sel.si_note);
+		rangelock_destroy(&o->o_rl);
+		dq_object_rele(o);
+		return (dq_mint_reason(args, DQ_REASON_NONE, error));
+	}
 
 	DQ_LOCK(q);
 	if ((q->q_flags & DQ_Q_CLOSING) != 0 || q->q_nobjects >= dq_max_objects) {
@@ -1168,6 +1437,9 @@ dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 		o->o_retired = true;
 		knlist_destroy(&o->o_sel.si_note);
 		rangelock_destroy(&o->o_rl);
+		/* Its release reaches o through pgo_dealloc and dq_taskq. */
+		o->o_vmdropped = true;
+		vm_object_deallocate(o->o_object);
 		dq_object_rele(o);
 		return (dq_mint_reason(args, DQ_REASON_NONE, error));
 	}
@@ -1232,6 +1504,7 @@ dq_reply_errno_allowed(uint32_t op, int error)
 
 	switch (op) {
 	case DQ_OP_WRITE:
+	case DQ_OP_WRITE_ASYNC:
 		return (error == EIO || error == ENOSPC || error == EDQUOT ||
 		    error == EFBIG || error == EACCES || error == EPERM ||
 		    error == EROFS || error == EINTR || error == EAGAIN ||
@@ -1285,6 +1558,7 @@ dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
 	body = (const char *)&ev->ev_hdr + sizeof(struct dq_event);
 	switch (ev->ev_hdr.de_op) {
 	case DQ_OP_READ:
+	case DQ_OP_READ_ASYNC:
 		rb = (const struct dq_read_body *)body;
 		if (len > rb->dr_len || (rerrno != 0 && len != 0))
 			return (EINVAL);
@@ -1297,6 +1571,7 @@ dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
 			return (EINVAL);
 		return (0);
 	case DQ_OP_WRITE:
+	case DQ_OP_WRITE_ASYNC:		/* never APPEND: the offset echoes */
 		if (rerrno != 0)
 			return (len == 0 ? 0 : EINVAL);
 		if (len != sizeof(*wr))
@@ -1374,6 +1649,7 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	size_t len;
 	uint32_t op;
 	int error, rerrno;
+	bool async;
 
 	if (r->dr_version != DQ_API_VERSION || r->dr_pad0 != 0 ||
 	    r->dr_errno < 0 || r->dr_errno > ELAST || r->dr_len > dq_max_io)
@@ -1419,7 +1695,7 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	 * without an error; dofilewrite would report a 0-byte write, which
 	 * callers loop on.  It is EIO to the requester.
 	 */
-	if (op == DQ_OP_WRITE && rerrno == 0 &&
+	if ((op == DQ_OP_WRITE || op == DQ_OP_WRITE_ASYNC) && rerrno == 0 &&
 	    ((const struct dq_write_reply *)dd->dd_bytes)->dwr_written == 0 &&
 	    ((const struct dq_write_body *)((const char *)&ev->ev_hdr +
 	    sizeof(struct dq_event)))->dw_len != 0) {
@@ -1433,7 +1709,16 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	ev->ev_reply = dd;	/* the waiter takes this reference */
 	ev->ev_errno = rerrno;
 	ev->ev_state = DQ_EV_REPLIED;
-	cv_signal(&ev->ev_cv);
+	async = ev->ev_async != NULL;
+	if (async) {
+		/*
+		 * A page operation completes in dq_taskq, which takes the VM
+		 * object lock; this ioctl takes none.  The task holds the
+		 * list reference from here.
+		 */
+		dq_async_replied_locked(q, ev->ev_async);
+	} else
+		cv_signal(&ev->ev_cv);
 	SDT_PROBE4(dq, , , event__reply, q, ev, r->dr_errno, len);
 	/* Observers and the policies see what the controller said. */
 	dq_observer_fanout_reply(q, r->dr_id, r->dr_errno, dd);
@@ -1442,13 +1727,20 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	fp = NULL;
 	if (o != NULL) {
 		DQO_LOCK(o);
+		/*
+		 * o_fp is cleared under o_mtx inside fo_close, so the struct
+		 * file is valid here, but its count may already be 0 (the
+		 * close is running): fhold would raise it to 1 and the fdrop
+		 * below would close the file a second time.
+		 */
 		fp = o->o_fp;
-		if (fp != NULL && !fhold(fp))
+		if (fp != NULL && !refcount_acquire_if_not_zero(&fp->f_count))
 			fp = NULL;
 		DQO_UNLOCK(o);
 	}
 	DQ_UNLOCK(q);
-	dq_event_rele(ev);	/* the list reference */
+	if (!async)
+		dq_event_rele(ev);	/* the list reference */
 	if (fp != NULL) {
 		mac_file_notify_reply(q->q_cred, fp, op, r->dr_errno, len);
 		fdrop(fp, td);
@@ -1477,7 +1769,11 @@ dq_queue_setident(struct dq_queue *q, struct dq_setident_args *args)
 		return (error);
 	}
 	dq_object_set_ident_locked(q, o, &args->dsi_ident, NOTE_ATTRIB);
+	dq_object_hold(o);
 	DQ_UNLOCK(q);
+	/* B10: the pager object's size follows, with no dq lock held. */
+	dq_object_setsize(o, args->dsi_ident.di_size);
+	dq_object_rele(o);
 	return (0);
 }
 
@@ -1539,6 +1835,8 @@ dq_queue_stats2(struct dq_queue *q, struct dq_stats2 *st)
 	st->ds2_queue_highwater = q->q_highwater;
 	st->ds2_queue_bytes = q->q_bytes;
 	st->ds2_observers = q->q_nobservers;
+	st->ds2_async_pending = q->q_nasync;
+	st->ds2_async_bytes = q->q_async_bytes;
 	DQ_UNLOCK(q);
 }
 
@@ -1579,6 +1877,11 @@ dq_queue_stats(struct dq_queue *q, struct dq_stats *st)
 #define	DQ_PUSH_NOTES	(NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | \
 	NOTE_LINK | NOTE_RENAME | NOTE_OPEN | NOTE_CLOSE | NOTE_CLOSE_WRITE | \
 	NOTE_READ)
+/*
+ * INVALIDATE (B2): the clean cached pages of the range are dropped and
+ * unmapped, outside q_mtx (the VM object lock comes first); a revoked
+ * object has no pages left and the push is a no-op.
+ */
 int
 dq_queue_push(struct dq_queue *q, const struct dq_push_args *args)
 {
@@ -1588,11 +1891,17 @@ dq_queue_push(struct dq_queue *q, const struct dq_push_args *args)
 		return (EINVAL);
 	switch (args->dp_op) {
 	case DQ_PUSH_NOTIFY_VNODE:
-		if (args->dp_note == 0 || (args->dp_note & ~DQ_PUSH_NOTES) != 0)
+		if (args->dp_note == 0 || (args->dp_note & ~DQ_PUSH_NOTES) != 0 ||
+		    args->dp_offset != 0 || args->dp_len != 0)
+			return (EINVAL);
+		break;
+	case DQ_PUSH_INVALIDATE:
+		if (args->dp_note != 0 || args->dp_offset > OFF_MAX ||
+		    args->dp_len > (uint64_t)OFF_MAX - args->dp_offset)
 			return (EINVAL);
 		break;
 	default:
-		return (EINVAL);	/* INVALIDATE is stage 1b-ii */
+		return (EINVAL);
 	}
 	key.o_id = args->dp_object;
 	DQ_LOCK(q);
@@ -1601,11 +1910,18 @@ dq_queue_push(struct dq_queue *q, const struct dq_push_args *args)
 		DQ_UNLOCK(q);
 		return (ESRCH);
 	}
-	DQO_LOCK(o);
-	dq_file_knote(o, args->dp_note);
-	DQO_UNLOCK(o);
 	q->q_stats.ds2_pushes++;
+	if (args->dp_op == DQ_PUSH_NOTIFY_VNODE) {
+		DQO_LOCK(o);
+		dq_file_knote(o, args->dp_note);
+		DQO_UNLOCK(o);
+		DQ_UNLOCK(q);
+		return (0);
+	}
+	dq_object_hold(o);
 	DQ_UNLOCK(q);
+	dq_object_invalidate(o, args->dp_offset, args->dp_len);
+	dq_object_rele(o);
 	return (0);
 }
 
