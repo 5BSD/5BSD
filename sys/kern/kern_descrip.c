@@ -4481,12 +4481,6 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	error = fget(td, uap->fd, &cap_flock_rights, &fp);
 	if (error != 0)
 		return (error);
-	/* A table that takes no locks: what the type tests used to say. */
-	error = EOPNOTSUPP;
-	if (fp->f_ops->fo_advlock == NULL)
-		goto done;
-
-	error = 0;
 	lf.l_whence = SEEK_SET;
 	lf.l_start = 0;
 	lf.l_len = 0;
@@ -6129,12 +6123,16 @@ invfo_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
 	return (EBADF);
 }
 
+/*
+ * What the type tests gave a descriptor that takes no locks: EOPNOTSUPP to
+ * flock(2), EBADF to the fcntl(2) record locks and the close-time unlock.
+ */
 int
 invfo_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
     struct thread *td)
 {
 
-	return (EBADF);
+	return ((flags & F_FLOCK) != 0 ? EOPNOTSUPP : EBADF);
 }
 
 int

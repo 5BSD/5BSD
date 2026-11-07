@@ -563,14 +563,9 @@ or
 rejects a lock request for a mode the descriptor was not opened with before
 the table is consulted; whether the table takes locks at all is the table's
 business.
-.Xr flock 2
-and the close-time unlock skip a table that has no
+The close-time unlock skips a table that has no
 .Fn fo_advlock
-member, returning
-.Er EOPNOTSUPP
-and nothing respectively;
-.Xr fcntl 2
-lets the default answer.
+member; the system calls let the default answer.
 .Bl -tag -width "devfs nodes"
 .It vnode files
 .Fn vn_advlock
@@ -590,8 +585,15 @@ which takes
 requests to the vnode and refuses the rest as a pipe does.
 .It everything else
 .Fn invfo_advlock
-returns
-.Er EBADF .
+returns what the type tests gave a descriptor that takes no locks:
+.Er EOPNOTSUPP
+to
+.Xr flock 2
+.Pq Dv F_FLOCK ,
+.Er EBADF
+to the
+.Xr fcntl 2
+record locks.
 .Dv O_PATH
 files, pseudo-terminal masters and linuxkpi files do not install the member:
 the type tests these system calls used to make refused them, and they stay
