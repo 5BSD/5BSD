@@ -11,9 +11,11 @@
 #include <sys/param.h>
 #include <sys/event.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -38,6 +40,35 @@ check_times_set(int fd)
 	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
 	ATF_CHECK_EQ(times[0].tv_sec, sb.st_atim.tv_sec);
 	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
+}
+
+/*
+ * The /dev/fd/N cases need fdescfs.  The guest may not mount it on /dev/fd,
+ * so mount a private instance in the work directory; the cleanup unmounts.
+ */
+static void
+mount_fdesc(const atf_tc_t *tc)
+{
+	struct iovec iov[4];
+
+	ATF_REQUIRE_EQ(0, mkdir("fdesc", 0755));
+	iov[0].iov_base = __DECONST(char *, "fstype");
+	iov[0].iov_len = sizeof("fstype");
+	iov[1].iov_base = __DECONST(char *, "fdescfs");
+	iov[1].iov_len = sizeof("fdescfs");
+	iov[2].iov_base = __DECONST(char *, "fspath");
+	iov[2].iov_len = sizeof("fspath");
+	iov[3].iov_base = __DECONST(char *, "fdesc");
+	iov[3].iov_len = sizeof("fdesc");
+	if (nmount(iov, nitems(iov), 0) != 0)
+		atf_tc_fail("mount fdescfs: %s", strerror(errno));
+	(void)tc;
+}
+
+static void
+umount_fdesc(void)
+{
+	(void)unmount("fdesc", MNT_FORCE);
 }
 
 static void
@@ -139,8 +170,12 @@ ATF_TC_BODY(directory, tc)
 	close(fd);
 }
 
-/* futimens/fchflags refuse O_PATH with EBADF; /dev/fd/N still reaches it. */
-ATF_TC_WITHOUT_HEAD(opath_file);
+/* futimens/fchflags refuse O_PATH with EBADF; fdescfs still reaches it. */
+ATF_TC_WITH_CLEANUP(opath_file);
+ATF_TC_HEAD(opath_file, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
 ATF_TC_BODY(opath_file, tc)
 {
 	struct stat sb;
@@ -151,15 +186,17 @@ ATF_TC_BODY(opath_file, tc)
 	fd = open("file", O_PATH);
 	ATF_REQUIRE(fd >= 0);
 	check_errno(fd, EBADF);
-	snprintf(path, sizeof(path), "/dev/fd/%d", fd);
-	if (utimensat(AT_FDCWD, path, times, 0) != 0) {
-		if (errno == ENOENT)
-			atf_tc_skip("fdescfs is not mounted on /dev/fd");
-		atf_tc_fail("utimensat(%s): %s", path, strerror(errno));
-	}
+	mount_fdesc(tc);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	ATF_REQUIRE_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
+	    "utimensat(%s): %s", path, strerror(errno));
 	ATF_REQUIRE_EQ(0, stat("file", &sb));
 	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
 	close(fd);
+}
+ATF_TC_CLEANUP(opath_file, tc)
+{
+	umount_fdesc();
 }
 
 ATF_TC_WITHOUT_HEAD(fifo);
@@ -174,8 +211,12 @@ ATF_TC_BODY(fifo, tc)
 	close(fd);
 }
 
-/* Setting times on /dev/fd/N of a regular file reaches the file. */
-ATF_TC_WITHOUT_HEAD(fdescfs_regular_file);
+/* Setting attributes through fdescfs on a regular file reaches the file. */
+ATF_TC_WITH_CLEANUP(fdescfs_regular_file);
+ATF_TC_HEAD(fdescfs_regular_file, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
 ATF_TC_BODY(fdescfs_regular_file, tc)
 {
 	struct stat sb;
@@ -184,12 +225,10 @@ ATF_TC_BODY(fdescfs_regular_file, tc)
 
 	fd = open("file", O_RDWR | O_CREAT, 0644);
 	ATF_REQUIRE(fd >= 0);
-	snprintf(path, sizeof(path), "/dev/fd/%d", fd);
-	if (utimensat(AT_FDCWD, path, times, 0) != 0) {
-		if (errno == ENOENT)
-			atf_tc_skip("fdescfs is not mounted on /dev/fd");
-		atf_tc_fail("utimensat(%s): %s", path, strerror(errno));
-	}
+	mount_fdesc(tc);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	ATF_REQUIRE_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
+	    "utimensat(%s): %s", path, strerror(errno));
 	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
 	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
 	ATF_REQUIRE_EQ(0, chmod(path, 0600));
@@ -200,9 +239,17 @@ ATF_TC_BODY(fdescfs_regular_file, tc)
 	ATF_CHECK_EQ(7, sb.st_size);
 	close(fd);
 }
+ATF_TC_CLEANUP(fdescfs_regular_file, tc)
+{
+	umount_fdesc();
+}
 
-/* On a descriptor with no settable attributes /dev/fd/N drops changes. */
-ATF_TC_WITHOUT_HEAD(fdescfs_kqueue);
+/* On a descriptor with no settable attributes fdescfs drops changes. */
+ATF_TC_WITH_CLEANUP(fdescfs_kqueue);
+ATF_TC_HEAD(fdescfs_kqueue, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
 ATF_TC_BODY(fdescfs_kqueue, tc)
 {
 	char path[32];
@@ -210,16 +257,18 @@ ATF_TC_BODY(fdescfs_kqueue, tc)
 
 	fd = kqueue();
 	ATF_REQUIRE(fd >= 0);
-	snprintf(path, sizeof(path), "/dev/fd/%d", fd);
-	if (utimensat(AT_FDCWD, path, times, 0) != 0) {
-		if (errno == ENOENT)
-			atf_tc_skip("fdescfs is not mounted on /dev/fd");
-		atf_tc_fail("utimensat(%s): %s", path, strerror(errno));
-	}
+	mount_fdesc(tc);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	ATF_REQUIRE_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
+	    "utimensat(%s): %s", path, strerror(errno));
 	errno = 0;
 	ATF_CHECK_EQ(-1, chflags(path, UF_NODUMP));
 	ATF_CHECK_EQ(EOPNOTSUPP, errno);
 	close(fd);
+}
+ATF_TC_CLEANUP(fdescfs_kqueue, tc)
+{
+	umount_fdesc();
 }
 
 /*
