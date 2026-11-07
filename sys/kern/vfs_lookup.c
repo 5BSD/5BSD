@@ -655,6 +655,7 @@ namei(struct nameidata *ndp)
 	struct thread *td;
 	struct pwd *pwd;
 	int error;
+	bool magiclink;
 	enum cache_fpl_status status;
 
 	cnp = &ndp->ni_cnd;
@@ -811,6 +812,8 @@ restart:
 		error = namei_follow_link(ndp);
 		if (error != 0)
 			break;
+		/* Object-link text is a native path rooted at pwd_rdir. */
+		magiclink = (vn_irflag_read(ndp->ni_vp) & VIRF_MAGICLINK) != 0;
 		vput(ndp->ni_vp);
 		dp = ndp->ni_dvp;
 		/*
@@ -827,8 +830,12 @@ restart:
 			 * native namespace.  Otherwise absolute symlinks inside
 			 * /compat/linux, including the ELF interpreter symlink,
 			 * incorrectly escape to the native root (PR 289739).
+			 * Kernel-generated object links (linprocfs exe, cwd,
+			 * root) hold native paths from vn_fullpath(), so they
+			 * always resolve from the real root.
 			 */
-			if ((cnp->cn_flags & (ISRESTARTED | RINROOT)) == ISRESTARTED)
+			if ((cnp->cn_flags & RINROOT) == 0 &&
+			    ((cnp->cn_flags & ISRESTARTED) != 0 || magiclink))
 				ndp->ni_rootdir = pwd->pwd_rdir;
 			vrele(dp);
 			error = namei_handle_root(ndp, &dp);
