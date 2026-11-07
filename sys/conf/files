@@ -1554,6 +1554,8 @@ dev/dq/dq_queue.c		optional dq
 dev/dq/dq_file.c		optional dq
 dev/dq/dq_observer.c		optional dq
 dev/dq/dq_observe.c		optional dq
+dev/dq/dq_pager.c		optional dq
+dev/dq/dq_async.c		optional dq
 dev/dwc/if_dwc.c		optional dwc fdt
 dev/dwc/if_dwc_if.m		optional dwc fdt
 dev/dwc/dwc1000_core.c		optional dwc fdt

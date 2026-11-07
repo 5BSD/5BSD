@@ -25,6 +25,10 @@ ATF_TESTS_C+=	dq_lock_test
 ATF_TESTS_C+=	dq_ioctl_test
 ATF_TESTS_C+=	dq_note_test
 ATF_TESTS_C+=	dq_mac_test
+ATF_TESTS_C+=	dq_mmap_test
+ATF_TESTS_C+=	dq_sendfile_test
+ATF_TESTS_C+=	dq_cache_test
+ATF_TESTS_C+=	dq_async_test
 ATF_TESTS_SH+=	dq_dtrace_test
 
 # Every program is a controller: the shared harness is part of each.
@@ -48,6 +52,8 @@ TEST_METADATA.dq_concurrency_test+=	is_exclusive="true"
 TEST_METADATA.dq_oes_test+=	is_exclusive="true"
 # Switches mac_abac to enforcing for one rule, and traces with dtrace: alone.
 TEST_METADATA.dq_mac_test+=	is_exclusive="true"
+# Changes kern.dq.max_inflight_bytes and stalls page write-back: run alone.
+TEST_METADATA.dq_async_test+=	is_exclusive="true"
 
 WARNS?=		6
 

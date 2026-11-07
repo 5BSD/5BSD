@@ -16,7 +16,8 @@
  *
  * Writable mode mints a descriptor with DQ_MINT_F_WRITE under a policy of
  * dp_write = DQ_EVENT and answers every event with dq_serve_file() from
- * the real file: the child appends a line, locks, syncs, reads the whole
+ * the real file: the child appends a line, locks, syncs, maps the file
+ * shared and writable and writes a page back with msync, reads the whole
  * file back and prints it.  Every write, lock and sync is an event the
  * controller applies to the backing file; the controller could refuse,
  * redirect or log any of them instead.
@@ -30,6 +31,7 @@
 
 #include <sys/types.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -134,6 +136,9 @@ writable_child(int fd)
 {
 	static const char line[] = "appended through dq(4)\n";
 	unsigned char buf[4096];
+	unsigned char *p;
+	volatile unsigned char *vp;
+	struct stat st;
 	ssize_t r;
 
 	if (fcntl(fd, F_SETFL, O_APPEND) == -1)
@@ -146,6 +151,26 @@ writable_child(int fd)
 		err(1, "fsync");
 	if (flock(fd, LOCK_UN) == -1)
 		err(1, "flock unlock");
+	/*
+	 * Through a shared writable mapping too: the fault is a READ, the
+	 * store dirties the page, and msync(MS_SYNC) writes it back as a
+	 * WRITE_ASYNC the controller applies to the file.  The last byte is
+	 * rewritten in place with the bytes already there, so the file's
+	 * content does not change.
+	 */
+	if (fstat(fd, &st) == -1)
+		err(1, "fstat");
+	if (st.st_size > 0) {
+		p = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE,
+		    MAP_SHARED, fd, 0);
+		if (p == MAP_FAILED)
+			err(1, "mmap");
+		vp = p;	/* a real store, not optimised away */
+		vp[st.st_size - 1] = vp[st.st_size - 1];
+		if (msync(p, (size_t)st.st_size, MS_SYNC) == -1)
+			err(1, "msync");
+		(void)munmap(p, (size_t)st.st_size);
+	}
 	if (lseek(fd, 0, SEEK_SET) == -1)
 		err(1, "lseek");
 	while ((r = read(fd, buf, sizeof(buf))) > 0)
@@ -235,6 +260,7 @@ main(int argc, char **argv)
 	pol.dp_events = DQ_EVENTS_CLOSE;
 	if (writable) {
 		pol.dp_write = DQ_EVENT;
+		pol.dp_mmap_shared_write = DQ_ALLOW;
 		pol.dp_events |= DQ_EVENTS_GETATTR;
 		/* Lock owners, and the identity copy SETIDENT refreshes. */
 		s.opts.so_state = dq_serve_state_create();

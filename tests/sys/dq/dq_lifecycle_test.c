@@ -98,8 +98,13 @@ ATF_TC_BODY(close_once, tc)
 	dqt_msleep(100);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_CLOSE]);
 	ATF_CHECK_EQ(1, o->closes);
-	/* The closing thread is this process; the record needs no answer. */
-	ATF_CHECK_EQ(getpid(), c.last_caller.dc_pid);
+	/*
+	 * Series ii: CLOSE is posted by the deferred destroy task after the
+	 * write-back of any dirty pages, as a kernel caller (pid 0); the
+	 * record needs no answer.
+	 */
+	ATF_CHECK((c.op_caller[DQ_OP_CLOSE].dc_flags & DQ_CALLER_F_KERNEL) != 0);
+	ATF_CHECK_EQ(0, c.op_caller[DQ_OP_CLOSE].dc_pid);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

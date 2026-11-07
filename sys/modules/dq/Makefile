@@ -2,7 +2,8 @@
 
 PACKAGE=	dq
 KMOD=	dq
-SRCS=	dq_dev.c dq_queue.c dq_file.c dq_observer.c dq_observe.c
+SRCS=	dq_dev.c dq_queue.c dq_file.c dq_observer.c dq_observe.c \
+	dq_pager.c dq_async.c
 SRCS+=	bus_if.h device_if.h vnode_if.h opt_dq.h
 
 # The module is the device: compiled standalone it is still DEV_DQ.

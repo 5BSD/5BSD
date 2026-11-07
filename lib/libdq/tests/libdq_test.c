@@ -13,6 +13,7 @@
 #include <sys/param.h>
 #include <sys/filio.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -169,6 +170,51 @@ ATF_TC_BODY(accessor_bounds, tc)
 	ATF_CHECK(dq_event_first(buf, sizeof(buf)) == NULL);
 }
 
+ATF_TC_WITHOUT_HEAD(async_accessors);
+ATF_TC_BODY(async_accessors, tc)
+{
+	char buf[256], wbody[sizeof(struct dq_write_body) + 4096];
+	const struct dq_write_body *wbp;
+	const struct dq_read_body *rbp;
+	struct dq_write_body *wb;
+	struct dq_read_body rb;
+	struct dq_event *ev;
+	char *big;
+	const void *p;
+	size_t off, len;
+
+	/* READ_ASYNC has the READ body. */
+	off = 0;
+	memset(&rb, 0, sizeof(rb));
+	rb.dr_offset = 8192;
+	rb.dr_len = 4096;
+	ev = put_record(buf, &off, DQ_OP_READ_ASYNC, 0, &rb, sizeof(rb));
+	ATF_REQUIRE_EQ(0, dq_event_read(ev, &rbp));
+	ATF_CHECK_EQ(8192, rbp->dr_offset);
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_event_write(ev, &wbp, &p, &len));
+	ATF_CHECK_EQ(EINVAL, errno);
+	/* WRITE_ASYNC has the WRITE body and a page of data. */
+	big = malloc(sizeof(struct dq_event) + sizeof(wbody));
+	ATF_REQUIRE(big != NULL);
+	memset(wbody, 0, sizeof(wbody));
+	wb = (struct dq_write_body *)(void *)wbody;
+	wb->dw_offset = 4096;
+	wb->dw_len = 4096;
+	memset(wb + 1, 'p', 4096);
+	off = 0;
+	ev = put_record(big, &off, DQ_OP_WRITE_ASYNC, 0, wbody, sizeof(wbody));
+	ATF_REQUIRE_EQ(0, dq_event_write(ev, &wbp, &p, &len));
+	ATF_CHECK_EQ(4096, wbp->dw_offset);
+	ATF_CHECK_EQ(0, wbp->dw_flags);
+	ATF_CHECK_EQ(4096, len);
+	ATF_CHECK_EQ('p', ((const char *)p)[4095]);
+	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_WRITE_ASYNC, ENOSPC));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_WRITE_ASYNC, EPIPE));
+	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_READ_ASYNC, EPIPE));
+	free(big);
+}
+
 ATF_TC_WITHOUT_HEAD(errno_allow_lists);
 ATF_TC_BODY(errno_allow_lists, tc)
 {
@@ -286,6 +332,7 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 	dq_policy_default(&pol);
 	pol.dp_write = DQ_EVENT;
 	pol.dp_ioctl = DQ_EVENT;
+	pol.dp_mmap_shared_write = DQ_ALLOW;
 	pol.dp_events = events;
 	ATF_REQUIRE_MSG(dq_mint_file_flags(c->q, &c->ident, &pol,
 	    DQ_MINT_F_WRITE, &c->object, &c->fd, &reason) == 0,
@@ -551,6 +598,55 @@ ATF_TC_BODY(serve_locks, tc)
 	ctl_stop(&c);
 }
 
+static void
+child_map_write(void *arg, void *result)
+{
+	int fd = *(int *)arg;
+	struct io_res *r = result;
+	unsigned char *p;
+
+	p = mmap(NULL, DATA_LEN, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (p == MAP_FAILED) {
+		r->r[0].rv = -1;
+		r->r[0].err = errno;
+		return;
+	}
+	/* A fault (READ) and a store, then the write-back (WRITE_ASYNC). */
+	memcpy(r->buf, p + 4096, 16);
+	p[4096 + 5] = 0x77;
+	DO(1, msync(p, DATA_LEN, MS_SYNC));
+	DO(2, munmap(p, DATA_LEN));
+}
+
+ATF_TC(serve_mmap_writeback);
+ATF_TC_HEAD(serve_mmap_writeback, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "dq_serve_file answers a fault's READ "
+	    "and the WRITE_ASYNC of msync: the mapping holds the backing bytes "
+	    "and the store reaches the backing file at its offset");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(serve_mmap_writeback, tc)
+{
+	struct ctl c;
+	struct io_res r;
+	unsigned char got;
+	int fd;
+
+	ctl_start(&c, 3, 0);
+	fd = c.fd;
+	memset(&r, 0, sizeof(r));
+	requester(child_map_write, &fd, &r, sizeof(r));
+	ATF_REQUIRE_EQ_MSG(0, r.r[0].rv, "mmap: %s", strerror(r.r[0].err));
+	ATF_CHECK(memcmp(r.buf, data + 4096, 16) == 0);
+	ATF_CHECK_EQ_MSG(0, r.r[1].rv, "msync: %s", strerror(r.r[1].err));
+	ATF_CHECK_EQ(0, r.r[2].rv);
+	ATF_REQUIRE_EQ(1, pread(c.backing, &got, 1, 4096 + 5));
+	ATF_CHECK_EQ(0x77, got);
+	ATF_CHECK(c.ops[DQ_OP_WRITE_ASYNC] >= 1);
+	ctl_stop(&c);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -559,5 +655,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, errno_allow_lists);
 	ATF_TP_ADD_TC(tp, serve_each_op);
 	ATF_TP_ADD_TC(tp, serve_locks);
+	ATF_TP_ADD_TC(tp, async_accessors);
+	ATF_TP_ADD_TC(tp, serve_mmap_writeback);
 	return (atf_no_error());
 }

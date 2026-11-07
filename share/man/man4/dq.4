@@ -67,9 +67,9 @@ The interface is the installed header
 fixed width, native byte order, LP64 only and additive, and the
 .Xr libdq 3
 library wraps it.
-This page describes the device as built in stage 1b-i (the
+This page describes the device as built in stage 1b (the
 .Dv DQ_KIND_FILE
-kind, read-only or writable, without mappings), and names every answer
+kind, read-only or writable, with mappings), and names every answer
 that differs from a real file.
 .Ss Opening the device
 .Pa /dev/dq
@@ -306,12 +306,40 @@ The calls of a requester and the events they post:
 .It Xr close 2 , Xr _exit 2 Ta Dv DQ_OP_UNLOCK_ALL , CLOSE
 .It Xr ioctl 2 , Dv F_SETOWN Ta Dv DQ_OP_IOCTL
 .It Xr fstat 2 Ta Dv DQ_OP_GETATTR
+.It a fault on a Xr mmap 2 Ns ed page Ta Dv DQ_OP_READ
+.It Xr msync 2 , Xr fsync 2 , page daemon Ta Dv DQ_OP_WRITE_ASYNC
+.It Xr sendfile 2 Ta Dv DQ_OP_READ_ASYNC
 .El
 .Pp
-.Dv DQ_OP_READ_ASYNC
-and
-.Dv DQ_OP_WRITE_ASYNC
-are the page operations of the pager (stage 1b-ii) and are not posted.
+The page operations, posted by the pager without a waiting requester
+(see
+.Sx Pages ) :
+.Bl -tag -width "DQ_OP_WRITE_ASYNC" -offset indent
+.It Dv DQ_OP_READ_ASYNC
+The
+.Vt struct dq_read_body
+of a
+.Xr sendfile 2
+filling pages, answered as
+.Dv DQ_OP_READ .
+.It Dv DQ_OP_WRITE_ASYNC
+The
+.Vt struct dq_write_body
+.Pq Va dw_flags No 0, a page-aligned Va dw_offset
+followed by the bytes of a run of dirty pages, answered as
+.Dv DQ_OP_WRITE
+with
+.Va dwr_offset
+equal to
+.Va dw_offset ;
+the caller is
+.Dv DQ_CALLER_F_KERNEL .
+.El
+.Pp
+A fault on a mapping posts a
+.Dv DQ_OP_READ ,
+like
+.Xr read 2 .
 .Pp
 The controller answers with
 .Dv DQ_IOC_REPLY
@@ -647,15 +675,21 @@ is not
 A
 .Vt struct dq_policy
 accompanies each object.
-Stage 1b-i accepts
+Stage 1b accepts
 .Va dp_cache
 .Dv DQ_CACHE_NONE
-(no page cache, which is stage 1b-ii; the only switch for whether
+.Po
+.Xr read 2
+always posts; pages exist only while mapped or wired; the only switch for
+whether
 .Xr fstat 2
 posts is
-.Dv DQ_EVENTS_GETATTR )
+.Dv DQ_EVENTS_GETATTR
+.Pc ,
+.Dv DQ_CACHE_ATTR
 or
-.Dv DQ_CACHE_ATTR ;
+.Dv DQ_CACHE_DATA
+.Pq read 2 served from cached pages, see Sx Pages ;
 .Va dp_write
 .Dv DQ_DENY
 or
@@ -664,9 +698,14 @@ or
 .Dv DQ_DENY
 or
 .Dv DQ_EVENT ;
-.Va dp_exec
-and
 .Va dp_mmap_shared_write
+.Dv DQ_DENY ,
+or
+.Dv DQ_ALLOW
+with
+.Va dp_write
+.Dv DQ_EVENT ;
+.Va dp_exec
 .Dv DQ_DENY ;
 .Va dp_lock
 .Dv DQ_EVENT ;
@@ -826,21 +865,43 @@ knotes for what happened elsewhere: any combination of
 and
 .Dv NOTE_READ ,
 counted in
-.Va ds2_pushes .
-A note of 0, one with
+.Va ds2_pushes ;
+.Va dp_offset
+and
+.Va dp_len
+must be 0.
+With
+.Dv DQ_PUSH_INVALIDATE ,
+drop the object's clean pages in
+.Bq Va dp_offset , dp_offset No + Va dp_len
+(rounded out to pages;
+.Va dp_len
+0 to the end) so that the next fault or cached read posts
+.Dv DQ_OP_READ
+again;
+.Va dp_note
+must be 0.
+Dirty pages of a shared mapping the controller has not yet seen survive
+and are written back.
+A note of 0 for
+.Dv DQ_PUSH_NOTIFY_VNODE ,
+one with
 .Dv NOTE_REVOKE
 (the
 .Dv DQ_IOC_REVOKE
-ioctl's) or an unknown bit, a wrong version, nonzero padding and any other
+ioctl's) or an unknown bit, a range on a note, a note on an
+invalidation, a range past
+.Dv OFF_MAX ,
+a wrong version, nonzero padding and any other
 .Va dp_op
-.Po
-.Dv DQ_PUSH_INVALIDATE
-is stage 1b-ii
-.Pc
 are
 .Er EINVAL ;
 an unknown object is
 .Er ESRCH .
+The structure is 40 bytes since stage 1b-ii, which changed the command
+word; the 24-byte stage 1b-i layout is still accepted under its own word
+for
+.Dv DQ_PUSH_NOTIFY_VNODE .
 Attributes changed elsewhere travel with
 .Dv DQ_IOC_SETIDENT ,
 which raises
@@ -858,13 +919,16 @@ holds plus
 .Va ds2_overdepth
 (records queued beyond the depth, see
 .Sx Waiting, deadlines and interruption )
-and the stage 1b-ii
-counters
-.Va ds2_async_pending ,
-.Va ds2_async_bytes
+and the page counters:
+.Va ds2_async_pending
 and
-.Va ds2_async_deadlines ,
-0 for now.
+.Va ds2_async_bytes
+.Pq page operations in flight now, and their bytes ,
+.Va ds2_async_deadlines
+(page operations failed by their deadline) and
+.Va ds2_close_dropped
+(dirty pages dropped after a last close because their write-back failed
+or expired).
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -1439,6 +1503,222 @@ client) the controller raises with
 reports the presented size minus the offset;
 .Dv EVFILT_WRITE
 is always ready.
+.Ss Pages
+Each object has a VM object of its own, made at the mint, whose pager
+.Pq the Em dq pager
+fills and cleans pages through the queue.
+.Pp
+.Sy Mappings .
+.Xr mmap 2
+of a served descriptor maps that object, as
+.Fn vn_mmap
+maps a vnode's.
+A mapping needs
+.Dv FREAD ;
+a private mapping may be writable (copy on write); a shared writable one
+needs
+.Dv FWRITE
+.Pq Dv DQ_MINT_F_WRITE
+and
+.Va dp_mmap_shared_write
+.Dv DQ_ALLOW ,
+else
+.Er EACCES ,
+as for a read-only descriptor on a real file.
+.Dv PROT_EXEC
+is refused with
+.Er EACCES
+when the presented statfs flags carry
+.Dv MNT_NOEXEC ,
+and otherwise allowed: of the policy only
+.Dv MNT_NOEXEC
+applies to execute permission (no execution of a served file is possible
+before stage 3; declared), while
+.Dv CAP_MMAP_X ,
+.Dv FREAD
+and the MAC mmap check still apply.
+.Xr procstat 1
+.Fl v
+and
+.Xr kinfo_getvmmap 3
+show a vnode mapping with the presented path, size and file id; a mapping
+holds the open file, so a mapping that outlives the descriptor delays
+the last close (and with it the release of
+.Xr flock 2
+and OFD locks,
+.Dv DQ_OP_CLOSE
+and
+.Dv NOTE_CLOSE )
+to the last
+.Xr munmap 2 ,
+where a vnode releases at the last close (declared).
+A mapping made into another process's map (not the caller's own) does
+not hold the open file, so its dirty pages can be dropped when the file
+is closed (declared).
+.Pp
+.Sy Faults .
+A fault on a page that is not resident posts
+.Dv DQ_OP_READ
+with a page-aligned
+.Va dr_offset
+and a
+.Va dr_len
+of the faulting run, clipped at the presented size and at
+.Va kern.dq.max_io ;
+no page is read ahead or behind.
+A short reply that reaches the presented end of the file is the end of
+the file: the rest of the page is zero-filled.
+A reply short of bytes the presented size says exist
+.Pq offset No + length < Va di_size
+is an error, not zeros:
+.Dv SIGBUS
+for a fault,
+.Er EIO
+for a
+.Dv DQ_CACHE_DATA
+read.
+The fault waits with the object's deadline (the policy's, else
+.Va kern.dq.default_deadline_ms ,
+else 30 seconds: a fault never waits without bound).
+A caught signal does not end the wait: the fault goes on, without catching
+signals, until the reply, the deadline,
+.Dv SIGKILL
+or the process exiting.
+.Dv SIGBUS
+is raised where a vnode would raise it, for a page wholly past the end of
+the file, and where the controller fails it: an error reply, a missed
+deadline, a revoked object, a closed queue.
+A controller must not touch its own served mappings: the fault would wait
+on its own queue until the deadline and then raise
+.Dv SIGBUS
+(the
+.Er EDEADLK
+rule cannot apply to a fault; declared).
+.Xr mincore 2
+reports the resident pages of a served mapping.
+.Pp
+.Sy Write-back .
+Dirty pages of a shared writable mapping are written back as
+.Dv DQ_OP_WRITE_ASYNC ,
+a run of pages per event, by
+.Xr msync 2 ,
+.Xr fsync 2 ,
+the page daemon, and after the last close.
+Write-backs carry no waiting requester; the queue enforces the object's
+deadline on each.
+The bytes pending per queue are bounded by
+.Va kern.dq.max_inflight_bytes ;
+past it the pages stay dirty and the page daemon or
+.Xr msync 2
+tries again, so a stalled controller holds memory, never the system.
+An accepted run is clean; a refused, short or expired one stays dirty and
+is written again later.
+The controller's reply returns before the pages are marked clean:
+.Xr msync 2
+with
+.Dv MS_SYNC
+and
+.Xr fsync 2
+wait for the completion, not the reply.
+.Dv MS_SYNC
+fails with
+.Er EIO
+when a write-back of its own range was refused or missed its deadline
+(only those count; the page stays dirty, a later
+.Xr msync 2
+writes it), and its wait is not interruptible: it is bounded by the
+deadline instead (declared).
+.Xr fsync 2
+first writes the dirty pages back and waits for them, then posts
+.Dv DQ_OP_FSYNC .
+Its
+.Er EIO
+counts only the write-backs it started.
+.Pp
+.Sy Close .
+After the last reference to the open file (descriptors and mappings), the
+dirty pages are written back first; when every write-back completed or
+its deadline passed,
+.Dv DQ_OP_CLOSE
+is posted, carrying
+.Dv DQ_CALLER_F_KERNEL
+and pid 0 (it comes from the kernel's deferred destroy, not the closing
+process).
+Pages whose write-back failed or expired are then dropped and counted in
+.Va ds2_close_dropped .
+Neither
+.Xr munmap 2
+nor
+.Xr close 2
+waits for the controller.
+Until the destroy finishes the object is still listed by the
+.Dq dq.observe
+service.
+A revoke and the queue closing drop dirty pages at once, failing every
+pending page operation (data the controller had not taken is lost, as
+designed).
+.Pp
+.Sy The data cache .
+Under
+.Va dp_cache
+.Dv DQ_CACHE_DATA ,
+.Xr read 2
+is served from the object's pages, a miss posting
+.Dv DQ_OP_READ
+for whole pages; a second read of cached bytes posts nothing.
+An accepted
+.Dv DQ_OP_WRITE
+replaces the bytes of the resident pages it covers; a refused one changes
+nothing.
+.Dv DQ_PUSH_INVALIDATE
+drops clean pages so that they are asked for again.
+.Pp
+.Sy sendfile .
+.Xr sendfile 2
+sends from the object's pages, filling missing ones with
+.Dv DQ_OP_READ_ASYNC
+answered as
+.Dv DQ_OP_READ ;
+it runs
+.Fn mac_file_check_read
+and the
+.Er EDEADLK
+rule first.
+A failed or expired
+.Dv DQ_OP_READ_ASYNC
+aborts the transfer and the socket reports
+.Er EIO
+(its pending error, as for a vnode's I/O error): the
+.Xr sendfile 2
+call may already have returned, or it fails with
+.Er EPIPE
+or
+.Er ENOTCONN
+from the aborted socket.
+A revoke reaches
+.Er EIO
+through the size check of the next chunk.
+An INTERRUPT the queue posts for an expired page operation is allocated
+without sleeping and may be lost under memory pressure; the late reply is
+.Er ESRCH
+either way.
+An
+.Dv DQ_PUSH_INVALIDATE
+that races a page-in posts that run again.
+.Pp
+.Sy Shrinking .
+A
+.Dv DQ_IOC_SETIDENT
+or a served truncation that lowers the size removes the pages past the
+new end and zeroes the rest of the last page.
+Page operations pending past the new end are failed first: the
+controller's late reply to one is
+.Er ESRCH ,
+a delivered one is named by
+.Dv DQ_OP_INTERRUPT ,
+and faults beyond the new end raise
+.Dv SIGBUS .
+The shrink waits for those failures, which the deadline bounds.
 .Sh READ-ONLY OBJECTS
 A descriptor minted without
 .Dv DQ_MINT_F_WRITE
@@ -1477,8 +1757,10 @@ as on a read-only real file; read locks and
 are events (see
 .Sx Locks ) .
 .It Xr mmap 2
-.Er ENODEV ;
-the pager is stage 1b-ii.
+As a read-only real file: private and shared read mappings, a private
+writable one; a shared writable one is
+.Er EACCES
+.Pq see Sx Pages .
 .It Xr aio_read 2 , Xr aio_write 2 , Xr aio_fsync 2
 refused unless
 .Va vfs.aio.enable_unsafe
@@ -1488,8 +1770,12 @@ calls only a local vnode safe.
 With it set the aio daemon posts the event, flagged
 .Dv DQ_CALLER_F_KERNEL
 with the requester's credential.
-.It Xr sendfile 2 , Xr copy_file_range 2
-.Er EINVAL .
+.It Xr sendfile 2
+served
+.Pq see Sx Pages .
+.It Xr copy_file_range 2
+.Er EINVAL :
+no vnode exists to copy between.
 .It ACLs, extended attributes
 .Er EOPNOTSUPP .
 .It Xr fcntl 2 Dv F_READAHEAD , F_RDAHEAD , F_ISUNIONSTACK
@@ -1550,24 +1836,39 @@ The controller's credential, see
 .El
 .Sh STAGE 1B
 Stage 1b-i serves writes, attributes, sync, space, locks, ioctls and
-kqueue notes as described above.
-What it moved from stage 1a's pins: the write family on a writable
+kqueue notes; stage 1b-ii serves pages: mappings,
+.Xr msync 2 ,
+.Xr sendfile 2 ,
+the data cache,
+.Dv DQ_PUSH_INVALIDATE
+and the
+.Dv DQ_OP_READ_ASYNC
+and
+.Dv DQ_OP_WRITE_ASYNC
+page operations, all described above.
+What they moved from stage 1a's pins: the write family on a writable
 object, the attribute calls on every object, locks (no longer
 .Er EBADF
 and
 .Er EOPNOTSUPP
-from a table without lock flags), event ioctls, and
+from a table without lock flags), event ioctls,
 .Xr fsync 2
 under
-.Dv DQ_EVENT .
+.Dv DQ_EVENT ,
+.Xr mmap 2
+(no longer
+.Er ENODEV )
+and
+.Xr sendfile 2
+(no longer
+.Er EINVAL ) .
 Declared differences that remain:
 .Bl -bullet -offset indent
 .It
 No rollback across the chunks of a large write (see
 .Sx Writes ) .
 .It
-A mapping keeps the open file alive, so once mappings exist (stage 1b-ii)
-the
+A mapping keeps the open file alive: the
 .Xr flock 2
 and OFD release,
 .Dv DQ_OP_CLOSE
@@ -1577,17 +1878,34 @@ happen at the last
 .Xr munmap 2
 when a mapping outlives the descriptor, where a vnode releases at the last
 close.
-Mapping lifetime,
-.Xr mmap 2 ,
-.Xr msync 2 ,
-.Xr sendfile 2 ,
-.Dv DQ_CACHE_DATA ,
-.Dv DQ_PUSH_INVALIDATE
-and the
-.Dv DQ_OP_READ_ASYNC
-and
-.Dv DQ_OP_WRITE_ASYNC
-page operations are stage 1b-ii.
+.It
+A controller faulting on its own served mapping waits until the deadline
+and gets
+.Dv SIGBUS .
+.It
+.Xr msync 2
+with
+.Dv MS_SYNC
+is not interruptible (its wait is bounded by the deadline) and fails with
+.Er EIO
+when the controller refuses a run or misses the deadline.
+.It
+A failed page fill aborts a
+.Xr sendfile 2 ;
+the socket reports
+.Er EIO ,
+not necessarily the call.
+.It
+.Dv PROT_EXEC
+is governed, of the policy, by the presented
+.Dv MNT_NOEXEC
+alone.
+.It
+A mapping made into another process's map does not hold the file; its
+dirty pages can be dropped at close.
+.It
+A revoke or the queue closing drops dirty pages the controller had not
+taken.
 .It
 .Dv O_TRUNC
 at open is a vnode's alone (served files are not opened by path yet).
@@ -1631,6 +1949,10 @@ and the depth of observers.
 Unanswered events per object before requesters wait for a slot (64).
 .It Va max_inflight_per_requester
 Unanswered events per requester, keyed by nonce or pid (256).
+.It Va max_inflight_bytes
+Bytes of page operations
+.Pq Dv DQ_OP_READ_ASYNC , DQ_OP_WRITE_ASYNC
+a queue may have pending (64 MiB); past it write-back waits.
 .It Va max_objects
 Live objects per queue (65536).
 .It Va default_deadline_ms
@@ -1695,7 +2017,10 @@ a complete controller
 .Xr fcntl 2 ,
 .Xr flock 2 ,
 .Xr fspacectl 2 ,
+.Xr mmap 2 ,
+.Xr msync 2 ,
 .Xr posix_fallocate 2 ,
+.Xr sendfile 2 ,
 .Xr libdq 3 ,
 .Xr aio 4 ,
 .Xr fdescfs 4 ,

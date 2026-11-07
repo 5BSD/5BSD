@@ -542,28 +542,9 @@ sendfile_swapin(vm_object_t obj, struct sf_io *sfio, int *nios, off_t off,
 }
 
 /*
- * The source of a sendfile(2): the VM object whose pages are sent, its size
- * when the transfer started, and what the transfer loop needs from the
- * descriptor behind it -- pin the source while a chunk's pages are read,
- * re-read its size under that pin, note the access, let it go.  The vnode
- * and shm sources are the two sendfile(2) accepts today.
+ * The vnode and shm sources (struct sendfile_src, sys/sf_buf.h).  Other
+ * file types with their own pages build theirs and call sendfile_send().
  */
-struct sendfile_src;
-struct sendfile_src_ops {
-	int	(*ss_lock)(struct sendfile_src *);	/* NULL: nothing to pin */
-	void	(*ss_unlock)(struct sendfile_src *);
-	int	(*ss_getsize)(struct sendfile_src *, struct thread *, off_t *);
-						/* NULL: the size is fixed */
-	void	(*ss_accessed)(struct sendfile_src *);	/* NULL: no notice */
-	void	(*ss_release)(struct sendfile_src *);
-};
-struct sendfile_src {
-	const struct sendfile_src_ops *ss_ops;
-	vm_object_t	 ss_obj;
-	off_t		 ss_size;
-	struct vnode	*ss_vp;
-	struct shmfd	*ss_shmfd;
-};
 
 static int
 sendfile_vnode_lock(struct sendfile_src *ss)
@@ -842,8 +823,37 @@ done:
 	return (error);
 }
 
+/*
+ * sendfile(2) of a vnode or shm descriptor: the source from the descriptor
+ * type (sendfile_getobj), then the transfer.
+ */
 int
 vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
+    struct uio *trl_uio, off_t offset, size_t nbytes, off_t *sent, int flags,
+    struct thread *td)
+{
+	struct sendfile_src ss;
+	int error;
+
+	error = sendfile_getobj(td, fp, &ss);
+	if (error != 0) {
+		if (sent != NULL)
+			*sent = 0;
+		return (error == ERESTART ? EINTR : error);
+	}
+	return (sendfile_send(&ss, sockfd, hdr_uio, trl_uio, offset, nbytes,
+	    sent, flags, td));
+}
+
+/*
+ * The transfer from a prepared source (struct sendfile_src, referenced
+ * ss_obj) to the socket sockfd.  The source is released on every return.
+ * A file type that serves its own pages (DescriptorQueue) builds its source
+ * and calls this directly, after its own read admission (the syscall runs
+ * no file hook).
+ */
+int
+sendfile_send(struct sendfile_src *ssp, int sockfd, struct uio *hdr_uio,
     struct uio *trl_uio, off_t offset, size_t nbytes, off_t *sent, int flags,
     struct thread *td)
 {
@@ -875,9 +885,7 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	softerr = 0;
 	use_ext_pgs = false;
 
-	error = sendfile_getobj(td, fp, &ss);
-	if (error != 0)
-		goto out;
+	ss = *ssp;
 	obj = ss.ss_obj;
 	obj_size = ss.ss_size;
 

@@ -262,53 +262,68 @@ ATF_TC_BODY(fsync_ok, tc)
 	teardown(&f);
 }
 
-ATF_TC(mmap_enodev);
-ATF_TC_HEAD(mmap_enodev, tc)
+ATF_TC(mmap_readonly_rules);
+ATF_TC_HEAD(mmap_readonly_rules, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "mmap answers ENODEV: the dq pager is "
-	    "stage 1b");
+	atf_tc_set_md_var(tc, "descr", "a read-only object maps as a "
+	    "read-only real file does: MAP_PRIVATE (even PROT_WRITE, copy on "
+	    "write) and shared PROT_READ succeed, shared PROT_WRITE is EACCES; "
+	    "mapping posts nothing (pages come at the first fault, "
+	    "dq_mmap_test)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(mmap_enodev, tc)
+ATF_TC_BODY(mmap_readonly_rules, tc)
 {
 	struct fixture f;
-	void *p;
+	void *p, *q;
 
 	setup(&f, 34);
+#define	MAPS_SAME(prot, flags) do {					\
+	errno = 0;							\
+	p = mmap(NULL, 4096, (prot), (flags), f.o->fd, 0);		\
+	int _pe = p == MAP_FAILED ? errno : 0;				\
+	errno = 0;							\
+	q = mmap(NULL, 4096, (prot), (flags), f.oracle, 0);		\
+	int _qe = q == MAP_FAILED ? errno : 0;				\
+	ATF_CHECK_EQ_MSG(q == MAP_FAILED, p == MAP_FAILED,		\
+	    "%s %s: served %d oracle %d", #prot, #flags, _pe, _qe);	\
+	ATF_CHECK_EQ_MSG(_qe, _pe, "%s %s: errno served %d oracle %d",	\
+	    #prot, #flags, _pe, _qe);					\
+	if (p != MAP_FAILED)						\
+		(void)munmap(p, 4096);					\
+	if (q != MAP_FAILED)						\
+		(void)munmap(q, 4096);					\
+} while (0)
+	MAPS_SAME(PROT_READ, MAP_PRIVATE);
+	MAPS_SAME(PROT_READ | PROT_WRITE, MAP_PRIVATE);
+	MAPS_SAME(PROT_READ, MAP_SHARED);
+	MAPS_SAME(PROT_READ | PROT_WRITE, MAP_SHARED);
+#undef MAPS_SAME
 	errno = 0;
-	p = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, f.o->fd, 0);
+	p = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, f.o->fd, 0);
 	ATF_CHECK_EQ(MAP_FAILED, p);
-	ATF_CHECK_EQ(ENODEV, errno);
-	errno = 0;
-	p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, f.o->fd, 0);
-	ATF_CHECK_EQ(MAP_FAILED, p);
-	ATF_CHECK_EQ(ENODEV, errno);
+	ATF_CHECK_EQ(EACCES, errno);
 	teardown(&f);
 }
 
-ATF_TC(sendfile_copy_file_range);
-ATF_TC_HEAD(sendfile_copy_file_range, tc)
+ATF_TC(copy_file_range_einval);
+ATF_TC_HEAD(copy_file_range_einval, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "sendfile and copy_file_range answer "
-	    "EINVAL (invfo_sendfile, default copy_file_range) in stage 1a");
+	atf_tc_set_md_var(tc, "descr", "copy_file_range answers EINVAL (the "
+	    "default; no vnode to copy between); sendfile is served "
+	    "(dq_sendfile_test)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(sendfile_copy_file_range, tc)
+ATF_TC_BODY(copy_file_range_einval, tc)
 {
 	struct fixture f;
-	off_t sbytes;
-	int out, sv[2];
+	int out;
 
 	setup(&f, 35);
-	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	sbytes = 0;
-	FAILS(sendfile(f.o->fd, sv[0], 0, 100, NULL, &sbytes, 0), EINVAL);
 	out = open("copy_out", O_RDWR | O_CREAT | O_TRUNC, 0644);
 	ATF_REQUIRE(out != -1);
 	FAILS(copy_file_range(f.o->fd, NULL, out, NULL, 100, 0), EINVAL);
 	(void)close(out);
-	(void)close(sv[0]);
-	(void)close(sv[1]);
 	teardown(&f);
 }
 
@@ -725,8 +740,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, write_family);
 	ATF_TP_ADD_TC(tp, setattr_local_refusals);
 	ATF_TP_ADD_TC(tp, fsync_ok);
-	ATF_TP_ADD_TC(tp, mmap_enodev);
-	ATF_TP_ADD_TC(tp, sendfile_copy_file_range);
+	ATF_TP_ADD_TC(tp, mmap_readonly_rules);
+	ATF_TP_ADD_TC(tp, copy_file_range_einval);
 	ATF_TP_ADD_TC(tp, acl_extattr);
 	ATF_TP_ADD_TC(tp, locks_are_events);
 	ATF_TP_ADD_TC(tp, writable_served);

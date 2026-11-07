@@ -34,6 +34,7 @@ MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_get_stats2.3 \
 		libdq.3 dq_mint_file_flags.3 \
 		libdq.3 dq_push_vnode_note.3 \
+		libdq.3 dq_push_invalidate.3 \
 		libdq.3 dq_event_read.3 \
 		libdq.3 dq_event_write.3 \
 		libdq.3 dq_event_setattr.3 \

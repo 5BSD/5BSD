@@ -75,8 +75,23 @@ struct vm_object_kinfo;
 typedef void pgo_kinfo_t(vm_object_t object, struct vm_object_kinfo *ki,
     struct thread *td);
 
+/*
+ * pgo_flags: what the VM code may assume of a pager beyond its methods.
+ * PGO_WRITEBACK: dirty pages are written back through pgo_putpages by
+ * vm_object_page_clean() (msync, fsync), which then also maintains the
+ * object's cleangeneration; set for vnode objects and the DescriptorQueue
+ * pager, never for the swap base type (tmpfs objects leave the clean
+ * generation to the tmpfs scan).  PGO_RESIDENT_LOOKUP: residency of a page
+ * is a vm_page_lookup() on the object, as for swap and vnode objects, so
+ * mincore(2) reports such pages even where this process does not map them.
+ * A dynamic type that sets no flags inherits its base type's.
+ */
+#define	PGO_WRITEBACK		0x00000001
+#define	PGO_RESIDENT_LOOKUP	0x00000002
+
 struct pagerops {
 	int			pgo_kvme_type;
+	u_int			pgo_flags;		/* PGO_* */
 	pgo_init_t		*pgo_init;		/* Initialize pager. */
 	pgo_alloc_t		*pgo_alloc;		/* Allocate pager. */
 	pgo_dealloc_t		*pgo_dealloc;		/* Disassociate. */
@@ -268,6 +283,13 @@ vm_pager_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
 	method = pagertab[object->type]->pgo_kinfo;
 	if (method != NULL)
 		method(object, ki, td);
+}
+
+static __inline bool
+vm_pager_has_flag(vm_object_t object, u_int flag)
+{
+
+	return ((pagertab[object->type]->pgo_flags & flag) != 0);
 }
 
 static __inline void

@@ -435,6 +435,8 @@ vm_pager_alloc_dyn_type(struct pagerops *ops, int base_type)
 		FIX(page_removed);
 		FIX(can_alloc_page);
 #undef FIX
+		if (ops->pgo_flags == 0)
+			ops->pgo_flags = pagertab[base_type]->pgo_flags;
 	}
 	pagertab[res] = ops;	/* XXXKIB should be rel, but acq is too much */
 	mtx_unlock(&pagertab_lock);

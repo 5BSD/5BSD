@@ -199,10 +199,13 @@ struct dq_ident_file {
  * for a field is EINVAL rather than a silent reinterpretation.
  */
 enum dq_cache {
-	DQ_CACHE_NONE = 0,	/* no page cache (stage 1b); fstat posts
-				   only under DQ_EVENTS_GETATTR */
+	DQ_CACHE_NONE = 0,	/* read(2) always posts; pages exist only
+				   while mapped or wired; fstat posts only
+				   under DQ_EVENTS_GETATTR */
 	DQ_CACHE_ATTR = 1,	/* attributes from the identity */
-	DQ_CACHE_DATA = 2,	/* attributes and pages (stage 1b) */
+	DQ_CACHE_DATA = 2,	/* attributes and pages: read(2) is served
+				   from cached pages, a miss posts READ for
+				   whole pages; INVALIDATE drops them */
 };
 enum dq_answer {
 	DQ_DENY = 0,
@@ -220,7 +223,8 @@ struct dq_policy {
 	uint32_t	dp_cache;		/* enum dq_cache */
 	uint32_t	dp_write;		/* DQ_DENY | DQ_EVENT */
 	uint32_t	dp_exec;		/* DQ_DENY | DQ_ALLOW */
-	uint32_t	dp_mmap_shared_write;	/* DQ_DENY | DQ_ALLOW */
+	uint32_t	dp_mmap_shared_write;	/* DQ_DENY | DQ_ALLOW (ALLOW needs
+						   dp_write == DQ_EVENT) */
 	uint32_t	dp_lock;		/* DQ_EVENT */
 	uint32_t	dp_ioctl;		/* DQ_DENY | DQ_EVENT */
 	int32_t		dp_deadline_ms;		/* DQ_DEADLINE_DEFAULT, 0 = none, or ms */
@@ -295,6 +299,22 @@ struct dq_read_body {
 	uint32_t	dr_len;
 	uint32_t	dr_pad0;
 };
+
+/*
+ * Page operations (stage 1b-ii, design 10).  READ is also what a page fault
+ * posts (page-aligned dr_offset, dr_len up to the end of the file).
+ * READ_ASYNC (sendfile(2) filling pages) has the READ body and is answered
+ * as READ: errno + up to dr_len bytes, a short reply being the end of the
+ * file.  WRITE_ASYNC (writeback of dirty pages of a shared mapping: msync,
+ * fsync, the page daemon) has the WRITE body, dw_flags 0, followed by the
+ * page data, and is answered as WRITE: errno + struct dq_write_reply with
+ * dwr_offset == dw_offset.  Neither has a waiting requester: the caller is
+ * DQ_CALLER_F_KERNEL for WRITE_ASYNC, the queue enforces a deadline on both
+ * (the policy's, else kern.dq.default_deadline_ms, else 30 s: a page never
+ * waits forever), and a deadline that passes after the controller read the
+ * event posts INTERRUPT.  The REPLY ioctl returns before the pages are
+ * finished; msync(MS_SYNC) and fsync wait for that, not for the reply.
+ */
 /* GETATTR: no body; reply is errno + one struct dq_ident_file. */
 /* CLOSE: no body, no reply. */
 struct dq_interrupt_body {		/* no reply; de_id is 0 */
@@ -577,12 +597,21 @@ struct dq_stats2 {
 	uint64_t	ds2_pushes;		/* PUSH ioctls applied */
 	uint64_t	ds2_bad_replies;	/* reply errno outside the per-op
 						   allow-list: the requester got EIO */
-	uint64_t	ds2_async_pending;	/* stage 1b-ii; 0 */
-	uint64_t	ds2_async_bytes;	/* stage 1b-ii; 0 */
-	uint64_t	ds2_async_deadlines;	/* stage 1b-ii; 0 */
+	uint64_t	ds2_async_pending;	/* READ_ASYNC/WRITE_ASYNC posted
+						   and not yet completed (now) */
+	uint64_t	ds2_async_bytes;	/* their bytes, bounded by
+						   kern.dq.max_inflight_bytes (now) */
+	uint64_t	ds2_async_deadlines;	/* async events failed by their
+						   deadline (total) */
 	uint64_t	ds2_overdepth;		/* UNLOCK_ALL/INTERRUPT queued past
 						   the depth (never dropped) */
-	uint64_t	ds2_reserved[15];
+	uint64_t	ds2_close_dropped;	/* dirty pages dropped after the
+						   last close because their
+						   write-back failed or expired */
+	uint64_t	ds2_task_drops;		/* INTERRUPT records the completion
+						   task could not allocate (the
+						   late reply gets ESRCH) */
+	uint64_t	ds2_reserved[13];
 };
 
 /*
@@ -590,7 +619,13 @@ struct dq_stats2 {
  * DQ_PUSH_NOTIFY_VNODE raises dp_note on the object's EVFILT_VNODE knotes
  * for what happened elsewhere (NOTE_DELETE, LINK, RENAME; WRITE, EXTEND,
  * ATTRIB caused by others, SETIDENT carrying the attributes themselves).
- * NOTE_REVOKE belongs to the REVOKE ioctl; DQ_PUSH_INVALIDATE is 1b-ii.
+ * NOTE_REVOKE belongs to the REVOKE ioctl.  DQ_PUSH_INVALIDATE drops the
+ * object's clean cached pages in [dp_offset, dp_offset + dp_len) (dp_len 0:
+ * to the end), so the next access faults or reads them again; dirty pages
+ * of shared mappings the controller has not yet seen survive and are
+ * written back (OBJPR_CLEANONLY).  dp_note is 0 for it and the range is 0
+ * for NOTIFY_VNODE.  The 24-byte stage 1b-i layout (no range) is still
+ * accepted under its own command word for NOTIFY_VNODE.
  */
 struct dq_push_args {
 	uint32_t	dp_version;
@@ -598,9 +633,11 @@ struct dq_push_args {
 	uint64_t	dp_object;
 	uint32_t	dp_note;		/* NOTE_* of <sys/event.h> */
 	uint32_t	dp_pad0;
+	uint64_t	dp_offset;		/* INVALIDATE: page-rounded out */
+	uint64_t	dp_len;			/* INVALIDATE: 0 = to the end */
 };
 #define	DQ_PUSH_NOTIFY_VNODE	1
-#define	DQ_PUSH_INVALIDATE	2	/* reserved: stage 1b-ii */
+#define	DQ_PUSH_INVALIDATE	2
 
 /*
  * Ioctls on the queue, group 'j' (the only unused letter near 'q'/'Q').
@@ -616,6 +653,19 @@ struct dq_push_args {
 #define	DQ_IOC_SET_QUEUE_DEPTH	_IOW('j', 8, uint32_t)
 #define	DQ_IOC_PUSH		_IOW('j', 9, struct dq_push_args)
 #define	DQ_IOC_GET_STATS2	_IOR('j', 12, struct dq_stats2)
+
+#ifdef _KERNEL
+/* The stage 1b-i PUSH layout, before the INVALIDATE range (24 bytes). */
+struct dq_push_args_v1 {
+	uint32_t	dp_version;
+	uint32_t	dp_op;
+	uint64_t	dp_object;
+	uint32_t	dp_note;
+	uint32_t	dp_pad0;
+};
+#define	DQ_IOC_PUSH_V1		_IOW('j', 9, struct dq_push_args_v1)
+_Static_assert(sizeof(struct dq_push_args_v1) == 24, "dq_push_args_v1");
+#endif
 
 /* Layout is part of the ABI. */
 _Static_assert(sizeof(struct dq_timespec) == 16, "dq_timespec");
@@ -643,6 +693,6 @@ _Static_assert(sizeof(struct dq_lock_reply) == 32, "dq_lock_reply");
 _Static_assert(sizeof(struct dq_unlock_all_body) == 16, "dq_unlock_all_body");
 _Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
 _Static_assert(sizeof(struct dq_stats2) == 320, "dq_stats2");
-_Static_assert(sizeof(struct dq_push_args) == 24, "dq_push_args");
+_Static_assert(sizeof(struct dq_push_args) == 40, "dq_push_args");
 
 #endif /* !_DEV_DQ_DQ_H_ */

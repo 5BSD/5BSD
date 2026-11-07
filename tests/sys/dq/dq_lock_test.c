@@ -897,19 +897,6 @@ ATF_TC_BODY(getlk_creates_no_owner, tc)
 	teardown(&f);
 }
 
-/*
- * ds2_overdepth (K-B3) follows ds2_async_deadlines in struct dq_stats2;
- * read it by position until the field name is in the installed header.
- */
-static uint64_t
-stats2_overdepth(const struct dq_stats2 *st)
-{
-	uint64_t v;
-
-	memcpy(&v, (const char *)st + offsetof(struct dq_stats2,
-	    ds2_async_deadlines) + sizeof(uint64_t), sizeof(v));
-	return (v);
-}
 
 static bool
 pred_current(const struct dq_stats *st, uintptr_t n)
@@ -975,7 +962,7 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(0, st.ds_events_dropped);
 	dqt_stats2(&c, &st2);
-	ATF_CHECK_EQ(1, stats2_overdepth(&st2));
+	ATF_CHECK_EQ(1, st2.ds2_overdepth);
 
 	dqt_resume(&c);
 	status = dqt_wait(&rch, &r, sizeof(r));

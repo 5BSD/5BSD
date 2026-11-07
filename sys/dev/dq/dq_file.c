@@ -31,6 +31,7 @@
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/mutex.h>
 #include <sys/poll.h>
@@ -38,7 +39,9 @@
 #include <sys/proc.h>
 #include <sys/rangelock.h>
 #include <sys/refcount.h>
+#include <sys/rwlock.h>
 #include <sys/selinfo.h>
+#include <sys/sf_buf.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/uio.h>
@@ -47,6 +50,17 @@
 #include <sys/vnode.h>
 
 #include <crypto/siphash/siphash.h>
+
+#include <security/mac/mac_framework.h>
+
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/pmap.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
+#include <vm/vm_page.h>
+#include <vm/vm_pager.h>
 
 #include <dev/mac_capability/mac_capability_label.h>
 
@@ -84,10 +98,12 @@ static fo_acl_t		dq_acl;
 static fo_extattr_t	dq_extattr;
 static fo_fcntl_t	dq_fcntl;
 static fo_advlock_t	dq_advlock;
+static fo_sendfile_t	dq_sendfile;
 
 /*
- * DFLAG_FLOCK | DFLAG_RECLOCK: locks are LOCK events (D98).  No
- * DFLAG_PRIVWRITE yet: mappings are stage 1b-ii.
+ * DFLAG_FLOCK | DFLAG_RECLOCK: locks are LOCK events (D98).
+ * DFLAG_PRIVWRITE: a private mapping is copy-on-write in an anonymous
+ * shadow and needs no write right on the descriptor (D103).
  */
 const struct fileops dq_fileops = {
 	.fo_read = dq_read,
@@ -100,7 +116,7 @@ const struct fileops dq_fileops = {
 	.fo_close = dq_close,
 	.fo_chmod = dq_chmod,
 	.fo_chown = dq_chown,
-	.fo_sendfile = invfo_sendfile,
+	.fo_sendfile = dq_sendfile,
 	.fo_seek = dq_seek,
 	.fo_fill_kinfo = dq_fill_kinfo,
 	.fo_mmap = dq_mmap,
@@ -120,7 +136,7 @@ const struct fileops dq_fileops = {
 	.fo_fcntl = dq_fcntl,
 	.fo_advlock = dq_advlock,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_FLOCK |
-	    DFLAG_RECLOCK,
+	    DFLAG_RECLOCK | DFLAG_PRIVWRITE,
 };
 
 /*
@@ -275,21 +291,25 @@ dq_ident_validate(u_int kind, const struct dq_ident_file *di, int *reason)
 }
 
 /*
- * The set stage 1b-i accepts (plan section 3): writes, locks and ioctls as
- * events, no exec, no shared writable mappings and no data cache (both
- * 1b-ii); GETATTR and CLOSE are the optional events.
+ * The set stage 1b accepts (plan section 3): writes, locks and ioctls as
+ * events, the data cache, shared writable mappings when writes are served
+ * (N13), no exec; GETATTR and CLOSE are the optional events.
  */
 int
 dq_policy_validate(const struct dq_policy *pol, int *reason)
 {
 
 	*reason = DQ_REASON_POLICY;
-	if (pol->dp_cache != DQ_CACHE_NONE && pol->dp_cache != DQ_CACHE_ATTR)
+	if (pol->dp_cache != DQ_CACHE_NONE && pol->dp_cache != DQ_CACHE_ATTR &&
+	    pol->dp_cache != DQ_CACHE_DATA)
 		return (EINVAL);
 	if (pol->dp_write != DQ_DENY && pol->dp_write != DQ_EVENT)
 		return (EINVAL);
-	if (pol->dp_exec != DQ_DENY || pol->dp_mmap_shared_write != DQ_DENY ||
-	    pol->dp_lock != DQ_EVENT)
+	if (pol->dp_mmap_shared_write != DQ_DENY &&
+	    (pol->dp_mmap_shared_write != DQ_ALLOW ||
+	    pol->dp_write != DQ_EVENT))
+		return (EINVAL);
+	if (pol->dp_exec != DQ_DENY || pol->dp_lock != DQ_EVENT)
 		return (EINVAL);
 	if (pol->dp_ioctl != DQ_DENY && pol->dp_ioctl != DQ_EVENT)
 		return (EINVAL);
@@ -324,10 +344,14 @@ dq_file_install(struct thread *td, struct dq_object *o,
 
 	error = falloc_noinstall(td, &fp);
 	if (error != 0) {
-		/* No file ever referenced it; retire it here, post no CLOSE. */
+		/*
+		 * No file ever referenced it; retire it here, post no CLOSE,
+		 * and drop its pager object as dq_close would.
+		 */
 		DQO_LOCK(o);
 		o->o_policy.dp_events &= ~DQ_EVENTS_CLOSE;
 		DQO_UNLOCK(o);
+		dq_object_vm_teardown(o, true);
 		dq_object_retire(o, td);
 		return (error);
 	}
@@ -500,37 +524,19 @@ dq_uio_advance(struct uio *uio, size_t n)
 	}
 }
 
+/*
+ * dp_cache = NONE or ATTR: one READ per max_io chunk, in order; a short
+ * answer is the end of the file.
+ */
 static int
-dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
-    int flags, struct thread *td)
+dq_read_events(struct dq_object *o, struct uio *uio, struct thread *td)
 {
-	struct dq_object *o;
 	struct dq_read_body rb;
 	struct dq_data *reply;
-	void *cookie;
 	size_t replylen, chunk;
-	off_t start, end;
 	int error, rerror;
 
-	o = dq_fp_object(fp);
-	error = dq_object_usable(o);
-	if (error != 0)
-		return (error);
-	if (uio->uio_resid == 0)
-		return (0);
-	error = dq_deadlock_check(o, td);
-	if (error != 0)
-		return (error);
-
-	foffset_lock_uio(fp, uio, flags);
-	start = uio->uio_offset;
-	if (start < 0) {
-		error = EINVAL;
-		goto out_offset;
-	}
-	end = uio->uio_resid > OFF_MAX - start ? OFF_MAX :
-	    start + uio->uio_resid;
-	cookie = rangelock_rlock(&o->o_rl, start, end);
+	error = 0;
 	while (uio->uio_resid > 0) {
 		chunk = MIN((size_t)uio->uio_resid, (size_t)dq_max_io);
 		if ((off_t)chunk > OFF_MAX - uio->uio_offset)
@@ -556,6 +562,107 @@ dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		if (error != 0 || replylen < chunk)
 			break;	/* a short answer is the end of the file */
 	}
+	return (error);
+}
+
+/*
+ * dp_cache = DATA (D103): read(2) is served from the object's pages, as
+ * uiomove_object serves shm; a miss pages in through the pager (a READ for
+ * whole pages, with read-ahead up to VM_INITIAL_PAGEIN pages, waited for as
+ * a fault waits).  The page is wired, not busy, across the copy, so a
+ * destination that maps the same page can fault it in.  The end of the
+ * file is the size the pager object follows (o_vmsize, read under its
+ * lock), so a page past the object's end is never zero-filled into the
+ * cache while an identity change is still being applied.
+ */
+static int
+dq_read_cached(struct dq_object *o, struct uio *uio)
+{
+	vm_object_t obj;
+	vm_page_t m;
+	off_t nsize, size;
+	size_t pgoff, tlen;
+	int error, npages, rv;
+
+	obj = o->o_object;
+	error = 0;
+	while (uio->uio_resid > 0) {
+		VM_OBJECT_WLOCK(obj);
+		size = o->o_vmsize;
+		if (uio->uio_offset >= size) {
+			VM_OBJECT_WUNLOCK(obj);
+			break;
+		}
+		pgoff = uio->uio_offset & PAGE_MASK;
+		tlen = MIN(PAGE_SIZE - pgoff, (size_t)uio->uio_resid);
+		tlen = MIN(tlen, (size_t)(size - uio->uio_offset));
+		npages = howmany(MIN((off_t)uio->uio_resid,
+		    size - uio->uio_offset) + pgoff, PAGE_SIZE);
+		rv = vm_page_grab_valid(&m, obj, OFF_TO_IDX(uio->uio_offset),
+		    VM_ALLOC_NORMAL | VM_ALLOC_WIRED | VM_ALLOC_NOBUSY |
+		    VM_ALLOC_COUNT(MIN(npages, VM_ALLOC_COUNT_MAX)));
+		VM_OBJECT_WUNLOCK(obj);
+		if (rv == VM_PAGER_BAD)
+			break;		/* the size shrank under us */
+		if (rv != VM_PAGER_OK) {
+			/*
+			 * A shrink fails the page-ins reaching past it: look
+			 * again at the new size before calling it an error.
+			 */
+			VM_OBJECT_WLOCK(obj);
+			nsize = o->o_vmsize;
+			VM_OBJECT_WUNLOCK(obj);
+			if (uio->uio_offset >= nsize)
+				break;
+			if (nsize != size)
+				continue;
+			error = EIO;
+			break;
+		}
+		error = uiomove_fromphys(&m, pgoff, tlen, uio);
+		vm_page_unwire(m, PQ_ACTIVE);
+		if (error != 0)
+			break;
+	}
+	return (error);
+}
+
+static int
+dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
+    int flags, struct thread *td)
+{
+	struct dq_object *o;
+	void *cookie;
+	off_t start, end;
+	int error;
+	bool cached;
+
+	o = dq_fp_object(fp);
+	error = dq_object_usable(o);
+	if (error != 0)
+		return (error);
+	if (uio->uio_resid == 0)
+		return (0);
+	error = dq_deadlock_check(o, td);
+	if (error != 0)
+		return (error);
+
+	foffset_lock_uio(fp, uio, flags);
+	start = uio->uio_offset;
+	if (start < 0) {
+		error = EINVAL;
+		goto out_offset;
+	}
+	end = uio->uio_resid > OFF_MAX - start ? OFF_MAX :
+	    start + uio->uio_resid;
+	cookie = rangelock_rlock(&o->o_rl, start, end);
+	DQO_LOCK(o);
+	cached = o->o_policy.dp_cache == DQ_CACHE_DATA;
+	DQO_UNLOCK(o);
+	if (cached)
+		error = dq_read_cached(o, uio);
+	else
+		error = dq_read_events(o, uio, td);
 	rangelock_unlock(&o->o_rl, cookie);
 	if (error == 0) {
 		/* As the VOP_READ post hook raises it (D100). */
@@ -596,9 +703,10 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	uint32_t wflags;
 	long hint;
 	int error, rerror;
-	bool append;
+	bool append, extended;
 
 	o = dq_fp_object(fp);
+	extended = false;
 	error = dq_object_usable(o);
 	if (error != 0)
 		return (error);
@@ -685,10 +793,12 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		}
 		error = dq_event_post_wait(o, DQ_OP_WRITE, wb, bodylen, td, 0,
 		    &reply, &rerror);
-		free(wb, M_DQ);
-		if (error != 0)
+		if (error != 0) {
+			free(wb, M_DQ);
 			break;
+		}
 		if (rerror != 0) {
+			free(wb, M_DQ);
 			dq_reply_free(reply);
 			error = rerror;
 			break;
@@ -698,6 +808,14 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		written = wr->dwr_written;
 		woff = wr->dwr_offset;
 		dq_reply_free(reply);
+		/*
+		 * Accepted: the cached pages the bytes cover take them, valid
+		 * and as clean as they were (D103), so mappings and DATA reads
+		 * see the write.
+		 */
+		dq_pager_write_resident(o, woff, (const char *)(wb + 1),
+		    written);
+		free(wb, M_DQ);
 
 		dq_uio_advance(uio, written);
 		/*
@@ -716,10 +834,15 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 		if ((uint64_t)newend > o->o_ident.di_size) {
 			o->o_ident.di_size = newend;
 			hint |= NOTE_EXTEND;
+			extended = true;
 		}
 		if (written != 0)
 			dq_file_knote(o, hint);
 		DQO_UNLOCK(o);
+		if (extended) {
+			dq_object_setsize(o, newend);	/* B10 */
+			extended = false;
+		}
 		if (written < chunk)
 			break;	/* a short write ends the call */
 	}
@@ -1122,6 +1245,8 @@ dq_setattr_post(struct dq_object *o, struct dq_setattr_body *sb,
 	o->o_ident.di_ctime.tv_nsec = now.tv_nsec;
 	dq_file_knote(o, NOTE_ATTRIB);
 	DQO_UNLOCK(o);
+	if ((mask & DQ_SETATTR_SIZE) != 0)
+		dq_object_setsize(o, sb->dsa_size);	/* B10 */
 	return (0);
 }
 
@@ -1274,6 +1399,8 @@ dq_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 		}
 		dq_file_knote(o, hint);
 		DQO_UNLOCK(o);
+		if ((hint & NOTE_EXTEND) != 0)
+			dq_object_setsize(o, end);	/* B10 */
 	}
 	rangelock_unlock(&o->o_rl, cookie);
 	return (error);
@@ -1324,7 +1451,10 @@ dq_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length,
 /*
  * N10: FSYNC posts whenever the policy serves writes, whatever this
  * descriptor's FWRITE (another descriptor may have written); under
- * dp_write = DENY nothing is ever dirty and the answer is 0 locally.
+ * dp_write = DENY nothing is ever dirty and the answer is 0 locally.  D42:
+ * the dirty pages of shared mappings are written back first and their
+ * WRITE_ASYNC completions waited for, so the controller's FSYNC covers
+ * them; a page it refused is EIO here.
  */
 static int
 dq_fsync(struct file *fp, int mode, struct thread *td)
@@ -1332,7 +1462,8 @@ dq_fsync(struct file *fp, int mode, struct thread *td)
 	struct dq_object *o;
 	struct dq_fsync_body fb;
 	struct dq_data *reply;
-	bool event;
+	vm_object_t obj;
+	bool event, flushed;
 	int error, rerror;
 
 	o = dq_fp_object(fp);
@@ -1344,6 +1475,16 @@ dq_fsync(struct file *fp, int mode, struct thread *td)
 	error = dq_object_usable(o);
 	if (error != 0)
 		return (error);
+	error = dq_deadlock_check(o, td);
+	if (error != 0)
+		return (error);
+	obj = o->o_object;
+	VM_OBJECT_WLOCK(obj);
+	flushed = dq_pager_flush(o, obj, 0, IDX_TO_OFF(obj->size), TRUE,
+	    FALSE);
+	VM_OBJECT_WUNLOCK(obj);
+	if (!flushed)
+		return (EIO);
 	fb.dfs_mode = mode;
 	fb.dfs_pad0 = 0;
 	error = dq_event_post_wait(o, DQ_OP_FSYNC, &fb, sizeof(fb), td, 0,
@@ -1771,14 +1912,154 @@ dq_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
 	}
 }
 
+/*
+ * mmap(2) (D103), in shm_mmap's and vn_mmap's shape.  maxprot: READ with
+ * FREAD, EXECUTE unless the presented filesystem is MNT_NOEXEC (as
+ * vn_mmap); a private mapping may always be written (copy-on-write into an
+ * anonymous shadow: DFLAG_PRIVWRITE); a shared one only with FWRITE and
+ * dp_mmap_shared_write = ALLOW, else PROT_WRITE is EACCES as on a read-only
+ * descriptor; then the capability's maximum.  mac_file_check_mmap ran at
+ * the boundary.  The mapping holds the file (vm_mmap_file with the owner,
+ * N15), so dq_close and its flock/OFD release, CLOSE and NOTE_CLOSE happen
+ * at the last munmap when a mapping outlives the descriptor (N9).
+ */
 static int
-dq_mmap(struct file *fp __unused, vm_map_t map __unused,
-    vm_offset_t *addr __unused, vm_size_t size __unused, vm_prot_t prot __unused,
-    vm_prot_t cap_maxprot __unused, int flags __unused, vm_ooffset_t foff __unused,
-    struct thread *td __unused)
+dq_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
+    vm_prot_t prot, vm_prot_t cap_maxprot, int flags, vm_ooffset_t foff,
+    struct thread *td)
+{
+	struct dq_object *o;
+	vm_object_t obj;
+	vm_prot_t maxprot;
+	uint64_t fsflags;
+	uint32_t sharedw;
+	bool writecnt;
+	int error;
+
+	o = dq_fp_object(fp);
+	error = dq_object_usable(o);
+	if (error != 0)
+		return (error);
+	DQO_LOCK(o);
+	fsflags = o->o_ident.di_statfs.ds_flags;
+	sharedw = o->o_policy.dp_mmap_shared_write;
+	DQO_UNLOCK(o);
+
+	if ((fsflags & MNT_NOEXEC) != 0) {
+		maxprot = VM_PROT_NONE;
+		if ((prot & VM_PROT_EXECUTE) != 0)
+			return (EACCES);
+	} else
+		maxprot = VM_PROT_EXECUTE;
+	if ((fp->f_flag & FREAD) != 0)
+		maxprot |= VM_PROT_READ;
+	else if ((prot & VM_PROT_READ) != 0)
+		return (EACCES);
+	writecnt = false;
+	if ((flags & MAP_SHARED) != 0) {
+		if ((fp->f_flag & FWRITE) != 0 && sharedw == DQ_ALLOW)
+			maxprot |= VM_PROT_WRITE;
+		else if ((prot & VM_PROT_WRITE) != 0)
+			return (EACCES);
+	} else
+		maxprot |= VM_PROT_WRITE;
+	maxprot &= cap_maxprot;
+	if ((flags & MAP_SHARED) != 0 && (maxprot & VM_PROT_WRITE) != 0)
+		writecnt = true;
+
+	/* As vn_mmap and shm_mmap: an offset inside the object, no wrap. */
+	if (size > OFF_MAX || foff > OFF_MAX - size)
+		return (EINVAL);
+
+	obj = o->o_object;
+	vm_object_reference(obj);
+	if (writecnt)
+		vm_pager_update_writecount(obj, 0, size);
+	error = vm_mmap_file(map, addr, size, prot, maxprot, flags, obj, foff,
+	    writecnt, td, map == &td->td_proc->p_vmspace->vm_map ? fp : NULL);
+	if (error != 0) {
+		if (writecnt)
+			vm_pager_release_writecount(obj, 0, size);
+		vm_object_deallocate(obj);
+	}
+	return (error);
+}
+
+/*
+ * sendfile(2) (D104): the table answers; the f_type switch in
+ * sendfile_getobj gains no arm.  The source is the object's pager object,
+ * referenced while the transfer runs; its size is the pager's (o_vmsize,
+ * which follows the identity), re-read for each chunk, and a revoked
+ * object stops the transfer with EIO.  The syscall runs no file hook, so the read admission is checked
+ * here (N8).  Pages are filled by getpages_async (READ_ASYNC).
+ */
+static int
+dq_sendfile_getsize(struct sendfile_src *ss, struct thread *td __unused,
+    off_t *sizep)
+{
+	struct dq_object *o;
+	int error;
+
+	o = ss->ss_priv;
+	error = dq_object_usable(o);
+	if (error != 0)
+		return (error);
+	/* The pager's size, as vnode sendfile uses vnp_size. */
+	*sizep = dq_object_vmsize(o);
+	return (0);
+}
+
+static void
+dq_sendfile_accessed(struct sendfile_src *ss)
+{
+	struct dq_object *o;
+
+	o = ss->ss_priv;
+	DQO_LOCK(o);
+	dq_file_knote(o, NOTE_READ);
+	DQO_UNLOCK(o);
+}
+
+static void
+dq_sendfile_release(struct sendfile_src *ss)
 {
 
-	return (ENODEV);	/* the dq pager is stage 1b-ii */
+	vm_object_deallocate(ss->ss_obj);
+}
+
+static const struct sendfile_src_ops dq_sendfile_ops = {
+	.ss_getsize = dq_sendfile_getsize,
+	.ss_accessed = dq_sendfile_accessed,
+	.ss_release = dq_sendfile_release,
+};
+
+static int
+dq_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
+    struct uio *trl_uio, off_t offset, size_t nbytes, off_t *sent, int flags,
+    struct thread *td)
+{
+	struct dq_object *o;
+	struct sendfile_src ss;
+	int error;
+
+	o = dq_fp_object(fp);
+	if (sent != NULL)
+		*sent = 0;
+	error = dq_object_usable(o);
+	if (error == 0)
+		error = dq_deadlock_check(o, td);
+	if (error == 0)
+		error = mac_file_check_read(td->td_ucred, fp->f_cred, fp);
+	if (error != 0)
+		return (error);
+	bzero(&ss, sizeof(ss));
+	ss.ss_ops = &dq_sendfile_ops;
+	ss.ss_obj = o->o_object;
+	ss.ss_priv = o;
+	ss.ss_size = dq_object_vmsize(o);
+	vm_object_reference(ss.ss_obj);
+	return (sendfile_send(&ss, sockfd, hdr_uio, trl_uio, offset, nbytes,
+	    sent, flags, td));
 }
 
 static int
@@ -1868,7 +2149,13 @@ dq_close(struct file *fp, struct thread *td)
 	dq_object_knote_siblings(o,
 	    (fp->f_flag & FWRITE) != 0 ? NOTE_CLOSE_WRITE : NOTE_CLOSE);
 	fp->f_data = NULL;
-	dq_object_retire(o, td);
-	dq_object_rele(o);
+	/*
+	 * The last reference (a mapping holds one, so this is after the last
+	 * munmap: N9).  What was written through MAP_SHARED is not lost: the
+	 * dirty pages are written back by a deferred close on dq_taskq, which
+	 * then removes the pages, retires the id (CLOSE follows the
+	 * write-backs) and drops this reference.  Nothing here waits (I11).
+	 */
+	dq_object_close_deferred(o);
 	return (0);
 }

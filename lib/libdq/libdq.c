@@ -301,6 +301,20 @@ dq_push_vnode_note(int q, uint64_t object, uint32_t note)
 	return (ioctl(q, DQ_IOC_PUSH, &args));
 }
 
+int
+dq_push_invalidate(int q, uint64_t object, uint64_t offset, uint64_t len)
+{
+	struct dq_push_args args;
+
+	memset(&args, 0, sizeof(args));
+	args.dp_version = DQ_API_VERSION;
+	args.dp_op = DQ_PUSH_INVALIDATE;
+	args.dp_object = object;
+	args.dp_offset = offset;
+	args.dp_len = len;
+	return (ioctl(q, DQ_IOC_PUSH, &args));
+}
+
 /*
  * Events
  */
@@ -405,11 +419,13 @@ dq_event_payload(const struct dq_event *ev, size_t fixed, size_t len,
 	return (0);
 }
 
+/* READ_ASYNC has the READ body, WRITE_ASYNC the WRITE body (1b-ii). */
 int
 dq_event_read(const struct dq_event *ev, const struct dq_read_body **body)
 {
 
-	return (dq_event_fixed(ev, DQ_OP_READ, sizeof(**body),
+	return (dq_event_fixed(ev, ev != NULL && ev->de_op == DQ_OP_READ_ASYNC ?
+	    DQ_OP_READ_ASYNC : DQ_OP_READ, sizeof(**body),
 	    (const void **)body));
 }
 
@@ -418,7 +434,8 @@ dq_event_write(const struct dq_event *ev, const struct dq_write_body **body,
     const void **data, size_t *len)
 {
 
-	if (dq_event_fixed(ev, DQ_OP_WRITE, sizeof(**body),
+	if (dq_event_fixed(ev, ev != NULL && ev->de_op == DQ_OP_WRITE_ASYNC ?
+	    DQ_OP_WRITE_ASYNC : DQ_OP_WRITE, sizeof(**body),
 	    (const void **)body) != 0)
 		return (-1);
 	return (dq_event_payload(ev, sizeof(**body), (*body)->dw_len, data,
@@ -541,6 +558,7 @@ dq_reply_errno_allowed(uint32_t op, int error)
 		return (1);
 	switch (op) {
 	case DQ_OP_WRITE:
+	case DQ_OP_WRITE_ASYNC:
 		return (error == EIO || error == ENOSPC || error == EDQUOT ||
 		    error == EFBIG || error == EACCES || error == EPERM ||
 		    error == EROFS || error == EINTR || error == EAGAIN ||

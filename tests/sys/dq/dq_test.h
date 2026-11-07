@@ -134,6 +134,9 @@ struct dqt_ctl {
 	}		 wr[DQT_MAX_SEQS];
 	int		 nwr;
 	uint64_t	 interrupted[DQT_MAX_INTERRUPTS];
+	/* Per operation: the sequence and caller of the last record. */
+	uint64_t	 op_seq[DQ_OP_REPLY + 1];
+	struct dq_caller op_caller[DQ_OP_REPLY + 1];
 	/* dq_serve_file lock owners: one table per queue (POSIX owners span
 	   the objects of one identity), made at the first backing mint. */
 	struct dq_serve_state *lockstate;
@@ -234,5 +237,23 @@ void	dqt_sysctl_set_uint(const char *name, u_int value);
 void	dqt_check_stat_eq(const struct stat *served, const struct stat *want);
 void	dqt_check_statfs_eq(const struct statfs *served,
 	    const struct statfs *want);
+
+
+/*
+ * Pages.  dqt_touch reads (or writes wval, then reads) one byte of a
+ * mapping and returns 0, or the signal (SIGBUS, SIGSEGV) the access
+ * raised; for single-threaded requesters only.  dqt_sync is a pair of
+ * pipes for lock-step between the test and one requester: the child posts
+ * on toparent[1] and waits on tochild[0], the test the reverse.
+ */
+int	dqt_touch(volatile unsigned char *p, bool write, unsigned char wval,
+	    unsigned char *val);
+struct dqt_sync {
+	int		 tochild[2];
+	int		 toparent[2];
+};
+void	dqt_sync_init(struct dqt_sync *s);
+void	dqt_sync_post(int fd);
+bool	dqt_sync_wait(int fd, int ms);
 
 #endif /* !_DQ_TEST_H_ */

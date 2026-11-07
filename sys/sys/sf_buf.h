@@ -190,5 +190,42 @@ extern counter_u64_t sfstat[sizeof(struct sfstat) / sizeof(uint64_t)];
     counter_u64_add(sfstat[offsetof(struct sfstat, name) / sizeof(uint64_t)],\
 	(val))
 #define	SFSTAT_INC(name)	SFSTAT_ADD(name, 1)
+
+/*
+ * The source of a sendfile(2): the VM object whose pages are sent, its size
+ * when the transfer started, and what the transfer loop needs from the
+ * descriptor behind it -- pin the source while a chunk's pages are read,
+ * re-read its size under that pin, note the access, let it go.  vn_sendfile
+ * builds one for vnodes and shm (sendfile_getobj); a file type with its own
+ * pages builds its own and calls sendfile_send(), which consumes it: the
+ * source is released (ss_release) on every return.  ss_obj is referenced
+ * by the builder.
+ */
+struct sendfile_src;
+struct shmfd;
+struct socket;
+struct thread;
+struct uio;
+struct vnode;
+struct sendfile_src_ops {
+	int	(*ss_lock)(struct sendfile_src *);	/* NULL: nothing to pin */
+	void	(*ss_unlock)(struct sendfile_src *);
+	int	(*ss_getsize)(struct sendfile_src *, struct thread *, off_t *);
+						/* NULL: the size is fixed */
+	void	(*ss_accessed)(struct sendfile_src *);	/* NULL: no notice */
+	void	(*ss_release)(struct sendfile_src *);
+};
+struct sendfile_src {
+	const struct sendfile_src_ops *ss_ops;
+	struct vm_object *ss_obj;
+	off_t		 ss_size;
+	struct vnode	*ss_vp;
+	struct shmfd	*ss_shmfd;
+	void		*ss_priv;	/* the builder's own source */
+};
+
+int	sendfile_send(struct sendfile_src *ss, int sockfd, struct uio *hdr_uio,
+	    struct uio *trl_uio, off_t offset, size_t nbytes, off_t *sent,
+	    int flags, struct thread *td);
 #endif /* _KERNEL */
 #endif /* !_SYS_SF_BUF_H_ */

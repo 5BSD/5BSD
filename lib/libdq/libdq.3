@@ -31,6 +31,7 @@
 .Nm dq_get_stats2 ,
 .Nm dq_mint_file_flags ,
 .Nm dq_push_vnode_note ,
+.Nm dq_push_invalidate ,
 .Nm dq_event_read ,
 .Nm dq_event_write ,
 .Nm dq_event_setattr ,
@@ -125,6 +126,10 @@ DescriptorQueue controller library
 .Fc
 .Ft int
 .Fn dq_push_vnode_note "int q" "uint64_t object" "uint32_t note"
+.Ft int
+.Fo dq_push_invalidate
+.Fa "int q" "uint64_t object" "uint64_t offset" "uint64_t len"
+.Fc
 .Ft int
 .Fn dq_event_read "const struct dq_event *ev" "const struct dq_read_body **body"
 .Ft int
@@ -245,7 +250,16 @@ the same counters plus
 (replies whose errno the operation's allow-list refused, which the
 requester saw as
 .Er EIO )
-and the stage 1b-ii page counters; the kernel writes
+,
+.Va ds2_overdepth ,
+the page counters
+.Va ds2_async_pending ,
+.Va ds2_async_bytes ,
+.Va ds2_async_deadlines
+and
+.Va ds2_close_dropped
+.Pq Xr dq 4 ;
+the kernel writes
 .Va ds2_size .
 .Pp
 .Fn dq_set_queue_depth
@@ -268,7 +282,7 @@ with the default policy of
 a read-only object:
 .Va dp_cache
 .Dv DQ_CACHE_NONE
-(no page cache, which is stage 1b-ii; whether
+(every read posts; pages exist only while mapped; whether
 .Xr fstat 2
 posts is decided by
 .Dv DQ_EVENTS_GETATTR
@@ -306,6 +320,19 @@ to serve writes and
 to
 .Dv DQ_EVENT
 to serve ioctls before minting.
+Setting
+.Va dp_cache
+to
+.Dv DQ_CACHE_DATA
+caches read data in the kernel, and
+.Va dp_mmap_shared_write
+to
+.Dv DQ_ALLOW
+(with
+.Va dp_write
+.Dv DQ_EVENT )
+allows shared writable mappings, whose dirty pages come back as
+.Dv DQ_OP_WRITE_ASYNC .
 .Pp
 .Fn dq_ident_from_stat
 fills every field of
@@ -518,6 +545,28 @@ and
 .Dv NOTE_CLOSE
 on the other objects of the same identity on the queue
 .Pq Xr dq 4 .
+.Pp
+.Fn dq_push_invalidate
+drops the clean cached pages of
+.Fa object
+in
+.Bq Fa offset , offset No + Fa len
+(rounded out to pages;
+.Fa len
+0 to the end), so the next fault on a mapping, or the next
+.Dv DQ_CACHE_DATA
+read, posts
+.Dv DQ_OP_READ
+again
+.Pq Dv DQ_IOC_PUSH , DQ_PUSH_INVALIDATE ;
+a controller calls it after changing the bytes it serves.
+Dirty pages of a shared mapping it has not yet seen survive and are
+written back.
+.Er EINVAL
+for a range past
+.Dv OFF_MAX ,
+.Er ESRCH
+for an unknown object.
 .Ss Events
 .Fn dq_read_events
 performs one
@@ -583,6 +632,14 @@ check that the record is of their operation and holds its fixed body, and
 point
 .Fa *body
 at it.
+.Fn dq_event_read
+also accepts a
+.Dv DQ_OP_READ_ASYNC
+record and
+.Fn dq_event_write
+a
+.Dv DQ_OP_WRITE_ASYNC
+one, which have those bodies.
 .Fn dq_event_write
 and
 .Fn dq_event_ioctl
@@ -715,9 +772,9 @@ returns nonzero when
 .Fa error
 reaches the requester as itself:
 .Bl -tag -width "DQ_OP_FSPACECTL" -offset indent
-.It Dv DQ_OP_READ , GETATTR
+.It Dv DQ_OP_READ , READ_ASYNC , GETATTR
 any errno.
-.It Dv DQ_OP_WRITE
+.It Dv DQ_OP_WRITE , WRITE_ASYNC
 .Er EIO , ENOSPC , EDQUOT , EFBIG , EACCES , EPERM , EROFS , EINTR ,
 .Er EAGAIN , ENXIO , EINVAL , ESTALE .
 .It Dv DQ_OP_SETATTR
@@ -758,9 +815,17 @@ answers one event from a real file open on
 so a controller that serves a file it holds, with or without changes of
 its own in a handler around it, need not write the operations itself:
 .Bl -tag -width "DQ_OP_UNLOCK_ALL" -offset indent
-.It Dv DQ_OP_READ
+.It Dv DQ_OP_READ , DQ_OP_READ_ASYNC
 .Xr pread 2 ;
 a short read is the end of the file.
+The presented size must not exceed the backing file's: a reply short of
+bytes the identity says exist fails a fault with
+.Dv SIGBUS
+and a
+.Dv DQ_CACHE_DATA
+read with
+.Er EIO
+.Pq Xr dq 4 .
 .It Dv DQ_OP_GETATTR
 .Xr fstat 2 ,
 .Xr fstatfs 2
@@ -787,6 +852,18 @@ are followed by
 .Xr fsync 2
 and
 .Xr fdatasync 2 .
+.It Dv DQ_OP_WRITE_ASYNC
+.Xr pwrite 2
+of the dirty pages at
+.Va dw_offset ,
+answered with that offset; a backing errno outside the
+.Dv DQ_OP_WRITE
+list (such as
+.Er EPIPE )
+is sent as
+.Er EIO .
+The identity copy is not refreshed after a write-back: the size and
+times of a mapping are the kernel's to present.
 .It Dv DQ_OP_SETATTR
 the masked fields only, in the order that lets them all apply:
 .Xr ftruncate 2 ,
@@ -1090,7 +1167,7 @@ serve(int q, const struct dq_event *ev, const void *body,
 .Pa /usr/share/examples/dq/dqserve.c
 is a complete controller: a read-only redacting server, and with
 .Fl w
-a writable one built on
+a writable one, serving a shared writable mapping too, built on
 .Fn dq_serve_file .
 .Sh SEE ALSO
 .Xr fcntl 2 ,

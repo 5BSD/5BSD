@@ -16,6 +16,8 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -75,6 +77,7 @@ static void
 dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
     const struct dq_event *ev)
 {
+	const struct dq_read_body *rbp;
 	const struct dq_write_body *wb;
 	const struct dq_setattr_body *sb;
 	const struct dq_fsync_body *fb;
@@ -87,7 +90,17 @@ dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
 	size_t inlen;
 
 	switch (ev->de_op) {
+	case DQ_OP_READ:
+	case DQ_OP_READ_ASYNC:
+		if (dq_event_read(ev, &rbp) == 0 && c->nrd < DQT_MAX_SEQS) {
+			c->rd[c->nrd].object = ev->de_object;
+			c->rd[c->nrd].offset = rbp->dr_offset;
+			c->rd[c->nrd].len = rbp->dr_len;
+			c->nrd++;
+		}
+		break;
 	case DQ_OP_WRITE:
+	case DQ_OP_WRITE_ASYNC:
 		if (dq_event_write(ev, &wb, NULL, NULL) != 0)
 			return;
 		if (c->nwr < DQT_MAX_SEQS) {
@@ -140,12 +153,25 @@ dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
 	}
 }
 
-/* Hold an event the test wants left unanswered.  The mutex is held. */
+/*
+ * Hold an event the test wants left unanswered.  The mutex is held.  The
+ * length and offset of a READ/READ_ASYNC or WRITE/WRITE_ASYNC body are
+ * kept, whatever the caller passed, so a test can answer it later.
+ */
 static void
 dqt_hold_event(struct dqt_ctl *c, const struct dq_event *ev, uint32_t len,
     uint64_t offset)
 {
+	const struct dq_read_body *rb;
+	const struct dq_write_body *wb;
 
+	if (dq_event_read(ev, &rb) == 0) {
+		len = rb->dr_len;
+		offset = rb->dr_offset;
+	} else if (dq_event_write(ev, &wb, NULL, NULL) == 0) {
+		len = wb->dw_len;
+		offset = wb->dw_offset;
+	}
 	if (c->nheld < DQT_MAX_HELD) {
 		c->held[c->nheld].id = ev->de_id;
 		c->held[c->nheld].object = ev->de_object;
@@ -173,6 +199,10 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 		c->events[ev->de_op]++;
 	dqt_record_seq(c, ev->de_seq);
 	c->last_caller = ev->de_caller;
+	if (ev->de_op <= DQ_OP_REPLY) {
+		c->op_seq[ev->de_op] = ev->de_seq;
+		c->op_caller[ev->de_op] = ev->de_caller;
+	}
 	o = dqt_object_by_id(c, ev->de_object);
 	pr->serve_ev = NULL;
 	pr->serve_obj = NULL;
@@ -180,7 +210,7 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 
 	/* An object with a backing file: dq_serve_file answers, unlocked. */
 	if (o != NULL && o->backing != -1) {
-		if (ev->de_op == DQ_OP_READ)
+		if (ev->de_op == DQ_OP_READ || ev->de_op == DQ_OP_READ_ASYNC)
 			o->reads++;
 		else if (ev->de_op == DQ_OP_GETATTR)
 			o->getattrs++;
@@ -202,17 +232,12 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 
 	switch (ev->de_op) {
 	case DQ_OP_READ:
+	case DQ_OP_READ_ASYNC:	/* sendfile: answered as READ */
 		if (o != NULL)
 			o->reads++;
 		if (bodylen < sizeof(*rb))
 			return (false);
 		rb = body;
-		if (c->nrd < DQT_MAX_SEQS) {
-			c->rd[c->nrd].object = ev->de_object;
-			c->rd[c->nrd].offset = rb->dr_offset;
-			c->rd[c->nrd].len = rb->dr_len;
-			c->nrd++;
-		}
 		if (c->hold_replies) {
 			if (c->nheld < DQT_MAX_HELD) {
 				c->held[c->nheld].id = ev->de_id;
@@ -1036,4 +1061,75 @@ dqt_check_statfs_eq(const struct statfs *served, const struct statfs *want)
 	ATF_CHECK_STREQ(want->f_fstypename, served->f_fstypename);
 	ATF_CHECK_STREQ(want->f_mntfromname, served->f_mntfromname);
 	ATF_CHECK_STREQ(want->f_mntonname, served->f_mntonname);
+}
+
+/*
+ * Pages
+ */
+
+static sigjmp_buf dqt_touch_jmp;
+static volatile sig_atomic_t dqt_touch_sig;
+
+static void
+dqt_touch_handler(int sig)
+{
+
+	dqt_touch_sig = sig;
+	siglongjmp(dqt_touch_jmp, 1);
+}
+
+int
+dqt_touch(volatile unsigned char *p, bool write, unsigned char wval,
+    unsigned char *val)
+{
+	struct sigaction sa, obus, osegv;
+	unsigned char v;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = dqt_touch_handler;
+	sigemptyset(&sa.sa_mask);
+	(void)sigaction(SIGBUS, &sa, &obus);
+	(void)sigaction(SIGSEGV, &sa, &osegv);
+	dqt_touch_sig = 0;
+	if (sigsetjmp(dqt_touch_jmp, 1) == 0) {
+		if (write)
+			*p = wval;
+		v = *p;
+		if (val != NULL)
+			*val = v;
+	}
+	(void)sigaction(SIGBUS, &obus, NULL);
+	(void)sigaction(SIGSEGV, &osegv, NULL);
+	return (dqt_touch_sig);
+}
+
+void
+dqt_sync_init(struct dqt_sync *s)
+{
+
+	ATF_REQUIRE_EQ(0, pipe(s->tochild));
+	ATF_REQUIRE_EQ(0, pipe(s->toparent));
+}
+
+void
+dqt_sync_post(int fd)
+{
+	char b;
+
+	b = 's';
+	(void)write(fd, &b, 1);
+}
+
+bool
+dqt_sync_wait(int fd, int ms)
+{
+	struct pollfd pfd;
+	char b;
+
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	if (poll(&pfd, 1, ms) != 1)
+		return (false);
+	return (read(fd, &b, 1) == 1);
 }

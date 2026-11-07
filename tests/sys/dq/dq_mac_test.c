@@ -19,6 +19,7 @@
 
 #include <sys/param.h>
 #include <sys/mac.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
@@ -65,11 +66,13 @@ child_gated(void *arg, void *result)
 }
 
 /*
- * Count the file_check_write probes fired by the requester running fn.
+ * Count the probes of a mac_framework hook (file_check_write, ...) fired
+ * by the requester running fn.
  * Returns the count, or -1 (with a reason) when dtrace cannot trace it.
  */
 static long
-count_check_write(void (*fn)(void *, void *), void *arg, void *result,
+count_hook(const char *hook, void (*fn)(void *, void *), void *arg,
+    void *result,
     size_t resultlen, char *why, size_t whylen)
 {
 	struct gated_arg g;
@@ -92,8 +95,8 @@ count_check_write(void (*fn)(void *, void *), void *arg, void *result,
 	(void)close(g.go[0]);
 	(void)snprintf(prog, sizeof(prog),
 	    "BEGIN { printf(\"ready\\n\"); } "
-	    "mac_framework::file_check_write: /pid == %d/ { n++; } "
-	    "END { printf(\"count %%d\\n\", n); }", (int)ch.pid);
+	    "mac_framework::%s: /pid == %d/ { n++; } "
+	    "END { printf(\"count %%d\\n\", n); }", hook, (int)ch.pid);
 	ATF_REQUIRE_EQ(0, pipe(pfd));
 	dpid = fork();
 	ATF_REQUIRE(dpid != -1);
@@ -212,13 +215,13 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	 * calibrate: a write on the real file must add exactly one.
 	 */
 	memset(&r, 0, sizeof(r));
-	base = count_check_write(child_noop, NULL, &r, sizeof(r), why,
-	    sizeof(why));
+	base = count_hook("file_check_write", child_noop, NULL, &r, sizeof(r),
+	    why, sizeof(why));
 	if (base == -1)
 		atf_tc_skip("dtrace: %s", why);
 	memset(&r, 0, sizeof(r));
-	n = count_check_write(child_real_write, &backing, &r, sizeof(r), why,
-	    sizeof(why));
+	n = count_hook("file_check_write", child_real_write, &backing, &r,
+	    sizeof(r), why, sizeof(why));
 	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
 	if (n == base)
 		atf_tc_skip("no MAC policy implements file_check_write");
@@ -229,8 +232,8 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	dqt_init(&c);
 	o = dqt_mint_backing(&c, backing, path, NULL, DQ_MINT_F_WRITE);
 	memset(&r, 0, sizeof(r));
-	n = count_check_write(child_space, &o->fd, &r, sizeof(r), why,
-	    sizeof(why));
+	n = count_hook("file_check_write", child_space, &o->fd, &r,
+	    sizeof(r), why, sizeof(why));
 	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
 	ATF_CHECK_EQ_MSG(2, n - base, "file_check_write fired %ld times over "
 	    "a baseline of %ld", n, base);
@@ -238,6 +241,83 @@ ATF_TC_BODY(fallocate_fspacectl_check_write, tc)
 	ATF_CHECK_EQ(1, c.events[DQ_OP_FSPACECTL]);
 	dqt_fini(&c);
 	(void)close(backing);
+}
+
+static void
+child_real_read(void *arg, void *result)
+{
+	int fd = *(int *)arg;
+	struct space_res *r = result;
+	char buf[8];
+
+	r->write.rv = pread(fd, buf, sizeof(buf), 0);
+	r->write.err = r->write.rv == -1 ? errno : 0;
+}
+
+static void
+child_sendfile_one(void *arg, void *result)
+{
+	int fd = *(int *)arg;
+	struct space_res *r = result;
+	off_t sbytes;
+	int sv[2];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+		_exit(5);
+	sbytes = 0;
+	r->space.rv = sendfile(fd, sv[0], 0, 100, NULL, &sbytes, 0);
+	r->space.err = r->space.rv == -1 ? errno : (int)sbytes;
+	(void)close(sv[0]);
+	(void)close(sv[1]);
+}
+
+ATF_TC(sendfile_check_read);
+ATF_TC_HEAD(sendfile_check_read, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "N8: sendfile of a served file runs "
+	    "mac_file_check_read once (the syscall runs no file hook of its "
+	    "own; a vnode is checked by its VOP_READ path)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sendfile_check_read, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct space_res r;
+	char why[256];
+	long base, n;
+	int oracle;
+
+	dqt_fill(data, sizeof(data), 3);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), path,
+	    sizeof(path));
+	/* The harness's own reads count too: measure them, then calibrate. */
+	memset(&r, 0, sizeof(r));
+	base = count_hook("file_check_read", child_noop, NULL, &r, sizeof(r),
+	    why, sizeof(why));
+	if (base == -1)
+		atf_tc_skip("dtrace: %s", why);
+	memset(&r, 0, sizeof(r));
+	n = count_hook("file_check_read", child_real_read, &oracle, &r,
+	    sizeof(r), why, sizeof(why));
+	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
+	if (n == base)
+		atf_tc_skip("no MAC policy implements file_check_read");
+	ATF_REQUIRE_EQ_MSG(base + 1, n, "calibration: baseline %ld, a real "
+	    "read %ld", base, n);
+
+	dqt_init(&c);
+	o = dqt_mint(&c, oracle, path, data, sizeof(data), NULL);
+	memset(&r, 0, sizeof(r));
+	n = count_hook("file_check_read", child_sendfile_one, &o->fd, &r,
+	    sizeof(r), why, sizeof(why));
+	ATF_REQUIRE_MSG(n != -1, "dtrace: %s", why);
+	ATF_CHECK_EQ_MSG(0, r.space.rv, "sendfile: %d", r.space.err);
+	ATF_CHECK_EQ(100, r.space.err);
+	ATF_CHECK_EQ_MSG(1, n - base, "file_check_read fired %ld times over "
+	    "a baseline of %ld", n, base);
+	dqt_fini(&c);
+	(void)close(oracle);
 }
 
 /*
@@ -537,6 +617,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, fallocate_fspacectl_check_write);
+	ATF_TP_ADD_TC(tp, sendfile_check_read);
 	ATF_TP_ADD_TC(tp, abac_controller_label);
 	return (atf_no_error());
 }

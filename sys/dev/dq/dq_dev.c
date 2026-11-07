@@ -30,6 +30,7 @@
 #include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
+#include <sys/taskqueue.h>
 #include <sys/uio.h>
 
 #include <security/mac/mac_framework.h>
@@ -74,6 +75,8 @@ u_int dq_max_inflight_per_object = 64;
 u_int dq_max_inflight_per_requester = 256;
 u_int dq_max_objects = 65536;
 int dq_default_deadline_ms = 30000;
+u_int dq_max_inflight_bytes = 64 * 1024 * 1024;
+struct taskqueue *dq_taskq;
 
 /* A zero would make every read empty, every post a drop or an endless wait. */
 static int
@@ -130,6 +133,11 @@ SYSCTL_PROC(_kern_dq, OID_AUTO, default_deadline_ms,
     CTLTYPE_INT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, NULL, 0,
     dq_sysctl_deadline, "I",
     "Deadline for an unanswered event when the policy says default; 0 = none");
+SYSCTL_PROC(_kern_dq, OID_AUTO, max_inflight_bytes,
+    CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, &dq_max_inflight_bytes,
+    PAGE_SIZE, dq_sysctl_uint_min, "IU",
+    "Bytes of READ_ASYNC/WRITE_ASYNC page I/O a queue may have pending; "
+    "past it writeback answers VM_PAGER_AGAIN");
 u_int dq_nqueues;
 SYSCTL_UINT(_kern_dq, OID_AUTO, queues, CTLFLAG_RD, &dq_nqueues, 0,
     "Open queues");
@@ -237,6 +245,22 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		return (dq_queue_set_depth(q, *(uint32_t *)data));
 	case DQ_IOC_PUSH:
 		return (dq_queue_push(q, (const struct dq_push_args *)data));
+	case DQ_IOC_PUSH_V1: {
+		/* The stage 1b-i layout: no range, so no INVALIDATE. */
+		const struct dq_push_args_v1 *v1 =
+		    (const struct dq_push_args_v1 *)data;
+		struct dq_push_args pa;
+
+		if (v1->dp_op != DQ_PUSH_NOTIFY_VNODE)
+			return (EINVAL);
+		bzero(&pa, sizeof(pa));
+		pa.dp_version = v1->dp_version;
+		pa.dp_op = v1->dp_op;
+		pa.dp_object = v1->dp_object;
+		pa.dp_note = v1->dp_note;
+		pa.dp_pad0 = v1->dp_pad0;
+		return (dq_queue_push(q, &pa));
+	}
 	case FIONBIO:
 	case FIOASYNC:
 		return (0);
@@ -283,6 +307,26 @@ static int
 dq_init(void)
 {
 
+	int error;
+
+	/*
+	 * The pager type (D102): a dynamic type gets no pgo_init, so it is
+	 * registered here, before any queue can mint.  Without one there is
+	 * no object to serve pages from and no device.
+	 */
+	error = dq_pager_register();
+	if (error != 0) {
+		printf("dq: no dynamic pager type available\n");
+		return (error);
+	}
+	/* Async page completions (B1): never under a dq lock. */
+	/*
+	 * The name is the witness class of the queue's own mutex: it must not
+	 * be "dq", which is dq_mtx's (WITNESS keys locks by name).
+	 */
+	dq_taskq = taskqueue_create("dq_taskq", M_WAITOK,
+	    taskqueue_thread_enqueue, &dq_taskq);
+	taskqueue_start_threads(&dq_taskq, 2, PVM, "dq taskq");
 	mtx_init(&dq_mtx, "dq", NULL, MTX_DEF);
 	dq_file_init();		/* the lock-owner hash key */
 	dq_cdev = make_dev(&dq_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600, "dq");
