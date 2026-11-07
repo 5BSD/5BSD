@@ -243,3 +243,22 @@ runtime/manual documentation describes the added format.
 The recorded October ZFS/filedesc issue was consulted. Its later diagnosis records
 the local procdesc_knote proctree-lock edge fixed on dev; the separate upstream
 cycle is not patched here. WITNESS/panic diagnostics continue to fail the VM run.
+
+## Complete automatic-bootfs baseline R11 captured
+
+`bazel-system-image-native-r11-20261107/receipt.json` passes the complete image
+and all six selected tests. Counts remain 447 packages, 33,982 nondirectory records
+and 1,369 directories. Image SHA-256:
+`86c1b131fc622a7e58ec5e5f0f8ed0742e43d047c9da2e9ee231bc33982f0d4f`;
+report SHA-256 `0415e1d66a1a21134c10e2a62730e6e929d613776462017033a9132c6c48b07e`.
+The kernel bytes remain identical to R10; the loader configuration digest matches
+the maintained source with its pinned-root override removed.
+
+Fresh `bazel-system-upgrade-vm-r1-20261107` uses R11 with 2 GB/four vCPUs, the
+passed signed repository R2 and an explicit format-4 policy (3,600-second whole
+run, 2,400-second upgrade phase, 60-second space-reclamation bound). The shared
+file is explicitly in zroot/home, outside the BE root; no existing user file is
+reused. The new VM has already booted through normal ZFS selection and passed the
+first 13 console/PAM/SSH/su/firstboot checks. The complete baseline audit and actual
+upgrade/new-kernel/rollback/removal acceptance remain pending. No upgraded-system
+pass is inferred from preparation or startup. Implementation commit: 590d397caab.
