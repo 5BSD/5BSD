@@ -197,9 +197,19 @@ struct thread;
 struct vmspace;
 struct vnode;
 
+/*
+ * The entry forms an image source is constructed from; the argument of
+ * the proc:::exec-image-open probe.
+ */
+#define	IS_FORM_PATH		0	/* execve(2): args->fname looked up */
+#define	IS_FORM_INTERP_VNODE	1	/* a binmisc interpreter vnode */
+#define	IS_FORM_FD		2	/* fexecve(2) */
+#define	IS_FORM_INTERP_LOADER	3	/* the ELF interpreter's own lookup */
+
 /* The vnode image source, kern/exec_image_vnode.c. */
 void	exec_image_vnode_from_namei(struct image_params *, struct nameidata *);
-void	exec_image_vnode_from_vnode(struct image_params *, struct vnode *);
+void	exec_image_vnode_from_vnode(struct image_params *, struct vnode *,
+	    int form);
 void	exec_image_vnode_init(struct image_params *, struct vnode *);
 
 int	exec_alloc_args(struct image_args *);

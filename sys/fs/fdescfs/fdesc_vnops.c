@@ -604,7 +604,6 @@ fdesc_setattr(struct vop_setattr_args *ap)
 {
 	struct vattr *vap = ap->a_vap;
 	struct vnode *vp = ap->a_vp;
-	struct vattr rest;
 	struct file *fp;
 	struct thread *td = curthread;
 	cap_rights_t rights;
@@ -622,6 +621,11 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	    &fp);
 	if (error != 0)
 		return (error);
+	/*
+	 * fdescfs's own answer for a type without the member, what getvnode()'s
+	 * EINVAL always became here: chflags(2) is refused, every other change
+	 * is silently dropped.
+	 */
 	if (fp->f_ops->fo_setattr == NULL) {
 		fdrop(fp, td);
 		return (vap->va_flags != VNOVAL ? EOPNOTSUPP : 0);
@@ -632,40 +636,8 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	if (error != 0)
 		goto out;
 #endif
-	/* O_PATH descriptors were never allowed to truncate. */
-	if (vap->va_size != VNOVAL && fp->f_ops == &path_fileops) {
-		error = EBADF;
-		goto out;
-	}
-	/* Each attribute goes to the fileop that takes it. */
-	if (vap->va_size != VNOVAL) {
-		error = fo_truncate(fp, vap->va_size, ap->a_cred, td);
-		if (error != 0)
-			goto out;
-	}
-	if (vap->va_mode != (mode_t)VNOVAL) {
-		error = fo_chmod(fp, vap->va_mode, ap->a_cred, td);
-		if (error != 0)
-			goto out;
-	}
-	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL) {
-		error = fo_chown(fp, vap->va_uid, vap->va_gid, ap->a_cred, td);
-		if (error != 0)
-			goto out;
-	}
-	rest = *vap;
-	rest.va_size = VNOVAL;
-	rest.va_mode = (mode_t)VNOVAL;
-	rest.va_uid = VNOVAL;
-	rest.va_gid = VNOVAL;
-	/*
-	 * Only what the fileops above did not take goes to fo_setattr, and
-	 * only if there is any; the descriptor's own answer stands.
-	 */
-	if (rest.va_atime.tv_sec != VNOVAL || rest.va_mtime.tv_sec != VNOVAL ||
-	    rest.va_birthtime.tv_sec != VNOVAL || rest.va_flags != VNOVAL ||
-	    rest.va_vaflags != 0)
-		error = fo_setattr(fp, &rest, ap->a_cred, td);
+	/* The descriptor sets the whole vattr; its answer stands. */
+	error = fo_setattr(fp, vap, ap->a_cred, td);
 out:
 	fdrop(fp, td);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);

@@ -92,6 +92,8 @@
 MALLOC_DEFINE(M_FADVISE, "fadvise", "posix_fadvise(2) information");
 
 SDT_PROVIDER_DECLARE(vfs);
+SDT_PROVIDER_DECLARE(fd);
+SDT_PROBE_DECLARE(fd, , , refused);
 /* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
 SDT_PROBE_DEFINE3(vfs, , , copy__range__start,
     "struct vnode *", "struct vnode *", "size_t");
@@ -2844,7 +2846,8 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 	if (error != 0)
 		return (error);
 	/* getvnode() never accepted an O_PATH descriptor here. */
-	if (fp->f_ops == &path_fileops) {
+	if ((fp->f_flag & O_PATH) != 0) {
+		SDT_PROBE4(fd, , , refused, "fchflags", fp, 0, EBADF);
 		error = EBADF;
 		goto out;
 	}
@@ -3441,7 +3444,9 @@ kern_fsetutimes(struct thread *td, int fd, const struct timespec *ts,
 	error = fget(td, fd, &cap_futimes_rights, &fp);
 	if (error != 0)
 		return (error);
-	if (fp->f_ops == &path_fileops) {
+	/* getvnode() never accepted an O_PATH descriptor here. */
+	if ((fp->f_flag & O_PATH) != 0) {
+		SDT_PROBE4(fd, , , refused, "futimens", fp, 0, EBADF);
 		error = EBADF;
 		goto out;
 	}
@@ -3666,9 +3671,10 @@ kern_fsync(struct thread *td, int fd, bool fullsync)
 	 * fsync(2) and fdatasync(2) never accepted an O_PATH descriptor
 	 * (getvnode() refused it), although aio_fsync(2) and syncfs do.
 	 */
-	if (fp->f_ops == &path_fileops)
+	if ((fp->f_flag & O_PATH) != 0) {
+		SDT_PROBE4(fd, , , refused, "fsync", fp, 0, EBADF);
 		error = EBADF;
-	else
+	} else
 		error = kern_fsync_fp(td, fp, fullsync);
 	fdrop(fp, td);
 	return (error);
@@ -4403,7 +4409,8 @@ kern_getdirentries(struct thread *td, int fd, char *buf, size_t count,
 	if (error != 0)
 		return (error);
 	/* getvnode() refused O_PATH descriptors and files opened write-only. */
-	if (fp->f_ops == &path_fileops || (fp->f_flag & FREAD) == 0) {
+	if ((fp->f_flag & (O_PATH | FREAD)) != FREAD) {
+		SDT_PROBE4(fd, , , refused, "getdirentries", fp, 0, EBADF);
 		fdrop(fp, td);
 		return (EBADF);
 	}
@@ -5308,18 +5315,6 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 
 	/*
-	 * Only descriptor types that can copy ranges take part.  The vnode
-	 * body's own type test stood after the zero-length return; the
-	 * descriptor checks that stood ahead of the mode checks now follow
-	 * them (D82).
-	 */
-	if (infp->f_ops->fo_copy_file_range == NULL ||
-	    outfp->f_ops->fo_copy_file_range == NULL) {
-		error = EINVAL;
-		goto out;
-	}
-
-	/*
 	 * Make sure that the ranges checked and locked below are valid.  Note
 	 * that len is clamped to SSIZE_MAX above.
 	 */
@@ -5337,6 +5332,10 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 	if (error != 0)
 		goto out;
 #endif
+	/*
+	 * The descriptors answer: a type with no range copy gets the
+	 * default's EINVAL, where the vnode body's own type test stood.
+	 */
 	error = fo_copy_file_range(infp, &inoff, outfp, &outoff, &retlen,
 	    flags, td);
 out:

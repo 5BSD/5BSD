@@ -107,6 +107,15 @@ MALLOC_DEFINE(M_FILECAPS, "filecaps", "descriptor capabilities");
 MALLOC_DECLARE(M_FADVISE);
 
 SDT_PROVIDER_DEFINE(fd);
+/*
+ * Descriptor operations: a default answered for a table without the member
+ * (invfo), and a system call refused a descriptor before looking at its
+ * arguments (refused: why is the DFLAG_* bit the table lacks, or 0 for an
+ * O_PATH descriptor).
+ */
+SDT_PROBE_DEFINE3(fd, , , invfo, "const char *", "struct file *", "int");
+SDT_PROBE_DEFINE4(fd, , , refused, "const char *", "struct file *", "int",
+    "int");
 /* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
 SDT_PROBE_DEFINE3(fd, , , advlock__start,
     "struct vnode *", "int", "int");
@@ -808,6 +817,8 @@ revert_flags:
 		 * was.
 		 */
 		if ((fp->f_ops->fo_flags & DFLAG_RECLOCK) == 0) {
+			SDT_PROBE4(fd, , , refused, "fcntl", fp, DFLAG_RECLOCK,
+			    EBADF);
 			error = EBADF;
 			fdrop(fp, td);
 			break;
@@ -944,6 +955,8 @@ revert_flags:
 		if (error != 0)
 			break;
 		if ((fp->f_ops->fo_flags & DFLAG_RECLOCK) == 0) {
+			SDT_PROBE4(fd, , , refused, "fcntl", fp, DFLAG_RECLOCK,
+			    EBADF);
 			error = EBADF;
 			fdrop(fp, td);
 			break;
@@ -1012,7 +1025,8 @@ revert_flags:
 		if (error != 0)
 			break;
 		/* Read-ahead was never settable on an O_PATH descriptor. */
-		if (fp->f_ops == &path_fileops) {
+		if ((fp->f_flag & O_PATH) != 0) {
+			SDT_PROBE4(fd, , , refused, "fcntl", fp, 0, EBADF);
 			fdrop(fp, td);
 			error = EBADF;
 			break;
@@ -4544,6 +4558,8 @@ sys_flock(struct thread *td, struct flock_args *uap)
 		return (error);
 	/* A table that takes no flock(2) locks, refused as the type test did. */
 	if ((fp->f_ops->fo_flags & DFLAG_FLOCK) == 0) {
+		SDT_PROBE4(fd, , , refused, "flock", fp, DFLAG_FLOCK,
+		    EOPNOTSUPP);
 		error = EOPNOTSUPP;
 		goto done;
 	}
@@ -6070,6 +6086,7 @@ invfo_rdwr(struct file *fp, struct uio *uio, struct ucred *active_cred,
     int flags, struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "rdwr", fp, EOPNOTSUPP);
 	return (EOPNOTSUPP);
 }
 
@@ -6078,6 +6095,7 @@ invfo_truncate(struct file *fp, off_t length, struct ucred *active_cred,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "truncate", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6086,6 +6104,7 @@ invfo_ioctl(struct file *fp, u_long com, void *data,
     struct ucred *active_cred, struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "ioctl", fp, ENOTTY);
 	return (ENOTTY);
 }
 
@@ -6101,6 +6120,7 @@ int
 invfo_kqfilter(struct file *fp, struct knote *kn)
 {
 
+	SDT_PROBE3(fd, , , invfo, "kqfilter", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6109,6 +6129,7 @@ invfo_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "chmod", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6117,6 +6138,7 @@ invfo_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "chown", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6124,6 +6146,7 @@ int
 invfo_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "pathconf", fp, EOPNOTSUPP);
 	return (EOPNOTSUPP);
 }
 
@@ -6132,6 +6155,7 @@ int
 invfo_statfs(struct file *fp, struct statfs *buf, struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "statfs", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6140,14 +6164,56 @@ int
 invfo_fsync(struct file *fp, int mode, struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "fsync", fp, EINVAL);
 	return (EINVAL);
 }
 
+/*
+ * The attributes that have direct operations, size, mode and owner,
+ * applied through the descriptor's table in that order: the table's own
+ * answers stand (badfo_* for an O_PATH descriptor, a type's EINVAL, the
+ * vnode bodies' MAC checks and audit records).  Every fo_setattr body
+ * starts here; the rest of the vattr is the body's own.
+ */
+int
+file_setattr_direct(struct file *fp, struct vattr *vap,
+    struct ucred *active_cred, struct thread *td)
+{
+	int error;
+
+	if (vap->va_size != VNOVAL) {
+		error = fo_truncate(fp, vap->va_size, active_cred, td);
+		if (error != 0)
+			return (error);
+	}
+	if (vap->va_mode != (mode_t)VNOVAL) {
+		error = fo_chmod(fp, vap->va_mode, active_cred, td);
+		if (error != 0)
+			return (error);
+	}
+	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL)
+		return (fo_chown(fp, vap->va_uid, vap->va_gid, active_cred, td));
+	return (0);
+}
+
+/*
+ * A table without the member still takes the whole vattr: size, mode and
+ * owner go to their direct operations; times and flags have no taker on
+ * such a descriptor and get what getvnode() returned.
+ */
 int
 invfo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
     struct thread *td)
 {
+	int error;
 
+	error = file_setattr_direct(fp, vap, active_cred, td);
+	if (error != 0)
+		return (error);
+	if (vap->va_atime.tv_sec == VNOVAL && vap->va_mtime.tv_sec == VNOVAL &&
+	    vap->va_birthtime.tv_sec == VNOVAL && vap->va_flags == VNOVAL)
+		return (0);
+	SDT_PROBE3(fd, , , invfo, "setattr", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6157,6 +6223,7 @@ invfo_fadvise(struct file *fp, off_t offset, off_t len, int advice,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "fadvise", fp, ENODEV);
 	return (ENODEV);
 }
 
@@ -6166,6 +6233,7 @@ invfo_readdir(struct file *fp, struct uio *uio, off_t *basep,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "readdir", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6174,6 +6242,7 @@ invfo_copy_file_range(struct file *infp, off_t *inoffp, struct file *outfp,
     off_t *outoffp, size_t *lenp, unsigned int flags, struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "copy_file_range", infp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6183,6 +6252,7 @@ invfo_acl(struct file *fp, int op, int type, struct acl *aclp,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "acl", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6192,6 +6262,7 @@ invfo_extattr(struct file *fp, int op, int attrnamespace,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "extattr", fp, EINVAL);
 	return (EINVAL);
 }
 
@@ -6200,6 +6271,7 @@ int
 invfo_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "fcntl", fp, EBADF);
 	return (EBADF);
 }
 
@@ -6213,6 +6285,7 @@ invfo_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "advlock", fp, EBADF);
 	return (EBADF);
 }
 
@@ -6236,6 +6309,7 @@ invfo_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
     struct thread *td)
 {
 
+	SDT_PROBE3(fd, , , invfo, "sendfile", fp, EINVAL);
 	return (EINVAL);
 }
 

@@ -226,7 +226,7 @@ ATF_TC_CLEANUP(fdescfs_opath, tc)
 
 /*
  * Through fdescfs, a table with no fo_setattr member (sockets) keeps the old
- * answers: times silently dropped, chflags refused, chmod dropped.  A table
+ * answers: times and chmod silently dropped, chflags refused.  A table
  * that has the member answers for its descriptor: an anonymous pipe and a
  * posix_openpt(2) master report EINVAL for times and flags, and chmod goes
  * to the type's own fo_chmod (EINVAL for both: pipe_chmod takes only
@@ -290,6 +290,85 @@ ATF_TC_BODY(fdescfs_no_attributes, tc)
 	close(fd);
 }
 ATF_TC_CLEANUP(fdescfs_no_attributes, tc)
+{
+	umount_fdesc();
+}
+
+/*
+ * A shared memory object has fo_truncate, fo_chmod and fo_chown but no
+ * fo_setattr; fdescfs keeps getvnode()'s answer for such a type: every
+ * change but chflags(2) is silently dropped, the object untouched.
+ */
+ATF_TC_WITH_CLEANUP(fdescfs_shm);
+ATF_TC_HEAD(fdescfs_shm, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(fdescfs_shm, tc)
+{
+	struct stat sb;
+	char path[32];
+	int fd;
+
+	fd = shm_open(SHM_ANON, O_RDWR, 0600);
+	ATF_REQUIRE(fd >= 0);
+	mount_fdesc(tc);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	ATF_CHECK_EQ_MSG(0, truncate(path, 8192), "truncate(%s): %s", path,
+	    strerror(errno));
+	ATF_CHECK_EQ_MSG(0, chmod(path, 0640), "chmod(%s): %s", path,
+	    strerror(errno));
+	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
+	ATF_CHECK_EQ(0, sb.st_size);
+	ATF_CHECK_EQ(0600, sb.st_mode & ALLPERMS);
+	ATF_CHECK_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
+	    "utimensat(%s): %s", path, strerror(errno));
+	errno = 0;
+	ATF_CHECK_EQ(-1, chflags(path, UF_NODUMP));
+	ATF_CHECK_EQ(EOPNOTSUPP, errno);
+	close(fd);
+}
+ATF_TC_CLEANUP(fdescfs_shm, tc)
+{
+	umount_fdesc();
+}
+
+/*
+ * A /dev/ptmx master carries the device vnode, so its times reach the node
+ * through fdescfs; size, mode and owner go to the table's own operations,
+ * which a pty master refuses, so /dev/ptmx itself is never changed.
+ */
+ATF_TC_WITH_CLEANUP(fdescfs_ptmx_direct);
+ATF_TC_HEAD(fdescfs_ptmx_direct, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(fdescfs_ptmx_direct, tc)
+{
+	struct stat before, after;
+	char path[32];
+	int fd;
+
+	fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, stat("/dev/ptmx", &before));
+	mount_fdesc(tc);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	errno = 0;
+	ATF_CHECK_EQ(-1, chmod(path, 0600));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, truncate(path, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, chown(path, 0, 0));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_REQUIRE_EQ(0, stat("/dev/ptmx", &after));
+	ATF_CHECK_EQ(before.st_mode, after.st_mode);
+	ATF_CHECK_EQ(before.st_uid, after.st_uid);
+	close(fd);
+}
+ATF_TC_CLEANUP(fdescfs_ptmx_direct, tc)
 {
 	umount_fdesc();
 }
@@ -492,6 +571,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fdescfs_regular_file);
 	ATF_TP_ADD_TC(tp, fdescfs_kqueue);
 	ATF_TP_ADD_TC(tp, fdescfs_no_attributes);
+	ATF_TP_ADD_TC(tp, fdescfs_shm);
+	ATF_TP_ADD_TC(tp, fdescfs_ptmx_direct);
 	ATF_TP_ADD_TC(tp, fdescfs_fifo);
 	ATF_TP_ADD_TC(tp, pts_master_openpt);
 	ATF_TP_ADD_TC(tp, pts_master_ptmx);

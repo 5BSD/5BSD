@@ -47,6 +47,7 @@
 #include <sys/mutex.h>
 #include <sys/namei.h>
 #include <sys/proc.h>
+#include <sys/sdt.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <sys/vnode.h>
@@ -74,6 +75,16 @@ struct exec_image_vnode {
 
 static const struct image_source_ops exec_image_vnode_ops;
 
+/*
+ * An image source is constructed (form: IS_FORM_*) and closed (released:
+ * the reference was dropped, not handed to p_image).
+ */
+SDT_PROVIDER_DECLARE(proc);
+SDT_PROBE_DEFINE2(proc, , , exec__image__open, "struct image_params *",
+    "int");
+SDT_PROBE_DEFINE2(proc, , , exec__image__close, "struct image_params *",
+    "int");
+
 static struct exec_image_vnode *
 exec_image_vnode_data(const struct image_params *imgp)
 {
@@ -82,17 +93,17 @@ exec_image_vnode_data(const struct image_params *imgp)
 }
 
 static void
-exec_image_vnode_setup(struct image_params *imgp, struct vnode *vp,
-    bool fname)
+exec_image_vnode_setup(struct image_params *imgp, struct vnode *vp, int form)
 {
 	struct exec_image_vnode *eiv;
 
 	MPASS(imgp->is_ops == NULL && imgp->is_data == NULL);
 	eiv = malloc(sizeof(*eiv), M_TEMP, M_WAITOK | M_ZERO);
-	eiv->eiv_fname = fname;
+	eiv->eiv_fname = form == IS_FORM_PATH;
 	imgp->is_data = eiv;
 	imgp->is_ops = &exec_image_vnode_ops;
 	imgp->vp = vp;
+	SDT_PROBE2(proc, , , exec__image__open, imgp, form);
 }
 
 /*
@@ -107,7 +118,7 @@ exec_image_vnode_from_namei(struct image_params *imgp, struct nameidata *nd)
 	struct vnode *vp;
 
 	vp = nd->ni_vp;
-	exec_image_vnode_setup(imgp, vp, true);
+	exec_image_vnode_setup(imgp, vp, IS_FORM_PATH);
 	eiv = imgp->is_data;
 	eiv->eiv_nd = *nd;
 	eiv->eiv_dvp = nd->ni_dvp;
@@ -152,15 +163,17 @@ exec_image_vnode_from_namei(struct image_params *imgp, struct nameidata *nd)
 }
 
 /*
- * The interpreter-vnode (binmisc) and fexecve forms: the vnode is
- * referenced and unlocked.  Resolve its path, lock it and audit it, as
- * do_execve() did for both.
+ * The interpreter-vnode (binmisc, IS_FORM_INTERP_VNODE) and fexecve
+ * (IS_FORM_FD) forms: the vnode is referenced and unlocked.  Resolve its
+ * path, lock it and audit it, as do_execve() did for both.
  */
 void
-exec_image_vnode_from_vnode(struct image_params *imgp, struct vnode *vp)
+exec_image_vnode_from_vnode(struct image_params *imgp, struct vnode *vp,
+    int form)
 {
 
-	exec_image_vnode_setup(imgp, vp, false);
+	MPASS(form == IS_FORM_INTERP_VNODE || form == IS_FORM_FD);
+	exec_image_vnode_setup(imgp, vp, form);
 	if (vn_fullpath(vp, &imgp->execpath, &imgp->freepath) != 0)
 		imgp->execpath = imgp->args->fname;
 	vn_lock(vp, LK_SHARED | LK_RETRY);
@@ -175,7 +188,7 @@ void
 exec_image_vnode_init(struct image_params *imgp, struct vnode *vp)
 {
 
-	exec_image_vnode_setup(imgp, vp, false);
+	exec_image_vnode_setup(imgp, vp, IS_FORM_INTERP_LOADER);
 }
 
 static void
@@ -486,6 +499,7 @@ exec_image_vnode_close(struct image_params *imgp, bool release)
 
 	eiv = exec_image_vnode_data(imgp);
 	td = imgp->td;
+	SDT_PROBE2(proc, , , exec__image__close, imgp, release);
 	if (imgp->opened) {
 		VOP_CLOSE(imgp->vp, FREAD, td->td_ucred, td);
 		imgp->opened = false;

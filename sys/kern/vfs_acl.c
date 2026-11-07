@@ -61,6 +61,8 @@
 #include <security/mac/mac_framework.h>
 
 SDT_PROVIDER_DECLARE(vfs);
+SDT_PROVIDER_DECLARE(fd);
+SDT_PROBE_DECLARE(fd, , , refused);
 /* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
 SDT_PROBE_DEFINE2(vfs, , , acl__get__start,
     "struct vnode *", "acl_type_t");
@@ -482,10 +484,12 @@ kern_acl_fd(struct thread *td, int fd, const cap_rights_t *rightsp, int op,
 	error = fget(td, fd, rightsp, &fp);
 	if (error != 0)
 		return (error);
+	/* getvnode() never accepted an O_PATH descriptor for a change. */
 	if ((op == FO_ACL_SET || op == FO_ACL_DELETE) &&
-	    fp->f_ops == &path_fileops)
+	    (fp->f_flag & O_PATH) != 0) {
+		SDT_PROBE4(fd, , , refused, "acl", fp, 0, EBADF);
 		error = EBADF;
-	else
+	} else
 		error = fo_acl(fp, op, type, aclp, td);
 	fdrop(fp, td);
 	return (error);

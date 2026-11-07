@@ -143,8 +143,10 @@ A table that does not carry a vnode must not install a
 .Fn vn_*
 member.
 .Pp
-Two tables carry a vnode only on some creation paths: a pseudo-terminal
-master has one when opened through
+Three tables carry a vnode only on some creation paths: a FIFO has one and
+an anonymous pipe none
+.Pq Va pipeops ;
+a pseudo-terminal master has one when opened through
 .Pa /dev/ptmx
 and none from
 .Xr posix_openpt 2 ;
@@ -155,7 +157,9 @@ and none from
 Those tables install the
 .Fn vn_*_opt
 variants, which answer through the vnode when it is present and give the
-type-neutral answer otherwise.
+type-neutral answer otherwise, and keep a function of their own only where
+they have their own answer
+.Pq Fn pipe_pathconf , Fn pipe_advlock .
 Installing a plain
 .Fn vn_*
 member there dereferences a null vnode.
@@ -283,15 +287,14 @@ returns
 .El
 .Ss fo_setattr
 .Fn fo_setattr
-sets the access, modification and birth times and the file flags given in
-.Fa vap ;
-a field holding
+sets the attributes given in
+.Fa vap ,
+the whole
+.Vt "struct vattr" :
+size, mode, owner, the access, modification and birth times and the file
+flags; a field holding
 .Dv VNOVAL
 is left alone.
-Mode, owner and size have their own operations
-.Pq Fn fo_chmod , Fn fo_chown , Fn fo_truncate
-and are refused with
-.Er EINVAL .
 It answers
 .Xr futimens 2 ,
 .Xr futimes 2 ,
@@ -300,13 +303,28 @@ Linux file attribute flags, and attribute changes made through
 .Pa /dev/fd/N ,
 which
 .Xr fdescfs 4
-splits across the four operations.
+forwards in one call.
+Size, mode and owner have direct operations of their own,
+.Fn fo_truncate ,
+.Fn fo_chmod
+and
+.Fn fo_chown ,
+and every
+.Fn fo_setattr
+body applies them through those, in that order, by calling
+.Fn file_setattr_direct
+first: the table's own answers stand, the
+.Fn badfo_*
+refusals of an
+.Dv O_PATH
+descriptor and the vnode bodies' MAC checks and audit records among them.
 .Bl -tag -width "devfs nodes"
 .It vnode files
 .Fn vn_setattr
-carries the checks the system calls used to make themselves: the vnode
-audit record, the privilege to set flags on a device, the MAC flag and time
-checks and notifications, and the birth-time adjustment of
+sets the times and flags after the direct operations have run, carrying
+the checks the system calls used to make themselves: the vnode audit record, the
+privilege to set flags on a device, the MAC flag and time checks and
+notifications, and the birth-time adjustment of
 .Xr utimes 2 .
 It then suspends writes on the mount, locks the vnode and calls
 .Xr VOP_SETATTR 9 .
@@ -325,8 +343,20 @@ descriptor with
 before reaching the table, as they always did.
 .It everything else
 .Fn invfo_setattr
-returns
-.Er EINVAL .
+runs the direct operations and returns
+.Er EINVAL
+for times and flags, what
+.Fn getvnode
+returned.
+A table without the member is not reached by
+.Xr fdescfs 4
+at all: it keeps the answer
+.Fn getvnode
+gave there, refusing
+.Xr chflags 2
+with
+.Er EOPNOTSUPP
+and silently dropping every other change.
 .El
 .Ss fo_fadvise
 .Fn fo_fadvise
@@ -406,11 +436,11 @@ dispatched on the input file's table.
 carries the requested length in and the copied length out; the offsets
 are updated whatever the result.
 The system call validates the flags, clamps the length, takes both files'
-offset locks, checks the open modes and refuses negative offsets; it
-consults the table only when both descriptors install the operation, and
-returns
-.Er EINVAL
-otherwise, which is what descriptors without a vnode received.
+offset locks, checks the open modes, returns 0 for a zero length and
+refuses negative offsets; then the input descriptor's table answers, and a
+type without the operation gets the default's
+.Er EINVAL ,
+which is what descriptors without a vnode received.
 .Bl -tag -width "vnode files"
 .It vnode files
 .Fn vn_copy_range
@@ -659,6 +689,48 @@ file installs one that answers only the close-time
 of POSIX locks, because closing any descriptor of a file releases the
 process's record locks on it; every other request gets the default.
 .El
+.Sh DTRACE
+.Bl -tag -width "fd:::refused"
+.It fd:::invfo
+A default answered for a descriptor whose table has no member:
+.Fa arg0
+is the member's name,
+.Fa arg1
+the
+.Vt "struct file *" ,
+.Fa arg2
+the errno.
+The first probe to enable when a program gets
+.Er EINVAL
+from an operation on an unusual descriptor.
+.It fd:::refused
+A system call refused a descriptor before looking at its arguments:
+.Fa arg0
+the system call's name,
+.Fa arg1
+the
+.Vt "struct file *" ,
+.Fa arg2
+the
+.Dv DFLAG_*
+bit the table lacks, or 0 for an
+.Dv O_PATH
+descriptor,
+.Fa arg3
+the errno.
+.El
+.Pp
+The
+.Nm fd
+provider also carries
+.Nm advlock-start
+and
+.Nm advlock-done
+around every advisory lock request, and every
+.Fn mac_file_check_*
+hook fires the
+.Nm mac_framework
+provider's probes.
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
@@ -679,6 +751,7 @@ value.
 .Xr posix_fadvise 2 ,
 .Xr acl 3 ,
 .Xr fdescfs 4 ,
+.Xr image_source 9 ,
 .Xr VFS_STATFS 9 ,
 .Xr VFS_SYNC 9 ,
 .Xr vnode 9 ,

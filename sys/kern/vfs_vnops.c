@@ -442,28 +442,34 @@ vn_fsync_fs(struct vnode *vp)
 SDT_PROBE_DECLARE(vfs, , , chflags);
 
 /*
- * Set times and flags on any descriptor that carries a vnode.  Mode, owner
- * and size have their own fileops and are refused.  The checks the system
- * calls used to make before calling setfflags()/setutimes() live here now:
- * the vnode audit record, the device flag privilege, the MAC checks, and
- * setutimes()'s birth-time adjustment.
+ * Set attributes on any descriptor that carries a vnode: the whole vattr.
+ * Size, mode and owner go through the descriptor's own direct operations
+ * (file_setattr_direct: fo_truncate, fo_chmod, fo_chown, so the table's
+ * answers stand, vn_chmod's MAC check and audit record included); times
+ * and flags through VOP_SETATTR with the checks the system calls used to
+ * make before setfflags()/setutimes(): the vnode audit record, the device
+ * flag privilege, the MAC checks, and setutimes()'s birth-time adjustment.
+ * fdescfs sets attributes on /dev/fd/N with one call.
  */
 int
 vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
     struct thread *td)
 {
-	struct vattr cur;
+	struct vattr cur, rest;
 	struct vnode *vp;
 	struct mount *mp;
 	bool settimes;
 	int error;
 
-	if (vap->va_mode != (mode_t)VNOVAL || vap->va_uid != VNOVAL ||
-	    vap->va_gid != VNOVAL || vap->va_size != VNOVAL)
-		return (EINVAL);
+	error = file_setattr_direct(fp, vap, active_cred, td);
+	if (error != 0)
+		return (error);
+	vp = fp->f_vnode;
 	settimes = vap->va_atime.tv_sec != VNOVAL ||
 	    vap->va_mtime.tv_sec != VNOVAL;
-	vp = fp->f_vnode;
+	if (!settimes && vap->va_birthtime.tv_sec == VNOVAL &&
+	    vap->va_flags == VNOVAL)
+		return (0);
 #ifdef AUDIT
 	if (AUDITING_TD(td)) {
 		vn_lock(vp, LK_SHARED | LK_RETRY);
@@ -508,7 +514,13 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	    VOP_GETATTR(vp, &cur, active_cred) == 0 &&
 	    timespeccmp(&vap->va_mtime, &cur.va_birthtime, <))
 		vap->va_birthtime = vap->va_mtime;
-	error = VOP_SETATTR(vp, vap, active_cred);
+	/* Size, mode and owner went to their operations; VOP_SETATTR the rest. */
+	rest = *vap;
+	rest.va_size = VNOVAL;
+	rest.va_mode = (mode_t)VNOVAL;
+	rest.va_uid = VNOVAL;
+	rest.va_gid = VNOVAL;
+	error = VOP_SETATTR(vp, &rest, active_cred);
 #ifdef MAC
 	if (error == 0) {
 		if (vap->va_flags != VNOVAL)
@@ -551,11 +563,12 @@ vn_openfile_fadvise(struct file *fp, off_t offset, off_t len, int advice,
 }
 
 /*
- * Pseudo-terminal masters and linuxkpi files carry a vnode only when they
- * were opened through devfs (/dev/ptmx, a device node); posix_openpt(2) and
- * fd_install() make them with none.  These answer through the vnode when
- * it is there and give the type-neutral answer when it is not, which is
- * what the system calls' f_vnode tests gave them.
+ * The sometimes-vnode tables: a FIFO carries its vnode and an anonymous
+ * pipe none (pipeops); pseudo-terminal masters and linuxkpi files carry one
+ * only when opened through devfs (/dev/ptmx, a device node), none from
+ * posix_openpt(2) or fd_install().  These answer through the vnode when it
+ * is there and give the type-neutral answer when it is not, which is what
+ * the system calls' f_vnode tests gave them.
  */
 int
 vn_pathconf_opt(struct file *fp, int name, long *valuep, struct thread *td)
