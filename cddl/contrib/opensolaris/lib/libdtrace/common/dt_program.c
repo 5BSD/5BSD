@@ -2099,15 +2099,15 @@ dt_vprog_collect(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, dt_hashmap_t *load_hm,
 	dif_instr_t *loads;
 
 	pdesc.dtpd_vmid = 0;
-	/* Correct the ERROR probe's target forcefully. */
+	/*
+	 * This program goes to one guest only, and a guest matches a target
+	 * against its hostname, not the name its host gave the VM: an ERROR
+	 * clause aimed at that name would be dropped there.  Leave it
+	 * untargeted.
+	 */
 	if (strcmp(pdesc.dtpd_provider, "dtrace") == 0 &&
-	    strcmp(pdesc.dtpd_name, "ERROR") == 0) {
-		if (pgp->dp_vmname == NULL)
-			return (dt_set_errno(dtp, EINVAL));
-		if (strlcpy(pdesc.dtpd_target, pgp->dp_vmname,
-		    sizeof (pdesc.dtpd_target)) >= sizeof (pdesc.dtpd_target))
-			return (dt_set_errno(dtp, ENAMETOOLONG));
-	}
+	    strcmp(pdesc.dtpd_name, "ERROR") == 0)
+		pdesc.dtpd_target[0] = '\0';
 	if (!dt_vprog_fullname(target, sizeof (target), &pdesc))
 		return (dt_set_errno(dtp, EINVAL));
 	if ((loads = dt_loads_get(dtp, load_hm, target, &num_loads)) == NULL)
