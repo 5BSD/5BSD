@@ -1,0 +1,10 @@
+comment = "DescriptorQueue controller library (libdq)"
+
+desc = <<EOD
+libdq, the userland controller library for the dq(4) DescriptorQueue
+device.  A controller opens a queue, mints file descriptors that present an
+identity of its choosing, reads the operations the kernel turns into events
+on them, and answers them.  The library also connects to the dq.observe
+capability service to list queues and objects and to subscribe to a queue's
+observer stream.
+EOD

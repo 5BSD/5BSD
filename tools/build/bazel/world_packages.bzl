@@ -16,6 +16,7 @@ def world_package_families():
         "//packages/capsule:family",
         "//packages/capsulectl:family",
         "//packages/oes:family",
+        "//packages/dq:family",
         "//packages/switchboard:family",
         "//packages/switchboardctl:family",
         "//packages/sysextctl:family",
@@ -182,6 +183,7 @@ def world_package_families():
     families += select({"//tools/build/bazel/config:tests_enabled": ["//packages/libcapsulert-tests:family", "//packages/libservice-tests:family"], "//conditions:default": []})
     families += select({"//tools/build/bazel/config:tests_enabled": ["//packages/mac-capability-tests:family"], "//conditions:default": []})
     families += select({"//tools/build/bazel/config:tests_enabled": ["//packages/mac-abac-tests:family", "//packages/oes-tests:family"], "//conditions:default": []})
+    families += select({"//tools/build/bazel/config:tests_enabled": ["//packages/dq-tests:family"], "//conditions:default": []})
     families += select({"//tools/build/bazel/config:tests_enabled": ["//packages/netmap-tests:family"], "//conditions:default": []})
     families += select({"//tools/build/bazel/config:tests_enabled": ["//packages/bsdnetwork-tests:family"], "//conditions:default": []})
     families += select({"//tools/build/bazel/config:tests_enabled": ["//packages/bsdcrypto-tests:family", "//packages/bsddevice-tests:family"], "//conditions:default": []})

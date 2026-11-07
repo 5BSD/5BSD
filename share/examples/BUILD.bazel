@@ -34,6 +34,12 @@ script_installation(name = "freebsd_version", scripts = {}, manuals = [], packag
     'FreeBSD_version/README': '/usr/share/examples/FreeBSD_version/README',
 })
 
+# dq (examples)
+script_installation(name = "dq", scripts = {}, manuals = [], package = "examples", files = {
+    'dq/dqserve.c': '/usr/share/examples/dq/dqserve.c',
+    'dq/Makefile': '/usr/share/examples/dq/Makefile',
+})
+
 # bootforth (bootloader)
 script_installation(name = "bootforth", scripts = {}, manuals = [], package = "bootloader", files = {
     'bootforth/README': '/usr/share/examples/bootforth/README',
@@ -410,6 +416,7 @@ bsd_install_manifest(name = "install_manifest", manifests = [":bsd_daemon"] +
     [":freebsd_version"] +
     [":bootforth"] +
     [":csh"] +
+    [":dq"] +
     [":etc"] +
     [":find_interface"] +
     [":flua"] +

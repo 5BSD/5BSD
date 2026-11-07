@@ -131,6 +131,7 @@ _common_pages = [
     'disc.4',
     'disk.4',
     'divert.4',
+    'dq.4',
     'ds1307.4',
     'ds3231.4',
     'dummymbuf.4',

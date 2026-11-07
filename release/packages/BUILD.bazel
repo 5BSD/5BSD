@@ -12,6 +12,7 @@ exports_files(["ucl/libchannel-tests-all.ucl"], visibility = ["//packages/libcha
 exports_files(["ucl/bsdlog-all.ucl"], visibility = ["//packages/bsdlog:__pkg__"])
 
 exports_files(["ucl/oes-all.ucl"], visibility = ["//packages/oes:__pkg__"])
+exports_files(["ucl/dq-all.ucl"], visibility = ["//packages/dq:__pkg__"])
 exports_files(["ucl/bsdaudit-all.ucl"], visibility = ["//packages/bsdaudit:__pkg__"])
 exports_files(["ucl/bsdcrypto-all.ucl"], visibility = ["//packages/bsdcrypto:__pkg__"])
 exports_files(["ucl/bsddevice-all.ucl"], visibility = ["//packages/bsddevice:__pkg__"])
@@ -116,6 +117,7 @@ exports_files(["ucl/mac-abac-tests-all.ucl"], visibility = ["//packages/mac-abac
 exports_files(["ucl/netmap-tests-all.ucl"], visibility = ["//packages/netmap-tests:__pkg__"])
 
 exports_files(["ucl/oes-tests-all.ucl"], visibility = ["//packages/oes-tests:__pkg__"])
+exports_files(["ucl/dq-tests-all.ucl"], visibility = ["//packages/dq-tests:__pkg__"])
 
 exports_files(["ucl/libfidl-all.ucl", "ucl/libfidl-tools.ucl"], visibility = ["//packages/libfidl:__pkg__"])
 

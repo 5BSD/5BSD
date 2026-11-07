@@ -1,10 +1,12 @@
 # DescriptorQueue (dq)
 
-Status: design, revision 4 (2026-11-06). Not yet implemented. Revisions 1-3
-were withdrawn after independent review; section 20 records every decision
-and its source, section 19 every alternative. Sections marked *decision*
-carry an entry in section 20; *open* names an item in section 21. Line
-references are to the `proxy/objects` branch at the time of writing.
+Status: design, revision 4 (2026-11-06), with stage 0 landed on `dev`
+(section 6) and stage 1a built on `proxy/objects` (section 7.6, D85-D91,
+2026-11-07). Revisions 1-3 were withdrawn after independent review;
+section 20 records every decision and its source, section 19 every
+alternative. Sections marked *decision* carry an entry in section 20;
+*open* names an item in section 21. Line references are to the
+`proxy/objects` branch at the time of writing.
 
 ## 1. Purpose and principles
 
@@ -633,17 +635,29 @@ presence test (`fileops_dtrace_test`). All run in the plane-on guest.
 
 ### 7.1 `/dev/dq`
 
-Delivered like `/dev/oes`: BSDDevice opens it for a unit whose bundle
-requires `system.dq` and hands the fd to the unit; the node is 0600 and
-claimed through the isolation service at boot — **the claim is the
-authority**. `priv_check(PRIV_DRIVER)` is kept as a belt for the plane-off
-test path, as OES does; it is not the access rule. One open is one queue
-(`cdevpriv`). `read(2)` returns batched events; ioctls mint, reply, push,
-revoke, set identity and policy, read stats; `poll`/`kqueue` report
-readiness. Modelled on `sys/security/oes/oes_dev.c`: batching reads,
-per-queue sequence numbers, interruptible waits, bounded depth with
-visible drops. The queue fd is hardened at delivery (`CAP_XFER_NONE`,
-`CLOFORK_LOCKED`, `CLOEXEC_LOCKED`) as every plane fd is.
+Delivered like `/dev/oes` **as `/dev/oes` is actually delivered** (D85;
+revision 4 described a mechanism that does not exist): the node is 0600
+root:wheel, every open runs `priv_check(PRIV_DRIVER)` and refuses an ILP32
+caller, and no isolation claim covers it (only `/dev/mac_capability` is
+claimed at boot, `usr.sbin/capsule/mac_capability_claims.c`). A unit does
+not open the node itself: a provider serving an endpoint the unit's bundle
+names (`system.DQ`, `requires = ["system.dq"]`, the shape of
+BSDFilesystem's `system.OES` endpoint with `requires = ["system.oes"]`,
+`usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl`) opens it as root,
+rights-limits the fd and hardens it (`service_harden_fd`: `CAP_XFER_ONCE`
+or `NONE`, `CLOFORK_LOCKED`, `CLOEXEC_LOCKED`) before handing it over —
+**the endpoint admission is the authority**. BSDDevice refuses the `oes`
+leaf (`usr.sbin/BSDDevice/policy.c`) and will refuse `dq` the same way.
+The `BSDDescriptorQueue` provider that serves `system.DQ` is stage 4
+(section 18); until then the device permission and `PRIV_DRIVER` are the
+rule, and tests open the node as root in the VM as the OES tests do. One
+open is one queue (`cdevpriv`). `read(2)` returns batched events; ioctls
+mint, reply, push, revoke, set identity and policy, read stats;
+`poll`/`kqueue` report readiness. Modelled on
+`sys/security/oes/oes_dev.c`: batching reads, per-queue sequence numbers,
+interruptible waits, bounded depth with visible drops. A `/dev/fd/N`
+reopen of the queue fd shares the existing file (fdescfs answers the open
+with `dupfdopen`), so it is the same queue, as `dup` would give.
 
 *Decision D3*: a cdev, not a `mac_capability` service. A queue is a
 long-lived, `kqueue`-able stream of kernel-originated events with large
@@ -708,7 +722,7 @@ served mark is the object's `f_type == DTYPE_DQ`, never an `f_flag` bit
 
 | Field | Values | Meaning |
 |---|---|---|
-| `dp_cache` | `NONE`, `ATTR`, `DATA` | `read`/`fstat` always ask; attributes from the identity; attributes and pages (section 10). Pages used by mappings exist in every mode |
+| `dp_cache` | `NONE`, `ATTR`, `DATA` | no page cache; attributes from the identity; attributes and pages (section 10). Pages used by mappings exist in every mode. Whether `fstat` posts is `dp_events & GETATTR` alone, in every mode (D91) |
 | `dp_write` | `DENY`, `EVENT` | `RESOLVE` for `O_WRONLY/O_RDWR` fails `EACCES` and the fd is created without `FWRITE`; or writes are events |
 | `dp_exec` | `DENY`, `ALLOW` | `RESOLVE op=EXEC`/`fexecve` fail `EACCES`, or are served (stage 3) |
 | `dp_mmap_shared_write` | `DENY`, `ALLOW` | needs `dp_write = EVENT` |
@@ -721,6 +735,81 @@ served mark is the object's `f_type == DTYPE_DQ`, never an `f_flag` bit
 `fchmod`/`fchown`/`futimens`/`fchflags` under `dp_write = DENY` are
 `SETATTR` events — ownership, not `FWRITE`, governs them on real files —
 and the controller answers.
+
+### 7.6 Stage 1a as built (2026-11-07)
+
+Branch `proxy/objects`, worktree `/usr/obj/5BSD-proxy-objects`, on `dev`
+after the stage 0 quality pass. The plan of record (scratch
+`stage1a-plan.md`, revision 2) was reviewed independently before code
+("not yet", nineteen items, all adopted: D91) and the built stage again
+("not yet", six blocking and sixteen further items, all adopted: below).
+
+**What exists.**
+
+| Piece | Where |
+|---|---|
+| installed ABI | `sys/dev/dq/dq.h` (fixed width, LP64, static size assertions, ioctl group `'j'`, dense `DQ_PC_*` pathconf index with `dq_pc_names[]`), `dq_observe_proto.h` |
+| kernel | `sys/dev/dq/dq_dev.c` (cdev, `kern.dq.*` bounded tunables, SDT provider `dq` with twelve probes, module glue: device at `SI_SUB_DRIVERS`, the service via `SYSINIT` at `SI_SUB_PSEUDO`), `dq_queue.c` (queue, objects, events, replies, interrupts, deadlines, revoke, teardown), `dq_file.c` (the `DTYPE_DQ` fileops, identity and policy validation, `dq_file_ident()` for other subsystems), `dq_observer.c` (observer descriptors, `DTYPE_DEV` with their own table), `dq_observe.c` (the `dq.observe` service) |
+| served mark | `DTYPE_DQ 134`; tested only in OES's four hooks and `dq_file_ident()` (which also asks `f_ops`) |
+| MAC | `mac_file_notify_reply` (`docs/macf-new-hooks.md` 3.14), `mac_test`/`mac_test_hooks`, trace arguments regenerated |
+| OES | `AUTH/NOTIFY_FILE_READ`, `AUTH/NOTIFY_FILE_STAT`, `NOTIFY_FILE_CLOSE`, `NOTIFY_DQ_REPLY` (D89), `OES_FILE_META_PRESENTED`, `oes_event_presented_t`, the presented filler through `dq_file_ident()` under `DEV_DQ` |
+| bridges | fdescfs `readlink` and linprocfs fd links ask `fo_fill_kinfo` and use `kf_path` only when the presented type is a vnode |
+| build | `device dq` (`DEV_DQ opt_dq.h`) in amd64 and arm64 GENERIC, `sys/modules/dq`, Bazel kernel catalog rows and groups, `opt_dq` header targets for amd64/arm64/riscv, public-header installation of the ABI only (`dq_kern.h`/`dq_var.h` stay private) |
+| userland | `lib/libdq` (`libdq(3)`), `tests/sys/dq` (eleven ATF programs, ten C and one sh, 70 cases, incl. `dq_oes_test`), `share/man/man4/dq.4`, `share/examples/dq/dqserve.c`, pkgbase `dq`/`dq-tests` |
+
+**Deviations from the staging table, recorded.** `INTERRUPT` and deadlines
+are in 1a (the wait path needs them to be correct); `FILE_OPEN` waits for
+`RESOLVE` (1c) because `MINT` is not an open; the I9 row "uid-0 shell
+without the capability sees nothing" is stage 4 (D90); observer data
+bodies for replies are 1b (open item 7).
+
+**What the VM runs found (plane on, `GENERIC` with WITNESS).** Run 1: the
+`dq.observe` service registered at `SI_SUB_DRIVERS`, before the capability
+framework initialises its lock (`SI_SUB_PSEUDO`, `SI_ORDER_FIRST`) — boot
+panic; the module now loads with the drivers (where `cold` still holds, so
+a late `kldload` is refused as OES refuses it) and registers the service
+from a `SYSINIT` at `SI_SUB_PSEUDO`. Run 4: `filecaps_init` means "every
+ioctl", which the Capsicum invariant rejects for a rights set without
+`CAP_IOCTL`; a minted descriptor's filecaps now mirror what
+`cap_rights_limit` would leave (no right, no set). Run 5: the refusal reason
+of a `MINT` never reached userland because a failing ioctl copies its
+argument back to nobody — `dm_reasonp` is a user pointer now; the observer
+descriptor could not be made non-blocking and was not `CLOFORK` (rights and
+flags fixed); deadlines woke a few milliseconds early from the coarse clock
+(`sbinuptime` now); `getdirentries` on a served file is `ENOTDIR` as on a
+regular file. Run 6: 226/233; the shared-descriptor concurrency cases
+posted one event at a time because `read(2)` holds the implicit-offset lock
+across the wait (as a real file does) — they use `pread(2)` now; the
+`sys/security/oes` hook-coverage program's `NOTIFY_SOCKET_POLL` failure is
+pre-existing (it fails identically on the stage 0 kernel without `device
+dq`, run 22 of that stage). Run 7: 230/233 (the OES test's own process
+was self-muted by OES's default and so saw no `FILE_CLOSE`; the test
+unmutes itself). Run 8: 231/233 — every dq case (70 of 70) and the stage 0
+`sys/file` suite pass; the two non-passes are the pre-existing
+`devctl_device_test` metadata break and the baselined OES socket-poll
+failure. WITNESS clean throughout.
+
+**What the review of the built stage found and changed.** A presented path
+is a link target only when the presented type is a vnode (sockets, ptys and
+shm put other strings in `kf_path`); the OES Bazel targets lacked the
+`opt_dq` and dq header dependencies; a fault in a `readv` buffer could
+return a count including a partial record (the uio is restored to the start
+of the record that did not copy); `dq.observe`'s `SUBSCRIBE` handed out an
+observer through the framework's reply descriptors, which arrive with full
+rights and unlimited transfer — the service installs it itself with the
+ioctl path's rights and locked state and returns the number; the Bazel
+`dq` package lacked `dq.ko` and Make installed the private headers; a
+revoke did not wake a requester sleeping on its per-requester quota; the
+tunables accepted zero. Declared rather than changed: a deadline that
+expires after the controller has read the event posts `INTERRUPT` like a
+signal does (the event is abandoned either way); after the reply hook's
+`fdrop` a `CLOSE` record may carry the controller as caller; an
+`aio_read` from the controller (only with `vfs.aio.enable_unsafe`) is not
+caught by the `EDEADLK` scan and waits out the deadline.
+
+**Measured cost, for open item 6.** The `EDEADLK` scan walks the caller's
+descriptor table under `FILEDESC_SLOCK` once per posted event; nothing
+else in 1a is paid per operation beyond the event itself.
 
 ## 8. Wire protocol
 
@@ -819,8 +908,10 @@ deadline-bounded, D59); `kern.dq.max_objects` per queue (65536);
 
 ## 9. Files
 
-`dofileread`/`dofilewrite` take `foffset_lock` for the implicit offset,
-then call `fo_read`/`fo_write`. `dq_read` takes the object's
+The fileop owns the implicit offset: `dofileread`/`dofilewrite` pass
+`offset = -1` and never touch `f_offset` (`sys_generic.c`), and `vn_read`
+and `shm_read` take `foffset_lock_uio` themselves (D91 corrected the
+revision 4 text here). `dq_read` does the same, then takes the object's
 `struct rangelock` (the same type a vnode embeds) for `[offset,
 offset+len)` shared, `dq_write` exclusive, giving POSIX read/write
 atomicity between requesters of one object. With `dp_cache = NONE` the
@@ -883,8 +974,9 @@ sendfile in flight) or cached under `dp_cache = DATA`. They are dropped by
 `INVALIDATE`, `REVOKE`, queue close and object close, each via
 `vm_object_page_remove` with `pmap_remove_all`, so a mapping observes the
 change on its next access (wired pages are handled there too,
-`vm_object.c:2059-2068`). `dp_cache = NONE` means `read`/`fstat` always
-post; it does not mean "no pages". The OBJ_SWAP/OBJT_VNODE dispatch sites
+`vm_object.c:2059-2068`). `dp_cache = NONE` means no page cache: `read`
+always posts; whether `fstat` posts is `dp_events & GETATTR` alone (D91);
+it does not mean "no pages".
 (`vm_mmap.c:1036` mincore, `vm_map.c:3312` charge, `:4660` fork copy,
 `vm_fault.c:2372`, `vm_pageout.c:552,902,1659,1941`, `vm_page.c:2888,3025`,
 `vm_meter.c:240`, `vm_object.c:246,970,2574`) are each reviewed in stage
@@ -1317,8 +1409,8 @@ stage 0 lands.
 | Stage | Content |
 |---|---|
 | 0 | descriptor completeness (4.1, 6): 11 fileops; ledger; image source and `p_image`; `mac_file_*` hooks incl. `receive` on channel installation; `pgo_sync`/`pgo_kinfo`; `sendfile_getobj` seam |
-| 1a | `/dev/dq`, queue, `MINT FILE`, `READ`, identity, `REVOKE`, lifecycle, observer queue, `dq.observe`, OES file events (open/read/stat/close) |
-| 1b | writes, `SETATTR`, `FSYNC`, dq pager (full ops), `mmap`, `sendfile`, cache `DATA`, locks, ioctl, kqueue notes, `INTERRUPT`, deadlines, `mac_dq`, isolation/abac file hooks |
+| 1a | `/dev/dq`, queue, `MINT FILE`, `READ`, `GETATTR`, identity, `REVOKE`, lifecycle, `INTERRUPT`, deadlines, observer queue, `dq.observe`, OES file events (read/stat/close, `DQ_REPLY`; open with `RESOLVE`, D89), the `mac_file_notify_reply` hook — **built 2026-11-07, 7.6** |
+| 1b | writes, `SETATTR`, `FSYNC`, dq pager (full ops), `mmap`, `sendfile`, cache `DATA`, locks, ioctl, kqueue notes, observer data bodies, `mac_dq`, isolation/abac file hooks |
 | 1c | attachment in `pwddesc`, four choke points, `RESOLVE` incl. `SOCKET`, `DIR`/`SYMLINK`, `READDIR`, virtual cwd/root, I5(b) refusals, `attached` trailer, inotify, launcher example |
 | 2 | sockets |
 | 3 | exec from a descriptor |
@@ -1445,6 +1537,13 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D83 | 2026-11-07 | Stage 0 presented as one subsystem, "descriptor operations" (6.4): one rule, a vocabulary (member, default, vnode body, sometimes-vnode, capability flag, open-mode flag, image source, pager seam, boundary check, ledger), one idiom per situation (the default answers — no `fo_X == NULL` probes except the lock flags that must precede side effects; `O_PATH` is the descriptor's `f_flag`, never a table identity; `fo_setattr` is the whole `vattr`; sometimes-vnode is `vn_X_opt` everywhere, `pipeops` included), DTrace probes `fd:::invfo`, `fd:::refused`, `proc:::exec__image__open/close`, and the documents and tests of record (`fileops(9)`, `image_source(9)`, the handbook chapter, the ledger) | user: "a kernel subsystem of record, DTrace-integrated, explainable" | a layer with a name and a contract is reviewable; a list of patches is not |
 | D84 | 2026-11-07 | Quality-pass review (12 findings) adopted: size/mode/owner in `fo_setattr` go through the table's direct operations (`file_setattr_direct`), never `setfmode`/`setfown`/`vn_truncate` directly (two regressions: skipped `vn_chmod`/`vn_chown` MAC and audit; a `/dev/ptmx` master's `/dev/fd/N` chmod reaching the device node); fdescfs keeps upstream's silent drop for a table without the member (the first draft's "the default decomposes" would have applied chmod to shm through `/dev/fd/N`, a behaviour change the pass had no mandate for); `O_PATH` pipes (Linux `/proc` reopen) and the MAC-before-dispatch order recorded as deliberate; upstream's `path_fileops` identity tests left; man-page fixes (`.Fn A , Fn B`, NAME list, a false veriexec claim) | review | behaviour fidelity is the stage-0 contract; "the descriptor answers" never means "the helper answers" |
 | D80 | 2026-11-07 | Stage 0 landed on `dev` as merge `45dffd334d8` (31 commits over `46b84718217`; `dev` had moved by 14 unrelated commits, merge clean). The merged GENERIC, built from `/usr/src`, booted the plane-on guest and passed `sys/file`, `sys/vm`, `sys/kern/execve` 200/201 (run 13; the broken case is the pre-existing `devctl_device_test` metadata). Ledger of record `f788bbd974a`: 283 references, no open category-A row. Nothing installed, no reboot | run 13 | stage 0 complete; stage 1a starts from this design |
+| D85 | 2026-11-07 | How `/dev/oes` is really delivered, and so how `/dev/dq` is (7.1): BSDDevice refuses the `oes` leaf; BSDFilesystem's `system.OES` endpoint (`requires = ["system.oes"]`) opens the node as root, rights-limits and hardens the fd; no isolation claim exists on it; `priv_check(PRIV_DRIVER)` runs on every open. `/dev/dq` is 0600 with the same unconditional check and an ILP32 refusal; the `system.DQ` endpoint with `requires = ["system.dq"]` is stage 4's provider; tests open the node as root in the VM. Revision 4's "claimed through the isolation service, BSDDevice opens it, `priv_check` a belt" is withdrawn | exploration of the tree before stage 1a | the design must describe the plane that exists |
+| D86 | 2026-11-07 | Stage 1a delivery of a minted descriptor: inheritance. Without `RESOLVE` (1c) the controller is the only receiver; it opens the queue `O_CLOFORK`, mints and forks, so the child holds the object and not the queue and the `EDEADLK` rule does not trip. The minted fd is `finstall_prop`'d with `CAP_XFER_NONE` (no `SCM_RIGHTS` transfer until an attachment exists to bound one — the I6 row for 1a/1b), `O_CLOEXEC`, rights = `dp_rights`. `fp->f_cred` of a minted object is the controller's credential (visible to `mac_file_check_*`'s `file_cred`); declared in `dq(4)`, revisited when `RESOLVE` installs | plan review | a served fd must cross `fork` to reach a requester before 1c |
+| D87 | 2026-11-07 | What a 1a object answers (`dq(4)` STAGE 1A): `MINT` accepts `dp_write/exec/mmap_shared_write/ioctl = DENY`, `dp_lock = EVENT`, `dp_cache ∈ {NONE, ATTR}`, `dp_events ⊆ {GETATTR, CLOSE}`, else `EINVAL` with `dm_reason`; no `FWRITE`, so `write`/`fallocate`/`fspacectl` are the generic layer's `EBADF` and `ftruncate` its `EINVAL` (`kern_ftruncate`); `fchmod`/`fchown`/`futimens`/`fchflags`/`F_SET_RW_HINT` `EPERM` (the non-owner's answer; `SETATTR` events in 1b); `fsync` 0; `mmap` `ENODEV` (pager 1b); `sendfile` `EINVAL` (1b); `copy_file_range` default `EINVAL`; ACL/extattr `EOPNOTSUPP`; `getdirentries` `ENOTDIR`; `FIOBMAP2` `EOPNOTSUPP` (no `VOP_BMAP`); `fstatfs` unfiltered by `prison_enforce_statfs` (no mount exists); locks refused by the stage 0 capability flags. Every answer pinned by `dq_stage1a_test` | plan | a read-only descriptor's answers are the honest 1a answers |
+| D88 | 2026-11-07 | Plane facts for 1c/4: `MAC_CAPABILITY_SVC_NO_ATTACHED` (D61) does not exist (flags are `NOTIFY`, `MINTABLE`, `REFATTACH`); the caller trailer is a pinned 24-byte ABI with three pad bytes after `abi`, so `attached` goes there additively or through a new ioctl; `CAPSULE_OP_DELEGATE_SERVICE` names are ≤ 16 bytes and allowlisted in capsule | exploration | recorded so 1c does not re-derive them |
+| D89 | 2026-11-07 | OES file events for served descriptors (14): `AUTH_FILE_READ 0x002B`, `AUTH_FILE_STAT 0x002C` (NOTIFY `0x1043`, `0x1044`), `NOTIFY_FILE_CLOSE 0x1045`, `NOTIFY_DQ_REPLY 0x1046`, within the subscription bitmap's 128-per-class bound; `FILE_OPEN` waits for a requester-side open (`RESOLVE`, 1c) — `MINT` is not an open. OES implements `mpo_file_check_read/stat`, `mpo_file_notify_close` and the new `mpo_file_notify_reply`, each returning at once unless `f_type == DTYPE_DQ` (the documented served-mark use; registering the fast-path hooks turns them on system-wide). Payload from `dq_file_ident()` with `OES_FILE_META_PRESENTED`, object id and controller nonce; `NOTIFY_DQ_REPLY` carries a count, never content (D41). New MAC hook `mac_file_notify_reply(controller, fp, op, error, count)` (`MAC_POLICY_PERFORM`, `docs/macf-new-hooks.md` 3.14), posted from the reply path with the object's file held | plan | the audit trail needs the controller's answers, not their bytes |
+| D90 | 2026-11-07 | `dq.observe` is a `mac_capability` service (`MINTABLE`) registered by the device: `co_connect` admits a `PRIV_DRIVER` credential (the device's rule, D85) until stage 4's capsule admission under `system.dq.observe`; `co_call` ops `LIST_QUEUES`, `LIST_OBJECTS`, `SUBSCRIBE` (an observer descriptor in `reply_fds`, metadata-only, D41). Queues carry a kernel-wide id. The I9 row "uid-0 shell without the capability sees nothing" is therefore deferred to stage 4, not satisfied in 1a | plan | observation stays a capability (D21) even before the plane delivers it |
+| D91 | 2026-11-07 | Independent review of the stage 1a plan ("not yet", 19 items, then "code may begin") adopted in full: the fileop owns `foffset_lock_uio` (section 9 corrected); ABI constants and padding (`DQ_MNAMELEN` 1024, `f_nvnodelistsize`, explicit pads, `dp_rights_version` + `cap_rights_is_valid`, distinct `DENY/EVENT/ALLOW`, dense `DQ_PC_*` pathconf index with `dq_pc_names[]`, ioctl group `'j'`); `fo_close` with `td == NULL`; `de_caller` from `td_ucred` with the `P_KPROC`/no-thread rule, never `f_cred`; the `EDEADLK` scan only in operations that post, `FILEDESC_SLOCK` before `q_mtx`; `DEV_DQ opt_dq.h` with `device dq`; the waiter reads the event state before the wake reason; one reader at a time on a queue, dequeue after a successful copy, re-check after relock; observer records `M_NOWAIT`; `fhold` may fail before the reply hook; `SEEK_HOLE` past the end is `ENXIO`; the fileops table answers verified against the real file (`fo_cmp`, `EVFILT_WRITE`, `poll_no_poll`, `FIODTYPE`, `vn_fcntl`, `bzero` + `PAGE_SIZE` floor in `fstat`) | plan review 2026-11-07 | a design that names its locks and errnos can be reviewed before it is code |
 
 ### 20.1 Origin
 
@@ -1471,3 +1570,23 @@ system call.
 5. An atomic `pdfork` variant that attaches at fork, closing the handshake
    window entirely (D55 makes the handshake safe; this would make it
    unnecessary).
+6. The `EDEADLK` rule scans the caller's descriptor table on every
+   operation that posts (15.4, D91); measure it with stage 1a in place and
+   decide whether a per-filedesc mark is warranted before stage 2's sockets
+   multiply the posting paths.
+7. Observer data bodies (`DQ_OBS_F_DATA`) for replies: in 1a the reply
+   buffer belongs to the waiter and only lengths reach observers; a data
+   observer arrives with the pager (1b), where pages can be shared.
+8. How `attached` reaches the `mac_capability` caller trailer (D88): the
+   three pad bytes after `abi`, or a new ioctl; and the `SVC_NO_ATTACHED`
+   flag D61 assumes (1c).
+9. BSDDevice's policy must refuse the `dq` leaf as it refuses `oes` when
+   the stage 4 provider exists; until then the node's mode and
+   `PRIV_DRIVER` are the rule (D85).
+10. Found while testing D89, not dq's: OES's `oes_client_is_muted()` fails
+    open when it cannot `mtx_trylock` the event process (`oes_client.c`,
+    "Can't check, don't mute"), so a self-muted client occasionally receives
+    its own events (a `NOTIFY_DQ_REPLY` reached the controller that way).
+    `oes_client_is_muted_by_token()` could decide from the captured
+    pid/genid without the lock; that changes OES mute semantics and is an
+    OES change, recorded here for its owner.
