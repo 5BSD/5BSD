@@ -88,7 +88,7 @@ Enforced by the kernel, not by controller policy. Each has tests (section
 | I4 | **Exec is a new principal.** The identity nonce rotates on every exec, served or real, in the exec core: `mac_file_execve_relabel` is wired where `mac_vnode_execve_relabel` runs today (`kern_exec.c:1028-1040`), independent of image type. |
 | I5 | **An attached process cannot gain credential, authority or namespace by any kernel path while attached — and nothing detaches it.** (Userland elevation paths such as BSDAuth are refused where they land in `proc_set_cred`; beyond that they are the plane rule of 11.6 step 4.) (a) exec: `imgp->credential_setid` is forced false, as the kernel already does for `P_TRACED` and capability mode (`kern_exec.c:717-723`); `authority_setid` is forced false; an image for which `mac_vnode_execve_will_transition` is true is refused `EACCES` between `kern_exec.c:710` and `:800`, before `exec_new_vmspace`, so the old image continues (`will_relabel` is not part of the predicate: `mac_capability` relabels every exec); the `#!` loop re-evaluates per interpreter. (b) non-exec: `setcred(2)`, `NODE_OP_SET_CRED`, BSDAuth elevation and `jail_attach(2)` targeting an attached process are refused `EPERM`; the `setuid` family keeps today's rules (an unprivileged member cannot raise). (c) attachment does **not** reduce privilege a process already had. |
 | I6 | **Served objects flow only inside the attachment.** A served fd may be installed in a process only if that process is attached to the object's queue, or is the minting controller: enforced at `SCM_RIGHTS` externalize, at `mac_capability` channel-message and `CALL`-reply fd installation (`mac_capability_dev.c:867-888`, `:1558-1636`), and at `MINT`. Until stage 1c exists, minted fds are `CAP_XFER_NONE` and leave the controller only by inheritance (test-only delivery). |
-| I7 | **Kernel-origin lookups never receive a served object.** Only a lookup whose `NDINIT` carries `NI_DQ_FD_OK` — set by the user-origin syscall entry (`kern_openat`, `do_execve` for `args->fname`, the `*at` family, the Linux wrappers) and never by `__elfN(load_file)`, `linker_load_file`, coredump, ktrace, acct, firmware, nfsd — may receive `FD`; others receive `PASS` or errno. Kernel-origin `socreate` callers are never consulted and get real sockets. |
+| I7 | **Kernel-origin lookups never receive a served object.** Only a lookup whose `NDINIT` carries `NI_DQ_FD_OK` — set by the user-origin syscall entry (`kern_openat`, `do_execve` for `args->fname`, the `*at` family, the Linux wrappers) and never by `__elfN(load_interp_file)`, `linker_load_file`, coredump, ktrace, acct, firmware, nfsd — may receive `FD`; others receive `PASS` or errno. Kernel-origin `socreate` callers are never consulted and get real sockets. |
 | I8 | **Capsicum is enforced by the kernel on what the controller returns.** Rights, `CAP_LOOKUP`, `UF_LOOKUP_CAPMODE` and `ENOTCAPABLE` for `..`/absolute are decided before any event is posted; a `RESOLVE FD` is installed with rights = start-dirfd caps ∩ `dp_rights` (ioctl and fcntl limits likewise), as `openat` does with `ni_filecaps` (`vfs_syscalls.c:1199-1207`); under `BENEATH`, `STRICTREL` or `RINROOT` the returned normalized `di_path` must extend the start's normalized `di_path` at a component boundary, else `ENOTCAPABLE`. Guarantee, stated honestly: the controller cannot be made to return an object *it labels* as outside the start; the kernel cannot verify bytes. |
 | I9 | **Every served operation is observable as served**, through the `mac_file_*` hooks and OES events carrying the controller nonce and object id; observation is a capability, not a uid; observers see metadata unless granted data. |
 | I10 | **Fail closed on revoke and queue close.** Operations fail `EIO`/`ECONNRESET`; cached pages are unmapped and dropped (`vm_object_page_remove` with `pmap_remove_all`); delivered-but-unread socket data is flushed (`sbflush`); waiters wake with an error; pending async page operations complete with error; knotes are cleared. Excepted and documented: bytes already copied into the requester's memory, including `MAP_PRIVATE` copy-on-write pages; pages already queued by `sendfile` into a socket buffer; I/O already handed to hardware. |
@@ -113,7 +113,7 @@ Enforced by the kernel, not by controller policy. Each has tests (section
 | `sys/vm/vm_mmap.c:470` | private-mapping write promotion keyed on `DFLAG_PRIVWRITE`, not `f_type` (the allowance is `PROT_WRITE` on a private mapping of a descriptor lacking `CAP_MMAP_W` — D74); `vm_mmap_file` refuses `prot ⊄ maxprot` with `EACCES` for every caller (a KASSERT was reachable from shm — D74) |
 | `sys/security/mac/mac_framework.h`, `mac_policy.h`, `mac_system.c` | `mac_file_check_fcntl`, `_lock`, `_read`, `_write`, `_stat`, `_setattr`, `_fsync`, `_exec`; `mac_file_execve_relabel` |
 | `sys/dev/mac_capability/mac_capability_dev.c` | `mac_file_check_receive` on channel-message and `CALL`-reply fd installation (I6) |
-| `sys/kern/kern_exec.c`, `imgact_elf.c`, `imgact_shell.c` | image-source abstraction with the vnode backend as moved code; `p_image` beside `p_textvp`; `NI_DQ_FD_OK` on `args->fname` only, never in `__elfN(load_file)`; the two `p_textvp == NULL` kernel-process tests (`vm_map.c:5148`, `vfs_aio.c:1227`) → `P_KPROC` |
+| `sys/kern/kern_exec.c`, `imgact_elf.c`, `imgact_shell.c` | image-source abstraction with the vnode backend as moved code; `p_image` beside `p_textvp`; `NI_DQ_FD_OK` on `args->fname` only, never in `__elfN(load_interp_file)`; the two `p_textvp == NULL` kernel-process tests (`vm_map.c:5148`, `vfs_aio.c:1200`) → `P_KPROC` (done, D72 series); the contract as refined in 6.2.1/6.2.2 (D75, D77) |
 | `sys/kern/kern_sendfile.c` | `sendfile_getobj` fills a `struct sendfile_src {ss_ops, ss_obj, ss_size, ss_vp, ss_shmfd}` whose ops are `lock`/`unlock` (pin the source for a chunk), `getsize` (NULL: fixed), `accessed`, `release`; the vnode and shm arms are today's two, the dq arm is stage 1b (D74) |
 | `sys/vm/vm_object.c`, `vm_pager.h`, `vnode_pager.c`, `device_pager.c` | `pgo_sync(object, offset, size, syncio, invalidate)` entered and left with the object write-locked after the backing-chain walk (`vnode_pager_sync` and `dev_pager_sync` are the moved bodies, `vm.old_msync` moves with the former, no method means nothing to write back); `pgo_kinfo(object, struct vm_object_kinfo *, td)` on a referenced unlocked object through `vm_object_kinfo_hold` (never anonymous or dying objects) / `vm_object_kinfo` / `vm_object_kinfo_release`, used by `kern_proc_vmmap_out`, linprocfs maps and `vm.objects`; two observer changes: linprocfs names device mappings by cdev path, `vm.objects` withholds cdev paths from jails (D74) |
 | `docs/descriptor-completeness-ledger.md`, `share/man/man9/file.9`, `docs/macf-new-hooks.md`, `docs/descriptor-addressing-ledger.md` | documentation |
@@ -308,8 +308,10 @@ struct image_source_ops {
 `is_mac_transition` carries the five phases the exec core runs today
 (`execve_will_transition`, `will_relabel`, `check_exec`, `transition`,
 `relabel`); the vnode backend calls the vnode hooks, the dq backend calls
-`mac_file_*` equivalents. Nonce rotation moves to the core, called for
-both backends (I4). `struct proc` gains `p_image {kind, vp, fp}`;
+`mac_file_*` equivalents. Nonce rotation stays where it is, in
+mac_capability's `execve_relabel` hook, which the policy implements for
+both the vnode and the `mac_file_*` entry points; nothing moves into the
+core (I4, D77). `struct proc` gains `p_image {kind, vp, fp, path}`;
 `p_textvp` stays valid for vnode images; the 20 `p_textvp` consumers
 (`mac_grantbylabel`, `mac_do`, `hwpmc`, `kern_shutdown`, `coredump_vnode`,
 `kern_proc`, `kern_fork`, `kern_exit`, veriexec, `vm_map_growstack`,
@@ -365,6 +367,93 @@ stage-0 fallback: `kern_reroot` (initproc only) → `EOPNOTSUPP` when
 `FETCH_PID_GBL` → the process is treated as unlabeled (`EPERM`/`EINVAL`,
 the answers those paths give an unlabeled vnode). Every other consumer
 already tolerates NULL (survey, 2026-11-07).
+
+#### 6.2.2 Review outcome (2026-11-07, D77)
+
+An independent kernel review of 6.2.1 found seven points to settle before
+code and six to record; all are adopted.
+
+1. **Pin lifetime.** `imgp->textset` is released at `exec_fail_dealloc` on
+   success too; the durable text references are the per-mapping ones
+   (`VOP_SET_TEXT_CHECKED` + `MAP_VN_EXEC`, released by `vm_map` at
+   unmap). For a served image the kernel provides **no** writer exclusion
+   or immutability: `is_map_text` is a no-op, the mapping carries no text
+   reference, and "ETXTBSY for writers" is the controller's promise, not
+   a kernel guarantee (I10 already concedes that revoke drops pages). A
+   pager-level text reference may come with the stage-1b pager; it is not
+   promised here. The nullfs `v_usecount` hazard concerns the vnode in the
+   old vmspace and stays as moved code in the vnode backend.
+2. **Authority.** The dq `is_authority(EXEC)` calls
+   `cap_authority_exec(p, NULL, NULL)`: besides matching pinned vnodes,
+   that function invalidates a held authority with `nexec > 0`, bumps the
+   generation and resets `p_cap_execution`; a no-op would let a process
+   keep pinned software authority across a served exec (I3, I5). Only
+   `prepare` is skipped for dq.
+3. **Construction state.** `imgp->is_ops != NULL` (set only after
+   construction succeeded) is the discriminator that `imgp->vp != NULL`
+   is today; `exec_fail` before construction touches nothing. Four states:
+   not constructed; constructed + error (`is_close(error)`: close, unset
+   text, `vput`); constructed + success (`is_close(0)`: close, unset text,
+   unlock — the reference now belongs to `p_image`); re-interpret
+   (`is_unset_text`, `is_mac(INTERP_ENTER)`, close, `vm_object_deallocate`,
+   `execve_nosetid`, in today's order). The `nameidata` moves into the
+   vnode backend's `is_data`, and `NDFREE_PNBUF` into its `is_close`.
+4. **Interpreter source.** `is_first_page` references `imgp->object` for
+   both callers; `__elfN(load_interp_file)` therefore deallocates it in
+   its close, where it did not reference before (neutral). It also never
+   called `VOP_CLOSE` on the interpreter vnode it opened (upstream does
+   not either): that is fixed in its own commit **before** the refactor
+   so the refactor stays byte-for-byte; the effect is a `VOP_CLOSE(FREAD)`
+   per dynamic exec — a no-op on ufs/zfs/nullfs, a released file handle
+   on fusefs (leaked today), `nfs_close` attribute invalidation on nfs,
+   and `vop_close_post` firing. Recorded in the ledger.
+5. **`p_image` lifecycle.** `kern_fork` holds the image `struct file`
+   (`fhold`) as it `vrefact`s `p_textvp`; `kern_exit` drops it, and the
+   drop may be the last reference, so `fo_close` of a served image under
+   `exit1` is an I11 case (post and continue). `is_release_old` runs where
+   the deferred `vrele(oldtextvp)` runs today: after `is_close` has
+   dropped the image lock and after `PROC_UNLOCK` (the same-vnode re-exec
+   case). `struct proc` growth is KBI only; `kinfo_proc.ki_textvp` stays
+   and is NULL for dq. `p_image` carries the presented path (`pi_path`),
+   so `kern.proc.pathname` and `procstat` show what `is_path` gave at
+   exec, not `""`.
+6. **Attribute synthesis.** `credential_changing` is computed from
+   `va_mode`'s set-id bits before the `MNT_NOSUID` test, so the dq
+   backend synthesises `va_mode` with set-id bits clear (MINT refuses
+   them, I3) and `va_uid`/`va_gid` as the caller's. veriexec:
+   `mpo_file_execve_relabel` sets `EXEC_ID(new)->valid = false` (the
+   crdup'd copy would otherwise carry the previous image's identity as
+   valid) and `mpo_file_check_exec` denies under enforce (D28); the
+   fingerprint path stays vnode-only and is never handed a NULL vnode.
+7. **Nonce rotation** stays in mac_capability's relabel hooks (6.2 text
+   corrected); `relabelcred` is allocated only when a policy answers
+   `will_relabel`, as today.
+8. Lock preconditions per op, asserted by the MAC entry points: `is_check`,
+   `is_read` (`IO_NODELOCKED`), every `is_mac` phase, `is_authority(PREPARE)`,
+   `is_install`, `is_accessed` run with the image locked; `TRANSITION` and
+   `RELABEL` also under `PROC_LOCK`, NOSLEEP — the `mac_file_*` equivalents
+   are NOSLEEP too; `INTERP_ENTER` allocates `M_WAITOK` under the image
+   lock as today. `is_lock` = `vn_lock(LK_SHARED | LK_RETRY)` reproduces
+   the `VOP_ISLOCKED` restore in `map_insert` because exec only holds
+   shared.
+9. The vnode `is_map_text` keeps `MPASS(vp->v_object == object)` (an
+   `imgp->object` comparison would be a tautology). dq mappings carry
+   `cow = 0` and may coalesce where `MAP_VN_EXEC` entries do not.
+10. `struct image_params` appends `is_ops`/`is_data` after
+    `interpreter_vp`; `vp`, `object`, `attr`, `opened`, `textset` stay, so
+    veriexec's hand-built `image_params` and `exec_check_permissions`'s
+    export keep working (KBI by size only).
+11. Construction keeps the `args->fname[0] == '/'` shortcut, the
+    `execpath = args->fname` fallbacks, `AUDIT_ARG_VNODE1` for the
+    interpreter-vnode and `fexecve` forms and `AUDIT_ARG_FD`; `is_commname`
+    for the fname form uses `binname` (the same bytes as `nd.ni_cnd`).
+12. I7 names the function `__elfN(load_interp_file)`. A served ELF's
+    `PT_INTERP` resolves against the real namespace only (`ENOENT` if the
+    interpreter exists only in the virtual one). The stage-0 `fexecve`
+    form keeps `fgetvp_exec`'s `EINVAL` for non-vnode descriptors.
+13. The five NULL fallbacks stand; `kern_reroot`'s is unreachable in
+    practice. For a dq-served script, `interpvplabel` stays NULL, so
+    policies see "no interpreter label" on the real interpreter's exec.
 
 ### 6.3 The ledger
 
@@ -1198,6 +1287,7 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D74 | 2026-11-07 | Plane-on VM runs 4–5 (183/184, the broken case pre-existing): the `fcntl(2)` record-lock cases probe `fo_advlock == NULL → EBADF` right after `fget`, because `path_test:path_lock` expects the descriptor refusal before argument validation (pipes and FIFOs, whose shared table has the member, validate first); `DFLAG_PRIVWRITE` is a Capsicum matter — `PROT_WRITE` on a private mapping of a descriptor lacking `CAP_MMAP_W`, not of a read-only one (shm already allowed the latter); `vm_mmap_file` refuses `prot ⊄ maxprot` with `EACCES`, a `CAP_MMAP_R`-only shm descriptor mapped private-writable having reached `vm_map_insert`'s KASSERT (`~/5bsd-issues/2026-11-07-mmap-shm-maxprot-assert.md`); `pgo_kinfo`'s lock contract is hold-under-lock, report-unlocked, with the two observer changes listed in 4.1; `sendfile_src` carries pin/size/notice/release ops | runs 4 and 5; code reading before the shm test ran | the in-tree suite is the oracle for error order; a KASSERT reachable from userland is a stage-0 fix, not a note |
 | D75 | 2026-11-07 | Image-source contract widened (6.2.1) after a 118-site survey of the exec path: lock/unlock, per-mapping text refs (`is_map_cow`/`is_map_text`, no `MAP_VN_EXEC` for dq), path/commname, authority, install/release-old, accessed and close become backend ops so the core is vnode-free; `__elfN(load_interp_file)` builds a vnode source from its own namei; `#!` re-interpret keeps `NI_DQ_FD_OK` to the first pass; five NULL-unsafe `p_textvp` consumers get fallbacks. Under independent review before code | exec survey 2026-11-07 | the 6.2 op list left vnode knowledge in the core at the lock dances, `map_insert`, `cap_authority_*` and the `p_textvp` swap |
 | D76 | 2026-11-07 | `mac_file_check_{fcntl,lock,read,write,stat,setattr,fsync}` built at the fileops boundary (`docs/macf-new-hooks.md` 3.4, 3.6, 3.9–3.13): read/write/stat fast-pathed, fcntl rare-fast-pathed to skip its extra lookup, setattr takes a `vattr` holding the attribute, fsync has no fd; the exec pair lands with 6.2.1. Plane-on run 6: 183/184 | run 6 | a policy chooses the layer; vnode hooks untouched |
+| D77 | 2026-11-07 | 6.2.1 review adopted (6.2.2): no kernel immutability promise for a served image; dq `is_authority(EXEC)` still calls `cap_authority_exec(p, NULL, NULL)`; `is_ops != NULL` is the construction discriminator with four states; `is_first_page` references the object for both callers and the interpreter loader deallocates and `VOP_CLOSE`s (two neutral commits before the refactor); `p_image` held across fork/exit and carrying the presented path; synthesised `va_mode` without set-id bits; veriexec's file relabel invalidates the identity; nonce rotation stays in mac_capability's hooks; per-op lock preconditions | independent kernel review of 6.2.1 | seven must-fix items, all in the contract's blind spots around success-path cleanup and policy side effects |
 
 ### 20.1 Origin
 
