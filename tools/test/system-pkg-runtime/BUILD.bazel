@@ -2,3 +2,5 @@
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
 bsd_python_test(name = "serial_terminal_test", src = "serial-terminal-test.py",
     data = ["serial_terminal.py"], visibility = ["//visibility:public"])
+bsd_python_test(name = "installed_audit_test", src = "installed-audit-test.py",
+    data = ["installed_audit.py"], visibility = ["//visibility:public"])

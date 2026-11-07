@@ -1165,6 +1165,31 @@ T_flag_mtree_cleanup()
 	common_cleanup
 }
 
+# Input mtree flags must survive image construction without host chflags.
+atf_test_case file_flags cleanup
+file_flags_body()
+{
+	local flag
+
+	create_test_dirs
+	printf '. type=dir mode=0755 flags=none\n' > "$TEST_SPEC_FILE"
+	for flag in none schg sappnd sunlnk uarch nodump rdonly system hidden reparse offline sparse; do
+		printf '%s\n' "$flag" > "$TEST_INPUTS_DIR/$flag"
+		printf './%s type=file mode=0644 flags=%s\n' "$flag" "$flag" >> "$TEST_SPEC_FILE"
+	done
+	atf_check $MAKEFS -s 1g -o rootpath=/ -o poolname=$ZFS_POOL_NAME \
+	    -F "$TEST_SPEC_FILE" "$TEST_IMAGE" "$TEST_INPUTS_DIR"
+	import_image
+	# Check the exact on-disk flags, including an explicit zero-flags control.
+	# Do not use mtree repair flags or depend on mtree's missing-path exit code.
+	atf_check -o save:flags.diff mtree -e -f "$TEST_SPEC_FILE" -p "$TEST_MOUNT_DIR"
+	atf_check -o empty cat flags.diff
+}
+file_flags_cleanup()
+{
+	common_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case autoexpand
@@ -1175,6 +1200,7 @@ atf_init_test_cases()
 	atf_add_test_case devfs
 	atf_add_test_case empty_dir
 	atf_add_test_case empty_fs
+	atf_add_test_case file_flags
 	atf_add_test_case file_extend
 	atf_add_test_case file_sizes
 	atf_add_test_case hard_links

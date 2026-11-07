@@ -352,6 +352,41 @@ fs_populate_time(zfs_fs_t *fs, char *attrbuf, struct timespec *ts,
 	fs_populate_attr(fs, attrbuf, timebuf, ind, szp);
 }
 
+/* Match the flags exposed by FreeBSD ZFS getattr/setattr. */
+static uint64_t
+fs_bsdflags(uint32_t bsdflags, const char *name)
+{
+	static const struct {
+		uint32_t bsd;
+		uint64_t zfs;
+	} map[] = {
+		{ SF_IMMUTABLE, ZFS_IMMUTABLE },
+		{ SF_APPEND, ZFS_APPENDONLY },
+		{ SF_NOUNLINK, ZFS_NOUNLINK },
+		{ UF_ARCHIVE, ZFS_ARCHIVE },
+		{ UF_NODUMP, ZFS_NODUMP },
+		{ UF_READONLY, ZFS_READONLY },
+		{ UF_SYSTEM, ZFS_SYSTEM },
+		{ UF_HIDDEN, ZFS_HIDDEN },
+		{ UF_REPARSE, ZFS_REPARSE },
+		{ UF_OFFLINE, ZFS_OFFLINE },
+		{ UF_SPARSE, ZFS_SPARSE },
+	};
+	uint64_t flags;
+	u_int i;
+
+	flags = 0;
+	for (i = 0; i < nitems(map); i++) {
+		if ((bsdflags & map[i].bsd) != 0) {
+			flags |= map[i].zfs;
+			bsdflags &= ~map[i].bsd;
+		}
+	}
+	if (bsdflags != 0)
+		errx(1, "%s: unsupported ZFS file flags %#x", name, bsdflags);
+	return (flags);
+}
+
 static void
 fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
     dnode_phys_t *dnode)
@@ -431,8 +466,8 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 	}
 
 	daclcount = nitems(aces);
-	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_ARCHIVE |
-	    ZFS_AV_MODIFIED;
+	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_AV_MODIFIED |
+	    fs_bsdflags(FSINODE_ST_FLAGS(*cur->inode), cur->name);
 	gen = 1;
 	gid = sb->st_gid;
 	mode = sb->st_mode;

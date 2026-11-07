@@ -7923,3 +7923,18 @@ canonical effective configuration and requires UsePAM=yes before authentication.
 These selected-profile results do not establish exhaustive installed metadata,
 actual version/BE upgrades, cross/custom completeness or comparative performance.
 Make remains production/default; see the qualification document for exact evidence.
+.Pp
+The complete-package runtime driver also accepts a format-2 VM plan with
+metalog_output selecting the captured image METALOG and an explicit
+audit_deadline_seconds within the whole-VM deadline.
+It requires complete baseline record coverage and streams a hash-bound
+specification into the actual guest's read-only mtree over authenticated SSH.
+It compares types, numeric ownership, modes, flags, symlink text and regular-file
+SHA-256.  Declared empty directories are checked and their undeclared contents
+are pruned using inventory-derived mtree ignore records.  Acceptance requires
+exit zero and an empty diagnostic log, including missing-path diagnostics.
+It does not compare timestamps, extra runtime files or hardlink inode
+identity.  Every baseline difference fails and is retained for review, including
+legitimate firstboot changes.  Format-1 startup evidence does not establish this
+additional audit.  The maintained format-5 target/test interface carries
+//tools/test/system-pkg-runtime:installed_audit_test without a new frontend option.

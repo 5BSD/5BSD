@@ -21,6 +21,7 @@ sys.path.insert(0,str(SOURCE/'tools/test/daemon-runtime'))
 from qualification_artifacts import resolve_many,digest
 from host_resources import HostMonitor
 from serial_terminal import TerminalSizeResponder
+from installed_audit import specification
 
 FAILURE_DIAGNOSTICS = re.compile(rb"panic:|Fatal trap|lock order reversal|non-sleepable locks held|[A-Za-z_][A-Za-z0-9_]*: parameter not set")
 
@@ -97,8 +98,10 @@ def main():
     required={'format','qualification','target','image_output','report_output','qemu','qemu_img','bios','ssh',
               'qemu_data','cpus','memory_mib','deadline_seconds','max_rss_mib','max_overlay_mib',
               'console_user','password','ssh_user','user_uid','terminal_rows','terminal_columns'}
-    if set(plan)!=required or type(plan['format']) is not int or plan['format']!=1:
-        raise ValueError('exact format-1 VM plan fields required')
+    if type(plan.get('format')) is int and plan['format']==2:
+        required.update(('metalog_output','audit_deadline_seconds'))
+    if set(plan)!=required or type(plan['format']) is not int or plan['format'] not in (1,2):
+        raise ValueError('exact format-1 or format-2 VM plan fields required')
     if type(plan['user_uid']) is not int or not 0<plan['user_uid']<2**31:
         raise ValueError('explicit ordinary guest user UID required')
     for field in ('console_user','ssh_user'):
@@ -106,6 +109,8 @@ def main():
             raise ValueError('invalid guest account name')
     if not plan['password'] or any(ord(c)<32 or ord(c)==127 for c in plan['password']):
         raise ValueError('single-line private fixture password required')
+    if plan['format']==2 and (type(plan['audit_deadline_seconds']) is not int or not 0<plan['audit_deadline_seconds']<=plan['deadline_seconds']):
+        raise ValueError('positive audit deadline within the whole-VM budget required')
     TerminalSizeResponder(plan['terminal_rows'],plan['terminal_columns'])
     if not Path(plan['qemu_data']).is_absolute() or not Path(plan['qemu_data']).is_dir():
         raise ValueError('explicit QEMU data directory required')
@@ -115,14 +120,18 @@ def main():
         assert type(plan[key]) is int and plan[key]>0
     if plan['cpus']>os.cpu_count() or not 512<=plan['memory_mib']<=24576:raise ValueError('invalid explicit VM resources')
     q=Path(plan['qualification']);target=plan['target']
-    resolved=resolve_many(q,[(target,plan['image_output']),(target,plan['report_output'])])
+    selections=[(target,plan['image_output']),(target,plan['report_output'])]
+    if plan['format']==2:selections.append((target,plan['metalog_output']))
+    resolved=resolve_many(q,selections)
     image,build_report=resolved[0][0],json.loads(resolved[1][0].read_text())
     assert build_report['status']=='passed' and digest(image)==build_report['image_sha256']
+    audit_spec=specification(resolved[2][0].read_bytes(),build_report) if plan['format']==2 else None
     tools={name:Path(plan[name]).resolve(strict=True) for name in ('qemu','qemu_img','bios','ssh')}
     bindings={str(path):digest(path) for path in tools.values()}
-    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py')]
+    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')]
     source_bindings={str(path):digest(path) for path in sources}
     out.mkdir(mode=0o700)
+    if audit_spec is not None:(out/'installed.mtree').write_bytes(audit_spec)
     monitor=HostMonitor(out/'host-resources.jsonl',plan['max_rss_mib'])
     report=dict(format=1,status='running',scope='Normal complete package-image BIOS/ZFS boot, serial login/PAM, SSH password/PAM and su; not secure boot, upgrade or comparative performance',image=[b for p,b in resolved],tools=bindings,runner_sources=source_bindings,plan_sha256=digest(args.plan),checks=[])
     def save():(out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -211,6 +220,39 @@ def main():
         check('ssh-reject-wrong-password',lambda:ssh('ssh-negative','id -u',plan['password']+'-wrong',expected=255))
         check('su-password-pam',lambda:ssh('su-positive',"su -m root -c 'test \"$(id -u)\" -eq 0 && echo SU_ROOT_OK'",plan['password'],tty=True,answer=plan['password']))
         check('su-reject-wrong-password',lambda:ssh('su-negative','su -m root -c "id -u"',plan['password'],expected=1,tty=True,answer=plan['password']+'-wrong'))
+        if audit_spec is not None:
+            # Stream the complete spec over authenticated SSH into read-only
+            # mtree. File redirection prevents pipe backpressure; monitor the
+            # owned guest throughout. Never request mtree repair/update flags.
+            audit_command=[str(tools['ssh']),'-F','/dev/null','-p',str(port),
+                '-o','UserKnownHostsFile='+str(known),'-o','GlobalKnownHostsFile=/dev/null',
+                '-o','StrictHostKeyChecking=yes','-o','IdentityAgent=none',
+                '-o','PreferredAuthentications=password','-o','PubkeyAuthentication=no',
+                '-o','KbdInteractiveAuthentication=no','-o','NumberOfPasswordPrompts=1',
+                '-o','ConnectTimeout=20',plan['console_user']+'@127.0.0.1',
+                '/usr/sbin/mtree -e -f /dev/stdin -p /']
+            env={'PATH':'/bin:/usr/bin','HOME':str(out),'LC_ALL':'C','DISPLAY':'qualification',
+                'SSH_ASKPASS_REQUIRE':'force','SSH_ASKPASS':str(askpass),'QUAL_SSH_PASSWORD':plan['password']}
+            audit_log=out/'installed-audit.log'
+            with (out/'installed.mtree').open('rb') as manifest,audit_log.open('xb') as log:
+                child=subprocess.Popen(audit_command,stdin=manifest,stdout=log,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+                until=time.monotonic()+plan['audit_deadline_seconds']
+                try:
+                    while child.poll() is None:
+                        console.tick()
+                        if time.monotonic()>until:raise TimeoutError('installed mtree audit deadline')
+                        if audit_log.stat().st_size>32*1024**2:raise ValueError('installed audit exceeds evidence budget')
+                        time.sleep(0.2)
+                finally:
+                    if child.poll() is None:child.kill();child.wait()
+            audit_passed=child.returncode==0 and audit_log.stat().st_size==0
+            report['installed_audit']=dict(status='passed' if audit_passed else 'failed',
+                exit_status=child.returncode,specification_sha256=digest(out/'installed.mtree'),
+                log_sha256=digest(audit_log),files=build_report['files'],directories=build_report['directories'],
+                scope='All baseline object types, UID/GID, modes, flags, symlink targets and regular SHA256; excludes timestamps, extra runtime objects and hardlink inode identity')
+            save()
+            if not audit_passed:raise RuntimeError('complete installed-tree audit differs; retain every difference for review, see installed-audit.log')
+            check('installed-tree-audit',lambda:'complete captured baseline matches')
         console.send('/sbin/shutdown -p now')
         until=time.monotonic()+180
         while process.poll() is None:

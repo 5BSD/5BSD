@@ -1,5 +1,16 @@
 # Bazel qualification
 
+## Complete installed audit exposes image flag loss (2026-11-07)
+
+Fresh normal VM R6 repeats all 12 startup/authentication checks, then its complete
+35,351-object audit fails. Native makefs ZFS ignored declared flags, dropping all
+13 schg declarations and adding uarch. The constructor now maps supported input
+flags and rejects unsupported bits. Native build and rootless read-only zdb
+inspection pass; the new imported-image ATF case and corrected full-image runtime
+still need qualification. Firstboot account/marker differences remain explicit,
+without blanket configuration exclusions. See INSTALLED-TREE-AUDIT-QUALIFICATION.md.
+Make remains default; full migration and installed audit are not complete.
+
 ## Complete AMD64 package image passes normal startup and authentication (2026-11-06)
 
 Image R9 passes its full 447-package construction and five native test targets.

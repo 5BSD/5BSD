@@ -71,3 +71,38 @@ readers cannot consume test input. The actual guest stty/resizewin result must
 match the declared dimensions. Kernel and startup-shell failure diagnostics fail
 qualification immediately. Run `//tools/test/system-pkg-runtime:serial_terminal_test`
 through the normal frontend inputs to test fragmented protocol handling.
+
+## Complete installed baseline audit
+
+Use plan `format: 2` and add `metalog_output` naming the captured image target's
+`.METALOG` output, plus a positive `audit_deadline_seconds` within the whole-VM
+deadline. The runner authenticates the construction report and METALOG,
+requires exact coverage of all declared files and directories, and binds every
+regular file to its captured construction SHA-256. It streams the resulting
+`installed.mtree` over pinned-host SSH to the actual guest's read-only
+`/usr/sbin/mtree -e -f /dev/stdin -p /`. No repair/update flags are used.
+
+Declared directories with no baseline children receive mtree `ignore`: their own
+metadata is checked, while undeclared runtime children are not traversed. All
+baseline parents must themselves be declared directories. This is derived from
+the complete inventory, not a device-path exemption list. Acceptance requires
+exit zero **and an empty diagnostic log**: mtree can report missing paths or
+traversal errors without a failing exit status.
+
+The audit compares object type, numeric UID/GID, permissions, flags, symlink
+text and regular-file content. `-e` permits extra runtime objects; it does not
+omit declared objects. This baseline check does not verify timestamps, hardlink
+inode identity or inventory newly created runtime files. Those limits are
+recorded in the result. Normal firstboot may change packaged accounts, databases
+and fixture state: every difference is retained in `installed-audit.log`, causes
+failure, and requires review against its actual producer. No configuration tag,
+mutable directory or service name silently exempts baseline records.
+
+The host retains the complete specification and log hashes, object counts and
+actual mtree exit status. A failed audit is not a normal-shutdown pass: the
+runner stops its owned VM and retains the overlay. Format 1 preserves the earlier
+startup/authentication scope without claiming this additional installed audit.
+Run `//tools/test/system-pkg-runtime:installed_audit_test` through the maintained
+frontend to verify complete coverage and rejection of changed, missing, duplicate
+or unsupported specification records. No new C frontend option is needed: the
+existing format-5 target/test inputs carry this test and the image artifacts.
