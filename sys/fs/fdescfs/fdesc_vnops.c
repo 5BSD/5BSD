@@ -587,11 +587,18 @@ fdesc_getattr(struct vop_getattr_args *ap)
  * fo_setattr.  A descriptor with no settable attributes keeps the old
  * behaviour: every change is silently dropped except chflags(2), which is
  * refused.
+ *
+ * The fdesc vnode contributes only the descriptor number, so its lock is
+ * dropped while the descriptor's fileops run: they lock the file's own
+ * vnode, and holding the fdesc lock over that orders fdescfs before every
+ * other filesystem, the reverse of what unmounting fdescfs (covered vnode,
+ * then fdesc root) establishes.
  */
 static int
 fdesc_setattr(struct vop_setattr_args *ap)
 {
 	struct vattr *vap = ap->a_vap;
+	struct vnode *vp = ap->a_vp;
 	struct vattr rest;
 	struct file *fp;
 	struct thread *td = curthread;
@@ -602,10 +609,10 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	/*
 	 * Can't mess with the root vnode
 	 */
-	if (VTOFDESC(ap->a_vp)->fd_type == Froot)
+	if (VTOFDESC(vp)->fd_type == Froot)
 		return (EACCES);
 
-	fd = VTOFDESC(ap->a_vp)->fd_fd;
+	fd = VTOFDESC(vp)->fd_fd;
 	error = fget(td, fd, cap_rights_init_one(&rights, CAP_EXTATTR_SET),
 	    &fp);
 	if (error != 0)
@@ -614,6 +621,7 @@ fdesc_setattr(struct vop_setattr_args *ap)
 		fdrop(fp, td);
 		return (vap->va_flags != VNOVAL ? EOPNOTSUPP : 0);
 	}
+	VOP_UNLOCK(vp);
 	/* O_PATH descriptors were never allowed to truncate. */
 	if (vap->va_size != VNOVAL && fp->f_ops == &path_fileops) {
 		error = EBADF;
@@ -642,6 +650,7 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	error = fo_setattr(fp, &rest, ap->a_cred, td);
 out:
 	fdrop(fp, td);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	return (error);
 }
 
