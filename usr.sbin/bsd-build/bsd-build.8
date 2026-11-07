@@ -7938,3 +7938,17 @@ identity.  Every baseline difference fails and is retained for review, including
 legitimate firstboot changes.  Format-1 startup evidence does not establish this
 additional audit.  The maintained format-5 target/test interface carries
 //tools/test/system-pkg-runtime:installed_audit_test without a new frontend option.
+.Pp
+The runtime driver's format-3 plan adds firstboot_policy and
+firstboot_deadline_seconds.  Its explicit policy binds account baselines and the
+fixture producer to image payload hashes, declares exact account/group changes
+and consumed empty markers, and selects a captured native database comparator.
+Both positive and negative authentication must pass before password changes are
+accepted.  Live password databases must match actual private pwd_mkdb regeneration
+by logical keys and values; live state is never rebuilt in place.
+The complete original mtree audit is retained.  Only independently proven content
+changes and marker removals, plus explicitly selected ZFS uarch bookkeeping, are
+reconciled.  Other security flags, modes, ownership, links and content remain
+exact.  Native comparator/account/diagnostic tests run through the existing
+format-5 targets/tests interface.  This is runtime fixture qualification, not BIP
+or a production mutability policy.

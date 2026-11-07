@@ -106,3 +106,52 @@ Run `//tools/test/system-pkg-runtime:installed_audit_test` through the maintaine
 frontend to verify complete coverage and rejection of changed, missing, duplicate
 or unsupported specification records. No new C frontend option is needed: the
 existing format-5 target/test inputs carry this test and the image artifacts.
+
+## Prove firstboot transitions
+
+Format 3 adds `firstboot_policy` (an explicit JSON file) and
+`firstboot_deadline_seconds`. It retains the complete original mtree spec and raw
+log. The policy has exact format-1 fields:
+
+* `baseline_master`, `baseline_group`: source files whose hashes must equal the
+  captured image's `/etc/master.passwd` and `/etc/group` payloads.
+* `producer`: the source whose hash must equal the actual `/etc/rc.local` payload.
+* `changes`: account name to declared field changes. Existing accounts preserve
+  every undeclared field. New accounts require every field except name/password:
+  `uid`, `gid`, `class`, `change`, `expire`, `gecos`, `home`, `shell`, as strings.
+* `group_additions`: existing group name to an exact ordered list of added users.
+* `consumed_files`: distinct canonical paths of declared empty firstboot markers.
+* `zfs_archive_tracking`: explicit boolean permitting only the `uarch` bookkeeping
+  bit to vary. Security flags, modes and ownership remain exact.
+* `db_compare`: `qualification`, `target`, `output` selecting the actual captured
+  `//tools/test/system-pkg-runtime:db_compare` executable built through the normal
+  frontend. No mutable executable lookup or host replacement is used.
+
+The account set must match the console/SSH accounts whose positive **and negative**
+authentication checks have already passed. A fresh guest tar snapshot includes
+master.passwd, group, public passwd and both database files. Account/group content
+and order are checked against the complete baseline and declared changes; no
+other account or membership may change. Password salts are not predicted: only
+the exercised accounts may carry new encoded passwords. The actual live databases
+must then equal all logical records from real guest `pwd_mkdb` regeneration of
+the checked master, in a new private directory. The public passwd projection is
+also exact. The comparator opens both databases read-only and checks both key sets
+and values; it does not compare physical database page layout.
+
+The temporary helper and rebuild directory are removed after success. Live account
+files are never rewritten. Each consumed marker is separately checked absent.
+The audit then accepts only content hashes bound to these proofs, those specific
+marker removals, and the explicitly selected archive bit. It rejects every other
+raw diagnostic, missing object or security metadata change. The raw mtree status
+(normally 2 for real firstboot changes), complete diagnostics, classified changes,
+input hashes, commands, snapshot and proof are retained. Format 2 remains the
+strict unchanged-baseline check. These are fixture qualification inputs, not an
+operating-system mutability policy or BIP.
+
+Relevant native test targets are `db_compare_test`, `firstboot_accounts_test` and
+`mtree_reconcile_test` in this package. The DB test uses actual declared native
+pwd_mkdb and shell inputs, tests equal/changed/extra logical records and verifies
+that comparison does not modify either database. The Python tests reject account,
+membership, password-proof and raw-diagnostic drift. Existing frontend format-5
+`targets`/`tests` carry these targets; no C frontend option or backend switch is
+needed.

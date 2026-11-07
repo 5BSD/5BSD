@@ -109,3 +109,36 @@ rollback and old-BE removal. The earlier R5 startup/authentication pass remains
 valid in its narrower scope. No exhaustive installed-tree pass is claimed.
 Make remains default; BIP, verified boot and global performance qualification
 are not established by this work.
+
+## Corrected-image raw runtime audit R7
+
+`bazel-system-normal-boot-vm-r7-20261107` passes all 12 startup/authentication
+checks on the actual R10 image. Its complete raw installed audit still **fails**
+with status 2, now showing only archive bookkeeping, five provisioned account
+file hashes and the consumed firstboot marker. No dropped schg flag, other
+permission/ownership/type/link or unrelated content difference is reported. The
+owned VM is stopped; this is not a normal-shutdown pass. It observed 520 QEMU
+samples, 2,370,789,376 bytes maximum RSS, 525.70 s last CPU and 532.49 s last elapsed
+sample; allocated overlay max 16,409,088 bytes. Host load was approximately 34 on
+16 logical CPUs with unrelated compilation. This is not a controlled performance
+comparison and does not attribute a timing regression to constructor flags.
+
+The new format-3 driver keeps the original complete specification and raw mtree
+result. It requires hash-bound baseline/producer inputs and an explicit firstboot
+transition policy. Exact complete account/group/public content is checked; only
+already-authenticated accounts may have new salted passwords. It stages a
+captured native read-only db(3) comparator and uses real guest pwd_mkdb in a new
+private directory, checking every live DB key/value in both directions. Live
+account state is never rewritten. Content hashes become reconciliation proof only
+after these checks, not by treating observed hashes as expected without validation.
+Consumed empty markers must be independently absent. Optional normalization is
+limited to uarch; all security flag or other metadata changes fail. Full raw
+logs and structured reconciliation remain reviewable.
+
+`bazel-account-db-native-r2-20261107` passes three actual generated-database test
+cases: equal records, changed records, and extra records in either direction,
+including before/after byte checks proving the comparator is read-only. `bazel-firstboot-proof-native-r1-20261107` passes all four selected native test
+targets (13 cases: DB comparison, accounts, mtree reconciliation and complete
+specification coverage), and captures the real comparator executable. Actual
+format-3 VM qualification remains pending. No reconciled runtime pass is claimed yet. Existing maintained
+frontend target/test inputs carry all helpers; the C backend/default is unchanged.
