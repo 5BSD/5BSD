@@ -4440,6 +4440,20 @@ sendfile_fallback(struct thread *td, struct file *fp, l_int out,
 	} else
 		out_offset = 0;
 
+#ifdef MAC
+	/*
+	 * The boundary checks kern_fileread and kern_filewrite make (D94):
+	 * the requester's credential against the input file's for the read
+	 * and the output file's for the write, once for the loop as
+	 * kern_sendfile checks once.
+	 */
+	error = mac_file_check_read(td->td_ucred, fp->f_cred, fp);
+	if (error != 0)
+		goto drop;
+	error = mac_file_check_write(td->td_ucred, ofp->f_cred, ofp);
+	if (error != 0)
+		goto drop;
+#endif
 	flags = FOF_OFFSET | FOF_NOUPDATE;
 	bufsz = min(count, maxphys);
 	buf = malloc(bufsz, M_LINUX, M_WAITOK);
