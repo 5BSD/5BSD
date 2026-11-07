@@ -12,7 +12,8 @@
 .Nm fo_setattr ,
 .Nm fo_fadvise ,
 .Nm fo_readdir ,
-.Nm fo_copy_file_range
+.Nm fo_copy_file_range ,
+.Nm fo_acl
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -31,6 +32,8 @@
 .Fn fo_readdir "struct file *fp" "struct uio *uio" "off_t *basep" "struct thread *td"
 .Ft int
 .Fn fo_copy_file_range "struct file *infp" "off_t *inoffp" "struct file *outfp" "off_t *outoffp" "size_t *lenp" "unsigned int flags" "struct thread *td"
+.Ft int
+.Fn fo_acl "struct file *fp" "int op" "int type" "struct acl *aclp" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -364,6 +367,46 @@ through the default.
 returns
 .Er EINVAL .
 .El
+.Ss fo_acl
+.Fn fo_acl
+answers the
+.Fn __acl_get_fd ,
+.Fn __acl_set_fd ,
+.Fn __acl_delete_fd
+and
+.Fn __acl_aclcheck_fd
+system calls, selected by
+.Fa op
+.Pq Dv FO_ACL_GET , Dv FO_ACL_SET , Dv FO_ACL_DELETE , Dv FO_ACL_CHECK ,
+for the
+.Vt acl_type_t
+.Fa type .
+The system calls record the descriptor audit argument and refuse set and
+delete on an
+.Dv O_PATH
+descriptor with
+.Er EBADF ,
+as they always did; get and check accept one.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_acl
+calls the
+.Fn vacl_*
+helper for the operation, each of which locks the vnode and runs its own
+MAC check and audit record before
+.Xr VOP_GETACL 9 ,
+.Xr VOP_SETACL 9
+or
+.Xr VOP_ACLCHECK 9 .
+Regular files, directories,
+.Dv O_PATH
+files, FIFOs, devfs nodes and vnode-carrying pseudo-terminal masters and
+linuxkpi files use it, and get whatever their filesystem answers.
+.It everything else
+.Fn invfo_acl
+returns
+.Er EINVAL .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
@@ -379,14 +422,18 @@ value.
 .Xr futimens 2 ,
 .Xr getdirentries 2 ,
 .Xr posix_fadvise 2 ,
+.Xr acl 3 ,
 .Xr fdescfs 4 ,
 .Xr VFS_STATFS 9 ,
 .Xr VFS_SYNC 9 ,
 .Xr vnode 9 ,
+.Xr VOP_ACLCHECK 9 ,
 .Xr VOP_ADVISE 9 ,
 .Xr VOP_FSYNC 9 ,
+.Xr VOP_GETACL 9 ,
 .Xr VOP_PATHCONF 9 ,
 .Xr VOP_READDIR 9 ,
+.Xr VOP_SETACL 9 ,
 .Xr VOP_SETATTR 9
 .Sh HISTORY
 The
@@ -398,9 +445,10 @@ table has existed since
 .Fn fo_fsync ,
 .Fn fo_setattr ,
 .Fn fo_fadvise ,
-.Fn fo_readdir
-and
+.Fn fo_readdir ,
 .Fn fo_copy_file_range
+and
+.Fn fo_acl
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

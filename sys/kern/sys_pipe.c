@@ -208,6 +208,7 @@ static fo_statfs_t	pipe_statfs;
 static fo_fsync_t	pipe_fsync;
 static fo_setattr_t	pipe_setattr;
 static fo_readdir_t	pipe_readdir;
+static fo_acl_t		pipe_acl;
 
 const struct fileops pipeops = {
 	.fo_read = pipe_read,
@@ -228,6 +229,7 @@ const struct fileops pipeops = {
 	.fo_fsync = pipe_fsync,
 	.fo_setattr = pipe_setattr,
 	.fo_readdir = pipe_readdir,
+	.fo_acl = pipe_acl,
 	.fo_flags = DFLAG_PASSABLE
 };
 
@@ -2127,6 +2129,18 @@ pipe_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
 	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
 		return (vn_readdir(fp, uio, basep, td));
 	return (invfo_readdir(fp, uio, basep, td));
+}
+
+static int
+pipe_acl(struct file *fp, int op, int type, struct acl *aclp,
+    struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_acl(fp, op, type, aclp, td));
+	return (invfo_acl(fp, op, type, aclp, td));
 }
 
 static int

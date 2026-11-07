@@ -20,6 +20,7 @@ ATF_TESTS_C+=	fsetattr_test
 ATF_TESTS_C+=	fadvise_test
 ATF_TESTS_C+=	getdirentries_test
 ATF_TESTS_C+=	copy_file_range_test
+ATF_TESTS_C+=	acl_fd_test
 
 PROGS+=		flock_helper
 

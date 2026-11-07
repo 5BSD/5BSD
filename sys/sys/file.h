@@ -86,6 +86,7 @@ struct nameidata;
 
 struct file;
 struct filecaps;
+struct acl;
 struct kaiocb;
 struct kinfo_file;
 struct statfs;
@@ -173,7 +174,15 @@ typedef int fo_readdir_t(struct file *fp, struct uio *uio, off_t *basep,
 typedef int fo_copy_file_range_t(struct file *infp, off_t *inoffp,
 		    struct file *outfp, off_t *outoffp, size_t *lenp,
 		    unsigned int flags, struct thread *td);
+typedef int fo_acl_t(struct file *fp, int op, int type, struct acl *aclp,
+		    struct thread *td);
 typedef int fo_spare_t(struct file *fp);
+
+/* fo_acl operations. */
+#define	FO_ACL_GET	0	/* __acl_get_fd(2): copy the ACL out to aclp */
+#define	FO_ACL_SET	1	/* __acl_set_fd(2): set the ACL from aclp */
+#define	FO_ACL_DELETE	2	/* __acl_delete_fd(2) */
+#define	FO_ACL_CHECK	3	/* __acl_aclcheck_fd(2): validate aclp */
 
 /* fo_fsync modes. */
 #define	FO_FSYNC_FULL	0	/* fsync(2): data and metadata */
@@ -211,7 +220,8 @@ struct fileops {
 	fo_fadvise_t	*fo_fadvise;
 	fo_readdir_t	*fo_readdir;
 	fo_copy_file_range_t *fo_copy_file_range;
-	fo_spare_t	*fo_spares[1];	/* Spare slots */
+	fo_acl_t	*fo_acl;
+	fo_spare_t	*fo_spares[4];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
@@ -351,6 +361,7 @@ fo_setattr_t	invfo_setattr;
 fo_fadvise_t	invfo_fadvise;
 fo_readdir_t	invfo_readdir;
 fo_copy_file_range_t invfo_copy_file_range;
+fo_acl_t	invfo_acl;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -363,6 +374,7 @@ fo_setattr_t	vn_setattr;
 fo_fadvise_t	vn_fadvise;
 fo_readdir_t	vn_readdir;
 fo_copy_file_range_t vn_copy_range;
+fo_acl_t	vn_acl;
 /*
  * For descriptor types that carry a vnode only on some creation paths
  * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
@@ -373,6 +385,7 @@ fo_statfs_t	vn_statfs_opt;
 fo_fsync_t	vn_fsync_opt;
 fo_setattr_t	vn_setattr_opt;
 fo_readdir_t	vn_readdir_opt;
+fo_acl_t	vn_acl_opt;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -632,6 +645,17 @@ fo_copy_file_range(struct file *infp, off_t *inoffp, struct file *outfp,
 		    lenp, flags, td));
 	return ((*infp->f_ops->fo_copy_file_range)(infp, inoffp, outfp,
 	    outoffp, lenp, flags, td));
+}
+
+/* The __acl_*_fd(2) family: op is FO_ACL_*, type an acl_type_t. */
+static __inline int
+fo_acl(struct file *fp, int op, int type, struct acl *aclp,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_acl == NULL)
+		return (invfo_acl(fp, op, type, aclp, td));
+	return ((*fp->f_ops->fo_acl)(fp, op, type, aclp, td));
 }
 
 static __inline int
