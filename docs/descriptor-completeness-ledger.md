@@ -123,7 +123,7 @@ Categories:
 | `kern/vfs_aio.c:1705`⁽ᴺ⁾ | `aio_aqueue` | `EINVAL` for `LIO_SYNC` on a file without a vnode | keep (6.1.1, by decision): any `f_vnode`-carrying file is accepted and its `fo_fsync` runs `vn_fsync` (D63); the sync itself is `fo_fsync` since `78f8f643b0b` (`aio_fsync_vnode` is gone). Stays: per-opcode `cap_*` rights |
 | `kern/vfs_aio.c:1713`⁽ᴺ⁾ | `aio_aqueue` | negative offset allowed only for a `VCHR` vnode | deferred, as `kern/sys_generic.c:331` |
 | `kern/vfs_extattr.c:281` | `vn_extattr` | `vp = fp->f_vnode`, then `extattr_{set,get,delete,list}_vp` by `FO_EXTATTR_*` | done (`fo_extattr`, `13ff5fd675e`): the `fo_extattr` vnode body; each `extattr_*_vp` locks and runs its own MAC check as before |
-| `kern/vfs_syscalls.c:2846` | `sys_fchflags` | comment: `getvnode()` never accepted an O_PATH descriptor here | done (`fo_setattr`, `ed6f7f051a3`): the `f_ops == &path_fileops → EBADF` test that follows replaces `getvnode` (D71); comment only. The `VNOVAL` refusal now comes after the descriptor is consulted (an empty `fo_setattr` first, so a type without attributes keeps `EINVAL` and a file gets `EOPNOTSUPP`; `f134444e4b1`) |
+| `kern/vfs_syscalls.c:2846` | `sys_fchflags` | comment: `getvnode()` never accepted an O_PATH descriptor here | done (`fo_setattr`, `ed6f7f051a3`): the `f_ops == &path_fileops → EBADF` test that follows replaces `getvnode` (D71); comment only. The `VNOVAL` refusal comes after the descriptor is consulted, plainly: `EOPNOTSUPP` for any open descriptor (`f134444e4b1`, D81; a type without attributes once answered `EINVAL` to that one value) |
 | `kern/vfs_syscalls.c:3434` | `kern_fsetutimes` | comment: `futimes`/`futimens` never accepted O_PATH (`getvnode()` refused it) | done (`fo_setattr` times, `ed6f7f051a3`; D71); comment only |
 | `kern/vfs_syscalls.c:3670` | `kern_fsync` | comment: `fsync`/`fdatasync` never accepted O_PATH, `aio_fsync` and `syncfs` do | done (`fo_fsync`, `78f8f643b0b`); the `MPASS(f_type == DTYPE_VNODE)` the old `:3693` row said to remove is gone (D64); comment only |
 | `kern/vfs_syscalls.c:4408` | `kern_getdirentries` | comment: `getvnode()` refused O_PATH and write-only files | done (`fo_readdir`, `f6e5f5d0922`): the `path_fileops`/`FREAD` test that follows replaces `getvnode`; comment only |
@@ -454,8 +454,9 @@ members in the order `fo_pathconf`, `fo_statfs`, `fo_fsync`, `fo_setattr`,
 - `vn/pipe` — `pipeops` only: `pipe_*` branching on `PIPE_TYPE_NAMED`, `vn_*`
   for a FIFO, today's pipe answer otherwise (`pathconf` `PIPE_BUF` for
   `_PC_PIPE_BUF` else `EINVAL`, the rest `invfo_*`). `pipe_advlock` admits
-  `F_FLOCK` only: a FIFO takes `flock(2)` through `vn_advlock` and refuses
-  `fcntl(2)` record locks with `invfo_advlock`'s `EBADF` (D72, D73);
+  `F_FLOCK` only: a FIFO takes `flock(2)` through `vn_advlock`, an anonymous
+  pipe answers it with its own `EOPNOTSUPP`, and both give `fcntl(2)` record
+  locks and the close-time unlock `invfo_advlock`'s `EBADF` (D72, D73, D81);
 - `own` — the table's own implementation (`vnops`, `vn_openfileops` and the
   three run-time copies: `vn_openfile_*` wrappers around the `vn_*` bodies,
   or the body itself for `fo_fsync`, `fo_readdir`, `fo_copy_file_range`,
@@ -513,20 +514,21 @@ side-effect free as the type test was:
 dispatching, so `fo_fadvise` is never reached on `pipeops`, `ptsdev_ops`,
 `linuxfileops` or `path_fileops`. The `fsync`, `fchflags`, `futimes`/`futimens`,
 ACL set/delete and `F_READAHEAD` system calls still refuse `path_fileops` with
-`EBADF` ahead of the table (D71). `fchflags(2)` asks the fileop for nothing
-before refusing `VNOVAL`, so the refusal comes after the descriptor is
-consulted as it did: `fchflags(pipe, -1)` is `EINVAL`, `(badfd, -1)` `EBADF`,
-`(file, -1)` `EOPNOTSUPP` (`f134444e4b1`).
+`EBADF` ahead of the table (D71). `fchflags(2)` refuses `VNOVAL` once the
+descriptor is known, so `(badfd, -1)` is `EBADF` and every open descriptor
+gets `EOPNOTSUPP` (`f134444e4b1`, D81; a type without attributes once answered
+`EINVAL` to that value).
 
-The fdescfs drop rule (`80f7f749378`, finding 3): `fdesc_setattr` forwards
-`va_size` to `fo_truncate`, `va_mode` to `fo_chmod`, `va_uid`/`va_gid` to
-`fo_chown` and only what those did not take — times, flags, `va_vaflags` —
-to `fo_setattr`, and only if there is any. An `EINVAL` from any of them is a
-type without that operation (pipes, sockets, `posix_openpt(2)` masters,
-linuxkpi files; `invfo_*`) and maps to the old answer, which was given before
-the descriptor's operations were consulted at all: the change is dropped
-(`0`), except that `va_flags` → `EOPNOTSUPP` (`chflags(2)` on `/dev/fd/N`
-refused). A FIFO or `/dev/ptmx` master carries a vnode and its `vn_*` run.
+The fdescfs rule (`80f7f749378`, D81): `fdesc_setattr` forwards `va_size`
+to `fo_truncate`, `va_mode` to `fo_chmod`, `va_uid`/`va_gid` to `fo_chown`
+and only what those did not take — times, flags, `va_vaflags` — to
+`fo_setattr`, and only if there is any; each fileop's answer stands. A table
+with no `fo_setattr` member (sockets, kqueues, shm) has no settable
+attributes and keeps the old drop rule: the change is dropped (`0`), except
+that `va_flags` → `EOPNOTSUPP`. A table with the member answers for its
+descriptor: an anonymous pipe or a `posix_openpt(2)` master reports `EINVAL`
+for times and flags where the missing vnode once meant "dropped" (declared,
+D81). A FIFO or `/dev/ptmx` master carries a vnode and its `vn_*` run.
 
 Three table flags say what the type does on its own; the flags column reads
 `PRIVWRITE / FLOCK / RECLOCK`:
