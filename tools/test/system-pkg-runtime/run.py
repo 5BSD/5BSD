@@ -21,12 +21,11 @@ sys.path.insert(0,str(SOURCE/'tools/test/daemon-runtime'))
 from qualification_artifacts import resolve_many,digest
 from host_resources import HostMonitor
 from serial_terminal import TerminalSizeResponder
+from startup_diagnostics import reject_failures
 from installed_audit import specification
 import firstboot_runtime
 import upgrade_runtime
 from mtree_reconcile import reconcile
-
-FAILURE_DIAGNOSTICS = re.compile(rb"panic:|Fatal trap|lock order reversal|non-sleepable locks held|[A-Za-z_][A-Za-z0-9_]*: parameter not set")
 
 class Console:
     def __init__(self,process,log,monitor,started,deadline,overlay,disk_limit,rows,columns):
@@ -52,8 +51,7 @@ class Console:
         if now-self.started>self.deadline:raise TimeoutError('explicit whole-VM deadline exceeded')
         if self.error:raise self.error
         with self.lock:
-            if FAILURE_DIAGNOSTICS.search(bytes(self.data)):
-                raise RuntimeError("guest kernel or startup-shell failure; see serial.log")
+            reject_failures(bytes(self.data))
         if self.process.poll() is not None:
             if allow_exit:return
             raise RuntimeError('VM exited before the requested check completed')
@@ -138,7 +136,7 @@ def main():
     upgrade=upgrade_runtime.load(plan['upgrade_policy'],build_report) if plan['format']==4 else None
     tools={name:Path(plan[name]).resolve(strict=True) for name in ('qemu','qemu_img','bios','ssh')}
     bindings={str(path):digest(path) for path in tools.values()}
-    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py','upgrade_runtime.py')]
+    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py','upgrade_runtime.py','startup_diagnostics.py')]
     source_bindings={str(path):digest(path) for path in sources}
     if firstboot is not None:source_bindings.update(firstboot['bindings'])
     if upgrade is not None:source_bindings.update(upgrade['bindings'])

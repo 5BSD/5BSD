@@ -209,3 +209,13 @@ install a host upgrade or change the system repository. Full upgraded-tree
 metadata, non-default/cross profiles, hardware publication and comparative
 performance remain separate gates. The normal format-5 frontend target/test
 inputs carry `upgrade_policy_test`; the C build backend remains Make/default.
+
+### Service-failure acceptance guard
+
+The normal runner rejects logged capability-service startup/on-demand failures and
+runtime-container cleanup/creation errors, as well as panic/WITNESS/shell errors.
+`startup_diagnostics_test` covers real snippets from upgrade R1, whose original
+runner passed authentication but omitted service failures. Replaying the full R1
+serial log now rejects it; the accepted baseline R8 log remains accepted. This
+guard is additional failure detection, not proof of complete service health.
+The diagnostic module is hash-bound with the other runner sources.

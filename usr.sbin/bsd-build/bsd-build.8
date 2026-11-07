@@ -7964,3 +7964,11 @@ then removes the unused environment and checks space reclamation.
 The default fixture follows ZFS bootfs rather than pinning a root dataset.
 This is not host installation, application database schema rollback, BIP,
 exhaustive upgraded metadata or comparative performance qualification.
+
+.Pp
+Complete-package runtime qualification also rejects logged capability-service
+launch and runtime-container cleanup failures.
+The native format-5 targets/tests interface accepts
+//tools/test/system-pkg-runtime:startup_diagnostics_test.
+This diagnostic gate does not establish complete service health; Make remains
+the production system backend until all qualification gates pass.

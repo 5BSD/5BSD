@@ -1,5 +1,40 @@
 # Installed baseline audit and ZFS image flags (2026-11-07)
 
+## Real BE upgrade exposes capability-service restart failure (2026-11-07)
+
+`bazel-system-upgrade-vm-r1-20261107` completes the signed network upgrade of all
+447 packages in an inactive ZFS BE, boots its new kernel, passes positive/negative
+SSH and su, rolls back with shared-file persistence, and deletes the unused BE
+(reclaiming 2,805,727,232 bytes). This is useful mechanism evidence, **not an
+accepted full-system upgrade qualification**: the new boot logs existing runtime
+containers and failed capability-service launches. The old automatic gate omitted
+those diagnostics and incorrectly reports overall `passed`.
+
+`bazel-system-upgrade-acceptance-review-r1-20261107/review.json` preserves both
+original result/serial hashes and rejects that upgrade log under the strengthened
+service-failure gate; the earlier normal-boot R8 log still passes that gate.
+Historical result files are unchanged. Runtime cleanup now reports failed
+unlink/rmdir/fdopendir operations instead of hiding them. The cleanup cause remains
+unproven; root starts read-only and cleanup precedes rc, which is a hypothesis to
+verify, not a license to move cleanup after live services or adopt old directories.
+
+NEXT: capture the cleanup errno on the real upgraded boot, fix its lifecycle at
+the production boundary, and check required services from installed manifests,
+including useful operations rather than process existence alone. Diagnostic
+rejection alone does not prove all services healthy. Cross-platform completion,
+fresh Make parity, native bootstrap/reproducibility, sandbox/cache/performance,
+hardware and combined publication remain open. Make stays production/default;
+BIP remains excluded. No host upgrade or installation was performed.
+
+
+Native `bazel-startup-diagnostics-native-r1-20261107` passes all five selected
+Python test targets and builds the actual traced Switchboard binary with the
+cleanup diagnostics. The new Python suite runs three methods, including recorded
+service-failure rejection, preserved kernel/shell failure gates, and normal
+startup/expected authentication refusal. The frontend's format-5 target/test
+inputs need no C option/backend change. Real upgraded-boot diagnostic validation
+is still pending; no lifecycle fix is claimed from logging alone.
+
 ## Scope and retained failure
 
 The maintained normal runtime runner accepts a format-2 plan naming the captured

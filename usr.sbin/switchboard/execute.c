@@ -216,11 +216,13 @@ svc_rmtree_at(int parent, const char *name)
 
 	fd = openat(parent, name, O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
 	if (fd == -1) {
-		(void)unlinkat(parent, name, 0);
+		if (unlinkat(parent, name, 0) == -1)
+			syslog(LOG_ERR, "runtime cleanup: unlink %s: %m", name);
 		return;
 	}
 	dir = fdopendir(fd);
 	if (dir == NULL) {
+		syslog(LOG_ERR, "runtime cleanup: fdopendir %s: %m", name);
 		(void)close(fd);
 		return;
 	}
@@ -230,11 +232,13 @@ svc_rmtree_at(int parent, const char *name)
 			continue;
 		if (de->d_type == DT_DIR)
 			svc_rmtree_at(fd, de->d_name);
-		else
-			(void)unlinkat(fd, de->d_name, 0);
+		else if (unlinkat(fd, de->d_name, 0) == -1)
+			syslog(LOG_ERR, "runtime cleanup: unlink %s/%s: %m",
+			    name, de->d_name);
 	}
 	(void)closedir(dir);
-	(void)unlinkat(parent, name, AT_REMOVEDIR);
+	if (unlinkat(parent, name, AT_REMOVEDIR) == -1)
+		syslog(LOG_ERR, "runtime cleanup: rmdir %s: %m", name);
 }
 
 /*

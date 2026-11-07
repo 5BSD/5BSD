@@ -19,3 +19,6 @@ bsd_python_test(name = "mtree_reconcile_test", src = "mtree-reconcile-test.py",
     data = ["mtree_reconcile.py"], visibility = ["//visibility:public"])
 bsd_python_test(name = "upgrade_policy_test", src = "upgrade-policy-test.py",
     data = ["upgrade_runtime.py", "//tools/build/bazel:qualification_artifacts.py"], visibility = ["//visibility:public"])
+
+bsd_python_test(name = "startup_diagnostics_test", src = "startup-diagnostics-test.py",
+    data = ["startup_diagnostics.py"], visibility = ["//visibility:public"])
