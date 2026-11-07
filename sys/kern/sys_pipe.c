@@ -210,6 +210,7 @@ static fo_setattr_t	pipe_setattr;
 static fo_readdir_t	pipe_readdir;
 static fo_acl_t		pipe_acl;
 static fo_extattr_t	pipe_extattr;
+static fo_advlock_t	pipe_advlock;
 
 const struct fileops pipeops = {
 	.fo_read = pipe_read,
@@ -232,6 +233,7 @@ const struct fileops pipeops = {
 	.fo_readdir = pipe_readdir,
 	.fo_acl = pipe_acl,
 	.fo_extattr = pipe_extattr,
+	.fo_advlock = pipe_advlock,
 	.fo_flags = DFLAG_PASSABLE
 };
 
@@ -2157,6 +2159,23 @@ pipe_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
 		    nbytes, auio, td));
 	return (invfo_extattr(fp, op, attrnamespace, attrname, data, nbytes,
 	    auio, td));
+}
+
+/*
+ * A FIFO takes flock(2) locks on its vnode; the fcntl(2) record locks were
+ * EBADF for it (and so is the POSIX unlock a close owes), as for a pipe.
+ */
+static int
+pipe_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
+    struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if ((cpipe->pipe_type & PIPE_TYPE_NAMED) != 0 &&
+	    (flags & F_FLOCK) != 0)
+		return (vn_advlock(fp, id, op, fl, flags, td));
+	return (invfo_advlock(fp, id, op, fl, flags, td));
 }
 
 static int

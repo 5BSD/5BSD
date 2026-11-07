@@ -15,7 +15,8 @@
 .Nm fo_copy_file_range ,
 .Nm fo_acl ,
 .Nm fo_extattr ,
-.Nm fo_fcntl
+.Nm fo_fcntl ,
+.Nm fo_advlock
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -40,6 +41,8 @@
 .Fn fo_extattr "struct file *fp" "int op" "int attrnamespace" "const char *attrname" "void *data" "size_t nbytes" "struct uio *auio" "struct thread *td"
 .Ft int
 .Fn fo_fcntl "struct file *fp" "int cmd" "intptr_t arg" "struct thread *td"
+.Ft int
+.Fn fo_advlock "struct file *fp" "void *id" "int op" "struct flock *fl" "int flags" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -513,6 +516,67 @@ for them, and the default keeps doing so.
 returns
 .Er EBADF .
 .El
+.Ss fo_advlock
+.Fn fo_advlock
+answers
+.Xr flock 2
+.Pq Dv F_FLOCK in Fa flags , the file as Fa id ,
+the
+.Xr fcntl 2
+record locks
+.Po
+.Dv F_POSIX
+with the process leader as
+.Fa id ,
+.Dv F_OFD
+with the file
+.Pc
+and the unlock of all POSIX locks that every
+.Xr close 2
+owes the process, with
+.Fa op
+one of
+.Dv F_SETLK , F_GETLK , F_UNLCK
+or
+.Dv F_UNLCKSYS .
+.Xr fcntl 2
+rejects a lock request for a mode the descriptor was not opened with before
+the table is consulted; whether the table takes locks at all is the table's
+business.
+.Xr flock 2
+and the close-time unlock skip a table that has no
+.Fn fo_advlock
+member, returning
+.Er EOPNOTSUPP
+and nothing respectively;
+.Xr fcntl 2
+lets the default answer.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_advlock
+checks, for
+.Dv F_OFD ,
+that the filesystem declares
+.Dv VFCF_OFDLOCKS
+.Pq Er EOPNOTSUPP otherwise
+and calls
+.Xr VOP_ADVLOCK 9
+inside the file context.
+Regular files, directories and devfs nodes use it.
+A FIFO installs
+.Fn pipe_advlock ,
+which takes
+.Dv F_FLOCK
+requests to the vnode and refuses the rest as a pipe does.
+.It everything else
+.Fn invfo_advlock
+returns
+.Er EBADF .
+.Dv O_PATH
+files, pseudo-terminal masters and linuxkpi files do not install the member:
+the type tests these system calls used to make refused them, and they stay
+refused.
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
@@ -524,6 +588,7 @@ value.
 .Xr fchflags 2 ,
 .Xr fcntl 2 ,
 .Xr fdatasync 2 ,
+.Xr flock 2 ,
 .Xr fpathconf 2 ,
 .Xr fstatfs 2 ,
 .Xr fsync 2 ,
@@ -537,6 +602,7 @@ value.
 .Xr vnode 9 ,
 .Xr VOP_ACLCHECK 9 ,
 .Xr VOP_ADVISE 9 ,
+.Xr VOP_ADVLOCK 9 ,
 .Xr VOP_FSYNC 9 ,
 .Xr VOP_GETACL 9 ,
 .Xr VOP_GETEXTATTR 9 ,
@@ -557,9 +623,10 @@ table has existed since
 .Fn fo_readdir ,
 .Fn fo_copy_file_range ,
 .Fn fo_acl ,
-.Fn fo_extattr
-and
+.Fn fo_extattr ,
 .Fn fo_fcntl
+and
+.Fn fo_advlock
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

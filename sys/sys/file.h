@@ -87,6 +87,7 @@ struct nameidata;
 struct file;
 struct filecaps;
 struct acl;
+struct flock;
 struct kaiocb;
 struct kinfo_file;
 struct statfs;
@@ -181,6 +182,8 @@ typedef int fo_extattr_t(struct file *fp, int op, int attrnamespace,
 		    struct uio *auio, struct thread *td);
 typedef int fo_fcntl_t(struct file *fp, int cmd, intptr_t arg,
 		    struct thread *td);
+typedef int fo_advlock_t(struct file *fp, void *id, int op,
+		    struct flock *fl, int flags, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
 
 /*
@@ -242,6 +245,7 @@ struct fileops {
 	fo_acl_t	*fo_acl;
 	fo_extattr_t	*fo_extattr;
 	fo_fcntl_t	*fo_fcntl;
+	fo_advlock_t	*fo_advlock;
 	fo_spare_t	*fo_spares[4];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
@@ -385,6 +389,7 @@ fo_copy_file_range_t invfo_copy_file_range;
 fo_acl_t	invfo_acl;
 fo_extattr_t	invfo_extattr;
 fo_fcntl_t	invfo_fcntl;
+fo_advlock_t	invfo_advlock;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -400,6 +405,7 @@ fo_copy_file_range_t vn_copy_range;
 fo_acl_t	vn_acl;
 fo_extattr_t	vn_extattr;
 fo_fcntl_t	vn_fcntl;
+fo_advlock_t	vn_advlock;
 /*
  * For descriptor types that carry a vnode only on some creation paths
  * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
@@ -712,6 +718,22 @@ fo_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
 	if (fp->f_ops->fo_fcntl == NULL)
 		return (invfo_fcntl(fp, cmd, arg, td));
 	return ((*fp->f_ops->fo_fcntl)(fp, cmd, arg, td));
+}
+
+/*
+ * Advisory locks: flock(2) (F_FLOCK, id is the file), the fcntl(2) record
+ * locks (F_POSIX with the process leader as id, F_OFD with the file) and
+ * the unlock every close owes POSIX locks.  A table without it takes no
+ * locks; callers decide what that means for their system call.
+ */
+static __inline int
+fo_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_advlock == NULL)
+		return (invfo_advlock(fp, id, op, fl, flags, td));
+	return ((*fp->f_ops->fo_advlock)(fp, id, op, fl, flags, td));
 }
 
 static __inline int
