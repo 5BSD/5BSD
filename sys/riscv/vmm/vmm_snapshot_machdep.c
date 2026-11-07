@@ -12,8 +12,8 @@
  *                pending IPI/timer/exception flags and the SBI timer deadline.
  *   STRUCT_APLIC APLIC domain configuration, sources and targets.
  *
- * Limits (fail closed): SSTC guests are refused because this VMM does not
- * context-switch vstimecmp; the VMM does not virtualize `time` (no
+ * Limits (fail closed): SSTC guests are refused because these records do
+ * not carry vstimecmp; the VMM does not virtualize `time` (no
  * htimedelta), so a restore onto a host whose time is behind the captured
  * time is refused rather than letting guest time run backwards.  Tracing
  * state is never part of these records.
@@ -184,7 +184,7 @@ riscv_snapshot_vm_save(struct vm *vm, struct vm_snapshot_meta *meta,
 		error = riscv_snapshot_sstc(vcpu, &sstc);
 		if (error != 0)
 			return (error);
-		/* vstimecmp is not context-switched by this VMM. */
+		/* These records do not carry vstimecmp. */
 		if (sstc)
 			return (EOPNOTSUPP);
 		if (i == 0)
