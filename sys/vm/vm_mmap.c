@@ -1690,6 +1690,16 @@ vm_mmap_file(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 	}
 
 	/*
+	 * The protection must fit the maximum the caller derived from the
+	 * descriptor's rights and open mode: vm_map_insert() asserts it, and
+	 * the vnode path refuses it the same way.  A private PROT_WRITE
+	 * mapping of a shm descriptor without CAP_MMAP_W reached the
+	 * assertion before this.
+	 */
+	if ((prot & ~maxprot) != 0)
+		return (EACCES);
+
+	/*
 	 * We currently can only deal with page aligned file offsets.
 	 * The mmap() system call already enforces this by subtracting
 	 * the page offset from the file offset, but checking here

@@ -84,7 +84,9 @@ mappings are copy-on-write and never reach the object, so
 .Xr mmap 2
 grants
 .Dv PROT_WRITE
-on such a mapping of a read-only descriptor without a write right.
+on such a mapping of a descriptor that lacks the
+.Dv CAP_MMAP_W
+right.
 Vnode files and
 .Xr devfs 4
 nodes set it;
