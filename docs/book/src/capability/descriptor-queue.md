@@ -495,6 +495,9 @@ settled details, found while moving the code:
   table's `is_check`); veriexec's `CHECK_FD` builds `image_params` by hand
   and never calls it, contrary to the earlier note — it keeps compiling
   because the existing fields stay where they are.
+- `p_image` is appended at the end of `struct proc`, not beside `p_textvp`:
+  `kern_thread.c` asserts the offsets of `p_filemon`, `p_comm` and
+  `p_emuldata` (KBI), and a member inserted before them trips the build.
 - `proc_get_binpath` copies `pi_path` out under `PROC_LOCK` and hands it
   back as `freebuf`, because `sysctl_kern_proc_pathname` frees its scratch
   buffer before reading `retbuf`; `kern_fork` `strdup`s `pi_path` (a shared
