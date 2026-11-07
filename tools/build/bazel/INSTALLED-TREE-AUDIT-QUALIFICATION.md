@@ -35,6 +35,25 @@ startup/expected authentication refusal. The frontend's format-5 target/test
 inputs need no C option/backend change. Real upgraded-boot diagnostic validation
 is still pending; no lifecycle fix is claimed from logging alone.
 
+## Diagnostic candidate and strict retry
+
+`bazel-system-upgrade-native-r2-20261107/receipt.json` passes the complete
+447-package candidate and both selected solver/SSP test targets. It includes
+Switchboard cleanup-error logging. The actual packaged kernel digest still
+matches explicit policy input
+`6ba5fcdd17aad4f7b4b179cddd721ba25bab66b51aefac77c95666f3542a3f98`.
+`bazel-system-upgrade-repository-r3-20261107/receipt.json` passes signed-catalogue
+verification, all archive verification and actual wrong-key rejection.
+
+Fresh `bazel-system-upgrade-vm-r2-20261107` is running with those frozen inputs,
+the unchanged complete baseline R11 image, 2 GB/four vCPUs, and the stronger
+service-failure gate (implementation ac3f2ad48ea, final-drain fix 874d50cadd1).
+This retry is diagnostic: a failure is to be retained and investigated, not
+avoided by adopting old service directories or clearing them in the fixture.
+No lifecycle fix or successful upgrade qualification is claimed yet. Compilation
+uses 16 jobs; package compression's configured single-thread-per-package tail
+is not a controlled Make performance comparison.
+
 ## Scope and retained failure
 
 The maintained normal runtime runner accepts a format-2 plan naming the captured
