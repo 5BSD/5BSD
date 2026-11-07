@@ -52,6 +52,7 @@ _ARCHIVES = [
     "//lib/libdevinfo:install_archive",
     "//lib/libdevstat:install_archive",
     "//lib/libdl:install_archive",
+    "//lib/libdq:install_archive",
     "//lib/libdwarf:install_archive",
     "//lib/libedit:install_archive",
     "//lib/libelftc:production_install_archive",
