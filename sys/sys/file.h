@@ -382,6 +382,9 @@ fo_fsync_t	invfo_fsync;
 fo_setattr_t	invfo_setattr;
 int file_setattr_direct(struct file *, struct vattr *, struct ucred *,
 	    struct thread *);
+/* The write size limits (RLIMIT_FSIZE, maxfsz) with no vnode: vfs_vnops.c. */
+int rlimit_fsize_check(off_t offset, ssize_t *resid, off_t maxfsz, bool adj,
+	    struct thread *td);
 fo_fadvise_t	invfo_fadvise;
 fo_readdir_t	invfo_readdir;
 fo_copy_file_range_t invfo_copy_file_range;

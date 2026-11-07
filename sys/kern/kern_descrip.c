@@ -941,7 +941,7 @@ revert_flags:
 			flp->l_len = 0;
 			flp->l_type = F_UNLCK;
 			(void) fo_advlock(fp, (caddr_t)p->p_leader,
-			    F_UNLCK, flp, F_POSIX, td);
+			    F_UNLCK, flp, F_POSIX | F_CLOSEUNLCK, td);
 		}
 		fdrop(fp, td);
 		fdrop(fp2, td);
@@ -3063,7 +3063,7 @@ fdclearlocks(struct thread *td)
 			lf.l_type = F_UNLCK;
 			(void) fo_advlock(fp,
 			    (caddr_t)p->p_leader, F_UNLCK,
-			    &lf, F_POSIX, td);
+			    &lf, F_POSIX | F_CLOSEUNLCK, td);
 			FILEDESC_XLOCK(fdp);
 			fdrop(fp, td);
 		}
@@ -3394,6 +3394,10 @@ closef(struct file *fp, struct thread *td)
 	 * NULL thread pointer when there really is no owning
 	 * context that might have locks, or the locks will be
 	 * leaked.
+	 *
+	 * F_CLOSEUNLCK tells the table this is the close's unlock-all, not
+	 * a user's F_UNLCK: a table that keeps its locks outside the kernel
+	 * answers without waiting.
 	 */
 	if (fp->f_ops->fo_advlock != NULL) {
 		if ((td->td_proc->p_leader->p_flag & P_ADVLOCK) != 0) {
@@ -3402,7 +3406,7 @@ closef(struct file *fp, struct thread *td)
 			lf.l_len = 0;
 			lf.l_type = F_UNLCK;
 			(void) fo_advlock(fp, (caddr_t)td->td_proc->p_leader,
-			    F_UNLCK, &lf, F_POSIX, td);
+			    F_UNLCK, &lf, F_POSIX | F_CLOSEUNLCK, td);
 		}
 		fdtol = td->td_proc->p_fdtol;
 		if (fdtol != NULL) {
@@ -3426,7 +3430,7 @@ closef(struct file *fp, struct thread *td)
 				lf.l_type = F_UNLCK;
 				(void) fo_advlock(fp,
 				    (caddr_t)fdtol->fdl_leader, F_UNLCK, &lf,
-				    F_POSIX, td);
+				    F_POSIX | F_CLOSEUNLCK, td);
 				FILEDESC_XLOCK(fdp);
 				fdtol->fdl_holdcount--;
 				if (fdtol->fdl_holdcount == 0 &&
