@@ -582,7 +582,8 @@ interpret:
 		 */
 		newtextvp = imgp->interpreter_vp;
 		imgp->interpreter_vp = NULL;
-		exec_image_vnode_from_vnode(imgp, newtextvp);
+		exec_image_vnode_from_vnode(imgp, newtextvp,
+		    IS_FORM_INTERP_VNODE);
 	} else {
 		AUDIT_ARG_FD(args->fd);
 
@@ -599,7 +600,7 @@ interpret:
 		if (error != 0)
 			goto exec_fail;
 
-		exec_image_vnode_from_vnode(imgp, newtextvp);
+		exec_image_vnode_from_vnode(imgp, newtextvp, IS_FORM_FD);
 	}
 
 	/*

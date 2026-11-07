@@ -379,6 +379,8 @@ fo_pathconf_t	invfo_pathconf;
 fo_statfs_t	invfo_statfs;
 fo_fsync_t	invfo_fsync;
 fo_setattr_t	invfo_setattr;
+int file_setattr_direct(struct file *, struct vattr *, struct ucred *,
+	    struct thread *);
 fo_fadvise_t	invfo_fadvise;
 fo_readdir_t	invfo_readdir;
 fo_copy_file_range_t invfo_copy_file_range;
@@ -404,8 +406,9 @@ fo_fcntl_t	vn_fcntl;
 fo_advlock_t	vn_advlock;
 /*
  * For descriptor types that carry a vnode only on some creation paths
- * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
- * is there, the type-neutral default when it is not.
+ * (FIFOs and anonymous pipes, pseudo-terminal masters, linuxkpi files): the
+ * vn_* answer when the vnode is there, the type-neutral default when it is
+ * not.
  */
 fo_pathconf_t	vn_pathconf_opt;
 fo_statfs_t	vn_statfs_opt;

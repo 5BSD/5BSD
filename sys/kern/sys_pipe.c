@@ -204,12 +204,6 @@ static fo_chmod_t	pipe_chmod;
 static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
 static fo_pathconf_t	pipe_pathconf;
-static fo_statfs_t	pipe_statfs;
-static fo_fsync_t	pipe_fsync;
-static fo_setattr_t	pipe_setattr;
-static fo_readdir_t	pipe_readdir;
-static fo_acl_t		pipe_acl;
-static fo_extattr_t	pipe_extattr;
 static fo_advlock_t	pipe_advlock;
 
 const struct fileops pipeops = {
@@ -226,13 +220,20 @@ const struct fileops pipeops = {
 	.fo_sendfile = invfo_sendfile,
 	.fo_fill_kinfo = pipe_fill_kinfo,
 	.fo_cmp = file_kcmp_generic,
+	/*
+	 * This table serves FIFOs, which carry their vnode, and anonymous
+	 * pipes, which carry none: a sometimes-vnode table, so the members a
+	 * vnode answers are the vn_*_opt variants.  The two it answers for
+	 * itself are pathconf (PIPE_BUF) and advlock (flock(2) is EOPNOTSUPP
+	 * on an anonymous pipe; a FIFO's goes to its vnode).
+	 */
 	.fo_pathconf = pipe_pathconf,
-	.fo_statfs = pipe_statfs,
-	.fo_fsync = pipe_fsync,
-	.fo_setattr = pipe_setattr,
-	.fo_readdir = pipe_readdir,
-	.fo_acl = pipe_acl,
-	.fo_extattr = pipe_extattr,
+	.fo_statfs = vn_statfs_opt,
+	.fo_fsync = vn_fsync_opt,
+	.fo_setattr = vn_setattr_opt,
+	.fo_readdir = vn_readdir_opt,
+	.fo_acl = vn_acl_opt,
+	.fo_extattr = vn_extattr_opt,
 	.fo_advlock = pipe_advlock,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_FLOCK	/* FIFOs; not RECLOCK */
 };
@@ -2086,79 +2087,6 @@ pipe_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
 		return (EINVAL);
 	*valuep = PIPE_BUF;
 	return (0);
-}
-
-/* A FIFO lives on a filesystem; an anonymous pipe does not. */
-static int
-pipe_statfs(struct file *fp, struct statfs *buf, struct thread *td)
-{
-	struct pipe *cpipe;
-
-	cpipe = fp->f_data;
-	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
-		return (vn_statfs(fp, buf, td));
-	return (invfo_statfs(fp, buf, td));
-}
-
-static int
-pipe_fsync(struct file *fp, int mode, struct thread *td)
-{
-	struct pipe *cpipe;
-
-	cpipe = fp->f_data;
-	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
-		return (vn_fsync(fp, mode, td));
-	return (invfo_fsync(fp, mode, td));
-}
-
-static int
-pipe_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
-    struct thread *td)
-{
-	struct pipe *cpipe;
-
-	cpipe = fp->f_data;
-	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
-		return (vn_setattr(fp, vap, active_cred, td));
-	return (invfo_setattr(fp, vap, active_cred, td));
-}
-
-/* A FIFO's vnode says ENOTDIR; an anonymous pipe has no vnode to ask. */
-static int
-pipe_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
-{
-	struct pipe *cpipe;
-
-	cpipe = fp->f_data;
-	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
-		return (vn_readdir(fp, uio, basep, td));
-	return (invfo_readdir(fp, uio, basep, td));
-}
-
-static int
-pipe_acl(struct file *fp, int op, int type, struct acl *aclp,
-    struct thread *td)
-{
-	struct pipe *cpipe;
-
-	cpipe = fp->f_data;
-	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
-		return (vn_acl(fp, op, type, aclp, td));
-	return (invfo_acl(fp, op, type, aclp, td));
-}
-
-static int
-pipe_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
-    void *data, size_t nbytes, struct uio *auio, struct thread *td)
-{
-	struct pipe *cpipe;
-
-	cpipe = fp->f_data;
-	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
-		return (vn_extattr(fp, op, attrnamespace, attrname, data,
-		    nbytes, auio, td));
-	return (invfo_extattr(fp, op, attrnamespace, attrname, data, nbytes,
-	    auio, td));
 }
 
 /*

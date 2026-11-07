@@ -143,7 +143,7 @@ xattr_getvnode(struct thread *td, int fd, bool opath, cap_rights_t *rightsp,
 	error = fget(td, fd, rightsp, &fp);
 	if (error != 0)
 		return (error);
-	if (!opath && fp->f_ops == &path_fileops)
+	if (!opath && (fp->f_flag & O_PATH) != 0)
 		error = EBADF;
 	else if (fp->f_ops->fo_extattr == NULL)
 		error = EINVAL;

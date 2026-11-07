@@ -10,6 +10,7 @@ ATF_TESTS_C+=	closefrom_test
 TAP_TESTS_C+=	dup_test
 ATF_TESTS_C+=	fcntlflags_test
 TAP_TESTS_SH+=	flock_test
+ATF_TESTS_SH+=	fileops_dtrace_test
 PLAIN_TESTS_C+=	ftruncate_test
 PLAIN_TESTS_C+=	newfileops_on_fork_test
 ATF_TESTS_C+=	fspacectl_test

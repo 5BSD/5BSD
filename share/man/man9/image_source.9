@@ -1,0 +1,289 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd November 7, 2026
+.Dt IMAGE_SOURCE 9
+.Os
+.Sh NAME
+.Nm image_source ,
+.Nm IS_LOCK ,
+.Nm IS_UNLOCK ,
+.Nm IS_ASSERT_LOCKED ,
+.Nm IS_CHECK ,
+.Nm IS_FIRST_PAGE ,
+.Nm IS_READ ,
+.Nm IS_MAP_COW ,
+.Nm IS_MAP_TEXT ,
+.Nm IS_UNSET_TEXT ,
+.Nm IS_PATH ,
+.Nm IS_COMMNAME ,
+.Nm IS_NOSUID ,
+.Nm IS_MAC ,
+.Nm IS_AUTHORITY_PREPARE ,
+.Nm IS_AUTHORITY_EXEC ,
+.Nm IS_INSTALL ,
+.Nm IS_RELEASE_OLD ,
+.Nm IS_ACCESSED ,
+.Nm IS_CLOSE ,
+.Nm exec_image_vnode_from_namei ,
+.Nm exec_image_vnode_from_vnode ,
+.Nm exec_image_vnode_init
+.Nd how the exec core reaches the image it activates
+.Sh SYNOPSIS
+.In sys/imgact.h
+.Ft void
+.Fn IS_LOCK "struct image_params *imgp"
+.Ft void
+.Fn IS_UNLOCK "struct image_params *imgp"
+.Ft void
+.Fn IS_ASSERT_LOCKED "struct image_params *imgp" "const char *msg"
+.Ft int
+.Fn IS_CHECK "struct image_params *imgp"
+.Ft int
+.Fn IS_FIRST_PAGE "struct image_params *imgp"
+.Ft int
+.Fn IS_READ "struct image_params *imgp" "void *buf" "size_t len" "off_t off"
+.Ft int
+.Fn IS_MAP_COW "struct image_params *imgp"
+.Ft void
+.Fn IS_MAP_TEXT "struct image_params *imgp" "vm_object_t object"
+.Ft void
+.Fn IS_UNSET_TEXT "struct image_params *imgp"
+.Ft int
+.Fn IS_PATH "struct image_params *imgp" "char **retbuf" "char **freebuf"
+.Ft int
+.Fn IS_COMMNAME "struct image_params *imgp" "char *buf" "size_t len"
+.Ft bool
+.Fn IS_NOSUID "struct image_params *imgp"
+.Ft int
+.Fn IS_MAC "struct image_params *imgp" "int phase" "struct ucred *oldcred" "struct ucred *newcred"
+.Ft "struct cap_authority *"
+.Fn IS_AUTHORITY_PREPARE "struct image_params *imgp" "struct proc *p"
+.Ft void
+.Fn IS_AUTHORITY_EXEC "struct image_params *imgp" "struct proc *p" "struct cap_authority *selected"
+.Ft void
+.Fn IS_INSTALL "struct image_params *imgp" "struct proc *p" "struct image_source_old *old"
+.Ft void
+.Fn IS_RELEASE_OLD "const struct image_source_ops *ops" "struct image_params *imgp" "struct image_source_old *old"
+.Ft void
+.Fn IS_ACCESSED "struct image_params *imgp"
+.Ft void
+.Fn IS_CLOSE "struct image_params *imgp" "bool release"
+.Pp
+.Ft void
+.Fn exec_image_vnode_from_namei "struct image_params *imgp" "struct nameidata *nd"
+.Ft void
+.Fn exec_image_vnode_from_vnode "struct image_params *imgp" "struct vnode *vp" "int form"
+.Ft void
+.Fn exec_image_vnode_init "struct image_params *imgp" "struct vnode *vp"
+.Sh DESCRIPTION
+An image source is the object
+.Xr execve 2
+activates: the thing whose header is read, whose segments are mapped,
+whose permissions and set-id bits are checked, and which becomes the
+process's text when the exec commits.
+The exec core
+.Pq Fn do_execve , the image activators, Fn exec_fail_dealloc
+reaches it only through the operations table
+.Va imgp->is_ops ,
+a
+.Vt "struct image_source_ops" ,
+installed by the source's constructor together with the source's private
+state in
+.Va imgp->is_data .
+The core never names a vnode: every vnode operation that used to be inline
+lives in the vnode backend,
+.Pa sys/kern/exec_image_vnode.c ,
+in the order it used to run.
+A served image, whose bytes come from a userland controller, is another
+backend with no vnode at all.
+.Pp
+.Va imgp->is_ops
+is
+.Dv NULL
+until a constructor has succeeded; that is the discriminator the core uses
+for
+.Dq a source exists and must be closed .
+.Ss Constructors
+The core builds the source from the three entry forms of
+.Xr execve 2 :
+.Bl -tag -width "IS_FORM_INTERP_LOADER"
+.It Dv IS_FORM_PATH
+.Fn exec_image_vnode_from_namei :
+the path in
+.Va args->fname
+was looked up with
+.Dv LOCKLEAF | LOCKSHARED | WANTPARENT ;
+the source takes the vnode, its parent and the last component, which
+become
+.Va p_textvp , p_textdvp
+and
+.Va p_binname
+when the exec commits.
+.It Dv IS_FORM_INTERP_VNODE
+.Fn exec_image_vnode_from_vnode :
+an image activator
+.Pq binmisc
+handed over a referenced, unlocked interpreter vnode in
+.Va imgp->interpreter_vp .
+.It Dv IS_FORM_FD
+.Fn exec_image_vnode_from_vnode :
+.Xr fexecve 2 ;
+the descriptor's vnode, referenced and unlocked.
+.It Dv IS_FORM_INTERP_LOADER
+.Fn exec_image_vnode_init :
+the ELF interpreter loader built its own kernel-origin lookup and
+constructs a source over the locked vnode; that source is never installed.
+.El
+.Pp
+For the two
+.Fn exec_image_vnode_from_vnode
+forms the constructor resolves the path, locks the vnode and records the
+audit argument itself, because
+.Dv AUDIT_ARG_VNODE1
+needs the locked vnode and cannot be emitted by a vnode-free core.
+.Ss Operations
+The image is locked for
+.Fn IS_CHECK ,
+.Fn IS_READ ,
+every
+.Fn IS_MAC
+phase,
+.Fn IS_AUTHORITY_PREPARE ,
+.Fn IS_INSTALL
+and
+.Fn IS_ACCESSED ;
+the
+.Dv IS_MAC_TRANSITION
+and
+.Dv IS_MAC_RELABEL
+phases also run under the process lock and must not sleep.
+.Bl -tag -width "IS_AUTHORITY_PREPARE"
+.It Fn IS_LOCK , Fn IS_UNLOCK , Fn IS_ASSERT_LOCKED
+The source's lock.
+The core unlocks around operations that may sleep
+.Pq Fn crdup , Fn uifind , Fn malloc "M_WAITOK" , Fn copyout , the hwpmc and HWT hooks
+and relocks, as it always did with the vnode; the vnode backend takes the
+lock shared, a source without a lock does nothing.
+.It Fn IS_CHECK
+.Fn exec_check_permissions :
+fill
+.Va imgp->attr ,
+run the MAC exec check, refuse
+.Dv MNT_NOEXEC ,
+a non-executable mode, anything but a regular file and an empty file,
+check
+.Dv VEXEC ,
+take the text reference
+.Pq Va imgp->textset , Er ETXTBSY
+and open the file
+.Pq Va imgp->opened .
+.It Fn IS_FIRST_PAGE
+Reference the image's VM object into
+.Va imgp->object
+and map its first page
+.Pq Va imgp->image_header .
+.Fn exec_unmap_first_page
+and the object's release stay in the core.
+.It Fn IS_READ
+Read
+.Fa len
+bytes at
+.Fa off
+beyond the first page
+.Pq program headers, Dv PT_INTERP , Dv PT_NOTE .
+.It Fn IS_MAP_COW , Fn IS_MAP_TEXT
+The extra
+.Dv MAP_*
+flags a mapping of the image takes
+.Pq Dv MAP_VN_EXEC
+and the per-mapping text reference taken after a successful mapping.
+A source without text references returns 0 and does nothing.
+.It Fn IS_UNSET_TEXT
+Drop the text reference
+.Fn IS_CHECK
+took, if it is still held.
+.It Fn IS_PATH , Fn IS_COMMNAME
+The image's path
+.Pq for Va imgp->execpath
+and the name for
+.Va p_comm .
+For the path form the path is resolved through the parent and the last
+component; a lookup that produced no parent leaves the path unresolved,
+as before.
+.It Fn IS_NOSUID
+Whether set-id bits and software authority are to be ignored
+.Pq Dv MNT_NOSUID .
+.It Fn IS_MAC
+The MAC phases of the exec, in order:
+.Dv IS_MAC_WILL_TRANSITION ,
+.Dv IS_MAC_WILL_RELABEL
+.Pq return the hook's answer ,
+.Dv IS_MAC_TRANSITION ,
+.Dv IS_MAC_RELABEL ,
+and
+.Dv IS_MAC_INTERP_ENTER
+when a
+.Ql #!
+script hands over to its interpreter
+.Pq the label copy .
+The vnode backend calls the
+.Fn mac_vnode_execve_*
+hooks.
+.It Fn IS_AUTHORITY_PREPARE , Fn IS_AUTHORITY_EXEC
+Software authority matching
+.Pq Fn cap_authority_exec_prepare , Fn cap_authority_exec .
+.Fn IS_AUTHORITY_EXEC
+must be called by every backend: besides matching, it invalidates authority
+held across the exec.
+.It Fn IS_INSTALL , Fn IS_RELEASE_OLD
+Install the image as the process's
+.Pq Va p_textvp , p_textdvp , p_binname , p_image
+under the process lock, saving what it displaced in
+.Vt "struct image_source_old" ;
+release the displaced state after the process and image locks are gone,
+through the ops saved at install, since
+.Fn IS_CLOSE
+has by then cleared
+.Va imgp->is_ops .
+The displaced state may be another kind of image: the structure carries a
+vnode triple and a file reference with its presented path.
+.It Fn IS_ACCESSED
+The image was executed
+.Pq Dv VOP_UPDATE_ATIME .
+.It Fn IS_CLOSE
+Close the source: undo the open, drop the text reference, and either drop
+the reference
+.Pq Fa release ,
+on an error or for a source that was never installed, or merely unlock it,
+the reference now belonging to the process.
+Frees
+.Va imgp->is_data
+and clears
+.Va imgp->is_ops .
+.El
+.Sh DTRACE
+.Bl -tag -width "proc:::exec-image-close"
+.It proc:::exec-image-open
+A source was constructed;
+.Fa arg0
+is the
+.Vt "struct image_params *" ,
+.Fa arg1
+the
+.Dv IS_FORM_*
+form.
+.It proc:::exec-image-close
+A source was closed;
+.Fa arg1
+is non-zero when its reference was dropped.
+.El
+.Sh SEE ALSO
+.Xr execve 2 ,
+.Xr fexecve 2 ,
+.Xr fileops 9 ,
+.Xr mac 9 ,
+.Xr vnode 9
+.Sh HISTORY
+The image source first appeared in 5BSD, as stage 0 of the DescriptorQueue
+design, so that a process may execute an image that is not a vnode.

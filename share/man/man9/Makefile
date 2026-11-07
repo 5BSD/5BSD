@@ -199,6 +199,7 @@ MAN=	accept_filter.9 \
 	iflibdi.9 \
 	iflibtxrx.9 \
 	ifnet.9 \
+	image_source.9 \
 	inittodr.9 \
 	insmntque.9 \
 	intr_event.9 \
@@ -1379,6 +1380,28 @@ MLINKS+=iflibtxrx.9 isc_rxd_available.9 \
 	iflibtxrx.9 isc_txd_credits_update.9 \
 	iflibtxrx.9 isc_txd_encap.9 \
 	iflibtxrx.9 isc_txd_flush.9
+MLINKS+=image_source.9 IS_ACCESSED.9 \
+	image_source.9 IS_ASSERT_LOCKED.9 \
+	image_source.9 IS_AUTHORITY_EXEC.9 \
+	image_source.9 IS_AUTHORITY_PREPARE.9 \
+	image_source.9 IS_CHECK.9 \
+	image_source.9 IS_CLOSE.9 \
+	image_source.9 IS_COMMNAME.9 \
+	image_source.9 IS_FIRST_PAGE.9 \
+	image_source.9 IS_INSTALL.9 \
+	image_source.9 IS_LOCK.9 \
+	image_source.9 IS_MAC.9 \
+	image_source.9 IS_MAP_COW.9 \
+	image_source.9 IS_MAP_TEXT.9 \
+	image_source.9 IS_NOSUID.9 \
+	image_source.9 IS_PATH.9 \
+	image_source.9 IS_READ.9 \
+	image_source.9 IS_RELEASE_OLD.9 \
+	image_source.9 IS_UNLOCK.9 \
+	image_source.9 IS_UNSET_TEXT.9 \
+	image_source.9 exec_image_vnode_from_namei.9 \
+	image_source.9 exec_image_vnode_from_vnode.9 \
+	image_source.9 exec_image_vnode_init.9
 MLINKS+=ifnet.9 if_addmulti.9 \
 	ifnet.9 if_alloc.9 \
 	ifnet.9 if_alloc_dev.9 \

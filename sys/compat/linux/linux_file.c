@@ -520,7 +520,7 @@ linux_fileattr_fget(struct thread *td, int fd, const cap_rights_t *rightsp,
 	error = fget(td, fd, rightsp, &fp);
 	if (error != 0)
 		return (error);
-	if (fp->f_ops == &path_fileops)
+	if ((fp->f_flag & O_PATH) != 0)
 		error = EBADF;
 	else if (fp->f_ops->fo_setattr == NULL)
 		error = EOPNOTSUPP;
@@ -630,7 +630,7 @@ linux_fchroot(struct thread *td, struct linux_fchroot_args *args)
 	if (error != 0)
 		return (error == EINVAL ? ENOTDIR : error);
 	/* Linux fd_empty() rejects O_PATH descriptors. */
-	if (fp->f_ops == &path_fileops) {
+	if ((fp->f_flag & O_PATH) != 0) {
 		fdrop(fp, td);
 		return (EBADF);
 	}
@@ -777,7 +777,7 @@ linux_getdents_error(struct thread *td, int fd, int err)
 	error = fget(td, fd, &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
-	if (fp->f_ops == &path_fileops)
+	if ((fp->f_flag & O_PATH) != 0)
 		error = EBADF;
 	else if (fp->f_ops->fo_readdir == NULL)
 		error = EINVAL;	/* no directory entries, as getvnode() said */
