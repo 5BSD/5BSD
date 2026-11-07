@@ -91,9 +91,9 @@ dq_observe_list_queues(const struct dqo_request *req, void *reply,
 		qi[n].qi_nonce = mac_capability_proc_nonce(q->q_cred);
 		qi[n].qi_objects = q->q_nobjects;
 		qi[n].qi_pending = q->q_count;
-		qi[n].qi_inflight = q->q_stats.ds_inflight;
-		qi[n].qi_posted = q->q_stats.ds_events_posted;
-		qi[n].qi_dropped = q->q_stats.ds_events_dropped;
+		qi[n].qi_inflight = q->q_stats.ds2_inflight;
+		qi[n].qi_posted = q->q_stats.ds2_events_posted;
+		qi[n].qi_dropped = q->q_stats.ds2_events_dropped;
 		qi[n].qi_observers = q->q_nobservers;
 		if ((q->q_flags & DQ_Q_CLOSING) != 0)
 			qi[n].qi_flags |= DQO_QF_CLOSING;

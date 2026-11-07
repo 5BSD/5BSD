@@ -307,6 +307,143 @@ struct dq_reply_record {		/* observer copy of a reply (DQ_OP_REPLY) */
 };
 
 /*
+ * Stage 1b-i bodies (design 8.2, D95-D99).  A variable-length body carries
+ * its payload right after the fixed part; the record (de_size) is padded to
+ * a multiple of 8 with zeros and the length field counts the payload alone.
+ * The reply errnos a controller may answer are allow-listed per operation
+ * in dq(4); any other errno reaches the requester as EIO and is counted in
+ * ds2_bad_replies.  A reply body of the wrong size is EINVAL to the
+ * controller and leaves the event in flight.
+ */
+
+/* WRITE: data[dw_len] follows; reply is errno + struct dq_write_reply. */
+struct dq_write_body {
+	uint64_t	dw_offset;	/* advisory under DQ_WRITE_F_APPEND */
+	uint32_t	dw_len;		/* data bytes, <= kern.dq.max_io */
+	uint32_t	dw_flags;	/* DQ_WRITE_F_* */
+};
+#define	DQ_WRITE_F_APPEND	0x00000001	/* at the controller's EOF */
+#define	DQ_WRITE_F_SYNC		0x00000002	/* O_SYNC: data and metadata */
+#define	DQ_WRITE_F_DSYNC	0x00000004	/* O_DSYNC: data only */
+struct dq_write_reply {
+	uint64_t	dwr_written;	/* <= dw_len; less is a short write */
+	uint64_t	dwr_offset;	/* where the bytes went; the implicit
+					   file offset becomes offset+written */
+};
+
+/* SETATTR: reply is errno.  Times are realtime, like the identity's. */
+struct dq_setattr_body {
+	uint32_t	dsa_mask;	/* DQ_SETATTR_* */
+	uint32_t	dsa_mode;	/* ALLPERMS bits */
+	uint32_t	dsa_uid;
+	uint32_t	dsa_gid;
+	uint64_t	dsa_size;
+	uint32_t	dsa_flags;	/* st_flags */
+	uint32_t	dsa_pad0;
+	struct dq_timespec dsa_atime;
+	struct dq_timespec dsa_mtime;
+	struct dq_timespec dsa_birthtime;
+};
+#define	DQ_SETATTR_MODE		0x00000001
+#define	DQ_SETATTR_UID		0x00000002
+#define	DQ_SETATTR_GID		0x00000004
+#define	DQ_SETATTR_SIZE		0x00000008	/* ftruncate */
+#define	DQ_SETATTR_FLAGS	0x00000010	/* fchflags */
+#define	DQ_SETATTR_ATIME	0x00000020
+#define	DQ_SETATTR_MTIME	0x00000040
+#define	DQ_SETATTR_BIRTHTIME	0x00000080
+#define	DQ_SETATTR_F_UTIMES_NULL 0x00000100	/* utimes(2) with a NULL
+						   argument: the times are now;
+						   VWRITE sufficed */
+
+/* FSYNC: reply is errno. */
+struct dq_fsync_body {
+	uint32_t	dfs_mode;	/* the fo_fsync mode word: MNT_WAIT */
+	uint32_t	dfs_pad0;
+};
+
+/* FALLOCATE: reply is errno; the kernel extends di_size to offset+len. */
+struct dq_fallocate_body {
+	uint64_t	dfa_offset;
+	uint64_t	dfa_len;
+};
+
+/* FSPACECTL: reply is errno + struct dq_fspacectl_reply. */
+struct dq_fspacectl_body {
+	uint32_t	dsc_cmd;	/* SPACECTL_DEALLOC */
+	uint32_t	dsc_flags;	/* SPACECTL_F_* */
+	uint64_t	dsc_offset;
+	uint64_t	dsc_len;
+};
+struct dq_fspacectl_reply {		/* the range left to do */
+	uint64_t	dscr_offset;	/* >= dsc_offset */
+	uint64_t	dscr_len;	/* offset + len == dsc_offset + dsc_len */
+};
+
+/*
+ * LOCK: reply is errno, plus struct dq_lock_reply for DQ_LOCK_GETLK.
+ * Types are F_RDLCK, F_WRLCK and F_UNLCK of <fcntl.h>; start and len are
+ * normalised as lockf(9) normalises them (whence SEEK_SET, negative lengths
+ * folded, SEEK_END resolved from di_size; len 0 = to the end of the file).
+ * The owner is the process leader's pid for POSIX locks and a keyed hash
+ * of the open file for flock(2) and OFD locks: stable across dup and fork,
+ * distinct per open, never a kernel pointer.  pid is the owner's pid for
+ * POSIX locks and -1 otherwise, as lockf(9) reports it.
+ */
+struct dq_lock_body {
+	uint32_t	dl_op;		/* DQ_LOCK_* */
+	uint32_t	dl_kind;	/* DQ_LOCK_POSIX, _FLOCK, _OFD */
+	uint32_t	dl_type;	/* F_RDLCK, F_WRLCK, F_UNLCK */
+	uint32_t	dl_pad0;
+	int64_t		dl_start;
+	int64_t		dl_len;
+	uint64_t	dl_owner;
+	int32_t		dl_pid;
+	int32_t		dl_pad1;
+};
+#define	DQ_LOCK_GETLK		1
+#define	DQ_LOCK_SETLK		2
+#define	DQ_LOCK_SETLKW		3	/* the requester waits; no deadline */
+#define	DQ_LOCK_UNLCK		4
+#define	DQ_LOCK_POSIX		1
+#define	DQ_LOCK_FLOCK		2
+#define	DQ_LOCK_OFD		3
+struct dq_lock_reply {			/* GETLK: the blocking lock, or F_UNLCK */
+	uint32_t	dlr_type;
+	uint32_t	dlr_pad0;
+	int64_t		dlr_start;
+	int64_t		dlr_len;
+	int32_t		dlr_pid;
+	int32_t		dlr_pad1;
+};
+
+/*
+ * UNLOCK_ALL: no reply.  Every lock of this kind held by this owner on the
+ * object is gone: posted by close for the POSIX locks a process owes and
+ * for the flock/OFD locks of a closing open file, only when a LOCK of that
+ * kind was ever posted on the object (D14).
+ */
+struct dq_unlock_all_body {
+	uint32_t	dua_kind;
+	uint32_t	dua_pad0;
+	uint64_t	dua_owner;
+};
+
+/*
+ * IOCTL: in[dio_len] follows: the argument of an IOC_IN command and the
+ * integer of an IOC_VOID command with an int-sized argument; nothing for
+ * IOC_VOID with size 0 or for IOC_OUT alone.  Reply is errno + out[len],
+ * where len must be IOCPARM_LEN(cmd) when the command is IOC_OUT and errno
+ * is 0, and 0 otherwise.  A command whose argument embeds pointers cannot
+ * be served; the controller answers ENOTTY.
+ */
+struct dq_ioctl_body {
+	uint64_t	dio_cmd;
+	uint32_t	dio_len;
+	uint32_t	dio_pad0;
+};
+
+/*
  * Replies.  dr_data points at dr_len bytes in the controller's memory;
  * the kernel copies them before taking any lock.
  */
@@ -337,7 +474,16 @@ enum dq_reason {
 	DQ_REASON_RIGHTS,	/* dp_rights_version / cap_rights version */
 	DQ_REASON_PATHCONF,	/* dp_valid names an unknown slot */
 	DQ_REASON_NAMEMAX,	/* ds_namemax == 0 */
+	DQ_REASON_FLAGS,	/* dm_flags unknown, or DQ_MINT_F_WRITE without
+				   dp_write == DQ_EVENT */
 };
+
+/*
+ * MINT flags.  DQ_MINT_F_WRITE installs the descriptor FREAD|FWRITE (as
+ * open(2) fixes the access mode at open) and needs dp_write == DQ_EVENT;
+ * without it the descriptor is read-only whatever the policy says.
+ */
+#define	DQ_MINT_F_WRITE		0x00000001
 
 struct dq_mint_args {
 	uint32_t	dm_version;		/* DQ_API_VERSION */
@@ -346,7 +492,7 @@ struct dq_mint_args {
 	struct dq_policy dm_policy;
 	uint64_t	dm_object;		/* out: object id */
 	int32_t		dm_fd;			/* out: the minted descriptor */
-	int32_t		dm_pad0;
+	uint32_t	dm_flags;		/* DQ_MINT_F_* (was dm_pad0, zero) */
 	int32_t		*dm_reasonp;		/* optional: receives enum dq_reason
 						   on EINVAL (an ioctl that fails
 						   copies its argument back to
@@ -404,8 +550,61 @@ struct dq_stats {
 };
 
 /*
+ * GET_STATS2 (B8): dq_stats is frozen (its size is in the command word);
+ * everything new goes here.  ds2_size is written by the kernel.
+ */
+struct dq_stats2 {
+	uint32_t	ds2_size;		/* sizeof(struct dq_stats2) */
+	uint32_t	ds2_pad0;
+	uint64_t	ds2_queue_id;
+	uint64_t	ds2_events_posted;
+	uint64_t	ds2_events_delivered;
+	uint64_t	ds2_events_dropped;
+	uint64_t	ds2_replies;
+	uint64_t	ds2_late_replies;
+	uint64_t	ds2_interrupts;
+	uint64_t	ds2_deadline_misses;
+	uint64_t	ds2_objects_live;
+	uint64_t	ds2_objects_total;
+	uint64_t	ds2_objects_revoked;
+	uint64_t	ds2_inflight;
+	uint64_t	ds2_queue_depth;
+	uint64_t	ds2_queue_current;
+	uint64_t	ds2_queue_highwater;
+	uint64_t	ds2_queue_bytes;
+	uint64_t	ds2_observers;
+	uint64_t	ds2_locks;		/* LOCK events posted */
+	uint64_t	ds2_pushes;		/* PUSH ioctls applied */
+	uint64_t	ds2_bad_replies;	/* reply errno outside the per-op
+						   allow-list: the requester got EIO */
+	uint64_t	ds2_async_pending;	/* stage 1b-ii; 0 */
+	uint64_t	ds2_async_bytes;	/* stage 1b-ii; 0 */
+	uint64_t	ds2_async_deadlines;	/* stage 1b-ii; 0 */
+	uint64_t	ds2_overdepth;		/* UNLOCK_ALL/INTERRUPT queued past
+						   the depth (never dropped) */
+	uint64_t	ds2_reserved[15];
+};
+
+/*
+ * PUSH: the controller tells the kernel something about an object.
+ * DQ_PUSH_NOTIFY_VNODE raises dp_note on the object's EVFILT_VNODE knotes
+ * for what happened elsewhere (NOTE_DELETE, LINK, RENAME; WRITE, EXTEND,
+ * ATTRIB caused by others, SETIDENT carrying the attributes themselves).
+ * NOTE_REVOKE belongs to the REVOKE ioctl; DQ_PUSH_INVALIDATE is 1b-ii.
+ */
+struct dq_push_args {
+	uint32_t	dp_version;
+	uint32_t	dp_op;			/* DQ_PUSH_* */
+	uint64_t	dp_object;
+	uint32_t	dp_note;		/* NOTE_* of <sys/event.h> */
+	uint32_t	dp_pad0;
+};
+#define	DQ_PUSH_NOTIFY_VNODE	1
+#define	DQ_PUSH_INVALIDATE	2	/* reserved: stage 1b-ii */
+
+/*
  * Ioctls on the queue, group 'j' (the only unused letter near 'q'/'Q').
- * 9-11 are reserved for PUSH, ATTACH and REGISTER_NAME (later stages).
+ * 10-11 are reserved for ATTACH and REGISTER_NAME (later stages).
  */
 #define	DQ_IOC_MINT		_IOWR('j', 1, struct dq_mint_args)
 #define	DQ_IOC_MINT_OBSERVER	_IOWR('j', 2, struct dq_observer_args)
@@ -415,6 +614,8 @@ struct dq_stats {
 #define	DQ_IOC_SETPOLICY	_IOW('j', 6, struct dq_setpolicy_args)
 #define	DQ_IOC_GET_STATS	_IOR('j', 7, struct dq_stats)
 #define	DQ_IOC_SET_QUEUE_DEPTH	_IOW('j', 8, uint32_t)
+#define	DQ_IOC_PUSH		_IOW('j', 9, struct dq_push_args)
+#define	DQ_IOC_GET_STATS2	_IOR('j', 12, struct dq_stats2)
 
 /* Layout is part of the ABI. */
 _Static_assert(sizeof(struct dq_timespec) == 16, "dq_timespec");
@@ -428,5 +629,20 @@ _Static_assert(sizeof(struct dq_read_body) == 16, "dq_read_body");
 _Static_assert(sizeof(struct dq_reply) == 32, "dq_reply");
 _Static_assert(sizeof(struct dq_mint_args) == 3976, "dq_mint_args");
 _Static_assert(sizeof(struct dq_stats) == 144, "dq_stats");
+_Static_assert(sizeof(struct dq_interrupt_body) == 8, "dq_interrupt_body");
+_Static_assert(sizeof(struct dq_reply_record) == 16, "dq_reply_record");
+_Static_assert(sizeof(struct dq_write_body) == 16, "dq_write_body");
+_Static_assert(sizeof(struct dq_write_reply) == 16, "dq_write_reply");
+_Static_assert(sizeof(struct dq_setattr_body) == 80, "dq_setattr_body");
+_Static_assert(sizeof(struct dq_fsync_body) == 8, "dq_fsync_body");
+_Static_assert(sizeof(struct dq_fallocate_body) == 16, "dq_fallocate_body");
+_Static_assert(sizeof(struct dq_fspacectl_body) == 24, "dq_fspacectl_body");
+_Static_assert(sizeof(struct dq_fspacectl_reply) == 16, "dq_fspacectl_reply");
+_Static_assert(sizeof(struct dq_lock_body) == 48, "dq_lock_body");
+_Static_assert(sizeof(struct dq_lock_reply) == 32, "dq_lock_reply");
+_Static_assert(sizeof(struct dq_unlock_all_body) == 16, "dq_unlock_all_body");
+_Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
+_Static_assert(sizeof(struct dq_stats2) == 320, "dq_stats2");
+_Static_assert(sizeof(struct dq_push_args) == 24, "dq_push_args");
 
 #endif /* !_DEV_DQ_DQ_H_ */

@@ -14,6 +14,7 @@
 #include <dev/dq/dq.h>
 
 struct file;
+struct ucred;
 
 /*
  * The served mark is fp->f_type == DTYPE_DQ, but only an object carries an
@@ -25,6 +26,14 @@ struct file;
  */
 int	dq_file_ident(struct file *fp, struct dq_ident_file *ident,
 	    uint64_t *objectp, uint64_t *noncep);
+
+/*
+ * The controller's credential (B9): what a MAC policy evaluates a requester
+ * against for a served file whose object carries no label of its own
+ * (D22).  Valid while fp is held; NULL for a descriptor that is not a dq
+ * object.  Never a reference: do not crfree it.
+ */
+struct ucred *dq_file_cred(struct file *fp);
 
 #endif /* _KERNEL */
 #endif /* !_DEV_DQ_DQ_KERN_H_ */

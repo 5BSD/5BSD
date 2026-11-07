@@ -5,18 +5,29 @@
  * DescriptorQueue: kernel-private structures.
  *
  * Lock order, outermost first:
- *   foffset -> rangelock -> FILEDESC_SLOCK (the EDEADLK scan, inside
- *   dq_event_post_wait) -> q_rdsx -> dq_mtx -> q_mtx -> o_mtx.
- * foffset and the rangelock are not witness locks and nothing takes them
- * under a filedesc lock; the scan is taken with no dq mutex held.  q_file
- * is compared by address while the queue is not CLOSING; CLOSING is set by
- * the cdevpriv destructor after the file's count hit zero, so a reused
- * address can give one false EDEADLK in that window (accepted).
- * Nothing sleeps under q_mtx or o_mtx except the ev_cv waits, which
- * release q_mtx.  copyin, copyout, uiomove and M_WAITOK allocations happen
+ *   FILEDESC_SLOCK (the EDEADLK scan) -> foffset -> rangelock -> q_rdsx ->
+ *   dq_mtx -> q_mtx -> o_mtx.
+ * The EDEADLK scan (dq_caller_holds_queue) runs at the top of every fileop
+ * that serializes before posting, before foffset_lock_uio or any
+ * rangelock, and again inside dq_event_post_wait: a controller touching
+ * its own served descriptor must get EDEADLK, never sleep uninterruptibly
+ * in rangelock_*lock behind a requester whose event only it can answer.
+ * foffset and the rangelock are not witness locks; the scan is taken with
+ * no dq mutex held.  q_file is compared by address while the queue is not
+ * CLOSING; CLOSING is set by the cdevpriv destructor after the file's count
+ * hit zero, so a reused address can give one false EDEADLK in that window
+ * (accepted).
+ * Nothing sleeps under q_mtx or o_mtx except the waits that release q_mtx:
+ * the ev_cv waits and the msleeps on o_inflight, q_requesters and
+ * q_pending.  copyin, copyout, uiomove and M_WAITOK allocations happen
  * with neither held; observer records are M_NOWAIT and a failure is a
  * counted drop.  Knote filters run under the knlist's mutex (o_mtx for an
  * object, q_mtx for a queue or an observer) and never take the other.
+ * The identity index (q_idhash) is under q_mtx; the sibling walks
+ * (dq_object_knote_siblings, dq_object_mark_locked) take q_mtx then each
+ * sibling's o_mtx in turn, never two o_mtx at once.  Reply data (struct dq_data) and WRITE events
+ * are refcounted and shared between the waiter and the observer records
+ * that hold them; the last release happens with no dq lock held.
  */
 
 #ifndef _DEV_DQ_DQ_VAR_H_
@@ -68,6 +79,19 @@ int	dq_event_cmp(const struct dq_event_k *, const struct dq_event_k *);
 int	dq_object_cmp(const struct dq_object *, const struct dq_object *);
 
 /*
+ * Reply data (D101): one refcounted buffer shared by the waiter and every
+ * data observer's record, so a reply is copied in once and never copied
+ * again under a lock.  dd_len is the controller's length; the allocation
+ * is dd_len bytes rounded up to 8, zero padded, so a record copy can take
+ * the padding from it.
+ */
+struct dq_data {
+	u_int			 dd_refs;
+	size_t			 dd_len;
+	char			 dd_bytes[];
+};
+
+/*
  * A posted event.  ev_hdr and the body are one allocation; ev_size is the
  * record length (header + body) the controller reads.
  */
@@ -88,8 +112,9 @@ struct dq_event_k {
 	bool			 ev_linked;	/* on q_pending or in q_inflight */
 	struct cv		 ev_cv;
 	int			 ev_errno;	/* reply errno or failure */
-	void			*ev_reply;	/* reply data, waiter frees */
-	size_t			 ev_replylen;
+	struct dq_data		*ev_reply;	/* reply data; the waiter takes
+						   the reference */
+	bool			 ev_lock;	/* a LOCK: counted in o_locks */
 	sbintime_t		 ev_deadline;	/* 0 = none */
 	struct dq_object	*ev_object;	/* held; NULL for queue-level */
 	uint64_t		 ev_requester;	/* per-requester quota key */
@@ -108,11 +133,21 @@ struct dq_requester {
 };
 #define	DQ_REQUESTER_HASH	64
 
-/* An observer record: a copy of an event or a reply, maybe without data. */
+/*
+ * An observer record: a copy of an event or a reply, maybe without data.
+ * The header and the fixed body are inline; a data observer's WRITE record
+ * holds the event instead of copying its data (or_ev: the body is read
+ * from the event's own allocation, which never changes after the post) and
+ * its REPLY record holds the reply buffer (or_data) as a second piece.
+ * or_size is the whole record as the observer reads it.
+ */
 struct dq_obs_rec {
 	TAILQ_ENTRY(dq_obs_rec)	 or_link;
 	size_t			 or_size;
-	struct dq_event		 or_hdr;	/* body follows */
+	size_t			 or_inline;	/* body bytes after or_hdr */
+	struct dq_event_k	*or_ev;		/* held; body from the event */
+	struct dq_data		*or_data;	/* held; second piece */
+	struct dq_event		 or_hdr;	/* inline body follows */
 };
 
 struct dq_observer {
@@ -142,14 +177,32 @@ struct dq_object {
 	uint64_t		 o_id;
 	u_int			 o_kind;
 	enum dq_object_state	 o_state;
-	u_int			 o_inflight;	/* posted, not yet answered */
+	u_int			 o_inflight;	/* posted, not yet answered;
+						   LOCK events excepted (B6) */
+	u_int			 o_locks;	/* LOCK events posted, unanswered */
+	u_int			 o_locked;	/* DQ_LOCKED_*: a LOCK of this
+						   kind was ever posted (D14) */
+#define	DQ_LOCKED_POSIX		0x1
+#define	DQ_LOCKED_FLOCK		0x2
+#define	DQ_LOCKED_OFD		0x4
 	bool			 o_retired;	/* removed from q_objects */
 	struct dq_ident_file	 o_ident;
 	struct dq_policy	 o_policy;
 	struct rangelock	 o_rl;
 	struct selinfo		 o_sel;		/* EVFILT_* knotes, on o_mtx */
 	RB_ENTRY(dq_object)	 o_tree;	/* q_objects */
+	/*
+	 * The identity index (N6): objects of one (di_dev, di_ino) share a
+	 * q_idhash bucket, so sibling walks touch only that bucket.  The
+	 * indexed key is kept here, under q_mtx, because o_ident changes
+	 * under o_mtx alone for the fields that are not the key.
+	 */
+	LIST_ENTRY(dq_object)	 o_idlink;	/* q_idhash, under q_mtx */
+	uint64_t		 o_hdev;	/* indexed di_dev, under q_mtx */
+	uint64_t		 o_hino;	/* indexed di_ino, under q_mtx */
+	bool			 o_hashed;	/* on q_idhash */
 };
+#define	DQ_IDHASH		64
 
 RB_HEAD(dq_object_tree, dq_object);
 RB_PROTOTYPE(dq_object_tree, dq_object, o_tree, dq_object_cmp);
@@ -173,13 +226,14 @@ struct dq_queue {
 	uint64_t		 q_next_id;
 	uint64_t		 q_seq;
 	struct dq_object_tree	 q_objects;
+	LIST_HEAD(dq_object_idlist, dq_object) q_idhash[DQ_IDHASH]; /* by (dev, ino) */
 	uint64_t		 q_next_object;
 	u_int			 q_nobjects;
 	u_int			 q_nobservers;
 	LIST_HEAD(, dq_observer) q_observers;
 	LIST_HEAD(, dq_requester) q_requesters[DQ_REQUESTER_HASH];
 	struct selinfo		 q_sel;		/* knlist on q_mtx */
-	struct dq_stats		 q_stats;
+	struct dq_stats2	 q_stats;	/* GET_STATS is a projection */
 	LIST_ENTRY(dq_queue)	 q_all;		/* dq_queues, under dq_mtx */
 };
 
@@ -213,35 +267,52 @@ int	dq_queue_reply(struct dq_queue *q, const struct dq_reply *r,
 int	dq_queue_revoke(struct dq_queue *q, uint64_t object);
 int	dq_queue_setident(struct dq_queue *q, struct dq_setident_args *args);
 int	dq_queue_setpolicy(struct dq_queue *q, struct dq_setpolicy_args *);
+int	dq_queue_push(struct dq_queue *q, const struct dq_push_args *args);
 void	dq_queue_stats(struct dq_queue *q, struct dq_stats *st);
+void	dq_queue_stats2(struct dq_queue *q, struct dq_stats2 *st);
 int	dq_queue_set_depth(struct dq_queue *q, uint32_t depth);
 bool	dq_caller_holds_queue(struct dq_queue *q, struct thread *td);
 
 void	dq_object_hold(struct dq_object *o);
 void	dq_object_rele(struct dq_object *o);
 void	dq_object_retire(struct dq_object *o, struct thread *td);
+void	dq_object_knote_siblings(struct dq_object *o, long hint);
+void	dq_object_mark_locked(struct dq_object *o, u_int bit);
+void	dq_object_set_ident(struct dq_object *o,
+	    const struct dq_ident_file *di, long hint);
+
+void	dq_event_hold(struct dq_event_k *ev);
+void	dq_event_rele(struct dq_event_k *ev);
+void	dq_data_hold(struct dq_data *dd);
+void	dq_data_rele(struct dq_data *dd);
 
 /*
- * Post an event on an object and wait for the answer.  On success
- * *replyp and *replylenp hold the reply data (free with dq_reply_free) and the
- * reply's errno is in *errnop; the return value is the kernel's own
- * verdict (EIO for revoke/close/deadline/drop, EINTR/ERESTART for a
- * signal, EDEADLK).
+ * Post an event on an object and wait for the answer.  On success *replyp
+ * holds the reply data (NULL when the reply carried none; release with
+ * dq_reply_free) and the reply's errno is in *errnop; the return value is
+ * the kernel's own verdict (EIO for revoke/close/deadline/drop, EINTR/
+ * ERESTART for a signal, EDEADLK).  DQ_POST_NODEADLINE waits without the
+ * policy's deadline (LOCK: a blocked SETLKW is legitimate for any time);
+ * DQ_POST_LOCK counts the event in o_locks, not o_inflight, so blocked
+ * lockers never block readers (B6).
  */
+#define	DQ_POST_NODEADLINE	0x1
+#define	DQ_POST_LOCK		0x2
 int	dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
-	    size_t bodylen, struct thread *td, void **replyp,
-	    size_t *replylenp, int *errnop);
+	    size_t bodylen, struct thread *td, int flags,
+	    struct dq_data **replyp, int *errnop);
 void	dq_event_post_nowait(struct dq_queue *q, struct dq_object *o,
 	    uint32_t op, const void *body, size_t bodylen, struct thread *td);
-void	dq_reply_free(void *reply);
+void	dq_reply_free(struct dq_data *reply);
 
 /* dq_file.c */
 extern const struct fileops dq_fileops;
+void	dq_file_init(void);
 int	dq_ident_validate(u_int kind, const struct dq_ident_file *ident,
 	    int *reason);
 int	dq_policy_validate(const struct dq_policy *pol, int *reason);
 int	dq_file_install(struct thread *td, struct dq_object *o,
-	    const struct dq_policy *pol, int *fdp);
+	    const struct dq_policy *pol, u_int mflags, int *fdp);
 void	dq_file_knote(struct dq_object *o, long hint);
 
 /* dq_observer.c */
@@ -249,10 +320,9 @@ extern const struct fileops dq_observer_fileops;
 struct dq_observer *dq_observer_create(struct dq_queue *q, u_int flags);
 int	dq_observer_install(struct thread *td, struct dq_observer *ob,
 	    int *fdp);
-void	dq_observer_fanout_event(struct dq_queue *q,
-	    const struct dq_event_k *ev);
+void	dq_observer_fanout_event(struct dq_queue *q, struct dq_event_k *ev);
 void	dq_observer_fanout_reply(struct dq_queue *q, uint64_t id, int error,
-	    size_t len);
+	    struct dq_data *data);
 void	dq_observer_wakeup(struct dq_queue *q);
 void	dq_observer_unlink_all(struct dq_queue *q);
 void	dq_observer_close_ob(struct dq_observer *ob);

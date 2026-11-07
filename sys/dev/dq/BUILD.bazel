@@ -6,7 +6,7 @@ exports_files(["dq.h", "dq_observe_proto.h"], visibility = ["//lib/libdq:__pkg__
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 cc_library(name = "kernel_headers", hdrs = ["dq.h", "dq_kern.h", "dq_observe_proto.h", "dq_var.h"],
-    includes = ["../.."], visibility = ["//sys/security/oes:__pkg__"],
+    includes = ["../.."], visibility = ["//sys/security/oes:__pkg__", "//sys/security/mac_abac:__pkg__"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 _KERNEL_SOURCES = ["dq_dev.c", "dq_queue.c", "dq_file.c", "dq_observer.c", "dq_observe.c"]

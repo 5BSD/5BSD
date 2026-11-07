@@ -19,6 +19,8 @@
  *   - abac_rules.c  - Rule engine
  */
 
+#include "opt_dq.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
@@ -43,6 +45,10 @@
 #include <sys/acl.h>
 
 #include <security/mac/mac_policy.h>
+
+#ifdef DEV_DQ
+#include <dev/dq/dq_kern.h>
+#endif
 
 #include "mac_abac.h"
 #include "abac_dtrace.h"
@@ -304,6 +310,91 @@ static void abac_destroy(struct mac_policy_conf *mpc);
 static void abac_init(struct mac_policy_conf *mpc);
 static int abac_syscall(struct thread *td, int call, void *arg);
 
+#ifdef DEV_DQ
+/*
+ * Served files (DescriptorQueue, design D93/B9).  A served object carries
+ * no label of its own (D22) and has no vnode: its label is the controller
+ * credential's, exactly the subject label abac_posixshm_create would have
+ * copied at creation, obtained through dq_file_cred() while the file is
+ * held.  The file hooks are gated on the served mark first, as OES gates
+ * its own, so a vnode-backed descriptor keeps its vnode hooks and nothing
+ * is evaluated twice.  Permissive mode logs and allows, as the vnode hooks
+ * do.
+ */
+static int
+abac_dq_check(struct ucred *active_cred, struct file *fp, uint32_t op)
+{
+	struct abac_label *subj, *obj;
+	struct ucred *qcred;
+	int error;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	ABAC_CHECK_ENABLED();
+	qcred = dq_file_cred(fp);
+	if (qcred == NULL)
+		return (0);
+	if (active_cred == NULL || active_cred->cr_label == NULL)
+		return (0);
+	subj = SLOT(active_cred->cr_label);
+	if (subj == NULL)
+		subj = &abac_default_subject;
+	if (qcred->cr_label == NULL)
+		return (0);
+	obj = SLOT(qcred->cr_label);
+	if (obj == NULL)
+		obj = &abac_default_object;
+
+	error = abac_rules_check(active_cred, subj, obj, op, NULL);
+
+	if (error != 0 && abac_mode == ABAC_MODE_PERMISSIVE)
+		return (0);
+
+	return (error);
+}
+
+static int
+abac_dq_check_read(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	return (abac_dq_check(active_cred, fp, ABAC_OP_READ));
+}
+
+static int
+abac_dq_check_write(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	return (abac_dq_check(active_cred, fp, ABAC_OP_WRITE));
+}
+
+static int
+abac_dq_check_stat(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+
+	return (abac_dq_check(active_cred, fp, ABAC_OP_STAT));
+}
+
+static int
+abac_dq_check_mmap(struct ucred *cred, struct file *fp, int fd, int prot,
+    int flags, vm_offset_t addr, vm_size_t size)
+{
+
+	return (abac_dq_check(cred, fp, ABAC_OP_MMAP));
+}
+
+/* Attributes are written like data: the vnode policy has no finer op. */
+static int
+abac_dq_check_setattr(struct ucred *cred, struct file *fp, int fd,
+    struct vattr *vap)
+{
+
+	return (abac_dq_check(cred, fp, ABAC_OP_WRITE));
+}
+#endif /* DEV_DQ */
+
 /*
  * MAC policy operations structure
  */
@@ -447,6 +538,15 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_posixshm_check_truncate = abac_posixshm_check_truncate,
 	.mpo_posixshm_check_unlink = abac_posixshm_check_unlink,
 	.mpo_posixshm_check_write = abac_posixshm_check_write,
+
+#ifdef DEV_DQ
+	/* Served files (DescriptorQueue), checked against the controller */
+	.mpo_file_check_read = abac_dq_check_read,
+	.mpo_file_check_write = abac_dq_check_write,
+	.mpo_file_check_stat = abac_dq_check_stat,
+	.mpo_file_check_mmap = abac_dq_check_mmap,
+	.mpo_file_check_setattr = abac_dq_check_setattr,
+#endif
 
 	/* Privilege hooks */
 	.mpo_priv_check = abac_priv_check,
