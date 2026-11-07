@@ -541,19 +541,123 @@ sendfile_swapin(vm_object_t obj, struct sf_io *sfio, int *nios, off_t off,
 	return (0);
 }
 
+/*
+ * The source of a sendfile(2): the VM object whose pages are sent, its size
+ * when the transfer started, and what the transfer loop needs from the
+ * descriptor behind it -- pin the source while a chunk's pages are read,
+ * re-read its size under that pin, note the access, let it go.  The vnode
+ * and shm sources are the two sendfile(2) accepts today.
+ */
+struct sendfile_src;
+struct sendfile_src_ops {
+	int	(*ss_lock)(struct sendfile_src *);	/* NULL: nothing to pin */
+	void	(*ss_unlock)(struct sendfile_src *);
+	int	(*ss_getsize)(struct sendfile_src *, struct thread *, off_t *);
+						/* NULL: the size is fixed */
+	void	(*ss_accessed)(struct sendfile_src *);	/* NULL: no notice */
+	void	(*ss_release)(struct sendfile_src *);
+};
+struct sendfile_src {
+	const struct sendfile_src_ops *ss_ops;
+	vm_object_t	 ss_obj;
+	off_t		 ss_size;
+	struct vnode	*ss_vp;
+	struct shmfd	*ss_shmfd;
+};
+
 static int
-sendfile_getobj(struct thread *td, struct file *fp, vm_object_t *obj_res,
-    struct vnode **vp_res, struct shmfd **shmfd_res, off_t *obj_size)
+sendfile_vnode_lock(struct sendfile_src *ss)
+{
+
+	return (vn_lock(ss->ss_vp, LK_SHARED));
+}
+
+static void
+sendfile_vnode_unlock(struct sendfile_src *ss)
+{
+
+	VOP_UNLOCK(ss->ss_vp);
+}
+
+/*
+ * Use the pager size when available to simplify synchronization with
+ * filesystems, which otherwise must atomically update both the vnode pager
+ * size and file size.
+ */
+static int
+sendfile_vnode_getsize(struct sendfile_src *ss, struct thread *td,
+    off_t *sizep)
+{
+	struct vattr va;
+	int error;
+
+	ASSERT_VOP_LOCKED(ss->ss_vp, __func__);
+	if (ss->ss_obj->type == OBJT_VNODE) {
+		VM_OBJECT_RLOCK(ss->ss_obj);
+		*sizep = ss->ss_obj->un_pager.vnp.vnp_size;
+		VM_OBJECT_RUNLOCK(ss->ss_obj);
+		return (0);
+	}
+	error = VOP_GETATTR(ss->ss_vp, &va, td->td_ucred);
+	if (error == 0)
+		*sizep = va.va_size;
+	return (error);
+}
+
+static void
+sendfile_vnode_accessed(struct sendfile_src *ss)
+{
+
+	INOTIFY(ss->ss_vp, IN_ACCESS);
+}
+
+static void
+sendfile_src_release_obj(struct sendfile_src *ss)
+{
+
+	vm_object_deallocate(ss->ss_obj);
+}
+
+static const struct sendfile_src_ops sendfile_vnode_ops = {
+	.ss_lock = sendfile_vnode_lock,
+	.ss_unlock = sendfile_vnode_unlock,
+	.ss_getsize = sendfile_vnode_getsize,
+	.ss_accessed = sendfile_vnode_accessed,
+	.ss_release = sendfile_src_release_obj,
+};
+
+static const struct sendfile_src_ops sendfile_shm_ops = {
+	.ss_release = sendfile_src_release_obj,
+};
+
+static int
+sendfile_src_lock(struct sendfile_src *ss)
+{
+
+	if (ss->ss_ops->ss_lock == NULL)
+		return (0);
+	return (ss->ss_ops->ss_lock(ss));
+}
+
+static void
+sendfile_src_unlock(struct sendfile_src *ss)
+{
+
+	if (ss->ss_ops->ss_unlock != NULL)
+		ss->ss_ops->ss_unlock(ss);
+}
+
+static int
+sendfile_getobj(struct thread *td, struct file *fp, struct sendfile_src *ss)
 {
 	vm_object_t obj;
 	struct vnode *vp;
-	struct shmfd *shmfd;
 	int error;
 
 	error = 0;
-	vp = *vp_res = NULL;
+	vp = NULL;
 	obj = NULL;
-	shmfd = *shmfd_res = NULL;
+	bzero(ss, sizeof(*ss));
 
 	/*
 	 * The file descriptor must be a regular file and have a
@@ -586,18 +690,22 @@ sendfile_getobj(struct thread *td, struct file *fp, vm_object_t *obj_res,
 		 */
 		if (obj->type == OBJT_VNODE) {
 			VM_OBJECT_RLOCK(obj);
-			*obj_size = obj->un_pager.vnp.vnp_size;
+			ss->ss_size = obj->un_pager.vnp.vnp_size;
 		} else {
-			error = vn_getsize_locked(vp, obj_size, td->td_ucred);
+			error = vn_getsize_locked(vp, &ss->ss_size,
+			    td->td_ucred);
 			if (error != 0)
 				goto out;
 			VM_OBJECT_RLOCK(obj);
 		}
+		ss->ss_ops = &sendfile_vnode_ops;
+		ss->ss_vp = vp;
 	} else if (fp->f_type == DTYPE_SHM) {
-		shmfd = fp->f_data;
-		obj = shmfd->shm_object;
+		ss->ss_shmfd = fp->f_data;
+		obj = ss->ss_shmfd->shm_object;
 		VM_OBJECT_RLOCK(obj);
-		*obj_size = shmfd->shm_size;
+		ss->ss_size = ss->ss_shmfd->shm_size;
+		ss->ss_ops = &sendfile_shm_ops;
 	} else {
 		error = EINVAL;
 		goto out;
@@ -616,9 +724,7 @@ sendfile_getobj(struct thread *td, struct file *fp, vm_object_t *obj_res,
 	 */
 	vm_object_reference_locked(obj);
 	VM_OBJECT_RUNLOCK(obj);
-	*obj_res = obj;
-	*vp_res = vp;
-	*shmfd_res = shmfd;
+	ss->ss_obj = obj;
 
 out:
 	if (vp != NULL)
@@ -742,7 +848,7 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
     struct thread *td)
 {
 	struct file *sock_fp;
-	struct vnode *vp;
+	struct sendfile_src ss;
 	struct vm_object *obj;
 	vm_page_t pga;
 	struct socket *so;
@@ -752,8 +858,6 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 #endif
 	struct mbuf *m, *mh, *mhtail;
 	struct sf_buf *sf;
-	struct shmfd *shmfd;
-	struct vattr va;
 	off_t off, sbytes, rem, obj_size, nobj_size;
 	int error, ext_pgs_idx, hdrlen, max_pgs, softerr;
 #ifdef KERN_TLS
@@ -771,9 +875,11 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	softerr = 0;
 	use_ext_pgs = false;
 
-	error = sendfile_getobj(td, fp, &obj, &vp, &shmfd, &obj_size);
+	error = sendfile_getobj(td, fp, &ss);
 	if (error != 0)
 		goto out;
+	obj = ss.ss_obj;
+	obj_size = ss.ss_size;
 
 	error = sendfile_getsock(td, sockfd, &sock_fp, &so);
 	if (error != 0)
@@ -856,28 +962,21 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 			hdr_uio = NULL;
 		}
 
-		if (vp != NULL) {
-			error = vn_lock(vp, LK_SHARED);
-			if (error != 0)
+		/*
+		 * Pin the source for this chunk and check to see if the
+		 * file size has changed.
+		 */
+		error = sendfile_src_lock(&ss);
+		if (error != 0)
+			goto done;
+		if (ss.ss_ops->ss_getsize != NULL) {
+			error = ss.ss_ops->ss_getsize(&ss, td, &nobj_size);
+			if (error != 0) {
+				sendfile_src_unlock(&ss);
 				goto done;
-
-			/*
-			 * Check to see if the file size has changed.
-			 */
-			if (obj->type == OBJT_VNODE) {
-				VM_OBJECT_RLOCK(obj);
-				nobj_size = obj->un_pager.vnp.vnp_size;
-				VM_OBJECT_RUNLOCK(obj);
-			} else {
-				error = VOP_GETATTR(vp, &va, td->td_ucred);
-				if (error != 0) {
-					VOP_UNLOCK(vp);
-					goto done;
-				}
-				nobj_size = va.va_size;
 			}
 			if (off >= nobj_size) {
-				VOP_UNLOCK(vp);
+				sendfile_src_unlock(&ss);
 				goto done;
 			}
 			if (nobj_size != obj_size) {
@@ -945,8 +1044,7 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 		error = sendfile_swapin(obj, sfio, &nios, off, space, rhpages,
 		    flags);
 		if (error != 0) {
-			if (vp != NULL)
-				VOP_UNLOCK(vp);
+			sendfile_src_unlock(&ss);
 			sendfile_iodone(sfio, NULL, 0, error);
 			goto done;
 		}
@@ -1107,8 +1205,7 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 			mtail = m0;
 		}
 
-		if (vp != NULL)
-			VOP_UNLOCK(vp);
+		sendfile_src_unlock(&ss);
 
 		/* Keep track of bytes processed. */
 		off += space;
@@ -1216,13 +1313,14 @@ done:
 	SOCK_IO_SEND_UNLOCK(so);
 	CURVNET_RESTORE();
 out:
-	if (error == 0 && sbytes > 0 && vp != NULL)
-		INOTIFY(vp, IN_ACCESS);
+	if (error == 0 && sbytes > 0 && ss.ss_obj != NULL &&
+	    ss.ss_ops->ss_accessed != NULL)
+		ss.ss_ops->ss_accessed(&ss);
 	if (sent != NULL) {
 		(*sent) = sbytes;
 	}
-	if (obj != NULL)
-		vm_object_deallocate(obj);
+	if (ss.ss_obj != NULL)
+		ss.ss_ops->ss_release(&ss);
 	if (so)
 		fdrop(sock_fp, td);
 	if (m)
