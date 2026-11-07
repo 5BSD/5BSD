@@ -6097,6 +6097,7 @@ const struct fileops path_fileops = {
 	.fo_fsync = vn_fsync,
 	.fo_setattr = vn_setattr,
 	.fo_acl = vn_acl,
+	.fo_extattr = vn_extattr,
 	.fo_flags = DFLAG_PASSABLE,
 };
 
@@ -6215,6 +6216,15 @@ invfo_copy_file_range(struct file *infp, off_t *inoffp, struct file *outfp,
 /* What getvnode_path() returned for a descriptor with no vnode. */
 int
 invfo_acl(struct file *fp, int op, int type, struct acl *aclp,
+    struct thread *td)
+{
+
+	return (EINVAL);
+}
+
+int
+invfo_extattr(struct file *fp, int op, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, struct uio *auio,
     struct thread *td)
 {
 

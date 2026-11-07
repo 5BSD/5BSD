@@ -627,6 +627,34 @@ vn_openfile_acl(struct file *fp, int op, int type, struct acl *aclp,
 	return (error);
 }
 
+int
+vn_extattr_opt(struct file *fp, int op, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, struct uio *auio,
+    struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_extattr(fp, op, attrnamespace, attrname, data,
+		    nbytes, auio, td));
+	return (vn_extattr(fp, op, attrnamespace, attrname, data, nbytes,
+	    auio, td));
+}
+
+static int
+vn_openfile_extattr(struct file *fp, int op, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, struct uio *auio,
+    struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_extattr(fp, op, attrnamespace, attrname, data, nbytes, auio,
+	    td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
 /*
  * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
  * that carries a vnode.  The file context is entered here, not by a
@@ -688,6 +716,7 @@ const struct fileops vnops = {
 	.fo_readdir = vn_readdir,
 	.fo_copy_file_range = vn_copy_range,
 	.fo_acl = vn_openfile_acl,
+	.fo_extattr = vn_openfile_extattr,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -717,6 +746,7 @@ const struct fileops vnops = {
 	.fo_readdir = vn_readdir, \
 	.fo_copy_file_range = vn_copy_range, \
 	.fo_acl = vn_openfile_acl, \
+	.fo_extattr = vn_openfile_extattr, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

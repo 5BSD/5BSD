@@ -1164,6 +1164,7 @@ MLINKS+=fetch.9 fubyte.9 \
 	fetch.9 fueword64.9
 MLINKS+=fileops.9 fo_acl.9 \
 	fileops.9 fo_copy_file_range.9 \
+	fileops.9 fo_extattr.9 \
 	fileops.9 fo_fadvise.9 \
 	fileops.9 fo_fsync.9 \
 	fileops.9 fo_pathconf.9 \

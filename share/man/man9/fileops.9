@@ -13,7 +13,8 @@
 .Nm fo_fadvise ,
 .Nm fo_readdir ,
 .Nm fo_copy_file_range ,
-.Nm fo_acl
+.Nm fo_acl ,
+.Nm fo_extattr
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -34,6 +35,8 @@
 .Fn fo_copy_file_range "struct file *infp" "off_t *inoffp" "struct file *outfp" "off_t *outoffp" "size_t *lenp" "unsigned int flags" "struct thread *td"
 .Ft int
 .Fn fo_acl "struct file *fp" "int op" "int type" "struct acl *aclp" "struct thread *td"
+.Ft int
+.Fn fo_extattr "struct file *fp" "int op" "int attrnamespace" "const char *attrname" "void *data" "size_t nbytes" "struct uio *auio" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -407,6 +410,51 @@ linuxkpi files use it, and get whatever their filesystem answers.
 returns
 .Er EINVAL .
 .El
+.Ss fo_extattr
+.Fn fo_extattr
+answers the
+.Xr extattr_set_fd 2 ,
+.Xr extattr_get_fd 2 ,
+.Xr extattr_delete_fd 2
+and
+.Xr extattr_list_fd 2
+system calls and the Linux
+.Fn f*xattr
+family, selected by
+.Fa op
+.Pq Dv FO_EXTATTR_SET , Dv FO_EXTATTR_GET , Dv FO_EXTATTR_DELETE , Dv FO_EXTATTR_LIST .
+Set and get take the user buffer in
+.Fa data
+and
+.Fa nbytes
+.Pq get with a null buffer returns the size ,
+list fills
+.Fa auio ,
+delete takes neither.
+The system calls record the audit arguments and accept
+.Dv O_PATH
+descriptors, as they always did.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_extattr
+calls the
+.Fn extattr_*_vp
+helper for the operation, each of which locks the vnode and runs its own
+MAC check before
+.Xr VOP_SETEXTATTR 9 ,
+.Xr VOP_GETEXTATTR 9 ,
+.Fn VOP_DELETEEXTATTR
+or
+.Xr VOP_LISTEXTATTR 9 .
+Regular files, directories,
+.Dv O_PATH
+files, FIFOs, devfs nodes and vnode-carrying pseudo-terminal masters and
+linuxkpi files use it, and get whatever their filesystem answers.
+.It everything else
+.Fn invfo_extattr
+returns
+.Er EINVAL .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
@@ -414,6 +462,7 @@ value.
 .Sh SEE ALSO
 .Xr aio_fsync 2 ,
 .Xr copy_file_range 2 ,
+.Xr extattr_get_fd 2 ,
 .Xr fchflags 2 ,
 .Xr fdatasync 2 ,
 .Xr fpathconf 2 ,
@@ -431,6 +480,7 @@ value.
 .Xr VOP_ADVISE 9 ,
 .Xr VOP_FSYNC 9 ,
 .Xr VOP_GETACL 9 ,
+.Xr VOP_GETEXTATTR 9 ,
 .Xr VOP_PATHCONF 9 ,
 .Xr VOP_READDIR 9 ,
 .Xr VOP_SETACL 9 ,
@@ -446,9 +496,10 @@ table has existed since
 .Fn fo_setattr ,
 .Fn fo_fadvise ,
 .Fn fo_readdir ,
-.Fn fo_copy_file_range
-and
+.Fn fo_copy_file_range ,
 .Fn fo_acl
+and
+.Fn fo_extattr
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

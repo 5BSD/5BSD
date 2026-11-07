@@ -726,6 +726,7 @@ static const struct fileops ptsdev_ops = {
 	.fo_setattr	= vn_setattr_opt,
 	.fo_readdir	= vn_readdir_opt,
 	.fo_acl		= vn_acl_opt,
+	.fo_extattr	= vn_extattr_opt,
 	.fo_flags	= DFLAG_PASSABLE,
 };
 

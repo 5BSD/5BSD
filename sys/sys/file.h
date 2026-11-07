@@ -176,7 +176,16 @@ typedef int fo_copy_file_range_t(struct file *infp, off_t *inoffp,
 		    unsigned int flags, struct thread *td);
 typedef int fo_acl_t(struct file *fp, int op, int type, struct acl *aclp,
 		    struct thread *td);
+typedef int fo_extattr_t(struct file *fp, int op, int attrnamespace,
+		    const char *attrname, void *data, size_t nbytes,
+		    struct uio *auio, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
+
+/* fo_extattr operations: set and get use data/nbytes, list uses auio. */
+#define	FO_EXTATTR_SET		0
+#define	FO_EXTATTR_GET		1
+#define	FO_EXTATTR_DELETE	2
+#define	FO_EXTATTR_LIST		3
 
 /* fo_acl operations. */
 #define	FO_ACL_GET	0	/* __acl_get_fd(2): copy the ACL out to aclp */
@@ -221,6 +230,7 @@ struct fileops {
 	fo_readdir_t	*fo_readdir;
 	fo_copy_file_range_t *fo_copy_file_range;
 	fo_acl_t	*fo_acl;
+	fo_extattr_t	*fo_extattr;
 	fo_spare_t	*fo_spares[4];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
@@ -362,6 +372,7 @@ fo_fadvise_t	invfo_fadvise;
 fo_readdir_t	invfo_readdir;
 fo_copy_file_range_t invfo_copy_file_range;
 fo_acl_t	invfo_acl;
+fo_extattr_t	invfo_extattr;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -375,6 +386,7 @@ fo_fadvise_t	vn_fadvise;
 fo_readdir_t	vn_readdir;
 fo_copy_file_range_t vn_copy_range;
 fo_acl_t	vn_acl;
+fo_extattr_t	vn_extattr;
 /*
  * For descriptor types that carry a vnode only on some creation paths
  * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
@@ -386,6 +398,7 @@ fo_fsync_t	vn_fsync_opt;
 fo_setattr_t	vn_setattr_opt;
 fo_readdir_t	vn_readdir_opt;
 fo_acl_t	vn_acl_opt;
+fo_extattr_t	vn_extattr_opt;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -656,6 +669,23 @@ fo_acl(struct file *fp, int op, int type, struct acl *aclp,
 	if (fp->f_ops->fo_acl == NULL)
 		return (invfo_acl(fp, op, type, aclp, td));
 	return ((*fp->f_ops->fo_acl)(fp, op, type, aclp, td));
+}
+
+/*
+ * The extattr_*_fd(2) family: op is FO_EXTATTR_*; set and get take a user
+ * buffer in data/nbytes (get with NULL data returns the size), list fills
+ * auio, delete takes neither.
+ */
+static __inline int
+fo_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
+    void *data, size_t nbytes, struct uio *auio, struct thread *td)
+{
+
+	if (fp->f_ops->fo_extattr == NULL)
+		return (invfo_extattr(fp, op, attrnamespace, attrname, data,
+		    nbytes, auio, td));
+	return ((*fp->f_ops->fo_extattr)(fp, op, attrnamespace, attrname, data,
+	    nbytes, auio, td));
 }
 
 static __inline int

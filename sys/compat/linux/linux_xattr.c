@@ -127,8 +127,9 @@ error_to_xattrerror(int attrnamespace, int error)
 }
 
 /*
- * Look up the vnode-backed file for the f*xattr() family.  Like Linux, a
- * user-supplied O_PATH descriptor fails with EBADF.  The *xattrat() family
+ * Look up the file for the f*xattr() family: one whose fileops answer
+ * extended attributes (EINVAL otherwise, as getvnode() gave).  Like Linux,
+ * a user-supplied O_PATH descriptor fails with EBADF.  The *xattrat() family
  * resolves dfd-relative paths through a temporary internal O_PATH
  * descriptor (see xattrat_resolve()), which must be accepted.
  */
@@ -136,10 +137,22 @@ static int
 xattr_getvnode(struct thread *td, int fd, bool opath, cap_rights_t *rightsp,
     struct file **fpp)
 {
+	struct file *fp;
+	int error;
 
-	if (opath)
-		return (getvnode_path(td, fd, rightsp, NULL, fpp));
-	return (getvnode(td, fd, rightsp, fpp));
+	error = fget(td, fd, rightsp, &fp);
+	if (error != 0)
+		return (error);
+	if (!opath && fp->f_ops == &path_fileops)
+		error = EBADF;
+	else if (fp->f_ops->fo_extattr == NULL)
+		error = EINVAL;
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
+	}
+	*fpp = fp;
+	return (0);
 }
 
 static int
@@ -455,6 +468,32 @@ done:
 	return (error);
 }
 
+/*
+ * The descriptor form of linux_extattr_get_vp(): Linux getxattr() semantics
+ * (a null buffer asks for the size; a short buffer is ERANGE) through the
+ * file's own fo_extattr, as a size probe followed by the read.
+ */
+static int
+linux_extattr_get_fp(struct file *fp, int attrnamespace, const char *attrname,
+    void *data, size_t nbytes, struct thread *td)
+{
+	size_t size;
+	int error;
+
+	if (nbytes > IOSIZE_MAX)
+		return (EINVAL);
+	error = kern_extattr_get_fp(td, fp, attrnamespace, attrname, NULL, 0);
+	if (error != 0)
+		return (error);
+	size = td->td_retval[0];
+	if (data == NULL || nbytes == 0)
+		return (0);
+	if (size > nbytes)
+		return (ERANGE);
+	return (kern_extattr_get_fp(td, fp, attrnamespace, attrname, data,
+	    size));
+}
+
 static int
 getxattr(struct thread *td, struct getxattr_args *args)
 {
@@ -465,12 +504,12 @@ getxattr(struct thread *td, struct getxattr_args *args)
 	cap_rights_t rights;
 	int attrnamespace, error;
 
+	vp = NULL;
 	if (args->path == NULL) {
 		error = xattr_getvnode(td, args->fd, args->opath,
 		    cap_rights_init_one(&rights, CAP_EXTATTR_GET), &fp);
 		if (error != 0)
 			return (error);
-		vp = fp->f_vnode;
 	} else {
 		NDINIT_ATRIGHTS(&nd, LOOKUP, args->follow, UIO_USERSPACE,
 		    args->path, AT_FDCWD,
@@ -484,8 +523,12 @@ getxattr(struct thread *td, struct getxattr_args *args)
 
 	error = xattr_to_extattr(args->name, &attrnamespace, attrname);
 	if (error == 0) {
-		error = linux_extattr_get_vp(vp, attrnamespace, attrname,
-			args->value, args->size, td);
+		if (fp != NULL)
+			error = linux_extattr_get_fp(fp, attrnamespace,
+			    attrname, args->value, args->size, td);
+		else
+			error = linux_extattr_get_vp(vp, attrnamespace,
+			    attrname, args->value, args->size, td);
 		if (error == EPERM || error == EOPNOTSUPP)
 			error = ENOATTR;
 	}
