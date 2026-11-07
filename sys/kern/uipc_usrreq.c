@@ -538,10 +538,71 @@ uipc_lock_peer(struct socket *so, struct unpcb **unp2)
 	return (0);
 }
 
+/*
+ * pr_abort's contract with sendfile(2) and KTLS (sendfile_iodone): "tear
+ * down protocol state, free all ready mbufs and detach not ready ones"; the
+ * I/O path then frees the not-ready mbufs itself (mb_free_notready).  A
+ * unix(4) stream socket keeps a sender's not-ready mbufs in the peer's
+ * receive buffer, so abort must unlink them there, or the peer's buffer
+ * keeps pointers to mbufs the I/O path has freed (unp_dispose then walks
+ * freed memory).  Everything from the first not-ready mbuf on is cut off:
+ * the not-ready ones are left to their owner, the ready ones after them
+ * (data behind the hole, which can never be delivered in order) are
+ * returned for freeing.  Called with the peer's receive buffer locked.
+ */
+static struct mbuf *
+uipc_abort_notready(struct sockbuf *sb)
+{
+	STAILQ_HEAD(, mbuf) rest;
+	struct mbuf *m, *prev, *free, **freetail;
+
+	if (sb->uxst_fnrdy == NULL)
+		return (NULL);
+	prev = NULL;
+	STAILQ_FOREACH(m, &sb->uxst_mbq, m_stailq) {
+		if (m == sb->uxst_fnrdy)
+			break;
+		prev = m;
+	}
+	MPASS(m != NULL);
+	if (prev == NULL) {
+		STAILQ_FIRST(&rest) = STAILQ_FIRST(&sb->uxst_mbq);
+		STAILQ_INIT(&sb->uxst_mbq);
+	} else
+		STAILQ_SPLIT_AFTER(&sb->uxst_mbq, prev, &rest, m_stailq);
+	free = NULL;
+	freetail = &free;
+	while ((m = STAILQ_FIRST(&rest)) != NULL) {
+		STAILQ_FIRST(&rest) = STAILQ_NEXT(m, m_stailq);
+		if (m->m_type == MT_CONTROL)
+			sb->sb_ctl -= m->m_len;
+		else
+			sb->sb_ccc -= m->m_len;
+		sb->sb_mbcnt -= MSIZE;
+		if (m->m_flags & M_EXT)
+			sb->sb_mbcnt -= m->m_ext.ext_size;
+		/*
+		 * A not-ready mbuf is left exactly as it is: m_stailq and
+		 * m_next share storage, and the I/O path frees its run by
+		 * walking m_next for the count it queued (mb_free_notready).
+		 * Only the ready mbufs we free are relinked.
+		 */
+		if ((m->m_flags & M_NOTREADY) != 0)
+			continue;
+		m->m_next = NULL;
+		*freetail = m;
+		freetail = &m->m_next;
+	}
+	sb->uxst_fnrdy = NULL;
+	return (free);
+}
+
 static void
 uipc_abort(struct socket *so)
 {
 	struct unpcb *unp, *unp2;
+	struct socket *so2;
+	struct mbuf *m;
 
 	unp = sotounpcb(so);
 	KASSERT(unp != NULL, ("uipc_abort: unp == NULL"));
@@ -552,7 +613,22 @@ uipc_abort(struct socket *so)
 	if (unp2 != NULL) {
 		unp_pcb_hold(unp2);
 		UNP_PCB_UNLOCK(unp);
+		m = NULL;
+		if (so->so_type == SOCK_STREAM) {
+			UNP_PCB_LOCK(unp2);
+			so2 = unp2->unp_socket;
+			if (so2 != NULL) {
+				SOCK_RECVBUF_LOCK(so2);
+				m = uipc_abort_notready(&so2->so_rcv);
+				SOCK_RECVBUF_UNLOCK(so2);
+			}
+			UNP_PCB_UNLOCK(unp2);
+		}
 		unp_drop(unp2);
+		if (m != NULL) {
+			unp_scan(m, unp_freerights);
+			m_freemp(m);
+		}
 	} else
 		UNP_PCB_UNLOCK(unp);
 }
@@ -3018,11 +3094,26 @@ uipc_ready(struct socket *so, struct mbuf *m, int count)
 	if (__predict_true(uipc_lock_peer(so, &unp2) == 0)) {
 		struct socket *so2;
 		struct sockbuf *sb;
+		struct mbuf *n;
 
 		so2 = unp2->unp_socket;
 		sb = &so2->so_rcv;
 		SOCK_RECVBUF_LOCK(so2);
 		UNP_PCB_UNLOCK(unp2);
+		/*
+		 * An abort (uipc_abort_notready) may have cut this run off
+		 * the peer's queue before the connection dropped: then it is
+		 * ours alone, and readying it there would leave it orphaned.
+		 */
+		for (n = sb->uxst_fnrdy; n != NULL; n = STAILQ_NEXT(n, m_stailq))
+			if (n == m)
+				break;
+		if (n == NULL) {
+			SOCK_RECVBUF_UNLOCK(so2);
+			for (int i = 0; i < count; i++)
+				m = m_free(m);
+			return (ECONNRESET);
+		}
 		UIPC_STREAM_SBCHECK(sb);
 		error = uipc_sbready(sb, m, count);
 		UIPC_STREAM_SBCHECK(sb);
