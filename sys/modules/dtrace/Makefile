@@ -12,7 +12,7 @@ SUBDIR=		dtaudit		\
 		sdt		\
 		systrace
 
-.if ${MACHINE_CPUARCH} == "amd64"
+.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
 SUBDIR+=	fasttrap systrace_linux
 .endif
 .if ${MACHINE_CPUARCH} == "amd64"

@@ -67,7 +67,7 @@
 #include <machine/vfp.h>
 #endif
 
-MODULE_VERSION(linux64elf, 1);
+MODULE_VERSION(linux64, 1);
 
 #define	LINUX_VDSOPAGE_SIZE	PAGE_SIZE * 2
 #define	LINUX_VDSOPAGE		(VM_MAXUSER_ADDRESS - \

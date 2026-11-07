@@ -56,10 +56,17 @@
 #include <cddl/dev/dtrace/dtrace_cddl.h>
 
 #ifdef LINUX_SYSTRACE
+#ifdef __aarch64__
+#include <arm64/linux/linux.h>
+#include <arm64/linux/linux_proto.h>
+#include <arm64/linux/linux_syscalls.c>
+#include <arm64/linux/linux_systrace_args.c>
+#else
 #include <amd64/linux/linux.h>
 #include <amd64/linux/linux_proto.h>
 #include <amd64/linux/linux_syscalls.c>
 #include <amd64/linux/linux_systrace_args.c>
+#endif
 #define	MODNAME		"linux"
 extern struct sysent linux_sysent[];
 #define	MAXSYSCALL	LINUX_SYS_MAXSYSCALL
