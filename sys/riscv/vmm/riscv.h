@@ -65,6 +65,7 @@ struct hypcsr {
 	uint64_t vsatp;
 	uint64_t scounteren;
 	uint64_t senvcfg;
+	uint64_t vstimecmp;
 };
 
 enum vmm_fence_type {
@@ -132,5 +133,6 @@ bool vmm_sbi_ecall(struct vcpu *);
 void riscv_send_ipi(struct hyp *hyp, cpuset_t *cpus);
 int riscv_check_ipi(struct hypctx *hypctx, bool clear);
 bool riscv_check_interrupts_pending(struct hypctx *hypctx);
+sbintime_t riscv_vstimer_wait(struct hypctx *hypctx);
 
 #endif /* !_VMM_RISCV_H_ */

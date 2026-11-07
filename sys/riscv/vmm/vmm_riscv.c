@@ -175,6 +175,8 @@ vmmops_vcpu_restore_csrs(struct hypctx *hypctx)
 	csr_write(vstval, csrs->vstval);
 	csr_write(hvip, csrs->hvip);
 	csr_write(vsatp, csrs->vsatp);
+	if (has_sstc)
+		csr_write(vstimecmp, csrs->vstimecmp);
 }
 
 static void
@@ -193,6 +195,8 @@ vmmops_vcpu_save_csrs(struct hypctx *hypctx)
 	csrs->vstval = csr_read(vstval);
 	csrs->hvip = csr_read(hvip);
 	csrs->vsatp = csr_read(vsatp);
+	if (has_sstc)
+		csrs->vstimecmp = csr_read(vstimecmp);
 }
 
 void *
@@ -228,6 +232,9 @@ vmmops_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	/* hstatus */
 	hypctx->guest_regs.hyp_hstatus = HSTATUS_SPV | HSTATUS_VTW;
 	hypctx->guest_regs.hyp_hstatus |= HSTATUS_SPVP;
+
+	/* No Sstc timer interrupt until the guest programs one. */
+	hypctx->guest_csrs.vstimecmp = UINT64_MAX;
 
 	hypctx->cpu_id = vcpuid;
 	hyp->ctx[vcpuid] = hypctx;
@@ -662,6 +669,27 @@ riscv_check_interrupts_pending(struct hypctx *hypctx)
 		return (true);
 
 	return (false);
+}
+
+/*
+ * A guest using Sstc programs vstimecmp itself, so a WFI exit does not see
+ * its timer in interrupts_pending.  Return how long the vCPU may sleep, or
+ * zero if the timer is already due.
+ */
+sbintime_t
+riscv_vstimer_wait(struct hypctx *hypctx)
+{
+	uint64_t deadline, now;
+
+	if (!has_sstc)
+		return (SBT_1S);
+	deadline = hypctx->guest_csrs.vstimecmp;
+	now = rdtime();
+	if (now >= deadline)
+		return (0);
+	if (deadline - now >= hypctx->vtimer.freq)
+		return (SBT_1S);
+	return ((deadline - now) * SBT_1S / hypctx->vtimer.freq + 1);
 }
 
 static void

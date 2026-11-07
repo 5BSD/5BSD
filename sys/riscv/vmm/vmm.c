@@ -750,6 +750,7 @@ static int
 vm_handle_wfi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 {
 	struct vm *vm;
+	sbintime_t wait;
 
 	vm = vcpu->vm;
 	vcpu_lock(vcpu);
@@ -769,12 +770,16 @@ vm_handle_wfi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 		if (vcpu_should_yield(vcpu))
 			break;
 
+		wait = riscv_vstimer_wait(vcpu->cookie);
+		if (wait == 0)
+			break;
+
 		vcpu_require_state_locked(vcpu, VCPU_SLEEPING);
 		/*
 		 * XXX msleep_spin() cannot be interrupted by signals so
-		 * wake up periodically to check pending signals.
+		 * wake up at least once a second to check pending signals.
 		 */
-		msleep_spin(vcpu, &vcpu->mtx, "vmidle", hz);
+		msleep_spin_sbt(vcpu, &vcpu->mtx, "vmidle", wait, 0, 0);
 		vcpu_require_state_locked(vcpu, VCPU_FROZEN);
 	}
 	vcpu_unlock(vcpu);
