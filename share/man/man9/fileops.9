@@ -10,7 +10,8 @@
 .Nm fo_statfs ,
 .Nm fo_fsync ,
 .Nm fo_setattr ,
-.Nm fo_fadvise
+.Nm fo_fadvise ,
+.Nm fo_readdir
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -25,6 +26,8 @@
 .Fn fo_setattr "struct file *fp" "struct vattr *vap" "struct ucred *active_cred" "struct thread *td"
 .Ft int
 .Fn fo_fadvise "struct file *fp" "off_t offset" "off_t len" "int advice" "struct thread *td"
+.Ft int
+.Fn fo_readdir "struct file *fp" "struct uio *uio" "off_t *basep" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -290,6 +293,42 @@ return
 returns
 .Er ENODEV .
 .El
+.Ss fo_readdir
+.Fn fo_readdir
+answers
+.Xr getdirentries 2 :
+it reads directory entries into
+.Fa uio
+from
+.Va uio_offset ,
+leaves
+.Va uio_offset
+at the next entry, and stores the offset the read began from through
+.Fa basep .
+The system call holds the file's offset lock around the call, checks
+.Dv FREAD ,
+and refuses
+.Dv O_PATH
+descriptors with
+.Er EBADF ,
+as it always did.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_readdir
+locks the vnode shared, returns
+.Er ENOTDIR
+for anything that is not a directory, runs the MAC readdir check and
+.Xr VOP_READDIR 9 ,
+and, when a union mount's root directory is exhausted, moves the file to
+the covered directory and reads on, as it always did.
+Directories use it; FIFOs, devfs nodes and vnode-carrying pseudo-terminal
+masters and linuxkpi files reach it and get
+.Er ENOTDIR .
+.It everything else
+.Fn invfo_readdir
+returns
+.Er EINVAL .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
@@ -302,6 +341,7 @@ value.
 .Xr fstatfs 2 ,
 .Xr fsync 2 ,
 .Xr futimens 2 ,
+.Xr getdirentries 2 ,
 .Xr posix_fadvise 2 ,
 .Xr fdescfs 4 ,
 .Xr VFS_STATFS 9 ,
@@ -310,6 +350,7 @@ value.
 .Xr VOP_ADVISE 9 ,
 .Xr VOP_FSYNC 9 ,
 .Xr VOP_PATHCONF 9 ,
+.Xr VOP_READDIR 9 ,
 .Xr VOP_SETATTR 9
 .Sh HISTORY
 The
@@ -319,9 +360,10 @@ table has existed since
 .Fn fo_pathconf ,
 .Fn fo_statfs ,
 .Fn fo_fsync ,
-.Fn fo_setattr
-and
+.Fn fo_setattr ,
 .Fn fo_fadvise
+and
+.Fn fo_readdir
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

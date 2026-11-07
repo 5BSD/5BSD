@@ -6194,6 +6194,15 @@ invfo_fadvise(struct file *fp, off_t offset, off_t len, int advice,
 	return (ENODEV);
 }
 
+/* What getvnode() returned for a descriptor with no vnode. */
+int
+invfo_readdir(struct file *fp, struct uio *uio, off_t *basep,
+    struct thread *td)
+{
+
+	return (EINVAL);
+}
+
 int
 invfo_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
     struct uio *trl_uio, off_t offset, size_t nbytes, off_t *sent, int flags,

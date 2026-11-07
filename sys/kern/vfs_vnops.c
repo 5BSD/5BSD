@@ -594,6 +594,16 @@ vn_setattr_opt(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	return (vn_setattr(fp, vap, active_cred, td));
 }
 
+int
+vn_readdir_opt(struct file *fp, struct uio *uio, off_t *basep,
+    struct thread *td)
+{
+
+	if (fp->f_vnode == NULL)
+		return (invfo_readdir(fp, uio, basep, td));
+	return (vn_readdir(fp, uio, basep, td));
+}
+
 /*
  * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
  * that carries a vnode.  The file context is entered here, not by a
@@ -652,6 +662,7 @@ const struct fileops vnops = {
 	.fo_fsync = vn_fsync,
 	.fo_setattr = vn_openfile_setattr,
 	.fo_fadvise = vn_openfile_fadvise,
+	.fo_readdir = vn_readdir,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -678,6 +689,7 @@ const struct fileops vnops = {
 	.fo_fsync = vn_fsync, \
 	.fo_setattr = vn_openfile_setattr, \
 	.fo_fadvise = vn_openfile_fadvise, \
+	.fo_readdir = vn_readdir, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

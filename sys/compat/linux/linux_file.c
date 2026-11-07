@@ -768,21 +768,22 @@ linux_lseek(struct thread *td, struct linux_lseek_args *args)
 static int
 linux_getdents_error(struct thread *td, int fd, int err)
 {
-	struct vnode *vp;
+	struct stat sb;
 	struct file *fp;
 	int error;
 
 	/* Linux return ENOTDIR in case when fd is not a directory. */
-	error = getvnode(td, fd, &cap_read_rights, &fp);
+	error = fget(td, fd, &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
-	vp = fp->f_vnode;
-	if (vp->v_type != VDIR) {
-		fdrop(fp, td);
-		return (ENOTDIR);
-	}
+	if (fp->f_ops == &path_fileops)
+		error = EBADF;
+	else
+		error = fo_stat(fp, &sb, td->td_ucred);
+	if (error == 0 && !S_ISDIR(sb.st_mode))
+		error = ENOTDIR;
 	fdrop(fp, td);
-	return (err);
+	return (error != 0 ? error : err);
 }
 
 struct l_dirent {

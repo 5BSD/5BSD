@@ -168,6 +168,8 @@ typedef int fo_setattr_t(struct file *fp, struct vattr *vap,
 		    struct ucred *active_cred, struct thread *td);
 typedef int fo_fadvise_t(struct file *fp, off_t offset, off_t len,
 		    int advice, struct thread *td);
+typedef int fo_readdir_t(struct file *fp, struct uio *uio, off_t *basep,
+		    struct thread *td);
 typedef int fo_spare_t(struct file *fp);
 
 /* fo_fsync modes. */
@@ -204,7 +206,8 @@ struct fileops {
 	fo_fsync_t	*fo_fsync;
 	fo_setattr_t	*fo_setattr;
 	fo_fadvise_t	*fo_fadvise;
-	fo_spare_t	*fo_spares[3];	/* Spare slots */
+	fo_readdir_t	*fo_readdir;
+	fo_spare_t	*fo_spares[2];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
@@ -342,6 +345,7 @@ fo_statfs_t	invfo_statfs;
 fo_fsync_t	invfo_fsync;
 fo_setattr_t	invfo_setattr;
 fo_fadvise_t	invfo_fadvise;
+fo_readdir_t	invfo_readdir;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -352,6 +356,7 @@ fo_statfs_t	vn_statfs;
 fo_fsync_t	vn_fsync;
 fo_setattr_t	vn_setattr;
 fo_fadvise_t	vn_fadvise;
+fo_readdir_t	vn_readdir;
 /*
  * For descriptor types that carry a vnode only on some creation paths
  * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
@@ -361,6 +366,7 @@ fo_pathconf_t	vn_pathconf_opt;
 fo_statfs_t	vn_statfs_opt;
 fo_fsync_t	vn_fsync_opt;
 fo_setattr_t	vn_setattr_opt;
+fo_readdir_t	vn_readdir_opt;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -589,6 +595,20 @@ fo_fadvise(struct file *fp, off_t offset, off_t len, int advice,
 	if (fp->f_ops->fo_fadvise == NULL)
 		return (invfo_fadvise(fp, offset, len, advice, td));
 	return ((*fp->f_ops->fo_fadvise)(fp, offset, len, advice, td));
+}
+
+/*
+ * Read directory entries into uio from uio_offset, leaving uio_offset at the
+ * next entry and *basep at the offset the read began from.  The caller holds
+ * the file's offset lock.
+ */
+static __inline int
+fo_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
+{
+
+	if (fp->f_ops->fo_readdir == NULL)
+		return (invfo_readdir(fp, uio, basep, td));
+	return ((*fp->f_ops->fo_readdir)(fp, uio, basep, td));
 }
 
 static __inline int

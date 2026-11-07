@@ -4372,40 +4372,61 @@ int
 kern_getdirentries(struct thread *td, int fd, char *buf, size_t count,
     off_t *basep, ssize_t *residp, enum uio_seg bufseg)
 {
-	struct vn_file_context filectx;
-	struct vnode *vp;
 	struct file *fp;
 	struct uio auio;
 	struct iovec aiov;
-	off_t loff;
-	int error, eofflag;
-	off_t foffset;
+	int error;
 
 	AUDIT_ARG_FD(fd);
 	if (count > IOSIZE_MAX)
 		return (EINVAL);
-	auio.uio_resid = count;
-	error = getvnode(td, fd, &cap_read_rights, &fp);
+	error = fget(td, fd, &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
-	if ((fp->f_flag & FREAD) == 0) {
+	/* getvnode() refused O_PATH descriptors and files opened write-only. */
+	if (fp->f_ops == &path_fileops || (fp->f_flag & FREAD) == 0) {
 		fdrop(fp, td);
 		return (EBADF);
-	}
-	vp = fp->f_vnode;
-	foffset = foffset_lock(fp, 0);
-unionread:
-	if (__predict_false((vp->v_vflag & VV_UNLINKED) != 0)) {
-		error = ENOENT;
-		goto fail;
 	}
 	aiov.iov_base = buf;
 	aiov.iov_len = count;
 	auio.uio_iov = &aiov;
 	auio.uio_iovcnt = 1;
+	auio.uio_resid = count;
 	auio.uio_rw = UIO_READ;
 	auio.uio_segflg = bufseg;
 	auio.uio_td = td;
+	auio.uio_offset = foffset_lock(fp, 0);
+	error = fo_readdir(fp, &auio, basep, td);
+	foffset_unlock(fp, auio.uio_offset, 0);
+	fdrop(fp, td);
+	if (error != 0)
+		return (error);
+	if (residp != NULL)
+		*residp = auio.uio_resid;
+	td->td_retval[0] = count - auio.uio_resid;
+	return (0);
+}
+
+/*
+ * Directory entries of a vnode file.  A union mount's root directory reads
+ * on into the directory it covers, and the file follows: f_vnode moves to
+ * the covered vnode and the offset restarts, as it always has.
+ */
+int
+vn_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
+{
+	struct vn_file_context filectx;
+	struct vnode *vp;
+	ssize_t count;
+	off_t loff;
+	int error, eofflag;
+
+	count = uio->uio_resid;
+	vp = fp->f_vnode;
+unionread:
+	if (__predict_false((vp->v_vflag & VV_UNLINKED) != 0))
+		return (ENOENT);
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	/*
 	 * We want to return ENOTDIR for anything that is not VDIR, but
@@ -4413,31 +4434,26 @@ unionread:
 	 * unlocked.
 	 */
 	if (vp->v_type != VDIR) {
-		if (vp->v_type == VBAD)
-			error = EBADF;
-		else
-			error = ENOTDIR;
+		error = vp->v_type == VBAD ? EBADF : ENOTDIR;
 		VOP_UNLOCK(vp);
-		goto fail;
+		return (error);
 	}
 	AUDIT_ARG_VNODE1(vp);
-	loff = auio.uio_offset = foffset;
+	loff = uio->uio_offset;
 #ifdef MAC
 	error = mac_vnode_check_readdir(td->td_ucred, vp);
 	if (error == 0)
 #endif
 		{
 		vn_file_context_enter(&filectx, fp, NULL, 0);
-		error = VOP_READDIR(vp, &auio, fp->f_cred, &eofflag, NULL,
-		    NULL);
+		error = VOP_READDIR(vp, uio, fp->f_cred, &eofflag, NULL, NULL);
 		vn_file_context_leave(&filectx);
 	}
-	foffset = auio.uio_offset;
 	if (error != 0) {
 		VOP_UNLOCK(vp);
-		goto fail;
+		return (error);
 	}
-	if (count == auio.uio_resid &&
+	if (count == uio->uio_resid &&
 	    (vp->v_vflag & VV_ROOT) &&
 	    (vp->v_mount->mnt_flag & MNT_UNION)) {
 		struct vnode *tvp = vp;
@@ -4445,19 +4461,13 @@ unionread:
 		vp = vp->v_mount->mnt_vnodecovered;
 		vref(vp);
 		fp->f_vnode = vp;
-		foffset = 0;
+		uio->uio_offset = 0;
 		vput(tvp);
 		goto unionread;
 	}
 	VOP_UNLOCK(vp);
 	*basep = loff;
-	if (residp != NULL)
-		*residp = auio.uio_resid;
-	td->td_retval[0] = count - auio.uio_resid;
-fail:
-	foffset_unlock(fp, foffset, 0);
-	fdrop(fp, td);
-	return (error);
+	return (0);
 }
 
 /*

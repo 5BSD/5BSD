@@ -207,6 +207,7 @@ static fo_pathconf_t	pipe_pathconf;
 static fo_statfs_t	pipe_statfs;
 static fo_fsync_t	pipe_fsync;
 static fo_setattr_t	pipe_setattr;
+static fo_readdir_t	pipe_readdir;
 
 const struct fileops pipeops = {
 	.fo_read = pipe_read,
@@ -226,6 +227,7 @@ const struct fileops pipeops = {
 	.fo_statfs = pipe_statfs,
 	.fo_fsync = pipe_fsync,
 	.fo_setattr = pipe_setattr,
+	.fo_readdir = pipe_readdir,
 	.fo_flags = DFLAG_PASSABLE
 };
 
@@ -2113,6 +2115,18 @@ pipe_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
 		return (vn_setattr(fp, vap, active_cred, td));
 	return (invfo_setattr(fp, vap, active_cred, td));
+}
+
+/* A FIFO's vnode says ENOTDIR; an anonymous pipe has no vnode to ask. */
+static int
+pipe_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_readdir(fp, uio, basep, td));
+	return (invfo_readdir(fp, uio, basep, td));
 }
 
 static int
