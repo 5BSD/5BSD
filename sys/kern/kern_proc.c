@@ -2280,13 +2280,10 @@ int
 kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 {
 	vm_map_entry_t entry, tmp_entry;
-	struct vattr va;
 	vm_map_t map;
 	vm_object_t lobj, nobj, obj, tobj;
-	char *fullpath, *freepath;
 	struct kinfo_vmentry *kve;
-	struct ucred *cred;
-	struct vnode *vp;
+	struct vm_object_kinfo ki;
 	struct vmspace *vm;
 	struct thread *td;
 	vm_offset_t addr;
@@ -2294,7 +2291,7 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 	int error;
 	key_t key;
 	unsigned short seq;
-	bool guard, super;
+	bool guard, held, super;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
@@ -2377,22 +2374,15 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 		last_timestamp = map->timestamp;
 		vm_map_unlock_read(map);
 
-		freepath = NULL;
-		fullpath = "";
 		if (lobj != NULL) {
-			kve->kve_type = vm_object_kvme_type(lobj, &vp);
-			if (vp != NULL)
-				vref(vp);
+			kve->kve_type = vm_object_kvme_type(lobj, NULL);
+			/* The path and attributes are the pager's report. */
+			held = vm_object_kinfo_hold(lobj);
 			if (lobj != obj)
 				VM_OBJECT_RUNLOCK(lobj);
 
 			kve->kve_ref_count = obj->ref_count;
 			kve->kve_shadow_count = obj->shadow_count;
-			if (obj->type == OBJT_DEVICE ||
-			    obj->type == OBJT_MGTDEVICE) {
-				cdev_pager_get_path(obj, kve->kve_path,
-				    sizeof(kve->kve_path));
-			}
 			VM_OBJECT_RUNLOCK(obj);
 			if ((lobj->flags & OBJ_SYSVSHM) != 0) {
 				kve->kve_flags |= KVME_FLAG_SYSVSHM;
@@ -2405,28 +2395,26 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 				shm_get_path(lobj, kve->kve_path,
 				    sizeof(kve->kve_path));
 			}
-			if (vp != NULL) {
-				vn_fullpath(vp, &fullpath, &freepath);
-				kve->kve_vn_type = vntype_to_kinfo(vp->v_type);
-				cred = td->td_ucred;
-				vn_lock(vp, LK_SHARED | LK_RETRY);
-				if (VOP_GETATTR(vp, &va, cred) == 0) {
-					kve->kve_vn_fileid = va.va_fileid;
-					kve->kve_vn_fsid = va.va_fsid;
+			if (held) {
+				vm_object_kinfo(lobj, &ki, td);
+				kve->kve_vn_type = ki.vk_vn_type;
+				if (ki.vk_attr_valid) {
+					kve->kve_vn_fileid = ki.vk_fileid;
+					kve->kve_vn_fsid = ki.vk_fsid;
 					kve->kve_vn_fsid_freebsd11 =
 					    kve->kve_vn_fsid; /* truncate */
-					kve->kve_vn_mode =
-					    MAKEIMODE(va.va_type, va.va_mode);
-					kve->kve_vn_size = va.va_size;
-					kve->kve_vn_rdev = va.va_rdev;
+					kve->kve_vn_mode = ki.vk_mode;
+					kve->kve_vn_size = ki.vk_size;
+					kve->kve_vn_rdev = ki.vk_rdev;
 					kve->kve_vn_rdev_freebsd11 =
 					    kve->kve_vn_rdev; /* truncate */
 					kve->kve_status = KF_ATTR_VALID;
 				}
-				vput(vp);
-				strlcpy(kve->kve_path, fullpath, sizeof(
-				    kve->kve_path));
-				free(freepath, M_TEMP);
+				if (ki.vk_path != NULL)
+					strlcpy(kve->kve_path, ki.vk_path,
+					    sizeof(kve->kve_path));
+				vm_object_kinfo_release(&ki);
+				vm_object_deallocate(lobj);
 			}
 		} else {
 			kve->kve_type = guard ? KVME_TYPE_GUARD :

@@ -105,6 +105,8 @@ static void vnode_pager_release_writecount(vm_object_t, vm_offset_t,
 static void vnode_pager_getvp(vm_object_t, struct vnode **, bool *);
 static boolean_t vnode_pager_sync(vm_object_t, vm_ooffset_t, vm_size_t,
     boolean_t, boolean_t);
+static void vnode_pager_kinfo(vm_object_t, struct vm_object_kinfo *,
+    struct thread *);
 
 const struct pagerops vnodepagerops = {
 	.pgo_kvme_type = KVME_TYPE_VNODE,
@@ -120,7 +122,35 @@ const struct pagerops vnodepagerops = {
 	.pgo_mightbedirty = vm_object_mightbedirty_,
 	.pgo_getvp = vnode_pager_getvp,
 	.pgo_sync = vnode_pager_sync,
+	.pgo_kinfo = vnode_pager_kinfo,
 };
+
+/*
+ * What a vnode object reports to the observers of a mapping: the vnode's
+ * path, type and attributes.  The caller's object reference holds the
+ * vnode (vm_object_reference_locked), so only the vnode lock is taken.
+ */
+static void
+vnode_pager_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
+    struct thread *td)
+{
+	struct vattr va;
+	struct vnode *vp;
+
+	vp = object->handle;
+	vn_fullpath(vp, &ki->vk_path, &ki->vk_freepath);
+	ki->vk_vn_type = vntype_to_kinfo(vp->v_type);
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	if (VOP_GETATTR(vp, &va, td->td_ucred) == 0) {
+		ki->vk_fileid = va.va_fileid;
+		ki->vk_fsid = va.va_fsid;
+		ki->vk_mode = MAKEIMODE(va.va_type, va.va_mode);
+		ki->vk_size = va.va_size;
+		ki->vk_rdev = va.va_rdev;
+		ki->vk_attr_valid = true;
+	}
+	VOP_UNLOCK(vp);
+}
 
 static int old_msync;
 SYSCTL_INT(_vm, OID_AUTO, old_msync, CTLFLAG_RW, &old_msync, 0,

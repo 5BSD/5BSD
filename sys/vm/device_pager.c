@@ -44,6 +44,7 @@
 #include <sys/rwlock.h>
 #include <sys/sx.h>
 #include <sys/user.h>
+#include <sys/malloc.h>
 #include <sys/vmmeter.h>
 
 #include <vm/vm.h>
@@ -68,6 +69,8 @@ static int dev_pager_populate(vm_object_t object, vm_pindex_t pidx,
     int fault_type, vm_prot_t, vm_pindex_t *first, vm_pindex_t *last);
 static boolean_t dev_pager_sync(vm_object_t object, vm_ooffset_t offset,
     vm_size_t size, boolean_t syncio, boolean_t invalidate);
+static void dev_pager_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
+    struct thread *td);
 
 /* list of device pager objects */
 static struct pagerlst dev_pager_object_list;
@@ -83,7 +86,25 @@ const struct pagerops devicepagerops = {
 	.pgo_putpages =	dev_pager_putpages,
 	.pgo_haspage =	dev_pager_haspage,
 	.pgo_sync =	dev_pager_sync,
+	.pgo_kinfo =	dev_pager_kinfo,
 };
+
+/*
+ * What a device object reports to the observers of a mapping: the path its
+ * cdev pager operations give it, if any.
+ */
+static void
+dev_pager_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
+    struct thread *td)
+{
+
+	if (object->un_pager.devp.ops->cdev_pg_path == NULL)
+		return;
+	ki->vk_freepath = malloc(PATH_MAX, M_TEMP, M_WAITOK);
+	ki->vk_freepath[0] = '\0';
+	cdev_pager_get_path(object, ki->vk_freepath, PATH_MAX);
+	ki->vk_path = ki->vk_freepath;
+}
 
 /*
  * msync(2) on an unmanaged device object has nothing to write back;
@@ -111,6 +132,7 @@ const struct pagerops mgtdevicepagerops = {
 	.pgo_putpages =	dev_pager_putpages,
 	.pgo_haspage =	dev_pager_haspage,
 	.pgo_populate =	dev_pager_populate,
+	.pgo_kinfo =	dev_pager_kinfo,
 };
 
 static int old_dev_pager_ctor(void *handle, vm_ooffset_t size, vm_prot_t prot,

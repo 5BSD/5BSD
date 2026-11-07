@@ -2402,6 +2402,54 @@ vm_object_vnode(vm_object_t object)
 }
 
 /*
+ * Observers of a mapping (kinfo_getvmmap(3), procstat(1), linprocfs, the
+ * vm.objects sysctl) learn about the object behind it from its pager.  The
+ * pager runs unlocked and may sleep, so the caller holds the object: with
+ * the object locked, vm_object_kinfo_hold() takes a reference when the
+ * pager has anything to report; the caller unlocks, calls vm_object_kinfo(),
+ * copies what it wants, releases the report and drops the reference with
+ * vm_object_deallocate().  Pagers whose objects may be anonymous report
+ * nothing, so the extra reference never reaches an OBJ_ANON object and
+ * dropping it never collapses a chain.
+ */
+bool
+vm_object_kinfo_hold(vm_object_t object)
+{
+
+	VM_OBJECT_ASSERT_LOCKED(object);
+	if (pagertab[object->type]->pgo_kinfo == NULL)
+		return (false);
+	/*
+	 * The vm.objects walk can meet an object between its last
+	 * deallocation and its type turning OBJT_DEAD; it has nothing left
+	 * to report and cannot be referenced.
+	 */
+	if ((object->flags & OBJ_DEAD) != 0)
+		return (false);
+	KASSERT((object->flags & OBJ_ANON) == 0,
+	    ("vm_object_kinfo_hold: anonymous object %p reports", object));
+	vm_object_reference_locked(object);
+	return (true);
+}
+
+void
+vm_object_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
+    struct thread *td)
+{
+
+	bzero(ki, sizeof(*ki));
+	vm_pager_kinfo(object, ki, td);
+}
+
+void
+vm_object_kinfo_release(struct vm_object_kinfo *ki)
+{
+
+	free(ki->vk_freepath, M_TEMP);
+	ki->vk_path = ki->vk_freepath = NULL;
+}
+
+/*
  * Busy the vm object.  This prevents new pages belonging to the object from
  * becoming busy.  Existing pages persist as busy.  Callers are responsible
  * for checking page state before proceeding.
@@ -2453,16 +2501,14 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 {
 	struct pctrie_iter pages;
 	struct kinfo_vmobject *kvo;
-	char *fullpath, *freepath;
-	struct vnode *vp;
-	struct vattr va;
+	struct vm_object_kinfo ki;
 	vm_object_t obj;
 	vm_page_t m;
 	u_long sp;
 	int count, error;
 	key_t key;
 	unsigned short seq;
-	bool want_path;
+	bool held, want_path;
 
 	if (req->oldptr == NULL) {
 		/*
@@ -2533,24 +2579,19 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 			}
 		}
 
-		freepath = NULL;
-		fullpath = "";
-		vp = NULL;
-		kvo->kvo_type = vm_object_kvme_type(obj, want_path ? &vp :
-		    NULL);
-		if (vp != NULL) {
-			vref(vp);
-		} else if ((obj->flags & OBJ_ANON) != 0) {
+		/*
+		 * Paths are the pager's report (vm_object_kinfo) and are
+		 * withheld from jailed observers.
+		 */
+		held = want_path && vm_object_kinfo_hold(obj);
+		kvo->kvo_type = vm_object_kvme_type(obj, NULL);
+		if ((obj->flags & OBJ_ANON) != 0) {
 			MPASS(kvo->kvo_type == KVME_TYPE_SWAP);
 			kvo->kvo_me = (uintptr_t)obj;
 			/* tmpfs objs are reported as vnodes */
 			kvo->kvo_backing_obj = (uintptr_t)obj->backing_object;
 			sp = swap_pager_swapped_pages(obj);
 			kvo->kvo_swapped = sp > UINT32_MAX ? UINT32_MAX : sp;
-		}
-		if (obj->type == OBJT_DEVICE || obj->type == OBJT_MGTDEVICE) {
-			cdev_pager_get_path(obj, kvo->kvo_path,
-			    sizeof(kvo->kvo_path));
 		}
 		VM_OBJECT_RUNLOCK(obj);
 		if ((obj->flags & OBJ_SYSVSHM) != 0) {
@@ -2564,18 +2605,19 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 			shm_get_path(obj, kvo->kvo_path,
 			    sizeof(kvo->kvo_path));
 		}
-		if (vp != NULL) {
-			vn_fullpath(vp, &fullpath, &freepath);
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			if (VOP_GETATTR(vp, &va, curthread->td_ucred) == 0) {
-				kvo->kvo_vn_fileid = va.va_fileid;
-				kvo->kvo_vn_fsid = va.va_fsid;
-				kvo->kvo_vn_fsid_freebsd11 = va.va_fsid;
+		if (held) {
+			vm_object_kinfo(obj, &ki, curthread);
+			if (ki.vk_attr_valid) {
+				kvo->kvo_vn_fileid = ki.vk_fileid;
+				kvo->kvo_vn_fsid = ki.vk_fsid;
+				kvo->kvo_vn_fsid_freebsd11 = ki.vk_fsid;
 								/* truncate */
 			}
-			vput(vp);
-			strlcpy(kvo->kvo_path, fullpath, sizeof(kvo->kvo_path));
-			free(freepath, M_TEMP);
+			if (ki.vk_path != NULL)
+				strlcpy(kvo->kvo_path, ki.vk_path,
+				    sizeof(kvo->kvo_path));
+			vm_object_kinfo_release(&ki);
+			vm_object_deallocate(obj);
 		}
 
 		/* Pack record size down */
