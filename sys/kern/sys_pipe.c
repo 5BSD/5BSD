@@ -2162,8 +2162,10 @@ pipe_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
 }
 
 /*
- * A FIFO takes flock(2) locks on its vnode; the fcntl(2) record locks were
- * EBADF for it (and so is the POSIX unlock a close owes), as for a pipe.
+ * A FIFO takes flock(2) locks on its vnode.  An anonymous pipe takes none
+ * and answers flock(2) with its own EOPNOTSUPP; the fcntl(2) record locks
+ * (refused ahead of the table, the FIFO table having no DFLAG_RECLOCK) and
+ * the POSIX unlock a close owes get the default EBADF for both.
  */
 static int
 pipe_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
@@ -2172,9 +2174,11 @@ pipe_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
 	struct pipe *cpipe;
 
 	cpipe = fp->f_data;
-	if ((cpipe->pipe_type & PIPE_TYPE_NAMED) != 0 &&
-	    (flags & F_FLOCK) != 0)
-		return (vn_advlock(fp, id, op, fl, flags, td));
+	if ((flags & F_FLOCK) != 0) {
+		if ((cpipe->pipe_type & PIPE_TYPE_NAMED) != 0)
+			return (vn_advlock(fp, id, op, fl, flags, td));
+		return (EOPNOTSUPP);
+	}
 	return (invfo_advlock(fp, id, op, fl, flags, td));
 }
 

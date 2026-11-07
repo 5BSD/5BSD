@@ -186,14 +186,6 @@ typedef int fo_advlock_t(struct file *fp, void *id, int op,
 		    struct flock *fl, int flags, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
 
-/*
- * fo_fcntl commands beyond the fcntl(2) ones it answers (F_READAHEAD with
- * the byte count already in arg, F_ISUNIONSTACK): the Linux read/write
- * life-time hints, kernel-private numbers kern_fcntl() never passes.
- */
-#define	FO_FCNTL_GET_RW_HINT	0x40000001	/* arg: uint16_t * to fill */
-#define	FO_FCNTL_SET_RW_HINT	0x40000002	/* arg: the hint value */
-
 /* fo_extattr operations: set and get use data/nbytes, list uses auio. */
 #define	FO_EXTATTR_SET		0
 #define	FO_EXTATTR_GET		1

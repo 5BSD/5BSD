@@ -221,6 +221,16 @@ ATF_TC_BODY(refused_before_args, tc)
 	 */
 	ATF_REQUIRE_EQ(0, pipe(fds));
 	check_refused_before_args(fds[0], EBADF);
+	/*
+	 * A real flock(2) request on the pipe is EOPNOTSUPP, and the
+	 * FHASLOCK bit set ahead of it comes off again (F_GETFL shows it).
+	 */
+	fd = fcntl(fds[0], F_GETFL);
+	ATF_REQUIRE(fd != -1);
+	errno = 0;
+	ATF_CHECK_EQ(-1, flock(fds[0], LOCK_SH | LOCK_NB));
+	ATF_CHECK_EQ(EOPNOTSUPP, errno);
+	ATF_CHECK_EQ(fd, fcntl(fds[0], F_GETFL));
 	close(fds[0]);
 	close(fds[1]);
 	fd = kqueue();

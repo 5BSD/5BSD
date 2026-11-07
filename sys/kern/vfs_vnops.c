@@ -658,7 +658,8 @@ vn_openfile_extattr(struct file *fp, int op, int attrnamespace,
 /*
  * The fcntl(2) commands a vnode file answers for itself: read-ahead
  * (F_READAHEAD, with F_RDAHEAD's size already converted), F_ISUNIONSTACK,
- * and the Linux read/write life-time hints kept in v_write_hint.
+ * and the kernel-private F_GET_RW_HINT/F_SET_RW_HINT behind the Linux
+ * read/write life-time hints kept in v_write_hint.
  */
 int
 vn_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
@@ -706,11 +707,11 @@ vn_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
 		    (mp->mnt_flag & MNT_UNION) != 0;
 		return (0);
 
-	case FO_FCNTL_GET_RW_HINT:
-		*(uint16_t *)arg = atomic_load_short(&vp->v_write_hint);
+	case F_GET_RW_HINT:
+		td->td_retval[0] = atomic_load_short(&vp->v_write_hint);
 		return (0);
 
-	case FO_FCNTL_SET_RW_HINT:
+	case F_SET_RW_HINT:
 		error = vn_lock(vp, LK_SHARED | LK_RETRY);
 		if (error == 0) {
 			error = VOP_ACCESS(vp, VADMIN, td->td_ucred, td);

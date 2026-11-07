@@ -26,20 +26,31 @@
 
 static char path[] = "/var/tmp/msync_pager_test.XXXXXX";
 
+/*
+ * The file must keep its name: UFS does not write back the pages of a
+ * removed inode, so an unlinked file would never show a clean page.  The
+ * name is recorded in the work directory for the cleanup, which runs in
+ * another process and would otherwise see only the template.
+ */
+static const char path_file[] = "msync_path";
+
 static int
 make_file(void)
 {
 	struct statfs sfs;
 	char buf[PAGE_SIZE];
+	FILE *f;
 	int fd;
 
 	fd = mkstemp(path);
 	ATF_REQUIRE_MSG(fd >= 0, "mkstemp %s: %s", path, strerror(errno));
+	f = fopen(path_file, "w");
+	ATF_REQUIRE(f != NULL);
+	ATF_REQUIRE(fprintf(f, "%s\n", path) > 0);
+	ATF_REQUIRE_EQ(0, fclose(f));
 	ATF_REQUIRE_EQ(0, fstatfs(fd, &sfs));
-	if (strcmp(sfs.f_fstypename, "tmpfs") == 0) {
-		unlink(path);
+	if (strcmp(sfs.f_fstypename, "tmpfs") == 0)
 		atf_tc_skip("/var/tmp is tmpfs; the vnode pager is not used");
-	}
 	memset(buf, 'a', sizeof(buf));
 	ATF_REQUIRE_EQ((ssize_t)sizeof(buf), write(fd, buf, sizeof(buf)));
 	return (fd);
@@ -48,7 +59,17 @@ make_file(void)
 static void
 cleanup_file(void)
 {
-	unlink(path);
+	char name[sizeof(path)];
+	FILE *f;
+
+	f = fopen(path_file, "r");
+	if (f == NULL)
+		return;
+	if (fgets(name, sizeof(name), f) != NULL) {
+		name[strcspn(name, "\n")] = '\0';
+		(void)unlink(name);
+	}
+	fclose(f);
 }
 
 static char
@@ -132,7 +153,13 @@ ATF_TC_CLEANUP(private_file_copy, tc)
  * cannot be told apart from here once the clean has run; the knob is
  * exercised for its round trip.
  */
-ATF_TC(old_msync);
+/*
+ * The knob's old value is kept in the work directory so the cleanup can
+ * restore it whatever the body did.
+ */
+static const char old_msync_file[] = "old_msync";
+
+ATF_TC_WITH_CLEANUP(old_msync);
 ATF_TC_HEAD(old_msync, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "MS_INVALIDATE writes a dirty shared "
@@ -141,12 +168,17 @@ ATF_TC_HEAD(old_msync, tc)
 }
 ATF_TC_BODY(old_msync, tc)
 {
+	FILE *f;
 	char *p, c;
 	int fd, old, one;
 	size_t len;
 
 	len = sizeof(old);
 	ATF_REQUIRE_EQ(0, sysctlbyname("vm.old_msync", &old, &len, NULL, 0));
+	f = fopen(old_msync_file, "w");
+	ATF_REQUIRE(f != NULL);
+	ATF_REQUIRE(fprintf(f, "%d\n", old) > 0);
+	ATF_REQUIRE_EQ(0, fclose(f));
 	one = 1;
 	ATF_REQUIRE_EQ(0, sysctlbyname("vm.old_msync", NULL, NULL, &one,
 	    sizeof(one)));
@@ -160,9 +192,20 @@ ATF_TC_BODY(old_msync, tc)
 	ATF_CHECK_EQ('b', c);
 	ATF_CHECK_EQ(0, munmap(p, PAGE_SIZE));
 	close(fd);
-	unlink(path);
-	ATF_REQUIRE_EQ(0, sysctlbyname("vm.old_msync", NULL, NULL, &old,
-	    sizeof(old)));
+}
+ATF_TC_CLEANUP(old_msync, tc)
+{
+	FILE *f;
+	int old;
+
+	cleanup_file();
+	f = fopen(old_msync_file, "r");
+	if (f == NULL)
+		return;
+	if (fscanf(f, "%d", &old) == 1)
+		(void)sysctlbyname("vm.old_msync", NULL, NULL, &old,
+		    sizeof(old));
+	fclose(f);
 }
 
 ATF_TC_WITHOUT_HEAD(anonymous);

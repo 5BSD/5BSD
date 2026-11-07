@@ -149,7 +149,8 @@ struct image_source_ops {
 	void (*is_release_old)(struct image_params *,
 		    struct image_source_old *);	/* after PROC_UNLOCK and is_close */
 	void (*is_accessed)(struct image_params *);	/* VOP_UPDATE_ATIME */
-	void (*is_close)(struct image_params *, int error);	/* close; vput when error */
+	void (*is_close)(struct image_params *, bool release);
+			/* close; drop the reference when release, else unlock */
 };
 
 /* is_mac phases.  The will_* phases return the MAC hook's answer. */
@@ -158,6 +159,36 @@ struct image_source_ops {
 #define	IS_MAC_TRANSITION	3
 #define	IS_MAC_RELABEL		4
 #define	IS_MAC_INTERP_ENTER	5	/* mac_execve_interpreter_enter */
+
+/* The exec core calls the image source through these, like VOP_*. */
+#define	IS_LOCK(imgp)		((imgp)->is_ops->is_lock(imgp))
+#define	IS_UNLOCK(imgp)		((imgp)->is_ops->is_unlock(imgp))
+#define	IS_ASSERT_LOCKED(imgp, msg) \
+	((imgp)->is_ops->is_assert_locked((imgp), (msg)))
+#define	IS_CHECK(imgp)		((imgp)->is_ops->is_check(imgp))
+#define	IS_FIRST_PAGE(imgp)	((imgp)->is_ops->is_first_page(imgp))
+#define	IS_READ(imgp, buf, len, off) \
+	((imgp)->is_ops->is_read((imgp), (buf), (len), (off)))
+#define	IS_MAP_COW(imgp)	((imgp)->is_ops->is_map_cow(imgp))
+#define	IS_MAP_TEXT(imgp, obj)	((imgp)->is_ops->is_map_text((imgp), (obj)))
+#define	IS_UNSET_TEXT(imgp)	((imgp)->is_ops->is_unset_text(imgp))
+#define	IS_PATH(imgp, retbuf, freebuf) \
+	((imgp)->is_ops->is_path((imgp), (retbuf), (freebuf)))
+#define	IS_COMMNAME(imgp, buf, len) \
+	((imgp)->is_ops->is_commname((imgp), (buf), (len)))
+#define	IS_NOSUID(imgp)		((imgp)->is_ops->is_nosuid(imgp))
+#define	IS_MAC(imgp, phase, oldcred, newcred) \
+	((imgp)->is_ops->is_mac((imgp), (phase), (oldcred), (newcred)))
+#define	IS_AUTHORITY_PREPARE(imgp, p) \
+	((imgp)->is_ops->is_authority_prepare((imgp), (p)))
+#define	IS_AUTHORITY_EXEC(imgp, p, sel) \
+	((imgp)->is_ops->is_authority_exec((imgp), (p), (sel)))
+#define	IS_INSTALL(imgp, p, old) \
+	((imgp)->is_ops->is_install((imgp), (p), (old)))
+#define	IS_ACCESSED(imgp)	((imgp)->is_ops->is_accessed(imgp))
+#define	IS_CLOSE(imgp, release)	((imgp)->is_ops->is_close((imgp), (release)))
+/* After IS_CLOSE the source is gone; the ops saved at install release. */
+#define	IS_RELEASE_OLD(ops, imgp, old)	((ops)->is_release_old((imgp), (old)))
 
 #ifdef _KERNEL
 struct nameidata;

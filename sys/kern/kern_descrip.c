@@ -6204,15 +6204,16 @@ invfo_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
 }
 
 /*
- * What the type tests gave a descriptor that takes no locks: EOPNOTSUPP to
- * flock(2), EBADF to the fcntl(2) record locks and the close-time unlock.
+ * What the type tests gave a descriptor that takes no locks.  flock(2)
+ * never reaches here (it refuses a table without DFLAG_FLOCK with
+ * EOPNOTSUPP first); the record locks and the close-time unlock get EBADF.
  */
 int
 invfo_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
     struct thread *td)
 {
 
-	return ((flags & F_FLOCK) != 0 ? EOPNOTSUPP : EBADF);
+	return (EBADF);
 }
 
 /*

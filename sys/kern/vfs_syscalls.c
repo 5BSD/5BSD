@@ -2848,19 +2848,16 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 		error = EBADF;
 		goto out;
 	}
-	VATTR_NULL(&vattr);
 	/*
-	 * We can't support the value matching VNOVAL.  The refusal came
-	 * after the descriptor was known to carry attributes: ask the
-	 * fileop for nothing first, so a type without attributes keeps its
-	 * EINVAL and a file gets EOPNOTSUPP.
+	 * We can't support the value matching VNOVAL; refused once the
+	 * descriptor is known, as before (a type with no attributes used to
+	 * answer EINVAL to it instead).
 	 */
 	if (uap->flags == VNOVAL) {
-		error = fo_setattr(fp, &vattr, td->td_ucred, td);
-		if (error == 0)
-			error = EOPNOTSUPP;
+		error = EOPNOTSUPP;
 		goto out;
 	}
+	VATTR_NULL(&vattr);
 	vattr.va_flags = uap->flags;
 #ifdef MAC
 	error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &vattr);
@@ -5306,19 +5303,21 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 	}
 
+	/* If len == 0, just return 0. */
+	if (len == 0)
+		goto out;
+
 	/*
-	 * Only descriptor types that can copy ranges take part; the vnode
-	 * test this replaces stood here, after the mode checks.
+	 * Only descriptor types that can copy ranges take part.  The vnode
+	 * body's own type test stood after the zero-length return; the
+	 * descriptor checks that stood ahead of the mode checks now follow
+	 * them (D82).
 	 */
 	if (infp->f_ops->fo_copy_file_range == NULL ||
 	    outfp->f_ops->fo_copy_file_range == NULL) {
 		error = EINVAL;
 		goto out;
 	}
-
-	/* If len == 0, just return 0. */
-	if (len == 0)
-		goto out;
 
 	/*
 	 * Make sure that the ranges checked and locked below are valid.  Note

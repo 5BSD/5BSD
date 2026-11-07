@@ -572,7 +572,7 @@ interpret:
 		 */
 		if (args->fname[0] == '/') {
 			imgp->execpath = args->fname;
-		} else if (imgp->is_ops->is_path(imgp, &imgp->execpath,
+		} else if (IS_PATH(imgp, &imgp->execpath,
 		    &imgp->freepath) != 0) {
 			imgp->execpath = args->fname;
 		}
@@ -606,11 +606,11 @@ interpret:
 	 * Check file permissions.  Also 'opens' file and sets its vnode to
 	 * text mode.
 	 */
-	error = imgp->is_ops->is_check(imgp);
+	error = IS_CHECK(imgp);
 	if (error)
 		goto exec_fail_dealloc;
 
-	error = imgp->is_ops->is_first_page(imgp);
+	error = IS_FIRST_PAGE(imgp);
 	if (error)
 		goto exec_fail_dealloc;
 
@@ -644,7 +644,7 @@ interpret:
 	credential_changing |= (attr.va_mode & S_ISGID) &&
 	    oldcred->cr_gid != attr.va_gid;
 #ifdef MAC
-	will_transition = imgp->is_ops->is_mac(imgp, IS_MAC_WILL_TRANSITION,
+	will_transition = IS_MAC(imgp, IS_MAC_WILL_TRANSITION,
 	    oldcred, NULL) != 0;
 	credential_changing |= will_transition;
 #endif
@@ -657,16 +657,16 @@ interpret:
 #ifdef CAPABILITY_MODE
 	    ((oldcred->cr_flags & CRED_FLAG_CAPMODE) == 0) &&
 #endif
-	    !imgp->is_ops->is_nosuid(imgp) &&
+	    !IS_NOSUID(imgp) &&
 	    (p->p_flag & P_TRACED) == 0) {
 		imgp->credential_setid = true;
-		imgp->is_ops->is_unlock(imgp);
+		IS_UNLOCK(imgp);
 		imgp->newcred = crdup(oldcred);
 		if (attr.va_mode & S_ISUID) {
 			euip = uifind(attr.va_uid);
 			change_euid(imgp->newcred, euip);
 		}
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 		if (attr.va_mode & S_ISGID)
 			change_egid(imgp->newcred, attr.va_gid);
 		/*
@@ -695,9 +695,9 @@ interpret:
 		 */
 		if (oldcred->cr_svuid != oldcred->cr_uid ||
 		    oldcred->cr_svgid != oldcred->cr_gid) {
-			imgp->is_ops->is_unlock(imgp);
+			IS_UNLOCK(imgp);
 			imgp->newcred = crdup(oldcred);
-			imgp->is_ops->is_lock(imgp);
+			IS_LOCK(imgp);
 			change_svuid(imgp->newcred, imgp->newcred->cr_uid);
 			change_svgid(imgp->newcred, imgp->newcred->cr_gid);
 		}
@@ -716,12 +716,12 @@ interpret:
 		crfree(relabelcred);
 		relabelcred = NULL;
 	}
-	will_relabel = imgp->is_ops->is_mac(imgp, IS_MAC_WILL_RELABEL,
+	will_relabel = IS_MAC(imgp, IS_MAC_WILL_RELABEL,
 	    oldcred, NULL) != 0;
 	if (will_relabel) {
-		imgp->is_ops->is_unlock(imgp);
+		IS_UNLOCK(imgp);
 		relabelcred = crdup(oldcred);
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 	}
 #endif
 
@@ -731,7 +731,7 @@ interpret:
 	 */
 	cap_authority_drop(exec_authority);
 	exec_authority = NULL;
-	exec_authority = imgp->is_ops->is_authority_prepare(imgp, p);
+	exec_authority = IS_AUTHORITY_PREPARE(imgp, p);
 	imgp->authority_setid = exec_authority != NULL;
 
 	/* The new credentials are installed into the process later. */
@@ -768,13 +768,13 @@ interpret:
 		 * so nothing should illegitimately be blocked.
 		 */
 		MPASS(imgp->textset);
-		imgp->is_ops->is_unset_text(imgp);
+		IS_UNSET_TEXT(imgp);
 		/* free name buffer and old vnode */
 #ifdef MAC
-		imgp->is_ops->is_mac(imgp, IS_MAC_INTERP_ENTER, NULL, NULL);
+		IS_MAC(imgp, IS_MAC_INTERP_ENTER, NULL, NULL);
 #endif
 		/* The script's reference is dropped: it is never installed. */
-		imgp->is_ops->is_close(imgp, ENOEXEC);
+		IS_CLOSE(imgp, true);
 		vm_object_deallocate(imgp->object);
 		imgp->object = NULL;
 		execve_nosetid(imgp);
@@ -794,14 +794,14 @@ interpret:
 	 * NB: We unlock the vnode here because it is believed that none
 	 * of the sv_copyout_strings/sv_fixup operations require the vnode.
 	 */
-	imgp->is_ops->is_unlock(imgp);
+	IS_UNLOCK(imgp);
 
 	if (disallow_high_osrel &&
 	    P_OSREL_MAJOR(p->p_osrel) > P_OSREL_MAJOR(__FreeBSD_version)) {
 		error = ENOEXEC;
 		uprintf("Osrel %d for image %s too high\n", p->p_osrel,
 		    imgp->execpath != NULL ? imgp->execpath : "<unresolved>");
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 		goto exec_fail_dealloc;
 	}
 
@@ -810,7 +810,7 @@ interpret:
 	 */
 	error = (*p->p_sysent->sv_copyout_strings)(imgp, &stack_base);
 	if (error != 0) {
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 		goto exec_fail_dealloc;
 	}
 
@@ -819,7 +819,7 @@ interpret:
 	 */
 	error = (*p->p_sysent->sv_fixup)(&stack_base, imgp);
 	if (error != 0) {
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 		goto exec_fail_dealloc;
 	}
 
@@ -856,7 +856,7 @@ interpret:
 		sigacts_copy(newsigacts, oldsigacts);
 	}
 
-	imgp->is_ops->is_lock(imgp);
+	IS_LOCK(imgp);
 
 	PROC_LOCK(p);
 	if (oldsigacts)
@@ -869,7 +869,7 @@ interpret:
 
 	/* name this process - nameiexec(p, ndp) */
 	bzero(p->p_comm, sizeof(p->p_comm));
-	if (imgp->is_ops->is_commname(imgp, p->p_comm, sizeof(p->p_comm)) != 0)
+	if (IS_COMMNAME(imgp, p->p_comm, sizeof(p->p_comm)) != 0)
 		bcopy(fexecv_proc_title, p->p_comm, sizeof(fexecv_proc_title));
 	bcopy(p->p_comm, td->td_name, sizeof(td->td_name));
 #ifdef KTR
@@ -923,16 +923,16 @@ interpret:
 		 * taking sleepable locks, so temporarily drop our locks.
 		 */
 		PROC_UNLOCK(p);
-		imgp->is_ops->is_unlock(imgp);
+		IS_UNLOCK(imgp);
 		fdsetugidsafety(td);
 		error = fdcheckstd(td);
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 		if (error != 0)
 			goto exec_fail_dealloc;
 		PROC_LOCK(p);
 #ifdef MAC
 		if (will_transition) {
-			imgp->is_ops->is_mac(imgp, IS_MAC_TRANSITION, oldcred,
+			IS_MAC(imgp, IS_MAC_TRANSITION, oldcred,
 			    imgp->newcred);
 		}
 #endif
@@ -956,7 +956,7 @@ interpret:
 			imgp->newcred = relabelcred;
 			relabelcred = NULL;
 		}
-		imgp->is_ops->is_mac(imgp, IS_MAC_RELABEL, oldcred,
+		IS_MAC(imgp, IS_MAC_RELABEL, oldcred,
 		    imgp->newcred);
 	}
 #endif
@@ -973,9 +973,9 @@ interpret:
 	 * Install the image as the process's: p_textvp (and p_image) for
 	 * use in kern.proc.pathname.  The old image is released at the end.
 	 */
-	imgp->is_ops->is_authority_exec(imgp, p,
+	IS_AUTHORITY_EXEC(imgp, p,
 	    imgp->authority_setid ? exec_authority : NULL);
-	imgp->is_ops->is_install(imgp, p, &old_image);
+	IS_INSTALL(imgp, p, &old_image);
 	installed_ops = imgp->is_ops;
 
 #ifdef KDTRACE_HOOKS
@@ -1019,13 +1019,13 @@ interpret:
 	 * P_INEXEC flag is cleared.
 	 */
 	if (PMC_SYSTEM_SAMPLING_ACTIVE() || PMC_PROC_IS_USING_PMCS(p)) {
-		imgp->is_ops->is_unlock(imgp);
+		IS_UNLOCK(imgp);
 		pe.pm_credentialschanged = imgp->credential_setid;
 		pe.pm_baseaddr = imgp->reloc_base;
 		pe.pm_dynaddr = imgp->et_dyn_addr;
 
 		PMC_CALL_HOOK_X(td, PMC_FN_PROCESS_EXEC, (void *) &pe);
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 	}
 #endif
 
@@ -1033,7 +1033,7 @@ interpret:
 	if ((td->td_proc->p_flag2 & P2_HWT) != 0) {
 		struct hwt_record_entry ent;
 
-		imgp->is_ops->is_unlock(imgp);
+		IS_UNLOCK(imgp);
 		ent.fullpath = imgp->execpath;
 		ent.addr = imgp->et_dyn_addr;
 		ent.baseaddr = imgp->reloc_base;
@@ -1041,7 +1041,7 @@ interpret:
 		ent.len = 0;
 		ent.record_type = HWT_RECORD_EXECUTABLE;
 		HWT_CALL_HOOK(td, HWT_EXEC, &ent);
-		imgp->is_ops->is_lock(imgp);
+		IS_LOCK(imgp);
 	}
 #endif
 
@@ -1052,7 +1052,7 @@ interpret:
 	mac_proc_notify_exec_complete(p);
 #endif
 
-	imgp->is_ops->is_accessed(imgp);
+	IS_ACCESSED(imgp);
 
 	SDT_PROBE1(proc, , , exec__success, args->fname);
 
@@ -1071,7 +1071,7 @@ exec_fail_dealloc:
 	 * error, keeping the reference p_textvp now owns on success.
 	 */
 	if (imgp->is_ops != NULL)
-		imgp->is_ops->is_close(imgp, error);
+		IS_CLOSE(imgp, error != 0);
 
 	if (imgp->object != NULL)
 		vm_object_deallocate(imgp->object);
@@ -1116,7 +1116,7 @@ exec_fail:
 	 * displaced, now that the process lock and the image lock are gone.
 	 */
 	if (installed_ops != NULL)
-		installed_ops->is_release_old(imgp, &old_image);
+		IS_RELEASE_OLD(installed_ops, imgp, &old_image);
 #ifdef KTRACE
 	ktr_io_params_free(kiop);
 #endif

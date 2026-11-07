@@ -586,9 +586,12 @@ fdesc_getattr(struct vop_getattr_args *ap)
 /*
  * Attributes set on /dev/fd/N go to descriptor N's own fileops: size to
  * fo_truncate, mode to fo_chmod, owner to fo_chown, times and flags to
- * fo_setattr.  A descriptor with no settable attributes keeps the old
- * behaviour: every change is silently dropped except chflags(2), which is
- * refused.
+ * fo_setattr.  A table with no fo_setattr member has no settable attributes
+ * and keeps the old behaviour: every change is silently dropped except
+ * chflags(2), which is refused.  A table with one answers for its
+ * descriptor: an anonymous pipe or a pseudo-terminal master opened with
+ * posix_openpt(2) now reports EINVAL where the lack of a vnode once meant
+ * "dropped".
  *
  * The fdesc vnode contributes only the descriptor number, so its lock is
  * dropped while the descriptor's fileops run: they lock the file's own
@@ -634,29 +637,19 @@ fdesc_setattr(struct vop_setattr_args *ap)
 		error = EBADF;
 		goto out;
 	}
-	/*
-	 * Each attribute goes to the fileop that takes it; a type that has
-	 * no such operation answers EINVAL, which was "dropped" before the
-	 * descriptor's operations were consulted at all.
-	 */
+	/* Each attribute goes to the fileop that takes it. */
 	if (vap->va_size != VNOVAL) {
 		error = fo_truncate(fp, vap->va_size, ap->a_cred, td);
-		if (error == EINVAL)
-			error = 0;
 		if (error != 0)
 			goto out;
 	}
 	if (vap->va_mode != (mode_t)VNOVAL) {
 		error = fo_chmod(fp, vap->va_mode, ap->a_cred, td);
-		if (error == EINVAL)
-			error = 0;
 		if (error != 0)
 			goto out;
 	}
 	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL) {
 		error = fo_chown(fp, vap->va_uid, vap->va_gid, ap->a_cred, td);
-		if (error == EINVAL)
-			error = 0;
 		if (error != 0)
 			goto out;
 	}
@@ -667,17 +660,12 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	rest.va_gid = VNOVAL;
 	/*
 	 * Only what the fileops above did not take goes to fo_setattr, and
-	 * only if there is any.  A type whose fo_setattr has no attributes
-	 * (EINVAL) gets the old answer: the change is dropped, chflags(2)
-	 * refused.
+	 * only if there is any; the descriptor's own answer stands.
 	 */
 	if (rest.va_atime.tv_sec != VNOVAL || rest.va_mtime.tv_sec != VNOVAL ||
 	    rest.va_birthtime.tv_sec != VNOVAL || rest.va_flags != VNOVAL ||
-	    rest.va_vaflags != 0) {
+	    rest.va_vaflags != 0)
 		error = fo_setattr(fp, &rest, ap->a_cred, td);
-		if (error == EINVAL)
-			error = rest.va_flags != VNOVAL ? EOPNOTSUPP : 0;
-	}
 out:
 	fdrop(fp, td);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
