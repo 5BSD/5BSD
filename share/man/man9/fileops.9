@@ -14,7 +14,8 @@
 .Nm fo_readdir ,
 .Nm fo_copy_file_range ,
 .Nm fo_acl ,
-.Nm fo_extattr
+.Nm fo_extattr ,
+.Nm fo_fcntl
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -37,6 +38,8 @@
 .Fn fo_acl "struct file *fp" "int op" "int type" "struct acl *aclp" "struct thread *td"
 .Ft int
 .Fn fo_extattr "struct file *fp" "int op" "int attrnamespace" "const char *attrname" "void *data" "size_t nbytes" "struct uio *auio" "struct thread *td"
+.Ft int
+.Fn fo_fcntl "struct file *fp" "int cmd" "intptr_t arg" "struct thread *td"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -455,6 +458,61 @@ linuxkpi files use it, and get whatever their filesystem answers.
 returns
 .Er EINVAL .
 .El
+.Ss fo_fcntl
+.Fn fo_fcntl
+answers the
+.Xr fcntl 2
+commands whose meaning depends on the descriptor type and that the generic
+file layer cannot answer itself:
+.Dv F_READAHEAD
+.Po
+.Dv F_RDAHEAD
+arrives as
+.Dv F_READAHEAD
+with the byte count already in
+.Fa arg
+.Pc
+and
+.Dv F_ISUNIONSTACK
+from
+.Xr fcntl 2 ,
+and the kernel-private
+.Dv FO_FCNTL_GET_RW_HINT
+and
+.Dv FO_FCNTL_SET_RW_HINT
+behind the Linux read/write life-time hints.
+A command that yields a value stores it in
+.Va td_retval[0] ,
+as
+.Fn kern_fcntl
+does.
+.Xr fcntl 2
+refuses read-ahead on an
+.Dv O_PATH
+descriptor with
+.Er EBADF
+before the table is consulted, as it always did.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_fcntl
+sets the file's sequential read-ahead on a regular file
+.Pq Er ENOTTY otherwise ,
+reports whether the mount is a union stack, and reads or sets the vnode's
+write hint after a
+.Dv VADMIN
+access check.
+Regular files, directories,
+.Dv O_PATH
+files and devfs nodes use it.
+FIFOs, pseudo-terminal masters and linuxkpi files do not: the type tests
+these commands used to make returned
+.Er EBADF
+for them, and the default keeps doing so.
+.It everything else
+.Fn invfo_fcntl
+returns
+.Er EBADF .
+.El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an
 .Xr errno 2
@@ -464,6 +522,7 @@ value.
 .Xr copy_file_range 2 ,
 .Xr extattr_get_fd 2 ,
 .Xr fchflags 2 ,
+.Xr fcntl 2 ,
 .Xr fdatasync 2 ,
 .Xr fpathconf 2 ,
 .Xr fstatfs 2 ,
@@ -497,9 +556,10 @@ table has existed since
 .Fn fo_fadvise ,
 .Fn fo_readdir ,
 .Fn fo_copy_file_range ,
-.Fn fo_acl
-and
+.Fn fo_acl ,
 .Fn fo_extattr
+and
+.Fn fo_fcntl
 first appeared in 5BSD, in the series that made every descriptor type
 answer its own system calls without the kernel reaching past the table to
 a vnode.

@@ -656,6 +656,88 @@ vn_openfile_extattr(struct file *fp, int op, int attrnamespace,
 }
 
 /*
+ * The fcntl(2) commands a vnode file answers for itself: read-ahead
+ * (F_READAHEAD, with F_RDAHEAD's size already converted), F_ISUNIONSTACK,
+ * and the Linux read/write life-time hints kept in v_write_hint.
+ */
+int
+vn_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
+{
+	struct vnode *vp;
+	struct mount *mp;
+	int bsize, error;
+
+	vp = fp->f_vnode;
+	switch (cmd) {
+	case F_READAHEAD:
+		if (vp->v_type != VREG)
+			return (ENOTTY);
+		/*
+		 * Exclusive lock synchronizes against f_seqcount reads and
+		 * writes in sequential_heuristic().
+		 */
+		error = vn_lock(vp, LK_EXCLUSIVE);
+		if (error != 0)
+			return (error);
+		if (arg >= 0) {
+			bsize = vp->v_mount->mnt_stat.f_iosize;
+			arg = MIN(arg, INT_MAX - bsize + 1);
+			fp->f_seqcount[UIO_READ] = MIN(IO_SEQMAX,
+			    (arg + bsize - 1) / bsize);
+			atomic_set_int(&fp->f_flag, FRDAHEAD);
+		} else {
+			atomic_clear_int(&fp->f_flag, FRDAHEAD);
+		}
+		VOP_UNLOCK(vp);
+		return (0);
+
+	case F_ISUNIONSTACK:
+		/*
+		 * Since we don't prevent dooming the vnode even non-null mp
+		 * found can become immediately stale. This is tolerable since
+		 * mount points are type-stable (providing safe memory access)
+		 * and any vfs op on this vnode going forward will return an
+		 * error (meaning return value in this case is meaningless).
+		 */
+		mp = atomic_load_ptr(&vp->v_mount);
+		if (__predict_false(mp == NULL))
+			return (EBADF);
+		td->td_retval[0] = (mp->mnt_kern_flag & MNTK_UNIONFS) != 0 ||
+		    (mp->mnt_flag & MNT_UNION) != 0;
+		return (0);
+
+	case FO_FCNTL_GET_RW_HINT:
+		*(uint16_t *)arg = atomic_load_short(&vp->v_write_hint);
+		return (0);
+
+	case FO_FCNTL_SET_RW_HINT:
+		error = vn_lock(vp, LK_SHARED | LK_RETRY);
+		if (error == 0) {
+			error = VOP_ACCESS(vp, VADMIN, td->td_ucred, td);
+			VOP_UNLOCK(vp);
+		}
+		if (error == 0)
+			atomic_store_short(&vp->v_write_hint, (uint16_t)arg);
+		return (error);
+
+	default:
+		return (EINVAL);
+	}
+}
+
+static int
+vn_openfile_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_fcntl(fp, cmd, arg, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/*
  * fsync(2), fdatasync(2), aio_fsync(2) and Linux syncfs(2) on any descriptor
  * that carries a vnode.  The file context is entered here, not by a
  * per-table wrapper, so FIFOs, pseudo-terminal masters, devfs and linuxkpi
@@ -717,6 +799,7 @@ const struct fileops vnops = {
 	.fo_copy_file_range = vn_copy_range,
 	.fo_acl = vn_openfile_acl,
 	.fo_extattr = vn_openfile_extattr,
+	.fo_fcntl = vn_openfile_fcntl,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -747,6 +830,7 @@ const struct fileops vnops = {
 	.fo_copy_file_range = vn_copy_range, \
 	.fo_acl = vn_openfile_acl, \
 	.fo_extattr = vn_openfile_extattr, \
+	.fo_fcntl = vn_openfile_fcntl, \
 	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
 }
 

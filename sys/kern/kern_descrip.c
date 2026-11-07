@@ -654,10 +654,8 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 	struct filedescent *fde;
 	struct proc *p;
 	struct vnode *vp;
-	struct mount *mp;
 	struct kinfo_file *kif;
 	int error, flg, kif_sz, seals, tmp, got_set, got_cleared;
-	uint64_t bsize;
 	off_t foffset;
 	int flags;
 
@@ -1012,43 +1010,19 @@ revert_flags:
 		error = fget_unlocked(td, fd, &cap_fcntl_readahead_rights, &fp);
 		if (error != 0)
 			break;
-		if (fp->f_type != DTYPE_VNODE || fp->f_ops == &path_fileops) {
+		/* Read-ahead was never settable on an O_PATH descriptor. */
+		if (fp->f_ops == &path_fileops) {
 			fdrop(fp, td);
 			error = EBADF;
 			break;
 		}
-		vp = fp->f_vnode;
-		if (vp->v_type != VREG) {
-			fdrop(fp, td);
-			error = ENOTTY;
-			break;
-		}
-
-		/*
-		 * Exclusive lock synchronizes against f_seqcount reads and
-		 * writes in sequential_heuristic().
-		 */
-		error = vn_lock(vp, LK_EXCLUSIVE);
-		if (error != 0) {
-			fdrop(fp, td);
-			break;
-		}
-		if (arg >= 0) {
-			bsize = fp->f_vnode->v_mount->mnt_stat.f_iosize;
-			arg = MIN(arg, INT_MAX - bsize + 1);
-			fp->f_seqcount[UIO_READ] = MIN(IO_SEQMAX,
-			    (arg + bsize - 1) / bsize);
-			atomic_set_int(&fp->f_flag, FRDAHEAD);
-		} else {
-			atomic_clear_int(&fp->f_flag, FRDAHEAD);
-		}
-		VOP_UNLOCK(vp);
+		error = fo_fcntl(fp, F_READAHEAD, arg, td);
 		fdrop(fp, td);
 		break;
 
 	case F_ISUNIONSTACK:
 		/*
-		 * Check if the vnode is part of a union stack (either the
+		 * Check if the file is part of a union stack (either the
 		 * "union" flag from mount(2) or unionfs).
 		 *
 		 * Prior to introduction of this op libc's readdir would call
@@ -1063,29 +1037,7 @@ revert_flags:
 		error = fget_unlocked(td, fd, &cap_no_rights, &fp);
 		if (error != 0)
 			break;
-		if (fp->f_type != DTYPE_VNODE) {
-			fdrop(fp, td);
-			error = EBADF;
-			break;
-		}
-		vp = fp->f_vnode;
-		/*
-		 * Since we don't prevent dooming the vnode even non-null mp
-		 * found can become immediately stale. This is tolerable since
-		 * mount points are type-stable (providing safe memory access)
-		 * and any vfs op on this vnode going forward will return an
-		 * error (meaning return value in this case is meaningless).
-		 */
-		mp = atomic_load_ptr(&vp->v_mount);
-		if (__predict_false(mp == NULL)) {
-			fdrop(fp, td);
-			error = EBADF;
-			break;
-		}
-		td->td_retval[0] = 0;
-		if (mp->mnt_kern_flag & MNTK_UNIONFS ||
-		    mp->mnt_flag & MNT_UNION)
-			td->td_retval[0] = 1;
+		error = fo_fcntl(fp, F_ISUNIONSTACK, arg, td);
 		fdrop(fp, td);
 		break;
 
@@ -6098,6 +6050,7 @@ const struct fileops path_fileops = {
 	.fo_setattr = vn_setattr,
 	.fo_acl = vn_acl,
 	.fo_extattr = vn_extattr,
+	.fo_fcntl = vn_fcntl,
 	.fo_flags = DFLAG_PASSABLE,
 };
 
@@ -6229,6 +6182,14 @@ invfo_extattr(struct file *fp, int op, int attrnamespace,
 {
 
 	return (EINVAL);
+}
+
+/* What the f_type tests in kern_fcntl() gave a descriptor with no vnode. */
+int
+invfo_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
+{
+
+	return (EBADF);
 }
 
 int

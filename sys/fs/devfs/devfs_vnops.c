@@ -2112,6 +2112,7 @@ static const struct fileops devfs_ops_f = {
 	.fo_readdir =	vn_readdir,
 	.fo_acl =	vn_acl,
 	.fo_extattr =	vn_extattr,
+	.fo_fcntl =	vn_fcntl,
 	.fo_flags =	DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
 
@@ -2139,6 +2140,7 @@ static const struct fileops devfs_ops_nonpassable_f = {
 	.fo_readdir =	vn_readdir,
 	.fo_acl =	vn_acl,
 	.fo_extattr =	vn_extattr,
+	.fo_fcntl =	vn_fcntl,
 	.fo_flags =	DFLAG_SEEKABLE
 };
 

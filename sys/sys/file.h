@@ -179,7 +179,17 @@ typedef int fo_acl_t(struct file *fp, int op, int type, struct acl *aclp,
 typedef int fo_extattr_t(struct file *fp, int op, int attrnamespace,
 		    const char *attrname, void *data, size_t nbytes,
 		    struct uio *auio, struct thread *td);
+typedef int fo_fcntl_t(struct file *fp, int cmd, intptr_t arg,
+		    struct thread *td);
 typedef int fo_spare_t(struct file *fp);
+
+/*
+ * fo_fcntl commands beyond the fcntl(2) ones it answers (F_READAHEAD with
+ * the byte count already in arg, F_ISUNIONSTACK): the Linux read/write
+ * life-time hints, kernel-private numbers kern_fcntl() never passes.
+ */
+#define	FO_FCNTL_GET_RW_HINT	0x40000001	/* arg: uint16_t * to fill */
+#define	FO_FCNTL_SET_RW_HINT	0x40000002	/* arg: the hint value */
 
 /* fo_extattr operations: set and get use data/nbytes, list uses auio. */
 #define	FO_EXTATTR_SET		0
@@ -231,6 +241,7 @@ struct fileops {
 	fo_copy_file_range_t *fo_copy_file_range;
 	fo_acl_t	*fo_acl;
 	fo_extattr_t	*fo_extattr;
+	fo_fcntl_t	*fo_fcntl;
 	fo_spare_t	*fo_spares[4];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
@@ -373,6 +384,7 @@ fo_readdir_t	invfo_readdir;
 fo_copy_file_range_t invfo_copy_file_range;
 fo_acl_t	invfo_acl;
 fo_extattr_t	invfo_extattr;
+fo_fcntl_t	invfo_fcntl;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
@@ -387,6 +399,7 @@ fo_readdir_t	vn_readdir;
 fo_copy_file_range_t vn_copy_range;
 fo_acl_t	vn_acl;
 fo_extattr_t	vn_extattr;
+fo_fcntl_t	vn_fcntl;
 /*
  * For descriptor types that carry a vnode only on some creation paths
  * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
@@ -686,6 +699,19 @@ fo_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
 		    nbytes, auio, td));
 	return ((*fp->f_ops->fo_extattr)(fp, op, attrnamespace, attrname, data,
 	    nbytes, auio, td));
+}
+
+/*
+ * The fcntl(2) commands a descriptor type answers for itself; results that
+ * are values go to td_retval[0] as kern_fcntl() does.
+ */
+static __inline int
+fo_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
+{
+
+	if (fp->f_ops->fo_fcntl == NULL)
+		return (invfo_fcntl(fp, cmd, arg, td));
+	return ((*fp->f_ops->fo_fcntl)(fp, cmd, arg, td));
 }
 
 static __inline int

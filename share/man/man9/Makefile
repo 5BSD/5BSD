@@ -1166,6 +1166,7 @@ MLINKS+=fileops.9 fo_acl.9 \
 	fileops.9 fo_copy_file_range.9 \
 	fileops.9 fo_extattr.9 \
 	fileops.9 fo_fadvise.9 \
+	fileops.9 fo_fcntl.9 \
 	fileops.9 fo_fsync.9 \
 	fileops.9 fo_pathconf.9 \
 	fileops.9 fo_readdir.9 \

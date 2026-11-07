@@ -2324,37 +2324,30 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		return (0);
 
 	case LINUX_F_GET_RW_HINT:
+		/*
+		 * The hint lives with the file; a descriptor whose fileops
+		 * have no fcntl commands has none (EINVAL, as Linux says).
+		 */
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (fp->f_type != DTYPE_VNODE || fp->f_vnode == NULL) {
-			fdrop(fp, td);
-			return (EINVAL);
-		}
-		hint = atomic_load_short(&fp->f_vnode->v_write_hint);
+		error = fo_fcntl(fp, FO_FCNTL_GET_RW_HINT, (intptr_t)&hint, td);
 		fdrop(fp, td);
+		if (error != 0)
+			return (error == EBADF ? EINVAL : error);
 		return (copyout(&hint, PTRIN(args->arg), sizeof(hint)));
 	case LINUX_F_SET_RW_HINT:
+		error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
+		if (error != 0)
+			return (error);
+		if (hint > LINUX_RWH_WRITE_LIFE_EXTREME)
+			return (EINVAL);
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (fp->f_type != DTYPE_VNODE || fp->f_vnode == NULL) {
-			fdrop(fp, td);
-			return (EINVAL);
-		}
-		error = vn_lock(fp->f_vnode, LK_SHARED | LK_RETRY);
-		if (error == 0) {
-			error = VOP_ACCESS(fp->f_vnode, VADMIN, td->td_ucred, td);
-			VOP_UNLOCK(fp->f_vnode);
-		}
-		if (error == 0)
-			error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
-		if (error == 0 && hint > LINUX_RWH_WRITE_LIFE_EXTREME)
-			error = EINVAL;
-		if (error == 0)
-			atomic_store_short(&fp->f_vnode->v_write_hint, hint);
+		error = fo_fcntl(fp, FO_FCNTL_SET_RW_HINT, (intptr_t)hint, td);
 		fdrop(fp, td);
-		return (error);
+		return (error == EBADF ? EINVAL : error);
 
 	case LINUX_F_CREATED_QUERY:
 		error = fget(td, args->fd, &cap_no_rights, &fp);
