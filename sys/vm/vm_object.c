@@ -115,9 +115,6 @@ SDT_PROBE_DEFINE1(vm, , , object__collapse, "struct vm_object *");
 SDT_PROBE_DEFINE2(vm, , , object__bypass,
     "struct vm_object *", "struct vm_object *");
 
-static int old_msync;
-SYSCTL_INT(_vm, OID_AUTO, old_msync, CTLFLAG_RW, &old_msync, 0,
-    "Use old (insecure) msync behavior");
 
 static boolean_t vm_object_page_remove_write(vm_page_t p, int flags,
 		    boolean_t *allclean);
@@ -1170,15 +1167,10 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
     boolean_t syncio, boolean_t invalidate)
 {
 	vm_object_t backing_object;
-	struct vnode *vp;
-	struct mount *mp;
-	int error, flags, fsync_after;
 	boolean_t res;
 
 	if (object == NULL)
 		return (TRUE);
-	res = TRUE;
-	error = 0;
 	VM_OBJECT_WLOCK(object);
 	while ((backing_object = object->backing_object) != NULL) {
 		VM_OBJECT_WLOCK(backing_object);
@@ -1189,81 +1181,11 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
 			size = IDX_TO_OFF(object->size) - offset;
 	}
 	/*
-	 * Flush pages if writing is allowed, invalidate them
-	 * if invalidation requested.  Pages undergoing I/O
-	 * will be ignored by vm_object_page_remove().
-	 *
-	 * We cannot lock the vnode and then wait for paging
-	 * to complete without deadlocking against vm_fault.
-	 * Instead we simply call vm_object_page_remove() and
-	 * allow it to block internally on a page-by-page
-	 * basis when it encounters pages undergoing async
-	 * I/O.
+	 * Flush pages if writing is allowed, invalidate them if invalidation
+	 * requested: the pager's business.  Pages undergoing I/O will be
+	 * ignored by vm_object_page_remove().
 	 */
-	if (object->type == OBJT_VNODE &&
-	    vm_object_mightbedirty(object) != 0 &&
-	    ((vp = object->handle)->v_vflag & VV_NOSYNC) == 0) {
-		VM_OBJECT_WUNLOCK(object);
-		(void)vn_start_write(vp, &mp, V_WAIT);
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		if (syncio && !invalidate && offset == 0 &&
-		    atop(size) == object->size) {
-			/*
-			 * If syncing the whole mapping of the file,
-			 * it is faster to schedule all the writes in
-			 * async mode, also allowing the clustering,
-			 * and then wait for i/o to complete.
-			 */
-			flags = 0;
-			fsync_after = TRUE;
-		} else {
-			flags = (syncio || invalidate) ? OBJPC_SYNC : 0;
-			flags |= invalidate ? (OBJPC_SYNC | OBJPC_INVAL) : 0;
-			fsync_after = FALSE;
-		}
-		VM_OBJECT_WLOCK(object);
-		res = vm_object_page_clean(object, offset, offset + size,
-		    flags);
-		VM_OBJECT_WUNLOCK(object);
-		if (fsync_after) {
-			for (;;) {
-				error = VOP_FSYNC(vp, MNT_WAIT, curthread);
-				if (error != ERELOOKUP)
-					break;
-
-				/*
-				 * Allow SU/bufdaemon to handle more
-				 * dependencies in the meantime.
-				 */
-				VOP_UNLOCK(vp);
-				vn_finished_write(mp);
-
-				(void)vn_start_write(vp, &mp, V_WAIT);
-				vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-			}
-		}
-		VOP_UNLOCK(vp);
-		vn_finished_write(mp);
-		if (error != 0)
-			res = FALSE;
-		VM_OBJECT_WLOCK(object);
-	}
-	if ((object->type == OBJT_VNODE ||
-	     object->type == OBJT_DEVICE) && invalidate) {
-		if (object->type == OBJT_DEVICE)
-			/*
-			 * The option OBJPR_NOTMAPPED must be passed here
-			 * because vm_object_page_remove() cannot remove
-			 * unmanaged mappings.
-			 */
-			flags = OBJPR_NOTMAPPED;
-		else if (old_msync)
-			flags = 0;
-		else
-			flags = OBJPR_CLEANONLY;
-		vm_object_page_remove(object, OFF_TO_IDX(offset),
-		    OFF_TO_IDX(offset + size + PAGE_MASK), flags);
-	}
+	res = vm_pager_sync(object, offset, size, syncio, invalidate);
 	VM_OBJECT_WUNLOCK(object);
 	return (res);
 }

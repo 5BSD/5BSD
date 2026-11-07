@@ -69,6 +69,8 @@ typedef void pgo_freespace_t(vm_object_t object, vm_pindex_t start,
 typedef void pgo_page_inserted_t(vm_object_t object, vm_page_t m);
 typedef void pgo_page_removed_t(vm_object_t object, vm_page_t m);
 typedef boolean_t pgo_can_alloc_page_t(vm_object_t object, vm_pindex_t pindex);
+typedef boolean_t pgo_sync_t(vm_object_t object, vm_ooffset_t offset,
+    vm_size_t size, boolean_t syncio, boolean_t invalidate);
 
 struct pagerops {
 	int			pgo_kvme_type;
@@ -90,6 +92,7 @@ struct pagerops {
 	pgo_page_inserted_t	*pgo_page_inserted;
 	pgo_page_removed_t	*pgo_page_removed;
 	pgo_can_alloc_page_t	*pgo_can_alloc_page;
+	pgo_sync_t		*pgo_sync;		/* msync(2) write-back. */
 };
 
 extern const struct pagerops defaultpagerops;
@@ -226,6 +229,25 @@ vm_pager_release_writecount(vm_object_t object, vm_offset_t start,
 	method = pagertab[object->type]->pgo_release_writecount;
 	if (method != NULL)
 		method(object, start, end);
+}
+
+/*
+ * msync(2) and mapping teardown reach the pager here: write back the dirty
+ * pages of the range and, on request, invalidate them.  The object is
+ * write-locked on entry and on return; the chain of backing objects has
+ * already been walked.  A pager without the method has nothing to write
+ * back or invalidate and the sync succeeds.
+ */
+static __inline boolean_t
+vm_pager_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
+    boolean_t syncio, boolean_t invalidate)
+{
+	pgo_sync_t *method;
+
+	method = pagertab[object->type]->pgo_sync;
+	if (method == NULL)
+		return (TRUE);
+	return (method(object, offset, size, syncio, invalidate));
 }
 
 static __inline void

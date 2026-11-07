@@ -4,6 +4,7 @@ TESTSDIR=	${TESTSBASE}/sys/vm
 
 ATF_TESTS_C+=	mlock_test \
 		mmap_test \
+		msync_pager_test \
 		page_fault_signal \
 		shared_shadow_inval_test
 

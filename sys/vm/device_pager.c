@@ -66,6 +66,8 @@ static boolean_t dev_pager_haspage(vm_object_t, vm_pindex_t, int *, int *);
 static void dev_pager_free_page(vm_object_t object, vm_page_t m);
 static int dev_pager_populate(vm_object_t object, vm_pindex_t pidx,
     int fault_type, vm_prot_t, vm_pindex_t *first, vm_pindex_t *last);
+static boolean_t dev_pager_sync(vm_object_t object, vm_ooffset_t offset,
+    vm_size_t size, boolean_t syncio, boolean_t invalidate);
 
 /* list of device pager objects */
 static struct pagerlst dev_pager_object_list;
@@ -80,7 +82,26 @@ const struct pagerops devicepagerops = {
 	.pgo_getpages =	dev_pager_getpages,
 	.pgo_putpages =	dev_pager_putpages,
 	.pgo_haspage =	dev_pager_haspage,
+	.pgo_sync =	dev_pager_sync,
 };
+
+/*
+ * msync(2) on an unmanaged device object has nothing to write back;
+ * invalidation removes the pages, with OBJPR_NOTMAPPED because
+ * vm_object_page_remove() cannot remove unmanaged mappings.  The managed
+ * device pager has no sync method: it never did either.
+ */
+static boolean_t
+dev_pager_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
+    boolean_t syncio, boolean_t invalidate)
+{
+
+	VM_OBJECT_ASSERT_WLOCKED(object);
+	if (invalidate)
+		vm_object_page_remove(object, OFF_TO_IDX(offset),
+		    OFF_TO_IDX(offset + size + PAGE_MASK), OBJPR_NOTMAPPED);
+	return (TRUE);
+}
 
 const struct pagerops mgtdevicepagerops = {
 	.pgo_kvme_type = KVME_TYPE_MGTDEVICE,
