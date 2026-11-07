@@ -834,6 +834,47 @@ opens. Run 14: 280/282 — all 119 dq and libdq cases and the stage 0
 `devctl_device_test` metadata break and the baselined OES socket-poll
 failure.
 
+### 7.8 Stage 1b-ii as built (2026-11-07)
+
+Served files have pages: a dq pager type of their own (`dq_pager.c`), the
+asynchronous page operations with queue-owned deadlines (`dq_async.c`),
+`mmap` in every mode, `msync` and `fsync` write-back, `sendfile` through
+`getpages_async`, the `DATA` cache, `INVALIDATE`, and the bound
+`kern.dq.max_inflight_bytes`. Two shared changes carry it: a `pgo_flags`
+word in `struct pagerops` (`PGO_WRITEBACK` lets `vm_object_page_clean`
+serve any write-back pager, not only vnodes; `PGO_RESIDENT_LOOKUP` lets
+`mincore` report resident pages), and `vn_sendfile` split into
+`sendfile_getobj` and an exported `sendfile_send` with the source in
+`<sys/sf_buf.h>`, so a table builds its own source.
+
+**What changed against the plan (D108).** Close writes dirty pages back from
+a deferred task and only then posts `CLOSE` (with the kernel as caller);
+revoke and queue close still drop them. A shrink fails the page operations
+it cuts off instead of sleeping on them, so a controller never waits on its
+own unanswered events. No `dq_taskq` task sleeps on another task or on the
+controller; the bounded sleeps it may take are listed in `dq_var.h`. An
+`INVALIDATE` racing a page-in re-posts the run (at most eight times). A
+short read reply inside the presented size is an error, never cached zeros.
+`msync`/`fsync` report only their own range's failures. Page faults do not
+run the `EDEADLK` scan (a controller faulting on its own served mapping
+waits out the deadline: declared). `MS_SYNC` waits are bounded, not
+interruptible (`vm_object_sync` can only report `EIO`).
+
+**What the VM runs found.** Run 16: the pager's dealloc did not mark the
+object dead (every pager must). Run 18: a false lock-order report (the task
+queue's mutex shared the global dq mutex's name) and a use-after-free in
+unix(4): an aborted `sendfile` into a unix stream socket left freed mbufs
+in the peer's receive buffer — any `sendfile` I/O error could trigger it,
+vnode sources included (issue file `2026-11-07-unix-sendfile-abort-uaf.md`);
+run 19 showed the first fix had broken the not-ready chain (the queue link
+and `m_next` share storage). Run 21: a failed write-back left its pages
+dirty but the object clean (`vm_object_page_clean` moves the clean
+generation when it posts), so the next `msync` skipped them; the failure
+completion re-marks the object. Run 22: 477/479 — all 144 dq and libdq
+cases, `sys/vm`, the unix-socket and `sendfile` suites and `sys/file` pass;
+the non-passes are the pre-existing `devctl_device_test` metadata break and
+the baselined OES socket-poll failure.
+
 ## 8. Wire protocol
 
 Fixed-width, native byte order, `DQ_API_VERSION` 1, additive like
@@ -1590,6 +1631,7 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D105 | 2026-11-07 | Stage 1b plan reviewed twice ("not yet", ten blocking and fifteen items; then "code may begin" after three corrections): the items above are the adopted set; also `dq_stats`/`GET_STATS` frozen with `DQ_IOC_GET_STATS2` (the size is in the ioctl word), reply errnos allow-listed per op (a controller's `EPIPE` must never raise `SIGPIPE`), `F_SET_RW_HINT` stays `EPERM`, `copy_file_range` stays the default, `dp_mmap_shared_write = ALLOW` refused until ii | plan review 2026-11-07 | a pager design has to be checked against the VM code's locks before it is code |
 | D106 | 2026-11-07 | Built-series review of 1b-i ("not yet") adopted: the `EDEADLK` rule runs before any offset or range lock in every operation that posts (a controller touching its own served file could sleep uninterruptibly behind a requester's write lock); Linux splice and sendfile check reads too; `UNLOCK_ALL` and `INTERRUPT` are never dropped for depth (`ds2_overdepth`), since a lost unlock leaks a controller-side lock under a pid that gets reused; POSIX lock ownership spans every open of the same identity on the queue, as on a real file (siblings indexed by `(di_dev, di_ino)` per queue, which also bounds the note walk); libdq's `GETLK` creates no owner. Also: a non-append `WRITE` reply must echo its offset; a zero-byte success is `EIO`; allow-lists widened (`EDQUOT`, `ENOSPC`, `ESTALE`, `EACCES` where real files return them); the snapshot chmod rule; `RLIMIT_FSIZE` on truncate after the attribute checks. Declared: an immutable or append flag combined with other attributes in one `vattr` is `EPERM` (ufs ignores the rest); `file_setattr_direct` applies size, mode and owner before flags | built-series review 2026-11-07 | |
 | D107 | 2026-11-07 | Stage 1b-i landed on `dev` as merge `e7af4595ac7` (four commits `66241e9182e`..`ee87e811087`). The merged GENERIC, built from `/usr/src`, passed `sys/dq`, `lib/libdq` and `sys/file` in the plane-on guest with only the pre-existing `devctl_device_test` metadata break (run 15). Nothing installed on the host, no reboot | run 15 | series ii (pages) starts from D102-D105 |
+| D108 | 2026-11-07 | Stage 1b-ii built and reviewed ("not yet": a double close in the reply path from series i — `fhold` succeeds on a zero count, now `refcount_acquire_if_not_zero`; the I12 test's shape; INVALIDATE racing page-ins; tail zeroing; sendfile sized by the pager; task-queue sleeps; per-range `msync` errors; short replies; a race in the unix(4) abort fix — all fixed). Overruled at implementation: close drops dirty pages (now deferred write-back), a shrink sleeps on the controller's own events (now fails them). Declared: a fault on one's own served mapping is not `EDEADLK`; `MS_SYNC` is not interruptible; a mapping placed into another process's map does not hold the file; a failed `sendfile` page-in aborts the socket (`EIO`) after the call may have returned | 1b-ii review, runs 16-22 | |
 
 ### 20.1 Origin
 

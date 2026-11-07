@@ -121,6 +121,16 @@ int	dq_set_policy(int q, uint64_t object, const struct dq_policy *pol);
 int	dq_push_vnode_note(int q, uint64_t object, uint32_t note);
 
 /*
+ * Drop the object's clean cached pages in [offset, offset + len) (len 0:
+ * to the end; the range is rounded out to pages) so the next fault or
+ * DQ_CACHE_DATA read asks again (DQ_IOC_PUSH, DQ_PUSH_INVALIDATE).  Dirty
+ * pages of a shared mapping the controller has not yet seen survive and
+ * are written back.  ESRCH for an unknown object.
+ */
+int	dq_push_invalidate(int q, uint64_t object, uint64_t offset,
+	    uint64_t len);
+
+/*
  * Events
  */
 

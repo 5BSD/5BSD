@@ -653,7 +653,12 @@ dq_serve_write(int q, const struct dq_event *ev,
 		return (dq_reply(q, ev->de_id, dq_serve_map(DQ_OP_WRITE, error),
 		    NULL, 0));
 	rv = dq_reply_write(q, ev->de_id, (uint64_t)n, (uint64_t)off);
-	if (rv == 0 && opts != NULL &&
+	/*
+	 * Not after a WRITE_ASYNC: write-back of a mapping's pages runs from
+	 * the page daemon and msync, and the size and times a mapping
+	 * changes are the kernel's to present; the controller may SETIDENT.
+	 */
+	if (rv == 0 && opts != NULL && ev->de_op == DQ_OP_WRITE &&
 	    (opts->so_flags & DQ_SERVE_F_SYNC_IDENT) != 0)
 		rv = dq_serve_ident_sync(q, ev, opts, backing);
 	return (rv);
@@ -825,10 +830,12 @@ dq_serve_file(int q, const struct dq_event *ev, const void *body,
 	st = opts != NULL ? opts->so_state : NULL;
 	switch (ev->de_op) {
 	case DQ_OP_READ:
+	case DQ_OP_READ_ASYNC:		/* sendfile: answered as READ */
 		return (dq_serve_read(q, ev, backing_fd));
 	case DQ_OP_GETATTR:
 		return (dq_serve_getattr(q, ev, opts, backing_fd));
 	case DQ_OP_WRITE:
+	case DQ_OP_WRITE_ASYNC:		/* write-back: pwrite at dw_offset */
 		return (dq_serve_write(q, ev, opts, backing_fd));
 	case DQ_OP_SETATTR:
 		return (dq_serve_setattr(q, ev, opts, backing_fd));

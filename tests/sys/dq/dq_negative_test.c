@@ -300,7 +300,9 @@ ATF_TC_BODY(mint_reasons_policy, tc)
 
 	p = f.pol;
 	p.dp_cache = DQ_CACHE_DATA;
-	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "cache DATA");
+	/* Stage 1b-ii: the data cache is served. */
+	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
+	(void)close(fd);
 	p = f.pol;
 	p.dp_cache = 7;
 	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "cache out of range");
@@ -355,6 +357,13 @@ ATF_TC_BODY(mint_reasons_policy, tc)
 	p.dp_mmap_shared_write = DQ_ALLOW;
 	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY,
 	    "mmap_shared_write ALLOW with write DENY");
+	/* With write EVENT it is accepted (1b-ii). */
+	p.dp_write = DQ_EVENT;
+	ATF_CHECK_EQ(0, dq_mint_file(f.c.q, &f.ident, &p, &object, &fd, NULL));
+	(void)close(fd);
+	p.dp_mmap_shared_write = 7;
+	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY,
+	    "mmap_shared_write out of range");
 	p = f.pol;
 	p.dp_lock = DQ_DENY;
 	expect_reason(&f, &f.ident, &p, DQ_REASON_POLICY, "lock DENY");

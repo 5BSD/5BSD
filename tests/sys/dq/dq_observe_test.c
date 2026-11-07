@@ -210,7 +210,7 @@ ATF_TC_BODY(list_objects, tc)
 	struct dq_stats st;
 	size_t count, i;
 	uint64_t total;
-	int oracle, svc;
+	int oracle, svc, waited;
 	bool saw1, saw2;
 
 	dqt_fill(data, sizeof(data), 92);
@@ -255,11 +255,20 @@ ATF_TC_BODY(list_objects, tc)
 	ATF_REQUIRE_EQ(0, dq_observe_list_objects(svc, st.ds_queue_id, 2, oi,
 	    nitems(oi), &count, &total));
 	ATF_CHECK_EQ(0, count);
-	/* A closed object leaves the table. */
+	/*
+	 * A closed object leaves the table once its deferred destroy (the
+	 * write-back of dirty pages, bounded by the page deadline) is done:
+	 * poll, bounded, for the listing to drop it.
+	 */
 	ATF_REQUIRE_EQ(0, close(o1->fd));
 	o1->fd = -1;
-	ATF_REQUIRE_EQ(0, dq_observe_list_objects(svc, st.ds_queue_id, 0, oi,
-	    nitems(oi), &count, &total));
+	for (waited = 0;; waited += 10) {
+		ATF_REQUIRE_EQ(0, dq_observe_list_objects(svc, st.ds_queue_id,
+		    0, oi, nitems(oi), &count, &total));
+		if (total == 1 || waited >= 4 * DQT_WAIT_MS)
+			break;
+		dqt_msleep(10);
+	}
 	ATF_CHECK_EQ(1, total);
 	ATF_CHECK_EQ(1, count);
 	ATF_CHECK_EQ(o2->id, oi[0].oi_id);
