@@ -28,6 +28,10 @@ package_closure = importlib.util.module_from_spec(_closure_spec)
 _closure_spec.loader.exec_module(package_closure)
 
 
+# Reserved default pkg repository catalogues, never installable package archives.
+REPOSITORY_CATALOGUES = frozenset(('data.pkg', 'packagesite.pkg', 'files.pkg', 'meta.pkg'))
+
+
 def run(*args, **kwargs):
     try:
         return subprocess.run([str(a) for a in args], check=True, text=True, **kwargs)
@@ -97,7 +101,7 @@ def create(pkg, output, meta, payload=None):
 def inventory(directory):
     result = {}
     for p in sorted(directory.glob('*.pkg')):
-        if p.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg'):
+        if p.name in REPOSITORY_CATALOGUES:
             continue  # pkg repository catalogues are not package archives.
         m = manifest(p)
         if m['name'] in result:
@@ -513,7 +517,7 @@ def add_bootstrap_package(source, expected, candidate, info):
     """
     source = Path(source)
     if (not re.fullmatch(r'[0-9a-fA-F]{64}', expected or '') or
-            source.suffix != '.pkg' or source.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg') or
+            source.suffix != '.pkg' or source.name in REPOSITORY_CATALOGUES or
             source.is_symlink() or not source.is_file()):
         raise ValueError('bootstrap pkg requires a regular .pkg archive and SHA256')
     if 'pkg' in inventory(candidate):
@@ -575,7 +579,7 @@ def add_application_packages(selection_path, candidate, info):
         sources.add(value)
         source = Path(value)
         if (source.is_symlink() or not source.is_file() or source.suffix != '.pkg' or
-                source.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg')):
+                source.name in REPOSITORY_CATALOGUES):
             raise ValueError('application requires a regular .pkg archive')
         target = candidate / source.name
         if target.exists() or target.is_symlink():

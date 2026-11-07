@@ -23,6 +23,7 @@ from host_resources import HostMonitor
 from serial_terminal import TerminalSizeResponder
 from installed_audit import specification
 import firstboot_runtime
+import upgrade_runtime
 from mtree_reconcile import reconcile
 
 FAILURE_DIAGNOSTICS = re.compile(rb"panic:|Fatal trap|lock order reversal|non-sleepable locks held|[A-Za-z_][A-Za-z0-9_]*: parameter not set")
@@ -102,10 +103,11 @@ def main():
               'console_user','password','ssh_user','user_uid','terminal_rows','terminal_columns'}
     if type(plan.get('format')) is int and plan['format']>=2:
         required.update(('metalog_output','audit_deadline_seconds'))
-    if plan.get('format')==3:
+    if type(plan.get('format')) is int and plan['format']>=3:
         required.update(('firstboot_policy','firstboot_deadline_seconds'))
-    if set(plan)!=required or type(plan['format']) is not int or plan['format'] not in (1,2,3):
-        raise ValueError('exact format-1/2/3 VM plan fields required')
+    if plan.get('format')==4:required.add('upgrade_policy')
+    if set(plan)!=required or type(plan['format']) is not int or plan['format'] not in (1,2,3,4):
+        raise ValueError('exact format-1/2/3/4 VM plan fields required')
     if type(plan['user_uid']) is not int or not 0<plan['user_uid']<2**31:
         raise ValueError('explicit ordinary guest user UID required')
     for field in ('console_user','ssh_user'):
@@ -115,7 +117,7 @@ def main():
         raise ValueError('single-line private fixture password required')
     if plan['format']>=2 and (type(plan['audit_deadline_seconds']) is not int or not 0<plan['audit_deadline_seconds']<=plan['deadline_seconds']):
         raise ValueError('positive audit deadline within the whole-VM budget required')
-    if plan['format']==3 and (type(plan['firstboot_deadline_seconds']) is not int or not 0<plan['firstboot_deadline_seconds']<=plan['deadline_seconds']):
+    if plan['format']>=3 and (type(plan['firstboot_deadline_seconds']) is not int or not 0<plan['firstboot_deadline_seconds']<=plan['deadline_seconds']):
         raise ValueError('positive firstboot deadline within whole-VM budget required')
     TerminalSizeResponder(plan['terminal_rows'],plan['terminal_columns'])
     if not Path(plan['qemu_data']).is_absolute() or not Path(plan['qemu_data']).is_dir():
@@ -132,13 +134,16 @@ def main():
     image,build_report=resolved[0][0],json.loads(resolved[1][0].read_text())
     assert build_report['status']=='passed' and digest(image)==build_report['image_sha256']
     audit_spec=specification(resolved[2][0].read_bytes(),build_report) if plan['format']>=2 else None
-    firstboot=firstboot_runtime.load(plan['firstboot_policy'],build_report,{plan['console_user'],plan['ssh_user']}) if plan['format']==3 else None
+    firstboot=firstboot_runtime.load(plan['firstboot_policy'],build_report,{plan['console_user'],plan['ssh_user']}) if plan['format']>=3 else None
+    upgrade=upgrade_runtime.load(plan['upgrade_policy'],build_report) if plan['format']==4 else None
     tools={name:Path(plan[name]).resolve(strict=True) for name in ('qemu','qemu_img','bios','ssh')}
     bindings={str(path):digest(path) for path in tools.values()}
-    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py')]
+    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py','upgrade_runtime.py')]
     source_bindings={str(path):digest(path) for path in sources}
     if firstboot is not None:source_bindings.update(firstboot['bindings'])
+    if upgrade is not None:source_bindings.update(upgrade['bindings'])
     out.mkdir(mode=0o700)
+    if upgrade is not None:(out/'upgrade-policy.json').write_bytes(upgrade['policy_bytes'])
     if firstboot is not None:(out/'firstboot-policy.json').write_bytes(firstboot['policy_bytes'])
     if audit_spec is not None:(out/'installed.mtree').write_bytes(audit_spec)
     monitor=HostMonitor(out/'host-resources.jsonl',plan['max_rss_mib'])
@@ -154,6 +159,7 @@ def main():
         '-drive','file='+str(overlay)+',format=qcow2,if=virtio',
         '-netdev','user,id=net0,hostfwd=tcp:127.0.0.1:'+str(port)+'-:22',
         '-device','virtio-net-pci,netdev=net0,romfile=']
+    if upgrade is not None:command.remove('-no-reboot')
     report.update(qemu_command=command,ssh_port=port);save()
     started=time.monotonic();process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
     console=Console(process,out/'serial.log',monitor,started,plan['deadline_seconds'],overlay,plan['max_overlay_mib']*1024**2,plan['terminal_rows'],plan['terminal_columns'])
@@ -239,7 +245,8 @@ def main():
             'SSH_ASKPASS_REQUIRE':'force','SSH_ASKPASS':str(askpass),'QUAL_SSH_PASSWORD':plan['password']}
         firstboot_proof=None
         if firstboot is not None:
-            firstboot_until=time.monotonic()+plan['firstboot_deadline_seconds']
+            operation_until=time.monotonic()+plan['firstboot_deadline_seconds']
+            report['root_commands']=[]
             report['firstboot_commands']=[]
             def root_invoke(label,remote,input_path=None):
                 log_path=out/(label+'.output');begin=time.monotonic()
@@ -248,15 +255,17 @@ def main():
                     try:
                         while child.poll() is None:
                             console.tick()
-                            if time.monotonic()>firstboot_until:raise TimeoutError('explicit firstboot proof deadline')
-                            if log_path.stat().st_size>32*1024**2:raise ValueError('firstboot proof exceeds evidence budget')
+                            if time.monotonic()>operation_until:raise TimeoutError('explicit root-operation phase deadline')
+                            if log_path.stat().st_size>32*1024**2:raise ValueError('root-operation output exceeds evidence budget')
                             time.sleep(0.2)
                     finally:
                         if child.poll() is None:child.kill();child.wait()
-                report['firstboot_commands'].append(dict(label=label,command=remote,status=child.returncode,seconds=time.monotonic()-begin,output_sha256=digest(log_path)))
+                record=dict(label=label,command=remote,status=child.returncode,seconds=time.monotonic()-begin,output_sha256=digest(log_path))
+                report['root_commands'].append(record)
+                if firstboot_proof is None:report['firstboot_commands'].append(record)
                 save()
                 if child.returncode:raise RuntimeError('guest firstboot proof failed: '+label+'; see '+str(log_path))
-                if log_path.stat().st_size>32*1024**2:raise ValueError('firstboot proof exceeds evidence budget')
+                if log_path.stat().st_size>32*1024**2:raise ValueError('root-operation output exceeds evidence budget')
                 return log_path.read_bytes()
             firstboot_proof=firstboot_runtime.exercise(firstboot,root_invoke,out,{plan['console_user'],plan['ssh_user']})
             check('firstboot-transitions',lambda:firstboot_proof)
@@ -296,6 +305,9 @@ def main():
             save()
             if not audit_passed:raise RuntimeError('complete installed-tree audit differs; retain every difference for review, see installed-audit.log')
             check('installed-tree-audit',lambda:'complete captured baseline plus any independently verified firstboot transitions matches')
+        if upgrade is not None:
+            operation_until=time.monotonic()+upgrade['policy']['deadline_seconds']
+            upgrade_runtime.exercise(upgrade,root_invoke,console,check,ssh,plan,build_report,out)
         console.send('/sbin/shutdown -p now')
         until=time.monotonic()+180
         while process.poll() is None:

@@ -7952,3 +7952,15 @@ reconciled.  Other security flags, modes, ownership, links and content remain
 exact.  Native comparator/account/diagnostic tests run through the existing
 format-5 targets/tests interface.  This is runtime fixture qualification, not BIP
 or a production mutability policy.
+.Pp
+The complete-package VM driver accepts format 4 with an explicit upgrade_policy.
+It uses a complete captured package set and a signed private qualification
+repository; preparation reuses maintained pkg catalogue/archive verification and
+rejects the wrong public key.  Target ABI/OSVERSION and test keys are inputs.
+No combined publication or latest advancement is performed.
+The VM scenario clones, mounts and upgrades an inactive BE with actual pkg,
+boots the changed kernel, verifies authentication and shared data, rolls back,
+then removes the unused environment and checks space reclamation.
+The default fixture follows ZFS bootfs rather than pinning a root dataset.
+This is not host installation, application database schema rollback, BIP,
+exhaustive upgraded metadata or comparative performance qualification.

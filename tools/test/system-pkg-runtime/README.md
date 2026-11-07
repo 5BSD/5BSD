@@ -155,3 +155,57 @@ that comparison does not modify either database. The Python tests reject account
 membership, password-proof and raw-diagnostic drift. Existing frontend format-5
 `targets`/`tests` carry these targets; no C frontend option or backend switch is
 needed.
+
+## Real boot-environment upgrade qualification
+
+`prepare_repository.py --plan PLAN --output DIRECTORY` prepares a **private test
+repository**, never a combined publication or a `latest` update. Its format-1 plan
+selects the complete captured package index/families, exact package output prefix,
+explicit native pkg tool, target ABI/OSVERSION, signing private key, matching public
+key and a different public key. Every indexed package is copied and hash checked;
+normal `pkg repo` signs the catalogue. The maintained hardware verifier imports
+that catalogue with its public key and fetches every archive; the different key
+must fail actual verification. Only public keys ever enter a VM or HTTP server.
+The reserved pkg `files.pkg` catalogue is metadata, not an installable archive;
+other malformed archives remain errors.
+
+Format 4 retains all format-3 baseline/authentication/firstboot checks and adds
+`upgrade_policy`, an explicit format-1 JSON file with these fields:
+
+* `repository`: the passed preparation output directory.
+* `baseline_version`, `baseline_kernel_revision`, `kernel_revision`,
+  `kernel_sha256`: expected old/new package and actual kernel identities.
+* `candidate`: a new, unused BE name.
+* `pkg_path`: an executable declared in the captured image (the private fixture
+  supplies its SDK pkg tool). No host executable fallback is performed.
+* `guest_host_address`: the QEMU user-network address reaching the host's
+  loopback HTTP server (normally `10.0.2.2`). The server binds only 127.0.0.1.
+* `persistent_dataset`, `persistent_path`: an explicitly shared image dataset
+  outside the BE parent, and a previously absent test file beneath its mountpoint.
+* `deadline_seconds`, `reclaim_deadline_seconds`: positive bounded phase budgets.
+
+The driver verifies every repository byte/trust key before starting. In the guest
+it verifies the signed network catalogue and rejects the wrong key using separate
+private databases; active pkg state must remain unchanged. It creates a real BE
+clone, mounts it, uses actual chroot pkg with normal scripts/triggers and a
+transient devfs, then checks the complete installed version set, non-config pkg
+checksums and actual kernel bytes. It cleans temporary inputs, verifies the active
+DB is untouched, activates the candidate and reboots the same owned QEMU process.
+The default fixture loader follows ZFS bootfs; it must not pin a dataset in
+loader.conf. No init/rc replacement, memory-disk root or manual root switching is
+used.
+
+New boot and rollback each require the expected dataset GUID, kernel stamp and
+bytes, complete package version set, Capsule PID 1, retained signal protection,
+running PAM-enabled sshd, pinned SSH host identity, and real positive/negative
+SSH and su authentication. A write made to shared data on the new version must
+survive rollback. Then the unused candidate is removed, active removal must be
+refused, retained/shared GUIDs must survive and pool space must be reclaimed
+within the explicit deadline. This is a file/dataset persistence test, not a
+claim that application database schemas or data formats can safely be rolled back.
+
+The test runs entirely inside a disposable VM; it does not invoke host ZFS,
+install a host upgrade or change the system repository. Full upgraded-tree
+metadata, non-default/cross profiles, hardware publication and comparative
+performance remain separate gates. The normal format-5 frontend target/test
+inputs carry `upgrade_policy_test`; the C build backend remains Make/default.

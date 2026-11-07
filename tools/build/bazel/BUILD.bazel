@@ -443,3 +443,5 @@ bsd_python_test(name = "kernel_stack_protector_test", src = "kernel-stack-protec
     args = ["--initializer", "$(location //sys/kern:generic_core_stack_protector_object_files)",
             "--control", "$(location //sys/kern:generic_core_kern_malloc_object_files)"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+exports_files(["qualification_artifacts.py"], visibility = ["//tools/test/system-pkg-runtime:__pkg__"])

@@ -195,3 +195,51 @@ version stamp and a changed kernel SHA-256:
 This is a real package/kernel candidate for upcoming BE tests, not evidence that
 it has been installed, booted, upgraded, rolled back or published. No host upgrade,
 repository latest advancement or reboot was performed.
+
+## Signed network repository and BE scenario implementation
+
+`bazel-system-upgrade-repository-r2-20261107/receipt.json` passes preparation of
+all 447 next-version packages, a real signed pkg catalogue, import using the
+matching public key, authenticated fetching of every archive, and rejection of a
+different public key. Keys are explicit development fixtures outside the served
+repository; no private key enters the guest. This private qualification repository
+is not a combined publication and does not advance latest.
+
+R1 preparation correctly fails: the maintained verifier mistakes pkg's reserved
+`files.pkg` file-list catalogue for a package archive. A central reserved-catalogue
+set now covers inventory and bootstrap/application admission. A real `pkg repo -l`
+regression checks that package inventory excludes the catalogue while still
+rejecting a corrupt ordinary archive. That test and the existing full signed
+consumer/tamper test pass (`catalogue-regression.log` under the fixture key run).
+No missing-manifest or broad filename-pattern filter is used.
+
+The format-4 VM scenario is implemented with explicit identities, resources,
+repository/trust inputs, pkg role, guest host-network address and shared-data
+location. It retains all 14 baseline checks, then performs actual network catalogue
+verification and wrong-key refusal in isolated DBs, clone/mount/chroot pkg upgrade,
+non-config package checksums, version/kernel verification, activation/new-kernel
+boot, real authentication, rollback, shared-file persistence, active-removal
+refusal, unused-BE removal and bounded space reclamation. It never invokes host
+ZFS or installs on the host. Application database schema rollback and exhaustive
+upgraded-tree metadata remain outside this scenario's acceptance.
+
+Source review catches a second real fixture defect before this test: loader.conf
+pins vfs.root.mountfrom to zroot/ROOT/default, defeating ordinary BE activation.
+The maintained fixture now omits that override and follows normal loader/ZFS
+bootfs selection. The declared image policy still chooses the initial bootfs.
+Complete image R11 is rebuilding through the normal frontend; no guest edit or
+manual root substitution is used to get around the fixture.
+
+`bazel-upgrade-policy-native-r2-20261107` passes all four selected test targets
+(10 cases: upgrade paths/version inventories, terminal protocol, firstboot account
+changes and mtree reconciliation). R1 analysis fails on an undeclared cross-package
+source visibility dependency; explicit limited exports_files fixes the dependency
+without disabling visibility enforcement. The format-4 policy preflight validates
+447 package identities and 456 repository/trust/control bindings. Actual VM
+upgrade/rollback/removal acceptance is still pending. C frontend options/backend
+are unchanged; maintained format-5 targets/tests carry the new regression and
+runtime/manual documentation describes the added format.
+
+The recorded October ZFS/filedesc issue was consulted. Its later diagnosis records
+the local procdesc_knote proctree-lock edge fixed on dev; the separate upstream
+cycle is not patched here. WITNESS/panic diagnostics continue to fail the VM run.
