@@ -234,7 +234,7 @@ const struct fileops pipeops = {
 	.fo_acl = pipe_acl,
 	.fo_extattr = pipe_extattr,
 	.fo_advlock = pipe_advlock,
-	.fo_flags = DFLAG_PASSABLE
+	.fo_flags = DFLAG_PASSABLE | DFLAG_FLOCK	/* FIFOs; not RECLOCK */
 };
 
 static void	filt_pipedetach(struct knote *kn);

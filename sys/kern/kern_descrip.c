@@ -803,10 +803,11 @@ revert_flags:
 		if (error != 0)
 			break;
 		/*
-		 * A descriptor whose table takes no locks is refused before
-		 * the lock argument is looked at, as the type test was.
+		 * A descriptor whose table takes no record locks is refused
+		 * before the lock argument is looked at, as the type test
+		 * was.
 		 */
-		if (fp->f_ops->fo_advlock == NULL) {
+		if ((fp->f_ops->fo_flags & DFLAG_RECLOCK) == 0) {
 			error = EBADF;
 			fdrop(fp, td);
 			break;
@@ -888,6 +889,13 @@ revert_flags:
 			error = EINVAL;
 			break;
 		}
+		/*
+		 * A filesystem that takes no open-file-description locks
+		 * answered EOPNOTSUPP before the flag was set; it can hold
+		 * none, so the flag comes off again.
+		 */
+		if (error == EOPNOTSUPP && (flg & F_OFD) != 0)
+			atomic_clear_int(&fp->f_flag, FHASOFDLOCK);
 		if (error != 0 || (flg & F_OFD) != 0 ||
 		    flp->l_type == F_UNLCK ||
 		    flp->l_type == F_UNLCKSYS) {
@@ -935,7 +943,7 @@ revert_flags:
 		error = fget_unlocked(td, fd, &cap_flock_rights, &fp);
 		if (error != 0)
 			break;
-		if (fp->f_ops->fo_advlock == NULL) {
+		if ((fp->f_ops->fo_flags & DFLAG_RECLOCK) == 0) {
 			error = EBADF;
 			fdrop(fp, td);
 			break;
@@ -4534,6 +4542,11 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	error = fget(td, uap->fd, &cap_flock_rights, &fp);
 	if (error != 0)
 		return (error);
+	/* A table that takes no flock(2) locks, refused as the type test did. */
+	if ((fp->f_ops->fo_flags & DFLAG_FLOCK) == 0) {
+		error = EOPNOTSUPP;
+		goto done;
+	}
 	lf.l_whence = SEEK_SET;
 	lf.l_start = 0;
 	lf.l_len = 0;
@@ -4562,6 +4575,9 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	atomic_set_int(&fp->f_flag, FHASLOCK);
 	error = fo_advlock(fp, (caddr_t)fp, F_SETLK, &lf,
 	    (uap->how & LOCK_NB) ? F_FLOCK : F_FLOCK | F_WAIT, td);
+	/* An anonymous pipe shares the FIFO table and takes none. */
+	if (error == EOPNOTSUPP)
+		atomic_clear_int(&fp->f_flag, FHASLOCK);
 done:
 	fdrop(fp, td);
 	return (error);
@@ -6022,6 +6038,8 @@ path_close(struct file *fp, struct thread *td)
 	return (0);
 }
 
+static fo_advlock_t path_advlock;
+
 const struct fileops path_fileops = {
 	.fo_read = badfo_readwrite,
 	.fo_write = badfo_readwrite,
@@ -6043,7 +6061,8 @@ const struct fileops path_fileops = {
 	.fo_acl = vn_acl,
 	.fo_extattr = vn_extattr,
 	.fo_fcntl = vn_fcntl,
-	.fo_flags = DFLAG_PASSABLE,
+	.fo_advlock = path_advlock,
+	.fo_flags = DFLAG_PASSABLE,	/* neither FLOCK nor RECLOCK */
 };
 
 int
@@ -6194,6 +6213,20 @@ invfo_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
 {
 
 	return ((flags & F_FLOCK) != 0 ? EOPNOTSUPP : EBADF);
+}
+
+/*
+ * An O_PATH descriptor takes no locks, but closing one is a close of the
+ * file, which releases the process's POSIX locks on it as any close does.
+ */
+static int
+path_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
+    struct thread *td)
+{
+
+	if (op == F_UNLCK && (flags & F_POSIX) != 0)
+		return (vn_advlock(fp, id, op, fl, flags, td));
+	return (invfo_advlock(fp, id, op, fl, flags, td));
 }
 
 int

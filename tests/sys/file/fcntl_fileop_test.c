@@ -131,6 +131,22 @@ ATF_TC_BODY(no_vnode_ops, tc)
 	ATF_CHECK_EQ(-1, fcntl(fd, F_ISUNIONSTACK, 0));
 	ATF_CHECK_EQ(EBADF, errno);
 	close(fd);
+
+	fd = kqueue();
+	ATF_REQUIRE(fd >= 0);
+	check_readahead_errno(fd, EBADF);
+	errno = 0;
+	ATF_CHECK_EQ(-1, fcntl(fd, F_ISUNIONSTACK, 0));
+	ATF_CHECK_EQ(EBADF, errno);
+	close(fd);
+
+	fd = posix_openpt(O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	check_readahead_errno(fd, EBADF);
+	errno = 0;
+	ATF_CHECK_EQ(-1, fcntl(fd, F_ISUNIONSTACK, 0));
+	ATF_CHECK_EQ(EBADF, errno);
+	close(fd);
 }
 
 ATF_TC_WITHOUT_HEAD(bad_fd);

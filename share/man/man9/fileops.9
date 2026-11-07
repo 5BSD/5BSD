@@ -56,7 +56,12 @@ System calls that take a file descriptor dispatch through this table and
 never through the descriptor's type
 .Pq Va f_type
 or through a vnode the file may carry
-.Pq Va f_vnode .
+.Pq Va f_vnode ;
+where one must tell an
+.Dv O_PATH
+descriptor apart it compares the table itself
+.Pq Va f_ops ,
+not a type.
 A descriptor type therefore answers for itself, and a type that is not
 backed by a vnode is complete without one.
 .Pp
@@ -87,11 +92,37 @@ grants
 on such a mapping of a descriptor that lacks the
 .Dv CAP_MMAP_W
 right.
-Vnode files and
+Vnode files,
 .Xr devfs 4
-nodes set it;
+nodes and shm objects set it;
 .Xr mmap 2
 tests the flag, never the descriptor's type.
+.Dv DFLAG_FLOCK
+and
+.Dv DFLAG_RECLOCK
+mark the types that take
+.Xr flock 2
+locks and
+.Xr fcntl 2
+record locks:
+.Xr flock 2
+refuses a table without the first with
+.Er EOPNOTSUPP ,
+the record-lock commands a table without the second with
+.Er EBADF ,
+both before looking at their arguments, as the type tests did.
+The FIFO table carries
+.Dv DFLAG_FLOCK
+only.
+.Pp
+The vnode bodies of the per-open vnode tables run inside the file context
+.Pq Fn vn_file_context_enter
+like every other member of those tables, where the system calls they
+replace entered none; filesystems that key on the open file, such as
+.Xr fusefs 4 ,
+and
+.Xr inotify 2
+therefore see the per-open identity for these operations too.
 .Ss Descriptors that carry a vnode without being vnode files
 Several descriptor types keep a reference to the vnode they were opened
 through although they are not
@@ -386,9 +417,9 @@ otherwise, which is what descriptors without a vnode received.
 refuses overlapping ranges of one file, range-locks both vnodes, and runs
 .Fn vn_copy_file_range
 inside the file context.
-Only
 .Va vnops
-installs it: FIFOs, devices and pseudo-terminal masters were refused by
+and the per-open vnode tables install it: FIFOs, devices and
+pseudo-terminal masters were refused by
 .Fn vn_copy_file_range
 and keep the same
 .Er EINVAL
@@ -522,8 +553,8 @@ before the table is consulted, as it always did.
 .Fn vn_fcntl
 sets the file's sequential read-ahead on a regular file
 .Pq Er ENOTTY otherwise ,
-reports whether the mount is a union stack, and reads or sets the vnode's
-write hint after a
+reports whether the mount is a union stack, reads the vnode's write hint,
+and sets it after a
 .Dv VADMIN
 access check.
 Regular files, directories,
@@ -567,13 +598,25 @@ the table is consulted; whether the table takes locks at all is the table's
 business.
 The close-time unlock skips a table that has no
 .Fn fo_advlock
-member, and
-.Xr fcntl 2
-refuses such a descriptor with
+member; the record-lock commands refuse a table without
+.Dv DFLAG_RECLOCK
+with
 .Er EBADF
-before it looks at the lock argument, as the type test did;
+and
 .Xr flock 2
-lets the default answer.
+a table without
+.Dv DFLAG_FLOCK
+with
+.Er EOPNOTSUPP ,
+both before looking at their arguments, as the type tests did.
+When the table answers
+.Er EOPNOTSUPP
+to a request \(em an anonymous pipe through the FIFO table, or a
+filesystem without open-file-description locks \(em the
+.Dv FHASLOCK
+or
+.Dv FHASOFDLOCK
+flag set ahead of the request comes off again, since no lock can be held.
 .Bl -tag -width "devfs nodes"
 .It vnode files
 .Fn vn_advlock
@@ -602,10 +645,15 @@ to
 to the
 .Xr fcntl 2
 record locks.
-.Dv O_PATH
-files, pseudo-terminal masters and linuxkpi files do not install the member:
-the type tests these system calls used to make refused them, and they stay
+Pseudo-terminal masters and linuxkpi files do not install the member: the
+type tests these system calls used to make refused them, and they stay
 refused.
+An
+.Dv O_PATH
+file installs one that answers only the close-time
+.Dv F_UNLCK
+of POSIX locks, because closing any descriptor of a file releases the
+process's record locks on it; every other request gets the default.
 .El
 .Sh RETURN VALUES
 Each operation returns 0 on success or an

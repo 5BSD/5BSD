@@ -258,6 +258,8 @@ struct fileops {
 #define DFLAG_VNODE_STREAM 0x20 /* no shared file offset */
 #define	DFLAG_PRIVWRITE	0x40	/* private mappings are copy-on-write and
 				   need no write right on the descriptor */
+#define	DFLAG_FLOCK	0x80	/* takes flock(2) locks */
+#define	DFLAG_RECLOCK	0x100	/* takes fcntl(2) record locks */
 #endif /* _KERNEL */
 
 #if defined(_KERNEL) || defined(_WANT_FILE)

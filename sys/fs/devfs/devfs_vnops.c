@@ -2114,7 +2114,8 @@ static const struct fileops devfs_ops_f = {
 	.fo_extattr =	vn_extattr,
 	.fo_fcntl =	vn_fcntl,
 	.fo_advlock =	vn_advlock,
-	.fo_flags =	DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_PRIVWRITE
+	.fo_flags =	DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_PRIVWRITE |
+			DFLAG_FLOCK | DFLAG_RECLOCK
 };
 
 static const struct fileops devfs_ops_nonpassable_f = {
@@ -2143,7 +2144,8 @@ static const struct fileops devfs_ops_nonpassable_f = {
 	.fo_extattr =	vn_extattr,
 	.fo_fcntl =	vn_fcntl,
 	.fo_advlock =	vn_advlock,
-	.fo_flags =	DFLAG_SEEKABLE | DFLAG_PRIVWRITE
+	.fo_flags =	DFLAG_SEEKABLE | DFLAG_PRIVWRITE | DFLAG_FLOCK |
+			DFLAG_RECLOCK
 };
 
 /* Vops for non-CHR vnodes in /dev. */

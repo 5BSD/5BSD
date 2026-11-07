@@ -144,11 +144,15 @@ ATF_TC_BODY(regular_file_flags, tc)
 	close(fd);
 }
 
-/* The VNOVAL flag value is refused before the descriptor is consulted. */
+/*
+ * The VNOVAL flag value is refused after the descriptor is consulted, as
+ * it always was: EOPNOTSUPP on a file, EINVAL on a type with no
+ * attributes, EBADF on a closed descriptor.
+ */
 ATF_TC_WITHOUT_HEAD(flags_vnoval);
 ATF_TC_BODY(flags_vnoval, tc)
 {
-	int fd;
+	int fd, fds[2];
 
 	fd = open("file", O_RDWR | O_CREAT, 0644);
 	ATF_REQUIRE(fd >= 0);
@@ -156,6 +160,15 @@ ATF_TC_BODY(flags_vnoval, tc)
 	ATF_CHECK_EQ(-1, fchflags(fd, (u_long)-1));
 	ATF_CHECK_EQ(EOPNOTSUPP, errno);
 	close(fd);
+	errno = 0;
+	ATF_CHECK_EQ(-1, fchflags(fd, (u_long)-1));
+	ATF_CHECK_EQ(EBADF, errno);
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	errno = 0;
+	ATF_CHECK_EQ(-1, fchflags(fds[0], (u_long)-1));
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(fds[0]);
+	close(fds[1]);
 }
 
 ATF_TC_WITHOUT_HEAD(directory);
@@ -170,13 +183,26 @@ ATF_TC_BODY(directory, tc)
 	close(fd);
 }
 
-/* futimens/fchflags refuse O_PATH with EBADF; fdescfs still reaches it. */
-ATF_TC_WITH_CLEANUP(opath_file);
-ATF_TC_HEAD(opath_file, tc)
+/* futimens/fchflags refuse O_PATH with EBADF. */
+ATF_TC_WITHOUT_HEAD(opath_file);
+ATF_TC_BODY(opath_file, tc)
+{
+	int fd;
+
+	ATF_REQUIRE_EQ(0, close(open("file", O_RDWR | O_CREAT, 0644)));
+	fd = open("file", O_PATH);
+	ATF_REQUIRE(fd >= 0);
+	check_errno(fd, EBADF);
+	close(fd);
+}
+
+/* fdescfs still reaches an O_PATH descriptor's file. */
+ATF_TC_WITH_CLEANUP(fdescfs_opath);
+ATF_TC_HEAD(fdescfs_opath, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(opath_file, tc)
+ATF_TC_BODY(fdescfs_opath, tc)
 {
 	struct stat sb;
 	char path[32];
@@ -185,7 +211,6 @@ ATF_TC_BODY(opath_file, tc)
 	ATF_REQUIRE_EQ(0, close(open("file", O_RDWR | O_CREAT, 0644)));
 	fd = open("file", O_PATH);
 	ATF_REQUIRE(fd >= 0);
-	check_errno(fd, EBADF);
 	mount_fdesc(tc);
 	snprintf(path, sizeof(path), "fdesc/%d", fd);
 	ATF_REQUIRE_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
@@ -194,7 +219,91 @@ ATF_TC_BODY(opath_file, tc)
 	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
 	close(fd);
 }
-ATF_TC_CLEANUP(opath_file, tc)
+ATF_TC_CLEANUP(fdescfs_opath, tc)
+{
+	umount_fdesc();
+}
+
+/*
+ * Through fdescfs, a descriptor whose fileops have no attributes keeps the
+ * old answers: times silently dropped, chflags refused, chmod applied by
+ * the type that has one (a pipe) and dropped otherwise.
+ */
+static void
+check_fdesc_dropped(const char *path, bool chmod_applies, int fd)
+{
+	struct stat sb;
+
+	ATF_CHECK_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
+	    "utimensat(%s): %s", path, strerror(errno));
+	errno = 0;
+	ATF_CHECK_EQ(-1, chflags(path, UF_NODUMP));
+	ATF_CHECK_EQ(EOPNOTSUPP, errno);
+	ATF_CHECK_EQ_MSG(0, chmod(path, 0600), "chmod(%s): %s", path,
+	    strerror(errno));
+	if (chmod_applies) {
+		ATF_REQUIRE_EQ(0, fstat(fd, &sb));
+		ATF_CHECK_EQ(0600, sb.st_mode & ACCESSPERMS);
+	}
+}
+
+ATF_TC_WITH_CLEANUP(fdescfs_no_attributes);
+ATF_TC_HEAD(fdescfs_no_attributes, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(fdescfs_no_attributes, tc)
+{
+	char path[32];
+	int fds[2], fd;
+
+	mount_fdesc(tc);
+	/* A pipe has a chmod, but its fstat does not report the mode. */
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	snprintf(path, sizeof(path), "fdesc/%d", fds[0]);
+	check_fdesc_dropped(path, false, fds[0]);
+	close(fds[0]);
+	close(fds[1]);
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	ATF_REQUIRE(fd >= 0);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	check_fdesc_dropped(path, false, fd);
+	close(fd);
+	fd = posix_openpt(O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(fd >= 0);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	check_fdesc_dropped(path, false, fd);
+	close(fd);
+}
+ATF_TC_CLEANUP(fdescfs_no_attributes, tc)
+{
+	umount_fdesc();
+}
+
+/* A FIFO through fdescfs reaches its vnode. */
+ATF_TC_WITH_CLEANUP(fdescfs_fifo);
+ATF_TC_HEAD(fdescfs_fifo, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(fdescfs_fifo, tc)
+{
+	struct stat sb;
+	char path[32];
+	int fd;
+
+	ATF_REQUIRE_EQ(0, mkfifo("fifo", 0644));
+	fd = open("fifo", O_RDWR | O_NONBLOCK);
+	ATF_REQUIRE(fd >= 0);
+	mount_fdesc(tc);
+	snprintf(path, sizeof(path), "fdesc/%d", fd);
+	ATF_REQUIRE_EQ_MSG(0, utimensat(AT_FDCWD, path, times, 0),
+	    "utimensat(%s): %s", path, strerror(errno));
+	ATF_REQUIRE_EQ(0, stat("fifo", &sb));
+	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
+	close(fd);
+}
+ATF_TC_CLEANUP(fdescfs_fifo, tc)
 {
 	umount_fdesc();
 }
@@ -294,15 +403,21 @@ ATF_TC_HEAD(pts_master_ptmx, tc)
 }
 ATF_TC_BODY(pts_master_ptmx, tc)
 {
+	struct timespec saved[2];
 	struct stat sb;
 	int fd;
 
 	fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
 	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, stat("/dev/ptmx", &sb));
+	saved[0] = sb.st_atim;
+	saved[1] = sb.st_mtim;
 	ATF_REQUIRE_EQ_MSG(0, futimens(fd, times), "futimens: %s",
 	    strerror(errno));
 	ATF_REQUIRE_EQ(0, stat("/dev/ptmx", &sb));
 	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
+	/* Leave the node as it was. */
+	ATF_CHECK_EQ(0, futimens(fd, saved));
 	close(fd);
 }
 
@@ -358,9 +473,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, flags_vnoval);
 	ATF_TP_ADD_TC(tp, directory);
 	ATF_TP_ADD_TC(tp, opath_file);
+	ATF_TP_ADD_TC(tp, fdescfs_opath);
 	ATF_TP_ADD_TC(tp, fifo);
 	ATF_TP_ADD_TC(tp, fdescfs_regular_file);
 	ATF_TP_ADD_TC(tp, fdescfs_kqueue);
+	ATF_TP_ADD_TC(tp, fdescfs_no_attributes);
+	ATF_TP_ADD_TC(tp, fdescfs_fifo);
 	ATF_TP_ADD_TC(tp, pts_master_openpt);
 	ATF_TP_ADD_TC(tp, pts_master_ptmx);
 	ATF_TP_ADD_TC(tp, anonymous_pipe);

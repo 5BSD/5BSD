@@ -634,18 +634,29 @@ fdesc_setattr(struct vop_setattr_args *ap)
 		error = EBADF;
 		goto out;
 	}
+	/*
+	 * Each attribute goes to the fileop that takes it; a type that has
+	 * no such operation answers EINVAL, which was "dropped" before the
+	 * descriptor's operations were consulted at all.
+	 */
 	if (vap->va_size != VNOVAL) {
 		error = fo_truncate(fp, vap->va_size, ap->a_cred, td);
+		if (error == EINVAL)
+			error = 0;
 		if (error != 0)
 			goto out;
 	}
 	if (vap->va_mode != (mode_t)VNOVAL) {
 		error = fo_chmod(fp, vap->va_mode, ap->a_cred, td);
+		if (error == EINVAL)
+			error = 0;
 		if (error != 0)
 			goto out;
 	}
 	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL) {
 		error = fo_chown(fp, vap->va_uid, vap->va_gid, ap->a_cred, td);
+		if (error == EINVAL)
+			error = 0;
 		if (error != 0)
 			goto out;
 	}
@@ -654,7 +665,19 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	rest.va_mode = (mode_t)VNOVAL;
 	rest.va_uid = VNOVAL;
 	rest.va_gid = VNOVAL;
-	error = fo_setattr(fp, &rest, ap->a_cred, td);
+	/*
+	 * Only what the fileops above did not take goes to fo_setattr, and
+	 * only if there is any.  A type whose fo_setattr has no attributes
+	 * (EINVAL) gets the old answer: the change is dropped, chflags(2)
+	 * refused.
+	 */
+	if (rest.va_atime.tv_sec != VNOVAL || rest.va_mtime.tv_sec != VNOVAL ||
+	    rest.va_birthtime.tv_sec != VNOVAL || rest.va_flags != VNOVAL ||
+	    rest.va_vaflags != 0) {
+		error = fo_setattr(fp, &rest, ap->a_cred, td);
+		if (error == EINVAL)
+			error = rest.va_flags != VNOVAL ? EOPNOTSUPP : 0;
+	}
 out:
 	fdrop(fp, td);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
