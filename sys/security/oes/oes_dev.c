@@ -10,6 +10,8 @@
  * endpoint security framework.
  */
 
+#include "opt_dq.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/sysent.h>
@@ -1479,3 +1481,10 @@ MODULE_VERSION(oes, 1);
  * framework is now at 9) and forces a rebuild/re-review if the MAC ABI changes.
  */
 MODULE_DEPEND(oes, kernel_mac_support, MAC_VERSION, MAC_VERSION, MAC_VERSION);
+#ifdef DEV_DQ
+/*
+ * oes_fill_file_presented() calls dq_file_ident(); a kernel configured
+ * without the dq device compiles the call out and takes no dependency.
+ */
+MODULE_DEPEND(oes, dq, 1, 1, 1);
+#endif

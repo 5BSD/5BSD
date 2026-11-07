@@ -4,6 +4,7 @@
  * Tests every MAC hook/event type. Some require root privileges.
  */
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/extattr.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -28,6 +29,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <dev/dq/dq.h>
 #include <security/oes/oes.h>
 #include "test_common.h"
 
@@ -756,6 +758,206 @@ test_cred_events(void)
 	SKIP("NOTIFY_SETGID", "test needs privileged subprocess");
 }
 
+/*
+ * Served descriptors (dq(4)): mpo_file_check_read, mpo_file_check_stat,
+ * mpo_file_notify_close and mpo_file_notify_reply.  The child is the
+ * controller: it mints one object, fstats and closes it itself (the kernel
+ * exempts those from the controller deadlock rule), and lets a grandchild do
+ * the read so that the controller can answer it from the queue.  The queue is
+ * opened O_CLOFORK so the grandchild does not count as holding the queue.
+ * The read and the reply come from different processes, so the events are
+ * matched by type alone; nothing but a dq descriptor can produce them.
+ */
+static int dq_mint_errno;
+static int dq_mint_reason;
+
+static int
+dq_mint_test_object(int qfd)
+{
+	struct dq_mint_args mint;
+	const char *path = "/dq-oes-hook-test";
+
+	memset(&mint, 0, sizeof(mint));
+	mint.dm_version = DQ_API_VERSION;
+	mint.dm_kind = DQ_KIND_FILE;
+	mint.dm_ident.di_dev = 0x5bd;
+	mint.dm_ident.di_ino = 42;
+	mint.dm_ident.di_mode = S_IFREG | 0644;
+	mint.dm_ident.di_nlink = 1;
+	mint.dm_ident.di_size = 4096;
+	mint.dm_ident.di_blocks = 8;
+	mint.dm_ident.di_blksize = getpagesize();
+	mint.dm_ident.di_pathlen = strlen(path);
+	strlcpy(mint.dm_ident.di_path, path, sizeof(mint.dm_ident.di_path));
+	strlcpy(mint.dm_ident.di_statfs.ds_fstypename, "dq",
+	    sizeof(mint.dm_ident.di_statfs.ds_fstypename));
+	strlcpy(mint.dm_ident.di_statfs.ds_mntfromname, "dq",
+	    sizeof(mint.dm_ident.di_statfs.ds_mntfromname));
+	strlcpy(mint.dm_ident.di_statfs.ds_mntonname, "/",
+	    sizeof(mint.dm_ident.di_statfs.ds_mntonname));
+	mint.dm_ident.di_statfs.ds_namemax = 255;
+	mint.dm_policy.dp_cache = DQ_CACHE_ATTR;
+	mint.dm_policy.dp_write = DQ_DENY;
+	mint.dm_policy.dp_exec = DQ_DENY;
+	mint.dm_policy.dp_mmap_shared_write = DQ_DENY;
+	mint.dm_policy.dp_lock = DQ_EVENT;
+	mint.dm_policy.dp_ioctl = DQ_DENY;
+	mint.dm_policy.dp_deadline_ms = 2000;
+	mint.dm_policy.dp_rights_version = CAP_RIGHTS_VERSION;
+	cap_rights_init(&mint.dm_policy.dp_rights, CAP_READ, CAP_SEEK,
+	    CAP_FSTAT, CAP_EVENT);
+	if (ioctl(qfd, DQ_IOC_MINT, &mint) < 0) {
+		dq_mint_errno = errno;
+		dq_mint_reason = mint.dm_reason;
+		return (-1);
+	}
+	return (mint.dm_fd);
+}
+
+/* Answer the first READ on the queue with four bytes; anything else EIO. */
+static void
+dq_serve_one_read(int qfd)
+{
+	union {
+		struct dq_event ev;
+		char buf[4096];
+	} u;
+	struct dq_reply reply;
+	struct pollfd pfd;
+	ssize_t n;
+
+	pfd.fd = qfd;
+	pfd.events = POLLIN;
+	if (poll(&pfd, 1, 2000) <= 0)
+		return;
+	n = read(qfd, &u, sizeof(u));
+	if (n < (ssize_t)sizeof(struct dq_event) || u.ev.de_id == 0)
+		return;
+	memset(&reply, 0, sizeof(reply));
+	reply.dr_version = DQ_API_VERSION;
+	reply.dr_id = u.ev.de_id;
+	if (u.ev.de_op == DQ_OP_READ) {
+		reply.dr_errno = 0;
+		reply.dr_len = 4;
+		reply.dr_data = "abcd";
+	} else {
+		reply.dr_errno = EIO;
+	}
+	(void)ioctl(qfd, DQ_IOC_REPLY, &reply);
+}
+
+static void action_dq_session(void) {
+	struct stat sb;
+	pid_t reader;
+	int qfd, fd;
+
+	qfd = open("/dev/dq", O_RDWR | O_CLOEXEC | O_CLOFORK);
+	if (qfd < 0)
+		_exit(2);
+	fd = dq_mint_test_object(qfd);
+	if (fd < 0) {
+		/* Only the exit status crosses back to the test process. */
+		_exit(dq_mint_errno == EINVAL ? 64 + dq_mint_reason : 3);
+	}
+	(void)fstat(fd, &sb);
+	reader = fork();
+	if (reader == 0) {
+		char buf[16];
+
+		(void)read(fd, buf, sizeof(buf));
+		_exit(0);
+	}
+	if (reader > 0) {
+		dq_serve_one_read(qfd);
+		waitpid(reader, NULL, 0);
+	}
+	close(fd);
+	close(qfd);
+}
+
+/*
+ * Like test_event() but accepts the event from any process: the controller
+ * (child) and the requester (grandchild) are both children of this test.
+ */
+static int
+test_dq_event(const char *name, oes_event_type_t event)
+{
+	pid_t pid;
+	int status, seen;
+
+	close_oes();
+	if (setup_notify(&event, 1) < 0) {
+		FAIL(name, "setup failed");
+		return (-1);
+	}
+	drain_events();
+
+	pid = fork();
+	if (pid == 0) {
+		action_dq_session();
+		_exit(0);
+	}
+
+	seen = wait_for_event(event, 0, 3000);
+	waitpid(pid, &status, 0);
+	close_oes();
+
+	if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+		char reason[64];
+		int code = WEXITSTATUS(status);
+
+		if (code >= 64)
+			snprintf(reason, sizeof(reason),
+			    "DQ_IOC_MINT: EINVAL, dm_reason %d", code - 64);
+		else
+			snprintf(reason, sizeof(reason), "controller child: %s",
+			    code == 2 ? "open /dev/dq failed" :
+			    "DQ_IOC_MINT failed");
+		FAIL(name, reason);
+		return (-1);
+	}
+	if (seen) {
+		PASS(name);
+		return (0);
+	}
+	FAIL(name, "event not received");
+	return (-1);
+}
+
+static void
+test_dq_events(void)
+{
+	static const struct {
+		const char *name;
+		oes_event_type_t event;
+	} events[] = {
+		{ "NOTIFY_FILE_STAT", OES_EVENT_NOTIFY_FILE_STAT },
+		{ "NOTIFY_FILE_READ", OES_EVENT_NOTIFY_FILE_READ },
+		{ "NOTIFY_DQ_REPLY", OES_EVENT_NOTIFY_DQ_REPLY },
+		{ "NOTIFY_FILE_CLOSE", OES_EVENT_NOTIFY_FILE_CLOSE },
+	};
+	size_t i;
+	int qfd;
+
+	printf("\n=== SERVED DESCRIPTOR EVENTS (dq) ===\n");
+
+	/* The device admits PRIV_DRIVER only and may be absent from the kernel. */
+	qfd = open("/dev/dq", O_RDWR | O_CLOEXEC);
+	if (qfd < 0) {
+		char reason[64];
+
+		snprintf(reason, sizeof(reason), "open /dev/dq: %s",
+		    strerror(errno));
+		for (i = 0; i < sizeof(events) / sizeof(events[0]); i++)
+			SKIP(events[i].name, reason);
+		return;
+	}
+	close(qfd);
+
+	for (i = 0; i < sizeof(events) / sizeof(events[0]); i++)
+		test_dq_event(events[i].name, events[i].event);
+}
+
 static void
 test_auth_denial(void)
 {
@@ -885,6 +1087,7 @@ main(int argc, char **argv)
 	test_system_events();
 	test_cred_events();
 	test_priv_events();
+	test_dq_events();
 	test_auth_denial();
 
 	cleanup_test_files();

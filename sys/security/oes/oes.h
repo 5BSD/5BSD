@@ -50,16 +50,22 @@ typedef enum {
  * Canonical subscription bitmaps for all currently defined event types.
  * Bit positions are (event & 0x0FFF), split into low/high 64-bit words.
  */
-#define OES_AUTH_EVENT_MASK_LO		0x607FFFFFFFEULL
+#define OES_AUTH_EVENT_MASK_LO		0x1E07FFFFFFFEULL
 #define OES_AUTH_EVENT_MASK_HI		0x0ULL
 #define OES_NOTIFY_EVENT_MASK_LO	0xFFFFFFFFFFFFEBFEULL
-#define OES_NOTIFY_EVENT_MASK_HI	0x7ULL
+#define OES_NOTIFY_EVENT_MASK_HI	0x7FULL
 
 /*
  * Event coverage notes:
  *
  * - NOTIFY_CLOSE: implemented via the mac_vnode_check_close hook added to the
  *   MAC framework.  A close cannot be denied, so this event is NOTIFY-only.
+ *
+ * - FILE_READ, FILE_STAT, NOTIFY_FILE_CLOSE, NOTIFY_DQ_REPLY: generated from
+ *   the mac_file_* hooks for descriptors served by a DescriptorQueue
+ *   controller (dq(4)); the file object is the identity the controller
+ *   presents (OES_FILE_META_PRESENTED), and there is no vnode behind it.
+ *   Vnode-backed descriptors keep producing the vnode events above.
  *
  * - AUTH_TRUNCATE/NOTIFY_TRUNCATE, AUTH_UNMOUNT, AUTH_KLDUNLOAD: the required
  *   MAC hooks now exist in the framework (mac_vnode_check_truncate,
@@ -631,6 +637,22 @@ typedef struct {
 } oes_event_proc_sched_t;
 
 /*
+ * Controller reply on a served descriptor (OES_EVENT_NOTIFY_DQ_REPLY).
+ *
+ * The file is the identity the controller presents, never the backing
+ * object; count is a byte or record count only, the reply payload itself is
+ * not carried.  The controller process is the message's em_process.
+ */
+typedef struct {
+	oes_file_t	file;		/* Presented identity (META_PRESENTED) */
+	uint64_t	object;		/* Object id on the controller's queue */
+	uint64_t	controller_nonce; /* Controller identity nonce, 0 if none */
+	int32_t		op;		/* DQ_OP_* the reply answers */
+	int32_t		error;		/* errno carried by the reply */
+	uint64_t	count;		/* Reply payload length in bytes */
+} oes_event_presented_t;
+
+/*
  * Main message structure
  *
  * Clients read these from the oes fd. Messages are variable-length:
@@ -721,6 +743,8 @@ typedef struct {
 		oes_event_mount_stat_t	mount_stat;
 		oes_event_priv_t	priv;
 		oes_event_proc_sched_t	proc_sched;
+		oes_event_file_t	close;		/* FILE_CLOSE */
+		oes_event_presented_t	dq_reply;
 		uint8_t			_reserved[128]; /* Future expansion */
 	} em_event_data;
 } oes_message_t;
@@ -746,6 +770,8 @@ typedef struct {
 #define OES_FILE_META_ATTR_UNAVAILABLE	0x00000008
 #define OES_FILE_META_FSTYPE_UNAVAILABLE 0x00000010
 #define OES_FILE_META_PROPOSED_ATTRS	0x00000020
+/* Identity presented by a DescriptorQueue controller, not read from a vnode. */
+#define OES_FILE_META_PRESENTED		0x00000040
 
 static inline void
 oes_message_mark_path_unavailable(oes_message_t *msg)

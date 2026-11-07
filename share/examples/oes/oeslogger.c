@@ -543,6 +543,8 @@ emit_file(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	    (file->ef_meta_flags & OES_FILE_META_PROPOSED_ATTRS) != 0, true);
 	json_kv_bool(fp, depth + 1, "filesystem_type_unavailable",
 	    (file->ef_meta_flags & OES_FILE_META_FSTYPE_UNAVAILABLE) != 0, true);
+	json_kv_bool(fp, depth + 1, "presented",
+	    (file->ef_meta_flags & OES_FILE_META_PRESENTED) != 0, true);
 
 	/* Filesystem */
 	json_kv_str(fp, depth + 1, "fstype", file->ef_fstype, false);
@@ -854,11 +856,13 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 		obj_close(fp, depth, false, false);
 		break;
 
-	/* --- READ / WRITE --- */
+	/* --- READ / WRITE (FILE_READ is the served-descriptor read) --- */
 	case OES_EVENT_AUTH_READ:
 	case OES_EVENT_NOTIFY_READ:
 	case OES_EVENT_AUTH_WRITE:
 	case OES_EVENT_NOTIFY_WRITE:
+	case OES_EVENT_AUTH_FILE_READ:
+	case OES_EVENT_NOTIFY_FILE_READ:
 		obj_open(fp, depth, "event_data", false);
 		emit_file(fp, depth + 1, "file", msg,
 		    &msg->em_event_data.rw.file, false);
@@ -940,6 +944,8 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 	case OES_EVENT_NOTIFY_READLINK:
 	case OES_EVENT_AUTH_RELABEL:
 	case OES_EVENT_NOTIFY_RELABEL:
+	case OES_EVENT_AUTH_FILE_STAT:
+	case OES_EVENT_NOTIFY_FILE_STAT:
 		obj_open(fp, depth, "event_data", false);
 		emit_file(fp, depth + 1, "file", msg,
 		    &msg->em_event_data.stat.file, false);
@@ -1007,6 +1013,32 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 		break;
 
 	/* --- NOTIFY-only events below (no AUTH equivalent) --- */
+
+	/* --- FILE_CLOSE (served descriptor; the vnode CLOSE has no payload) --- */
+	case OES_EVENT_NOTIFY_FILE_CLOSE:
+		obj_open(fp, depth, "event_data", false);
+		emit_file(fp, depth + 1, "file", msg,
+		    &msg->em_event_data.close.file, false);
+		obj_close(fp, depth, false, false);
+		break;
+
+	/* --- DQ_REPLY: controller reply metadata, never the payload --- */
+	case OES_EVENT_NOTIFY_DQ_REPLY:
+		obj_open(fp, depth, "event_data", false);
+		emit_file(fp, depth + 1, "file", msg,
+		    &msg->em_event_data.dq_reply.file, true);
+		json_kv_uint(fp, depth + 1, "object",
+		    msg->em_event_data.dq_reply.object, true);
+		json_kv_uint(fp, depth + 1, "controller_nonce",
+		    msg->em_event_data.dq_reply.controller_nonce, true);
+		json_kv_int(fp, depth + 1, "op",
+		    msg->em_event_data.dq_reply.op, true);
+		json_kv_int(fp, depth + 1, "error",
+		    msg->em_event_data.dq_reply.error, true);
+		json_kv_uint(fp, depth + 1, "count",
+		    msg->em_event_data.dq_reply.count, false);
+		obj_close(fp, depth, false, false);
+		break;
 
 	case OES_EVENT_NOTIFY_EXIT:
 		obj_open(fp, depth, "event_data", false);
@@ -1231,7 +1263,7 @@ usage(void)
  * AUTH events are trivially auth_capable. For NOTIFY events, we check
  * if the corresponding AUTH event exists. NOTIFY-only events (exit, fork,
  * signal, setuid, setgid, all socket/pipe/reboot/sysctl/kenv/mount_stat/
- * priv_check/proc_sched) return false.
+ * priv_check/proc_sched, file_close, dq_reply) return false.
  */
 static bool
 event_has_auth(oes_event_type_t ev)

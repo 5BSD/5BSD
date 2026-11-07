@@ -140,8 +140,12 @@ filesystem revision and type, link count, and second-plus-nanosecond access,
 modification, change, and birth timestamps.
 The
 .Dv OES_FILE_META_*
-bits distinguish unavailable attributes, unavailable or truncated paths, and
-proposed attributes for objects that do not exist yet.
+bits distinguish unavailable attributes, unavailable or truncated paths,
+proposed attributes for objects that do not exist yet, and identities presented
+by a
+.Xr dq 4
+controller rather than read from a vnode
+.Pq Dv OES_FILE_META_PRESENTED .
 .Ss MAC hooks
 Events are generated from MAC policy hooks, including process execution and
 credential changes, the file lifecycle
@@ -153,6 +157,33 @@ File
 events are delivered via the
 .Fn mac_vnode_check_close
 hook; because a close cannot be denied, close is a NOTIFY-only event.
+.Pp
+Descriptors served by a
+.Xr dq 4
+controller have no vnode, so the vnode hooks never see them.
+For those descriptors only, the policy implements the descriptor-level hooks
+.Fn mac_file_check_read ,
+.Fn mac_file_check_stat ,
+.Fn mac_file_notify_close
+and
+.Fn mac_file_notify_reply ,
+generating
+.Dv OES_EVENT_AUTH_FILE_READ ,
+.Dv OES_EVENT_AUTH_FILE_STAT
+.Pq with NOTIFY counterparts ,
+.Dv OES_EVENT_NOTIFY_FILE_CLOSE
+and
+.Dv OES_EVENT_NOTIFY_DQ_REPLY .
+The file object in these messages is the identity the controller presents and
+carries
+.Dv OES_FILE_META_PRESENTED .
+A
+.Dv NOTIFY_DQ_REPLY
+message is attributed to the controller process and reports the answered
+operation, its errno, the object id, the controller's identity nonce and the
+reply length; it never carries reply data.
+Any other descriptor type returns from these hooks at once and produces no
+event.
 .Ss DTrace
 The framework defines an
 .Nm

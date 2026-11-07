@@ -29,6 +29,23 @@ _Static_assert(offsetof(oes_process_t, ep_coalition) == 408,
     "coalition identity must follow the v1 process layout unchanged");
 _Static_assert(sizeof(oes_file_t) == 208,
     "file v1 wire size changed");
+/*
+ * Served-descriptor reply payload: added within the v2 union, which must not
+ * grow (the message size assertion above) and keeps its reserved tail.
+ */
+_Static_assert(sizeof(oes_event_presented_t) == 240,
+    "presented payload wire size changed");
+_Static_assert(offsetof(oes_event_presented_t, object) == 208 &&
+    offsetof(oes_event_presented_t, controller_nonce) == 216 &&
+    offsetof(oes_event_presented_t, op) == 224 &&
+    offsetof(oes_event_presented_t, error) == 228 &&
+    offsetof(oes_event_presented_t, count) == 232,
+    "presented payload layout changed");
+_Static_assert(sizeof(oes_event_presented_t) <=
+    sizeof(((oes_message_t *)0)->em_event_data),
+    "presented payload exceeds the event union");
+_Static_assert(OES_FILE_META_PRESENTED == 0x40,
+    "presented meta flag value changed");
 _Static_assert(sizeof(oes_thread_t) == 40,
     "thread v1 wire size changed");
 _Static_assert(offsetof(oes_process_t, ep_audit_flags) == 256,
