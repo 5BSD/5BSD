@@ -105,8 +105,6 @@ static void vnode_pager_release_writecount(vm_object_t, vm_offset_t,
 static void vnode_pager_getvp(vm_object_t, struct vnode **, bool *);
 static boolean_t vnode_pager_sync(vm_object_t, vm_ooffset_t, vm_size_t,
     boolean_t, boolean_t);
-static void vnode_pager_kinfo(vm_object_t, struct vm_object_kinfo *,
-    struct thread *);
 
 const struct pagerops vnodepagerops = {
 	.pgo_kvme_type = KVME_TYPE_VNODE,
@@ -122,22 +120,20 @@ const struct pagerops vnodepagerops = {
 	.pgo_mightbedirty = vm_object_mightbedirty_,
 	.pgo_getvp = vnode_pager_getvp,
 	.pgo_sync = vnode_pager_sync,
-	.pgo_kinfo = vnode_pager_kinfo,
 };
 
 /*
- * What a vnode object reports to the observers of a mapping: the vnode's
- * path, type and attributes.  The caller's object reference holds the
- * vnode (vm_object_reference_locked), so only the vnode lock is taken.
+ * What a vnode-backed object reports to the observers of a mapping: the
+ * vnode's path, type and attributes.  The vnode is referenced by
+ * vm_object_kinfo_hold() under the object lock (vnode objects and tmpfs
+ * objects alike, through pgo_getvp); here only the vnode lock is taken.
  */
-static void
-vnode_pager_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
+void
+vm_object_kinfo_vnode(struct vnode *vp, struct vm_object_kinfo *ki,
     struct thread *td)
 {
 	struct vattr va;
-	struct vnode *vp;
 
-	vp = object->handle;
 	vn_fullpath(vp, &ki->vk_path, &ki->vk_freepath);
 	ki->vk_vn_type = vntype_to_kinfo(vp->v_type);
 	vn_lock(vp, LK_SHARED | LK_RETRY);

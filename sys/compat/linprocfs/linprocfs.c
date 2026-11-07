@@ -1645,6 +1645,7 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 	ino_t ino;
 	int error;
 	struct vm_object_kinfo ki;
+	struct vm_object_kinfo_hold kh;
 	bool held, private;
 
 	if (uio->uio_rw != UIO_READ)
@@ -1695,17 +1696,17 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 		ino = 0;
 		if (lobj) {
 			/* The name and inode are the pager's report. */
-			held = vm_object_kinfo_hold(lobj);
+			held = vm_object_kinfo_hold(lobj, &kh);
 			if (lobj != obj)
 				VM_OBJECT_RUNLOCK(lobj);
 			VM_OBJECT_RUNLOCK(obj);
 			if (held) {
-				vm_object_kinfo(lobj, &ki, td);
+				vm_object_kinfo(&kh, &ki, td);
 				if (ki.vk_path != NULL)
 					name = ki.vk_path;
 				freename = ki.vk_freepath;
 				ino = ki.vk_fileid;
-				vm_object_deallocate(lobj);
+				vm_object_kinfo_release(&kh);
 			} else if (SV_PROC_ABI(p) == SV_ABI_LINUX) {
 				/*
 				 * sv_shared_page_base pointed out to the

@@ -387,10 +387,23 @@ struct vm_object_kinfo {
 	uint64_t	 vk_size;
 	uint64_t	 vk_rdev;
 };
-bool vm_object_kinfo_hold(vm_object_t object);
-void vm_object_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
+/*
+ * What vm_object_kinfo_hold() took under the object lock so the report can
+ * run unlocked: the object's vnode, referenced (any pager that answers
+ * pgo_getvp, including tmpfs), or else the object itself, referenced (a
+ * pager with pgo_kinfo).  vm_object_kinfo_release() drops it; the report's
+ * vk_freepath is the caller's to free.
+ */
+struct vm_object_kinfo_hold {
+	vm_object_t	 kh_obj;
+	struct vnode	*kh_vp;
+};
+bool vm_object_kinfo_hold(vm_object_t object, struct vm_object_kinfo_hold *kh);
+void vm_object_kinfo(struct vm_object_kinfo_hold *kh,
+    struct vm_object_kinfo *ki, struct thread *td);
+void vm_object_kinfo_release(struct vm_object_kinfo_hold *kh);
+void vm_object_kinfo_vnode(struct vnode *vp, struct vm_object_kinfo *ki,
     struct thread *td);
-void vm_object_kinfo_release(struct vm_object_kinfo *ki);
 void vm_object_madvise(vm_object_t, vm_pindex_t, vm_pindex_t, int);
 boolean_t vm_object_page_clean(vm_object_t object, vm_ooffset_t start,
     vm_ooffset_t end, int flags);

@@ -2297,6 +2297,7 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 	vm_object_t lobj, nobj, obj, tobj;
 	struct kinfo_vmentry *kve;
 	struct vm_object_kinfo ki;
+	struct vm_object_kinfo_hold kh;
 	struct vmspace *vm;
 	struct thread *td;
 	vm_offset_t addr;
@@ -2390,7 +2391,7 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 		if (lobj != NULL) {
 			kve->kve_type = vm_object_kvme_type(lobj, NULL);
 			/* The path and attributes are the pager's report. */
-			held = vm_object_kinfo_hold(lobj);
+			held = vm_object_kinfo_hold(lobj, &kh);
 			if (lobj != obj)
 				VM_OBJECT_RUNLOCK(lobj);
 
@@ -2409,7 +2410,7 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 				    sizeof(kve->kve_path));
 			}
 			if (held) {
-				vm_object_kinfo(lobj, &ki, td);
+				vm_object_kinfo(&kh, &ki, td);
 				kve->kve_vn_type = ki.vk_vn_type;
 				if (ki.vk_attr_valid) {
 					kve->kve_vn_fileid = ki.vk_fileid;
@@ -2426,8 +2427,8 @@ kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen, int flags)
 				if (ki.vk_path != NULL)
 					strlcpy(kve->kve_path, ki.vk_path,
 					    sizeof(kve->kve_path));
-				vm_object_kinfo_release(&ki);
-				vm_object_deallocate(lobj);
+				free(ki.vk_freepath, M_TEMP);
+				vm_object_kinfo_release(&kh);
 			}
 		} else {
 			kve->kve_type = guard ? KVME_TYPE_GUARD :

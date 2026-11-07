@@ -2404,19 +2404,25 @@ vm_object_vnode(vm_object_t object)
 /*
  * Observers of a mapping (kinfo_getvmmap(3), procstat(1), linprocfs, the
  * vm.objects sysctl) learn about the object behind it from its pager.  The
- * pager runs unlocked and may sleep, so the caller holds the object: with
- * the object locked, vm_object_kinfo_hold() takes a reference when the
- * pager has anything to report; the caller unlocks, calls vm_object_kinfo(),
- * copies what it wants, releases the report and drops the reference with
- * vm_object_deallocate().  Pagers whose objects may be anonymous report
- * nothing, so the extra reference never reaches an OBJ_ANON object and
- * dropping it never collapses a chain.
+ * report runs unlocked and may sleep, so with the object locked
+ * vm_object_kinfo_hold() takes what the report needs: the object's vnode,
+ * referenced, for any pager that answers pgo_getvp (vnode objects and
+ * tmpfs), as the observers always did; otherwise the object itself,
+ * referenced, for a pager with a pgo_kinfo method.  Pagers whose objects
+ * may be anonymous have neither, so the object reference never reaches an
+ * OBJ_ANON object and dropping it never collapses a chain.
  */
 bool
-vm_object_kinfo_hold(vm_object_t object)
+vm_object_kinfo_hold(vm_object_t object, struct vm_object_kinfo_hold *kh)
 {
 
 	VM_OBJECT_ASSERT_LOCKED(object);
+	kh->kh_obj = NULL;
+	kh->kh_vp = vm_object_vnode(object);
+	if (kh->kh_vp != NULL) {
+		vref(kh->kh_vp);
+		return (true);
+	}
 	if (pagertab[object->type]->pgo_kinfo == NULL)
 		return (false);
 	/*
@@ -2429,24 +2435,37 @@ vm_object_kinfo_hold(vm_object_t object)
 	KASSERT((object->flags & OBJ_ANON) == 0,
 	    ("vm_object_kinfo_hold: anonymous object %p reports", object));
 	vm_object_reference_locked(object);
+	kh->kh_obj = object;
 	return (true);
 }
 
 void
-vm_object_kinfo(vm_object_t object, struct vm_object_kinfo *ki,
+vm_object_kinfo(struct vm_object_kinfo_hold *kh, struct vm_object_kinfo *ki,
     struct thread *td)
 {
 
 	bzero(ki, sizeof(*ki));
-	vm_pager_kinfo(object, ki, td);
+	if (kh->kh_vp != NULL)
+		vm_object_kinfo_vnode(kh->kh_vp, ki, td);
+	else
+		vm_pager_kinfo(kh->kh_obj, ki, td);
 }
 
+/*
+ * Dropping the object reference may be the last one, in which case the
+ * object terminates in the observer's context; a vnode reference is a
+ * vrele as before.
+ */
 void
-vm_object_kinfo_release(struct vm_object_kinfo *ki)
+vm_object_kinfo_release(struct vm_object_kinfo_hold *kh)
 {
 
-	free(ki->vk_freepath, M_TEMP);
-	ki->vk_path = ki->vk_freepath = NULL;
+	if (kh->kh_vp != NULL)
+		vrele(kh->kh_vp);
+	else if (kh->kh_obj != NULL)
+		vm_object_deallocate(kh->kh_obj);
+	kh->kh_vp = NULL;
+	kh->kh_obj = NULL;
 }
 
 /*
@@ -2502,6 +2521,7 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 	struct pctrie_iter pages;
 	struct kinfo_vmobject *kvo;
 	struct vm_object_kinfo ki;
+	struct vm_object_kinfo_hold kh;
 	vm_object_t obj;
 	vm_page_t m;
 	u_long sp;
@@ -2583,7 +2603,7 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 		 * Paths are the pager's report (vm_object_kinfo) and are
 		 * withheld from jailed observers.
 		 */
-		held = want_path && vm_object_kinfo_hold(obj);
+		held = want_path && vm_object_kinfo_hold(obj, &kh);
 		kvo->kvo_type = vm_object_kvme_type(obj, NULL);
 		if ((obj->flags & OBJ_ANON) != 0) {
 			MPASS(kvo->kvo_type == KVME_TYPE_SWAP);
@@ -2606,7 +2626,7 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 			    sizeof(kvo->kvo_path));
 		}
 		if (held) {
-			vm_object_kinfo(obj, &ki, curthread);
+			vm_object_kinfo(&kh, &ki, curthread);
 			if (ki.vk_attr_valid) {
 				kvo->kvo_vn_fileid = ki.vk_fileid;
 				kvo->kvo_vn_fsid = ki.vk_fsid;
@@ -2616,8 +2636,8 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 			if (ki.vk_path != NULL)
 				strlcpy(kvo->kvo_path, ki.vk_path,
 				    sizeof(kvo->kvo_path));
-			vm_object_kinfo_release(&ki);
-			vm_object_deallocate(obj);
+			free(ki.vk_freepath, M_TEMP);
+			vm_object_kinfo_release(&kh);
 		}
 
 		/* Pack record size down */
