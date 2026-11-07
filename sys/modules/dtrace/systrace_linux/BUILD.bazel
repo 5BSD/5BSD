@@ -2,3 +2,4 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
 amd64_generic_module(module = "systrace_linux", objects = ["//sys/cddl/dev/systrace:systrace_linux_ordered_objects"], export_all = False)
+[cross_generic_module(arch = arch, module = "systrace_linux", objects = ["//sys/cddl/dev/systrace:" + arch + "_systrace_linux_ordered_objects"], export_all = False) for arch in ["arm64", "riscv"]]

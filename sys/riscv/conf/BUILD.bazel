@@ -440,3 +440,5 @@ cc_library(name = "core_builtin_options_headers", hdrs = [":core_builtin_" + nam
     strip_include_prefix = "core_builtin_options", visibility = ["//sys/kern:__pkg__"])
 
 exports_files(["GENERIC.hints"], visibility = ["//etc:__pkg__"])
+
+filegroup(name = "fasttrap_global_option", srcs = [":opt_global"], visibility = ["//sys/cddl/contrib/opensolaris:__pkg__"])

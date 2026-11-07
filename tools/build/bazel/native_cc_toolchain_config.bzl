@@ -124,7 +124,10 @@ def _impl(ctx):
         # library recipes do not repeat CFLAGS; executable recipes do.
         features = [feature(name = "bsd_riscv_userland_abi", enabled = True,
             flag_sets = [flag_set(actions = _COMPILE + ["c++-link-executable"],
-                flag_groups = [flag_group(flags = ["-march=rv64imafdc", "-mabi=lp64d", "-mno-relax"])])])] + features
+                flag_groups = [flag_group(flags = ["-march=rv64imafdc", "-mabi=lp64d", "-mno-relax"])]),
+                # DTrace walks user stacks by frame pointer.
+                flag_set(actions = _COMPILE,
+                    flag_groups = [flag_group(flags = ["-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer"])])])] + features
     validation_actions = []
     if ctx.attr.archive_validation:
         features.append(feature(name = "symbol_check", implies = [ACTION_NAMES.validate_static_library]))

@@ -25,7 +25,7 @@ bsd_source_headers(name = "core_source_search_headers", hdrs = ["common/util/str
 
 exports_files(["uts/common/dtrace/dtrace.c", "uts/common/dtrace/dtrace_xoroshiro128_plus.c"], visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
 
-bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h", "uts/common/sys/fasttrap.h", "uts/common/sys/fasttrap_impl.h", "uts/intel/sys/fasttrap_isa.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h", "uts/common/sys/fasttrap.h", "uts/common/sys/fasttrap_impl.h", "uts/intel/sys/fasttrap_isa.h", "uts/aarch64/sys/fasttrap_isa.h", "uts/riscv/sys/fasttrap_isa.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
 
 load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
 
@@ -42,7 +42,18 @@ amd64_cddl_module_objects(name = "fasttrap_module", srcs = ["uts/common/dtrace/f
 bsd_component_selected_objects(name = "fasttrap_ordered_objects", group = ":fasttrap_module_ctf",
     object_names = ["fasttrap.o", "fasttrap_isa.o", "u8_textprep.o"], visibility = ["//sys/modules/dtrace/fasttrap:__pkg__"])
 
+_FASTTRAP_CROSS_DEPS = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"]
+[cross_cddl_module_objects(arch = arch, name = "fasttrap_module", srcs = ["uts/common/dtrace/fasttrap.c", "uts/" + isa + "/dtrace/fasttrap_isa.c", "//sys/contrib/openzfs:module/zfs/u8_textprep.c"],
+    deps = _FASTTRAP_CROSS_DEPS, header_overrides = [":" + isa + "_fasttrap_isa_headers"],
+    preinclude_headers = ["//sys/" + arch + "/conf:fasttrap_global_option"],
+    textual_hdrs = [], copts = ["-Wno-cast-qual", "-Wno-unused"])
+ for arch, isa in [("arm64", "aarch64"), ("riscv", "riscv")]]
+[bsd_component_selected_objects(name = arch + "_fasttrap_ordered_objects", group = ":" + arch + "_fasttrap_module_ctf",
+    object_names = ["fasttrap.o", "fasttrap_isa.o", "u8_textprep.o"], visibility = ["//sys/modules/dtrace/fasttrap:__pkg__"])
+ for arch in ["arm64", "riscv"]]
+
 bsd_source_headers(name = "fasttrap_isa_headers", hdrs = ["uts/intel/sys/fasttrap_isa.h"], includes = ["uts/intel"])
+[bsd_source_headers(name = isa + "_fasttrap_isa_headers", hdrs = ["uts/" + isa + "/sys/fasttrap_isa.h"], includes = ["uts/" + isa]) for isa in ["aarch64", "riscv"]]
 
 # Native filesystem/RPC physical prerequisites; identical contexts share providers.
 bsd_source_headers(name = "filesystems_rpc_kernel_nfs_clkdtrace_headers", hdrs = ["uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h"],
