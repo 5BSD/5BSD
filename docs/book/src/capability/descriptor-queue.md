@@ -319,6 +319,53 @@ case via `map != &vm->vm_map`); the rest get a defined NULL fallback before
 stage 3 sets one. Stage-0 tests include `aio_read` into a not-yet-grown
 stack page.
 
+#### 6.2.1 Contract as refined by the exec survey (2026-11-07, D75)
+
+A line-by-line survey of `kern_exec.c`, `imgact_elf.c`, `imgact_shell.c`
+and veriexec (118 vnode sites) before implementation showed that the ops
+above leave vnode knowledge in the core at four places; the contract is
+widened so the core is vnode-free and every backend answers through
+`imgp->is_ops`. The vnode backend is moved code throughout.
+
+| Op | Vnode backend (moved from) | dq backend (stage 3) |
+|---|---|---|
+| `is_lock(imgp)` / `is_unlock(imgp)` / `is_assert_locked(imgp)` | `vn_lock(vp, LK_SHARED \| LK_RETRY)` / `VOP_UNLOCK` / `ASSERT_VOP_LOCKED`; replaces the fourteen lock dances in `do_execve` and `exec_elf_imgact` (around `crdup`/`uifind`, `M_WAITOK` mallocs, `exec_new_vmspace`, `copyout_strings`, `fdsetugidsafety`, the hwpmc/HWT hooks) | no-ops |
+| `is_check(imgp)` | `exec_check_permissions`: `VOP_GETATTR` into `imgp->attr`, `mac_vnode_check_exec`, `MNT_NOEXEC`, exec bits, `VREG`, nonzero size, `VOP_ACCESS(VEXEC)`, `VOP_SET_TEXT` (`imgp->textset`, `ETXTBSY`), `VOP_OPEN` (`imgp->opened`) | synthesises `attr` (`va_type = VREG`, exec bits, the served length in `va_size`, identity fields zero), `mac_file_check_exec`, asks the controller to pin the image (the `textset` equivalent) |
+| `is_first_page(imgp)` | `imgp->object = vp->v_object` referenced, then `exec_map_first_page` (grab page 0 wired, `sf_buf`); `exec_unmap_first_page` stays core | `imgp->object` = the dq pager object; same page path |
+| `is_read(imgp, buf, off, len)` | `vn_rdwr(UIO_READ, …, IO_NODELOCKED)` at the four sites (interpreter phdrs, `PT_INTERP`, phdrs, `PT_NOTE`) | controller `READ` |
+| `is_map_cow(imgp)` → `int`, `is_map_text(imgp)` | `MAP_VN_EXEC` for `vm_map_fixed`; `VOP_SET_TEXT_CHECKED` after a successful mapping (`map_insert`); the `MPASS(vp->v_object == object)` becomes `MPASS(imgp->object == object)` | `0` (no vnode text refs on the map entries; the dq object's own pin outlives the mappings — 13); no-op |
+| `is_unset_text(imgp)` | `VOP_UNSET_TEXT_CHECKED` when `textset` (re-interpret and `exec_fail_dealloc`) | releases the pin |
+| `is_path(imgp, &retbuf, &freebuf)` | `vn_fullpath_hardlink(vp, dvp, binname)` when the lookup produced `dvp`/`binname`, else `vn_fullpath` (interpreter vnode, `fexecve`) | the presented path |
+| `is_commname(imgp, buf, len)` | `vn_commname` (the `fexecve` fallback for `p_comm`) | the presented name's last component |
+| `is_nosuid(imgp)` | `v_mount->mnt_flag & MNT_NOSUID` (both tests) | `true` always (I9) |
+| `is_mac(imgp, phase, oldcred, newcred)` | `mac_vnode_execve_will_transition` / `will_relabel` / `transition` / `relabel` with `imgp->interpvplabel`; phase `INTERP_ENTER` = `mac_execve_interpreter_enter` (copies `v_label`) | `mac_file_execve_relabel` and `mac_file_check_exec`; `INTERP_ENTER` leaves the label `NULL` |
+| `is_authority(imgp, p, phase)` | `cap_authority_exec_prepare(p, vp)` under `is_nosuid == false`, then `cap_authority_exec(p, vp, selected)`; pointer identity against pinned vnodes | never matches: prepare returns `NULL`, exec a no-op (`authority_setid` is already false under attachment) |
+| `is_install(imgp, p, &old)` / `is_release_old(&old)` | swap `p_textvp`/`p_textdvp`/`p_binname` under `PROC_LOCK` and set `p_image = {VNODE, vp}`; release the old vnode state after `PROC_UNLOCK` | `p_textvp = NULL`, `p_image = {DQ, fp}` with a held `struct file` reference |
+| `is_accessed(imgp)` | `VOP_UPDATE_ATIME` | controller `NOTIFY(EXEC)` |
+| `is_close(imgp, error)` | `VOP_CLOSE(FREAD)` when `opened`, `is_unset_text`, `vput` on error else `VOP_UNLOCK` (the reference now belongs to `p_textvp`), `vrele(dvp)`, free `binname`, `NDFREE_PNBUF`; the private vnode state lives in `imgp->is_data` | drop the image `struct file` on error |
+
+Construction: the core builds the source from the three entry forms
+(`args->fname` lookup, `imgp->interpreter_vp` from binmisc, `fexecve`'s
+descriptor); `__elfN(load_interp_file)` builds a vnode-backed source
+directly from its own kernel-origin `namei` (`exec_image_vnode_init(imgp,
+vp)`), never through the descriptor form and never with `NI_DQ_FD_OK`
+(I7). The `#!` re-interpret path re-enters the `args->fname` form with the
+script's interpreter name, which is script-origin: `NI_DQ_FD_OK` is set on
+the first pass only. The `fexecve` form is where stage 3 selects the dq
+backend from `fp->f_ops`; in stage 0 it still requires a vnode
+(`fgetvp_exec`). `imgact_shell.c`'s `VOP_GETATTR` for `va_size` reads
+`imgp->attr` instead. The veriexec `CHECK_FD` syscall builds an
+`image_params` by hand with no ops; it keeps compiling and keeps calling
+the vnode functions it calls today.
+
+`p_textvp` consumers that dereference without a NULL test, and their
+stage-0 fallback: `kern_reroot` (initproc only) → `EOPNOTSUPP` when
+`p_image.kind != VNODE`; `mac_grantbylabel` at `priv_grant`,
+`PRIV_VERIEXEC_DIRECT` (parent), `proc_check_resource` and the self case of
+`FETCH_PID_GBL` → the process is treated as unlabeled (`EPERM`/`EINVAL`,
+the answers those paths give an unlabeled vnode). Every other consumer
+already tolerates NULL (survey, 2026-11-07).
+
 ### 6.3 The ledger
 
 `docs/descriptor-completeness-ledger.md` is generated by a recorded
@@ -1149,6 +1196,8 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D72 | 2026-11-07 | Stage-0 implementation findings: `struct fileops` grows (the spares were fewer than the eleven members); `ptsdev_ops` and `linuxfileops` are *sometimes-vnode* tables and install `vn_*_opt` (delegate when `f_vnode != NULL`, `invfo_*` otherwise); `F_READAHEAD`/`F_RDAHEAD` go through `fo_fcntl`, not `fo_fadvise` (per-open state, not range advice); the `VFCF_OFDLOCKS` half of `fcntl_ofd_check` moves into `vn_advlock`; FIFO locks go through `pipe_advlock`, which admits `F_FLOCK` only; `vn_open_vnode_advlock` stays on the vnode (the file has no table yet at open time) | stage-0 build; plane-on VM run 1 panic in `fpathconf_test:pts_master` | `posix_openpt(2)` masters and `fd_install()` linuxkpi files carry no vnode; read-ahead sets `f_seqcount`/`FRDAHEAD` |
 | D73 | 2026-11-07 | Plane-on VM run 3 findings: `fdesc_setattr` drops the fdesc vnode lock around the `fo_*` calls (the node contributes only the fd), because forwarding attributes to the underlying vnode under that lock orders fdescfs before every filesystem, the reverse of fdescfs unmount (covered vnode, then fdesc root) — WITNESS LOR, recorded in `~/5bsd-issues/2026-11-07-fdescfs-setattr-lock-order.md`; `invfo_advlock` answers `EOPNOTSUPP` to `F_FLOCK` and `EBADF` otherwise, so `flock(2)` dispatches unconditionally and an anonymous pipe keeps its `EOPNOTSUPP` (`pipeops` installs `pipe_advlock` for FIFOs, so a NULL-member probe in `flock(2)` misclassified pipes); the VM provider aborts a run on any LOR, so a LOR is a failing result, not a note | run 3 LOR; `advlock_fd_test:no_vnode` | the per-syscall errno of a type-neutral refusal belongs in `invfo_*`, not in the syscall's probe |
 | D74 | 2026-11-07 | Plane-on VM runs 4–5 (183/184, the broken case pre-existing): the `fcntl(2)` record-lock cases probe `fo_advlock == NULL → EBADF` right after `fget`, because `path_test:path_lock` expects the descriptor refusal before argument validation (pipes and FIFOs, whose shared table has the member, validate first); `DFLAG_PRIVWRITE` is a Capsicum matter — `PROT_WRITE` on a private mapping of a descriptor lacking `CAP_MMAP_W`, not of a read-only one (shm already allowed the latter); `vm_mmap_file` refuses `prot ⊄ maxprot` with `EACCES`, a `CAP_MMAP_R`-only shm descriptor mapped private-writable having reached `vm_map_insert`'s KASSERT (`~/5bsd-issues/2026-11-07-mmap-shm-maxprot-assert.md`); `pgo_kinfo`'s lock contract is hold-under-lock, report-unlocked, with the two observer changes listed in 4.1; `sendfile_src` carries pin/size/notice/release ops | runs 4 and 5; code reading before the shm test ran | the in-tree suite is the oracle for error order; a KASSERT reachable from userland is a stage-0 fix, not a note |
+| D75 | 2026-11-07 | Image-source contract widened (6.2.1) after a 118-site survey of the exec path: lock/unlock, per-mapping text refs (`is_map_cow`/`is_map_text`, no `MAP_VN_EXEC` for dq), path/commname, authority, install/release-old, accessed and close become backend ops so the core is vnode-free; `__elfN(load_interp_file)` builds a vnode source from its own namei; `#!` re-interpret keeps `NI_DQ_FD_OK` to the first pass; five NULL-unsafe `p_textvp` consumers get fallbacks. Under independent review before code | exec survey 2026-11-07 | the 6.2 op list left vnode knowledge in the core at the lock dances, `map_insert`, `cap_authority_*` and the `p_textvp` swap |
+| D76 | 2026-11-07 | `mac_file_check_{fcntl,lock,read,write,stat,setattr,fsync}` built at the fileops boundary (`docs/macf-new-hooks.md` 3.4, 3.6, 3.9–3.13): read/write/stat fast-pathed, fcntl rare-fast-pathed to skip its extra lookup, setattr takes a `vattr` holding the attribute, fsync has no fd; the exec pair lands with 6.2.1. Plane-on run 6: 183/184 | run 6 | a policy chooses the layer; vnode hooks untouched |
 
 ### 20.1 Origin
 
