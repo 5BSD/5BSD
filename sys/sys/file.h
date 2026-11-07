@@ -86,9 +86,13 @@ struct nameidata;
 
 struct file;
 struct filecaps;
+struct acl;
+struct flock;
 struct kaiocb;
 struct kinfo_file;
+struct statfs;
 struct ucred;
+struct vattr;
 
 #define	FOF_OFFSET	0x01	/* Use the offset in uio argument */
 #define	FOF_NOLOCK	0x02	/* Do not take FOFFSET_LOCK */
@@ -157,7 +161,55 @@ typedef int fo_fspacectl_t(struct file *fp, int cmd,
 typedef int fo_cmp_t(struct file *fp, struct file *fp1, struct thread *td);
 typedef	int fo_fork_t(struct filedesc *fdp, struct file *fp, struct file **fp1,
 		    struct proc *p1, struct thread *td);
+typedef int fo_pathconf_t(struct file *fp, int name, long *valuep,
+		    struct thread *td);
+typedef int fo_statfs_t(struct file *fp, struct statfs *buf,
+		    struct thread *td);
+typedef int fo_fsync_t(struct file *fp, int mode, struct thread *td);
+typedef int fo_setattr_t(struct file *fp, struct vattr *vap,
+		    struct ucred *active_cred, struct thread *td);
+typedef int fo_fadvise_t(struct file *fp, off_t offset, off_t len,
+		    int advice, struct thread *td);
+typedef int fo_readdir_t(struct file *fp, struct uio *uio, off_t *basep,
+		    struct thread *td);
+typedef int fo_copy_file_range_t(struct file *infp, off_t *inoffp,
+		    struct file *outfp, off_t *outoffp, size_t *lenp,
+		    unsigned int flags, struct thread *td);
+typedef int fo_acl_t(struct file *fp, int op, int type, struct acl *aclp,
+		    struct thread *td);
+typedef int fo_extattr_t(struct file *fp, int op, int attrnamespace,
+		    const char *attrname, void *data, size_t nbytes,
+		    struct uio *auio, struct thread *td);
+typedef int fo_fcntl_t(struct file *fp, int cmd, intptr_t arg,
+		    struct thread *td);
+typedef int fo_advlock_t(struct file *fp, void *id, int op,
+		    struct flock *fl, int flags, struct thread *td);
 typedef int fo_spare_t(struct file *fp);
+
+/*
+ * fo_fcntl commands beyond the fcntl(2) ones it answers (F_READAHEAD with
+ * the byte count already in arg, F_ISUNIONSTACK): the Linux read/write
+ * life-time hints, kernel-private numbers kern_fcntl() never passes.
+ */
+#define	FO_FCNTL_GET_RW_HINT	0x40000001	/* arg: uint16_t * to fill */
+#define	FO_FCNTL_SET_RW_HINT	0x40000002	/* arg: the hint value */
+
+/* fo_extattr operations: set and get use data/nbytes, list uses auio. */
+#define	FO_EXTATTR_SET		0
+#define	FO_EXTATTR_GET		1
+#define	FO_EXTATTR_DELETE	2
+#define	FO_EXTATTR_LIST		3
+
+/* fo_acl operations. */
+#define	FO_ACL_GET	0	/* __acl_get_fd(2): copy the ACL out to aclp */
+#define	FO_ACL_SET	1	/* __acl_set_fd(2): set the ACL from aclp */
+#define	FO_ACL_DELETE	2	/* __acl_delete_fd(2) */
+#define	FO_ACL_CHECK	3	/* __acl_aclcheck_fd(2): validate aclp */
+
+/* fo_fsync modes. */
+#define	FO_FSYNC_FULL	0	/* fsync(2): data and metadata */
+#define	FO_FSYNC_DATA	1	/* fdatasync(2): data only */
+#define	FO_FSYNC_FS	2	/* the whole filesystem the file is on */
 typedef	int fo_flags_t;
 
 struct fileops {
@@ -183,7 +235,18 @@ struct fileops {
 	fo_fspacectl_t	*fo_fspacectl;
 	fo_cmp_t	*fo_cmp;
 	fo_fork_t	*fo_fork;
-	fo_spare_t	*fo_spares[8];	/* Spare slots */
+	fo_pathconf_t	*fo_pathconf;
+	fo_statfs_t	*fo_statfs;
+	fo_fsync_t	*fo_fsync;
+	fo_setattr_t	*fo_setattr;
+	fo_fadvise_t	*fo_fadvise;
+	fo_readdir_t	*fo_readdir;
+	fo_copy_file_range_t *fo_copy_file_range;
+	fo_acl_t	*fo_acl;
+	fo_extattr_t	*fo_extattr;
+	fo_fcntl_t	*fo_fcntl;
+	fo_advlock_t	*fo_advlock;
+	fo_spare_t	*fo_spares[4];	/* Spare slots */
 	fo_flags_t	fo_flags;	/* DFLAG_* below */
 };
 
@@ -193,6 +256,10 @@ struct fileops {
 #define DFLAG_VNODE_OPENFILE 0x08 /* per-open vnode lifetime */
 #define DFLAG_VNODE_NOSHAREDMAP 0x10 /* only private mappings allowed */
 #define DFLAG_VNODE_STREAM 0x20 /* no shared file offset */
+#define	DFLAG_PRIVWRITE	0x40	/* private mappings are copy-on-write and
+				   need no write right on the descriptor */
+#define	DFLAG_FLOCK	0x80	/* takes flock(2) locks */
+#define	DFLAG_RECLOCK	0x100	/* takes fcntl(2) record locks */
 #endif /* _KERNEL */
 
 #if defined(_KERNEL) || defined(_WANT_FILE)
@@ -316,11 +383,45 @@ fo_kqfilter_t	invfo_kqfilter;
 fo_chmod_t	invfo_chmod;
 fo_chown_t	invfo_chown;
 fo_sendfile_t	invfo_sendfile;
+fo_pathconf_t	invfo_pathconf;
+fo_statfs_t	invfo_statfs;
+fo_fsync_t	invfo_fsync;
+fo_setattr_t	invfo_setattr;
+fo_fadvise_t	invfo_fadvise;
+fo_readdir_t	invfo_readdir;
+fo_copy_file_range_t invfo_copy_file_range;
+fo_acl_t	invfo_acl;
+fo_extattr_t	invfo_extattr;
+fo_fcntl_t	invfo_fcntl;
+fo_advlock_t	invfo_advlock;
 fo_stat_t	vn_statfile;
 fo_sendfile_t	vn_sendfile;
 fo_seek_t	vn_seek;
 fo_fill_kinfo_t	vn_fill_kinfo;
 fo_kqfilter_t	vn_kqfilter_opath;
+fo_pathconf_t	vn_pathconf;
+fo_statfs_t	vn_statfs;
+fo_fsync_t	vn_fsync;
+fo_setattr_t	vn_setattr;
+fo_fadvise_t	vn_fadvise;
+fo_readdir_t	vn_readdir;
+fo_copy_file_range_t vn_copy_range;
+fo_acl_t	vn_acl;
+fo_extattr_t	vn_extattr;
+fo_fcntl_t	vn_fcntl;
+fo_advlock_t	vn_advlock;
+/*
+ * For descriptor types that carry a vnode only on some creation paths
+ * (pseudo-terminal masters, linuxkpi files): the vn_* answer when the vnode
+ * is there, the type-neutral default when it is not.
+ */
+fo_pathconf_t	vn_pathconf_opt;
+fo_statfs_t	vn_statfs_opt;
+fo_fsync_t	vn_fsync_opt;
+fo_setattr_t	vn_setattr_opt;
+fo_readdir_t	vn_readdir_opt;
+fo_acl_t	vn_acl_opt;
+fo_extattr_t	vn_extattr_opt;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 int file_kcmp_generic(struct file *fp1, struct file *fp2, struct thread *td);
 
@@ -490,6 +591,153 @@ fo_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 		return (ENODEV);
 	return ((*fp->f_ops->fo_mmap)(fp, map, addr, size, prot, cap_maxprot,
 	    flags, foff, td));
+}
+
+/*
+ * Descriptor types that never carry a vnode leave the slot NULL and get the
+ * fpathconf(2) answer they always had.
+ */
+static __inline int
+fo_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+
+	if (fp->f_ops->fo_pathconf == NULL)
+		return (invfo_pathconf(fp, name, valuep, td));
+	return ((*fp->f_ops->fo_pathconf)(fp, name, valuep, td));
+}
+
+static __inline int
+fo_statfs(struct file *fp, struct statfs *buf, struct thread *td)
+{
+
+	if (fp->f_ops->fo_statfs == NULL)
+		return (invfo_statfs(fp, buf, td));
+	return ((*fp->f_ops->fo_statfs)(fp, buf, td));
+}
+
+static __inline int
+fo_fsync(struct file *fp, int mode, struct thread *td)
+{
+
+	if (fp->f_ops->fo_fsync == NULL)
+		return (invfo_fsync(fp, mode, td));
+	return ((*fp->f_ops->fo_fsync)(fp, mode, td));
+}
+
+/*
+ * Set the times and flags in *vap (VNOVAL leaves a field alone).  Mode,
+ * owner and size have their own operations and are refused here.
+ */
+static __inline int
+fo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_setattr == NULL)
+		return (invfo_setattr(fp, vap, active_cred, td));
+	return ((*fp->f_ops->fo_setattr)(fp, vap, active_cred, td));
+}
+
+/*
+ * posix_fadvise(2) with an already validated range and advice.  The
+ * descriptor decides whether it has anything to advise about.
+ */
+static __inline int
+fo_fadvise(struct file *fp, off_t offset, off_t len, int advice,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_fadvise == NULL)
+		return (invfo_fadvise(fp, offset, len, advice, td));
+	return ((*fp->f_ops->fo_fadvise)(fp, offset, len, advice, td));
+}
+
+/*
+ * Read directory entries into uio from uio_offset, leaving uio_offset at the
+ * next entry and *basep at the offset the read began from.  The caller holds
+ * the file's offset lock.
+ */
+static __inline int
+fo_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
+{
+
+	if (fp->f_ops->fo_readdir == NULL)
+		return (invfo_readdir(fp, uio, basep, td));
+	return ((*fp->f_ops->fo_readdir)(fp, uio, basep, td));
+}
+
+/*
+ * copy_file_range(2) between two descriptors, dispatched on the input
+ * file's table; *lenp is the requested length in and the copied length
+ * out.  The caller holds both files' offset locks.
+ */
+static __inline int
+fo_copy_file_range(struct file *infp, off_t *inoffp, struct file *outfp,
+    off_t *outoffp, size_t *lenp, unsigned int flags, struct thread *td)
+{
+
+	if (infp->f_ops->fo_copy_file_range == NULL)
+		return (invfo_copy_file_range(infp, inoffp, outfp, outoffp,
+		    lenp, flags, td));
+	return ((*infp->f_ops->fo_copy_file_range)(infp, inoffp, outfp,
+	    outoffp, lenp, flags, td));
+}
+
+/* The __acl_*_fd(2) family: op is FO_ACL_*, type an acl_type_t. */
+static __inline int
+fo_acl(struct file *fp, int op, int type, struct acl *aclp,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_acl == NULL)
+		return (invfo_acl(fp, op, type, aclp, td));
+	return ((*fp->f_ops->fo_acl)(fp, op, type, aclp, td));
+}
+
+/*
+ * The extattr_*_fd(2) family: op is FO_EXTATTR_*; set and get take a user
+ * buffer in data/nbytes (get with NULL data returns the size), list fills
+ * auio, delete takes neither.
+ */
+static __inline int
+fo_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
+    void *data, size_t nbytes, struct uio *auio, struct thread *td)
+{
+
+	if (fp->f_ops->fo_extattr == NULL)
+		return (invfo_extattr(fp, op, attrnamespace, attrname, data,
+		    nbytes, auio, td));
+	return ((*fp->f_ops->fo_extattr)(fp, op, attrnamespace, attrname, data,
+	    nbytes, auio, td));
+}
+
+/*
+ * The fcntl(2) commands a descriptor type answers for itself; results that
+ * are values go to td_retval[0] as kern_fcntl() does.
+ */
+static __inline int
+fo_fcntl(struct file *fp, int cmd, intptr_t arg, struct thread *td)
+{
+
+	if (fp->f_ops->fo_fcntl == NULL)
+		return (invfo_fcntl(fp, cmd, arg, td));
+	return ((*fp->f_ops->fo_fcntl)(fp, cmd, arg, td));
+}
+
+/*
+ * Advisory locks: flock(2) (F_FLOCK, id is the file), the fcntl(2) record
+ * locks (F_POSIX with the process leader as id, F_OFD with the file) and
+ * the unlock every close owes POSIX locks.  A table without it takes no
+ * locks; callers decide what that means for their system call.
+ */
+static __inline int
+fo_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
+    struct thread *td)
+{
+
+	if (fp->f_ops->fo_advlock == NULL)
+		return (invfo_advlock(fp, id, op, fl, flags, td));
+	return ((*fp->f_ops->fo_advlock)(fp, id, op, fl, flags, td));
 }
 
 static __inline int

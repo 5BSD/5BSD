@@ -56,6 +56,7 @@
 #include <sys/uio.h>
 #include <sys/ucred.h>
 #include <sys/un.h>
+#include <sys/unistd.h>
 #include <sys/unpcb.h>
 #include <sys/user.h>
 
@@ -103,6 +104,7 @@ static fo_fdclose_t soo_fdclose;
 static fo_chmod_t soo_chmod;
 static fo_fill_kinfo_t soo_fill_kinfo;
 static fo_aio_queue_t soo_aio_queue;
+static fo_pathconf_t soo_pathconf;
 
 static void	soo_aio_cancel(struct kaiocb *job);
 
@@ -122,6 +124,7 @@ const struct fileops socketops = {
 	.fo_fill_kinfo = soo_fill_kinfo,
 	.fo_aio_queue = soo_aio_queue,
 	.fo_cmp = file_kcmp_generic,
+	.fo_pathconf = soo_pathconf,
 	.fo_flags = DFLAG_PASSABLE
 };
 
@@ -401,6 +404,16 @@ soo_chmod(struct file *fp, mode_t mode, struct ucred *cred, struct thread *td)
 	else
 		error = EINVAL;
 	return (error);
+}
+
+static int
+soo_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+
+	if (name != _PC_PIPE_BUF)
+		return (EINVAL);
+	*valuep = PIPE_BUF;
+	return (0);
 }
 
 static int

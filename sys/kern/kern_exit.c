@@ -44,6 +44,7 @@
 #include <sys/cap_authority.h>
 #include <sys/eventhandler.h>
 #include <sys/exterrvar.h>
+#include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
@@ -526,6 +527,16 @@ exit1(struct thread *td, int rval, int signo)
 		free(p->p_binname, M_PARGS);
 		p->p_binname = NULL;
 	}
+	if (p->p_image.pi_fp != NULL) {
+		/* May be the image's last reference. */
+		fdrop(p->p_image.pi_fp, td);
+		p->p_image.pi_fp = NULL;
+	}
+	if (p->p_image.pi_path != NULL) {
+		free(p->p_image.pi_path, M_PARGS);
+		p->p_image.pi_path = NULL;
+	}
+	p->p_image.pi_kind = PI_KIND_NONE;
 
 	/*
 	 * Release our limits structure.

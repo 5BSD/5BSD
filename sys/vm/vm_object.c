@@ -115,9 +115,6 @@ SDT_PROBE_DEFINE1(vm, , , object__collapse, "struct vm_object *");
 SDT_PROBE_DEFINE2(vm, , , object__bypass,
     "struct vm_object *", "struct vm_object *");
 
-static int old_msync;
-SYSCTL_INT(_vm, OID_AUTO, old_msync, CTLFLAG_RW, &old_msync, 0,
-    "Use old (insecure) msync behavior");
 
 static boolean_t vm_object_page_remove_write(vm_page_t p, int flags,
 		    boolean_t *allclean);
@@ -1170,15 +1167,10 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
     boolean_t syncio, boolean_t invalidate)
 {
 	vm_object_t backing_object;
-	struct vnode *vp;
-	struct mount *mp;
-	int error, flags, fsync_after;
 	boolean_t res;
 
 	if (object == NULL)
 		return (TRUE);
-	res = TRUE;
-	error = 0;
 	VM_OBJECT_WLOCK(object);
 	while ((backing_object = object->backing_object) != NULL) {
 		VM_OBJECT_WLOCK(backing_object);
@@ -1189,81 +1181,11 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
 			size = IDX_TO_OFF(object->size) - offset;
 	}
 	/*
-	 * Flush pages if writing is allowed, invalidate them
-	 * if invalidation requested.  Pages undergoing I/O
-	 * will be ignored by vm_object_page_remove().
-	 *
-	 * We cannot lock the vnode and then wait for paging
-	 * to complete without deadlocking against vm_fault.
-	 * Instead we simply call vm_object_page_remove() and
-	 * allow it to block internally on a page-by-page
-	 * basis when it encounters pages undergoing async
-	 * I/O.
+	 * Flush pages if writing is allowed, invalidate them if invalidation
+	 * requested: the pager's business.  Pages undergoing I/O will be
+	 * ignored by vm_object_page_remove().
 	 */
-	if (object->type == OBJT_VNODE &&
-	    vm_object_mightbedirty(object) != 0 &&
-	    ((vp = object->handle)->v_vflag & VV_NOSYNC) == 0) {
-		VM_OBJECT_WUNLOCK(object);
-		(void)vn_start_write(vp, &mp, V_WAIT);
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		if (syncio && !invalidate && offset == 0 &&
-		    atop(size) == object->size) {
-			/*
-			 * If syncing the whole mapping of the file,
-			 * it is faster to schedule all the writes in
-			 * async mode, also allowing the clustering,
-			 * and then wait for i/o to complete.
-			 */
-			flags = 0;
-			fsync_after = TRUE;
-		} else {
-			flags = (syncio || invalidate) ? OBJPC_SYNC : 0;
-			flags |= invalidate ? (OBJPC_SYNC | OBJPC_INVAL) : 0;
-			fsync_after = FALSE;
-		}
-		VM_OBJECT_WLOCK(object);
-		res = vm_object_page_clean(object, offset, offset + size,
-		    flags);
-		VM_OBJECT_WUNLOCK(object);
-		if (fsync_after) {
-			for (;;) {
-				error = VOP_FSYNC(vp, MNT_WAIT, curthread);
-				if (error != ERELOOKUP)
-					break;
-
-				/*
-				 * Allow SU/bufdaemon to handle more
-				 * dependencies in the meantime.
-				 */
-				VOP_UNLOCK(vp);
-				vn_finished_write(mp);
-
-				(void)vn_start_write(vp, &mp, V_WAIT);
-				vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-			}
-		}
-		VOP_UNLOCK(vp);
-		vn_finished_write(mp);
-		if (error != 0)
-			res = FALSE;
-		VM_OBJECT_WLOCK(object);
-	}
-	if ((object->type == OBJT_VNODE ||
-	     object->type == OBJT_DEVICE) && invalidate) {
-		if (object->type == OBJT_DEVICE)
-			/*
-			 * The option OBJPR_NOTMAPPED must be passed here
-			 * because vm_object_page_remove() cannot remove
-			 * unmanaged mappings.
-			 */
-			flags = OBJPR_NOTMAPPED;
-		else if (old_msync)
-			flags = 0;
-		else
-			flags = OBJPR_CLEANONLY;
-		vm_object_page_remove(object, OFF_TO_IDX(offset),
-		    OFF_TO_IDX(offset + size + PAGE_MASK), flags);
-	}
+	res = vm_pager_sync(object, offset, size, syncio, invalidate);
 	VM_OBJECT_WUNLOCK(object);
 	return (res);
 }
@@ -2480,6 +2402,73 @@ vm_object_vnode(vm_object_t object)
 }
 
 /*
+ * Observers of a mapping (kinfo_getvmmap(3), procstat(1), linprocfs, the
+ * vm.objects sysctl) learn about the object behind it from its pager.  The
+ * report runs unlocked and may sleep, so with the object locked
+ * vm_object_kinfo_hold() takes what the report needs: the object's vnode,
+ * referenced, for any pager that answers pgo_getvp (vnode objects and
+ * tmpfs), as the observers always did; otherwise the object itself,
+ * referenced, for a pager with a pgo_kinfo method.  Pagers whose objects
+ * may be anonymous have neither, so the object reference never reaches an
+ * OBJ_ANON object and dropping it never collapses a chain.
+ */
+bool
+vm_object_kinfo_hold(vm_object_t object, struct vm_object_kinfo_hold *kh)
+{
+
+	VM_OBJECT_ASSERT_LOCKED(object);
+	kh->kh_obj = NULL;
+	kh->kh_vp = vm_object_vnode(object);
+	if (kh->kh_vp != NULL) {
+		vref(kh->kh_vp);
+		return (true);
+	}
+	if (pagertab[object->type]->pgo_kinfo == NULL)
+		return (false);
+	/*
+	 * The vm.objects walk can meet an object between its last
+	 * deallocation and its type turning OBJT_DEAD; it has nothing left
+	 * to report and cannot be referenced.
+	 */
+	if ((object->flags & OBJ_DEAD) != 0)
+		return (false);
+	KASSERT((object->flags & OBJ_ANON) == 0,
+	    ("vm_object_kinfo_hold: anonymous object %p reports", object));
+	vm_object_reference_locked(object);
+	kh->kh_obj = object;
+	return (true);
+}
+
+void
+vm_object_kinfo(struct vm_object_kinfo_hold *kh, struct vm_object_kinfo *ki,
+    struct thread *td)
+{
+
+	bzero(ki, sizeof(*ki));
+	if (kh->kh_vp != NULL)
+		vm_object_kinfo_vnode(kh->kh_vp, ki, td);
+	else
+		vm_pager_kinfo(kh->kh_obj, ki, td);
+}
+
+/*
+ * Dropping the object reference may be the last one, in which case the
+ * object terminates in the observer's context; a vnode reference is a
+ * vrele as before.
+ */
+void
+vm_object_kinfo_release(struct vm_object_kinfo_hold *kh)
+{
+
+	if (kh->kh_vp != NULL)
+		vrele(kh->kh_vp);
+	else if (kh->kh_obj != NULL)
+		vm_object_deallocate(kh->kh_obj);
+	kh->kh_vp = NULL;
+	kh->kh_obj = NULL;
+}
+
+/*
  * Busy the vm object.  This prevents new pages belonging to the object from
  * becoming busy.  Existing pages persist as busy.  Callers are responsible
  * for checking page state before proceeding.
@@ -2531,16 +2520,15 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 {
 	struct pctrie_iter pages;
 	struct kinfo_vmobject *kvo;
-	char *fullpath, *freepath;
-	struct vnode *vp;
-	struct vattr va;
+	struct vm_object_kinfo ki;
+	struct vm_object_kinfo_hold kh;
 	vm_object_t obj;
 	vm_page_t m;
 	u_long sp;
 	int count, error;
 	key_t key;
 	unsigned short seq;
-	bool want_path;
+	bool held, want_path;
 
 	if (req->oldptr == NULL) {
 		/*
@@ -2611,24 +2599,19 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 			}
 		}
 
-		freepath = NULL;
-		fullpath = "";
-		vp = NULL;
-		kvo->kvo_type = vm_object_kvme_type(obj, want_path ? &vp :
-		    NULL);
-		if (vp != NULL) {
-			vref(vp);
-		} else if ((obj->flags & OBJ_ANON) != 0) {
+		/*
+		 * Paths are the pager's report (vm_object_kinfo) and are
+		 * withheld from jailed observers.
+		 */
+		held = want_path && vm_object_kinfo_hold(obj, &kh);
+		kvo->kvo_type = vm_object_kvme_type(obj, NULL);
+		if ((obj->flags & OBJ_ANON) != 0) {
 			MPASS(kvo->kvo_type == KVME_TYPE_SWAP);
 			kvo->kvo_me = (uintptr_t)obj;
 			/* tmpfs objs are reported as vnodes */
 			kvo->kvo_backing_obj = (uintptr_t)obj->backing_object;
 			sp = swap_pager_swapped_pages(obj);
 			kvo->kvo_swapped = sp > UINT32_MAX ? UINT32_MAX : sp;
-		}
-		if (obj->type == OBJT_DEVICE || obj->type == OBJT_MGTDEVICE) {
-			cdev_pager_get_path(obj, kvo->kvo_path,
-			    sizeof(kvo->kvo_path));
 		}
 		VM_OBJECT_RUNLOCK(obj);
 		if ((obj->flags & OBJ_SYSVSHM) != 0) {
@@ -2642,18 +2625,19 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 			shm_get_path(obj, kvo->kvo_path,
 			    sizeof(kvo->kvo_path));
 		}
-		if (vp != NULL) {
-			vn_fullpath(vp, &fullpath, &freepath);
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			if (VOP_GETATTR(vp, &va, curthread->td_ucred) == 0) {
-				kvo->kvo_vn_fileid = va.va_fileid;
-				kvo->kvo_vn_fsid = va.va_fsid;
-				kvo->kvo_vn_fsid_freebsd11 = va.va_fsid;
+		if (held) {
+			vm_object_kinfo(&kh, &ki, curthread);
+			if (ki.vk_attr_valid) {
+				kvo->kvo_vn_fileid = ki.vk_fileid;
+				kvo->kvo_vn_fsid = ki.vk_fsid;
+				kvo->kvo_vn_fsid_freebsd11 = ki.vk_fsid;
 								/* truncate */
 			}
-			vput(vp);
-			strlcpy(kvo->kvo_path, fullpath, sizeof(kvo->kvo_path));
-			free(freepath, M_TEMP);
+			if (ki.vk_path != NULL)
+				strlcpy(kvo->kvo_path, ki.vk_path,
+				    sizeof(kvo->kvo_path));
+			free(ki.vk_freepath, M_TEMP);
+			vm_object_kinfo_release(&kh);
 		}
 
 		/* Pack record size down */

@@ -45,6 +45,8 @@
 #include <sys/user.h>
 #include <vm/uma.h>
 
+#include <security/mac/mac_framework.h>
+
 #include "mac_capability_internal.h"
 #include "mac_capability_label.h"
 
@@ -859,6 +861,24 @@ mac_capability_msg_deliver(struct mac_capability_instance *s,
 				return (EBADF);
 			}
 		}
+#ifdef MAC
+		/*
+		 * The receiver's policy admits every descriptor before any
+		 * is installed (I6); a refusal fails the receive, as a
+		 * descriptor that could not be held does.
+		 */
+		for (i = 0; i < nfds_out; i++) {
+			error = mac_file_check_receive(td->td_ucred,
+			    msg->cm_fdset->fds[i]);
+			if (error != 0) {
+				for (i = 0; i < nfds_out; i++)
+					fdrop(msg->cm_fdset->fds[i], td);
+				mac_capability_msg_free(msg);
+				args->nfds = 0;
+				return (error);
+			}
+		}
+#endif
 		for (i = 0; uinfo != NULL && i < nfds_out; i++)
 			mac_capability_fd_describe(msg->cm_fdset->fds[i],
 			    &msg->cm_fdset->fcaps[i], &info[i]);
@@ -1569,7 +1589,16 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 						break;
 					}
 				}
-				if (!fhold(out_fds[i])) {
+				error = 0;
+#ifdef MAC
+				/* The caller's policy admits the reply (I6). */
+				error = mac_file_check_receive(td->td_ucred,
+				    out_fds[i]);
+#endif
+				if (error != 0) {
+					/* Refused; the handler's reference is
+					 * dropped below like any other. */
+				} else if (!fhold(out_fds[i])) {
 					error = EBADF;
 				} else {
 					struct filedesc *fdesc;

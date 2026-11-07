@@ -376,34 +376,15 @@ int
 kern_fstatfs(struct thread *td, int fd, struct statfs *buf)
 {
 	struct file *fp;
-	struct mount *mp;
-	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
-	error = getvnode_path(td, fd, &cap_fstatfs_rights, NULL, &fp);
+	error = fget(td, fd, &cap_fstatfs_rights, &fp);
 	if (error != 0)
 		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-	mp = vfs_ref_from_vp(vp);
+	error = fo_statfs(fp, buf, td);
 	fdrop(fp, td);
-#ifdef MAC
-	if (mp != NULL) {
-		error = mac_mount_check_stat(td->td_ucred, mp);
-		if (error != 0) {
-			vfs_rel(mp);
-			return (error);
-		}
-	}
-#endif
-	return (kern_do_statfs(td, mp, buf));
+	return (error);
 }
 
 /*
@@ -2853,43 +2834,40 @@ struct fchflags_args {
 int
 sys_fchflags(struct thread *td, struct fchflags_args *uap)
 {
+	struct vattr vattr;
 	struct file *fp;
-	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(uap->fd);
 	AUDIT_ARG_FFLAGS(uap->flags);
-	error = getvnode(td, uap->fd, &cap_fchflags_rights,
-	    &fp);
+	error = fget(td, uap->fd, &cap_fchflags_rights, &fp);
 	if (error != 0)
 		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
+	/* getvnode() never accepted an O_PATH descriptor here. */
+	if (fp->f_ops == &path_fileops) {
+		error = EBADF;
+		goto out;
 	}
-#endif
+	VATTR_NULL(&vattr);
 	/*
-	 * Prevent non-root users from setting flags on devices.  When
-	 * a device is reused, users can retain ownership of the device
-	 * if they are allowed to set flags and programs assume that
-	 * chown can't fail when done as root.
+	 * We can't support the value matching VNOVAL.  The refusal came
+	 * after the descriptor was known to carry attributes: ask the
+	 * fileop for nothing first, so a type without attributes keeps its
+	 * EINVAL and a file gets EOPNOTSUPP.
 	 */
-	if (VN_ISDEV(vp)) {
-		error = priv_check(td, PRIV_VFS_CHFLAGS_DEV);
-		if (error != 0)
-			goto out;
+	if (uap->flags == VNOVAL) {
+		error = fo_setattr(fp, &vattr, td->td_ucred, td);
+		if (error == 0)
+			error = EOPNOTSUPP;
+		goto out;
 	}
+	vattr.va_flags = uap->flags;
 #ifdef MAC
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	error = mac_vnode_check_setflags(td->td_ucred, vp, uap->flags);
-	VOP_UNLOCK(vp);
+	error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &vattr);
 	if (error != 0)
 		goto out;
 #endif
-	error = setfflags(td, vp, uap->flags);
+	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 out:
 	fdrop(fp, td);
 	return (error);
@@ -3028,15 +3006,13 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 		return (error);
 #ifdef MAC
 	{
-		struct vnode *vp = fp->f_vnode;
-		if (vp != NULL) {
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			error = mac_vnode_check_setmode(td->td_ucred, vp,
-			    uap->mode & ALLPERMS);
-			VOP_UNLOCK(vp);
-			if (error != 0)
-				goto out;
-		}
+		struct vattr va;
+
+		VATTR_NULL(&va);
+		va.va_mode = uap->mode;
+		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
+		if (error != 0)
+			goto out;
 	}
 #endif
 	error = fo_chmod(fp, uap->mode, td->td_ucred, td);
@@ -3187,15 +3163,14 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 		return (error);
 #ifdef MAC
 	{
-		struct vnode *vp = fp->f_vnode;
-		if (vp != NULL) {
-			vn_lock(vp, LK_SHARED | LK_RETRY);
-			error = mac_vnode_check_setowner(td->td_ucred, vp,
-			    uap->uid, uap->gid);
-			VOP_UNLOCK(vp);
-			if (error != 0)
-				goto out;
-		}
+		struct vattr va;
+
+		VATTR_NULL(&va);
+		va.va_uid = uap->uid;
+		va.va_gid = uap->gid;
+		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
+		if (error != 0)
+			goto out;
 	}
 #endif
 	error = fo_chown(fp, uap->uid, uap->gid, td->td_ucred, td);
@@ -3454,43 +3429,53 @@ sys_futimes(struct thread *td, struct futimes_args *uap)
 	return (kern_futimes(td, uap->fd, uap->tptr, UIO_USERSPACE));
 }
 
+/*
+ * futimes(2) and futimens(2): the descriptor sets its own times.  Neither
+ * ever accepted an O_PATH descriptor (getvnode() refused it).
+ */
+static int
+kern_fsetutimes(struct thread *td, int fd, const struct timespec *ts,
+    bool nullflag)
+{
+	struct vattr vattr;
+	struct file *fp;
+	int error;
+
+	error = fget(td, fd, &cap_futimes_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_ops == &path_fileops) {
+		error = EBADF;
+		goto out;
+	}
+	VATTR_NULL(&vattr);
+	vattr.va_atime = ts[0];
+	vattr.va_mtime = ts[1];
+	if (nullflag)
+		vattr.va_vaflags |= VA_UTIMES_NULL;
+#ifdef MAC
+	error = mac_file_check_setattr(td->td_ucred, fp, fd, &vattr);
+	if (error != 0)
+		goto out;
+#endif
+	error = fo_setattr(fp, &vattr, td->td_ucred, td);
+out:
+	fdrop(fp, td);
+	return (error);
+}
+
 int
 kern_futimes(struct thread *td, int fd, const struct timeval *tptr,
     enum uio_seg tptrseg)
 {
 	struct timespec ts[2];
-	struct file *fp;
-	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
 	error = getutimes(tptr, tptrseg, ts);
 	if (error != 0)
 		return (error);
-	error = getvnode(td, fd, &cap_futimes_rights, &fp);
-	if (error != 0)
-		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-#ifdef MAC
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
-	VOP_UNLOCK(vp);
-	if (error != 0)
-		goto out;
-#endif
-	error = setutimes(td, vp, ts, 2, tptr == NULL);
-#ifdef MAC
-out:
-#endif
-	fdrop(fp, td);
-	return (error);
+	return (kern_fsetutimes(td, fd, ts, tptr == NULL));
 }
 
 int
@@ -3505,8 +3490,6 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
     enum uio_seg tptrseg)
 {
 	struct timespec ts[2];
-	struct file *fp;
-	struct vnode *vp;
 	int error, flags;
 
 	AUDIT_ARG_FD(fd);
@@ -3515,30 +3498,7 @@ kern_futimens(struct thread *td, int fd, const struct timespec *tptr,
 		return (error);
 	if (flags & UTIMENS_EXIT)
 		return (0);
-	error = getvnode(td, fd, &cap_futimes_rights, &fp);
-	if (error != 0)
-		return (error);
-	vp = fp->f_vnode;
-#ifdef AUDIT
-	if (AUDITING_TD(td)) {
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(vp);
-		VOP_UNLOCK(vp);
-	}
-#endif
-#ifdef MAC
-	vn_lock(vp, LK_SHARED | LK_RETRY);
-	error = mac_vnode_check_setutimes(td->td_ucred, vp, ts[0], ts[1]);
-	VOP_UNLOCK(vp);
-	if (error != 0)
-		goto out;
-#endif
-	error = setutimes(td, vp, ts, 2, flags & UTIMENS_NULL);
-#ifdef MAC
-out:
-#endif
-	fdrop(fp, td);
-	return (error);
+	return (kern_fsetutimes(td, fd, ts, (flags & UTIMENS_NULL) != 0));
 }
 
 int
@@ -3685,32 +3645,14 @@ otruncate(struct thread *td, struct otruncate_args *uap)
 int
 kern_fsync_fp(struct thread *td, struct file *fp, bool fullsync)
 {
-	struct vn_file_context filectx;
-	struct vnode *vp;
-	struct mount *mp;
+#ifdef MAC
 	int error;
 
-	MPASS(fp->f_type == DTYPE_VNODE);
-	vp = fp->f_vnode;
-#if 0
-	if (!fullsync)
-		/* XXXKIB: compete outstanding aio writes */;
-#endif
-retry:
-	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
+	error = mac_file_check_fsync(td->td_ucred, fp);
 	if (error != 0)
 		return (error);
-	vn_lock(vp, vn_lktype_write(mp, vp) | LK_RETRY);
-	AUDIT_ARG_VNODE1(vp);
-	vnode_pager_clean_async(vp);
-	vn_file_context_enter(&filectx, fp, NULL, 0);
-	error = fullsync ? VOP_FSYNC(vp, MNT_WAIT, td) : VOP_FDATASYNC(vp, td);
-	vn_file_context_leave(&filectx);
-	VOP_UNLOCK(vp);
-	vn_finished_write(mp);
-	if (error == ERELOOKUP)
-		goto retry;
-	return (error);
+#endif
+	return (fo_fsync(fp, fullsync ? FO_FSYNC_FULL : FO_FSYNC_DATA, td));
 }
 
 int
@@ -3720,10 +3662,17 @@ kern_fsync(struct thread *td, int fd, bool fullsync)
 	int error;
 
 	AUDIT_ARG_FD(fd);
-	error = getvnode(td, fd, &cap_fsync_rights, &fp);
+	error = fget(td, fd, &cap_fsync_rights, &fp);
 	if (error != 0)
 		return (error);
-	error = kern_fsync_fp(td, fp, fullsync);
+	/*
+	 * fsync(2) and fdatasync(2) never accepted an O_PATH descriptor
+	 * (getvnode() refused it), although aio_fsync(2) and syncfs do.
+	 */
+	if (fp->f_ops == &path_fileops)
+		error = EBADF;
+	else
+		error = kern_fsync_fp(td, fp, fullsync);
 	fdrop(fp, td);
 	return (error);
 }
@@ -4445,40 +4394,61 @@ int
 kern_getdirentries(struct thread *td, int fd, char *buf, size_t count,
     off_t *basep, ssize_t *residp, enum uio_seg bufseg)
 {
-	struct vn_file_context filectx;
-	struct vnode *vp;
 	struct file *fp;
 	struct uio auio;
 	struct iovec aiov;
-	off_t loff;
-	int error, eofflag;
-	off_t foffset;
+	int error;
 
 	AUDIT_ARG_FD(fd);
 	if (count > IOSIZE_MAX)
 		return (EINVAL);
-	auio.uio_resid = count;
-	error = getvnode(td, fd, &cap_read_rights, &fp);
+	error = fget(td, fd, &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
-	if ((fp->f_flag & FREAD) == 0) {
+	/* getvnode() refused O_PATH descriptors and files opened write-only. */
+	if (fp->f_ops == &path_fileops || (fp->f_flag & FREAD) == 0) {
 		fdrop(fp, td);
 		return (EBADF);
-	}
-	vp = fp->f_vnode;
-	foffset = foffset_lock(fp, 0);
-unionread:
-	if (__predict_false((vp->v_vflag & VV_UNLINKED) != 0)) {
-		error = ENOENT;
-		goto fail;
 	}
 	aiov.iov_base = buf;
 	aiov.iov_len = count;
 	auio.uio_iov = &aiov;
 	auio.uio_iovcnt = 1;
+	auio.uio_resid = count;
 	auio.uio_rw = UIO_READ;
 	auio.uio_segflg = bufseg;
 	auio.uio_td = td;
+	auio.uio_offset = foffset_lock(fp, 0);
+	error = fo_readdir(fp, &auio, basep, td);
+	foffset_unlock(fp, auio.uio_offset, 0);
+	fdrop(fp, td);
+	if (error != 0)
+		return (error);
+	if (residp != NULL)
+		*residp = auio.uio_resid;
+	td->td_retval[0] = count - auio.uio_resid;
+	return (0);
+}
+
+/*
+ * Directory entries of a vnode file.  A union mount's root directory reads
+ * on into the directory it covers, and the file follows: f_vnode moves to
+ * the covered vnode and the offset restarts, as it always has.
+ */
+int
+vn_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
+{
+	struct vn_file_context filectx;
+	struct vnode *vp;
+	ssize_t count;
+	off_t loff;
+	int error, eofflag;
+
+	count = uio->uio_resid;
+	vp = fp->f_vnode;
+unionread:
+	if (__predict_false((vp->v_vflag & VV_UNLINKED) != 0))
+		return (ENOENT);
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	/*
 	 * We want to return ENOTDIR for anything that is not VDIR, but
@@ -4486,31 +4456,26 @@ unionread:
 	 * unlocked.
 	 */
 	if (vp->v_type != VDIR) {
-		if (vp->v_type == VBAD)
-			error = EBADF;
-		else
-			error = ENOTDIR;
+		error = vp->v_type == VBAD ? EBADF : ENOTDIR;
 		VOP_UNLOCK(vp);
-		goto fail;
+		return (error);
 	}
 	AUDIT_ARG_VNODE1(vp);
-	loff = auio.uio_offset = foffset;
+	loff = uio->uio_offset;
 #ifdef MAC
 	error = mac_vnode_check_readdir(td->td_ucred, vp);
 	if (error == 0)
 #endif
 		{
 		vn_file_context_enter(&filectx, fp, NULL, 0);
-		error = VOP_READDIR(vp, &auio, fp->f_cred, &eofflag, NULL,
-		    NULL);
+		error = VOP_READDIR(vp, uio, fp->f_cred, &eofflag, NULL, NULL);
 		vn_file_context_leave(&filectx);
 	}
-	foffset = auio.uio_offset;
 	if (error != 0) {
 		VOP_UNLOCK(vp);
-		goto fail;
+		return (error);
 	}
-	if (count == auio.uio_resid &&
+	if (count == uio->uio_resid &&
 	    (vp->v_vflag & VV_ROOT) &&
 	    (vp->v_mount->mnt_flag & MNT_UNION)) {
 		struct vnode *tvp = vp;
@@ -4518,19 +4483,13 @@ unionread:
 		vp = vp->v_mount->mnt_vnodecovered;
 		vref(vp);
 		fp->f_vnode = vp;
-		foffset = 0;
+		uio->uio_offset = 0;
 		vput(tvp);
 		goto unionread;
 	}
 	VOP_UNLOCK(vp);
 	*basep = loff;
-	if (residp != NULL)
-		*residp = auio.uio_resid;
-	td->td_retval[0] = count - auio.uio_resid;
-fail:
-	foffset_unlock(fp, foffset, 0);
-	fdrop(fp, td);
-	return (error);
+	return (0);
 }
 
 /*
@@ -5129,9 +5088,6 @@ int
 kern_posix_fadvise_fp(struct thread *td, struct file *fp, off_t offset,
     off_t len, int advice)
 {
-	struct fadvise_info *fa, *new;
-	struct vnode *vp;
-	off_t end;
 	int error;
 
 	error = kern_posix_fadvise_validate(offset, len, advice);
@@ -5140,11 +5096,27 @@ kern_posix_fadvise_fp(struct thread *td, struct file *fp, off_t offset,
 	AUDIT_ARG_FILE(td->td_proc, fp);
 	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0)
 		return (ESPIPE);
-	if (fp->f_type != DTYPE_VNODE)
-		return (ENODEV);
+	return (fo_fadvise(fp, offset, len, advice, td));
+}
+
+/*
+ * The fadvise(2) regions a vnode file keeps in f_advice, consulted by
+ * vn_read() and vn_write(), plus VOP_ADVISE for the hints the filesystem
+ * acts on itself.  Only regular files have anything to advise about.
+ */
+int
+vn_fadvise(struct file *fp, off_t offset, off_t len, int advice,
+    struct thread *td)
+{
+	struct fadvise_info *fa, *new;
+	struct vnode *vp;
+	off_t end;
+	int error;
+
 	vp = fp->f_vnode;
 	if (vp->v_type != VREG)
 		return (ENODEV);
+	error = 0;
 	switch (advice) {
 	case POSIX_FADV_SEQUENTIAL:
 	case POSIX_FADV_RANDOM:
@@ -5253,17 +5225,13 @@ int
 kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
     off_t *outoffp, size_t len, unsigned int flags)
 {
-	struct vn_file_context filectx;
 	struct file *infp, *infp1, *outfp, *outfp1;
-	struct vnode *invp, *outvp;
 	int error;
 	size_t retlen;
-	void *rl_rcookie, *rl_wcookie;
 	off_t inoff, outoff, savinoff, savoutoff;
 	bool foffsets_locked, foffsets_set;
 
 	infp = outfp = NULL;
-	rl_rcookie = rl_wcookie = NULL;
 	foffsets_locked = false;
 	foffsets_set = false;
 	error = 0;
@@ -5290,20 +5258,12 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		error = EBADF;
 		goto out;
 	}
-	if (infp->f_vnode == NULL) {
-		error = EINVAL;
-		goto out;
-	}
 	error = fget_write(td, outfd,
 	    outoffp != NULL ? &cap_pwrite_rights : &cap_write_rights, &outfp);
 	if (error != 0)
 		goto out;
 	if (outfp->f_ops == &badfileops) {
 		error = EBADF;
-		goto out;
-	}
-	if (outfp->f_vnode == NULL) {
-		error = EINVAL;
 		goto out;
 	}
 
@@ -5339,12 +5299,20 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 	savinoff = inoff;
 	savoutoff = outoff;
 
-	invp = infp->f_vnode;
-	outvp = outfp->f_vnode;
 	/* Sanity check the f_flag bits. */
 	if ((outfp->f_flag & (FWRITE | FAPPEND)) != FWRITE ||
 	    (infp->f_flag & FREAD) == 0) {
 		error = EBADF;
+		goto out;
+	}
+
+	/*
+	 * Only descriptor types that can copy ranges take part; the vnode
+	 * test this replaces stood here, after the mode checks.
+	 */
+	if (infp->f_ops->fo_copy_file_range == NULL ||
+	    outfp->f_ops->fo_copy_file_range == NULL) {
+		error = EINVAL;
 		goto out;
 	}
 
@@ -5353,7 +5321,7 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 
 	/*
-	 * Make sure that the ranges we check and lock below are valid.  Note
+	 * Make sure that the ranges checked and locked below are valid.  Note
 	 * that len is clamped to SSIZE_MAX above.
 	 */
 	if (inoff < 0 || outoff < 0) {
@@ -5361,43 +5329,18 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 	}
 
-	/*
-	 * If infp and outfp refer to the same file, the byte ranges cannot
-	 * overlap.
-	 */
-	if (invp == outvp) {
-		if ((inoff <= outoff && inoff + len > outoff) ||
-		    (inoff > outoff && outoff + len > inoff)) {
-			error = EINVAL;
-			goto out;
-		}
-		rangelock_may_recurse(&invp->v_rl);
-	}
-
-	/* Range lock the byte ranges for both invp and outvp. */
-	for (;;) {
-		rl_wcookie = vn_rangelock_wlock(outvp, outoff, outoff + len);
-		rl_rcookie = vn_rangelock_tryrlock(invp, inoff, inoff + len);
-		if (rl_rcookie != NULL)
-			break;
-		vn_rangelock_unlock(outvp, rl_wcookie);
-		rl_rcookie = vn_rangelock_rlock(invp, inoff, inoff + len);
-		vn_rangelock_unlock(invp, rl_rcookie);
-	}
-
 	retlen = len;
-	vn_file_context_enter(&filectx, infp, outfp, 0);
-	SDT_PROBE3(vfs, , , copy__range__start, (invp), (outvp), (retlen));
-	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &retlen,
-	    flags, infp->f_cred, outfp->f_cred, td);
-	SDT_PROBE4(vfs, , , copy__range__done,
-	    (invp), (outvp), (retlen), (error));
-	vn_file_context_leave(&filectx);
+#ifdef MAC
+	error = mac_file_check_read(td->td_ucred, infp->f_cred, infp);
+	if (error == 0)
+		error = mac_file_check_write(td->td_ucred, outfp->f_cred,
+		    outfp);
+	if (error != 0)
+		goto out;
+#endif
+	error = fo_copy_file_range(infp, &inoff, outfp, &outoff, &retlen,
+	    flags, td);
 out:
-	if (rl_rcookie != NULL)
-		vn_rangelock_unlock(invp, rl_rcookie);
-	if (rl_wcookie != NULL)
-		vn_rangelock_unlock(outvp, rl_wcookie);
 	if ((foffsets_locked || foffsets_set) &&
 	    (error == EINTR || error == ERESTART)) {
 		inoff = savinoff;
@@ -5421,6 +5364,69 @@ out:
 	if (infp != NULL)
 		fdrop(infp, td);
 	td->td_retval[0] = retlen;
+	return (error);
+}
+
+/*
+ * copy_file_range(2) between two vnode files: the same-file overlap check,
+ * the byte-range locks on both vnodes, and vn_copy_file_range() inside the
+ * file context.  Offsets and length are written back whatever the result,
+ * as the system call then restores them on EINTR.
+ */
+int
+vn_copy_range(struct file *infp, off_t *inoffp, struct file *outfp,
+    off_t *outoffp, size_t *lenp, unsigned int flags, struct thread *td)
+{
+	struct vn_file_context filectx;
+	struct vnode *invp, *outvp;
+	void *rl_rcookie, *rl_wcookie;
+	off_t inoff, outoff;
+	size_t len;
+	int error;
+
+	/* The partner must be a vnode file too. */
+	if (outfp->f_vnode == NULL)
+		return (EINVAL);
+	invp = infp->f_vnode;
+	outvp = outfp->f_vnode;
+	inoff = *inoffp;
+	outoff = *outoffp;
+	len = *lenp;
+
+	/*
+	 * If infp and outfp refer to the same file, the byte ranges cannot
+	 * overlap.
+	 */
+	if (invp == outvp) {
+		if ((inoff <= outoff && inoff + len > outoff) ||
+		    (inoff > outoff && outoff + len > inoff))
+			return (EINVAL);
+		rangelock_may_recurse(&invp->v_rl);
+	}
+
+	/* Range lock the byte ranges for both invp and outvp. */
+	for (;;) {
+		rl_wcookie = vn_rangelock_wlock(outvp, outoff, outoff + len);
+		rl_rcookie = vn_rangelock_tryrlock(invp, inoff, inoff + len);
+		if (rl_rcookie != NULL)
+			break;
+		vn_rangelock_unlock(outvp, rl_wcookie);
+		rl_rcookie = vn_rangelock_rlock(invp, inoff, inoff + len);
+		vn_rangelock_unlock(invp, rl_rcookie);
+	}
+
+	vn_file_context_enter(&filectx, infp, outfp, 0);
+	SDT_PROBE3(vfs, , , copy__range__start, (invp), (outvp), (len));
+	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &len,
+	    flags, infp->f_cred, outfp->f_cred, td);
+	SDT_PROBE4(vfs, , , copy__range__done, (invp), (outvp), (len),
+	    (error));
+	vn_file_context_leave(&filectx);
+	vn_rangelock_unlock(invp, rl_rcookie);
+	vn_rangelock_unlock(outvp, rl_wcookie);
+	*inoffp = inoff;
+	*outoffp = outoff;
+	*lenp = len;
 	return (error);
 }
 

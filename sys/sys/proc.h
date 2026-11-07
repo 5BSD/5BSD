@@ -653,6 +653,18 @@ enum {
     (((td)->td_flags & TDF_SEINTR) != 0 ? EINTR : ERESTART)
 
 /*
+ * The image a process executes.  A vnode image keeps p_textvp valid;
+ * other kinds hold a file reference and the path the source presented.
+ */
+struct proc_image {
+	int		pi_kind;	/* PI_KIND_* */
+	struct file	*pi_fp;		/* held image file, or NULL */
+	char		*pi_path;	/* M_PARGS presented path, or NULL */
+};
+#define	PI_KIND_NONE	0
+#define	PI_KIND_VNODE	1
+
+/*
  * Process structure.
  */
 struct proc {
@@ -800,6 +812,10 @@ struct proc {
 	u_int		p_asig;		/* (c) ASYNCEXIT pending signal. */
 	u_int		p_tree_refcnt;	/* (e) proctree refcount */
 	u_int		p_zombieref;	/* (e) References for reap. */
+	/*
+	 * Appended so the asserted member offsets above stay put (KBI).
+	 */
+	struct proc_image p_image;	/* (b) Image source of executable. */
 };
 
 #define	p_session	p_pgrp->pg_session

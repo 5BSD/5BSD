@@ -474,13 +474,12 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 #ifdef KTRACE
 	struct ktr_io_params *kiop;
 #endif
-	struct vnode *oldtextvp, *newtextvp;
-	struct vnode *oldtextdvp, *newtextdvp;
-	char *oldbinname, *newbinname;
+	struct vnode *newtextvp;
+	const struct image_source_ops *installed_ops = NULL;
+	struct image_source_old old_image;
 	bool credential_changing;
 	struct cap_authority *exec_authority = NULL;
 #ifdef MAC
-	struct label *interpvplabel = NULL;
 	struct ucred *relabelcred = NULL;
 	bool will_transition;
 	bool will_relabel;
@@ -491,13 +490,9 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	int error, i, orig_osrel;
 	uint32_t orig_fctl0;
 	const Elf_Brandinfo *orig_brandinfo;
-	size_t freepath_size;
 	static const char fexecv_proc_title[] = "(fexecv)";
 
 	imgp = &image_params;
-	oldtextvp = oldtextdvp = NULL;
-	newtextvp = newtextdvp = NULL;
-	newbinname = oldbinname = NULL;
 #ifdef KTRACE
 	kiop = NULL;
 #endif
@@ -566,62 +561,20 @@ interpret:
 		if (error)
 			goto exec_fail;
 
-		newtextvp = nd.ni_vp;
-		newtextdvp = nd.ni_dvp;
-		nd.ni_dvp = NULL;
-		newbinname = malloc(nd.ni_cnd.cn_namelen + 1, M_PARGS,
-		    M_WAITOK);
-		memcpy(newbinname, nd.ni_cnd.cn_nameptr, nd.ni_cnd.cn_namelen);
-		newbinname[nd.ni_cnd.cn_namelen] = '\0';
-		imgp->vp = newtextvp;
-
-		if (atomic_load_8(&newtextdvp->v_type) != VDIR) {
-			struct vnode *dvp1;
-			char *buf1;
-			size_t buf1len;
-
-			/*
-			 * The newtextdvp vnode might be not a
-			 * directory when reclaimed or when the image
-			 * is mounted over a regular file.  In the
-			 * latter case, try to resolve the containing
-			 * directory.
-			 *
-			 * In any case, p_textdvp must be either a
-			 * directory or reclaimed.
-			 */
-			VOP_UNLOCK(imgp->vp);
-			dvp1 = newtextdvp;
-			buf1len = MAXNAMLEN + 1;
-			buf1 = malloc(buf1len, M_TEMP, M_WAITOK);
-			error = vn_vptocnp(&dvp1, buf1, &buf1len);
-			if (error == 0) {
-				if (atomic_load_8(&dvp1->v_type) == VDIR) {
-					newtextdvp = dvp1;
-				} else {
-					vrele(dvp1);
-					newtextdvp = NULL;
-				}
-			} else {
-				newtextdvp = NULL;
-			}
-			free(buf1, M_TEMP);
-			vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
-		}
+		/*
+		 * The image source takes the vnode, its parent and the
+		 * last component; the core does not look at nd again.
+		 */
+		exec_image_vnode_from_namei(imgp, &nd);
 
 		/*
 		 * Do the best to calculate the full path to the image file.
 		 */
 		if (args->fname[0] == '/') {
 			imgp->execpath = args->fname;
-		} else if (newtextdvp != NULL) {
-			VOP_UNLOCK(imgp->vp);
-			freepath_size = MAXPATHLEN;
-			if (vn_fullpath_hardlink(newtextvp, newtextdvp,
-			    newbinname, nd.ni_cnd.cn_namelen, &imgp->execpath,
-			    &imgp->freepath, &freepath_size) != 0)
-				imgp->execpath = args->fname;
-			vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		} else if (imgp->is_ops->is_path(imgp, &imgp->execpath,
+		    &imgp->freepath) != 0) {
+			imgp->execpath = args->fname;
 		}
 	} else if (imgp->interpreter_vp) {
 		/*
@@ -629,12 +582,7 @@ interpret:
 		 */
 		newtextvp = imgp->interpreter_vp;
 		imgp->interpreter_vp = NULL;
-		if (vn_fullpath(newtextvp, &imgp->execpath,
-		    &imgp->freepath) != 0)
-			imgp->execpath = args->fname;
-		vn_lock(newtextvp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(newtextvp);
-		imgp->vp = newtextvp;
+		exec_image_vnode_from_vnode(imgp, newtextvp);
 	} else {
 		AUDIT_ARG_FD(args->fd);
 
@@ -651,27 +599,18 @@ interpret:
 		if (error != 0)
 			goto exec_fail;
 
-		if (vn_fullpath(newtextvp, &imgp->execpath,
-		    &imgp->freepath) != 0)
-			imgp->execpath = args->fname;
-		vn_lock(newtextvp, LK_SHARED | LK_RETRY);
-		AUDIT_ARG_VNODE1(newtextvp);
-		imgp->vp = newtextvp;
+		exec_image_vnode_from_vnode(imgp, newtextvp);
 	}
 
 	/*
 	 * Check file permissions.  Also 'opens' file and sets its vnode to
 	 * text mode.
 	 */
-	error = exec_check_permissions(imgp);
+	error = imgp->is_ops->is_check(imgp);
 	if (error)
 		goto exec_fail_dealloc;
 
-	imgp->object = imgp->vp->v_object;
-	if (imgp->object != NULL)
-		vm_object_reference(imgp->object);
-
-	error = exec_map_first_page(imgp);
+	error = imgp->is_ops->is_first_page(imgp);
 	if (error)
 		goto exec_fail_dealloc;
 
@@ -705,8 +644,8 @@ interpret:
 	credential_changing |= (attr.va_mode & S_ISGID) &&
 	    oldcred->cr_gid != attr.va_gid;
 #ifdef MAC
-	will_transition = mac_vnode_execve_will_transition(oldcred, imgp->vp,
-	    interpvplabel, imgp) != 0;
+	will_transition = imgp->is_ops->is_mac(imgp, IS_MAC_WILL_TRANSITION,
+	    oldcred, NULL) != 0;
 	credential_changing |= will_transition;
 #endif
 
@@ -718,16 +657,16 @@ interpret:
 #ifdef CAPABILITY_MODE
 	    ((oldcred->cr_flags & CRED_FLAG_CAPMODE) == 0) &&
 #endif
-	    (imgp->vp->v_mount->mnt_flag & MNT_NOSUID) == 0 &&
+	    !imgp->is_ops->is_nosuid(imgp) &&
 	    (p->p_flag & P_TRACED) == 0) {
 		imgp->credential_setid = true;
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		imgp->newcred = crdup(oldcred);
 		if (attr.va_mode & S_ISUID) {
 			euip = uifind(attr.va_uid);
 			change_euid(imgp->newcred, euip);
 		}
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 		if (attr.va_mode & S_ISGID)
 			change_egid(imgp->newcred, attr.va_gid);
 		/*
@@ -756,9 +695,9 @@ interpret:
 		 */
 		if (oldcred->cr_svuid != oldcred->cr_uid ||
 		    oldcred->cr_svgid != oldcred->cr_gid) {
-			VOP_UNLOCK(imgp->vp);
+			imgp->is_ops->is_unlock(imgp);
 			imgp->newcred = crdup(oldcred);
-			vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+			imgp->is_ops->is_lock(imgp);
 			change_svuid(imgp->newcred, imgp->newcred->cr_uid);
 			change_svgid(imgp->newcred, imgp->newcred->cr_gid);
 		}
@@ -777,12 +716,12 @@ interpret:
 		crfree(relabelcred);
 		relabelcred = NULL;
 	}
-	will_relabel = mac_vnode_execve_will_relabel(oldcred, imgp->vp,
-	    interpvplabel, imgp) != 0;
+	will_relabel = imgp->is_ops->is_mac(imgp, IS_MAC_WILL_RELABEL,
+	    oldcred, NULL) != 0;
 	if (will_relabel) {
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		relabelcred = crdup(oldcred);
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 	}
 #endif
 
@@ -792,8 +731,7 @@ interpret:
 	 */
 	cap_authority_drop(exec_authority);
 	exec_authority = NULL;
-	if ((imgp->vp->v_mount->mnt_flag & MNT_NOSUID) == 0)
-		exec_authority = cap_authority_exec_prepare(p, imgp->vp);
+	exec_authority = imgp->is_ops->is_authority_prepare(imgp, p);
 	imgp->authority_setid = exec_authority != NULL;
 
 	/* The new credentials are installed into the process later. */
@@ -830,27 +768,13 @@ interpret:
 		 * so nothing should illegitimately be blocked.
 		 */
 		MPASS(imgp->textset);
-		VOP_UNSET_TEXT_CHECKED(newtextvp);
-		imgp->textset = false;
+		imgp->is_ops->is_unset_text(imgp);
 		/* free name buffer and old vnode */
 #ifdef MAC
-		mac_execve_interpreter_enter(newtextvp, &interpvplabel);
+		imgp->is_ops->is_mac(imgp, IS_MAC_INTERP_ENTER, NULL, NULL);
 #endif
-		if (imgp->opened) {
-			VOP_CLOSE(newtextvp, FREAD, td->td_ucred, td);
-			imgp->opened = false;
-		}
-		vput(newtextvp);
-		imgp->vp = newtextvp = NULL;
-		if (args->fname != NULL) {
-			if (newtextdvp != NULL) {
-				vrele(newtextdvp);
-				newtextdvp = NULL;
-			}
-			NDFREE_PNBUF(&nd);
-			free(newbinname, M_PARGS);
-			newbinname = NULL;
-		}
+		/* The script's reference is dropped: it is never installed. */
+		imgp->is_ops->is_close(imgp, ENOEXEC);
 		vm_object_deallocate(imgp->object);
 		imgp->object = NULL;
 		execve_nosetid(imgp);
@@ -870,14 +794,14 @@ interpret:
 	 * NB: We unlock the vnode here because it is believed that none
 	 * of the sv_copyout_strings/sv_fixup operations require the vnode.
 	 */
-	VOP_UNLOCK(imgp->vp);
+	imgp->is_ops->is_unlock(imgp);
 
 	if (disallow_high_osrel &&
 	    P_OSREL_MAJOR(p->p_osrel) > P_OSREL_MAJOR(__FreeBSD_version)) {
 		error = ENOEXEC;
 		uprintf("Osrel %d for image %s too high\n", p->p_osrel,
 		    imgp->execpath != NULL ? imgp->execpath : "<unresolved>");
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 		goto exec_fail_dealloc;
 	}
 
@@ -886,7 +810,7 @@ interpret:
 	 */
 	error = (*p->p_sysent->sv_copyout_strings)(imgp, &stack_base);
 	if (error != 0) {
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 		goto exec_fail_dealloc;
 	}
 
@@ -895,7 +819,7 @@ interpret:
 	 */
 	error = (*p->p_sysent->sv_fixup)(&stack_base, imgp);
 	if (error != 0) {
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 		goto exec_fail_dealloc;
 	}
 
@@ -932,7 +856,7 @@ interpret:
 		sigacts_copy(newsigacts, oldsigacts);
 	}
 
-	vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+	imgp->is_ops->is_lock(imgp);
 
 	PROC_LOCK(p);
 	if (oldsigacts)
@@ -945,10 +869,7 @@ interpret:
 
 	/* name this process - nameiexec(p, ndp) */
 	bzero(p->p_comm, sizeof(p->p_comm));
-	if (args->fname)
-		bcopy(nd.ni_cnd.cn_nameptr, p->p_comm,
-		    min(nd.ni_cnd.cn_namelen, MAXCOMLEN));
-	else if (vn_commname(newtextvp, p->p_comm, sizeof(p->p_comm)) != 0)
+	if (imgp->is_ops->is_commname(imgp, p->p_comm, sizeof(p->p_comm)) != 0)
 		bcopy(fexecv_proc_title, p->p_comm, sizeof(fexecv_proc_title));
 	bcopy(p->p_comm, td->td_name, sizeof(td->td_name));
 #ifdef KTR
@@ -1002,17 +923,17 @@ interpret:
 		 * taking sleepable locks, so temporarily drop our locks.
 		 */
 		PROC_UNLOCK(p);
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		fdsetugidsafety(td);
 		error = fdcheckstd(td);
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 		if (error != 0)
 			goto exec_fail_dealloc;
 		PROC_LOCK(p);
 #ifdef MAC
 		if (will_transition) {
-			mac_vnode_execve_transition(oldcred, imgp->newcred,
-			    imgp->vp, interpvplabel, imgp);
+			imgp->is_ops->is_mac(imgp, IS_MAC_TRANSITION, oldcred,
+			    imgp->newcred);
 		}
 #endif
 	} else {
@@ -1027,16 +948,16 @@ interpret:
 	 * exec, or a set-id credential stripped by execve_nosetid() for a
 	 * no_new_privs / disallowed-setid exec — adopt the private
 	 * credential prepared above so the refresh still takes effect.
-	 * PROC_LOCK is held and the text vnode is locked here (matching
-	 * mac_vnode_execve_transition()); nothing below sleeps.
+	 * PROC_LOCK is held and the image is locked here (matching the
+	 * TRANSITION phase); nothing below sleeps.
 	 */
 	if (will_relabel) {
 		if (imgp->newcred == NULL) {
 			imgp->newcred = relabelcred;
 			relabelcred = NULL;
 		}
-		mac_vnode_execve_relabel(oldcred, imgp->newcred, imgp->vp,
-		    interpvplabel, imgp);
+		imgp->is_ops->is_mac(imgp, IS_MAC_RELABEL, oldcred,
+		    imgp->newcred);
 	}
 #endif
 	/*
@@ -1049,19 +970,13 @@ interpret:
 	}
 
 	/*
-	 * Store the vp for use in kern.proc.pathname.  This vnode was
-	 * referenced by namei() or by fexecve variant of fname handling.
+	 * Install the image as the process's: p_textvp (and p_image) for
+	 * use in kern.proc.pathname.  The old image is released at the end.
 	 */
-	cap_authority_exec(p, newtextvp,
+	imgp->is_ops->is_authority_exec(imgp, p,
 	    imgp->authority_setid ? exec_authority : NULL);
-	oldtextvp = p->p_textvp;
-	p->p_textvp = newtextvp;
-	oldtextdvp = p->p_textdvp;
-	p->p_textdvp = newtextdvp;
-	newtextdvp = NULL;
-	oldbinname = p->p_binname;
-	p->p_binname = newbinname;
-	newbinname = NULL;
+	imgp->is_ops->is_install(imgp, p, &old_image);
+	installed_ops = imgp->is_ops;
 
 #ifdef KDTRACE_HOOKS
 	/*
@@ -1104,13 +1019,13 @@ interpret:
 	 * P_INEXEC flag is cleared.
 	 */
 	if (PMC_SYSTEM_SAMPLING_ACTIVE() || PMC_PROC_IS_USING_PMCS(p)) {
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		pe.pm_credentialschanged = imgp->credential_setid;
 		pe.pm_baseaddr = imgp->reloc_base;
 		pe.pm_dynaddr = imgp->et_dyn_addr;
 
 		PMC_CALL_HOOK_X(td, PMC_FN_PROCESS_EXEC, (void *) &pe);
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 	}
 #endif
 
@@ -1118,7 +1033,7 @@ interpret:
 	if ((td->td_proc->p_flag2 & P2_HWT) != 0) {
 		struct hwt_record_entry ent;
 
-		VOP_UNLOCK(imgp->vp);
+		imgp->is_ops->is_unlock(imgp);
 		ent.fullpath = imgp->execpath;
 		ent.addr = imgp->et_dyn_addr;
 		ent.baseaddr = imgp->reloc_base;
@@ -1126,7 +1041,7 @@ interpret:
 		ent.len = 0;
 		ent.record_type = HWT_RECORD_EXECUTABLE;
 		HWT_CALL_HOOK(td, HWT_EXEC, &ent);
-		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		imgp->is_ops->is_lock(imgp);
 	}
 #endif
 
@@ -1137,7 +1052,7 @@ interpret:
 	mac_proc_notify_exec_complete(p);
 #endif
 
-	VOP_UPDATE_ATIME(imgp->vp, NULL);
+	imgp->is_ops->is_accessed(imgp);
 
 	SDT_PROBE1(proc, , , exec__success, args->fname);
 
@@ -1151,21 +1066,12 @@ exec_fail_dealloc:
 	if (imgp->firstpage != NULL)
 		exec_unmap_first_page(imgp);
 
-	if (imgp->vp != NULL) {
-		if (imgp->opened)
-			VOP_CLOSE(imgp->vp, FREAD, td->td_ucred, td);
-		if (imgp->textset)
-			VOP_UNSET_TEXT_CHECKED(imgp->vp);
-		if (error != 0)
-			vput(imgp->vp);
-		else
-			VOP_UNLOCK(imgp->vp);
-		if (args->fname != NULL)
-			NDFREE_PNBUF(&nd);
-		if (newtextdvp != NULL)
-			vrele(newtextdvp);
-		free(newbinname, M_PARGS);
-	}
+	/*
+	 * A constructed image source is closed here: with its reference on
+	 * error, keeping the reference p_textvp now owns on success.
+	 */
+	if (imgp->is_ops != NULL)
+		imgp->is_ops->is_close(imgp, error);
 
 	if (imgp->object != NULL)
 		vm_object_deallocate(imgp->object);
@@ -1201,18 +1107,16 @@ exec_fail:
 
 #ifdef MAC
 	mac_execve_exit(imgp);
-	mac_execve_interpreter_exit(interpvplabel);
+	mac_execve_interpreter_exit(imgp->interpvplabel);
 #endif
 	exec_free_args(args);
 
 	/*
-	 * Handle deferred decrement of ref counts.
+	 * Handle deferred decrement of ref counts: the image the new one
+	 * displaced, now that the process lock and the image lock are gone.
 	 */
-	if (oldtextvp != NULL)
-		vrele(oldtextvp);
-	if (oldtextdvp != NULL)
-		vrele(oldtextdvp);
-	free(oldbinname, M_PARGS);
+	if (installed_ops != NULL)
+		installed_ops->is_release_old(imgp, &old_image);
 #ifdef KTRACE
 	ktr_io_params_free(kiop);
 #endif
@@ -1265,7 +1169,7 @@ exec_map_first_page(struct image_params *imgp)
 	if (imgp->firstpage != NULL)
 		exec_unmap_first_page(imgp);
 
-	object = imgp->vp->v_object;
+	object = imgp->object;
 	if (object == NULL)
 		return (EACCES);
 #if VM_NRESERVLEVEL > 0
@@ -2020,83 +1924,6 @@ exec_copyout_strings(struct image_params *imgp, uintptr_t *stack_base)
 	}
 
 	return (0);
-}
-
-/*
- * Check permissions of file to execute.
- *	Called with imgp->vp locked.
- *	Return 0 for success or error code on failure.
- */
-int
-exec_check_permissions(struct image_params *imgp)
-{
-	struct vnode *vp = imgp->vp;
-	struct vattr *attr = imgp->attr;
-	struct thread *td;
-	int error;
-
-	td = curthread;
-
-	/* Get file attributes */
-	error = VOP_GETATTR(vp, attr, td->td_ucred);
-	if (error)
-		return (error);
-
-#ifdef MAC
-	error = mac_vnode_check_exec(td->td_ucred, imgp->vp, imgp);
-	if (error)
-		return (error);
-#endif
-
-	/*
-	 * 1) Check if file execution is disabled for the filesystem that
-	 *    this file resides on.
-	 * 2) Ensure that at least one execute bit is on. Otherwise, a
-	 *    privileged user will always succeed, and we don't want this
-	 *    to happen unless the file really is executable.
-	 * 3) Ensure that the file is a regular file.
-	 */
-	if ((vp->v_mount->mnt_flag & MNT_NOEXEC) ||
-	    (attr->va_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0 ||
-	    (attr->va_type != VREG))
-		return (EACCES);
-
-	/*
-	 * Zero length files can't be exec'd
-	 */
-	if (attr->va_size == 0)
-		return (ENOEXEC);
-
-	/*
-	 *  Check for execute permission to file based on current credentials.
-	 */
-	error = VOP_ACCESS(vp, VEXEC, td->td_ucred, td);
-	if (error)
-		return (error);
-
-	/*
-	 * Check number of open-for-writes on the file and deny execution
-	 * if there are any.
-	 *
-	 * Add a text reference now so no one can write to the
-	 * executable while we're activating it.
-	 *
-	 * Remember if this was set before and unset it in case this is not
-	 * actually an executable image.
-	 */
-	error = VOP_SET_TEXT(vp);
-	if (error != 0)
-		return (error);
-	imgp->textset = true;
-
-	/*
-	 * Call filesystem specific open routine (which does nothing in the
-	 * general case).
-	 */
-	error = VOP_OPEN(vp, FREAD, td->td_ucred, td, NULL);
-	if (error == 0)
-		imgp->opened = true;
-	return (error);
 }
 
 /*

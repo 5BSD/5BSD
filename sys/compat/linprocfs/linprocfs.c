@@ -1644,9 +1644,9 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 	const char *l_map_str;
 	ino_t ino;
 	int error;
-	struct vnode *vp;
-	struct vattr vat;
-	bool private;
+	struct vm_object_kinfo ki;
+	struct vm_object_kinfo_hold kh;
+	bool held, private;
 
 	if (uio->uio_rw != UIO_READ)
 		return (EOPNOTSUPP);
@@ -1695,18 +1695,18 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 		vm_map_unlock_read(map);
 		ino = 0;
 		if (lobj) {
-			vp = vm_object_vnode(lobj);
-			if (vp != NULL)
-				vref(vp);
+			/* The name and inode are the pager's report. */
+			held = vm_object_kinfo_hold(lobj, &kh);
 			if (lobj != obj)
 				VM_OBJECT_RUNLOCK(lobj);
 			VM_OBJECT_RUNLOCK(obj);
-			if (vp != NULL) {
-				vn_fullpath(vp, &name, &freename);
-				vn_lock(vp, LK_SHARED | LK_RETRY);
-				VOP_GETATTR(vp, &vat, td->td_ucred);
-				ino = vat.va_fileid;
-				vput(vp);
+			if (held) {
+				vm_object_kinfo(&kh, &ki, td);
+				if (ki.vk_path != NULL)
+					name = ki.vk_path;
+				freename = ki.vk_freepath;
+				ino = ki.vk_fileid;
+				vm_object_kinfo_release(&kh);
 			} else if (SV_PROC_ABI(p) == SV_ABI_LINUX) {
 				/*
 				 * sv_shared_page_base pointed out to the

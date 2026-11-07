@@ -13,6 +13,18 @@ TAP_TESTS_SH+=	flock_test
 PLAIN_TESTS_C+=	ftruncate_test
 PLAIN_TESTS_C+=	newfileops_on_fork_test
 ATF_TESTS_C+=	fspacectl_test
+ATF_TESTS_C+=	fpathconf_test
+ATF_TESTS_C+=	fstatfs_test
+ATF_TESTS_C+=	fsync_test
+ATF_TESTS_C+=	fsetattr_test
+ATF_TESTS_C+=	fadvise_test
+ATF_TESTS_C+=	getdirentries_test
+ATF_TESTS_C+=	copy_file_range_test
+ATF_TESTS_C+=	acl_fd_test
+ATF_TESTS_C+=	extattr_fd_test
+ATF_TESTS_C+=	fcntl_fileop_test
+ATF_TESTS_C+=	advlock_fd_test
+ATF_TESTS_C+=	mmap_privwrite_test
 
 PROGS+=		flock_helper
 

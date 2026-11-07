@@ -114,6 +114,7 @@
 #include <sys/proc.h>
 #include <sys/vnode.h>
 #include <sys/uio.h>
+#include <sys/unistd.h>
 #include <sys/user.h>
 #include <sys/event.h>
 
@@ -202,6 +203,14 @@ struct pipeasync {
 static fo_chmod_t	pipe_chmod;
 static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
+static fo_pathconf_t	pipe_pathconf;
+static fo_statfs_t	pipe_statfs;
+static fo_fsync_t	pipe_fsync;
+static fo_setattr_t	pipe_setattr;
+static fo_readdir_t	pipe_readdir;
+static fo_acl_t		pipe_acl;
+static fo_extattr_t	pipe_extattr;
+static fo_advlock_t	pipe_advlock;
 
 const struct fileops pipeops = {
 	.fo_read = pipe_read,
@@ -217,7 +226,15 @@ const struct fileops pipeops = {
 	.fo_sendfile = invfo_sendfile,
 	.fo_fill_kinfo = pipe_fill_kinfo,
 	.fo_cmp = file_kcmp_generic,
-	.fo_flags = DFLAG_PASSABLE
+	.fo_pathconf = pipe_pathconf,
+	.fo_statfs = pipe_statfs,
+	.fo_fsync = pipe_fsync,
+	.fo_setattr = pipe_setattr,
+	.fo_readdir = pipe_readdir,
+	.fo_acl = pipe_acl,
+	.fo_extattr = pipe_extattr,
+	.fo_advlock = pipe_advlock,
+	.fo_flags = DFLAG_PASSABLE | DFLAG_FLOCK	/* FIFOs; not RECLOCK */
 };
 
 static void	filt_pipedetach(struct knote *kn);
@@ -2051,6 +2068,114 @@ pipe_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	} else
 		error = invfo_chown(fp, uid, gid, active_cred, td);
 	return (error);
+}
+
+/*
+ * A FIFO answers as its vnode does; an anonymous pipe knows only
+ * _PC_PIPE_BUF.
+ */
+static int
+pipe_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_pathconf(fp, name, valuep, td));
+	if (name != _PC_PIPE_BUF)
+		return (EINVAL);
+	*valuep = PIPE_BUF;
+	return (0);
+}
+
+/* A FIFO lives on a filesystem; an anonymous pipe does not. */
+static int
+pipe_statfs(struct file *fp, struct statfs *buf, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_statfs(fp, buf, td));
+	return (invfo_statfs(fp, buf, td));
+}
+
+static int
+pipe_fsync(struct file *fp, int mode, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_fsync(fp, mode, td));
+	return (invfo_fsync(fp, mode, td));
+}
+
+static int
+pipe_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
+    struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_setattr(fp, vap, active_cred, td));
+	return (invfo_setattr(fp, vap, active_cred, td));
+}
+
+/* A FIFO's vnode says ENOTDIR; an anonymous pipe has no vnode to ask. */
+static int
+pipe_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_readdir(fp, uio, basep, td));
+	return (invfo_readdir(fp, uio, basep, td));
+}
+
+static int
+pipe_acl(struct file *fp, int op, int type, struct acl *aclp,
+    struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_acl(fp, op, type, aclp, td));
+	return (invfo_acl(fp, op, type, aclp, td));
+}
+
+static int
+pipe_extattr(struct file *fp, int op, int attrnamespace, const char *attrname,
+    void *data, size_t nbytes, struct uio *auio, struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
+		return (vn_extattr(fp, op, attrnamespace, attrname, data,
+		    nbytes, auio, td));
+	return (invfo_extattr(fp, op, attrnamespace, attrname, data, nbytes,
+	    auio, td));
+}
+
+/*
+ * A FIFO takes flock(2) locks on its vnode; the fcntl(2) record locks were
+ * EBADF for it (and so is the POSIX unlock a close owes), as for a pipe.
+ */
+static int
+pipe_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
+    struct thread *td)
+{
+	struct pipe *cpipe;
+
+	cpipe = fp->f_data;
+	if ((cpipe->pipe_type & PIPE_TYPE_NAMED) != 0 &&
+	    (flags & F_FLOCK) != 0)
+		return (vn_advlock(fp, id, op, fl, flags, td));
+	return (invfo_advlock(fp, id, op, fl, flags, td));
 }
 
 static int

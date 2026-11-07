@@ -1,0 +1,710 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd November 6, 2026
+.Dt FILEOPS 9
+.Os
+.Sh NAME
+.Nm fileops ,
+.Nm fo_pathconf ,
+.Nm fo_statfs ,
+.Nm fo_fsync ,
+.Nm fo_setattr ,
+.Nm fo_fadvise ,
+.Nm fo_readdir ,
+.Nm fo_copy_file_range ,
+.Nm fo_acl ,
+.Nm fo_extattr ,
+.Nm fo_fcntl ,
+.Nm fo_advlock
+.Nd operations on an open file descriptor
+.Sh SYNOPSIS
+.In sys/param.h
+.In sys/file.h
+.Ft int
+.Fn fo_pathconf "struct file *fp" "int name" "long *valuep" "struct thread *td"
+.Ft int
+.Fn fo_statfs "struct file *fp" "struct statfs *buf" "struct thread *td"
+.Ft int
+.Fn fo_fsync "struct file *fp" "int mode" "struct thread *td"
+.Ft int
+.Fn fo_setattr "struct file *fp" "struct vattr *vap" "struct ucred *active_cred" "struct thread *td"
+.Ft int
+.Fn fo_fadvise "struct file *fp" "off_t offset" "off_t len" "int advice" "struct thread *td"
+.Ft int
+.Fn fo_readdir "struct file *fp" "struct uio *uio" "off_t *basep" "struct thread *td"
+.Ft int
+.Fn fo_copy_file_range "struct file *infp" "off_t *inoffp" "struct file *outfp" "off_t *outoffp" "size_t *lenp" "unsigned int flags" "struct thread *td"
+.Ft int
+.Fn fo_acl "struct file *fp" "int op" "int type" "struct acl *aclp" "struct thread *td"
+.Ft int
+.Fn fo_extattr "struct file *fp" "int op" "int attrnamespace" "const char *attrname" "void *data" "size_t nbytes" "struct uio *auio" "struct thread *td"
+.Ft int
+.Fn fo_fcntl "struct file *fp" "int cmd" "intptr_t arg" "struct thread *td"
+.Ft int
+.Fn fo_advlock "struct file *fp" "void *id" "int op" "struct flock *fl" "int flags" "struct thread *td"
+.Sh DESCRIPTION
+Every open file
+.Pq Vt "struct file"
+carries a pointer,
+.Va f_ops ,
+to a
+.Vt "struct fileops"
+table that implements each operation a process can perform on the
+descriptor.
+System calls that take a file descriptor dispatch through this table and
+never through the descriptor's type
+.Pq Va f_type
+or through a vnode the file may carry
+.Pq Va f_vnode ;
+where one must tell an
+.Dv O_PATH
+descriptor apart it compares the table itself
+.Pq Va f_ops ,
+not a type.
+A descriptor type therefore answers for itself, and a type that is not
+backed by a vnode is complete without one.
+.Pp
+Each member has an inline dispatch function of the same name.
+Members that a table leaves
+.Dv NULL
+dispatch to a type-neutral default, named
+.Fn invfo_* ,
+which returns the error the operation has always returned for a descriptor
+of no particular type.
+Vnode-backed descriptors use the
+.Fn vn_*
+implementations.
+.Pp
+A table also describes its type through
+.Va fo_flags .
+Besides
+.Dv DFLAG_PASSABLE
+and
+.Dv DFLAG_SEEKABLE ,
+.Dv DFLAG_PRIVWRITE
+marks a type whose
+.Dv MAP_PRIVATE
+mappings are copy-on-write and never reach the object, so
+.Xr mmap 2
+grants
+.Dv PROT_WRITE
+on such a mapping of a descriptor that lacks the
+.Dv CAP_MMAP_W
+right.
+Vnode files,
+.Xr devfs 4
+nodes and shm objects set it;
+.Xr mmap 2
+tests the flag, never the descriptor's type.
+.Dv DFLAG_FLOCK
+and
+.Dv DFLAG_RECLOCK
+mark the types that take
+.Xr flock 2
+locks and
+.Xr fcntl 2
+record locks:
+.Xr flock 2
+refuses a table without the first with
+.Er EOPNOTSUPP ,
+the record-lock commands a table without the second with
+.Er EBADF ,
+both before looking at their arguments, as the type tests did.
+The FIFO table carries
+.Dv DFLAG_FLOCK
+only.
+.Pp
+The vnode bodies of the per-open vnode tables run inside the file context
+.Pq Fn vn_file_context_enter
+like every other member of those tables, where the system calls they
+replace entered none; filesystems that key on the open file, such as
+.Xr fusefs 4 ,
+and
+.Xr inotify 2
+therefore see the per-open identity for these operations too.
+.Ss Descriptors that carry a vnode without being vnode files
+Several descriptor types keep a reference to the vnode they were opened
+through although they are not
+.Dv DTYPE_VNODE
+files served by
+.Va vnops :
+FIFOs
+.Pq Va pipeops ,
+pseudo-terminal masters,
+.Xr devfs 4
+nodes under their own tables, and linuxkpi files.
+For every operation that is answered by the vnode, these tables install the
+.Fn vn_*
+implementation explicitly, so the descriptor answers exactly as its vnode
+does; no default inspects
+.Va f_vnode .
+A table that does not carry a vnode must not install a
+.Fn vn_*
+member.
+.Pp
+Two tables carry a vnode only on some creation paths: a pseudo-terminal
+master has one when opened through
+.Pa /dev/ptmx
+and none from
+.Xr posix_openpt 2 ;
+a linuxkpi file has one when opened through
+.Xr devfs 4
+and none from
+.Fn fd_install .
+Those tables install the
+.Fn vn_*_opt
+variants, which answer through the vnode when it is present and give the
+type-neutral answer otherwise.
+Installing a plain
+.Fn vn_*
+member there dereferences a null vnode.
+.Ss fo_pathconf
+.Fn fo_pathconf
+answers
+.Xr fpathconf 2 :
+it stores the value of the configuration variable
+.Fa name
+through
+.Fa valuep
+and returns 0, or returns an error.
+.Dv _PC_ASYNC_IO
+is answered by the system call for every descriptor and never reaches the
+table.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_pathconf
+locks the vnode shared and calls
+.Xr VOP_PATHCONF 9 .
+Directories, regular files,
+.Dv O_PATH
+files, FIFOs, pseudo-terminal masters, devfs nodes and linuxkpi files all
+use it.
+.It pipes and sockets
+Answer
+.Dv _PC_PIPE_BUF
+with
+.Dv PIPE_BUF
+and return
+.Er EINVAL
+for every other name.
+A FIFO is a pipe that carries a vnode and answers through the vnode
+instead.
+.It everything else
+.Fn invfo_pathconf
+returns
+.Er EOPNOTSUPP .
+.El
+.Ss fo_statfs
+.Fn fo_statfs
+answers
+.Xr fstatfs 2
+by filling
+.Fa buf .
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_statfs
+references the vnode's mount, runs the MAC mount-stat check, and calls
+.Fn kern_do_statfs ,
+which busies the mount, calls
+.Xr VFS_STATFS 9
+and applies jail
+.Xr statfs 2
+enforcement.
+All of it needs the mount, so none of it is left in the system call.
+Directories, regular files,
+.Dv O_PATH
+files, FIFOs, pseudo-terminal masters, devfs nodes and linuxkpi files all
+use it.
+.It everything else
+.Fn invfo_statfs
+returns
+.Er EINVAL ,
+the error a descriptor without a vnode has always received.
+.El
+.Ss fo_fsync
+.Fn fo_fsync
+flushes the file according to
+.Fa mode :
+.Bl -tag -width "FO_FSYNC_FULL" -compact
+.It Dv FO_FSYNC_FULL
+data and metadata, as
+.Xr fsync 2
+and
+.Dv LIO_SYNC ;
+.It Dv FO_FSYNC_DATA
+data only, as
+.Xr fdatasync 2
+and
+.Dv LIO_DSYNC ;
+.It Dv FO_FSYNC_FS
+the whole filesystem the file is on, as Linux
+.Fn syncfs .
+.El
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_fsync
+is the one implementation for the system calls,
+.Xr aio_fsync 2
+and
+.Fn syncfs .
+It suspends writes on the mount, locks the vnode, cleans its pages and
+calls
+.Xr VOP_FSYNC 9
+or
+.Xr VOP_FDATASYNC 9 ,
+retrying on
+.Er ERELOOKUP ;
+for
+.Dv FO_FSYNC_FS
+it busies the mount and runs
+.Xr VFS_SYNC 9 .
+It enters the file context itself, so every table installs it directly.
+Directories, regular files, FIFOs, pseudo-terminal masters, devfs nodes,
+linuxkpi files and
+.Dv O_PATH
+files use it;
+.Xr fsync 2
+and
+.Xr fdatasync 2
+refuse an
+.Dv O_PATH
+descriptor with
+.Er EBADF
+before reaching the table, as they always did, while
+.Xr aio_fsync 2
+and
+.Fn syncfs
+accept one, as they always did.
+.It everything else
+.Fn invfo_fsync
+returns
+.Er EINVAL .
+.El
+.Ss fo_setattr
+.Fn fo_setattr
+sets the access, modification and birth times and the file flags given in
+.Fa vap ;
+a field holding
+.Dv VNOVAL
+is left alone.
+Mode, owner and size have their own operations
+.Pq Fn fo_chmod , Fn fo_chown , Fn fo_truncate
+and are refused with
+.Er EINVAL .
+It answers
+.Xr futimens 2 ,
+.Xr futimes 2 ,
+.Xr fchflags 2 ,
+Linux file attribute flags, and attribute changes made through
+.Pa /dev/fd/N ,
+which
+.Xr fdescfs 4
+splits across the four operations.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_setattr
+carries the checks the system calls used to make themselves: the vnode
+audit record, the privilege to set flags on a device, the MAC flag and time
+checks and notifications, and the birth-time adjustment of
+.Xr utimes 2 .
+It then suspends writes on the mount, locks the vnode and calls
+.Xr VOP_SETATTR 9 .
+Directories, regular files, FIFOs, pseudo-terminal masters, devfs nodes,
+linuxkpi files and
+.Dv O_PATH
+files use it;
+.Xr futimens 2 ,
+.Xr futimes 2
+and
+.Xr fchflags 2
+refuse an
+.Dv O_PATH
+descriptor with
+.Er EBADF
+before reaching the table, as they always did.
+.It everything else
+.Fn invfo_setattr
+returns
+.Er EINVAL .
+.El
+.Ss fo_fadvise
+.Fn fo_fadvise
+applies a
+.Xr posix_fadvise 2
+hint to the byte range
+.Fa offset
+and
+.Fa len .
+The system call validates the range and the advice, records the audit
+argument, and refuses a descriptor without
+.Dv DFLAG_SEEKABLE
+with
+.Er ESPIPE
+before the table is consulted.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_fadvise
+keeps the sequential, random and no-reuse regions in the file's
+.Va f_advice ,
+which
+.Fn vn_read
+and
+.Fn vn_write
+consult, and passes the will-need and do-not-need hints to
+.Xr VOP_ADVISE 9 .
+Only a regular file has anything to advise about; directories and devices
+return
+.Er ENODEV .
+.It everything else
+.Fn invfo_fadvise
+returns
+.Er ENODEV .
+.El
+.Ss fo_readdir
+.Fn fo_readdir
+answers
+.Xr getdirentries 2 :
+it reads directory entries into
+.Fa uio
+from
+.Va uio_offset ,
+leaves
+.Va uio_offset
+at the next entry, and stores the offset the read began from through
+.Fa basep .
+The system call holds the file's offset lock around the call, checks
+.Dv FREAD ,
+and refuses
+.Dv O_PATH
+descriptors with
+.Er EBADF ,
+as it always did.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_readdir
+locks the vnode shared, returns
+.Er ENOTDIR
+for anything that is not a directory, runs the MAC readdir check and
+.Xr VOP_READDIR 9 ,
+and, when a union mount's root directory is exhausted, moves the file to
+the covered directory and reads on, as it always did.
+Directories use it; FIFOs, devfs nodes and vnode-carrying pseudo-terminal
+masters and linuxkpi files reach it and get
+.Er ENOTDIR .
+.It everything else
+.Fn invfo_readdir
+returns
+.Er EINVAL .
+.El
+.Ss fo_copy_file_range
+.Fn fo_copy_file_range
+answers
+.Xr copy_file_range 2 ,
+dispatched on the input file's table.
+.Fa lenp
+carries the requested length in and the copied length out; the offsets
+are updated whatever the result.
+The system call validates the flags, clamps the length, takes both files'
+offset locks, checks the open modes and refuses negative offsets; it
+consults the table only when both descriptors install the operation, and
+returns
+.Er EINVAL
+otherwise, which is what descriptors without a vnode received.
+.Bl -tag -width "vnode files"
+.It vnode files
+.Fn vn_copy_range
+refuses overlapping ranges of one file, range-locks both vnodes, and runs
+.Fn vn_copy_file_range
+inside the file context.
+.Va vnops
+and the per-open vnode tables install it: FIFOs, devices and
+pseudo-terminal masters were refused by
+.Fn vn_copy_file_range
+and keep the same
+.Er EINVAL
+through the default.
+.It everything else
+.Fn invfo_copy_file_range
+returns
+.Er EINVAL .
+.El
+.Ss fo_acl
+.Fn fo_acl
+answers the
+.Fn __acl_get_fd ,
+.Fn __acl_set_fd ,
+.Fn __acl_delete_fd
+and
+.Fn __acl_aclcheck_fd
+system calls, selected by
+.Fa op
+.Pq Dv FO_ACL_GET , Dv FO_ACL_SET , Dv FO_ACL_DELETE , Dv FO_ACL_CHECK ,
+for the
+.Vt acl_type_t
+.Fa type .
+The system calls record the descriptor audit argument and refuse set and
+delete on an
+.Dv O_PATH
+descriptor with
+.Er EBADF ,
+as they always did; get and check accept one.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_acl
+calls the
+.Fn vacl_*
+helper for the operation, each of which locks the vnode and runs its own
+MAC check and audit record before
+.Xr VOP_GETACL 9 ,
+.Xr VOP_SETACL 9
+or
+.Xr VOP_ACLCHECK 9 .
+Regular files, directories,
+.Dv O_PATH
+files, FIFOs, devfs nodes and vnode-carrying pseudo-terminal masters and
+linuxkpi files use it, and get whatever their filesystem answers.
+.It everything else
+.Fn invfo_acl
+returns
+.Er EINVAL .
+.El
+.Ss fo_extattr
+.Fn fo_extattr
+answers the
+.Xr extattr_set_fd 2 ,
+.Xr extattr_get_fd 2 ,
+.Xr extattr_delete_fd 2
+and
+.Xr extattr_list_fd 2
+system calls and the Linux
+.Fn f*xattr
+family, selected by
+.Fa op
+.Pq Dv FO_EXTATTR_SET , Dv FO_EXTATTR_GET , Dv FO_EXTATTR_DELETE , Dv FO_EXTATTR_LIST .
+Set and get take the user buffer in
+.Fa data
+and
+.Fa nbytes
+.Pq get with a null buffer returns the size ,
+list fills
+.Fa auio ,
+delete takes neither.
+The system calls record the audit arguments and accept
+.Dv O_PATH
+descriptors, as they always did.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_extattr
+calls the
+.Fn extattr_*_vp
+helper for the operation, each of which locks the vnode and runs its own
+MAC check before
+.Xr VOP_SETEXTATTR 9 ,
+.Xr VOP_GETEXTATTR 9 ,
+.Fn VOP_DELETEEXTATTR
+or
+.Xr VOP_LISTEXTATTR 9 .
+Regular files, directories,
+.Dv O_PATH
+files, FIFOs, devfs nodes and vnode-carrying pseudo-terminal masters and
+linuxkpi files use it, and get whatever their filesystem answers.
+.It everything else
+.Fn invfo_extattr
+returns
+.Er EINVAL .
+.El
+.Ss fo_fcntl
+.Fn fo_fcntl
+answers the
+.Xr fcntl 2
+commands whose meaning depends on the descriptor type and that the generic
+file layer cannot answer itself:
+.Dv F_READAHEAD
+.Po
+.Dv F_RDAHEAD
+arrives as
+.Dv F_READAHEAD
+with the byte count already in
+.Fa arg
+.Pc
+and
+.Dv F_ISUNIONSTACK
+from
+.Xr fcntl 2 ,
+and the kernel-private
+.Dv FO_FCNTL_GET_RW_HINT
+and
+.Dv FO_FCNTL_SET_RW_HINT
+behind the Linux read/write life-time hints.
+A command that yields a value stores it in
+.Va td_retval[0] ,
+as
+.Fn kern_fcntl
+does.
+.Xr fcntl 2
+refuses read-ahead on an
+.Dv O_PATH
+descriptor with
+.Er EBADF
+before the table is consulted, as it always did.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_fcntl
+sets the file's sequential read-ahead on a regular file
+.Pq Er ENOTTY otherwise ,
+reports whether the mount is a union stack, reads the vnode's write hint,
+and sets it after a
+.Dv VADMIN
+access check.
+Regular files, directories,
+.Dv O_PATH
+files and devfs nodes use it.
+FIFOs, pseudo-terminal masters and linuxkpi files do not: the type tests
+these commands used to make returned
+.Er EBADF
+for them, and the default keeps doing so.
+.It everything else
+.Fn invfo_fcntl
+returns
+.Er EBADF .
+.El
+.Ss fo_advlock
+.Fn fo_advlock
+answers
+.Xr flock 2
+.Pq Dv F_FLOCK in Fa flags , the file as Fa id ,
+the
+.Xr fcntl 2
+record locks
+.Po
+.Dv F_POSIX
+with the process leader as
+.Fa id ,
+.Dv F_OFD
+with the file
+.Pc
+and the unlock of all POSIX locks that every
+.Xr close 2
+owes the process, with
+.Fa op
+one of
+.Dv F_SETLK , F_GETLK , F_UNLCK
+or
+.Dv F_UNLCKSYS .
+.Xr fcntl 2
+rejects a lock request for a mode the descriptor was not opened with before
+the table is consulted; whether the table takes locks at all is the table's
+business.
+The close-time unlock skips a table that has no
+.Fn fo_advlock
+member; the record-lock commands refuse a table without
+.Dv DFLAG_RECLOCK
+with
+.Er EBADF
+and
+.Xr flock 2
+a table without
+.Dv DFLAG_FLOCK
+with
+.Er EOPNOTSUPP ,
+both before looking at their arguments, as the type tests did.
+When the table answers
+.Er EOPNOTSUPP
+to a request \(em an anonymous pipe through the FIFO table, or a
+filesystem without open-file-description locks \(em the
+.Dv FHASLOCK
+or
+.Dv FHASOFDLOCK
+flag set ahead of the request comes off again, since no lock can be held.
+.Bl -tag -width "devfs nodes"
+.It vnode files
+.Fn vn_advlock
+checks, for
+.Dv F_OFD ,
+that the filesystem declares
+.Dv VFCF_OFDLOCKS
+.Pq Er EOPNOTSUPP otherwise
+and calls
+.Xr VOP_ADVLOCK 9
+inside the file context.
+Regular files, directories and devfs nodes use it.
+A FIFO installs
+.Fn pipe_advlock ,
+which takes
+.Dv F_FLOCK
+requests to the vnode and refuses the rest as a pipe does.
+.It everything else
+.Fn invfo_advlock
+returns what the type tests gave a descriptor that takes no locks:
+.Er EOPNOTSUPP
+to
+.Xr flock 2
+.Pq Dv F_FLOCK ,
+.Er EBADF
+to the
+.Xr fcntl 2
+record locks.
+Pseudo-terminal masters and linuxkpi files do not install the member: the
+type tests these system calls used to make refused them, and they stay
+refused.
+An
+.Dv O_PATH
+file installs one that answers only the close-time
+.Dv F_UNLCK
+of POSIX locks, because closing any descriptor of a file releases the
+process's record locks on it; every other request gets the default.
+.El
+.Sh RETURN VALUES
+Each operation returns 0 on success or an
+.Xr errno 2
+value.
+.Sh SEE ALSO
+.Xr aio_fsync 2 ,
+.Xr copy_file_range 2 ,
+.Xr extattr_get_fd 2 ,
+.Xr fchflags 2 ,
+.Xr fcntl 2 ,
+.Xr fdatasync 2 ,
+.Xr flock 2 ,
+.Xr fpathconf 2 ,
+.Xr fstatfs 2 ,
+.Xr fsync 2 ,
+.Xr futimens 2 ,
+.Xr getdirentries 2 ,
+.Xr posix_fadvise 2 ,
+.Xr acl 3 ,
+.Xr fdescfs 4 ,
+.Xr VFS_STATFS 9 ,
+.Xr VFS_SYNC 9 ,
+.Xr vnode 9 ,
+.Xr VOP_ACLCHECK 9 ,
+.Xr VOP_ADVISE 9 ,
+.Xr VOP_ADVLOCK 9 ,
+.Xr VOP_FSYNC 9 ,
+.Xr VOP_GETACL 9 ,
+.Xr VOP_GETEXTATTR 9 ,
+.Xr VOP_PATHCONF 9 ,
+.Xr VOP_READDIR 9 ,
+.Xr VOP_SETACL 9 ,
+.Xr VOP_SETATTR 9
+.Sh HISTORY
+The
+.Vt "struct fileops"
+table has existed since
+.Bx 4.4 .
+.Fn fo_pathconf ,
+.Fn fo_statfs ,
+.Fn fo_fsync ,
+.Fn fo_setattr ,
+.Fn fo_fadvise ,
+.Fn fo_readdir ,
+.Fn fo_copy_file_range ,
+.Fn fo_acl ,
+.Fn fo_extattr ,
+.Fn fo_fcntl
+and
+.Fn fo_advlock
+first appeared in 5BSD, in the series that made every descriptor type
+answer its own system calls without the kernel reaching past the table to
+a vnode.
