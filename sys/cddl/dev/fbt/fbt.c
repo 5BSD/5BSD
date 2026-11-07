@@ -165,6 +165,16 @@ fbt_excluded(const char *name)
 #if defined(__aarch64__) || defined(__riscv)
 	if (strcmp(name, "unwind_frame") == 0)
 		return (1);
+
+	/*
+	 * The compiler emits calls to these for copies and zeroing in probe
+	 * context, dtrace_probe() included, where amd64 inlines them.
+	 */
+	if (strcmp(name, "memset") == 0 ||
+	    strcmp(name, "memcpy") == 0 ||
+	    strcmp(name, "memmove") == 0 ||
+	    strcmp(name, "memcmp") == 0)
+		return (1);
 #endif
 
 	/*
