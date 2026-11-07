@@ -104,12 +104,30 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	 * entry points, and fork_trampoline, run while sp_el0 holds the user
 	 * stack pointer instead of the thread's stack canary: a probe there
 	 * faults on the canary load in every function it calls, the fault
-	 * handler included, until the kernel stack overflows.
+	 * handler included, until the kernel stack overflows.  A fault in
+	 * probe context that DTrace does not claim, such as a kernel mapping
+	 * caught mid break-before-make, reaches data_abort() and
+	 * pmap_klookup(): a probe there recurses into dtrace_probe().
 	 */
 	if (strncmp(name, "handle_el", 9) == 0 ||
 	    strcmp(name, "handle_empty_exception") == 0 ||
 	    strcmp(name, "fork_trampoline") == 0 ||
-	    strcmp(name, "do_el1h_sync") == 0)
+	    strcmp(name, "do_el1h_sync") == 0 ||
+	    strcmp(name, "data_abort") == 0 ||
+	    strcmp(name, "pmap_klookup") == 0)
+		return (0);
+
+	/*
+	 * A break-before-make update leaves a kernel mapping invalid while
+	 * it flushes the TLB.  data_abort() takes a fault on it for that
+	 * update in progress and retries, so a probe inside the window that
+	 * touches memory behind the mapping, DTrace state included, faults
+	 * and retries forever and the update never completes.
+	 */
+	if (strncmp(name, "pmap_update_", 12) == 0 ||
+	    strncmp(name, "pmap_s1_invalidate", 18) == 0 ||
+	    strncmp(name, "pmap_invalidate_", 16) == 0 ||
+	    strncmp(name, "pmap_tlbi_", 10) == 0)
 		return (0);
 
 	instr = (uint32_t *)(symval->value);
