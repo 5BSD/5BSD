@@ -87,6 +87,9 @@ HOOK_CHECK_IMPL(file_check_mmap, struct ucred *cred __unused,
     int flags __unused, vm_offset_t addr __unused, vm_size_t size __unused)
 HOOK_NOTIFY_IMPL(file_notify_close, struct ucred *cred __unused,
     struct file *fp __unused, int fd __unused)
+HOOK_NOTIFY_IMPL(file_notify_reply, struct ucred *controller __unused,
+    struct file *fp __unused, int op __unused, int error __unused,
+    size_t count __unused)
 HOOK_CHECK_IMPL(mount_check_mount, struct ucred *cred __unused,
     struct vnode *vp __unused, struct label *vplabel __unused,
     struct vfsconf *vfsp __unused, struct vfsoptlist **optlist __unused,
@@ -192,6 +195,7 @@ static struct mac_policy_ops test_hooks_ops = {
 	.mpo_file_check_ioctl = test_file_check_ioctl,
 	.mpo_file_check_mmap = test_file_check_mmap,
 	.mpo_file_notify_close = test_file_notify_close,
+	.mpo_file_notify_reply = test_file_notify_reply,
 	.mpo_mount_check_mount = test_mount_check_mount,
 	.mpo_mount_check_unmount = test_mount_check_unmount,
 	.mpo_mount_check_update = test_mount_check_update,

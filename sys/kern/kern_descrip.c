@@ -5819,6 +5819,8 @@ file_type_to_name(short type)
 		return ("envfd");
 	case DTYPE_ZFSHANDLE:
 		return ("zfshandle");
+	case DTYPE_DQ:
+		return ("dq");
 	default:
 		return ("unkn");
 	}

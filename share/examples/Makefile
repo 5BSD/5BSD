@@ -10,6 +10,7 @@ LDIRS=	BSD_daemon \
 	FreeBSD_version \
 	bootforth \
 	csh \
+	dq \
 	etc \
 	find_interface \
 	flua \
@@ -68,6 +69,10 @@ SE_BOOTFORTH= \
 SE_DIRS+=	csh
 SE_CSHPACKAGE=	csh
 SE_CSH=		dot.cshrc
+
+SE_DIRS+=	dq
+SE_DQ=		dqserve.c \
+		Makefile
 
 SE_DIRS+=	etc
 SE_ETC= \

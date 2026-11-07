@@ -26,6 +26,7 @@ SUBDIR=	\
 	ctl \
 	capsule \
 	capsulectl \
+	dq \
 	oes \
 	switchboard \
 	switchboardctl \
@@ -218,7 +219,7 @@ SUBDIR.${MK_TESTS}+=		libotelexport-tests otel-tests
 SUBDIR.${MK_TESTS}+=		libtrustedzfs-tests
 SUBDIR.${MK_TESTS}+=		libcapsulert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
-SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests
+SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests dq-tests
 SUBDIR.${MK_TESTS}+=		netmap-tests
 SUBDIR.${MK_TESTS}+=		bsdnetwork-tests
 SUBDIR.${MK_TESTS}+=		bsdcrypto-tests bsddevice-tests

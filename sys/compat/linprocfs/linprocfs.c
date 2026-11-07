@@ -2388,6 +2388,33 @@ linprocfs_fdlookup_impl(struct thread *td, struct proc *p, int fd,
 	return (error);
 }
 
+/*
+ * A descriptor without a vnode may still present a path (a served object,
+ * fo_fill_kinfo as F_KINFO and procstat see it).  0 and the path appended,
+ * ENOENT when the table presents none.
+ */
+static int
+linprocfs_kinfo_path(struct thread *td, struct file *fp, struct sbuf *sb)
+{
+	struct filedesc *fdp;
+	struct kinfo_file *kif;
+	int error;
+
+	kif = malloc(sizeof(*kif), M_TEMP, M_WAITOK | M_ZERO);
+	fdp = td->td_proc->p_fd;
+	FILEDESC_SLOCK(fdp);
+	error = fo_fill_kinfo(fp, kif, fdp);
+	FILEDESC_SUNLOCK(fdp);
+	if (error == 0) {
+		if (kif->kf_type == KF_TYPE_VNODE && kif->kf_path[0] != '\0')
+			sbuf_cat(sb, kif->kf_path);
+		else
+			error = ENOENT;
+	}
+	free(kif, M_TEMP);
+	return (error);
+}
+
 static int
 linprocfs_dofd(PFS_FILL_ARGS, int fd)
 {
@@ -2405,6 +2432,8 @@ linprocfs_dofd(PFS_FILL_ARGS, int fd)
 			error = vn_fullpath(fp->f_vnode, &name, &buffer);
 		if (error == 0)
 			sbuf_cat(sb, name);
+	} else if (linprocfs_kinfo_path(td, fp, sb) == 0) {
+		/* A presented path, appended. */
 	} else if (fp->f_type == DTYPE_PIPE || fp->f_type == DTYPE_SOCKET) {
 		error = fo_stat(fp, &st, td->td_ucred);
 		if (error == 0 && fp->f_type == DTYPE_SOCKET)

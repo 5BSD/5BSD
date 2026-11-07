@@ -63,6 +63,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libdevinfo \
 	libdevstat \
 	libdl \
+	libdq \
 	libdwarf \
 	libedit \
 	libelftc \
@@ -186,6 +187,7 @@ SUBDIR_DEPEND_libtimecmp= libservice libfidl
 SUBDIR_DEPEND_libextensioncmp= libservice libfidl
 SUBDIR_DEPEND_libfilesystemcmp= libservice libtrustedzfs libfidl
 SUBDIR_DEPEND_libnamespacecmp= libservice libfidl
+SUBDIR_DEPEND_libdq= libcapability
 SUBDIR_DEPEND_liboes= libservice libfidl
 SUBDIR_DEPEND_libvmcmp= libservice libfidl
 SUBDIR_DEPEND_libpowercmp= libservice libfidl

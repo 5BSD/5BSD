@@ -1549,6 +1549,11 @@ dev/dialog/da9063/da9063_if.m	optional da9063_pmic
 dev/dialog/da9063/da9063_iic.c	optional da9063_pmic iicbus fdt
 dev/dialog/da9063/da9063_rtc.c	optional da9063_rtc fdt
 dev/dttransport/dttransport.c	standard
+dev/dq/dq_dev.c			optional dq
+dev/dq/dq_queue.c		optional dq
+dev/dq/dq_file.c		optional dq
+dev/dq/dq_observer.c		optional dq
+dev/dq/dq_observe.c		optional dq
 dev/dwc/if_dwc.c		optional dwc fdt
 dev/dwc/if_dwc_if.m		optional dwc fdt
 dev/dwc/dwc1000_core.c		optional dwc fdt

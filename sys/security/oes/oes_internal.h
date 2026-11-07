@@ -364,8 +364,9 @@ bool	oes_event_is_valid(oes_event_type_t ev);
  * Used to mask bitmap subscribe inputs, expand "mute all" correctly,
  * and validate cache keys.
  *
- * AUTH: bits 1-34 (EXEC..RELABEL), 41-42 (SWAPON, SWAPOFF)
- * NOTIFY: bits 1-4,6-9,11,13-63 (low), 64-66 (high)
+ * AUTH: bits 1-34 (EXEC..RELABEL), 41-42 (SWAPON, SWAPOFF),
+ *   43-44 (FILE_READ, FILE_STAT)
+ * NOTIFY: bits 1-4,6-9,11,13-63 (low), 64-70 (high)
  *   Gaps at bits 0, 5, 10, 12 (no NOTIFY events defined there)
  */
 #define OES_VALID_AUTH_LO	OES_AUTH_EVENT_MASK_LO
@@ -559,6 +560,16 @@ void	oes_fill_process(oes_process_t *ep, struct proc *p,
 	    struct ucred *cred, struct oes_strtab *st, void *msg_base);
 void	oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 	    struct oes_strtab *st, void *msg_base);
+/*
+ * Fill from the identity a DescriptorQueue controller presents for a served
+ * descriptor (fp->f_type == DTYPE_DQ).  Also reports the object id and the
+ * controller's identity nonce when the pointers are given.  Returns the
+ * dq_file_ident() error; ENOTTY when the kernel has no dq device.
+ */
+struct file;
+int	oes_fill_file_presented(oes_file_t *ef, struct file *fp,
+	    struct oes_strtab *st, void *msg_base, uint64_t *objectp,
+	    uint64_t *noncep);
 int	oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp);
 void	oes_scope_snapshot(struct oes_pending *ep);
 

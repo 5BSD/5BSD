@@ -7,6 +7,8 @@
  * Open Endpoint Security (OES) - Client Management
  */
 
+#include "opt_dq.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -21,6 +23,7 @@
 #include <sys/vnode.h>
 #include <sys/namei.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/mount.h>
 #include <sys/tty.h>
 #include <sys/resourcevar.h>
@@ -31,6 +34,9 @@
 #include <security/oes/oes.h>
 #include <security/oes/oes_internal.h>
 #include <dev/mac_capability/mac_capability_label.h>
+#ifdef DEV_DQ
+#include <dev/dq/dq_kern.h>
+#endif
 
 MALLOC_DECLARE(M_OES);
 
@@ -2518,4 +2524,86 @@ oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 	} else if (st != NULL && msg_base != NULL) {
 		oes_file_mark_path_unavailable(msg_base, ef);
 	}
+}
+
+/*
+ * A served descriptor has no vnode: every attribute below is what the
+ * controller presented and validated at MINT/SETIDENT, so the token is built
+ * from the presented ino/dev exactly as oes_fill_file() builds it from the
+ * vnode attributes.  Mutes and cache keys therefore follow the presented
+ * identity, which OES_FILE_META_PRESENTED lets a client tell apart.
+ */
+int
+oes_fill_file_presented(oes_file_t *ef, struct file *fp, struct oes_strtab *st,
+    void *msg_base, uint64_t *objectp, uint64_t *noncep)
+{
+#ifdef DEV_DQ
+	struct dq_ident_file *ident;
+#endif
+	uint64_t object = 0, nonce = 0;
+	int error;
+
+	bzero(ef, sizeof(*ef));
+	ef->ef_meta_flags |= OES_FILE_META_PRESENTED;
+	ef->ef_type = EF_TYPE_REG;
+
+#ifdef DEV_DQ
+	/* 3.8 KiB of identity is too large for a MAC hook's stack frame. */
+	ident = malloc(sizeof(*ident), M_TEMP, M_WAITOK);
+	error = dq_file_ident(fp, ident, &object, &nonce);
+	if (error == 0) {
+		ef->ef_ino = ident->di_ino;
+		ef->ef_dev = ident->di_dev;
+		ef->ef_size = ident->di_size;
+		ef->ef_blocks = ident->di_blocks;
+		ef->ef_allocated_bytes = ident->di_blocks * 512;
+		ef->ef_block_size = ident->di_blksize;
+		ef->ef_generation = ident->di_gen;
+		ef->ef_rdev = ident->di_rdev;
+		ef->ef_filerev = ident->di_filerev;
+		ef->ef_mode = ident->di_mode;
+		ef->ef_uid = ident->di_uid;
+		ef->ef_gid = ident->di_gid;
+		ef->ef_flags = ident->di_flags;
+		ef->ef_nlink = ident->di_nlink;
+
+		ef->ef_atime = ident->di_atime.tv_sec;
+		ef->ef_mtime = ident->di_mtime.tv_sec;
+		ef->ef_ctime = ident->di_ctime.tv_sec;
+		ef->ef_birthtime = ident->di_birthtime.tv_sec;
+		ef->ef_atime_nsec = ident->di_atime.tv_nsec;
+		ef->ef_mtime_nsec = ident->di_mtime.tv_nsec;
+		ef->ef_ctime_nsec = ident->di_ctime.tv_nsec;
+		ef->ef_birthtime_nsec = ident->di_birthtime.tv_nsec;
+
+		ef->ef_token.eft_id = ident->di_ino;
+		ef->ef_token.eft_dev = ident->di_dev;
+
+		strlcpy(ef->ef_fstype, ident->di_statfs.ds_fstypename,
+		    sizeof(ef->ef_fstype));
+
+		if (st != NULL && msg_base != NULL) {
+			ef->ef_path_off = oes_strtab_add(st, msg_base,
+			    ident->di_path);
+			if (ef->ef_path_off == 0)
+				ef->ef_meta_flags |=
+				    OES_FILE_META_PATH_TRUNCATED;
+		}
+	}
+	free(ident, M_TEMP);
+#else
+	(void)fp;
+	error = ENOTTY;
+#endif
+	if (error != 0) {
+		ef->ef_meta_flags |= OES_FILE_META_ATTR_UNAVAILABLE |
+		    OES_FILE_META_FSTYPE_UNAVAILABLE;
+		if (st != NULL && msg_base != NULL)
+			oes_file_mark_path_unavailable(msg_base, ef);
+	}
+	if (objectp != NULL)
+		*objectp = object;
+	if (noncep != NULL)
+		*noncep = nonce;
+	return (error);
 }

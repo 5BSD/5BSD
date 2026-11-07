@@ -9,8 +9,9 @@ cc_library(name = "kernel_headers", hdrs = ["oes.h", "oes_event_table.h", "oes_i
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 _KERNEL_SOURCES = ["oes_dev.c", "oes_client.c", "oes_cache.c", "oes_event.c", "oes_mac.c"]
-_KERNEL_DEPS = [":kernel_headers", "//sys/amd64/conf:generic_opt_mac_header", "//sys/security/mac:policy_headers",
-        "//sys/security/audit:kernel_headers", "//sys/netinet:address_headers", "//sys/dev/mac_capability:label_headers"]
+_KERNEL_DEPS = [":kernel_headers", "//sys/amd64/conf:generic_opt_mac_header", "//sys/amd64/conf:generic_opt_dq_header",
+        "//sys/security/mac:policy_headers", "//sys/security/audit:kernel_headers", "//sys/netinet:address_headers",
+        "//sys/dev/mac_capability:label_headers", "//sys/dev/dq:kernel_headers"]
 amd64_generic_module_objects(srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
 amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
 
@@ -22,9 +23,11 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     deps = [
         ":kernel_headers",
         "//sys/" + arch + "/conf:generic_opt_mac_header",
+        "//sys/" + arch + "/conf:generic_opt_dq_header",
         "//sys/security/mac:policy_headers",
         "//sys/security/audit:kernel_headers",
         "//sys/netinet:address_headers",
         "//sys/dev/mac_capability:label_headers",
+        "//sys/dev/dq:kernel_headers",
     ],
 ) for arch in ["arm64", "riscv"]]

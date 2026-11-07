@@ -2696,5 +2696,9 @@ options 	STATS
 # File system monitoring
 device		filemon		# file monitoring for make(1) meta-mode
 
+# DescriptorQueue: a controller serves descriptors (read, fstat, ...) to
+# programs through /dev/dq; see dq(4).
+device		dq
+
 # Options for the Intel QuickAssist (QAT) driver.
 options		QAT_DISABLE_SAFE_DC_MODE	# Disable QAT safe data compression mode (only for 4940 devices).

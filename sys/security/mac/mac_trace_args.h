@@ -939,6 +939,11 @@
 	    (policy)->mpc_name, 2, \
 	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct file *)(a1) }))
 
+#define MAC_HOOK_ARGS_file_notify_reply(policy, a0, a1, a2, a3, a4) \
+	SDT_PROBE4(mac_framework, , , hook__args, "file_notify_reply", \
+	    (policy)->mpc_name, 5, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct file *)(a1), (uint64_t)(int)(a2), (uint64_t)(int)(a3), (uint64_t)(size_t)(a4) }))
+
 #define MAC_HOOK_ARGS_socket_check_accept(policy, a0, a1, a2) \
 	SDT_PROBE4(mac_framework, , , hook__args, "socket_check_accept", \
 	    (policy)->mpc_name, 3, \

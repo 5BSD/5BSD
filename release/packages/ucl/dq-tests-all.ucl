@@ -1,0 +1,13 @@
+comment = "DescriptorQueue (dq) integration tests"
+
+desc = <<EOD
+Integration tests for the dq(4) DescriptorQueue device: presented identity,
+served reads and their chunk and EOF boundaries, the stage 1a operation
+answers, object lifecycle and revoke, concurrency and interruption,
+deadlines, observer descriptors and the dq.observe service, and the mint,
+reply and control refusals.  The tests open /dev/dq and require root.
+EOD
+
+annotations = {
+	set = "tests"
+}

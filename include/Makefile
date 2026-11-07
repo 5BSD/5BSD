@@ -171,6 +171,13 @@ HID=		hid.h \
 		hidraw.h
 HIDDIR=		${INCLUDEDIR}/dev/hid
 
+# DescriptorQueue: the installed ABI only; dq_kern.h and dq_var.h are
+# kernel-private.
+.PATH: ${SRCTOP}/sys/dev/dq
+DQ=		dq.h \
+		dq_observe_proto.h
+DQDIR=		${INCLUDEDIR}/dev/dq
+
 .PATH: ${SRCTOP}/sys/dev/hyperv/include ${SRCTOP}/sys/dev/hyperv/utilities
 HYPERV=		hv_snapshot.h \
 		hyperv.h
@@ -250,6 +257,7 @@ INCSGROUPS=	INCS \
 		CAMSCSI \
 		COREBOOT \
 		CRYPTO \
+		DQ \
 		EVDEV \
 		FS9660 \
 		HID \

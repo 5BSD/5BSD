@@ -3647,6 +3647,36 @@
       }
     ]
   },
+  "file_notify_reply": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "controller",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "op",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "error",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "count",
+        "type": "size_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
   "socket_check_accept": {
     "result": "int",
     "arguments": [

@@ -11,6 +11,7 @@ BOOK_FILES = [
     "capability/coalitions-and-accounting.md",
     "capability/descriptor-operations.md",
     "capability/descriptor-protections.md",
+    "capability/descriptor-queue.md",
     "capability/mac-abac.md",
     "capability/mac-capability.md",
     "capability/oes.md",

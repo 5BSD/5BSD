@@ -81,6 +81,7 @@ struct nameidata;
 #define	DTYPE_LINUXPIDFD 131	/* Linux pidfd (compat/linux) */
 #define	DTYPE_LINUXSIGNALFD 132	/* Linux signalfd (compat/linux) */
 #define	DTYPE_LINUXPERF 133	/* Linux perf event (compat/linux) */
+#define	DTYPE_DQ	134	/* DescriptorQueue served object (dev/dq) */
 
 #ifdef _KERNEL
 

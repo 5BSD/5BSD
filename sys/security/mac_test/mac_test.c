@@ -2142,6 +2142,16 @@ test_file_check_fsync(struct ucred *cred, struct file *fp)
 	return (0);
 }
 
+COUNTER_DECL(file_notify_reply);
+static void
+test_file_notify_reply(struct ucred *controller, struct file *fp, int op,
+    int error, size_t count)
+{
+
+	LABEL_CHECK(controller->cr_label, MAGIC_CRED);
+	COUNTER_INC(file_notify_reply);
+}
+
 COUNTER_DECL(system_check_kas_info);
 static int
 test_system_check_kas_info(struct ucred *cred, struct proc *p)
@@ -4098,6 +4108,7 @@ static struct mac_policy_ops test_ops =
 	.mpo_file_check_stat = test_file_check_stat,
 	.mpo_file_check_setattr = test_file_check_setattr,
 	.mpo_file_check_fsync = test_file_check_fsync,
+	.mpo_file_notify_reply = test_file_notify_reply,
 
 	.mpo_socket_check_accept = test_socket_check_accept,
 	.mpo_socket_check_bind = test_socket_check_bind,

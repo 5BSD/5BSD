@@ -25,9 +25,9 @@ mount and kld, turn kernel operations into events of two kinds.
 | AUTH | sleepable MAC check hooks, before the operation | the originating thread sleeps in the hook until every subscribed AUTH client answers or the deadline passes | allow or deny |
 | NOTIFY | check hooks, event handlers and the framework's close hook, after the decision | never blocks the originating thread | observe |
 
-There are 100 event types, generated from the X-macro table in
-`sys/security/oes/oes_event_table.h`: 36 AUTH events in the range
-`0x0001` to `0x0FFF` and 64 NOTIFY events in `0x1001` to `0x1FFF`. The
+There are 106 event types, generated from the X-macro table in
+`sys/security/oes/oes_event_table.h`: 38 AUTH events in the range
+`0x0001` to `0x0FFF` and 68 NOTIFY events in `0x1001` to `0x1FFF`. The
 `0x1000` bit tells them apart (`OES_EVENT_IS_AUTH`). Most AUTH events have
 a NOTIFY counterpart; when they do, the NOTIFY is queued only after the
 combined authorization decision and carries that decision in `em_result`
@@ -43,6 +43,21 @@ the system call later succeeded.
 | memory | `MMAP`, `MPROTECT` | |
 | system | `MOUNT`, `KLDLOAD`, `SWAPON`, `SWAPOFF` | `UNMOUNT`, `KLDUNLOAD`, `REBOOT`, `SYSCTL`, `KENV`, `MOUNT_STAT` |
 | sockets and pipes | | `SOCKET_CREATE`, `_CONNECT`, `_BIND`, `_LISTEN`, `_ACCEPT`, `_SEND`, `_RECEIVE`, `_STAT`, `_POLL`, `PIPE_READ`, `_WRITE`, `_STAT`, `_POLL`, `_IOCTL` |
+| served descriptors (dq(4)) | `FILE_READ`, `FILE_STAT` | `FILE_CLOSE`, `DQ_REPLY` |
+
+The served-descriptor events come from the descriptor-level
+`mac_file_check_read`, `mac_file_check_stat`, `mac_file_notify_close` and
+`mac_file_notify_reply` hooks, and only for descriptors a DescriptorQueue
+controller serves (`fp->f_type == DTYPE_DQ`): such a descriptor has no
+vnode, so the vnode hooks never see it, and every other descriptor type
+returns from these hooks before any work is done. The file object in these
+messages is the identity the controller presents, marked
+`OES_FILE_META_PRESENTED`, with the presented path, inode, device,
+filesystem type and timestamps; the mute and cache tokens are built from
+the presented inode and device. `DQ_REPLY` is attributed to the controller
+process and reports the answered operation, its errno, the object id, the
+controller's identity nonce and the reply length (`oes_event_presented_t`);
+it never carries reply data.
 
 `CLOSE` is the one event 5BSD had to add a hook for: FreeBSD's MAC
 framework had no close hook, so OES brought `mac_vnode_check_close`, called
@@ -113,7 +128,8 @@ supplementary groups, audit session, jail, login class, ABI, start time,
 routing FIB and the `EP_FLAG_OES_CLIENT` bit). File objects carry vnode
 identity, ownership, mode, flags, sizes, generation and nanosecond
 timestamps, with `OES_FILE_META_*` bits marking attributes that were
-unavailable, truncated or proposed for an object that does not exist yet.
+unavailable, truncated, proposed for an object that does not exist yet, or
+presented by a dq(4) controller instead of read from a vnode.
 Consumers must read `ep_meta_flags` and `ef_meta_flags` rather than assume
 every field is populated. The message format is version 1 of a pre-1.0 ABI
 (`OES_API_VERSION`), fixed-width and additive.

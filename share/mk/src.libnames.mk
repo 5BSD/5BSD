@@ -167,6 +167,7 @@ _LIBRARIES=	\
 		devinfo \
 		devstat \
 		dl \
+		dq \
 		dtrace \
 		dwarf \
 		edit \
@@ -372,6 +373,7 @@ _DP_logcmp=	pthread service shmring fidl_bsd cplusplus
 _DP_kldmgr=	service
 _DP_notify=	pthread service fidl_bsd cplusplus
 _DP_cache=	notify service pthread
+_DP_dq=	capability
 _DP_oes= service fidl_bsd cplusplus
 _DP_rebootctl=	service
 _DP_tracecmp=	dtrace service fidl_bsd cplusplus

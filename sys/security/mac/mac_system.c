@@ -377,6 +377,24 @@ mac_file_check_fsync(struct ucred *cred, struct file *fp)
 	return (error);
 }
 
+/*
+ * The controller of a served descriptor answered an operation on it
+ * (docs/macf-new-hooks.md 3.14).  Called from the controller's reply path
+ * with no lock held; policies see the operation code, the answer and a byte
+ * count, never the bytes.
+ */
+MAC_CHECK_PROBE_DEFINE5(file_notify_reply, "struct ucred *", "struct file *",
+    "int", "int", "size_t");
+
+void
+mac_file_notify_reply(struct ucred *controller, struct file *fp, int op,
+    int error, size_t count)
+{
+
+	MAC_POLICY_PERFORM(file_notify_reply, controller, fp, op, error, count);
+	MAC_CHECK_PROBE5(file_notify_reply, 0, controller, fp, op, error, count);
+}
+
 MAC_CHECK_PROBE_DEFINE2(pts_check_open, "struct ucred *", "int");
 
 int

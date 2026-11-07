@@ -52,6 +52,7 @@ include		"std.xilinx"
 # ---------------------------------------------------------------------------
 options 	OES			# OpenEndpointSecurity
 options 	MAC_ABAC		# Attribute-based access control MAC policy
+device		dq			# DescriptorQueue: controller-served descriptors
 options 	MAC_VERIEXEC
 options 	MAC_VERIEXEC_SHA256
 device		mac_veriexec_parser

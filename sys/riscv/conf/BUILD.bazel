@@ -42,6 +42,13 @@ bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_pla
 cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     strip_include_prefix = "generic_options", visibility = (['//sys/dev/alc:__pkg__', '//sys/dev/ale:__pkg__', '//sys/dev/aq:__pkg__', '//sys/dev/backlight:__pkg__', '//sys/dev/bce:__pkg__', '//sys/dev/bge:__pkg__', '//sys/dev/et:__pkg__', '//sys/dev/etherswitch:__pkg__', '//sys/dev/jme:__pkg__', '//sys/dev/mii:__pkg__', '//sys/dev/msk:__pkg__', '//sys/dev/nfe:__pkg__', '//sys/dev/re:__pkg__', '//sys/dev/rge:__pkg__', '//sys/dev/sge:__pkg__', '//sys/dev/usb/net:__pkg__', '//sys/dev/usb:__pkg__', '//sys/dev/vte:__pkg__']) + ['//sys/dev/flash:__pkg__', '//sys/dev/gpio:__pkg__', '//sys/dev/iicbus/mux:__pkg__', '//sys/dev/iicbus:__pkg__', '//sys/dev/ow:__pkg__', '//sys/dev/pwm:__pkg__', '//sys/dev/spibus:__pkg__'])
 
+# DescriptorQueue: `device dq` (or its absence) decides opt_dq.h; the device and OES read it.
+bsd_tree_file(name = "opt_dq", tree = ":generic_config", member = "opt_dq.h",
+    output = "generic_options/opt_dq.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_opt_dq_header", hdrs = [":opt_dq"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/dq:__pkg__", "//sys/security/oes:__pkg__"])
+
 # Source-owned option names; contents, including empty headers, come from config.
 [bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
     output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",

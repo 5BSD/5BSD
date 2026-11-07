@@ -1,0 +1,582 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd November 7, 2026
+.Dt LIBDQ 3
+.Os
+.Sh NAME
+.Nm libdq ,
+.Nm dq_open ,
+.Nm dq_get_stats ,
+.Nm dq_set_queue_depth ,
+.Nm dq_policy_default ,
+.Nm dq_ident_from_stat ,
+.Nm dq_mint_file ,
+.Nm dq_mint_observer ,
+.Nm dq_revoke ,
+.Nm dq_set_ident ,
+.Nm dq_set_policy ,
+.Nm dq_read_events ,
+.Nm dq_event_first ,
+.Nm dq_event_next ,
+.Nm dq_event_body ,
+.Nm dq_reply ,
+.Nm dq_dispatch ,
+.Nm dq_observe_connect ,
+.Nm dq_observe_list_queues ,
+.Nm dq_observe_list_objects ,
+.Nm dq_observe_subscribe
+.Nd DescriptorQueue controller library
+.Sh LIBRARY
+DescriptorQueue controller library
+.Pq libdq, Fl ldq
+.Sh SYNOPSIS
+.In libdq.h
+.Ft int
+.Fn dq_open "void"
+.Ft int
+.Fn dq_get_stats "int fd" "struct dq_stats *st"
+.Ft int
+.Fn dq_set_queue_depth "int q" "uint32_t depth"
+.Ft void
+.Fn dq_policy_default "struct dq_policy *pol"
+.Ft int
+.Fo dq_ident_from_stat
+.Fa "struct dq_ident_file *ident" "const char *path" "const struct stat *st"
+.Fa "const struct statfs *sfs" "int fd"
+.Fc
+.Ft int
+.Fo dq_mint_file
+.Fa "int q" "const struct dq_ident_file *ident" "const struct dq_policy *pol"
+.Fa "uint64_t *object" "int *fd" "int *reason"
+.Fc
+.Ft int
+.Fn dq_mint_observer "int q" "uint32_t flags"
+.Ft int
+.Fn dq_revoke "int q" "uint64_t object"
+.Ft int
+.Fn dq_set_ident "int q" "uint64_t object" "const struct dq_ident_file *ident"
+.Ft int
+.Fn dq_set_policy "int q" "uint64_t object" "const struct dq_policy *pol"
+.Ft int
+.Fn dq_read_events "int fd" "void *buf" "size_t len" "ssize_t *got"
+.Ft "const struct dq_event *"
+.Fn dq_event_first "const void *buf" "size_t len"
+.Ft "const struct dq_event *"
+.Fn dq_event_next "const void *buf" "size_t len" "const struct dq_event *ev"
+.Ft "const void *"
+.Fn dq_event_body "const struct dq_event *ev" "size_t *bodylen"
+.Ft int
+.Fo dq_reply
+.Fa "int q" "uint64_t id" "int error" "const void *data" "size_t len"
+.Fc
+.Ft typedef int
+.Fo (*dq_handler_t)
+.Fa "int q" "const struct dq_event *ev" "const void *body" "size_t bodylen"
+.Fa "void *arg"
+.Fc
+.Ft int
+.Fn dq_dispatch "int q" "dq_handler_t handler" "void *arg"
+.Ft int
+.Fn dq_observe_connect "void"
+.Ft int
+.Fo dq_observe_list_queues
+.Fa "int svc" "uint64_t first" "struct dqo_queue_info *buf" "size_t nbuf"
+.Fa "size_t *count" "uint64_t *total"
+.Fc
+.Ft int
+.Fo dq_observe_list_objects
+.Fa "int svc" "uint64_t queue" "uint64_t first" "struct dqo_object_info *buf"
+.Fa "size_t nbuf" "size_t *count" "uint64_t *total"
+.Fc
+.Ft int
+.Fn dq_observe_subscribe "int svc" "uint64_t queue"
+.Sh DESCRIPTION
+The
+.Nm
+library is the controller side of a DescriptorQueue, the
+.Xr dq 4
+device.
+A controller opens a queue, mints descriptors that present an identity of
+its choosing, reads the events the kernel posts for operations on those
+descriptors and answers them by id.
+Every function is a thin wrapper over the
+.Xr ioctl 2
+and
+.Xr read 2
+interface of
+.In dev/dq/dq.h ;
+the kernel's errnos pass through unchanged and are listed below per
+function.
+Functions return 0 on success and -1 with
+.Va errno
+set on failure, except those documented to return a descriptor, a count or
+a pointer.
+The interface is LP64 only.
+.Ss Queue
+.Fn dq_open
+opens
+.Pa /dev/dq
+with
+.Dv O_RDWR | O_CLOEXEC | O_CLOFORK
+and returns the queue descriptor.
+One open is one queue.
+The queue is closed on fork so that a child the controller forks inherits
+the minted descriptors and not the queue; a process whose descriptor table
+holds the queue is refused operations on the queue's objects with
+.Er EDEADLK
+.Pq see Xr dq 4 .
+Opening fails with
+.Er ENOENT
+when the device is not configured,
+.Er EPERM
+or
+.Er EACCES
+without the
+.Dv PRIV_DRIVER
+privilege, and
+.Er EOPNOTSUPP
+from a 32-bit process.
+.Pp
+.Fn dq_get_stats
+fills
+.Fa st
+with the
+.Vt struct dq_stats
+of the queue, or of the queue an observer descriptor
+.Fa fd
+watches.
+.Pp
+.Fn dq_set_queue_depth
+lowers the number of unread events the queue holds;
+.Fa depth
+must be between 1 and
+.Va kern.dq.queue_depth
+or the call fails with
+.Er EINVAL .
+A full queue fails the requester's operation with
+.Er EIO ,
+counts a drop and leaves a gap in
+.Va de_seq .
+.Ss Identity and policy
+.Fn dq_policy_default
+fills
+.Fa pol
+with the policy stage 1a of
+.Xr dq 4
+accepts:
+.Va dp_cache
+.Dv DQ_CACHE_NONE
+(no page cache, which is stage 1b; whether
+.Xr fstat 2
+posts is decided by
+.Dv DQ_EVENTS_GETATTR
+alone),
+.Va dp_write ,
+.Va dp_exec ,
+.Va dp_mmap_shared_write
+and
+.Va dp_ioctl
+.Dv DQ_DENY ,
+.Va dp_lock
+.Dv DQ_EVENT ,
+.Va dp_deadline_ms
+.Dv DQ_DEADLINE_DEFAULT ,
+no
+.Va dp_events ,
+.Va dp_rights_version
+.Dv CAP_RIGHTS_VERSION
+and
+.Va dp_rights
+.Dv CAP_ALL_RIGHTS ,
+which is what
+.Xr open 2
+returns.
+A controller narrows the rights or adds
+.Dv DQ_EVENTS_GETATTR
+and
+.Dv DQ_EVENTS_CLOSE
+before minting.
+.Pp
+.Fn dq_ident_from_stat
+fills every field of
+.Fa ident
+from a real file:
+.Fa path
+is copied as presented (it must be absolute and normalized, as
+.Xr realpath 3
+returns it, or the mint fails with
+.Dv DQ_REASON_PATH ) ,
+the
+.Vt struct stat
+and
+.Vt struct statfs
+the caller took supply the attributes and the mount, and
+.Xr fpathconf 2
+is asked on
+.Fa fd
+for every
+.Dv _PC_*
+name in
+.Va dq_pc_names[] ;
+a name the filesystem refuses is left out of
+.Va dp_valid
+so the served descriptor refuses it with
+.Er EINVAL
+too.
+.Fa fd
+may be -1 to present no
+.Xr pathconf 2
+answers.
+.Va di_blksize
+is floored at the page size, which the kernel requires.
+It fails with
+.Er EINVAL
+for a null or empty path and
+.Er ENAMETOOLONG
+for a path of
+.Dv DQ_PATH_MAX
+bytes or more.
+.Ss Objects
+.Fn dq_mint_file
+mints a
+.Dv DQ_KIND_FILE
+object presenting
+.Fa ident
+under
+.Fa pol .
+On success
+.Fa *object
+is the object id, never reused on the queue, and
+.Fa *fd
+the descriptor installed in the caller:
+read-only, close-on-exec, limited to
+.Va dp_rights ,
+and not transferable over
+.Dv SCM_RIGHTS
+.Pq Er ENOTCAPABLE .
+Until the resolution stage installs served descriptors in a requester, the
+descriptor reaches one by inheritance across
+.Xr fork 2 .
+The
+.Fa reason
+pointer, which may be
+.Dv NULL ,
+is handed to the kernel as
+.Va dm_reasonp
+(a failing
+.Xr ioctl 2
+copies its argument back to nobody): on
+.Er EINVAL
+the kernel stores the refused field there as an
+.Vt enum dq_reason
+.Pq Xr dq 4 ,
+on success
+.Dv DQ_REASON_NONE ,
+and on any other failure the library has already stored
+.Dv DQ_REASON_NONE .
+Other errors are
+.Er ENOSPC
+when the queue holds
+.Va kern.dq.max_objects
+objects,
+.Er ENXIO
+when the queue is closing, and those of
+.Xr open 2
+for the descriptor table.
+.Pp
+.Fn dq_mint_observer
+mints an observer descriptor of the queue and returns it.
+It receives a copy of every event and every reply posted on the queue,
+with reply data removed and lengths kept;
+.Dv DQ_OBS_F_DATA
+asks for data bodies where a stage carries them.
+The descriptor is readable, pollable, answers
+.Dv DQ_IOC_GET_STATS
+.Pq Fn dq_get_stats
+and nothing else, and is locked close-on-exec, close-on-fork and
+non-transferable.
+.Er EINVAL
+for an unknown flag,
+.Er ENXIO
+for a closing queue.
+.Pp
+.Fn dq_revoke
+revokes
+.Fa object :
+every pending and in-flight event of it fails with
+.Er EIO ,
+.Dv NOTE_REVOKE
+fires, later reads answer
+.Er EIO ,
+and
+.Xr fstat 2 ,
+.Xr fstatfs 2 ,
+.Xr fpathconf 2
+and
+.Dv F_KINFO
+keep answering from the frozen identity.
+.Er ESRCH
+for an unknown id.
+.Pp
+.Fn dq_set_ident
+replaces the presented identity after validation and fires
+.Dv NOTE_ATTRIB
+on the object's
+.Dv EVFILT_VNODE
+knotes.
+.Er EINVAL
+for an identity the kernel refuses (no reason is returned),
+.Er ESRCH
+for an unknown object.
+.Pp
+.Fn dq_set_policy
+changes
+.Va dp_cache ,
+.Va dp_deadline_ms
+and
+.Va dp_events
+of a minted object.
+The fields the installed descriptor fixes,
+.Va dp_write ,
+.Va dp_exec ,
+.Va dp_mmap_shared_write ,
+.Va dp_lock ,
+.Va dp_ioctl
+and
+.Va dp_rights ,
+must equal the minted values or the call fails with
+.Er EINVAL ;
+so does a policy outside the accepted set.
+.Er ESRCH
+for an unknown object.
+.Ss Events
+.Fn dq_read_events
+performs one
+.Xr read 2
+of whole records into
+.Fa buf
+and stores the byte count in
+.Fa *got .
+The kernel copies as many whole records as fit, in order, and never splits
+one;
+.Fa len
+below the size of a
+.Vt struct dq_event
+is
+.Er EINVAL ,
+a first record that does not fit is
+.Er ENOBUFS ,
+an empty queue opened or set non-blocking is
+.Er EAGAIN ,
+a closing queue is
+.Er ENXIO ,
+and a signal is
+.Er EINTR .
+A fault in
+.Fa buf
+after some records were copied returns those and leaves the rest queued.
+On an observer descriptor a count of 0 means the watched queue is gone and
+drained.
+.Pp
+.Fn dq_event_first
+and
+.Fn dq_event_next
+walk the records in a buffer of
+.Fa len
+bytes.
+Each returns
+.Dv NULL
+when no further whole record follows, that is when fewer than a header's
+bytes remain or
+.Va de_size
+is smaller than a header or extends past
+.Fa len .
+.Fn dq_event_body
+returns the body that follows the header and stores its length in
+.Fa *bodylen
+when that is not
+.Dv NULL .
+.Pp
+.Fn dq_reply
+answers the event
+.Fa id
+with
+.Fa error
+(0 or an errno) and the body
+.Fa data
+of
+.Fa len
+bytes.
+For
+.Dv DQ_OP_READ
+the body is up to the asked length of file bytes and a short answer is
+the end of the file; for
+.Dv DQ_OP_GETATTR
+it is exactly one
+.Vt struct dq_ident_file
+when
+.Fa error
+is 0.
+Any nonzero
+.Fa error
+takes an empty body.
+.Er ESRCH
+means the id is not in flight: unknown, already answered, abandoned by an
+interrupted or timed-out requester, or revoked (counted in
+.Va ds_late_replies ) .
+.Er EINVAL
+is returned for a body longer than asked, a body with a nonzero error, a
+malformed identity, an errno outside the kernel's range, a length above
+.Va kern.dq.max_io ,
+or a reply to an event that takes none.
+.Er EFAULT
+for an unreadable
+.Fa data .
+.Pp
+.Fn dq_dispatch
+performs one
+.Fn dq_read_events
+into a buffer sized for the largest record the kernel can post and calls
+.Fa handler
+once per record with the header, the body and
+.Fa arg .
+The handler returns 0 to continue or nonzero to stop.
+.Fn dq_dispatch
+returns the number of records handed to the handler, or -1 with the errno
+of the read.
+Records needing no answer
+.Pq Dv DQ_OP_CLOSE , Dv DQ_OP_INTERRUPT
+carry
+.Va de_id
+0.
+.Ss The dq.observe service
+.Fn dq_observe_connect
+opens
+.Pa /dev/mac_capability ,
+connects to the
+.Dq dq.observe
+service and returns the service descriptor; the device is closed again.
+The service admits a credential that may open
+.Pa /dev/dq .
+.Pp
+.Fn dq_observe_list_queues
+lists the queues of the system starting at index
+.Fa first
+into
+.Fa buf Ns Bq Fa nbuf
+and stores how many were filled in
+.Fa *count
+and how many exist in
+.Fa *total
+(either may be
+.Dv NULL ) ;
+.Fn dq_observe_list_objects
+does the same for the objects of
+.Fa queue ,
+identified by its
+.Va ds_queue_id .
+A caller pages by advancing
+.Fa first .
+.Er ESRCH
+for an unknown queue,
+.Er EPROTO
+for a malformed reply.
+.Pp
+.Fn dq_observe_subscribe
+returns a metadata-only observer descriptor of
+.Fa queue ,
+as
+.Fn dq_mint_observer
+without
+.Dv DQ_OBS_F_DATA
+would: the service installs it in the caller itself, rights-limited and
+locked like an ioctl-minted observer, and names it in a
+.Vt struct dqo_subscribe_reply .
+.Er ESRCH
+for an unknown queue,
+.Er ENXIO
+for a closing one,
+.Er EPROTO
+for a malformed reply.
+.Sh RETURN VALUES
+.Fn dq_open ,
+.Fn dq_mint_observer ,
+.Fn dq_observe_connect
+and
+.Fn dq_observe_subscribe
+return a descriptor, or -1 with
+.Va errno
+set.
+.Fn dq_dispatch
+returns a record count, or -1.
+.Fn dq_event_first ,
+.Fn dq_event_next
+and
+.Fn dq_event_body
+return pointers into the caller's buffer.
+.Fn dq_policy_default
+returns nothing.
+The other functions return 0 on success and -1 with
+.Va errno
+set on failure.
+.Sh EXAMPLES
+A controller that serves a file's bytes from memory:
+.Bd -literal -offset indent
+int q, fd, reason;
+uint64_t object;
+struct dq_policy pol;
+struct dq_ident_file ident;
+
+q = dq_open();
+dq_policy_default(&pol);
+dq_ident_from_stat(&ident, path, &st, &sfs, realfd);
+if (dq_mint_file(q, &ident, &pol, &object, &fd, &reason) == -1)
+	err(1, "mint (reason %d)", reason);
+/* fd is inherited by a fork(2)ed requester; the queue is not. */
+for (;;)
+	if (dq_dispatch(q, handler, &served) == -1)
+		err(1, "dq_dispatch");
+.Ed
+.Pp
+where the handler answers a read from the buffer:
+.Bd -literal -offset indent
+static int
+handler(int q, const struct dq_event *ev, const void *body,
+    size_t bodylen, void *arg)
+{
+	const struct dq_read_body *rb;
+	struct served *s = arg;
+	size_t n;
+
+	switch (ev->de_op) {
+	case DQ_OP_READ:
+		rb = body;
+		n = rb->dr_offset >= s->len ? 0 :
+		    MIN(rb->dr_len, s->len - rb->dr_offset);
+		return (dq_reply(q, ev->de_id, 0, s->data + rb->dr_offset,
+		    n) == -1);
+	case DQ_OP_CLOSE:
+		s->closed = true;
+		return (0);
+	default:
+		return (0);
+	}
+}
+.Ed
+.Pp
+.Pa /usr/share/examples/dq/dqserve.c
+is a complete controller.
+.Sh SEE ALSO
+.Xr ioctl 2 ,
+.Xr read 2 ,
+.Xr libcapability 3 ,
+.Xr dq 4
+.Sh HISTORY
+The
+.Nm
+library first appeared in 5BSD 16.0.
+.Sh AUTHORS
+.An Kory Heard Aq Mt koryheard@icloud.com

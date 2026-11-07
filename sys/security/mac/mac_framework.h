@@ -620,6 +620,14 @@ mac_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 int	mac_file_check_setattr(struct ucred *cred, struct file *fp, int fd,
 	    struct vattr *vap);
 int	mac_file_check_fsync(struct ucred *cred, struct file *fp);
+/*
+ * A served descriptor's controller answered one of its operations
+ * (docs/macf-new-hooks.md 3.14).  Notification only: op is the subsystem's
+ * operation code, error the answer, count the bytes it carried; the
+ * content never reaches a policy.
+ */
+void	mac_file_notify_reply(struct ucred *controller, struct file *fp,
+	    int op, int error, size_t count);
 int	mac_execve_enter(struct image_params *imgp, struct mac *mac_p);
 void	mac_execve_exit(struct image_params *imgp);
 void	mac_execve_interpreter_enter(struct vnode *interpvp,

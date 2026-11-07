@@ -25,6 +25,7 @@
 #include <sys/sysctl.h>
 #include <sys/random.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/eventhandler.h>
 #include <sys/acl.h>
 #include <sys/dirent.h>
@@ -480,6 +481,10 @@ struct oes_vnode_event_info {
 	unsigned long		ioctl_cmd;
 	struct mount		*mp;
 	int			priv;
+	struct file		*fp;		/* Served descriptor (DTYPE_DQ) */
+	int			dq_op;		/* DQ_REPLY: DQ_OP_* answered */
+	int			dq_error;	/* DQ_REPLY: errno in the reply */
+	size_t			dq_count;	/* DQ_REPLY: payload length */
 	bool			nosleep;	/* Use non-blocking delivery */
 };
 
@@ -1303,10 +1308,18 @@ oes_event_primary_path(const struct oes_pending *ep)
 	case OES_EVENT_NOTIFY_READ:
 	case OES_EVENT_AUTH_WRITE:
 	case OES_EVENT_NOTIFY_WRITE:
+	case OES_EVENT_AUTH_FILE_READ:
+	case OES_EVENT_NOTIFY_FILE_READ:
 		return (oes_msg_string(msg, msg->em_event_data.rw.file.ef_path_off));
 	case OES_EVENT_AUTH_STAT:
 	case OES_EVENT_NOTIFY_STAT:
+	case OES_EVENT_AUTH_FILE_STAT:
+	case OES_EVENT_NOTIFY_FILE_STAT:
 		return (oes_msg_string(msg, msg->em_event_data.stat.file.ef_path_off));
+	case OES_EVENT_NOTIFY_FILE_CLOSE:
+		return (oes_msg_string(msg, msg->em_event_data.close.file.ef_path_off));
+	case OES_EVENT_NOTIFY_DQ_REPLY:
+		return (oes_msg_string(msg, msg->em_event_data.dq_reply.file.ef_path_off));
 	case OES_EVENT_AUTH_POLL:
 	case OES_EVENT_NOTIFY_POLL:
 		return (oes_msg_string(msg, msg->em_event_data.poll.file.ef_path_off));
@@ -1438,10 +1451,18 @@ oes_event_primary_file(const struct oes_pending *ep)
 	case OES_EVENT_NOTIFY_READ:
 	case OES_EVENT_AUTH_WRITE:
 	case OES_EVENT_NOTIFY_WRITE:
+	case OES_EVENT_AUTH_FILE_READ:
+	case OES_EVENT_NOTIFY_FILE_READ:
 		return (&msg->em_event_data.rw.file);
 	case OES_EVENT_AUTH_STAT:
 	case OES_EVENT_NOTIFY_STAT:
+	case OES_EVENT_AUTH_FILE_STAT:
+	case OES_EVENT_NOTIFY_FILE_STAT:
 		return (&msg->em_event_data.stat.file);
+	case OES_EVENT_NOTIFY_FILE_CLOSE:
+		return (&msg->em_event_data.close.file);
+	case OES_EVENT_NOTIFY_DQ_REPLY:
+		return (&msg->em_event_data.dq_reply.file);
 	case OES_EVENT_AUTH_POLL:
 	case OES_EVENT_NOTIFY_POLL:
 		return (&msg->em_event_data.poll.file);
@@ -2950,6 +2971,43 @@ oes_generate_vnode_event(oes_event_type_t event,
 				oes_fill_file(&ep->ep_msg.em_event_data.swapoff.file,
 				    vp, cred, &st, &ep->ep_msg);
 			break;
+		/*
+		 * Served descriptors: the file object is the controller's
+		 * presented identity, so the vnode fillers above do not apply.
+		 */
+		case OES_EVENT_AUTH_FILE_READ:
+		case OES_EVENT_NOTIFY_FILE_READ:
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(
+				    &ep->ep_msg.em_event_data.rw.file, info->fp,
+				    &st, &ep->ep_msg, NULL, NULL);
+			break;
+		case OES_EVENT_AUTH_FILE_STAT:
+		case OES_EVENT_NOTIFY_FILE_STAT:
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(
+				    &ep->ep_msg.em_event_data.stat.file, info->fp,
+				    &st, &ep->ep_msg, NULL, NULL);
+			break;
+		case OES_EVENT_NOTIFY_FILE_CLOSE:
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(
+				    &ep->ep_msg.em_event_data.close.file, info->fp,
+				    &st, &ep->ep_msg, NULL, NULL);
+			break;
+		case OES_EVENT_NOTIFY_DQ_REPLY: {
+			oes_event_presented_t *pr =
+			    &ep->ep_msg.em_event_data.dq_reply;
+
+			if (info->fp != NULL)
+				(void)oes_fill_file_presented(&pr->file, info->fp,
+				    &st, &ep->ep_msg, &pr->object,
+				    &pr->controller_nonce);
+			pr->op = info->dq_op;
+			pr->error = info->dq_error;
+			pr->count = info->dq_count;
+			break;
+		}
 		default:
 			break;
 		}
@@ -3184,6 +3242,79 @@ oes_mac_vnode_check_close(struct ucred *cred, struct vnode *vp,
 	info.vp = vp;
 
 	return (oes_generate_vnode_event(OES_EVENT_NOTIFY_CLOSE, &info));
+}
+
+/*
+ * Descriptor-level hooks for DescriptorQueue served objects.
+ *
+ * Registering mpo_file_check_read/stat switches on the framework's fast-path
+ * flag for every read(2) and fstat(2) in the system, so the served-mark test
+ * is the first statement of each hook: vnode-backed descriptors already pay
+ * for their events in the vnode hooks and must see nothing more here.
+ * Served descriptors have no vnode, so without these hooks a controller's
+ * objects would be invisible to OES.
+ */
+static int
+oes_mac_file_check_read(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(active_cred);
+	info.fp = fp;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_READ, &info));
+}
+
+static int
+oes_mac_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
+    struct file *fp)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return (0);
+	info = OES_VNODE_INFO_INIT(active_cred);
+	info.fp = fp;
+
+	return (oes_generate_vnode_event(OES_EVENT_AUTH_FILE_STAT, &info));
+}
+
+static void
+oes_mac_file_notify_close(struct ucred *cred, struct file *fp, int fd)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return;
+	info = OES_VNODE_INFO_INIT(cred);
+	info.fp = fp;
+
+	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_FILE_CLOSE, &info);
+}
+
+/*
+ * The controller answers from its DQ_IOC_REPLY ioctl, so curthread and the
+ * controller credential describe the same process; the requester is not
+ * on this thread.  The reply's bytes never enter the message, only count.
+ */
+static void
+oes_mac_file_notify_reply(struct ucred *controller, struct file *fp, int op,
+    int error, size_t count)
+{
+	struct oes_vnode_event_info info;
+
+	if (fp->f_type != DTYPE_DQ)
+		return;
+	info = OES_VNODE_INFO_INIT(controller);
+	info.fp = fp;
+	info.dq_op = op;
+	info.dq_error = error;
+	info.dq_count = count;
+
+	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_DQ_REPLY, &info);
 }
 
 /*
@@ -4385,6 +4516,15 @@ static struct mac_policy_ops oes_mac_ops = {
 	.mpo_vnode_check_revoke = oes_mac_vnode_check_revoke,
 	.mpo_vnode_check_open = oes_mac_vnode_check_open,
 	.mpo_vnode_check_close = oes_mac_vnode_check_close,
+
+	/*
+	 * Served descriptors (dq(4)) - sleepable; the read/stat hooks are
+	 * framework fast paths and return at once for any other file type.
+	 */
+	.mpo_file_check_read = oes_mac_file_check_read,
+	.mpo_file_check_stat = oes_mac_file_check_stat,
+	.mpo_file_notify_close = oes_mac_file_notify_close,
+	.mpo_file_notify_reply = oes_mac_file_notify_reply,
 	.mpo_vnode_check_create = oes_mac_vnode_check_create,
 	.mpo_vnode_check_unlink = oes_mac_vnode_check_unlink,
 	.mpo_vnode_check_rename_from = oes_mac_vnode_check_rename_from,

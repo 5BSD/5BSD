@@ -210,6 +210,7 @@ bsd_kernel_module_set(
         "//sys/modules/oce:module_product",
         "//sys/modules/ocs_fc:module_product",
         "//sys/modules/oes:module_product",
+        "//sys/modules/dq:module_product",
         "//sys/modules/ossl:module_product",
         "//sys/modules/otus:module_product",
         "//sys/modules/p2sb:module_product",
