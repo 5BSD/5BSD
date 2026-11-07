@@ -31,22 +31,49 @@
 #define	DQT_MAX_SEQS		4096
 #define	DQT_MAX_HELD		64
 #define	DQT_MAX_INTERRUPTS	64
+#define	DQT_MAX_LOCKS		32
+#define	DQT_MAX_IOCTL_IN	64
 #define	DQT_READERS_MAX		2
 #define	DQT_PATH_MAX		1024
 
 /* Default wait for a controller-side condition, in milliseconds. */
 #define	DQT_WAIT_MS		5000
 
+/*
+ * An object is served from memory (data, len: READ and GETATTR answered by
+ * the harness, every other event answered with serve_errno or EIO, locks
+ * with ENOLCK) or from a backing file (backing != -1: every event goes to
+ * dq_serve_file() with the object's lock state and identity copy).
+ */
 struct dqt_object {
 	uint64_t	 id;
 	int		 fd;		/* in the controller process */
 	const unsigned char *data;	/* the bytes served */
 	size_t		 len;
-	struct dq_ident_file ident;	/* the GETATTR answer */
+	struct dq_ident_file ident;	/* the GETATTR answer / serve copy */
 	int		 read_errno;	/* 0: serve bytes; else this errno */
+	int		 serve_errno;	/* != 0: answer every 1b event with it */
+	int		 backing;	/* -1, or the file dq_serve_file serves */
+	struct dq_serve_state *lockstate;	/* the queue's (dqt_ctl), shared */
+	struct dq_serve_opts sopts;
 	unsigned	 reads;		/* READ events seen */
 	unsigned	 getattrs;	/* GETATTR events seen */
 	unsigned	 closes;	/* CLOSE records seen */
+	unsigned	 served;	/* records handed to dq_serve_file */
+	unsigned	 serve_failures;	/* dq_serve_file returned -1 */
+	/* The last body of each kind, for field assertions. */
+	struct dq_write_body last_write;
+	struct dq_setattr_body last_setattr;
+	struct dq_fsync_body last_fsync;
+	struct dq_fallocate_body last_fallocate;
+	struct dq_fspacectl_body last_fspacectl;
+	struct dq_ioctl_body last_ioctl;
+	unsigned char	 last_ioctl_in[DQT_MAX_IOCTL_IN];
+	/* Every LOCK and UNLOCK_ALL body, in delivery order. */
+	struct dq_lock_body locks[DQT_MAX_LOCKS];
+	int		 nlocks;
+	struct dq_unlock_all_body unlocks[DQT_MAX_LOCKS];
+	int		 nunlocks;
 };
 
 /* An event the controller read but was told not to answer. */
@@ -98,7 +125,18 @@ struct dqt_ctl {
 		uint32_t	 len;
 	}		 rd[DQT_MAX_SEQS];
 	int		 nrd;
+	/* Every WRITE body seen (offset, length, flags), in delivery order. */
+	struct dqt_write_seen {
+		uint64_t	 object;
+		uint64_t	 offset;
+		uint32_t	 len;
+		uint32_t	 flags;
+	}		 wr[DQT_MAX_SEQS];
+	int		 nwr;
 	uint64_t	 interrupted[DQT_MAX_INTERRUPTS];
+	/* dq_serve_file lock owners: one table per queue (POSIX owners span
+	   the objects of one identity), made at the first backing mint. */
+	struct dq_serve_state *lockstate;
 	int		 ninterrupted;
 };
 
@@ -129,6 +167,19 @@ struct dqt_object *dqt_mint(struct dqt_ctl *c, int oracle_fd,
 struct dqt_object *dqt_mint_ident(struct dqt_ctl *c,
 	    const struct dq_ident_file *ident, const struct dq_policy *pol,
 	    const void *data, size_t len);
+struct dqt_object *dqt_mint_ident_flags(struct dqt_ctl *c,
+	    const struct dq_ident_file *ident, const struct dq_policy *pol,
+	    uint32_t mflags, const void *data, size_t len);
+/*
+ * Mint an object served from a backing file through dq_serve_file(): the
+ * identity is the backing file's at path, pol NULL is the write-serving
+ * policy (dp_write = DQ_EVENT) and mflags DQ_MINT_F_WRITE makes the
+ * descriptor writable.  The object owns a lock state; dqt_fini destroys it.
+ */
+struct dqt_object *dqt_mint_backing(struct dqt_ctl *c, int backing_fd,
+	    const char *path, const struct dq_policy *pol, uint32_t mflags);
+/* dq_policy_default() with dp_write = DQ_EVENT. */
+void	dqt_policy_write(struct dq_policy *pol);
 struct dqt_object *dqt_object_by_id(struct dqt_ctl *c, uint64_t id);
 
 /*
@@ -157,7 +208,10 @@ struct dqt_rr {
 bool	dqt_wait_events(struct dqt_ctl *c, uint32_t op, unsigned n, int ms);
 bool	dqt_wait_held(struct dqt_ctl *c, int n, int ms);
 bool	dqt_wait_interrupts(struct dqt_ctl *c, int n, int ms);
+/* Wait until the object has seen n LOCK bodies. */
+bool	dqt_wait_locks(struct dqt_ctl *c, struct dqt_object *o, int n, int ms);
 void	dqt_stats(struct dqt_ctl *c, struct dq_stats *st);
+void	dqt_stats2(struct dqt_ctl *c, struct dq_stats2 *st);
 void	dqt_msleep(int ms);
 /* Poll the queue's statistics until pred(st, arg) holds or ms elapse. */
 typedef bool (*dqt_stats_pred)(const struct dq_stats *st, uintptr_t arg);

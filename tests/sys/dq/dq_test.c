@@ -23,7 +23,7 @@
 
 #include "dq_test.h"
 
-#define	DQT_READ_BUFSIZE	65536
+#define	DQT_READ_BUFSIZE	(65536 + 131072 + 128)	/* a whole max_io WRITE fits */
 #define	DQT_POLL_MS		50
 
 /*
@@ -62,7 +62,99 @@ struct dqt_pending_reply {
 	int		 error;
 	const void	*data;
 	size_t		 len;
+	/* Set: hand the record to dq_serve_file() instead of replying. */
+	const struct dq_event *serve_ev;
+	struct dqt_object *serve_obj;
 };
+
+/*
+ * Record a stage 1b body on the object (and WRITE bodies on the controller)
+ * for the tests' field assertions.  The mutex is held.
+ */
+static void
+dqt_record_body(struct dqt_ctl *c, struct dqt_object *o,
+    const struct dq_event *ev)
+{
+	const struct dq_write_body *wb;
+	const struct dq_setattr_body *sb;
+	const struct dq_fsync_body *fb;
+	const struct dq_fallocate_body *ab;
+	const struct dq_fspacectl_body *pb;
+	const struct dq_lock_body *lb;
+	const struct dq_unlock_all_body *ub;
+	const struct dq_ioctl_body *ib;
+	const void *in;
+	size_t inlen;
+
+	switch (ev->de_op) {
+	case DQ_OP_WRITE:
+		if (dq_event_write(ev, &wb, NULL, NULL) != 0)
+			return;
+		if (c->nwr < DQT_MAX_SEQS) {
+			c->wr[c->nwr].object = ev->de_object;
+			c->wr[c->nwr].offset = wb->dw_offset;
+			c->wr[c->nwr].len = wb->dw_len;
+			c->wr[c->nwr].flags = wb->dw_flags;
+			c->nwr++;
+		}
+		if (o != NULL)
+			o->last_write = *wb;
+		break;
+	case DQ_OP_SETATTR:
+		if (o != NULL && dq_event_setattr(ev, &sb) == 0)
+			o->last_setattr = *sb;
+		break;
+	case DQ_OP_FSYNC:
+		if (o != NULL && dq_event_fsync(ev, &fb) == 0)
+			o->last_fsync = *fb;
+		break;
+	case DQ_OP_FALLOCATE:
+		if (o != NULL && dq_event_fallocate(ev, &ab) == 0)
+			o->last_fallocate = *ab;
+		break;
+	case DQ_OP_FSPACECTL:
+		if (o != NULL && dq_event_fspacectl(ev, &pb) == 0)
+			o->last_fspacectl = *pb;
+		break;
+	case DQ_OP_LOCK:
+		if (o != NULL && dq_event_lock(ev, &lb) == 0 &&
+		    o->nlocks < DQT_MAX_LOCKS)
+			o->locks[o->nlocks++] = *lb;
+		break;
+	case DQ_OP_UNLOCK_ALL:
+		if (o != NULL && dq_event_unlock_all(ev, &ub) == 0 &&
+		    o->nunlocks < DQT_MAX_LOCKS)
+			o->unlocks[o->nunlocks++] = *ub;
+		break;
+	case DQ_OP_IOCTL:
+		if (o != NULL && dq_event_ioctl(ev, &ib, &in, &inlen) == 0) {
+			o->last_ioctl = *ib;
+			memset(o->last_ioctl_in, 0, sizeof(o->last_ioctl_in));
+			if (inlen != 0)
+				memcpy(o->last_ioctl_in, in,
+				    MIN(inlen, sizeof(o->last_ioctl_in)));
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+/* Hold an event the test wants left unanswered.  The mutex is held. */
+static void
+dqt_hold_event(struct dqt_ctl *c, const struct dq_event *ev, uint32_t len,
+    uint64_t offset)
+{
+
+	if (c->nheld < DQT_MAX_HELD) {
+		c->held[c->nheld].id = ev->de_id;
+		c->held[c->nheld].object = ev->de_object;
+		c->held[c->nheld].op = ev->de_op;
+		c->held[c->nheld].len = len;
+		c->held[c->nheld].offset = offset;
+		c->nheld++;
+	}
+}
 
 /* Decide one record under the mutex; the reply itself is made later. */
 static bool
@@ -82,6 +174,31 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 	dqt_record_seq(c, ev->de_seq);
 	c->last_caller = ev->de_caller;
 	o = dqt_object_by_id(c, ev->de_object);
+	pr->serve_ev = NULL;
+	pr->serve_obj = NULL;
+	dqt_record_body(c, o, ev);
+
+	/* An object with a backing file: dq_serve_file answers, unlocked. */
+	if (o != NULL && o->backing != -1) {
+		if (ev->de_op == DQ_OP_READ)
+			o->reads++;
+		else if (ev->de_op == DQ_OP_GETATTR)
+			o->getattrs++;
+		else if (ev->de_op == DQ_OP_CLOSE)
+			o->closes++;
+		if (ev->de_op == DQ_OP_INTERRUPT && bodylen >= sizeof(*ib)) {
+			ib = body;
+			if (c->ninterrupted < DQT_MAX_INTERRUPTS)
+				c->interrupted[c->ninterrupted++] = ib->din_id;
+		}
+		if (c->hold_replies && ev->de_id != 0) {
+			dqt_hold_event(c, ev, 0, 0);
+			return (false);
+		}
+		pr->serve_ev = ev;
+		pr->serve_obj = o;
+		return (true);
+	}
 
 	switch (ev->de_op) {
 	case DQ_OP_READ:
@@ -160,8 +277,28 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 				c->interrupted[c->ninterrupted++] = ib->din_id;
 		}
 		return (false);
-	default:
+	case DQ_OP_UNLOCK_ALL:
 		return (false);
+	default:
+		/*
+		 * A stage 1b event on a memory object: held when asked, else
+		 * answered with the object's serve_errno (EIO, or ENOLCK for
+		 * a lock, when none is set) and no body.
+		 */
+		if (ev->de_id == 0)
+			return (false);
+		if (c->hold_replies) {
+			dqt_hold_event(c, ev, 0, 0);
+			return (false);
+		}
+		pr->id = ev->de_id;
+		pr->len = 0;
+		pr->data = NULL;
+		if (o != NULL && o->serve_errno != 0)
+			pr->error = o->serve_errno;
+		else
+			pr->error = ev->de_op == DQ_OP_LOCK ? ENOLCK : EIO;
+		return (true);
 	}
 }
 
@@ -204,6 +341,26 @@ dqt_process_batch(struct dqt_ctl *c, const char *buf, size_t len)
 	if (c->reply_delay_ms > 0)
 		dqt_msleep(c->reply_delay_ms);
 	for (i = 0; i < nreplies; i++) {
+		if (replies[i].serve_ev != NULL) {
+			struct dqt_object *so = replies[i].serve_obj;
+			const void *sbody;
+			size_t sbodylen;
+			int rv, serr;
+
+			sbody = dq_event_body(replies[i].serve_ev, &sbodylen);
+			rv = dq_serve_file(c->q, replies[i].serve_ev, sbody,
+			    sbodylen, so->backing, &so->sopts);
+			serr = errno;
+			pthread_mutex_lock(&c->mtx);
+			so->served++;
+			if (rv == -1) {
+				so->serve_failures++;
+				c->reply_failures++;
+				c->last_reply_errno = serr;
+			}
+			pthread_mutex_unlock(&c->mtx);
+			continue;
+		}
 		if (dq_reply(c->q, replies[i].id, replies[i].error,
 		    replies[i].data, replies[i].len) == -1) {
 			pthread_mutex_lock(&c->mtx);
@@ -349,6 +506,11 @@ dqt_fini(struct dqt_ctl *c)
 			(void)close(c->objs[i].fd);
 			c->objs[i].fd = -1;
 		}
+		c->objs[i].lockstate = NULL;
+	}
+	if (c->lockstate != NULL) {
+		dq_serve_state_destroy(c->lockstate);
+		c->lockstate = NULL;
 	}
 	if (c->q != -1) {
 		(void)close(c->q);
@@ -445,28 +607,93 @@ dqt_ident_of(int fd, const char *path, struct dq_ident_file *ident,
 	    "dq_ident_from_stat: %s", strerror(errno));
 }
 
-struct dqt_object *
-dqt_mint_ident(struct dqt_ctl *c, const struct dq_ident_file *ident,
-    const struct dq_policy *pol, const void *data, size_t len)
+void
+dqt_policy_write(struct dq_policy *pol)
 {
+
+	dq_policy_default(pol);
+	pol->dp_write = DQ_EVENT;
+}
+
+/*
+ * The object is filled before it is counted (under the mutex), so the
+ * reader thread never sees one half made.
+ */
+static struct dqt_object *
+dqt_mint_common(struct dqt_ctl *c, const struct dq_ident_file *ident,
+    const struct dq_policy *pol, uint32_t mflags, const void *data,
+    size_t len, int backing)
+{
+	struct dq_policy defpol;
 	struct dqt_object *o;
 	int reason;
 
+	if (pol == NULL) {
+		dq_policy_default(&defpol);
+		pol = &defpol;
+	}
 	ATF_REQUIRE(c->nobjs < DQT_MAX_OBJECTS);
 	o = &c->objs[c->nobjs];
 	memset(o, 0, sizeof(*o));
 	o->ident = *ident;
 	o->data = data;
 	o->len = len;
+	o->backing = backing;
+	if (backing != -1) {
+		if (c->lockstate == NULL)
+			c->lockstate = dq_serve_state_create();
+		ATF_REQUIRE(c->lockstate != NULL);
+		o->lockstate = c->lockstate;
+		o->sopts.so_state = o->lockstate;
+		o->sopts.so_ident = &o->ident;
+	}
 	reason = DQ_REASON_NONE;
-	ATF_REQUIRE_MSG(dq_mint_file(c->q, ident, pol, &o->id, &o->fd,
-	    &reason) == 0, "dq_mint_file: %s (reason %d)", strerror(errno),
-	    reason);
+	ATF_REQUIRE_MSG(dq_mint_file_flags(c->q, ident, pol, mflags, &o->id,
+	    &o->fd, &reason) == 0, "dq_mint_file: %s (reason %d)",
+	    strerror(errno), reason);
 	ATF_REQUIRE(o->fd >= 0);
 	ATF_REQUIRE(o->id != 0);
 	pthread_mutex_lock(&c->mtx);
 	c->nobjs++;
 	pthread_mutex_unlock(&c->mtx);
+	return (o);
+}
+
+struct dqt_object *
+dqt_mint_ident(struct dqt_ctl *c, const struct dq_ident_file *ident,
+    const struct dq_policy *pol, const void *data, size_t len)
+{
+
+	return (dqt_mint_common(c, ident, pol, 0, data, len, -1));
+}
+
+struct dqt_object *
+dqt_mint_ident_flags(struct dqt_ctl *c, const struct dq_ident_file *ident,
+    const struct dq_policy *pol, uint32_t mflags, const void *data, size_t len)
+{
+
+	return (dqt_mint_common(c, ident, pol, mflags, data, len, -1));
+}
+
+struct dqt_object *
+dqt_mint_backing(struct dqt_ctl *c, int backing_fd, const char *path,
+    const struct dq_policy *pol, uint32_t mflags)
+{
+	struct dq_ident_file *ident;
+	struct dq_policy wpol;
+	struct dqt_object *o;
+	struct statfs sfs;
+	struct stat st;
+
+	ident = calloc(1, sizeof(*ident));
+	ATF_REQUIRE(ident != NULL);
+	dqt_ident_of(backing_fd, path, ident, &st, &sfs);
+	if (pol == NULL) {
+		dqt_policy_write(&wpol);
+		pol = &wpol;
+	}
+	o = dqt_mint_common(c, ident, pol, mflags, NULL, 0, backing_fd);
+	free(ident);
 	return (o);
 }
 
@@ -636,6 +863,29 @@ dqt_wait_interrupts(struct dqt_ctl *c, int n, int ms)
 {
 
 	return (dqt_wait_cond(c, dqt_cond_interrupts, (uintptr_t)n, 0, ms));
+}
+
+static bool
+dqt_cond_locks(struct dqt_ctl *c __unused, uintptr_t o, uintptr_t n)
+{
+
+	return (((struct dqt_object *)o)->nlocks >= (int)n);
+}
+
+bool
+dqt_wait_locks(struct dqt_ctl *c, struct dqt_object *o, int n, int ms)
+{
+
+	return (dqt_wait_cond(c, dqt_cond_locks, (uintptr_t)o, (uintptr_t)n,
+	    ms));
+}
+
+void
+dqt_stats2(struct dqt_ctl *c, struct dq_stats2 *st)
+{
+
+	ATF_REQUIRE_MSG(dq_get_stats2(c->q, st) == 0, "DQ_IOC_GET_STATS2: %s",
+	    strerror(errno));
 }
 
 void

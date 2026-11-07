@@ -42,6 +42,14 @@ dq_get_stats(int fd, struct dq_stats *st)
 }
 
 int
+dq_get_stats2(int fd, struct dq_stats2 *st)
+{
+
+	memset(st, 0, sizeof(*st));
+	return (ioctl(fd, DQ_IOC_GET_STATS2, st));
+}
+
+int
 dq_set_queue_depth(int q, uint32_t depth)
 {
 
@@ -183,10 +191,19 @@ int
 dq_mint_file(int q, const struct dq_ident_file *ident,
     const struct dq_policy *pol, uint64_t *object, int *fd, int *reason)
 {
+
+	return (dq_mint_file_flags(q, ident, pol, 0, object, fd, reason));
+}
+
+int
+dq_mint_file_flags(int q, const struct dq_ident_file *ident,
+    const struct dq_policy *pol, uint32_t flags, uint64_t *object, int *fd,
+    int *reason)
+{
 	struct dq_mint_args *args;
 	int error, rv;
 
-	/* 3968 bytes: kept off the stack of callers that mint in threads. */
+	/* 3976 bytes: kept off the stack of callers that mint in threads. */
 	args = calloc(1, sizeof(*args));
 	if (args == NULL)
 		return (-1);
@@ -194,6 +211,7 @@ dq_mint_file(int q, const struct dq_ident_file *ident,
 	args->dm_kind = DQ_KIND_FILE;
 	args->dm_ident = *ident;
 	args->dm_policy = *pol;
+	args->dm_flags = flags;
 	/*
 	 * A failing ioctl copies its argument back to nobody, so the kernel
 	 * stores the reason through this pointer: enum dq_reason on EINVAL,
@@ -270,6 +288,19 @@ dq_set_policy(int q, uint64_t object, const struct dq_policy *pol)
 	return (ioctl(q, DQ_IOC_SETPOLICY, &args));
 }
 
+int
+dq_push_vnode_note(int q, uint64_t object, uint32_t note)
+{
+	struct dq_push_args args;
+
+	memset(&args, 0, sizeof(args));
+	args.dp_version = DQ_API_VERSION;
+	args.dp_op = DQ_PUSH_NOTIFY_VNODE;
+	args.dp_object = object;
+	args.dp_note = note;
+	return (ioctl(q, DQ_IOC_PUSH, &args));
+}
+
 /*
  * Events
  */
@@ -329,6 +360,216 @@ dq_event_body(const struct dq_event *ev, size_t *bodylen)
 	return ((const char *)(const void *)ev + sizeof(*ev));
 }
 
+/*
+ * Typed accessors: the record is of op and its body, fixed part and the
+ * payload a length field counts, lies within de_size (the record is padded
+ * to 8, so the payload may be shorter than what follows the fixed part).
+ */
+static int
+dq_event_fixed(const struct dq_event *ev, uint32_t op, size_t fixed,
+    const void **bodyp)
+{
+	size_t bodylen;
+
+	if (ev == NULL || bodyp == NULL || ev->de_op != op ||
+	    ev->de_size < sizeof(*ev)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	bodylen = ev->de_size - sizeof(*ev);
+	if (bodylen < fixed) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*bodyp = dq_event_body(ev, NULL);
+	return (0);
+}
+
+/* A payload of len bytes after a fixed part of fixed bytes fits the record. */
+static int
+dq_event_payload(const struct dq_event *ev, size_t fixed, size_t len,
+    const void **datap, size_t *lenp)
+{
+	size_t bodylen;
+
+	bodylen = ev->de_size - sizeof(*ev);
+	if (len > bodylen - fixed) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (datap != NULL)
+		*datap = len != 0 ?
+		    (const char *)dq_event_body(ev, NULL) + fixed : NULL;
+	if (lenp != NULL)
+		*lenp = len;
+	return (0);
+}
+
+int
+dq_event_read(const struct dq_event *ev, const struct dq_read_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_READ, sizeof(**body),
+	    (const void **)body));
+}
+
+int
+dq_event_write(const struct dq_event *ev, const struct dq_write_body **body,
+    const void **data, size_t *len)
+{
+
+	if (dq_event_fixed(ev, DQ_OP_WRITE, sizeof(**body),
+	    (const void **)body) != 0)
+		return (-1);
+	return (dq_event_payload(ev, sizeof(**body), (*body)->dw_len, data,
+	    len));
+}
+
+int
+dq_event_setattr(const struct dq_event *ev,
+    const struct dq_setattr_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_SETATTR, sizeof(**body),
+	    (const void **)body));
+}
+
+int
+dq_event_fsync(const struct dq_event *ev, const struct dq_fsync_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_FSYNC, sizeof(**body),
+	    (const void **)body));
+}
+
+int
+dq_event_fallocate(const struct dq_event *ev,
+    const struct dq_fallocate_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_FALLOCATE, sizeof(**body),
+	    (const void **)body));
+}
+
+int
+dq_event_fspacectl(const struct dq_event *ev,
+    const struct dq_fspacectl_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_FSPACECTL, sizeof(**body),
+	    (const void **)body));
+}
+
+int
+dq_event_lock(const struct dq_event *ev, const struct dq_lock_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_LOCK, sizeof(**body),
+	    (const void **)body));
+}
+
+int
+dq_event_unlock_all(const struct dq_event *ev,
+    const struct dq_unlock_all_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_UNLOCK_ALL, sizeof(**body),
+	    (const void **)body));
+}
+
+int
+dq_event_ioctl(const struct dq_event *ev, const struct dq_ioctl_body **body,
+    const void **in, size_t *len)
+{
+
+	if (dq_event_fixed(ev, DQ_OP_IOCTL, sizeof(**body),
+	    (const void **)body) != 0)
+		return (-1);
+	return (dq_event_payload(ev, sizeof(**body), (*body)->dio_len, in,
+	    len));
+}
+
+int
+dq_event_interrupt(const struct dq_event *ev,
+    const struct dq_interrupt_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_INTERRUPT, sizeof(**body),
+	    (const void **)body));
+}
+
+/*
+ * An observer's copy of a reply: the bytes follow the record only on a
+ * DQ_OBS_F_DATA observer (the record is then header, record and
+ * roundup(len, 8) bytes); a non-data observer's copy of a reply that had a
+ * body is flagged DQ_EVENT_F_NODATA and *data is NULL.
+ */
+int
+dq_event_reply_record(const struct dq_event *ev,
+    const struct dq_reply_record **rr, const void **data, size_t *len)
+{
+	size_t bodylen;
+
+	if (dq_event_fixed(ev, DQ_OP_REPLY, sizeof(**rr),
+	    (const void **)rr) != 0)
+		return (-1);
+	bodylen = ev->de_size - sizeof(*ev);
+	if (len != NULL)
+		*len = (*rr)->drr_len;
+	if (data != NULL)
+		*data = NULL;
+	if ((ev->de_flags & DQ_EVENT_F_NODATA) != 0 || (*rr)->drr_len == 0)
+		return (0);
+	if (bodylen - sizeof(**rr) < (*rr)->drr_len) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (data != NULL)
+		*data = (const char *)(const void *)(*rr + 1);
+	return (0);
+}
+
+/*
+ * N5: the kernel's per-operation allow-list, mirrored so a controller can
+ * see which of its errnos reach the requester as themselves.
+ */
+int
+dq_reply_errno_allowed(uint32_t op, int error)
+{
+
+	if (error == 0)
+		return (1);
+	switch (op) {
+	case DQ_OP_WRITE:
+		return (error == EIO || error == ENOSPC || error == EDQUOT ||
+		    error == EFBIG || error == EACCES || error == EPERM ||
+		    error == EROFS || error == EINTR || error == EAGAIN ||
+		    error == ENXIO || error == EINVAL || error == ESTALE);
+	case DQ_OP_SETATTR:
+		return (error == EPERM || error == EROFS || error == EINVAL ||
+		    error == EOPNOTSUPP || error == EIO || error == EFBIG ||
+		    error == EDQUOT || error == ENOSPC || error == EACCES ||
+		    error == ESTALE);
+	case DQ_OP_FSYNC:
+		return (error == EIO || error == EINVAL || error == ENOSPC ||
+		    error == EDQUOT || error == ESTALE);
+	case DQ_OP_FALLOCATE:
+		return (error == ENOSPC || error == EFBIG || error == EINVAL ||
+		    error == EIO || error == EOPNOTSUPP || error == EDQUOT);
+	case DQ_OP_FSPACECTL:
+		return (error == ENOSPC || error == EFBIG || error == EINVAL ||
+		    error == EIO || error == EOPNOTSUPP || error == ENODEV);
+	case DQ_OP_LOCK:
+		return (error == EAGAIN || error == EDEADLK || error == ENOLCK ||
+		    error == EINVAL || error == EIO || error == EINTR);
+	case DQ_OP_IOCTL:
+		return (error == ENOTTY || error == EINVAL || error == EIO ||
+		    error == EPERM || error == EACCES || error == ENXIO);
+	default:
+		return (1);
+	}
+}
+
 int
 dq_reply(int q, uint64_t id, int error, const void *data, size_t len)
 {
@@ -347,10 +588,48 @@ dq_reply(int q, uint64_t id, int error, const void *data, size_t len)
 	return (ioctl(q, DQ_IOC_REPLY, &r));
 }
 
+int
+dq_reply_write(int q, uint64_t id, uint64_t written, uint64_t offset)
+{
+	struct dq_write_reply wr;
+
+	wr.dwr_written = written;
+	wr.dwr_offset = offset;
+	return (dq_reply(q, id, 0, &wr, sizeof(wr)));
+}
+
+int
+dq_reply_fspacectl(int q, uint64_t id, uint64_t offset, uint64_t len)
+{
+	struct dq_fspacectl_reply sr;
+
+	sr.dscr_offset = offset;
+	sr.dscr_len = len;
+	return (dq_reply(q, id, 0, &sr, sizeof(sr)));
+}
+
+int
+dq_reply_lock(int q, uint64_t id, const struct dq_lock_reply *lr)
+{
+
+	if (lr == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (dq_reply(q, id, 0, lr, sizeof(*lr)));
+}
+
+int
+dq_reply_ioctl(int q, uint64_t id, int error, const void *out, size_t len)
+{
+
+	return (dq_reply(q, id, error, out, len));
+}
+
 /*
- * The largest record a queue can post is a header plus kern.dq.max_io
- * (a WRITE body in a later stage); the dispatch buffer is sized once from
- * the sysctl so a single read never answers ENOBUFS.
+ * The largest record a queue can post is a header, a WRITE body and
+ * kern.dq.max_io data bytes; the dispatch buffer is sized once from the
+ * sysctl so a single read never answers ENOBUFS.
  */
 static size_t
 dq_dispatch_bufsize(void)
@@ -364,7 +643,8 @@ dq_dispatch_bufsize(void)
 	len = sizeof(max_io);
 	if (sysctlbyname("kern.dq.max_io", &max_io, &len, NULL, 0) != 0)
 		max_io = 131072;
-	size = sizeof(struct dq_event) + max_io;
+	size = sizeof(struct dq_event) + sizeof(struct dq_write_body) +
+	    roundup2((size_t)max_io, 8);
 	return (size);
 }
 

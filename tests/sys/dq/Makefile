@@ -18,6 +18,13 @@ ATF_TESTS_C+=	dq_observer_test
 ATF_TESTS_C+=	dq_observe_test
 ATF_TESTS_C+=	dq_negative_test
 ATF_TESTS_C+=	dq_oes_test
+ATF_TESTS_C+=	dq_write_test
+ATF_TESTS_C+=	dq_setattr_test
+ATF_TESTS_C+=	dq_fsync_test
+ATF_TESTS_C+=	dq_lock_test
+ATF_TESTS_C+=	dq_ioctl_test
+ATF_TESTS_C+=	dq_note_test
+ATF_TESTS_C+=	dq_mac_test
 ATF_TESTS_SH+=	dq_dtrace_test
 
 # Every program is a controller: the shared harness is part of each.
@@ -39,6 +46,8 @@ LIBADD+=	dq pthread util
 TEST_METADATA.dq_concurrency_test+=	is_exclusive="true"
 # Attaches a global OES client, as the OES suite does: run alone.
 TEST_METADATA.dq_oes_test+=	is_exclusive="true"
+# Switches mac_abac to enforcing for one rule, and traces with dtrace: alone.
+TEST_METADATA.dq_mac_test+=	is_exclusive="true"
 
 WARNS?=		6
 

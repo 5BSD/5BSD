@@ -10,6 +10,8 @@
  * and answers by id.  Every function here is a thin, errno-preserving
  * wrapper over the ioctls and read(2) of <dev/dq/dq.h>; the kernel's own
  * errnos pass through unchanged and libdq(3) lists them per function.
+ * dq_serve_file() is the one routine with policy of its own: it answers
+ * every stage 1b-i event from a backing descriptor.
  */
 
 #ifndef _LIBDQ_H_
@@ -30,6 +32,14 @@
 /* The mac_capability device dq_observe_connect() opens. */
 #define	DQ_MAC_CAPABILITY_DEVICE	"/dev/mac_capability"
 
+/*
+ * The fo_fsync mode word a DQ_OP_FSYNC body carries (dfs_mode): the
+ * kernel's FO_FSYNC_* of <sys/file.h>, which userland does not see.
+ */
+#define	DQ_FSYNC_FULL		0	/* fsync(2): data and metadata */
+#define	DQ_FSYNC_DATA		1	/* fdatasync(2): data only */
+#define	DQ_FSYNC_FS		2	/* the whole filesystem (Linux syncfs) */
+
 __BEGIN_DECLS
 
 /*
@@ -45,6 +55,8 @@ int	dq_open(void);
 
 /* Statistics of a queue or of an observer descriptor. */
 int	dq_get_stats(int fd, struct dq_stats *st);
+/* The extended counters (DQ_IOC_GET_STATS2); ds2_size is the kernel's. */
+int	dq_get_stats2(int fd, struct dq_stats2 *st);
 
 /* Lower the queue's depth; 1..kern.dq.queue_depth, never above it. */
 int	dq_set_queue_depth(int q, uint32_t depth);
@@ -54,10 +66,11 @@ int	dq_set_queue_depth(int q, uint32_t depth);
  */
 
 /*
- * The stage 1a policy the kernel accepts (D87): no served writes, locks as
- * events (nothing posts), no ioctls, no exec, no shared writable mappings,
- * the default deadline, no optional events, and CAP_ALL_RIGHTS because
- * that is what open(2) returns.
+ * The default policy the kernel accepts (D87): no served writes (the object
+ * is read-only), locks as events, no ioctls, no exec, no shared writable
+ * mappings, the default deadline, no optional events, and CAP_ALL_RIGHTS
+ * because that is what open(2) returns.  A controller that serves writes
+ * sets dp_write = DQ_EVENT and mints with DQ_MINT_F_WRITE.
  */
 void	dq_policy_default(struct dq_policy *pol);
 
@@ -80,11 +93,17 @@ int	dq_ident_from_stat(struct dq_ident_file *ident, const char *path,
  * Mint a DQ_KIND_FILE object.  On success *object is its id and *fd the
  * descriptor installed in the caller (O_CLOEXEC, dp_rights, not
  * transferable over SCM_RIGHTS).  On EINVAL *reason names the refused
- * field (enum dq_reason); reason may be NULL.
+ * field (enum dq_reason); reason may be NULL.  dq_mint_file() mints a
+ * read-only descriptor; dq_mint_file_flags() passes dm_flags, where
+ * DQ_MINT_F_WRITE installs it FREAD|FWRITE and needs dp_write == DQ_EVENT
+ * (else EINVAL with DQ_REASON_FLAGS).
  */
 int	dq_mint_file(int q, const struct dq_ident_file *ident,
 	    const struct dq_policy *pol, uint64_t *object, int *fd,
 	    int *reason);
+int	dq_mint_file_flags(int q, const struct dq_ident_file *ident,
+	    const struct dq_policy *pol, uint32_t flags, uint64_t *object,
+	    int *fd, int *reason);
 
 /* Mint an observer descriptor of the queue (DQ_OBS_F_*).  Returns the fd. */
 int	dq_mint_observer(int q, uint32_t flags);
@@ -92,6 +111,14 @@ int	dq_mint_observer(int q, uint32_t flags);
 int	dq_revoke(int q, uint64_t object);
 int	dq_set_ident(int q, uint64_t object, const struct dq_ident_file *ident);
 int	dq_set_policy(int q, uint64_t object, const struct dq_policy *pol);
+
+/*
+ * Raise an EVFILT_VNODE note on an object's knotes for what happened
+ * elsewhere (DQ_IOC_PUSH, DQ_PUSH_NOTIFY_VNODE): NOTE_DELETE, LINK,
+ * RENAME, WRITE, EXTEND, ATTRIB, OPEN, CLOSE, CLOSE_WRITE, READ.  0 and
+ * NOTE_REVOKE are EINVAL (revoke is dq_revoke()).
+ */
+int	dq_push_vnode_note(int q, uint64_t object, uint32_t note);
 
 /*
  * Events
@@ -107,7 +134,7 @@ int	dq_read_events(int fd, void *buf, size_t len, ssize_t *got);
 
 /*
  * Walk the records of a buffer.  Each returns NULL when no further whole
- * record (de_size at least a header, within len) follows.
+ * record (de_size at least a header, a multiple of 8, within len) follows.
  */
 const struct dq_event *dq_event_first(const void *buf, size_t len);
 const struct dq_event *dq_event_next(const void *buf, size_t len,
@@ -117,20 +144,148 @@ const struct dq_event *dq_event_next(const void *buf, size_t len,
 const void *dq_event_body(const struct dq_event *ev, size_t *bodylen);
 
 /*
+ * Typed body accessors.  Each checks de_op and that the record holds the
+ * fixed body (and, for WRITE and IOCTL, the payload its length field
+ * counts; the record is padded to 8 bytes, so a payload is shorter than
+ * what follows the fixed part).  They return 0 with the pointers set, or
+ * -1 with errno EINVAL for a record of another operation or one too short
+ * for its body.  Output pointers other than the body may be NULL.  For an
+ * observer's DQ_OP_REPLY record *data is NULL when the record carries no
+ * bytes (DQ_EVENT_F_NODATA, or a reply without a body) and *len is the
+ * reply's length either way.
+ */
+int	dq_event_read(const struct dq_event *ev,
+	    const struct dq_read_body **body);
+int	dq_event_write(const struct dq_event *ev,
+	    const struct dq_write_body **body, const void **data, size_t *len);
+int	dq_event_setattr(const struct dq_event *ev,
+	    const struct dq_setattr_body **body);
+int	dq_event_fsync(const struct dq_event *ev,
+	    const struct dq_fsync_body **body);
+int	dq_event_fallocate(const struct dq_event *ev,
+	    const struct dq_fallocate_body **body);
+int	dq_event_fspacectl(const struct dq_event *ev,
+	    const struct dq_fspacectl_body **body);
+int	dq_event_lock(const struct dq_event *ev,
+	    const struct dq_lock_body **body);
+int	dq_event_unlock_all(const struct dq_event *ev,
+	    const struct dq_unlock_all_body **body);
+int	dq_event_ioctl(const struct dq_event *ev,
+	    const struct dq_ioctl_body **body, const void **in, size_t *len);
+int	dq_event_interrupt(const struct dq_event *ev,
+	    const struct dq_interrupt_body **body);
+int	dq_event_reply_record(const struct dq_event *ev,
+	    const struct dq_reply_record **rr, const void **data, size_t *len);
+
+/*
  * Answer an event: error is 0 or an errno; data/len the reply body the
  * operation defines (READ: up to the asked length, short means EOF;
- * GETATTR: exactly one struct dq_ident_file when error is 0).
+ * GETATTR: exactly one struct dq_ident_file when error is 0; the stage
+ * 1b-i bodies have the typed helpers below).  The kernel validates the
+ * body against the operation (EINVAL, the event stays in flight) and maps
+ * an errno outside the operation's allow-list to EIO for the requester.
  */
 int	dq_reply(int q, uint64_t id, int error, const void *data, size_t len);
 
 /*
+ * The per-operation reply bodies.  dq_reply_write(): the count taken (at
+ * most dw_len) and the offset the bytes went to (for DQ_WRITE_F_APPEND the
+ * controller's end of file; the implicit file offset becomes
+ * offset+written).  dq_reply_fspacectl(): the range left undone, with
+ * offset >= dsc_offset and offset+len == dsc_offset+dsc_len (0 remaining:
+ * dsc_offset+dsc_len, 0).  dq_reply_lock(): a DQ_LOCK_GETLK answer, the
+ * blocking lock or dlr_type F_UNLCK.  dq_reply_ioctl(): out[len] with len
+ * IOCPARM_LEN(cmd) for a successful IOC_OUT command and 0 otherwise.
+ */
+int	dq_reply_write(int q, uint64_t id, uint64_t written, uint64_t offset);
+int	dq_reply_fspacectl(int q, uint64_t id, uint64_t offset, uint64_t len);
+int	dq_reply_lock(int q, uint64_t id, const struct dq_lock_reply *lr);
+int	dq_reply_ioctl(int q, uint64_t id, int error, const void *out,
+	    size_t len);
+
+/*
+ * The kernel's per-operation errno allow-list (dq(4)): true when a reply
+ * of error to op reaches the requester as itself, false when the kernel
+ * turns it into EIO and counts it in ds2_bad_replies.  READ and GETATTR
+ * accept any errno.
+ */
+int	dq_reply_errno_allowed(uint32_t op, int error);
+
+/*
  * One read(2) and one handler call per record.  The handler returns 0 to
  * continue or nonzero to stop; dq_dispatch returns the records handed
- * over, or -1 when the read failed.
+ * over, or -1 when the read failed.  The buffer holds the largest record
+ * the kernel posts (a WRITE of kern.dq.max_io bytes).
  */
 typedef int (*dq_handler_t)(int q, const struct dq_event *ev,
 	    const void *body, size_t bodylen, void *arg);
 int	dq_dispatch(int q, dq_handler_t handler, void *arg);
+
+/*
+ * Serving a backing file
+ */
+
+/*
+ * dq_serve_file() answers one event from a real file open on backing_fd:
+ * READ by pread(2), GETATTR from fstat(2)/fstatfs(2)/fpathconf(2), WRITE by
+ * pwrite(2) (an append goes to the backing file's end and reports that
+ * offset; O_SYNC/O_DSYNC flags are honoured with fsync(2)/fdatasync(2)),
+ * SETATTR by the masked fchmod/fchown/ftruncate/futimens/fchflags calls,
+ * FSYNC by fsync or fdatasync, FALLOCATE by posix_fallocate(2), FSPACECTL
+ * by fspacectl(2), LOCK and UNLOCK_ALL by OFD locks on a separate open of
+ * the backing file per owner so distinct owners are distinct lockers (a
+ * POSIX owner per identity, a flock or OFD owner per object), IOCTL by
+ * the caller's handler or ENOTTY.  CLOSE, INTERRUPT and
+ * UNLOCK_ALL need no reply and update the lock state.  A backing errno the
+ * operation's allow-list refuses is sent as EIO.
+ *
+ * The lock state (one per queue, shared by all its objects) holds the
+ * owner opens and the threads blocked in a DQ_LOCK_SETLKW; without it
+ * every LOCK is answered ENOLCK.  A GETLK by an owner that holds nothing
+ * asks through a temporary open; a SETLKW granted after its requester gave
+ * up (the reply answers ESRCH) is unlocked again.
+ * so_ident, when set, is the controller's copy of the identity: GETATTR is
+ * answered from it refreshed, and after a successful SETATTR (and, under
+ * DQ_SERVE_F_SYNC_IDENT, after WRITE, FALLOCATE and FSPACECTL) it is
+ * refreshed from the backing file and sent with dq_set_ident(), so the
+ * presented mtime, ctime and blocks are the backing file's.  Without it
+ * GETATTR is answered EIO.
+ *
+ * The ioctl handler receives the command, its input and a buffer of
+ * IOCPARM_LEN(cmd) bytes for an IOC_OUT command; it returns 0 after
+ * filling the output, or an errno.  Pointer-embedding commands cannot be
+ * served: refuse them with ENOTTY.
+ *
+ * Returns 0 once the record is answered (or needed no answer), -1 with the
+ * errno of the failing reply ioctl.  An operation it does not know is
+ * answered EIO; a record of another queue's ABI (too short for its body)
+ * is answered EIO too.
+ */
+struct dq_serve_state;
+
+typedef int (*dq_ioctl_handler_t)(int backing_fd,
+	    const struct dq_ioctl_body *ib, const void *in, void *out,
+	    size_t outlen, void *arg);
+
+struct dq_serve_opts {
+	struct dq_serve_state *so_state;	/* lock owners; may be NULL */
+	struct dq_ident_file *so_ident;		/* identity copy; may be NULL */
+	dq_ioctl_handler_t so_ioctl;		/* NULL: ENOTTY */
+	void		*so_arg;
+	uint32_t	 so_flags;		/* DQ_SERVE_F_* */
+	uint32_t	 so_pad0;
+};
+#define	DQ_SERVE_F_SYNC_IDENT	0x00000001	/* SETIDENT after every
+						   mutating operation */
+
+struct dq_serve_state *dq_serve_state_create(void);
+/* Cancels the blocked SETLKW threads and closes the owner opens. */
+void	dq_serve_state_destroy(struct dq_serve_state *st);
+/* Lock owners currently held open (for tests and diagnostics). */
+int	dq_serve_state_owners(const struct dq_serve_state *st);
+
+int	dq_serve_file(int q, const struct dq_event *ev, const void *body,
+	    size_t bodylen, int backing_fd, const struct dq_serve_opts *opts);
 
 /*
  * The dq.observe service (D90)

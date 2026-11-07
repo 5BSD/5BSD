@@ -811,6 +811,29 @@ caught by the `EDEADLK` scan and waits out the deadline.
 descriptor table under `FILEDESC_SLOCK` once per posted event; nothing
 else in 1a is paid per operation beyond the event itself.
 
+### 7.7 Stage 1b-i as built (2026-11-07)
+
+Served writes, attributes, fsync, fallocate, fspacectl, locks, ioctls,
+kqueue notes and data observers (D93-D101 as amended by D105), with the
+boundary MAC calls `fallocate`, `fspacectl` and the Linux bridges lacked
+and abac checks against the controller's label. Plan reviewed twice before
+code; the built series reviewed independently ("not yet", five blocking
+items, all adopted — D106).
+
+**What the VM runs found (plane on, WITNESS).** Run 10 (new kernel, 1a
+tests): only 1a pins the series moves. Runs 11-13: test and library
+defects only, each traced — an fspacectl range overlapping the bytes it
+checked, per-owner opens inherited across `fork` (an OFD lock lives while
+any descriptor of its open file does: owner opens are now close-on-fork),
+an abac-labelled result pipe (labels follow their creator; the labelled
+controller runs in its own child because abac never relabels downward), a
+dtrace count including the harness's own write, a NULL policy, a recorder
+cap, and two expectations written before POSIX ownership spanned sibling
+opens. Run 14: 280/282 — all 119 dq and libdq cases and the stage 0
+`sys/file` suite pass; the non-passes are the pre-existing
+`devctl_device_test` metadata break and the baselined OES socket-poll
+failure.
+
 ## 8. Wire protocol
 
 Fixed-width, native byte order, `DQ_API_VERSION` 1, additive like
@@ -1565,6 +1588,7 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D103 | 2026-11-07 | `mmap` (ii) in `shm_mmap`'s shape: `maxprot` from `FREAD`/`FWRITE`/`dp_mmap_shared_write`, private mappings COW with `DFLAG_PRIVWRITE`, own writecount, `vm_mmap_file(..., fp)` so the mapping holds the file; the fault wait abandons only on `SIGKILL`/`P_WEXIT`/deadline, continuing with non-catching bounded slices after a caught signal (I12) | 1b plan + review | |
 | D104 | 2026-11-07 | `sendfile` (ii): `vn_sendfile` split into `sendfile_getobj` + an exported `sendfile_send`; `dq_sendfile` builds its own `sendfile_src` (object, size, getsize, release) and calls `mac_file_check_read` itself (the syscall runs no file hook); the `f_type` switch in `sendfile_getobj` gains no arm | 1b plan + review | the table answers |
 | D105 | 2026-11-07 | Stage 1b plan reviewed twice ("not yet", ten blocking and fifteen items; then "code may begin" after three corrections): the items above are the adopted set; also `dq_stats`/`GET_STATS` frozen with `DQ_IOC_GET_STATS2` (the size is in the ioctl word), reply errnos allow-listed per op (a controller's `EPIPE` must never raise `SIGPIPE`), `F_SET_RW_HINT` stays `EPERM`, `copy_file_range` stays the default, `dp_mmap_shared_write = ALLOW` refused until ii | plan review 2026-11-07 | a pager design has to be checked against the VM code's locks before it is code |
+| D106 | 2026-11-07 | Built-series review of 1b-i ("not yet") adopted: the `EDEADLK` rule runs before any offset or range lock in every operation that posts (a controller touching its own served file could sleep uninterruptibly behind a requester's write lock); Linux splice and sendfile check reads too; `UNLOCK_ALL` and `INTERRUPT` are never dropped for depth (`ds2_overdepth`), since a lost unlock leaks a controller-side lock under a pid that gets reused; POSIX lock ownership spans every open of the same identity on the queue, as on a real file (siblings indexed by `(di_dev, di_ino)` per queue, which also bounds the note walk); libdq's `GETLK` creates no owner. Also: a non-append `WRITE` reply must echo its offset; a zero-byte success is `EIO`; allow-lists widened (`EDQUOT`, `ENOSPC`, `ESTALE`, `EACCES` where real files return them); the snapshot chmod rule; `RLIMIT_FSIZE` on truncate after the attribute checks. Declared: an immutable or append flag combined with other attributes in one `vattr` is `EPERM` (ufs ignores the rest); `file_setattr_direct` applies size, mode and owner before flags | built-series review 2026-11-07 | |
 
 ### 20.1 Origin
 

@@ -2,8 +2,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Observer descriptors (design 7.2): a copy of every event and every reply
- * on a queue, lengths and never bytes, on a descriptor that can read and
- * ask for statistics and nothing else.
+ * on a queue (lengths always, bytes only to a DQ_OBS_F_DATA observer), on a
+ * descriptor that can read and ask for statistics and nothing else.
  */
 
 #include <sys/param.h>
@@ -134,9 +134,9 @@ ATF_TC_BODY(sees_events_and_replies, tc)
 	ATF_CHECK_EQ(0, rb->dr_offset);
 	ATF_CHECK_EQ(100, rb->dr_len);
 	ATF_CHECK_EQ(c.last_caller.dc_pid, recs[0]->de_caller.dc_pid);
-	/* The reply: id, errno and length; no data. */
+	/* The reply: id, errno and length; the data removed and flagged. */
 	ATF_CHECK_EQ(DQ_OP_REPLY, recs[1]->de_op);
-	ATF_CHECK_EQ(DQ_EVENT_F_OBSERVED, recs[1]->de_flags);
+	ATF_CHECK_EQ(DQ_EVENT_F_OBSERVED | DQ_EVENT_F_NODATA, recs[1]->de_flags);
 	ATF_CHECK_EQ(recs[0]->de_id, recs[1]->de_id);
 	ATF_CHECK_EQ(2, recs[1]->de_seq);
 	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*rr), recs[1]->de_size);
@@ -147,15 +147,26 @@ ATF_TC_BODY(sees_events_and_replies, tc)
 	ATF_CHECK_EQ(100, rr->drr_len);
 
 	/*
-	 * DQ_OBS_F_DATA: in stage 1a no event body carries data (READ asks
-	 * for an offset and a length) and the reply bytes belong to the
-	 * waiter (dq_observer.c), so a data observer sees the same records.
+	 * DQ_OBS_F_DATA: a READ event carries no data (an offset and a
+	 * length); the REPLY record carries the reply bytes after the record,
+	 * padded to 8 (D101: a reference to the waiter's buffer).
 	 */
 	n = collect(obs_data, buf, OBS_BUFSIZE, recs, 2, DQT_WAIT_MS);
 	ATF_REQUIRE_EQ(2, n);
 	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*rb), recs[0]->de_size);
-	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*rr), recs[1]->de_size);
+	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*rr) + roundup2(100, 8),
+	    recs[1]->de_size);
 	ATF_CHECK((recs[1]->de_flags & DQ_EVENT_F_NODATA) == 0);
+	{
+		const void *rdata;
+		size_t rlen;
+
+		ATF_REQUIRE_EQ(0, dq_event_reply_record(recs[1], &rr, &rdata,
+		    &rlen));
+		ATF_CHECK_EQ(100, rlen);
+		ATF_REQUIRE(rdata != NULL);
+		ATF_CHECK(memcmp(rdata, data, 100) == 0);
+	}
 
 	free(buf);
 	(void)close(obs);
@@ -399,6 +410,190 @@ ATF_TC_BODY(mint_observer_args, tc)
 	dqt_fini(&c);
 }
 
+struct one_write_arg {
+	int		 fd;
+	const void	*buf;
+	size_t		 len;
+	off_t		 off;
+};
+
+static void
+child_one_pwrite(void *arg, void *result)
+{
+	struct one_write_arg *a = arg;
+	struct dqt_rr *r = result;
+
+	r->rv = pwrite(a->fd, a->buf, a->len, a->off);
+	r->err = r->rv == -1 ? errno : 0;
+}
+
+/* The first record of op among n collected, or NULL. */
+static const struct dq_event *
+find_op(const struct dq_event **recs, int n, uint32_t op)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		if (recs[i]->de_op == op)
+			return (recs[i]);
+	}
+	return (NULL);
+}
+
+ATF_TC(write_data_bodies);
+ATF_TC_HEAD(write_data_bodies, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a DQ_OBS_F_DATA observer sees the "
+	    "WRITE bytes in the event and the reply body after the REPLY "
+	    "record; a metadata observer sees both flagged DQ_EVENT_F_NODATA "
+	    "without the bytes (D101)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(write_data_bodies, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct one_write_arg a;
+	struct dqt_rr r;
+	const struct dq_event *recs[8], *wev, *rev;
+	const struct dq_write_body *wb;
+	const struct dq_reply_record *rr;
+	const struct dq_write_reply *wr;
+	const void *wdata, *rdata;
+	unsigned char wbuf[37];
+	char *buf;
+	size_t wlen, rlen;
+	int backing, n, obs, obs_data;
+
+	dqt_fill(data, sizeof(data), 83);
+	backing = dqt_make_oracle("backing", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	(void)close(backing);
+	backing = open(oracle_path, O_RDWR);
+	ATF_REQUIRE(backing != -1);
+	dqt_init(&c);
+	o = dqt_mint_backing(&c, backing, oracle_path, NULL, DQ_MINT_F_WRITE);
+	obs = dq_mint_observer(c.q, 0);
+	obs_data = dq_mint_observer(c.q, DQ_OBS_F_DATA);
+	ATF_REQUIRE(obs != -1 && obs_data != -1);
+
+	/* 37 bytes: the record pads the payload to 40. */
+	dqt_fill(wbuf, sizeof(wbuf), 84);
+	a.fd = o->fd;
+	a.buf = wbuf;
+	a.len = sizeof(wbuf);
+	a.off = 1000;
+	dqt_run_child(child_one_pwrite, &a, &r, sizeof(r));
+	ATF_REQUIRE_EQ_MSG((long)sizeof(wbuf), r.rv, "pwrite: %s",
+	    strerror(r.err));
+
+	buf = malloc(OBS_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	n = collect(obs_data, buf, OBS_BUFSIZE, recs, 2, DQT_WAIT_MS);
+	ATF_REQUIRE_EQ(2, n);
+	wev = find_op(recs, n, DQ_OP_WRITE);
+	rev = find_op(recs, n, DQ_OP_REPLY);
+	ATF_REQUIRE(wev != NULL && rev != NULL);
+	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*wb) + 40, wev->de_size);
+	ATF_CHECK_EQ(0, wev->de_size % 8);
+	ATF_CHECK((wev->de_flags & DQ_EVENT_F_NODATA) == 0);
+	ATF_REQUIRE_EQ(0, dq_event_write(wev, &wb, &wdata, &wlen));
+	ATF_CHECK_EQ(1000, wb->dw_offset);
+	ATF_CHECK_EQ(sizeof(wbuf), wlen);
+	ATF_CHECK(memcmp(wdata, wbuf, sizeof(wbuf)) == 0);
+	/* The reply body is the dq_write_reply the controller sent. */
+	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*rr) + sizeof(*wr),
+	    rev->de_size);
+	ATF_REQUIRE_EQ(0, dq_event_reply_record(rev, &rr, &rdata, &rlen));
+	ATF_CHECK_EQ(wev->de_id, rr->drr_id);
+	ATF_CHECK_EQ(sizeof(*wr), rlen);
+	ATF_REQUIRE(rdata != NULL);
+	wr = rdata;
+	ATF_CHECK_EQ(sizeof(wbuf), wr->dwr_written);
+	ATF_CHECK_EQ(1000, wr->dwr_offset);
+
+	/* The metadata observer: no bytes, the record says so. */
+	n = collect(obs, buf, OBS_BUFSIZE, recs, 2, DQT_WAIT_MS);
+	ATF_REQUIRE_EQ(2, n);
+	wev = find_op(recs, n, DQ_OP_WRITE);
+	rev = find_op(recs, n, DQ_OP_REPLY);
+	ATF_REQUIRE(wev != NULL && rev != NULL);
+	ATF_CHECK_EQ(DQ_EVENT_F_OBSERVED | DQ_EVENT_F_NODATA, wev->de_flags);
+	ATF_CHECK_EQ(0, wev->de_size % 8);
+	/* The fixed body (offset, length, flags) is kept; the bytes are not. */
+	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*wb), wev->de_size);
+	ATF_CHECK_EQ(37,
+	    ((const struct dq_write_body *)(const void *)(wev + 1))->dw_len);
+	ATF_CHECK_EQ(DQ_EVENT_F_OBSERVED | DQ_EVENT_F_NODATA, rev->de_flags);
+	ATF_CHECK_EQ(sizeof(struct dq_event) + sizeof(*rr), rev->de_size);
+	ATF_REQUIRE_EQ(0, dq_event_reply_record(rev, &rr, &rdata, &rlen));
+	ATF_CHECK_EQ(sizeof(*wr), rlen);
+	ATF_CHECK(rdata == NULL);
+
+	free(buf);
+	(void)close(obs);
+	(void)close(obs_data);
+	dqt_fini(&c);
+	(void)close(backing);
+}
+
+ATF_TC(get_stats2);
+ATF_TC_HEAD(get_stats2, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "DQ_IOC_GET_STATS2 answers on the queue "
+	    "and on an observer, ds2_size 320, the 1a counters equal to "
+	    "DQ_IOC_GET_STATS's, the 1b-ii counters 0, ds2_pushes counted");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(get_stats2, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct one_read_arg a;
+	struct dqt_rr r;
+	struct dq_stats st;
+	struct dq_stats2 s2, o2;
+	int obs, oracle;
+
+	dqt_fill(data, sizeof(data), 85);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+	dqt_init(&c);
+	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
+	obs = dq_mint_observer(c.q, 0);
+	ATF_REQUIRE(obs != -1);
+	a.fd = o->fd;
+	a.len = 100;
+	dqt_run_child(child_one_read, &a, &r, sizeof(r));
+	ATF_REQUIRE_EQ(100, r.rv);
+	ATF_REQUIRE_EQ(0, dq_push_vnode_note(c.q, o->id, NOTE_ATTRIB));
+
+	dqt_stats2(&c, &s2);
+	dqt_stats(&c, &st);
+	ATF_CHECK_EQ(320, s2.ds2_size);
+	ATF_CHECK_EQ(st.ds_queue_id, s2.ds2_queue_id);
+	ATF_CHECK_EQ(st.ds_events_posted, s2.ds2_events_posted);
+	ATF_CHECK_EQ(st.ds_replies, s2.ds2_replies);
+	ATF_CHECK_EQ(st.ds_objects_live, s2.ds2_objects_live);
+	ATF_CHECK_EQ(st.ds_queue_depth, s2.ds2_queue_depth);
+	ATF_CHECK_EQ(1, s2.ds2_observers);
+	ATF_CHECK_EQ(1, s2.ds2_pushes);
+	ATF_CHECK_EQ(0, s2.ds2_bad_replies);
+	ATF_CHECK_EQ(0, s2.ds2_locks);
+	ATF_CHECK_EQ(0, s2.ds2_async_pending);
+	ATF_CHECK_EQ(0, s2.ds2_async_bytes);
+	ATF_CHECK_EQ(0, s2.ds2_async_deadlines);
+	/* The observer answers it too (its ioctl set holds both commands). */
+	memset(&o2, 0xa5, sizeof(o2));
+	ATF_REQUIRE_EQ_MSG(0, dq_get_stats2(obs, &o2), "%s", strerror(errno));
+	ATF_CHECK_EQ(320, o2.ds2_size);
+	ATF_CHECK_EQ(s2.ds2_queue_id, o2.ds2_queue_id);
+	ATF_CHECK_EQ(s2.ds2_pushes, o2.ds2_pushes);
+	(void)close(obs);
+	dqt_fini(&c);
+	(void)close(oracle);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -407,5 +602,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, read_rules);
 	ATF_TP_ADD_TC(tp, set_queue_depth_bounds);
 	ATF_TP_ADD_TC(tp, mint_observer_args);
+	ATF_TP_ADD_TC(tp, write_data_bodies);
+	ATF_TP_ADD_TC(tp, get_stats2);
 	return (atf_no_error());
 }
