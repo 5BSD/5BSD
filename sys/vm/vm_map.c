@@ -5142,10 +5142,11 @@ vm_map_growstack(vm_map_t map, vm_offset_t addr, vm_map_entry_t gap_entry)
 
 	/*
 	 * Disallow stack growth when the access is performed by a
-	 * debugger or AIO daemon.  The reason is that the wrong
-	 * resource limits are applied.
+	 * debugger or AIO daemon (a kernel process).  The reason is that
+	 * the wrong resource limits are applied.
 	 */
-	if (p != initproc && (map != &vm->vm_map || p->p_textvp == NULL))
+	if (p != initproc && (map != &vm->vm_map ||
+	    (p->p_flag & P_KPROC) != 0))
 		return (KERN_FAILURE);
 
 	MPASS(!vm_map_is_system(map));

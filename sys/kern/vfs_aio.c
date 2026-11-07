@@ -1197,7 +1197,8 @@ aio_daemon(void *_id)
 	p = td->td_proc;
 	myvm = vmspace_acquire_ref(p);
 
-	KASSERT(p->p_textvp == NULL, ("kthread has a textvp"));
+	KASSERT((p->p_flag & P_KPROC) != 0,
+	    ("aio daemon is not a kernel process"));
 
 	/*
 	 * Allocate and ready the aio control info.  There is one aiop structure
