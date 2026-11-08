@@ -10113,6 +10113,13 @@ struct dtrace_probe_cookie {
 	uint8_t inprobe;
 };
 
+/*
+ * Set before the recursion panic below.  panic() can itself be an fbt
+ * probe that fires before KERNEL_PANICKED() holds, and firing it would
+ * recurse again until the kernel stack overflows, losing the message.
+ */
+static volatile bool dtrace_probe_recursed;
+
 /* ERROR probes belong to the host even when a guest DIF action faults. */
 static const void *
 dtrace_probe_vmhdl(dtrace_id_t id)
@@ -10156,8 +10163,10 @@ dtrace_probe_enter(uint16_t vmid, dtrace_id_t id)
 	 * assertion, a new case should be added.
 	 */
 	if (cookie.inprobe != 0 &&
-	    (vmid != HYPERTRACE_HOSTID || id != dtrace_probeid_error))
+	    (vmid != HYPERTRACE_HOSTID || id != dtrace_probeid_error)) {
+		dtrace_probe_recursed = true;
 		panic("Recursing into dtrace_probe().");
+	}
 
 	curthread->t_dtrace_inprobe = 1;
 
@@ -10201,7 +10210,7 @@ dtrace_probe(dtrace_id_t id, uintptr_t _arg0, uintptr_t _arg1, uintptr_t _arg2,
 	int xlate;
 	const void *vmhdl;
 
-	if (KERNEL_PANICKED())
+	if (KERNEL_PANICKED() || dtrace_probe_recursed)
 		return;
 
 #ifdef illumos
