@@ -67,7 +67,7 @@ The interface is the installed header
 fixed width, native byte order, LP64 only and additive, and the
 .Xr libdq 3
 library wraps it.
-This page describes the device as built in stage 1b (the
+This page describes the device as built in stage 1c-i (the
 .Dv DQ_KIND_FILE
 kind, read-only or writable, with mappings), and names every answer
 that differs from a real file.
@@ -135,7 +135,10 @@ the requesting process (pid, parent, thread, credential, jail and
 .Xr mac_capability 4
 nonce;
 .Dv DQ_CALLER_F_KERNEL
-with pid 0 when a kernel process such as an aio daemon posted it), and
+with pid 0 when a kernel process such as an aio daemon posted it);
+.Dv DQ_CALLER_F_ATTACHED
+when the requester is attached, see
+.Sx Attachment and resolution, and
 .Va de_time
 the monotonic time of the post.
 The operations:
@@ -291,6 +294,16 @@ followed by the input.
 The reply is an errno and the output.
 See
 .Sx Ioctls on a served file .
+.It Dv DQ_OP_RESOLVE
+A queue-level event
+.Pq Va de_object No 0
+posted for a lookup by an attached process: body
+.Vt struct dq_resolve_body
+and four strings; the reply is
+.Dv DQ_RESOLVE_PASS
+or an errno.
+See
+.Sx Attachment and resolution .
 .El
 .Pp
 The calls of a requester and the events they post:
@@ -461,6 +474,14 @@ any errno.
 .Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
 .It Dv DQ_OP_IOCTL
 .Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
+.It Dv DQ_OP_RESOLVE
+.Er EPERM , ENOENT , EIO , ENXIO , E2BIG , ENOEXEC , EACCES , EBUSY ,
+.Er EEXIST , EXDEV , ENODEV , ENOTDIR , EISDIR , EINVAL , ETXTBSY , EFBIG ,
+.Er ENOSPC , EROFS , EMLINK , EAGAIN , ENAMETOOLONG , ENOTEMPTY , ELOOP ,
+.Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
+.Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
+.Er EAUTH , ENOATTR , EINTEGRITY
+(one list for every lookup operation).
 .El
 .Ss Reading the queue
 .Xr read 2
@@ -907,6 +928,17 @@ Attributes changed elsewhere travel with
 which raises
 .Dv NOTE_ATTRIB
 itself.
+.It Dv DQ_IOC_ATTACH Vt "struct dq_attach_args"
+Attach the process named by the process descriptor
+.Va da_procfd ;
+see
+.Sx Attachment and resolution .
+.Va da_rootfd
+and
+.Va da_cwdfd
+must be -1 and
+.Va da_flags
+0 (served start directories come in stage 1c-iii).
 .It Dv DQ_IOC_GET_STATS2 Vt "struct dq_stats2"
 Everything
 .Vt struct dq_stats
@@ -929,6 +961,20 @@ and
 .Va ds2_close_dropped
 (dirty pages dropped after a last close because their write-back failed
 or expired).
+The resolution counters:
+.Va ds2_resolves
+.Pq Dv DQ_OP_RESOLVE No events posted ,
+.Va ds2_resolve_pass ,
+.Va ds2_resolve_kernel
+(class 2 and 3 consultations),
+.Va ds2_resolve_unmarked
+(user-space lookups the kernel had no intent for: a kernel ledger
+failure, consulted and failed closed),
+.Va ds2_resolve_failclosed
+(lookups refused without an answer: a dead binding, a deadline, a
+held lock) and
+.Va ds2_attached
+.Pq Dv DQ_IOC_ATTACH Ns es committed .
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -1719,6 +1765,307 @@ a delivered one is named by
 and faults beyond the new end raise
 .Dv SIGBUS .
 The shrink waits for those failures, which the deadline bounds.
+.Ss Attachment and resolution
+A controller may
+.Em attach
+a process to its queue.
+From then on every name the process resolves is posted to the queue as a
+.Dv DQ_OP_RESOLVE
+event before the lookup runs, and the controller decides: it answers
+.Dv DQ_RESOLVE_PASS
+and the lookup proceeds unchanged, or an errno and the system call fails
+with it.
+Stage 1c-i accepts only those two answers; served results (a minted
+object, attributes, a link) come in stage 1c-iii.
+.Pp
+.Sy Attaching .
+.Dv DQ_IOC_ATTACH
+takes a process descriptor.
+The target must be a process the caller can debug
+.Pq Fn p_candebug ,
+must not have exec'd since it was forked (in practice a
+.Xr pdfork 2 Ns ed
+child waiting to exec), must have its own descriptor table and its own
+working-directory state (not shared through
+.Xr rfork 2
+without
+.Dv RFFDG
+or the Linux
+.Dv CLONE_FILES
+and
+.Dv CLONE_FS ) ,
+must hold no descriptor of the queue, and must not be attached already
+(here or to another queue): otherwise
+.Er EBUSY .
+The caller itself is
+.Er EBUSY ;
+an exiting or exited target
+.Er ESRCH ;
+a descriptor that is not a process descriptor, a wrong version, flags or
+start directories
+.Er EINVAL .
+The preconditions are checked and the attachment committed in one
+section, so no fork, exec or descriptor transfer can slip between them.
+There is no detach.
+ATTACH is meant for a quiesced child, one blocked waiting to be told to
+exec: a lookup or a fork the target has already begun when ATTACH commits
+finishes unattached (its checks are behind it), so a child that runs
+freely while being attached may resolve a name or leave a descendant
+unconsulted.
+.Pp
+.Sy Inheritance .
+Every child of an attached process is attached to the same queue:
+.Xr fork 2 ,
+.Xr vfork 2 ,
+.Xr rfork 2
+(with or without
+.Dv RFFDG
+or
+.Dv RFCFDG ) ,
+.Xr pdfork 2
+and the Linux
+.Fn clone .
+A process that replaces its own descriptor table or working-directory
+state
+.Pq Fn rfork RFCFDG , Fn linux_unshare
+stays attached.
+.Pp
+.Sy What is posted .
+One event per path-taking system call, and one per lookup the kernel makes
+on the process's behalf:
+.Bl -column "DQ_RCLASS_KCONSUMER" -offset indent
+.It Sy Class Ta Sy Lookups
+.It Dv DQ_RCLASS_USER Ta the process's own path argument: open, stat,
+access, readlink, realpath, getfh, unlink, rmdir, rename and link (one
+event carrying both paths), symlink, mkdir, mknod, mkfifo, the attribute
+and truncate calls, execve, chdir, chroot, the extended attribute and
+ACL calls, revoke,
+.Dv AF_UNIX
+bind, connect and datagram sendto, and the
+.Dv INTERNAL
+calls
+.Pq Fn __mac_get_file , undelete , quotactl ;
+.Dv DQ_RF_USER
+is set
+.It Dv DQ_RCLASS_KCONSUMER Ta a path the process names for the kernel to
+use: ktrace, acct, swapon and swapoff, auditctl, the mount points of
+mount, nmount and unmount and the
+.Ql from ,
+.Ql fspec
+and
+.Ql target
+mount options, quotactl's quota file, jail paths, extattrctl and a
+.Xr kldload 2
+path containing a slash;
+.Dv DQ_RF_KCONSUMER
+is set and
+.Dv DQ_RF_USER
+clear
+.It Dv DQ_RCLASS_KERNEL Ta a lookup the kernel originates:
+the interpreter of a
+.Ql #!
+script and an ELF image's
+.Dv PT_INTERP ,
+op
+.Dv DQ_ROP_EXEC_INTERP
+.El
+.Pp
+The body names the operation
+.Pq Va drs_op , Dv DQ_ROP_* ,
+the class
+.Pq Va drs_flags ,
+the lookup flags
+.Pq Va drs_rflags , Dv DQ_RF_* ,
+the start
+.Po
+.Va drs_start_kind :
+the working directory, the root for an absolute path, or a directory
+descriptor
+.Pc ,
+the open flags or mode
+.Pq Va drs_mode ,
+the system call number, and four strings, each NUL-terminated after the
+96-byte
+.Vt struct dq_resolve_body
+and the record padded to 8: the path, the second path of a rename or
+link, a best-effort path of the start relative to the process's root
+.Pq Dv DQ_RF_STARTPATH_VALID ,
+and the same hint for the second path's start
+.Pq Dv DQ_RF_STARTPATH2_VALID .
+For a rename or link the second path's own start is described by
+.Va drs_start2_kind
+.Po
+.Dv DQ_START_REAL_CWD ,
+.Dv DQ_START_REAL_ROOT
+or
+.Dv DQ_START_REAL_DIRFD ,
+from its own directory descriptor and leading slash; 0 when there is no
+second path
+.Pc
+and
+.Va drs_start2 :
+the two paths may start from different directories.
+The caller carries
+.Dv DQ_CALLER_F_ATTACHED .
+.Pp
+Nothing is posted for what never reaches a lookup: refusals of
+capability mode
+.Pq Er ECAPMODE , Er ENOTCAPABLE ,
+lookups of kernel-space paths the kernel makes for itself (module
+searches, firmware, the root mount), and the file-handle calls that take
+no name
+.Pq Fn fhopen , fhstat No and the like .
+.Fn fhlink
+and
+.Fn fhlinkat
+name a new link and post
+.Dv DQ_ROP_LINK
+for it.
+A lookup the kernel makes for an attached process with no intent (a
+kernel-copied path no consultation covers) fails with
+.Er EPERM
+and is counted as unmarked.
+.Pp
+Some consultations are made ahead of the operation that uses the path
+.Pq Xr swapon 2 , Xr swapoff 2 , No the Xr quotactl 2 Dv Q_QUOTAON No quota file :
+if the path's bytes change between the consultation and the use, the
+call fails with
+.Er EIO
+rather than use bytes the controller never saw.
+An attached process's lookups never take the lockless fast path, so
+every lookup is consulted and resolves exactly as it would otherwise.
+Only the names the process passes are consulted: in stage 1c-i the
+targets of symbolic links met inside a lookup the controller passed are
+followed unconsulted, so a policy that decides by name can be bypassed
+through a symbolic link until served results arrive (stage 1c-iii); a
+controller that must hold a name boundary refuses symbolic links it
+does not trust or creates no names it does not control.
+A user-space lookup without an intent (a kernel bug) is still consulted,
+fails closed, and is counted in
+.Va ds2_resolve_unmarked .
+.Pp
+.Sy Answering .
+The reply is an errno with no body, or errno 0 with exactly one
+.Vt struct dq_resolve_reply
+of kind
+.Dv DQ_RESOLVE_PASS
+and zero padding; anything else is
+.Er EINVAL
+to the controller and the event stays in flight.
+An errno outside the
+.Dv DQ_OP_RESOLVE
+allow-list reaches the requester as
+.Er EIO .
+An
+.Er EAGAIN
+answer to
+.Xr rename 2 ,
+.Xr link 2
+or
+.Fn fhlink
+reaches the requester as
+.Er EIO
+(those calls retry internally on
+.Er EAGAIN ,
+which would re-post forever).
+An errno answer is the system call's result and the real namespace is
+not touched: an
+.Dv O_CREAT
+refused creates nothing.
+.Pp
+.Sy Waiting .
+A class 1 consultation waits with
+.Va kern.dq.default_deadline_ms ;
+classes 2 and 3 at most
+.Va kern.dq.kernel_deadline_ms ,
+never without bound.
+A missed deadline fails the lookup with
+.Er EIO
+and posts
+.Dv DQ_OP_INTERRUPT .
+A caught signal ends the wait: during the first consultation of a system
+call's path the call restarts
+.Pq Dv SA_RESTART
+and posts again, the abandoned event named by an INTERRUPT; any other
+wait, and every wait of
+.Xr rename 2
+and
+.Xr link 2 ,
+fails with
+.Er EINTR
+instead (a restarted rename could report a rename that did not happen).
+A restart copies the path in again: if the bytes changed, the new bytes
+are posted, never the old answer reused.
+A queue at its depth fails the lookup with
+.Er EIO
+at once and counts a drop.
+.Pp
+.Sy Failing closed .
+When the controller's queue closes, every waiting lookup and every later
+lookup of an attached process fails with
+.Er EIO :
+an attached process never reaches the real namespace unconsulted.
+A lookup attempted while the process holds a lock the consultation could
+not wait under fails closed too.
+Both count in
+.Va ds2_resolve_failclosed .
+.Pp
+.Sy Kernel paths refused .
+Some kernel facilities open a file by a path they keep and use outside
+any lookup the controller could see; an attached caller is refused them
+with
+.Er EPERM :
+attaching an
+.Xr md 4
+vnode device, the
+.Xr ctl 4
+block backend's file, loading a
+.Xr veriexec 8
+manifest, adding an
+.Xr imgact_binmisc 4
+interpreter, ZFS file vdevs and the ZFS cachefile, the
+.Xr netgraph 4
+.Dv AF_LOCAL
+ksocket bind and connect, the vnode-reclaim sysctl, the
+.Xr alq 9
+log path sysctls, the
+.Xr oes 4
+mute path, and the pNFS server paths.
+A mount path option
+.Pq Ql from , Ql fspec , Ql target
+that is not NUL-terminated is
+.Er EINVAL
+for an attached caller.
+.Xr unmount 2
+of a path that does not resolve returns that error; it does not fall
+back to matching the name against mount points.
+.Pp
+.Sy What an attached process cannot do
+(I5): an attached process gains no privilege.
+.Dv DQ_IOC_ATTACH
+sets
+.Dv P2_NO_NEW_PRIVS
+.Po visible through
+.Xr procctl 2
+.Dv PROC_NO_NEW_PRIVS_STATUS ,
+inherited, never cleared
+.Pc ,
+so an exec of a set-user-id or set-group-id image runs with the
+unchanged credentials and installs no authority; an exec that would
+change the MAC label is refused with
+.Er EACCES .
+.Xr setcred 2 ,
+.Fn __mac_set_proc ,
+the capability authority's install, and
+.Xr jail_attach 2
+(also through
+.Xr jail_set 2
+with
+.Dv JAIL_ATTACH )
+are refused with
+.Er EPERM ,
+and an attached process dumps no core.
+The process can still lower its privileges.
 .Sh READ-ONLY OBJECTS
 A descriptor minted without
 .Dv DQ_MINT_F_WRITE
@@ -1914,6 +2261,30 @@ The controller's word is the end of file of an append; the kernel applies
 .Dv RLIMIT_FSIZE
 to an append at the presented size.
 .El
+.Sh STAGE 1C-I
+Stage 1c-i adds attachment and consultation
+.Pq Sx Attachment and resolution :
+a controller sees, and may refuse, every name an attached process
+resolves, before any served object can stand in for a name.
+Consultations answer only
+.Dv DQ_RESOLVE_PASS
+or an errno; served results, served directories, a virtual working
+directory and root
+.Pq Va da_rootfd , da_cwdfd
+come in stage 1c-iii, sockets
+.Pq Dv DQ_ROP_SOCKET , DQ_ROP_SOCKETPAIR
+in 1c-ii, the rules on passing served descriptors to unattached processes
+in 1c-iv.
+Consequences of the attachment that differ from an unattached run, by
+design: set-id and authority transitions do not happen,
+.Xr jail_attach 2 ,
+.Xr setcred 2
+and
+.Fn __mac_set_proc
+are refused, no core is dumped, and lookups skip the lockless fast path
+(the results are the same; the probes of that path do not fire).
+.Pa tests/sys/dq/dqpass.expected
+lists the test cases these consequences change.
 .Sh MAC
 .Xr posix_fallocate 2
 and
@@ -1949,6 +2320,9 @@ and the depth of observers.
 Unanswered events per object before requesters wait for a slot (64).
 .It Va max_inflight_per_requester
 Unanswered events per requester, keyed by nonce or pid (256).
+.It Va kernel_deadline_ms
+The longest a kernel-consumer or kernel-origin consultation (classes 2
+and 3) waits (5000); never 0.
 .It Va max_inflight_bytes
 Bytes of page operations
 .Pq Dv DQ_OP_READ_ASYNC , DQ_OP_WRITE_ASYNC
@@ -2014,12 +2388,15 @@ a complete controller
 .El
 .Sh SEE ALSO
 .Xr cap_xfer_limit 2 ,
+.Xr execve 2 ,
 .Xr fcntl 2 ,
 .Xr flock 2 ,
 .Xr fspacectl 2 ,
 .Xr mmap 2 ,
 .Xr msync 2 ,
+.Xr pdfork 2 ,
 .Xr posix_fallocate 2 ,
+.Xr procctl 2 ,
 .Xr sendfile 2 ,
 .Xr libdq 3 ,
 .Xr aio 4 ,
