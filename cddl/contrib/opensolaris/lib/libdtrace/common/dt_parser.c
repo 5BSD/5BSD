@@ -2426,7 +2426,10 @@ dt_node_t *
 dt_node_pdesc_by_id(uintmax_t id)
 {
 	static const char *const names[] = {
-		"providers", "modules", "functions"
+		[DTRACE_PROBESPEC_TARGET] = "targets",
+		[DTRACE_PROBESPEC_PROVIDER] = "providers",
+		[DTRACE_PROBESPEC_MOD] = "modules",
+		[DTRACE_PROBESPEC_FUNC] = "functions"
 	};
 
 	dtrace_hdl_t *dtp = yypcb->pcb_hdl;
