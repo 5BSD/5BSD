@@ -326,6 +326,39 @@ dtrace_program_info(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
 	}
 }
 
+/*
+ * The kernel copies out a description of every probe an enabling matched and
+ * fails with E2BIG when they do not fit, so start small and grow the buffer:
+ * pid$target:a.out:: alone matches every instruction of the program.
+ */
+#define	DT_ENABLE_NPROBES_MIN	4096
+#define	DT_ENABLE_NPROBES_MAX	(1 << 22)
+
+static int
+dt_enable_ioctl(dtrace_hdl_t *dtp, int cmd, dtrace_enable_io_t *args,
+    int *nprobesp)
+{
+	int nprobes, n;
+
+	for (nprobes = DT_ENABLE_NPROBES_MIN;; nprobes *= 4) {
+		args->n_matched = 0;
+		args->n_desc = 0;
+		args->ps = calloc(nprobes, sizeof (dtrace_probedesc_t));
+		if (args->ps == NULL) {
+			errno = ENOMEM;
+			return (-1);
+		}
+		args->ps_bufsize = nprobes * sizeof (dtrace_probedesc_t);
+		n = dt_ioctl(dtp, cmd, args);
+		if (n != -1 || errno != E2BIG ||
+		    nprobes >= DT_ENABLE_NPROBES_MAX)
+			break;
+		free(args->ps);
+	}
+	*nprobesp = nprobes;
+	return (n);
+}
+
 int
 dtrace_program_exec(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
     dtrace_proginfo_t *pip)
@@ -341,26 +374,17 @@ dtrace_program_exec(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
 	if ((dof = dtrace_dof_create(dtp, pgp, DTRACE_D_STRIP)) == NULL)
 		return (-1);
 
-	expected_nprobes = DTRACE_MIN_NPROBES;
-
 	args.dof = dof;
-	args.n_matched = 0;
-	args.n_desc = 0;
 	args.vmid = pgp->dp_vmid;
 	args.epoch = pgp->dp_vmepoch;
-	args.ps = malloc(sizeof(dtrace_probedesc_t) * expected_nprobes);
-	if (args.ps == NULL) {
-		dtrace_dof_destroy(dtp, dof);
-		return (dt_set_errno(dtp, EDT_NOMEM));
-	}
-
-	memset(args.ps, 0, sizeof(dtrace_probedesc_t) * expected_nprobes);
-	args.ps_bufsize = expected_nprobes * sizeof(dtrace_probedesc_t);
-	n = dt_ioctl(dtp, DTRACEIOC_ENABLE, &args);
+	n = dt_enable_ioctl(dtp, DTRACEIOC_ENABLE, &args, &expected_nprobes);
+	err = errno;
 	dtrace_dof_destroy(dtp, dof);
 
 	if (n == -1) {
-		switch (errno) {
+		if (args.ps == NULL)
+			return (dt_set_errno(dtp, EDT_NOMEM));
+		switch (err) {
 		case EINVAL:
 			err = EDT_DIFINVAL;
 			break;
@@ -374,7 +398,7 @@ dtrace_program_exec(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
 			err = EDT_ENABLING_ERR;
 			break;
 		default:
-			err = errno;
+			break;
 		}
 
 		free(args.ps);
@@ -439,28 +463,24 @@ dtrace_augment_tracing(dtrace_hdl_t *dtp, dtrace_prog_t *pgp)
 	void *dof;
 	int n, err;
 	int i;
-	int expected_nprobes = DTRACE_MIN_NPROBES;
 
 	if ((dof = dtrace_dof_create(dtp, pgp, DTRACE_D_STRIP)) == NULL)
 		return (-1);
 
+	/* DTRACEIOC_AUGMENT does not describe the probes it matched. */
 	args.dof = dof;
 	args.n_matched = 0;
 	args.n_desc = 0;
 	args.vmid = pgp->dp_vmid;
 	args.epoch = pgp->dp_vmepoch;
-	args.ps = dt_zalloc(dtp, sizeof(dtrace_probedesc_t) * expected_nprobes);
-	if (args.ps == NULL) {
-		dtrace_dof_destroy(dtp, dof);
-		return (dt_set_errno(dtp, EDT_NOMEM));
-	}
-
-	args.ps_bufsize = sizeof(dtrace_probedesc_t) * expected_nprobes;
+	args.ps = NULL;
+	args.ps_bufsize = 0;
 	n = dt_ioctl(dtp, DTRACEIOC_AUGMENT, &args);
+	err = errno;
 	dtrace_dof_destroy(dtp, dof);
 
 	if (n == -1) {
-		switch (errno) {
+		switch (err) {
 		case EINVAL:
 			err = EDT_DIFINVAL;
 			break;
@@ -474,14 +494,12 @@ dtrace_augment_tracing(dtrace_hdl_t *dtp, dtrace_prog_t *pgp)
 			err = EDT_ENABLING_ERR;
 			break;
 		default:
-			err = errno;
+			break;
 		}
 
-		dt_free(dtp, args.ps);
 		return (dt_set_errno(dtp, err));
 	}
 
-	dt_free(dtp, args.ps);
 	return (0);
 }
 

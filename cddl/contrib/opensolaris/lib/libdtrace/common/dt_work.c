@@ -193,7 +193,6 @@ dtrace_go(dtrace_hdl_t *dtp)
 	dtrace_enable_io_t args = { 0 };
 	void *dof;
 	int error, r;
-	int expected_nprobes = 0;
 
 	if (dtp->dt_active)
 		return (dt_set_errno(dtp, EINVAL));
@@ -213,23 +212,15 @@ dtrace_go(dtrace_hdl_t *dtp)
 	if ((dof = dtrace_getopt_dof(dtp)) == NULL)
 		return (-1); /* dt_errno has been set for us */
 
-	expected_nprobes = DTRACE_MIN_NPROBES;
-
+	/* The options DOF enables no probes, so there is nothing to describe. */
 	args.dof = dof;
 	args.n_matched = 0;
 	args.vmid = 0;
-	args.ps = malloc(sizeof(dtrace_probedesc_t) * expected_nprobes);
-	if (args.ps == NULL) {
-		dtrace_dof_destroy(dtp, dof);
-		return (dt_set_errno(dtp, EDT_NOMEM));
-	}
-
-	memset(args.ps, 0, sizeof(dtrace_probedesc_t) * expected_nprobes);
-	args.ps_bufsize = expected_nprobes * sizeof(dtrace_probedesc_t);
+	args.ps = NULL;
+	args.ps_bufsize = 0;
 	r = dt_ioctl(dtp, DTRACEIOC_ENABLE, &args);
 	error = errno;
 	dtrace_dof_destroy(dtp, dof);
-	free(args.ps);
 
 	if (r == -1 && (error != ENOTTY || dtp->dt_vector == NULL))
 		return (dt_set_errno(dtp, error));
