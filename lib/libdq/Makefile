@@ -7,7 +7,7 @@
 PACKAGE=	dq
 LIB=		dq
 SHLIB_MAJOR=	1
-SRCS=		libdq.c libdq_serve.c
+SRCS=		libdq.c libdq_serve.c libdq_tree.c
 LIBADD=		capability
 
 MAN=		libdq.3

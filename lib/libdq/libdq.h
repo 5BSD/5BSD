@@ -256,6 +256,44 @@ int	dq_reply_resolve_pass(int q, uint64_t id);
 int	dq_reply_resolve_errno(int q, uint64_t id, int error);
 
 /*
+ * Served answers (stage 1c-iii-a).  The kernel publishes the kinds an
+ * event takes in drs_accept: dq_resolve_accepts() tests one
+ * (DQ_RESOLVE_*); a kind outside the set is EINVAL and the event stays in
+ * flight.  dq_resolve_errno_allowed_ev() is the allow-list for this
+ * event (ENOTCAPABLE only on a STRICTREL, BENEATH or RINROOT lookup).
+ * dq_event_resolve_ext() also returns the SETATTR/TRUNCATE body that
+ * follows the strings (NULL for other operations).
+ *
+ * dq_reply_resolve_fd(): a served object minted at the reply (kind
+ * DQ_KIND_FILE, flags DQ_MINT_F_WRITE and DQ_MINT_F_CREATED, the latter
+ * only for an O_CREAT open that created the file); *objectp receives its
+ * id before the kernel links it, and is undefined if the reply then fails
+ * (zeroed where possible); reasonp (may be NULL) gets the dq_reason of an
+ * EINVAL.  Every id a successful reply returned ends exactly once: CLOSE,
+ * when the policy subscribes, comes after the requester's last close or
+ * when the answer was refused after the reply.
+ * dq_reply_resolve_attr(): attributes only (stat, access, realpath); any
+ * file type, set-id bits allowed.  dq_reply_resolve_link(): readlink, an
+ * S_IFLNK identity whose di_size is strlen(target).  dq_reply_resolve_ok():
+ * the controller performed a mutating operation.
+ */
+int	dq_resolve_accepts(const struct dq_resolve_body *rb, uint32_t kind);
+int	dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb,
+	    int error);
+int	dq_event_resolve_ext(const struct dq_event *ev,
+	    const struct dq_resolve_body **body, const char **path,
+	    const char **path2, const char **startpath,
+	    const char **startpath2, const struct dq_setattr_body **setattr);
+int	dq_reply_resolve_fd(int q, uint64_t id, uint32_t kind, uint32_t flags,
+	    const struct dq_ident_file *ident, const struct dq_policy *pol,
+	    uint64_t *objectp, int32_t *reasonp);
+int	dq_reply_resolve_attr(int q, uint64_t id,
+	    const struct dq_ident_file *ident);
+int	dq_reply_resolve_link(int q, uint64_t id,
+	    const struct dq_ident_file *ident, const char *target);
+int	dq_reply_resolve_ok(int q, uint64_t id);
+
+/*
  * One read(2) and one handler call per record.  The handler returns 0 to
  * continue or nonzero to stop; dq_dispatch returns the records handed
  * over, or -1 when the read failed.  The buffer holds the largest record
@@ -345,6 +383,41 @@ int	dq_serve_state_owners(const struct dq_serve_state *st);
 
 int	dq_serve_file(int q, const struct dq_event *ev, const void *body,
 	    size_t bodylen, int backing_fd, const struct dq_serve_opts *opts);
+
+/*
+ * dq_serve_tree() (D173), stage 1c-iii-a mode: the tree open at rootfd is
+ * presented at the real-namespace directory prefix to the processes
+ * attached to q, whose starts all stay real.  A RESOLVE naming something
+ * under prefix (its path made absolute with the start hint, normalized,
+ * symlinks in the backing tree followed) is answered from the backing
+ * tree: open FD of a regular file (O_CREAT and O_EXCL performed here,
+ * O_TRUNC by the kernel through the object; DQ_MINT_F_CREATED when this
+ * open created it), stat, access and
+ * realpath ATTR, readlink LINK, chmod/chown/utimes/chflags/truncate FD of
+ * the target (the kernel applies D96 and posts the object's SETATTR),
+ * mkdir, mknod, mkfifo, unlink, rmdir, symlink, rename and link OK after
+ * performing them (a rename or link across the prefix is EXDEV), exec
+ * EACCES, extended attributes and ACLs EOPNOTSUPP.  Directories and the
+ * other non-regular objects, names outside prefix, the kernel's own
+ * lookups and restricted lookups (no served kind in drs_accept) are
+ * PASSed, as is a symlink leading out of the prefix answered EACCES.
+ * di_path is the real-namespace name the process resolved (under prefix),
+ * never the backing path; ds_mntonname is "/".  Object events are served
+ * by dq_serve_file() on the backing file; CLOSE closes it.  Parent
+ * directory permissions are not checked by the controller (the kernel's
+ * DAC applies to FD answers).  DQ_TREE_F_WRITE serves writes; without it
+ * every mutation (creation, removal, rename, link, truncation, a write or
+ * O_TRUNC open) is EROFS.  A refused FD answer is followed by EIO, so no
+ * event stays in flight.  Renames honour AT_RENAME_NOREPLACE (drs_mode).
+ */
+struct dq_tree;
+#define	DQ_TREE_F_WRITE		0x00000001
+struct dq_tree *dq_tree_create(int q, int rootfd, const char *prefix,
+	    uint32_t flags);
+void	dq_tree_destroy(struct dq_tree *t);
+int	dq_tree_objects(const struct dq_tree *t);
+int	dq_serve_tree(struct dq_tree *t, const struct dq_event *ev,
+	    const void *body, size_t bodylen);
 
 /*
  * The dq.observe service (D90)

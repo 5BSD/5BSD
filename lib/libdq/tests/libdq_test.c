@@ -243,7 +243,8 @@ ATF_TC_BODY(resolve_accessor, tc)
 	    sizeof(*rb) + 13);
 	ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
 	ATF_CHECK_STREQ("/x", sp2);
-	ATF_CHECK_EQ(0, rbp->drs_pad1);
+	ATF_CHECK_EQ(0, rbp->drs_accept);
+	ATF_CHECK_EQ(0, rbp->drs_cmode);
 	ATF_CHECK_EQ(DQ_ROP_RENAME, rbp->drs_op);
 	ATF_CHECK_STREQ("a/b", p1);
 	ATF_CHECK_STREQ("c/de", p2);

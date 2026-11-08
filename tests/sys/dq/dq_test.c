@@ -214,7 +214,8 @@ dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
 		s->pid = ev->de_caller.dc_pid;
 		s->start_kind = rb->drs_start_kind;
 		s->start2_kind = rb->drs_start2_kind;
-		s->pad1 = rb->drs_pad1;
+		s->accept = rb->drs_accept;
+		s->cmode = rb->drs_cmode;
 		s->domain = rb->drs_domain;
 		s->type = rb->drs_type;
 		s->protocol = rb->drs_protocol;
