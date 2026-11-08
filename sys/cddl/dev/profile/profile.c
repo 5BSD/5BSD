@@ -258,6 +258,26 @@ profile_probe(profile_probe_t *prof, hrtime_t late)
 	td->t_dtrace_trapframe = NULL;
 }
 
+/*
+ * Return the deadline after "expected" for a timer of period "interval".
+ * When the handler has fallen behind, skip the missed firings, as the illumos
+ * cyclic subsystem does; rescheduling an absolute deadline that is already in
+ * the past would otherwise fire the callout back to back and never let the CPU
+ * run anything else once a firing costs more than the interval (for example,
+ * profile-4999hz with every fbt probe enabled on a slow or emulated CPU).
+ */
+static sbintime_t
+profile_next(sbintime_t expected, sbintime_t interval)
+{
+	sbintime_t now;
+
+	expected += interval;
+	now = sbinuptime();
+	if (expected <= now)
+		expected += ((now - expected) / interval + 1) * interval;
+	return (expected);
+}
+
 static void
 profile_fire(void *arg)
 {
@@ -268,7 +288,8 @@ profile_fire(void *arg)
 	late = sbt_to_nsec(sbinuptime() - pcpu->profc_expected);
 
 	profile_probe(prof, late);
-	pcpu->profc_expected += pcpu->profc_interval;
+	pcpu->profc_expected = profile_next(pcpu->profc_expected,
+	    pcpu->profc_interval);
 	callout_schedule_sbt_curcpu(&pcpu->profc_cyclic,
 	    pcpu->profc_expected, 0, C_DIRECT_EXEC | C_ABSOLUTE);
 }
@@ -279,7 +300,8 @@ profile_tick(void *arg)
 	profile_probe_t *prof = arg;
 
 	profile_probe(prof, 0);
-	prof->prof_expected += prof->prof_interval;
+	prof->prof_expected = profile_next(prof->prof_expected,
+	    prof->prof_interval);
 	callout_schedule_sbt(&prof->prof_cyclic,
 	    prof->prof_expected, 0, C_DIRECT_EXEC | C_ABSOLUTE);
 }
