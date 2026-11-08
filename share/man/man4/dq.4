@@ -980,7 +980,18 @@ failure, consulted and failed closed),
 (lookups refused without an answer: a dead binding, a deadline, a
 held lock) and
 .Va ds2_attached
-.Pq Dv DQ_IOC_ATTACH Ns es committed .
+.Pq Dv DQ_IOC_ATTACH Ns es committed ;
+.Va ds2_resolve_served
+(answers
+.Dv DQ_RESOLVE_FD , ATTR , LINK
+or
+.Dv OK ) ,
+.Va ds2_resolve_retired
+(served objects retired before a descriptor was installed),
+.Va ds2_resolve_exdev
+and
+.Va ds2_readdirs
+(reserved for stage 1c-iii-b, 0).
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -2031,11 +2042,13 @@ fails closed, and is counted in
 .Va ds2_resolve_unmarked .
 .Pp
 .Sy Answering .
-The reply is an errno with no body, or errno 0 with exactly one
+The reply is an errno with no body, or errno 0 with a
 .Vt struct dq_resolve_reply
-of kind
-.Dv DQ_RESOLVE_PASS
-and zero padding; anything else is
+of a kind the event accepts
+.Pq Va drs_accept ,
+followed by exactly that kind's payload
+.Pq Sx Served answers ;
+anything else is
 .Er EINVAL
 to the controller and the event stays in flight.
 An errno outside the operation's
@@ -2166,6 +2179,342 @@ are refused with
 .Er EPERM ,
 and an attached process dumps no core.
 The process can still lower its privileges.
+.Ss Served answers
+From stage 1c-iii-a a consultation may be answered with a served result
+instead of
+.Dv DQ_RESOLVE_PASS .
+The kernel publishes the kinds each event takes in
+.Va drs_accept ,
+a mask of
+.Fn DQ_RACCEPT kind ;
+.Dv DQ_RESOLVE_PASS
+is always in it, an errno is always accepted (allow-listed), and a kind
+outside it is
+.Er EINVAL
+to the controller with the event still in flight.
+Served kinds are offered only to the first path of a user-origin lookup
+from a real start (the working directory, the root or a real directory
+descriptor) that is not
+.Dv O_RESOLVE_BENEATH ,
+capability-mode relative,
+.Dv RINROOT ,
+.Dv O_NOSYMLINKS ,
+.Dv NOMAGICLINKS ,
+.Dv NOXDEV
+or an
+.Dv O_NAMEDATTR
+open; the kernel's own lookups, second paths, paths consulted ahead and
+socket names take
+.Dv DQ_RESOLVE_PASS
+or an errno only.
+.Bl -column "DQ_ROP_REALPATH, DQ_ROP_ACCESS" "FD, OK" -offset indent
+.It Sy Operation Ta Sy Served kinds
+.It Dv DQ_ROP_OPEN Ta FD
+.It Dv DQ_ROP_STAT , DQ_ROP_ACCESS , DQ_ROP_REALPATH Ta ATTR
+.It Dv DQ_ROP_READLINK Ta LINK
+.It Dv DQ_ROP_SETATTR , DQ_ROP_TRUNCATE Ta OK, FD
+.It Dv DQ_ROP_MKDIR , MKNOD , MKFIFO , UNLINK , RMDIR , SYMLINK , RENAME , LINK Ta OK
+.El
+.Pp
+The replies; each size is the whole reply
+.Pq Va dr_len ,
+the 8-byte
+.Vt struct dq_resolve_reply
+included:
+.Bl -tag -width "DQ_RESOLVE_ATTR"
+.It Dv DQ_RESOLVE_OK
+8 bytes: the controller performed the operation (for
+.Dv DQ_ROP_RENAME
+and
+.Dv DQ_ROP_LINK
+both names are its own).
+.It Dv DQ_RESOLVE_FD
+3976 bytes in all: the reply and a
+.Vt struct dq_resolve_mint
+(3968):
+a
+.Dv DQ_KIND_FILE
+object minted at the reply, validated as
+.Dv DQ_IOC_MINT
+validates
+.Pq Dv DQ_MINT_F_WRITE needs Va dp_write No = Dv DQ_EVENT ;
+.Dv DQ_MINT_F_CREATED
+only for an open with
+.Dv O_CREAT ;
+a
+.Dv DQ_ROP_TRUNCATE
+answer needs
+.Dv DQ_MINT_F_WRITE ) .
+The id is copied to
+.Va *drm_objectp
+and
+.Dv DQ_REASON_NONE
+to
+.Va *drm_reasonp
+before the object is linked; a copy that faults is
+.Er EFAULT
+and nothing is linked.
+When the reply then fails
+.Er ( ESRCH ,
+the event is gone;
+.Er ENXIO ,
+the queue is closing;
+.Er ENOSPC ,
+.Va kern.dq.max_objects ;
+.Er ENOMEM ,
+the pager object)
+the id is never used and
+.Va *drm_objectp
+is undefined, zeroed where possible.
+Observers see both pointers as zero.
+.It Dv DQ_RESOLVE_ATTR
+3904 bytes in all: the reply and a
+.Vt struct dq_resolve_attr
+(3896):
+attributes only, no object; any file type and the set-id bits are
+allowed (so
+.Xr stat 2
+of a name can show what
+.Xr fstat 2
+of a served descriptor cannot: set-id bits and device numbers).
+.It Dv DQ_RESOLVE_LINK
+A
+.Vt struct dq_resolve_attr
+of an
+.Dv S_IFLNK
+identity whose
+.Va di_size
+is the target's length, then a
+.Vt struct dq_resolve_target :
+.Va drt_len
+bytes, a NUL and zeros to the next 8-byte boundary, no inner NUL; at
+most 4936 bytes.
+.El
+.Pp
+A
+.Dv DQ_OP_RESOLVE
+reply may be up to
+.Dv DQ_RESOLVE_REPLY_MAX
+(8192) bytes even when
+.Va kern.dq.max_io
+is smaller; every other reply is bounded by
+.Va kern.dq.max_io .
+Controllers are native LP64 processes only.
+.Pp
+.Sy Completion .
+The requester's system call completes from the answer in its own thread
+and credential; it makes no further lookup.
+An
+.Dv DQ_RESOLVE_FD
+open is checked as a real open of the presented file would be: the
+access mode against the identity with
+.Xr vaccess 9
+(write access also for
+.Dv O_TRUNC
+with
+.Dv O_RDONLY ;
+.Er EROFS
+for a write on a read-only file system,
+.Er EPERM
+for a write to an immutable file and for a write without
+.Dv O_APPEND
+to an append-only one; skipped when the controller said
+.Dv DQ_MINT_F_CREATED ) ,
+.Dv O_DIRECTORY
+.Er ( ENOTDIR ) ,
+a write mode without
+.Dv DQ_MINT_F_WRITE
+and
+.Dv O_EXEC
+.Er ( EACCES ) ,
+and
+.Dv O_VERIFY
+.Er ( EAUTH
+while
+.Xr mac_veriexec 4
+enforces: a served file has no fingerprint; ignored otherwise).
+.Dv O_CREAT
+and
+.Dv O_EXCL
+are the controller's;
+.Dv O_TRUNC
+is applied by the kernel after the access check, through the object's
+.Dv DQ_OP_SETATTR
+(so
+.Dv O_RDONLY | O_TRUNC
+truncates as on a real file);
+.Dv O_EXLOCK
+and
+.Dv O_SHLOCK
+post a
+.Dv DQ_OP_LOCK
+(a signal is
+.Er EINTR ) .
+The descriptor gets the policy's rights,
+.Dv O_CLOEXEC
+and
+.Dv O_CLOFORK
+only as asked, and cannot be passed in
+.Dv SCM_RIGHTS
+.Er ( ENOTCAPABLE ,
+until stage 1c-iv).
+An
+.Dv O_PATH
+open of a served file answers as an
+.Dv O_PATH
+vnode descriptor does: no
+.Xr read 2 ,
+.Xr write 2 ,
+truncation,
+.Xr ioctl 2 ,
+.Xr fchmod 2 ,
+.Xr fchown 2 ,
+.Xr sendfile 2 ,
+.Xr mmap 2
+or
+.Xr getdirentries 2
+.Er ( EBADF ) ,
+.Dv POLLNVAL ,
+kevents only with
+.Dv FKQALLOWED ,
+no locks but the POSIX release of a close;
+.Xr fstat 2 ,
+.Xr fstatfs 2 ,
+.Xr fpathconf 2 ,
+.Dv F_KINFO ,
+.Xr fcntl 2 ,
+.Xr fsync 2
+and attribute changes through
+.Xr futimens 2
+as on the object.
+.Pp
+Vnode MAC checks do not apply to served results (there is no vnode);
+served files are checked at file level as minted ones are.
+.Pp
+.Dv DQ_ROP_SETATTR
+and
+.Dv DQ_ROP_TRUNCATE
+events carry a
+.Vt struct dq_setattr_body
+after the strings at the next 8-byte boundary: the requested change, with
+.Dv DQ_SETATTR_ATIME_NOW
+and
+.Dv DQ_SETATTR_MTIME_NOW
+for
+.Dv UTIME_NOW
+(the kernel's time filled in), a time left out for
+.Dv UTIME_OMIT ,
+and in
+.Va dsa_priv
+the
+.Dv DQ_SAPRIV_*
+privileges the kernel evaluated, only where the change can need one
+(chmod: admin, and setgid when setting
+.Dv S_ISGID ;
+chown to another user or a group the caller is not in: chown and admin;
+chflags: admin, and system flags and the securelevel when setting
+system flags; utimes with explicit times: admin).
+A bit not evaluated is 0.
+A chflags word wider than 32 bits posts no flags and accepts no
+.Dv DQ_RESOLVE_OK .
+Answered
+.Dv DQ_RESOLVE_OK ,
+the controller applied the change; answered
+.Dv DQ_RESOLVE_FD ,
+the kernel applies it through the transient descriptor with the rules
+of
+.Xr fchmod 2 ,
+.Xr fchown 2 ,
+.Xr futimens 2
+and
+.Xr fchflags 2
+on a served file (the object's
+.Dv DQ_OP_SETATTR
+follows), and for a truncation
+.Xr truncate 2 Ns 's
+write access on the identity,
+.Dv RLIMIT_FSIZE
+and the object's
+.Dv DQ_OP_SETATTR .
+A chmod adding set-id bits, and a truncation past
+.Dv RLIMIT_FSIZE ,
+do not accept
+.Dv DQ_RESOLVE_OK :
+a served identity never carries set-id bits (so
+.Ql chmod g+s
+of a served name fails with
+.Er EPERM ) ,
+and the signal and
+.Er EFBIG
+come from the kernel.
+.Dv DQ_ROP_SYMLINK
+carries the target as the second path (data; no start);
+.Dv DQ_ROP_MKNOD
+the device in
+.Va drs_dev ;
+.Dv DQ_ROP_OPEN ,
+.Dv DQ_ROP_MKDIR ,
+.Dv DQ_ROP_MKNOD ,
+.Dv DQ_ROP_MKFIFO
+and
+.Dv DQ_ROP_SYMLINK
+the creation mode after the umask in
+.Va drs_cmode ;
+.Dv DQ_ROP_RENAME
+its flags in
+.Va drs_mode .
+.Pp
+.Sy After the reply .
+An answer the requester cannot use (a check above failing,
+.Er EMFILE
+at install,
+.Er ENFILE
+when the file cannot be allocated, an object revoked or its queue closed
+before the requester bound it,
+.Er EIO )
+retires the object: every id whose reply returned 0 ends exactly once,
+with
+.Dv DQ_OP_CLOSE
+when the policy subscribes, and is counted in
+.Va ds2_resolve_retired
+when no descriptor was ever installed.
+Served answers are counted in
+.Va ds2_resolve_served .
+.Pp
+.Sy Empty paths .
+.Dv AT_EMPTY_PATH
+on a served descriptor, attached or not, is the descriptor's own
+operation with no event:
+.Xr fstatat 2 ,
+.Xr fchmodat 2 ,
+.Xr fchownat 2 ,
+.Xr utimensat 2 ,
+.Xr chflagsat 2
+and
+.Xr faccessat 2
+answer as their descriptor forms;
+.Xr readlinkat 2
+is
+.Er EINVAL
+(a served file is not a symbolic link);
+.Xr linkat 2
+is
+.Er EXDEV .
+An empty path on a real descriptor is consulted but accepts only
+.Dv DQ_RESOLVE_PASS
+or an errno: the descriptor's real operation applies.
+On a served descriptor opened
+.Dv O_PATH ,
+.Xr fchmodat 2
+and
+.Xr fchownat 2
+with
+.Dv AT_EMPTY_PATH
+fail with
+.Er EBADF ,
+where a real
+.Dv O_PATH
+descriptor succeeds (stage 1c-iii-b applies them to the object).
 .Sh READ-ONLY OBJECTS
 A descriptor minted without
 .Dv DQ_MINT_F_WRITE
@@ -2381,6 +2730,10 @@ and
 answered
 .Dv DQ_RESOLVE_PASS
 or an errno.
+Stage 1c-iii-a adds served answers from real starts
+.Pq Sx Served answers ;
+served directories and starts come in 1c-iii-b, a virtual working
+directory and root in 1c-iii-c.
 Consequences of the attachment that differ from an unattached run, by
 design: set-id and authority transitions do not happen,
 .Xr jail_attach 2 ,
@@ -2451,6 +2804,32 @@ Read-only: kernel-space lookups by attached threads outside any intent
 or exempt region, over all queues since boot
 .Pq Va ds2_resolve_unmarked .
 .El
+.Pp
+Fault injection for the tests, read-write:
+.Bl -tag -width "debug.dqres.drop_completion" -offset indent -compact
+.It Va debug.dqres.drop_completion
+The next N served answers skip their completion; the system call
+returns
+.Er EIO
+(the containment of
+.Xr namei 9 ) .
+.It Va debug.dq.fail_vm_create
+The next N object creations fail as if the pager object could not be
+allocated
+.Er ( ENOMEM ) .
+.It Va debug.dq.fail_bind_enfile
+The next N requesters binding a
+.Dv DQ_RESOLVE_FD
+answer fail as if no file could be allocated
+.Er ( ENFILE ) ;
+the object retires with its
+.Dv DQ_OP_CLOSE .
+.It Va debug.dq.fail_link_closing
+The next N
+.Dv DQ_RESOLVE_FD
+replies find the queue closing at their link step
+.Er ( ENXIO ) .
+.El
 .Sh DTRACE
 The
 .Nm
@@ -2482,6 +2861,13 @@ SDT provider fires:
 .It dq:::reply-late
 .Fa "struct dq_queue *" ,
 .Fa "uint64_t id"
+.It dq:::resolve-served
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t rop" ,
+.Fa "uint32_t kind"
+.It dq:::resolve-retire
+.Fa "struct dq_queue *" ,
+.Fa "struct dq_object *"
 .El
 .Pp
 Every reply also runs the
