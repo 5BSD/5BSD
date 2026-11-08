@@ -46,6 +46,7 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <security/mac_veriexec/mac_veriexec.h>
 #include <security/mac_veriexec/mac_veriexec_internal.h>
@@ -209,6 +210,10 @@ verifiedexecioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 			/*
 			 * FreeBSD seems to copy the args to kernel space
 			 */
+			/* Not consultable here (DescriptorQueue, design 11). */
+			error = dqres_kpath_refused(td);
+			if (error != 0)
+				return (error);
 			NDINIT(&nid, LOOKUP, FOLLOW, UIO_SYSSPACE, params->file);
 			if ((error = vn_open(&nid, &flags, 0, NULL)) != 0)
 				return (error);

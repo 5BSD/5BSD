@@ -187,6 +187,14 @@ dq_queue_close(struct dq_queue *q)
 	/* Queue-level records (CLOSE, INTERRUPT) left unread. */
 	TAILQ_FOREACH_SAFE(ev, &q->q_pending, ev_link, evtmp)
 		dq_event_fail_locked(q, ev, EIO, &freed);
+	/*
+	 * Queue-level events the controller read and never answered
+	 * (RESOLVE): their requesters fail closed (D136).
+	 */
+	RB_FOREACH_SAFE(ev, dq_inflight_tree, &q->q_inflight, evtmp) {
+		if (ev->ev_object == NULL)
+			dq_event_fail_locked(q, ev, EIO, &freed);
+	}
 	wakeup(&q->q_pending);
 	wakeup(&q->q_requesters);
 	selwakeup(&q->q_sel);
@@ -1173,6 +1181,140 @@ dq_event_post_nowait(struct dq_queue *q, struct dq_object *o, uint32_t op,
 }
 
 /*
+ * A queue-level event a requester waits for (RESOLVE, stage 1c): as
+ * dq_event_post_wait without an object, so no per-object quota and no
+ * revoke; the queue closing fails it.  The caller is flagged ATTACHED.
+ */
+int
+dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
+    size_t bodylen, struct thread *td, sbintime_t deadline,
+    struct dq_data **replyp, int *errnop)
+{
+	struct dq_event_k *ev;
+	struct dq_requester *rq, *newrq;
+	struct dq_interrupt_body ib;
+	int error;
+	bool interrupt, drop_list_ref;
+
+	*replyp = NULL;
+	*errnop = 0;
+	interrupt = drop_list_ref = false;
+	if (dq_caller_holds_queue(q, td))
+		return (EDEADLK);
+	ev = dq_event_alloc(NULL, op, body, bodylen, td);
+	ev->ev_waited = true;
+	ev->ev_deadline = deadline;
+	ev->ev_hdr.de_caller.dc_flags |= DQ_CALLER_F_ATTACHED;
+	newrq = malloc(sizeof(*newrq), M_DQ, M_WAITOK | M_ZERO);
+	rq = NULL;
+
+	DQ_LOCK(q);
+	for (;;) {
+		if ((q->q_flags & DQ_Q_CLOSING) != 0) {
+			error = EIO;
+			goto out_locked;
+		}
+		rq = dq_requester_find_locked(q, ev->ev_requester);
+		if (rq != NULL && rq->rq_inflight >= dq_max_inflight_per_requester) {
+			/* The quota wait is bounded by the same deadline. */
+			if (deadline != 0)
+				error = msleep_sbt(&q->q_requesters, &q->q_mtx,
+				    PCATCH, "dqreq", deadline, 0, C_ABSOLUTE);
+			else
+				error = msleep(&q->q_requesters, &q->q_mtx,
+				    PCATCH, "dqreq", 0);
+			if (error == EWOULDBLOCK)
+				error = EIO;
+			if (error != 0)
+				goto out_locked;
+			continue;
+		}
+		break;
+	}
+	error = dq_event_enqueue_locked(q, ev);
+	if (error != 0)
+		goto out_locked;
+	if (rq == NULL) {
+		rq = newrq;
+		newrq = NULL;
+		rq->rq_key = ev->ev_requester;
+		LIST_INSERT_HEAD(&q->q_requesters[rq->rq_key % DQ_REQUESTER_HASH],
+		    rq, rq_link);
+	}
+	rq->rq_inflight++;
+	SDT_PROBE2(dq, , , resolve__post, q, ev);
+
+	error = 0;
+	while (ev->ev_state == DQ_EV_PENDING || ev->ev_state == DQ_EV_DELIVERED) {
+		if (deadline == 0)
+			error = cv_wait_sig(&ev->ev_cv, &q->q_mtx);
+		else
+			error = cv_timedwait_sig_sbt(&ev->ev_cv, &q->q_mtx,
+			    deadline, 0, C_ABSOLUTE);
+		if (error != 0)
+			break;
+	}
+	switch (ev->ev_state) {
+	case DQ_EV_REPLIED:
+		*replyp = ev->ev_reply;
+		*errnop = ev->ev_errno;
+		ev->ev_reply = NULL;
+		error = 0;
+		break;
+	case DQ_EV_FAILED:
+		error = EIO;
+		break;
+	case DQ_EV_PENDING:
+		TAILQ_REMOVE(&q->q_pending, ev, ev_link);
+		q->q_count--;
+		q->q_bytes -= ev->ev_size;
+		ev->ev_linked = false;
+		drop_list_ref = true;
+		if (error == EWOULDBLOCK) {
+			ev->ev_state = DQ_EV_FAILED;
+			q->q_stats.ds2_deadline_misses++;
+			SDT_PROBE2(dq, , , event__deadline, q, ev);
+			error = EIO;
+		} else
+			ev->ev_state = DQ_EV_INTERRUPTED;
+		break;
+	case DQ_EV_DELIVERED:
+		RB_REMOVE(dq_inflight_tree, &q->q_inflight, ev);
+		q->q_stats.ds2_inflight--;
+		ev->ev_linked = false;
+		drop_list_ref = true;
+		interrupt = true;
+		if (error == EWOULDBLOCK) {
+			ev->ev_state = DQ_EV_FAILED;
+			q->q_stats.ds2_deadline_misses++;
+			SDT_PROBE2(dq, , , event__deadline, q, ev);
+			error = EIO;
+		} else {
+			ev->ev_state = DQ_EV_INTERRUPTED;
+			q->q_stats.ds2_interrupts++;
+			SDT_PROBE2(dq, , , event__interrupt, q, ev);
+		}
+		break;
+	default:
+		panic("dq: event %p in state %d", ev, ev->ev_state);
+	}
+	dq_requester_release_locked(q, ev->ev_requester);
+out_locked:
+	DQ_UNLOCK(q);
+	if (newrq != NULL)
+		free(newrq, M_DQ);
+	if (interrupt) {
+		ib.din_id = ev->ev_hdr.de_id;
+		dq_event_post_nowait(q, NULL, DQ_OP_INTERRUPT, &ib, sizeof(ib),
+		    td);
+	}
+	if (drop_list_ref)
+		dq_event_rele(ev);
+	dq_event_rele(ev);
+	return (error);
+}
+
+/*
  * read(2) on the queue: whole records, as many as fit, in order.  One
  * reader at a time; an event is dequeued only after its copy succeeded, so
  * a fault in the controller's buffer loses nothing: the read returns
@@ -1529,6 +1671,8 @@ dq_reply_errno_allowed(uint32_t op, int error)
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
+	case DQ_OP_RESOLVE:
+		return (dq_resolve_errno_allowed(error));
 	default:
 		return (true);
 	}
@@ -1630,6 +1774,8 @@ dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
 		if (rerrno == 0 && (ib->dio_cmd & IOC_OUT) != 0)
 			return (len == IOCPARM_LEN(ib->dio_cmd) ? 0 : EINVAL);
 		return (len == 0 ? 0 : EINVAL);
+	case DQ_OP_RESOLVE:
+		return (dq_resolve_reply_validate(rerrno, buf, len));
 	default:
 		return (EINVAL);
 	}

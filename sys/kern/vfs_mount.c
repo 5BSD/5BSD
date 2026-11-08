@@ -65,6 +65,8 @@
 #include <sys/systm.h>
 #include <sys/taskqueue.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <vm/uma.h>
 
 #include <netinet/in.h>
@@ -86,6 +88,8 @@ SDT_PROBE_DEFINE5(mount, , , mount, "char *", "char *", "uint64_t",
     "struct ucred *", "int");
 SDT_PROBE_DEFINE4(mount, , , unmount, "char *", "char *", "uint64_t", "int");
 
+static int	vfs_donmount_dqres(struct thread *td, struct vfsoptlist *optlist,
+		    struct dq_intent *di, bool *enteredp);
 static int	vfs_domount(struct thread *td, const char *fstype, char *fspath,
 		    uint64_t fsflags, bool only_export, bool jail_export,
 		    struct vfsoptlist **optlist);
@@ -835,14 +839,16 @@ vfs_donmount(struct thread *td, uint64_t fsflags, struct uio *fsoptions)
 {
 	struct vfsoptlist *optlist;
 	struct vfsopt *opt, *tmp_opt;
+	struct dq_intent dqi;
 	char *fstype, *fspath, *errmsg;
 	int error, fstypelen, fspathlen, errmsg_len, errmsg_pos;
-	bool autoro, has_nonexport, only_export, jail_export;
+	bool autoro, dqentered, has_nonexport, only_export, jail_export;
 
 	errmsg = fspath = NULL;
 	errmsg_len = fspathlen = 0;
 	errmsg_pos = -1;
 	autoro = default_autoro;
+	dqentered = false;
 
 	error = vfs_buildopts(fsoptions, &optlist);
 	if (error)
@@ -1035,6 +1041,10 @@ vfs_donmount(struct thread *td, uint64_t fsflags, struct uio *fsoptions)
 	    prison_check_nfsd(td->td_ucred))
 		jail_export = true;
 
+	/* An attached caller's path-valued options (design 11). */
+	error = vfs_donmount_dqres(td, optlist, &dqi, &dqentered);
+	if (error != 0)
+		goto bail;
 	error = vfs_domount(td, fstype, fspath, fsflags, only_export,
 	    jail_export, &optlist);
 	if (error == ENODEV) {
@@ -1058,6 +1068,8 @@ vfs_donmount(struct thread *td, uint64_t fsflags, struct uio *fsoptions)
 		    jail_export, &optlist);
 	}
 bail:
+	if (dqentered)
+		dq_intent_leave(td, &dqi);
 	/* copyout the errmsg */
 	if (errmsg_pos != -1 && ((2 * errmsg_pos + 1) < fsoptions->uio_iovcnt)
 	    && errmsg_len > 0 && errmsg != NULL) {
@@ -1143,6 +1155,72 @@ sys_mount(struct thread *td, struct mount_args *uap)
 	if ((vfsp->vfc_flags & VFCF_SBDRY) != 0)
 		return (vfsp->vfc_vfsops_sd->vfs_cmount(ma, uap->data, flags));
 	return (vfsp->vfc_vfsops->vfs_cmount(ma, uap->data, flags));
+}
+
+/*
+ * DescriptorQueue (design 11, D127): the lookups a filesystem's VFS_MOUNT
+ * makes (its "from"/"fspec"/"target" device or directory, a snapshot
+ * file) run with the mount busied and the covered vnode locked, where a
+ * consultation must not wait.  An attached caller's path-valued options
+ * were consulted in vfs_donmount before any of that; the lookups
+ * themselves are exempt.
+ */
+static int
+vfs_mount_exempt(struct mount *mp)
+{
+	int error, save;
+
+	DQRES_NORESOLVE_ENTER(save);
+	error = VFS_MOUNT(mp);
+	DQRES_NORESOLVE_LEAVE(save);
+	return (error);
+}
+
+static const char *const vfs_dqres_pathopts[] = { "from", "fspec", "target" };
+
+/*
+ * An attached caller's path-valued options ("from", "fspec", "target"),
+ * consulted before vfs_domount (D127 class 2) in content slots of di, which
+ * stays published (*enteredp) across VFS_MOUNT: the filesystem's own lookup
+ * of the same bytes runs inside vfs_mount_exempt and is checked there
+ * against the consulted start (EIO on a change).  A value that is not
+ * NUL-terminated within its length is EINVAL for an attached caller (a
+ * filesystem could otherwise look up bytes nobody consulted).
+ */
+static int
+vfs_donmount_dqres(struct thread *td, struct vfsoptlist *optlist,
+    struct dq_intent *di, bool *enteredp)
+{
+	struct vfsopt *opt;
+	const char *value;
+	u_int i;
+	int error, slot;
+
+	*enteredp = false;
+	if (!DQRES_ATTACHED_TD(td))
+		return (0);
+	slot = 0;
+	TAILQ_FOREACH(opt, optlist, link) {
+		for (i = 0; i < nitems(vfs_dqres_pathopts); i++) {
+			if (strcmp(opt->name, vfs_dqres_pathopts[i]) != 0)
+				continue;
+			value = opt->value;
+			if (opt->len <= 0 || value[opt->len - 1] != '\0' ||
+			    slot == DQ_INTENT_SLOTS)
+				return (EINVAL);
+			if (!*enteredp) {
+				dq_intent_enter(td, di, DQ_ROP_INTERNAL,
+				    DQI_KCONSUMER);
+				*enteredp = true;
+			}
+			dq_intent_slot_content(di, slot, value, AT_FDCWD);
+			error = dqres_consult_slot(td, slot);
+			if (error != 0)
+				return (error);
+			slot++;
+		}
+	}
+	return (0);
 }
 
 /*
@@ -1245,7 +1323,7 @@ vfs_domount_first(
 	 */
 	error1 = 0;
 	unmounted = true;
-	if ((error = VFS_MOUNT(mp)) != 0 ||
+	if ((error = vfs_mount_exempt(mp)) != 0 ||
 	    (error1 = VFS_STATFS(mp, &mp->mnt_stat)) != 0 ||
 	    (error1 = VFS_ROOT(mp, LK_EXCLUSIVE, &newdp)) != 0) {
 		rootvp = NULL;
@@ -1403,7 +1481,7 @@ vfs_mount_anon(struct thread *td, const char *fstype, struct vfsoptlist *opts,
 	error = mac_mount_check_mount_anon(actor_cred, mp);
 #endif
 	if (error == 0)
-		error = VFS_MOUNT(mp);
+		error = vfs_mount_exempt(mp);
 	if (error != 0) {
 		vfs_freeopts(mp->mnt_optnew);
 		mp->mnt_optnew = NULL;
@@ -1621,7 +1699,7 @@ vfs_domount_update(
 	 */
 	error = 0;
 	if (!only_export)
-		error = VFS_MOUNT(mp);
+		error = vfs_mount_exempt(mp);
 
 	export_error = 0;
 	/* Process the export option. */
@@ -1767,9 +1845,11 @@ vfs_domount(
 {
 	struct vfsconf *vfsp;
 	struct nameidata nd;
+	struct dq_intent dqi;
 	struct vnode *vp;
 	char *pathbuf;
 	int error;
+	bool dq;
 
 	/*
 	 * Be ultra-paranoid about making sure the type and fspath
@@ -1827,7 +1907,18 @@ vfs_domount(
 	 */
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | AUDITVNODE1 | WANTPARENT,
 	    UIO_SYSSPACE, fspath);
+	/*
+	 * The fspath is a kernel-consumer path (D127 class 2), consulted by
+	 * its own lookup (a kernel-space slot), with nothing held (D149).
+	 */
+	dq = DQRES_ATTACHED_TD(td);
+	if (dq) {
+		dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+		dq_intent_slot(&dqi, 0, fspath, UIO_SYSSPACE, AT_FDCWD);
+	}
 	error = namei(&nd);
+	if (dq)
+		dq_intent_leave(td, &dqi);
 	if (error != 0)
 		return (error);
 	vp = nd.ni_vp;
@@ -1900,10 +1991,12 @@ int
 kern_unmount(struct thread *td, const char *path, uint64_t flags)
 {
 	struct nameidata nd;
+	struct dq_intent dqi;
 	struct mount *mp;
 	char *fsidbuf, *pathbuf;
 	fsid_t fsid;
 	int error;
+	bool dq;
 
 	AUDIT_ARG_VALUE(flags);
 	if ((flags & (MNT_DEFERRED | MNT_RECURSE | MNT_BYCAP)) != 0)
@@ -1946,12 +2039,32 @@ kern_unmount(struct thread *td, const char *path, uint64_t flags)
 		 */
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | AUDITVNODE1,
 		    UIO_SYSSPACE, pathbuf);
-		if (namei(&nd) == 0) {
+		/*
+		 * An attached caller's path (D127 class 2), consulted by its
+		 * own lookup after the copyin, before any lock.  The
+		 * controller's errno cannot be told from a lookup error, so
+		 * an attached caller gets no fallback to the literal
+		 * mount-on name (it would bypass a refusal): fail closed.
+		 */
+		dq = DQRES_ATTACHED_TD(td);
+		if (dq) {
+			dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL,
+			    DQI_KCONSUMER);
+			dq_intent_slot(&dqi, 0, pathbuf, UIO_SYSSPACE,
+			    AT_FDCWD);
+		}
+		error = namei(&nd);
+		if (dq)
+			dq_intent_leave(td, &dqi);
+		if (error == 0) {
 			NDFREE_PNBUF(&nd);
 			error = vn_path_to_global_path(td, nd.ni_vp, pathbuf,
 			    MNAMELEN);
 			if (error == 0)
 				vput(nd.ni_vp);
+		} else if (dq) {
+			free(pathbuf, M_TEMP);
+			return (error);
 		}
 		mtx_lock(&mountlist_mtx);
 		TAILQ_FOREACH_REVERSE(mp, &mountlist, mntlist, mnt_list) {

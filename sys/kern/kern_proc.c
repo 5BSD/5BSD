@@ -77,6 +77,7 @@
 #include <sys/user.h>
 #include <sys/vnode.h>
 #include <sys/wait.h>
+#include <sys/dqres.h>
 #ifdef KTRACE
 #include <sys/ktrace.h>
 #endif
@@ -2131,7 +2132,8 @@ proc_get_binpath(struct proc *p, char *binname, char **retbuf,
 			 * which case we should not report old name.
 			 */
 			NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, *retbuf);
-			error = namei(&nd);
+			/* A recheck of a computed path: exempt (D127). */
+			error = DQRES_EXEMPT(namei(&nd));
 			if (error == 0) {
 				if (nd.ni_vp == vp)
 					do_fullpath = false;

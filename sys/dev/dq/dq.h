@@ -25,6 +25,19 @@
 #error "DescriptorQueue is LP64 only"
 #endif
 
+/*
+ * ufs/ufs/dinode.h defines di_rdev as a macro (di_db[0]); any source that
+ * includes it before this header (the NFS server does, through its port
+ * headers) would turn struct dq_ident_file's di_rdev into a zero-length
+ * array and change the layout.  The identity's field names are ABI, so
+ * the macro is suspended for this header instead.
+ */
+#pragma push_macro("di_rdev")
+#undef di_rdev
+/* sys/bus.h defines dr_data (struct dq_reply's field name is ABI). */
+#pragma push_macro("dr_data")
+#undef dr_data
+
 #define	DQ_API_VERSION		1
 
 #define	DQ_PATH_MAX		1024	/* presented path, NUL included */
@@ -253,6 +266,8 @@ struct dq_caller {
 };
 #define	DQ_CALLER_F_KERNEL	0x00000001	/* a kernel thread or no thread
 						   posted it (pid 0) */
+#define	DQ_CALLER_F_ATTACHED	0x00000002	/* the caller's process is
+						   attached (RESOLVE, 1c) */
 
 struct dq_event {
 	uint32_t	de_version;		/* DQ_API_VERSION */
@@ -611,7 +626,17 @@ struct dq_stats2 {
 	uint64_t	ds2_task_drops;		/* INTERRUPT records the completion
 						   task could not allocate (the
 						   late reply gets ESRCH) */
-	uint64_t	ds2_reserved[13];
+	uint64_t	ds2_resolves;		/* RESOLVE events posted (1c) */
+	uint64_t	ds2_resolve_pass;	/* answered PASS */
+	uint64_t	ds2_resolve_kernel;	/* class 2/3 consultations */
+	uint64_t	ds2_resolve_unmarked;	/* unmarked user-space lookups
+						   (a ledger failure; dqpass
+						   asserts 0) */
+	uint64_t	ds2_resolve_failclosed;	/* refused without an answer:
+						   dead binding, deadline, held
+						   lock */
+	uint64_t	ds2_attached;		/* ATTACHes committed */
+	uint64_t	ds2_reserved[7];
 };
 
 /*
@@ -641,7 +666,7 @@ struct dq_push_args {
 
 /*
  * Ioctls on the queue, group 'j' (the only unused letter near 'q'/'Q').
- * 10-11 are reserved for ATTACH and REGISTER_NAME (later stages).
+ * 10 is ATTACH (stage 1c); 11 is reserved for REGISTER_NAME.
  */
 #define	DQ_IOC_MINT		_IOWR('j', 1, struct dq_mint_args)
 #define	DQ_IOC_MINT_OBSERVER	_IOWR('j', 2, struct dq_observer_args)
@@ -653,6 +678,154 @@ struct dq_push_args {
 #define	DQ_IOC_SET_QUEUE_DEPTH	_IOW('j', 8, uint32_t)
 #define	DQ_IOC_PUSH		_IOW('j', 9, struct dq_push_args)
 #define	DQ_IOC_GET_STATS2	_IOR('j', 12, struct dq_stats2)
+
+/*
+ * Stage 1c: resolution (design 11).  A process attached to a queue
+ * (DQ_IOC_ATTACH) has every name it resolves posted as a queue-level
+ * RESOLVE event (de_object 0) before the lookup runs; the controller
+ * answers PASS (the lookup proceeds unchanged) or an errno (the syscall
+ * fails with it).  Series 1c-i accepts only those two answers.
+ *
+ * RESOLVE body: struct dq_resolve_body, then drs_pathlen bytes of path,
+ * NUL, drs_path2len bytes of the second path (RENAME, LINK), NUL,
+ * drs_startpathlen bytes of the start hint, NUL, drs_startpath2len bytes
+ * of the second path's start hint, NUL; the record is padded to a
+ * multiple of 8.  Every length excludes its NUL.  The second path has its
+ * own start kind (drs_start2_kind, from its own dirfd and leading '/'; 0
+ * when there is no second path); a hint is present only when
+ * DQ_RF_STARTPATH_VALID (path) or DQ_RF_STARTPATH2_VALID (path2) is set.
+ * drs_rflags describe the first path's lookup; the second path's own
+ * lookup flags are not known when the event is posted.
+ */
+struct dq_resolve_body {
+	uint32_t	drs_op;			/* DQ_ROP_* */
+	uint32_t	drs_rflags;		/* DQ_RF_* */
+	uint32_t	drs_start_kind;		/* DQ_START_* */
+	uint32_t	drs_flags;		/* DQ_RCLASS_* (D127) */
+	uint64_t	drs_start;		/* served start object; 0 */
+	uint32_t	drs_mode;		/* open flags, mkdir mode, ... */
+	uint32_t	drs_syscall;		/* the requester's syscall number */
+	uint64_t	drs_dev;		/* mknod dev */
+	uint32_t	drs_start2_kind;
+	uint32_t	drs_pathlen;
+	uint32_t	drs_path2len;
+	uint32_t	drs_startpathlen;
+	uint64_t	drs_start2;
+	uint64_t	drs_object;		/* a served fd argument */
+	int32_t		drs_domain;		/* sockets (1c-ii) */
+	int32_t		drs_type;
+	int32_t		drs_protocol;
+	int32_t		drs_pad0;
+	uint32_t	drs_startpath2len;	/* path2's start hint */
+	uint32_t	drs_pad1;
+};
+
+/* Operations (drs_op). */
+#define	DQ_ROP_OPEN		1
+#define	DQ_ROP_STAT		2
+#define	DQ_ROP_ACCESS		3
+#define	DQ_ROP_READLINK		4
+#define	DQ_ROP_REALPATH		5
+#define	DQ_ROP_GETFH		6
+#define	DQ_ROP_UNLINK		7
+#define	DQ_ROP_RMDIR		8
+#define	DQ_ROP_RENAME		9
+#define	DQ_ROP_LINK		10
+#define	DQ_ROP_SYMLINK		11
+#define	DQ_ROP_MKDIR		12
+#define	DQ_ROP_MKNOD		13
+#define	DQ_ROP_MKFIFO		14
+#define	DQ_ROP_SETATTR		15
+#define	DQ_ROP_TRUNCATE		16
+#define	DQ_ROP_EXEC		17
+#define	DQ_ROP_EXEC_INTERP	18
+#define	DQ_ROP_CONNECT		19
+#define	DQ_ROP_BIND		20
+#define	DQ_ROP_SOCKET		21
+#define	DQ_ROP_SOCKETPAIR	22
+#define	DQ_ROP_CHDIR		23
+#define	DQ_ROP_CHROOT		24
+#define	DQ_ROP_INOTIFY		25
+#define	DQ_ROP_XATTR		26
+#define	DQ_ROP_ACL		27
+#define	DQ_ROP_REVOKE		28
+#define	DQ_ROP_INTERNAL		29
+#define	DQ_ROP_MAX		29
+
+/* Lookup flags (drs_rflags). */
+#define	DQ_RF_USER		0x00000001	/* user-origin (class 1) */
+#define	DQ_RF_STRICTREL		0x00000002	/* capability-mode relative */
+#define	DQ_RF_BENEATH		0x00000004	/* O_RESOLVE_BENEATH */
+#define	DQ_RF_RINROOT		0x00000008	/* resolve in a scoped root */
+#define	DQ_RF_NOFOLLOW		0x00000010
+#define	DQ_RF_EMPTYPATH		0x00000020
+#define	DQ_RF_FSEARCH		0x00000040
+#define	DQ_RF_NOSYMLINKS	0x00000080
+#define	DQ_RF_NOMAGICLINKS	0x00000100
+#define	DQ_RF_NOXDEV		0x00000200
+#define	DQ_RF_TRAILINGSLASH	0x00000400
+#define	DQ_RF_STARTPATH_VALID	0x00000800	/* the start hint is present */
+#define	DQ_RF_SYMLINK_RESTART	0x00001000	/* re-consulted at an absolute
+						   symlink (1c-iii) */
+#define	DQ_RF_ABSTRACT		0x00002000	/* AF_UNIX abstract name (1c-ii) */
+#define	DQ_RF_KCONSUMER		0x00004000	/* the object goes to the kernel
+						   (class 2) */
+#define	DQ_RF_STARTPATH2_VALID	0x00008000	/* path2's start hint is present */
+
+/* Start kinds (drs_start_kind). */
+#define	DQ_START_SERVED		1	/* drs_start names it (1c-iii) */
+#define	DQ_START_REAL_CWD	2
+#define	DQ_START_REAL_ROOT	3	/* absolute path */
+#define	DQ_START_REAL_DIRFD	4
+#define	DQ_START_NONE		5	/* sockets */
+
+/* Lookup classes (drs_flags, D127). */
+#define	DQ_RCLASS_USER		1	/* the requester's own path */
+#define	DQ_RCLASS_KCONSUMER	2	/* a user path for a kernel consumer */
+#define	DQ_RCLASS_KERNEL	3	/* a kernel-origin lookup (EXEC_INTERP) */
+
+/*
+ * The reply body: struct dq_resolve_reply, then the kind's payload.
+ * Kinds 2-5 are accepted from stage 1c-iii; in 1c-i a RESOLVE reply is
+ * either an errno with no body or exactly a PASS.
+ */
+struct dq_resolve_reply {
+	uint32_t	drr_kind;		/* DQ_RESOLVE_* */
+	uint32_t	drr_pad0;
+};
+#define	DQ_RESOLVE_PASS		1
+#define	DQ_RESOLVE_FD		2	/* + struct dq_resolve_mint (iii) */
+#define	DQ_RESOLVE_ATTR		3	/* (iii) */
+#define	DQ_RESOLVE_LINK		4	/* (iii) */
+#define	DQ_RESOLVE_OK		5	/* (iii) */
+#define	DQ_RESOLVE_REPLY_MAX	8192
+
+struct dq_resolve_mint {		/* stage 1c-iii */
+	uint32_t	drm_kind;
+	uint32_t	drm_flags;
+	struct dq_ident_file drm_ident;
+	struct dq_policy drm_policy;
+	uint64_t	*drm_objectp;		/* out, before linking */
+	int32_t		*drm_reasonp;
+};
+
+/*
+ * ATTACH (D138): attach the process named by the process descriptor
+ * da_procfd to this queue.  It must be a child that has not exec'd, not
+ * already attached, not sharing its pwddesc or descriptor table, holding
+ * no descriptor of this queue, and debuggable by the caller.  ATTACH sets
+ * P2_NO_NEW_PRIVS on it (D150).  da_rootfd and da_cwdfd (served
+ * directories) are stage 1c-iii: -1 here.
+ */
+struct dq_attach_args {
+	uint32_t	da_version;
+	int32_t		da_procfd;
+	int32_t		da_rootfd;		/* -1 */
+	int32_t		da_cwdfd;		/* -1 */
+	uint32_t	da_flags;		/* 0 */
+	uint32_t	da_pad0;
+};
+#define	DQ_IOC_ATTACH		_IOW('j', 10, struct dq_attach_args)
 
 #ifdef _KERNEL
 /* The stage 1b-i PUSH layout, before the INVALIDATE range (24 bytes). */
@@ -694,5 +867,15 @@ _Static_assert(sizeof(struct dq_unlock_all_body) == 16, "dq_unlock_all_body");
 _Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
 _Static_assert(sizeof(struct dq_stats2) == 320, "dq_stats2");
 _Static_assert(sizeof(struct dq_push_args) == 40, "dq_push_args");
+_Static_assert(sizeof(struct dq_resolve_body) == 96, "dq_resolve_body");
+_Static_assert(__offsetof(struct dq_resolve_body, drs_pad0) == 84 &&
+    __offsetof(struct dq_resolve_body, drs_startpath2len) == 88,
+    "dq_resolve_body: the 1c-i additions are appended");
+_Static_assert(sizeof(struct dq_resolve_reply) == 8, "dq_resolve_reply");
+_Static_assert(sizeof(struct dq_resolve_mint) == 3968, "dq_resolve_mint");
+_Static_assert(sizeof(struct dq_attach_args) == 24, "dq_attach_args");
+
+#pragma pop_macro("dr_data")
+#pragma pop_macro("di_rdev")
 
 #endif /* !_DEV_DQ_DQ_H_ */

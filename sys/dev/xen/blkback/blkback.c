@@ -2525,6 +2525,7 @@ xbb_open_backend(struct xbb_softc *xbb)
 	pwd_ensure_dirs();
 
  again:
+	/* dq-ledger: kthread (xenstore watch; attached caller: EPERM) */
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, xbb->dev_name);
 	error = vn_open(&nd, &flags, 0, NULL);
 	if (error) {

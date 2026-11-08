@@ -50,6 +50,7 @@
 #include <sys/stdarg.h>
 #include <sys/syscallsubr.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_mib.h>
@@ -88,7 +89,8 @@ linux_pwd_onexec(struct thread *td)
 	int error;
 
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, linux_emul_path);
-	error = namei(&nd);
+	/* The ABI root at exec: exempt (DescriptorQueue, D127). */
+	error = DQRES_EXEMPT(namei(&nd));
 	if (error != 0) {
 		/* Do not prevent execution if altroot is non-existent. */
 		pwd_altroot(td, NULL);

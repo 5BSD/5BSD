@@ -47,6 +47,8 @@
 
 #include <fs/nfsserver/nfs_fha_new.h>
 
+#include <sys/dqres.h>
+
 #include <security/mac/mac_framework.h>
 
 NFSDLOCKMUTEX;
@@ -448,7 +450,7 @@ static int
 nfs_proc(struct nfsrv_descript *nd, u_int32_t xid, SVCXPRT *xprt,
     struct nfsrvcache **rpp)
 {
-	int cacherep = RC_DOIT, isdgram, taglen = -1;
+	int cacherep = RC_DOIT, dqsave, isdgram, taglen = -1;
 	struct mbuf *m;
 	u_char tag[NFSV4_SMALLSTR + 1], *tagstr = NULL;
 	u_int32_t minorvers = 0;
@@ -507,7 +509,13 @@ nfs_proc(struct nfsrv_descript *nd, u_int32_t xid, SVCXPRT *xprt,
 	 */
 	if (cacherep == RC_DOIT) {
 		nd->nd_xprt = xprt;
+		/*
+		 * The server's lookups are made for its clients, not for the
+		 * nfsd process (DescriptorQueue, D127): exempt.
+		 */
+		DQRES_NORESOLVE_ENTER(dqsave);
 		nfsrvd_dorpc(nd, isdgram, tagstr, taglen, minorvers);
+		DQRES_NORESOLVE_LEAVE(dqsave);
 		if ((nd->nd_flag & ND_NFSV41) != 0) {
 			if (nd->nd_repstat != NFSERR_REPLYFROMCACHE &&
 			    (nd->nd_flag & ND_SAVEREPLY) != 0) {

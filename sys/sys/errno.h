@@ -191,6 +191,8 @@ __END_DECLS
 #define	ENOIOCTL	(-3)		/* ioctl not handled by this layer */
 #define	EDIRIOCTL	(-4)		/* do direct ioctl in GEOM */
 #define	ERELOOKUP	(-5)		/* retry the directory lookup */
+#define	EDQRESOLVED	(-6)		/* DescriptorQueue served the lookup
+					   (consumed by the intent's syscall) */
 #endif
 
 #ifndef _KERNEL

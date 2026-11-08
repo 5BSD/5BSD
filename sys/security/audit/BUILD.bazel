@@ -13,7 +13,7 @@ amd64_generic_kernel_objects(name = "generic",
     srcs = ["audit.c", "audit_arg.c", "audit_bsm.c", "audit_bsm_db.c", "audit_bsm_klib.c",
         "audit_pipe.c", "audit_syscalls.c", "audit_trigger.c", "audit_worker.c",
         "bsm_domain.c", "bsm_errno.c", "bsm_fcntl.c", "bsm_socket_type.c", "bsm_token.c"],
-    deps = [":internal_headers", "//sys/security/mac:framework_headers", "//sys/netinet:pcb_headers", "//sys/netinet:ipv4_wire_headers"])
+    deps = ["//sys/dev/dq:headers", ":internal_headers", "//sys/security/mac:framework_headers", "//sys/netinet:pcb_headers", "//sys/netinet:ipv4_wire_headers"])
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "tracing_module_headers", hdrs = ["audit.h", "audit_private.h"],

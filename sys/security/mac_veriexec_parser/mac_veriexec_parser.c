@@ -35,6 +35,7 @@
 #include <sys/proc.h>
 #include <sys/systm.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <crypto/sha2/sha256.h>
 #include <crypto/sha2/sha384.h>
@@ -240,7 +241,8 @@ open_file(const char *path, struct nameidata *nid)
 	pwd_ensure_dirs();
 
 	NDINIT(nid, LOOKUP, 0, UIO_SYSSPACE, path);
-	rc = vn_open(nid, &flags, 0, NULL);
+	/* The boot manifest: exempt (DescriptorQueue, D127). */
+	rc = DQRES_EXEMPT(vn_open(nid, &flags, 0, NULL));
 	if (rc != 0)
 		return (rc);
 	NDFREE_PNBUF(nid);

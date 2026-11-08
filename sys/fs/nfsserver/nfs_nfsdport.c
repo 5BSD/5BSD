@@ -51,6 +51,8 @@
 #include <sys/netexport.h>
 #include <sys/osd.h>
 #include <sys/sysctl.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <nlm/nlm_prot.h>
 #include <nlm/nlm.h>
 #include <vm/vm_param.h>
@@ -4711,6 +4713,7 @@ out:
 int
 nfsrv_v4rootexport(void *argp, struct ucred *cred, struct thread *p)
 {
+	struct dq_intent dqi;
 	struct nfsex_args *nfsexargp = (struct nfsex_args *)argp;
 	int error = 0;
 	struct nameidata nd;
@@ -4727,8 +4730,14 @@ nfsrv_v4rootexport(void *argp, struct ucred *cred, struct thread *p)
 		/*
 		 * If fspec != NULL, this is the v4root path.
 		 */
+		/* nfssvc(2): the v4 root export path (class 2). */
+		dq_intent_enter(p, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+		dq_intent_slot(&dqi, 0, nfsexargp->fspec, UIO_USERSPACE,
+		    AT_FDCWD);
 		NDINIT(&nd, LOOKUP, FOLLOW, UIO_USERSPACE, nfsexargp->fspec);
-		if ((error = namei(&nd)) != 0)
+		error = namei(&nd);
+		dq_intent_leave(p, &dqi);
+		if (error != 0)
 			goto out;
 		NDFREE_PNBUF(&nd);
 		error = nfsvno_getfh(nd.ni_vp, &fh, p);

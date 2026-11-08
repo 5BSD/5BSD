@@ -75,6 +75,7 @@
 #include <sys/zfs_znode.h>
 #include <sys/zfs_ioctl_impl.h>
 #include <sys/zvol.h>
+#include <sys/dqres.h>
 
 #include "zfs_namecheck.h"
 #include "zfs_prop.h"
@@ -2644,7 +2645,8 @@ zfshandle_op_blkopen(zfshandle_t *zh, struct zfd_blkopen_args *args,
 		return (error);
 	flags = FREAD | (args->zb_write ? FWRITE : 0);
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, path);
-	error = vn_open(&nd, &flags, 0, fp);
+	/* The zvol of a handle the caller holds: exempt (DescriptorQueue). */
+	error = DQRES_EXEMPT(vn_open(&nd, &flags, 0, fp));
 	if (error != 0) {
 		fdrop(fp, td);
 		return (error);

@@ -74,6 +74,7 @@
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
 #include <sys/unistd.h>
+#include <sys/dqres.h>
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
@@ -426,10 +427,9 @@ fork_norfproc(struct thread *td, int flags)
 
 		pdtmp = pdinit(td->td_proc->p_pd, false);
 		fdtmp = fdinit();
-		pdescfree(td);
+		pd_replace(td, pdtmp);	/* carries the binding (D147) */
 		fdescfree(td);
 		p1->p_fd = fdtmp;
-		p1->p_pd = pdtmp;
 	}
 
 	/*
@@ -542,6 +542,12 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 			    p1->p_fd, p2);
 		}
 	}
+	/*
+	 * D147: an ATTACH that committed while fdcopy slept is seen here,
+	 * before the child can run; the child is then attached too.
+	 */
+	dqres_fork_late(p1, pd);
+
 	/*
 	 * Make a proc table entry for the new process.
 	 * Start by zeroing the section of proc that is zero-initialized,

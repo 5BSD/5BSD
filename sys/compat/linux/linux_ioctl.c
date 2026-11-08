@@ -54,6 +54,7 @@
 #include <sys/sysproto.h>
 #include <sys/sx.h>
 #include <sys/tty.h>
+#include <sys/dqres.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -744,7 +745,9 @@ linux_ioctl_tiocgptpeer(struct thread *td, struct file *fp, l_uint lflags)
 	if (error != 0)
 		return (ENOTTY);
 	snprintf(path, sizeof(path), "/dev/pts/%d", unit);
-	return (kern_openat(td, AT_FDCWD, path, UIO_SYSSPACE, flags, 0));
+	/* The peer of a pty the caller holds: exempt (DescriptorQueue). */
+	return (DQRES_EXEMPT(kern_openat(td, AT_FDCWD, path, UIO_SYSSPACE,
+	    flags, 0)));
 }
 
 static int

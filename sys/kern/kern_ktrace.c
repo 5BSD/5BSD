@@ -59,6 +59,8 @@
 #include <sys/sysproto.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -1100,8 +1102,8 @@ struct ktrace_args {
 };
 #endif
 /* ARGSUSED */
-int
-sys_ktrace(struct thread *td, struct ktrace_args *uap)
+static int
+sys_ktrace_dqimpl(struct thread *td, struct ktrace_args *uap)
 {
 #ifdef KTRACE
 	struct vnode *vp = NULL;
@@ -1232,6 +1234,26 @@ done:
 #else /* !KTRACE */
 	return (ENOSYS);
 #endif /* KTRACE */
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_ktrace(struct thread *td, struct ktrace_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_ktrace_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot(&dqi, 0, uap->fname, UIO_USERSPACE, AT_FDCWD);
+	dqerror = sys_ktrace_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /* ARGSUSED */

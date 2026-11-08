@@ -103,6 +103,12 @@ SDT_PROBE_DECLARE(dq, , , event__drop);
 SDT_PROBE_DECLARE(dq, , , event__interrupt);
 SDT_PROBE_DECLARE(dq, , , event__deadline);
 SDT_PROBE_DECLARE(dq, , , reply__late);
+SDT_PROBE_DECLARE(dq, , , attach);
+SDT_PROBE_DECLARE(dq, , , resolve__post);
+SDT_PROBE_DECLARE(dq, , , resolve__reply);
+SDT_PROBE_DECLARE(dq, , , resolve__failclosed);
+SDT_PROBE_DECLARE(dq, , , resolve__unmarked);
+SDT_PROBE_DECLARE(dq, , , resolve__locked);
 
 /* Tunables (dq_dev.c), kern.dq.* */
 extern u_int dq_max_io;
@@ -112,6 +118,7 @@ extern u_int dq_max_inflight_per_requester;
 extern u_int dq_max_objects;
 extern int dq_default_deadline_ms;
 extern u_int dq_max_inflight_bytes;
+extern int dq_kernel_deadline_ms;	/* class 2/3 and lock-holding waits */
 
 /* The page deadline when neither the policy nor the default sets one. */
 #define	DQ_PAGE_DEADLINE_MS	30000
@@ -376,6 +383,8 @@ struct dq_queue {
 	u_int			 q_nasync;
 	struct callout		 q_callout;	/* earliest da_deadline; q_mtx */
 	sbintime_t		 q_callout_at;	/* 0: not armed */
+	struct dqres_binding	*q_binding;	/* attachments (1c), under q_mtx;
+						   holds a q_refs */
 };
 
 #define	DQ_LOCK(q)		mtx_lock(&(q)->q_mtx)
@@ -462,6 +471,22 @@ int	dq_event_post_wait(struct dq_object *o, uint32_t op, const void *body,
 void	dq_event_post_nowait(struct dq_queue *q, struct dq_object *o,
 	    uint32_t op, const void *body, size_t bodylen, struct thread *td);
 void	dq_reply_free(struct dq_data *reply);
+/*
+ * A queue-level event (RESOLVE) waited for by a requester with no object:
+ * the per-requester quota, the EDEADLK scan, PCATCH waits, deadline (0 =
+ * none) and INTERRUPT as for any waited event.
+ */
+int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
+	    size_t bodylen, struct thread *td, sbintime_t deadline,
+	    struct dq_data **replyp, int *errnop);
+
+/* dq_resolve.c */
+struct dqres_binding;
+void	dq_resolve_init(void);
+bool	dq_resolve_errno_allowed(int error);
+int	dq_resolve_reply_validate(int rerrno, const void *buf, size_t len);
+int	dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
+	    struct thread *td);
 
 /* dq_async.c */
 int	dq_async_post(struct dq_object *o, struct vm_object *obj,

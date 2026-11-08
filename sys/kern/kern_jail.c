@@ -72,6 +72,8 @@
 #include <sys/sysctl.h>
 #include <sys/uuid.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <net/if.h>
 #include <net/vnet.h>
@@ -1049,6 +1051,7 @@ kern_jail_set_common(struct thread *td, struct uio *optuio, int flags,
 {
 	struct file *jfp_out;
 	struct nameidata nd;
+	struct dq_intent dqi;
 #ifdef INET
 	struct prison_ip *ip4;
 #endif
@@ -1536,7 +1539,14 @@ kern_jail_set_common(struct thread *td, struct uio *optuio, int flags,
 			goto done_free;
 		}
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, path);
+		/*
+		 * A kernel-consumer path (D127 class 2), the jail's root:
+		 * consulted by this namei, which holds no lock.
+		 */
+		dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+		dq_intent_slot(&dqi, 0, path, UIO_SYSSPACE, AT_FDCWD);
 		error = namei(&nd);
+		dq_intent_leave(td, &dqi);
 		if (error)
 			goto done_free;
 		root = nd.ni_vp;
@@ -3251,6 +3261,15 @@ do_jail_attach(struct thread *td, struct prison *pr, int *drflagsp)
 	if (drflags & PD_LOCKED) {
 		mtx_unlock(&pr->pr_mtx);
 		drflags &= ~PD_LOCKED;
+	}
+	/*
+	 * I5 (D137): an attached process never changes jail.  Tested here
+	 * to avoid the OSD side effects; authoritative (atomic with ATTACH)
+	 * in pwd_chroot_chdir, whose refusal reverts OSD below.
+	 */
+	if (dqres_proc_attached(td->td_proc)) {
+		prison_deref(pr, drflags);
+		return (EPERM);
 	}
 	error = osd_jail_call(pr, PR_METHOD_ATTACH, td);
 	if (error)

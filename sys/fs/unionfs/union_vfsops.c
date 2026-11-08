@@ -230,6 +230,7 @@ unionfs_domount(struct mount *mp)
 	/*
 	 * Find upper node
 	 */
+	/* dq-ledger: content via kern/vfs_mount.c:vfs_donmount_dqres */
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, target);
 	if ((error = namei(ndp)))
 		return (error);

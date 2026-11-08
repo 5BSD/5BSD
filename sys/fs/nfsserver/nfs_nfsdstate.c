@@ -34,6 +34,7 @@
 #include <fs/nfs/nfsport.h>
 
 #include <sys/sdt.h>
+#include <sys/dqres.h>
 
 SDT_PROVIDER_DECLARE(nfsserver);
 SDT_PROBE_DEFINE2(nfsserver, , , client__start, "void *", "int");
@@ -7552,6 +7553,13 @@ nfsrv_setdsserver(char *dspathp, char *mdspathp, NFSPROC_T *p,
 		printf("A pNFS nfsd cannot run in a jail\n");
 		return (EPERM);
 	}
+	/*
+	 * The pNFS paths come from nfssvc(2): not consultable here, refused
+	 * for an attached caller (DescriptorQueue, design 11).
+	 */
+	error = dqres_kpath_refused(p);
+	if (error != 0)
+		return (error);
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF, UIO_SYSSPACE,
 	    dspathp);
 	error = namei(&nd);
@@ -8489,6 +8497,10 @@ nfsrv_mdscopymr(char *mdspathp, char *dspathp, char *curdspathp, char *buf,
 	*fdsp = NULL;
 	if (dspathp == NULL && curdspathp != NULL)
 		return (EPERM);
+	/* nfssvc(2)'s paths: refused for an attached caller (as above). */
+	error = dqres_kpath_refused(p);
+	if (error != 0)
+		return (error);
 
 	/*
 	 * Look up the MDS file shared locked.  The lock will be upgraded

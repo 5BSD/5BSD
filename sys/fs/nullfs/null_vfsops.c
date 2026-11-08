@@ -132,6 +132,7 @@ nullfs_mount(struct mount *mp)
 	 * Find lower node
 	 */
 	ndp = &nd;
+	/* dq-ledger: content via kern/vfs_mount.c:vfs_donmount_dqres */
 	NDINIT(ndp, LOOKUP, FOLLOW|LOCKLEAF, UIO_SYSSPACE, target);
 	error = namei(ndp);
 

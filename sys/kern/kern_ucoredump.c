@@ -52,6 +52,7 @@
 #include <sys/syslog.h>
 #include <sys/ucoredump.h>
 #include <sys/wait.h>
+#include <sys/dqres.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -253,6 +254,12 @@ coredump(struct thread *td, const char **errmsg)
 	 * if it is larger than the limit.
 	 */
 	limit = (off_t)lim_cur(td, RLIMIT_CORE);
+	/*
+	 * D153: an attached process dumps no core, so none lands in a real
+	 * directory its controller never saw; as RLIMIT_CORE == 0.
+	 */
+	if (dqres_cred_change_refused(p))
+		limit = 0;
 	if (limit == 0 || racct_get_available(p, RACCT_CORE) == 0) {
 		PROC_UNLOCK(p);
 		*errmsg = "coredumpsize limit is 0";

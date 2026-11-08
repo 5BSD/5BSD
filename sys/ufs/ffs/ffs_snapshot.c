@@ -251,6 +251,7 @@ ffs_snapshot(struct mount *mp, char *snapfile)
 	 * Create the snapshot file.
 	 */
 restart:
+	/* dq-ledger: content via kern/vfs_mount.c:vfs_donmount_dqres */
 	NDINIT(&nd, CREATE, LOCKPARENT | LOCKLEAF | NOCACHE, UIO_SYSSPACE,
 	    snapfile);
 	if ((error = namei(&nd)) != 0)
@@ -888,6 +889,7 @@ out:
 
 		/* Remove snapshot as its creation has failed. */
 		vput(vp);
+		/* dq-ledger: content via kern/vfs_mount.c:vfs_donmount_dqres */
 		NDINIT(&nd, DELETE, LOCKPARENT | LOCKLEAF, UIO_SYSSPACE,
 		    snapfile);
 		if ((rmerr = namei(&nd)) != 0 ||

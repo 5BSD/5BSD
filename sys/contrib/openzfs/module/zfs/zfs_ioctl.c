@@ -151,6 +151,9 @@
 
 #include <sys/types.h>
 #include <sys/param.h>
+#if defined(__FreeBSD__) && defined(_KERNEL)
+#include <sys/dqres.h>
+#endif
 #include <sys/errno.h>
 #include <sys/file.h>
 #include <sys/kmem.h>
@@ -1791,6 +1794,26 @@ zfsvfs_rele(zfsvfs_t *zfsvfs, const void *tag)
 	}
 }
 
+/*
+ * 5BSD DescriptorQueue (design 11): a pool cache file is written, and
+ * retried from the async thread, by path with no consultation possible;
+ * an attached caller may not name one (create, import, set).
+ */
+static int
+zfs_dqres_cachefile(nvlist_t *config, nvlist_t *props)
+{
+#if defined(__FreeBSD__) && defined(_KERNEL)
+	if (((props != NULL && nvlist_exists(props,
+	    zpool_prop_to_name(ZPOOL_PROP_CACHEFILE))) ||
+	    (config != NULL && nvlist_exists(config,
+	    ZPOOL_CONFIG_CACHEFILE))) && dqres_kpath_refused(curthread) != 0)
+		return (SET_ERROR(EPERM));
+#else
+	(void) config, (void) props;
+#endif
+	return (0);
+}
+
 static int
 zfs_ioc_pool_create(zfs_cmd_t *zc)
 {
@@ -1811,6 +1834,11 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 	    get_nvlist(zc->zc_nvlist_src, zc->zc_nvlist_src_size,
 	    zc->zc_iflags, &props))) {
 		nvlist_free(config);
+		return (error);
+	}
+	if ((error = zfs_dqres_cachefile(config, props)) != 0) {
+		nvlist_free(config);
+		nvlist_free(props);
 		return (error);
 	}
 
@@ -1913,6 +1941,11 @@ zfs_ioc_pool_import(zfs_cmd_t *zc)
 	    get_nvlist(zc->zc_nvlist_src, zc->zc_nvlist_src_size,
 	    zc->zc_iflags, &props))) {
 		nvlist_free(config);
+		return (error);
+	}
+	if ((error = zfs_dqres_cachefile(config, props)) != 0) {
+		nvlist_free(config);
+		nvlist_free(props);
 		return (error);
 	}
 
@@ -3593,6 +3626,10 @@ zfs_ioc_pool_set_props(zfs_cmd_t *zc)
 	if ((error = get_nvlist(zc->zc_nvlist_src, zc->zc_nvlist_src_size,
 	    zc->zc_iflags, &props)))
 		return (error);
+	if ((error = zfs_dqres_cachefile(NULL, props)) != 0) {
+		nvlist_free(props);
+		return (error);
+	}
 
 	/*
 	 * If the only property is the configfile, then just do a spa_lookup()

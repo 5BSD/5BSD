@@ -44,6 +44,8 @@
 #include <sys/smp.h>
 #include <sys/sysctl.h>
 #include <sys/taskqueue.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <rpc/rpc_com.h>
 #include <vm/vm.h>
 #include <vm/vm_object.h>
@@ -235,10 +237,15 @@ nfsrv_object_create(struct vnode *vp, struct thread *td)
 int
 nfsrv_lookupfilename(struct nameidata *ndp, char *fname, NFSPROC_T *p __unused)
 {
+	struct dq_intent dqi;
 	int error;
 
+	/* nfssvc(2): an export path for the NFS server (class 2). */
+	dq_intent_enter(curthread, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot(&dqi, 0, fname, UIO_USERSPACE, AT_FDCWD);
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_USERSPACE, fname);
 	error = namei(ndp);
+	dq_intent_leave(curthread, &dqi);
 	if (!error) {
 		NDFREE_PNBUF(ndp);
 	}

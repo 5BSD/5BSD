@@ -70,6 +70,8 @@
 #include <sys/syslog.h>
 #include <sys/eventhandler.h>
 #include <sys/user.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <vm/vm.h>
 #include <vm/vm_kern.h>
@@ -848,6 +850,7 @@ __elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
 	struct nameidata *nd;
 	struct vattr *attr;
 	struct image_params *imgp;
+	struct dq_intent dqi;
 	void *m_phdrs = NULL;
 	u_long rbase;
 	u_long base_addr = 0;
@@ -882,7 +885,16 @@ __elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
 	imgp->interpreted = IMGACT_INTERP_ELF; /* ignored by do_execve */
 
 	NDINIT(nd, LOOKUP, ndflags, UIO_SYSSPACE, file);
-	if ((error = namei(nd)) != 0)
+	/*
+	 * PT_INTERP: a kernel-origin lookup (D127 class 3, EXEC_INTERP), no
+	 * restart (the image is half built).
+	 */
+	dq_intent_enter(td, &dqi, DQ_ROP_EXEC_INTERP,
+	    DQI_KERNEL | DQI_NO_ERESTART);
+	dq_intent_slot(&dqi, 0, file, UIO_SYSSPACE, AT_FDCWD);
+	error = namei(nd);
+	dq_intent_leave(td, &dqi);
+	if (error != 0)
 		goto fail;
 	NDFREE_PNBUF(nd);
 	exec_image_vnode_init(imgp, nd->ni_vp);

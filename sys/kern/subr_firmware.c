@@ -50,6 +50,7 @@
 #include <sys/vnode.h>
 
 #include <sys/sdt.h>
+#include <sys/dqres.h>
 
 SDT_PROVIDER_DEFINE(firmware);
 /* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
@@ -311,7 +312,8 @@ try_binary_file(const char *imagename, uint32_t flags)
 
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, fn);
 	oflags = FREAD;
-	error = vn_open(&nd, &oflags, 0, NULL);
+	/* The firmware path: exempt (DescriptorQueue, D127). */
+	error = DQRES_EXEMPT(vn_open(&nd, &oflags, 0, NULL));
 	if (error)
 		goto err;
 	NDFREE_PNBUF(&nd);

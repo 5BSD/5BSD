@@ -101,6 +101,8 @@
 #include <sys/user.h>
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -2736,8 +2738,8 @@ SDT_PROVIDER_DEFINE(swap);
 SDT_PROBE_DEFINE2(swap, , , on, "uintptr_t", "int");
 SDT_PROBE_DEFINE2(swap, , , off, "uintptr_t", "int");
 
-int
-kern_swapon_priority(struct thread *td, const char *name, int priority,
+static int
+kern_swapon_priority_dqimpl(struct thread *td, const char *name, int priority,
     int trimflags)
 {
 	struct vattr attr;
@@ -2747,6 +2749,15 @@ kern_swapon_priority(struct thread *td, const char *name, int priority,
 
 	error = priv_check(td, PRIV_SWAPON);
 	if (error)
+		return (error);
+	/*
+	 * DescriptorQueue (design 11): the lookup below runs under
+	 * swdev_syscall_lock, where it must not wait; an attached caller's
+	 * path is consulted here, before the lock, and the lookup only
+	 * checks it resolves what was consulted (EIO otherwise).
+	 */
+	error = dqres_consult_slot(td, 0);
+	if (error != 0)
 		return (error);
 
 	sx_xlock(&swdev_syscall_lock);
@@ -2789,6 +2800,29 @@ done:
 	sx_xunlock(&swdev_syscall_lock);
 	SDT_PROBE2(swap, , , on, (uintptr_t)name, error);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): name is always a user-space path
+ * (sys_swapon, linux_swapon), a kernel-consumer one (class 2) consulted
+ * ahead of swdev_syscall_lock.  Entries recorded in
+ * sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_swapon_priority(struct thread *td, const char *name, int priority,
+    int trimflags)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!DQRES_ATTACHED_TD(td))
+		return (kern_swapon_priority_dqimpl(td, name, priority,
+		    trimflags));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot(&dqi, 0, name, UIO_USERSPACE, AT_FDCWD);
+	dqerror = kern_swapon_priority_dqimpl(td, name, priority, trimflags);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 int
@@ -2891,7 +2925,7 @@ swaponsomething(struct vnode *vp, void *id, u_long nblks,
  * only to make this work.
  */
 static int
-kern_swapoff(struct thread *td, const char *name, enum uio_seg name_seg,
+kern_swapoff_dqimpl(struct thread *td, const char *name, enum uio_seg name_seg,
     u_int flags)
 {
 	struct vnode *vp;
@@ -2904,6 +2938,10 @@ kern_swapoff(struct thread *td, const char *name, enum uio_seg name_seg,
 		return (error);
 	if ((flags & ~(SWAPOFF_FORCE)) != 0)
 		return (EINVAL);
+	/* An attached caller's path, consulted before the lock (swapon). */
+	error = dqres_consult_slot(td, 0);
+	if (error != 0)
+		return (error);
 
 	sx_xlock(&swdev_syscall_lock);
 
@@ -2929,6 +2967,27 @@ done:
 	sx_xunlock(&swdev_syscall_lock);
 	SDT_PROBE2(swap, , , off, (uintptr_t)name, error);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern_swapoff(struct thread *td, const char *name, enum uio_seg name_seg,
+    u_int flags)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(name_seg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_swapoff_dqimpl(td, name, name_seg, flags));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot(&dqi, 0, name, name_seg, AT_FDCWD);
+	dqerror = kern_swapoff_dqimpl(td, name, name_seg, flags);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 

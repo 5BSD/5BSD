@@ -43,6 +43,8 @@
 #include <sys/sysproto.h>
 #include <sys/systm.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <sys/jail.h>
 
 #include <bsm/audit.h>
@@ -781,8 +783,8 @@ fail:
  * Syscall to manage audit files.
  */
 /* ARGSUSED */
-int
-sys_auditctl(struct thread *td, struct auditctl_args *uap)
+static int
+sys_auditctl_dqimpl(struct thread *td, struct auditctl_args *uap)
 {
 	struct nameidata nd;
 	struct ucred *cred;
@@ -845,6 +847,26 @@ sys_auditctl(struct thread *td, struct auditctl_args *uap)
 	audit_rotate_vnode(cred, vp);
 
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_auditctl(struct thread *td, struct auditctl_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_auditctl_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = sys_auditctl_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 #else /* !AUDIT */

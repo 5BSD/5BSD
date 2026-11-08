@@ -10,7 +10,7 @@ amd64_generic_module_objects(name = "sha512_module", srcs = ["mac_veriexec_sha51
 cc_library(name = "internal_headers", hdrs = ["mac_veriexec_internal.h"], includes = ["../.."], deps = [":headers"], visibility = ["//sys/security/mac_veriexec_parser:__pkg__"])
 amd64_generic_module_objects(
     srcs = ["mac_veriexec.c", "veriexec_capimage.c", "veriexec_fingerprint.c", "veriexec_metadata.c"],
-    deps = [":internal_headers", "//sys/security/mac:policy_headers", "//sys/security/mac:framework_headers",
+    deps = ["//sys/dev/dq:headers", ":internal_headers", "//sys/security/mac:policy_headers", "//sys/security/mac:framework_headers",
         "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_mac_header",
         "//sys/amd64/conf:generic_opt_veriexec_header", "//sys/fs/nullfs:headers",
         "//sys/crypto/sha2:module_headers", "//sys/opencrypto:ed25519_headers"],
@@ -21,7 +21,7 @@ load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objec
 # GENERIC selects capimage verification and the SHA256 registration backend.
 amd64_generic_kernel_objects(name = "generic_builtin",
     srcs = ["mac_veriexec.c", "veriexec_capimage.c", "veriexec_fingerprint.c", "veriexec_metadata.c", "mac_veriexec_sha256.c"],
-    deps = [":internal_headers", "//sys/security/mac:policy_headers", "//sys/security/mac:framework_headers",
+    deps = ["//sys/dev/dq:headers", ":internal_headers", "//sys/security/mac:policy_headers", "//sys/security/mac:framework_headers",
         "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_mac_header",
         "//sys/amd64/conf:generic_opt_veriexec_header", "//sys/fs/nullfs:headers",
         "//sys/crypto/sha2:module_headers", "//sys/opencrypto:ed25519_headers"])

@@ -150,6 +150,7 @@ fuse_getdevice(const char *fspec, struct thread *td, struct cdev **fdevp)
 	 * and verify that it refers to a sensible disk device.
 	 */
 
+	/* dq-ledger: content via kern/vfs_mount.c:vfs_donmount_dqres */
 	NDINIT(ndp, LOOKUP, FOLLOW, UIO_SYSSPACE, fspec);
 	if ((err = namei(ndp)) != 0)
 		return err;

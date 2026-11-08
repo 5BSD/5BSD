@@ -63,6 +63,8 @@
 #ifdef KTRACE
 #include <sys/ktrace.h>
 #endif
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #ifdef INVARIANTS
 #include <machine/_inttypes.h>
 #endif
@@ -3279,7 +3281,7 @@ vn_getcwd(char *buf, char **retbuf, size_t *buflen)
  *   calling thread lacks permission to traverse "quux".
  */
 static int
-kern___realpathat(struct thread *td, int fd, const char *path, char *buf,
+kern___realpathat_dqimpl(struct thread *td, int fd, const char *path, char *buf,
     size_t size, int flags, enum uio_seg pathseg)
 {
 	struct nameidata nd;
@@ -3337,6 +3339,27 @@ out:
 	vrele(nd.ni_dvp);
 	NDFREE_PNBUF(&nd);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_REALPATH; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern___realpathat(struct thread *td, int fd, const char *path, char *buf,
+    size_t size, int flags, enum uio_seg pathseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern___realpathat_dqimpl(td, fd, path, buf, size, flags, pathseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_REALPATH, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern___realpathat_dqimpl(td, fd, path, buf, size, flags, pathseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 int
@@ -4030,7 +4053,8 @@ vn_path_to_global_path(struct thread *td, struct vnode *vp, char *path,
 	 * If vnode was renamed, return ENOENT.
 	 */
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | AUDITVNODE1, UIO_SYSSPACE, path);
-	error = namei(&nd);
+	/* A recheck of a computed path: exempt (DescriptorQueue, D127). */
+	error = DQRES_EXEMPT(namei(&nd));
 	if (error != 0) {
 		vrele(vp);
 		goto out;
@@ -4096,7 +4120,8 @@ vn_path_to_global_path_hardlink(struct thread *td, struct vnode *vp,
 	 * If vnode was renamed, return ENOENT.
 	 */
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | AUDITVNODE1, UIO_SYSSPACE, path);
-	error = namei(&nd);
+	/* A recheck of a computed path: exempt (DescriptorQueue, D127). */
+	error = DQRES_EXEMPT(namei(&nd));
 	if (error != 0) {
 		vrele(vp);
 		goto out;
@@ -4672,6 +4697,11 @@ cache_can_fplookup(struct cache_fpl *fpl)
 		return (false);
 	}
 	if (AUDITING_TD(td)) {
+		cache_fpl_aborted_early(fpl);
+		return (false);
+	}
+	/* An attached process's lookups are consulted (D125): no SMR walk. */
+	if (DQRES_ATTACHED_TD(td)) {
 		cache_fpl_aborted_early(fpl);
 		return (false);
 	}

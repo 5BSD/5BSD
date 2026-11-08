@@ -52,6 +52,8 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <fs/nullfs/null.h>
 #include <security/mac/mac_framework.h>
 #include <security/mac/mac_policy.h>
@@ -926,7 +928,7 @@ mac_veriexec_init(struct mac_policy_conf *mpc __unused)
  * @return 0 on success, otherwise an error code.
  */
 static int
-mac_veriexec_syscall(struct thread *td, int call, void *arg)
+mac_veriexec_syscall_dqimpl(struct thread *td, int call, void *arg)
 {
 	struct image_params img;
 	struct nameidata nd;
@@ -1057,6 +1059,10 @@ cleanup_file:
 			break;
 		goto lookup_metadata;
 	case MAC_VERIEXEC_GET_PARAMS_PATH_SYSCALL:
+		/* The intent's slot follows the path this call looks up. */
+		if (td->td_dqintent != NULL)
+			dq_intent_slot(td->td_dqintent, 0, pargs.u.filename,
+			    UIO_USERSPACE, AT_FDCWD);
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | AUDITVNODE1,
 		    UIO_USERSPACE, pargs.u.filename);
 		flags = FREAD;
@@ -1096,6 +1102,26 @@ lookup_metadata:
 		vn_close(nd.ni_vp, FREAD, td->td_ucred, td);
 	}
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+mac_veriexec_syscall(struct thread *td, int call, void *arg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (mac_veriexec_syscall_dqimpl(td, call, arg));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_USER);
+	dq_intent_slot(&dqi, 0, arg, UIO_USERSPACE, AT_FDCWD);
+	dqerror = mac_veriexec_syscall_dqimpl(td, call, arg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 static struct mac_policy_ops mac_veriexec_ops =

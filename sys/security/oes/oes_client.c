@@ -29,6 +29,7 @@
 #include <sys/resourcevar.h>
 #include <sys/time.h>
 #include <sys/sysent.h>
+#include <sys/dqres.h>
 #include <security/audit/audit.h>
 
 #include <security/oes/oes.h>
@@ -1211,6 +1212,12 @@ oes_client_mute_path(struct oes_client *ec, const char *path, uint32_t type,
 	 * Only attempt for literal full paths (starting with /).
 	 */
 	if (type == OES_MUTE_PATH_LITERAL && path[0] == '/') {
+		/*
+		 * The client's path cannot be consulted here: refused for
+		 * an attached caller (DescriptorQueue, design 11).
+		 */
+		if (dqres_kpath_refused(curthread) != 0)
+			return (EPERM);
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, path);
 		if (namei(&nd) == 0) {
 			if (VOP_GETATTR(nd.ni_vp, &va,
@@ -1817,6 +1824,12 @@ oes_client_mute_path_events(struct oes_client *ec, const char *path,
 	 * Only attempt for literal full paths (starting with /).
 	 */
 	if (type == OES_MUTE_PATH_LITERAL && path[0] == '/') {
+		/*
+		 * The client's path cannot be consulted here: refused for
+		 * an attached caller (DescriptorQueue, design 11).
+		 */
+		if (dqres_kpath_refused(curthread) != 0)
+			return (EPERM);
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, path);
 		if (namei(&nd) == 0) {
 			if (VOP_GETATTR(nd.ni_vp, &va,
