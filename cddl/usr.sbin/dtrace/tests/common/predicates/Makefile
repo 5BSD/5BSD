@@ -14,6 +14,7 @@ TFILES= \
      tst.complex.d  \
      tst.complex.d.out  \
      tst.predcache.ksh  \
+     tst.strpredmov.d  \
 
 TESTEXES= \
 

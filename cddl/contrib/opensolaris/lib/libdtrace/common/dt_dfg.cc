@@ -341,10 +341,17 @@ usiteContainsReg(DFGNode *n, DFGNode *curnode, uint8_t rd,
 
 	case DIF_OP_NOT:
 	case DIF_OP_MOV:
+		/* not/mov r1, rd: rd is written, not read. */
+		_r1 = DIF_INSTR_R1(instr);
+		if (_r1 == rd)
+			*r1 = 1;
+		break;
+
 	case DIF_OP_STB:
 	case DIF_OP_STH:
 	case DIF_OP_STW:
 	case DIF_OP_STX:
+		/* st* r1, [rd]: the address is in rd. */
 		_r1 = DIF_INSTR_R1(instr);
 		_r2 = DIF_INSTR_RD(instr);
 
