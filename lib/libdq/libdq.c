@@ -945,3 +945,152 @@ dq_reply_resolve_errno(int q, uint64_t id, int error)
 	}
 	return (dq_reply(q, id, error, NULL, 0));
 }
+
+int
+dq_resolve_accepts(const struct dq_resolve_body *rb, uint32_t kind)
+{
+
+	return (kind < 32 && (rb->drs_accept & DQ_RACCEPT(kind)) != 0);
+}
+
+int
+dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb, int error)
+{
+
+	if (error == ENOTCAPABLE)
+		return (rb->drs_op != DQ_ROP_SOCKET &&
+		    rb->drs_op != DQ_ROP_SOCKETPAIR &&
+		    (rb->drs_rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH |
+		    DQ_RF_RINROOT)) != 0);
+	return (dq_resolve_errno_allowed(rb->drs_op, error));
+}
+
+int
+dq_event_resolve_ext(const struct dq_event *ev,
+    const struct dq_resolve_body **body, const char **path,
+    const char **path2, const char **startpath, const char **startpath2,
+    const struct dq_setattr_body **setattr)
+{
+	const struct dq_resolve_body *rb;
+	size_t bodylen, off;
+
+	if (dq_event_resolve(ev, &rb, path, path2, startpath,
+	    startpath2) != 0)
+		return (-1);
+	if (body != NULL)
+		*body = rb;
+	if (setattr == NULL)
+		return (0);
+	*setattr = NULL;
+	if (rb->drs_op != DQ_ROP_SETATTR && rb->drs_op != DQ_ROP_TRUNCATE)
+		return (0);
+	bodylen = ev->de_size - sizeof(*ev);
+	off = sizeof(*rb) + rb->drs_pathlen + 1 + rb->drs_path2len + 1 +
+	    rb->drs_startpathlen + 1 + rb->drs_startpath2len + 1;
+	off = (off + 7) & ~(size_t)7;
+	if (off + sizeof(**setattr) > bodylen) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*setattr = (const struct dq_setattr_body *)(const void *)
+	    ((const char *)rb + off);
+	return (0);
+}
+
+int
+dq_reply_resolve_fd(int q, uint64_t id, uint32_t kind, uint32_t flags,
+    const struct dq_ident_file *ident, const struct dq_policy *pol,
+    uint64_t *objectp, int32_t *reasonp)
+{
+	struct {
+		struct dq_resolve_reply	rr;
+		struct dq_resolve_mint	rm;
+	} *r;
+	int error, ret;
+
+	if (ident == NULL || pol == NULL || objectp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	r = calloc(1, sizeof(*r));
+	if (r == NULL)
+		return (-1);
+	r->rr.drr_kind = DQ_RESOLVE_FD;
+	r->rm.drm_kind = kind;
+	r->rm.drm_flags = flags;
+	r->rm.drm_ident = *ident;
+	r->rm.drm_policy = *pol;
+	r->rm.drm_objectp = objectp;
+	r->rm.drm_reasonp = reasonp;
+	ret = dq_reply(q, id, 0, r, sizeof(*r));
+	error = errno;
+	free(r);
+	errno = error;
+	return (ret);
+}
+
+int
+dq_reply_resolve_attr(int q, uint64_t id, const struct dq_ident_file *ident)
+{
+	struct {
+		struct dq_resolve_reply	rr;
+		struct dq_resolve_attr	ra;
+	} *r;
+	int error, ret;
+
+	r = calloc(1, sizeof(*r));
+	if (r == NULL)
+		return (-1);
+	r->rr.drr_kind = DQ_RESOLVE_ATTR;
+	r->ra.dra_ident = *ident;
+	ret = dq_reply(q, id, 0, r, sizeof(*r));
+	error = errno;
+	free(r);
+	errno = error;
+	return (ret);
+}
+
+int
+dq_reply_resolve_link(int q, uint64_t id, const struct dq_ident_file *ident,
+    const char *target)
+{
+	struct dq_resolve_reply *rr;
+	struct dq_resolve_attr *ra;
+	struct dq_resolve_target *rt;
+	size_t len, tlen;
+	char *buf;
+	int error, ret;
+
+	tlen = strlen(target);
+	if (tlen == 0 || tlen >= DQ_PATH_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+	len = sizeof(*rr) + sizeof(*ra) + ((sizeof(*rt) + tlen + 1 + 7) &
+	    ~(size_t)7);
+	buf = calloc(1, len);
+	if (buf == NULL)
+		return (-1);
+	rr = (struct dq_resolve_reply *)(void *)buf;
+	ra = (struct dq_resolve_attr *)(void *)(rr + 1);
+	rt = (struct dq_resolve_target *)(void *)(ra + 1);
+	rr->drr_kind = DQ_RESOLVE_LINK;
+	ra->dra_ident = *ident;
+	rt->drt_len = (uint32_t)tlen;
+	memcpy(rt->drt_target, target, tlen);
+	ret = dq_reply(q, id, 0, buf, len);
+	error = errno;
+	free(buf);
+	errno = error;
+	return (ret);
+}
+
+int
+dq_reply_resolve_ok(int q, uint64_t id)
+{
+	struct dq_resolve_reply rr;
+
+	memset(&rr, 0, sizeof(rr));
+	rr.drr_kind = DQ_RESOLVE_OK;
+	return (dq_reply(q, id, 0, &rr, sizeof(rr)));
+}

@@ -598,40 +598,130 @@ uipc_abort_notready(struct sockbuf *sb)
 	return (free);
 }
 
+/*
+ * Does unp2's receive buffer hold data unp sent (not ready, or once)?  A
+ * receive buffer takes data only during its socket's one connection (once
+ * disconnected or shut it refuses more, uipc_sendfile()), so its not ready
+ * data has a single source.  Called with unp2's pcb or receive buffer
+ * locked.  unp's own unp_gencnt ((g)) is read unlocked, which is benign: it
+ * changes only at attach and detach, and unp is aborting, so attached.
+ */
+static bool
+uipc_nrsrc_is(struct unpcb *unp2, struct unpcb *unp)
+{
+
+	return (unp2->unp_nrsrc == unp &&
+	    unp2->unp_nrsrcgen == unp->unp_gencnt);
+}
+
+/*
+ * Abort the not ready data unp sent that former peers still hold: it stays
+ * in their receive buffers, to be read before EOF, when the connection goes
+ * (or the socket reconnects).  pr_abort is per socket, as in the connected
+ * case: every such buffer is cut off (uipc_abort_notready()) and its reader
+ * gets EPIPE, as unp_drop() gives the connected peer.
+ *
+ * Known limitation: pr_abort is not told which run failed.  A later failed
+ * sendfile on a disconnected but still open sender also cuts an earlier run
+ * of it still pending at a former peer.
+ */
+static void
+uipc_abort_former(struct unpcb *unp)
+{
+	struct unpcb *unp2;
+	struct socket *so2;
+	struct mbuf *m, *free, **freetail;
+
+	free = NULL;
+	freetail = &free;
+	UNP_LINK_RLOCK();
+	LIST_FOREACH(unp2, &unp_shead, unp_link) {
+		so2 = unp2->unp_socket;
+		SOCK_LOCK(so2);
+		if (SOLISTENING(so2)) {
+			SOCK_UNLOCK(so2);
+			continue;
+		}
+		SOCK_RECVBUF_LOCK(so2);
+		if (so2->so_rcv.uxst_fnrdy == NULL ||
+		    !uipc_nrsrc_is(unp2, unp)) {
+			SOCK_RECVBUF_UNLOCK(so2);
+			SOCK_UNLOCK(so2);
+			continue;
+		}
+		m = uipc_abort_notready(&so2->so_rcv);
+		so2->so_error = EPIPE;
+		SOCK_UNLOCK(so2);
+		sorwakeup_locked(so2);
+		*freetail = m;
+		while (*freetail != NULL)
+			freetail = &(*freetail)->m_next;
+	}
+	UNP_LINK_RUNLOCK();
+	if (free != NULL) {
+		unp_scan(free, unp_freerights);
+		m_freemp(free);
+	}
+}
+
 static void
 uipc_abort(struct socket *so)
 {
 	struct unpcb *unp, *unp2;
 	struct socket *so2;
 	struct mbuf *m;
+	bool drop, nrsent;
 
 	unp = sotounpcb(so);
 	KASSERT(unp != NULL, ("uipc_abort: unp == NULL"));
 	UNP_PCB_UNLOCK_ASSERT(unp);
 
+	nrsent = so->so_type == SOCK_STREAM &&
+	    atomic_load_int(&unp->unp_nrsent) != 0;
 	UNP_PCB_LOCK(unp);
 	unp2 = unp->unp_conn;
 	if (unp2 != NULL) {
 		unp_pcb_hold(unp2);
 		UNP_PCB_UNLOCK(unp);
 		m = NULL;
+		drop = true;
 		if (so->so_type == SOCK_STREAM) {
 			UNP_PCB_LOCK(unp2);
 			so2 = unp2->unp_socket;
 			if (so2 != NULL) {
 				SOCK_RECVBUF_LOCK(so2);
-				m = uipc_abort_notready(&so2->so_rcv);
+				/*
+				 * A sendfile(2) sender drops the peer only if
+				 * the peer holds its not ready data.  Not if
+				 * the sender has reconnected (the data is with
+				 * a former peer), the peer's shutdown(SHUT_RD)
+				 * discarded it, or uipc_sendfile() refused it
+				 * (EPIPE into a shut receive buffer): nothing
+				 * of the transfer is with the peer then.
+				 */
+				if (nrsent &&
+				    (so2->so_rcv.uxst_fnrdy == NULL ||
+				    !uipc_nrsrc_is(unp2, unp)))
+					drop = false;
+				else
+					m = uipc_abort_notready(&so2->so_rcv);
 				SOCK_RECVBUF_UNLOCK(so2);
 			}
-			UNP_PCB_UNLOCK(unp2);
+			if (drop)
+				UNP_PCB_UNLOCK(unp2);
+			else if (!unp_pcb_rele(unp2))
+				UNP_PCB_UNLOCK(unp2);
 		}
-		unp_drop(unp2);
+		if (drop)
+			unp_drop(unp2);
 		if (m != NULL) {
 			unp_scan(m, unp_freerights);
 			m_freemp(m);
 		}
 	} else
 		UNP_PCB_UNLOCK(unp);
+	if (nrsent)
+		uipc_abort_former(unp);
 }
 
 static int
@@ -1877,7 +1967,13 @@ restart:
 			SOCK_IO_RECV_UNLOCK(so);
 			return (error);
 		}
-		if (sb->sb_state & SBS_CANTRCVMORE) {
+		/*
+		 * Not ready data (sendfile(2)) of a peer that has gone stays
+		 * in the buffer and is made ready or aborted later, see
+		 * uipc_ready() and uipc_abort(): EOF comes only after it.
+		 */
+		if ((sb->sb_state & SBS_CANTRCVMORE) &&
+		    sb->uxst_fnrdy == NULL) {
 			SOCK_RECVBUF_UNLOCK(so);
 			SOCK_IO_RECV_UNLOCK(so);
 			return (0);
@@ -2158,6 +2254,7 @@ uipc_sopoll_stream_or_seqpacket(struct socket *so, int events,
 {
 	struct unpcb *unp = sotounpcb(so);
 	int revents;
+	bool nrpending = false;
 
 	UNP_PCB_LOCK(unp);
 	if (SOLISTENING(so)) {
@@ -2186,9 +2283,16 @@ uipc_sopoll_stream_or_seqpacket(struct socket *so, int events,
 			if (sbavail(&so->so_rcv) >= so->so_rcv.sb_lowat ||
 			    so->so_error || so->so_rerror)
 				revents |= events & (POLLIN | POLLRDNORM);
-			if (so->so_rcv.sb_state & SBS_CANTRCVMORE)
+			/*
+			 * Not ready data of a peer that has shut down or gone
+			 * is read before EOF: no EOF and no hangup (select(2)
+			 * counts POLLHUP as readable, masked below, after
+			 * the write side) until it is.
+			 */
+			if (soreadeof(so))
 				revents |= events &
 				    (POLLIN | POLLRDNORM | POLLRDHUP);
+			nrpending = so->so_rcv.uxst_fnrdy != NULL;
 			if (!(revents & (POLLIN | POLLRDNORM | POLLRDHUP))) {
 				selrecord(td, &so->so_rdsel);
 				so->so_rcv.sb_flags |= SB_SEL;
@@ -2215,6 +2319,8 @@ uipc_sopoll_stream_or_seqpacket(struct socket *so, int events,
 			} else
 				selrecord(td, &so->so_wrsel);
 		}
+		if (nrpending)
+			revents &= ~POLLHUP;
 	}
 	UNP_PCB_UNLOCK(unp);
 	return (revents);
@@ -2928,6 +3034,15 @@ uipc_sendfile_wait(struct socket *so, off_t need, int *space)
 	sb = &so2->so_rcv;
 	SOCK_RECVBUF_LOCK(so2);
 	UNP_PCB_UNLOCK(unp2);
+	/*
+	 * A shut receive buffer (the peer's shutdown(SHUT_RD), whose
+	 * unp_dispose() also takes its space away) is EPIPE at once, as for
+	 * send(2), instead of a wait nobody ends.
+	 */
+	if (__predict_false(sb->sb_state & SBS_CANTRCVMORE)) {
+		SOCK_RECVBUF_UNLOCK(so2);
+		return (EPIPE);
+	}
 	while ((*space = uipc_stream_sbspace(sb)) < need &&
 	    (*space < so->so_snd.sb_hiwat / 2)) {
 		UIPC_STREAM_SBCHECK(sb);
@@ -2979,6 +3094,12 @@ uipc_sendfile(struct socket *so, int flags, struct mbuf *m,
 	    ("unix(4): TLS sendfile(2) not supported"));
 
 	notready = flags & PRUS_NOTREADY;
+	/*
+	 * A sendfile(2) sender with I/O in flight: whatever happens to this
+	 * run, its abort follows the not ready data (uipc_abort()).
+	 */
+	if (notready && atomic_load_int(&sotounpcb(so)->unp_nrsent) == 0)
+		atomic_store_int(&sotounpcb(so)->unp_nrsent, 1);
 
 	if (__predict_false((so->so_state & SS_ISCONNECTED) == 0)) {
 		error = ENOTCONN;
@@ -2993,6 +3114,27 @@ uipc_sendfile(struct socket *so, int flags, struct mbuf *m,
 	so2 = unp2->unp_socket;
 	sb = &so2->so_rcv;
 	SOCK_RECVBUF_LOCK(so2);
+	/*
+	 * As uipc_sosend_stream_or_seqpacket(): a shut receive buffer takes
+	 * no more data.  So not ready data only ever comes from the peer of
+	 * the receiver's one connection, which uipc_abort() relies on.
+	 */
+	if (__predict_false(sb->sb_state & SBS_CANTRCVMORE)) {
+		SOCK_RECVBUF_UNLOCK(so2);
+		UNP_PCB_UNLOCK(unp2);
+		error = EPIPE;
+		goto out;
+	}
+	if (notready) {
+		struct unpcb *unp = sotounpcb(so);
+
+		/*
+		 * unp_gencnt changes only at attach and detach: unlocked,
+		 * it is stable for a socket that is sending.
+		 */
+		unp2->unp_nrsrc = unp;
+		unp2->unp_nrsrcgen = unp->unp_gencnt;
+	}
 	UNP_PCB_UNLOCK(unp2);
 	UIPC_STREAM_SBCHECK(sb);
 	sb->sb_ccc += mc.mc_len;
@@ -3084,8 +3226,15 @@ uipc_ready_scan(struct socket *so, struct mbuf *m, int count, int *errorp)
 			}
 		}
 	}
-	SOCK_RECVBUF_UNLOCK(so);
 	SOCK_UNLOCK(so);
+	/*
+	 * The reader of a disconnected socket waits for this data before it
+	 * sees EOF (uipc_soreceive_stream_or_seqpacket()).
+	 */
+	if (mb != NULL && *errorp == 0)
+		sorwakeup_locked(so);
+	else
+		SOCK_RECVBUF_UNLOCK(so);
 	return (mb != NULL);
 }
 
@@ -3107,45 +3256,44 @@ uipc_ready(struct socket *so, struct mbuf *m, int count)
 		SOCK_RECVBUF_LOCK(so2);
 		UNP_PCB_UNLOCK(unp2);
 		/*
-		 * An abort (uipc_abort_notready) may have cut this run off
-		 * the peer's queue before the connection dropped: then it is
-		 * ours alone, and readying it there would leave it orphaned.
+		 * The run may not be in the peer's queue: an abort or a
+		 * shutdown (uipc_abort_notready) cut it off, and then it is
+		 * ours alone (readying it there would leave it orphaned), or
+		 * the socket has reconnected since and the run is with a
+		 * former peer.  The search below tells.
 		 */
 		for (n = sb->uxst_fnrdy; n != NULL; n = STAILQ_NEXT(n, m_stailq))
 			if (n == m)
 				break;
-		if (n == NULL) {
-			SOCK_RECVBUF_UNLOCK(so2);
-			for (int i = 0; i < count; i++)
-				m = m_free(m);
-			return (ECONNRESET);
+		if (n != NULL) {
+			UIPC_STREAM_SBCHECK(sb);
+			error = uipc_sbready(sb, m, count);
+			UIPC_STREAM_SBCHECK(sb);
+			if (error == 0)
+				sorwakeup_locked(so2);
+			else
+				SOCK_RECVBUF_UNLOCK(so2);
+			return (error);
 		}
-		UIPC_STREAM_SBCHECK(sb);
-		error = uipc_sbready(sb, m, count);
-		UIPC_STREAM_SBCHECK(sb);
-		if (error == 0)
-			sorwakeup_locked(so2);
-		else
-			SOCK_RECVBUF_UNLOCK(so2);
-	} else {
-		/*
-		 * The receiving socket has been disconnected, but may still
-		 * be valid.  In this case, the not-ready mbufs are still
-		 * present in its socket buffer, so perform an exhaustive
-		 * search before giving up and freeing the mbufs.
-		 */
-		UNP_LINK_RLOCK();
-		LIST_FOREACH(unp, &unp_shead, unp_link) {
-			if (uipc_ready_scan(unp->unp_socket, m, count, &error))
-				break;
-		}
-		UNP_LINK_RUNLOCK();
+		SOCK_RECVBUF_UNLOCK(so2);
+	}
+	/*
+	 * The receiving socket has been disconnected, but may still be
+	 * valid.  In this case, the not-ready mbufs are still present in its
+	 * socket buffer, so perform an exhaustive search before giving up and
+	 * freeing the mbufs.
+	 */
+	UNP_LINK_RLOCK();
+	LIST_FOREACH(unp, &unp_shead, unp_link) {
+		if (uipc_ready_scan(unp->unp_socket, m, count, &error))
+			break;
+	}
+	UNP_LINK_RUNLOCK();
 
-		if (unp == NULL) {
-			for (int i = 0; i < count; i++)
-				m = m_free(m);
-			return (ECONNRESET);
-		}
+	if (unp == NULL) {
+		for (int i = 0; i < count; i++)
+			m = m_free(m);
+		return (ECONNRESET);
 	}
 	return (error);
 }
@@ -3162,6 +3310,40 @@ uipc_sense(struct socket *so, struct stat *sb)
 	sb->st_dev = NODEV;
 	sb->st_ino = unp->unp_ino;
 	return (0);
+}
+
+/*
+ * shutdown(2) of the receive side: a reader waiting for not ready
+ * sendfile(2) data (uipc_soreceive_stream_or_seqpacket()) is to see EOF now,
+ * and unp_dispose() waits for that reader.  The not ready mbufs are cut off
+ * as an abort does: the I/O path still owns them, and uipc_ready() then
+ * finds nothing and frees them.  Called once SBS_CANTRCVMORE is set, after
+ * which no more can come (uipc_sendfile()); its wakeup is the one the
+ * reader then acts on.
+ */
+static void
+uipc_shutdown_notready(struct socket *so)
+{
+	struct mbuf *m;
+
+	/* The receive buffer lock keeps the socket from listen(2). */
+	SOCK_LOCK(so);
+	if (SOLISTENING(so)) {
+		SOCK_UNLOCK(so);
+		return;
+	}
+	SOCK_RECVBUF_LOCK(so);
+	SOCK_UNLOCK(so);
+	if (so->so_rcv.uxst_fnrdy == NULL) {
+		SOCK_RECVBUF_UNLOCK(so);
+		return;
+	}
+	m = uipc_abort_notready(&so->so_rcv);
+	sorwakeup_locked(so);
+	if (m != NULL) {
+		unp_scan(m, unp_freerights);
+		m_freemp(m);
+	}
 }
 
 static int
@@ -3196,6 +3378,12 @@ uipc_shutdown(struct socket *so, enum shutdown_how how)
 		error = ENOTCONN;
 		if (so->so_type != SOCK_DGRAM) {
 			SOCK_UNLOCK(so);
+			/*
+			 * A disconnected reader may still wait for not ready
+			 * data of its former peer: release it as below.
+			 */
+			if (how != SHUT_WR)
+				uipc_shutdown_notready(so);
 			return (error);
 		}
 	} else
@@ -3206,15 +3394,19 @@ uipc_shutdown(struct socket *so, enum shutdown_how how)
 	case SHUT_RD:
 		if (so->so_type == SOCK_DGRAM)
 			socantrcvmore(so);
-		else
+		else {
 			uipc_cantrcvmore(so);
+			uipc_shutdown_notready(so);
+		}
 		unp_dispose(so);
 		break;
 	case SHUT_RDWR:
 		if (so->so_type == SOCK_DGRAM)
 			socantrcvmore(so);
-		else
+		else {
 			uipc_cantrcvmore(so);
+			uipc_shutdown_notready(so);
+		}
 		unp_dispose(so);
 		/* FALLTHROUGH */
 	case SHUT_WR:

@@ -842,7 +842,7 @@ dq_serve_resolve(int q, const struct dq_event *ev,
 		    opts->so_resolve_arg);
 	if (error == 0)
 		return (dq_reply_resolve_pass(q, ev->de_id));
-	if (error < 0 || !dq_resolve_errno_allowed(rb->drs_op, error))
+	if (error < 0 || !dq_resolve_errno_allowed_ev(rb, error))
 		error = EIO;
 	return (dq_reply_resolve_errno(q, ev->de_id, error));
 }

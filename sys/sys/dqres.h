@@ -16,8 +16,12 @@
 
 #include <sys/types.h>
 #include <sys/_uio.h>
+#include <sys/caprights.h>
 
 struct dqres_binding;
+struct dq_ident_file;
+struct dq_object;
+struct dq_setattr_body;
 struct file;
 struct nameidata;
 struct proc;
@@ -38,6 +42,23 @@ struct dqres {
 	u_int			 dr_flags;
 #define	DR_CWD_DEAD		0x0001	/* fhold overflowed at inheritance */
 #define	DR_ROOT_DEAD		0x0002
+};
+
+/*
+ * A served answer (1c-iii): what the controller's FD, ATTR, LINK or OK
+ * reply carried, held by the intent until the completion takes it.
+ */
+struct dqres_answer {
+	uint32_t	 da_kind;	/* DQ_RESOLVE_*; 0 = none */
+	uint32_t	 da_mflags;	/* FD: DQ_MINT_F_* */
+	uint32_t	 da_okind;	/* FD: DQ_KIND_* */
+	struct dq_object *da_obj;	/* FD: linked, the creation reference;
+					   dro_bind or dro_answer_release */
+	struct dq_ident_file *da_ident;	/* FD, ATTR, LINK: M_TEMP copy */
+	char		*da_target;	/* LINK: M_TEMP, NUL-terminated */
+	size_t		 da_targetlen;
+	uint64_t	 da_qgid;	/* the queue (Linux served mount ids) */
+	cap_rights_t	 da_rights;	/* FD: the policy's dp_rights */
 };
 
 /*
@@ -111,7 +132,25 @@ struct dq_intent {
 	uint32_t	 di_syscall;
 	struct dq_islot	 di_slot[DQ_INTENT_SLOTS];
 	struct dq_intent *di_prev;	/* an outer intent */
+	/*
+	 * Served answers (1c-iii, D157-D161).  di_accept is the served kinds
+	 * (DQ_RACCEPT(DQ_RESOLVE_*)) the entry point can complete, declared
+	 * only through dq_intent_enter_served (DQI_SERVED); slot 0 of a
+	 * class-1, unrestricted real-start lookup accepts them besides PASS.
+	 * di_res holds the answer between dqres_namei's EDQRESOLVED and the
+	 * wrapper's completion (DQI_COMPLETING); dq_intent_leave releases
+	 * anything not taken.
+	 */
+	uint32_t	 di_accept;
+	uint32_t	 di_cmode;	/* drs_cmode: creation mode after umask */
+	uint64_t	 di_dev;	/* drs_dev: mknod */
+	const struct dq_setattr_body *di_setattr; /* SETATTR, TRUNCATE */
+	const char	*di_text;	/* SYMLINK: the target (path2), kernel */
+	size_t		 di_textlen;
+	struct dqres_answer di_res;
 };
+#define	DQI_SERVED		0x0020	/* di_accept declared */
+#define	DQI_COMPLETING		0x0040	/* the completion runs: no lookup */
 
 /* What a consultation asks (filled by kern_dqres.c, posted by dev/dq). */
 struct dqres_req {
@@ -139,19 +178,35 @@ struct dqres_req {
 	int		 rq_domain;	/* SOCKET, SOCKETPAIR (1c-ii) */
 	int		 rq_type;
 	int		 rq_protocol;
+	uint32_t	 rq_accept;	/* DQ_RACCEPT(...) (1c-iii) */
+	uint32_t	 rq_cmode;
+	uint64_t	 rq_dev;
+	const struct dq_setattr_body *rq_setattr; /* appended to the body */
 };
 
 /*
  * The vector dev/dq registers (D125).  consult posts RESOLVE on the
- * binding's queue and waits; it answers 0 for PASS or an errno.  It never
- * returns ERESTART unless rq_may_restart.
+ * binding's queue and waits; it answers 0 with the answer's kind in
+ * *ans (PASS, or a served kind of rq_accept) or an errno.  It never
+ * returns ERESTART unless rq_may_restart.  bind turns an FD answer's
+ * object into a referenced, uninstalled file in the calling thread's
+ * credential (consuming da_obj in every case; a failure retires it);
+ * answer_release retires an FD answer's object nobody bound.  file_ident
+ * copies a served file's identity (ENOTTY for any other file) with its
+ * queue's id and whether the queue has closed.
  */
 struct dqres_ops {
 	void	(*dro_hold)(struct dqres_binding *);
 	void	(*dro_rele)(struct dqres_binding *);
 	int	(*dro_consult)(struct thread *, struct dqres_binding *,
-		    const struct dqres_req *);
+		    const struct dqres_req *, struct dqres_answer *);
 	void	(*dro_unmarked)(struct dqres_binding *); /* M2 counter */
+	int	(*dro_bind)(struct thread *, struct dqres_answer *, int,
+		    struct file **);
+	void	(*dro_answer_release)(struct thread *, struct dqres_answer *);
+	int	(*dro_file_ident)(struct file *, struct dq_ident_file *,
+		    uint64_t *, bool *);
+	bool	(*dro_queue_closed)(uint64_t);	/* gone or DQ_Q_CLOSING */
 };
 
 void	dqres_register(const struct dqres_ops *ops);
@@ -179,7 +234,10 @@ void	dq_intent_enter(struct thread *td, struct dq_intent *di, uint32_t op,
 	    uint32_t flags);
 void	dq_intent_slot(struct dq_intent *di, int slot, const char *path,
 	    enum uio_seg seg, int dirfd);
+void	dq_intent_enter_served(struct thread *td, struct dq_intent *di,
+	    uint32_t op, uint32_t flags, uint32_t accept);
 void	dq_intent_leave(struct thread *td, struct dq_intent *di);
+bool	dqres_inject_drop(struct thread *td);
 int	dqres_consult_slot(struct thread *td, int slot);
 void	dq_intent_slot_content(struct dq_intent *di, int slot,
 	    const char *kpath, int dirfd);
@@ -214,6 +272,65 @@ int	dqres_consult_sun(struct thread *td, struct dq_intent *di, uint32_t op,
  */
 int	dqres_consult_socket(struct thread *td, uint32_t op, int domain,
 	    int type, int protocol);
+
+/*
+ * EDQRESOLVED containment (D157): the only consumer.  A marked wrapper
+ * whose intent was entered with dq_intent_enter_served runs its completion
+ * when the impl returned EDQRESOLVED (unless the fault injection drops it),
+ * with DQI_COMPLETING set: a completion makes no lookup.
+ */
+#define	DQRES_SERVED(td, di, error, completion) do {			\
+	if (__predict_false((error) == EDQRESOLVED) &&			\
+	    !dqres_inject_drop(td)) {					\
+		(di)->di_flags |= DQI_COMPLETING;			\
+		(error) = (completion);					\
+		(di)->di_flags &= ~DQI_COMPLETING;			\
+	}								\
+} while (0)
+
+/*
+ * Completion helpers (1c-iii-a, kern_dqres.c).  Each takes what the answer
+ * holds; the intent releases the rest at leave.
+ */
+struct stat;
+struct statfs;
+struct ucred;
+const struct dq_ident_file *dqres_ident(struct dq_intent *di, uint32_t kind);
+void	dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb);
+void	dqres_ident_to_statfs(const struct dq_ident_file *di,
+	    struct statfs *sf);
+int	dqres_ident_pathconf(const struct dq_ident_file *di, int name,
+	    long *valuep);
+int	dqres_ident_access(const struct dq_ident_file *di, int accmode,
+	    struct ucred *cred);
+int	dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
+	    struct file **fpp);
+int	dqres_take_file_raw(struct thread *td, struct dq_intent *di,
+	    int fflags, struct file **fpp);
+int	dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
+	    int flags, int *fdp);
+int	dqres_setattr_apply(struct thread *td, struct file *fp,
+	    const struct dq_setattr_body *sb);
+void	dqres_setattr_priv(struct thread *td, struct dq_setattr_body *sb,
+	    uint32_t which);
+int	dqres_emptypath_file(struct thread *td, int fd,
+	    const cap_rights_t *rights, struct file **fpp);
+int	dqres_file_ident(struct file *fp, struct dq_ident_file *ident,
+	    uint64_t *qgidp, bool *closedp);
+/* Is the queue with this id closing or gone (true without dev/dq)? */
+bool	dqres_queue_closed(uint64_t qgid);
+/* mac_veriexec registers whether it enforces (O_VERIFY on served files). */
+void	dqres_register_veriexec(bool (*enforcing)(void));
+
+/*
+ * A queue closed (dev/dq, after its objects are revoked): consumers that
+ * keep per-queue state keyed by the queue's id (the Linux ABI's served
+ * mount ids) free it here, so dev/dq never calls into them.
+ */
+#ifdef _SYS_EVENTHANDLER_H_
+typedef void (*dq_queue_closed_fn)(void *, uint64_t);
+EVENTHANDLER_DECLARE(dq_queue_closed, dq_queue_closed_fn);
+#endif
 
 /* I5 (D137, D153). */
 bool	dqres_cred_change_refused(struct proc *p);

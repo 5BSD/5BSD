@@ -96,6 +96,20 @@ struct unpcb {
 	mode_t  unp_mode;		/* (g) initial pre-bind() mode */
 	LIST_ENTRY(unpcb) unp_abstract_link; /* abstract namespace lock */
 	LIST_ENTRY(unpcb) unp_dead;	/* (g) link in dead list */
+	/*
+	 * Not ready sendfile(2) data of stream sockets.  unp_nrsrc and
+	 * unp_nrsrcgen (its unp_gencnt then) name the socket whose not ready
+	 * data our receive buffer takes: only ever the peer of our one
+	 * connection, since a shut receive buffer takes no more.  uipc_abort()
+	 * matches them, on unp_shead, against the aborting sender, also after
+	 * a disconnect or reconnect; they are compared, never dereferenced.
+	 * unp_nrsent: we have sent such data (uipc_abort() looks only then).
+	 * (r): written with the pcb and receive buffer locked, read with
+	 * either.
+	 */
+	struct	unpcb *unp_nrsrc;	/* (r) */
+	unp_gen_t unp_nrsrcgen;		/* (r) */
+	u_int	unp_nrsent;		/* (a) */
 } __aligned(CACHE_LINE_SIZE);
 
 /*

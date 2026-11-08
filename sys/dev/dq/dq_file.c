@@ -71,6 +71,15 @@
 _Static_assert(DQ_MNAMELEN == MNAMELEN, "DQ_MNAMELEN");
 _Static_assert(DQ_MFSNAMELEN == MFSNAMELEN, "DQ_MFSNAMELEN");
 
+/*
+ * O_PATH (D133, plan 4.7): a served file opened O_PATH answers as
+ * path_fileops does: no data, no mode or owner change through it, no
+ * mapping, POLLNVAL, kevent only when FKQALLOWED, no locks but the POSIX
+ * release of a close; stat, statfs, pathconf, kinfo, fcntl, fsync,
+ * setattr, ACLs and extended attributes as on the object.
+ */
+#define	DQ_OPATH(fp)	(((fp)->f_flag & O_PATH) != 0)
+
 static fo_rdwr_t	dq_read;
 static fo_rdwr_t	dq_write;
 static fo_truncate_t	dq_truncate;
@@ -223,6 +232,23 @@ dq_ident_validate(u_int kind, const struct dq_ident_file *di, int *reason)
 	case DQ_KIND_FILE:
 		type = S_IFREG;
 		break;
+	case DQ_KIND_ANY:
+		/*
+		 * A RESOLVE ATTR or LINK identity (D160): attributes only, no
+		 * object, so any file type and the set-id bits are allowed
+		 * (I3 governs objects) and the block size is what the
+		 * presented node has.
+		 */
+		type = di->di_mode & S_IFMT;
+		switch (type) {
+		case S_IFREG: case S_IFDIR: case S_IFLNK: case S_IFIFO:
+		case S_IFSOCK: case S_IFCHR: case S_IFBLK: case S_IFWHT:
+			break;
+		default:
+			*reason = DQ_REASON_TYPE;
+			return (EINVAL);
+		}
+		break;
 	default:
 		*reason = DQ_REASON_KIND;
 		return (EINVAL);
@@ -261,11 +287,11 @@ dq_ident_validate(u_int kind, const struct dq_ident_file *di, int *reason)
 		*reason = DQ_REASON_TYPE;
 		return (EINVAL);
 	}
-	if ((di->di_mode & (S_ISUID | S_ISGID)) != 0) {
+	if (kind != DQ_KIND_ANY && (di->di_mode & (S_ISUID | S_ISGID)) != 0) {
 		*reason = DQ_REASON_SETID;
 		return (EINVAL);
 	}
-	if (di->di_blksize < PAGE_SIZE) {
+	if (kind != DQ_KIND_ANY && di->di_blksize < PAGE_SIZE) {
 		*reason = DQ_REASON_BLKSIZE;
 		return (EINVAL);
 	}
@@ -385,6 +411,46 @@ dq_file_install(struct thread *td, struct dq_object *o,
 	/* On failure this is the last file reference: dq_close retires it. */
 	fdrop(fp, td);
 	return (error);
+}
+
+/*
+ * Bind a RESOLVE FD answer to a new file in the requester's thread (D159):
+ * f_cred is the requester's, the object's creation reference becomes the
+ * file's, and the file is returned referenced, not installed.  A file
+ * that cannot be allocated (ENFILE) or an object revoked, or whose queue
+ * closed, since the reply (EIO) retires the object (D171).  fflags are
+ * the open flags (FREAD, FWRITE, O_PATH, ...).
+ */
+static int	dq_object_usable(struct dq_object *o);
+
+int
+dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
+    struct file **fpp)
+{
+	struct file *fp;
+	int error;
+
+	*fpp = NULL;
+	/* debug.dq.fail_bind_enfile: falloc's ENFILE, for the tests. */
+	error = dq_fault_inject(&dq_fail_bind_enfile) ? ENFILE :
+	    falloc_noinstall(td, &fp);
+	if (error != 0) {
+		dq_object_retire_unbound(o, td);
+		return (error);
+	}
+	if (dq_object_usable(o) != 0) {
+		falloc_abort(td, fp);
+		dq_object_retire_unbound(o, td);
+		return (EIO);
+	}
+	DQO_LOCK(o);
+	o->o_fp = fp;
+	DQO_UNLOCK(o);
+	finit(fp, fflags & FMASK, DTYPE_DQ, o, &dq_fileops);
+	/* NOTE_OPEN reaches the identity's other objects (B7). */
+	dq_object_knote_siblings(o, NOTE_OPEN);
+	*fpp = fp;
+	return (0);
 }
 
 /* Fire the object's EVFILT knotes.  The caller holds o_mtx. */
@@ -637,6 +703,8 @@ dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	int error;
 	bool cached;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	o = dq_fp_object(fp);
 	error = dq_object_usable(o);
 	if (error != 0)
@@ -705,6 +773,8 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	int error, rerror;
 	bool append, extended;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	o = dq_fp_object(fp);
 	extended = false;
 	error = dq_object_usable(o);
@@ -1266,6 +1336,8 @@ dq_truncate(struct file *fp, off_t length, struct ucred *active_cred,
 	void *cookie;
 	int error;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	o = dq_fp_object(fp);
 	error = dq_object_usable(o);
 	if (error != 0)
@@ -1288,6 +1360,8 @@ dq_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
 {
 	struct dq_setattr_body sb;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	bzero(&sb, sizeof(sb));
 	sb.dsa_mask = DQ_SETATTR_MODE;
 	sb.dsa_mode = mode;
@@ -1300,6 +1374,8 @@ dq_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 {
 	struct dq_setattr_body sb;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	bzero(&sb, sizeof(sb));
 	if (uid != (uid_t)-1) {
 		sb.dsa_mask |= DQ_SETATTR_UID;
@@ -1519,6 +1595,9 @@ dq_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
 	int error, rerror;
 	bool posted;
 
+	/* path_advlock: only the POSIX release a close owes. */
+	if (DQ_OPATH(fp) && (op != F_UNLCK || (flags & F_POSIX) == 0))
+		return (EBADF);
 	o = dq_fp_object(fp);
 	if ((flags & F_FLOCK) != 0) {
 		kind = DQ_LOCK_FLOCK;
@@ -1673,6 +1752,8 @@ dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
 	bool event;
 	int error, rerror;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	o = dq_fp_object(fp);
 	DQO_LOCK(o);
 	size = o->o_ident.di_size;
@@ -1732,10 +1813,12 @@ dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
 }
 
 static int
-dq_poll(struct file *fp __unused, int events, struct ucred *active_cred __unused,
+dq_poll(struct file *fp, int events, struct ucred *active_cred __unused,
     struct thread *td __unused)
 {
 
+	if (DQ_OPATH(fp))
+		return (POLLNVAL);
 	return (poll_no_poll(events));
 }
 
@@ -1809,6 +1892,8 @@ dq_kqfilter(struct file *fp, struct knote *kn)
 {
 	struct dq_object *o;
 
+	if (DQ_OPATH(fp) && (fp->f_flag & FKQALLOWED) == 0)
+		return (EBADF);
 	o = dq_fp_object(fp);
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
@@ -1936,6 +2021,8 @@ dq_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	bool writecnt;
 	int error;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	o = dq_fp_object(fp);
 	error = dq_object_usable(o);
 	if (error != 0)
@@ -2042,6 +2129,8 @@ dq_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	struct sendfile_src ss;
 	int error;
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	o = dq_fp_object(fp);
 	if (sent != NULL)
 		*sent = 0;
@@ -2085,10 +2174,12 @@ dq_fadvise(struct file *fp __unused, off_t offset __unused, off_t len __unused,
 }
 
 static int
-dq_readdir(struct file *fp __unused, struct uio *uio __unused,
+dq_readdir(struct file *fp, struct uio *uio __unused,
     off_t *basep __unused, struct thread *td __unused)
 {
 
+	if (DQ_OPATH(fp))
+		return (EBADF);
 	return (ENOTDIR);	/* getdirentries on a regular file */
 }
 

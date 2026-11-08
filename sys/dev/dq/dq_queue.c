@@ -19,6 +19,7 @@
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
 #include <sys/event.h>
+#include <sys/eventhandler.h>
 #include <sys/file.h>
 #include <sys/fcntl.h>
 #include <sys/filedesc.h>
@@ -33,9 +34,11 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/refcount.h>
+#include <sys/dqres.h>
 #include <sys/sdt.h>
 #include <sys/selinfo.h>
 #include <sys/sx.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/tree.h>
 #include <sys/ucred.h>
@@ -216,6 +219,8 @@ dq_queue_close(struct dq_queue *q)
 	dq_nqueues--;
 	mtx_unlock(&dq_mtx);
 
+	/* Per-queue state kept elsewhere (Linux served mount ids). */
+	EVENTHANDLER_INVOKE(dq_queue_closed, q->q_gid);
 	SDT_PROBE1(dq, , , queue__close, q);
 	dq_queue_rele(q);
 }
@@ -630,6 +635,9 @@ dq_event_rele(struct dq_event_k *ev)
 	if (!refcount_release(&ev->ev_refs))
 		return;
 	KASSERT(!ev->ev_linked, ("dq: freeing a linked event"));
+	/* A RESOLVE FD answer nobody took (D171): its id ends here. */
+	if (ev->ev_robj != NULL)
+		dq_object_retire_unbound(ev->ev_robj, NULL);
 	cv_destroy(&ev->ev_cv);
 	dq_data_rele(ev->ev_reply);
 	if (ev->ev_object != NULL)
@@ -1188,7 +1196,7 @@ dq_event_post_nowait(struct dq_queue *q, struct dq_object *o, uint32_t op,
 int
 dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
     size_t bodylen, struct thread *td, sbintime_t deadline,
-    struct dq_data **replyp, int *errnop)
+    struct dq_data **replyp, int *errnop, struct dq_object **robjp)
 {
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
@@ -1198,6 +1206,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 
 	*replyp = NULL;
 	*errnop = 0;
+	*robjp = NULL;
 	interrupt = drop_list_ref = false;
 	if (dq_caller_holds_queue(q, td))
 		return (EDEADLK);
@@ -1258,7 +1267,9 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	case DQ_EV_REPLIED:
 		*replyp = ev->ev_reply;
 		*errnop = ev->ev_errno;
+		*robjp = ev->ev_robj;	/* state before the wake reason (D91) */
 		ev->ev_reply = NULL;
+		ev->ev_robj = NULL;
 		error = 0;
 		break;
 	case DQ_EV_FAILED:
@@ -1520,10 +1531,147 @@ dq_mint_reason(struct dq_mint_args *args, int reason, int error)
 	return (error);
 }
 
+/*
+ * Fault injection for the RESOLVE FD reply's ENOMEM row (debug.dq.
+ * fail_vm_create: the next N object creations fail as if the pager object
+ * could not be allocated).
+ */
+SYSCTL_NODE(_debug, OID_AUTO, dq, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "DescriptorQueue fault injection");
+static u_int dq_fail_vm_create;
+SYSCTL_UINT(_debug_dq, OID_AUTO, fail_vm_create, CTLFLAG_RW,
+    &dq_fail_vm_create, 0, "Fail the next N object creations with ENOMEM");
+static u_int dq_fail_link_closing;
+SYSCTL_UINT(_debug_dq, OID_AUTO, fail_link_closing, CTLFLAG_RW,
+    &dq_fail_link_closing, 0,
+    "The next N RESOLVE FD links see the queue closing (ENXIO)");
+u_int dq_fail_bind_enfile;
+SYSCTL_UINT(_debug_dq, OID_AUTO, fail_bind_enfile, CTLFLAG_RW,
+    &dq_fail_bind_enfile, 0,
+    "The next N binds of a RESOLVE FD answer fail as falloc would (ENFILE)");
+
+bool
+dq_fault_inject(u_int *counter)
+{
+	u_int n;
+
+	do {
+		n = atomic_load_int(counter);
+		if (n == 0)
+			return (false);
+	} while (!atomic_cmpset_int(counter, n, n - 1));
+	return (true);
+}
+
+/*
+ * Create an object, not yet visible: the creation reference, its pager
+ * object (D102, in every cache mode, created before the object is visible
+ * so a revoke always finds it) and its id, taken now (under q_mtx) so a
+ * RESOLVE FD reply can hand it to the controller before linking.
+ */
+int
+dq_object_create(struct dq_queue *q, u_int kind,
+    const struct dq_ident_file *ident, const struct dq_policy *pol,
+    struct dq_object **op)
+{
+	struct dq_object *o;
+	int error;
+
+	*op = NULL;
+	o = malloc(sizeof(*o), M_DQ, M_WAITOK | M_ZERO);
+	mtx_init(&o->o_mtx, "dq object", NULL, MTX_DEF);
+	refcount_init(&o->o_refs, 1);	/* the creation reference */
+	dq_queue_hold(q);
+	o->o_queue = q;
+	o->o_kind = kind;
+	o->o_state = DQ_OBJ_LIVE;
+	o->o_ident = *ident;
+	o->o_policy = *pol;
+	rangelock_init(&o->o_rl);
+	knlist_init_mtx(&o->o_sel.si_note, &o->o_mtx);
+	cv_init(&o->o_async_cv, "dqasync");
+	error = dq_fault_inject(&dq_fail_vm_create) ? ENOMEM : dq_object_vm_create(o);
+	if (error != 0) {
+		o->o_retired = true;
+		knlist_destroy(&o->o_sel.si_note);
+		rangelock_destroy(&o->o_rl);
+		dq_object_rele(o);
+		return (error);
+	}
+	/* q_mtx, not a 64-bit atomic: dq is MI (32-bit powerpc has none). */
+	DQ_LOCK(q);
+	o->o_id = ++q->q_next_object;
+	DQ_UNLOCK(q);
+	*op = o;
+	return (0);
+}
+
+/* An object created and never linked: its id is never used. */
+void
+dq_object_destroy_unlinked(struct dq_object *o)
+{
+
+	o->o_retired = true;
+	knlist_destroy(&o->o_sel.si_note);
+	rangelock_destroy(&o->o_rl);
+	/* Its release reaches o through pgo_dealloc and dq_taskq. */
+	o->o_vmdropped = true;
+	vm_object_deallocate(o->o_object);
+	dq_object_rele(o);
+}
+
+/* Make o visible on q; the caller checked DQ_Q_CLOSING and the limit. */
+void
+dq_object_link_locked(struct dq_queue *q, struct dq_object *o)
+{
+	struct dq_object *s;
+
+	DQ_LOCK_ASSERT(q);
+	RB_INSERT(dq_object_tree, &q->q_objects, o);
+	dq_object_hash_locked(q, o, o->o_ident.di_dev, o->o_ident.di_ino);
+	/*
+	 * B4: a sibling's POSIX locks are the process's on this file too, so
+	 * a close through this new object owes their UNLOCK_ALL.  o is not
+	 * yet visible to anyone else; o_mtx is not needed for it.
+	 */
+	DQ_SIBLINGS_FOREACH(s, q, o) {
+		if (s != o && (s->o_locked & DQ_LOCKED_POSIX) != 0) {
+			o->o_locked |= DQ_LOCKED_POSIX;
+			break;
+		}
+	}
+	q->q_nobjects++;
+	q->q_stats.ds2_objects_live++;
+	q->q_stats.ds2_objects_total++;
+}
+
+/*
+ * A linked object no file ever referenced (D171): a RESOLVE FD answer that
+ * was refused after the reply, never taken, or whose file could not be
+ * allocated.  Its pager object goes as dq_close's would, the id retires
+ * with its CLOSE when the policy subscribes (every id a REPLY returned 0
+ * for ends exactly once), and the creation reference is dropped.  td may
+ * be NULL.  No dq lock held.
+ */
+void
+dq_object_retire_unbound(struct dq_object *o, struct thread *td)
+{
+	struct dq_queue *q;
+
+	q = o->o_queue;
+	dq_object_vm_teardown(o, true);
+	dq_object_retire(o, td);
+	DQ_LOCK(q);
+	q->q_stats.ds2_resolve_retired++;
+	DQ_UNLOCK(q);
+	SDT_PROBE2(dq, , , resolve__retire, q, o);
+	dq_object_rele(o);
+}
+
 int
 dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 {
-	struct dq_object *o, *s;
+	struct dq_object *o;
 	int error, reason;
 
 	args->dm_object = 0;
@@ -1546,62 +1694,18 @@ dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 	    args->dm_policy.dp_write != DQ_EVENT))
 		return (dq_mint_reason(args, DQ_REASON_FLAGS, EINVAL));
 
-	o = malloc(sizeof(*o), M_DQ, M_WAITOK | M_ZERO);
-	mtx_init(&o->o_mtx, "dq object", NULL, MTX_DEF);
-	refcount_init(&o->o_refs, 1);	/* the mint's reference, dropped below */
-	dq_queue_hold(q);
-	o->o_queue = q;
-	o->o_kind = args->dm_kind;
-	o->o_state = DQ_OBJ_LIVE;
-	o->o_ident = args->dm_ident;
-	o->o_policy = args->dm_policy;
-	rangelock_init(&o->o_rl);
-	knlist_init_mtx(&o->o_sel.si_note, &o->o_mtx);
-	cv_init(&o->o_async_cv, "dqasync");
-	/*
-	 * The pager object (D102), in every cache mode: pages exist while
-	 * mapped, wired or cached.  Created before the object is visible so
-	 * a revoke always finds it.
-	 */
-	error = dq_object_vm_create(o);
-	if (error != 0) {
-		o->o_retired = true;
-		knlist_destroy(&o->o_sel.si_note);
-		rangelock_destroy(&o->o_rl);
-		dq_object_rele(o);
+	error = dq_object_create(q, args->dm_kind, &args->dm_ident,
+	    &args->dm_policy, &o);
+	if (error != 0)
 		return (dq_mint_reason(args, DQ_REASON_NONE, error));
-	}
-
 	DQ_LOCK(q);
 	if ((q->q_flags & DQ_Q_CLOSING) != 0 || q->q_nobjects >= dq_max_objects) {
 		error = (q->q_flags & DQ_Q_CLOSING) != 0 ? ENXIO : ENOSPC;
 		DQ_UNLOCK(q);
-		o->o_retired = true;
-		knlist_destroy(&o->o_sel.si_note);
-		rangelock_destroy(&o->o_rl);
-		/* Its release reaches o through pgo_dealloc and dq_taskq. */
-		o->o_vmdropped = true;
-		vm_object_deallocate(o->o_object);
-		dq_object_rele(o);
+		dq_object_destroy_unlinked(o);
 		return (dq_mint_reason(args, DQ_REASON_NONE, error));
 	}
-	o->o_id = ++q->q_next_object;
-	RB_INSERT(dq_object_tree, &q->q_objects, o);
-	dq_object_hash_locked(q, o, o->o_ident.di_dev, o->o_ident.di_ino);
-	/*
-	 * B4: a sibling's POSIX locks are the process's on this file too, so
-	 * a close through this new object owes their UNLOCK_ALL.  o is not
-	 * yet visible to anyone else; o_mtx is not needed for it.
-	 */
-	DQ_SIBLINGS_FOREACH(s, q, o) {
-		if (s != o && (s->o_locked & DQ_LOCKED_POSIX) != 0) {
-			o->o_locked |= DQ_LOCKED_POSIX;
-			break;
-		}
-	}
-	q->q_nobjects++;
-	q->q_stats.ds2_objects_live++;
-	q->q_stats.ds2_objects_total++;
+	dq_object_link_locked(q, o);
 	DQ_UNLOCK(q);
 
 	error = dq_file_install(td, o, &args->dm_policy, args->dm_flags,
@@ -1774,36 +1878,71 @@ dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
 			return (len == IOCPARM_LEN(ib->dio_cmd) ? 0 : EINVAL);
 		return (len == 0 ? 0 : EINVAL);
 	case DQ_OP_RESOLVE:
-		return (dq_resolve_reply_validate(rerrno, buf, len));
+		return (dq_resolve_reply_validate(ev, rerrno, buf, len));
 	default:
 		return (EINVAL);
 	}
 }
 
 /*
+ * A RESOLVE FD reply failed after the id went out (D171): the id is never
+ * used; *drm_objectp gets a best-effort zero (undefined on error, dq(4)).
+ */
+static void
+dq_reply_unmint(struct dq_object *robj, uint64_t *objectp)
+{
+	uint64_t zero;
+
+	if (robj == NULL)
+		return;
+	dq_object_destroy_unlinked(robj);
+	zero = 0;
+	if (objectp != NULL)
+		(void)copyout(&zero, objectp, sizeof(zero));
+}
+
+/*
  * A reply: copy the data in before any lock, find the event among those
  * delivered, check the body against the operation, hand it to the waiter.
+ * A RESOLVE reply may be larger than kern.dq.max_io, up to
+ * DQ_RESOLVE_REPLY_MAX (D129); its FD answer is minted before the lock
+ * (dq_resolve_mint_prepare) and linked under it.
  */
 int
 dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 {
 	struct dq_event_k key, *ev;
-	struct dq_object *o;
+	struct dq_object *o, *robj;
 	struct dq_data *dd;
 	struct file *fp;
+	uint64_t *objectp;
 	size_t len;
 	uint32_t op;
 	int error, rerrno;
 	bool async;
 
 	if (r->dr_version != DQ_API_VERSION || r->dr_pad0 != 0 ||
-	    r->dr_errno < 0 || r->dr_errno > ELAST || r->dr_len > dq_max_io)
+	    r->dr_errno < 0 || r->dr_errno > ELAST ||
+	    r->dr_len > MAX(dq_max_io, DQ_RESOLVE_REPLY_MAX))
 		return (EINVAL);
 	len = r->dr_len;
 	dd = NULL;
 	if (len != 0) {
 		dd = dq_data_alloc(len);
 		error = copyin(r->dr_data, dd->dd_bytes, len);
+		if (error != 0) {
+			dq_data_rele(dd);
+			return (error);
+		}
+	}
+	robj = NULL;
+	objectp = NULL;
+	/* Only for a RESOLVE event that accepts FD: prepare looks first. */
+	if (r->dr_errno == 0 && len >= sizeof(struct dq_resolve_reply) &&
+	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind ==
+	    DQ_RESOLVE_FD) {
+		error = dq_resolve_mint_prepare(q, r->dr_id, dd, &robj,
+		    &objectp);
 		if (error != 0) {
 			dq_data_rele(dd);
 			return (error);
@@ -1818,23 +1957,47 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 		SDT_PROBE2(dq, , , reply__late, q, r->dr_id);
 		DQ_UNLOCK(q);
 		dq_data_rele(dd);
+		dq_reply_unmint(robj, objectp);
 		return (ESRCH);
 	}
 	KASSERT(ev->ev_state == DQ_EV_DELIVERED, ("dq: inflight event state"));
 	op = ev->ev_hdr.de_op;
 	o = ev->ev_object;
-	error = dq_reply_validate(ev, r->dr_errno,
-	    dd != NULL ? dd->dd_bytes : NULL, len);
+	if (op != DQ_OP_RESOLVE && len > dq_max_io)
+		error = EINVAL;
+	else
+		error = dq_reply_validate(ev, r->dr_errno,
+		    dd != NULL ? dd->dd_bytes : NULL, len);
+	/* An FD answer of an event the peek did not see (prepare raced). */
+	if (error == 0 && op == DQ_OP_RESOLVE && r->dr_errno == 0 &&
+	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind ==
+	    DQ_RESOLVE_FD && robj == NULL)
+		error = EINVAL;
+	if (error == 0 && robj != NULL) {
+		/* The link step (as dq_queue_mint links). */
+		if ((q->q_flags & DQ_Q_CLOSING) != 0 ||
+		    dq_fault_inject(&dq_fail_link_closing))
+			error = ENXIO;
+		else if (q->q_nobjects >= dq_max_objects)
+			error = ENOSPC;
+		else {
+			dq_object_link_locked(q, robj);
+			ev->ev_robj = robj;	/* the creation reference */
+			robj = NULL;
+			SDT_PROBE2(dq, , , mint, q, ev->ev_robj);
+		}
+	}
 	if (error != 0) {
 		DQ_UNLOCK(q);
 		dq_data_rele(dd);
+		dq_reply_unmint(robj, objectp);
 		return (error);
 	}
 	rerrno = r->dr_errno;
 	if (rerrno != 0 && !(op == DQ_OP_RESOLVE ?
-	    dq_resolve_errno_allowed(((const struct dq_resolve_body *)
-	    ((const char *)&ev->ev_hdr + sizeof(struct dq_event)))->drs_op,
-	    rerrno) : dq_reply_errno_allowed(op, rerrno))) {
+	    dq_resolve_errno_allowed_ev((const struct dq_resolve_body *)
+	    ((const char *)&ev->ev_hdr + sizeof(struct dq_event)), rerrno) :
+	    dq_reply_errno_allowed(op, rerrno))) {
 		rerrno = EIO;
 		q->q_stats.ds2_bad_replies++;
 	}

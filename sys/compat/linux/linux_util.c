@@ -363,6 +363,132 @@ MTX_SYSINIT(linux_mount_ids, &linux_mount_mtx, "Linux mount IDs", MTX_DEF);
 static struct unrhdr *linux_mount_unr;
 static eventhandler_tag linux_unmount_tag;
 
+/*
+ * Served mount ids (DescriptorQueue 1c-iii-a, review amendment 2).  A
+ * served object has no struct mount; its statx mount id is keyed by
+ * (queue, presented fsid), from the same allocator, the same for a path
+ * statx and an fstat of a descriptor of that object.  At most
+ * LINUX_DQ_MOUNT_IDS fsids per queue get their own id; every further fsid
+ * of the queue shares one stable overflow id (a documented collision: a
+ * controller cannot exhaust the allocator).  The first id is never
+ * reused for another fsid.  dev/dq's dq_queue_closed event frees a
+ * queue's ids; a revoked served descriptor of a closed queue then reports
+ * LINUX_DQ_MOUNT_ID_CLOSED, which the allocator never hands out.
+ */
+#define	LINUX_DQ_MOUNT_IDS	64
+#define	LINUX_DQ_MOUNT_ID_CLOSED	INT_MAX
+struct linux_dq_mount_entry {
+	LIST_ENTRY(linux_dq_mount_entry) link;
+	uint64_t	qgid;
+	uint32_t	fsid[2];
+	bool		overflow;	/* the queue's shared overflow id */
+	int		id;
+};
+static LIST_HEAD(, linux_dq_mount_entry) linux_dq_mount_entries =
+    LIST_HEAD_INITIALIZER(linux_dq_mount_entries);
+static eventhandler_tag linux_dq_closed_tag;
+
+static void
+linux_dq_queue_closed(void *arg __unused, uint64_t qgid)
+{
+	struct linux_dq_mount_entry *entry, *tmp;
+	LIST_HEAD(, linux_dq_mount_entry) gone;
+
+	LIST_INIT(&gone);
+	mtx_lock(&linux_mount_mtx);
+	LIST_FOREACH_SAFE(entry, &linux_dq_mount_entries, link, tmp) {
+		if (entry->qgid == qgid) {
+			LIST_REMOVE(entry, link);
+			LIST_INSERT_HEAD(&gone, entry, link);
+		}
+	}
+	mtx_unlock(&linux_mount_mtx);
+	while ((entry = LIST_FIRST(&gone)) != NULL) {
+		LIST_REMOVE(entry, link);
+		free_unr(linux_mount_unr, entry->id);
+		free(entry, M_LINUX);
+	}
+}
+
+uint64_t
+linux_dq_mount_id(uint64_t qgid, const uint32_t fsid[2], bool closed)
+{
+	struct linux_dq_mount_entry *entry, *over, *candidate, *inserted;
+	int id, n;
+
+	if (closed)
+		return (LINUX_DQ_MOUNT_ID_CLOSED);
+	candidate = inserted = NULL;
+again:
+	id = 0;
+	n = 0;
+	over = NULL;
+	mtx_lock(&linux_mount_mtx);
+	LIST_FOREACH(entry, &linux_dq_mount_entries, link) {
+		if (entry->qgid != qgid)
+			continue;
+		if (entry->overflow) {
+			over = entry;
+			continue;
+		}
+		n++;
+		if (entry->fsid[0] == fsid[0] && entry->fsid[1] == fsid[1]) {
+			id = entry->id;
+			break;
+		}
+	}
+	if (id == 0 && n >= LINUX_DQ_MOUNT_IDS && over != NULL)
+		id = over->id;
+	if (id == 0 && candidate != NULL) {
+		candidate->qgid = qgid;
+		candidate->fsid[0] = fsid[0];
+		candidate->fsid[1] = fsid[1];
+		candidate->overflow = n >= LINUX_DQ_MOUNT_IDS;
+		id = candidate->id;
+		LIST_INSERT_HEAD(&linux_dq_mount_entries, candidate, link);
+		inserted = candidate;
+		candidate = NULL;
+	}
+	mtx_unlock(&linux_mount_mtx);
+	/*
+	 * The queue may have closed (and its dq_queue_closed event run)
+	 * before the insertion: CLOSING is set before the event, so a
+	 * re-check after inserting either sees it or the event sees the
+	 * entry.
+	 */
+	if (inserted != NULL && dqres_queue_closed(qgid)) {
+		mtx_lock(&linux_mount_mtx);
+		/* Pointer, queue and id: never a reallocated entry. */
+		LIST_FOREACH(entry, &linux_dq_mount_entries, link) {
+			if (entry == inserted && entry->qgid == qgid &&
+			    entry->id == id) {
+				LIST_REMOVE(entry, link);
+				break;
+			}
+		}
+		mtx_unlock(&linux_mount_mtx);
+		if (entry != NULL) {
+			free_unr(linux_mount_unr, entry->id);
+			free(entry, M_LINUX);
+		}
+		return (LINUX_DQ_MOUNT_ID_CLOSED);
+	}
+	if (id == 0) {
+		candidate = malloc(sizeof(*candidate), M_LINUX, M_WAITOK);
+		candidate->id = alloc_unr(linux_mount_unr);
+		if (candidate->id == -1) {
+			free(candidate, M_LINUX);
+			return (0);
+		}
+		goto again;
+	}
+	if (candidate != NULL) {
+		free_unr(linux_mount_unr, candidate->id);
+		free(candidate, M_LINUX);
+	}
+	return (id);
+}
+
 static void
 linux_mount_unmounted(void *arg, struct mount *mp, struct thread *td)
 {
@@ -385,17 +511,27 @@ linux_mount_unmounted(void *arg, struct mount *mp, struct thread *td)
 void
 linux_mount_id_init(void)
 {
-	linux_mount_unr = new_unrhdr(1, INT_MAX, NULL);
+	/* INT_MAX is LINUX_DQ_MOUNT_ID_CLOSED, never allocated. */
+	linux_mount_unr = new_unrhdr(1, INT_MAX - 1, NULL);
 	linux_unmount_tag = EVENTHANDLER_REGISTER(vfs_unmounted,
 	    linux_mount_unmounted, NULL, EVENTHANDLER_PRI_ANY);
+	linux_dq_closed_tag = EVENTHANDLER_REGISTER(dq_queue_closed,
+	    linux_dq_queue_closed, NULL, EVENTHANDLER_PRI_ANY);
 }
 
 void
 linux_mount_id_uninit(void)
 {
 	struct linux_mount_entry *entry;
+	struct linux_dq_mount_entry *dentry;
 
 	EVENTHANDLER_DEREGISTER(vfs_unmounted, linux_unmount_tag);
+	EVENTHANDLER_DEREGISTER(dq_queue_closed, linux_dq_closed_tag);
+	while ((dentry = LIST_FIRST(&linux_dq_mount_entries)) != NULL) {
+		LIST_REMOVE(dentry, link);
+		free_unr(linux_mount_unr, dentry->id);
+		free(dentry, M_LINUX);
+	}
 	/* All Linuxulator consumers are gone before linux_common unloads. */
 	while ((entry = LIST_FIRST(&linux_mount_entries)) != NULL) {
 		LIST_REMOVE(entry, link);

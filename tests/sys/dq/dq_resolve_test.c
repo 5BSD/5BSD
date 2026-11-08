@@ -1006,8 +1006,10 @@ ATF_TC_BODY(two_path_calls, tc)
 			ATF_CHECK_EQ_MSG(two_start2[k], c.rs[i].start2_kind,
 			    "%s: start2_kind %u want %u", two_tag[k],
 			    c.rs[i].start2_kind, two_start2[k]);
-			ATF_CHECK_EQ_MSG(0, c.rs[i].pad1, "%s: drs_pad1 %u",
-			    two_tag[k], c.rs[i].pad1);
+			/* Two real starts: PASS, OK or an errno (D170). */
+			ATF_CHECK_EQ_MSG(DQ_RACCEPT(DQ_RESOLVE_PASS) |
+			    DQ_RACCEPT(DQ_RESOLVE_OK), c.rs[i].accept,
+			    "%s: drs_accept %#x", two_tag[k], c.rs[i].accept);
 		}
 	}
 	dqt_fini(&c);

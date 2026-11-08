@@ -36,6 +36,17 @@
 .Nm dq_event_resolve ,
 .Nm dq_reply_resolve_pass ,
 .Nm dq_reply_resolve_errno ,
+.Nm dq_resolve_accepts ,
+.Nm dq_resolve_errno_allowed_ev ,
+.Nm dq_event_resolve_ext ,
+.Nm dq_reply_resolve_fd ,
+.Nm dq_reply_resolve_attr ,
+.Nm dq_reply_resolve_link ,
+.Nm dq_reply_resolve_ok ,
+.Nm dq_tree_create ,
+.Nm dq_tree_destroy ,
+.Nm dq_tree_objects ,
+.Nm dq_serve_tree ,
 .Nm dq_event_read ,
 .Nm dq_event_write ,
 .Nm dq_event_setattr ,
@@ -147,6 +158,42 @@ DescriptorQueue controller library
 .Fn dq_reply_resolve_pass "int q" "uint64_t id"
 .Ft int
 .Fn dq_reply_resolve_errno "int q" "uint64_t id" "int error"
+.Ft int
+.Fn dq_resolve_accepts "const struct dq_resolve_body *rb" "uint32_t kind"
+.Ft int
+.Fn dq_resolve_errno_allowed_ev "const struct dq_resolve_body *rb" "int error"
+.Ft int
+.Fo dq_event_resolve_ext
+.Fa "const struct dq_event *ev" "const struct dq_resolve_body **body"
+.Fa "const char **path" "const char **path2" "const char **startpath"
+.Fa "const char **startpath2" "const struct dq_setattr_body **setattr"
+.Fc
+.Ft int
+.Fo dq_reply_resolve_fd
+.Fa "int q" "uint64_t id" "uint32_t kind" "uint32_t flags"
+.Fa "const struct dq_ident_file *ident" "const struct dq_policy *pol"
+.Fa "uint64_t *objectp" "int32_t *reasonp"
+.Fc
+.Ft int
+.Fn dq_reply_resolve_attr "int q" "uint64_t id" "const struct dq_ident_file *ident"
+.Ft int
+.Fo dq_reply_resolve_link
+.Fa "int q" "uint64_t id" "const struct dq_ident_file *ident"
+.Fa "const char *target"
+.Fc
+.Ft int
+.Fn dq_reply_resolve_ok "int q" "uint64_t id"
+.Ft "struct dq_tree *"
+.Fn dq_tree_create "int q" "int rootfd" "const char *prefix" "uint32_t flags"
+.Ft void
+.Fn dq_tree_destroy "struct dq_tree *t"
+.Ft int
+.Fn dq_tree_objects "const struct dq_tree *t"
+.Ft int
+.Fo dq_serve_tree
+.Fa "struct dq_tree *t" "const struct dq_event *ev" "const void *body"
+.Fa "size_t bodylen"
+.Fc
 .Ft int
 .Fn dq_event_read "const struct dq_event *ev" "const struct dq_read_body **body"
 .Ft int
@@ -936,6 +983,150 @@ with
 .Pa /usr/share/examples/dq/dqpass.c
 runs a command attached and answers every lookup
 .Dv DQ_RESOLVE_PASS .
+.Ss Served answers
+From stage 1c-iii-a a lookup of an attached process may be answered with
+a served result, of a kind the event accepts:
+.Fn dq_resolve_accepts
+tests
+.Va drs_accept
+for one
+.Dv DQ_RESOLVE_*
+kind (see
+.Xr dq 4
+for which operations and lookups take which kinds);
+.Fn dq_resolve_errno_allowed_ev
+is the errno allow-list of this event
+.Er ( ENOTCAPABLE
+only for a
+.Dv DQ_RF_STRICTREL ,
+.Dv DQ_RF_BENEATH
+or
+.Dv DQ_RF_RINROOT
+lookup).
+.Fn dq_event_resolve_ext
+is
+.Fn dq_event_resolve
+that also returns the
+.Vt struct dq_setattr_body
+of a
+.Dv DQ_ROP_SETATTR
+or
+.Dv DQ_ROP_TRUNCATE
+event (else
+.Dv NULL ) .
+.Pp
+.Fn dq_reply_resolve_fd
+answers with a served object minted at the reply: kind
+.Dv DQ_KIND_FILE ,
+flags
+.Dv DQ_MINT_F_WRITE
+(the requester's descriptor may write; needs
+.Va dp_write
+=
+.Dv DQ_EVENT )
+and
+.Dv DQ_MINT_F_CREATED
+(this
+.Dv O_CREAT
+open created the file; the kernel skips its access check).
+.Fa *objectp
+receives the id before the object is linked and is undefined when the
+reply fails;
+.Fa reasonp ,
+which may be
+.Dv NULL ,
+receives the
+.Vt enum dq_reason
+of an
+.Er EINVAL .
+Every id a successful reply returned ends exactly once, with
+.Dv DQ_OP_CLOSE
+when the policy subscribes, also when the requester could not use the
+answer.
+.Fn dq_reply_resolve_attr
+answers attributes only (stat, access, realpath; any file type).
+.Fn dq_reply_resolve_link
+answers
+.Xr readlink 2
+with an
+.Dv S_IFLNK
+identity and the target (its
+.Va di_size
+must be
+.Fn strlen target ) .
+.Fn dq_reply_resolve_ok
+says the controller performed a mutating operation.
+.Pp
+.Fn dq_tree_create
+prepares
+.Fn dq_serve_tree ,
+the served-tree controller in its stage 1c-iii-a mode: the directory
+open at
+.Fa rootfd
+(the backing tree) is presented at the real-namespace directory
+.Fa prefix .
+A lookup whose path, made absolute with the event's start hint and
+normalized, lies under
+.Fa prefix
+is answered from the backing tree, symbolic links there followed as
+.Xr namei 9
+would: an open of a regular file with
+.Dv DQ_RESOLVE_FD
+.Dv ( O_CREAT
+and
+.Dv O_EXCL
+performed by the tree,
+.Dv O_TRUNC
+by the kernel through the object), stat, access and realpath with
+.Dv DQ_RESOLVE_ATTR ,
+readlink with
+.Dv DQ_RESOLVE_LINK ,
+chmod, chown, utimes, chflags and truncate with
+.Dv DQ_RESOLVE_FD
+of the target, the creating and removing operations with
+.Dv DQ_RESOLVE_OK
+after performing them (a rename or link across
+.Fa prefix
+is
+.Er EXDEV ) ,
+exec
+.Er EACCES ,
+extended attributes and ACLs
+.Er EOPNOTSUPP .
+Every other lookup is passed: names outside
+.Fa prefix ,
+directories and the other non-regular nodes, the kernel's own lookups,
+and every event whose accept set lacks the kind.
+A served object's
+.Va di_path
+is the real-namespace name the process resolved, never the backing
+path, and its
+.Va ds_mntonname
+is
+.Ql / .
+A symbolic link leading out of
+.Fa prefix
+is
+.Er EACCES
+in this mode.
+Object events go to
+.Fn dq_serve_file
+on the backing file;
+.Dv DQ_OP_CLOSE
+closes it.
+.Dv DQ_TREE_F_WRITE
+serves writes; without it every creation, removal, rename, link,
+truncation and write open is
+.Er EROFS .
+A served answer the kernel refuses (other than a vanished event) is
+followed by
+.Er EIO ,
+so no event is left in flight.
+Renames honour
+.Dv AT_RENAME_NOREPLACE
+.Pq Va drs_mode .
+.Fn dq_tree_objects
+counts the objects the tree holds.
 .Ss Serving a backing file
 .Fn dq_serve_file
 answers one event from a real file open on

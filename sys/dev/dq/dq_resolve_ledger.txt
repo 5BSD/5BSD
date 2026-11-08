@@ -1,13 +1,13 @@
 SYSNDI	cam/ctl/ctl_backend_block.c	ctl_be_block_open	be_lun->dev_path	REFUSED
 USERNDI	compat/linux/linux_quota.c	linux_quotactl_dqimpl	args->special	slot0
-MARK	compat/linux/linux_quota.c	linux_quotactl	DQ_ROP_INTERNAL	DQI_USER
+MARK	compat/linux/linux_quota.c	linux_quotactl	DQ_ROP_INTERNAL	DQI_USER	PASS	-	-
 SLOT	compat/linux/linux_quota.c	linux_quotactl	0	args->special
 VARSEG	compat/linux/linux_stats.c	linux_kern_statat_id_dqimpl	pathseg	slot0
-MARK	compat/linux/linux_stats.c	linux_kern_statat_id	DQ_ROP_STAT	DQI_USER
+MARK	compat/linux/linux_stats.c	linux_kern_statat_id	DQ_ROP_STAT	DQI_USER	PASS+ATTR	linux_kern_statat_id_dqserved	ENOTDIR
 SLOT	compat/linux/linux_stats.c	linux_kern_statat_id	0	path
 SYSNDI	compat/linux/linux_util.c	linux_pwd_onexec	linux_emul_path	EXEMPT
 USERNDI	compat/linux/linux_xattr.c	getxattr_dqimpl	args->path	slot0
-MARK	compat/linux/linux_xattr.c	getxattr	DQ_ROP_XATTR	DQI_USER
+MARK	compat/linux/linux_xattr.c	getxattr	DQ_ROP_XATTR	DQI_USER	PASS	-	-
 SLOT	compat/linux/linux_xattr.c	getxattr	0	args->path
 SYSNDI	contrib/openzfs/module/os/freebsd/zfs/zfs_file_os.c	zfs_file_open	path	REFUSED
 SYSNDI	contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c	zfshandle_op_blkopen	path	EXEMPT
@@ -22,10 +22,10 @@ SYSNDI	fs/cd9660/cd9660_vfsops.c	cd9660_mount	fspec	via:content@kern/vfs_mount.c
 SYSNDI	fs/ext2fs/ext2_vfsops.c	ext2_mount	fspec	via:content@kern/vfs_mount.c:vfs_donmount_dqres
 SYSNDI	fs/fuse/fuse_vfsops.c	fuse_getdevice	fspec	via:content@kern/vfs_mount.c:vfs_donmount_dqres
 SYSNDI	fs/msdosfs/msdosfs_vfsops.c	msdosfs_mount	from	via:content@kern/vfs_mount.c:vfs_donmount_dqres
-MARK	fs/nfs/nfs_commonport.c	nfsrv_lookupfilename	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	fs/nfs/nfs_commonport.c	nfsrv_lookupfilename	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	fs/nfs/nfs_commonport.c	nfsrv_lookupfilename	0	fname
 USERNDI	fs/nfs/nfs_commonport.c	nfsrv_lookupfilename	fname	slot0
-MARK	fs/nfsserver/nfs_nfsdport.c	nfsrv_v4rootexport	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	fs/nfsserver/nfs_nfsdport.c	nfsrv_v4rootexport	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	fs/nfsserver/nfs_nfsdport.c	nfsrv_v4rootexport	0	nfsexargp->fspec
 USERNDI	fs/nfsserver/nfs_nfsdport.c	nfsrv_v4rootexport	nfsexargp->fspec	slot0
 SYSNDI	fs/nfsserver/nfs_nfsdstate.c	nfsrv_setdsserver	dspathp	REFUSED
@@ -40,28 +40,28 @@ SYSNDI	fs/unionfs/union_vfsops.c	unionfs_domount	target	via:content@kern/vfs_mou
 SYSNDI	kern/coredump_vnode.c	corefile_open_last	name	via:refused@kern/coredump_vnode.c:corefile_open
 SYSNDI	kern/coredump_vnode.c	corefile_open	name	REFUSED
 SYSNDI	kern/imgact_binmisc.c	imgact_binmisc_populate_interp	t	via:refused@kern/imgact_binmisc.c:sysctl_kern_binmisc
-MARK	kern/imgact_elf.c	__elfN	DQ_ROP_EXEC_INTERP	DQI_KERNEL|DQI_NO_ERESTART
+MARK	kern/imgact_elf.c	__elfN	DQ_ROP_EXEC_INTERP	DQI_KERNEL|DQI_NO_ERESTART	PASS	-	-
 SLOT	kern/imgact_elf.c	__elfN	0	file
 SYSNDI	kern/imgact_elf.c	__elfN	file	MARKED:slot0
 USERNDI	kern/kern_acct.c	sys_acct_dqimpl	uap->path	slot0
-MARK	kern/kern_acct.c	sys_acct	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/kern_acct.c	sys_acct	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/kern_acct.c	sys_acct	0	uap->path
 SYSNDI	kern/kern_alq.c	alq_open_flags	file	REFUSED
 SYSNDI	kern/kern_ctf.c	link_elf_ctf_get	lf->pathname	via:exempt@kern/kern_linker.c:linker_ctf_get
 SLOT	kern/kern_dqres.c	dq_intent_slot_content	slot	kpath
-MARK	kern/kern_dqres.c	dqres_consult_sun	op	DQI_USER
+MARK	kern/kern_dqres.c	dqres_consult_sun	op	DQI_USER	PASS	-	-
 SLOT	kern/kern_dqres.c	dqres_consult_sun	0	buf
-MARK	kern/kern_exec.c	do_execve	DQ_ROP_EXEC	DQI_USER
-MARK	kern/kern_exec.c	do_execve	DQ_ROP_EXEC_INTERP	DQI_KERNEL|DQI_NO_ERESTART
+MARK	kern/kern_exec.c	do_execve	DQ_ROP_EXEC	DQI_USER	PASS	-	-
+MARK	kern/kern_exec.c	do_execve	DQ_ROP_EXEC_INTERP	DQI_KERNEL|DQI_NO_ERESTART	PASS	-	-
 SLOT	kern/kern_exec.c	do_execve	0	args->fname
 SYSNDI	kern/kern_exec.c	do_execve	args->fname	MARKED:slot0
-MARK	kern/kern_jail.c	kern_jail_set_common	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/kern_jail.c	kern_jail_set_common	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/kern_jail.c	kern_jail_set_common	0	path
 SYSNDI	kern/kern_jail.c	kern_jail_set_common	path	MARKED:slot0
 USERNDI	kern/kern_ktrace.c	sys_ktrace_dqimpl	uap->fname	slot0
-MARK	kern/kern_ktrace.c	sys_ktrace	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/kern_ktrace.c	sys_ktrace	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/kern_ktrace.c	sys_ktrace	0	uap->fname
-MARK	kern/kern_linker.c	kldload_common	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/kern_linker.c	kldload_common	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/kern_linker.c	kldload_common	0	file
 SYSNDI	kern/kern_linker.c	linker_lookup_file	result	via:exempt@kern/kern_linker.c:linker_load_module
 SYSNDI	kern/kern_linker.c	linker_hints_lookup	pathbuf	via:exempt@kern/kern_linker.c:linker_load_module
@@ -77,50 +77,50 @@ CONSULT	kern/uipc_syscalls.c	kern_sendit	DQ_ROP_CONNECT	1
 SYSNDI	kern/uipc_usrreq.c	uipc_bindat	buf	via:content@kern/uipc_syscalls.c:kern_bindat
 SYSNDI	kern/uipc_usrreq.c	unp_connectat_peer	buf	via:content@kern/uipc_syscalls.c:kern_connectat
 USERNDI	kern/vfs_acl.c	kern___acl_get_path_dqimpl	path	slot0
-MARK	kern/vfs_acl.c	kern___acl_get_path	DQ_ROP_ACL	DQI_USER
+MARK	kern/vfs_acl.c	kern___acl_get_path	DQ_ROP_ACL	DQI_USER	PASS	-	-
 SLOT	kern/vfs_acl.c	kern___acl_get_path	0	path
 USERNDI	kern/vfs_acl.c	kern___acl_set_path_dqimpl	path	slot0
-MARK	kern/vfs_acl.c	kern___acl_set_path	DQ_ROP_ACL	DQI_USER
+MARK	kern/vfs_acl.c	kern___acl_set_path	DQ_ROP_ACL	DQI_USER	PASS	-	-
 SLOT	kern/vfs_acl.c	kern___acl_set_path	0	path
 USERNDI	kern/vfs_acl.c	kern___acl_delete_path_dqimpl	path	slot0
-MARK	kern/vfs_acl.c	kern___acl_delete_path	DQ_ROP_ACL	DQI_USER
+MARK	kern/vfs_acl.c	kern___acl_delete_path	DQ_ROP_ACL	DQI_USER	PASS	-	-
 SLOT	kern/vfs_acl.c	kern___acl_delete_path	0	path
 USERNDI	kern/vfs_acl.c	kern___acl_aclcheck_path_dqimpl	path	slot0
-MARK	kern/vfs_acl.c	kern___acl_aclcheck_path	DQ_ROP_ACL	DQI_USER
+MARK	kern/vfs_acl.c	kern___acl_aclcheck_path	DQ_ROP_ACL	DQI_USER	PASS	-	-
 SLOT	kern/vfs_acl.c	kern___acl_aclcheck_path	0	path
 VARSEG	kern/vfs_cache.c	kern___realpathat_dqimpl	pathseg	slot0
-MARK	kern/vfs_cache.c	kern___realpathat	DQ_ROP_REALPATH	DQI_USER
+MARK	kern/vfs_cache.c	kern___realpathat	DQ_ROP_REALPATH	DQI_USER	PASS+ATTR	kern___realpathat_dqserved	-
 SLOT	kern/vfs_cache.c	kern___realpathat	0	path
 SYSNDI	kern/vfs_cache.c	vn_path_to_global_path	path	EXEMPT
 SYSNDI	kern/vfs_cache.c	vn_path_to_global_path_hardlink	path	EXEMPT
 SYSNDI	kern/vfs_default.c	vop_stdvptocnp	".."	EXEMPT
 USERNDI	kern/vfs_extattr.c	sys_extattrctl_dqimpl	uap->filename	slot1
 USERNDI	kern/vfs_extattr.c	sys_extattrctl_dqimpl	uap->path	slot0
-MARK	kern/vfs_extattr.c	sys_extattrctl	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/vfs_extattr.c	sys_extattrctl	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/vfs_extattr.c	sys_extattrctl	0	uap->path
 SLOT	kern/vfs_extattr.c	sys_extattrctl	1	uap->filename
 VARSEG	kern/vfs_extattr.c	kern_extattr_set_path_dqimpl	pathseg	slot0
-MARK	kern/vfs_extattr.c	kern_extattr_set_path	DQ_ROP_XATTR	DQI_USER
+MARK	kern/vfs_extattr.c	kern_extattr_set_path	DQ_ROP_XATTR	DQI_USER	PASS	-	-
 SLOT	kern/vfs_extattr.c	kern_extattr_set_path	0	path
 VARSEG	kern/vfs_extattr.c	kern_extattr_get_path_dqimpl	pathseg	slot0
-MARK	kern/vfs_extattr.c	kern_extattr_get_path	DQ_ROP_XATTR	DQI_USER
+MARK	kern/vfs_extattr.c	kern_extattr_get_path	DQ_ROP_XATTR	DQI_USER	PASS	-	-
 SLOT	kern/vfs_extattr.c	kern_extattr_get_path	0	path
 VARSEG	kern/vfs_extattr.c	kern_extattr_delete_path_dqimpl	pathseg	slot0
-MARK	kern/vfs_extattr.c	kern_extattr_delete_path	DQ_ROP_XATTR	DQI_USER
+MARK	kern/vfs_extattr.c	kern_extattr_delete_path	DQ_ROP_XATTR	DQI_USER	PASS	-	-
 SLOT	kern/vfs_extattr.c	kern_extattr_delete_path	0	path
 VARSEG	kern/vfs_extattr.c	kern_extattr_list_path_dqimpl	pathseg	slot0
-MARK	kern/vfs_extattr.c	kern_extattr_list_path	DQ_ROP_XATTR	DQI_USER
+MARK	kern/vfs_extattr.c	kern_extattr_list_path	DQ_ROP_XATTR	DQI_USER	PASS	-	-
 SLOT	kern/vfs_extattr.c	kern_extattr_list_path	0	path
 SYSNDI	kern/vfs_inotify.c	vn_inotify_add_watch	dp->d_name	EXEMPT
 USERNDI	kern/vfs_inotify.c	kern_inotify_add_watch_dqimpl	path	slot0
-MARK	kern/vfs_inotify.c	kern_inotify_add_watch	DQ_ROP_INOTIFY	DQI_USER
+MARK	kern/vfs_inotify.c	kern_inotify_add_watch	DQ_ROP_INOTIFY	DQI_USER	PASS	-	-
 SLOT	kern/vfs_inotify.c	kern_inotify_add_watch	0	path
-MARK	kern/vfs_mount.c	vfs_donmount_dqres	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/vfs_mount.c	vfs_donmount_dqres	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/vfs_mount.c	vfs_donmount_dqres	slot	value
-MARK	kern/vfs_mount.c	vfs_domount	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/vfs_mount.c	vfs_domount	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/vfs_mount.c	vfs_domount	0	fspath
 SYSNDI	kern/vfs_mount.c	vfs_domount	fspath	MARKED:slot0
-MARK	kern/vfs_mount.c	kern_unmount	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	kern/vfs_mount.c	kern_unmount	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/vfs_mount.c	kern_unmount	0	pathbuf
 SYSNDI	kern/vfs_mount.c	kern_unmount	pathbuf	MARKED:slot0
 SYSCALL	kern/vfs_mountroot.c	vfs_mountroot_devfs	kern_symlinkat	via:exempt@kern/vfs_mountroot.c:vfs_mountroot
@@ -133,107 +133,107 @@ SYSNDI	kern/vfs_mountroot.c	parse_mount_dev_present	dev	via:exempt@kern/vfs_moun
 SYSNDI	kern/vfs_mountroot.c	vfs_mountroot_readconf	"/.mount.conf"	via:exempt@kern/vfs_mountroot.c:vfs_mountroot
 SYSNDI	kern/vfs_subr.c	sysctl_try_reclaim_vnode	buf	REFUSED
 USERNDI	kern/vfs_syscalls.c	sys_quotactl_dqimpl	uap->path	slot0
-MARK	kern/vfs_syscalls.c	sys_quotactl	DQ_ROP_INTERNAL	DQI_USER
+MARK	kern/vfs_syscalls.c	sys_quotactl	DQ_ROP_INTERNAL	DQI_USER	PASS	-	-
 SLOT	kern/vfs_syscalls.c	sys_quotactl	0	uap->path
 SLOT	kern/vfs_syscalls.c	sys_quotactl	1	uap->arg
 VARSEG	kern/vfs_syscalls.c	kern_statfs_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_statfs	DQ_ROP_STAT	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_statfs	DQ_ROP_STAT	DQI_USER	PASS+ATTR	kern_statfs_dqserved	-
 SLOT	kern/vfs_syscalls.c	kern_statfs	0	path
 VARSEG	kern/vfs_syscalls.c	kern_chdir_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_chdir	DQ_ROP_CHDIR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_chdir	DQ_ROP_CHDIR	DQI_USER	PASS	-	-
 SLOT	kern/vfs_syscalls.c	kern_chdir	0	path
 USERNDI	kern/vfs_syscalls.c	sys_chroot_dqimpl	uap->path	slot0
-MARK	kern/vfs_syscalls.c	sys_chroot	DQ_ROP_CHROOT	DQI_USER
+MARK	kern/vfs_syscalls.c	sys_chroot	DQ_ROP_CHROOT	DQI_USER	PASS	-	-
 SLOT	kern/vfs_syscalls.c	sys_chroot	0	uap->path
 VARSEG	kern/vfs_syscalls.c	openatfp_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	openatfp	DQ_ROP_OPEN	DQI_USER
+MARK	kern/vfs_syscalls.c	openatfp	DQ_ROP_OPEN	DQI_USER	PASS+FD	openatfp_dqserved	ENXIO+ENODEV
 SLOT	kern/vfs_syscalls.c	openatfp	0	path
 VARSEG	kern/vfs_syscalls.c	kern_mknodat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_mknodat	DQ_ROP_MKNOD	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_mknodat	DQ_ROP_MKNOD	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_mknodat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_mkfifoat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_mkfifoat	DQ_ROP_MKFIFO	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_mkfifoat	DQ_ROP_MKFIFO	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_mkfifoat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_linkat_dqimpl	segflag	slot0
-MARK	kern/vfs_syscalls.c	kern_linkat	DQ_ROP_LINK	DQI_USER|DQI_NO_ERESTART|DQI_PATH2
+MARK	kern/vfs_syscalls.c	kern_linkat	DQ_ROP_LINK	DQI_USER|DQI_NO_ERESTART|DQI_PATH2	PASS+OK	dq_ok_dqserved	ENOTDIR+ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_linkat	0	path1
 SLOT	kern/vfs_syscalls.c	kern_linkat	1	path2
 VARSEG	kern/vfs_syscalls.c	kern_linkat_vp	segflag	slot1@kern/vfs_syscalls.c:kern_linkat+slot0@kern/vfs_syscalls.c:kern_fhlinkat
 VARSEG	kern/vfs_syscalls.c	kern_symlinkat_dqimpl	segflg	slot0
-MARK	kern/vfs_syscalls.c	kern_symlinkat	DQ_ROP_SYMLINK	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_symlinkat	DQ_ROP_SYMLINK	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_symlinkat	0	path2
 USERNDI	kern/vfs_syscalls.c	sys_undelete_dqimpl	uap->path	slot0
-MARK	kern/vfs_syscalls.c	sys_undelete	DQ_ROP_INTERNAL	DQI_USER
+MARK	kern/vfs_syscalls.c	sys_undelete	DQ_ROP_INTERNAL	DQI_USER	PASS	-	-
 SLOT	kern/vfs_syscalls.c	sys_undelete	0	uap->path
 VARSEG	kern/vfs_syscalls.c	kern_funlinkat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_funlinkat	DQ_ROP_UNLINK	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_funlinkat	DQ_ROP_UNLINK	DQI_USER	PASS+OK	dq_ok_dqserved	EINVAL+ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_funlinkat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_accessat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_accessat	DQ_ROP_ACCESS	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_accessat	DQ_ROP_ACCESS	DQI_USER	PASS+ATTR	kern_accessat_dqserved	ENOTDIR
 SLOT	kern/vfs_syscalls.c	kern_accessat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_statat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_statat	DQ_ROP_STAT	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_statat	DQ_ROP_STAT	DQI_USER	PASS+ATTR	kern_statat_dqserved	ENOTDIR
 SLOT	kern/vfs_syscalls.c	kern_statat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_pathconf_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_pathconf	DQ_ROP_STAT	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_pathconf	DQ_ROP_STAT	DQI_USER	PASS+ATTR	kern_pathconf_dqserved	-
 SLOT	kern/vfs_syscalls.c	kern_pathconf	0	path
 VARSEG	kern/vfs_syscalls.c	kern_readlinkat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_readlinkat	DQ_ROP_READLINK	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_readlinkat	DQ_ROP_READLINK	DQI_USER	PASS+LINK	kern_readlinkat_dqserved	ENOTDIR
 SLOT	kern/vfs_syscalls.c	kern_readlinkat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_chflagsat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_chflagsat	DQ_ROP_SETATTR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_chflagsat	DQ_ROP_SETATTR	DQI_USER	PASS+FD+OK?	kern_chflagsat_dqserved	ENOTDIR
 SLOT	kern/vfs_syscalls.c	kern_chflagsat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_fchmodat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_fchmodat	DQ_ROP_SETATTR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_fchmodat	DQ_ROP_SETATTR	DQI_USER	PASS+FD+OK?	dq_setattr_dqserved	ENOTDIR
 SLOT	kern/vfs_syscalls.c	kern_fchmodat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_fchownat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_fchownat	DQ_ROP_SETATTR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_fchownat	DQ_ROP_SETATTR	DQI_USER	PASS+FD+OK	dq_setattr_dqserved	ENOTDIR
 SLOT	kern/vfs_syscalls.c	kern_fchownat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_utimesat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_utimesat	DQ_ROP_SETATTR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_utimesat	DQ_ROP_SETATTR	DQI_USER	PASS+FD+OK	dq_setattr_dqserved	-
 SLOT	kern/vfs_syscalls.c	kern_utimesat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_lutimes_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_lutimes	DQ_ROP_SETATTR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_lutimes	DQ_ROP_SETATTR	DQI_USER	PASS+FD+OK	dq_setattr_dqserved	-
 SLOT	kern/vfs_syscalls.c	kern_lutimes	0	path
 VARSEG	kern/vfs_syscalls.c	kern_utimensat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_utimensat	DQ_ROP_SETATTR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_utimensat	DQ_ROP_SETATTR	DQI_USER	PASS+FD+OK	dq_setattr_dqserved	ENOTDIR
 SLOT	kern/vfs_syscalls.c	kern_utimensat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_truncate_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_truncate	DQ_ROP_TRUNCATE	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_truncate	DQ_ROP_TRUNCATE	DQI_USER	PASS+FD+OK?	kern_truncate_dqserved	ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_truncate	0	path
 VARSEG	kern/vfs_syscalls.c	kern_renameat_mac	pathseg	slot0@kern/vfs_syscalls.c:kern_renameat
 VARSEG	kern/vfs_syscalls.c	kern_renameat_dqimpl	pathseg	slot0
 VARSEG	kern/vfs_syscalls.c	kern_renameat_dqimpl	pathseg	slot1
-MARK	kern/vfs_syscalls.c	kern_renameat	DQ_ROP_RENAME	DQI_USER|DQI_NO_ERESTART|DQI_PATH2
+MARK	kern/vfs_syscalls.c	kern_renameat	DQ_ROP_RENAME	DQI_USER|DQI_NO_ERESTART|DQI_PATH2	PASS+OK	dq_ok_dqserved	EISDIR+ERESTART+ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_renameat	0	from
 SLOT	kern/vfs_syscalls.c	kern_renameat	1	to
 VARSEG	kern/vfs_syscalls.c	kern_mkdirat_dqimpl	segflg	slot0
-MARK	kern/vfs_syscalls.c	kern_mkdirat	DQ_ROP_MKDIR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_mkdirat	DQ_ROP_MKDIR	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_mkdirat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_frmdirat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_frmdirat	DQ_ROP_RMDIR	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_frmdirat	DQ_ROP_RMDIR	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_frmdirat	0	path
 USERNDI	kern/vfs_syscalls.c	sys_revoke_dqimpl	uap->path	slot0
-MARK	kern/vfs_syscalls.c	sys_revoke	DQ_ROP_REVOKE	DQI_USER
+MARK	kern/vfs_syscalls.c	sys_revoke	DQ_ROP_REVOKE	DQI_USER	PASS	-	-
 SLOT	kern/vfs_syscalls.c	sys_revoke	0	uap->path
 VARSEG	kern/vfs_syscalls.c	kern_getfhat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_getfhat	DQ_ROP_GETFH	DQI_USER
+MARK	kern/vfs_syscalls.c	kern_getfhat	DQ_ROP_GETFH	DQI_USER	PASS	-	-
 SLOT	kern/vfs_syscalls.c	kern_getfhat	0	path
-MARK	kern/vfs_syscalls.c	kern_fhlinkat	DQ_ROP_LINK	DQI_USER|DQI_NO_ERESTART
+MARK	kern/vfs_syscalls.c	kern_fhlinkat	DQ_ROP_LINK	DQI_USER|DQI_NO_ERESTART	PASS	-	-
 SLOT	kern/vfs_syscalls.c	kern_fhlinkat	0	path
 USERNDI	security/audit/audit_syscalls.c	sys_auditctl_dqimpl	uap->path	slot0
-MARK	security/audit/audit_syscalls.c	sys_auditctl	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	security/audit/audit_syscalls.c	sys_auditctl	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	security/audit/audit_syscalls.c	sys_auditctl	0	uap->path
 USERNDI	security/mac/mac_syscalls.c	kern___mac_get_path_dqimpl	path_p	slot0
-MARK	security/mac/mac_syscalls.c	kern___mac_get_path	DQ_ROP_INTERNAL	DQI_USER
+MARK	security/mac/mac_syscalls.c	kern___mac_get_path	DQ_ROP_INTERNAL	DQI_USER	PASS	-	-
 SLOT	security/mac/mac_syscalls.c	kern___mac_get_path	0	path_p
 USERNDI	security/mac/mac_syscalls.c	kern___mac_set_path_dqimpl	path_p	slot0
-MARK	security/mac/mac_syscalls.c	kern___mac_set_path	DQ_ROP_INTERNAL	DQI_USER
+MARK	security/mac/mac_syscalls.c	kern___mac_set_path	DQ_ROP_INTERNAL	DQI_USER	PASS	-	-
 SLOT	security/mac/mac_syscalls.c	kern___mac_set_path	0	path_p
 USERNDI	security/mac_veriexec/mac_veriexec.c	mac_veriexec_syscall_dqimpl	arg	slot0
 SLOT	security/mac_veriexec/mac_veriexec.c	mac_veriexec_syscall_dqimpl	0	pargs.u.filename
 USERNDI	security/mac_veriexec/mac_veriexec.c	mac_veriexec_syscall_dqimpl	pargs.u.filename	slot0
-MARK	security/mac_veriexec/mac_veriexec.c	mac_veriexec_syscall	DQ_ROP_INTERNAL	DQI_USER
+MARK	security/mac_veriexec/mac_veriexec.c	mac_veriexec_syscall	DQ_ROP_INTERNAL	DQI_USER	PASS	-	-
 SLOT	security/mac_veriexec/mac_veriexec.c	mac_veriexec_syscall	0	arg
 SYSNDI	security/mac_veriexec_parser/mac_veriexec_parser.c	open_file	path	EXEMPT
 SYSNDI	security/oes/oes_client.c	oes_client_mute_path	path	REFUSED
@@ -243,10 +243,10 @@ SYSNDI	ufs/ffs/ffs_snapshot.c	ffs_snapshot	snapfile	via:content@kern/vfs_mount.c
 SYSNDI	ufs/ffs/ffs_vfsops.c	ffs_mount	fspec	via:content@kern/vfs_mount.c:vfs_donmount_dqres
 USERNDI	ufs/ufs/ufs_quota.c	quotaon	fname	slot1@kern/vfs_syscalls.c:sys_quotactl
 USERNDI	vm/swap_pager.c	kern_swapon_priority_dqimpl	name	slot0
-MARK	vm/swap_pager.c	kern_swapon_priority	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	vm/swap_pager.c	kern_swapon_priority	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	vm/swap_pager.c	kern_swapon_priority	0	name
 VARSEG	vm/swap_pager.c	kern_swapoff_dqimpl	name_seg	slot0
-MARK	vm/swap_pager.c	kern_swapoff	DQ_ROP_INTERNAL	DQI_KCONSUMER
+MARK	vm/swap_pager.c	kern_swapoff	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	vm/swap_pager.c	kern_swapoff	0	name
 SOCKET	cam/ctl/ctl_ha.c	ctl_ha_connect	socreate	KERNEL:CTL HA peer link, from its kthread
 SOCKET	cam/ctl/ctl_ha.c	ctl_ha_listen	socreate	KERNEL:CTL HA peer link, from its kthread
@@ -279,3 +279,8 @@ SOCKET	nfs/krpc_subr.c	krpc_call	socreate	KERNEL:NFS root mount RPC, boot
 SOCKET	nlm/nlm_prot_impl.c	nlm_server_main	socreate	KERNEL:NLM server sockets; I7
 SOCKET	nlm/nlm_prot_impl.c	nlm_server_main	socreate	KERNEL:NLM server sockets; I7
 SOCKET	rpc/rpc_generic.c	__rpc_nconf2socket	socreate	KERNEL:kernel RPC client sockets; I7
+EDQRESOLVED	kern/kern_dqres.c:dqres_namei	ALLOWED
+EDQRESOLVED	kern/subr_syscall.c:syscall_dq_stray	ALLOWED
+EDQRESOLVED	kern/subr_syscall.c:syscallret	ALLOWED
+EDQRESOLVED	sys/dqres.h:DQRES_SERVED	ALLOWED
+EDQRESOLVED	sys/errno.h:EDQRESOLVED	ALLOWED

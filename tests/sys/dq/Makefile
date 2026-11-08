@@ -32,6 +32,7 @@ ATF_TESTS_C+=	dq_async_test
 ATF_TESTS_C+=	dq_attach_test
 ATF_TESTS_C+=	dq_resolve_test
 ATF_TESTS_C+=	dq_socket_test
+ATF_TESTS_C+=	dq_served_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_oracle_test
 
@@ -68,6 +69,7 @@ TEST_METADATA.dq_resolve_test+=	is_exclusive="true"
 # Creates a jail, sets kern.dq.default_deadline_ms and
 # net.inet.tcp.udp_tunneling_port, traces with dtrace: run alone.
 TEST_METADATA.dq_socket_test+=	is_exclusive="true"
+TEST_METADATA.dq_served_test+=	is_exclusive="true"
 # Runs whole suites twice under kyua: alone, and with time.
 TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="3600"
 

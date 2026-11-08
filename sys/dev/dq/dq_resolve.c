@@ -21,6 +21,7 @@
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
 #include <sys/counter.h>
+#include <sys/fcntl.h>
 #include <sys/dqres.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -32,10 +33,12 @@
 #include <sys/procdesc.h>
 #include <sys/refcount.h>
 #include <sys/sdt.h>
+#include <sys/stat.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 
 #include <dev/dq/dq.h>
+#include <dev/dq/dq_kern.h>
 #include <dev/dq/dq_var.h>
 
 struct dqres_binding {
@@ -167,18 +170,23 @@ dq_resolve_may_wait(struct thread *td, const struct dqres_req *rq)
  */
 static int
 dq_resolve_consult(struct thread *td, struct dqres_binding *b,
-    const struct dqres_req *rq)
+    const struct dqres_req *rq, struct dqres_answer *ans)
 {
 	struct dq_queue *q;
 	struct dq_resolve_body *rb;
 	const struct dq_resolve_reply *rr;
+	const struct dq_resolve_mint *rm;
+	const struct dq_resolve_attr *ra;
+	const struct dq_resolve_target *rt;
 	struct dq_data *reply;
+	struct dq_object *robj;
 	sbintime_t deadline;
-	size_t bodylen;
+	size_t bodylen, strlen_;
 	char *p;
 	int error, rerror, ms;
 	bool dead;
 
+	bzero(ans, sizeof(*ans));
 	q = b->db_queue;
 	if ((q->q_flags & DQ_Q_CLOSING) != 0) {
 		/* The controller is gone: fail closed (D136). */
@@ -190,10 +198,22 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 		SDT_PROBE2(dq, , , resolve__locked, q, rq->rq_op);
 		return (EIO);
 	}
-	bodylen = roundup2(sizeof(*rb) + rq->rq_pathlen + 1 +
+	/*
+	 * SETATTR and TRUNCATE (D161): the setattr body follows the four
+	 * strings at the next 8-byte boundary.
+	 */
+	strlen_ = roundup2(sizeof(*rb) + rq->rq_pathlen + 1 +
 	    rq->rq_path2len + 1 + rq->rq_startpathlen + 1 +
 	    rq->rq_startpath2len + 1, 8);
+	bodylen = strlen_ + (rq->rq_setattr != NULL ?
+	    sizeof(struct dq_setattr_body) : 0);
 	rb = malloc(bodylen, M_DQ, M_WAITOK | M_ZERO);
+	if (rq->rq_setattr != NULL)
+		memcpy((char *)rb + strlen_, rq->rq_setattr,
+		    sizeof(struct dq_setattr_body));
+	rb->drs_accept = rq->rq_accept;
+	rb->drs_cmode = rq->rq_cmode;
+	rb->drs_dev = rq->rq_dev;
 	rb->drs_op = rq->rq_op;
 	rb->drs_rflags = rq->rq_rflags;
 	rb->drs_start_kind = rq->rq_start_kind;
@@ -237,7 +257,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	deadline = ms > 0 ? sbinuptime() + (sbintime_t)ms * SBT_1MS : 0;
 
 	error = dq_event_post_wait_q(q, DQ_OP_RESOLVE, rb, bodylen, td,
-	    deadline, &reply, &rerror);
+	    deadline, &reply, &rerror, &robj);
 	free(rb, M_DQ);
 	DQ_LOCK(q);
 	q->q_stats.ds2_resolves++;
@@ -267,15 +287,120 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 		SDT_PROBE3(dq, , , resolve__reply, q, rq->rq_op, rerror);
 		return (rerror);
 	}
-	/* The reply path accepted only PASS (1c-i). */
+	/*
+	 * The reply path accepted a kind of rq_accept with its exact size
+	 * (dq_resolve_reply_validate) and, for FD, linked the object it
+	 * minted (robj, the creation reference, now the answer's).
+	 */
 	rr = (const struct dq_resolve_reply *)reply->dd_bytes;
-	KASSERT(rr->drr_kind == DQ_RESOLVE_PASS, ("dq: resolve kind"));
+	KASSERT((rq->rq_accept & DQ_RACCEPT(rr->drr_kind)) != 0,
+	    ("dq: resolve kind %u outside %#x", rr->drr_kind, rq->rq_accept));
+	KASSERT((robj != NULL) == (rr->drr_kind == DQ_RESOLVE_FD),
+	    ("dq: resolve FD object"));
+	ans->da_kind = rr->drr_kind;
+	ans->da_qgid = q->q_gid;
+	switch (rr->drr_kind) {
+	case DQ_RESOLVE_FD:
+		rm = (const struct dq_resolve_mint *)(rr + 1);
+		ans->da_obj = robj;
+		ans->da_mflags = rm->drm_flags;
+		ans->da_okind = rm->drm_kind;
+		ans->da_rights = rm->drm_policy.dp_rights;
+		ans->da_ident = malloc(sizeof(*ans->da_ident), M_TEMP,
+		    M_WAITOK);
+		*ans->da_ident = rm->drm_ident;
+		break;
+	case DQ_RESOLVE_ATTR:
+	case DQ_RESOLVE_LINK:
+		ra = (const struct dq_resolve_attr *)(rr + 1);
+		ans->da_ident = malloc(sizeof(*ans->da_ident), M_TEMP,
+		    M_WAITOK);
+		*ans->da_ident = ra->dra_ident;
+		if (rr->drr_kind == DQ_RESOLVE_LINK) {
+			rt = (const struct dq_resolve_target *)(ra + 1);
+			ans->da_targetlen = rt->drt_len;
+			ans->da_target = malloc(rt->drt_len + 1, M_TEMP,
+			    M_WAITOK);
+			memcpy(ans->da_target, rt->drt_target, rt->drt_len + 1);
+		}
+		break;
+	default:
+		break;
+	}
+	/* rr points into reply: only ans is read from here on. */
 	dq_reply_free(reply);
 	DQ_LOCK(q);
-	q->q_stats.ds2_resolve_pass++;
+	if (ans->da_kind == DQ_RESOLVE_PASS)
+		q->q_stats.ds2_resolve_pass++;
+	else
+		q->q_stats.ds2_resolve_served++;
 	DQ_UNLOCK(q);
+	if (ans->da_kind != DQ_RESOLVE_PASS)
+		SDT_PROBE3(dq, , , resolve__served, q, rq->rq_op, ans->da_kind);
 	SDT_PROBE3(dq, , , resolve__reply, q, rq->rq_op, 0);
 	return (0);
+}
+
+/* dro_bind: the answer's object becomes a file of the requester (D159). */
+static int
+dq_resolve_bind(struct thread *td, struct dqres_answer *ans, int fflags,
+    struct file **fpp)
+{
+	struct dq_object *o;
+
+	o = ans->da_obj;
+	ans->da_obj = NULL;
+	KASSERT(o != NULL, ("dq: bind without an object"));
+	return (dq_file_bind(td, o, fflags, fpp));
+}
+
+/* dro_answer_release: an FD answer nobody bound (D171). */
+static void
+dq_resolve_answer_release(struct thread *td, struct dqres_answer *ans)
+{
+	struct dq_object *o;
+
+	o = ans->da_obj;
+	ans->da_obj = NULL;
+	if (o != NULL)
+		dq_object_retire_unbound(o, td);
+}
+
+static int
+dq_resolve_file_ident(struct file *fp, struct dq_ident_file *ident,
+    uint64_t *qgidp, bool *closedp)
+{
+	struct dq_object *o;
+	uint64_t id, nonce;
+	int error;
+
+	error = dq_file_ident(fp, ident, &id, &nonce);
+	if (error != 0)
+		return (error);
+	o = fp->f_data;
+	*qgidp = o->o_queue->q_gid;
+	*closedp = (o->o_queue->q_flags & DQ_Q_CLOSING) != 0;
+	return (0);
+}
+
+/* dro_queue_closed: CLOSING is set before the queue leaves dq_queues. */
+static bool
+dq_resolve_queue_closed(uint64_t qgid)
+{
+	struct dq_queue *q;
+	bool closed;
+
+	closed = true;
+	mtx_lock(&dq_mtx);
+	LIST_FOREACH(q, &dq_queues, q_all) {
+		if (q->q_gid == qgid) {
+			closed = (atomic_load_int(&q->q_flags) &
+			    DQ_Q_CLOSING) != 0;
+			break;
+		}
+	}
+	mtx_unlock(&dq_mtx);
+	return (closed);
 }
 
 static const struct dqres_ops dq_resolve_ops = {
@@ -283,6 +408,10 @@ static const struct dqres_ops dq_resolve_ops = {
 	.dro_rele = dq_binding_rele,
 	.dro_consult = dq_resolve_consult,
 	.dro_unmarked = dq_binding_unmarked,
+	.dro_bind = dq_resolve_bind,
+	.dro_answer_release = dq_resolve_answer_release,
+	.dro_file_ident = dq_resolve_file_ident,
+	.dro_queue_closed = dq_resolve_queue_closed,
 };
 
 void
@@ -329,23 +458,207 @@ dq_resolve_errno_allowed(uint32_t rop, int error)
 }
 
 /*
- * The reply body of a RESOLVE: an errno carries none; otherwise exactly a
- * struct dq_resolve_reply of kind PASS in 1c-i and 1c-ii.  Any other kind
- * (an FD for a socket included, stage 2) is EINVAL to the controller and
- * the event stays in flight (D128).
+ * The errno allow-list against the event (D158): ENOTCAPABLE only for a
+ * lookup restricted to a subtree (STRICTREL, BENEATH, RINROOT), where a
+ * real lookup can return it; elsewhere it is EIO and counted.
+ */
+bool
+dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb, int error)
+{
+
+	if (error == ENOTCAPABLE)
+		return (rb->drs_op != DQ_ROP_SOCKET &&
+		    rb->drs_op != DQ_ROP_SOCKETPAIR &&
+		    (rb->drs_rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH |
+		    DQ_RF_RINROOT)) != 0);
+	return (dq_resolve_errno_allowed(rb->drs_op, error));
+}
+
+static const struct dq_resolve_body *
+dq_resolve_ev_body(const struct dq_event_k *ev)
+{
+
+	return ((const struct dq_resolve_body *)((const char *)&ev->ev_hdr +
+	    sizeof(struct dq_event)));
+}
+
+/*
+ * A symlink target or a REAL path in a reply: drt_len bytes (1 ..
+ * DQ_PATH_MAX - 1) with no NUL, then a NUL and zeros to the end of the
+ * reply, which is exactly the next 8-byte boundary.
+ */
+static int
+dq_resolve_target_validate(const struct dq_resolve_target *rt, size_t avail)
+{
+	size_t i, need;
+
+	if (avail < sizeof(*rt) || rt->drt_pad0 != 0 || rt->drt_len == 0 ||
+	    rt->drt_len >= DQ_PATH_MAX)
+		return (EINVAL);
+	need = roundup2(sizeof(*rt) + rt->drt_len + 1, 8);
+	if (avail != need ||
+	    strnlen(rt->drt_target, rt->drt_len + 1) != rt->drt_len)
+		return (EINVAL);
+	for (i = sizeof(*rt) + rt->drt_len; i < need; i++) {
+		if (((const char *)rt)[i] != '\0')
+			return (EINVAL);
+	}
+	return (0);
+}
+
+/*
+ * The reply body of a RESOLVE (D128, D158): an errno carries none;
+ * otherwise a struct dq_resolve_reply of a kind the event accepts
+ * (drs_accept) with exactly that kind's payload.  Anything else is EINVAL
+ * to the controller and the event stays in flight.  An FD answer's mint
+ * was validated before the lock (dq_resolve_mint_prepare).
  */
 int
-dq_resolve_reply_validate(int rerrno, const void *buf, size_t len)
+dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
+    const void *buf, size_t len)
 {
+	const struct dq_resolve_body *rb;
 	const struct dq_resolve_reply *rr;
+	const struct dq_resolve_attr *ra;
+	int reason;
 
 	if (rerrno != 0)
 		return (len == 0 ? 0 : EINVAL);
-	if (len != sizeof(*rr))
+	if (len < sizeof(*rr))
 		return (EINVAL);
+	rb = dq_resolve_ev_body(ev);
 	rr = buf;
-	if (rr->drr_kind != DQ_RESOLVE_PASS || rr->drr_pad0 != 0)
+	if (rr->drr_pad0 != 0 || rr->drr_kind >= 32 ||
+	    (rb->drs_accept & DQ_RACCEPT(rr->drr_kind)) == 0)
 		return (EINVAL);
+	len -= sizeof(*rr);
+	switch (rr->drr_kind) {
+	case DQ_RESOLVE_PASS:
+	case DQ_RESOLVE_OK:
+		return (len == 0 ? 0 : EINVAL);
+	case DQ_RESOLVE_FD:
+		return (len == sizeof(struct dq_resolve_mint) ? 0 : EINVAL);
+	case DQ_RESOLVE_ATTR:
+	case DQ_RESOLVE_LINK:
+		if (len < sizeof(*ra))
+			return (EINVAL);
+		ra = (const struct dq_resolve_attr *)(rr + 1);
+		if (ra->dra_flags != 0 || ra->dra_pad0 != 0 ||
+		    dq_ident_validate(DQ_KIND_ANY, &ra->dra_ident,
+		    &reason) != 0)
+			return (EINVAL);
+		if (rr->drr_kind == DQ_RESOLVE_ATTR)
+			return (len == sizeof(*ra) ? 0 : EINVAL);
+		/* LINK: a symlink whose size is the target's length. */
+		if (!S_ISLNK(ra->dra_ident.di_mode) ||
+		    dq_resolve_target_validate(
+		    (const struct dq_resolve_target *)(ra + 1),
+		    len - sizeof(*ra)) != 0 ||
+		    ra->dra_ident.di_size !=
+		    ((const struct dq_resolve_target *)(ra + 1))->drt_len)
+			return (EINVAL);
+		return (0);
+	default:
+		return (EINVAL);
+	}
+}
+
+static int
+dq_resolve_mint_reason(const struct dq_resolve_mint *rm, int reason,
+    int error)
+{
+	int32_t r;
+
+	if (rm->drm_reasonp != NULL) {
+		r = reason;
+		if (copyout(&r, rm->drm_reasonp, sizeof(r)) != 0 && error == 0)
+			error = EFAULT;
+	}
+	return (error);
+}
+
+/*
+ * An FD answer, before the queue lock (D130, D171): validate the mint,
+ * peek that the event is delivered and accepts FD, create the object
+ * unlinked, and hand its id (and DQ_REASON_NONE) to the controller.  A
+ * refusal here is EINVAL with the reason (ESRCH for an event that is
+ * gone, ENOMEM when the pager object cannot be made, EFAULT when the id
+ * cannot be written) and leaves the event in flight.  On success
+ * *robjp is the unlinked object; dq_queue_reply links it or destroys it.
+ * The two pointers are cleared in dd, which observers copy.
+ */
+int
+dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
+    struct dq_object **robjp, uint64_t **objectpp)
+{
+	struct dq_resolve_mint *rm;
+	const struct dq_resolve_body *rb;
+	struct dq_event_k key, *ev;
+	struct dq_object *o;
+	uint64_t oid;
+	uint32_t rop, mode;
+	int error, reason;
+
+	*robjp = NULL;
+	*objectpp = NULL;
+	/*
+	 * The event first (review item 1): only a delivered RESOLVE event
+	 * whose accept set has FD makes these bytes a mint.  Any other reply
+	 * (a READ's data, a WRITE's count) is left to dq_reply_validate, as
+	 * is a missing event (ESRCH there).
+	 */
+	key.ev_hdr.de_id = id;
+	DQ_LOCK(q);
+	ev = RB_FIND(dq_inflight_tree, &q->q_inflight, &key);
+	if (ev == NULL || ev->ev_hdr.de_op != DQ_OP_RESOLVE ||
+	    (dq_resolve_ev_body(ev)->drs_accept &
+	    DQ_RACCEPT(DQ_RESOLVE_FD)) == 0) {
+		DQ_UNLOCK(q);
+		return (0);
+	}
+	rb = dq_resolve_ev_body(ev);
+	rop = rb->drs_op;
+	mode = rb->drs_mode;
+	DQ_UNLOCK(q);
+	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rm))
+		return (EINVAL);
+	rm = (struct dq_resolve_mint *)(dd->dd_bytes +
+	    sizeof(struct dq_resolve_reply));
+	if (rm->drm_kind != DQ_KIND_FILE)
+		return (dq_resolve_mint_reason(rm, DQ_REASON_KIND, EINVAL));
+	error = dq_ident_validate(rm->drm_kind, &rm->drm_ident, &reason);
+	if (error == 0)
+		error = dq_policy_validate(&rm->drm_policy, &reason);
+	if (error != 0)
+		return (dq_resolve_mint_reason(rm, reason, error));
+	if ((rm->drm_flags & ~(DQ_MINT_F_WRITE | DQ_MINT_F_CREATED)) != 0 ||
+	    ((rm->drm_flags & DQ_MINT_F_WRITE) != 0 &&
+	    rm->drm_policy.dp_write != DQ_EVENT))
+		return (dq_resolve_mint_reason(rm, DQ_REASON_FLAGS, EINVAL));
+	/* DQ_MINT_F_CREATED only for an open that could create (D166). */
+	if ((rm->drm_flags & DQ_MINT_F_CREATED) != 0 &&
+	    (rop != DQ_ROP_OPEN || (mode & O_CREAT) == 0))
+		return (dq_resolve_mint_reason(rm, DQ_REASON_FLAGS, EINVAL));
+	/* A truncate's FD is written through: it must be writable. */
+	if (rop == DQ_ROP_TRUNCATE && (rm->drm_flags & DQ_MINT_F_WRITE) == 0)
+		return (dq_resolve_mint_reason(rm, DQ_REASON_FLAGS, EINVAL));
+
+	error = dq_object_create(q, rm->drm_kind, &rm->drm_ident,
+	    &rm->drm_policy, &o);
+	if (error != 0)
+		return (dq_resolve_mint_reason(rm, DQ_REASON_NONE, ENOMEM));
+	oid = o->o_id;
+	error = copyout(&oid, rm->drm_objectp, sizeof(oid));
+	if (error == 0)
+		error = dq_resolve_mint_reason(rm, DQ_REASON_NONE, 0);
+	if (error != 0) {
+		dq_object_destroy_unlinked(o);
+		return (EFAULT);
+	}
+	*objectpp = rm->drm_objectp;
+	rm->drm_objectp = NULL;		/* observers see no pointers */
+	rm->drm_reasonp = NULL;
+	*robjp = o;
 	return (0);
 }
 

@@ -148,7 +148,7 @@ struct dqt_ctl {
 	struct dqt_resolve_seen {
 		uint64_t	 id;
 		uint32_t	 op, cls, rflags, mode, syscall, caller_flags;
-		uint32_t	 start_kind, start2_kind, pad1;
+		uint32_t	 start_kind, start2_kind, accept, cmode;
 		int32_t		 pid;
 		int32_t		 domain, type, protocol;	/* sockets */
 		uint32_t	 pathlen;	/* exact: abstract names */

@@ -7,7 +7,17 @@
 # every place an attached process's names are marked or consulted, and
 # every lookup the kernel can make in an attached process's thread.
 #
-#   MARK     file function op flags           an intent (class 1, 2 or 3)
+#   MARK     file function op flags accept complete xform
+#                                             an intent (class 1, 2 or 3);
+#                                             accept: PASS, or PASS+kinds
+#                                             of dq_intent_enter_served
+#                                             (a trailing ? when a kind can
+#                                             be withheld per call);
+#                                             complete: the completion its
+#                                             DQRES_SERVED runs, or -;
+#                                             xform: the errnos the impl
+#                                             (FUNC_dqimpl) tests and may
+#                                             transform, for sign-off (D157)
 #   SLOT     file function slot pointer       a slot the intent declares
 #   CONSULT  file function op class           dqres_consult_sun,
 #                                             dqres_consult_socket
@@ -56,6 +66,17 @@
 #			sopeeloff: a socket split off one the process made
 #   KERNEL:REASON	"dq-ledger: kernel (REASON)": a socket the kernel
 #			makes for itself or for a facility (I7), recorded
+#
+# EDQRESOLVED containment (D157): every file and function or macro whose
+# code (not comments) names EDQRESOLVED is a row, ALLOWED only for its
+# definition (errno.h), the consumer macro DQRES_SERVED (dqres.h), the
+# producer dqres_namei and the stray mapping in syscall_dq_stray and
+# syscallret, STRAY otherwise (the build fails).  A MARK row is FLAG when
+# a served intent has no DQRES_SERVED completion or the reverse, when the
+# DQRES_SERVED does not sit after the impl call and before
+# dq_intent_leave, or when the completion (a *_dqserved function) does
+# not name every served kind of the accept set.  XFORM lists the errnos
+# an impl compares any variable with, and its switch cases.
 #
 #	dq_resolve_ledger.sh generate SRCDIR	write the ledger to stdout
 #	dq_resolve_ledger.sh check SRCDIR LEDGER	fail if LEDGER differs or
@@ -195,13 +216,74 @@ scan()
 		    !/^dq_intent_slot_content|^dqres_consult_sun/ {
 			printf("K\t%s\t%s\n", file, fn)
 		}
-		/dq_intent_enter\(/ && !/^dq_intent_enter/ { me = 1; mel = "" }
+		function accepted(e,    k, r) {
+			r = "PASS"
+			if (e ~ /DQ_RESOLVE_FD/ || e ~ /dq_setattr_accept/)
+				r = r "+FD"
+			if (e ~ /DQ_RESOLVE_ATTR/) r = r "+ATTR"
+			if (e ~ /DQ_RESOLVE_LINK/) r = r "+LINK"
+			if (e ~ /DQ_RESOLVE_OK/ || e ~ /dq_setattr_accept/)
+				r = r "+OK"
+			if (e ~ /\?/ || (e ~ /dq_setattr_accept/ &&
+			    e !~ /dq_setattr_accept\(false\)/))
+				r = r "?"
+			return (r)
+		}
+		/dq_intent_enter(_served)?\(/ && !/^dq_intent_enter/ && \
+		    fn != "dq_intent_enter_served" { me = 1; mel = "" }
 		me { mel = mel $0 }
 		me && /;/ {
 			me = 0
-			n = args(callargs(mel, "dq_intent_enter"), a)
-			printf("M\t%s\t%s\t%s\t%s\n", file, fn, strip(a[3]),
-			    strip(a[4]))
+			if (mel ~ /dq_intent_enter_served\(/) {
+				n = args(callargs(mel, "dq_intent_enter_served"),
+				    a)
+				acc = accepted(a[5])
+			} else {
+				n = args(callargs(mel, "dq_intent_enter"), a)
+				acc = "PASS"
+			}
+			printf("M\t%s\t%s\t%s\t%s\t%s\n", file, fn,
+			    strip(a[3]), strip(a[4]), acc)
+		}
+		# Order in a wrapper: the impl call, DQRES_SERVED, the leave.
+		/^[A-Za-z_][A-Za-z0-9_]*\(/ { implat = servedat = 0 }
+		/= [A-Za-z0-9_]+_dqimpl\(/ && !/^[A-Za-z_]/ { implat = FNR }
+		/dq_intent_leave\(/ && !/^dq_intent_leave/ && servedat != 0 {
+			printf("O\t%s\t%s\t%d\n", file, fn,
+			    implat != 0 && implat < servedat)
+			servedat = 0
+		}
+		/DQRES_SERVED\(/ && !/^#define/ { md = 1; mdl = "" }
+		md { mdl = mdl $0 }
+		md && /;/ {
+			md = 0
+			servedat = FNR
+			n = args(callargs(mdl, "DQRES_SERVED"), a)
+			comp = strip(a[4]); sub(/\(.*/, "", comp)
+			printf("D\t%s\t%s\t%s\n", file, fn, comp)
+		}
+		# The kinds a completion handles: those it names.
+		fn ~ /_dqserved$/ {
+			code = $0
+			while (match(code, /DQ_RESOLVE_(FD|ATTR|LINK|OK)/)) {
+				printf("H\t%s\t%s\t%s\n", file, fn,
+				    substr(code, RSTART + 11, RLENGTH - 11))
+				code = substr(code, RSTART + RLENGTH)
+			}
+		}
+		# The errnos an impl tests: any variable compared with an
+		# errno, and switch cases.
+		fn ~ /_dqimpl$/ {
+			code = $0
+			gsub(/"[^"]*"/, "", code)
+			if (code ~ /^[ \t]*(\*|\/\*|\/\/)/)
+				code = ""
+			while (match(code, /[A-Za-z_][A-Za-z0-9_>.-]* [!=]= E[A-Z][A-Z0-9]+|case E[A-Z][A-Z0-9]+:/)) {
+				e = substr(code, RSTART, RLENGTH)
+				sub(/.* /, "", e); sub(/:$/, "", e)
+				printf("Z\t%s\t%s\t%s\n", file, fn, e)
+				code = substr(code, RSTART + RLENGTH)
+			}
 		}
 		/dq_intent_slot(_content)?\(/ && \
 		    !/^dq_intent_slot/ { ms = 1; msl = "" }
@@ -295,6 +377,13 @@ generate()
 		if ($1 == "X") exempt[$2 "\t" $3] = 1
 		if ($1 == "R") refuse[$2 "\t" $3] = 1
 		if ($1 == "K") content[$2 "\t" $3] = 1
+		if ($1 == "D") served[$2 "\t" $3] = $4
+		if ($1 == "O") order[$2 "\t" $3] = $4
+		if ($1 == "H") handles[$2 "\t" $3 "\t" $4] = 1
+		if ($1 == "Z" && index("+" xf[$2 "\t" $3] "+",
+		    "+" $4 "+") == 0)
+			xf[$2 "\t" $3] = xf[$2 "\t" $3] \
+			    (xf[$2 "\t" $3] == "" ? "" : "+") $4
 		if ($1 == "F" && $3 ~ /_dqimpl$/) {
 			b = $3; sub(/_dqimpl$/, "", b); wrapped[b] = 1
 		}
@@ -358,7 +447,34 @@ generate()
 			return (c)
 		return ("UNCLASSIFIED")
 	}
-	$1 == "M" { printf("MARK\t%s\t%s\t%s\t%s\n", $2, $3, $4, $5) }
+	# Every served kind of the accept set handled by the completion.
+	function unhandled(file, comp, acc,    n, i, w, kk) {
+		gsub(/\?/, "", acc)
+		n = split(acc, w, "+")
+		for (i = 2; i <= n; i++) {
+			kk = file "\t" comp "\t" w[i]
+			if (!(kk in handles))
+				return (1)
+		}
+		return (0)
+	}
+	$1 == "M" {
+		k = $2 "\t" $3
+		comp = (k in served) ? served[k] : "-"
+		x = $6 == "PASS" ? "-" : \
+		    ((($2 "\t" $3 "_dqimpl") in xf) ? xf[$2 "\t" $3 "_dqimpl"] : \
+		    "-")
+		bad = ($6 != "PASS") != (comp != "-")
+		if (!bad && comp != "-")
+			bad = !((k in order) && order[k] == 1) ||
+			    unhandled($2, comp, $6)
+		printf("MARK\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", $2, $3, $4, $5,
+		    $6, comp, x, bad ? "\tFLAG" : "")
+		marked[k] = 1
+	}
+	$1 == "D" && !(($2 "\t" $3) in mserved) {
+		mserved[$2 "\t" $3] = 1
+	}
 	$1 == "S" { printf("SLOT\t%s\t%s\t%s\t%s\n", $2, $3, $4, $5) }
 	$1 == "C" { printf("CONSULT\t%s\t%s\t%s\t%s\n", $2, $3, $4, $5) }
 	$1 == "N" && $4 == "UIO_USERSPACE" {
@@ -380,10 +496,59 @@ generate()
 	$1 == "Q" && ($4 in wrapped) {
 		printf("SYSCALL\t%s\t%s\t%s\t%s\n", $2, $3, $4,
 		    sysclass($2, $3, "", $5, $6, $7))
+	}
+	END {
+		for (k in served)
+			if (!(k in marked))
+				printf("SERVED\t%s\t%s\tFLAG\n", k, served[k])
 	}' "$raw" "$raw"
 	rm -f "$raw"
 	scan_sockets "$1"
+	scan_edq "$1"
 }
+
+# EDQRESOLVED in code (not comments), per file and the function or macro
+# it appears in (D157): ALLOWED only for its definition (errno.h), the
+# consumer macro (DQRES_SERVED), the producer (dqres_namei) and the stray
+# mapping (syscall_dq_stray, syscallret's assertion).
+scan_edq()
+(
+	cd "$1"
+	grep -rlE --include='*.c' --include='*.h' 'EDQRESOLVED' . |
+	    sed 's,^\./,,' | LC_ALL=C sort | while read -r f; do
+		awk -v file="$f" '
+		/^[A-Za-z_][A-Za-z0-9_]*\(/ {
+			fn = $0; sub(/\(.*/, "", fn)
+		}
+		/^#[ \t]*define[ \t]/ {
+			mac = $0; sub(/^#[ \t]*define[ \t]+/, "", mac)
+			sub(/[ \t(].*/, "", mac)
+			inmac = 1
+		}
+		{
+			code = $0
+			if (code ~ /^[ \t]*(\*|\/\*|\/\/)/)
+				code = ""
+			sub(/\/\*.*/, "", code)
+			if (code ~ /EDQRESOLVED/) {
+				ctx = inmac ? mac : (fn != "" ? fn : "-")
+				key = file ":" ctx
+				if (!(key in seen)) {
+					seen[key] = 1
+					ok = key == "sys/errno.h:EDQRESOLVED" ||
+					    key == "sys/dqres.h:DQRES_SERVED" ||
+					    key == "kern/kern_dqres.c:dqres_namei" ||
+					    key == "kern/subr_syscall.c:syscall_dq_stray" ||
+					    key == "kern/subr_syscall.c:syscallret"
+					printf("EDQRESOLVED\t%s\t%s\n", key,
+					    ok ? "ALLOWED" : "STRAY")
+				}
+			}
+			if (inmac && $0 !~ /\\$/)
+				inmac = 0
+		}' "$f"
+	done
+)
 
 case "$1" in
 generate)
@@ -399,7 +564,7 @@ check)
 		rm -f "$tmp"
 		exit 1
 	fi
-	if grep -E '	(UNMARKED|FLAG|UNCLASSIFIED)$' "$tmp" >&2; then
+	if grep -E '	(UNMARKED|FLAG|UNCLASSIFIED|STRAY)$' "$tmp" >&2; then
 		echo "dq_resolve_ledger: unmarked or unclassified lookups" \
 		    "above" >&2
 		rm -f "$tmp"

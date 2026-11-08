@@ -109,6 +109,8 @@ SDT_PROBE_DECLARE(dq, , , resolve__reply);
 SDT_PROBE_DECLARE(dq, , , resolve__failclosed);
 SDT_PROBE_DECLARE(dq, , , resolve__unmarked);
 SDT_PROBE_DECLARE(dq, , , resolve__locked);
+SDT_PROBE_DECLARE(dq, , , resolve__served);
+SDT_PROBE_DECLARE(dq, , , resolve__retire);
 
 /* Tunables (dq_dev.c), kern.dq.* */
 extern u_int dq_max_io;
@@ -179,6 +181,11 @@ struct dq_event_k {
 						   a shrink may fail it */
 	sbintime_t		 ev_deadline;	/* 0 = none */
 	struct dq_object	*ev_object;	/* held; NULL for queue-level */
+	struct dq_object	*ev_robj;	/* RESOLVE FD (1c-iii): the object
+						   minted at the reply, linked,
+						   holding its creation reference;
+						   the waiter takes it, else
+						   dq_event_rele retires it */
 	uint64_t		 ev_requester;	/* per-requester quota key */
 	size_t			 ev_size;
 	struct dq_event		 ev_hdr;	/* body follows */
@@ -369,7 +376,8 @@ struct dq_queue {
 	uint64_t		 q_seq;
 	struct dq_object_tree	 q_objects;
 	LIST_HEAD(dq_object_idlist, dq_object) q_idhash[DQ_IDHASH]; /* by (dev, ino) */
-	uint64_t		 q_next_object;
+	uint64_t		 q_next_object;	/* q_mtx; ids are taken before
+						   the object is linked (1c-iii) */
 	u_int			 q_nobjects;
 	u_int			 q_nobservers;
 	LIST_HEAD(, dq_observer) q_observers;
@@ -478,13 +486,35 @@ void	dq_reply_free(struct dq_data *reply);
  */
 int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, sbintime_t deadline,
-	    struct dq_data **replyp, int *errnop);
+	    struct dq_data **replyp, int *errnop, struct dq_object **robjp);
+
+/*
+ * Objects created apart from their linking (MINT, and the RESOLVE FD reply
+ * of 1c-iii, which mints before it knows the event is still there): create
+ * holds the creation reference and takes the id; link (q_mtx) makes the
+ * object visible; an object never linked is destroyed unlinked (its id is
+ * never used).  An object linked but never bound to a file is retired
+ * with dq_object_retire_unbound, which drops the creation reference.
+ */
+/* Fault injection (debug.dq.*): consume one of *counter, true if taken. */
+bool	dq_fault_inject(u_int *counter);
+extern u_int dq_fail_bind_enfile;
+int	dq_object_create(struct dq_queue *q, u_int kind,
+	    const struct dq_ident_file *ident, const struct dq_policy *pol,
+	    struct dq_object **op);
+void	dq_object_link_locked(struct dq_queue *q, struct dq_object *o);
+void	dq_object_destroy_unlinked(struct dq_object *o);
+void	dq_object_retire_unbound(struct dq_object *o, struct thread *td);
 
 /* dq_resolve.c */
 struct dqres_binding;
 void	dq_resolve_init(void);
 bool	dq_resolve_errno_allowed(uint32_t rop, int error);
-int	dq_resolve_reply_validate(int rerrno, const void *buf, size_t len);
+bool	dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb, int error);
+int	dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
+	    const void *buf, size_t len);
+int	dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id,
+	    struct dq_data *dd, struct dq_object **robjp, uint64_t **objectpp);
 int	dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	    struct thread *td);
 
@@ -526,12 +556,16 @@ off_t	dq_object_vmsize(struct dq_object *o);
 /* dq_file.c */
 extern const struct fileops dq_fileops;
 void	dq_file_init(void);
+/* kind DQ_KIND_ANY: an ATTR/LINK identity (any S_IFMT, set-id allowed). */
+#define	DQ_KIND_ANY		0
 int	dq_ident_validate(u_int kind, const struct dq_ident_file *ident,
 	    int *reason);
 int	dq_policy_validate(const struct dq_policy *pol, int *reason);
 int	dq_file_install(struct thread *td, struct dq_object *o,
 	    const struct dq_policy *pol, u_int mflags, int *fdp);
 void	dq_file_knote(struct dq_object *o, long hint);
+int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
+	    struct file **fpp);
 
 /* dq_observer.c */
 extern const struct fileops dq_observer_fileops;

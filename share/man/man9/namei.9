@@ -592,8 +592,49 @@ through
 .Fn dqres_kpath_refused .
 The kernel-only pseudo-error
 .Er EDQRESOLVED
-is reserved for lookups the controller answers itself and never reaches
-userland.
+ends a lookup the controller answered itself (a served file, attributes,
+a symbolic link or a performed operation, stage 1c-iii).
+It is produced only by
+.Fn dqres_namei ,
+for slot 0 of an intent entered with
+.Fn dq_intent_enter_served ,
+whose accept set names the answer's kind; the answer is kept in the
+intent
+.Pq Va di_res .
+Every function between
+.Fn namei
+and the marked entry point returns it unchanged; it is consumed only by
+the entry point's completion,
+.Fn DQRES_SERVED ,
+which runs with
+.Dv DQI_COMPLETING
+set and makes no lookup
+.Fn ( dqres_namei
+asserts it).
+.Fn dq_intent_leave
+releases an answer no completion took.
+A stray
+.Er EDQRESOLVED
+is mapped to
+.Er EIO
+in
+.Fn syscallenter
+right after the system call returns, both as its result and as a
+.Dv TDP_NERRNO
+.Va td_errno ,
+before audit, DTrace and the ABI see it; under
+.Dv INVARIANTS
+it panics unless the
+.Va debug.dqres.drop_completion
+fault injection dropped the completion.
+The resolution ledger lists, per entry point, the accepted kinds, the
+completion and the errnos its implementation transforms, and fails the
+kernel build when
+.Er EDQRESOLVED
+appears in code outside its producer, the consumer macro, the
+.Fn syscallenter
+mapping and
+.In sys/errno.h .
 .Sh SEE ALSO
 .Xr uio 9 ,
 .Xr uma 9 ,
