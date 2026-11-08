@@ -362,8 +362,9 @@ soeventmtx(struct socket *so, const sb_which which)
 
 /* can we read something from so? */
 bool	soreadabledata(struct socket *so);
+bool	soreadeof(struct socket *so);
 #define	_soreadable(so) \
-	(soreadabledata(so) || ((so)->so_rcv.sb_state & SBS_CANTRCVMORE))
+	(soreadabledata(so) || soreadeof(so))
 
 static inline bool
 soreadable(struct socket *so)

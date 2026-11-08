@@ -4788,6 +4788,23 @@ soreadabledata(struct socket *so)
 	    soreadable_atomic_record(so) || so->so_error || so->so_rerror);
 }
 
+/*
+ * Is the receive side at EOF?  A unix(4) stream peer puts its not ready
+ * sendfile(2) data straight into our receive buffer; when the peer shuts
+ * down or goes before that data is ready, EOF comes only after it.
+ */
+bool
+soreadeof(struct socket *so)
+{
+	/* A listening socket has no receive buffer. */
+	if (SOLISTENING(so) ||
+	    (so->so_rcv.sb_state & SBS_CANTRCVMORE) == 0)
+		return (false);
+	return (so->so_type == SOCK_DGRAM ||
+	    so->so_proto->pr_domain->dom_family != AF_UNIX ||
+	    so->so_rcv.uxst_fnrdy == NULL);
+}
+
 int
 sopoll_generic(struct socket *so, int events, struct thread *td)
 {
@@ -4929,7 +4946,7 @@ filt_soread(struct knote *kn, long hint)
 	SOCK_RECVBUF_LOCK_ASSERT(so);
 
 	kn->kn_data = sbavail(&so->so_rcv) - so->so_rcv.sb_ctl;
-	if (so->so_rcv.sb_state & SBS_CANTRCVMORE) {
+	if (soreadeof(so)) {
 		kn->kn_flags |= EV_EOF;
 		kn->kn_fflags = so->so_error;
 		return (1);
