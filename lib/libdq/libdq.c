@@ -583,6 +583,22 @@ dq_reply_errno_allowed(uint32_t op, int error)
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
+	case DQ_OP_RESOLVE:
+		/* One list for every RESOLVE op (dq_resolve_errno_allowed). */
+		switch (error) {
+		case EPERM: case ENOENT: case EIO: case ENXIO: case E2BIG:
+		case ENOEXEC: case EACCES: case EBUSY: case EEXIST: case EXDEV:
+		case ENODEV: case ENOTDIR: case EISDIR: case EINVAL: case ETXTBSY:
+		case EFBIG: case ENOSPC: case EROFS: case EMLINK: case EAGAIN:
+		case ENAMETOOLONG: case ENOTEMPTY: case ELOOP: case EDQUOT:
+		case ESTALE: case EOPNOTSUPP: case EINTR: case EAFNOSUPPORT:
+		case EPROTONOSUPPORT: case EADDRINUSE: case EADDRNOTAVAIL:
+		case ECONNREFUSED: case EPROTOTYPE: case EFTYPE: case EAUTH:
+		case ENOATTR: case EINTEGRITY:
+			return (1);
+		default:
+			return (0);
+		}
 	default:
 		return (1);
 	}
@@ -815,4 +831,98 @@ dq_observe_subscribe(int svc, uint64_t queue)
 		return (-1);
 	}
 	return (rep.sr_fd);
+}
+
+/*
+ * Resolution (stage 1c)
+ */
+
+int
+dq_attach(int q, int procfd)
+{
+	struct dq_attach_args args;
+
+	memset(&args, 0, sizeof(args));
+	args.da_version = DQ_API_VERSION;
+	args.da_procfd = procfd;
+	args.da_rootfd = -1;
+	args.da_cwdfd = -1;
+	return (ioctl(q, DQ_IOC_ATTACH, &args));
+}
+
+/*
+ * A RESOLVE body is the fixed part, then four NUL-terminated strings
+ * whose lengths (without the NUL) the fixed part gives; the record is
+ * padded to 8.  Every string must end inside the record at its stated
+ * length.
+ */
+int
+dq_event_resolve(const struct dq_event *ev, const struct dq_resolve_body **body,
+    const char **path, const char **path2, const char **startpath,
+    const char **startpath2)
+{
+	const struct dq_resolve_body *rb;
+	const char *s;
+	size_t bodylen, need, lens[4];
+	const char **outs[4];
+	int i;
+
+	if (dq_event_fixed(ev, DQ_OP_RESOLVE, sizeof(*rb),
+	    (const void **)&rb) != 0)
+		return (-1);
+	bodylen = ev->de_size - sizeof(*ev);
+	lens[0] = rb->drs_pathlen;
+	lens[1] = rb->drs_path2len;
+	lens[2] = rb->drs_startpathlen;
+	lens[3] = rb->drs_startpath2len;
+	need = sizeof(*rb);
+	for (i = 0; i < 4; i++) {
+		if (lens[i] >= bodylen) {	/* also keeps the sum small */
+			errno = EINVAL;
+			return (-1);
+		}
+		need += lens[i] + 1;
+	}
+	if (need > bodylen) {
+		errno = EINVAL;
+		return (-1);
+	}
+	outs[0] = path;
+	outs[1] = path2;
+	outs[2] = startpath;
+	outs[3] = startpath2;
+	s = (const char *)(const void *)(rb + 1);
+	for (i = 0; i < 4; i++) {
+		if (s[lens[i]] != '\0' || strnlen(s, lens[i]) != lens[i]) {
+			errno = EINVAL;
+			return (-1);
+		}
+		if (outs[i] != NULL)
+			*outs[i] = s;
+		s += lens[i] + 1;
+	}
+	if (body != NULL)
+		*body = rb;
+	return (0);
+}
+
+int
+dq_reply_resolve_pass(int q, uint64_t id)
+{
+	struct dq_resolve_reply rr;
+
+	memset(&rr, 0, sizeof(rr));
+	rr.drr_kind = DQ_RESOLVE_PASS;
+	return (dq_reply(q, id, 0, &rr, sizeof(rr)));
+}
+
+int
+dq_reply_resolve_errno(int q, uint64_t id, int error)
+{
+
+	if (error <= 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (dq_reply(q, id, error, NULL, 0));
 }

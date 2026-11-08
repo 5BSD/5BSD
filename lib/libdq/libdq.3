@@ -32,6 +32,10 @@
 .Nm dq_mint_file_flags ,
 .Nm dq_push_vnode_note ,
 .Nm dq_push_invalidate ,
+.Nm dq_attach ,
+.Nm dq_event_resolve ,
+.Nm dq_reply_resolve_pass ,
+.Nm dq_reply_resolve_errno ,
 .Nm dq_event_read ,
 .Nm dq_event_write ,
 .Nm dq_event_setattr ,
@@ -130,6 +134,18 @@ DescriptorQueue controller library
 .Fo dq_push_invalidate
 .Fa "int q" "uint64_t object" "uint64_t offset" "uint64_t len"
 .Fc
+.Ft int
+.Fn dq_attach "int q" "int procfd"
+.Ft int
+.Fo dq_event_resolve
+.Fa "const struct dq_event *ev" "const struct dq_resolve_body **body"
+.Fa "const char **path" "const char **path2" "const char **startpath"
+.Fa "const char **startpath2"
+.Fc
+.Ft int
+.Fn dq_reply_resolve_pass "int q" "uint64_t id"
+.Ft int
+.Fn dq_reply_resolve_errno "int q" "uint64_t id" "int error"
 .Ft int
 .Fn dq_event_read "const struct dq_event *ev" "const struct dq_read_body **body"
 .Ft int
@@ -790,6 +806,14 @@ any errno.
 .Er EAGAIN , EDEADLK , ENOLCK , EINVAL , EIO , EINTR .
 .It Dv DQ_OP_IOCTL
 .Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
+.It Dv DQ_OP_RESOLVE
+one list for every lookup operation:
+.Er EPERM , ENOENT , EIO , ENXIO , E2BIG , ENOEXEC , EACCES , EBUSY ,
+.Er EEXIST , EXDEV , ENODEV , ENOTDIR , EISDIR , EINVAL , ETXTBSY , EFBIG ,
+.Er ENOSPC , EROFS , EMLINK , EAGAIN , ENAMETOOLONG , ENOTEMPTY , ELOOP ,
+.Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
+.Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
+.Er EAUTH , ENOATTR , EINTEGRITY .
 .El
 .Pp
 .Fn dq_dispatch
@@ -808,6 +832,66 @@ Records needing no answer
 carry
 .Va de_id
 0.
+.Ss Resolution
+.Fn dq_attach
+attaches the process named by the process descriptor
+.Fa procfd
+to the queue
+.Pq Dv DQ_IOC_ATTACH :
+from then on every name it, and every process it forks, resolves is
+posted as a
+.Dv DQ_OP_RESOLVE
+event and waits for the answer.
+The target is typically a
+.Xr pdfork 2 Ns ed
+child attached before it execs: it must not have exec'd, share its
+descriptor table or working-directory state, hold a descriptor of the
+queue (which
+.Fn dq_open
+opens close-on-fork), or be attached already, or the call fails with
+.Er EBUSY ;
+an exited child is
+.Er ESRCH ,
+anything but a process descriptor
+.Er EINVAL .
+An attached process gains no privilege; see
+.Xr dq 4 .
+.Pp
+.Fn dq_event_resolve
+checks a
+.Dv DQ_OP_RESOLVE
+record and returns its fixed body (96 bytes) and its four strings: the
+path, the second path of a rename or link, the start hint and the second
+path's start hint, each
+NUL-terminated, possibly empty, and checked to end where its length
+says inside the record.
+Any output pointer may be
+.Dv NULL .
+It fails with
+.Er EINVAL
+for another operation or a malformed record.
+.Pp
+.Fn dq_reply_resolve_pass
+answers
+.Dv DQ_RESOLVE_PASS :
+the lookup proceeds unchanged.
+.Fn dq_reply_resolve_errno
+answers an errno, which becomes the system call's result; an errno
+outside the
+.Dv DQ_OP_RESOLVE
+list of
+.Fn dq_reply_errno_allowed
+reaches the requester as
+.Er EIO .
+Every lookup must be answered: an unanswered one fails with
+.Er EIO
+at its deadline, and when the queue closes every lookup of an attached
+process fails with
+.Er EIO .
+.Pp
+.Pa /usr/share/examples/dq/dqpass.c
+runs a command attached and answers every lookup
+.Dv DQ_RESOLVE_PASS .
 .Ss Serving a backing file
 .Fn dq_serve_file
 answers one event from a real file open on
@@ -956,6 +1040,27 @@ and the one a command whose argument embeds pointers must get.
 cancels the blocked
 .Dv DQ_LOCK_SETLKW
 the record names, so a lock is never granted to a gone waiter.
+.It Dv DQ_OP_RESOLVE
+.Dv DQ_RESOLVE_PASS ,
+unless
+.Va so_resolve
+returns an errno
+.Po called with the event, its body and its path strings;
+0 passes
+.Pc ,
+or
+.Dv DQ_SERVE_F_RESOLVE_STRICT
+is set in
+.Va so_flags
+and the consultation is not the requester's own path
+.Pq class Dv DQ_RCLASS_KCONSUMER No or Dv DQ_RCLASS_KERNEL :
+then only
+.Dv DQ_ROP_EXEC_INTERP
+(the interpreter of an image the requester was allowed to execute) is
+passed and everything else is refused with
+.Er EACCES .
+An errno outside the allow-list is sent as
+.Er EIO .
 .It Dv DQ_OP_CLOSE
 drops the object's flock and OFD owners and cancels their waits; POSIX
 owners belong to the identity and go with
@@ -1000,7 +1105,15 @@ and
 so that the presented times and block count are the backing file's;
 .Va so_ioctl
 and its
-.Va so_arg .
+.Va so_arg ;
+.Va so_resolve
+and its
+.Va so_resolve_arg ;
+and
+.Va so_flags :
+.Dv DQ_SERVE_F_SYNC_IDENT
+and
+.Dv DQ_SERVE_F_RESOLVE_STRICT .
 .Fn dq_serve_file
 returns 0 once the record is answered or needed no answer, and -1 with
 the errno of the reply when that failed.
@@ -1173,6 +1286,7 @@ a writable one, serving a shared writable mapping too, built on
 .Xr fcntl 2 ,
 .Xr flock 2 ,
 .Xr ioctl 2 ,
+.Xr pdfork 2 ,
 .Xr read 2 ,
 .Xr write 2 ,
 .Xr libcapability 3 ,

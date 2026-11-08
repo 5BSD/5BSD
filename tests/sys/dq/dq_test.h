@@ -33,6 +33,8 @@
 #define	DQT_MAX_INTERRUPTS	64
 #define	DQT_MAX_LOCKS		32
 #define	DQT_MAX_IOCTL_IN	64
+#define	DQT_MAX_RESOLVES	1024
+#define	DQT_RPATH		128
 #define	DQT_READERS_MAX		2
 #define	DQT_PATH_MAX		1024
 
@@ -137,6 +139,25 @@ struct dqt_ctl {
 	/* Per operation: the sequence and caller of the last record. */
 	uint64_t	 op_seq[DQ_OP_REPLY + 1];
 	struct dq_caller op_caller[DQ_OP_REPLY + 1];
+	/*
+	 * RESOLVE (1c): every event recorded; answered PASS unless its path
+	 * contains resolve_fail_match (then resolve_fail_errno) or
+	 * resolve_hold_match (then held, see dqt_held), or its op has an
+	 * errno in resolve_errno[].
+	 */
+	struct dqt_resolve_seen {
+		uint64_t	 id;
+		uint32_t	 op, cls, rflags, mode, syscall, caller_flags;
+		uint32_t	 start_kind, start2_kind, pad1;
+		int32_t		 pid;
+		char		 path[DQT_RPATH], path2[DQT_RPATH];
+		char		 startpath2[DQT_RPATH];
+	}		 rs[DQT_MAX_RESOLVES];
+	int		 nrs;
+	int		 resolve_errno[DQ_ROP_MAX + 1];
+	char		 resolve_fail_match[DQT_RPATH];
+	int		 resolve_fail_errno;
+	char		 resolve_hold_match[DQT_RPATH];
 	/* dq_serve_file lock owners: one table per queue (POSIX owners span
 	   the objects of one identity), made at the first backing mint. */
 	struct dq_serve_state *lockstate;
@@ -255,5 +276,27 @@ struct dqt_sync {
 void	dqt_sync_init(struct dqt_sync *s);
 void	dqt_sync_post(int fd);
 bool	dqt_sync_wait(int fd, int ms);
+
+
+/*
+ * Resolution (1c).  dqt_attach_spawn pdforks a requester, attaches it to
+ * the controller's queue before it runs fn (a child that has not exec'd,
+ * holding no queue descriptor: dq_open is O_CLOFORK), and returns its
+ * process descriptor; dqt_attach_wait collects the result and the exit
+ * status.  dqt_find_resolve returns the index (from `from`) of the first
+ * recorded RESOLVE whose path or second path contains match, of op (0:
+ * any), or -1; dqt_count_resolve counts them.
+ */
+struct dqt_achild {
+	pid_t		 pid;
+	int		 pd;
+	int		 pipefd;
+};
+void	dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch,
+	    dqt_child_fn fn, void *arg);
+int	dqt_attach_wait(struct dqt_achild *ch, void *result, size_t resultlen);
+int	dqt_find_resolve(struct dqt_ctl *c, const char *match, uint32_t op,
+	    int from);
+int	dqt_count_resolve(struct dqt_ctl *c, const char *match, uint32_t op);
 
 #endif /* !_DQ_TEST_H_ */

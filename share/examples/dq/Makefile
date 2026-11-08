@@ -1,5 +1,5 @@
-PROG=	dqserve
+PROGS=	dqserve dqpass
 MAN=
 LIBADD=	dq
 
-.include <bsd.prog.mk>
+.include <bsd.progs.mk>
