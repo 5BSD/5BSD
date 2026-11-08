@@ -5002,7 +5002,7 @@ nv_true(const nvlist_t *nvl, const char *name)
  * Each decision is logged before it takes effect.
  */
 static nvlist_t *
-vm_do_migrate_resolve(struct vmctx *ctx, const nvlist_t *nvl)
+vm_do_migrate_resolve(struct vmctx *ctx __unused, const nvlist_t *nvl)
 {
 	struct migration_prod_dest *dst = migration_dest_retained;
 	struct migration_handoff_entry witness, *witness_p = NULL;
