@@ -66,6 +66,7 @@
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/resourcevar.h>
 #include <sys/procdesc.h>
 #include <sys/rwlock.h>
 #include <sys/sdt.h>
@@ -364,6 +365,91 @@ sys_statfs(struct thread *td, struct statfs_args *uap)
 	return (error);
 }
 
+/*
+ * DescriptorQueue (stage 1c-iii-a, D157-D166): completions of served
+ * answers.  Each runs in its marked wrapper when the impl returned
+ * EDQRESOLVED, with DQI_COMPLETING set; none makes a lookup.  The answer
+ * is the controller's FD, ATTR, LINK or OK, of a kind the event accepted.
+ */
+
+/* A mutating operation the controller performed: OK. */
+static int
+dq_ok_dqserved(struct dq_intent *di)
+{
+
+	return (di->di_res.da_kind == DQ_RESOLVE_OK ? 0 : EIO);
+}
+
+/*
+ * SETATTR answered OK (the controller decided, Q7) or FD: the posted
+ * change applied through the transient file under D96's rules (D160).
+ */
+static int
+dq_setattr_dqserved(struct thread *td, struct dq_intent *di)
+{
+	struct file *fp;
+	int error;
+
+	if (di->di_res.da_kind == DQ_RESOLVE_OK)
+		return (0);
+	if (di->di_res.da_kind != DQ_RESOLVE_FD)
+		return (EIO);
+	error = dqres_take_file_raw(td, di, FREAD, &fp);
+	if (error != 0)
+		return (error);
+	error = dqres_setattr_apply(td, fp, di->di_setattr);
+	fdrop(fp, td);
+	return (error);
+}
+
+/* The served kinds of a SETATTR: OK and FD; FD only when withheld. */
+static uint32_t
+dq_setattr_accept(bool fd_only)
+{
+
+	return ((fd_only ? 0 : DQ_RACCEPT(DQ_RESOLVE_OK)) |
+	    DQ_RACCEPT(DQ_RESOLVE_FD));
+}
+
+/* The times of a utimes(2)/utimensat(2) SETATTR body (D161). */
+static void
+dq_setattr_times(struct dq_setattr_body *sb, const struct timespec *ts)
+{
+	struct timespec now;
+	int i;
+
+	vfs_timestamp(&now);
+	if (ts == NULL) {
+		sb->dsa_mask |= DQ_SETATTR_ATIME | DQ_SETATTR_MTIME |
+		    DQ_SETATTR_ATIME_NOW | DQ_SETATTR_MTIME_NOW |
+		    DQ_SETATTR_F_UTIMES_NULL;
+		sb->dsa_atime.tv_sec = sb->dsa_mtime.tv_sec = now.tv_sec;
+		sb->dsa_atime.tv_nsec = sb->dsa_mtime.tv_nsec = now.tv_nsec;
+		return;
+	}
+	for (i = 0; i < 2; i++) {
+		struct dq_timespec *d;
+		uint32_t bit, nowbit;
+
+		d = i == 0 ? &sb->dsa_atime : &sb->dsa_mtime;
+		bit = i == 0 ? DQ_SETATTR_ATIME : DQ_SETATTR_MTIME;
+		nowbit = i == 0 ? DQ_SETATTR_ATIME_NOW : DQ_SETATTR_MTIME_NOW;
+		if (ts[i].tv_nsec == UTIME_OMIT)
+			continue;
+		sb->dsa_mask |= bit;
+		if (ts[i].tv_nsec == UTIME_NOW) {
+			sb->dsa_mask |= nowbit;
+			d->tv_sec = now.tv_sec;
+			d->tv_nsec = now.tv_nsec;
+		} else {
+			d->tv_sec = ts[i].tv_sec;
+			d->tv_nsec = ts[i].tv_nsec;
+		}
+	}
+	if (ts[0].tv_nsec == UTIME_NOW && ts[1].tv_nsec == UTIME_NOW)
+		sb->dsa_mask |= DQ_SETATTR_F_UTIMES_NULL;
+}
+
 static int
 kern_statfs_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
     struct statfs *buf)
@@ -391,6 +477,18 @@ kern_statfs_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
 	return (kern_do_statfs(td, mp, buf));
 }
 
+static int
+kern_statfs_dqserved(struct dq_intent *di, struct statfs *buf)
+{
+	const struct dq_ident_file *id;
+
+	id = dqres_ident(di, DQ_RESOLVE_ATTR);
+	if (id == NULL)
+		return (EIO);
+	dqres_ident_to_statfs(id, buf);
+	return (0);
+}
+
 /*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_STAT; kernel callers pass kernel-space paths and
@@ -405,9 +503,11 @@ kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_statfs_dqimpl(td, path, pathseg, buf));
-	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_STAT, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
 	dqerror = kern_statfs_dqimpl(td, path, pathseg, buf);
+	DQRES_SERVED(td, &dqi, dqerror, kern_statfs_dqserved(&dqi, buf));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -1308,6 +1408,68 @@ bad:
 }
 
 /*
+ * open(2) answered FD (D133, D159, D166, D176): the checks a real open of
+ * the presented file would fail, the bind in the requester's credential,
+ * O_EXLOCK/O_SHLOCK through fo_advlock (a LOCK event; a signal is EINTR,
+ * never a restart after a served answer), O_TRUNC through fo_truncate,
+ * then the install or *fpp.  O_CREAT and O_EXCL were the controller's.
+ */
+static int
+openatfp_dqserved(struct thread *td, struct dq_intent *di, int flags,
+    struct file **fpp)
+{
+	struct file *fp;
+	struct flock lf;
+	int error, indx, type;
+
+	if (di->di_res.da_kind != DQ_RESOLVE_FD)
+		return (EIO);
+	error = openflags(&flags);
+	if (error != 0)
+		return (error);
+	error = dqres_take_file(td, di, flags, &fp);
+	if (error != 0)
+		return (error);
+	if ((flags & (O_EXLOCK | O_SHLOCK)) != 0 && (flags & O_PATH) == 0) {
+		lf.l_whence = SEEK_SET;
+		lf.l_start = 0;
+		lf.l_len = 0;
+		lf.l_type = (flags & O_EXLOCK) != 0 ? F_WRLCK : F_RDLCK;
+		type = F_FLOCK;
+		if ((flags & FNONBLOCK) == 0)
+			type |= F_WAIT;
+		error = fo_advlock(fp, (caddr_t)fp, F_SETLK, &lf, type, td);
+		if (error == ERESTART)
+			error = EINTR;
+		if (error != 0) {
+			fdrop(fp, td);	/* the last reference: retired */
+			return (error);
+		}
+		atomic_set_int(&fp->f_flag, FHASLOCK);
+	}
+	/*
+	 * O_TRUNC as openatfp_dqimpl applies it, after D166 checked write
+	 * access (so O_RDONLY | O_TRUNC truncates as on a real file): the
+	 * object's SETATTR.
+	 */
+	if ((flags & O_TRUNC) != 0 && (flags & O_PATH) == 0) {
+		error = fo_truncate(fp, 0, td->td_ucred, td);
+		if (error != 0) {
+			fdrop(fp, td);
+			return (error);
+		}
+	}
+	if (fpp != NULL) {
+		*fpp = fp;
+		return (0);
+	}
+	error = dqres_install(td, di, fp, flags, &indx);
+	if (error == 0)
+		td->td_retval[0] = indx;
+	return (error);
+}
+
+/*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_OPEN; kernel callers pass kernel-space paths and
  * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
@@ -1322,10 +1484,14 @@ openatfp(struct thread *td, int dirfd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (openatfp_dqimpl(td, dirfd, path, pathseg, flags, mode, lookup_flags, fpp));
-	dq_intent_enter(td, &dqi, DQ_ROP_OPEN, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_OPEN, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_FD));
+	dqi.di_cmode = ((mode & ~td->td_proc->p_pd->pd_cmask) & ALLPERMS) &
+	    ~S_ISTXT;
 	dqi.di_mode = flags;
 	dq_intent_slot(&dqi, 0, path, pathseg, dirfd);
 	dqerror = openatfp_dqimpl(td, dirfd, path, pathseg, flags, mode, lookup_flags, fpp);
+	DQRES_SERVED(td, &dqi, dqerror, openatfp_dqserved(td, &dqi, flags, fpp));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -1536,10 +1702,14 @@ kern_mknodat(struct thread *td, int fd, const char *path, enum uio_seg pathseg,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_mknodat_dqimpl(td, fd, path, pathseg, mode, dev));
-	dq_intent_enter(td, &dqi, DQ_ROP_MKNOD, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_MKNOD, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
+	dqi.di_cmode = (mode & ALLPERMS) & ~td->td_proc->p_pd->pd_cmask;
+	dqi.di_dev = dev;
 	dqi.di_mode = mode;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_mknodat_dqimpl(td, fd, path, pathseg, mode, dev);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -1649,10 +1819,13 @@ kern_mkfifoat(struct thread *td, int fd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_mkfifoat_dqimpl(td, fd, path, pathseg, mode));
-	dq_intent_enter(td, &dqi, DQ_ROP_MKFIFO, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_MKFIFO, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
+	dqi.di_cmode = (mode & ALLPERMS) & ~td->td_proc->p_pd->pd_cmask;
 	dqi.di_mode = mode;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_mkfifoat_dqimpl(td, fd, path, pathseg, mode);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -1735,6 +1908,7 @@ kern_linkat_dqimpl(struct thread *td, int fd1, int fd2, const char *path1,
     const char *path2, enum uio_seg segflag, int flag)
 {
 	struct nameidata nd;
+	struct file *fp;
 	int error;
 
 	if ((flag & ~(AT_SYMLINK_FOLLOW | AT_RESOLVE_BENEATH |
@@ -1747,8 +1921,20 @@ kern_linkat_dqimpl(struct thread *td, int fd1, int fd2, const char *path1,
 		NDINIT_ATRIGHTS(&nd, LOOKUP, AUDITVNODE1 | at2cnpflags(flag,
 		    AT_SYMLINK_FOLLOW | AT_RESOLVE_BENEATH | AT_EMPTY_PATH),
 		    segflag, path1, fd1, &cap_linkat_source_rights);
-		if ((error = namei(&nd)) != 0)
+		if ((error = namei(&nd)) != 0) {
+			/*
+			 * D164 (Q5): a served descriptor has no name to
+			 * link in the real namespace.
+			 */
+			if (error == ENOTDIR &&
+			    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
+			    dqres_emptypath_file(td, fd1,
+			    &cap_linkat_source_rights, &fp) == 0) {
+				fdrop(fp, td);
+				error = EXDEV;
+			}
 			return (error);
+		}
 		NDFREE_PNBUF(&nd);
 		if ((nd.ni_resflags & NIRES_EMPTYPATH) != 0) {
 			error = priv_check(td, PRIV_VFS_FHOPEN);
@@ -1785,11 +1971,12 @@ kern_linkat(struct thread *td, int fd1, int fd2, const char *path1,
 
 	if (!(segflag == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_linkat_dqimpl(td, fd1, fd2, path1, path2, segflag, flag));
-	dq_intent_enter(td, &dqi, DQ_ROP_LINK,
-	    DQI_USER | DQI_NO_ERESTART | DQI_PATH2);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_LINK, DQI_USER | DQI_NO_ERESTART | DQI_PATH2,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
 	dq_intent_slot(&dqi, 0, path1, segflag, fd1);
 	dq_intent_slot(&dqi, 1, path2, segflag, fd2);
 	dqerror = kern_linkat_dqimpl(td, fd1, fd2, path1, path2, segflag, flag);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -1915,8 +2102,8 @@ sys_symlinkat(struct thread *td, struct symlinkat_args *uap)
 }
 
 static int
-kern_symlinkat_dqimpl(struct thread *td, const char *path1, int fd, const char *path2,
-    enum uio_seg segflg)
+kern_symlinkat_dqimpl(struct thread *td, const char *path1, enum uio_seg seg1,
+    int fd, const char *path2, enum uio_seg segflg)
 {
 	struct mount *mp;
 	struct vattr vattr;
@@ -1925,7 +2112,7 @@ kern_symlinkat_dqimpl(struct thread *td, const char *path1, int fd, const char *
 	struct nameidata nd;
 	int error;
 
-	if (segflg == UIO_SYSSPACE) {
+	if (seg1 == UIO_SYSSPACE) {
 		syspath = path1;
 	} else {
 		tmppath = uma_zalloc(namei_zone, M_WAITOK);
@@ -1980,7 +2167,7 @@ out2:
 	if (error == ERELOOKUP)
 		goto restart;
 out:
-	if (segflg != UIO_SYSSPACE)
+	if (seg1 != UIO_SYSSPACE)
 		uma_zfree(namei_zone, tmppath);
 	return (error);
 }
@@ -1995,14 +2182,34 @@ kern_symlinkat(struct thread *td, const char *path1, int fd, const char *path2,
     enum uio_seg segflg)
 {
 	struct dq_intent dqi;
+	char *target;
+	size_t len;
 	int dqerror;
 
 	if (!(segflg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
-		return (kern_symlinkat_dqimpl(td, path1, fd, path2, segflg));
-	dq_intent_enter(td, &dqi, DQ_ROP_SYMLINK, DQI_USER);
+		return (kern_symlinkat_dqimpl(td, path1, segflg, fd, path2,
+		    segflg));
+	/*
+	 * The target is copied once and posted as path2 (data, no start);
+	 * the symlink created on PASS holds exactly the posted bytes.
+	 */
+	target = uma_zalloc(namei_zone, M_WAITOK);
+	dqerror = copyinstr(path1, target, MAXPATHLEN, &len);
+	if (dqerror != 0) {
+		uma_zfree(namei_zone, target);
+		return (dqerror);
+	}
+	dq_intent_enter_served(td, &dqi, DQ_ROP_SYMLINK, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
+	dqi.di_cmode = ACCESSPERMS & ~td->td_proc->p_pd->pd_cmask;
+	dqi.di_text = target;
+	dqi.di_textlen = len - 1;
 	dq_intent_slot(&dqi, 0, path2, segflg, fd);
-	dqerror = kern_symlinkat_dqimpl(td, path1, fd, path2, segflg);
+	dqerror = kern_symlinkat_dqimpl(td, target, UIO_SYSSPACE, fd, path2,
+	    segflg);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
+	uma_zfree(namei_zone, target);
 	return (dqerror);
 }
 
@@ -2245,9 +2452,11 @@ kern_funlinkat(struct thread *td, int dfd, const char *path, int fd,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_funlinkat_dqimpl(td, dfd, path, fd, pathseg, flag, oldinum));
-	dq_intent_enter(td, &dqi, DQ_ROP_UNLINK, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_UNLINK, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
 	dq_intent_slot(&dqi, 0, path, pathseg, dfd);
 	dqerror = kern_funlinkat_dqimpl(td, dfd, path, fd, pathseg, flag, oldinum);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -2370,6 +2579,64 @@ sys_faccessat(struct thread *td, struct faccessat_args *uap)
 	    uap->amode));
 }
 
+/* access(2) answered ATTR: D166 on the presented identity. */
+static int
+dq_access_ident(struct thread *td, const struct dq_ident_file *id, int flag,
+    int amode)
+{
+	struct ucred *cred, *usecred;
+	int accmode, error;
+
+	cred = td->td_ucred;
+	if ((flag & AT_EACCESS) == 0 &&
+	    ((cred->cr_uid != cred->cr_ruid ||
+	    cred->cr_rgid != cred->cr_gid))) {
+		usecred = crdup(cred);
+		usecred->cr_uid = cred->cr_ruid;
+		usecred->cr_gid = cred->cr_rgid;
+	} else
+		usecred = cred;
+	accmode = 0;
+	if ((amode & R_OK) != 0)
+		accmode |= VREAD;
+	if ((amode & W_OK) != 0)
+		accmode |= VWRITE;
+	if ((amode & X_OK) != 0)
+		accmode |= VEXEC;
+	error = dqres_ident_access(id, accmode, usecred);
+	if (usecred != cred)
+		crfree(usecred);
+	return (error);
+}
+
+/* faccessat(fd, "", AT_EMPTY_PATH) of a served descriptor (D164). */
+static int
+dq_emptypath_access(struct thread *td, int fd, int flag, int amode,
+    struct ucred *cred)
+{
+	struct dq_ident_file *id;
+	struct file *fp;
+	struct ucred *save;
+	uint64_t qgid;
+	bool closed;
+	int error;
+
+	/* kern_accessat_dqimpl swapped td_ucred; use the caller's. */
+	save = td->td_ucred;
+	td->td_ucred = cred;
+	error = dqres_emptypath_file(td, fd, &cap_fstat_rights, &fp);
+	if (error == 0) {
+		id = malloc(sizeof(*id), M_TEMP, M_WAITOK);
+		error = dqres_file_ident(fp, id, &qgid, &closed);
+		if (error == 0)
+			error = dq_access_ident(td, id, flag, amode);
+		free(id, M_TEMP);
+		fdrop(fp, td);
+	}
+	td->td_ucred = save;
+	return (error);
+}
+
 static int
 kern_accessat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, int flag, int amode)
@@ -2403,8 +2670,13 @@ kern_accessat_dqimpl(struct thread *td, int fd, const char *path,
 	NDINIT_ATRIGHTS(&nd, LOOKUP, LOCKSHARED | LOCKLEAF |
 	    AUDITVNODE1 | at2cnpflags(flag, AT_RESOLVE_BENEATH | AT_SYMLINK_NOFOLLOW |
 	    AT_EMPTY_PATH), pathseg, path, fd, &cap_fstat_rights);
-	if ((error = namei(&nd)) != 0)
+	if ((error = namei(&nd)) != 0) {
+		/* D164: a served descriptor's own access, no event. */
+		if (error == ENOTDIR &&
+		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0)
+			error = dq_emptypath_access(td, fd, flag, amode, cred);
 		goto out;
+	}
 	vp = nd.ni_vp;
 
 	error = vn_access(vp, amode, usecred, td);
@@ -2416,6 +2688,18 @@ out:
 		crfree(usecred);
 	}
 	return (error);
+}
+
+static int
+kern_accessat_dqserved(struct thread *td, struct dq_intent *di, int flag,
+    int amode)
+{
+	const struct dq_ident_file *id;
+
+	id = dqres_ident(di, DQ_RESOLVE_ATTR);
+	if (id == NULL)
+		return (EIO);
+	return (dq_access_ident(td, id, flag, amode));
 }
 
 /*
@@ -2432,10 +2716,12 @@ kern_accessat(struct thread *td, int fd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_accessat_dqimpl(td, fd, path, pathseg, flag, amode));
-	dq_intent_enter(td, &dqi, DQ_ROP_ACCESS, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_ACCESS, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dqi.di_mode = amode;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_accessat_dqimpl(td, fd, path, pathseg, flag, amode);
+	DQRES_SERVED(td, &dqi, dqerror, kern_accessat_dqserved(td, &dqi, flag, amode));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -2743,6 +3029,23 @@ kern_statat_dqimpl(struct thread *td, int flag, int fd, const char *path,
 	return (error);
 }
 
+static int
+kern_statat_dqserved(struct thread *td, struct dq_intent *di,
+    struct stat *sbp)
+{
+	const struct dq_ident_file *id;
+
+	id = dqres_ident(di, DQ_RESOLVE_ATTR);
+	if (id == NULL)
+		return (EIO);
+	dqres_ident_to_stat(id, sbp);
+#ifdef KTRACE
+	if (KTRPOINT(td, KTR_STRUCT))
+		ktrstat_error(sbp, 0);
+#endif
+	return (0);
+}
+
 /*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_STAT; kernel callers pass kernel-space paths and
@@ -2757,9 +3060,11 @@ kern_statat(struct thread *td, int flag, int fd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_statat_dqimpl(td, flag, fd, path, pathseg, sbp));
-	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_STAT, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_statat_dqimpl(td, flag, fd, path, pathseg, sbp);
+	DQRES_SERVED(td, &dqi, dqerror, kern_statat_dqserved(td, &dqi, sbp));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -2906,6 +3211,17 @@ kern_pathconf_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
 	return (error);
 }
 
+static int
+kern_pathconf_dqserved(struct dq_intent *di, int name, long *valuep)
+{
+	const struct dq_ident_file *id;
+
+	id = dqres_ident(di, DQ_RESOLVE_ATTR);
+	if (id == NULL)
+		return (EIO);
+	return (dqres_ident_pathconf(id, name, valuep));
+}
+
 /*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_STAT; kernel callers pass kernel-space paths and
@@ -2920,9 +3236,11 @@ kern_pathconf(struct thread *td, const char *path, enum uio_seg pathseg,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_pathconf_dqimpl(td, path, pathseg, name, flags, valuep));
-	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_STAT, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
 	dqerror = kern_pathconf_dqimpl(td, path, pathseg, name, flags, valuep);
+	DQRES_SERVED(td, &dqi, dqerror, kern_pathconf_dqserved(&dqi, name, valuep));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -2964,6 +3282,7 @@ static int
 kern_readlinkat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, char *buf, enum uio_seg bufseg, size_t count)
 {
+	struct file *fp;
 	struct vnode *vp;
 	struct nameidata nd;
 	int error;
@@ -2974,14 +3293,43 @@ kern_readlinkat_dqimpl(struct thread *td, int fd, const char *path,
 	NDINIT_AT(&nd, LOOKUP, NOFOLLOW | LOCKSHARED | LOCKLEAF | AUDITVNODE1 |
 	    EMPTYPATH, pathseg, path, fd);
 
-	if ((error = namei(&nd)) != 0)
+	if ((error = namei(&nd)) != 0) {
+		/* D164: a served file is not a symlink (EINVAL, no event). */
+		if (error == ENOTDIR &&
+		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
+		    dqres_emptypath_file(td, fd, &cap_no_rights, &fp) == 0) {
+			fdrop(fp, td);
+			error = EINVAL;
+		}
 		return (error);
+	}
 	NDFREE_PNBUF(&nd);
 	vp = nd.ni_vp;
 
 	error = kern_readlink_vp(vp, buf, bufseg, count, td);
 	vput(vp);
 
+	return (error);
+}
+
+/* readlink(2) answered LINK: the target, as kern_readlink_vp copies it. */
+static int
+kern_readlinkat_dqserved(struct thread *td, struct dq_intent *di, char *buf,
+    enum uio_seg bufseg, size_t count)
+{
+	size_t len;
+	int error;
+
+	if (di->di_res.da_kind != DQ_RESOLVE_LINK)
+		return (EIO);
+	len = MIN(count, di->di_res.da_targetlen);
+	error = 0;
+	if (bufseg == UIO_SYSSPACE)
+		bcopy(di->di_res.da_target, buf, len);
+	else
+		error = copyout(di->di_res.da_target, buf, len);
+	if (error == 0)
+		td->td_retval[0] = len;
 	return (error);
 }
 
@@ -2999,9 +3347,11 @@ kern_readlinkat(struct thread *td, int fd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_readlinkat_dqimpl(td, fd, path, pathseg, buf, bufseg, count));
-	dq_intent_enter(td, &dqi, DQ_ROP_READLINK, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_READLINK, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_LINK));
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_readlinkat_dqimpl(td, fd, path, pathseg, buf, bufseg, count);
+	DQRES_SERVED(td, &dqi, dqerror, kern_readlinkat_dqserved(td, &dqi, buf, bufseg, count));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -3124,6 +3474,8 @@ static int
 kern_chflagsat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, u_long flags, int atflag)
 {
+	struct file *fp;
+	struct vattr va;
 	struct nameidata nd;
 	struct vnode *vp;
 	int error;
@@ -3136,8 +3488,19 @@ kern_chflagsat_dqimpl(struct thread *td, int fd, const char *path,
 	NDINIT_ATRIGHTS(&nd, LOOKUP, at2cnpflags(atflag, AT_SYMLINK_NOFOLLOW |
 	    AT_RESOLVE_BENEATH | AT_EMPTY_PATH) | AUDITVNODE1, pathseg, path,
 	    fd, &cap_fchflags_rights);
-	if ((error = namei(&nd)) != 0)
+	if ((error = namei(&nd)) != 0) {
+		/* D164: the served descriptor's own fchflags, no event. */
+		if (error == ENOTDIR &&
+		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
+		    dqres_emptypath_file(td, fd, &cap_fchflags_rights,
+		    &fp) == 0) {
+			VATTR_NULL(&va);
+			va.va_flags = flags;
+			error = fo_setattr(fp, &va, td->td_ucred, td);
+			fdrop(fp, td);
+		}
 		return (error);
+	}
 	NDFREE_PNBUF(&nd);
 	vp = nd.ni_vp;
 
@@ -3165,6 +3528,29 @@ out:
 	return (error);
 }
 
+/* chflags(2) answered OK or FD: the full flags word through fo_setattr. */
+static int
+kern_chflagsat_dqserved(struct thread *td, struct dq_intent *di,
+    u_long flags)
+{
+	struct file *fp;
+	struct vattr va;
+	int error;
+
+	if (di->di_res.da_kind == DQ_RESOLVE_OK)
+		return (0);
+	if (di->di_res.da_kind != DQ_RESOLVE_FD)
+		return (EIO);
+	error = dqres_take_file_raw(td, di, FREAD, &fp);
+	if (error != 0)
+		return (error);
+	VATTR_NULL(&va);
+	va.va_flags = flags;
+	error = fo_setattr(fp, &va, td->td_ucred, td);
+	fdrop(fp, td);
+	return (error);
+}
+
 /*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_SETATTR; kernel callers pass kernel-space paths and
@@ -3175,13 +3561,33 @@ kern_chflagsat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, u_long flags, int atflag)
 {
 	struct dq_intent dqi;
+	struct dq_setattr_body sb;
 	int dqerror;
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_chflagsat_dqimpl(td, fd, path, pathseg, flags, atflag));
-	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	/*
+	 * A flags word wider than st_flags (VNOVAL included) has no 32-bit
+	 * body: OK is withheld and nothing is posted in the mask; the FD path
+	 * hands the full word to fo_setattr, so the answer is a real file's
+	 * (EOPNOTSUPP, or no change for VNOVAL).
+	 */
+	dq_intent_enter_served(td, &dqi, DQ_ROP_SETATTR, DQI_USER,
+	    dq_setattr_accept(flags > UINT32_MAX));
+	bzero(&sb, sizeof(sb));
+	if (flags <= UINT32_MAX) {
+		sb.dsa_mask = DQ_SETATTR_FLAGS;
+		sb.dsa_flags = (uint32_t)flags;
+	}
+	/* Privilege only matters for system flags; VADMIN always may. */
+	dqres_setattr_priv(td, &sb, DQ_SAPRIV_ADMIN |
+	    ((flags & SF_SETTABLE) != 0 ? DQ_SAPRIV_SYSFLAGS |
+	    DQ_SAPRIV_SECURELEVEL : 0));
+	dqi.di_setattr = &sb;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_chflagsat_dqimpl(td, fd, path, pathseg, flags, atflag);
+	DQRES_SERVED(td, &dqi, dqerror, kern_chflagsat_dqserved(td, &dqi,
+	    flags));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -3314,6 +3720,7 @@ static int
 kern_fchmodat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, mode_t mode, int flag)
 {
+	struct file *fp;
 	struct nameidata nd;
 	struct vnode *vp;
 	int error;
@@ -3326,8 +3733,17 @@ kern_fchmodat_dqimpl(struct thread *td, int fd, const char *path,
 	NDINIT_ATRIGHTS(&nd, LOOKUP, at2cnpflags(flag, AT_SYMLINK_NOFOLLOW |
 	    AT_RESOLVE_BENEATH | AT_EMPTY_PATH) | AUDITVNODE1, pathseg, path,
 	    fd, &cap_fchmod_rights);
-	if ((error = namei(&nd)) != 0)
+	if ((error = namei(&nd)) != 0) {
+		/* D164: the served descriptor's own fchmod, no event. */
+		if (error == ENOTDIR &&
+		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
+		    dqres_emptypath_file(td, fd, &cap_fchmod_rights,
+		    &fp) == 0) {
+			error = fo_chmod(fp, mode, td->td_ucred, td);
+			fdrop(fp, td);
+		}
 		return (error);
+	}
 	NDFREE_PNBUF(&nd);
 	vp = nd.ni_vp;
 #ifdef MAC
@@ -3355,14 +3771,32 @@ kern_fchmodat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, mode_t mode, int flag)
 {
 	struct dq_intent dqi;
+	struct dq_setattr_body sb;
 	int dqerror;
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_fchmodat_dqimpl(td, fd, path, pathseg, mode, flag));
-	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_SETATTR, DQI_USER,
+	    dq_setattr_accept((mode & (S_ISUID | S_ISGID)) != 0));
+	/*
+	 * D161: set-id bits never reach a served identity (I3).  OK is
+	 * withheld so a PASS keeps the real chmod and an FD answer gets
+	 * D96's EPERM; the controller cannot report success.
+	 */
+	bzero(&sb, sizeof(sb));
+	sb.dsa_mask = DQ_SETATTR_MODE;
+	sb.dsa_mode = mode & ALLPERMS;
+	/*
+	 * The owner is not known before the answer, so VADMIN's privilege
+	 * is evaluated; SETGID only when the mode sets it.
+	 */
+	dqres_setattr_priv(td, &sb, DQ_SAPRIV_ADMIN |
+	    ((mode & S_ISGID) != 0 ? DQ_SAPRIV_SETGID : 0));
+	dqi.di_setattr = &sb;
 	dqi.di_mode = mode;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_fchmodat_dqimpl(td, fd, path, pathseg, mode, flag);
+	DQRES_SERVED(td, &dqi, dqerror, dq_setattr_dqserved(td, &dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -3474,6 +3908,7 @@ static int
 kern_fchownat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, int uid, int gid, int flag)
 {
+	struct file *fp;
 	struct nameidata nd;
 	struct vnode *vp;
 	int error;
@@ -3487,8 +3922,17 @@ kern_fchownat_dqimpl(struct thread *td, int fd, const char *path,
 	    AT_RESOLVE_BENEATH | AT_EMPTY_PATH) | AUDITVNODE1, pathseg, path,
 	    fd, &cap_fchown_rights);
 
-	if ((error = namei(&nd)) != 0)
+	if ((error = namei(&nd)) != 0) {
+		/* D164: the served descriptor's own fchown, no event. */
+		if (error == ENOTDIR &&
+		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
+		    dqres_emptypath_file(td, fd, &cap_fchown_rights,
+		    &fp) == 0) {
+			error = fo_chown(fp, uid, gid, td->td_ucred, td);
+			fdrop(fp, td);
+		}
 		return (error);
+	}
 	NDFREE_PNBUF(&nd);
 	vp = nd.ni_vp;
 #ifdef MAC
@@ -3516,13 +3960,33 @@ kern_fchownat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, int uid, int gid, int flag)
 {
 	struct dq_intent dqi;
+	struct dq_setattr_body sb;
 	int dqerror;
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_fchownat_dqimpl(td, fd, path, pathseg, uid, gid, flag));
-	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_SETATTR, DQI_USER,
+	    dq_setattr_accept(false));
+	bzero(&sb, sizeof(sb));
+	if (uid != -1) {
+		sb.dsa_mask |= DQ_SETATTR_UID;
+		sb.dsa_uid = uid;
+	}
+	if (gid != -1) {
+		sb.dsa_mask |= DQ_SETATTR_GID;
+		sb.dsa_gid = gid;
+	}
+	/*
+	 * Privilege can matter only for a change to another uid or to a
+	 * group the caller is not in (the owner is not known yet).
+	 */
+	if ((uid != -1 && (uid_t)uid != td->td_ucred->cr_uid) ||
+	    (gid != -1 && !groupmember((gid_t)gid, td->td_ucred)))
+		dqres_setattr_priv(td, &sb, DQ_SAPRIV_CHOWN | DQ_SAPRIV_ADMIN);
+	dqi.di_setattr = &sb;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_fchownat_dqimpl(td, fd, path, pathseg, uid, gid, flag);
+	DQRES_SERVED(td, &dqi, dqerror, dq_setattr_dqserved(td, &dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -3780,13 +4244,44 @@ kern_utimesat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, const struct timeval *tptr, enum uio_seg tptrseg)
 {
 	struct dq_intent dqi;
+	struct dq_setattr_body sb;
+	struct timeval ktv[2];
+	struct timespec ts[2];
+	const struct timeval *ktp;
+	enum uio_seg tseg;
 	int dqerror;
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_utimesat_dqimpl(td, fd, path, pathseg, tptr, tptrseg));
-	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	/*
+	 * D161: the times are copied in once (only from user space) and the
+	 * impl applies exactly what was posted.
+	 */
+	ktp = tptr;
+	tseg = tptrseg;
+	if (tptr != NULL && tptrseg == UIO_USERSPACE) {
+		dqerror = copyin(tptr, ktv, sizeof(ktv));
+		if (dqerror != 0)
+			return (dqerror);
+		ktp = ktv;
+		tseg = UIO_SYSSPACE;
+	}
+	dq_intent_enter_served(td, &dqi, DQ_ROP_SETATTR, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK) | DQ_RACCEPT(DQ_RESOLVE_FD));
+	bzero(&sb, sizeof(sb));
+	if (ktp == NULL)
+		dq_setattr_times(&sb, NULL);	/* the _NOW flags, UTIMES_NULL */
+	else {
+		TIMEVAL_TO_TIMESPEC(&ktp[0], &ts[0]);
+		TIMEVAL_TO_TIMESPEC(&ktp[1], &ts[1]);
+		dq_setattr_times(&sb, ts);
+		/* Explicit times need ownership or PRIV_VFS_ADMIN. */
+		dqres_setattr_priv(td, &sb, DQ_SAPRIV_ADMIN);
+	}
+	dqi.di_setattr = &sb;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
-	dqerror = kern_utimesat_dqimpl(td, fd, path, pathseg, tptr, tptrseg);
+	dqerror = kern_utimesat_dqimpl(td, fd, path, pathseg, ktp, tseg);
+	DQRES_SERVED(td, &dqi, dqerror, dq_setattr_dqserved(td, &dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -3849,13 +4344,44 @@ kern_lutimes(struct thread *td, const char *path, enum uio_seg pathseg,
     const struct timeval *tptr, enum uio_seg tptrseg)
 {
 	struct dq_intent dqi;
+	struct dq_setattr_body sb;
+	struct timeval ktv[2];
+	struct timespec ts[2];
+	const struct timeval *ktp;
+	enum uio_seg tseg;
 	int dqerror;
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_lutimes_dqimpl(td, path, pathseg, tptr, tptrseg));
-	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	/*
+	 * D161: the times are copied in once (only from user space) and the
+	 * impl applies exactly what was posted.
+	 */
+	ktp = tptr;
+	tseg = tptrseg;
+	if (tptr != NULL && tptrseg == UIO_USERSPACE) {
+		dqerror = copyin(tptr, ktv, sizeof(ktv));
+		if (dqerror != 0)
+			return (dqerror);
+		ktp = ktv;
+		tseg = UIO_SYSSPACE;
+	}
+	dq_intent_enter_served(td, &dqi, DQ_ROP_SETATTR, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK) | DQ_RACCEPT(DQ_RESOLVE_FD));
+	bzero(&sb, sizeof(sb));
+	if (ktp == NULL)
+		dq_setattr_times(&sb, NULL);	/* the _NOW flags, UTIMES_NULL */
+	else {
+		TIMEVAL_TO_TIMESPEC(&ktp[0], &ts[0]);
+		TIMEVAL_TO_TIMESPEC(&ktp[1], &ts[1]);
+		dq_setattr_times(&sb, ts);
+		/* Explicit times need ownership or PRIV_VFS_ADMIN. */
+		dqres_setattr_priv(td, &sb, DQ_SAPRIV_ADMIN);
+	}
+	dqi.di_setattr = &sb;
 	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
-	dqerror = kern_lutimes_dqimpl(td, path, pathseg, tptr, tptrseg);
+	dqerror = kern_lutimes_dqimpl(td, path, pathseg, ktp, tseg);
+	DQRES_SERVED(td, &dqi, dqerror, dq_setattr_dqserved(td, &dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -3965,6 +4491,8 @@ kern_utimensat_dqimpl(struct thread *td, int fd, const char *path,
 {
 	struct nameidata nd;
 	struct vnode *vp;
+	struct file *fp;
+	struct vattr va;
 	struct timespec ts[2];
 	int error, flags;
 
@@ -3977,8 +4505,25 @@ kern_utimensat_dqimpl(struct thread *td, int fd, const char *path,
 	NDINIT_ATRIGHTS(&nd, LOOKUP, at2cnpflags(flag, AT_SYMLINK_NOFOLLOW |
 	    AT_RESOLVE_BENEATH | AT_EMPTY_PATH) | AUDITVNODE1,
 	    pathseg, path, fd, &cap_futimes_rights);
-	if ((error = namei(&nd)) != 0)
+	if ((error = namei(&nd)) != 0) {
+		/* D164: the served descriptor's own futimens, no event. */
+		if (error == ENOTDIR &&
+		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
+		    dqres_emptypath_file(td, fd, &cap_futimes_rights,
+		    &fp) == 0) {
+			error = 0;
+			if ((flags & UTIMENS_EXIT) == 0) {
+				VATTR_NULL(&va);
+				va.va_atime = ts[0];
+				va.va_mtime = ts[1];
+				if ((flags & UTIMENS_NULL) != 0)
+					va.va_vaflags |= VA_UTIMES_NULL;
+				error = fo_setattr(fp, &va, td->td_ucred, td);
+			}
+			fdrop(fp, td);
+		}
 		return (error);
+	}
 	/*
 	 * We are allowed to call namei() regardless of 2xUTIME_OMIT.
 	 * POSIX states:
@@ -4013,13 +4558,35 @@ kern_utimensat(struct thread *td, int fd, const char *path,
     int flag)
 {
 	struct dq_intent dqi;
+	struct dq_setattr_body sb;
+	struct timespec kts[2];
+	const struct timespec *ktp;
+	enum uio_seg tseg;
 	int dqerror;
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_utimensat_dqimpl(td, fd, path, pathseg, tptr, tptrseg, flag));
-	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	/* D161: the times are copied in once, only from user space. */
+	ktp = tptr;
+	tseg = tptrseg;
+	if (tptr != NULL && tptrseg == UIO_USERSPACE) {
+		dqerror = copyin(tptr, kts, sizeof(kts));
+		if (dqerror != 0)
+			return (dqerror);
+		ktp = kts;
+		tseg = UIO_SYSSPACE;
+	}
+	dq_intent_enter_served(td, &dqi, DQ_ROP_SETATTR, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK) | DQ_RACCEPT(DQ_RESOLVE_FD));
+	bzero(&sb, sizeof(sb));
+	dq_setattr_times(&sb, ktp);
+	/* Explicit times (not both UTIME_NOW) need ownership or privilege. */
+	if ((sb.dsa_mask & DQ_SETATTR_F_UTIMES_NULL) == 0)
+		dqres_setattr_priv(td, &sb, DQ_SAPRIV_ADMIN);
+	dqi.di_setattr = &sb;
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
-	dqerror = kern_utimensat_dqimpl(td, fd, path, pathseg, tptr, tptrseg, flag);
+	dqerror = kern_utimensat_dqimpl(td, fd, path, pathseg, ktp, tseg, flag);
+	DQRES_SERVED(td, &dqi, dqerror, dq_setattr_dqserved(td, &dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -4095,6 +4662,40 @@ out:
 }
 
 /*
+ * truncate(2) answered OK (the controller truncated) or FD (review
+ * amendment 1): kern_truncate's VWRITE check on the presented identity
+ * (D166, with the append-only rule of ufs_setattr), the file bound
+ * writable (the mint carried DQ_MINT_F_WRITE), RLIMIT_FSIZE, then
+ * fo_truncate.
+ */
+static int
+kern_truncate_dqserved(struct thread *td, struct dq_intent *di, off_t length)
+{
+	const struct dq_ident_file *id;
+	struct file *fp;
+	int error;
+
+	if (di->di_res.da_kind == DQ_RESOLVE_OK)
+		return (0);
+	id = dqres_ident(di, DQ_RESOLVE_FD);
+	if (id == NULL)
+		return (EIO);
+	error = dqres_ident_access(id, VWRITE, td->td_ucred);
+	if (error == 0 && (id->di_flags & (SF_APPEND | UF_APPEND)) != 0)
+		error = EPERM;
+	if (error != 0)
+		return (error);		/* dq_intent_leave retires it */
+	error = dqres_take_file_raw(td, di, FREAD | FWRITE, &fp);
+	if (error != 0)
+		return (error);
+	error = vn_rlimit_trunc(length, td);
+	if (error == 0)
+		error = fo_truncate(fp, length, td->td_ucred, td);
+	fdrop(fp, td);
+	return (error);
+}
+
+/*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_TRUNCATE; kernel callers pass kernel-space paths and
  * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
@@ -4104,13 +4705,27 @@ kern_truncate(struct thread *td, const char *path, enum uio_seg pathseg,
     off_t length)
 {
 	struct dq_intent dqi;
+	struct dq_setattr_body sb;
 	int dqerror;
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_truncate_dqimpl(td, path, pathseg, length));
-	dq_intent_enter(td, &dqi, DQ_ROP_TRUNCATE, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_TRUNCATE, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_FD) |
+	    (length >= 0 && (rlim_t)length > lim_cur(td, RLIMIT_FSIZE) ? 0 :
+	    DQ_RACCEPT(DQ_RESOLVE_OK)));
+	/*
+	 * D161: the size; a length past RLIMIT_FSIZE withholds OK, so the
+	 * FD path applies SIGXFSZ and EFBIG (a negative one is EINVAL in the
+	 * impl before any lookup).
+	 */
+	bzero(&sb, sizeof(sb));
+	sb.dsa_mask = DQ_SETATTR_SIZE;
+	sb.dsa_size = length;
+	dqi.di_setattr = &sb;
 	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
 	dqerror = kern_truncate_dqimpl(td, path, pathseg, length);
+	DQRES_SERVED(td, &dqi, dqerror, kern_truncate_dqserved(td, &dqi, length));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -4521,11 +5136,13 @@ kern_renameat(struct thread *td, int fromfd, const char *from, int tofd,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_renameat_dqimpl(td, fromfd, from, tofd, to, pathseg, flags));
-	dq_intent_enter(td, &dqi, DQ_ROP_RENAME,
-	    DQI_USER | DQI_NO_ERESTART | DQI_PATH2);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_RENAME, DQI_USER | DQI_NO_ERESTART | DQI_PATH2,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
+	dqi.di_mode = flags;
 	dq_intent_slot(&dqi, 0, from, pathseg, fromfd);
 	dq_intent_slot(&dqi, 1, to, pathseg, tofd);
 	dqerror = kern_renameat_dqimpl(td, fromfd, from, tofd, to, pathseg, flags);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -4623,10 +5240,13 @@ kern_mkdirat(struct thread *td, int fd, const char *path, enum uio_seg segflg,
 
 	if (!(segflg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_mkdirat_dqimpl(td, fd, path, segflg, mode));
-	dq_intent_enter(td, &dqi, DQ_ROP_MKDIR, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_MKDIR, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
+	dqi.di_cmode = (mode & ACCESSPERMS) & ~td->td_proc->p_pd->pd_cmask;
 	dqi.di_mode = mode;
 	dq_intent_slot(&dqi, 0, path, segflg, fd);
 	dqerror = kern_mkdirat_dqimpl(td, fd, path, segflg, mode);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -4750,9 +5370,11 @@ kern_frmdirat(struct thread *td, int dfd, const char *path, int fd,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_frmdirat_dqimpl(td, dfd, path, fd, pathseg, flag));
-	dq_intent_enter(td, &dqi, DQ_ROP_RMDIR, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_RMDIR, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_OK));
 	dq_intent_slot(&dqi, 0, path, pathseg, dfd);
 	dqerror = kern_frmdirat_dqimpl(td, dfd, path, fd, pathseg, flag);
+	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -5400,6 +6022,7 @@ kern_fhlinkat(struct thread *td, int fd, const char *path,
 
 	if (pathseg != UIO_USERSPACE || !DQRES_ATTACHED_TD(td))
 		return (kern_fhlinkat_dqimpl(td, fd, path, pathseg, fhp));
+	/* PASS only (review): the handle's file is real, its link too. */
 	dq_intent_enter(td, &dqi, DQ_ROP_LINK, DQI_USER | DQI_NO_ERESTART);
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern_fhlinkat_dqimpl(td, fd, path, pathseg, fhp);

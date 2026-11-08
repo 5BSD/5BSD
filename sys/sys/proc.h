@@ -581,6 +581,8 @@ enum {
 #define	TDP2_UEXTERR	0x00000020 /* User set ext error reporting ptr */
 #define	TDP2_INOTIFY_LOOKUP 0x00000040 /* Internal watch directory scan */
 #define	TDP2_DQ_NORESOLVE 0x00000080 /* Lookups exempt from DQ RESOLVE */
+#define	TDP2_DQ_INJECTED 0x00000100 /* DQ fault injection dropped a
+					      completion (D157 test) */
 
 /*
  * Reasons that the current thread can not be run yet.

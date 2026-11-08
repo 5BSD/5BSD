@@ -107,6 +107,26 @@ linux_encode_minor(dev_t _dev)
 	return (_dev == NODEV ? 0 : minor(_dev) & 0xfffff);
 }
 
+/*
+ * A served descriptor's statx mount id (DescriptorQueue 1c-iii-a): the
+ * same as a path statx answered ATTR for that object gives
+ * (linux_dq_mount_id), or the reserved closed-queue id.
+ */
+static uint64_t
+linux_dq_fp_mount_id(struct file *fp)
+{
+	struct dq_ident_file *id;
+	uint64_t mntid, qgid;
+	bool closed;
+
+	id = malloc(sizeof(*id), M_TEMP, M_WAITOK);
+	mntid = 0;
+	if (dqres_file_ident(fp, id, &qgid, &closed) == 0)
+		mntid = linux_dq_mount_id(qgid, id->di_statfs.ds_fsid, closed);
+	free(id, M_TEMP);
+	return (mntid);
+}
+
 static int
 linux_kern_fstat_id(struct thread *td, int fd, struct stat *sbp,
     uint64_t *mntid)
@@ -132,7 +152,8 @@ linux_kern_fstat_id(struct thread *td, int fd, struct stat *sbp,
 		translate_vnhook_major_minor(vp, sbp);
 		if (mntid != NULL)
 			*mntid = linux_vnode_mount_id(vp);
-	}
+	} else if (error == 0 && mntid != NULL && fp->f_type == DTYPE_DQ)
+		*mntid = linux_dq_fp_mount_id(fp);
 	fdrop(fp, td);
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
@@ -177,6 +198,27 @@ linux_kern_statat_id_dqimpl(struct thread *td, int flag, int fd,
 	return (error);
 }
 
+/* The Linux stat family answered ATTR (D160), with a served mount id. */
+static int
+linux_kern_statat_id_dqserved(struct thread *td, struct dq_intent *di,
+    struct stat *sbp, uint64_t *mntid)
+{
+	const struct dq_ident_file *id;
+
+	id = dqres_ident(di, DQ_RESOLVE_ATTR);
+	if (id == NULL)
+		return (EIO);
+	dqres_ident_to_stat(id, sbp);
+	if (mntid != NULL)
+		*mntid = linux_dq_mount_id(di->di_res.da_qgid,
+		    id->di_statfs.ds_fsid, false);
+#ifdef KTRACE
+	if (KTRPOINT(td, KTR_STRUCT))
+		ktrstat_error(sbp, 0);
+#endif
+	return (0);
+}
+
 /*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of the Linux
  * stat family's user-supplied path (stat, lstat, newfstatat, statx),
@@ -192,10 +234,13 @@ linux_kern_statat_id(struct thread *td, int flag, int fd, const char *path,
 	if (pathseg != UIO_USERSPACE || !DQRES_ATTACHED_TD(td))
 		return (linux_kern_statat_id_dqimpl(td, flag, fd, path,
 		    pathseg, sbp, mntid));
-	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_STAT, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = linux_kern_statat_id_dqimpl(td, flag, fd, path, pathseg,
 	    sbp, mntid);
+	DQRES_SERVED(td, &dqi, dqerror, linux_kern_statat_id_dqserved(td,
+	    &dqi, sbp, mntid));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }

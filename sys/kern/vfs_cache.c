@@ -3342,6 +3342,30 @@ out:
 }
 
 /*
+ * realpath(3) answered ATTR (D160, D174): the presented di_path.  With a
+ * real root (1c-iii-a) it is a real-namespace path, the controller's
+ * obligation; it is shown as is.
+ */
+static int
+kern___realpathat_dqserved(struct dq_intent *di, char *buf, size_t size,
+    enum uio_seg pathseg)
+{
+	const struct dq_ident_file *id;
+	size_t len;
+
+	id = dqres_ident(di, DQ_RESOLVE_ATTR);
+	if (id == NULL)
+		return (EIO);
+	len = id->di_pathlen + 1;
+	if (size < len)
+		return (ENAMETOOLONG);
+	if (pathseg == UIO_USERSPACE)
+		return (copyout(id->di_path, buf, len));
+	memcpy(buf, id->di_path, len);
+	return (0);
+}
+
+/*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_REALPATH; kernel callers pass kernel-space paths and
  * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
@@ -3355,9 +3379,12 @@ kern___realpathat(struct thread *td, int fd, const char *path, char *buf,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern___realpathat_dqimpl(td, fd, path, buf, size, flags, pathseg));
-	dq_intent_enter(td, &dqi, DQ_ROP_REALPATH, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_REALPATH, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern___realpathat_dqimpl(td, fd, path, buf, size, flags, pathseg);
+	DQRES_SERVED(td, &dqi, dqerror, kern___realpathat_dqserved(&dqi, buf,
+	    size, pathseg));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }

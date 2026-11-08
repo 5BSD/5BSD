@@ -56,6 +56,36 @@
 SDT_PROBE_DECLARE(capsicum, , , syscall__deny);
 SDT_PROBE_DECLARE(capsicum, , , trap__signal);
 
+/*
+ * DescriptorQueue (D157): EDQRESOLVED is produced only by kern_dqres.c and
+ * consumed only by the completion in a marked kern_X wrapper.  One that
+ * escapes a syscall is mapped to EIO here, right after sy_call returns and
+ * before the audit record, the DTrace return probe, KTR and
+ * sv_set_syscall_retval see it, both as the returned error and as a
+ * td_errno a TDP_NERRNO syscall set itself.  Under INVARIANTS it is a bug,
+ * unless the fault injection (debug.dqres.drop_completion) dropped the
+ * completion on purpose (TDP2_DQ_INJECTED).
+ */
+static inline void
+syscall_dq_stray(struct thread *td, int *errorp)
+{
+	bool stray;
+
+	stray = *errorp == EDQRESOLVED ||
+	    ((td->td_pflags & TDP_NERRNO) != 0 && td->td_errno == EDQRESOLVED);
+	if (__predict_true(!stray)) {
+		td->td_pflags2 &= ~TDP2_DQ_INJECTED;
+		return;
+	}
+	KASSERT((td->td_pflags2 & TDP2_DQ_INJECTED) != 0,
+	    ("EDQRESOLVED not consumed, syscall %d", td->td_sa.code));
+	td->td_pflags2 &= ~TDP2_DQ_INJECTED;
+	if (*errorp == EDQRESOLVED)
+		*errorp = EIO;
+	if ((td->td_pflags & TDP_NERRNO) != 0 && td->td_errno == EDQRESOLVED)
+		td->td_errno = EIO;
+}
+
 static inline void
 syscallenter(struct thread *td)
 {
@@ -193,6 +223,7 @@ syscallenter(struct thread *td)
 		if (error == 0)
 #endif
 		error = (se->sy_call)(td, sa->args);
+		syscall_dq_stray(td, &error);
 		/* Save the latest error return value. */
 		if (__predict_false((td->td_pflags & TDP_NERRNO) != 0))
 			td->td_pflags &= ~TDP_NERRNO;
@@ -225,6 +256,7 @@ syscallenter(struct thread *td)
 		if (error == 0)
 #endif
 		error = (se->sy_call)(td, sa->args);
+		syscall_dq_stray(td, &error);
 		/* Save the latest error return value. */
 		if (__predict_false((td->td_pflags & TDP_NERRNO) != 0))
 			td->td_pflags &= ~TDP_NERRNO;
@@ -257,11 +289,9 @@ syscallret(struct thread *td)
 
 	KASSERT(td->td_errno != ERELOOKUP,
 	    ("ERELOOKUP not consumed syscall %d", td->td_sa.code));
+	/* D157: syscallenter mapped a stray one right after sy_call. */
 	KASSERT(td->td_errno != EDQRESOLVED,
-	    ("EDQRESOLVED not consumed syscall %d", td->td_sa.code));
-	/* D128: a stray one never reaches userland. */
-	if (__predict_false(td->td_errno == EDQRESOLVED))
-		td->td_errno = EIO;
+	    ("EDQRESOLVED reached syscallret, syscall %d", td->td_sa.code));
 	KASSERT(td->td_dqintent == NULL,
 	    ("dq intent left published by syscall %d", td->td_sa.code));
 

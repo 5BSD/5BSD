@@ -888,6 +888,14 @@ mac_veriexec_vnode_check_setmode(struct ucred *cred, struct vnode *vp,
  *
  * @param mpc		MAC policy configuration
  */
+/* DescriptorQueue (D176): O_VERIFY of a served file is EAUTH when enforcing. */
+static bool
+mac_veriexec_dq_enforcing(void)
+{
+
+	return (mac_veriexec_in_state(VERIEXEC_STATE_ENFORCE) != 0);
+}
+
 static void
 mac_veriexec_init(struct mac_policy_conf *mpc __unused)
 {
@@ -909,6 +917,9 @@ mac_veriexec_init(struct mac_policy_conf *mpc __unused)
 	/* Check if unlink control is activated via tunable value */
 	if (!mac_veriexec_block_unlink)
 		mac_veriexec_ops.mpo_vnode_check_unlink = NULL;
+
+	/* The policy never unloads (MPC_LOADTIME_FLAG_UNLOADOK unset). */
+	dqres_register_veriexec(mac_veriexec_dq_enforcing);
 }
 
 

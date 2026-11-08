@@ -17,18 +17,24 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
+#include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/mount.h>
 #include <sys/namei.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/refcount.h>
 #include <sys/dqres.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/sx.h>
+#include <sys/sysctl.h>
 #include <sys/un.h>
 #include <sys/vnode.h>
 
@@ -317,6 +323,65 @@ dq_intent_enter(struct thread *td, struct dq_intent *di, uint32_t op,
 	td->td_dqintent = di;
 }
 
+/*
+ * An entry point whose wrapper completes served answers (D157): accept is
+ * the DQ_RACCEPT() set of FD, ATTR, LINK and OK the completion handles.
+ * Only slot 0's class-1 lookup from an unrestricted real start offers them
+ * to the controller; the ledger checks every such wrapper has a
+ * completion.
+ */
+void
+dq_intent_enter_served(struct thread *td, struct dq_intent *di, uint32_t op,
+    uint32_t flags, uint32_t accept)
+{
+
+	KASSERT((accept & ~(DQ_RACCEPT(DQ_RESOLVE_FD) |
+	    DQ_RACCEPT(DQ_RESOLVE_ATTR) | DQ_RACCEPT(DQ_RESOLVE_LINK) |
+	    DQ_RACCEPT(DQ_RESOLVE_OK))) == 0, ("dq: served kinds %#x", accept));
+	dq_intent_enter(td, di, op, flags);
+	di->di_flags |= DQI_SERVED;
+	di->di_accept = accept;
+}
+
+/*
+ * Fault injection (D157 test row): debug.dqres.drop_completion = N makes
+ * the next N served answers skip their completion, so EDQRESOLVED escapes
+ * the wrapper; syscallenter maps it to EIO, and its INVARIANTS assertion
+ * is suppressed for that syscall only (TDP2_DQ_INJECTED).
+ */
+static SYSCTL_NODE(_debug, OID_AUTO, dqres, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "DescriptorQueue resolution fault injection");
+static u_int dqres_drop_completion;
+SYSCTL_UINT(_debug_dqres, OID_AUTO, drop_completion, CTLFLAG_RW,
+    &dqres_drop_completion, 0,
+    "Drop the completion of the next N served answers (EIO)");
+
+bool
+dqres_inject_drop(struct thread *td)
+{
+	u_int n;
+
+	do {
+		n = atomic_load_int(&dqres_drop_completion);
+		if (n == 0)
+			return (false);
+	} while (!atomic_cmpset_int(&dqres_drop_completion, n, n - 1));
+	td->td_pflags2 |= TDP2_DQ_INJECTED;
+	return (true);
+}
+
+/* Release an answer nobody completed (D171). */
+static void
+dqres_answer_free(struct thread *td, struct dqres_answer *ans)
+{
+
+	if (ans->da_obj != NULL)
+		dqres_ops->dro_answer_release(td, ans);
+	free(ans->da_ident, M_TEMP);
+	free(ans->da_target, M_TEMP);
+	bzero(ans, sizeof(*ans));
+}
+
 void
 dq_intent_slot(struct dq_intent *di, int slot, const char *path,
     enum uio_seg seg, int dirfd)
@@ -383,6 +448,8 @@ dq_intent_leave(struct thread *td, struct dq_intent *di)
 	    di));
 	for (i = 0; i < DQ_INTENT_SLOTS; i++)
 		dq_islot_forget(&di->di_slot[i]);
+	if (di->di_res.da_kind != 0)
+		dqres_answer_free(td, &di->di_res);
 	td->td_dqintent = di->di_prev;
 }
 
@@ -574,6 +641,39 @@ dq_islot_mismatch(struct dq_intent *di, struct dq_islot *s)
 }
 
 /*
+ * The accept set (D158): PASS always; the entry point's served kinds only
+ * for slot 0 of a DQI_SERVED intent, class 1, consulted in its own namei
+ * (not carried, not ahead, not content) from a real start without
+ * STRICTREL, BENEATH, RINROOT, NOSYMLINKS, NOMAGICLINKS or NOXDEV, not an
+ * O_NAMEDATTR open, and with a non-empty path.  Errnos are always accepted (allow-listed).
+ */
+static uint32_t
+dq_accept(struct dq_intent *di, struct dq_islot *s, int slot, uint32_t class,
+    uint32_t rflags, struct nameidata *ndp)
+{
+	uint32_t a;
+
+	a = DQ_RACCEPT(DQ_RESOLVE_PASS);
+	if (s == NULL || slot != 0 || class != 1 ||
+	    (di->di_flags & DQI_SERVED) == 0 ||
+	    (s->ds_flags & (DQS_F_PATH2 | DQS_F_AHEAD | DQS_F_CONTENT)) != 0)
+		return (a);
+	if ((rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH | DQ_RF_RINROOT |
+	    DQ_RF_NOSYMLINKS | DQ_RF_NOMAGICLINKS | DQ_RF_NOXDEV)) != 0 ||
+	    (ndp->ni_cnd.cn_flags & OPENNAMED) != 0)
+		return (a);
+	/*
+	 * An empty path (AT_EMPTY_PATH, O_EMPTY_PATH) names the real
+	 * descriptor itself: only the real operation applies (a served
+	 * answer would skip linkat's PRIV_VFS_FHOPEN, make fstatat differ
+	 * from fstat, or replace a real reopen).
+	 */
+	if (ndp->ni_cnd.cn_pnbuf[0] == '\0')
+		return (a);
+	return (a | di->di_accept);
+}
+
+/*
  * The choke point, from namei_setup with the start computed (dp, the root
  * vnode actually used for an absolute path, 0c item 3), references held
  * and no lock taken (D149).  0 continues the lookup unchanged; an errno
@@ -589,6 +689,7 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs)
 	struct dq_intent *di;
 	struct dq_islot *s, *s1;
 	struct dqres_req rq;
+	struct dqres_answer ans;
 	char *fullpath, *freepath, *hint2, *freehint2;
 	size_t len;
 	uint32_t rflags, start_kind;
@@ -604,6 +705,9 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs)
 		return (0);
 	cnp = &ndp->ni_cnd;
 	di = td->td_dqintent;
+	/* Completions perform no lookups (D157). */
+	KASSERT(di == NULL || (di->di_flags & DQI_COMPLETING) == 0,
+	    ("dq: lookup inside a completion, syscall %d", td->td_sa.code));
 	slot = di != NULL ? dq_islot_find(di, ndp) : -1;
 	s = slot >= 0 ? &di->di_slot[slot] : NULL;
 	carried = s != NULL &&
@@ -688,6 +792,18 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs)
 	rq.rq_start_kind = start_kind;
 	rq.rq_path = cnp->cn_pnbuf;
 	rq.rq_pathlen = len;
+	rq.rq_accept = dq_accept(di, s, slot, rq.rq_class, rflags, ndp);
+	if (s != NULL && slot == 0) {
+		/* D161: what the operation would create or change. */
+		rq.rq_cmode = di->di_cmode;
+		rq.rq_dev = di->di_dev;
+		rq.rq_setattr = di->di_setattr;
+		if (di->di_text != NULL) {
+			/* SYMLINK: the target is path2, data (no start). */
+			rq.rq_path2 = di->di_text;
+			rq.rq_path2len = di->di_textlen;
+		}
+	}
 	/* ERESTART only from a slot's first consultation (D149). */
 	rq.rq_may_restart = s != NULL && s->ds_state == DQS_DECLARED &&
 	    (di->di_flags & DQI_NO_ERESTART) == 0;
@@ -723,13 +839,30 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs)
 		rq.rq_startpathlen = strlen(fullpath);
 		rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
 	}
-	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq);
+	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(freepath, M_TEMP);
 	free(freehint2, M_TEMP);
 	if (error != 0) {
 		if (s1 != NULL)
 			dq_islot_forget(s1);
 		return (error);
+	}
+	if (ans.da_kind != DQ_RESOLVE_PASS) {
+		/*
+		 * A served answer (D157): the only producer of EDQRESOLVED.
+		 * The lookup ends here; the wrapper's completion takes the
+		 * answer from the intent (or dq_intent_leave releases it).
+		 * The slot keeps no PASS: a restart consults again.
+		 */
+		KASSERT(s != NULL && slot == 0 && (rq.rq_accept &
+		    DQ_RACCEPT(ans.da_kind)) != 0 && di->di_res.da_kind == 0,
+		    ("dq: served answer %u outside %#x", ans.da_kind,
+		    rq.rq_accept));
+		if (s1 != NULL)
+			dq_islot_forget(s1);
+		dq_islot_forget(s);
+		di->di_res = ans;
+		return (EDQRESOLVED);
 	}
 	if (s != NULL) {
 		dq_islot_forget(s);
@@ -767,6 +900,7 @@ dqres_consult_slot(struct thread *td, int slot)
 	struct dq_intent *di;
 	struct dq_islot *s;
 	struct dqres_req rq;
+	struct dqres_answer ans;
 	char *hint, *freehint;
 	int error;
 
@@ -800,12 +934,15 @@ dqres_consult_slot(struct thread *td, int slot)
 	rq.rq_start_kind = s->ds_start_kind;
 	rq.rq_path = s->ds_bytes;
 	rq.rq_pathlen = s->ds_len;
+	rq.rq_accept = DQ_RACCEPT(DQ_RESOLVE_PASS);	/* consulted ahead */
 	if (hint != NULL) {
 		rq.rq_startpath = hint;
 		rq.rq_startpathlen = strlen(hint);
 		rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
 	}
-	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq);
+	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	KASSERT(error != 0 || ans.da_kind == DQ_RESOLVE_PASS,
+	    ("dq: ahead slot answered %u", ans.da_kind));
 	free(freehint, M_TEMP);
 	if (error != 0) {
 		dq_islot_forget(s);
@@ -837,6 +974,7 @@ dqres_consult_sun(struct thread *td, struct dq_intent *di, uint32_t op,
 	struct pwddesc *pdp;
 	struct dqres *dr;
 	struct dqres_req rq;
+	struct dqres_answer ans;
 	char *buf;
 	ssize_t len;
 	int error;
@@ -879,7 +1017,8 @@ dqres_consult_sun(struct thread *td, struct dq_intent *di, uint32_t op,
 	rq.rq_start_kind = DQ_START_NONE;
 	rq.rq_path = buf + 1;
 	rq.rq_pathlen = len - 1;
-	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq);
+	rq.rq_accept = DQ_RACCEPT(DQ_RESOLVE_PASS);
+	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(buf, M_TEMP);
 	return (error);
 }
@@ -897,6 +1036,7 @@ dqres_consult_socket(struct thread *td, uint32_t op, int domain, int type,
 	struct pwddesc *pdp;
 	struct dqres *dr;
 	struct dqres_req rq;
+	struct dqres_answer ans;
 
 	KASSERT(op == DQ_ROP_SOCKET || op == DQ_ROP_SOCKETPAIR,
 	    ("dq: socket op %u", op));
@@ -917,5 +1057,373 @@ dqres_consult_socket(struct thread *td, uint32_t op, int domain, int type,
 	rq.rq_domain = domain;
 	rq.rq_type = type;
 	rq.rq_protocol = protocol;
-	return (dqres_ops->dro_consult(td, dr->dr_binding, &rq));
+	rq.rq_accept = DQ_RACCEPT(DQ_RESOLVE_PASS);	/* FD sockets: stage 2 */
+	return (dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans));
+}
+
+/*
+ * Completions (1c-iii-a, D157-D166).  They run in the requester's thread
+ * with DQI_COMPLETING set, after the lookup ended with EDQRESOLVED, and
+ * make no lookup.
+ */
+
+/* The answer's identity, when the answer is of that kind. */
+const struct dq_ident_file *
+dqres_ident(struct dq_intent *di, uint32_t kind)
+{
+
+	if (di->di_res.da_kind != kind)
+		return (NULL);
+	return (di->di_res.da_ident);
+}
+
+/* As dq_stat presents an object's identity; no mount-point flag. */
+void
+dqres_ident_to_stat(const struct dq_ident_file *di, struct stat *sb)
+{
+
+	bzero(sb, sizeof(*sb));
+	sb->st_dev = di->di_dev;
+	sb->st_ino = di->di_ino;
+	sb->st_nlink = di->di_nlink;
+	sb->st_mode = di->di_mode;
+	sb->st_uid = di->di_uid;
+	sb->st_gid = di->di_gid;
+	sb->st_rdev = di->di_rdev;
+	sb->st_atim.tv_sec = di->di_atime.tv_sec;
+	sb->st_atim.tv_nsec = di->di_atime.tv_nsec;
+	sb->st_mtim.tv_sec = di->di_mtime.tv_sec;
+	sb->st_mtim.tv_nsec = di->di_mtime.tv_nsec;
+	sb->st_ctim.tv_sec = di->di_ctime.tv_sec;
+	sb->st_ctim.tv_nsec = di->di_ctime.tv_nsec;
+	sb->st_birthtim.tv_sec = di->di_birthtime.tv_sec;
+	sb->st_birthtim.tv_nsec = di->di_birthtime.tv_nsec;
+	sb->st_size = di->di_size;
+	sb->st_blocks = di->di_blocks;
+	sb->st_blksize = di->di_blksize;
+	sb->st_flags = di->di_flags;
+	sb->st_gen = di->di_gen;
+	sb->st_filerev = di->di_filerev;
+}
+
+/* As dq_statfs: the presented statfs, unfiltered (D87). */
+void
+dqres_ident_to_statfs(const struct dq_ident_file *di, struct statfs *buf)
+{
+	const struct dq_statfs *ds;
+
+	ds = &di->di_statfs;
+	bzero(buf, sizeof(*buf));
+	buf->f_version = STATFS_VERSION;
+	buf->f_type = ds->ds_type;
+	buf->f_flags = ds->ds_flags;
+	buf->f_bsize = ds->ds_bsize;
+	buf->f_iosize = ds->ds_iosize;
+	buf->f_blocks = ds->ds_blocks;
+	buf->f_bfree = ds->ds_bfree;
+	buf->f_bavail = ds->ds_bavail;
+	buf->f_files = ds->ds_files;
+	buf->f_ffree = ds->ds_ffree;
+	buf->f_syncwrites = ds->ds_syncwrites;
+	buf->f_asyncwrites = ds->ds_asyncwrites;
+	buf->f_syncreads = ds->ds_syncreads;
+	buf->f_asyncreads = ds->ds_asyncreads;
+	buf->f_nvnodelistsize = ds->ds_nvnodelistsize;
+	buf->f_namemax = ds->ds_namemax;
+	buf->f_owner = ds->ds_owner;
+	buf->f_fsid.val[0] = ds->ds_fsid[0];
+	buf->f_fsid.val[1] = ds->ds_fsid[1];
+	memcpy(buf->f_fstypename, ds->ds_fstypename, MFSNAMELEN);
+	memcpy(buf->f_mntfromname, ds->ds_mntfromname, MNAMELEN);
+	memcpy(buf->f_mntonname, ds->ds_mntonname, MNAMELEN);
+}
+
+/*
+ * pathconf from the dense index; a name the identity does not answer is
+ * EINVAL; _PC_ASYNC_IO is answered as kern_fpathconf answers it for a
+ * vnode (async I/O is available).
+ */
+int
+dqres_ident_pathconf(const struct dq_ident_file *di, int name, long *valuep)
+{
+	int i;
+
+	if (name == _PC_ASYNC_IO) {
+		*valuep = _POSIX_ASYNCHRONOUS_IO;
+		return (0);
+	}
+	for (i = 0; i < DQ_PC_NCOUNT; i++) {
+		if (dq_pc_names[i] == name)
+			break;
+	}
+	if (i == DQ_PC_NCOUNT ||
+	    (di->di_pathconf.dp_valid & ((uint64_t)1 << i)) == 0)
+		return (EINVAL);
+	*valuep = di->di_pathconf.dp_value[i];
+	return (0);
+}
+
+/*
+ * Kernel DAC on a presented identity (D166), as ufs_access applies it:
+ * EROFS for a write to a regular file, directory or symlink of a
+ * read-only file system, EPERM for a write to an immutable or snapshot
+ * file, then vaccess against the requester's credential.
+ */
+int
+dqres_ident_access(const struct dq_ident_file *di, int accmode,
+    struct ucred *cred)
+{
+	mode_t type;
+
+	type = di->di_mode & S_IFMT;
+	if ((accmode & VWRITE) != 0) {
+		if ((di->di_statfs.ds_flags & MNT_RDONLY) != 0 &&
+		    (type == S_IFREG || type == S_IFDIR || type == S_IFLNK))
+			return (EROFS);
+		if ((di->di_flags & (SF_IMMUTABLE | UF_IMMUTABLE |
+		    SF_SNAPSHOT)) != 0)
+			return (EPERM);
+	}
+	if (accmode == 0)
+		return (0);
+	return (vaccess(IFTOVT(di->di_mode), di->di_mode & ALLPERMS,
+	    di->di_uid, di->di_gid, accmode, cred));
+}
+
+/*
+ * O_VERIFY on a served file (D176): it has no fingerprint.  The veriexec
+ * policy, compiled in or loaded as a module, registers whether it
+ * enforces; without it O_VERIFY is ignored, as for a real file.
+ */
+static bool (*dqres_veriexec_enforcing)(void);
+
+void
+dqres_register_veriexec(bool (*enforcing)(void))
+{
+
+	atomic_store_rel_ptr((volatile uintptr_t *)&dqres_veriexec_enforcing,
+	    (uintptr_t)enforcing);
+}
+
+static int
+dqres_verify(int flags)
+{
+	bool (*enforcing)(void);
+
+	if ((flags & O_VERIFY) == 0)
+		return (0);
+	enforcing = (bool (*)(void))atomic_load_acq_ptr(
+	    (volatile uintptr_t *)&dqres_veriexec_enforcing);
+	return (enforcing != NULL && enforcing() ? EAUTH : 0);
+}
+
+/*
+ * An FD answer for open (D133, D166, D176, D159): flags are the open
+ * flags after openflags().  The checks a real open of the presented file
+ * would fail, each with the ufs oracle's errno, then the bind.  Any
+ * failure retires the object (D171).  The file is returned referenced,
+ * not installed.
+ */
+int
+dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
+    struct file **fpp)
+{
+	struct dqres_answer *ans;
+	const struct dq_ident_file *id;
+	int accmode, error;
+
+	*fpp = NULL;
+	ans = &di->di_res;
+	KASSERT(ans->da_kind == DQ_RESOLVE_FD && ans->da_obj != NULL,
+	    ("dq: take_file of kind %u", ans->da_kind));
+	id = ans->da_ident;
+	error = 0;
+	/* DQ_KIND_FILE (iii-a): a regular file. */
+	if ((flags & O_DIRECTORY) != 0)
+		error = ENOTDIR;
+	if (error == 0 && (ans->da_mflags & DQ_MINT_F_CREATED) == 0) {
+		accmode = 0;
+		if ((flags & O_PATH) == 0) {
+			if ((flags & FREAD) != 0)
+				accmode |= VREAD;
+			if ((flags & (FWRITE | O_TRUNC)) != 0)
+				accmode |= VWRITE;
+			if ((flags & FEXEC) != 0)
+				accmode |= VEXEC;
+		}
+		error = dqres_ident_access(id, accmode, td->td_ucred);
+		/* ufs_open: an append-only file opens for append only. */
+		if (error == 0 && (id->di_flags & (SF_APPEND | UF_APPEND)) != 0 &&
+		    (flags & (FWRITE | O_APPEND)) == FWRITE)
+			error = EPERM;
+	}
+	/* The mint fixed the access mode (D95); exec is DENY (iii-a). */
+	if (error == 0 && (flags & FWRITE) != 0 &&
+	    (ans->da_mflags & DQ_MINT_F_WRITE) == 0)
+		error = EACCES;
+	if (error == 0 && (flags & FEXEC) != 0)
+		error = EACCES;
+	if (error == 0)
+		error = dqres_verify(flags);
+	if (error != 0) {
+		dqres_ops->dro_answer_release(td, ans);
+		return (error);
+	}
+	return (dqres_ops->dro_bind(td, ans, flags & FMASK, fpp));
+}
+
+/* An FD answer bound with exactly fflags (SETATTR, TRUNCATE). */
+int
+dqres_take_file_raw(struct thread *td, struct dq_intent *di, int fflags,
+    struct file **fpp)
+{
+
+	KASSERT(di->di_res.da_kind == DQ_RESOLVE_FD &&
+	    di->di_res.da_obj != NULL, ("dq: take_file_raw"));
+	return (dqres_ops->dro_bind(td, &di->di_res, fflags, fpp));
+}
+
+/*
+ * Install a served file in the requester's table (D159): the policy's
+ * rights with the fcntl and ioctl limits a cap_rights_limit(2) to them
+ * leaves, CAP_XFER_NONE until stage 1c-iv, O_CLOEXEC and O_CLOFORK as the
+ * open asked; O_RESOLVE_BENEATH never (a BENEATH lookup accepts no served
+ * answer).  The file's reference passes to the table; on failure (EMFILE)
+ * it is dropped, which retires the object through dq_close.
+ */
+int
+dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
+    int flags, int *fdp)
+{
+	struct fdinstall_prop prop = { .fip_xfer_state = CAP_XFER_NONE };
+	struct filecaps fcaps;
+	int error;
+
+	filecaps_fill(&fcaps);
+	fcaps.fc_rights = di->di_res.da_rights;
+	if (!cap_rights_is_set(&fcaps.fc_rights, CAP_FCNTL))
+		fcaps.fc_fcntls = 0;
+	if (!cap_rights_is_set(&fcaps.fc_rights, CAP_IOCTL))
+		fcaps.fc_nioctls = 0;
+	error = finstall_refed_prop(td, fp, fdp,
+	    flags & (O_CLOEXEC | O_CLOFORK), &fcaps, &prop);
+	if (error != 0) {
+		filecaps_free(&fcaps);
+		fdrop(fp, td);
+	}
+	return (error);
+}
+
+/*
+ * A SETATTR answered FD (D160, Q7): the posted change applied through the
+ * transient file, under D96's rules as fchmod, fchown, futimens and
+ * fchflags apply them to a served descriptor.
+ */
+int
+dqres_setattr_apply(struct thread *td, struct file *fp,
+    const struct dq_setattr_body *sb)
+{
+	struct vattr va;
+	uid_t uid;
+	gid_t gid;
+
+	if ((sb->dsa_mask & DQ_SETATTR_MODE) != 0)
+		return (fo_chmod(fp, sb->dsa_mode, td->td_ucred, td));
+	if ((sb->dsa_mask & (DQ_SETATTR_UID | DQ_SETATTR_GID)) != 0) {
+		uid = (sb->dsa_mask & DQ_SETATTR_UID) != 0 ? sb->dsa_uid :
+		    (uid_t)-1;
+		gid = (sb->dsa_mask & DQ_SETATTR_GID) != 0 ? sb->dsa_gid :
+		    (gid_t)-1;
+		return (fo_chown(fp, uid, gid, td->td_ucred, td));
+	}
+	VATTR_NULL(&va);
+	if ((sb->dsa_mask & DQ_SETATTR_FLAGS) != 0)
+		va.va_flags = sb->dsa_flags;
+	if ((sb->dsa_mask & DQ_SETATTR_ATIME) != 0) {
+		va.va_atime.tv_sec = sb->dsa_atime.tv_sec;
+		va.va_atime.tv_nsec = sb->dsa_atime.tv_nsec;
+	}
+	if ((sb->dsa_mask & DQ_SETATTR_MTIME) != 0) {
+		va.va_mtime.tv_sec = sb->dsa_mtime.tv_sec;
+		va.va_mtime.tv_nsec = sb->dsa_mtime.tv_nsec;
+	}
+	if ((sb->dsa_mask & DQ_SETATTR_F_UTIMES_NULL) != 0)
+		va.va_vaflags |= VA_UTIMES_NULL;
+	return (fo_setattr(fp, &va, td->td_ucred, td));
+}
+
+/*
+ * dsa_priv (D161, review amendment 3): only the privileges the operation
+ * needs are evaluated, since each priv_check_cred fires the SDT and MAC
+ * grant hooks.
+ */
+void
+dqres_setattr_priv(struct thread *td, struct dq_setattr_body *sb,
+    uint32_t which)
+{
+	struct ucred *cred;
+
+	cred = td->td_ucred;
+	sb->dsa_priv = 0;
+	if ((which & DQ_SAPRIV_ADMIN) != 0 &&
+	    priv_check_cred(cred, PRIV_VFS_ADMIN) == 0)
+		sb->dsa_priv |= DQ_SAPRIV_ADMIN;
+	if ((which & DQ_SAPRIV_CHOWN) != 0 &&
+	    priv_check_cred(cred, PRIV_VFS_CHOWN) == 0)
+		sb->dsa_priv |= DQ_SAPRIV_CHOWN;
+	if ((which & DQ_SAPRIV_SETGID) != 0 &&
+	    priv_check_cred(cred, PRIV_VFS_SETGID) == 0)
+		sb->dsa_priv |= DQ_SAPRIV_SETGID;
+	if ((which & DQ_SAPRIV_SYSFLAGS) != 0 &&
+	    priv_check_cred(cred, PRIV_VFS_SYSFLAGS) == 0)
+		sb->dsa_priv |= DQ_SAPRIV_SYSFLAGS;
+	if ((which & DQ_SAPRIV_SECURELEVEL) != 0 &&
+	    securelevel_gt(cred, 0) == 0)
+		sb->dsa_priv |= DQ_SAPRIV_SECURELEVEL;
+}
+
+/*
+ * AT_EMPTY_PATH on a served descriptor (D164): the lookup of "" from a
+ * vnode-less descriptor answered ENOTDIR with NIRES_EMPTYPATH; for a
+ * served one the *at call is the descriptor's own operation, with no
+ * event, attached or not.  0 and *fpp held for a served descriptor,
+ * ENOTDIR (the lookup's answer) for any other.
+ */
+int
+dqres_emptypath_file(struct thread *td, int fd, const cap_rights_t *rights,
+    struct file **fpp)
+{
+	struct file *fp;
+	int error;
+
+	*fpp = NULL;
+	error = fget(td, fd, rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type != DTYPE_DQ) {
+		fdrop(fp, td);
+		return (ENOTDIR);
+	}
+	*fpp = fp;
+	return (0);
+}
+
+/* A served file's identity (ENOTTY for any other file). */
+int
+dqres_file_ident(struct file *fp, struct dq_ident_file *ident,
+    uint64_t *qgidp, bool *closedp)
+{
+
+	if (dqres_ops == NULL || fp->f_type != DTYPE_DQ)
+		return (ENOTTY);
+	return (dqres_ops->dro_file_ident(fp, ident, qgidp, closedp));
+}
+
+bool
+dqres_queue_closed(uint64_t qgid)
+{
+
+	if (dqres_ops == NULL)
+		return (true);
+	return (dqres_ops->dro_queue_closed(qgid));
 }

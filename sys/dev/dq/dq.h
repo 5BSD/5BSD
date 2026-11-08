@@ -374,7 +374,8 @@ struct dq_setattr_body {
 	uint32_t	dsa_gid;
 	uint64_t	dsa_size;
 	uint32_t	dsa_flags;	/* st_flags */
-	uint32_t	dsa_pad0;
+	uint32_t	dsa_priv;	/* DQ_SAPRIV_* (was dsa_pad0): RESOLVE
+					   events only, 0 in object SETATTR */
 	struct dq_timespec dsa_atime;
 	struct dq_timespec dsa_mtime;
 	struct dq_timespec dsa_birthtime;
@@ -390,6 +391,22 @@ struct dq_setattr_body {
 #define	DQ_SETATTR_F_UTIMES_NULL 0x00000100	/* utimes(2) with a NULL
 						   argument: the times are now;
 						   VWRITE sufficed */
+#define	DQ_SETATTR_ATIME_NOW	0x00000200	/* RESOLVE: UTIME_NOW, the
+						   kernel's time is in dsa_atime */
+#define	DQ_SETATTR_MTIME_NOW	0x00000400
+/*
+ * dsa_priv (RESOLVE SETATTR/TRUNCATE, 1c-iii): the privileges the kernel
+ * evaluated on the requester's credential for this operation only (chmod:
+ * ADMIN and SETGID; chown: CHOWN and ADMIN; chflags: SYSFLAGS and ADMIN;
+ * utimes: ADMIN), so the controller applies the D96 rules without
+ * guessing.  A bit not evaluated is 0.
+ */
+#define	DQ_SAPRIV_ADMIN		0x00000001	/* PRIV_VFS_ADMIN */
+#define	DQ_SAPRIV_CHOWN		0x00000002	/* PRIV_VFS_CHOWN */
+#define	DQ_SAPRIV_SETGID	0x00000004	/* PRIV_VFS_SETGID */
+#define	DQ_SAPRIV_SYSFLAGS	0x00000008	/* PRIV_VFS_SYSFLAGS */
+#define	DQ_SAPRIV_SECURELEVEL	0x00000010	/* securelevel_gt(cred, 0) == 0
+						   (chflags only) */
 
 /* FSYNC: reply is errno. */
 struct dq_fsync_body {
@@ -511,6 +528,7 @@ enum dq_reason {
 	DQ_REASON_NAMEMAX,	/* ds_namemax == 0 */
 	DQ_REASON_FLAGS,	/* dm_flags unknown, or DQ_MINT_F_WRITE without
 				   dp_write == DQ_EVENT */
+	DQ_REASON_TARGET,	/* a bad symlink target or REAL path (1c-iii) */
 };
 
 /*
@@ -519,6 +537,9 @@ enum dq_reason {
  * without it the descriptor is read-only whatever the policy says.
  */
 #define	DQ_MINT_F_WRITE		0x00000001
+#define	DQ_MINT_F_CREATED	0x00000002	/* RESOLVE FD only: this open
+						   created the file (O_CREAT in
+						   drs_mode); DAC is not checked */
 
 struct dq_mint_args {
 	uint32_t	dm_version;		/* DQ_API_VERSION */
@@ -636,7 +657,14 @@ struct dq_stats2 {
 						   dead binding, deadline, held
 						   lock */
 	uint64_t	ds2_attached;		/* ATTACHes committed */
-	uint64_t	ds2_reserved[7];
+	uint64_t	ds2_resolve_served;	/* answered FD, ATTR, LINK or OK
+						   (1c-iii) */
+	uint64_t	ds2_resolve_retired;	/* served objects retired before
+						   a descriptor was installed */
+	uint64_t	ds2_resolve_exdev;	/* refused EXDEV with no event
+						   (1c-iii-b/c) */
+	uint64_t	ds2_readdirs;		/* READDIR events (1c-iii-b) */
+	uint64_t	ds2_reserved[3];
 };
 
 /*
@@ -715,10 +743,14 @@ struct dq_resolve_body {
 	int32_t		drs_domain;		/* sockets (1c-ii) */
 	int32_t		drs_type;
 	int32_t		drs_protocol;
-	int32_t		drs_pad0;
+	uint32_t	drs_cmode;		/* creation mode after the umask
+						   (was drs_pad0, 1c-iii) */
 	uint32_t	drs_startpath2len;	/* path2's start hint */
-	uint32_t	drs_pad1;
+	uint32_t	drs_accept;		/* DQ_RACCEPT(DQ_RESOLVE_*): the
+						   answers this event takes (was
+						   drs_pad1, 1c-iii) */
 };
+#define	DQ_RACCEPT(k)		(1u << (k))
 
 /* Operations (drs_op). */
 #define	DQ_ROP_OPEN		1
@@ -778,6 +810,8 @@ struct dq_resolve_body {
 #define	DQ_START_REAL_ROOT	3	/* absolute path */
 #define	DQ_START_REAL_DIRFD	4
 #define	DQ_START_NONE		5	/* sockets */
+#define	DQ_START_REAL_SYMDIR	6	/* a relative symlink's directory
+					   (1c-iii-c, reserved) */
 
 /* Lookup classes (drs_flags, D127). */
 #define	DQ_RCLASS_USER		1	/* the requester's own path */
@@ -785,9 +819,21 @@ struct dq_resolve_body {
 #define	DQ_RCLASS_KERNEL	3	/* a kernel-origin lookup (EXEC_INTERP) */
 
 /*
- * The reply body: struct dq_resolve_reply, then the kind's payload.
- * Kinds 2-5 are accepted from stage 1c-iii; in 1c-i a RESOLVE reply is
- * either an errno with no body or exactly a PASS.
+ * The reply body: struct dq_resolve_reply, then the kind's payload (1c-iii).
+ * The kernel publishes the kinds an event accepts in drs_accept; any other
+ * kind is EINVAL to the controller and the event stays in flight.
+ *
+ *	PASS, OK	the reply alone (8 bytes)
+ *	FD		+ struct dq_resolve_mint (3976 bytes): a served object
+ *			minted at the reply, installed in the requester
+ *	ATTR		+ struct dq_resolve_attr (3904): attributes only
+ *	LINK		+ struct dq_resolve_attr (S_ISLNK, di_size == drt_len)
+ *			+ struct dq_resolve_target (<= 4936)
+ *	REAL		+ struct dq_resolve_target (1c-iii-b)
+ *
+ * A target is drt_len bytes, a NUL, and zeros to the next 8-byte boundary;
+ * no inner NUL.  An errno reply carries no body.  The reply may be up to
+ * MAX(kern.dq.max_io, DQ_RESOLVE_REPLY_MAX) bytes.
  */
 struct dq_resolve_reply {
 	uint32_t	drr_kind;		/* DQ_RESOLVE_* */
@@ -798,15 +844,35 @@ struct dq_resolve_reply {
 #define	DQ_RESOLVE_ATTR		3	/* (iii) */
 #define	DQ_RESOLVE_LINK		4	/* (iii) */
 #define	DQ_RESOLVE_OK		5	/* (iii) */
+#define	DQ_RESOLVE_REAL		6	/* (iii-b, reserved) */
 #define	DQ_RESOLVE_REPLY_MAX	8192
 
+struct dq_resolve_attr {		/* ATTR, LINK */
+	uint32_t	dra_flags;		/* 0 */
+	uint32_t	dra_pad0;
+	struct dq_ident_file dra_ident;		/* any S_IFMT; set-id bits allowed */
+};
+
+struct dq_resolve_target {		/* LINK, REAL */
+	uint32_t	drt_len;		/* 1..DQ_PATH_MAX-1, NUL excluded */
+	uint32_t	drt_pad0;
+	char		drt_target[];		/* drt_len bytes, NUL, zero pad */
+};
+
+/*
+ * FD: the object is minted at the reply.  *drm_objectp receives its id
+ * and *drm_reasonp DQ_REASON_NONE (or the refusal reason with EINVAL)
+ * before the object is linked; on any later failure of the reply
+ * *drm_objectp is undefined (zeroed where possible) and the id is never
+ * used.  Native LP64 controllers only (the pointers are native).
+ */
 struct dq_resolve_mint {		/* stage 1c-iii */
-	uint32_t	drm_kind;
-	uint32_t	drm_flags;
+	uint32_t	drm_kind;		/* DQ_KIND_FILE (iii-a) */
+	uint32_t	drm_flags;		/* DQ_MINT_F_WRITE, _CREATED */
 	struct dq_ident_file drm_ident;
 	struct dq_policy drm_policy;
 	uint64_t	*drm_objectp;		/* out, before linking */
-	int32_t		*drm_reasonp;
+	int32_t		*drm_reasonp;		/* optional */
 };
 
 /*
@@ -868,9 +934,20 @@ _Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
 _Static_assert(sizeof(struct dq_stats2) == 320, "dq_stats2");
 _Static_assert(sizeof(struct dq_push_args) == 40, "dq_push_args");
 _Static_assert(sizeof(struct dq_resolve_body) == 96, "dq_resolve_body");
-_Static_assert(__offsetof(struct dq_resolve_body, drs_pad0) == 84 &&
-    __offsetof(struct dq_resolve_body, drs_startpath2len) == 88,
+_Static_assert(__offsetof(struct dq_resolve_body, drs_cmode) == 84 &&
+    __offsetof(struct dq_resolve_body, drs_startpath2len) == 88 &&
+    __offsetof(struct dq_resolve_body, drs_accept) == 92,
     "dq_resolve_body: the 1c-i additions are appended");
+_Static_assert(__offsetof(struct dq_setattr_body, dsa_priv) == 28,
+    "dq_setattr_body: dsa_priv");
+_Static_assert(sizeof(struct dq_resolve_attr) == 3896, "dq_resolve_attr");
+_Static_assert(sizeof(struct dq_resolve_target) == 8, "dq_resolve_target");
+_Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_mint) +
+    sizeof(struct dq_resolve_target) + DQ_PATH_MAX <= DQ_RESOLVE_REPLY_MAX,
+    "an FD reply fits");
+_Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_attr) +
+    sizeof(struct dq_resolve_target) + DQ_PATH_MAX <= DQ_RESOLVE_REPLY_MAX,
+    "a LINK reply fits");
 _Static_assert(sizeof(struct dq_resolve_reply) == 8, "dq_resolve_reply");
 _Static_assert(sizeof(struct dq_resolve_mint) == 3968, "dq_resolve_mint");
 _Static_assert(sizeof(struct dq_attach_args) == 24, "dq_attach_args");
