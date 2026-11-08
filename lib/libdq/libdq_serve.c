@@ -819,7 +819,9 @@ dq_serve_ioctl(int q, const struct dq_event *ev,
  * 3) is PASSed only for EXEC_INTERP (the interpreter of an image the
  * requester was allowed to exec) and refused with EACCES otherwise.  The
  * caller's handler, when set, decides everything else; an errno outside
- * the RESOLVE allow-list is sent as EIO.
+ * the operation's RESOLVE allow-list is sent as EIO.  socket(2) and
+ * socketpair(2) (DQ_ROP_SOCKET, DQ_ROP_SOCKETPAIR, class 1) are PASSed
+ * unless the handler refuses them.
  */
 static int
 dq_serve_resolve(int q, const struct dq_event *ev,
@@ -840,7 +842,7 @@ dq_serve_resolve(int q, const struct dq_event *ev,
 		    opts->so_resolve_arg);
 	if (error == 0)
 		return (dq_reply_resolve_pass(q, ev->de_id));
-	if (error < 0 || !dq_reply_errno_allowed(DQ_OP_RESOLVE, error))
+	if (error < 0 || !dq_resolve_errno_allowed(rb->drs_op, error))
 		error = EIO;
 	return (dq_reply_resolve_errno(q, ev->de_id, error));
 }

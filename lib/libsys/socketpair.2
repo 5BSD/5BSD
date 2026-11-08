@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 27, 2026
+.Dd November 8, 2026
 .Dt SOCKETPAIR 2
 .Os
 .Sh NAME
@@ -72,6 +72,16 @@ with
 .Pq Dv SOL_LOCAL .
 This requires the calling process to be in capability mode to send or
 receive on the marked end.
+.Pp
+In a process attached to a
+.Xr dq 4
+queue, the call is first posted to the queue's controller as one
+.Dv DQ_ROP_SOCKETPAIR
+event for the pair, before any socket or descriptor exists, and proceeds
+only when the controller passes it; otherwise it returns the
+controller's error, or
+.Er EACCES
+when the controller has closed the queue.
 .Sh RETURN VALUES
 .Rv -std socketpair
 .Sh ERRORS
@@ -90,6 +100,25 @@ The address
 .Fa sv
 does not specify a valid part of the
 process address space.
+.El
+.Pp
+A process attached to a
+.Xr dq 4
+queue may also see:
+.Bl -tag -width Er
+.It Bq Er EACCES
+The controller refused the pair, or has closed the queue.
+.It Bq Er EPERM , EAFNOSUPPORT , EPROTONOSUPPORT , EPROTOTYPE , EOPNOTSUPP , ENOBUFS , EMFILE , ENFILE
+The controller refused the pair with this error.
+.It Bq Er EINTR
+A signal without
+.Dv SA_RESTART
+arrived while the call waited for the controller.
+.It Bq Er EIO
+The controller did not answer before the deadline, the queue was full,
+or the controller answered an error
+.Fn socketpair
+cannot return.
 .El
 .Sh SEE ALSO
 .Xr cap_xfer_limit 2 ,

@@ -584,23 +584,42 @@ dq_reply_errno_allowed(uint32_t op, int error)
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
 	case DQ_OP_RESOLVE:
-		/* One list for every RESOLVE op (dq_resolve_errno_allowed). */
+		/* Allowed for some RESOLVE op (dq_resolve_errno_allowed). */
+		return (dq_resolve_errno_allowed(DQ_ROP_OPEN, error) ||
+		    dq_resolve_errno_allowed(DQ_ROP_SOCKET, error));
+	default:
+		return (1);
+	}
+}
+
+/* The kernel's RESOLVE list per resolve op (dev/dq dq_resolve.c). */
+int
+dq_resolve_errno_allowed(uint32_t rop, int error)
+{
+
+	if (rop == DQ_ROP_SOCKET || rop == DQ_ROP_SOCKETPAIR) {
 		switch (error) {
-		case EPERM: case ENOENT: case EIO: case ENXIO: case E2BIG:
-		case ENOEXEC: case EACCES: case EBUSY: case EEXIST: case EXDEV:
-		case ENODEV: case ENOTDIR: case EISDIR: case EINVAL: case ETXTBSY:
-		case EFBIG: case ENOSPC: case EROFS: case EMLINK: case EAGAIN:
-		case ENAMETOOLONG: case ENOTEMPTY: case ELOOP: case EDQUOT:
-		case ESTALE: case EOPNOTSUPP: case EINTR: case EAFNOSUPPORT:
-		case EPROTONOSUPPORT: case EADDRINUSE: case EADDRNOTAVAIL:
-		case ECONNREFUSED: case EPROTOTYPE: case EFTYPE: case EAUTH:
-		case ENOATTR: case EINTEGRITY:
+		case EPERM: case EACCES: case EAFNOSUPPORT:
+		case EPROTONOSUPPORT: case EPROTOTYPE: case EOPNOTSUPP:
+		case ENOBUFS: case EMFILE: case ENFILE:
 			return (1);
 		default:
 			return (0);
 		}
-	default:
+	}
+	switch (error) {
+	case EPERM: case ENOENT: case EIO: case ENXIO: case E2BIG:
+	case ENOEXEC: case EACCES: case EBUSY: case EEXIST: case EXDEV:
+	case ENODEV: case ENOTDIR: case EISDIR: case EINVAL: case ETXTBSY:
+	case EFBIG: case ENOSPC: case EROFS: case EMLINK: case EAGAIN:
+	case ENAMETOOLONG: case ENOTEMPTY: case ELOOP: case EDQUOT:
+	case ESTALE: case EOPNOTSUPP: case EINTR: case EAFNOSUPPORT:
+	case EPROTONOSUPPORT: case EADDRINUSE: case EADDRNOTAVAIL:
+	case ECONNREFUSED: case EPROTOTYPE: case EFTYPE: case EAUTH:
+	case ENOATTR: case EINTEGRITY:
 		return (1);
+	default:
+		return (0);
 	}
 }
 

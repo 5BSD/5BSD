@@ -270,6 +270,32 @@ ATF_TC_BODY(resolve_accessor, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_RESOLVE, EACCES));
 	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_RESOLVE, EPIPE));
+	/* socket(2) and socketpair(2) have their own list (1c-ii). */
+	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_RESOLVE, ENOBUFS));
+	ATF_CHECK(dq_resolve_errno_allowed(DQ_ROP_SOCKET, EACCES));
+	ATF_CHECK(dq_resolve_errno_allowed(DQ_ROP_SOCKETPAIR, EMFILE));
+	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_SOCKET, ENOENT));
+	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOBUFS));
+	ATF_CHECK(dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOENT));
+
+	/* A SOCKET body: four empty strings, the request in the fixed part. */
+	memset(body, 0, sizeof(body));
+	rb->drs_op = DQ_ROP_SOCKET;
+	rb->drs_flags = DQ_RCLASS_USER;
+	rb->drs_rflags = DQ_RF_USER;
+	rb->drs_start_kind = DQ_START_NONE;
+	rb->drs_domain = 2;
+	rb->drs_type = 1;
+	rb->drs_protocol = 6;
+	off = 0;
+	ev = put_record(buf, &off, DQ_OP_RESOLVE, 0, body, sizeof(*rb) + 4);
+	ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
+	ATF_CHECK_STREQ("", p1);
+	ATF_CHECK_EQ(DQ_ROP_SOCKET, rbp->drs_op);
+	ATF_CHECK_EQ(DQ_START_NONE, rbp->drs_start_kind);
+	ATF_CHECK_EQ(2, rbp->drs_domain);
+	ATF_CHECK_EQ(1, rbp->drs_type);
+	ATF_CHECK_EQ(6, rbp->drs_protocol);
 }
 
 ATF_TC_WITHOUT_HEAD(errno_allow_lists);

@@ -55,6 +55,7 @@ MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_reply_lock.3 \
 		libdq.3 dq_reply_ioctl.3 \
 		libdq.3 dq_reply_errno_allowed.3 \
+		libdq.3 dq_resolve_errno_allowed.3 \
 		libdq.3 dq_serve_state_create.3 \
 		libdq.3 dq_serve_state_destroy.3 \
 		libdq.3 dq_serve_state_owners.3 \

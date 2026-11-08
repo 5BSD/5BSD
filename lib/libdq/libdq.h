@@ -217,9 +217,12 @@ int	dq_reply_ioctl(int q, uint64_t id, int error, const void *out,
  * The kernel's per-operation errno allow-list (dq(4)): true when a reply
  * of error to op reaches the requester as itself, false when the kernel
  * turns it into EIO and counts it in ds2_bad_replies.  READ and GETATTR
- * accept any errno.
+ * accept any errno.  For DQ_OP_RESOLVE it is true when some resolve
+ * operation allows error; dq_resolve_errno_allowed() answers for one
+ * (DQ_ROP_*): socket(2) and socketpair(2) have a list of their own.
  */
 int	dq_reply_errno_allowed(uint32_t op, int error);
+int	dq_resolve_errno_allowed(uint32_t rop, int error);
 
 /*
  * Resolution (stage 1c-i)

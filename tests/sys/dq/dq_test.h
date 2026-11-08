@@ -142,14 +142,16 @@ struct dqt_ctl {
 	/*
 	 * RESOLVE (1c): every event recorded; answered PASS unless its path
 	 * contains resolve_fail_match (then resolve_fail_errno) or
-	 * resolve_hold_match (then held, see dqt_held), or its op has an
-	 * errno in resolve_errno[].
+	 * resolve_hold_match or its op is resolve_hold_op (then held, see
+	 * dqt_held), or its op has an errno in resolve_errno[].
 	 */
 	struct dqt_resolve_seen {
 		uint64_t	 id;
 		uint32_t	 op, cls, rflags, mode, syscall, caller_flags;
 		uint32_t	 start_kind, start2_kind, pad1;
 		int32_t		 pid;
+		int32_t		 domain, type, protocol;	/* sockets */
+		uint32_t	 pathlen;	/* exact: abstract names */
 		char		 path[DQT_RPATH], path2[DQT_RPATH];
 		char		 startpath2[DQT_RPATH];
 	}		 rs[DQT_MAX_RESOLVES];
@@ -158,6 +160,7 @@ struct dqt_ctl {
 	char		 resolve_fail_match[DQT_RPATH];
 	int		 resolve_fail_errno;
 	char		 resolve_hold_match[DQT_RPATH];
+	uint32_t	 resolve_hold_op;	/* 0: none */
 	/* dq_serve_file lock owners: one table per queue (POSIX owners span
 	   the objects of one identity), made at the first backing mint. */
 	struct dq_serve_state *lockstate;
