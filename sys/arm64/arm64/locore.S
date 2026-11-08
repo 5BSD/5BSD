@@ -56,6 +56,32 @@
 .endif
 .endm
 
+#if PAGE_SIZE == PAGE_SIZE_4K
+#define	LPA2_MASK	ID_AA64MMFR0_TGran4_MASK
+#define	LPA2_VAL	ID_AA64MMFR0_TGran4_LPA2
+#elif PAGE_SIZE == PAGE_SIZE_16K
+#define	LPA2_MASK	ID_AA64MMFR0_TGran16_MASK
+#define	LPA2_VAL	ID_AA64MMFR0_TGran16_LPA2
+#else
+#error Unsupported page size
+#endif
+
+/*
+ * Find the shareability attribute we should use. If FEAT_LPA2 is
+ * enabled then the shareability field is moved from the page table
+ * to tcr_el1 and the bits in the page table are reused by the
+ * address field.  start_mmu sets TCR_EL1.DS when the result is zero,
+ * so every CPU, not only the boot CPU, must compute it.
+ */
+.macro	pte_sh_attr reg, tmp
+	mrs	\reg, id_aa64mmfr0_el1
+	mov	\tmp, LPA2_VAL
+	and	\reg, \reg, LPA2_MASK
+	cmp	\reg, \tmp
+	ldr	\reg, =(ATTR_SH(ATTR_SH_IS))
+	csel	\reg, xzr, \reg, eq
+.endm
+
 #if PAGE_SIZE == PAGE_SIZE_16K
 /*
  * The number of level 3 tables to create. 32 will allow for 1G of address
@@ -270,6 +296,8 @@ LENTRY(mpentry_common)
 	/* Load the identity page table */
 	adrp	x27, pagetable_l0_ttbr0_bootstrap
 	add	x27, x27, :lo12:pagetable_l0_ttbr0_bootstrap
+	/* Find the shareability attribute, as the boot CPU did */
+	pte_sh_attr x22, x7
 
 	/* Enable the mmu */
 	bl	start_mmu
@@ -575,29 +603,8 @@ LENTRY(create_pagetables)
 	lsl	x21, x6, ATTR_S1_GP_SHIFT	/* Shift to the correct bit */
 #endif
 
-	/*
-	 * Find the shareability attribute we should use. If FEAT_LPA2 is
-	 * enabled then the shareability field is moved from the page table
-	 * to tcr_el1 and the bits in the page table are reused by the
-	 * address field.
-	 */
-#if PAGE_SIZE == PAGE_SIZE_4K
-#define	LPA2_MASK	ID_AA64MMFR0_TGran4_MASK
-#define	LPA2_VAL	ID_AA64MMFR0_TGran4_LPA2
-#elif PAGE_SIZE == PAGE_SIZE_16K
-#define	LPA2_MASK	ID_AA64MMFR0_TGran16_MASK
-#define	LPA2_VAL	ID_AA64MMFR0_TGran16_LPA2
-#else
-#error Unsupported page size
-#endif
-	mrs	x6, id_aa64mmfr0_el1
-	mov	x7, LPA2_VAL
-	and	x6, x6, LPA2_MASK
-	cmp	x6, x7
-	ldr	x22, =(ATTR_SH(ATTR_SH_IS))
-	csel	x22, xzr, x22, eq
-#undef LPA2_MASK
-#undef LPA2_VAL
+	/* Find the shareability attribute we should use. */
+	pte_sh_attr x22, x7
 
 	/*
 	 * Build the TTBR1 maps.
