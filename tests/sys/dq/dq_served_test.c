@@ -357,8 +357,9 @@ ATF_TC_BODY(open_fd, tc)
 	ATF_CHECK(r[8]);
 	i = srv_find(&s, DQ_ROP_OPEN, "/a");
 	ATF_REQUIRE(i >= 0);
-	ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) | DQ_RACCEPT(DQ_RESOLVE_FD),
-	    s.seen[i].accept);
+	/* REAL is offered to unrestricted lookups too (1c-iii-b). */
+	ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) | DQ_RACCEPT(DQ_RESOLVE_FD) |
+	    DQ_RACCEPT(DQ_RESOLVE_REAL), s.seen[i].accept);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK(st.ds2_resolve_served >= 2);
@@ -540,8 +541,8 @@ ATF_TC_BODY(mutate_ok, tc)
 	ATF_REQUIRE(i >= 0);
 	ATF_CHECK(s.seen[i].has_setattr);
 	/* The set-id chmod withholds OK (FD then gives EPERM). */
-	ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) | DQ_RACCEPT(DQ_RESOLVE_FD),
-	    s.seen[i].accept);
+	ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) | DQ_RACCEPT(DQ_RESOLVE_FD) |
+	    DQ_RACCEPT(DQ_RESOLVE_REAL), s.seen[i].accept);
 	ATF_CHECK_EQ(DQ_SETATTR_MODE, s.seen[i].sb.dsa_mask);
 	i = srv_find(&s, DQ_ROP_MKDIR, "/m");
 	ATF_REQUIRE(i >= 0);
@@ -1624,8 +1625,8 @@ ATF_TC_BODY(truncate_rlimit_otrunc, tc)
 	ATF_CHECK_EQ(1, r[1]);
 	i = srv_find(&s, DQ_ROP_TRUNCATE, "/a");
 	ATF_REQUIRE(i >= 0);
-	ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) | DQ_RACCEPT(DQ_RESOLVE_FD),
-	    s.seen[i].accept);
+	ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) | DQ_RACCEPT(DQ_RESOLVE_FD) |
+	    DQ_RACCEPT(DQ_RESOLVE_REAL), s.seen[i].accept);
 	ATF_CHECK_EQ(0, r[2]);
 	ATF_CHECK(stat("backing/a", &st) == 0 && st.st_size == 0);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
@@ -1682,7 +1683,8 @@ ATF_TC_BODY(chflags_readonly_tree, tc)
 		if (s.seen[i].op == DQ_ROP_SETATTR && s.seen[i].has_setattr &&
 		    s.seen[i].sb.dsa_mask == 0)
 			ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) |
-			    DQ_RACCEPT(DQ_RESOLVE_FD), s.seen[i].accept);
+			    DQ_RACCEPT(DQ_RESOLVE_FD) |
+			    DQ_RACCEPT(DQ_RESOLVE_REAL), s.seen[i].accept);
 	}
 	pthread_mutex_unlock(&s.mtx);
 	ATF_CHECK(now);

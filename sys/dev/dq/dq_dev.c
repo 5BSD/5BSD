@@ -73,6 +73,10 @@ SDT_PROBE_DEFINE3(dq, , , resolve__served, "struct dq_queue *", "uint32_t",
     "uint32_t");
 SDT_PROBE_DEFINE2(dq, , , resolve__retire, "struct dq_queue *",
     "struct dq_object *");
+SDT_PROBE_DEFINE3(dq, , , resolve__real, "struct dq_queue *", "uint32_t",
+    "char *");
+SDT_PROBE_DEFINE3(dq, , , resolve__symlink, "struct dq_queue *", "uint32_t",
+    "uint32_t");
 
 /*
  * Tunables (design 8.6).  Bounded setters: a controller can lower its own

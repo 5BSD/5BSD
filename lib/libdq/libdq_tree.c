@@ -16,11 +16,27 @@
  * contract).  Everything else is PASSed: names outside the prefix, the
  * kernel's own lookups, non-regular objects, and every event whose accept
  * set lacks the kind the answer would need.
+ *
+ * Stage 1c-iii-b mode (DQ_TREE_F_SERVED): dq_tree_root() mints the tree's
+ * root as a served directory, a lookup start for the attached processes
+ * that inherit it.  A lookup from a served start (DQ_START_SERVED, whose
+ * hint is the start's presented path) is answered as above, never PASS:
+ * directories are served (FD of a DIR, READDIR from getdirentries(2) of
+ * the backing directory, cookies being its offsets), a final symbolic
+ * link under O_PATH | O_NOFOLLOW is a served SYMLINK, and a device, FIFO
+ * or socket node, an AF_UNIX connect or bind, a name outside the prefix,
+ * and the operations the tree does not serve are answered REAL with the
+ * real path (the backing path for names under the prefix), when the
+ * event accepts it.  A symbolic link in the backing tree leading out of
+ * the prefix is followed by REAL too.  DQ_TREE_F_EXEC_REAL answers exec
+ * REAL as well.
  */
 
 #include <sys/param.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -34,6 +50,7 @@
 struct dq_tree_obj {
 	uint64_t		 to_id;
 	int			 to_fd;		/* the backing file */
+	uint32_t		 to_kind;	/* DQ_KIND_* */
 	struct dq_ident_file	 to_ident;
 };
 
@@ -43,6 +60,7 @@ struct dq_tree {
 	uint32_t		 t_flags;
 	char			 t_prefix[PATH_MAX];
 	size_t			 t_prefixlen;
+	char			 t_realroot[PATH_MAX]; /* rootfd's real path */
 	struct dq_serve_state	*t_state;
 	struct dq_tree_obj	**t_objs;
 	size_t			 t_nobjs, t_cap;
@@ -56,7 +74,6 @@ struct dq_tree_res {
 	struct stat tr_st;		/* lstat of tr_rel when it exists */
 };
 
-#define	DQ_TREE_NOTMINE		(-1)	/* not under the prefix: PASS */
 
 
 /* Lexical normalization of an absolute path: no ".", "..", "//". */
@@ -113,106 +130,388 @@ dq_tree_below(const struct dq_tree *t, const char *norm)
 	return (norm + t->t_prefixlen + 1);
 }
 
+/* Drop the last component of an absolute normalized name ("/" stays). */
+static void
+dq_tree_pop(char *name)
+{
+	char *s;
+
+	s = strrchr(name, '/');
+	if (s == NULL || s == name)
+		strcpy(name, "/");
+	else
+		*s = '\0';
+}
+
+/* The backing tree, confined: every *at below rootfd resolves beneath it. */
+#define	DQ_TREE_AT	AT_RESOLVE_BENEATH
+#define	DQ_TREE_O	(O_RESOLVE_BENEATH | O_CLOEXEC)
+
+/* readlinkat(2) of a backing node through a confined O_PATH open. */
+static ssize_t
+dq_tree_readlink(struct dq_tree *t, const char *rel, char *buf, size_t len)
+{
+	ssize_t n;
+	int error, fd;
+
+	fd = openat(t->t_rootfd, rel, O_PATH | O_NOFOLLOW | DQ_TREE_O);
+	if (fd < 0)
+		return (-1);
+	n = readlinkat(fd, "", buf, len);
+	error = errno;
+	close(fd);
+	errno = error;
+	return (n);
+}
+
 /*
- * Resolve name (absolute, normalized) in the backing tree, following
- * symlinks as namei would: every one but a final one under NOFOLLOW.  A
- * symlink whose target leaves the prefix cannot be served in this mode
- * (EACCES, documented).
+ * The directory holding a backing path and its last component, for the
+ * operations with no confining flag (mkdirat, mkfifoat, mknodat,
+ * symlinkat, renameat, linkat's second path): the parent is opened
+ * O_RESOLVE_BENEATH, and the name has no '/' (tr_rel never holds "..").
  */
 static int
-dq_tree_walk(struct dq_tree *t, const char *name, bool follow,
-    struct dq_tree_res *res)
+dq_tree_parent(struct dq_tree *t, const char *rel, int *dfdp,
+    const char **namep)
 {
-	char cur[PATH_MAX], rel[PATH_MAX], tgt[PATH_MAX], tmp[PATH_MAX * 2];
-	const char *below, *p, *slash;
+	char parent[PATH_MAX];
+	const char *slash;
+
+	slash = strrchr(rel, '/');
+	if (slash == NULL) {
+		strlcpy(parent, ".", sizeof(parent));
+		*namep = rel;
+	} else {
+		if ((size_t)(slash - rel) >= sizeof(parent))
+			return (ENAMETOOLONG);
+		memcpy(parent, rel, slash - rel);
+		parent[slash - rel] = '\0';
+		*namep = slash + 1;
+	}
+	*dfdp = openat(t->t_rootfd, parent, O_RDONLY | O_DIRECTORY |
+	    DQ_TREE_O);
+	return (*dfdp < 0 ? errno : 0);
+}
+
+/* vfs.lookup_cap_dotdot{,_nonlocal}, as namei reads them. */
+static bool
+dq_tree_sysctl_on(const char *name)
+{
+	size_t len;
+	int v;
+
+	len = sizeof(v);
+	if (sysctlbyname(name, &v, &len, NULL, 0) != 0)
+		return (true);
+	return (v != 0);
+}
+
+static bool
+dq_tree_cap_dotdot(void)
+{
+
+	return (dq_tree_sysctl_on("vfs.lookup_cap_dotdot"));
+}
+
+/*
+ * Is the directory a ".." leaves on a local file system?  Inside the
+ * prefix the backing directory reached (confined), outside the real one
+ * (nameicap_check_dotdot's MNT_LOCAL test, round 4).
+ */
+static bool
+dq_tree_dir_local(struct dq_tree *t, bool inside, const char *rel,
+    const char *cur)
+{
+	struct statfs sfs;
+	int fd, rv;
+
+	if (inside) {
+		fd = openat(t->t_rootfd, rel[0] != '\0' ? rel : ".",
+		    O_PATH | O_DIRECTORY | DQ_TREE_O);
+		if (fd < 0)
+			return (true);	/* the lookup itself will fail */
+		rv = fstatfs(fd, &sfs);
+		close(fd);
+	} else
+		rv = statfs(cur, &sfs);
+	return (rv != 0 || (sfs.f_flags & MNT_LOCAL) != 0);
+}
+
+/*
+ * Resolve a path of an event as namei would (1c-iii-b, review rounds 2
+ * and 3): from the event's start (its hint) or the root, component by
+ * component.  Inside the prefix through the backing tree (lstat per
+ * component, confined beneath rootfd, symbolic links spliced in, at most
+ * MAXSYMLINKS, ".." the parent of the directory actually reached, ".." at
+ * the tree's root leaving it).  Outside the prefix the names are real:
+ * before a ".." the directory reached is made canonical with realpath(3),
+ * and so is the parent of the final name, so names after an absolute
+ * symbolic link match the real file system.
+ *
+ * rf restricts the lookup as the kernel restricts it (DQ_RF_STRICTREL,
+ * DQ_RF_BENEATH, DQ_RF_RINROOT of this path): below the start, a ".."
+ * that would leave it, an absolute path or symbolic link target, and
+ * under STRICTREL any ".." while vfs.lookup_cap_dotdot is 0, are
+ * ENOTCAPABLE; under RINROOT an absolute name restarts at the start and
+ * ".." stays there.
+ *
+ * *minep says the result is inside; res->tr_name is the resolved
+ * real-namespace name either way (empty without a hint), and inside
+ * res->tr_rel is the backing path.  In iii-a mode a backing symbolic link
+ * leading out of the prefix is EACCES.
+ */
+static int
+dq_tree_lookup(struct dq_tree *t, const char *path, const char *start,
+    bool startvalid, bool follow, uint32_t rf, struct dq_tree_res *res,
+    bool *minep)
+{
+	char *work, *tmp, cur[PATH_MAX], rel[PATH_MAX], tgt[PATH_MAX];
+	char cur0[PATH_MAX], rel0[PATH_MAX], canon[PATH_MAX];
+	const char *p, *q, *r;
 	struct stat st;
 	ssize_t n;
-	int loops, error;
-	bool last;
+	size_t clen;
+	int error, loops, depth, phase;
+	bool inside, inside0, last, trailing, viasym, restricted, rinroot;
+	bool strict, capdotdot, nonlocal;
 
+	*minep = false;
+	res->tr_exists = false;
+	res->tr_name[0] = '\0';
+	res->tr_rel[0] = '\0';
+	restricted = (rf & (DQ_RF_STRICTREL | DQ_RF_BENEATH |
+	    DQ_RF_RINROOT)) != 0;
+	rinroot = (rf & DQ_RF_RINROOT) != 0;
+	strict = (rf & DQ_RF_STRICTREL) != 0;
+	capdotdot = !strict || dq_tree_cap_dotdot();
+	/*
+	 * namei folds O_RESOLVE_BENEATH into STRICTREL with CAP_DOTDOT, so
+	 * nameicap_check_dotdot's non-local refusal applies to BENEATH too;
+	 * the lookup_cap_dotdot refusal applies only under STRICTREL proper.
+	 */
+	nonlocal = (rf & (DQ_RF_STRICTREL | DQ_RF_BENEATH)) == 0 ||
+	    dq_tree_sysctl_on("vfs.lookup_cap_dotdot_nonlocal");
+	work = malloc(PATH_MAX * 2);
+	tmp = malloc(PATH_MAX * 2);
+	if (work == NULL || tmp == NULL) {
+		free(work);
+		free(tmp);
+		return (ENOMEM);
+	}
+	error = 0;
 	loops = 0;
-	strlcpy(cur, name, sizeof(cur));
-restart:
-	below = dq_tree_below(t, cur);
-	if (below == NULL)
-		return (EACCES);
-	rel[0] = '\0';
-	for (p = below; *p != '\0'; p = slash != NULL ? slash + 1 : "") {
-		slash = strchr(p, '/');
-		last = slash == NULL;
-		if (rel[0] != '\0')
-			strlcat(rel, "/", sizeof(rel));
-		strncat(rel, p, last ? strlen(p) : (size_t)(slash - p));
-		if (fstatat(t->t_rootfd, rel, &st, AT_SYMLINK_NOFOLLOW) != 0) {
-			error = errno;
-			if (error == ENOENT && last) {
-				res->tr_exists = false;
-				goto found;
-			}
-			return (error);
+	viasym = false;
+	depth = 0;
+	inside0 = false;
+	cur0[0] = rel0[0] = '\0';
+	if (restricted) {
+		/* Phase 0 walks the start, phase 1 the path from it. */
+		if (!startvalid || start == NULL || start[0] != '/')
+			goto done;
+		if (path[0] == '/' && !rinroot) {
+			error = ENOTCAPABLE;
+			goto done;
 		}
-		if (S_ISLNK(st.st_mode) && (!last || follow)) {
-			if (++loops > MAXSYMLINKS)
-				return (ELOOP);
-			n = readlinkat(t->t_rootfd, rel, tgt, sizeof(tgt) - 1);
-			if (n < 0)
-				return (errno);
-			tgt[n] = '\0';
-			if (tgt[0] == '/')
-				snprintf(tmp, sizeof(tmp), "%s/%s", tgt,
-				    last ? "" : slash + 1);
-			else {
-				/* Relative to the link's directory. */
-				char *d = strrchr(rel, '/');
-
-				if (d != NULL)
-					*d = '\0';
+		strlcpy(work, start, PATH_MAX * 2);
+	} else if (path[0] == '/')
+		strlcpy(work, path, PATH_MAX * 2);
+	else if (startvalid && start != NULL && start[0] == '/')
+		snprintf(work, PATH_MAX * 2, "%s/%s", start, path);
+	else
+		goto done;		/* no hint: not this tree's */
+	phase = restricted ? 0 : 1;
+restart:
+	strlcpy(cur, "/", sizeof(cur));
+	rel[0] = '\0';
+	inside = t->t_prefixlen == 1;
+	p = work;
+	for (;;) {
+		while (*p == '/')
+			p++;
+		if (*p == '\0') {
+			if (phase == 0) {
+				/* The start reached: the path from here. */
+				phase = 1;
+				depth = 0;
+				strlcpy(cur0, cur, sizeof(cur0));
+				strlcpy(rel0, rel, sizeof(rel0));
+				inside0 = inside;
+				strlcpy(work, path, PATH_MAX * 2);
+				p = work;
+				continue;
+			}
+			break;
+		}
+		for (q = p; *q != '\0' && *q != '/'; q++)
+			;
+		clen = (size_t)(q - p);
+		for (r = q; *r == '/'; r++)
+			;
+		last = *r == '\0' && phase == 1;
+		trailing = last && *q == '/';
+		if (clen == 1 && p[0] == '.') {
+			p = q;
+			continue;
+		}
+		if (clen == 2 && p[0] == '.' && p[1] == '.') {
+			if (phase == 1 && restricted) {
+				if (!capdotdot || (!nonlocal &&
+				    !dq_tree_dir_local(t, inside, rel, cur))) {
+					error = ENOTCAPABLE;
+					goto done;
+				}
+				if (depth == 0) {
+					if (rinroot) {
+						p = q;	/* clamped */
+						continue;
+					}
+					error = ENOTCAPABLE;
+					goto done;
+				}
+				depth--;
+			}
+			if (inside && rel[0] != '\0') {
+				/* The parent of the backing directory reached. */
+				if (strchr(rel, '/') != NULL)
+					*strrchr(rel, '/') = '\0';
 				else
 					rel[0] = '\0';
-				snprintf(tmp, sizeof(tmp), "%s/%s%s%s/%s",
-				    t->t_prefixlen == 1 ? "" : t->t_prefix,
-				    rel, rel[0] != '\0' ? "/" : "", tgt,
-				    last ? "" : slash + 1);
+				dq_tree_pop(cur);
+			} else if (inside && t->t_prefixlen > 1) {
+				/* Out of the tree's root, into the real parent. */
+				inside = false;
+				dq_tree_pop(cur);
+			} else if (!inside) {
+				/* A real directory: its canonical parent. */
+				if (realpath(cur, canon) != NULL)
+					strlcpy(cur, canon, sizeof(cur));
+				dq_tree_pop(cur);
 			}
-			error = dq_tree_normalize(tmp, cur, sizeof(cur));
-			if (error != 0)
-				return (error);
-			goto restart;
+			p = q;
+			continue;
 		}
-		if (!last && !S_ISDIR(st.st_mode))
-			return (ENOTDIR);
+		if (clen >= NAME_MAX + 1 ||
+		    strlen(cur) + 1 + clen + 1 > sizeof(cur)) {
+			error = ENAMETOOLONG;
+			goto done;
+		}
+		if (strcmp(cur, "/") != 0)
+			strlcat(cur, "/", sizeof(cur));
+		strncat(cur, p, clen);
+		if (phase == 1 && restricted)
+			depth++;
+		if (!inside) {
+			/* Down a real directory; entering the prefix. */
+			if (strcmp(cur, t->t_prefix) == 0)
+				inside = true;
+			p = q;
+			continue;
+		}
+		if (rel[0] != '\0')
+			strlcat(rel, "/", sizeof(rel));
+		strncat(rel, p, clen);
+		if (fstatat(t->t_rootfd, rel, &st, AT_SYMLINK_NOFOLLOW |
+		    DQ_TREE_AT) != 0) {
+			error = errno;
+			if (error == ENOENT && last) {
+				error = 0;
+				break;		/* found: does not exist */
+			}
+			goto done;
+		}
+		if (S_ISLNK(st.st_mode) && (!last || follow || trailing)) {
+			if (++loops > MAXSYMLINKS) {
+				error = ELOOP;
+				goto done;
+			}
+			n = dq_tree_readlink(t, rel, tgt, sizeof(tgt) - 1);
+			if (n <= 0) {
+				error = n < 0 ? errno : ENOENT;
+				goto done;
+			}
+			tgt[n] = '\0';
+			viasym = true;
+			if ((size_t)n + strlen(q) + 1 > MAXPATHLEN) {
+				error = ENAMETOOLONG;
+				goto done;
+			}
+			snprintf(tmp, PATH_MAX * 2, "%s%s", tgt, q);
+			strlcpy(work, tmp, PATH_MAX * 2);
+			if (tgt[0] == '/') {
+				if (phase == 1 && restricted) {
+					if (!rinroot) {
+						error = ENOTCAPABLE;
+						goto done;
+					}
+					/* RINROOT: from the start again. */
+					strlcpy(cur, cur0, sizeof(cur));
+					strlcpy(rel, rel0, sizeof(rel));
+					inside = inside0;
+					depth = 0;
+					p = work;
+					continue;
+				}
+				goto restart;
+			}
+			/* Relative: from the link's directory. */
+			if (phase == 1 && restricted)
+				depth--;
+			dq_tree_pop(cur);
+			if (strchr(rel, '/') != NULL)
+				*strrchr(rel, '/') = '\0';
+			else
+				rel[0] = '\0';
+			p = work;
+			continue;
+		}
+		if (!last && !S_ISDIR(st.st_mode)) {
+			error = ENOTDIR;
+			goto done;
+		}
 		if (last) {
+			if (trailing && !S_ISDIR(st.st_mode)) {
+				error = ENOTDIR;
+				goto done;
+			}
 			res->tr_exists = true;
 			res->tr_st = st;
 		}
+		p = q;
 	}
-	if (*below == '\0') {
-		if (fstat(t->t_rootfd, &res->tr_st) != 0)
-			return (errno);
+	if (!inside) {
+		/* A backing symlink out of the prefix: iii-a cannot follow. */
+		if (viasym && (t->t_flags & DQ_TREE_F_SERVED) == 0) {
+			error = EACCES;
+			goto done;
+		}
+		/* The real parent, canonical; the last name as given. */
+		strlcpy(tmp, cur, PATH_MAX * 2);
+		if (strcmp(cur, "/") != 0) {
+			dq_tree_pop(tmp);
+			if (realpath(tmp, canon) != NULL) {
+				snprintf(tmp, PATH_MAX * 2, "%s%s%s", canon,
+				    strcmp(canon, "/") == 0 ? "" : "/",
+				    strrchr(cur, '/') + 1);
+				strlcpy(cur, tmp, sizeof(cur));
+			}
+		}
+		strlcpy(res->tr_name, cur, sizeof(res->tr_name));
+		goto done;
+	}
+	strlcpy(res->tr_name, cur, sizeof(res->tr_name));
+	if (rel[0] == '\0') {
+		if (fstat(t->t_rootfd, &res->tr_st) != 0) {
+			error = errno;
+			goto done;
+		}
 		res->tr_exists = true;
 	}
-found:
 	strlcpy(res->tr_rel, rel[0] != '\0' ? rel : ".", sizeof(res->tr_rel));
-	strlcpy(res->tr_name, cur, sizeof(res->tr_name));
-	return (0);
-}
-
-/* The absolute name a path of the event names, from its start hint. */
-static int
-dq_tree_name(struct dq_tree *t, const char *path, const char *start,
-    bool startvalid, char *norm, size_t normlen)
-{
-	char full[PATH_MAX * 2];
-
-	if (path[0] == '/')
-		strlcpy(full, path, sizeof(full));
-	else if (startvalid)
-		snprintf(full, sizeof(full), "%s/%s", start, path);
-	else
-		return (DQ_TREE_NOTMINE);
-	if (dq_tree_normalize(full, norm, normlen) != 0)
-		return (DQ_TREE_NOTMINE);
-	return (dq_tree_below(t, norm) == NULL ? DQ_TREE_NOTMINE : 0);
+	*minep = true;
+done:
+	free(work);
+	free(tmp);
+	return (error);
 }
 
 /* The identity of a backing node, presented under its resolved name. */
@@ -223,7 +522,7 @@ dq_tree_ident(struct dq_tree *t, const struct dq_tree_res *res,
 	struct statfs sfs;
 	int fd, error;
 
-	fd = openat(t->t_rootfd, res->tr_rel, O_PATH | O_NOFOLLOW);
+	fd = openat(t->t_rootfd, res->tr_rel, O_PATH | O_NOFOLLOW | DQ_TREE_O);
 	if (fd < 0)
 		return (errno);
 	error = 0;
@@ -241,7 +540,7 @@ dq_tree_ident(struct dq_tree *t, const struct dq_tree_res *res,
 }
 
 static int
-dq_tree_add(struct dq_tree *t, uint64_t id, int fd,
+dq_tree_add(struct dq_tree *t, uint64_t id, int fd, uint32_t kind,
     const struct dq_ident_file *ident)
 {
 	struct dq_tree_obj **n, *o;
@@ -258,6 +557,7 @@ dq_tree_add(struct dq_tree *t, uint64_t id, int fd,
 		return (-1);
 	o->to_id = id;
 	o->to_fd = fd;
+	o->to_kind = kind;
 	o->to_ident = *ident;
 	t->t_objs[t->t_nobjs++] = o;
 	return (0);
@@ -280,7 +580,9 @@ dq_tree_find(struct dq_tree *t, uint64_t id, size_t *ip)
 
 /*
  * Mint the answer: the backing file open for what the object will need,
- * kept in the table under the id the kernel returned.
+ * kept in the table under the id the kernel returned.  A directory's
+ * backing descriptor reads its entries; a symbolic link's is O_PATH and
+ * the answer carries its target.
  */
 static int
 dq_tree_reply_fd(struct dq_tree *t, uint64_t evid, const struct dq_tree_res *res,
@@ -288,14 +590,36 @@ dq_tree_reply_fd(struct dq_tree *t, uint64_t evid, const struct dq_tree_res *res
 {
 	struct dq_ident_file *ident;
 	struct dq_policy pol;
+	char tgt[PATH_MAX];
 	uint64_t id;
+	ssize_t n;
+	uint32_t kind;
 	int fd, error;
 
-	fd = openat(t->t_rootfd, res->tr_rel,
-	    (write ? O_RDWR : O_RDONLY) | O_NOFOLLOW | O_CLOEXEC);
-	if (fd < 0 && !write)
+	kind = S_ISDIR(res->tr_st.st_mode) ? DQ_KIND_DIR :
+	    S_ISLNK(res->tr_st.st_mode) ? DQ_KIND_SYMLINK : DQ_KIND_FILE;
+	if (kind == DQ_KIND_DIR)
+		fd = openat(t->t_rootfd, res->tr_rel, O_RDONLY | O_DIRECTORY |
+		    O_NOFOLLOW | DQ_TREE_O);
+	else if (kind == DQ_KIND_SYMLINK) {
 		fd = openat(t->t_rootfd, res->tr_rel, O_PATH | O_NOFOLLOW |
-		    O_CLOEXEC);
+		    DQ_TREE_O);
+		n = fd < 0 ? -1 : readlinkat(fd, "", tgt, sizeof(tgt) - 1);
+		if (n <= 0) {
+			error = n < 0 ? errno : EINVAL;
+			if (fd >= 0)
+				close(fd);
+			return (dq_reply_resolve_errno(t->t_q, evid, error));
+		}
+		tgt[n] = '\0';
+	} else {
+		fd = openat(t->t_rootfd, res->tr_rel,
+		    (write ? O_RDWR : O_RDONLY) | O_NOFOLLOW | DQ_TREE_O);
+		if (fd < 0 && !write)
+			fd = openat(t->t_rootfd, res->tr_rel, O_RESOLVE_BENEATH |
+			    O_PATH |
+			    O_NOFOLLOW | O_CLOEXEC);
+	}
 	if (fd < 0)
 		return (dq_reply_resolve_errno(t->t_q, evid, errno));
 	ident = malloc(sizeof(*ident));
@@ -309,15 +633,22 @@ dq_tree_reply_fd(struct dq_tree *t, uint64_t evid, const struct dq_tree_res *res
 		close(fd);
 		return (dq_reply_resolve_errno(t->t_q, evid, error));
 	}
-	dq_policy_default(&pol);
+	if (kind == DQ_KIND_FILE)
+		dq_policy_default(&pol);
+	else
+		dq_policy_default_dir(&pol);
 	pol.dp_events = DQ_EVENTS_CLOSE;
-	if ((t->t_flags & DQ_TREE_F_WRITE) != 0 && write) {
+	if ((t->t_flags & DQ_TREE_F_WRITE) != 0 && write &&
+	    kind == DQ_KIND_FILE) {
 		pol.dp_write = DQ_EVENT;
 		mflags |= DQ_MINT_F_WRITE;
 	}
 	id = 0;
-	if (dq_reply_resolve_fd(t->t_q, evid, DQ_KIND_FILE, mflags, ident,
-	    &pol, &id, NULL) != 0) {
+	if ((kind == DQ_KIND_SYMLINK ?
+	    dq_reply_resolve_fd_symlink(t->t_q, evid, ident, &pol, tgt, &id,
+	    NULL) :
+	    dq_reply_resolve_fd(t->t_q, evid, kind, mflags, ident, &pol, &id,
+	    NULL)) != 0) {
 		error = errno;
 		free(ident);
 		close(fd);
@@ -326,10 +657,56 @@ dq_tree_reply_fd(struct dq_tree *t, uint64_t evid, const struct dq_tree_res *res
 			return (0);
 		return (dq_reply_resolve_errno(t->t_q, evid, EIO));
 	}
-	if (dq_tree_add(t, id, fd, ident) != 0)
+	if (dq_tree_add(t, id, fd, kind, ident) != 0)
 		close(fd);	/* its CLOSE finds nothing */
 	free(ident);
 	return (0);
+}
+
+/*
+ * The real path of a normalized name (iii-b): under the prefix, the
+ * backing node's (rootfd's real path and the backing path); outside it,
+ * the name itself, which is a real-namespace name.
+ */
+static int
+dq_tree_realpath(const struct dq_tree *t, const char *norm, char *out,
+    size_t outlen)
+{
+	const char *below;
+	char tmp[PATH_MAX * 2];
+
+	below = dq_tree_below(t, norm);
+	if (below == NULL)
+		return (strlcpy(out, norm, outlen) >= outlen ? ENAMETOOLONG : 0);
+	if (t->t_realroot[0] == '\0')
+		return (EIO);
+	snprintf(tmp, sizeof(tmp), "%s/%s", t->t_realroot, below);
+	return (dq_tree_normalize(tmp, out, outlen));
+}
+
+/*
+ * What a name the tree does not serve gets (iii-b): PASS when the event
+ * takes it (a real start), else REAL of the real path when it takes that,
+ * else the errno (ENOTCAPABLE for a restricted lookup, where the real
+ * namespace cannot be reached).
+ */
+static int
+dq_tree_unserved(struct dq_tree *t, uint64_t evid,
+    const struct dq_resolve_body *rb, const char *norm, int error)
+{
+	char real[PATH_MAX];
+
+	if (dq_resolve_accepts(rb, DQ_RESOLVE_PASS))
+		return (dq_reply_resolve_pass(t->t_q, evid));
+	if (norm != NULL && dq_resolve_accepts(rb, DQ_RESOLVE_REAL) &&
+	    dq_tree_realpath(t, norm, real, sizeof(real)) == 0)
+		return (dq_reply_resolve_real(t->t_q, evid, real));
+	if ((rb->drs_rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH |
+	    DQ_RF_RINROOT)) != 0)
+		error = ENOTCAPABLE;
+	if (error <= 0 || !dq_resolve_errno_allowed_ev(rb, error))
+		error = EIO;
+	return (dq_reply_resolve_errno(t->t_q, evid, error));
 }
 
 static int
@@ -348,42 +725,73 @@ dq_tree_mutate(struct dq_tree *t, const struct dq_resolve_body *rb,
     const struct dq_tree_res *res, const struct dq_tree_res *res2,
     const char *path2)
 {
-	int r;
+	const char *name, *name2;
+	int dfd, dfd2, error, r;
 
+	/* Each name through its confined parent directory (round 3). */
+	error = dq_tree_parent(t, res->tr_rel, &dfd, &name);
+	if (error != 0)
+		return (error);
+	dfd2 = -1;
+	name2 = NULL;
+	if (rb->drs_op == DQ_ROP_RENAME || rb->drs_op == DQ_ROP_LINK) {
+		error = dq_tree_parent(t, res2->tr_rel, &dfd2, &name2);
+		if (error != 0) {
+			close(dfd);
+			return (error);
+		}
+	}
 	switch (rb->drs_op) {
 	case DQ_ROP_MKDIR:
-		r = mkdirat(t->t_rootfd, res->tr_rel, rb->drs_cmode);
+		r = mkdirat(dfd, name, rb->drs_cmode);
 		break;
 	case DQ_ROP_MKFIFO:
-		r = mkfifoat(t->t_rootfd, res->tr_rel, rb->drs_cmode);
+		r = mkfifoat(dfd, name, rb->drs_cmode);
 		break;
 	case DQ_ROP_MKNOD:
-		r = mknodat(t->t_rootfd, res->tr_rel,
-		    (rb->drs_mode & S_IFMT) | rb->drs_cmode,
+		r = mknodat(dfd, name, (rb->drs_mode & S_IFMT) | rb->drs_cmode,
 		    (dev_t)rb->drs_dev);
 		break;
 	case DQ_ROP_UNLINK:
-		r = unlinkat(t->t_rootfd, res->tr_rel, 0);
+		r = unlinkat(dfd, name, 0);
 		break;
 	case DQ_ROP_RMDIR:
-		r = unlinkat(t->t_rootfd, res->tr_rel, AT_REMOVEDIR);
+		r = unlinkat(dfd, name, AT_REMOVEDIR);
 		break;
 	case DQ_ROP_SYMLINK:
-		r = symlinkat(path2, t->t_rootfd, res->tr_rel);
+		r = symlinkat(path2, dfd, name);
 		break;
 	case DQ_ROP_RENAME:
 		/* drs_mode holds renameat2's flags (AT_RENAME_NOREPLACE). */
-		r = renameat2(t->t_rootfd, res->tr_rel, t->t_rootfd,
-		    res2->tr_rel, rb->drs_mode);
+		r = renameat2(dfd, name, dfd2, name2, rb->drs_mode);
 		break;
 	case DQ_ROP_LINK:
-		r = linkat(t->t_rootfd, res->tr_rel, t->t_rootfd,
-		    res2->tr_rel, 0);
+		r = linkat(dfd, name, dfd2, name2, 0);
 		break;
 	default:
-		return (EIO);
+		r = -1;
+		errno = EIO;
+		break;
 	}
-	return (r != 0 ? errno : 0);
+	error = r != 0 ? errno : 0;
+	close(dfd);
+	if (dfd2 >= 0)
+		close(dfd2);
+	return (error);
+}
+
+/* REAL of a name's real path when the event takes it, else unserved. */
+static int
+dq_tree_real(struct dq_tree *t, uint64_t evid,
+    const struct dq_resolve_body *rb, const char *norm)
+{
+	char real[PATH_MAX];
+
+	if (norm != NULL && norm[0] != '\0' &&
+	    dq_resolve_accepts(rb, DQ_RESOLVE_REAL) &&
+	    dq_tree_realpath(t, norm, real, sizeof(real)) == 0)
+		return (dq_reply_resolve_real(t->t_q, evid, real));
+	return (dq_tree_unserved(t, evid, rb, norm, EACCES));
 }
 
 static int
@@ -392,36 +800,88 @@ dq_tree_resolve(struct dq_tree *t, const struct dq_event *ev)
 	const struct dq_resolve_body *rb;
 	const struct dq_setattr_body *sb;
 	const char *path, *path2, *sp, *sp2;
-	char norm[PATH_MAX], norm2[PATH_MAX];
+	const char *norm;
 	struct dq_tree_res *res, *res2;
 	struct dq_ident_file *ident;
 	char tgt[PATH_MAX];
-	uint32_t want, mflags;
+	uint32_t want, mflags, rf2;
 	ssize_t n;
-	int error, fd, ret, mine, mine2, flags;
-	bool follow, writable;
+	int error, fd, ret, flags;
+	bool follow, mine, mine2, served, writable;
 
 	if (dq_event_resolve_ext(ev, &rb, &path, &path2, &sp, &sp2, &sb) != 0)
 		return (dq_reply_resolve_errno(t->t_q, ev->de_id, EIO));
-	/* The kernel's own lookups and every non-path consultation. */
+	/*
+	 * The kernel's own lookups and every non-path consultation.  A
+	 * served start (iii-b) must be one of this tree's directories; its
+	 * hint is that directory's presented path.  A symlink
+	 * re-consultation of a relative target starts at the link's
+	 * directory (REAL_SYMDIR), whose real path is the hint.
+	 */
 	if (rb->drs_flags != DQ_RCLASS_USER ||
 	    (rb->drs_start_kind != DQ_START_REAL_ROOT &&
 	    rb->drs_start_kind != DQ_START_REAL_CWD &&
-	    rb->drs_start_kind != DQ_START_REAL_DIRFD))
-		return (dq_reply_resolve_pass(t->t_q, ev->de_id));
-	mine = dq_tree_name(t, path, sp,
-	    (rb->drs_rflags & DQ_RF_STARTPATH_VALID) != 0, norm, sizeof(norm));
+	    rb->drs_start_kind != DQ_START_REAL_DIRFD &&
+	    rb->drs_start_kind != DQ_START_REAL_SYMDIR &&
+	    rb->drs_start_kind != DQ_START_SERVED))
+		return (dq_tree_unserved(t, ev->de_id, rb, NULL, EACCES));
+	if (rb->drs_start_kind == DQ_START_SERVED &&
+	    dq_tree_find(t, rb->drs_start, NULL) == NULL)
+		return (dq_tree_errno(t, ev->de_id, rb, EIO));
+	res = calloc(2, sizeof(*res));
+	ident = malloc(sizeof(*ident));
+	if (res == NULL || ident == NULL) {
+		free(res);
+		free(ident);
+		return (dq_reply_resolve_errno(t->t_q, ev->de_id, EIO));
+	}
+	res2 = &res[1];
+	/*
+	 * Resolve the path(s) as namei would, through the backing tree
+	 * inside the prefix (round 2: no lexical "..").
+	 */
+	follow = (rb->drs_rflags & DQ_RF_NOFOLLOW) == 0 ||
+	    (rb->drs_rflags & DQ_RF_TRAILINGSLASH) != 0;
+	mine2 = false;
+	/*
+	 * A restricted real lookup takes PASS only: the kernel's own walk
+	 * holds it inside its start (no walk here).
+	 */
+	if (dq_resolve_accepts(rb, DQ_RESOLVE_PASS) &&
+	    (rb->drs_accept & ~DQ_RACCEPT(DQ_RESOLVE_PASS)) == 0) {
+		ret = dq_reply_resolve_pass(t->t_q, ev->de_id);
+		goto out;
+	}
+	/* Each path under its own restrictions (round 3). */
+	rf2 = ((rb->drs_rflags & DQ_RF_STRICTREL2) != 0 ? DQ_RF_STRICTREL :
+	    0) | ((rb->drs_rflags & DQ_RF_BENEATH2) != 0 ? DQ_RF_BENEATH : 0);
+	error = dq_tree_lookup(t, path, sp,
+	    (rb->drs_rflags & DQ_RF_STARTPATH_VALID) != 0, follow,
+	    rb->drs_rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH | DQ_RF_RINROOT),
+	    res, &mine);
+	if (error == 0 && (rb->drs_op == DQ_ROP_RENAME ||
+	    rb->drs_op == DQ_ROP_LINK) && path2[0] != '\0')
+		error = dq_tree_lookup(t, path2, sp2,
+		    (rb->drs_rflags & DQ_RF_STARTPATH2_VALID) != 0, false, rf2,
+		    res2, &mine2);
+	if (error != 0) {
+		ret = dq_tree_errno(t, ev->de_id, rb, error);
+		goto out;
+	}
+	norm = res->tr_name[0] != '\0' ? res->tr_name : NULL;
 	if (rb->drs_op == DQ_ROP_RENAME || rb->drs_op == DQ_ROP_LINK) {
-		mine2 = path2[0] == '\0' ? DQ_TREE_NOTMINE :
-		    dq_tree_name(t, path2, sp2,
-		    (rb->drs_rflags & DQ_RF_STARTPATH2_VALID) != 0, norm2,
-		    sizeof(norm2));
-		if (mine != 0 && mine2 != 0)
-			return (dq_reply_resolve_pass(t->t_q, ev->de_id));
-		if (mine != mine2)
-			return (dq_tree_errno(t, ev->de_id, rb, EXDEV));
-	} else if (mine != 0)
-		return (dq_reply_resolve_pass(t->t_q, ev->de_id));
+		if (!mine && !mine2) {
+			ret = dq_tree_unserved(t, ev->de_id, rb, NULL, EXDEV);
+			goto out;
+		}
+		if (mine != mine2) {
+			ret = dq_tree_errno(t, ev->de_id, rb, EXDEV);
+			goto out;
+		}
+	} else if (!mine) {
+		ret = dq_tree_unserved(t, ev->de_id, rb, norm, EACCES);
+		goto out;
+	}
 
 	/* The kind this operation is answered with. */
 	switch (rb->drs_op) {
@@ -444,36 +904,37 @@ dq_tree_resolve(struct dq_tree *t, const struct dq_event *ev)
 		want = DQ_RESOLVE_OK;
 		break;
 	case DQ_ROP_EXEC:
-		return (dq_tree_errno(t, ev->de_id, rb, EACCES));
+		/* DQ_TREE_F_EXEC_REAL: the backing binary runs (D167). */
+		if ((t->t_flags & DQ_TREE_F_EXEC_REAL) != 0 &&
+		    dq_resolve_accepts(rb, DQ_RESOLVE_REAL))
+			ret = dq_tree_real(t, ev->de_id, rb, norm);
+		else
+			ret = dq_tree_errno(t, ev->de_id, rb, EACCES);
+		goto out;
 	case DQ_ROP_XATTR:
 	case DQ_ROP_ACL:
-		return (dq_tree_errno(t, ev->de_id, rb, EOPNOTSUPP));
+		ret = dq_tree_errno(t, ev->de_id, rb, EOPNOTSUPP);
+		goto out;
+	case DQ_ROP_CONNECT:
+	case DQ_ROP_BIND:
+		/* A socket node is the backing one (iii-b). */
+		if ((t->t_flags & DQ_TREE_F_SERVED) != 0)
+			ret = dq_tree_real(t, ev->de_id, rb, norm);
+		else
+			ret = dq_tree_unserved(t, ev->de_id, rb, norm, EACCES);
+		goto out;
 	default:
-		return (dq_reply_resolve_pass(t->t_q, ev->de_id));
-	}
-	/* A restricted lookup takes PASS only: the real namespace answers. */
-	if (!dq_resolve_accepts(rb, want))
-		return (dq_reply_resolve_pass(t->t_q, ev->de_id));
-
-	res = calloc(2, sizeof(*res));
-	ident = malloc(sizeof(*ident));
-	if (res == NULL || ident == NULL) {
-		free(res);
-		free(ident);
-		return (dq_reply_resolve_errno(t->t_q, ev->de_id, EIO));
-	}
-	res2 = &res[1];
-	writable = (t->t_flags & DQ_TREE_F_WRITE) != 0;
-	follow = (rb->drs_rflags & DQ_RF_NOFOLLOW) == 0 ||
-	    (rb->drs_rflags & DQ_RF_TRAILINGSLASH) != 0;
-	error = dq_tree_walk(t, norm, follow, res);
-	if (error == 0 && (rb->drs_op == DQ_ROP_RENAME ||
-	    rb->drs_op == DQ_ROP_LINK))
-		error = dq_tree_walk(t, norm2, false, res2);
-	if (error != 0) {
-		ret = dq_tree_errno(t, ev->de_id, rb, error);
+		ret = dq_tree_unserved(t, ev->de_id, rb, norm, EACCES);
 		goto out;
 	}
+	/* A restricted real lookup takes PASS only: the real namespace. */
+	if (!dq_resolve_accepts(rb, want)) {
+		ret = dq_tree_unserved(t, ev->de_id, rb, norm, EACCES);
+		goto out;
+	}
+	writable = (t->t_flags & DQ_TREE_F_WRITE) != 0;
+
+	served = (t->t_flags & DQ_TREE_F_SERVED) != 0;
 	ret = 0;
 	error = 0;
 	switch (rb->drs_op) {
@@ -495,23 +956,38 @@ dq_tree_resolve(struct dq_tree *t, const struct dq_event *ev)
 				break;
 			}
 			fd = openat(t->t_rootfd, res->tr_rel, O_CREAT | O_EXCL |
-			    O_WRONLY | O_CLOEXEC, rb->drs_cmode);
+			    O_WRONLY | DQ_TREE_O, rb->drs_cmode);
 			if (fd < 0) {
 				error = errno;
 				break;
 			}
 			close(fd);
 			if (fstatat(t->t_rootfd, res->tr_rel, &res->tr_st,
-			    AT_SYMLINK_NOFOLLOW) != 0) {
+			    AT_SYMLINK_NOFOLLOW | DQ_TREE_AT) != 0) {
 				error = errno;
 				break;
 			}
 			res->tr_exists = true;
 			mflags |= DQ_MINT_F_CREATED;
 		}
+		if (served && S_ISDIR(res->tr_st.st_mode)) {
+			/* A served directory; the kernel applies EISDIR. */
+			ret = dq_tree_reply_fd(t, ev->de_id, res, false, 0);
+			goto out;
+		}
+		if (served && S_ISLNK(res->tr_st.st_mode)) {
+			/* A final symlink, not followed: O_PATH only. */
+			if ((flags & O_PATH) == 0) {
+				error = EMLINK;
+				break;
+			}
+			ret = dq_tree_reply_fd(t, ev->de_id, res, false, 0);
+			goto out;
+		}
 		if (!S_ISREG(res->tr_st.st_mode)) {
-			/* A directory, device, FIFO or socket: iii-b. */
-			ret = dq_reply_resolve_pass(t->t_q, ev->de_id);
+			/* A device, FIFO or socket: the backing node. */
+			ret = served ? dq_tree_real(t, ev->de_id, rb, norm) :
+			    dq_tree_unserved(t, ev->de_id, rb, norm, EACCES);
 			goto out;
 		}
 		/*
@@ -534,8 +1010,16 @@ dq_tree_resolve(struct dq_tree *t, const struct dq_event *ev)
 			error = ENOENT;
 			break;
 		}
-		if (!S_ISREG(res->tr_st.st_mode)) {
-			ret = dq_reply_resolve_pass(t->t_q, ev->de_id);
+		if (served && rb->drs_op == DQ_ROP_TRUNCATE &&
+		    S_ISDIR(res->tr_st.st_mode)) {
+			error = EISDIR;
+			break;
+		}
+		if (!S_ISREG(res->tr_st.st_mode) && !(served &&
+		    (S_ISDIR(res->tr_st.st_mode) ||
+		    S_ISLNK(res->tr_st.st_mode)))) {
+			ret = served ? dq_tree_real(t, ev->de_id, rb, norm) :
+			    dq_tree_unserved(t, ev->de_id, rb, norm, EACCES);
 			goto out;
 		}
 		if (!writable) {
@@ -566,7 +1050,7 @@ dq_tree_resolve(struct dq_tree *t, const struct dq_event *ev)
 			error = EINVAL;
 			break;
 		}
-		n = readlinkat(t->t_rootfd, res->tr_rel, tgt, sizeof(tgt) - 1);
+		n = dq_tree_readlink(t, res->tr_rel, tgt, sizeof(tgt) - 1);
 		if (n <= 0) {
 			error = n < 0 ? errno : EINVAL;
 			break;
@@ -598,10 +1082,12 @@ out:
 struct dq_tree *
 dq_tree_create(int q, int rootfd, const char *prefix, uint32_t flags)
 {
+	struct kinfo_file kif;
 	struct dq_tree *t;
 
 	if (prefix == NULL || prefix[0] != '/' ||
-	    (flags & ~DQ_TREE_F_WRITE) != 0) {
+	    (flags & ~(DQ_TREE_F_WRITE | DQ_TREE_F_SERVED |
+	    DQ_TREE_F_EXEC_REAL)) != 0) {
 		errno = EINVAL;
 		return (NULL);
 	}
@@ -618,7 +1104,63 @@ dq_tree_create(int q, int rootfd, const char *prefix, uint32_t flags)
 	t->t_rootfd = rootfd;
 	t->t_flags = flags;
 	t->t_state = dq_serve_state_create();
+	/* The backing tree's real path, for REAL answers (iii-b). */
+	kif.kf_structsize = sizeof(kif);
+	if (fcntl(rootfd, F_KINFO, &kif) == 0 && kif.kf_path[0] == '/' &&
+	    dq_tree_normalize(kif.kf_path, t->t_realroot,
+	    sizeof(t->t_realroot)) != 0)
+		t->t_realroot[0] = '\0';
 	return (t);
+}
+
+/*
+ * iii-b: mint the tree's root as a served directory presented at the
+ * prefix, owned by the tree (its backing descriptor reads the entries).
+ * The returned descriptor is the controller's; an attached child that
+ * inherits it starts lookups there.
+ */
+int
+dq_tree_root(struct dq_tree *t, int *fdp, uint64_t *objectp)
+{
+	struct dq_ident_file *ident;
+	struct dq_policy pol;
+	uint64_t id;
+	int bfd, error, fd;
+
+	if ((t->t_flags & DQ_TREE_F_SERVED) == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	ident = malloc(sizeof(*ident));
+	if (ident == NULL)
+		return (-1);
+	bfd = openat(t->t_rootfd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (bfd < 0 || dq_ident_from_lstat(ident, t->t_prefix, t->t_rootfd,
+	    ".") != 0) {
+		error = errno;
+		goto fail;
+	}
+	/* The presented mount is "/": a prefix of every name. */
+	strlcpy(ident->di_statfs.ds_mntonname, "/",
+	    sizeof(ident->di_statfs.ds_mntonname));
+	dq_policy_default_dir(&pol);
+	pol.dp_events = DQ_EVENTS_CLOSE;
+	if (dq_mint_dir(t->t_q, ident, &pol, &id, &fd, NULL) != 0 ||
+	    dq_tree_add(t, id, bfd, DQ_KIND_DIR, ident) != 0) {
+		error = errno;
+		goto fail;
+	}
+	free(ident);
+	*fdp = fd;
+	if (objectp != NULL)
+		*objectp = id;
+	return (0);
+fail:
+	if (bfd >= 0)
+		close(bfd);
+	free(ident);
+	errno = error;
+	return (-1);
 }
 
 void

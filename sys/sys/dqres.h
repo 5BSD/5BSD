@@ -55,10 +55,11 @@ struct dqres_answer {
 	struct dq_object *da_obj;	/* FD: linked, the creation reference;
 					   dro_bind or dro_answer_release */
 	struct dq_ident_file *da_ident;	/* FD, ATTR, LINK: M_TEMP copy */
-	char		*da_target;	/* LINK: M_TEMP, NUL-terminated */
+	char		*da_target;	/* LINK, REAL: M_TEMP, NUL-terminated */
 	size_t		 da_targetlen;
 	uint64_t	 da_qgid;	/* the queue (Linux served mount ids) */
 	cap_rights_t	 da_rights;	/* FD: the policy's dp_rights */
+	uint64_t	 da_objid;	/* FD: the object's id (audit) */
 };
 
 /*
@@ -96,6 +97,23 @@ struct dq_islot {
 	struct vnode	*ds_start_vp;	/* vref'd; released at leave */
 	struct vnode	*ds_rdir_vp;	/* carried absolute path: the process
 					   root of an ABI-root restart */
+	const cap_rights_t *ds_rights;	/* the rights the slot's lookup needs
+					   of its dirfd (dq_intent_slot_rights);
+					   NULL: none beyond CAP_LOOKUP */
+	uint32_t	 ds_frf;	/* fetched: DQ_RF_STRICTREL, _BENEATH
+					   of the slot's own start (1c-iii-b),
+					   DQS_FRF_UNUSABLE */
+	int		 ds_ferr;	/* fetched: the error the slot's own
+					   lookup will give (round 4) */
+#define	DQS_FRF_UNUSABLE	0x80000000	/* a real start its own namei
+						   refuses: PASS only (never
+						   posted) */
+	uint64_t	 ds_start_obj;	/* DQ_START_SERVED: the served start's
+					   object id (never reused on its
+					   queue; 1c-iii-b) */
+	char		*ds_real;	/* a REAL answer (M_TEMP): a restart,
+					   or a carried slot's own lookup,
+					   applies it without waiting (D167) */
 	char		*ds_bytes;	/* M_TEMP copy of the path consulted */
 	size_t		 ds_len;
 	uint8_t		 ds_state;
@@ -148,9 +166,27 @@ struct dq_intent {
 	const char	*di_text;	/* SYMLINK: the target (path2), kernel */
 	size_t		 di_textlen;
 	struct dqres_answer di_res;
+	/*
+	 * A served start (1c-iii-b): the answer came from a lookup that
+	 * started at a served directory.  di_startcaps are that
+	 * descriptor's capabilities (ni_filecaps, rights only), intersected
+	 * with the policy's rights at install (D159); di_resflags are the
+	 * lookup's NIRES_* (O_RESOLVE_BENEATH is inherited from
+	 * NIRES_BENEATH).
+	 */
+	uint64_t	 di_startobj;
+	cap_rights_t	 di_startrights;
+	uint32_t	 di_startfcntls;
+	uint32_t	 di_resflags;
+	bool		 di_startlimited; /* di_startrights apply */
+	int16_t		 di_startnioctls; /* -1: all */
+	u_long		*di_startioctls; /* M_TEMP copy of the start's list */
 };
 #define	DQI_SERVED		0x0020	/* di_accept declared */
 #define	DQI_COMPLETING		0x0040	/* the completion runs: no lookup */
+#define	DQI_REALFD		0x0080	/* funlinkat/frmdirat named a real
+					   descriptor: a served path is
+					   EDEADLK (D170) */
 
 /* What a consultation asks (filled by kern_dqres.c, posted by dev/dq). */
 struct dqres_req {
@@ -179,6 +215,8 @@ struct dqres_req {
 	int		 rq_type;
 	int		 rq_protocol;
 	uint32_t	 rq_accept;	/* DQ_RACCEPT(...) (1c-iii) */
+	uint64_t	 rq_start;	/* DQ_START_SERVED: the object (iii-b) */
+	uint64_t	 rq_start2;	/* path2's served start */
 	uint32_t	 rq_cmode;
 	uint64_t	 rq_dev;
 	const struct dq_setattr_body *rq_setattr; /* appended to the body */
@@ -201,12 +239,26 @@ struct dqres_ops {
 	int	(*dro_consult)(struct thread *, struct dqres_binding *,
 		    const struct dqres_req *, struct dqres_answer *);
 	void	(*dro_unmarked)(struct dqres_binding *); /* M2 counter */
+	void	(*dro_exdev)(struct dqres_binding *);	/* ds2_resolve_exdev */
 	int	(*dro_bind)(struct thread *, struct dqres_answer *, int,
 		    struct file **);
 	void	(*dro_answer_release)(struct thread *, struct dqres_answer *);
 	int	(*dro_file_ident)(struct file *, struct dq_ident_file *,
 		    uint64_t *, bool *);
 	bool	(*dro_queue_closed)(uint64_t);	/* gone or DQ_Q_CLOSING */
+	/*
+	 * 1c-iii-b.  start: a served descriptor as a lookup start, its
+	 * kind and id; EDEADLK unless the caller is attached to its queue
+	 * (the binding, NULL when unattached) and is not its controller,
+	 * EIO once revoked or closing, ENOTTY for another file.  setattr:
+	 * the object-level setattr (D96) without the O_PATH gate.  target:
+	 * a served symlink's target (M_TEMP), EINVAL for another kind.
+	 */
+	int	(*dro_start)(struct thread *, struct dqres_binding *,
+		    struct file *, uint32_t *, uint64_t *);
+	int	(*dro_setattr)(struct thread *, struct file *,
+		    struct dq_setattr_body *);
+	int	(*dro_target)(struct file *, char **, size_t *);
 };
 
 void	dqres_register(const struct dqres_ops *ops);
@@ -237,6 +289,14 @@ void	dq_intent_slot(struct dq_intent *di, int slot, const char *path,
 void	dq_intent_enter_served(struct thread *td, struct dq_intent *di,
 	    uint32_t op, uint32_t flags, uint32_t accept);
 void	dq_intent_leave(struct thread *td, struct dq_intent *di);
+/* The rights a slot's own lookup needs of its dirfd (beyond CAP_LOOKUP). */
+static __inline void
+dq_intent_slot_rights(struct dq_intent *di, int slot,
+    const cap_rights_t *rights)
+{
+
+	di->di_slot[slot].ds_rights = rights;
+}
 bool	dqres_inject_drop(struct thread *td);
 int	dqres_consult_slot(struct thread *td, int slot);
 void	dq_intent_slot_content(struct dq_intent *di, int slot,
@@ -255,7 +315,46 @@ dq_intent_slot_kconsumer(struct dq_intent *di, int slot)
  * namei computed (the root vnode used for an absolute path); abs is true
  * for an absolute path.
  */
-int	dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs);
+int	dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
+	    bool *realp);
+
+/*
+ * Served starts (1c-iii-b, D162-D165, D167, D170, D172).
+ *
+ * dqres_lookup_start: fgetvp_lookup_start found a vnode-less descriptor
+ * (held) at ni_dirfd: 0 makes it a served start (a served directory with
+ * a non-empty path in a process attached to its queue, or any served
+ * descriptor for an O_EMPTY_PATH open); otherwise ENOTDIR (so the
+ * AT_EMPTY_PATH fallbacks run), EDEADLK (a served directory outside its
+ * attachment, D163) or EIO (revoked, closing).
+ *
+ * dqres_namei_served: namei_setup's served branch, consuming fp: the
+ * D165 pre-checks, the consultation from the served start, the I8
+ * post-checks; EDQRESOLVED for a served answer, an errno, or 0 with
+ * *realp set when the answer was REAL and cn_pnbuf now holds the real
+ * absolute path namei continues from (the caller sets ni_rootdir and
+ * ISRESTARTED and starts at the root).
+ *
+ * dqres_namei_symlink: namei's symlink loop, after the link was read into
+ * cn_pnbuf (dp the link's directory, referenced, unlocked): a PASSed
+ * class-1 lookup's re-consultation (D172 (b)); 0 to continue, *realp as
+ * above, EDQRESOLVED or an errno.
+ */
+int	dqres_lookup_start(struct nameidata *ndp, struct file *fp);
+bool	namei_cap_dotdot(void);	/* vfs.lookup_cap_dotdot (vfs_lookup.c) */
+int	dqres_namei_served(struct nameidata *ndp, struct file *fp,
+	    bool capdotdot, bool *realp);
+int	dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp,
+	    bool *realp);
+/*
+ * funlinkat/frmdirat's descriptor (D170), before namei: a served one is
+ * returned held (0) and names the event's drs_object; ENOTTY for any
+ * other, which the caller takes as a vnode and marks with
+ * dqres_unlink_realfd (a served path is then EDEADLK).
+ */
+int	dqres_unlink_fd(struct thread *td, int fd, const cap_rights_t *rights,
+	    struct file **fpp);
+void	dqres_unlink_realfd(struct thread *td);
 
 /*
  * AF_UNIX names: *enteredp says di was entered (a path name, consulted in
@@ -315,6 +414,9 @@ void	dqres_setattr_priv(struct thread *td, struct dq_setattr_body *sb,
 	    uint32_t which);
 int	dqres_emptypath_file(struct thread *td, int fd,
 	    const cap_rights_t *rights, struct file **fpp);
+int	dqres_file_setattr(struct thread *td, struct file *fp,
+	    struct dq_setattr_body *sb);
+int	dqres_file_target(struct file *fp, char **targetp, size_t *lenp);
 int	dqres_file_ident(struct file *fp, struct dq_ident_file *ident,
 	    uint64_t *qgidp, bool *closedp);
 /* Is the queue with this id closing or gone (true without dev/dq)? */

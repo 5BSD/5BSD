@@ -48,6 +48,7 @@ MARK	kern/kern_acct.c	sys_acct	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/kern_acct.c	sys_acct	0	uap->path
 SYSNDI	kern/kern_alq.c	alq_open_flags	file	REFUSED
 SYSNDI	kern/kern_ctf.c	link_elf_ctf_get	lf->pathname	via:exempt@kern/kern_linker.c:linker_ctf_get
+CONSULT	kern/kern_descrip.c	fgetvp_lookup_start	START	1
 SLOT	kern/kern_dqres.c	dq_intent_slot_content	slot	kpath
 MARK	kern/kern_dqres.c	dqres_consult_sun	op	DQI_USER	PASS	-	-
 SLOT	kern/kern_dqres.c	dqres_consult_sun	0	buf
@@ -115,6 +116,8 @@ SYSNDI	kern/vfs_inotify.c	vn_inotify_add_watch	dp->d_name	EXEMPT
 USERNDI	kern/vfs_inotify.c	kern_inotify_add_watch_dqimpl	path	slot0
 MARK	kern/vfs_inotify.c	kern_inotify_add_watch	DQ_ROP_INOTIFY	DQI_USER	PASS	-	-
 SLOT	kern/vfs_inotify.c	kern_inotify_add_watch	0	path
+CONSULT	kern/vfs_lookup.c	namei_setup	SERVED	1
+CONSULT	kern/vfs_lookup.c	namei	SYMLINK	1
 MARK	kern/vfs_mount.c	vfs_donmount_dqres	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/vfs_mount.c	vfs_donmount_dqres	slot	value
 MARK	kern/vfs_mount.c	vfs_domount	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
@@ -166,7 +169,7 @@ USERNDI	kern/vfs_syscalls.c	sys_undelete_dqimpl	uap->path	slot0
 MARK	kern/vfs_syscalls.c	sys_undelete	DQ_ROP_INTERNAL	DQI_USER	PASS	-	-
 SLOT	kern/vfs_syscalls.c	sys_undelete	0	uap->path
 VARSEG	kern/vfs_syscalls.c	kern_funlinkat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_funlinkat	DQ_ROP_UNLINK	DQI_USER	PASS+OK	dq_ok_dqserved	EINVAL+ERELOOKUP
+MARK	kern/vfs_syscalls.c	kern_funlinkat	DQ_ROP_UNLINK	DQI_USER	PASS+OK	dq_ok_dqserved	ENOTTY+EINVAL+ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_funlinkat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_accessat_dqimpl	pathseg	slot0
 MARK	kern/vfs_syscalls.c	kern_accessat	DQ_ROP_ACCESS	DQI_USER	PASS+ATTR	kern_accessat_dqserved	ENOTDIR
@@ -211,7 +214,7 @@ VARSEG	kern/vfs_syscalls.c	kern_mkdirat_dqimpl	segflg	slot0
 MARK	kern/vfs_syscalls.c	kern_mkdirat	DQ_ROP_MKDIR	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_mkdirat	0	path
 VARSEG	kern/vfs_syscalls.c	kern_frmdirat_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_frmdirat	DQ_ROP_RMDIR	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP
+MARK	kern/vfs_syscalls.c	kern_frmdirat	DQ_ROP_RMDIR	DQI_USER	PASS+OK	dq_ok_dqserved	ENOTTY+ERELOOKUP
 SLOT	kern/vfs_syscalls.c	kern_frmdirat	0	path
 USERNDI	kern/vfs_syscalls.c	sys_revoke_dqimpl	uap->path	slot0
 MARK	kern/vfs_syscalls.c	sys_revoke	DQ_ROP_REVOKE	DQI_USER	PASS	-	-
@@ -280,6 +283,8 @@ SOCKET	nlm/nlm_prot_impl.c	nlm_server_main	socreate	KERNEL:NLM server sockets; I
 SOCKET	nlm/nlm_prot_impl.c	nlm_server_main	socreate	KERNEL:NLM server sockets; I7
 SOCKET	rpc/rpc_generic.c	__rpc_nconf2socket	socreate	KERNEL:kernel RPC client sockets; I7
 EDQRESOLVED	kern/kern_dqres.c:dqres_namei	ALLOWED
+EDQRESOLVED	kern/kern_dqres.c:dqres_namei_served	ALLOWED
+EDQRESOLVED	kern/kern_dqres.c:dqres_namei_symlink	ALLOWED
 EDQRESOLVED	kern/subr_syscall.c:syscall_dq_stray	ALLOWED
 EDQRESOLVED	kern/subr_syscall.c:syscallret	ALLOWED
 EDQRESOLVED	sys/dqres.h:DQRES_SERVED	ALLOWED

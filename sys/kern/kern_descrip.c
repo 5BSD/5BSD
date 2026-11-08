@@ -3986,8 +3986,25 @@ fgetvp_lookup_smr(struct nameidata *ndp, struct vnode **vpp, int *flagsp)
 }
 #endif
 
+/*
+ * The start of a lookup relative to ni_dirfd.  A vnode is returned
+ * referenced in *vpp.  A vnode-less descriptor is ENOTDIR, except that
+ * with dqfpp a DescriptorQueue served directory may be the start (stage
+ * 1c-iii-b, D162): the dqres vector decides (dqres_lookup_start), and the
+ * file is returned held in *dqfpp with *vpp NULL, the descriptor's
+ * O_RESOLVE_BENEATH and capability restrictions applied exactly as for a
+ * vnode.  nameidata does not grow.
+ */
 int
 fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
+{
+
+	return (fgetvp_lookup_start(ndp, vpp, NULL));
+}
+
+int
+fgetvp_lookup_start(struct nameidata *ndp, struct vnode **vpp,
+    struct file **dqfpp)
 {
 	struct thread *td;
 	struct file *fp;
@@ -3997,6 +4014,8 @@ fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
 	int error;
 	uint8_t flags;
 
+	if (dqfpp != NULL)
+		*dqfpp = NULL;
 	td = curthread;
 	rights = *ndp->ni_rightsneeded;
 	cap_rights_set_one(&rights, CAP_LOOKUP);
@@ -4023,9 +4042,12 @@ fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
 	vp = fp->f_vnode;
 	if (__predict_false(vp == NULL)) {
 		error = ENOTDIR;
-		goto out_free;
-	}
-	vrefact(vp);
+		if (dqfpp != NULL && fp->f_type == DTYPE_DQ)
+			error = dqres_lookup_start(ndp, fp);
+		if (error != 0)
+			goto out_free;
+	} else
+		vrefact(vp);
 	/*
 	 * XXX does not check for VDIR, handled by namei_setup
 	 */
@@ -4035,7 +4057,10 @@ fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
 		cnp->cn_flags |= RBENEATH;
 		ndp->ni_resflags |= NIRES_BENEATH;
 	}
-	fdrop(fp, td);
+	if (vp == NULL)
+		*dqfpp = fp;	/* the served start keeps the reference */
+	else
+		fdrop(fp, td);
 
 #ifdef CAPABILITIES
 	/*

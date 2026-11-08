@@ -596,6 +596,9 @@ ends a lookup the controller answered itself (a served file, attributes,
 a symbolic link or a performed operation, stage 1c-iii).
 It is produced only by
 .Fn dqres_namei ,
+.Fn dqres_namei_served
+and
+.Fn dqres_namei_symlink ,
 for slot 0 of an intent entered with
 .Fn dq_intent_enter_served ,
 whose accept set names the answer's kind; the answer is kept in the
@@ -631,10 +634,60 @@ The resolution ledger lists, per entry point, the accepted kinds, the
 completion and the errnos its implementation transforms, and fails the
 kernel build when
 .Er EDQRESOLVED
-appears in code outside its producer, the consumer macro, the
+appears in code outside its producers, the consumer macro, the
 .Fn syscallenter
 mapping and
 .In sys/errno.h .
+.Pp
+A served directory (stage 1c-iii-b) has no vnode.
+.Fn namei_setup
+obtains a directory descriptor's start through
+.Fn fgetvp_lookup_start ,
+which for a vnode-less descriptor asks the DescriptorQueue vector
+.Pq Fn dqres_lookup_start
+whether it is a served start; then it returns the file held instead of a
+vnode, with the descriptor's
+.Dv O_RESOLVE_BENEATH
+and capability restrictions applied, and
+.Vt struct nameidata
+does not grow.
+The served branch of
+.Fn namei_setup
+runs before the
+.Dv VDIR
+test,
+.Dv RINROOT Ns 's
+reference, the vnode-relative audit record and the error path's
+.Fn vrele :
+.Fn dqres_namei_served
+refuses what must not be posted, consults from the served directory,
+checks the answer against the start, and ends the lookup with
+.Er EDQRESOLVED
+or an errno.
+A
+.Dv DQ_RESOLVE_REAL
+answer, there or in
+.Fn dqres_namei ,
+replaces
+.Va cn_pnbuf
+with a real absolute path, counts one step in
+.Va ni_loopcnt
+.Pq Dv MAXSYMLINKS ,
+sets
+.Va ni_rootdir
+to the process's real root and
+.Dv ISRESTARTED
+(the Linux ABI root's retry never runs after it), re-records the
+audited path, and continues from the root.
+In the symbolic-link loop of
+.Fn namei ,
+after
+.Fn namei_follow_link ,
+.Fn dqres_namei_symlink
+consults a passed user-origin lookup again with the remaining path (the
+link's directory held, unlocked, across the wait and released before
+the error exit); it never runs for paths consulted ahead, exempt
+regions, or capability-restricted lookups.
 .Sh SEE ALSO
 .Xr uio 9 ,
 .Xr uma 9 ,

@@ -119,6 +119,34 @@ audit_arg_atfd1(int atfd)
 	ARG_SET_VALID(ar, ARG_ATFD1);
 }
 
+/*
+ * DescriptorQueue (stage 1c-iii-b, D151): the served directory a lookup
+ * started at and the served object it produced, by object id.
+ */
+void
+audit_arg_dqstart(uint64_t object)
+{
+	struct kaudit_record *ar;
+
+	ar = currecord();
+	if (ar == NULL)
+		return;
+	ar->k_ar.ar_arg_dqstart = object;
+	ARG_SET_VALID(ar, ARG_DQSTART);
+}
+
+void
+audit_arg_dqobj(uint64_t object)
+{
+	struct kaudit_record *ar;
+
+	ar = currecord();
+	if (ar == NULL)
+		return;
+	ar->k_ar.ar_arg_dqobj = object;
+	ARG_SET_VALID(ar, ARG_DQOBJ);
+}
+
 void
 audit_arg_atfd2(int atfd)
 {

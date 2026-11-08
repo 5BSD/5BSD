@@ -438,6 +438,8 @@ int fgetvp_write(struct thread *td, int fd, const cap_rights_t *rightsp,
     struct vnode **vpp);
 int fgetvp_lookup_smr(struct nameidata *ndp, struct vnode **vpp, int *flagsp);
 int fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp);
+int fgetvp_lookup_start(struct nameidata *ndp, struct vnode **vpp,
+    struct file **dqfpp);
 
 static __inline __result_use_check bool
 fhold(struct file *fp)

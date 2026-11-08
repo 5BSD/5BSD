@@ -989,9 +989,11 @@ or
 .Va ds2_resolve_retired
 (served objects retired before a descriptor was installed),
 .Va ds2_resolve_exdev
-and
+(two-path operations with a served and a real start, and
+.Xr fhlink 2
+into a served directory, refused with no event) and
 .Va ds2_readdirs
-(reserved for stage 1c-iii-b, 0).
+.Pq Dv DQ_OP_READDIR No events .
 The kernel writes
 .Va ds2_size
 .Pq 320 .
@@ -2031,12 +2033,26 @@ call fails with
 rather than use bytes the controller never saw.
 An attached process's lookups never take the lockless fast path, so
 every lookup is consulted and resolves exactly as it would otherwise.
-Only the names the process passes are consulted: in stage 1c-i the
-targets of symbolic links met inside a lookup the controller passed are
-followed unconsulted, so a policy that decides by name can be bypassed
-through a symbolic link until served results arrive (stage 1c-iii); a
-controller that must hold a name boundary refuses symbolic links it
-does not trust or creates no names it does not control.
+The names the process passes are consulted, and from stage 1c-iii-b so
+is every symbolic link a passed user-origin lookup follows
+.Pq Sx Served directories and starts .
+The symbolic links still followed unconsulted are those met by paths
+consulted ahead or carried (the second path of
+.Xr rename 2
+and
+.Xr link 2 ,
+socket names,
+.Xr swapon 8 ,
+quota and
+.Xr kldload 2
+files, mount options), by capability-mode,
+.Dv O_RESOLVE_BENEATH
+and
+.Dv RINROOT
+lookups (confined to their start by the kernel), and by the kernel's own
+lookups in exempt regions; a controller that must hold a name boundary
+there refuses symbolic links it does not trust or creates no names it
+does not control.
 A user-space lookup without an intent (a kernel bug) is still consulted,
 fails closed, and is counted in
 .Va ds2_resolve_unmarked .
@@ -2192,8 +2208,8 @@ is always in it, an errno is always accepted (allow-listed), and a kind
 outside it is
 .Er EINVAL
 to the controller with the event still in flight.
-Served kinds are offered only to the first path of a user-origin lookup
-from a real start (the working directory, the root or a real directory
+From a real start, served kinds are offered only to the first path of a
+user-origin lookup (the working directory, the root or a real directory
 descriptor) that is not
 .Dv O_RESOLVE_BENEATH ,
 capability-mode relative,
@@ -2205,8 +2221,13 @@ or an
 .Dv O_NAMEDATTR
 open; the kernel's own lookups, second paths, paths consulted ahead and
 socket names take
-.Dv DQ_RESOLVE_PASS
-or an errno only.
+.Dv DQ_RESOLVE_PASS ,
+.Dv DQ_RESOLVE_REAL
+where it is allowed, or an errno only.
+A lookup from a served directory
+.Pq Sx Served directories and starts
+never takes
+.Dv DQ_RESOLVE_PASS .
 .Bl -column "DQ_ROP_REALPATH, DQ_ROP_ACCESS" "FD, OK" -offset indent
 .It Sy Operation Ta Sy Served kinds
 .It Dv DQ_ROP_OPEN Ta FD
@@ -2234,7 +2255,16 @@ both names are its own).
 (3968):
 a
 .Dv DQ_KIND_FILE
-object minted at the reply, validated as
+or
+.Dv DQ_KIND_DIR
+object minted at the reply (a
+.Dv DQ_KIND_SYMLINK
+object adds a
+.Vt struct dq_resolve_target ,
+its target, whose length is its
+.Va di_size ,
+up to 5008 bytes in all, and answers only a lookup that does not follow
+a final symbolic link), validated as
 .Dv DQ_IOC_MINT
 validates
 .Pq Dv DQ_MINT_F_WRITE needs Va dp_write No = Dv DQ_EVENT ;
@@ -2289,6 +2319,13 @@ is the target's length, then a
 .Va drt_len
 bytes, a NUL and zeros to the next 8-byte boundary, no inner NUL; at
 most 4936 bytes.
+.It Dv DQ_RESOLVE_REAL
+The reply and a
+.Vt struct dq_resolve_target
+holding an absolute, normalized real path, at most 1040 bytes: the name
+is that path, and the lookup continues there from the real root
+(stage 1c-iii-b,
+.Sx Served directories and starts ) .
 .El
 .Pp
 A
@@ -2494,27 +2531,409 @@ and
 .Xr faccessat 2
 answer as their descriptor forms;
 .Xr readlinkat 2
-is
+returns a served symbolic link's target and is
 .Er EINVAL
-(a served file is not a symbolic link);
+for any other served descriptor;
 .Xr linkat 2
 is
 .Er EXDEV .
-An empty path on a real descriptor is consulted but accepts only
-.Dv DQ_RESOLVE_PASS
-or an errno: the descriptor's real operation applies.
-On a served descriptor opened
-.Dv O_PATH ,
 .Xr fchmodat 2
 and
 .Xr fchownat 2
-with
-.Dv AT_EMPTY_PATH
-fail with
-.Er EBADF ,
-where a real
+apply the change to the object itself, so they succeed on a served
+descriptor opened
 .Dv O_PATH
-descriptor succeeds (stage 1c-iii-b applies them to the object).
+as on a real one (stage 1c-iii-b), while
+.Xr fchmod 2
+and
+.Xr fchown 2
+of that descriptor stay
+.Er EBADF .
+An empty path on a real descriptor is consulted but accepts only
+.Dv DQ_RESOLVE_PASS
+or an errno: the descriptor's real operation applies.
+.Dv O_EMPTY_PATH
+on a served descriptor is the exception: an attached process's
+.Xr openat 2
+of a descriptor of its own queue posts
+.Dv DQ_ROP_OPEN
+with
+.Dv DQ_RF_EMPTYPATH
+from that object
+.Pq Dv DQ_START_SERVED
+and takes
+.Dv DQ_RESOLVE_FD
+or an errno: the controller reopens it.
+.Ss Served directories and starts
+Stage 1c-iii-b serves directories and symbolic links and lets a served
+directory start lookups.
+.Pp
+.Sy Kinds .
+A
+.Dv DQ_KIND_DIR
+object presents an
+.Dv S_IFDIR
+identity under a policy that never writes, executes or maps shared
+.Pq Va dp_write , dp_exec , dp_mmap_shared_write No = Dv DQ_DENY ,
+.Va dp_cache
+.Dv DQ_CACHE_NONE
+or
+.Dv DQ_CACHE_ATTR ,
+no
+.Dv DQ_MINT_F_WRITE ) ;
+.Dv DQ_IOC_MINT
+mints one as it mints a file.
+A
+.Dv DQ_KIND_SYMLINK
+object presents an
+.Dv S_IFLNK
+identity whose
+.Va di_size
+is its target's length (1 to
+.Dv DQ_PATH_MAX
+\- 1, kept by
+.Dv DQ_IOC_SETIDENT
+and a
+.Dv DQ_OP_GETATTR
+reply), under the same policy with
+.Va dp_ioctl
+.Dv DQ_DENY ;
+it exists only as an answer to an
+.Dv O_PATH | O_NOFOLLOW
+open (any other open of it is
+.Er EMLINK ,
+as on a real symbolic link) or to an operation that does not follow it
+.Pq Xr lchmod 2 , Xr lchown 2 , Xr lutimes 2 .
+Its descriptor is always
+.Dv O_PATH ;
+.Xr readlinkat 2
+with an empty path returns the target.
+A mode, owner or time change answered
+.Dv DQ_RESOLVE_FD
+with a symbolic link is applied to the object directly with the rules of
+.Xr fchmod 2
+and
+.Xr fchown 2
+(the object's
+.Dv DQ_OP_SETATTR
+follows).
+.Pp
+An open answered with a directory is checked as a real open of a
+directory: a write mode,
+.Dv O_TRUNC ,
+and
+.Dv O_CREAT
+without
+.Dv O_PATH
+are
+.Er EISDIR ;
+.Dv O_SEARCH
+.Pq Dv O_EXEC
+needs search permission on the identity.
+On a directory descriptor
+.Xr read 2
+is
+.Er EISDIR ,
+.Xr mmap 2
+and
+.Xr sendfile 2
+are
+.Er EINVAL ,
+.Dv SEEK_DATA
+and
+.Dv SEEK_HOLE
+are
+.Er EINVAL ,
+and
+.Dv F_KINFO
+and
+.Xr procstat 1
+report the type by kind
+.Pq Dv KF_VTYPE_VDIR , KF_VTYPE_VLNK .
+.Pp
+.Sy READDIR .
+.Xr getdirentries 2
+(and so
+.Xr readdir 3 )
+of a served directory posts
+.Dv DQ_OP_READDIR
+with a
+.Vt struct dq_readdir_body
+(16 bytes):
+.Va drd_cookie ,
+the descriptor's offset, which holds the controller's cookie (0 at open;
+.Xr lseek 2
+sets it), and
+.Va drd_len ,
+the space the caller left, at most
+.Va kern.dq.max_io
+\- 16.
+A buffer smaller than a
+.Vt struct dirent
+is
+.Er EINVAL
+with no event.
+The reply is an errno
+.Pq Er EIO , ENOENT , EACCES , EINVAL , ENOTDIR , ESTALE , EINTEGRITY ;
+anything else is
+.Er EIO
+and counted) or a
+.Vt struct dq_readdir_reply
+(16 bytes:
+.Va drdr_next ,
+the cookie after the records, at most
+.Dv OFF_MAX ;
+.Va drdr_eof ,
+0 or 1;
+.Va drdr_len )
+followed by
+.Va drdr_len
+bytes of
+.Vt struct dirent
+records as
+.Xr getdirentries 2
+returns them.
+Every record is checked:
+.Va d_reclen
+a multiple of 8, at least
+.Fn _GENERIC_DIRLEN d_namlen
+and within the reply;
+.Va d_namlen
+1 to
+.Dv MAXNAMLEN ;
+the name NUL-terminated with no
+.Ql /
+and no inner NUL;
+.Va d_type
+a
+.Dv DT_*
+value, and
+.Dv DT_DIR
+or
+.Dv DT_UNKNOWN
+for
+.Ql \&.
+and
+.Ql .. ;
+.Va drdr_len
+at most
+.Va drd_len .
+Zero bytes with
+.Va drdr_eof
+0 to a request that could hold an entry is refused.
+A malformed reply is
+.Er EINVAL
+to the controller and the event stays in flight.
+The kernel zeroes the pads, sets the offset to
+.Va drdr_next ,
+and reports the starting cookie as the base.
+.Pp
+.Sy Starts .
+A served directory used as the directory of an
+.Fn *at
+call, by a process attached to its queue, is the lookup's start: the
+lookup is posted with
+.Dv DQ_START_SERVED ,
+.Va drs_start
+the directory's object, and its presented path as the start hint, and it
+never takes
+.Dv DQ_RESOLVE_PASS
+(that would mean a real lookup of a name that is not there); it takes
+the operation's served kinds,
+.Dv DQ_RESOLVE_REAL
+where allowed, or an errno.
+A process not attached to the directory's queue (unattached, attached
+elsewhere, or the controller) gets
+.Er EDEADLK
+with no event; a revoked directory, or one whose queue is closing,
+.Er EIO .
+A served file or symbolic link as a directory is
+.Er ENOTDIR ,
+as before.
+An absolute path ignores the descriptor, as it always does.
+The kernel's own lookups, kernel consumers and unmarked lookups never
+start at a served directory
+.Pq Er ENOTDIR .
+An
+.Dv O_NAMEDATTR
+open from one is
+.Er EOPNOTSUPP .
+.Pp
+Restrictions apply as from a real directory descriptor: its rights,
+.Dv FD_RESOLVE_BENEATH ,
+capability mode and
+.Dv O_RESOLVE_BENEATH .
+Under
+.Dv O_RESOLVE_BENEATH
+or capability mode, before posting, an absolute path, a
+.Dv RINROOT
+lookup, a
+.Ql ..
+as the first component (after empty and
+.Ql \&.
+ones, so
+.Ql ./../x
+too), and in capability mode or from a descriptor with limited rights any
+.Ql ..
+while
+.Va vfs.lookup_cap_dotdot
+is 0, are
+.Er ENOTCAPABLE
+with no event.
+Every other path is posted as given (under
+.Dv RINROOT
+too, unrewritten; the controller clamps): only the controller knows
+its symbolic links.
+After the reply, a served object, attributes or a link answered to a
+restricted lookup must be under the start's presented path at a
+component boundary
+.Pf ( Pa /a
+does not contain
+.Pa /ab ) ,
+else
+.Er ENOTCAPABLE ;
+under
+.Dv NOXDEV
+(Linux
+.Fn openat2 )
+on the start's file system
+.Pq Va ds_fsid , di_dev ,
+else
+.Er EXDEV ;
+the object retires.
+This check sees only the result: a walk that leaves the start's file
+system and comes back is the controller's to refuse.
+.Dv DQ_RESOLVE_OK
+carries no identity and is not checked.
+A served descriptor opened from a directory gets that directory's
+rights, fcntl and ioctl limits intersected with the policy's (as a real
+.Xr openat 2
+from a limited descriptor gets the descriptor's) and inherits its
+.Dv FD_RESOLVE_BENEATH .
+The second path of a two-path operation is checked against its own
+descriptor before anything is posted: an empty second path is
+.Er ENOENT ,
+another queue's served directory
+.Er EXDEV ,
+and a served second start must pass the operation's rights on it and
+the pre-checks above for its own restrictions (posted as
+.Dv DQ_RF_STRICTREL2
+and
+.Dv DQ_RF_BENEATH2 ) .
+A real second start that is restricted or that its lookup would refuse
+(a bad or limited descriptor, a file, capability mode, an empty path)
+takes only
+.Dv DQ_RESOLVE_PASS ,
+so its own lookup runs and reports in the usual order; behind a served
+first path those errors
+.Pq Er ENOENT , ECAPMODE , ENOTCAPABLE No for missing rights or a Xr cap_lookup_capmode 2 No descriptor, Er ENOTDIR
+are returned before posting, ahead of the mixed-start
+.Er EXDEV
+.Pq Fn rename \(dqmissing\(dq badfd \(dqx\(dq No is Er ENOENT .
+A path consulted ahead under capability mode or from a limited or
+.Dv FD_RESOLVE_BENEATH
+descriptor takes no
+.Dv DQ_RESOLVE_REAL .
+A
+.Dv DQ_RESOLVE_REAL
+rewrite of a path ending in
+.Ql / ,
+.Ql \&.
+or
+.Ql ..
+ends in
+.Ql /
+(so
+.Ql file/.
+stays
+.Er ENOTDIR ) .
+.Pp
+Two-path operations
+.Pq Xr rename 2 , Xr link 2
+whose paths both start at served directories of the same queue are one
+event
+.Pq Va drs_start , drs_start2 ,
+answered
+.Dv DQ_RESOLVE_OK
+or an errno; a served and a real start (or another queue's) are
+.Er EXDEV
+with no event, as is
+.Xr fhlink 2
+into a served directory.
+.Xr funlinkat 2
+with a served descriptor names its object in
+.Va drs_object
+and needs a path from a served start
+.Pq Er EDEADLK No otherwise, with no event ;
+a real descriptor with a served path is
+.Er EDEADLK .
+.Xr linkat 2
+of a served descriptor with
+.Dv AT_EMPTY_PATH
+is
+.Er EXDEV .
+A name under
+.Pa /dev/fd/N
+of a served descriptor stays
+.Er ENOTDIR .
+.Pp
+.Sy REAL .
+.Dv DQ_RESOLVE_REAL
+answers a name with an absolute, normalized real path: the kernel
+replaces the path with it and continues from the process's real root
+(never the Linux ABI root, whose retry does not run after it).
+It is accepted for user-origin lookups of any operation except
+.Xr rename 2
+and
+.Xr link 2 ,
+from real and served starts, and for paths consulted ahead (socket
+names), never under capability mode,
+.Dv O_RESOLVE_BENEATH ,
+.Dv RINROOT ,
+.Dv O_NAMEDATTR ,
+.Dv NOSYMLINKS ,
+.Dv NOMAGICLINKS ,
+.Dv NOXDEV ,
+or for an empty path.
+Each rewrite counts as one step toward
+.Dv MAXSYMLINKS
+.Pq Er ELOOP ,
+shared with the symbolic links the lookup follows.
+A restart of the same lookup applies the same answer without a new
+event.
+The audit record holds the rewritten path.
+The result is a real vnode, with every vnode check.
+.Pp
+.Sy Symbolic links .
+A user-origin lookup answered
+.Dv DQ_RESOLVE_PASS
+(or rewritten by
+.Dv DQ_RESOLVE_REAL )
+is consulted again at every symbolic link it follows, with the remaining
+path after the link's target was inserted,
+.Dv DQ_RF_SYMLINK_RESTART ,
+and start
+.Dv DQ_START_REAL_ROOT
+(an absolute target) or
+.Dv DQ_START_REAL_SYMDIR
+(a relative one; the hint is the link's directory).
+It takes
+.Dv DQ_RESOLVE_PASS ,
+.Dv DQ_RESOLVE_REAL ,
+the operation's served kinds or an errno; a signal while waiting is
+.Er EINTR .
+Paths consulted ahead, second paths, the kernel's own lookups, exempt
+regions and capability-restricted lookups
+.Pq Dv O_RESOLVE_BENEATH , RINROOT , No capability mode
+keep their first answer.
+.Pp
+.Sy Audit .
+A lookup from a served directory records the path as given (not made
+absolute: there is no vnode to make it absolute against) and the start's
+object id
+.Pq Ql dq_start ;
+a served descriptor answered records its id
+.Pq Ql dq_object .
 .Sh READ-ONLY OBJECTS
 A descriptor minted without
 .Dv DQ_MINT_F_WRITE
@@ -2732,8 +3151,12 @@ answered
 or an errno.
 Stage 1c-iii-a adds served answers from real starts
 .Pq Sx Served answers ;
-served directories and starts come in 1c-iii-b, a virtual working
-directory and root in 1c-iii-c.
+stage 1c-iii-b served directories and symbolic links, served directories
+as lookup starts,
+.Dv DQ_RESOLVE_REAL
+and the re-consultation at symbolic links
+.Pq Sx Served directories and starts ;
+a virtual working directory and root come in 1c-iii-c.
 Consequences of the attachment that differ from an unattached run, by
 design: set-id and authority transitions do not happen,
 .Xr jail_attach 2 ,
@@ -2868,6 +3291,15 @@ SDT provider fires:
 .It dq:::resolve-retire
 .Fa "struct dq_queue *" ,
 .Fa "struct dq_object *"
+.It dq:::resolve-real
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t rop" ,
+.Fa "char *path"
+.It dq:::resolve-symlink
+.Fa "struct dq_queue *" ,
+.Fa "uint32_t rop" ,
+.Fa "uint32_t kind"
+(a re-consultation at a symbolic link and the kind it was answered)
 .El
 .Pp
 Every reply also runs the

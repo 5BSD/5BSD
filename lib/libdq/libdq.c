@@ -10,6 +10,7 @@
 #include <sys/ioctl.h>
 #include <sys/sysctl.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -583,6 +584,10 @@ dq_reply_errno_allowed(uint32_t op, int error)
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
+	case DQ_OP_READDIR:
+		return (error == EIO || error == ENOENT || error == EACCES ||
+		    error == EINVAL || error == ENOTDIR || error == ESTALE ||
+		    error == EINTEGRITY);
 	case DQ_OP_RESOLVE:
 		/* Allowed for some RESOLVE op (dq_resolve_errno_allowed). */
 		return (dq_resolve_errno_allowed(DQ_ROP_OPEN, error) ||
@@ -961,7 +966,7 @@ dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb, int error)
 		return (rb->drs_op != DQ_ROP_SOCKET &&
 		    rb->drs_op != DQ_ROP_SOCKETPAIR &&
 		    (rb->drs_rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH |
-		    DQ_RF_RINROOT)) != 0);
+		    DQ_RF_RINROOT | DQ_RF_STRICTREL2 | DQ_RF_BENEATH2)) != 0);
 	return (dq_resolve_errno_allowed(rb->drs_op, error));
 }
 
@@ -1093,4 +1098,228 @@ dq_reply_resolve_ok(int q, uint64_t id)
 	memset(&rr, 0, sizeof(rr));
 	rr.drr_kind = DQ_RESOLVE_OK;
 	return (dq_reply(q, id, 0, &rr, sizeof(rr)));
+}
+
+/*
+ * Served directories and symbolic links, REAL answers (stage 1c-iii-b).
+ */
+
+/*
+ * A directory's or a symbolic link's policy (D168): nothing is written,
+ * executed or mapped shared, no data cache, no ioctl; locks are events;
+ * every right.
+ */
+void
+dq_policy_default_dir(struct dq_policy *pol)
+{
+
+	dq_policy_default(pol);
+}
+
+int
+dq_mint_dir(int q, const struct dq_ident_file *ident,
+    const struct dq_policy *pol, uint64_t *object, int *fd, int *reason)
+{
+	struct dq_mint_args *args;
+	int error, rv;
+
+	args = calloc(1, sizeof(*args));
+	if (args == NULL)
+		return (-1);
+	args->dm_version = DQ_API_VERSION;
+	args->dm_kind = DQ_KIND_DIR;
+	args->dm_ident = *ident;
+	args->dm_policy = *pol;
+	args->dm_reasonp = reason;
+	if (reason != NULL)
+		*reason = DQ_REASON_NONE;
+	rv = ioctl(q, DQ_IOC_MINT, args);
+	error = errno;
+	if (rv == 0) {
+		*object = args->dm_object;
+		*fd = args->dm_fd;
+	}
+	free(args);
+	errno = error;
+	return (rv);
+}
+
+/*
+ * The identity of name relative to dirfd without following a final
+ * symbolic link, presented as presented; pathconf from an O_PATH open
+ * (none for a symbolic link, whose size is its target's length).
+ */
+int
+dq_ident_from_lstat(struct dq_ident_file *ident, const char *presented,
+    int dirfd, const char *name)
+{
+	struct statfs sfs;
+	struct stat st;
+	int error, fd, rv;
+
+	fd = openat(dirfd, name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+	if (fd < 0)
+		return (-1);
+	rv = -1;
+	if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
+	    fstatfs(fd, &sfs) == 0)
+		rv = dq_ident_from_stat(ident, presented, &st, &sfs,
+		    S_ISLNK(st.st_mode) ? -1 : fd);
+	error = errno;
+	close(fd);
+	errno = error;
+	return (rv);
+}
+
+/* A target payload: drt_len bytes, NUL, zeros to the next 8 bytes. */
+static size_t
+dq_target_size(size_t tlen)
+{
+
+	return ((sizeof(struct dq_resolve_target) + tlen + 1 + 7) &
+	    ~(size_t)7);
+}
+
+int
+dq_reply_resolve_fd_symlink(int q, uint64_t id,
+    const struct dq_ident_file *ident, const struct dq_policy *pol,
+    const char *target, uint64_t *objectp, int32_t *reasonp)
+{
+	struct dq_resolve_reply *rr;
+	struct dq_resolve_mint *rm;
+	struct dq_resolve_target *rt;
+	size_t len, tlen;
+	char *buf;
+	int error, ret;
+
+	if (ident == NULL || pol == NULL || target == NULL || objectp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	tlen = strlen(target);
+	if (tlen == 0 || tlen >= DQ_PATH_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+	len = sizeof(*rr) + sizeof(*rm) + dq_target_size(tlen);
+	buf = calloc(1, len);
+	if (buf == NULL)
+		return (-1);
+	rr = (struct dq_resolve_reply *)(void *)buf;
+	rm = (struct dq_resolve_mint *)(void *)(rr + 1);
+	rt = (struct dq_resolve_target *)(void *)(rm + 1);
+	rr->drr_kind = DQ_RESOLVE_FD;
+	rm->drm_kind = DQ_KIND_SYMLINK;
+	rm->drm_ident = *ident;
+	rm->drm_ident.di_size = tlen;
+	rm->drm_policy = *pol;
+	rm->drm_objectp = objectp;
+	rm->drm_reasonp = reasonp;
+	rt->drt_len = (uint32_t)tlen;
+	memcpy(rt->drt_target, target, tlen);
+	ret = dq_reply(q, id, 0, buf, len);
+	error = errno;
+	free(buf);
+	errno = error;
+	return (ret);
+}
+
+int
+dq_reply_resolve_real(int q, uint64_t id, const char *path)
+{
+	struct dq_resolve_reply *rr;
+	struct dq_resolve_target *rt;
+	size_t len, tlen;
+	char *buf;
+	int error, ret;
+
+	if (path == NULL || path[0] != '/') {
+		errno = EINVAL;
+		return (-1);
+	}
+	tlen = strlen(path);
+	if (tlen >= DQ_PATH_MAX) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	len = sizeof(*rr) + dq_target_size(tlen);
+	buf = calloc(1, len);
+	if (buf == NULL)
+		return (-1);
+	rr = (struct dq_resolve_reply *)(void *)buf;
+	rt = (struct dq_resolve_target *)(void *)(rr + 1);
+	rr->drr_kind = DQ_RESOLVE_REAL;
+	rt->drt_len = (uint32_t)tlen;
+	memcpy(rt->drt_target, path, tlen);
+	ret = dq_reply(q, id, 0, buf, len);
+	error = errno;
+	free(buf);
+	errno = error;
+	return (ret);
+}
+
+int
+dq_event_readdir(const struct dq_event *ev,
+    const struct dq_readdir_body **body)
+{
+
+	return (dq_event_fixed(ev, DQ_OP_READDIR, sizeof(**body),
+	    (const void **)body));
+}
+
+/*
+ * Append one struct dirent record (d_reclen padded to 8) to buf, which
+ * holds *lenp bytes of cap; ENOSPC when it does not fit.
+ */
+int
+dq_dirent_add(void *buf, size_t cap, size_t *lenp, uint64_t fileno,
+    uint64_t off, uint8_t type, const char *name)
+{
+	struct dirent *dp;
+	size_t namlen, reclen;
+
+	namlen = strlen(name);
+	if (namlen == 0 || namlen > MAXNAMLEN || strchr(name, '/') != NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	reclen = _GENERIC_DIRLEN(namlen);
+	if (*lenp > cap || cap - *lenp < reclen) {
+		errno = ENOSPC;
+		return (-1);
+	}
+	dp = (struct dirent *)(void *)((char *)buf + *lenp);
+	memset(dp, 0, reclen);
+	dp->d_fileno = fileno;
+	dp->d_off = (off_t)off;
+	dp->d_reclen = (uint16_t)reclen;
+	dp->d_type = type;
+	dp->d_namlen = (uint16_t)namlen;
+	memcpy(dp->d_name, name, namlen);
+	*lenp += reclen;
+	return (0);
+}
+
+int
+dq_reply_readdir(int q, uint64_t id, uint64_t next, int eof,
+    const void *records, size_t len)
+{
+	struct dq_readdir_reply *rr;
+	char *buf;
+	int error, ret;
+
+	buf = calloc(1, sizeof(*rr) + len);
+	if (buf == NULL)
+		return (-1);
+	rr = (struct dq_readdir_reply *)(void *)buf;
+	rr->drdr_next = next;
+	rr->drdr_eof = eof != 0;
+	rr->drdr_len = (uint32_t)len;
+	if (len != 0)
+		memcpy(rr + 1, records, len);
+	ret = dq_reply(q, id, 0, buf, sizeof(*rr) + len);
+	error = errno;
+	free(buf);
+	errno = error;
+	return (ret);
 }

@@ -193,6 +193,15 @@ static int lookup_cap_dotdot = 1;
 SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot, CTLFLAG_RWTUN,
     &lookup_cap_dotdot, 0,
     "enables \"..\" components in path lookup in capability mode");
+
+/* For dqres's pre-checks of a path it posts before namei (1c-iii-b). */
+bool
+namei_cap_dotdot(void)
+{
+
+	return (lookup_cap_dotdot != 0);
+}
+
 static int lookup_cap_dotdot_nonlocal = 1;
 SYSCTL_INT(_vfs, OID_AUTO, lookup_cap_dotdot_nonlocal, CTLFLAG_RWTUN,
     &lookup_cap_dotdot_nonlocal, 0,
@@ -342,19 +351,58 @@ namei_handle_root(struct nameidata *ndp, struct vnode **dpp)
 	return (0);
 }
 
+/*
+ * A REAL answer (D167) rewrote cn_pnbuf to a real absolute path: the
+ * lookup starts again at the process root, never the Linux ABI root
+ * (ISRESTARTED, so namei's ABI restart never re-runs), and the audited
+ * path is the rewritten one.  *dpp (if any) is released; on success it is
+ * the root, referenced.
+ */
+static int
+namei_dqres_real(struct nameidata *ndp, struct vnode **dpp, struct pwd *pwd)
+{
+	struct componentname *cnp;
+	struct thread *td;
+	int error;
+
+	cnp = &ndp->ni_cnd;
+	td = curthread;
+	if (*dpp != NULL) {
+		vrele(*dpp);
+		*dpp = NULL;
+	}
+	ndp->ni_rootdir = pwd->pwd_rdir;
+	cnp->cn_flags |= ISRESTARTED;
+	ndp->ni_resflags |= NIRES_ABS;
+	cnp->cn_nameptr = cnp->cn_pnbuf;
+	error = namei_handle_root(ndp, dpp);
+	if (error == 0 && AUDITING_TD(td)) {
+		if (cnp->cn_flags & AUDITVNODE1)
+			AUDIT_ARG_UPATH1_VP(td, ndp->ni_rootdir, *dpp,
+			    cnp->cn_pnbuf);
+		if (cnp->cn_flags & AUDITVNODE2)
+			AUDIT_ARG_UPATH2_VP(td, ndp->ni_rootdir, *dpp,
+			    cnp->cn_pnbuf);
+	}
+	return (error);
+}
+
 static int
 namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 {
 	struct componentname *cnp;
 	struct thread *td;
 	struct pwd *pwd;
+	struct file *dqfp;
 	int error;
-	bool startdir_used;
+	bool dqreal, startdir_used;
 
 	cnp = &ndp->ni_cnd;
 	td = curthread;
 
 	startdir_used = false;
+	dqreal = false;
+	dqfp = NULL;
 	*pwdp = NULL;
 	*dpp = NULL;
 
@@ -415,9 +463,30 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 			if (cnp->cn_flags & AUDITVNODE2)
 				AUDIT_ARG_ATFD2(ndp->ni_dirfd);
 
-			error = fgetvp_lookup(ndp, dpp);
+			error = fgetvp_lookup_start(ndp, dpp, &dqfp);
 		}
-		if (error == 0 && (*dpp)->v_type != VDIR &&
+		if (error == 0 && dqfp != NULL) {
+			/*
+			 * DescriptorQueue served start (1c-iii-b, M4, D162):
+			 * no vnode, so this returns before the VDIR test,
+			 * RINROOT's vrefact, the vnode-relative audit and the
+			 * error path's vrele.  The lookup is consulted from
+			 * the served directory: a served answer or an errno
+			 * ends it here; REAL continues from the real root.
+			 */
+			error = dqres_namei_served(ndp, dqfp,
+			    lookup_cap_dotdot != 0, &dqreal);
+			if (error == 0) {
+				MPASS(dqreal);
+				error = namei_dqres_real(ndp, dpp, pwd);
+			}
+			if (error != 0) {
+				if (*dpp != NULL)
+					vrele(*dpp);
+				pwd_drop(pwd);
+				return (error);
+			}
+		} else if (error == 0 && (*dpp)->v_type != VDIR &&
 		    (cnp->cn_flags & OPENNAMED) == 0 &&
 		    (cnp->cn_pnbuf[0] != '\0' ||
 		    (cnp->cn_flags & EMPTYPATH) == 0))
@@ -470,9 +539,12 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	 * for those).  PASS continues unchanged; an errno ends the lookup
 	 * and is released below like any other.
 	 */
-	if (error == 0 && DQRES_ATTACHED_TD(td))
+	if (error == 0 && DQRES_ATTACHED_TD(td) && !dqreal) {
 		error = dqres_namei(ndp, *dpp,
-		    (ndp->ni_resflags & NIRES_ABS) != 0);
+		    (ndp->ni_resflags & NIRES_ABS) != 0, &dqreal);
+		if (error == 0 && dqreal)
+			error = namei_dqres_real(ndp, dpp, pwd);
+	}
 	if (error != 0) {
 		if (*dpp != NULL)
 			vrele(*dpp);
@@ -824,10 +896,35 @@ restart:
 			break;
 		vput(ndp->ni_vp);
 		dp = ndp->ni_dvp;
+		cnp->cn_nameptr = cnp->cn_pnbuf;
+		/*
+		 * DescriptorQueue (D172 (b), 1c-iii-b): a PASSed lookup of an
+		 * attached process consults again at every symlink, with dp
+		 * (the link's directory) referenced and unlocked across the
+		 * wait.  REAL restarts at the real root; a served answer or an
+		 * errno ends the lookup (dp released before out:, which
+		 * releases no vnode).
+		 */
+		if (DQRES_ATTACHED_TD(td)) {
+			bool dqreal;
+
+			error = dqres_namei_symlink(ndp, dp, &dqreal);
+			if (error == 0 && dqreal) {
+				vrele(dp);
+				dp = NULL;
+				error = namei_dqres_real(ndp, &dp, pwd);
+				if (error != 0)
+					goto out;
+				continue;
+			}
+			if (error != 0) {
+				vrele(dp);
+				goto out;
+			}
+		}
 		/*
 		 * Check if root directory should replace current directory.
 		 */
-		cnp->cn_nameptr = cnp->cn_pnbuf;
 		if (*(cnp->cn_nameptr) == '/') {
 			/*
 			 * For ABI-root lookups, preserve the ABI root while
