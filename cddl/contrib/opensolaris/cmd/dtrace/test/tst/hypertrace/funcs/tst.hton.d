@@ -30,7 +30,7 @@
  * ASSERTION: Test network byte-ordering routines.
  */
 
-#if defined(__amd64__) || defined(__i386__)
+#if defined(__amd64__) || defined(__i386__) || defined(__LITTLE_ENDIAN__)
 #define _LITTLE_ENDIAN
 #endif
 
