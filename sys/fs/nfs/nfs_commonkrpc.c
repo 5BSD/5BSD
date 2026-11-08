@@ -325,6 +325,7 @@ newnfs_connect(struct nfsmount *nmp, struct nfssockreq *nrp,
 		 */
 		so = NULL;
 		saddr = NFSSOCKADDR(nrp->nr_nam, struct sockaddr *);
+		/* dq-ledger: kernel (NFS RPC transport; I7) */
 		error = socreate(saddr->sa_family, &so, nrp->nr_sotype,
 		    nrp->nr_soproto, td->td_ucred, td);
 		if (error != 0)

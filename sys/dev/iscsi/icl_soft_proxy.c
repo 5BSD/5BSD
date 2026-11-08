@@ -107,6 +107,7 @@ icl_soft_proxy_connect(struct icl_conn *ic, int domain, int socktype,
 	struct socket *so;
 	int error;
 
+	/* dq-ledger: kernel (iSCSI proxy sockets for iscsid/ctld; I7) */
 	error = socreate(domain, &so, socktype, protocol,
 	    curthread->td_ucred, curthread);
 	if (error != 0)
@@ -252,6 +253,7 @@ icl_listen_add_tcp(struct icl_listen *il, int domain, int socktype,
 	struct sockopt sopt;
 	int error, one = 1;
 
+	/* dq-ledger: kernel (iSCSI proxy sockets for iscsid/ctld; I7) */
 	error = socreate(domain, &so, socktype, protocol,
 	    curthread->td_ucred, curthread);
 	if (error != 0) {

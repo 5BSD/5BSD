@@ -483,7 +483,7 @@ int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 /* dq_resolve.c */
 struct dqres_binding;
 void	dq_resolve_init(void);
-bool	dq_resolve_errno_allowed(int error);
+bool	dq_resolve_errno_allowed(uint32_t rop, int error);
 int	dq_resolve_reply_validate(int rerrno, const void *buf, size_t len);
 int	dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	    struct thread *td);

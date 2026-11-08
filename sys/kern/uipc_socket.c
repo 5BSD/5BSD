@@ -1050,14 +1050,35 @@ soattach(struct socket *so, int proto, struct thread *td, struct socket *head)
 /*
  * socreate returns a socket with a ref count of 1 and a file descriptor
  * reference.  The socket should be closed with soclose().
+ *
+ * It is the composition of socreate_find (the protocol for domain, type
+ * and protocol, and the capability-mode test), the jail's address-family
+ * test and socreate_proto (the socket itself).  socket(2) and
+ * socketpair(2) call the parts, so that an attached process's request is
+ * consulted between them with the protocol resolved (DescriptorQueue,
+ * design 11, D139); kernel callers use socreate and are never consulted.
  */
 int
 socreate(int dom, struct socket **aso, int type, int proto,
     struct ucred *cred, struct thread *td)
 {
 	struct protosw *prp;
-	struct socket *so;
 	int error;
+
+	error = socreate_find(dom, type, proto, td, &prp);
+	if (error != 0)
+		return (error);
+	if (prison_check_af(cred, prp->pr_domain->dom_family) != 0)
+		return (EPROTONOSUPPORT);
+	/* dq-ledger: kernel (socreate, the composition kernel callers use; I7) */
+	return (socreate_proto(prp, dom, aso, type, proto, cred, td));
+}
+
+int
+socreate_find(int dom, int type, int proto, struct thread *td,
+    struct protosw **prpp)
+{
+	struct protosw *prp;
 
 	prp = pffindproto(dom, type, proto);
 	if (prp == NULL) {
@@ -1078,9 +1099,17 @@ socreate(int dom, struct socket **aso, int type, int proto,
 		if (IN_CAPABILITY_MODE(td))
 			return (ECAPMODE);
 	}
+	*prpp = prp;
+	return (0);
+}
 
-	if (prison_check_af(cred, prp->pr_domain->dom_family) != 0)
-		return (EPROTONOSUPPORT);
+/* The socket for a protocol socreate_find returned. */
+int
+socreate_proto(struct protosw *prp, int dom, struct socket **aso, int type,
+    int proto, struct ucred *cred, struct thread *td)
+{
+	struct socket *so;
+	int error;
 
 	so = soalloc(CRED_TO_VNET(cred));
 	if (so == NULL)

@@ -69,8 +69,10 @@ SYSNDI	kern/kern_proc.c	proc_get_binpath	*retbuf	EXEMPT
 SYSNDI	kern/link_elf.c	link_elf_load_file	filename	via:exempt@kern/kern_linker.c:linker_load_module
 SYSNDI	kern/link_elf_obj.c	link_elf_load_file	filename	via:exempt@kern/kern_linker.c:linker_load_module
 SYSNDI	kern/subr_firmware.c	try_binary_file	fn	EXEMPT
+CONSULT	kern/uipc_syscalls.c	kern_socket	DQ_ROP_SOCKET	1
 CONSULT	kern/uipc_syscalls.c	kern_bindat	DQ_ROP_BIND	1
 CONSULT	kern/uipc_syscalls.c	kern_connectat	DQ_ROP_CONNECT	1
+CONSULT	kern/uipc_syscalls.c	kern_socketpair	DQ_ROP_SOCKETPAIR	1
 CONSULT	kern/uipc_syscalls.c	kern_sendit	DQ_ROP_CONNECT	1
 SYSNDI	kern/uipc_usrreq.c	uipc_bindat	buf	via:content@kern/uipc_syscalls.c:kern_bindat
 SYSNDI	kern/uipc_usrreq.c	unp_connectat_peer	buf	via:content@kern/uipc_syscalls.c:kern_connectat
@@ -246,3 +248,34 @@ SLOT	vm/swap_pager.c	kern_swapon_priority	0	name
 VARSEG	vm/swap_pager.c	kern_swapoff_dqimpl	name_seg	slot0
 MARK	vm/swap_pager.c	kern_swapoff	DQ_ROP_INTERNAL	DQI_KCONSUMER
 SLOT	vm/swap_pager.c	kern_swapoff	0	name
+SOCKET	cam/ctl/ctl_ha.c	ctl_ha_connect	socreate	KERNEL:CTL HA peer link, from its kthread
+SOCKET	cam/ctl/ctl_ha.c	ctl_ha_listen	socreate	KERNEL:CTL HA peer link, from its kthread
+SOCKET	dev/iscsi/icl_soft_proxy.c	icl_soft_proxy_connect	socreate	KERNEL:iSCSI proxy sockets for iscsid/ctld; I7
+SOCKET	dev/iscsi/icl_soft_proxy.c	icl_listen_add_tcp	socreate	KERNEL:iSCSI proxy sockets for iscsid/ctld; I7
+SOCKET	dev/wg/if_wg.c	wg_socket_init	socreate	KERNEL:wg(4) UDP sockets of the interface; I7
+SOCKET	dev/wg/if_wg.c	wg_socket_init	socreate	KERNEL:wg(4) UDP sockets of the interface; I7
+SOCKET	fs/nfs/nfs_commonkrpc.c	newnfs_connect	socreate	KERNEL:NFS RPC transport; I7
+SOCKET	fs/nfsclient/nfs_clvfsops.c	nfs_mountroot	socreate	KERNEL:NFS root mount, boot
+SOCKET	kern/uipc_socket.c	socreate	socreate_proto	KERNEL:socreate, the composition kernel callers use; I7
+SOCKET	kern/uipc_syscalls.c	kern_socket	socreate_proto	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate_proto	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate_proto	CONSULT
+SOCKET	net/if_geneve.c	geneve_socket_init	socreate	KERNEL:geneve(4) tunnel socket; I7
+SOCKET	net/if_vxlan.c	vxlan_socket_init	socreate	KERNEL:vxlan(4) tunnel socket; I7
+SOCKET	netgraph/bluetooth/socket/ng_btsocket_rfcomm.c	ng_btsocket_rfcomm_connect	socreate	KERNEL:RFCOMM L2CAP session socket; I7
+SOCKET	netgraph/bluetooth/socket/ng_btsocket_rfcomm.c	ng_btsocket_rfcomm_listen	socreate	KERNEL:RFCOMM L2CAP session socket; I7
+SOCKET	netgraph/ng_ksocket.c	ng_ksocket_newhook	socreate	KERNEL:ng_ksocket(4) node socket; I7
+SOCKET	netinet/ip_gre.c	in_gre_setup_socket	socreate	KERNEL:gre(4) UDP encap socket; I7
+SOCKET	netinet/sctp_syscalls.c	sys_sctp_peeloff	sopeeloff	DERIVED:sctp_peeloff of the caller's socket
+SOCKET	netinet/sctp_syscalls.c	sys_sctp_peeloff	sopeeloff	DERIVED:sctp_peeloff of the caller's socket
+SOCKET	netinet/sctputil.c	sctp_over_udp_start	socreate	KERNEL:SCTP UDP tunnelling sockets, sysctl; I7
+SOCKET	netinet/sctputil.c	sctp_over_udp_start	socreate	KERNEL:SCTP UDP tunnelling sockets, sysctl; I7
+SOCKET	netinet/tcp_subr.c	tcp_over_udp_start	socreate	KERNEL:TCP UDP tunnelling sockets, sysctl; I7
+SOCKET	netinet/tcp_subr.c	tcp_over_udp_start	socreate	KERNEL:TCP UDP tunnelling sockets, sysctl; I7
+SOCKET	netinet6/ip6_gre.c	in6_gre_setup_socket	socreate	KERNEL:gre(4) UDP encap socket; I7
+SOCKET	netpfil/openbsd-pf/openbsd_net.c	obsd_socreate	socreate	KERNEL:pflow(4) export socket; I7
+SOCKET	nfs/bootp_subr.c	bootpc_init	socreate	KERNEL:BOOTP at boot
+SOCKET	nfs/krpc_subr.c	krpc_call	socreate	KERNEL:NFS root mount RPC, boot
+SOCKET	nlm/nlm_prot_impl.c	nlm_server_main	socreate	KERNEL:NLM server sockets; I7
+SOCKET	nlm/nlm_prot_impl.c	nlm_server_main	socreate	KERNEL:NLM server sockets; I7
+SOCKET	rpc/rpc_generic.c	__rpc_nconf2socket	socreate	KERNEL:kernel RPC client sockets; I7

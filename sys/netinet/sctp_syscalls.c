@@ -157,11 +157,13 @@ sys_sctp_peeloff(struct thread *td, struct sctp_peeloff_args *uap)
 	switch (head->so_proto->pr_domain->dom_family) {
 #ifdef INET
 	case AF_INET:
+		/* dq-ledger: derived (sctp_peeloff of the caller's socket) */
 		so = sopeeloff(head, &sctp_stream_protosw);
 		break;
 #endif
 #ifdef INET6
 	case AF_INET6:
+		/* dq-ledger: derived (sctp_peeloff of the caller's socket) */
 		so = sopeeloff(head, &sctp6_stream_protosw);
 		break;
 #endif

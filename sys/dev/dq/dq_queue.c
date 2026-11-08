@@ -1671,9 +1671,8 @@ dq_reply_errno_allowed(uint32_t op, int error)
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
-	case DQ_OP_RESOLVE:
-		return (dq_resolve_errno_allowed(error));
 	default:
+		/* RESOLVE: per resolve op, dq_resolve_errno_allowed. */
 		return (true);
 	}
 }
@@ -1832,7 +1831,10 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 		return (error);
 	}
 	rerrno = r->dr_errno;
-	if (rerrno != 0 && !dq_reply_errno_allowed(op, rerrno)) {
+	if (rerrno != 0 && !(op == DQ_OP_RESOLVE ?
+	    dq_resolve_errno_allowed(((const struct dq_resolve_body *)
+	    ((const char *)&ev->ev_hdr + sizeof(struct dq_event)))->drs_op,
+	    rerrno) : dq_reply_errno_allowed(op, rerrno))) {
 		rerrno = EIO;
 		q->q_stats.ds2_bad_replies++;
 	}

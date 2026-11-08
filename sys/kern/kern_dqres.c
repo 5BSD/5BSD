@@ -883,3 +883,39 @@ dqres_consult_sun(struct thread *td, struct dq_intent *di, uint32_t op,
 	free(buf, M_TEMP);
 	return (error);
 }
+
+/*
+ * socket(2), socketpair(2) (D139): the requester's own request, class 1,
+ * consulted after socreate_find and before the jail's address-family test
+ * and any descriptor slot, so a refusal leaves nothing behind and a
+ * restart is clean.  A dead controller is EACCES here (D136, dev/dq).
+ */
+int
+dqres_consult_socket(struct thread *td, uint32_t op, int domain, int type,
+    int protocol)
+{
+	struct pwddesc *pdp;
+	struct dqres *dr;
+	struct dqres_req rq;
+
+	KASSERT(op == DQ_ROP_SOCKET || op == DQ_ROP_SOCKETPAIR,
+	    ("dq: socket op %u", op));
+	if (dqres_ops == NULL || (td->td_pflags2 & TDP2_DQ_NORESOLVE) != 0)
+		return (0);
+	pdp = td->td_proc->p_pd;
+	dr = atomic_load_ptr(&pdp->pd_dqres);
+	if (dr == NULL)
+		return (0);
+	bzero(&rq, sizeof(rq));
+	rq.rq_class = 1;
+	rq.rq_op = op;
+	rq.rq_syscall = td->td_sa.code;
+	rq.rq_may_restart = true;	/* nothing done yet: a restart is clean */
+	rq.rq_rflags = DQ_RF_USER;
+	rq.rq_start_kind = DQ_START_NONE;
+	rq.rq_path = "";
+	rq.rq_domain = domain;
+	rq.rq_type = type;
+	rq.rq_protocol = protocol;
+	return (dqres_ops->dro_consult(td, dr->dr_binding, &rq));
+}

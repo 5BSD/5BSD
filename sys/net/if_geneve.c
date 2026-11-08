@@ -890,6 +890,7 @@ geneve_socket_init(struct geneve_socket *gnvso, struct ifnet *ifp)
 	int error;
 
 	td = curthread;
+	/* dq-ledger: kernel (geneve(4) tunnel socket; I7) */
 	error = socreate(gnvso->gnvso_laddr.sa.sa_family, &gnvso->gnvso_sock,
 	    SOCK_DGRAM, IPPROTO_UDP, td->td_ucred, td);
 	if (error) {

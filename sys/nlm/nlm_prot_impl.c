@@ -1568,6 +1568,7 @@ nlm_server_main(int addr_count, char **addrs)
 	if (nlm_socket == NULL) {
 		memset(&opt, 0, sizeof(opt));
 
+		/* dq-ledger: kernel (NLM server sockets; I7) */
 		error = socreate(AF_INET, &nlm_socket, SOCK_DGRAM, 0,
 		    td->td_ucred, td);
 		if (error) {
@@ -1585,6 +1586,7 @@ nlm_server_main(int addr_count, char **addrs)
 
 #ifdef INET6
 		nlm_socket6 = NULL;
+		/* dq-ledger: kernel (NLM server sockets; I7) */
 		error = socreate(AF_INET6, &nlm_socket6, SOCK_DGRAM, 0,
 		    td->td_ucred, td);
 		if (error) {

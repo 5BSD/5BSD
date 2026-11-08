@@ -9,13 +9,16 @@
 #
 #   MARK     file function op flags           an intent (class 1, 2 or 3)
 #   SLOT     file function slot pointer       a slot the intent declares
-#   CONSULT  file function op class           dqres_consult_sun
+#   CONSULT  file function op class           dqres_consult_sun,
+#                                             dqres_consult_socket
 #   USERNDI  file function pointer coverage   NDINIT* of UIO_USERSPACE
 #   VARSEG   file function segment coverage   NDINIT* whose segment is a
 #                                             variable
 #   SYSNDI   file function pointer class      NDINIT* of UIO_SYSSPACE
 #   SYSCALL  file function callee class       a marked kern_*() entry
 #                                             called with UIO_SYSSPACE
+#   SOCKET   file function callee class       a call of socreate,
+#                                             socreate_proto or sopeeloff
 #
 # User-space coverage is proved by pointer and slot:
 #   slotN		the NDINIT's pointer is the pointer slot N declares,
@@ -45,6 +48,15 @@
 #			only in kernel threads or before init (not machine
 #			checked: review these rows)
 #
+# Socket creation (1c-ii, D139): each call that makes a socket must be
+# classified, or the build fails (UNCLASSIFIED):
+#   CONSULT		dqres_consult_socket is called earlier in the same
+#			function (socket(2), socketpair(2))
+#   DERIVED:REASON	"dq-ledger: derived (REASON)", accepted only for
+#			sopeeloff: a socket split off one the process made
+#   KERNEL:REASON	"dq-ledger: kernel (REASON)": a socket the kernel
+#			makes for itself or for a facility (I7), recorded
+#
 #	dq_resolve_ledger.sh generate SRCDIR	write the ledger to stdout
 #	dq_resolve_ledger.sh check SRCDIR LEDGER	fail if LEDGER differs or
 #						has an UNMARKED, FLAG or
@@ -55,6 +67,56 @@ set -e
 # The trees scanned: every one that can call namei for a process.
 DQ_LEDGER_DIRS="kern vm security compat fs dev cam geom netinet netinet6 \
     net netgraph ufs opencrypto contrib/openzfs/module/os/freebsd"
+# And for socket creation, also the RPC, NFS boot, NLM and pf trees.
+DQ_LEDGER_SOCK_DIRS="${DQ_LEDGER_DIRS} nfs nlm rpc netpfil"
+
+scan_sockets()
+(
+	cd "$1"
+	# shellcheck disable=SC2086
+	find $DQ_LEDGER_SOCK_DIRS -name '*.c' 2>/dev/null | LC_ALL=C sort |
+	    xargs grep -lE '(socreate|socreate_proto|sopeeloff)\(' |
+	    while read -r f; do
+		awk -v file="$f" '
+		function annot(    s) {
+			s = ""
+			if (p3 ~ /dq-ledger:/) s = p3
+			if (p2 ~ /dq-ledger:/) s = p2
+			if (p1 ~ /dq-ledger:/) s = p1
+			sub(/.*dq-ledger: */, "", s)
+			sub(/ *\*\/.*/, "", s)
+			gsub(/\t/, " ", s)
+			return (s)
+		}
+		/^[A-Za-z_][A-Za-z0-9_]*\(/ {
+			fn = $0; sub(/\(.*/, "", fn); consulted = 0
+		}
+		{
+			code = $0
+			gsub(/"[^"]*"/, "\"\"", code)
+		}
+		code ~ /^[ \t]*(\*|\/\*|\/\/)/ { code = "" }
+		code ~ /dqres_consult_socket\(/ { consulted = 1 }
+		code ~ /(^|[^A-Za-z0-9_])(socreate|socreate_proto|sopeeloff)\(/ &&
+		    code !~ /^(socreate|socreate_proto|sopeeloff)\(/ {
+			match(code, /(socreate_proto|socreate|sopeeloff)\(/)
+			callee = substr(code, RSTART, RLENGTH - 1)
+			a = annot()
+			if (consulted)
+				c = "CONSULT"
+			else if (a ~ /^derived \(.*\)$/ && callee == "sopeeloff") {
+				sub(/^derived \(/, "", a); sub(/\)$/, "", a)
+				c = "DERIVED:" a
+			} else if (a ~ /^kernel \(.*\)$/) {
+				sub(/^kernel \(/, "", a); sub(/\)$/, "", a)
+				c = "KERNEL:" a
+			} else
+				c = "UNCLASSIFIED"
+			printf("SOCKET\t%s\t%s\t%s\t%s\n", file, fn, callee, c)
+		}
+		{ p3 = p2; p2 = p1; p1 = $0 }' "$f"
+	    done
+)
 
 scan()
 (
@@ -152,12 +214,21 @@ scan()
 			printf("S\t%s\t%s\t%s\t%s\n", file, fn, strip(a[2]),
 			    strip(a[3]))
 		}
-		/dqres_consult_sun\(/ && !/^dqres_consult_sun/ { mc = 1; mcl = "" }
+		/dqres_consult_(sun|socket)\(/ && \
+		    !/^dqres_consult_(sun|socket)/ { mc = 1; mcl = "" }
 		mc { mcl = mcl $0 }
 		mc && /;/ {
 			mc = 0
-			n = args(callargs(mcl, "dqres_consult_sun"), a)
-			printf("C\t%s\t%s\t%s\t1\n", file, fn, strip(a[3]))
+			# The op is the third argument of _sun, the second
+			# of _socket.
+			if (mcl ~ /dqres_consult_socket\(/) {
+				n = args(callargs(mcl, "dqres_consult_socket"), a)
+				op = strip(a[2])
+			} else {
+				n = args(callargs(mcl, "dqres_consult_sun"), a)
+				op = strip(a[3])
+			}
+			printf("C\t%s\t%s\t%s\t1\n", file, fn, op)
 		}
 		# The lookup after a pending kernel-space NDINIT.
 		pend && !nd && /namei\(|vn_open/ {
@@ -311,6 +382,7 @@ generate()
 		    sysclass($2, $3, "", $5, $6, $7))
 	}' "$raw" "$raw"
 	rm -f "$raw"
+	scan_sockets "$1"
 }
 
 case "$1" in

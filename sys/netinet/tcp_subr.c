@@ -822,6 +822,7 @@ tcp_over_udp_start(void)
 	}
 #endif
 #ifdef INET
+	/* dq-ledger: kernel (TCP UDP tunnelling sockets, sysctl; I7) */
 	if ((ret = socreate(PF_INET, &V_udp4_tun_socket,
 	    SOCK_DGRAM, IPPROTO_UDP,
 	    curthread->td_ucred, curthread))) {
@@ -848,6 +849,7 @@ tcp_over_udp_start(void)
 	}
 #endif
 #ifdef INET6
+	/* dq-ledger: kernel (TCP UDP tunnelling sockets, sysctl; I7) */
 	if ((ret = socreate(PF_INET6, &V_udp6_tun_socket,
 	    SOCK_DGRAM, IPPROTO_UDP,
 	    curthread->td_ucred, curthread))) {
