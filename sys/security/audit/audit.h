@@ -121,6 +121,8 @@ void	 audit_arg_upath2(struct thread *td, int dirfd, char *upath);
 void	 audit_arg_upath2_canon(char *upath);
 void	 audit_arg_upath1_vp(struct thread *td, struct vnode *rdir,
 	    struct vnode *cdir, char *upath);
+void	 audit_arg_dqstart(uint64_t object);
+void	 audit_arg_dqobj(uint64_t object);
 void	 audit_arg_upath2_vp(struct thread *td, struct vnode *rdir,
 	    struct vnode *cdir, char *upath);
 void	 audit_arg_vnode1(struct vnode *vp);
@@ -176,6 +178,17 @@ void	 audit_ret_svipc_id(int id);
 #define	AUDIT_ARG_ATFD1(atfd) do {					\
 	if (AUDITING_TD(curthread))					\
 		audit_arg_atfd1((atfd));				\
+} while (0)
+
+/* DescriptorQueue (stage 1c-iii-b): a served start and a served result. */
+#define	AUDIT_ARG_DQSTART(object) do {					\
+	if (AUDITING_TD(curthread))					\
+		audit_arg_dqstart((object));				\
+} while (0)
+
+#define	AUDIT_ARG_DQOBJ(object) do {					\
+	if (AUDITING_TD(curthread))					\
+		audit_arg_dqobj((object));				\
 } while (0)
 
 #define	AUDIT_ARG_ATFD2(atfd) do {					\
@@ -454,6 +467,8 @@ void	 audit_ret_svipc_id(int id);
 #define	AUDIT_ARG_ARGV(argv, argc, length)
 #define	AUDIT_ARG_ATFD1(atfd)
 #define	AUDIT_ARG_ATFD2(atfd)
+#define	AUDIT_ARG_DQSTART(object)
+#define	AUDIT_ARG_DQOBJ(object)
 #define	AUDIT_ARG_AUDITON(udata)
 #define	AUDIT_ARG_CMD(cmd)
 #define	AUDIT_ARG_DEV(dev)

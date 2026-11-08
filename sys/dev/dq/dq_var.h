@@ -111,6 +111,8 @@ SDT_PROBE_DECLARE(dq, , , resolve__unmarked);
 SDT_PROBE_DECLARE(dq, , , resolve__locked);
 SDT_PROBE_DECLARE(dq, , , resolve__served);
 SDT_PROBE_DECLARE(dq, , , resolve__retire);
+SDT_PROBE_DECLARE(dq, , , resolve__real);
+SDT_PROBE_DECLARE(dq, , , resolve__symlink);
 
 /* Tunables (dq_dev.c), kern.dq.* */
 extern u_int dq_max_io;
@@ -285,6 +287,10 @@ struct dq_object {
 #define	DQ_LOCKED_FLOCK		0x2
 #define	DQ_LOCKED_OFD		0x4
 	bool			 o_retired;	/* removed from q_objects */
+	char			*o_target;	/* DQ_KIND_SYMLINK: the target
+						   (M_DQ, NUL-terminated), fixed
+						   before the object is linked */
+	size_t			 o_targetlen;	/* == o_ident.di_size */
 	struct dq_ident_file	 o_ident;
 	struct dq_policy	 o_policy;
 	struct rangelock	 o_rl;
@@ -561,11 +567,28 @@ void	dq_file_init(void);
 int	dq_ident_validate(u_int kind, const struct dq_ident_file *ident,
 	    int *reason);
 int	dq_policy_validate(const struct dq_policy *pol, int *reason);
+int	dq_policy_validate_kind(u_int kind, const struct dq_policy *pol,
+	    int *reason);
+bool	dq_path_normalized(const char *path, size_t len);
+int	dq_object_ident_check(struct dq_object *o,
+	    const struct dq_ident_file *ident);
+int	dq_file_object_setattr(struct file *fp, struct dq_setattr_body *sb,
+	    struct ucred *cred, struct thread *td);
+int	dq_file_target(struct file *fp, char **targetp, size_t *lenp);
+int	dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
+	    uint32_t *kindp, uint64_t *objectp);
 int	dq_file_install(struct thread *td, struct dq_object *o,
 	    const struct dq_policy *pol, u_int mflags, int *fdp);
 void	dq_file_knote(struct dq_object *o, long hint);
 int	dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
 	    struct file **fpp);
+
+/* dq_dir.c (1c-iii-b) */
+int	dq_dir_readdir(struct file *fp, struct dq_object *o, struct uio *uio,
+	    off_t *basep, struct thread *td);
+int	dq_readdir_reply_validate(const struct dq_event_k *ev, int rerrno,
+	    const void *buf, size_t len);
+bool	dq_readdir_errno_allowed(int error);
 
 /* dq_observer.c */
 extern const struct fileops dq_observer_fileops;

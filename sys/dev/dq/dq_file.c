@@ -179,7 +179,7 @@ dq_lock_owner(void *id, int flags)
  * its reason so a controller can fix what it presented.
  */
 
-static bool
+bool
 dq_path_normalized(const char *path, size_t len)
 {
 	size_t i, start;
@@ -231,6 +231,17 @@ dq_ident_validate(u_int kind, const struct dq_ident_file *di, int *reason)
 	switch (kind) {
 	case DQ_KIND_FILE:
 		type = S_IFREG;
+		break;
+	case DQ_KIND_DIR:		/* 1c-iii-b, D168 */
+		type = S_IFDIR;
+		break;
+	case DQ_KIND_SYMLINK:		/* 1c-iii-b, D168: the size is the
+					   target's length */
+		type = S_IFLNK;
+		if (di->di_size == 0 || di->di_size >= DQ_PATH_MAX) {
+			*reason = DQ_REASON_SIZE;
+			return (EINVAL);
+		}
 		break;
 	case DQ_KIND_ANY:
 		/*
@@ -350,6 +361,56 @@ dq_policy_validate(const struct dq_policy *pol, int *reason)
 	    !cap_rights_is_valid(&pol->dp_rights))
 		return (EINVAL);
 	*reason = DQ_REASON_NONE;
+	return (0);
+}
+
+/*
+ * The policy a kind admits (D168).  A directory is never written,
+ * executed or mapped shared and caches at most its attributes; a symbolic
+ * link is an O_PATH object: everything DENY, locks as events, no data
+ * cache.
+ */
+int
+dq_policy_validate_kind(u_int kind, const struct dq_policy *pol, int *reason)
+{
+	int error;
+
+	error = dq_policy_validate(pol, reason);
+	if (error != 0)
+		return (error);
+	switch (kind) {
+	case DQ_KIND_FILE:
+		return (0);
+	case DQ_KIND_DIR:
+	case DQ_KIND_SYMLINK:
+		if (pol->dp_write != DQ_DENY || pol->dp_exec != DQ_DENY ||
+		    pol->dp_mmap_shared_write != DQ_DENY ||
+		    (pol->dp_cache != DQ_CACHE_NONE &&
+		    pol->dp_cache != DQ_CACHE_ATTR) ||
+		    (kind == DQ_KIND_SYMLINK && pol->dp_ioctl != DQ_DENY)) {
+			*reason = DQ_REASON_POLICY;
+			return (EINVAL);
+		}
+		return (0);
+	default:
+		*reason = DQ_REASON_KIND;
+		return (EINVAL);
+	}
+}
+
+/*
+ * A new identity for a live object (SETIDENT, a GETATTR reply): its own
+ * kind's rules, and a symbolic link's size stays its target's length.
+ */
+int
+dq_object_ident_check(struct dq_object *o, const struct dq_ident_file *ident)
+{
+	int reason;
+
+	if (dq_ident_validate(o->o_kind, ident, &reason) != 0)
+		return (EINVAL);
+	if (o->o_kind == DQ_KIND_SYMLINK && ident->di_size != o->o_targetlen)
+		return (EINVAL);
 	return (0);
 }
 
@@ -706,6 +767,9 @@ dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	if (DQ_OPATH(fp))
 		return (EBADF);
 	o = dq_fp_object(fp);
+	/* vn_read: read(2) of a directory is EISDIR (D168, the ufs oracle). */
+	if (o->o_kind != DQ_KIND_FILE)
+		return (EISDIR);
 	error = dq_object_usable(o);
 	if (error != 0)
 		return (error);
@@ -1081,7 +1145,9 @@ dq_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 	*di = o->o_ident;
 	DQO_UNLOCK(o);
 	kif->kf_type = KF_TYPE_VNODE;
-	kif->kf_un.kf_file.kf_file_type = KF_VTYPE_VREG;
+	kif->kf_un.kf_file.kf_file_type = o->o_kind == DQ_KIND_DIR ?
+	    KF_VTYPE_VDIR : o->o_kind == DQ_KIND_SYMLINK ? KF_VTYPE_VLNK :
+	    KF_VTYPE_VREG;
 	strlcpy(kif->kf_path, di->di_path, sizeof(kif->kf_path));
 	kif->kf_un.kf_file.kf_file_fsid = di->di_dev;
 	kif->kf_un.kf_file.kf_file_fsid_freebsd11 = di->di_dev;
@@ -1128,7 +1194,7 @@ dq_setattr_check(const struct dq_ident_file *di, const struct dq_setattr_body *s
 		if ((sb->dsa_flags & ~DQ_FLAGS_SETTABLE) != 0)
 			return (EOPNOTSUPP);
 		/* Only VADMIN may modify the flags. */
-		error = vaccess(VREG, di->di_mode, di->di_uid, di->di_gid,
+		error = vaccess(IFTOVT(di->di_mode), di->di_mode, di->di_uid, di->di_gid,
 		    VADMIN, cred);
 		if (error != 0)
 			return (error);
@@ -1168,7 +1234,7 @@ dq_setattr_check(const struct dq_ident_file *di, const struct dq_setattr_body *s
 	if ((mask & (DQ_SETATTR_UID | DQ_SETATTR_GID)) != 0) {
 		uid = (mask & DQ_SETATTR_UID) != 0 ? sb->dsa_uid : di->di_uid;
 		gid = (mask & DQ_SETATTR_GID) != 0 ? sb->dsa_gid : di->di_gid;
-		error = vaccess(VREG, di->di_mode, di->di_uid, di->di_gid,
+		error = vaccess(IFTOVT(di->di_mode), di->di_mode, di->di_uid, di->di_gid,
 		    VADMIN, cred);
 		if (error != 0)
 			return (error);
@@ -1191,10 +1257,10 @@ dq_setattr_check(const struct dq_ident_file *di, const struct dq_setattr_body *s
 		 * owner or PRIV_VFS_ADMIN (vop_stdaccessx maps it to VADMIN);
 		 * with a NULL utimes argument, write permission suffices.
 		 */
-		error = vaccess(VREG, di->di_mode, di->di_uid, di->di_gid,
+		error = vaccess(IFTOVT(di->di_mode), di->di_mode, di->di_uid, di->di_gid,
 		    VADMIN, cred);
 		if (error != 0 && (mask & DQ_SETATTR_F_UTIMES_NULL) != 0)
-			error = vaccess(VREG, di->di_mode, di->di_uid,
+			error = vaccess(IFTOVT(di->di_mode), di->di_mode, di->di_uid,
 			    di->di_gid, VWRITE, cred);
 		if (error != 0)
 			return (error);
@@ -1207,12 +1273,12 @@ dq_setattr_check(const struct dq_ident_file *di, const struct dq_setattr_body *s
 		    S_IWOTH)) != 0)
 			return (EPERM);
 		/* ufs_chmod: VWRITE_ACL, which is VADMIN here. */
-		error = vaccess(VREG, di->di_mode, di->di_uid, di->di_gid,
+		error = vaccess(IFTOVT(di->di_mode), di->di_mode, di->di_uid, di->di_gid,
 		    VADMIN, cred);
 		if (error != 0)
 			return (error);
 		/* The sticky bit on a non-directory takes privilege. */
-		if ((mode & S_ISTXT) != 0 &&
+		if ((mode & S_ISTXT) != 0 && !S_ISDIR(di->di_mode) &&
 		    priv_check_cred(cred, PRIV_VFS_STICKYFILE) != 0)
 			return (EFTYPE);
 		if (!groupmember(di->di_gid, cred) && (mode & S_ISGID) != 0) {
@@ -1952,7 +2018,10 @@ dq_seek(struct file *fp, off_t offset, int whence, struct thread *td)
 		break;
 	case SEEK_DATA:
 	case SEEK_HOLE:
-		if (offset < 0 || offset >= size)
+		/* vn_bmap_seekhole: ENOTTY, which vn_seek makes EINVAL. */
+		if (o->o_kind != DQ_KIND_FILE)
+			error = EINVAL;
+		else if (offset < 0 || offset >= size)
 			error = ENXIO;
 		else if (whence == SEEK_HOLE)
 			offset = size;
@@ -2024,6 +2093,9 @@ dq_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	if (DQ_OPATH(fp))
 		return (EBADF);
 	o = dq_fp_object(fp);
+	/* vm_mmap_vnode: only a regular file maps (EINVAL, the oracle). */
+	if (o->o_kind != DQ_KIND_FILE)
+		return (EINVAL);
 	error = dq_object_usable(o);
 	if (error != 0)
 		return (error);
@@ -2134,6 +2206,9 @@ dq_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	o = dq_fp_object(fp);
 	if (sent != NULL)
 		*sent = 0;
+	/* sendfile_getobj: a directory has no pages to send. */
+	if (o->o_kind != DQ_KIND_FILE)
+		return (EINVAL);
 	error = dq_object_usable(o);
 	if (error == 0)
 		error = dq_deadlock_check(o, td);
@@ -2174,13 +2249,77 @@ dq_fadvise(struct file *fp __unused, off_t offset __unused, off_t len __unused,
 }
 
 static int
-dq_readdir(struct file *fp, struct uio *uio __unused,
-    off_t *basep __unused, struct thread *td __unused)
+dq_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
 {
+	struct dq_object *o;
 
 	if (DQ_OPATH(fp))
 		return (EBADF);
-	return (ENOTDIR);	/* getdirentries on a regular file */
+	o = dq_fp_object(fp);
+	if (o->o_kind != DQ_KIND_DIR)
+		return (ENOTDIR);	/* getdirentries on a regular file */
+	return (dq_dir_readdir(fp, o, uio, basep, td));
+}
+
+/*
+ * The object-level setattr (D96) without fo_chmod's and fo_chown's O_PATH
+ * gate: a SETATTR answered FD on a SYMLINK object (lchmod, lchown,
+ * lutimes, 1c-iii-b, D160) and fchmodat/fchownat(fd, "", AT_EMPTY_PATH)
+ * of an O_PATH served descriptor, which a vnode's O_PATH descriptor
+ * allows (D164).
+ */
+int
+dq_file_object_setattr(struct file *fp, struct dq_setattr_body *sb,
+    struct ucred *cred, struct thread *td)
+{
+
+	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+		return (EBADF);
+	return (dq_setattr_post(fp->f_data, sb, cred, td));
+}
+
+/* A served symbolic link's target, an M_TEMP copy (EINVAL otherwise). */
+int
+dq_file_target(struct file *fp, char **targetp, size_t *lenp)
+{
+	struct dq_object *o;
+	char *t;
+
+	*targetp = NULL;
+	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+		return (EINVAL);
+	o = fp->f_data;
+	if (o->o_kind != DQ_KIND_SYMLINK || o->o_target == NULL)
+		return (EINVAL);
+	/* Fixed before the object was linked: no lock needed. */
+	t = malloc(o->o_targetlen + 1, M_TEMP, M_WAITOK);
+	memcpy(t, o->o_target, o->o_targetlen + 1);
+	*targetp = t;
+	*lenp = o->o_targetlen;
+	return (0);
+}
+
+/*
+ * A served descriptor as a lookup start (D162, D163): its kind and id,
+ * EDEADLK unless the caller is attached to the object's queue (q, the
+ * binding's queue, NULL when unattached) and is not its controller, EIO
+ * once revoked or closing.
+ */
+int
+dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
+    uint32_t *kindp, uint64_t *objectp)
+{
+	struct dq_object *o;
+
+	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+		return (ENOTTY);
+	o = fp->f_data;
+	*kindp = o->o_kind;
+	*objectp = o->o_id;
+	if (q == NULL || o->o_queue != q ||
+	    dq_caller_holds_queue(o->o_queue, td))
+		return (EDEADLK);
+	return (dq_object_usable(o));
 }
 
 static int

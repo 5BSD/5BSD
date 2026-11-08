@@ -256,6 +256,8 @@ struct audit_record {
 	struct sockaddr_storage ar_arg_sockaddr;
 	cap_rights_t		ar_arg_rights;
 	uint32_t		ar_arg_fcntl_rights;
+	uint64_t		ar_arg_dqstart;	/* DescriptorQueue objects */
+	uint64_t		ar_arg_dqobj;
 	char			ar_jailname[MAXHOSTNAMELEN];
 
 #ifdef KDTRACE_HOOKS
@@ -326,6 +328,8 @@ struct audit_record {
 #define	ARG_ATFD2		0x0008000000000000ULL
 #define	ARG_RIGHTS		0x0010000000000000ULL
 #define	ARG_FCNTL_RIGHTS	0x0020000000000000ULL
+#define	ARG_DQSTART		0x0040000000000000ULL	/* served start */
+#define	ARG_DQOBJ		0x0080000000000000ULL	/* served result */
 #define	ARG_SVIPC_WHICH		0x0200000000000000ULL
 #define	ARG_NONE		0x0000000000000000ULL
 #define	ARG_ALL			0xFFFFFFFFFFFFFFFFULL

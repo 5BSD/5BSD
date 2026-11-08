@@ -395,6 +395,7 @@ dq_object_rele(struct dq_object *o)
 	q = o->o_queue;
 	cv_destroy(&o->o_async_cv);
 	mtx_destroy(&o->o_mtx);
+	free(o->o_target, M_DQ);
 	free(o, M_DQ);
 	dq_queue_rele(q);
 }
@@ -1678,11 +1679,13 @@ dq_queue_mint(struct dq_queue *q, struct dq_mint_args *args, struct thread *td)
 	args->dm_fd = -1;
 	if (args->dm_version != DQ_API_VERSION)
 		return (dq_mint_reason(args, DQ_REASON_VERSION, EINVAL));
-	if (args->dm_kind != DQ_KIND_FILE)
+	/* A directory may be minted too (1c-iii-b); a symlink only by FD. */
+	if (args->dm_kind != DQ_KIND_FILE && args->dm_kind != DQ_KIND_DIR)
 		return (dq_mint_reason(args, DQ_REASON_KIND, EINVAL));
 	error = dq_ident_validate(args->dm_kind, &args->dm_ident, &reason);
 	if (error == 0)
-		error = dq_policy_validate(&args->dm_policy, &reason);
+		error = dq_policy_validate_kind(args->dm_kind,
+		    &args->dm_policy, &reason);
 	if (error != 0)
 		return (dq_mint_reason(args, reason, error));
 	/*
@@ -1775,6 +1778,8 @@ dq_reply_errno_allowed(uint32_t op, int error)
 	case DQ_OP_IOCTL:
 		return (error == ENOTTY || error == EINVAL || error == EIO ||
 		    error == EPERM || error == EACCES || error == ENXIO);
+	case DQ_OP_READDIR:
+		return (dq_readdir_errno_allowed(error));
 	default:
 		/* RESOLVE: per resolve op, dq_resolve_errno_allowed. */
 		return (true);
@@ -1800,7 +1805,6 @@ dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
 	const struct dq_lock_reply *lr;
 	const struct dq_ioctl_body *ib;
 	uint64_t end;
-	int reason;
 
 	body = (const char *)&ev->ev_hdr + sizeof(struct dq_event);
 	switch (ev->ev_hdr.de_op) {
@@ -1814,9 +1818,11 @@ dq_reply_validate(const struct dq_event_k *ev, int rerrno, const void *buf,
 		if (rerrno != 0)
 			return (len == 0 ? 0 : EINVAL);
 		if (len != sizeof(struct dq_ident_file) ||
-		    dq_ident_validate(ev->ev_object->o_kind, buf, &reason) != 0)
+		    dq_object_ident_check(ev->ev_object, buf) != 0)
 			return (EINVAL);
 		return (0);
+	case DQ_OP_READDIR:
+		return (dq_readdir_reply_validate(ev, rerrno, buf, len));
 	case DQ_OP_WRITE:
 	case DQ_OP_WRITE_ASYNC:		/* never APPEND: the offset echoes */
 		if (rerrno != 0)
@@ -2063,7 +2069,7 @@ int
 dq_queue_setident(struct dq_queue *q, struct dq_setident_args *args)
 {
 	struct dq_object key, *o;
-	int error, reason;
+	int error;
 
 	if (args->dsi_version != DQ_API_VERSION || args->dsi_pad0 != 0)
 		return (EINVAL);
@@ -2074,7 +2080,7 @@ dq_queue_setident(struct dq_queue *q, struct dq_setident_args *args)
 		DQ_UNLOCK(q);
 		return (ESRCH);
 	}
-	error = dq_ident_validate(o->o_kind, &args->dsi_ident, &reason);
+	error = dq_object_ident_check(o, &args->dsi_ident);
 	if (error != 0) {
 		DQ_UNLOCK(q);
 		return (error);

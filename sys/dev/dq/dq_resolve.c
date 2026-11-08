@@ -120,6 +120,18 @@ dq_binding_unmarked(struct dqres_binding *b)
 	SDT_PROBE1(dq, , , resolve__unmarked, q);
 }
 
+/* A two-path operation with mixed starts, fhlink into a served start (D170). */
+static void
+dq_binding_exdev(struct dqres_binding *b)
+{
+	struct dq_queue *q;
+
+	q = b->db_queue;
+	DQ_LOCK(q);
+	q->q_stats.ds2_resolve_exdev++;
+	DQ_UNLOCK(q);
+}
+
 static void
 dq_resolve_failclosed(struct dq_queue *q, int why)
 {
@@ -217,7 +229,9 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	rb->drs_op = rq->rq_op;
 	rb->drs_rflags = rq->rq_rflags;
 	rb->drs_start_kind = rq->rq_start_kind;
+	rb->drs_start = rq->rq_start;
 	rb->drs_start2_kind = rq->rq_start2_kind;
+	rb->drs_start2 = rq->rq_start2;
 	rb->drs_flags = rq->rq_class;
 	rb->drs_mode = rq->rq_mode;
 	rb->drs_syscall = rq->rq_syscall;
@@ -303,12 +317,20 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	case DQ_RESOLVE_FD:
 		rm = (const struct dq_resolve_mint *)(rr + 1);
 		ans->da_obj = robj;
+		ans->da_objid = robj->o_id;
 		ans->da_mflags = rm->drm_flags;
 		ans->da_okind = rm->drm_kind;
 		ans->da_rights = rm->drm_policy.dp_rights;
 		ans->da_ident = malloc(sizeof(*ans->da_ident), M_TEMP,
 		    M_WAITOK);
 		*ans->da_ident = rm->drm_ident;
+		break;
+	case DQ_RESOLVE_REAL:
+		/* An absolute, normalized real path (D167). */
+		rt = (const struct dq_resolve_target *)(rr + 1);
+		ans->da_targetlen = rt->drt_len;
+		ans->da_target = malloc(rt->drt_len + 1, M_TEMP, M_WAITOK);
+		memcpy(ans->da_target, rt->drt_target, rt->drt_len + 1);
 		break;
 	case DQ_RESOLVE_ATTR:
 	case DQ_RESOLVE_LINK:
@@ -330,12 +352,19 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	/* rr points into reply: only ans is read from here on. */
 	dq_reply_free(reply);
 	DQ_LOCK(q);
+	/* REAL is neither: dq:::resolve-real counts it. */
 	if (ans->da_kind == DQ_RESOLVE_PASS)
 		q->q_stats.ds2_resolve_pass++;
-	else
+	else if (ans->da_kind != DQ_RESOLVE_REAL)
 		q->q_stats.ds2_resolve_served++;
 	DQ_UNLOCK(q);
-	if (ans->da_kind != DQ_RESOLVE_PASS)
+	if ((rq->rq_rflags & DQ_RF_SYMLINK_RESTART) != 0)
+		SDT_PROBE3(dq, , , resolve__symlink, q, rq->rq_op,
+		    ans->da_kind);
+	if (ans->da_kind == DQ_RESOLVE_REAL)
+		SDT_PROBE3(dq, , , resolve__real, q, rq->rq_op,
+		    ans->da_target);
+	else if (ans->da_kind != DQ_RESOLVE_PASS)
 		SDT_PROBE3(dq, , , resolve__served, q, rq->rq_op, ans->da_kind);
 	SDT_PROBE3(dq, , , resolve__reply, q, rq->rq_op, 0);
 	return (0);
@@ -383,6 +412,28 @@ dq_resolve_file_ident(struct file *fp, struct dq_ident_file *ident,
 	return (0);
 }
 
+/*
+ * dro_start (D162, D163): a served descriptor as a lookup start, against
+ * the binding's queue (NULL when the caller is unattached).
+ */
+static int
+dq_resolve_start(struct thread *td, struct dqres_binding *b, struct file *fp,
+    uint32_t *kindp, uint64_t *objectp)
+{
+
+	return (dq_file_start(fp, b != NULL ? b->db_queue : NULL, td, kindp,
+	    objectp));
+}
+
+/* dro_setattr: the object-level setattr, with no O_PATH gate (D160). */
+static int
+dq_resolve_setattr(struct thread *td, struct file *fp,
+    struct dq_setattr_body *sb)
+{
+
+	return (dq_file_object_setattr(fp, sb, td->td_ucred, td));
+}
+
 /* dro_queue_closed: CLOSING is set before the queue leaves dq_queues. */
 static bool
 dq_resolve_queue_closed(uint64_t qgid)
@@ -408,10 +459,14 @@ static const struct dqres_ops dq_resolve_ops = {
 	.dro_rele = dq_binding_rele,
 	.dro_consult = dq_resolve_consult,
 	.dro_unmarked = dq_binding_unmarked,
+	.dro_exdev = dq_binding_exdev,
 	.dro_bind = dq_resolve_bind,
 	.dro_answer_release = dq_resolve_answer_release,
 	.dro_file_ident = dq_resolve_file_ident,
 	.dro_queue_closed = dq_resolve_queue_closed,
+	.dro_start = dq_resolve_start,
+	.dro_setattr = dq_resolve_setattr,
+	.dro_target = dq_file_target,
 };
 
 void
@@ -470,7 +525,7 @@ dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb, int error)
 		return (rb->drs_op != DQ_ROP_SOCKET &&
 		    rb->drs_op != DQ_ROP_SOCKETPAIR &&
 		    (rb->drs_rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH |
-		    DQ_RF_RINROOT)) != 0);
+		    DQ_RF_RINROOT | DQ_RF_STRICTREL2 | DQ_RF_BENEATH2)) != 0);
 	return (dq_resolve_errno_allowed(rb->drs_op, error));
 }
 
@@ -520,6 +575,7 @@ dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
 	const struct dq_resolve_body *rb;
 	const struct dq_resolve_reply *rr;
 	const struct dq_resolve_attr *ra;
+	const struct dq_resolve_target *rt;
 	int reason;
 
 	if (rerrno != 0)
@@ -537,7 +593,28 @@ dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
 	case DQ_RESOLVE_OK:
 		return (len == 0 ? 0 : EINVAL);
 	case DQ_RESOLVE_FD:
-		return (len == sizeof(struct dq_resolve_mint) ? 0 : EINVAL);
+		/*
+		 * dq_resolve_mint_prepare validated the mint and a SYMLINK's
+		 * target; the size is checked again against the kind.
+		 */
+		if (len < sizeof(struct dq_resolve_mint))
+			return (EINVAL);
+		if (((const struct dq_resolve_mint *)(rr + 1))->drm_kind !=
+		    DQ_KIND_SYMLINK)
+			return (len == sizeof(struct dq_resolve_mint) ? 0 :
+			    EINVAL);
+		return (dq_resolve_target_validate(
+		    (const struct dq_resolve_target *)((const char *)(rr + 1) +
+		    sizeof(struct dq_resolve_mint)),
+		    len - sizeof(struct dq_resolve_mint)));
+	case DQ_RESOLVE_REAL:
+		/* D167: an absolute, normalized real path. */
+		if (dq_resolve_target_validate(
+		    (const struct dq_resolve_target *)(rr + 1), len) != 0)
+			return (EINVAL);
+		rt = (const struct dq_resolve_target *)(rr + 1);
+		return (dq_path_normalized(rt->drt_target, rt->drt_len) ? 0 :
+		    EINVAL);
 	case DQ_RESOLVE_ATTR:
 	case DQ_RESOLVE_LINK:
 		if (len < sizeof(*ra))
@@ -595,8 +672,10 @@ dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	const struct dq_resolve_body *rb;
 	struct dq_event_k key, *ev;
 	struct dq_object *o;
+	const struct dq_resolve_target *rt;
 	uint64_t oid;
-	uint32_t rop, mode;
+	uint32_t rop, mode, rflags;
+	size_t extra;
 	int error, reason;
 
 	*robjp = NULL;
@@ -619,16 +698,46 @@ dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	rb = dq_resolve_ev_body(ev);
 	rop = rb->drs_op;
 	mode = rb->drs_mode;
+	rflags = rb->drs_rflags;
 	DQ_UNLOCK(q);
-	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rm))
+	if (dd->dd_len < sizeof(struct dq_resolve_reply) + sizeof(*rm))
 		return (EINVAL);
 	rm = (struct dq_resolve_mint *)(dd->dd_bytes +
 	    sizeof(struct dq_resolve_reply));
-	if (rm->drm_kind != DQ_KIND_FILE)
+	extra = dd->dd_len - sizeof(struct dq_resolve_reply) - sizeof(*rm);
+	/*
+	 * FILE (iii-a), DIR and SYMLINK (iii-b, D168).  A SYMLINK carries its
+	 * target after the mint, its size the target's length, and answers
+	 * only a lookup that does not follow a final symlink (O_NOFOLLOW,
+	 * lchmod, ...): a following lookup would have gone through it.
+	 */
+	rt = NULL;
+	switch (rm->drm_kind) {
+	case DQ_KIND_FILE:
+	case DQ_KIND_DIR:
+		if (extra != 0)
+			return (EINVAL);
+		break;
+	case DQ_KIND_SYMLINK:
+		rt = (const struct dq_resolve_target *)(rm + 1);
+		if (dq_resolve_target_validate(rt, extra) != 0)
+			return (dq_resolve_mint_reason(rm, DQ_REASON_TARGET,
+			    EINVAL));
+		if ((rflags & DQ_RF_NOFOLLOW) == 0)
+			return (dq_resolve_mint_reason(rm, DQ_REASON_KIND,
+			    EINVAL));
+		break;
+	default:
 		return (dq_resolve_mint_reason(rm, DQ_REASON_KIND, EINVAL));
+	}
 	error = dq_ident_validate(rm->drm_kind, &rm->drm_ident, &reason);
 	if (error == 0)
-		error = dq_policy_validate(&rm->drm_policy, &reason);
+		error = dq_policy_validate_kind(rm->drm_kind, &rm->drm_policy,
+		    &reason);
+	if (error == 0 && rt != NULL && rm->drm_ident.di_size != rt->drt_len) {
+		reason = DQ_REASON_TARGET;
+		error = EINVAL;
+	}
 	if (error != 0)
 		return (dq_resolve_mint_reason(rm, reason, error));
 	if ((rm->drm_flags & ~(DQ_MINT_F_WRITE | DQ_MINT_F_CREATED)) != 0 ||
@@ -647,6 +756,12 @@ dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	    &rm->drm_policy, &o);
 	if (error != 0)
 		return (dq_resolve_mint_reason(rm, DQ_REASON_NONE, ENOMEM));
+	if (rt != NULL) {
+		/* Fixed before the object is visible (dq_file_target). */
+		o->o_target = malloc(rt->drt_len + 1, M_DQ, M_WAITOK);
+		memcpy(o->o_target, rt->drt_target, rt->drt_len + 1);
+		o->o_targetlen = rt->drt_len;
+	}
 	oid = o->o_id;
 	error = copyout(&oid, rm->drm_objectp, sizeof(oid));
 	if (error == 0)

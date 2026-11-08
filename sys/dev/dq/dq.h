@@ -45,8 +45,10 @@
 #define	DQ_MFSNAMELEN		16	/* == MFSNAMELEN */
 
 /*
- * Kinds (design 7.3).  Stage 1a serves DQ_KIND_FILE; the others are
- * reserved numbers so the ABI does not move when they arrive.
+ * Kinds (design 7.3).  Stage 1a serves DQ_KIND_FILE; stage 1c-iii-b adds
+ * DQ_KIND_DIR (MINT and RESOLVE FD) and DQ_KIND_SYMLINK (RESOLVE FD only,
+ * O_PATH | O_NOFOLLOW opens); the others are reserved numbers so the ABI
+ * does not move when they arrive.
  */
 enum dq_kind {
 	DQ_KIND_FILE = 1,
@@ -339,6 +341,29 @@ struct dq_reply_record {		/* observer copy of a reply (DQ_OP_REPLY) */
 	uint64_t	drr_id;
 	int32_t		drr_errno;
 	uint32_t	drr_len;
+};
+
+/*
+ * READDIR (stage 1c-iii-b, DQ_KIND_DIR): getdirentries(2) on a served
+ * directory.  drd_cookie is the descriptor's offset, which holds the
+ * controller's cookie (0 at open; lseek(2) sets it).  The reply is errno,
+ * or struct dq_readdir_reply followed by drdr_len bytes of struct dirent
+ * records as getdirentries(2) returns them: each d_reclen a multiple of 8,
+ * at least GENERIC_DIRSIZ, d_namlen 1..MAXNAMLEN, the name NUL-terminated
+ * with no '/' and no inner NUL, d_type a DT_* value; drdr_len <= drd_len
+ * and the sum of the records; drdr_next (the cookie after them) <=
+ * OFF_MAX.  Zero bytes with drdr_eof == 0 is refused.  A malformed reply
+ * is EINVAL to the controller and the event stays in flight.
+ */
+struct dq_readdir_body {
+	uint64_t	drd_cookie;
+	uint32_t	drd_len;		/* <= kern.dq.max_io - 16 */
+	uint32_t	drd_pad0;
+};
+struct dq_readdir_reply {
+	uint64_t	drdr_next;		/* the cookie after these records */
+	uint32_t	drdr_eof;		/* 1: no more entries */
+	uint32_t	drdr_len;		/* record bytes that follow */
 };
 
 /*
@@ -712,7 +737,11 @@ struct dq_push_args {
  * (DQ_IOC_ATTACH) has every name it resolves posted as a queue-level
  * RESOLVE event (de_object 0) before the lookup runs; the controller
  * answers PASS (the lookup proceeds unchanged) or an errno (the syscall
- * fails with it).  Series 1c-i accepts only those two answers.
+ * fails with it).  Series 1c-iii adds the served answers below; series
+ * 1c-iii-b makes a served directory (DQ_KIND_DIR) a lookup start for the
+ * processes attached to its queue: such a lookup is posted with
+ * DQ_START_SERVED and drs_start = the directory's object, and never
+ * accepts PASS.
  *
  * RESOLVE body: struct dq_resolve_body, then drs_pathlen bytes of path,
  * NUL, drs_path2len bytes of the second path (RENAME, LINK), NUL,
@@ -803,6 +832,11 @@ struct dq_resolve_body {
 #define	DQ_RF_KCONSUMER		0x00004000	/* the object goes to the kernel
 						   (class 2) */
 #define	DQ_RF_STARTPATH2_VALID	0x00008000	/* path2's start hint is present */
+#define	DQ_RF_STRICTREL2	0x00010000	/* path2's start is capability-
+						   mode or limited-rights
+						   relative (1c-iii-b) */
+#define	DQ_RF_BENEATH2		0x00020000	/* path2's start descriptor is
+						   FD_RESOLVE_BENEATH */
 
 /* Start kinds (drs_start_kind). */
 #define	DQ_START_SERVED		1	/* drs_start names it (1c-iii) */
@@ -810,8 +844,10 @@ struct dq_resolve_body {
 #define	DQ_START_REAL_ROOT	3	/* absolute path */
 #define	DQ_START_REAL_DIRFD	4
 #define	DQ_START_NONE		5	/* sockets */
-#define	DQ_START_REAL_SYMDIR	6	/* a relative symlink's directory
-					   (1c-iii-c, reserved) */
+#define	DQ_START_REAL_SYMDIR	6	/* a relative symlink's directory: a
+					   re-consultation of a PASSed lookup
+					   (DQ_RF_SYMLINK_RESTART); the hint
+					   is that directory (1c-iii-b) */
 
 /* Lookup classes (drs_flags, D127). */
 #define	DQ_RCLASS_USER		1	/* the requester's own path */
@@ -829,7 +865,10 @@ struct dq_resolve_body {
  *	ATTR		+ struct dq_resolve_attr (3904): attributes only
  *	LINK		+ struct dq_resolve_attr (S_ISLNK, di_size == drt_len)
  *			+ struct dq_resolve_target (<= 4936)
- *	REAL		+ struct dq_resolve_target (1c-iii-b)
+ *	REAL		+ struct dq_resolve_target (1c-iii-b): an absolute,
+ *			normalized real path the lookup continues from
+ *	FD (SYMLINK)	+ struct dq_resolve_mint + struct dq_resolve_target
+ *			(the link's target, drt_len == di_size; <= 5008)
  *
  * A target is drt_len bytes, a NUL, and zeros to the next 8-byte boundary;
  * no inner NUL.  An errno reply carries no body.  The reply may be up to
@@ -844,7 +883,7 @@ struct dq_resolve_reply {
 #define	DQ_RESOLVE_ATTR		3	/* (iii) */
 #define	DQ_RESOLVE_LINK		4	/* (iii) */
 #define	DQ_RESOLVE_OK		5	/* (iii) */
-#define	DQ_RESOLVE_REAL		6	/* (iii-b, reserved) */
+#define	DQ_RESOLVE_REAL		6	/* + struct dq_resolve_target (iii-b) */
 #define	DQ_RESOLVE_REPLY_MAX	8192
 
 struct dq_resolve_attr {		/* ATTR, LINK */
@@ -867,7 +906,7 @@ struct dq_resolve_target {		/* LINK, REAL */
  * used.  Native LP64 controllers only (the pointers are native).
  */
 struct dq_resolve_mint {		/* stage 1c-iii */
-	uint32_t	drm_kind;		/* DQ_KIND_FILE (iii-a) */
+	uint32_t	drm_kind;		/* DQ_KIND_FILE, _DIR, _SYMLINK */
 	uint32_t	drm_flags;		/* DQ_MINT_F_WRITE, _CREATED */
 	struct dq_ident_file drm_ident;
 	struct dq_policy drm_policy;
@@ -951,6 +990,11 @@ _Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_attr) 
 _Static_assert(sizeof(struct dq_resolve_reply) == 8, "dq_resolve_reply");
 _Static_assert(sizeof(struct dq_resolve_mint) == 3968, "dq_resolve_mint");
 _Static_assert(sizeof(struct dq_attach_args) == 24, "dq_attach_args");
+_Static_assert(sizeof(struct dq_readdir_body) == 16, "dq_readdir_body");
+_Static_assert(sizeof(struct dq_readdir_reply) == 16, "dq_readdir_reply");
+_Static_assert(sizeof(struct dq_resolve_reply) + sizeof(struct dq_resolve_mint) +
+    sizeof(struct dq_resolve_target) + DQ_PATH_MAX == 5008,
+    "the largest FD (SYMLINK) reply");
 
 #pragma pop_macro("dr_data")
 #pragma pop_macro("di_rdev")

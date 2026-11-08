@@ -20,7 +20,14 @@
 #                                             transform, for sign-off (D157)
 #   SLOT     file function slot pointer       a slot the intent declares
 #   CONSULT  file function op class           dqres_consult_sun,
-#                                             dqres_consult_socket
+#                                             dqres_consult_socket; and
+#                                             the served-start choke
+#                                             points (1c-iii-b): op
+#                                             SERVED (namei_setup's served
+#                                             branch), SYMLINK (namei's
+#                                             re-consultation, D172) and
+#                                             START (fgetvp_lookup_start
+#                                             asking the vector)
 #   USERNDI  file function pointer coverage   NDINIT* of UIO_USERSPACE
 #   VARSEG   file function segment coverage   NDINIT* whose segment is a
 #                                             variable
@@ -70,8 +77,9 @@
 # EDQRESOLVED containment (D157): every file and function or macro whose
 # code (not comments) names EDQRESOLVED is a row, ALLOWED only for its
 # definition (errno.h), the consumer macro DQRES_SERVED (dqres.h), the
-# producer dqres_namei and the stray mapping in syscall_dq_stray and
-# syscallret, STRAY otherwise (the build fails).  A MARK row is FLAG when
+# producers dqres_namei, dqres_namei_served and dqres_namei_symlink
+# (1c-iii-b) and the stray mapping in syscall_dq_stray and syscallret,
+# STRAY otherwise (the build fails).  A MARK row is FLAG when
 # a served intent has no DQRES_SERVED completion or the reverse, when the
 # DQRES_SERVED does not sit after the impl call and before
 # dq_intent_leave, or when the completion (a *_dqserved function) does
@@ -312,6 +320,15 @@ scan()
 			}
 			printf("C\t%s\t%s\t%s\t1\n", file, fn, op)
 		}
+		# The served-start choke points (1c-iii-b).
+		/dqres_(namei_served|namei_symlink|lookup_start)\(/ && \
+		    !/^dqres_/ && fn != "" {
+			op = $0
+			sub(/.*dqres_/, "", op); sub(/\(.*/, "", op)
+			op = op == "namei_served" ? "SERVED" : \
+			    op == "namei_symlink" ? "SYMLINK" : "START"
+			printf("C\t%s\t%s\t%s\t1\n", file, fn, op)
+		}
 		# The lookup after a pending kernel-space NDINIT.
 		pend && !nd && /namei\(|vn_open/ {
 			flush($0 ~ /DQRES_EXEMPT\(/ ? 1 : 0)
@@ -538,6 +555,8 @@ scan_edq()
 					ok = key == "sys/errno.h:EDQRESOLVED" ||
 					    key == "sys/dqres.h:DQRES_SERVED" ||
 					    key == "kern/kern_dqres.c:dqres_namei" ||
+					    key == "kern/kern_dqres.c:dqres_namei_served" ||
+					    key == "kern/kern_dqres.c:dqres_namei_symlink" ||
 					    key == "kern/subr_syscall.c:syscall_dq_stray" ||
 					    key == "kern/subr_syscall.c:syscallret"
 					printf("EDQRESOLVED\t%s\t%s\n", key,

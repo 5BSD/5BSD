@@ -1927,6 +1927,16 @@ kaudit_to_bsm(struct kaudit_record *kar, struct au_record **pau)
 		return (BSM_NOAUDIT);
 	}
 
+	/* DescriptorQueue served start and result (stage 1c-iii-b). */
+	if (ARG_IS_VALID(kar, ARG_DQSTART)) {
+		tok = au_to_arg64(0, "dq_start", ar->ar_arg_dqstart);
+		kau_write(rec, tok);
+	}
+	if (ARG_IS_VALID(kar, ARG_DQOBJ)) {
+		tok = au_to_arg64(0, "dq_object", ar->ar_arg_dqobj);
+		kau_write(rec, tok);
+	}
+
 	if (jail_tok != NULL)
 		kau_write(rec, jail_tok);
 	kau_write(rec, subj_tok);

@@ -1975,6 +1975,7 @@ kern_linkat(struct thread *td, int fd1, int fd2, const char *path1,
 	    DQ_RACCEPT(DQ_RESOLVE_OK));
 	dq_intent_slot(&dqi, 0, path1, segflag, fd1);
 	dq_intent_slot(&dqi, 1, path2, segflag, fd2);
+	dq_intent_slot_rights(&dqi, 1, &cap_linkat_target_rights);
 	dqerror = kern_linkat_dqimpl(td, fd1, fd2, path1, path2, segflag, flag);
 	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
@@ -2358,7 +2359,14 @@ kern_funlinkat_dqimpl(struct thread *td, int dfd, const char *path, int fd,
 
 	fp = NULL;
 	if (fd != FD_NONE) {
-		error = getvnode_path(td, fd, &cap_no_rights, NULL, &fp);
+		/* D170: a served descriptor names the served object. */
+		error = dqres_unlink_fd(td, fd, &cap_no_rights, &fp);
+		if (error == ENOTTY) {
+			error = getvnode_path(td, fd, &cap_no_rights, NULL,
+			    &fp);
+			if (error == 0)
+				dqres_unlink_realfd(td);
+		}
 		if (error != 0)
 			return (error);
 	}
@@ -2382,7 +2390,8 @@ restart:
 	    sb.st_ino != oldinum) {
 		error = EIDRM;	/* Identifier removed */
 	} else if (fp != NULL && fp->f_vnode != vp) {
-		if (VN_IS_DOOMED(fp->f_vnode))
+		/* A served descriptor never names a real vnode (D170). */
+		if (fp->f_vnode != NULL && VN_IS_DOOMED(fp->f_vnode))
 			error = EBADF;
 		else
 			error = EDEADLK;
@@ -3294,12 +3303,28 @@ kern_readlinkat_dqimpl(struct thread *td, int fd, const char *path,
 	    EMPTYPATH, pathseg, path, fd);
 
 	if ((error = namei(&nd)) != 0) {
-		/* D164: a served file is not a symlink (EINVAL, no event). */
+		/*
+		 * D164: a served symlink's own target, no event; any other
+		 * served descriptor is not a symlink (EINVAL).
+		 */
 		if (error == ENOTDIR &&
 		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
 		    dqres_emptypath_file(td, fd, &cap_no_rights, &fp) == 0) {
+			char *target;
+			size_t tlen;
+
+			error = dqres_file_target(fp, &target, &tlen);
 			fdrop(fp, td);
-			error = EINVAL;
+			if (error == 0) {
+				tlen = MIN(tlen, count);
+				if (bufseg == UIO_SYSSPACE)
+					bcopy(target, buf, tlen);
+				else
+					error = copyout(target, buf, tlen);
+				free(target, M_TEMP);
+				if (error == 0)
+					td->td_retval[0] = tlen;
+			}
 		}
 		return (error);
 	}
@@ -3734,12 +3759,21 @@ kern_fchmodat_dqimpl(struct thread *td, int fd, const char *path,
 	    AT_RESOLVE_BENEATH | AT_EMPTY_PATH) | AUDITVNODE1, pathseg, path,
 	    fd, &cap_fchmod_rights);
 	if ((error = namei(&nd)) != 0) {
-		/* D164: the served descriptor's own fchmod, no event. */
+		/*
+		 * D164: the served descriptor's own chmod, no event, through
+		 * the object-level setattr, so an O_PATH descriptor works as
+		 * a vnode's O_PATH descriptor does here (1c-iii-b).
+		 */
 		if (error == ENOTDIR &&
 		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
 		    dqres_emptypath_file(td, fd, &cap_fchmod_rights,
 		    &fp) == 0) {
-			error = fo_chmod(fp, mode, td->td_ucred, td);
+			struct dq_setattr_body sb;
+
+			bzero(&sb, sizeof(sb));
+			sb.dsa_mask = DQ_SETATTR_MODE;
+			sb.dsa_mode = mode & ALLPERMS;
+			error = dqres_file_setattr(td, fp, &sb);
 			fdrop(fp, td);
 		}
 		return (error);
@@ -3923,12 +3957,26 @@ kern_fchownat_dqimpl(struct thread *td, int fd, const char *path,
 	    fd, &cap_fchown_rights);
 
 	if ((error = namei(&nd)) != 0) {
-		/* D164: the served descriptor's own fchown, no event. */
+		/*
+		 * D164: the served descriptor's own chown, no event, through
+		 * the object-level setattr (O_PATH as for a vnode, 1c-iii-b).
+		 */
 		if (error == ENOTDIR &&
 		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0 &&
 		    dqres_emptypath_file(td, fd, &cap_fchown_rights,
 		    &fp) == 0) {
-			error = fo_chown(fp, uid, gid, td->td_ucred, td);
+			struct dq_setattr_body sb;
+
+			bzero(&sb, sizeof(sb));
+			if (uid != (uid_t)-1) {
+				sb.dsa_mask |= DQ_SETATTR_UID;
+				sb.dsa_uid = uid;
+			}
+			if (gid != (gid_t)-1) {
+				sb.dsa_mask |= DQ_SETATTR_GID;
+				sb.dsa_gid = gid;
+			}
+			error = dqres_file_setattr(td, fp, &sb);
 			fdrop(fp, td);
 		}
 		return (error);
@@ -5141,6 +5189,7 @@ kern_renameat(struct thread *td, int fromfd, const char *from, int tofd,
 	dqi.di_mode = flags;
 	dq_intent_slot(&dqi, 0, from, pathseg, fromfd);
 	dq_intent_slot(&dqi, 1, to, pathseg, tofd);
+	dq_intent_slot_rights(&dqi, 1, &cap_renameat_target_rights);
 	dqerror = kern_renameat_dqimpl(td, fromfd, from, tofd, to, pathseg, flags);
 	DQRES_SERVED(td, &dqi, dqerror, dq_ok_dqserved(&dqi));
 	dq_intent_leave(td, &dqi);
@@ -5280,8 +5329,14 @@ kern_frmdirat_dqimpl(struct thread *td, int dfd, const char *path, int fd,
 
 	fp = NULL;
 	if (fd != FD_NONE) {
-		error = getvnode(td, fd, cap_rights_init_one(&rights,
+		/* D170: a served descriptor names the served object. */
+		error = dqres_unlink_fd(td, fd, cap_rights_init_one(&rights,
 		    CAP_LOOKUP), &fp);
+		if (error == ENOTTY) {
+			error = getvnode(td, fd, &rights, &fp);
+			if (error == 0)
+				dqres_unlink_realfd(td);
+		}
 		if (error != 0)
 			return (error);
 	}
@@ -5315,7 +5370,8 @@ restart:
 	}
 
 	if (fp != NULL && fp->f_vnode != vp) {
-		if (VN_IS_DOOMED(fp->f_vnode))
+		/* A served descriptor never names a real vnode (D170). */
+		if (fp->f_vnode != NULL && VN_IS_DOOMED(fp->f_vnode))
 			error = EBADF;
 		else
 			error = EDEADLK;
