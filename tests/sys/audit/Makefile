@@ -14,6 +14,8 @@ ATF_TESTS_C+=	inter-process
 ATF_TESTS_C+=	administrative
 ATF_TESTS_C+=	process-control
 ATF_TESTS_C+=	miscellaneous
+# DescriptorQueue served starts (dq(4) stage 1c-iii-b): skips without /dev/dq.
+ATF_TESTS_C+=	dq_served
 
 SRCS.file-attribute-access+=	file-attribute-access.c
 SRCS.file-attribute-access+=	utils.c
@@ -43,6 +45,10 @@ SRCS.process-control+=		process-control.c
 SRCS.process-control+=		utils.c
 SRCS.miscellaneous+=		miscellaneous.c
 SRCS.miscellaneous+=		utils.c
+SRCS.dq_served+=		dq_served.c
+SRCS.dq_served+=		utils.c
+CFLAGS.dq_served.c+=		-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+LIBADD.dq_served+=		dq pthread
 
 TEST_METADATA+= timeout="30"
 TEST_METADATA+= required_user="root"

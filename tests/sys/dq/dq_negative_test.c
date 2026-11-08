@@ -109,7 +109,15 @@ ATF_TC_BODY(mint_reasons_identity, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 	ATF_CHECK_EQ(DQ_REASON_VERSION, reason);
 	args->dm_version = DQ_API_VERSION;
+	/* A directory mints (1c-iii-b), but not with a file's identity. */
 	args->dm_kind = DQ_KIND_DIR;
+	reason = -1;
+	errno = 0;
+	ATF_CHECK_EQ(-1, ioctl(f.c.q, DQ_IOC_MINT, args));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(DQ_REASON_TYPE, reason);
+	/* A symbolic link exists only as a RESOLVE answer. */
+	args->dm_kind = DQ_KIND_SYMLINK;
 	reason = -1;
 	errno = 0;
 	ATF_CHECK_EQ(-1, ioctl(f.c.q, DQ_IOC_MINT, args));

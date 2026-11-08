@@ -823,6 +823,12 @@ is set, and the process is in capability mode.
 .Dv O_NAMEDATTR
 has been specified and the file object is not a named attribute
 directory or named attribute.
+.It Bq Er EDEADLK
+The
+.Fa fd
+argument is a
+.Xr dq 4
+served directory and the process is not attached to its queue.
 .El
 .Sh SEE ALSO
 .Xr chmod 2 ,
@@ -839,6 +845,7 @@ directory or named attribute.
 .Xr write 2 ,
 .Xr fopen 3 ,
 .Xr capsicum 4 ,
+.Xr dq 4 ,
 .Xr unix 4 ,
 .Xr named_attribute 7
 .Sh STANDARDS

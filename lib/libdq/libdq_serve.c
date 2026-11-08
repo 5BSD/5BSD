@@ -35,6 +35,7 @@
 #include <sys/queue.h>
 #include <sys/stat.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -676,24 +677,39 @@ dq_serve_setattr(int q, const struct dq_event *ev,
 {
 	const struct dq_setattr_body *sb;
 	struct timespec ts[2];
+	uid_t uid;
+	gid_t gid;
 	uint32_t mask;
 	int error, rv;
+	bool opath;
 
 	if (dq_event_setattr(ev, &sb) != 0)
 		return (dq_reply(q, ev->de_id, EIO, NULL, 0));
 	mask = sb->dsa_mask;
 	error = 0;
+	/*
+	 * An O_PATH backing descriptor (a served symbolic link, 1c-iii-b)
+	 * takes the *at(fd, "", AT_EMPTY_PATH) forms, which change the node
+	 * itself as lchmod(2) and friends do.
+	 */
+	opath = (fcntl(backing, F_GETFL) & O_PATH) != 0;
 	if (error == 0 && (mask & DQ_SETATTR_SIZE) != 0 &&
 	    ftruncate(backing, (off_t)sb->dsa_size) == -1)
 		error = errno;
 	if (error == 0 && (mask & DQ_SETATTR_MODE) != 0 &&
-	    fchmod(backing, (mode_t)(sb->dsa_mode & ALLPERMS)) == -1)
+	    (opath ? fchmodat(backing, "", (mode_t)(sb->dsa_mode & ALLPERMS),
+	    AT_EMPTY_PATH) :
+	    fchmod(backing, (mode_t)(sb->dsa_mode & ALLPERMS))) == -1)
 		error = errno;
-	if (error == 0 && (mask & (DQ_SETATTR_UID | DQ_SETATTR_GID)) != 0 &&
-	    fchown(backing,
-	    (mask & DQ_SETATTR_UID) != 0 ? (uid_t)sb->dsa_uid : (uid_t)-1,
-	    (mask & DQ_SETATTR_GID) != 0 ? (gid_t)sb->dsa_gid : (gid_t)-1) == -1)
-		error = errno;
+	if (error == 0 && (mask & (DQ_SETATTR_UID | DQ_SETATTR_GID)) != 0) {
+		uid = (mask & DQ_SETATTR_UID) != 0 ? (uid_t)sb->dsa_uid :
+		    (uid_t)-1;
+		gid = (mask & DQ_SETATTR_GID) != 0 ? (gid_t)sb->dsa_gid :
+		    (gid_t)-1;
+		if ((opath ? fchownat(backing, "", uid, gid, AT_EMPTY_PATH) :
+		    fchown(backing, uid, gid)) == -1)
+			error = errno;
+	}
 	if (error == 0 && (mask & (DQ_SETATTR_ATIME | DQ_SETATTR_MTIME)) != 0) {
 		ts[0].tv_sec = sb->dsa_atime.tv_sec;
 		ts[0].tv_nsec = (mask & DQ_SETATTR_ATIME) != 0 ?
@@ -701,11 +717,13 @@ dq_serve_setattr(int q, const struct dq_event *ev,
 		ts[1].tv_sec = sb->dsa_mtime.tv_sec;
 		ts[1].tv_nsec = (mask & DQ_SETATTR_MTIME) != 0 ?
 		    sb->dsa_mtime.tv_nsec : UTIME_OMIT;
-		if (futimens(backing, ts) == -1)
+		if ((opath ? utimensat(backing, "", ts, AT_EMPTY_PATH) :
+		    futimens(backing, ts)) == -1)
 			error = errno;
 	}
 	if (error == 0 && (mask & DQ_SETATTR_FLAGS) != 0 &&
-	    fchflags(backing, sb->dsa_flags) == -1)
+	    (opath ? chflagsat(backing, "", sb->dsa_flags, AT_EMPTY_PATH) :
+	    fchflags(backing, sb->dsa_flags)) == -1)
 		error = errno;
 	if (error != 0)
 		return (dq_reply(q, ev->de_id, dq_serve_map(DQ_OP_SETATTR, error),
@@ -713,6 +731,44 @@ dq_serve_setattr(int q, const struct dq_event *ev,
 	rv = dq_reply(q, ev->de_id, 0, NULL, 0);
 	if (rv == 0)
 		rv = dq_serve_ident_sync(q, ev, opts, backing);
+	return (rv);
+}
+
+/*
+ * READDIR of a served directory (1c-iii-b): getdirentries(2) of the
+ * backing directory from the cookie, which is its own offset; the cookie
+ * after the records is the backing offset after them, and an empty read
+ * is the end.  The records go as getdirentries returned them (the kernel
+ * validates and zeroes their pads).
+ */
+static int
+dq_serve_readdir(int q, const struct dq_event *ev, int backing)
+{
+	const struct dq_readdir_body *rb;
+	char *buf;
+	ssize_t n;
+	off_t base, next;
+	int error, rv;
+
+	if (dq_event_readdir(ev, &rb) != 0)
+		return (dq_reply(q, ev->de_id, EIO, NULL, 0));
+	buf = malloc(rb->drd_len != 0 ? rb->drd_len : 1);
+	if (buf == NULL)
+		return (dq_reply(q, ev->de_id, EIO, NULL, 0));
+	n = -1;
+	if (lseek(backing, (off_t)rb->drd_cookie, SEEK_SET) != -1)
+		n = getdirentries(backing, buf, rb->drd_len, &base);
+	next = n >= 0 ? lseek(backing, 0, SEEK_CUR) : -1;
+	if (n < 0 || next < 0) {
+		error = dq_reply_errno_allowed(DQ_OP_READDIR, errno) ?
+		    errno : EIO;
+		rv = dq_reply(q, ev->de_id, error, NULL, 0);
+	} else
+		rv = dq_reply_readdir(q, ev->de_id, (uint64_t)next, n == 0,
+		    buf, (size_t)n);
+	error = errno;
+	free(buf);
+	errno = error;
 	return (rv);
 }
 
@@ -890,6 +946,8 @@ dq_serve_file(int q, const struct dq_event *ev, const void *body,
 		return (0);
 	case DQ_OP_IOCTL:
 		return (dq_serve_ioctl(q, ev, opts, backing_fd));
+	case DQ_OP_READDIR:
+		return (dq_serve_readdir(q, ev, backing_fd));
 	case DQ_OP_INTERRUPT:
 		if (dq_event_interrupt(ev, &ib) == 0)
 			dq_serve_interrupt(st, ib->din_id);

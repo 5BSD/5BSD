@@ -43,6 +43,15 @@
 .Nm dq_reply_resolve_attr ,
 .Nm dq_reply_resolve_link ,
 .Nm dq_reply_resolve_ok ,
+.Nm dq_policy_default_dir ,
+.Nm dq_mint_dir ,
+.Nm dq_ident_from_lstat ,
+.Nm dq_reply_resolve_fd_symlink ,
+.Nm dq_reply_resolve_real ,
+.Nm dq_event_readdir ,
+.Nm dq_dirent_add ,
+.Nm dq_reply_readdir ,
+.Nm dq_tree_root ,
 .Nm dq_tree_create ,
 .Nm dq_tree_destroy ,
 .Nm dq_tree_objects ,
@@ -183,6 +192,40 @@ DescriptorQueue controller library
 .Fc
 .Ft int
 .Fn dq_reply_resolve_ok "int q" "uint64_t id"
+.Ft void
+.Fn dq_policy_default_dir "struct dq_policy *pol"
+.Ft int
+.Fo dq_mint_dir
+.Fa "int q" "const struct dq_ident_file *ident" "const struct dq_policy *pol"
+.Fa "uint64_t *object" "int *fd" "int *reason"
+.Fc
+.Ft int
+.Fo dq_ident_from_lstat
+.Fa "struct dq_ident_file *ident" "const char *presented" "int dirfd"
+.Fa "const char *name"
+.Fc
+.Ft int
+.Fo dq_reply_resolve_fd_symlink
+.Fa "int q" "uint64_t id" "const struct dq_ident_file *ident"
+.Fa "const struct dq_policy *pol" "const char *target" "uint64_t *objectp"
+.Fa "int32_t *reasonp"
+.Fc
+.Ft int
+.Fn dq_reply_resolve_real "int q" "uint64_t id" "const char *path"
+.Ft int
+.Fn dq_event_readdir "const struct dq_event *ev" "const struct dq_readdir_body **body"
+.Ft int
+.Fo dq_dirent_add
+.Fa "void *buf" "size_t cap" "size_t *lenp" "uint64_t fileno" "uint64_t off"
+.Fa "uint8_t type" "const char *name"
+.Fc
+.Ft int
+.Fo dq_reply_readdir
+.Fa "int q" "uint64_t id" "uint64_t next" "int eof" "const void *records"
+.Fa "size_t len"
+.Fc
+.Ft int
+.Fn dq_tree_root "struct dq_tree *t" "int *fdp" "uint64_t *objectp"
 .Ft "struct dq_tree *"
 .Fn dq_tree_create "int q" "int rootfd" "const char *prefix" "uint32_t flags"
 .Ft void
@@ -1127,6 +1170,141 @@ Renames honour
 .Pq Va drs_mode .
 .Fn dq_tree_objects
 counts the objects the tree holds.
+.Ss Served directories and REAL
+Stage 1c-iii-b serves directories and symbolic links.
+.Fn dq_mint_dir
+mints a
+.Dv DQ_KIND_DIR
+object as
+.Fn dq_mint_file
+mints a file; a child that inherits the descriptor and is attached to
+the queue uses it as a lookup start (a lookup from it is posted with
+.Dv DQ_START_SERVED
+and its object in
+.Va drs_start ,
+and never takes
+.Dv DQ_RESOLVE_PASS ) ,
+anyone else gets
+.Er EDEADLK .
+.Fn dq_policy_default_dir
+fills the policy a directory or a symbolic link admits.
+.Fn dq_ident_from_lstat
+fills an identity from
+.Fa name
+relative to
+.Fa dirfd
+without following a final symbolic link, presented as
+.Fa presented .
+.Fn dq_reply_resolve_fd
+also answers with
+.Dv DQ_KIND_DIR ;
+.Fn dq_reply_resolve_fd_symlink
+answers with a served symbolic link carrying
+.Fa target
+(its
+.Va di_size
+becomes the target's length), for an
+.Dv O_PATH | O_NOFOLLOW
+open or an operation that does not follow the link.
+.Fn dq_reply_resolve_real
+answers that the name is the real absolute normalized
+.Fa path ;
+the lookup continues there.
+.Pp
+.Fn dq_event_readdir
+returns a
+.Dv DQ_OP_READDIR
+body: the cookie (the descriptor's offset) and the space the caller
+left.
+.Fn dq_dirent_add
+appends a
+.Vt struct dirent
+record to
+.Fa buf
+.Po
+.Fa cap
+bytes,
+.Fa *lenp
+used;
+.Er ENOSPC
+when it does not fit
+.Pc .
+.Fn dq_reply_readdir
+answers the records, the cookie after them and whether the directory
+ended.
+.Fn dq_serve_file
+answers
+.Dv DQ_OP_READDIR
+by
+.Xr getdirentries 2
+of the backing directory from the cookie, which is its own offset, and
+applies a
+.Dv DQ_OP_SETATTR
+of an
+.Dv O_PATH
+backing descriptor (a symbolic link) with the
+.Dv AT_EMPTY_PATH
+forms of
+.Xr fchmodat 2
+and friends.
+.Pp
+.Fn dq_tree_create
+with
+.Dv DQ_TREE_F_SERVED
+selects the stage 1c-iii-b mode, and
+.Fn dq_tree_root
+then mints the tree's root as a served directory presented at
+.Fa prefix
+and returns the controller's descriptor of it.
+In this mode directories are served (an open is answered with a
+.Dv DQ_KIND_DIR
+object, its entries read from the backing directory), a final symbolic
+link opened
+.Dv O_PATH | O_NOFOLLOW
+is a served symbolic link (opened
+.Dv O_NOFOLLOW
+alone it is
+.Er EMLINK ) ,
+and device, FIFO and socket nodes, AF_UNIX connects and binds, names
+outside
+.Fa prefix
+(also reached through a backing symbolic link) and the operations the
+tree does not serve are answered
+.Dv DQ_RESOLVE_REAL
+with the real path (the backing node's for names under
+.Fa prefix ) ,
+when the event accepts it;
+.Dv DQ_RESOLVE_PASS
+from a real start, and
+.Er ENOTCAPABLE
+under a restricted lookup, otherwise.
+.Dv DQ_TREE_F_EXEC_REAL
+answers exec with
+.Dv DQ_RESOLVE_REAL
+of the backing binary.
+Paths are resolved as
+.Xr namei 9
+resolves them: component by component, through the backing tree inside
+.Fa prefix
+(every access confined beneath
+.Fa rootfd
+with
+.Dv O_RESOLVE_BENEATH ) ,
+canonical with
+.Xr realpath 3
+outside it, and under the lookup's restrictions
+.Pq Dv DQ_RF_STRICTREL , DQ_RF_BENEATH , DQ_RF_RINROOT , No and the second path's Dv DQ_RF_STRICTREL2 , DQ_RF_BENEATH2 :
+a
+.Ql ..
+above the start, an absolute name or symbolic link target, and any
+.Ql ..
+under capability mode while
+.Va vfs.lookup_cap_dotdot
+is 0 (or, from a non-local file system, while
+.Va vfs.lookup_cap_dotdot_nonlocal
+is 0), are
+.Er ENOTCAPABLE
+.Pq Dv RINROOT No clamps at the start instead .
 .Ss Serving a backing file
 .Fn dq_serve_file
 answers one event from a real file open on

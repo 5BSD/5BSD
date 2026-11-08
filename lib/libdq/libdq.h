@@ -294,6 +294,45 @@ int	dq_reply_resolve_link(int q, uint64_t id,
 int	dq_reply_resolve_ok(int q, uint64_t id);
 
 /*
+ * Served directories and REAL (stage 1c-iii-b).
+ *
+ * dq_mint_dir(): a served directory (DQ_KIND_DIR) minted in the
+ * controller, as dq_mint_file() mints a file; given to an attached child
+ * by inheritance it is a lookup start inside the attachment (EDEADLK
+ * outside it).  dq_policy_default_dir(): the policy a directory or a
+ * symbolic link admits (nothing written, executed or mapped shared).
+ * dq_ident_from_lstat(): the identity of name relative to dirfd, not
+ * following a final symbolic link, presented as presented.
+ * dq_reply_resolve_fd() also mints DQ_KIND_DIR; a DQ_KIND_SYMLINK object
+ * carries its target: dq_reply_resolve_fd_symlink() (an O_PATH |
+ * O_NOFOLLOW open, lchmod and the like; di_size becomes strlen(target)).
+ * dq_reply_resolve_real(): the name is the real absolute normalized path
+ * (never under STRICTREL, BENEATH, RINROOT, NOSYMLINKS, NOMAGICLINKS or
+ * NOXDEV, nor for rename and link); the lookup continues there.
+ *
+ * READDIR: dq_event_readdir() returns the body (drd_cookie, drd_len);
+ * dq_dirent_add() appends a struct dirent record to a buffer;
+ * dq_reply_readdir() answers the records, the cookie after them and the
+ * end-of-directory flag.
+ */
+void	dq_policy_default_dir(struct dq_policy *pol);
+int	dq_mint_dir(int q, const struct dq_ident_file *ident,
+	    const struct dq_policy *pol, uint64_t *object, int *fd,
+	    int *reason);
+int	dq_ident_from_lstat(struct dq_ident_file *ident,
+	    const char *presented, int dirfd, const char *name);
+int	dq_reply_resolve_fd_symlink(int q, uint64_t id,
+	    const struct dq_ident_file *ident, const struct dq_policy *pol,
+	    const char *target, uint64_t *objectp, int32_t *reasonp);
+int	dq_reply_resolve_real(int q, uint64_t id, const char *path);
+int	dq_event_readdir(const struct dq_event *ev,
+	    const struct dq_readdir_body **body);
+int	dq_dirent_add(void *buf, size_t cap, size_t *lenp, uint64_t fileno,
+	    uint64_t off, uint8_t type, const char *name);
+int	dq_reply_readdir(int q, uint64_t id, uint64_t next, int eof,
+	    const void *records, size_t len);
+
+/*
  * One read(2) and one handler call per record.  The handler returns 0 to
  * continue or nonzero to stop; dq_dispatch returns the records handed
  * over, or -1 when the read failed.  The buffer holds the largest record
@@ -410,10 +449,28 @@ int	dq_serve_file(int q, const struct dq_event *ev, const void *body,
  * O_TRUNC open) is EROFS.  A refused FD answer is followed by EIO, so no
  * event stays in flight.  Renames honour AT_RENAME_NOREPLACE (drs_mode).
  */
+/*
+ * Stage 1c-iii-b mode (DQ_TREE_F_SERVED): dq_tree_root() mints the tree's
+ * root as a served directory (presented at prefix) and returns the
+ * controller's descriptor of it; a child that inherits it and is attached
+ * to q starts lookups there.  Lookups from a served start are answered as
+ * above but never PASS: directories are served (FD of a DIR; READDIR
+ * from the backing directory, cookies its offsets), a final symbolic link
+ * opened O_PATH | O_NOFOLLOW is a served SYMLINK (O_NOFOLLOW alone is
+ * EMLINK), and device, FIFO and socket nodes, AF_UNIX connect and bind,
+ * names outside prefix (also through a backing symbolic link) and the
+ * operations the tree does not serve are answered REAL with the real path
+ * when the event takes it (the backing path under prefix), PASS from a
+ * real start, ENOTCAPABLE under a restricted lookup.
+ * DQ_TREE_F_EXEC_REAL answers exec REAL of the backing binary.
+ */
 struct dq_tree;
 #define	DQ_TREE_F_WRITE		0x00000001
+#define	DQ_TREE_F_SERVED	0x00000002	/* 1c-iii-b mode */
+#define	DQ_TREE_F_EXEC_REAL	0x00000004
 struct dq_tree *dq_tree_create(int q, int rootfd, const char *prefix,
 	    uint32_t flags);
+int	dq_tree_root(struct dq_tree *t, int *fdp, uint64_t *objectp);
 void	dq_tree_destroy(struct dq_tree *t);
 int	dq_tree_objects(const struct dq_tree *t);
 int	dq_serve_tree(struct dq_tree *t, const struct dq_event *ev,
