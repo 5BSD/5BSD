@@ -39,6 +39,8 @@
 #include <sys/tree.h>
 #include <sys/user.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <sys/sdt.h>
 
@@ -1452,7 +1454,8 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 			VOP_UNLOCK(vp);
 			NDINIT_ATVP(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE,
 			    dp->d_name, vp);
-			error = namei(&nd);
+			/* The directory scan: exempt (DescriptorQueue). */
+			error = DQRES_EXEMPT(namei(&nd));
 			vn_lock(vp, LK_SHARED | LK_RETRY);
 			/* A directory entry may disappear while its lock is dropped. */
 			if (error == ENOENT) {
@@ -1573,8 +1576,8 @@ fget_inotify(struct thread *td, int fd, const cap_rights_t *needrightsp,
 	return (0);
 }
 
-int
-kern_inotify_add_watch(struct thread *td, int fd, int dfd, const char *path,
+static int
+kern_inotify_add_watch_dqimpl(struct thread *td, int fd, int dfd, const char *path,
     uint32_t mask)
 {
 	struct nameidata nd;
@@ -1651,6 +1654,27 @@ out:
 		vput(vp);
 	fdrop(fp, td);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INOTIFY; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_inotify_add_watch(struct thread *td, int fd, int dfd, const char *path,
+    uint32_t mask)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (kern_inotify_add_watch_dqimpl(td, fd, dfd, path, mask));
+	dq_intent_enter(td, &dqi, DQ_ROP_INOTIFY, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, UIO_USERSPACE, dfd);
+	dqerror = kern_inotify_add_watch_dqimpl(td, fd, dfd, path, mask);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 int

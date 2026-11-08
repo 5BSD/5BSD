@@ -95,6 +95,7 @@
 #include <sys/un.h>
 #include <sys/unpcb.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <net/vnet.h>
 #include <crypto/siphash/siphash.h>
@@ -1005,6 +1006,11 @@ uipc_bindat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 	buf[namelen] = 0;
 
 restart:
+	/*
+	 * An attached caller's name was consulted in a content slot at
+	 * kern_bindat; this lookup is checked against it.
+	 * dq-ledger: content via kern/uipc_syscalls.c:kern_bindat
+	 */
 	NDINIT_ATRIGHTS(&nd, CREATE, NOFOLLOW | LOCKPARENT | NOCACHE,
 	    UIO_SYSSPACE, buf, fd, cap_rights_init_one(&rights, CAP_BINDAT));
 /* SHOULD BE ABLE TO ADOPT EXISTING AND wakeup() ALA FIFO's */
@@ -3669,7 +3675,12 @@ unp_connectat_peer(struct thread *td, int fd, const char *buf,
 			return (error);
 	}
 
-	/* Resolve the path to a vnode. */
+	/*
+	 * Resolve the path to a vnode.  An attached caller's name was
+	 * consulted in a content slot at kern_connectat or kern_sendit; this
+	 * lookup is checked against it.
+	 * dq-ledger: content via kern/uipc_syscalls.c:kern_connectat
+	 */
 	NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF |
 	    (fd == AT_FDCWD ? 0 : EMPTYPATH), UIO_SYSSPACE, buf, fd,
 	    cap_rights_init_one(&rights, CAP_CONNECTAT));

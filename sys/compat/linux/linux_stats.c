@@ -42,6 +42,7 @@
 #include <sys/syscallsubr.h>
 #include <sys/tty.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <security/mac/mac_framework.h>
 #ifdef KTRACE
@@ -49,6 +50,8 @@
 #endif
 
 #include <security/audit/audit.h>
+
+#include <dev/dq/dq.h>
 
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
@@ -139,8 +142,8 @@ linux_kern_fstat_id(struct thread *td, int fd, struct stat *sbp,
 }
 
 static int
-linux_kern_statat_id(struct thread *td, int flag, int fd, const char *path,
-    enum uio_seg pathseg, struct stat *sbp, uint64_t *mntid)
+linux_kern_statat_id_dqimpl(struct thread *td, int flag, int fd,
+    const char *path, enum uio_seg pathseg, struct stat *sbp, uint64_t *mntid)
 {
 	struct nameidata nd;
 	int error;
@@ -172,6 +175,29 @@ linux_kern_statat_id(struct thread *td, int flag, int fd, const char *path,
 		ktrstat_error(sbp, error);
 #endif
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of the Linux
+ * stat family's user-supplied path (stat, lstat, newfstatat, statx),
+ * DQ_ROP_STAT.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+linux_kern_statat_id(struct thread *td, int flag, int fd, const char *path,
+    enum uio_seg pathseg, struct stat *sbp, uint64_t *mntid)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (pathseg != UIO_USERSPACE || !DQRES_ATTACHED_TD(td))
+		return (linux_kern_statat_id_dqimpl(td, flag, fd, path,
+		    pathseg, sbp, mntid));
+	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = linux_kern_statat_id_dqimpl(td, flag, fd, path, pathseg,
+	    sbp, mntid);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 static int

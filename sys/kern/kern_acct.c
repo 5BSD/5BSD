@@ -90,6 +90,8 @@
 #include <sys/sysproto.h>
 #include <sys/tty.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -199,8 +201,8 @@ SYSCTL_INT(_kern, OID_AUTO, acct_suspended, CTLFLAG_RD, &acct_suspended, 0,
  * Accounting system call.  Written based on the specification and previous
  * implementation done by Mark Tinguely.
  */
-int
-sys_acct(struct thread *td, struct acct_args *uap)
+static int
+sys_acct_dqimpl(struct thread *td, struct acct_args *uap)
 {
 	struct nameidata nd;
 	int error, flags, replacing;
@@ -306,6 +308,26 @@ sys_acct(struct thread *td, struct acct_args *uap)
 	SDT_PROBE3(acct, , , config, (uintptr_t)uap->path, td->td_ucred,
 	    error);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_acct(struct thread *td, struct acct_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_acct_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = sys_acct_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*

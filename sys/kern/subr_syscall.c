@@ -257,6 +257,13 @@ syscallret(struct thread *td)
 
 	KASSERT(td->td_errno != ERELOOKUP,
 	    ("ERELOOKUP not consumed syscall %d", td->td_sa.code));
+	KASSERT(td->td_errno != EDQRESOLVED,
+	    ("EDQRESOLVED not consumed syscall %d", td->td_sa.code));
+	/* D128: a stray one never reaches userland. */
+	if (__predict_false(td->td_errno == EDQRESOLVED))
+		td->td_errno = EIO;
+	KASSERT(td->td_dqintent == NULL,
+	    ("dq intent left published by syscall %d", td->td_sa.code));
 
 	p = td->td_proc;
 	sa = &td->td_sa;

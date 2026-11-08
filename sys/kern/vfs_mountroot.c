@@ -63,6 +63,7 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <geom/geom.h>
 
@@ -293,6 +294,7 @@ vfs_mountroot_devfs(struct thread *td, struct mount **mpp)
 
 	set_rootvnode();
 
+	/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 	error = kern_symlinkat(td, "/", AT_FDCWD, "dev", UIO_SYSSPACE);
 	if (error)
 		printf("kern_symlink /dev -> / returns %d\n", error);
@@ -348,10 +350,12 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 	if (mporoot != mpdevfs) {
 		/* Remount old root under /.mount or /mnt */
 		fspath = "/.mount";
+		/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, fspath);
 		error = namei(&nd);
 		if (error) {
 			fspath = "/mnt";
+			/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 			NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE,
 			    fspath);
 			error = namei(&nd);
@@ -383,6 +387,7 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 	}
 
 	/* Remount devfs under /dev */
+	/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, "/dev");
 	error = namei(&nd);
 	if (!error) {
@@ -418,6 +423,7 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 	if (mporoot == mpdevfs) {
 		vfs_unbusy(mpdevfs);
 		/* Unlink the no longer needed /dev/dev -> / symlink */
+		/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 		error = kern_funlinkat(td, AT_FDCWD, "/dev/dev", FD_NONE,
 		    UIO_SYSSPACE, 0, 0);
 		if (error)
@@ -599,6 +605,7 @@ parse_dir_md(char **conf)
 	free(tok, M_TEMP);
 
 	/* Get file status. */
+	/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 	error = kern_statat(td, 0, AT_FDCWD, path, UIO_SYSSPACE, &sb);
 	if (error)
 		goto out;
@@ -729,6 +736,7 @@ parse_mount_dev_present(const char *dev)
 	struct nameidata nd;
 	int error;
 
+	/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, dev);
 	error = namei(&nd);
 	if (error != 0)
@@ -953,6 +961,7 @@ vfs_mountroot_readconf(struct thread *td, struct sbuf *sb)
 	ssize_t resid;
 	int error, flags, len;
 
+	/* dq-ledger: exempt via kern/vfs_mountroot.c:vfs_mountroot */
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, "/.mount.conf");
 	flags = FREAD;
 	error = vn_open(&nd, &flags, 0, NULL);
@@ -1071,13 +1080,18 @@ vfs_mountroot(void)
 	struct sbuf *sb;
 	struct thread *td;
 	time_t timebase;
-	int error;
+	int dqsave, error;
 
 	mtx_assert(&Giant, MA_NOTOWNED);
 
 	TSENTER();
 
 	td = curthread;
+	/*
+	 * Every lookup here is the kernel's own (DescriptorQueue, D127),
+	 * also when an attached root process reroots (kern_reroot).
+	 */
+	DQRES_NORESOLVE_ENTER(dqsave);
 
 	sb = sbuf_new_auto();
 	vfs_mountroot_conf0(sb);
@@ -1095,6 +1109,7 @@ vfs_mountroot(void)
 	}
 
 	sbuf_delete(sb);
+	DQRES_NORESOLVE_LEAVE(dqsave);
 
 	/*
 	 * Iterate over all currently mounted file systems and use

@@ -51,6 +51,7 @@
 #include <sys/reboot.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -441,6 +442,14 @@ alq_open_flags(struct alq **alqp, const char *file, struct ucred *cred, int cmod
 	KASSERT((size > 0), ("%s: size <= 0", __func__));
 
 	*alqp = NULL;
+	/*
+	 * The file may come from a sysctl an attached process wrote: not
+	 * consultable here, refused (DescriptorQueue, design 11).  Kernel
+	 * threads and unattached callers are unaffected.
+	 */
+	error = dqres_kpath_refused(curthread);
+	if (error != 0)
+		return (error);
 
 	NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, file);
 	oflags = FWRITE | O_NOFOLLOW | O_CREAT;

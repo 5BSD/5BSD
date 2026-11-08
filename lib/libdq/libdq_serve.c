@@ -812,6 +812,39 @@ dq_serve_ioctl(int q, const struct dq_event *ev,
 	return (rv);
 }
 
+/*
+ * RESOLVE (stage 1c-i): PASS or an errno.  The M2 default under
+ * DQ_SERVE_F_RESOLVE_STRICT: a consultation that is not the requester's
+ * own path (a kernel consumer's, class 2, or a kernel-origin lookup, class
+ * 3) is PASSed only for EXEC_INTERP (the interpreter of an image the
+ * requester was allowed to exec) and refused with EACCES otherwise.  The
+ * caller's handler, when set, decides everything else; an errno outside
+ * the RESOLVE allow-list is sent as EIO.
+ */
+static int
+dq_serve_resolve(int q, const struct dq_event *ev,
+    const struct dq_serve_opts *opts)
+{
+	const struct dq_resolve_body *rb;
+	const char *path, *path2;
+	int error;
+
+	if (dq_event_resolve(ev, &rb, &path, &path2, NULL, NULL) != 0)
+		return (dq_reply_resolve_errno(q, ev->de_id, EIO));
+	error = 0;
+	if (opts != NULL && (opts->so_flags & DQ_SERVE_F_RESOLVE_STRICT) != 0 &&
+	    rb->drs_flags != DQ_RCLASS_USER && rb->drs_op != DQ_ROP_EXEC_INTERP)
+		error = EACCES;
+	else if (opts != NULL && opts->so_resolve != NULL)
+		error = opts->so_resolve(ev, rb, path, path2,
+		    opts->so_resolve_arg);
+	if (error == 0)
+		return (dq_reply_resolve_pass(q, ev->de_id));
+	if (error < 0 || !dq_reply_errno_allowed(DQ_OP_RESOLVE, error))
+		error = EIO;
+	return (dq_reply_resolve_errno(q, ev->de_id, error));
+}
+
 int
 dq_serve_file(int q, const struct dq_event *ev, const void *body,
     size_t bodylen, int backing_fd, const struct dq_serve_opts *opts)
@@ -859,6 +892,8 @@ dq_serve_file(int q, const struct dq_event *ev, const void *body,
 		if (dq_event_interrupt(ev, &ib) == 0)
 			dq_serve_interrupt(st, ib->din_id);
 		return (0);
+	case DQ_OP_RESOLVE:
+		return (dq_serve_resolve(q, ev, opts));
 	case DQ_OP_CLOSE:
 		dq_serve_close(st, ev->de_object);
 		return (0);

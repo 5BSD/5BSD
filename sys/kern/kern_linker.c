@@ -57,6 +57,8 @@
 #include <sys/sysctl.h>
 #include <sys/sysproto.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <sys/dtrace_bsd.h>
 
 #ifdef DDB
@@ -859,7 +861,13 @@ linker_file_unload(linker_file_t file, int flags)
 int
 linker_ctf_get(linker_file_t file, linker_ctf_t *lc)
 {
-	return (LINKER_CTF_GET(file, lc));
+	int error, save;
+
+	/* kern_ctf.c reads the loaded file's CTF by its path: exempt. */
+	DQRES_NORESOLVE_ENTER(save);
+	error = LINKER_CTF_GET(file, lc);
+	DQRES_NORESOLVE_LEAVE(save);
+	return (error);
 }
 
 int
@@ -1251,7 +1259,8 @@ linker_kldload_unbusy(int flags)
  * Syscalls.
  */
 static int
-kldload_common(struct thread *td, const char *file, int *fileid, bool priv)
+kldload_common_dqimpl(struct thread *td, const char *file, int *fileid,
+    bool priv)
 {
 	const char *kldname, *modname;
 	linker_file_t lf;
@@ -1308,6 +1317,30 @@ kldload_common(struct thread *td, const char *file, int *fileid, bool priv)
 		SDT_PROBE3(kld, , , load, lf->filename, lf->id, error);
 	}
 	linker_kldload_unbusy(LINKER_UB_LOCKED);
+	return (error);
+}
+
+/*
+ * DescriptorQueue (design 11): a file path (not a bare module name, D152)
+ * of an attached process is a kernel-consumer path (D127 class 2),
+ * consulted here, before kld_sx is taken.  The linker looks up its own
+ * copy of the bytes inside its exempt region; the content slot checks that
+ * lookup against the consulted start (EIO on a change).
+ */
+static int
+kldload_common(struct thread *td, const char *file, int *fileid, bool priv)
+{
+	struct dq_intent dqi;
+	int error;
+
+	if (strchr(file, '/') == NULL || !DQRES_ATTACHED_TD(td))
+		return (kldload_common_dqimpl(td, file, fileid, priv));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot_content(&dqi, 0, file, AT_FDCWD);
+	error = dqres_consult_slot(td, 0);
+	if (error == 0)
+		error = kldload_common_dqimpl(td, file, fileid, priv);
+	dq_intent_leave(td, &dqi);
 	return (error);
 }
 
@@ -2066,6 +2099,7 @@ linker_lookup_file(const char *path, int pathlen, const char *name,
 		 * Attempt to open the file, and return the path if
 		 * we succeed and it's a regular file.
 		 */
+		/* dq-ledger: exempt via kern/kern_linker.c:linker_load_module */
 		NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, result);
 		flags = FREAD;
 		error = vn_open(&nd, &flags, 0, NULL);
@@ -2116,6 +2150,7 @@ linker_hints_lookup(const char *path, int pathlen, const char *modname,
 	snprintf(pathbuf, reclen, "%.*s%s%s", pathlen, path, sep,
 	    linker_hintfile);
 
+	/* dq-ledger: exempt via kern/kern_linker.c:linker_load_module */
 	NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, pathbuf);
 	flags = FREAD;
 	error = vn_open(&nd, &flags, 0, NULL);
@@ -2348,7 +2383,7 @@ linker_root_mounted(void)
  * NULL, register a reference to it.
  */
 static int
-linker_load_module(const char *kldname, const char *modname,
+linker_load_module_exempt(const char *kldname, const char *modname,
     struct linker_file *parent, const struct mod_depend *verinfo,
     struct linker_file **lfpp)
 {
@@ -2409,6 +2444,26 @@ linker_load_module(const char *kldname, const char *modname,
 			*lfpp = lfdep;
 	} while (0);
 	free(pathname, M_LINKER);
+	return (error);
+}
+
+/*
+ * DescriptorQueue (design 11): the search path, the hints file, the
+ * object file and its dependencies are the linker's own lookups, exempt
+ * (D127) when an attached process loads a module; kldload(2)'s file path
+ * was consulted in kldload_common before kld_sx.
+ */
+static int
+linker_load_module(const char *kldname, const char *modname,
+    struct linker_file *parent, const struct mod_depend *verinfo,
+    struct linker_file **lfpp)
+{
+	int error, save;
+
+	DQRES_NORESOLVE_ENTER(save);
+	error = linker_load_module_exempt(kldname, modname, parent, verinfo,
+	    lfpp);
+	DQRES_NORESOLVE_LEAVE(save);
 	return (error);
 }
 

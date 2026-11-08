@@ -58,6 +58,7 @@
 #ifdef KTRACE
 #include <sys/ktrace.h>
 #endif
+#include <sys/dqres.h>
 #ifdef INVARIANTS
 #include <machine/_inttypes.h>
 #endif
@@ -462,6 +463,16 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	}
 	if (ndp->ni_startdir != NULL && !startdir_used)
 		vrele(ndp->ni_startdir);
+	/*
+	 * DescriptorQueue (design 11, D126/D127): an attached process's
+	 * lookup is consulted here, with the real start computed and no
+	 * lock held (D149), after every capability-mode refusal (no event
+	 * for those).  PASS continues unchanged; an errno ends the lookup
+	 * and is released below like any other.
+	 */
+	if (error == 0 && DQRES_ATTACHED_TD(td))
+		error = dqres_namei(ndp, *dpp,
+		    (ndp->ni_resflags & NIRES_ABS) != 0);
 	if (error != 0) {
 		if (*dpp != NULL)
 			vrele(*dpp);

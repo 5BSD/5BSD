@@ -237,6 +237,7 @@ ext2_mount(struct mount *mp)
 	 */
 	if (fspec == NULL)
 		return (EINVAL);
+	/* dq-ledger: content via kern/vfs_mount.c:vfs_donmount_dqres */
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, fspec);
 	if ((error = namei(ndp)) != 0)
 		return (error);

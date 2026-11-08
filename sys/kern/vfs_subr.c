@@ -92,6 +92,7 @@ SDT_PROBE_DEFINE2(vfs, , , detach__done, "struct knote *", "struct vnode *");
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
 #include <sys/watchdog.h>
+#include <sys/dqres.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -448,6 +449,10 @@ sysctl_try_reclaim_vnode(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 	if (req->newlen >= PATH_MAX)
 		return (E2BIG);
+	/* Not consultable here: refused for an attached caller (design 11). */
+	error = dqres_kpath_refused(req->td);
+	if (error != 0)
+		return (error);
 
 	buf = malloc(PATH_MAX, M_TEMP, M_WAITOK);
 	error = SYSCTL_IN(req, buf, req->newlen);

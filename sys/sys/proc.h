@@ -326,6 +326,7 @@ struct thread {
 	struct kcov_info *td_kcov_info;	/* (*) Kernel code coverage data */
 	long		td_ucredref;	/* (k) references on td_realucred */
 	struct kexterr	td_kexterr;
+	struct dq_intent *td_dqintent;	/* (k) lookup intent (sys/dqres.h) */
 #define	td_endzero td_sigmask
 
 /* Copied during fork1(), thread_create(), or kthread_add(). */
@@ -579,6 +580,7 @@ enum {
 #define	TDP2_EXTERR	0x00000010 /* Kernel reported ext error */
 #define	TDP2_UEXTERR	0x00000020 /* User set ext error reporting ptr */
 #define	TDP2_INOTIFY_LOOKUP 0x00000040 /* Internal watch directory scan */
+#define	TDP2_DQ_NORESOLVE 0x00000080 /* Lookups exempt from DQ RESOLVE */
 
 /*
  * Reasons that the current thread can not be run yet.

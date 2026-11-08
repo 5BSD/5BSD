@@ -67,6 +67,7 @@
 #include <sys/sdt.h>
 #include <sys/syscallsubr.h>
 #include <sys/user.h>
+#include <sys/dqres.h>
 
 #include <opencrypto/cryptodev.h>
 #include <sys/cryptodesc.h>
@@ -2524,8 +2525,9 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		 * jail that does not expose /dev/crypto or in
 		 * capability mode).
 		 */
-		error = kern_openat(td, AT_FDCWD, "/dev/crypto", UIO_SYSSPACE,
-		    O_RDWR, 0);
+		/* A path the kernel computes: exempt (DescriptorQueue). */
+		error = DQRES_EXEMPT(kern_openat(td, AT_FDCWD, "/dev/crypto",
+		    UIO_SYSSPACE, O_RDWR, 0));
 		if (error == 0)
 			*(uint32_t *)data = td->td_retval[0];
 		break;

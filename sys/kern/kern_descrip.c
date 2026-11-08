@@ -77,6 +77,7 @@
 #include <sys/user.h>
 #include <sys/vnode.h>
 #include <sys/ktrace.h>
+#include <sys/dqres.h>
 
 #include <net/vnet.h>
 
@@ -2673,12 +2674,14 @@ pdinit(struct pwddesc *pdp, bool keeplock)
 {
 	struct pwddesc *newpdp;
 	struct pwd *newpwd;
+	struct dqres *prealloc;
 
 	newpdp = malloc(sizeof(*newpdp), M_PWDDESC, M_WAITOK | M_ZERO);
 
 	PWDDESC_LOCK_INIT(newpdp);
 	refcount_init(&newpdp->pd_refcount, 1);
 	newpdp->pd_cmask = CMASK;
+	newpdp->pd_procs = 1;
 
 	if (pdp == NULL) {
 		newpwd = pwd_alloc();
@@ -2686,11 +2689,26 @@ pdinit(struct pwddesc *pdp, bool keeplock)
 		return (newpdp);
 	}
 
+	/*
+	 * The DescriptorQueue attachment is copied with the directories
+	 * (D123): its record is allocated before the lock and the test
+	 * repeated under it, since an ATTACH may commit in between.
+	 */
+	prealloc = atomic_load_ptr(&pdp->pd_dqres) != NULL ?
+	    dqres_alloc(M_WAITOK) : NULL;
 	PWDDESC_XLOCK(pdp);
+	while (pdp->pd_dqres != NULL && prealloc == NULL) {
+		PWDDESC_XUNLOCK(pdp);
+		prealloc = dqres_alloc(M_WAITOK);
+		PWDDESC_XLOCK(pdp);
+	}
+	dqres_pd_inherit_locked(newpdp, pdp, &prealloc);
 	newpwd = pwd_hold_pwddesc(pdp);
 	smr_serialized_store(&newpdp->pd_pwd, newpwd, true);
 	if (!keeplock)
 		PWDDESC_XUNLOCK(pdp);
+	if (prealloc != NULL)
+		dqres_free_unused(prealloc);
 	return (newpdp);
 }
 
@@ -2750,6 +2768,7 @@ static void
 pddrop(struct pwddesc *pdp)
 {
 	struct pwd *pwd;
+	struct dqres *dr;
 
 	if (refcount_release_if_not_last(&pdp->pd_refcount))
 		return;
@@ -2761,8 +2780,11 @@ pddrop(struct pwddesc *pdp)
 	}
 	pwd = PWDDESC_XLOCKED_LOAD_PWD(pdp);
 	pwd_set(pdp, NULL);
+	dr = pdp->pd_dqres;
+	pdp->pd_dqres = NULL;
 	PWDDESC_XUNLOCK(pdp);
 	pwd_drop(pwd);
+	dqres_pd_release(dr);	/* after unlocking (D123) */
 
 	PWDDESC_LOCK_DESTROY(pdp);
 	free(pdp, M_PWDDESC);
@@ -2786,6 +2808,9 @@ struct pwddesc *
 pdshare(struct pwddesc *pdp)
 {
 	refcount_acquire(&pdp->pd_refcount);
+	PWDDESC_XLOCK(pdp);
+	pdp->pd_procs++;
+	PWDDESC_XUNLOCK(pdp);
 	return (pdp);
 }
 
@@ -2843,8 +2868,52 @@ pdunshare(struct thread *td)
 		return;
 
 	pdp = pdcopy(p->p_pd);
-	pdescfree(td);
-	p->p_pd = pdp;
+	pd_replace(td, pdp);
+}
+
+/*
+ * Replace the process's pwddesc (D147): pdunshare and fork_norfproc's
+ * RFCFDG.  Under PROC_LOCK -> PWDDESC_XLOCK(old), the section ATTACH
+ * commits in, the new pwddesc (not yet published, so unlocked) takes the
+ * old one's binding if they differ; the record is pre-allocated with both
+ * locks dropped and the test repeated.  pdhold readers take PROC_LOCK, so
+ * the store needs no PROC_WAIT_UNLOCKED.
+ */
+void
+pd_replace(struct thread *td, struct pwddesc *newpdp)
+{
+	struct proc *p;
+	struct pwddesc *old;
+	struct dqres *prealloc, *stale;
+
+	p = td->td_proc;
+	old = p->p_pd;
+	MPASS(old != NULL && old != newpdp);
+	prealloc = stale = NULL;
+	for (;;) {
+		PROC_LOCK(p);
+		PWDDESC_XLOCK(old);
+		if (!dqres_same_binding(old->pd_dqres, newpdp->pd_dqres)) {
+			if (old->pd_dqres != NULL && prealloc == NULL) {
+				PWDDESC_XUNLOCK(old);
+				PROC_UNLOCK(p);
+				prealloc = dqres_alloc(M_WAITOK);
+				continue;
+			}
+			stale = newpdp->pd_dqres;
+			newpdp->pd_dqres = NULL;
+			dqres_pd_inherit_locked(newpdp, old, &prealloc);
+		}
+		old->pd_procs--;
+		atomic_store_ptr(&p->p_pd, newpdp);
+		PWDDESC_XUNLOCK(old);
+		PROC_UNLOCK(p);
+		break;
+	}
+	pddrop(old);
+	dqres_pd_release(stale);
+	if (prealloc != NULL)
+		dqres_free_unused(prealloc);
 }
 
 /*
@@ -3194,6 +3263,9 @@ pdescfree(struct thread *td)
 	atomic_thread_fence_seq_cst();
 	PROC_WAIT_UNLOCKED(p);
 
+	PWDDESC_XLOCK(pdp);
+	pdp->pd_procs--;
+	PWDDESC_XUNLOCK(pdp);
 	pddrop(pdp);
 }
 
@@ -4971,7 +5043,11 @@ pwd_chroot_chdir(struct thread *td, struct vnode *vp)
 	FILEDESC_SLOCK(fdp);
 	PWDDESC_XLOCK(pdp);
 	oldpwd = PWDDESC_XLOCKED_LOAD_PWD(pdp);
-	error = chroot_refuse_vdir_fds(fdp);
+	/*
+	 * I5 (D137): jail_attach of an attached process is refused here,
+	 * under the lock ATTACH commits under, so the two cannot interleave.
+	 */
+	error = pdp->pd_dqres != NULL ? EPERM : chroot_refuse_vdir_fds(fdp);
 	FILEDESC_SUNLOCK(fdp);
 	if (error != 0) {
 		PWDDESC_XUNLOCK(pdp);

@@ -82,6 +82,7 @@
 #include <sys/dnv.h>
 #include <sys/sx.h>
 #include <sys/unistd.h>
+#include <sys/dqres.h>
 
 #include <geom/geom.h>
 
@@ -2539,6 +2540,12 @@ ctl_be_block_open(struct ctl_be_block_lun *be_lun, struct ctl_lun_req *req)
 	if (rootvnode == NULL) {
 		snprintf(req->error_str, sizeof(req->error_str),
 			 "Root filesystem is not mounted");
+		return (1);
+	}
+	/* An attached process's path cannot be consulted here (design 11). */
+	if (dqres_kpath_refused(curthread) != 0) {
+		snprintf(req->error_str, sizeof(req->error_str),
+			 "Not permitted for a DescriptorQueue-attached process");
 		return (1);
 	}
 	pwd_ensure_dirs();

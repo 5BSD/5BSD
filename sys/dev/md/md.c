@@ -89,6 +89,7 @@
 #include <sys/uio.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <geom/geom.h>
 #include <geom/geom_int.h>
@@ -1420,6 +1421,13 @@ mdcreate_vnode(struct md_s *sc, struct md_req *mdr, struct thread *td)
 	int error, flags;
 	long v;
 
+	/*
+	 * The backing file is looked up under md's locks, where an attached
+	 * process's path cannot be consulted (DescriptorQueue, design 11).
+	 */
+	error = dqres_kpath_refused(td);
+	if (error != 0)
+		return (error);
 	fname = mdr->md_file;
 	if (mdr->md_file_seg == UIO_USERSPACE) {
 		error = copyinstr(fname, sc->s_vnode.file,

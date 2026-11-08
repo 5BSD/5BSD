@@ -9,6 +9,8 @@
 #include <sys/proc.h>
 #include <sys/syscallsubr.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
@@ -28,8 +30,8 @@ struct linux_if_dqblk {
 };
 CTASSERT(sizeof(struct linux_if_dqblk) == 72);
 
-int
-linux_quotactl(struct thread *td, struct linux_quotactl_args *args)
+static int
+linux_quotactl_dqimpl(struct thread *td, struct linux_quotactl_args *args)
 {
 	struct nameidata nd;
 	int error;
@@ -51,6 +53,26 @@ linux_quotactl(struct thread *td, struct linux_quotactl_args *args)
 	error = vn_isdisk(nd.ni_vp) ? EOPNOTSUPP : ENOTBLK;
 	vput(nd.ni_vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+linux_quotactl(struct thread *td, struct linux_quotactl_args *args)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (linux_quotactl_dqimpl(td, args));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_USER);
+	dq_intent_slot(&dqi, 0, args->special, UIO_USERSPACE, AT_FDCWD);
+	dqerror = linux_quotactl_dqimpl(td, args);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 static int

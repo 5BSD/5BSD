@@ -35,6 +35,8 @@
 #include <sys/proc.h>
 #include <sys/syscallsubr.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -495,7 +497,7 @@ linux_extattr_get_fp(struct file *fp, int attrnamespace, const char *attrname,
 }
 
 static int
-getxattr(struct thread *td, struct getxattr_args *args)
+getxattr_dqimpl(struct thread *td, struct getxattr_args *args)
 {
 	char attrname[LINUX_XATTR_NAME_MAX + 1];
 	struct file *fp = NULL;
@@ -540,6 +542,26 @@ getxattr(struct thread *td, struct getxattr_args *args)
 		vrele(nd.ni_vp);
 	}
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_XATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+getxattr(struct thread *td, struct getxattr_args *args)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (getxattr_dqimpl(td, args));
+	dq_intent_enter(td, &dqi, DQ_ROP_XATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, args->path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = getxattr_dqimpl(td, args);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 int

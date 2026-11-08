@@ -77,6 +77,9 @@
 #include <sys/sysproto.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
+#include <ufs/ufs/quota.h>	/* Q_QUOTAON, SUBCMDSHIFT */
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
@@ -194,8 +197,8 @@ struct quotactl_args {
 	caddr_t arg;
 };
 #endif
-int
-sys_quotactl(struct thread *td, struct quotactl_args *uap)
+static int
+sys_quotactl_dqimpl(struct thread *td, struct quotactl_args *uap)
 {
 	struct mount *mp;
 	struct nameidata nd;
@@ -214,6 +217,17 @@ sys_quotactl(struct thread *td, struct quotactl_args *uap)
 	mp = nd.ni_vp->v_mount;
 	vfs_ref(mp);
 	vput(nd.ni_vp);
+	/*
+	 * DescriptorQueue (design 11): Q_QUOTAON's quota file (uap->arg,
+	 * slot 1) is looked up inside VFS_QUOTACTL; an attached caller's
+	 * is consulted here, before the mount is busied, and that lookup
+	 * only checks it resolves what was consulted.
+	 */
+	error = dqres_consult_slot(td, 1);
+	if (error != 0) {
+		vfs_rel(mp);
+		return (error);
+	}
 	error = vfs_busy(mp, 0);
 	if (error != 0) {
 		vfs_rel(mp);
@@ -237,6 +251,32 @@ sys_quotactl(struct thread *td, struct quotactl_args *uap)
 		vfs_unbusy(mp);
 	vfs_rel(mp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_quotactl(struct thread *td, struct quotactl_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_quotactl_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_USER);
+	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
+	/* Q_QUOTAON: the quota file, an independent slot (ufs quotaon). */
+	if ((uap->cmd >> SUBCMDSHIFT) == Q_QUOTAON &&
+	    uap->arg != NULL) {
+		dq_intent_slot(&dqi, 1, uap->arg, UIO_USERSPACE, AT_FDCWD);
+		dq_intent_slot_kconsumer(&dqi, 1);
+	}
+	dqerror = sys_quotactl_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -324,8 +364,8 @@ sys_statfs(struct thread *td, struct statfs_args *uap)
 	return (error);
 }
 
-int
-kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
+static int
+kern_statfs_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
     struct statfs *buf)
 {
 	struct mount *mp;
@@ -349,6 +389,27 @@ kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
 	}
 #endif
 	return (kern_do_statfs(td, mp, buf));
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_STAT; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
+    struct statfs *buf)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_statfs_dqimpl(td, path, pathseg, buf));
+	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_statfs_dqimpl(td, path, pathseg, buf);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -787,8 +848,8 @@ sys_chdir(struct thread *td, struct chdir_args *uap)
 	return (kern_chdir(td, uap->path, UIO_USERSPACE));
 }
 
-int
-kern_chdir(struct thread *td, const char *path, enum uio_seg pathseg)
+static int
+kern_chdir_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg)
 {
 	struct nameidata nd;
 	int error;
@@ -806,6 +867,26 @@ kern_chdir(struct thread *td, const char *path, enum uio_seg pathseg)
 	NDFREE_PNBUF(&nd);
 	pwd_chdir(td, nd.ni_vp);
 	return (0);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_CHDIR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_chdir(struct thread *td, const char *path, enum uio_seg pathseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_chdir_dqimpl(td, path, pathseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_CHDIR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_chdir_dqimpl(td, path, pathseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 static int unprivileged_chroot = 0;
@@ -874,8 +955,8 @@ struct chroot_args {
 	char	*path;
 };
 #endif
-int
-sys_chroot(struct thread *td, struct chroot_args *uap)
+static int
+sys_chroot_dqimpl(struct thread *td, struct chroot_args *uap)
 {
 	struct nameidata nd;
 	int error;
@@ -888,6 +969,26 @@ sys_chroot(struct thread *td, struct chroot_args *uap)
 	NDFREE_PNBUF(&nd);
 	error = kern_chroot(td, nd.ni_vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_CHROOT; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_chroot(struct thread *td, struct chroot_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_chroot_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_CHROOT, DQI_USER);
+	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = sys_chroot_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -1079,7 +1180,7 @@ finit_open(struct file *fp, struct vnode *vp, int flags)
  * incompatible with fdopen(), in which case we return EINVAL.
  */
 static int
-openatfp(struct thread *td, int dirfd, const char *path,
+openatfp_dqimpl(struct thread *td, int dirfd, const char *path,
     enum uio_seg pathseg, int flags, int mode, uint64_t lookup_flags,
     struct file **fpp)
 {
@@ -1206,6 +1307,29 @@ bad:
 	return (error);
 }
 
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_OPEN; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+openatfp(struct thread *td, int dirfd, const char *path,
+    enum uio_seg pathseg, int flags, int mode, uint64_t lookup_flags,
+    struct file **fpp)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (openatfp_dqimpl(td, dirfd, path, pathseg, flags, mode, lookup_flags, fpp));
+	dq_intent_enter(td, &dqi, DQ_ROP_OPEN, DQI_USER);
+	dqi.di_mode = flags;
+	dq_intent_slot(&dqi, 0, path, pathseg, dirfd);
+	dqerror = openatfp_dqimpl(td, dirfd, path, pathseg, flags, mode, lookup_flags, fpp);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
 int
 kern_openat(struct thread *td, int dirfd, const char *path,
     enum uio_seg pathseg, int flags, int mode)
@@ -1296,8 +1420,8 @@ freebsd11_mknodat(struct thread *td,
 }
 #endif /* COMPAT_FREEBSD11 */
 
-int
-kern_mknodat(struct thread *td, int fd, const char *path, enum uio_seg pathseg,
+static int
+kern_mknodat_dqimpl(struct thread *td, int fd, const char *path, enum uio_seg pathseg,
     int mode, dev_t dev)
 {
 	struct vnode *vp;
@@ -1399,6 +1523,28 @@ restart:
 }
 
 /*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_MKNOD; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_mknodat(struct thread *td, int fd, const char *path, enum uio_seg pathseg,
+    int mode, dev_t dev)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_mknodat_dqimpl(td, fd, path, pathseg, mode, dev));
+	dq_intent_enter(td, &dqi, DQ_ROP_MKNOD, DQI_USER);
+	dqi.di_mode = mode;
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_mknodat_dqimpl(td, fd, path, pathseg, mode, dev);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
+/*
  * Create a named pipe.
  */
 #ifndef _SYS_SYSPROTO_H_
@@ -1430,8 +1576,8 @@ sys_mkfifoat(struct thread *td, struct mkfifoat_args *uap)
 	    uap->mode));
 }
 
-int
-kern_mkfifoat(struct thread *td, int fd, const char *path,
+static int
+kern_mkfifoat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, int mode)
 {
 	struct mount *mp;
@@ -1487,6 +1633,28 @@ out:
 	if (error == ERELOOKUP)
 		goto restart;
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_MKFIFO; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_mkfifoat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, int mode)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_mkfifoat_dqimpl(td, fd, path, pathseg, mode));
+	dq_intent_enter(td, &dqi, DQ_ROP_MKFIFO, DQI_USER);
+	dqi.di_mode = mode;
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_mkfifoat_dqimpl(td, fd, path, pathseg, mode);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -1562,8 +1730,8 @@ can_hardlink(struct vnode *vp, struct ucred *cred)
 	return (0);
 }
 
-int
-kern_linkat(struct thread *td, int fd1, int fd2, const char *path1,
+static int
+kern_linkat_dqimpl(struct thread *td, int fd1, int fd2, const char *path1,
     const char *path2, enum uio_seg segflag, int flag)
 {
 	struct nameidata nd;
@@ -1603,6 +1771,29 @@ kern_linkat(struct thread *td, int fd1, int fd2, const char *path1,
 	return (error);
 }
 
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_LINK; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_linkat(struct thread *td, int fd1, int fd2, const char *path1,
+    const char *path2, enum uio_seg segflag, int flag)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(segflag == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_linkat_dqimpl(td, fd1, fd2, path1, path2, segflag, flag));
+	dq_intent_enter(td, &dqi, DQ_ROP_LINK,
+	    DQI_USER | DQI_NO_ERESTART | DQI_PATH2);
+	dq_intent_slot(&dqi, 0, path1, segflag, fd1);
+	dq_intent_slot(&dqi, 1, path2, segflag, fd2);
+	dqerror = kern_linkat_dqimpl(td, fd1, fd2, path1, path2, segflag, flag);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
 static int
 kern_linkat_vp(struct thread *td, struct vnode *vp, int fd, const char *path,
     enum uio_seg segflag)
@@ -1619,6 +1810,9 @@ kern_linkat_vp(struct thread *td, struct vnode *vp, int fd, const char *path,
 		vrele(vp);
 		return (EINVAL);
 	}
+	/*
+	 * dq-ledger: slot 1 path2 of kern/vfs_syscalls.c:kern_linkat, slot 0 path of kern/vfs_syscalls.c:kern_fhlinkat
+	 */
 	NDINIT_ATRIGHTS(&nd, CREATE,
 	    LOCKPARENT | AUDITVNODE2 | NOCACHE, segflag, path, fd,
 	    &cap_linkat_target_rights);
@@ -1720,8 +1914,8 @@ sys_symlinkat(struct thread *td, struct symlinkat_args *uap)
 	    UIO_USERSPACE));
 }
 
-int
-kern_symlinkat(struct thread *td, const char *path1, int fd, const char *path2,
+static int
+kern_symlinkat_dqimpl(struct thread *td, const char *path1, int fd, const char *path2,
     enum uio_seg segflg)
 {
 	struct mount *mp;
@@ -1792,6 +1986,27 @@ out:
 }
 
 /*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_SYMLINK; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_symlinkat(struct thread *td, const char *path1, int fd, const char *path2,
+    enum uio_seg segflg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(segflg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_symlinkat_dqimpl(td, path1, fd, path2, segflg));
+	dq_intent_enter(td, &dqi, DQ_ROP_SYMLINK, DQI_USER);
+	dq_intent_slot(&dqi, 0, path2, segflg, fd);
+	dqerror = kern_symlinkat_dqimpl(td, path1, fd, path2, segflg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
+/*
  * Delete a whiteout from the filesystem.
  */
 #ifndef _SYS_SYSPROTO_H_
@@ -1799,8 +2014,8 @@ struct undelete_args {
 	char *path;
 };
 #endif
-int
-sys_undelete(struct thread *td, struct undelete_args *uap)
+static int
+sys_undelete_dqimpl(struct thread *td, struct undelete_args *uap)
 {
 	struct mount *mp;
 	struct nameidata nd;
@@ -1839,6 +2054,26 @@ restart:
 	if (error == ERELOOKUP)
 		goto restart;
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_undelete(struct thread *td, struct undelete_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_undelete_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_USER);
+	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = sys_undelete_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -1903,8 +2138,8 @@ sys_funlinkat(struct thread *td, struct funlinkat_args *uap)
 	    UIO_USERSPACE, 0));
 }
 
-int
-kern_funlinkat(struct thread *td, int dfd, const char *path, int fd,
+static int
+kern_funlinkat_dqimpl(struct thread *td, int dfd, const char *path, int fd,
     enum uio_seg pathseg, int flag, ino_t oldinum)
 {
 	struct mount *mp;
@@ -1994,6 +2229,27 @@ fdout:
 	if (fp != NULL)
 		fdrop(fp, td);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_UNLINK; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_funlinkat(struct thread *td, int dfd, const char *path, int fd,
+    enum uio_seg pathseg, int flag, ino_t oldinum)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_funlinkat_dqimpl(td, dfd, path, fd, pathseg, flag, oldinum));
+	dq_intent_enter(td, &dqi, DQ_ROP_UNLINK, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, dfd);
+	dqerror = kern_funlinkat_dqimpl(td, dfd, path, fd, pathseg, flag, oldinum);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -2114,8 +2370,8 @@ sys_faccessat(struct thread *td, struct faccessat_args *uap)
 	    uap->amode));
 }
 
-int
-kern_accessat(struct thread *td, int fd, const char *path,
+static int
+kern_accessat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, int flag, int amode)
 {
 	struct ucred *cred, *usecred;
@@ -2160,6 +2416,28 @@ out:
 		crfree(usecred);
 	}
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_ACCESS; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_accessat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, int flag, int amode)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_accessat_dqimpl(td, fd, path, pathseg, flag, amode));
+	dq_intent_enter(td, &dqi, DQ_ROP_ACCESS, DQI_USER);
+	dqi.di_mode = amode;
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_accessat_dqimpl(td, fd, path, pathseg, flag, amode);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -2426,8 +2704,8 @@ sys_fstatat(struct thread *td, struct fstatat_args *uap)
 	return (error);
 }
 
-int
-kern_statat(struct thread *td, int flag, int fd, const char *path,
+static int
+kern_statat_dqimpl(struct thread *td, int flag, int fd, const char *path,
     enum uio_seg pathseg, struct stat *sbp)
 {
 	struct nameidata nd;
@@ -2463,6 +2741,27 @@ kern_statat(struct thread *td, int flag, int fd, const char *path,
 		ktrstat_error(sbp, error);
 #endif
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_STAT; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_statat(struct thread *td, int flag, int fd, const char *path,
+    enum uio_seg pathseg, struct stat *sbp)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_statat_dqimpl(td, flag, fd, path, pathseg, sbp));
+	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_statat_dqimpl(td, flag, fd, path, pathseg, sbp);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 #if defined(COMPAT_FREEBSD11)
@@ -2589,8 +2888,8 @@ sys_lpathconf(struct thread *td, struct lpathconf_args *uap)
 	return (error);
 }
 
-int
-kern_pathconf(struct thread *td, const char *path, enum uio_seg pathseg,
+static int
+kern_pathconf_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
     int name, u_long flags, long *valuep)
 {
 	struct nameidata nd;
@@ -2605,6 +2904,27 @@ kern_pathconf(struct thread *td, const char *path, enum uio_seg pathseg,
 	error = VOP_PATHCONF(nd.ni_vp, name, valuep);
 	vput(nd.ni_vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_STAT; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_pathconf(struct thread *td, const char *path, enum uio_seg pathseg,
+    int name, u_long flags, long *valuep)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_pathconf_dqimpl(td, path, pathseg, name, flags, valuep));
+	dq_intent_enter(td, &dqi, DQ_ROP_STAT, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_pathconf_dqimpl(td, path, pathseg, name, flags, valuep);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -2640,8 +2960,8 @@ sys_readlinkat(struct thread *td, struct readlinkat_args *uap)
 	    uap->buf, UIO_USERSPACE, uap->bufsize));
 }
 
-int
-kern_readlinkat(struct thread *td, int fd, const char *path,
+static int
+kern_readlinkat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, char *buf, enum uio_seg bufseg, size_t count)
 {
 	struct vnode *vp;
@@ -2663,6 +2983,27 @@ kern_readlinkat(struct thread *td, int fd, const char *path,
 	vput(vp);
 
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_READLINK; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_readlinkat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, char *buf, enum uio_seg bufseg, size_t count)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_readlinkat_dqimpl(td, fd, path, pathseg, buf, bufseg, count));
+	dq_intent_enter(td, &dqi, DQ_ROP_READLINK, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_readlinkat_dqimpl(td, fd, path, pathseg, buf, bufseg, count);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -2780,7 +3121,7 @@ sys_lchflags(struct thread *td, struct lchflags_args *uap)
 }
 
 static int
-kern_chflagsat(struct thread *td, int fd, const char *path,
+kern_chflagsat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, u_long flags, int atflag)
 {
 	struct nameidata nd;
@@ -2822,6 +3163,27 @@ kern_chflagsat(struct thread *td, int fd, const char *path,
 out:
 	vrele(vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_SETATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern_chflagsat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, u_long flags, int atflag)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_chflagsat_dqimpl(td, fd, path, pathseg, flags, atflag));
+	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_chflagsat_dqimpl(td, fd, path, pathseg, flags, atflag);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -2948,8 +3310,8 @@ sys_lchmod(struct thread *td, struct lchmod_args *uap)
 	    uap->mode, AT_SYMLINK_NOFOLLOW));
 }
 
-int
-kern_fchmodat(struct thread *td, int fd, const char *path,
+static int
+kern_fchmodat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, mode_t mode, int flag)
 {
 	struct nameidata nd;
@@ -2981,6 +3343,28 @@ out:
 #endif
 	vrele(vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_SETATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_fchmodat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, mode_t mode, int flag)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_fchmodat_dqimpl(td, fd, path, pathseg, mode, flag));
+	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dqi.di_mode = mode;
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_fchmodat_dqimpl(td, fd, path, pathseg, mode, flag);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -3086,8 +3470,8 @@ sys_fchownat(struct thread *td, struct fchownat_args *uap)
 	    uap->gid, uap->flag));
 }
 
-int
-kern_fchownat(struct thread *td, int fd, const char *path,
+static int
+kern_fchownat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, int uid, int gid, int flag)
 {
 	struct nameidata nd;
@@ -3120,6 +3504,27 @@ out:
 #endif
 	vrele(vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_SETATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_fchownat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, int uid, int gid, int flag)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_fchownat_dqimpl(td, fd, path, pathseg, uid, gid, flag));
+	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_fchownat_dqimpl(td, fd, path, pathseg, uid, gid, flag);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -3332,8 +3737,8 @@ sys_futimesat(struct thread *td, struct futimesat_args *uap)
 	    uap->times, UIO_USERSPACE));
 }
 
-int
-kern_utimesat(struct thread *td, int fd, const char *path,
+static int
+kern_utimesat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, const struct timeval *tptr, enum uio_seg tptrseg)
 {
 	struct nameidata nd;
@@ -3366,6 +3771,27 @@ out:
 }
 
 /*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_SETATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_utimesat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, const struct timeval *tptr, enum uio_seg tptrseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_utimesat_dqimpl(td, fd, path, pathseg, tptr, tptrseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_utimesat_dqimpl(td, fd, path, pathseg, tptr, tptrseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
+/*
  * Set the access and modification times of a file.
  */
 #ifndef _SYS_SYSPROTO_H_
@@ -3382,8 +3808,8 @@ sys_lutimes(struct thread *td, struct lutimes_args *uap)
 	    UIO_USERSPACE));
 }
 
-int
-kern_lutimes(struct thread *td, const char *path, enum uio_seg pathseg,
+static int
+kern_lutimes_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
     const struct timeval *tptr, enum uio_seg tptrseg)
 {
 	struct timespec ts[2];
@@ -3411,6 +3837,27 @@ out:
 #endif
 	vrele(vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_SETATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_lutimes(struct thread *td, const char *path, enum uio_seg pathseg,
+    const struct timeval *tptr, enum uio_seg tptrseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_lutimes_dqimpl(td, path, pathseg, tptr, tptrseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_lutimes_dqimpl(td, path, pathseg, tptr, tptrseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -3511,8 +3958,8 @@ sys_utimensat(struct thread *td, struct utimensat_args *uap)
 	    uap->times, UIO_USERSPACE, uap->flag));
 }
 
-int
-kern_utimensat(struct thread *td, int fd, const char *path,
+static int
+kern_utimensat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, const struct timespec *tptr, enum uio_seg tptrseg,
     int flag)
 {
@@ -3556,6 +4003,28 @@ kern_utimensat(struct thread *td, int fd, const char *path,
 }
 
 /*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_SETATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_utimensat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, const struct timespec *tptr, enum uio_seg tptrseg,
+    int flag)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_utimensat_dqimpl(td, fd, path, pathseg, tptr, tptrseg, flag));
+	dq_intent_enter(td, &dqi, DQ_ROP_SETATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_utimensat_dqimpl(td, fd, path, pathseg, tptr, tptrseg, flag);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
+/*
  * Truncate a file given its path name.
  */
 #ifndef _SYS_SYSPROTO_H_
@@ -3572,8 +4041,8 @@ sys_truncate(struct thread *td, struct truncate_args *uap)
 	return (kern_truncate(td, uap->path, UIO_USERSPACE, uap->length));
 }
 
-int
-kern_truncate(struct thread *td, const char *path, enum uio_seg pathseg,
+static int
+kern_truncate_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg,
     off_t length)
 {
 	struct mount *mp;
@@ -3623,6 +4092,27 @@ out:
 	if (error == ERELOOKUP)
 		goto retry;
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_TRUNCATE; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_truncate(struct thread *td, const char *path, enum uio_seg pathseg,
+    off_t length)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_truncate_dqimpl(td, path, pathseg, length));
+	dq_intent_enter(td, &dqi, DQ_ROP_TRUNCATE, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_truncate_dqimpl(td, path, pathseg, length);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 #if defined(COMPAT_43)
@@ -3752,6 +4242,7 @@ kern_renameat_mac(struct thread *td, int fromfd, const char *from, int tofd,
 {
 	int error;
 
+	/* dq-ledger: slot 0 from of kern/vfs_syscalls.c:kern_renameat */
 	NDINIT_ATRIGHTS(fromnd, op, LOCKPARENT | LOCKLEAF | AUDITVNODE1 |
 	    ndflags, pathseg, from, fromfd, &cap_renameat_source_rights);
 	if ((error = namei(fromnd)) != 0)
@@ -3770,8 +4261,8 @@ kern_renameat_mac(struct thread *td, int fromfd, const char *from, int tofd,
 }
 #endif
 
-int
-kern_renameat(struct thread *td, int fromfd, const char *from, int tofd,
+static int
+kern_renameat_dqimpl(struct thread *td, int fromfd, const char *from, int tofd,
     const char *to, enum uio_seg pathseg, u_int flags)
 {
 	struct mount *mp, *tmp;
@@ -4017,6 +4508,29 @@ out1:
 }
 
 /*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_RENAME; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_renameat(struct thread *td, int fromfd, const char *from, int tofd,
+    const char *to, enum uio_seg pathseg, u_int flags)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_renameat_dqimpl(td, fromfd, from, tofd, to, pathseg, flags));
+	dq_intent_enter(td, &dqi, DQ_ROP_RENAME,
+	    DQI_USER | DQI_NO_ERESTART | DQI_PATH2);
+	dq_intent_slot(&dqi, 0, from, pathseg, fromfd);
+	dq_intent_slot(&dqi, 1, to, pathseg, tofd);
+	dqerror = kern_renameat_dqimpl(td, fromfd, from, tofd, to, pathseg, flags);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
+/*
  * Make a directory file.
  */
 #ifndef _SYS_SYSPROTO_H_
@@ -4047,8 +4561,8 @@ sys_mkdirat(struct thread *td, struct mkdirat_args *uap)
 	return (kern_mkdirat(td, uap->fd, uap->path, UIO_USERSPACE, uap->mode));
 }
 
-int
-kern_mkdirat(struct thread *td, int fd, const char *path, enum uio_seg segflg,
+static int
+kern_mkdirat_dqimpl(struct thread *td, int fd, const char *path, enum uio_seg segflg,
     int mode)
 {
 	struct mount *mp;
@@ -4096,6 +4610,28 @@ out:
 }
 
 /*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_MKDIR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_mkdirat(struct thread *td, int fd, const char *path, enum uio_seg segflg,
+    int mode)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(segflg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_mkdirat_dqimpl(td, fd, path, segflg, mode));
+	dq_intent_enter(td, &dqi, DQ_ROP_MKDIR, DQI_USER);
+	dqi.di_mode = mode;
+	dq_intent_slot(&dqi, 0, path, segflg, fd);
+	dqerror = kern_mkdirat_dqimpl(td, fd, path, segflg, mode);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
+/*
  * Remove a directory file.
  */
 #ifndef _SYS_SYSPROTO_H_
@@ -4111,8 +4647,8 @@ sys_rmdir(struct thread *td, struct rmdir_args *uap)
 	    0));
 }
 
-int
-kern_frmdirat(struct thread *td, int dfd, const char *path, int fd,
+static int
+kern_frmdirat_dqimpl(struct thread *td, int dfd, const char *path, int fd,
     enum uio_seg pathseg, int flag)
 {
 	struct mount *mp;
@@ -4198,6 +4734,27 @@ fdout:
 	if (fp != NULL)
 		fdrop(fp, td);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_RMDIR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_frmdirat(struct thread *td, int dfd, const char *path, int fd,
+    enum uio_seg pathseg, int flag)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_frmdirat_dqimpl(td, dfd, path, fd, pathseg, flag));
+	dq_intent_enter(td, &dqi, DQ_ROP_RMDIR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, dfd);
+	dqerror = kern_frmdirat_dqimpl(td, dfd, path, fd, pathseg, flag);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 #if defined(COMPAT_43) || defined(COMPAT_FREEBSD11)
@@ -4526,8 +5083,8 @@ struct revoke_args {
 	char	*path;
 };
 #endif
-int
-sys_revoke(struct thread *td, struct revoke_args *uap)
+static int
+sys_revoke_dqimpl(struct thread *td, struct revoke_args *uap)
 {
 	struct vnode *vp;
 	struct vattr vattr;
@@ -4562,6 +5119,26 @@ sys_revoke(struct thread *td, struct revoke_args *uap)
 out:
 	vput(vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_REVOKE; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_revoke(struct thread *td, struct revoke_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_revoke_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_REVOKE, DQI_USER);
+	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = sys_revoke_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -4684,8 +5261,8 @@ sys_getfhat(struct thread *td, struct getfhat_args *uap)
 	    uap->fhp, UIO_USERSPACE));
 }
 
-int
-kern_getfhat(struct thread *td, int flags, int fd, const char *path,
+static int
+kern_getfhat_dqimpl(struct thread *td, int flags, int fd, const char *path,
     enum uio_seg pathseg, fhandle_t *fhp, enum uio_seg fhseg)
 {
 	struct nameidata nd;
@@ -4723,6 +5300,27 @@ kern_getfhat(struct thread *td, int flags, int fd, const char *path,
 	return (error);
 }
 
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_GETFH; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_getfhat(struct thread *td, int flags, int fd, const char *path,
+    enum uio_seg pathseg, fhandle_t *fhp, enum uio_seg fhseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_getfhat_dqimpl(td, flags, fd, path, pathseg, fhp, fhseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_GETFH, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_getfhat_dqimpl(td, flags, fd, path, pathseg, fhp, fhseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
+}
+
 #ifndef _SYS_SYSPROTO_H_
 struct fhlink_args {
 	fhandle_t *fhp;
@@ -4751,7 +5349,7 @@ sys_fhlinkat(struct thread *td, struct fhlinkat_args *uap)
 }
 
 static int
-kern_fhlinkat(struct thread *td, int fd, const char *path,
+kern_fhlinkat_dqimpl(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, fhandle_t *fhp)
 {
 	fhandle_t fh;
@@ -4784,6 +5382,29 @@ kern_fhlinkat(struct thread *td, int fd, const char *path,
 		error = kern_linkat_vp(td, vp, fd, path, pathseg);
 	} while (error == EAGAIN || error == ERELOOKUP);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of fhlink(2)
+ * and fhlinkat(2)'s user-supplied path, DQ_ROP_LINK (the file is named by
+ * a handle, so only the new name is resolved; the loop below reruns it on
+ * ERELOOKUP, hence DQI_NO_ERESTART as kern_linkat).  Entries recorded in
+ * sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern_fhlinkat(struct thread *td, int fd, const char *path,
+    enum uio_seg pathseg, fhandle_t *fhp)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (pathseg != UIO_USERSPACE || !DQRES_ATTACHED_TD(td))
+		return (kern_fhlinkat_dqimpl(td, fd, path, pathseg, fhp));
+	dq_intent_enter(td, &dqi, DQ_ROP_LINK, DQI_USER | DQI_NO_ERESTART);
+	dq_intent_slot(&dqi, 0, path, pathseg, fd);
+	dqerror = kern_fhlinkat_dqimpl(td, fd, path, pathseg, fhp);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 #ifndef _SYS_SYSPROTO_H_

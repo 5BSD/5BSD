@@ -980,6 +980,7 @@ tarfs_mount(struct mount *mp)
 	if (vfs_flagopt(mp->mnt_optnew, "verify", NULL, 0)) {
 	    flags |= O_VERIFY;
 	}
+	/* dq-ledger: content via kern/vfs_mount.c:vfs_donmount_dqres */
 	NDINIT(&nd, LOOKUP, ISOPEN | FOLLOW | LOCKLEAF, UIO_SYSSPACE, from);
 	error = namei(&nd);
 	if (error != 0)

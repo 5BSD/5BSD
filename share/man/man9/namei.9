@@ -31,7 +31,7 @@
 .\" If you integrate this manpage in another OS, I'd appreciate a note
 .\"	- eivind@FreeBSD.org
 .\"
-.Dd September 30, 2025
+.Dd November 8, 2026
 .Dt NAMEI 9
 .Os
 .Sh NAME
@@ -523,6 +523,77 @@ operation is
 .It Bq Er EROFS
 An attempt is made to modify a file or directory on a read-only file system.
 .El
+.Pp
+For a process attached to a DescriptorQueue
+.Pq Xr dq 4 ,
+.Fn namei
+consults the queue's controller from
+.Fn namei_setup ,
+after the capability-mode checks and with no lock held, and may also return
+the controller's errno for the lookup,
+.Er EIO
+when the controller is gone, misses its deadline or the caller holds a lock
+it must not wait under, and
+.Er ERESTART
+only on the first consultation of a path the calling system call marked with
+a lookup intent
+.Pq Vt struct dq_intent , Pa sys/dqres.h .
+A user-origin entry point marks its path argument with
+.Fn dq_intent_enter
+and
+.Fn dq_intent_slot
+and unmarks it with
+.Fn dq_intent_leave ;
+a lookup matches its slot by the path pointer, its segment and its
+directory descriptor.
+A lookup that runs under a lock or with a mount busied is consulted ahead
+with
+.Fn dqres_consult_slot
+before that state is entered; its
+.Fn namei
+then only checks that it resolves the consulted bytes from the consulted
+start, and fails with
+.Er EIO
+otherwise.
+The second path of
+.Xr rename 2
+and
+.Xr link 2
+travels in the first path's consultation, and a change to it makes
+.Fn namei
+return
+.Er ERELOOKUP
+to the system call's own retry loop.
+.Pp
+A kernel-space lookup an attached process's thread makes of a path the
+kernel computes (the linker's search, firmware, mountroot, a filesystem's
+.Dv VFS_MOUNT ,
+.Fn vn_fullpath )
+must run in an exempt region,
+.Fn DQRES_EXEMPT
+or
+.Fn DQRES_NORESOLVE_ENTER
+and
+.Fn DQRES_NORESOLVE_LEAVE .
+A kernel copy of a caller's path that the kernel looks up later through a
+buffer of its own (an
+.Dv AF_UNIX
+name, a module file, a mount option) is consulted ahead in a content slot
+.Pq Fn dq_intent_slot_content ,
+which matches that lookup by its bytes and directory descriptor and checks
+its start, even inside an exempt region.
+Any other unmarked kernel-space lookup by such a thread is counted as a
+ledger failure and fails with
+.Er EPERM .
+Subsystems that cannot consult a path at their lookup refuse attached
+callers with
+.Er EPERM
+through
+.Fn dqres_kpath_refused .
+The kernel-only pseudo-error
+.Er EDQRESOLVED
+is reserved for lookups the controller answers itself and never reaches
+userland.
 .Sh SEE ALSO
 .Xr uio 9 ,
 .Xr uma 9 ,

@@ -100,6 +100,7 @@ link_elf_ctf_get(linker_file_t lf, linker_ctf_t *lc)
 	 */
 	ef->ctfcnt = -1;
 
+	/* dq-ledger: exempt via kern/kern_linker.c:linker_ctf_get */
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, lf->pathname);
 	flags = FREAD;
 	error = vn_open(&nd, &flags, 0, NULL);

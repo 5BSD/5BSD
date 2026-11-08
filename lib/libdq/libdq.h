@@ -222,6 +222,37 @@ int	dq_reply_ioctl(int q, uint64_t id, int error, const void *out,
 int	dq_reply_errno_allowed(uint32_t op, int error);
 
 /*
+ * Resolution (stage 1c-i)
+ */
+
+/*
+ * Attach the process named by the process descriptor procfd to the queue
+ * (DQ_IOC_ATTACH): from then on every name it resolves is posted as a
+ * RESOLVE event and waits for PASS or an errno.  The target must be a
+ * pdfork(2)ed child that has not exec'd, shares neither its pwddesc nor
+ * its descriptor table, holds no descriptor of the queue and is
+ * debuggable by the caller (EBUSY, ESRCH, EPERM, EINVAL otherwise, see
+ * dq(4)).  It gets P2_NO_NEW_PRIVS and its descendants stay attached.
+ */
+int	dq_attach(int q, int procfd);
+
+/*
+ * A RESOLVE event's fixed body and its four strings (the path, the second
+ * path of RENAME/LINK, the start hint, the second path's start hint),
+ * each NUL-terminated and possibly empty; checked to lie within the
+ * record.  Output pointers may be NULL.  -1 with EINVAL for another
+ * operation or a malformed record.
+ */
+int	dq_event_resolve(const struct dq_event *ev,
+	    const struct dq_resolve_body **body, const char **path,
+	    const char **path2, const char **startpath,
+	    const char **startpath2);
+
+/* Answer a RESOLVE: PASS (the lookup proceeds) or an errno (it fails). */
+int	dq_reply_resolve_pass(int q, uint64_t id);
+int	dq_reply_resolve_errno(int q, uint64_t id, int error);
+
+/*
  * One read(2) and one handler call per record.  The handler returns 0 to
  * continue or nonzero to stop; dq_dispatch returns the records handed
  * over, or -1 when the read failed.  The buffer holds the largest record
@@ -277,6 +308,14 @@ typedef int (*dq_ioctl_handler_t)(int backing_fd,
 	    const struct dq_ioctl_body *ib, const void *in, void *out,
 	    size_t outlen, void *arg);
 
+/*
+ * A RESOLVE policy: return 0 to PASS the lookup or an errno to fail it.
+ * Called with the body and its strings (dq_event_resolve).
+ */
+typedef int (*dq_resolve_handler_t)(const struct dq_event *ev,
+	    const struct dq_resolve_body *rb, const char *path,
+	    const char *path2, void *arg);
+
 struct dq_serve_opts {
 	struct dq_serve_state *so_state;	/* lock owners; may be NULL */
 	struct dq_ident_file *so_ident;		/* identity copy; may be NULL */
@@ -284,9 +323,16 @@ struct dq_serve_opts {
 	void		*so_arg;
 	uint32_t	 so_flags;		/* DQ_SERVE_F_* */
 	uint32_t	 so_pad0;
+	dq_resolve_handler_t so_resolve;	/* NULL: PASS (see below) */
+	void		*so_resolve_arg;
 };
 #define	DQ_SERVE_F_SYNC_IDENT	0x00000001	/* SETIDENT after every
 						   mutating operation */
+#define	DQ_SERVE_F_RESOLVE_STRICT 0x00000002	/* M2: a consultation that is
+						   not the requester's own path
+						   (class 2, 3) is PASSed only
+						   for EXEC_INTERP, EACCES
+						   otherwise */
 
 struct dq_serve_state *dq_serve_state_create(void);
 /* Cancels the blocked SETLKW threads and closes the owner opens. */

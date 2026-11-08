@@ -40,6 +40,7 @@
 #include <sys/sysctl.h>
 #include <sys/sx.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <machine/atomic.h>
 
@@ -173,6 +174,7 @@ imgact_binmisc_populate_interp(char *str, imgact_binmisc_entry_t *ibe, int flags
 			tp++;
 		}
 		*tp = '\0';
+		/* dq-ledger: refused via kern/imgact_binmisc.c:sysctl_kern_binmisc */
 		NDINIT(&nd, LOOKUP, FOLLOW | ISOPEN, UIO_SYSSPACE, t);
 
 		/*
@@ -485,6 +487,14 @@ sysctl_kern_binmisc(SYSCTL_HANDLER_ARGS)
 
 	switch(arg2) {
 	case IBC_ADD:
+		/*
+		 * An interpreter path is looked up later, at every matching
+		 * exec, by whoever execs: an attached process may not install
+		 * one (DescriptorQueue, design 11).
+		 */
+		error = dqres_kpath_refused(req->td);
+		if (error != 0)
+			return (error);
 		/* Add an entry. Limited to IBE_MAX_ENTRIES. */
 		error = SYSCTL_IN(req, &xbe, sizeof(xbe));
 		if (error)

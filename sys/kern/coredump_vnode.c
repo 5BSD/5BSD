@@ -78,6 +78,7 @@
 #include <sys/ucoredump.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
 
 #include <security/audit/audit.h>
 
@@ -227,6 +228,7 @@ corefile_open_last(struct thread *td, char *name, int indexpos,
 		    i);
 		name[indexpos + indexlen] = ch;
 
+		/* dq-ledger: refused via kern/coredump_vnode.c:corefile_open */
 		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name);
 		error = vn_open_cred(&nd, &flags, cmode, oflags, td->td_ucred,
 		    NULL);
@@ -310,6 +312,14 @@ corefile_open(const char *comm, uid_t uid, pid_t pid, struct thread *td,
 	char *hostname, *name;
 	int cmode, error, flags, i, indexpos, indexlen, oflags, ncores;
 
+	/*
+	 * D153: an attached process dumps no core.  kern_ucoredump.c checked
+	 * at the start of the dump; an ATTACH may have committed since, so
+	 * the attachment is checked again before any name is looked up.
+	 */
+	error = dqres_kpath_refused(td);
+	if (error != 0)
+		return (error);
 	hostname = NULL;
 	format = corefilename;
 	name = malloc(MAXPATHLEN, M_TEMP, M_WAITOK | M_ZERO);

@@ -48,6 +48,8 @@
 #include <sys/malloc.h>
 #include <sys/mount.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/namei.h>
@@ -391,7 +393,7 @@ sys___acl_get_link(struct thread *td, struct __acl_get_link_args *uap)
 }
 
 static int
-kern___acl_get_path(struct thread *td, const char *path, acl_type_t type,
+kern___acl_get_path_dqimpl(struct thread *td, const char *path, acl_type_t type,
     struct acl *aclp, int follow)
 {
 	struct nameidata nd;
@@ -405,6 +407,27 @@ kern___acl_get_path(struct thread *td, const char *path, acl_type_t type,
 		NDFREE_PNBUF(&nd);
 	}
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_ACL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern___acl_get_path(struct thread *td, const char *path, acl_type_t type,
+    struct acl *aclp, int follow)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (kern___acl_get_path_dqimpl(td, path, type, aclp, follow));
+	dq_intent_enter(td, &dqi, DQ_ROP_ACL, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = kern___acl_get_path_dqimpl(td, path, type, aclp, follow);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -430,7 +453,7 @@ sys___acl_set_link(struct thread *td, struct __acl_set_link_args *uap)
 }
 
 static int
-kern___acl_set_path(struct thread *td, const char *path,
+kern___acl_set_path_dqimpl(struct thread *td, const char *path,
     acl_type_t type, const struct acl *aclp, int follow)
 {
 	struct nameidata nd;
@@ -444,6 +467,27 @@ kern___acl_set_path(struct thread *td, const char *path,
 		NDFREE_PNBUF(&nd);
 	}
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_ACL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern___acl_set_path(struct thread *td, const char *path,
+    acl_type_t type, const struct acl *aclp, int follow)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (kern___acl_set_path_dqimpl(td, path, type, aclp, follow));
+	dq_intent_enter(td, &dqi, DQ_ROP_ACL, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = kern___acl_set_path_dqimpl(td, path, type, aclp, follow);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -542,7 +586,7 @@ sys___acl_delete_link(struct thread *td, struct __acl_delete_link_args *uap)
 }
 
 static int
-kern___acl_delete_path(struct thread *td, const char *path,
+kern___acl_delete_path_dqimpl(struct thread *td, const char *path,
     acl_type_t type, int follow)
 {
 	struct nameidata nd;
@@ -556,6 +600,27 @@ kern___acl_delete_path(struct thread *td, const char *path,
 		NDFREE_PNBUF(&nd);
 	}
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_ACL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern___acl_delete_path(struct thread *td, const char *path,
+    acl_type_t type, int follow)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (kern___acl_delete_path_dqimpl(td, path, type, follow));
+	dq_intent_enter(td, &dqi, DQ_ROP_ACL, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = kern___acl_delete_path_dqimpl(td, path, type, follow);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -593,7 +658,7 @@ sys___acl_aclcheck_link(struct thread *td, struct __acl_aclcheck_link_args *uap)
 }
 
 static int
-kern___acl_aclcheck_path(struct thread *td, const char *path, acl_type_t type,
+kern___acl_aclcheck_path_dqimpl(struct thread *td, const char *path, acl_type_t type,
     struct acl *aclp, int follow)
 {
 	struct nameidata nd;
@@ -607,6 +672,27 @@ kern___acl_aclcheck_path(struct thread *td, const char *path, acl_type_t type,
 		NDFREE_PNBUF(&nd);
 	}
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_ACL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern___acl_aclcheck_path(struct thread *td, const char *path, acl_type_t type,
+    struct acl *aclp, int follow)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (kern___acl_aclcheck_path_dqimpl(td, path, type, aclp, follow));
+	dq_intent_enter(td, &dqi, DQ_ROP_ACL, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, UIO_USERSPACE, AT_FDCWD);
+	dqerror = kern___acl_aclcheck_path_dqimpl(td, path, type, aclp, follow);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*

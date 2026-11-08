@@ -1,0 +1,28 @@
+# Expected differences between a test suite run under dqpass (attached to a
+# queue that answers every RESOLVE with PASS) and the same run unattached
+# (plan stage 1c, M9).  One extended regular expression per line, matched
+# against "suite/program:case"; matching cases are left out of the
+# comparison.  Each group names the dq(4) rule that makes the difference.
+
+# I5: no set-user-id or set-group-id transition while attached
+# (P2_NO_NEW_PRIVS), no authority installation.
+setuid
+setgid
+issetugid
+no_new_privs
+
+# I5: jail_attach(2), jail(2) with JAIL_ATTACH, and setcred(2) are refused;
+# tests run in a jail (execenv=jail), vnet and jexec tests need them.
+jail
+vnet
+jexec
+setcred
+
+# The SMR fast path declines for an attached process: the fplookup dtrace
+# probes do not fire.
+fplookup
+cache_fplookup
+
+# D153: an attached process dumps no core.
+coredump
+core_dump

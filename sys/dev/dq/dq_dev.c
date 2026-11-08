@@ -61,6 +61,14 @@ SDT_PROBE_DEFINE2(dq, , , event__interrupt, "struct dq_queue *",
 SDT_PROBE_DEFINE2(dq, , , event__deadline, "struct dq_queue *",
     "struct dq_event_k *");
 SDT_PROBE_DEFINE2(dq, , , reply__late, "struct dq_queue *", "uint64_t");
+SDT_PROBE_DEFINE2(dq, , , attach, "struct dq_queue *", "pid_t");
+SDT_PROBE_DEFINE2(dq, , , resolve__post, "struct dq_queue *",
+    "struct dq_event_k *");
+SDT_PROBE_DEFINE3(dq, , , resolve__reply, "struct dq_queue *", "uint32_t",
+    "int");
+SDT_PROBE_DEFINE2(dq, , , resolve__failclosed, "struct dq_queue *", "int");
+SDT_PROBE_DEFINE1(dq, , , resolve__unmarked, "struct dq_queue *");
+SDT_PROBE_DEFINE2(dq, , , resolve__locked, "struct dq_queue *", "uint32_t");
 
 /*
  * Tunables (design 8.6).  Bounded setters: a controller can lower its own
@@ -76,6 +84,7 @@ u_int dq_max_inflight_per_requester = 256;
 u_int dq_max_objects = 65536;
 int dq_default_deadline_ms = 30000;
 u_int dq_max_inflight_bytes = 64 * 1024 * 1024;
+int dq_kernel_deadline_ms = 5000;
 struct taskqueue *dq_taskq;
 
 /* A zero would make every read empty, every post a drop or an endless wait. */
@@ -133,6 +142,26 @@ SYSCTL_PROC(_kern_dq, OID_AUTO, default_deadline_ms,
     CTLTYPE_INT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, NULL, 0,
     dq_sysctl_deadline, "I",
     "Deadline for an unanswered event when the policy says default; 0 = none");
+/* 0c item 1: a kernel-side wait is always bounded; the floor is 1 ms. */
+static int
+dq_sysctl_kernel_deadline(SYSCTL_HANDLER_ARGS)
+{
+	int value, error;
+
+	value = dq_kernel_deadline_ms;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < 1)
+		return (EINVAL);
+	dq_kernel_deadline_ms = value;
+	return (0);
+}
+SYSCTL_PROC(_kern_dq, OID_AUTO, kernel_deadline_ms,
+    CTLTYPE_INT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, NULL, 0,
+    dq_sysctl_kernel_deadline, "I",
+    "Deadline for a RESOLVE a kernel consumer, a kernel lookup or a "
+    "lock-holding caller waits for (never 0)");
 SYSCTL_PROC(_kern_dq, OID_AUTO, max_inflight_bytes,
     CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, &dq_max_inflight_bytes,
     PAGE_SIZE, dq_sysctl_uint_min, "IU",
@@ -238,6 +267,9 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 		st = (struct dq_stats *)data;
 		dq_queue_stats(q, st);
 		return (0);
+	case DQ_IOC_ATTACH:
+		return (dq_queue_attach(q, (const struct dq_attach_args *)data,
+		    td));
 	case DQ_IOC_GET_STATS2:
 		dq_queue_stats2(q, (struct dq_stats2 *)data);
 		return (0);
@@ -329,6 +361,7 @@ dq_init(void)
 	taskqueue_start_threads(&dq_taskq, 2, PVM, "dq taskq");
 	mtx_init(&dq_mtx, "dq", NULL, MTX_DEF);
 	dq_file_init();		/* the lock-owner hash key */
+	dq_resolve_init();	/* the resolution vector (D125) */
 	dq_cdev = make_dev(&dq_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600, "dq");
 	if (dq_cdev == NULL) {
 		mtx_destroy(&dq_mtx);

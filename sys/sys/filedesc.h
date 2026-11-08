@@ -115,11 +115,16 @@ struct pwd {
 };
 typedef SMR_POINTER(struct pwd *) smrpwd_t;
 
+struct dqres;
 struct pwddesc {
 	struct mtx	pd_lock;	/* protects members of this struct */
 	smrpwd_t	pd_pwd;		/* directories */
 	u_int		pd_refcount;
 	u_short		pd_cmask;	/* mask for file creation */
+	u_int		pd_procs;	/* processes using it (D124); not
+					   counting transient pdhold users */
+	struct dqres	*pd_dqres;	/* DescriptorQueue attachment, or NULL
+					   (sys/dqres.h, D123) */
 };
 
 /*

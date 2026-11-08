@@ -82,6 +82,7 @@
 #include <sys/sysctl.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
+#include <sys/dqres.h>
 
 #ifdef MAC
 #include <security/mac/mac_syscalls.h>
@@ -806,6 +807,15 @@ kern_setcred(struct thread *const td, const u_int flags,
 		goto unlock_finish;
 #endif
 	/*
+	 * I5 (D137): an attached process takes no new credential through
+	 * setcred(2), whatever the flags.
+	 */
+	if (dqres_cred_change_refused(p)) {
+		error = EPERM;
+		goto unlock_finish;
+	}
+
+	/*
 	 * Privilege check.
 	 */
 	error = priv_check_cred(old_cred, PRIV_CRED_SETCRED);
@@ -953,6 +963,11 @@ kern_setcred_proc(struct thread *td, struct proc *p, u_int flags,
 	if (error != 0)
 		goto unlock_finish;
 #endif
+	/* I5 (D137): nor through NODE_OP_SET_CRED. */
+	if (dqres_cred_change_refused(p)) {
+		error = EPERM;
+		goto unlock_finish;
+	}
 
 #ifdef RACCT
 	crhold(new_cred);

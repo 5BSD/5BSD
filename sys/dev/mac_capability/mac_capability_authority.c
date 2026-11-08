@@ -32,6 +32,7 @@
 #include <sys/user.h>
 #include <sys/vnode.h>
 #include <sys/taskqueue.h>
+#include <sys/dqres.h>
 #include <machine/atomic.h>
 #include "mac_capability_internal.h"
 #include "mac_capability_label.h"
@@ -1426,6 +1427,8 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 		PROC_LOCK(td->td_proc);
 		if ((td->td_proc->p_flag & P_TRACED) != 0 ||
 		    (td->td_proc->p_traceflag & KTRFAC_MASK) != 0 ||
+		    /* I5 (D137): no authority for an attached process. */
+		    dqres_cred_change_refused(td->td_proc) ||
 		    atomic_load_acq_int(&a->revoked) ||
 		    atomic_load_acq_int(&a->issuer->revoked) ||
 		    a->issuer->cred->cr_prison != td->td_proc->p_ucred->cr_prison)

@@ -58,6 +58,7 @@
 #include <sys/stat.h>
 #include <security/audit/audit.h>
 #include <sys/priv.h>
+#include <sys/dqres.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -717,7 +718,9 @@ vop_stdvptocnp(struct vop_vptocnp_args *ap)
 	NDINIT_ATVP(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF, UIO_SYSSPACE,
 	    "..", vp);
 	flags = FREAD;
-	error = vn_open_cred(&nd, &flags, 0, VN_OPEN_NOAUDIT, cred, NULL);
+	/* vn_fullpath's own lookup: exempt (DescriptorQueue, D127). */
+	error = DQRES_EXEMPT(vn_open_cred(&nd, &flags, 0, VN_OPEN_NOAUDIT,
+	    cred, NULL));
 	if (error) {
 		vn_lock(vp, locked | LK_RETRY);
 		return (error);

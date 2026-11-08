@@ -62,6 +62,9 @@
 #ifdef KTRACE
 #include <sys/ktrace.h>
 #endif
+#include <sys/dqres.h>
+
+#include <dev/dq/dq.h>
 
 #include <net/vnet.h>
 
@@ -195,9 +198,11 @@ sys_bind(struct thread *td, struct bind_args *uap)
 int
 kern_bindat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 {
+	struct dq_intent dqi;
 	struct socket *so;
 	struct file *fp;
 	int error;
+	bool dq;
 
 #ifdef CAPABILITY_MODE
 	if (dirfd == AT_FDCWD) {
@@ -210,9 +215,16 @@ kern_bindat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_SOCKADDR(td, dirfd, sa);
-	error = getsock(td, fd, &cap_bind_rights, &fp);
+	/* An AF_UNIX name of an attached process (design 11, BIND). */
+	error = dqres_consult_sun(td, &dqi, DQ_ROP_BIND, dirfd, sa, &dq);
 	if (error != 0)
 		return (error);
+	error = getsock(td, fd, &cap_bind_rights, &fp);
+	if (error != 0) {
+		if (dq)
+			dq_intent_leave(td, &dqi);
+		return (error);
+	}
 	so = fp->f_data;
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
@@ -230,6 +242,8 @@ kern_bindat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 #ifdef MAC
 done:
 #endif
+	if (dq)
+		dq_intent_leave(td, &dqi);
 	fdrop(fp, td);
 	return (error);
 }
@@ -470,9 +484,11 @@ sys_connect(struct thread *td, struct connect_args *uap)
 int
 kern_connectat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 {
+	struct dq_intent dqi;
 	struct socket *so;
 	struct file *fp;
 	int error;
+	bool dq;
 
 #ifdef CAPABILITY_MODE
 	if (dirfd == AT_FDCWD) {
@@ -485,9 +501,16 @@ kern_connectat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 
 	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_SOCKADDR(td, dirfd, sa);
-	error = getsock(td, fd, &cap_connect_rights, &fp);
+	/* An AF_UNIX name of an attached process (design 11, CONNECT). */
+	error = dqres_consult_sun(td, &dqi, DQ_ROP_CONNECT, dirfd, sa, &dq);
 	if (error != 0)
 		return (error);
+	error = getsock(td, fd, &cap_connect_rights, &fp);
+	if (error != 0) {
+		if (dq)
+			dq_intent_leave(td, &dqi);
+		return (error);
+	}
 	so = fp->f_data;
 	if (so->so_state & SS_ISCONNECTING) {
 		error = EALREADY;
@@ -503,6 +526,11 @@ kern_connectat(struct thread *td, int dirfd, int fd, struct sockaddr *sa)
 		goto bad;
 #endif
 	error = soconnectat(dirfd, so, sa, td);
+	if (dq) {
+		/* The protocol's lookup has run. */
+		dq_intent_leave(td, &dqi);
+		dq = false;
+	}
 	if (error != 0)
 		goto bad;
 	if ((so->so_state & SS_NBIO) && (so->so_state & SS_ISCONNECTING)) {
@@ -525,6 +553,8 @@ bad:
 	if (error == ERESTART)
 		error = EINTR;
 done1:
+	if (dq)
+		dq_intent_leave(td, &dqi);
 	fdrop(fp, td);
 	return (error);
 }
@@ -726,12 +756,14 @@ kern_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
 	struct uio auio;
 	struct iovec *iov;
 	struct socket *so;
+	struct dq_intent dqi;
 	const cap_rights_t *rights;
 #ifdef KTRACE
 	struct uio *ktruio = NULL;
 #endif
 	ssize_t len;
 	int i, error;
+	bool dq;
 
 	AUDIT_ARG_FD(s);
 	rights = &cap_send_rights;
@@ -739,8 +771,26 @@ kern_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
 		AUDIT_ARG_SOCKADDR(td, AT_FDCWD, mp->msg_name);
 		rights = &cap_send_connect_rights;
 	}
+	/*
+	 * A datagram send to an AF_UNIX name connects to it implicitly:
+	 * consulted here, before SOCK_IO_SEND_LOCK is taken, so the wait
+	 * holds no lock (expected count 0); the protocol's lookup under that
+	 * lock is only checked against the content slot.  Capability mode
+	 * refuses the AT_FDCWD lookup later, without an event.
+	 */
+	dq = false;
+	if (mp->msg_name != NULL && !IN_CAPABILITY_MODE(td)) {
+		error = dqres_consult_sun(td, &dqi, DQ_ROP_CONNECT, AT_FDCWD,
+		    mp->msg_name, &dq);
+		if (error != 0) {
+			m_freem(control);
+			return (error);
+		}
+	}
 	error = getsock(td, s, rights, &fp);
 	if (error != 0) {
+		if (dq)
+			dq_intent_leave(td, &dqi);
 		m_freem(control);
 		return (error);
 	}
@@ -796,6 +846,8 @@ kern_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
 	}
 #endif
 bad:
+	if (dq)
+		dq_intent_leave(td, &dqi);
 	fdrop(fp, td);
 	return (error);
 }

@@ -69,6 +69,8 @@
 #include <sys/socket.h>
 #include <sys/pipe.h>
 #include <sys/socketvar.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 
 #include <security/mac/mac_framework.h>
 #include <security/mac/mac_internal.h>
@@ -433,6 +435,13 @@ sys___mac_set_proc(struct thread *td, struct __mac_set_proc_args *uap)
 	newcred = crget();
 
 	PROC_LOCK(p);
+	/* I5 (D137): an attached process keeps its label. */
+	if (dqres_cred_change_refused(p)) {
+		PROC_UNLOCK(p);
+		crfree(newcred);
+		error = EPERM;
+		goto finish;
+	}
 	oldcred = p->p_ucred;
 	crcopy(newcred, oldcred);
 
@@ -573,7 +582,7 @@ sys___mac_get_link(struct thread *td, struct __mac_get_link_args *uap)
 }
 
 static int
-kern___mac_get_path(struct thread *td, const char *path_p, struct mac *mac_p,
+kern___mac_get_path_dqimpl(struct thread *td, const char *path_p, struct mac *mac_p,
    int follow)
 {
 	char *u_buffer, *buffer;
@@ -611,6 +620,27 @@ out:
 	free_copied_label(&mac);
 
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern___mac_get_path(struct thread *td, const char *path_p, struct mac *mac_p,
+   int follow)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (kern___mac_get_path_dqimpl(td, path_p, mac_p, follow));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_USER);
+	dq_intent_slot(&dqi, 0, path_p, UIO_USERSPACE, AT_FDCWD);
+	dqerror = kern___mac_get_path_dqimpl(td, path_p, mac_p, follow);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 int
@@ -740,7 +770,7 @@ sys___mac_set_link(struct thread *td, struct __mac_set_link_args *uap)
 }
 
 static int
-kern___mac_set_path(struct thread *td, const char *path_p, struct mac *mac_p,
+kern___mac_set_path_dqimpl(struct thread *td, const char *path_p, struct mac *mac_p,
     int follow)
 {
 	struct label *intlabel;
@@ -777,6 +807,27 @@ kern___mac_set_path(struct thread *td, const char *path_p, struct mac *mac_p,
 out:
 	mac_vnode_label_free(intlabel);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+static int
+kern___mac_set_path(struct thread *td, const char *path_p, struct mac *mac_p,
+    int follow)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (kern___mac_set_path_dqimpl(td, path_p, mac_p, follow));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_USER);
+	dq_intent_slot(&dqi, 0, path_p, UIO_USERSPACE, AT_FDCWD);
+	dqerror = kern___mac_set_path_dqimpl(td, path_p, mac_p, follow);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 SDT_PROBE_DEFINE2(mac_framework, , , syscall__start, "char *", "int");

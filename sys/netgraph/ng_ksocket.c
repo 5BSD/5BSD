@@ -59,6 +59,7 @@
 #include <sys/socketvar.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include <sys/dqres.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -768,6 +769,13 @@ ng_ksocket_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			if (so == NULL)
 				ERROUT(ENXIO);
 
+			/*
+			 * An AF_LOCAL name from an attached process's message
+			 * cannot be consulted here (DescriptorQueue).
+			 */
+			if (sa->sa_family == AF_LOCAL &&
+			    (error = dqres_kpath_refused(td)) != 0)
+				ERROUT(error);
 			/* Bind */
 			error = sobind(so, sa, td);
 			break;
@@ -838,6 +846,10 @@ ng_ksocket_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			/* Do connect */
 			if ((so->so_state & SS_ISCONNECTING) != 0)
 				ERROUT(EALREADY);
+			/* As for bind: not consultable here. */
+			if (sa->sa_family == AF_LOCAL &&
+			    (error = dqres_kpath_refused(td)) != 0)
+				ERROUT(error);
 			if ((error = soconnect(so, sa, td)) != 0) {
 				so->so_state &= ~SS_ISCONNECTING;
 				ERROUT(error);

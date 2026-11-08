@@ -23,6 +23,7 @@
 /* Portions Copyright 2010 Robert Milkowski */
 
 #include <sys/param.h>
+#include <sys/dqres.h>
 #include <sys/time.h>
 #include <sys/systm.h>
 #include <sys/sysmacros.h>
@@ -6006,7 +6007,9 @@ zfs_getextattr_dir(struct vop_getextattr_args *ap, const char *attrname)
 #else
 	NDINIT_ATVP(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, attrname, xvp);
 #endif
-	error = vn_open_cred(&nd, &flags, 0, VN_OPEN_INVFS, ap->a_cred, NULL);
+	/* An attribute in the xattr directory: exempt (5BSD DescriptorQueue). */
+	error = DQRES_EXEMPT(vn_open_cred(&nd, &flags, 0, VN_OPEN_INVFS,
+	    ap->a_cred, NULL));
 	if (error != 0)
 		return (SET_ERROR(error));
 	vp = nd.ni_vp;
@@ -6151,7 +6154,8 @@ zfs_deleteextattr_dir(struct vop_deleteextattr_args *ap, const char *attrname)
 	NDINIT_ATVP(&nd, DELETE, NOFOLLOW | LOCKPARENT | LOCKLEAF,
 	    UIO_SYSSPACE, attrname, xvp);
 #endif
-	error = namei(&nd);
+	/* An attribute in the xattr directory: exempt (5BSD DescriptorQueue). */
+	error = DQRES_EXEMPT(namei(&nd));
 	if (error != 0)
 		return (SET_ERROR(error));
 
@@ -6293,8 +6297,9 @@ zfs_setextattr_dir(struct vop_setextattr_args *ap, const char *attrname)
 #else
 	NDINIT_ATVP(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, attrname, xvp);
 #endif
-	error = vn_open_cred(&nd, &flags, 0600, VN_OPEN_INVFS, ap->a_cred,
-	    NULL);
+	/* An attribute in the xattr directory: exempt (5BSD DescriptorQueue). */
+	error = DQRES_EXEMPT(vn_open_cred(&nd, &flags, 0600, VN_OPEN_INVFS,
+	    ap->a_cred, NULL));
 	if (error != 0)
 		return (SET_ERROR(error));
 	vp = nd.ni_vp;
@@ -6481,7 +6486,8 @@ zfs_listextattr_dir(struct vop_listextattr_args *ap, const char *attrprefix)
 	NDINIT_ATVP(&nd, LOOKUP, NOFOLLOW | LOCKLEAF | LOCKSHARED,
 	    UIO_SYSSPACE, ".", xvp);
 #endif
-	error = namei(&nd);
+	/* An attribute in the xattr directory: exempt (5BSD DescriptorQueue). */
+	error = DQRES_EXEMPT(namei(&nd));
 	if (error != 0)
 		return (SET_ERROR(error));
 	vp = nd.ni_vp;

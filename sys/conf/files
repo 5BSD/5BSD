@@ -1556,6 +1556,12 @@ dev/dq/dq_observer.c		optional dq
 dev/dq/dq_observe.c		optional dq
 dev/dq/dq_pager.c		optional dq
 dev/dq/dq_async.c		optional dq
+dev/dq/dq_resolve.c		optional dq
+dq_resolve_ledger.chk		standard				   \
+	dependency	"$S/tools/dq_resolve_ledger.sh $S/dev/dq/dq_resolve_ledger.txt .PHONY" \
+	compile-with	"sh $S/tools/dq_resolve_ledger.sh check $S $S/dev/dq/dq_resolve_ledger.txt && touch $@" \
+	no-obj no-implicit-rule before-depend				   \
+	clean		"dq_resolve_ledger.chk"
 dev/dwc/if_dwc.c		optional dwc fdt
 dev/dwc/if_dwc_if.m		optional dwc fdt
 dev/dwc/dwc1000_core.c		optional dwc fdt
@@ -3752,6 +3758,7 @@ kern/kern_cpu.c			standard
 kern/kern_cpuset.c		standard
 kern/kern_context.c		standard
 kern/kern_descrip.c		standard
+kern/kern_dqres.c		standard
 kern/kern_devctl.c		standard
 kern/kern_dtrace.c		optional kdtrace_hooks
 kern/kern_dump.c		standard

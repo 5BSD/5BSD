@@ -215,6 +215,63 @@ ATF_TC_BODY(async_accessors, tc)
 	free(big);
 }
 
+ATF_TC_WITHOUT_HEAD(resolve_accessor);
+ATF_TC_BODY(resolve_accessor, tc)
+{
+	char buf[512], body[sizeof(struct dq_resolve_body) + 64];
+	const struct dq_resolve_body *rbp;
+	struct dq_resolve_body *rb;
+	struct dq_event *ev;
+	const char *p1, *p2, *sp, *sp2;
+	size_t off;
+	char *s;
+
+	ATF_REQUIRE_EQ(96, sizeof(struct dq_resolve_body));
+	memset(body, 0, sizeof(body));
+	rb = (struct dq_resolve_body *)(void *)body;
+	rb->drs_op = DQ_ROP_RENAME;
+	rb->drs_flags = DQ_RCLASS_USER;
+	rb->drs_pathlen = 3;
+	rb->drs_path2len = 4;
+	rb->drs_startpathlen = 0;
+	rb->drs_startpath2len = 2;
+	rb->drs_rflags = DQ_RF_STARTPATH2_VALID;
+	s = (char *)(rb + 1);
+	memcpy(s, "a/b\0c/de\0\0/x\0", 13);
+	off = 0;
+	ev = put_record(buf, &off, DQ_OP_RESOLVE, 0, body,
+	    sizeof(*rb) + 13);
+	ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
+	ATF_CHECK_STREQ("/x", sp2);
+	ATF_CHECK_EQ(0, rbp->drs_pad1);
+	ATF_CHECK_EQ(DQ_ROP_RENAME, rbp->drs_op);
+	ATF_CHECK_STREQ("a/b", p1);
+	ATF_CHECK_STREQ("c/de", p2);
+	ATF_CHECK_STREQ("", sp);
+	/* A length that runs past the record, or a missing NUL. */
+	((struct dq_resolve_body *)(void *)(ev + 1))->drs_path2len = 200;
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
+	ATF_CHECK_EQ(EINVAL, errno);
+	((struct dq_resolve_body *)(void *)(ev + 1))->drs_path2len = 3;
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
+	ATF_CHECK_EQ(EINVAL, errno);
+	((struct dq_resolve_body *)(void *)(ev + 1))->drs_path2len = 4;
+	/* The fourth string must end where its length says too. */
+	((struct dq_resolve_body *)(void *)(ev + 1))->drs_startpath2len = 5;
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
+	ATF_CHECK_EQ(EINVAL, errno);
+	/* Another operation. */
+	ev->de_op = DQ_OP_READ;
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_event_resolve(ev, &rbp, NULL, NULL, NULL, NULL));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK(dq_reply_errno_allowed(DQ_OP_RESOLVE, EACCES));
+	ATF_CHECK(!dq_reply_errno_allowed(DQ_OP_RESOLVE, EPIPE));
+}
+
 ATF_TC_WITHOUT_HEAD(errno_allow_lists);
 ATF_TC_BODY(errno_allow_lists, tc)
 {
@@ -657,5 +714,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, serve_locks);
 	ATF_TP_ADD_TC(tp, async_accessors);
 	ATF_TP_ADD_TC(tp, serve_mmap_writeback);
+	ATF_TP_ADD_TC(tp, resolve_accessor);
 	return (atf_no_error());
 }

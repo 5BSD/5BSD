@@ -101,6 +101,9 @@
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
 
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
+
 #ifdef KDTRACE_HOOKS
 #include <sys/dtrace_bsd.h>
 dtrace_execexit_func_t	dtrace_fasttrap_exec;
@@ -478,6 +481,8 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	const struct image_source_ops *installed_ops = NULL;
 	struct image_source_old old_image;
 	bool credential_changing;
+	bool dq_attached;
+	struct dq_intent dqi;
 	struct cap_authority *exec_authority = NULL;
 #ifdef MAC
 	struct ucred *relabelcred = NULL;
@@ -509,6 +514,12 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	    ("%s(): process already has P_INEXEC flag", __func__));
 	execve_block_pass(td);
 	p->p_flag |= P_INEXEC;
+	/*
+	 * I5 (D137): the attached state is read once, under the lock that
+	 * sets P_INEXEC; ATTACH refuses a process in exec, so it holds for
+	 * the whole exec.
+	 */
+	dq_attached = dqres_cred_change_refused(p);
 	PROC_UNLOCK(p);
 
 	/*
@@ -557,7 +568,21 @@ interpret:
 		    AUDITVNODE1 | WANTPARENT, UIO_SYSSPACE,
 		    args->fname);
 
+		/*
+		 * The image the requester named is its own path (EXEC,
+		 * D127 class 1); a #! interpreter on a later pass is a
+		 * kernel-origin lookup (EXEC_INTERP, class 3, no restart:
+		 * exec_new_vmspace may have run, 0c item 2).  Both are
+		 * consulted by this namei.
+		 */
+		if (imgp->interpreted == 0)
+			dq_intent_enter(td, &dqi, DQ_ROP_EXEC, DQI_USER);
+		else
+			dq_intent_enter(td, &dqi, DQ_ROP_EXEC_INTERP,
+			    DQI_KERNEL | DQI_NO_ERESTART);
+		dq_intent_slot(&dqi, 0, args->fname, UIO_SYSSPACE, AT_FDCWD);
 		error = namei(&nd);
+		dq_intent_leave(td, &dqi);
 		if (error)
 			goto exec_fail;
 
@@ -649,6 +674,22 @@ interpret:
 	    oldcred, NULL) != 0;
 	credential_changing |= will_transition;
 #endif
+	/*
+	 * I5 (D137): an attached process never gains privilege by exec.  A
+	 * MAC transition is refused outright; a set-id image runs with the
+	 * credential unchanged, keeping p_pdeathsig (D68).  P2_NO_NEW_PRIVS,
+	 * set at ATTACH (D150), already suppresses set-id; this keeps the
+	 * EACCES contract.  Re-evaluated on every #! pass.
+	 */
+	if (dq_attached) {
+#ifdef MAC
+		if (will_transition) {
+			error = EACCES;
+			goto exec_fail_dealloc;
+		}
+#endif
+		credential_changing = false;
+	}
 
 	/* Don't inherit PROC_PDEATHSIG_CTL value if setuid/setgid. */
 	if (credential_changing)
@@ -732,7 +773,8 @@ interpret:
 	 */
 	cap_authority_drop(exec_authority);
 	exec_authority = NULL;
-	exec_authority = IS_AUTHORITY_PREPARE(imgp, p);
+	/* I5: no software authority for an attached process (D137). */
+	exec_authority = dq_attached ? NULL : IS_AUTHORITY_PREPARE(imgp, p);
 	imgp->authority_setid = exec_authority != NULL;
 
 	/* The new credentials are installed into the process later. */

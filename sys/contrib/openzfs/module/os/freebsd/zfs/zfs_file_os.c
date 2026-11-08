@@ -46,6 +46,7 @@
 #include <sys/zfs_file.h>
 #include <sys/buf.h>
 #include <sys/stat.h>
+#include <sys/dqres.h>
 
 int
 zfs_file_open(const char *path, int flags, int mode, cred_t *cr,
@@ -58,6 +59,13 @@ zfs_file_open(const char *path, int flags, int mode, cred_t *cr,
 	int error;
 
 	td = curthread;
+	/*
+	 * A file vdev, cache file or other path ZFS opens in an attached
+	 * process's context cannot be consulted here (5BSD DescriptorQueue,
+	 * design 11).
+	 */
+	if (dqres_kpath_refused(td) != 0)
+		return (SET_ERROR(EPERM));
 	pwd_ensure_dirs();
 
 	KASSERT((flags & (O_EXEC | O_PATH)) == 0,

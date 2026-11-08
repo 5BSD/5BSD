@@ -42,6 +42,8 @@
 #include <sys/filedesc.h>
 #include <sys/limits.h>
 #include <sys/vnode.h>
+#include <sys/dqres.h>
+#include <dev/dq/dq.h>
 #include <sys/proc.h>
 #include <sys/extattr.h>
 #include <sys/sdt.h>
@@ -91,8 +93,8 @@ struct extattrctl_args {
 	const char *attrname;
 };
 #endif
-int
-sys_extattrctl(struct thread *td, struct extattrctl_args *uap)
+static int
+sys_extattrctl_dqimpl(struct thread *td, struct extattrctl_args *uap)
 {
 	struct vnode *filename_vp;
 	struct nameidata nd;
@@ -174,6 +176,34 @@ out:
 	if (filename_vp != NULL)
 		vrele(filename_vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_INTERNAL; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+sys_extattrctl(struct thread *td, struct extattrctl_args *uap)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(true) || !DQRES_ATTACHED_TD(td))
+		return (sys_extattrctl_dqimpl(td, uap));
+	dq_intent_enter(td, &dqi, DQ_ROP_INTERNAL, DQI_KCONSUMER);
+	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
+	/*
+	 * The attribute backing file is optional and is looked up first, on
+	 * its own: an independent slot (not DQI_PATH2), declared only when
+	 * it is given.
+	 */
+	if (uap->filename != NULL)
+		dq_intent_slot(&dqi, 1, uap->filename, UIO_USERSPACE,
+		    AT_FDCWD);
+	dqerror = sys_extattrctl_dqimpl(td, uap);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*-
@@ -380,8 +410,8 @@ user_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
 	    attrname, data, nbytes, follow, UIO_USERSPACE));
 }
 
-int
-kern_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
+static int
+kern_extattr_set_path_dqimpl(struct thread *td, const char *path, int attrnamespace,
     const char *attrname, void *data, size_t nbytes, int follow,
     enum uio_seg pathseg)
 {
@@ -402,6 +432,28 @@ kern_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
 
 	vrele(nd.ni_vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_XATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_extattr_set_path(struct thread *td, const char *path, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, int follow,
+    enum uio_seg pathseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_extattr_set_path_dqimpl(td, path, attrnamespace, attrname, data, nbytes, follow, pathseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_XATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_extattr_set_path_dqimpl(td, path, attrnamespace, attrname, data, nbytes, follow, pathseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*-
@@ -577,8 +629,8 @@ user_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
 	    attrname, data, nbytes, follow, UIO_USERSPACE));
 }
 
-int
-kern_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
+static int
+kern_extattr_get_path_dqimpl(struct thread *td, const char *path, int attrnamespace,
     const char *attrname, void *data, size_t nbytes, int follow,
     enum uio_seg pathseg)
 {
@@ -599,6 +651,28 @@ kern_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
 
 	vrele(nd.ni_vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_XATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_extattr_get_path(struct thread *td, const char *path, int attrnamespace,
+    const char *attrname, void *data, size_t nbytes, int follow,
+    enum uio_seg pathseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_extattr_get_path_dqimpl(td, path, attrnamespace, attrname, data, nbytes, follow, pathseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_XATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_extattr_get_path_dqimpl(td, path, attrnamespace, attrname, data, nbytes, follow, pathseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*
@@ -742,8 +816,8 @@ user_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
 	    attrname, follow, UIO_USERSPACE));
 }
 
-int
-kern_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
+static int
+kern_extattr_delete_path_dqimpl(struct thread *td, const char *path, int attrnamespace,
     const char *attrname, int follow, enum uio_seg pathseg)
 {
 	struct nameidata nd;
@@ -761,6 +835,27 @@ kern_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
 	error = extattr_delete_vp(nd.ni_vp, attrnamespace, attrname, td);
 	vrele(nd.ni_vp);
 	return(error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_XATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_extattr_delete_path(struct thread *td, const char *path, int attrnamespace,
+    const char *attrname, int follow, enum uio_seg pathseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_extattr_delete_path_dqimpl(td, path, attrnamespace, attrname, follow, pathseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_XATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_extattr_delete_path_dqimpl(td, path, attrnamespace, attrname, follow, pathseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }
 
 /*-
@@ -936,8 +1031,8 @@ user_extattr_list_path(struct thread *td, const char *path, int attrnamespace,
 	    auiop, follow, UIO_USERSPACE));
 }
 
-int
-kern_extattr_list_path(struct thread *td, const char *path, int attrnamespace,
+static int
+kern_extattr_list_path_dqimpl(struct thread *td, const char *path, int attrnamespace,
     struct uio *auiop, int follow, enum uio_seg pathseg)
 {
 	struct nameidata nd;
@@ -954,4 +1049,25 @@ kern_extattr_list_path(struct thread *td, const char *path, int attrnamespace,
 
 	vrele(nd.ni_vp);
 	return (error);
+}
+
+/*
+ * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
+ * user-supplied path, DQ_ROP_XATTR; kernel callers pass kernel-space paths and
+ * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
+ */
+int
+kern_extattr_list_path(struct thread *td, const char *path, int attrnamespace,
+    struct uio *auiop, int follow, enum uio_seg pathseg)
+{
+	struct dq_intent dqi;
+	int dqerror;
+
+	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
+		return (kern_extattr_list_path_dqimpl(td, path, attrnamespace, auiop, follow, pathseg));
+	dq_intent_enter(td, &dqi, DQ_ROP_XATTR, DQI_USER);
+	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
+	dqerror = kern_extattr_list_path_dqimpl(td, path, attrnamespace, auiop, follow, pathseg);
+	dq_intent_leave(td, &dqi);
+	return (dqerror);
 }

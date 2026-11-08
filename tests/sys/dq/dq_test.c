@@ -5,6 +5,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/procdesc.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -182,6 +183,61 @@ dqt_hold_event(struct dqt_ctl *c, const struct dq_event *ev, uint32_t len,
 	}
 }
 
+static const struct dq_resolve_reply dqt_pass = { DQ_RESOLVE_PASS, 0 };
+
+/* A RESOLVE: recorded; held, refused or PASSed.  The mutex is held. */
+static bool
+dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
+    struct dqt_pending_reply *pr)
+{
+	const struct dq_resolve_body *rb;
+	const char *path, *path2, *sp2;
+	struct dqt_resolve_seen *s;
+	int error;
+
+	pr->id = ev->de_id;
+	pr->data = NULL;
+	pr->len = 0;
+	if (dq_event_resolve(ev, &rb, &path, &path2, NULL, &sp2) != 0) {
+		pr->error = EIO;
+		return (true);
+	}
+	if (c->nrs < DQT_MAX_RESOLVES) {
+		s = &c->rs[c->nrs++];
+		s->id = ev->de_id;
+		s->op = rb->drs_op;
+		s->cls = rb->drs_flags;
+		s->rflags = rb->drs_rflags;
+		s->mode = rb->drs_mode;
+		s->syscall = rb->drs_syscall;
+		s->caller_flags = ev->de_caller.dc_flags;
+		s->pid = ev->de_caller.dc_pid;
+		s->start_kind = rb->drs_start_kind;
+		s->start2_kind = rb->drs_start2_kind;
+		s->pad1 = rb->drs_pad1;
+		(void)strlcpy(s->startpath2, sp2, sizeof(s->startpath2));
+		(void)strlcpy(s->path, path, sizeof(s->path));
+		(void)strlcpy(s->path2, path2, sizeof(s->path2));
+	}
+	if (c->resolve_hold_match[0] != '\0' &&
+	    (strstr(path, c->resolve_hold_match) != NULL ||
+	    strstr(path2, c->resolve_hold_match) != NULL)) {
+		dqt_hold_event(c, ev, 0, 0);
+		return (false);
+	}
+	error = rb->drs_op <= DQ_ROP_MAX ? c->resolve_errno[rb->drs_op] : 0;
+	if (c->resolve_fail_match[0] != '\0' &&
+	    (strstr(path, c->resolve_fail_match) != NULL ||
+	    strstr(path2, c->resolve_fail_match) != NULL))
+		error = c->resolve_fail_errno;
+	pr->error = error;
+	if (error == 0) {
+		pr->data = &dqt_pass;
+		pr->len = sizeof(dqt_pass);
+	}
+	return (true);
+}
+
 /* Decide one record under the mutex; the reply itself is made later. */
 static bool
 dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
@@ -302,6 +358,8 @@ dqt_handle_record(struct dqt_ctl *c, const struct dq_event *ev,
 				c->interrupted[c->ninterrupted++] = ib->din_id;
 		}
 		return (false);
+	case DQ_OP_RESOLVE:
+		return (dqt_handle_resolve(c, ev, pr));
 	case DQ_OP_UNLOCK_ALL:
 		return (false);
 	default:
@@ -1132,4 +1190,101 @@ dqt_sync_wait(int fd, int ms)
 	if (poll(&pfd, 1, ms) != 1)
 		return (false);
 	return (read(fd, &b, 1) == 1);
+}
+
+/*
+ * Resolution (1c)
+ */
+
+void
+dqt_attach_spawn(struct dqt_ctl *c, struct dqt_achild *ch, dqt_child_fn fn,
+    void *arg)
+{
+	int go[2], res[2];
+	char b;
+
+	ATF_REQUIRE_EQ(0, pipe(go));
+	ATF_REQUIRE_EQ(0, pipe(res));
+	ch->pid = pdfork(&ch->pd, 0);
+	ATF_REQUIRE_MSG(ch->pid != -1, "pdfork: %s", strerror(errno));
+	if (ch->pid == 0) {
+		char result[4096];
+
+		(void)close(go[1]);
+		(void)close(res[0]);
+		if (read(go[0], &b, 1) != 1)
+			_exit(2);
+		memset(result, 0, sizeof(result));
+		fn(arg, result);
+		(void)write(res[1], result, sizeof(result));
+		_exit(0);
+	}
+	(void)close(go[0]);
+	(void)close(res[1]);
+	ch->pipefd = res[0];
+	ATF_REQUIRE_MSG(dq_attach(c->q, ch->pd) == 0, "DQ_IOC_ATTACH: %s",
+	    strerror(errno));
+	b = 'g';
+	ATF_REQUIRE_EQ(1, write(go[1], &b, 1));
+	(void)close(go[1]);
+}
+
+int
+dqt_attach_wait(struct dqt_achild *ch, void *result, size_t resultlen)
+{
+	char *p;
+	ssize_t n;
+	size_t off;
+	int status;
+
+	ATF_REQUIRE(resultlen <= 4096);
+	p = result;
+	for (off = 0; off < resultlen; off += (size_t)n) {
+		n = read(ch->pipefd, p + off, resultlen - off);
+		if (n <= 0)
+			break;
+	}
+	(void)close(ch->pipefd);
+	ch->pipefd = -1;
+	ATF_REQUIRE_MSG(pdwait(ch->pd, &status, WEXITED, NULL, NULL) == 0,
+	    "pdwait: %s", strerror(errno));
+	(void)close(ch->pd);
+	ch->pd = -1;
+	return (status);
+}
+
+int
+dqt_find_resolve(struct dqt_ctl *c, const char *match, uint32_t op, int from)
+{
+	int i, found;
+
+	found = -1;
+	pthread_mutex_lock(&c->mtx);
+	for (i = from; i < c->nrs; i++) {
+		if ((op == 0 || c->rs[i].op == op) &&
+		    (strstr(c->rs[i].path, match) != NULL ||
+		    strstr(c->rs[i].path2, match) != NULL)) {
+			found = i;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&c->mtx);
+	return (found);
+}
+
+int
+dqt_count_resolve(struct dqt_ctl *c, const char *match, uint32_t op)
+{
+	int i, n;
+
+	n = 0;
+	pthread_mutex_lock(&c->mtx);
+	for (i = 0; i < c->nrs; i++) {
+		if ((op == 0 || c->rs[i].op == op) &&
+		    (strstr(c->rs[i].path, match) != NULL ||
+		    strstr(c->rs[i].path2, match) != NULL))
+			n++;
+	}
+	pthread_mutex_unlock(&c->mtx);
+	return (n);
 }
