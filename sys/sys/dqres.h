@@ -136,6 +136,9 @@ struct dqres_req {
 	uint32_t	 rq_start2_kind; /* path2's own (DQ_START_*), or 0 */
 	const char	*rq_startpath2;	/* path2's start hint, may be NULL */
 	size_t		 rq_startpath2len;
+	int		 rq_domain;	/* SOCKET, SOCKETPAIR (1c-ii) */
+	int		 rq_type;
+	int		 rq_protocol;
 };
 
 /*
@@ -203,6 +206,14 @@ int	dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs);
 struct sockaddr;
 int	dqres_consult_sun(struct thread *td, struct dq_intent *di, uint32_t op,
 	    int dirfd, const struct sockaddr *sa, bool *enteredp);
+
+/*
+ * socket(2) and socketpair(2) of an attached process (D139): one event
+ * with the protocol as socreate_find resolved it, no path, start NONE;
+ * called with no descriptor slot taken and no lock held.  0 is PASS.
+ */
+int	dqres_consult_socket(struct thread *td, uint32_t op, int domain,
+	    int type, int protocol);
 
 /* I5 (D137, D153). */
 bool	dqres_cred_change_refused(struct proc *p);

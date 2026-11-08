@@ -1000,6 +1000,7 @@ vxlan_socket_init(struct vxlan_socket *vso, struct ifnet *ifp)
 
 	td = curthread;
 
+	/* dq-ledger: kernel (vxlan(4) tunnel socket; I7) */
 	error = socreate(vso->vxlso_laddr.sa.sa_family, &vso->vxlso_sock,
 	    SOCK_DGRAM, IPPROTO_UDP, td->td_ucred, td);
 	if (error) {

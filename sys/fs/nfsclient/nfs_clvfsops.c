@@ -479,6 +479,7 @@ nfs_mountroot(struct mount *mp)
 	 * Do enough of ifconfig(8) so that the critical net interface can
 	 * talk to the server.
 	 */
+	/* dq-ledger: kernel (NFS root mount, boot) */
 	error = socreate(nd->myif.ifra_addr.sa_family, &so, nd->root_args.sotype, 0,
 	    td->td_ucred, td);
 	if (error)

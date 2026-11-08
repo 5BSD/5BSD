@@ -184,8 +184,18 @@ with `freebsd/main` c2b7fe4a9e9). Files where both sides carry changes and
 merges need care: `sys/sys/socket.h` and `socketvar.h`,
 `sys/net/if_clone.c`, `sys/net/if_loop.c`, `sys/netlink/route/iface.c`,
 `sbin/ifconfig/af_inet.c` and `af_nd6.c`, `sys/netinet/ip_input.c`
-(forwarding policy), and `sys/netpfil/dummynet/ip_dn_io.c`, whose only
-client is now pf.
+(forwarding policy), `sys/netpfil/dummynet/ip_dn_io.c`, whose only
+client is now pf, and `sys/kern/uipc_socket.c` and `uipc_syscalls.c`,
+where 5BSD splits `socreate()` into `socreate_find()` and
+`socreate_proto()` so `socket(2)` and `socketpair(2)` of a process
+attached to a DescriptorQueue are consulted between the parts (an
+upstream change to `socreate()` must be carried into the parts).
+`kern_socket()` therefore runs the protocol lookup and the jail's
+address-family test before `falloc()` for every process: with a full
+descriptor table a bad domain or protocol, `ECAPMODE` or a jail family
+refusal is returned instead of upstream's `EMFILE`, `ktrcapfail` is
+recorded even with a full table, and a failed request no longer briefly
+occupies a descriptor slot.
 
 After a merge on either side, check for things both sides added (the same
 definition twice) and for 5BSD numbers that upstream has started to use.

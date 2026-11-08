@@ -7514,6 +7514,7 @@ sctp_over_udp_start(void)
 	}
 #endif
 #ifdef INET
+	/* dq-ledger: kernel (SCTP UDP tunnelling sockets, sysctl; I7) */
 	if ((ret = socreate(PF_INET, &SCTP_BASE_INFO(udp4_tun_socket),
 	    SOCK_DGRAM, IPPROTO_UDP,
 	    curthread->td_ucred, curthread))) {
@@ -7540,6 +7541,7 @@ sctp_over_udp_start(void)
 	}
 #endif
 #ifdef INET6
+	/* dq-ledger: kernel (SCTP UDP tunnelling sockets, sysctl; I7) */
 	if ((ret = socreate(PF_INET6, &SCTP_BASE_INFO(udp6_tun_socket),
 	    SOCK_DGRAM, IPPROTO_UDP,
 	    curthread->td_ucred, curthread))) {

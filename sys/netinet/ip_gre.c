@@ -285,6 +285,7 @@ in_gre_setup_socket(struct gre_softc *sc)
 			s->addr = addr;
 			gs = &s->base;
 
+			/* dq-ledger: kernel (gre(4) UDP encap socket; I7) */
 			error = socreate(sc->gre_family, &gs->so,
 			    SOCK_DGRAM, IPPROTO_UDP, curthread->td_ucred,
 			    curthread);

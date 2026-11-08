@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd February 1, 2026
+.Dd November 8, 2026
 .Dt SOCKET 2
 .Os
 .Sh NAME
@@ -436,6 +436,19 @@ Connection associated with a socket can be terminated by
 system call.
 One direction of communication can be disabled with
 .Xr shutdown 2 .
+.Pp
+In a process attached to a
+.Xr dq 4
+queue,
+.Fn socket
+is first posted to the queue's controller as a
+.Dv DQ_ROP_SOCKET
+event naming the domain, the type and the protocol the socket would get,
+and proceeds only when the controller passes it; the controller may
+instead answer an error, which
+.Fn socket
+returns.
+No descriptor is allocated while the controller decides.
 .Sh RETURN VALUES
 A -1 is returned if an error occurs, otherwise the return
 value is a descriptor referencing the socket.
@@ -446,10 +459,25 @@ system call fails if:
 .Bl -tag -width Er
 .It Bq Er EACCES
 Permission to create a socket of the specified type and/or protocol
-is denied.
+is denied, or the process is attached to a
+.Xr dq 4
+queue whose controller refused the socket or has closed the queue.
 .It Bq Er EAFNOSUPPORT
 The address family (domain) is not supported or the
 specified domain is not supported by this protocol family.
+.It Bq Er EINTR
+The process is attached to a
+.Xr dq 4
+queue and a signal without
+.Dv SA_RESTART
+arrived while the call waited for the controller.
+.It Bq Er EIO
+The process is attached to a
+.Xr dq 4
+queue and the controller did not answer before the deadline, the queue
+was full, or the controller answered an error
+.Fn socket
+cannot return.
 .It Bq Er EMFILE
 The per-process descriptor table is full.
 .It Bq Er ENFILE
@@ -458,7 +486,10 @@ The system file table is full.
 Insufficient buffer space is available.
 The socket cannot be created until sufficient resources are freed.
 .It Bq Er EPERM
-User has insufficient privileges to carry out the requested operation.
+User has insufficient privileges to carry out the requested operation,
+or the process is attached to a
+.Xr dq 4
+queue whose controller refused the socket with this error.
 .It Bq Er EPROTONOSUPPORT
 The protocol type or the specified protocol is not supported
 within this domain.

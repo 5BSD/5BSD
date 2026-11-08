@@ -38,6 +38,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
+#include <sys/domain.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -136,9 +137,40 @@ sys_socket(struct thread *td, struct socket_args *uap)
 	return (kern_socket(td, uap->domain, uap->type, uap->protocol));
 }
 
+/*
+ * socket(2) and socketpair(2) of an attached process (DescriptorQueue,
+ * design 11, D139) are consulted after socreate_find, with the protocol it
+ * resolved, before the jail's address-family test and before any
+ * descriptor slot exists.  For a protosw whose pr_protocol is 0 the
+ * caller's protocol number is posted as given and not validated: for raw IP
+ * it is the IP protocol the socket uses; for AF_UNIX and PF_ROUTE the
+ * socket ignores it (SO_PROTOCOL reports 0).  A protocol module can
+ * unregister during the wait, so the protocol is found again after a PASS
+ * and must be the one consulted, with the same type and posted protocol;
+ * the capability-mode test is repeated without a second ktrcapfail record.
+ */
+#define	SOCKET_DQ_PROTOCOL(prp, protocol)				\
+	((prp)->pr_protocol != 0 ? (prp)->pr_protocol : (protocol))
+
+static int
+socket_dq_refind(struct thread *td, int domain, int type, int protocol,
+    struct protosw *prp, int posted)
+{
+	struct protosw *nprp;
+
+	nprp = pffindproto(domain, type, protocol);
+	if (nprp != prp || nprp->pr_type != type ||
+	    SOCKET_DQ_PROTOCOL(nprp, protocol) != posted)
+		return (EPROTONOSUPPORT);
+	if ((nprp->pr_flags & PR_CAPATTACH) == 0 && IN_CAPABILITY_MODE(td))
+		return (ECAPMODE);
+	return (0);
+}
+
 int
 kern_socket(struct thread *td, int domain, int type, int protocol)
 {
+	struct protosw *prp;
 	struct socket *so;
 	struct file *fp;
 	int fd, error, oflag, fflag;
@@ -164,11 +196,30 @@ kern_socket(struct thread *td, int domain, int type, int protocol)
 	if (error != 0)
 		return (error);
 #endif
+	/*
+	 * The parts of socreate(), with the consultation between them and the
+	 * descriptor slot taken only after it (D139).
+	 */
+	error = socreate_find(domain, type, protocol, td, &prp);
+	if (error != 0)
+		return (error);
+	if (DQRES_ATTACHED_TD(td)) {
+		error = dqres_consult_socket(td, DQ_ROP_SOCKET, domain, type,
+		    SOCKET_DQ_PROTOCOL(prp, protocol));
+		if (error == 0)
+			error = socket_dq_refind(td, domain, type, protocol, prp,
+			    SOCKET_DQ_PROTOCOL(prp, protocol));
+		if (error != 0)
+			return (error);
+	}
+	if (prison_check_af(td->td_ucred, prp->pr_domain->dom_family) != 0)
+		return (EPROTONOSUPPORT);
 	error = falloc(td, &fp, &fd, oflag);
 	if (error != 0)
 		return (error);
 	/* An extra reference on `fp' has been held for us by falloc(). */
-	error = socreate(domain, &so, type, protocol, td->td_ucred, td);
+	error = socreate_proto(prp, domain, &so, type, protocol, td->td_ucred,
+	    td);
 	if (error != 0) {
 		fdclose(td, fp, fd);
 	} else {
@@ -577,6 +628,7 @@ int
 kern_socketpair(struct thread *td, int domain, int type, int protocol,
     int *rsv)
 {
+	struct protosw *prp;
 	struct file *fp1, *fp2;
 	struct socket *so1, *so2;
 	int fd, error, oflag, fflag;
@@ -604,10 +656,27 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	if (error != 0)
 		return (error);
 #endif
-	error = socreate(domain, &so1, type, protocol, td->td_ucred, td);
+	/* One consultation for the pair, before any socket or slot (D139). */
+	error = socreate_find(domain, type, protocol, td, &prp);
 	if (error != 0)
 		return (error);
-	error = socreate(domain, &so2, type, protocol, td->td_ucred, td);
+	if (DQRES_ATTACHED_TD(td)) {
+		error = dqres_consult_socket(td, DQ_ROP_SOCKETPAIR, domain,
+		    type, SOCKET_DQ_PROTOCOL(prp, protocol));
+		if (error == 0)
+			error = socket_dq_refind(td, domain, type, protocol, prp,
+			    SOCKET_DQ_PROTOCOL(prp, protocol));
+		if (error != 0)
+			return (error);
+	}
+	if (prison_check_af(td->td_ucred, prp->pr_domain->dom_family) != 0)
+		return (EPROTONOSUPPORT);
+	error = socreate_proto(prp, domain, &so1, type, protocol, td->td_ucred,
+	    td);
+	if (error != 0)
+		return (error);
+	error = socreate_proto(prp, domain, &so2, type, protocol, td->td_ucred,
+	    td);
 	if (error != 0)
 		goto free1;
 	/* On success extra reference to `fp1' and 'fp2' is set by falloc. */

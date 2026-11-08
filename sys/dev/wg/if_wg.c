@@ -757,6 +757,7 @@ wg_socket_init(struct wg_softc *sc, in_port_t port)
 	 * to the network.
 	 */
 #ifdef INET
+	/* dq-ledger: kernel (wg(4) UDP sockets of the interface; I7) */
 	rc = socreate(AF_INET, &so4, SOCK_DGRAM, IPPROTO_UDP, cred, curthread);
 	if (rc)
 		goto out;
@@ -770,6 +771,7 @@ wg_socket_init(struct wg_softc *sc, in_port_t port)
 #endif
 
 #ifdef INET6
+	/* dq-ledger: kernel (wg(4) UDP sockets of the interface; I7) */
 	rc = socreate(AF_INET6, &so6, SOCK_DGRAM, IPPROTO_UDP, cred, curthread);
 	if (rc)
 		goto out;

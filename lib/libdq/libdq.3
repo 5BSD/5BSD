@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 7, 2026
+.Dd November 8, 2026
 .Dt LIBDQ 3
 .Os
 .Sh NAME
@@ -52,6 +52,7 @@
 .Nm dq_reply_lock ,
 .Nm dq_reply_ioctl ,
 .Nm dq_reply_errno_allowed ,
+.Nm dq_resolve_errno_allowed ,
 .Nm dq_serve_state_create ,
 .Nm dq_serve_state_destroy ,
 .Nm dq_serve_state_owners ,
@@ -189,6 +190,8 @@ DescriptorQueue controller library
 .Fc
 .Ft int
 .Fn dq_reply_errno_allowed "uint32_t op" "int error"
+.Ft int
+.Fn dq_resolve_errno_allowed "uint32_t rop" "int error"
 .Ft "struct dq_serve_state *"
 .Fn dq_serve_state_create "void"
 .Ft void
@@ -807,13 +810,23 @@ any errno.
 .It Dv DQ_OP_IOCTL
 .Er ENOTTY , EINVAL , EIO , EPERM , EACCES , ENXIO .
 .It Dv DQ_OP_RESOLVE
-one list for every lookup operation:
+an errno some resolve operation allows; per operation,
+.Fn dq_resolve_errno_allowed
+answers for
+.Fa rop
+.Pq a Dv DQ_ROP_* No value :
+.Bl -tag -width "DQ_ROP_SOCKETPAIR" -compact
+.It Dv DQ_ROP_SOCKET , DQ_ROP_SOCKETPAIR
+.Er EPERM , EACCES , EAFNOSUPPORT , EPROTONOSUPPORT , EPROTOTYPE ,
+.Er EOPNOTSUPP , ENOBUFS , EMFILE , ENFILE .
+.It every lookup operation
 .Er EPERM , ENOENT , EIO , ENXIO , E2BIG , ENOEXEC , EACCES , EBUSY ,
 .Er EEXIST , EXDEV , ENODEV , ENOTDIR , EISDIR , EINVAL , ETXTBSY , EFBIG ,
 .Er ENOSPC , EROFS , EMLINK , EAGAIN , ENAMETOOLONG , ENOTEMPTY , ELOOP ,
 .Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
 .Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
 .Er EAUTH , ENOATTR , EINTEGRITY .
+.El
 .El
 .Pp
 .Fn dq_dispatch
@@ -838,8 +851,12 @@ attaches the process named by the process descriptor
 .Fa procfd
 to the queue
 .Pq Dv DQ_IOC_ATTACH :
-from then on every name it, and every process it forks, resolves is
-posted as a
+from then on every name it, and every process it forks, resolves, and
+every
+.Xr socket 2
+and
+.Xr socketpair 2
+call they make, is posted as a
 .Dv DQ_OP_RESOLVE
 event and waits for the answer.
 The target is typically a
@@ -870,6 +887,29 @@ Any output pointer may be
 It fails with
 .Er EINVAL
 for another operation or a malformed record.
+A
+.Dv DQ_ROP_SOCKET
+or
+.Dv DQ_ROP_SOCKETPAIR
+body has empty strings, start kind
+.Dv DQ_START_NONE ,
+and the request in
+.Va drs_domain ,
+.Va drs_type
+(without the
+.Dv SOCK_CLOEXEC ,
+.Dv SOCK_CLOFORK
+and
+.Dv SOCK_NONBLOCK
+flags)
+and
+.Va drs_protocol
+(the protocol of the protocol switch the kernel found; for a switch whose
+own protocol is 0, such as raw IP,
+.Dv AF_UNIX
+or
+.Dv PF_ROUTE ,
+the caller's number as given and not validated).
 .Pp
 .Fn dq_reply_resolve_pass
 answers
@@ -877,17 +917,21 @@ answers
 the lookup proceeds unchanged.
 .Fn dq_reply_resolve_errno
 answers an errno, which becomes the system call's result; an errno
-outside the
-.Dv DQ_OP_RESOLVE
-list of
-.Fn dq_reply_errno_allowed
+outside the operation's list
+.Pq Fn dq_resolve_errno_allowed
 reaches the requester as
 .Er EIO .
 Every lookup must be answered: an unanswered one fails with
 .Er EIO
 at its deadline, and when the queue closes every lookup of an attached
 process fails with
-.Er EIO .
+.Er EIO ,
+every
+.Xr socket 2
+and
+.Xr socketpair 2
+with
+.Er EACCES .
 .Pp
 .Pa /usr/share/examples/dq/dqpass.c
 runs a command attached and answers every lookup
@@ -1190,7 +1234,9 @@ and
 .Fn dq_event_body
 return pointers into the caller's buffer.
 .Fn dq_reply_errno_allowed
-returns nonzero or 0.
+and
+.Fn dq_resolve_errno_allowed
+return nonzero or 0.
 .Fn dq_serve_state_create
 returns a state, or
 .Dv NULL

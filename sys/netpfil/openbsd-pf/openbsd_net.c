@@ -1223,6 +1223,7 @@ obsd_if_clone_vnet_detach(void)
 int
 obsd_socreate(int dom, struct socket **aso, int type, int proto)
 {
+	/* dq-ledger: kernel (pflow(4) export socket; I7) */
 	return (socreate(dom, aso, type, proto, curthread->td_ucred,
 	    curthread));
 }

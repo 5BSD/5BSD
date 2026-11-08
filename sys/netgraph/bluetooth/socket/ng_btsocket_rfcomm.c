@@ -528,6 +528,7 @@ ng_btsocket_rfcomm_connect(struct socket *so, struct sockaddr *nam,
 	 * might have already open session.
 	 */
 
+	/* dq-ledger: kernel (RFCOMM L2CAP session socket; I7) */
 	error = socreate(PF_BLUETOOTH, &l2so, SOCK_SEQPACKET,
 			BLUETOOTH_PROTO_L2CAP, td->td_ucred, td);
 
@@ -890,6 +891,7 @@ ng_btsocket_rfcomm_listen(struct socket *so, int backlog, struct thread *td)
 	 * might have already open session.
 	 */
 
+	/* dq-ledger: kernel (RFCOMM L2CAP session socket; I7) */
 	socreate_error = socreate(PF_BLUETOOTH, &l2so, SOCK_SEQPACKET,
 			BLUETOOTH_PROTO_L2CAP, td->td_ucred, td);
 

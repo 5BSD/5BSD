@@ -514,6 +514,10 @@ int	soconnectat(int fd, struct socket *so, struct sockaddr *nam,
 int	soconnect2(struct socket *so1, struct socket *so2);
 int	socreate(int dom, struct socket **aso, int type, int proto,
 	    struct ucred *cred, struct thread *td);
+int	socreate_find(int dom, int type, int proto, struct thread *td,
+	    struct protosw **prpp);
+int	socreate_proto(struct protosw *prp, int dom, struct socket **aso,
+	    int type, int proto, struct ucred *cred, struct thread *td);
 int	sodisconnect(struct socket *so);
 void	sodtor_set(struct socket *, so_dtor_t *);
 struct	sockaddr *sodupsockaddr(const struct sockaddr *sa, int mflags);

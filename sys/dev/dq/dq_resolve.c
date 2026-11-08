@@ -11,13 +11,16 @@
  * with the queue's deadline rules, answered PASS or an errno.  Fail closed
  * throughout (D136): a dead binding, a missed deadline and a lock the
  * requester must not hold while waiting all answer EIO without the
- * controller's word.
+ * controller's word.  socket(2) and socketpair(2) (1c-ii, D139) are
+ * consulted the same way with no path; a dead controller is EACCES to them,
+ * which they can return, where a lookup gets EIO.
  */
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
+#include <sys/counter.h>
 #include <sys/dqres.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -30,6 +33,7 @@
 #include <sys/refcount.h>
 #include <sys/sdt.h>
 #include <sys/sx.h>
+#include <sys/sysctl.h>
 
 #include <dev/dq/dq.h>
 #include <dev/dq/dq_var.h>
@@ -84,6 +88,22 @@ dq_binding_get(struct dq_queue *q)
 	return (nb);
 }
 
+/*
+ * System-wide witnesses of the two fail-closed counters, which outlive the
+ * queue whose ds2_* copy dies with it (kern.dq.stats.*, read-only).
+ */
+SYSCTL_DECL(_kern_dq);
+static SYSCTL_NODE(_kern_dq, OID_AUTO, stats, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+    "DescriptorQueue statistics of all queues");
+static COUNTER_U64_DEFINE_EARLY(dq_gstat_resolve_failclosed);
+SYSCTL_COUNTER_U64(_kern_dq_stats, OID_AUTO, resolve_failclosed, CTLFLAG_RD,
+    &dq_gstat_resolve_failclosed,
+    "Consultations refused without the controller's answer");
+static COUNTER_U64_DEFINE_EARLY(dq_gstat_resolve_unmarked);
+SYSCTL_COUNTER_U64(_kern_dq_stats, OID_AUTO, resolve_unmarked, CTLFLAG_RD,
+    &dq_gstat_resolve_unmarked,
+    "Kernel-space lookups by attached threads outside any intent or region");
+
 static void
 dq_binding_unmarked(struct dqres_binding *b)
 {
@@ -93,6 +113,7 @@ dq_binding_unmarked(struct dqres_binding *b)
 	DQ_LOCK(q);
 	q->q_stats.ds2_resolve_unmarked++;
 	DQ_UNLOCK(q);
+	counter_u64_add(dq_gstat_resolve_unmarked, 1);
 	SDT_PROBE1(dq, , , resolve__unmarked, q);
 }
 
@@ -103,7 +124,17 @@ dq_resolve_failclosed(struct dq_queue *q, int why)
 	DQ_LOCK(q);
 	q->q_stats.ds2_resolve_failclosed++;
 	DQ_UNLOCK(q);
+	counter_u64_add(dq_gstat_resolve_failclosed, 1);
 	SDT_PROBE2(dq, , , resolve__failclosed, q, why);
+}
+
+/* What a dead binding answers (D136): EIO to lookups, EACCES to sockets. */
+static int
+dq_resolve_dead_errno(const struct dqres_req *rq)
+{
+
+	return (rq->rq_op == DQ_ROP_SOCKET || rq->rq_op == DQ_ROP_SOCKETPAIR ?
+	    EACCES : EIO);
 }
 
 /*
@@ -146,12 +177,13 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	size_t bodylen;
 	char *p;
 	int error, rerror, ms;
+	bool dead;
 
 	q = b->db_queue;
 	if ((q->q_flags & DQ_Q_CLOSING) != 0) {
 		/* The controller is gone: fail closed (D136). */
 		dq_resolve_failclosed(q, 1);
-		return (EIO);
+		return (dq_resolve_dead_errno(rq));
 	}
 	if (!dq_resolve_may_wait(td, rq)) {
 		dq_resolve_failclosed(q, 2);
@@ -174,6 +206,9 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	rb->drs_startpathlen = rq->rq_startpathlen;
 	rb->drs_startpath2len = rq->rq_startpath2len;
 	rb->drs_object = rq->rq_object;
+	rb->drs_domain = rq->rq_domain;
+	rb->drs_type = rq->rq_type;
+	rb->drs_protocol = rq->rq_protocol;
 	p = (char *)(rb + 1);
 	memcpy(p, rq->rq_path, rq->rq_pathlen);
 	p += rq->rq_pathlen + 1;
@@ -208,10 +243,15 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	q->q_stats.ds2_resolves++;
 	if (rq->rq_class != 1)
 		q->q_stats.ds2_resolve_kernel++;
+	dead = (q->q_flags & DQ_Q_CLOSING) != 0;
 	DQ_UNLOCK(q);
 	if (error != 0) {
-		if (error == EIO)
+		if (error == EIO) {
+			/* The queue closed under the wait, or a deadline. */
 			dq_resolve_failclosed(q, 3);
+			if (dead)
+				error = dq_resolve_dead_errno(rq);
+		}
 		if (error == ERESTART && !rq->rq_may_restart)
 			error = EINTR;
 		return (error);
@@ -253,14 +293,25 @@ dq_resolve_init(void)
 }
 
 /*
- * The errnos a RESOLVE reply may carry: what a lookup and the operation
- * behind it can fail with on a real filesystem.  Anything else is EIO to
- * the requester and counted (N5 of 1b).
+ * The errnos a RESOLVE reply may carry: for socket(2) and socketpair(2),
+ * what they can fail with; for every lookup, what a lookup and the
+ * operation behind it can fail with on a real filesystem.  Anything else
+ * is EIO to the requester and counted (N5 of 1b).
  */
 bool
-dq_resolve_errno_allowed(int error)
+dq_resolve_errno_allowed(uint32_t rop, int error)
 {
 
+	if (rop == DQ_ROP_SOCKET || rop == DQ_ROP_SOCKETPAIR) {
+		switch (error) {
+		case EPERM: case EACCES: case EAFNOSUPPORT:
+		case EPROTONOSUPPORT: case EPROTOTYPE: case EOPNOTSUPP:
+		case ENOBUFS: case EMFILE: case ENFILE:
+			return (true);
+		default:
+			return (false);
+		}
+	}
 	switch (error) {
 	case EPERM: case ENOENT: case EIO: case ENXIO: case E2BIG:
 	case ENOEXEC: case EACCES: case EBUSY: case EEXIST: case EXDEV:
@@ -279,8 +330,9 @@ dq_resolve_errno_allowed(int error)
 
 /*
  * The reply body of a RESOLVE: an errno carries none; otherwise exactly a
- * struct dq_resolve_reply of kind PASS in 1c-i.  Any other kind is EINVAL
- * to the controller and the event stays in flight (D128).
+ * struct dq_resolve_reply of kind PASS in 1c-i and 1c-ii.  Any other kind
+ * (an FD for a socket included, stage 2) is EINVAL to the controller and
+ * the event stays in flight (D128).
  */
 int
 dq_resolve_reply_validate(int rerrno, const void *buf, size_t len)

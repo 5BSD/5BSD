@@ -264,6 +264,7 @@ __rpc_nconf2socket(const struct netconfig *nconf)
 		return 0;
 
 	so = NULL;
+	/* dq-ledger: kernel (kernel RPC client sockets; I7) */
 	error =  socreate(si.si_af, &so, si.si_socktype, si.si_proto,
 	    curthread->td_ucred, curthread);
 

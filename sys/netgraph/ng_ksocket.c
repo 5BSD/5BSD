@@ -664,6 +664,7 @@ ng_ksocket_newhook(node_p node, hook_p hook, const char *name0)
 			return (EINVAL);
 
 		/* Create the socket */
+		/* dq-ledger: kernel (ng_ksocket(4) node socket; I7) */
 		error = socreate(family, &priv->so, type, protocol,
 		   td->td_ucred, td);
 		if (error != 0)

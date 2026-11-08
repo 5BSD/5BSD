@@ -215,13 +215,18 @@ dqt_handle_resolve(struct dqt_ctl *c, const struct dq_event *ev,
 		s->start_kind = rb->drs_start_kind;
 		s->start2_kind = rb->drs_start2_kind;
 		s->pad1 = rb->drs_pad1;
+		s->domain = rb->drs_domain;
+		s->type = rb->drs_type;
+		s->protocol = rb->drs_protocol;
+		s->pathlen = rb->drs_pathlen;
 		(void)strlcpy(s->startpath2, sp2, sizeof(s->startpath2));
 		(void)strlcpy(s->path, path, sizeof(s->path));
 		(void)strlcpy(s->path2, path2, sizeof(s->path2));
 	}
-	if (c->resolve_hold_match[0] != '\0' &&
+	if ((c->resolve_hold_op != 0 && rb->drs_op == c->resolve_hold_op) ||
+	    (c->resolve_hold_match[0] != '\0' &&
 	    (strstr(path, c->resolve_hold_match) != NULL ||
-	    strstr(path2, c->resolve_hold_match) != NULL)) {
+	    strstr(path2, c->resolve_hold_match) != NULL))) {
 		dqt_hold_event(c, ev, 0, 0);
 		return (false);
 	}

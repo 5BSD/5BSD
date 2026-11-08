@@ -137,7 +137,7 @@ Not changed in stage 0, by decision: `kern_lockf.c` (D14), `struct pwd`
 | `sys/sys/filedesc.h` (`struct pwddesc`) | `pd_dqres` |
 | `sys/kern/vfs_lookup.c` (`namei_setup`, `namei_handle_root`), `kern_descrip.c` (`fgetvp_lookup`), `vfs_cache.c` (`cache_can_fplookup`, `vn_getcwd`) | the choke points (D39) |
 | `sys/kern/vfs_syscalls.c` (`chdir`, `fchdir`, `chroot`, `fchroot`), `mac_capability_capprotect.c` (`CP_OP_CHROOT`), `kern_jail.c` (`jail_attach`) | virtual cwd/root; `jail_attach` refused when attached |
-| `sys/kern/uipc_socket.c` (`socreate`), `uipc_syscalls.c` (`socketpair`) | `RESOLVE op=SOCKET/SOCKETPAIR` (D40) |
+| `sys/kern/uipc_socket.c` (`socreate` = `socreate_find` + jail test + `socreate_proto`), `uipc_syscalls.c` (`kern_socket`, `kern_socketpair`) | `RESOLVE op=SOCKET/SOCKETPAIR` (D40, D139, D155) |
 | `sys/kern/kern_exec.c` | I5(a) evaluated between `:710` and `:800`; `P2_DQ_EXECED` |
 | `sys/dev/mac_capability/mac_capability_dev.c` | caller trailer carries `attached` (11.6) |
 | `sys/dev/dq/dq_file.c` (`fo_flags`), `mac_vfs.c` (`mac_vnode_prepare_mmap`, `mac_mmap_image_close`) | dq fileops carry `DFLAG_PRIVWRITE` (the `vm_mmap.c:470` test is flag-based since stage 0, D65); NULL-vnode no-op in the two MAC helpers |
@@ -1161,13 +1161,25 @@ a lookup without `USER` is `EINVAL`; `FD` with `FWRITE` when policy is
 `DENY` is `EINVAL`; set-id bits `EINVAL`. `OPENNAMED` (`O_NAMEDATTR`) on a
 served start is refused `EOPNOTSUPP` before any event (D43).
 
-`SOCKET`: consulted **inside `socreate`** after `PR_CAPATTACH`/`ECAPMODE`,
-`prison_check_af` and `pffindproto` have run (`uipc_socket.c:1062-1083`),
-so the controller sees the resolved protocol and no event precedes the
-kernel's own checks (D40). `socketpair` posts one `SOCKETPAIR` event whose
-`FD` reply mints both ends connected. Kernel-origin `socreate` callers
-(NFS, RPC, NLM, iSCSI, wg, vxlan, geneve, gre, SCTP, netgraph) are never
-consulted (I7).
+`SOCKET` (as built in 1c-ii, D139/D155): `socreate` is split into
+`socreate_find` (`pffindproto` and its errors, then the
+`PR_CAPATTACH`/`ECAPMODE` test) and `socreate_proto` (the socket itself);
+`socreate` stays their composition with `prison_check_af` between them, so
+kernel-origin callers (NFS, RPC, NLM, iSCSI, wg, vxlan, geneve, gre, SCTP,
+netgraph, TCP-over-UDP tunnelling) are never consulted (I7). `kern_socket`
+runs `mac_socket_check_create` → `socreate_find` → consult →
+`prison_check_af` → `falloc` → `socreate_proto`, so the controller sees
+the resolved protocol (a wildcard protosw such as raw IP posts the
+requested protocol), no event precedes the MAC, protocol and capability
+checks, the jail's family test applies after `PASS`, and no descriptor
+slot exists while the consultation waits. The protosw is found again
+after the wait and must be the same (a protocol module may unregister).
+`socketpair` posts one `SOCKETPAIR` event before either socket or slot
+exists; in stage 2 its `FD` reply mints both ends connected. Until then
+an `FD` reply is `EINVAL` to the controller. A dead controller is
+`EACCES` to both calls (D136); their errno allow-list is their own
+(`EPERM`, `EACCES`, `EAFNOSUPPORT`, `EPROTONOSUPPORT`, `EPROTOTYPE`,
+`EOPNOTSUPP`, `ENOBUFS`, `EMFILE`, `ENFILE`).
 
 ### 11.4 cwd, root, `getcwd`, jails
 
@@ -1270,8 +1282,9 @@ step 1 is not optional.
 
 ## 12. Sockets
 
-A served socket is a `struct socket` created by a new
-`socreate_proto(protosw, type, cred, td, &so)` in `uipc_socket.c` — the
+A served socket is a `struct socket` created by
+`socreate_proto(protosw, dom, &so, type, proto, cred, td)` in
+`uipc_socket.c` (split out of `socreate` in 1c-ii, D155) — the
 `socreate` sequence with a caller-supplied, `pr_init`-filled protosw,
 needed because `socreate` only reaches protosws registered in a domain and
 TCP owns `(SOCK_STREAM, IPPROTO_TCP)`. dq keeps one protosw per presented
@@ -1506,7 +1519,7 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | `UIO_SYSSPACE` as the kernel-origin criterion (rev 3) | `do_execve` and Linux compat copy paths in first (`kern_exec.c:561`) |
 | attachment inherit in `kern_fork.c` (rev 3) | `rfork(RFCFDG)` builds its `pwddesc` in `pdinit`; a one-call escape |
 | SMR decline in `cache_fplookup_dirfd` (rev 3) | `AT_FDCWD`/absolute starts never pass it; the partial fallback via `ni_startdir` bypasses all |
-| `RESOLVE op=SOCKET` in `kern_socket` (rev 3) | Capsicum, jail and protocol defaulting happen inside `socreate` |
+| `RESOLVE op=SOCKET` in `kern_socket` (rev 3) | Capsicum, jail and protocol defaulting happen inside `socreate` (later adopted with `socreate` split, D139: the consultation sits between the parts) |
 | refuse set-id exec under attachment, or detach-then-exec (rev 3) | detach-then-exec left an unattached process when exec failed after the detach point; refusal breaks `ping`/`su` needlessly; `NOSUID` semantics run them unprivileged and their privileged operations become served `RESOLVE`s |
 | observers with data by default (rev 3) | a content tap into `/var/log` |
 | a per-process syscall table routing to userland | catches syscalls only (kernel-origin lookups escape); runs before the kernel's enforcement; visible ABI; nothing for the descriptor side |
@@ -1636,6 +1649,7 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D110 | 2026-11-07 | Stage 1 complete: the OES events for the 1b operations (`9367e9c56a4`) landed on `dev` as merge `3f330ee172d`; the merged GENERIC passed `sys/dq`, `lib/libdq`, the whole `sys/security/oes` suite, `sys/file` and `sys/vm`, 950/953 (run 26). The three non-passes — `devctl_device_test` metadata, OES `test_event_metadata` access timestamp, OES `NOTIFY_SOCKET_POLL` — and two shutdown lock-order reversals in tmpfs/devfs/ufs unmount are identical on the stage 0 kernel without DescriptorQueue (issue file 2026-11-07-oes-suite-preexisting). Nothing installed on the host, no reboot | run 26 | stage 1c (resolution) starts from section 11 |
 | D111-D153 | 2026-11-07 | Stage 1c planned against the code (exploration, pre-plan decisions D111-D121, plan revisions 1 and 2, independent review twice: "not yet" with seven blocking items — a path re-read on namei restart bypassing a cached answer, ATTACH racing pwddesc replacement and fork, fd-table sharing, the own-queue scan not atomic with the commit, a wait under `mnt_renamelock`, ERESTART escaping namei, and I5 gaps through `CAP_AUTH_INSTALL` — then "code may begin"). Key decisions: the attachment is inherited in `pdinit` and carried at every `pwddesc` replacement and late in `do_fork`; ATTACH requires a sole, unshared `pwddesc` and fd table, holds the target's table across the scan and the commit, sets `P2_NO_NEW_PRIVS`, and checks `p_candebug`; lookups carry an explicit intent with per-slot cached answers re-validated against the re-copied path; kernel-origin lookups of an attached process are consulted fail-closed with `PASS`/errno answers only; resolver waits are guarded by always-maintained lock counters and bounded for kernel lookups; `setcred(2)`, `NODE_OP_SET_CRED`, `jail_attach`, `CAP_AUTH_INSTALL` and core dumps are refused while attached; sockets are consulted from `kern_socket`/`kern_socketpair` before the jail's address-family check; `mac_dq` lives in `dq.ko`. Built in five series (attachment and consultation; sockets; served results and the virtual namespace; I6 and the plane rule; inotify and the launcher). Plan of record: scratch `stage1c-plan.md` (revision 2 with 0c) | 1c plan reviews 2026-11-07 | |
 | D154 | 2026-11-08 | Stage 1c series i (attachment and consultation) built and reviewed twice by an independent reviewer ("not yet" both times; every finding fixed). As built, differing from the plan: marks are made by generated `kern_X` → `kern_X_dqimpl` wrappers for `UIO_USERSPACE` paths, so freebsd32 and Linux are covered through the same `kern_*`; a user path the kernel copies first is bound by a *content slot* (bytes, dirfd, segment) or a pointer slot consulted ahead (`dqres_consult_slot`: swapon, swapoff, the `Q_QUOTAON` quota file) and compared at its lookup, with start vnodes held and a change failing `EIO`; slot 1 of rename/link has its own start kind, vnode and hint, carried in the same event (`dq_resolve_body` 96 bytes, a fourth string, `DQ_RF_STARTPATH2_VALID`) and a change re-consults via `ERELOOKUP`; any other kernel-space lookup by an attached thread outside a `TDP2_DQ_NORESOLVE` region of kernel-computed paths fails `EPERM` and is counted (`ds2_resolve_unmarked`), never passed; attached callers get `EPERM` for md vnode attach, the CTL block backend, veriexec load, binmisc add, ZFS file vdevs and cachefile, netgraph `AF_LOCAL` ksocket, the vnode-reclaim sysctl, alq log paths, the OES mute path and pNFS server paths; unmount of an unresolvable path by an attached caller returns its error with no mount-on-name fallback; `EAGAIN` answers to rename/link/fhlink become `EIO`; one errno allow-list for all resolve ops; the ledger (`sys/tools/dq_resolve_ledger.sh`, 248 rows) classifies every user and kernel-space lookup and fails every kernel build on an unmarked or unclassified one. No `__FreeBSD_version` bump (5BSD does not move the shared sequence); `struct thread` and `struct pwddesc` grew, so out-of-tree modules rebuild. Plane-on VM run 31: `sys/dq`, `lib/libdq`, `sys/file`, `sys/kern/execve` and the PASS oracle 346/347, the one being the baselined `devctl_device_test` metadata | 1c-i reviews 2026-11-08, runs 27-31 | |
+| D155 | 2026-11-08 | Stage 1c series ii (sockets) built and reviewed ("not yet"; no kernel defect; findings fixed). `socreate` split into `socreate_find` (protocol lookup and its errors, the `PR_CAPATTACH` test) and `socreate_proto` (the socket); `socreate` stays the composition with `prison_check_af` between them, so kernel callers are never consulted. `kern_socket`: MAC → `socreate_find` → `RESOLVE SOCKET` → `prison_check_af` → `falloc` → `socreate_proto`; `kern_socketpair` posts one `SOCKETPAIR` before either socket. This order holds for every process, attached or not: with a full descriptor table a bad domain, type or protocol, `ECAPMODE` or a jail family refusal now wins over `EMFILE` (upstream gives `EMFILE`), `ktrcapfail` is recorded even with a full table, and a failed request no longer briefly occupies a descriptor slot. Body: `drs_domain`, `drs_type` without `SOCK_*` flags, `drs_protocol` = the found protosw's `pr_protocol`; for a protosw whose `pr_protocol` is 0 the caller's number is posted as given and unvalidated (raw IP: the IP protocol the socket uses; `AF_UNIX`/`PF_ROUTE`: ignored, `SO_PROTOCOL` reports 0); start `NONE`, empty strings; no ABI change (1c-i reserved the fields). As built beyond the plan: after the wait `pffindproto` runs again and must return the same protosw, type and posted protocol (`protosw_unregister` exists: SCTP, SEND, pf divert), else `EPROTONOSUPPORT`, and the capability-mode test is repeated without a second `ktrcapfail`; a socket list of reply errnos (`EPERM`, `EACCES`, `EAFNOSUPPORT`, `EPROTONOSUPPORT`, `EPROTOTYPE`, `EOPNOTSUPP`, `ENOBUFS`, `EMFILE`, `ENFILE`; lookups keep 1c-i's list; libdq `dq_resolve_errno_allowed`); a dead controller is `EACCES` to both calls, a missed deadline `EIO`, both counted in `ds2_resolve_failclosed` and in the system-wide `kern.dq.stats.resolve_failclosed` (with `kern.dq.stats.resolve_unmarked`, counter(9), outliving the queue). Not consulted: sockets derived from a consulted one (`accept`, `accept4`, `sctp_peeloff`), `SCM_RIGHTS` receipt (no creation), children (they inherit the attachment), and kernel `socreate` on behalf of a request (NFS mount, NLM, iSCSI, wg/gre ioctls, netgraph ksocket, UDP tunnelling sysctls; I7). The MAC check stays before the protocol lookup (upstream order). Abstract `AF_UNIX` names are 1c-i's (`dqres_consult_sun`, rflag `ABSTRACT`), unchanged. The ledger records the two consult sites and classifies every `socreate`/`socreate_proto`/`sopeeloff` call in the scanned trees (also `nfs`, `nlm`, `rpc`, `netpfil`) as `CONSULT`, `DERIVED` or `KERNEL` with a reason, failing the build on an unclassified one (281 rows, 31 `SOCKET`) | 1c-ii build and review 2026-11-08 | plane-on VM run 35: `sys/dq`, `lib/libdq`, `sys/kern`, `sys/netinet` 3839/3955, 0 broken, no LOR or panic; the 11 failures (`inotify_lifetime_test:directory`, Linux adjtime, break_signals, peerpidfd, pkey, statx2, xattrat, and four needing the disposable ZFS-root VM) fail identically on dev before 1c-i (baseline run 34); the 105 skips are environmental plus `mac_denial_no_event` (no policy denies socket creation) |
 
 ### 20.1 Origin
 

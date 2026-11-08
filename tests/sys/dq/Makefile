@@ -31,6 +31,7 @@ ATF_TESTS_C+=	dq_cache_test
 ATF_TESTS_C+=	dq_async_test
 ATF_TESTS_C+=	dq_attach_test
 ATF_TESTS_C+=	dq_resolve_test
+ATF_TESTS_C+=	dq_socket_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_oracle_test
 
@@ -48,6 +49,8 @@ LIBADD.dq_oes_test+=	oes
 
 # jail_setv(3) for the I5 jail_attach row.
 LIBADD.dq_resolve_test+=	jail
+# jail_setv(3) for the address-family row.
+LIBADD.dq_socket_test+=	jail
 
 # The controller thread, the harness's kinfo_getfile(3) oracle.
 LIBADD+=	dq pthread util
@@ -62,6 +65,9 @@ TEST_METADATA.dq_mac_test+=	is_exclusive="true"
 TEST_METADATA.dq_async_test+=	is_exclusive="true"
 # Changes kern.dq.default_deadline_ms and creates a jail: run alone.
 TEST_METADATA.dq_resolve_test+=	is_exclusive="true"
+# Creates a jail, sets kern.dq.default_deadline_ms and
+# net.inet.tcp.udp_tunneling_port, traces with dtrace: run alone.
+TEST_METADATA.dq_socket_test+=	is_exclusive="true"
 # Runs whole suites twice under kyua: alone, and with time.
 TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="3600"
 
@@ -74,6 +80,12 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
+
+# The socket commands the oracle runs (stage 1c-ii).
+PROGS+=		dq_sockprog
+SRCS.dq_sockprog=	dq_sockprog.c
+MAN.dq_sockprog=
+BINDIR.dq_sockprog=	${TESTSDIR}
 
 WARNS?=		6
 

@@ -80,6 +80,12 @@ commands_body()
 	same_both_ways ./work/s.sh arg
 	dqpass -o r ./work/s.sh x >/dev/null
 	atf_check -o match:'exec_interp' cat r
+	# socket(2) and socketpair(2) (1c-ii): a program, and nc(1) over an
+	# AF_UNIX stream socket (bind, connect, socket).
+	same_both_ways "$(atf_get_srcdir)/dq_sockprog"
+	dqpass -o r "$(atf_get_srcdir)/dq_sockprog" >/dev/null
+	atf_check -o match:'socket ' -o match:'socketpair ' cat r
+	same_both_ways /bin/sh -c 'cd work && rm -f ns && { nc -lU ns > got & } && i=0 && while [ ! -S ns ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done && echo hi | nc -NU ns && wait && cat got && rm -f ns got'
 }
 
 # kyua's per-case results, normalized: "program:case result", sorted.

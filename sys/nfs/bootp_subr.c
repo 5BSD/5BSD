@@ -1657,6 +1657,7 @@ retry:
 #endif
 	}
 
+	/* dq-ledger: kernel (BOOTP at boot) */
 	error = socreate(AF_INET, &bootp_so, SOCK_DGRAM, 0, td->td_ucred, td);
 	if (error != 0)
 		panic("%s: socreate, error=%d", __func__, error);

@@ -370,6 +370,7 @@ ctl_ha_connect(struct ha_softc *softc)
 	int error;
 
 	/* Create the socket */
+	/* dq-ledger: kernel (CTL HA peer link, from its kthread) */
 	error = socreate(PF_INET, &so, SOCK_STREAM,
 	    IPPROTO_TCP, td->td_ucred, td);
 	if (error != 0) {
@@ -434,6 +435,7 @@ ctl_ha_listen(struct ha_softc *softc)
 
 	/* Create the socket */
 	if (softc->ha_lso == NULL) {
+		/* dq-ledger: kernel (CTL HA peer link, from its kthread) */
 		error = socreate(PF_INET, &softc->ha_lso, SOCK_STREAM,
 		    IPPROTO_TCP, td->td_ucred, td);
 		if (error != 0) {
