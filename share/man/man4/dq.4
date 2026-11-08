@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 7, 2026
+.Dd November 8, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -481,7 +481,13 @@ any errno.
 .Er EDQUOT , ESTALE , EOPNOTSUPP , EINTR , EAFNOSUPPORT , EPROTONOSUPPORT ,
 .Er EADDRINUSE , EADDRNOTAVAIL , ECONNREFUSED , EPROTOTYPE , EFTYPE ,
 .Er EAUTH , ENOATTR , EINTEGRITY
-(one list for every lookup operation).
+(one list for every lookup operation);
+for
+.Dv DQ_ROP_SOCKET
+and
+.Dv DQ_ROP_SOCKETPAIR :
+.Er EPERM , EACCES , EAFNOSUPPORT , EPROTONOSUPPORT , EPROTOTYPE ,
+.Er EOPNOTSUPP , ENOBUFS , EMFILE , ENFILE .
 .El
 .Ss Reading the queue
 .Xr read 2
@@ -1841,7 +1847,11 @@ event carrying both paths), symlink, mkdir, mknod, mkfifo, the attribute
 and truncate calls, execve, chdir, chroot, the extended attribute and
 ACL calls, revoke,
 .Dv AF_UNIX
-bind, connect and datagram sendto, and the
+bind, connect and datagram sendto,
+.Xr socket 2
+and
+.Xr socketpair 2 ,
+and the
 .Dv INTERNAL
 calls
 .Pq Fn __mac_get_file , undelete , quotactl ;
@@ -1908,6 +1918,82 @@ the two paths may start from different directories.
 The caller carries
 .Dv DQ_CALLER_F_ATTACHED .
 .Pp
+An
+.Dv AF_UNIX
+name whose first byte is NUL (a Linux abstract name) is looked up
+nowhere: its
+.Dv DQ_ROP_BIND
+or
+.Dv DQ_ROP_CONNECT
+event carries
+.Dv DQ_RF_ABSTRACT ,
+start
+.Dv DQ_START_NONE
+and the name's bytes after the NUL as the path, with the exact length in
+.Va drs_pathlen
+(the bytes may hold further NULs).
+.Pp
+.Xr socket 2
+posts one
+.Dv DQ_ROP_SOCKET
+event and
+.Xr socketpair 2
+one
+.Dv DQ_ROP_SOCKETPAIR
+event for the pair, with no path, start
+.Dv DQ_START_NONE ,
+and the request in
+.Va drs_domain ,
+.Va drs_type
+(without
+.Dv SOCK_CLOEXEC ,
+.Dv SOCK_CLOFORK
+and
+.Dv SOCK_NONBLOCK )
+and
+.Va drs_protocol ,
+the protocol of the protocol switch the kernel found (protocol 0 for
+a stream on
+.Dv AF_INET
+arrives as
+.Dv IPPROTO_TCP ) .
+For a protocol switch whose own protocol is 0 the caller's protocol
+number is posted as given and not validated: for raw IP it is the IP
+protocol the socket uses; for
+.Dv AF_UNIX
+and
+.Dv PF_ROUTE
+the socket ignores it and
+.Dv SO_PROTOCOL
+reports 0.
+The event is posted after the MAC check, the protocol lookup and the
+capability-mode test, which fail with no event, and before the jail's
+address-family test and before any descriptor is allocated: a refused
+socket leaves nothing behind.
+.Pp
+Only
+.Xr socket 2
+and
+.Xr socketpair 2
+are consulted.
+Sockets derived from a consulted one are not:
+.Xr accept 2 ,
+.Xr accept4 2
+and
+.Xr sctp_peeloff 2 .
+Receiving a socket descriptor with
+.Dv SCM_RIGHTS
+creates nothing and is not consulted, and children of an attached
+process inherit the attachment.
+Sockets the kernel creates itself, also on behalf of a request (an NFS
+mount, NLM, iSCSI, the
+.Xr wg 4
+and
+.Xr gre 4
+ioctls,
+.Xr ng_ksocket 4 ,
+TCP and SCTP UDP tunnelling), are never consulted.
+.Pp
 Nothing is posted for what never reaches a lookup: refusals of
 capability mode
 .Pq Er ECAPMODE , Er ENOTCAPABLE ,
@@ -1952,10 +2038,15 @@ of kind
 and zero padding; anything else is
 .Er EINVAL
 to the controller and the event stays in flight.
-An errno outside the
+An errno outside the operation's
 .Dv DQ_OP_RESOLVE
 allow-list reaches the requester as
 .Er EIO .
+A
+.Dv DQ_RESOLVE_FD
+answer to a socket event is
+.Er EINVAL
+to the controller (served sockets come in stage 2).
 An
 .Er EAGAIN
 answer to
@@ -2003,8 +2094,17 @@ at once and counts a drop.
 .Sy Failing closed .
 When the controller's queue closes, every waiting lookup and every later
 lookup of an attached process fails with
-.Er EIO :
+.Er EIO ,
+and every waiting and later
+.Xr socket 2
+and
+.Xr socketpair 2
+with
+.Er EACCES
+(which they can return):
 an attached process never reaches the real namespace unconsulted.
+A socket event that misses its deadline fails with
+.Er EIO .
 A lookup attempted while the process holds a lock the consultation could
 not wait under fails closed too.
 Both count in
@@ -2271,10 +2371,16 @@ Consultations answer only
 or an errno; served results, served directories, a virtual working
 directory and root
 .Pq Va da_rootfd , da_cwdfd
-come in stage 1c-iii, sockets
-.Pq Dv DQ_ROP_SOCKET , DQ_ROP_SOCKETPAIR
-in 1c-ii, the rules on passing served descriptors to unattached processes
-in 1c-iv.
+come in stage 1c-iii, the rules on passing served descriptors to
+unattached processes in 1c-iv.
+Stage 1c-ii adds
+.Xr socket 2
+and
+.Xr socketpair 2
+.Pq Dv DQ_ROP_SOCKET , DQ_ROP_SOCKETPAIR ,
+answered
+.Dv DQ_RESOLVE_PASS
+or an errno.
 Consequences of the attachment that differ from an unattached run, by
 design: set-id and authority transitions do not happen,
 .Xr jail_attach 2 ,
@@ -2335,6 +2441,15 @@ The deadline a policy of
 gets (30000); 0 means none.
 .It Va queues
 Read-only: open queues.
+.It Va stats.resolve_failclosed
+Read-only: consultations refused without the controller's answer, over
+all queues since boot (each queue's own count is
+.Va ds2_resolve_failclosed ,
+gone with the queue).
+.It Va stats.resolve_unmarked
+Read-only: kernel-space lookups by attached threads outside any intent
+or exempt region, over all queues since boot
+.Pq Va ds2_resolve_unmarked .
 .El
 .Sh DTRACE
 The
