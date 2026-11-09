@@ -77,6 +77,21 @@ extra_script=${EXTRA_SCRIPT:-}
 [ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
 extra_dir=${EXTRA_DIR:-}
 [ -z "$extra_dir" ] || [ -d "$extra_dir" ] || die "no such EXTRA_DIR: $extra_dir"
+# LINUX_COMPAT_DIR: a host directory holding compat/linux/... (test data, e.g.
+# the overlay staged by stage-linux-compat.sh); its tree is installed under
+# /compat/linux with its symlinks and modes, and linprocfs and linsysfs are
+# mounted at /compat/linux/proc and /compat/linux/sys.  The plane refuses a
+# late kldload, so pass linux64_load, linprocfs_load and linsysfs_load in
+# LOADER_EXTRA as well.
+linux_compat_dir=${LINUX_COMPAT_DIR:-}
+if [ -n "$linux_compat_dir" ]; then
+	[ -d "$linux_compat_dir/compat/linux" ] ||
+	    die "LINUX_COMPAT_DIR has no compat/linux: $linux_compat_dir"
+	linux_compat_dir=$(cd "$linux_compat_dir" && pwd)
+	# Checked here, not in the manifest pipeline, where die cannot stop us.
+	bad=$(cd "$linux_compat_dir" && find compat/linux -print | grep -v '^[A-Za-z0-9_./+-]*$' || true)
+	[ -z "$bad" ] || die "LINUX_COMPAT_DIR has unsupported path names: $bad"
+fi
 cpus=${CPUS:-4} mem=${MEM_MB:-8192} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
@@ -164,6 +179,12 @@ cat > "$x/fstab" <<'EOF'
 tmpfs		/tmp	tmpfs	rw,mode=1777	0	0
 tmpfs		/Capabilities/Run	tmpfs	rw,mode=0700	0	0
 EOF
+if [ -n "$linux_compat_dir" ]; then
+	cat >> "$x/fstab" <<'EOF'
+linprocfs	/compat/linux/proc	linprocfs	rw	0	0
+linsysfs	/compat/linux/sys	linsysfs	rw	0	0
+EOF
+fi
 cat > "$x/rc.conf" <<'EOF'
 hostname="kyua-planeon"
 sendmail_enable="NONE"
@@ -403,6 +424,24 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 			case $b in *[!A-Za-z0-9_.-]*) die "EXTRA_DIR file name: $b";; esac
 			echo "./root/vm-extra.d/$b type=file uname=root gname=wheel mode=0555 contents=$(cd "$extra_dir" && pwd)/$b"
 		done
+	fi
+	if [ -n "$linux_compat_dir" ]; then
+		# Directories, symlinks and files of the overlay, modes kept;
+		# the mount points for linprocfs and linsysfs.
+		echo "./compat type=dir uname=root gname=wheel mode=0755"
+		(cd "$linux_compat_dir" && find compat/linux -print | env -i LC_ALL=C sort) |
+		while read -r p; do
+			mode=$(stat -f %Lp "$linux_compat_dir/$p")
+			if [ -L "$linux_compat_dir/$p" ]; then
+				echo "./$p type=link uname=root gname=wheel mode=0755 link=$(readlink "$linux_compat_dir/$p")"
+			elif [ -d "$linux_compat_dir/$p" ]; then
+				echo "./$p type=dir uname=root gname=wheel mode=$mode"
+			elif [ -f "$linux_compat_dir/$p" ]; then
+				echo "./$p type=file uname=root gname=wheel mode=$mode contents=$linux_compat_dir/$p"
+			fi
+		done
+		echo "./compat/linux/proc type=dir uname=root gname=wheel mode=0555"
+		echo "./compat/linux/sys type=dir uname=root gname=wheel mode=0555"
 	fi
 } | awk 'NR == 1 { print; next } NF { print }' > "$work/METALOG.raw"
 # Keep one record per path (makefs rejects duplicates in manifest mode); the
