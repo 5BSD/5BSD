@@ -47,6 +47,7 @@
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/pmap.h>
+#include <vm/vm_phys.h>
 #include <vm/vm_map.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_param.h>
@@ -284,8 +285,44 @@ SYSCTL_INT(_hw_vmm, OID_AUTO, hypercalls_enabled, CTLFLAG_RWTUN,
     &hypercalls_enabled, 0,
     "Enable hypercalls on all guests");
 
-static int vm_hypertrace_copyin(struct vcpu *, struct vm_guest_paging *,
-    uint64_t, void *, size_t);
+/*
+ * Copy to or from guest memory in DTrace probe context, which can neither
+ * fault, sleep nor take a lock.  vm_handle_smccc_call() holds the VM's stage
+ * 2 pmap lock across hypertrace_probe(), so the translations stay put; the
+ * guest tables and data are read through the direct map, RAM only.
+ */
+static int
+vm_hypertrace_copy_locked(struct vcpu *vcpu, struct vm_guest_paging *paging,
+    uint64_t gla, void *buf, size_t len, vm_prot_t prot)
+{
+	pmap_t pmap;
+	vm_paddr_t pa;
+	uint64_t gpa;
+	size_t done, chunk;
+	int error, fault;
+
+	pmap = vmspace_pmap(vm_vmspace(vcpu->vm));
+	if (gla == 0 || len == 0 || gla > UINT64_MAX - (len - 1))
+		return (EFAULT);
+	for (done = 0; done < len; done += chunk) {
+		error = arm64_gla2gpa_locked(vcpu->cookie, paging, gla + done,
+		    prot, &gpa, &fault, pmap);
+		if (error != 0 || fault != 0)
+			return (EFAULT);
+		chunk = MIN(len - done, PAGE_SIZE - (gpa & PAGE_MASK));
+		pa = pmap_s2_extract_locked(pmap, gpa, prot);
+		if (pa == 0 || !PHYS_IN_DMAP(pa) ||
+		    vm_phys_paddr_to_vm_page(pa) == NULL)
+			return (EFAULT);
+		if ((prot & VM_PROT_WRITE) != 0)
+			memcpy((void *)PHYS_TO_DMAP(pa),
+			    (const uint8_t *)buf + done, chunk);
+		else
+			memcpy((uint8_t *)buf + done,
+			    (const void *)PHYS_TO_DMAP(pa), chunk);
+	}
+	return (0);
+}
 
 static int
 vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
@@ -297,8 +334,8 @@ vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
 	    dst == NULL || length == 0 ||
 	    length > sizeof(struct trapframe))
 		return (EINVAL);
-	return (vm_hypertrace_copyin(vhdl->vcpu, vhdl->paging, gla, dst,
-	    length));
+	return (vm_hypertrace_copy_locked(vhdl->vcpu, vhdl->paging, gla, dst,
+	    length, VM_PROT_READ));
 }
 
 static int
@@ -328,10 +365,6 @@ vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
 {
 	const struct vm_hdl *vhdl = handle;
 	struct vm_guest_paging user_paging;
-	uint64_t gpa;
-	void *cookie, *hva;
-	size_t done, chunk;
-	int error, fault;
 
 	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
 	    src == NULL || gla == 0 || length == 0 || length > 8 ||
@@ -341,21 +374,8 @@ vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
 		return (EOPNOTSUPP);
 	user_paging = *vhdl->paging;
 	user_paging.flags &= ~VM_GP_M_MASK;
-	for (done = 0; done < length; done += chunk) {
-		error = vm_gla2gpa_nofault(vhdl->vcpu, &user_paging,
-		    gla + done, VM_PROT_WRITE, &gpa, &fault);
-		if (error != 0 || fault != 0)
-			return (EFAULT);
-		chunk = MIN(length - done, PAGE_SIZE - (gpa & PAGE_MASK));
-		cookie = NULL;
-		hva = vm_gpa_hold(vhdl->vcpu, gpa, chunk, VM_PROT_WRITE,
-		    &cookie);
-		if (hva == NULL)
-			return (EFAULT);
-		memcpy(hva, (const uint8_t *)src + done, chunk);
-		vm_gpa_release(cookie);
-	}
-	return (0);
+	return (vm_hypertrace_copy_locked(vhdl->vcpu, &user_paging, gla,
+	    __DECONST(void *, src), length, VM_PROT_WRITE));
 }
 
 static int
@@ -1119,6 +1139,27 @@ vm_hypertrace_copyin(struct vcpu *vcpu, struct vm_guest_paging *paging,
 	return (0);
 }
 
+/*
+ * Fire a guest probe with the VM's stage 2 pmap locked, so that DTrace can
+ * read guest memory in probe context (vm_hypertrace_copy_locked()).  Take and
+ * drop the lock outside probe context, since mutex instrumentation can itself
+ * fire probes, and drop the event rather than wait when the lock is contended.
+ */
+static uint64_t
+vm_hypertrace_probe(struct vcpu *vcpu, struct vm_hdl *handle,
+    hypertrace_id_t id, hypertrace_args_t *args)
+{
+	pmap_t pmap;
+	int error;
+
+	pmap = vmspace_pmap(vm_vmspace(vcpu->vm));
+	if (!PMAP_TRYLOCK(pmap))
+		return ((uint64_t)-2);
+	error = hypertrace_probe(handle, id, args);
+	PMAP_UNLOCK(pmap);
+	return (error == 0 ? 0 : (uint64_t)-2);
+}
+
 static int
 vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 {
@@ -1166,9 +1207,9 @@ vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 						handle.vcpu = vcpu;
 						handle.paging = &paging;
 						handle.tid = tid;
-						result = hypertrace_probe(&handle,
-						    (hypertrace_id_t)id, &args) == 0 ?
-						    0 : (uint64_t)-2;
+						result = vm_hypertrace_probe(vcpu,
+						    &handle, (hypertrace_id_t)id,
+						    &args);
 					}
 				}
 			}

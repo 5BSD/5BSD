@@ -46,6 +46,7 @@
 #include <vm/vm_map.h>
 #include <vm/vm_page.h>
 #include <vm/vm_param.h>
+#include <vm/vm_phys.h>
 
 #include <machine/vm.h>
 #include <machine/cpufunc.h>
@@ -876,11 +877,35 @@ ptp_hold(struct vcpu *vcpu, vm_paddr_t ptpphys, size_t len, void **cookie)
 	return (ptr);
 }
 
+/*
+ * A guest translation table page, for a walker that holds the guest's locked
+ * stage 2 pmap and so can neither hold the page nor take the lock again:
+ * resolve it through the stage 2 tables and read it through the direct map.
+ * Only RAM is read; a table in device memory fails the walk.
+ */
+static void *
+ptp_map_locked(pmap_t pmap, vm_paddr_t ptpphys)
+{
+	vm_paddr_t pa;
+
+	pa = pmap_s2_extract_locked(pmap, ptpphys, VM_PROT_READ);
+	if (pa == 0 || !PHYS_IN_DMAP(pa) ||
+	    vm_phys_paddr_to_vm_page(pa) == NULL)
+		return (NULL);
+	return ((void *)PHYS_TO_DMAP(pa));
+}
+
 /* log2 of the number of bytes in a page table entry */
 #define	PTE_SHIFT	3
-int
-vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
-    int prot, uint64_t *gpa, int *is_fault)
+
+/*
+ * Translate a guest virtual address.  With a NULL pmap, hold each table page;
+ * otherwise the caller holds that stage 2 pmap's lock and the tables are read
+ * without blocking (ptp_map_locked()).
+ */
+static int
+gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
+    int prot, uint64_t *gpa, int *is_fault, pmap_t locked)
 {
 	struct hypctx *hypctx;
 	void *cookie;
@@ -1036,7 +1061,11 @@ vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
 			pte_addr += PAGE_SIZE;
 		}
 
-		ptep = ptp_hold(hypctx->vcpu, pte_addr, PAGE_SIZE, &cookie);
+		if (locked != NULL)
+			ptep = ptp_map_locked(locked, pte_addr);
+		else
+			ptep = ptp_hold(hypctx->vcpu, pte_addr, PAGE_SIZE,
+			    &cookie);
 		if (ptep == NULL)
 			goto error;
 		pte = ptep[idx];
@@ -1110,6 +1139,27 @@ fault:
 	*is_fault = 1;
 	ptp_release(&cookie);
 	return (0);
+}
+
+int
+vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
+    int prot, uint64_t *gpa, int *is_fault)
+{
+
+	return (gla2gpa(vcpui, paging, gla, prot, gpa, is_fault, NULL));
+}
+
+/*
+ * As vmmops_gla2gpa(), for DTrace probe context: the caller holds the VM's
+ * stage 2 pmap lock, and nothing here sleeps, faults or takes a lock.
+ */
+int
+arm64_gla2gpa_locked(void *vcpui, struct vm_guest_paging *paging,
+    uint64_t gla, int prot, uint64_t *gpa, int *is_fault, pmap_t pmap)
+{
+
+	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
+	return (gla2gpa(vcpui, paging, gla, prot, gpa, is_fault, pmap));
 }
 
 int

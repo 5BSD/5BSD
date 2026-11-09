@@ -365,5 +365,7 @@ uint64_t	vmm_call_hyp(uint64_t, ...);
 
 struct hypctx *arm64_get_active_vcpu(void);
 void raise_data_insn_abort(struct hypctx *, uint64_t, bool, int);
+int arm64_gla2gpa_locked(void *, struct vm_guest_paging *, uint64_t, int,
+    uint64_t *, int *, pmap_t);
 
 #endif /* !_VMM_ARM64_H_ */

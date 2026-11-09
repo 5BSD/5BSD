@@ -2365,6 +2365,40 @@ pmap_invalidate_all(pmap_t pmap)
 }
 
 /*
+ * The physical address that the block or page entry tpte, found at level lvl
+ * by pmap_pte(), maps va to.
+ */
+static vm_paddr_t
+pmap_pte_to_pa(pt_entry_t tpte, int lvl, vm_offset_t va)
+{
+	vm_paddr_t pa;
+
+	pa = PTE_TO_PHYS(tpte);
+	switch(lvl) {
+	case 1:
+		PMAP_ASSERT_L1_BLOCKS_SUPPORTED;
+		KASSERT((tpte & ATTR_DESCR_MASK) == L1_BLOCK,
+		    ("%s: Invalid L1 pte found: %lx", __func__,
+		    tpte & ATTR_DESCR_MASK));
+		pa |= (va & L1_OFFSET);
+		break;
+	case 2:
+		KASSERT((tpte & ATTR_DESCR_MASK) == L2_BLOCK,
+		    ("%s: Invalid L2 pte found: %lx", __func__,
+		    tpte & ATTR_DESCR_MASK));
+		pa |= (va & L2_OFFSET);
+		break;
+	case 3:
+		KASSERT((tpte & ATTR_DESCR_MASK) == L3_PAGE,
+		    ("%s: Invalid L3 pte found: %lx", __func__,
+		    tpte & ATTR_DESCR_MASK));
+		pa |= (va & L3_OFFSET);
+		break;
+	}
+	return (pa);
+}
+
+/*
  *	Routine:	pmap_extract
  *	Function:
  *		Extract the physical page address associated
@@ -2373,7 +2407,7 @@ pmap_invalidate_all(pmap_t pmap)
 vm_paddr_t
 pmap_extract(pmap_t pmap, vm_offset_t va)
 {
-	pt_entry_t *pte, tpte;
+	pt_entry_t *pte;
 	vm_paddr_t pa;
 	int lvl;
 
@@ -2384,33 +2418,38 @@ pmap_extract(pmap_t pmap, vm_offset_t va)
 	 * will return either a valid block/page entry, or NULL.
 	 */
 	pte = pmap_pte(pmap, va, &lvl);
-	if (pte != NULL) {
-		tpte = pmap_load(pte);
-		pa = PTE_TO_PHYS(tpte);
-		switch(lvl) {
-		case 1:
-			PMAP_ASSERT_L1_BLOCKS_SUPPORTED;
-			KASSERT((tpte & ATTR_DESCR_MASK) == L1_BLOCK,
-			    ("pmap_extract: Invalid L1 pte found: %lx",
-			    tpte & ATTR_DESCR_MASK));
-			pa |= (va & L1_OFFSET);
-			break;
-		case 2:
-			KASSERT((tpte & ATTR_DESCR_MASK) == L2_BLOCK,
-			    ("pmap_extract: Invalid L2 pte found: %lx",
-			    tpte & ATTR_DESCR_MASK));
-			pa |= (va & L2_OFFSET);
-			break;
-		case 3:
-			KASSERT((tpte & ATTR_DESCR_MASK) == L3_PAGE,
-			    ("pmap_extract: Invalid L3 pte found: %lx",
-			    tpte & ATTR_DESCR_MASK));
-			pa |= (va & L3_OFFSET);
-			break;
-		}
-	}
+	if (pte != NULL)
+		pa = pmap_pte_to_pa(pmap_load(pte), lvl, va);
 	PMAP_UNLOCK(pmap);
 	return (pa);
+}
+
+/*
+ * Translate an intermediate physical address in a stage 2 pmap that the caller
+ * has locked, for a caller that can neither take the lock nor hold a page,
+ * such as a DTrace probe reading guest memory.  Return 0 unless the mapping
+ * grants every access in prot; a stage 2 mapping is writable only once its
+ * page is dirty, so writing through the direct map then loses nothing.
+ */
+vm_paddr_t
+pmap_s2_extract_locked(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
+{
+	pt_entry_t *pte, tpte;
+	int lvl;
+
+	KASSERT(pmap->pm_stage == PM_STAGE2,
+	    ("%s: pmap %p is not a stage 2 pmap", __func__, pmap));
+	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
+	pte = pmap_pte(pmap, va, &lvl);
+	if (pte == NULL)
+		return (0);
+	tpte = pmap_load(pte);
+	if (((prot & VM_PROT_READ) != 0 &&
+	    (tpte & ATTR_S2_S2AP(ATTR_S2_S2AP_READ)) == 0) ||
+	    ((prot & VM_PROT_WRITE) != 0 &&
+	    (tpte & ATTR_S2_S2AP(ATTR_S2_S2AP_WRITE)) == 0))
+		return (0);
+	return (pmap_pte_to_pa(tpte, lvl, va));
 }
 
 /*
