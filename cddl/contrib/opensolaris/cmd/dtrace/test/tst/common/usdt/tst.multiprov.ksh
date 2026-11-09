@@ -86,7 +86,7 @@ done
 
 echo "}" >> test.c
 
-echo 'END{printa("%-10s %@d\\n", @)}' >> test.d
+printf '%s\n' 'END{printa("%-10s %@d\n", @)}' >> test.d
 
 cc -o test test.c $objs
 
