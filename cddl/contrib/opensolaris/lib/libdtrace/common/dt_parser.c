@@ -1361,6 +1361,7 @@ dt_node_is_actfunc(const dt_node_t *dnp)
  * even faster, we precompute the table of type information in dtrace_open().
  */
 static uint64_t dt_int_convert(uint64_t, size_t, int, size_t, int);
+static void dt_node_int_fit(dt_node_t *);
 
 dt_node_t *
 dt_node_int(uintmax_t value)
@@ -2016,11 +2017,21 @@ dt_node_op1(int op, dt_node_t *cp)
 				cp->dn_value &= ~0ULL >>
 				    (64 - dt_node_type_size(cp) * NBBY);
 			}
+			/* -INT_MIN does not fit an int. */
+			dt_node_int_fit(cp);
 			/*FALLTHRU*/
 		case DT_TOK_IPOS:
 			return (cp);
 		case DT_TOK_BNEG:
+			/*
+			 * As for negation, keep the complement of an unsigned
+			 * integer within its type: ~0u is 0xffffffff.
+			 */
 			cp->dn_value = ~cp->dn_value;
+			if (!(cp->dn_flags & DT_NF_SIGNED)) {
+				cp->dn_value &= ~0ULL >>
+				    (64 - dt_node_type_size(cp) * NBBY);
+			}
 			return (cp);
 		case DT_TOK_LNEG:
 			/* The result of ! has type int (see K&R[A7.4.7]). */
@@ -2110,6 +2121,41 @@ dt_int_convert(uint64_t v, size_t srcsize, int srcsigned, size_t dstsize,
 	}
 
 	return (v);
+}
+
+/*
+ * D folds integer constant expressions in 64 bits and has always kept the
+ * result when it does not fit the type of its operands: (1 << 63) - 7 is
+ * 9223372036854775801, not the -7 an int would hold.  Rather than narrow such
+ * a result, give it the type an integer constant of that value has (see
+ * dt_node_int()): the first 64-bit signed type, or unsigned type for an
+ * unsigned result, so that the value and its type agree.
+ */
+static void
+dt_node_int_fit(dt_node_t *dnp)
+{
+	dtrace_hdl_t *dtp = yypcb->pcb_hdl;
+	size_t size = dt_node_type_size(dnp);
+	int sgn = (dnp->dn_flags & DT_NF_SIGNED) != 0;
+	uint64_t limit;
+	size_t i;
+
+	if (size == 0 || size >= sizeof (uint64_t))
+		return;
+	limit = ~0ULL >> (64 - size * NBBY + sgn);
+	if (sgn ? (int64_t)dnp->dn_value >= -(int64_t)limit - 1 &&
+	    (int64_t)dnp->dn_value <= (int64_t)limit : dnp->dn_value <= limit)
+		return;
+
+	for (i = sgn ? 0 : 1; i < nitems(dtp->dt_ints); i += 2) {
+		if (dtp->dt_ints[i].did_limit ==
+		    (sgn ? (uint64_t)INT64_MAX : UINT64_MAX)) {
+			dt_node_type_assign(dnp, dtp->dt_ints[i].did_object,
+			    dtp->dt_ints[i].did_ctfp, dtp->dt_ints[i].did_type,
+			    B_FALSE);
+			return;
+		}
+	}
 }
 
 /*
@@ -2290,6 +2336,7 @@ dt_node_op2(int op, dt_node_t *lp, dt_node_t *rp)
 		}
 
 		if (dnp != NULL) {
+			dt_node_int_fit(dnp);
 			dt_node_free(lp);
 			dt_node_free(rp);
 			return (dnp);
