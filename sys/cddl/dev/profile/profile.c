@@ -259,12 +259,18 @@ profile_probe(profile_probe_t *prof, hrtime_t late)
 }
 
 /*
- * Return the deadline after "expected" for a timer of period "interval".
- * When the handler has fallen behind, skip the missed firings, as the illumos
- * cyclic subsystem does; rescheduling an absolute deadline that is already in
- * the past would otherwise fire the callout back to back and never let the CPU
- * run anything else once a firing costs more than the interval (for example,
- * profile-4999hz with every fbt probe enabled on a slow or emulated CPU).
+ * Return the deadline after "expected" for a timer of period "interval",
+ * skipping any firings that are already in the past.
+ *
+ * Rescheduling an absolute deadline that has passed fires the callout again
+ * at once, so once a firing costs more than the interval (profile-4999hz with
+ * every fbt probe enabled on a slow or emulated CPU) the CPU never runs
+ * anything else.  The illumos cyclic subsystem catches up back to back and
+ * skips only when it is more than a second behind, which still saturates the
+ * CPU in that case.  Skipping whenever a deadline has passed allows at most
+ * one firing per interval, so the handler cannot monopolize the CPU, at the
+ * cost of dropping a firing that a callout delayed by more than one interval
+ * would otherwise deliver late.
  */
 static sbintime_t
 profile_next(sbintime_t expected, sbintime_t interval)
