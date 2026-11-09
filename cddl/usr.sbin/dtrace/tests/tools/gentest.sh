@@ -83,12 +83,13 @@ ARCH=$(dirname ${CATEGORY})
 EXFAILS=$(echo -e "$EXFAIL" | grep "^${CATEGORY}/" | xargs basename -a)
 SKIPS=$(echo -e "$SKIP" | grep "^${CATEGORY}/" | xargs basename -a)
 SKIPCIS=$(echo -e "$SKIPCI" | grep "^${CATEGORY}/" | xargs basename -a)
+SKIPNOCTFS=$(echo -e "$SKIPNOCTF" | grep "^${CATEGORY}/" | xargs basename -a)
 
 FILELIST=$(mktemp)
 trap 'rm -f $FILELIST' EXIT
 
 echo "$@" | tr ' ' '\n' | xargs basename -a | sort > ${FILELIST}
-TFILES=$(printf '%s\n%s' "$EXFAILS" "$SKIPS" "$SKIPCIS" | sort | comm -13 /dev/stdin $FILELIST)
+TFILES=$(printf '%s\n' "$EXFAILS" "$SKIPS" "$SKIPCIS" "$SKIPNOCTFS" | sort | comm -13 /dev/stdin $FILELIST)
 
 #
 # Generate test cases.
@@ -96,6 +97,7 @@ TFILES=$(printf '%s\n%s' "$EXFAILS" "$SKIPS" "$SKIPCIS" | sort | comm -13 /dev/s
 gentestcases SKIPS "atf_skip \"test may hang or cause system instability\""
 gentestcases EXFAILS "atf_expect_fail \"test is known to fail\""
 gentestcases SKIPCIS "if [ \"\$(atf_config_get ci false)\" = \"true\" ]; then atf_skip \"see cddl/usr.sbin/dtrace/tests/tools/exclude.sh\"; fi"
+gentestcases SKIPNOCTFS "if ! elfdump -d /usr/lib/libproc.so.[0-9]* 2>/dev/null | grep -q 'libctf\\.so'; then atf_skip \"libproc was built without CTF (WITHOUT_CTF)\"; fi"
 gentestcases TFILES
 
 #

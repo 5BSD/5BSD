@@ -18,9 +18,11 @@
 # The SKIP variable contains tests that should not be executed at all. The
 # EXFAIL variable contains tests that are expected to fail when run. The
 # SKIPCI variable contains tests that are flakey and should not be executed in
-# the CI environment. Please avoid adding tests to SKIP unless it really is
-# necessary; with EXFAIL, tests that begin passing as the result of a change
-# are visible in the test summary.
+# the CI environment. The SKIPNOCTF variable contains tests that need the
+# traced program's CTF, which libproc can only read when the system is built
+# with CTF; they are skipped at run time otherwise. Please avoid adding tests
+# to SKIP unless it really is necessary; with EXFAIL, tests that begin passing
+# as the result of a change are visible in the test summary.
 
 exclude()
 {
@@ -379,6 +381,22 @@ exclude SKIP hypertrace/ustack/tst.spin.ksh
 
 # https://bugs.freebsd.org/237641
 exclude SKIPCI hypertrace/misc/tst.dynopt.d
+
+# Need the traced program's CTF through libproc (WITH_CTF builds only).
+exclude SKIPNOCTF common/uctf/tst.aouttype.ksh
+exclude SKIPNOCTF common/uctf/tst.chasestrings.ksh
+exclude SKIPNOCTF common/uctf/tst.pidprint.ksh
+exclude SKIPNOCTF common/uctf/tst.pidprinttarg.ksh
+exclude SKIPNOCTF common/uctf/tst.printtype.ksh
+exclude SKIPNOCTF common/uctf/tst.printtypetarg.ksh
+exclude SKIPNOCTF common/uctf/tst.userstrings.ksh
+exclude SKIPNOCTF hypertrace/uctf/tst.aouttype.ksh
+exclude SKIPNOCTF hypertrace/uctf/tst.chasestrings.ksh
+exclude SKIPNOCTF hypertrace/uctf/tst.pidprint.ksh
+exclude SKIPNOCTF hypertrace/uctf/tst.pidprinttarg.ksh
+exclude SKIPNOCTF hypertrace/uctf/tst.printtype.ksh
+exclude SKIPNOCTF hypertrace/uctf/tst.printtypetarg.ksh
+exclude SKIPNOCTF hypertrace/uctf/tst.userstrings.ksh
 
 # A probe fired by a direct dtrace_probe() call, such as BEGIN, has no
 # arguments beyond arg4.  amd64 and i386 read whatever lies on the stack above
