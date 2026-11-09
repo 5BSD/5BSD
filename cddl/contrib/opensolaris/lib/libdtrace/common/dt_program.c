@@ -43,6 +43,7 @@
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -333,6 +334,8 @@ dtrace_program_info(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
  */
 #define	DT_ENABLE_NPROBES_MIN	4096
 #define	DT_ENABLE_NPROBES_MAX	(1 << 22)
+_Static_assert(DT_ENABLE_NPROBES_MAX <= INT_MAX / sizeof (dtrace_probedesc_t),
+    "ps_bufsize is an int");
 
 static int
 dt_enable_ioctl(dtrace_hdl_t *dtp, int cmd, dtrace_enable_io_t *args,
