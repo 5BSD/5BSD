@@ -1217,8 +1217,8 @@ closes it.
 serves writes; without it every creation, removal, rename, link,
 truncation and write open is
 .Er EROFS .
-A served answer the kernel refuses (other than a vanished event) is
-followed by
+Any answer the kernel refuses (other than a vanished event) or that
+cannot be built is followed by
 .Er EIO ,
 so no event is left in flight.
 Renames honour
@@ -1412,7 +1412,11 @@ is 0), are
 answers one event from a real file open on
 .Fa backing_fd ,
 so a controller that serves a file it holds, with or without changes of
-its own in a handler around it, need not write the operations itself:
+its own in a handler around it, need not write the operations itself.
+An answer the kernel refuses, or one that cannot be built, is followed by
+.Er EIO
+(the call still returns the failure), so no waited event is left in
+flight until its deadline:
 .Bl -tag -width "DQ_OP_UNLOCK_ALL" -offset indent
 .It Dv DQ_OP_READ , DQ_OP_READ_ASYNC
 .Xr pread 2 ;

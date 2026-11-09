@@ -1421,10 +1421,23 @@ dq_serve_tree(struct dq_tree *t, const struct dq_event *ev, const void *body,
 	struct dq_serve_opts opts;
 	struct dq_tree_obj *o;
 	size_t i;
-	int ret;
+	int error, ret;
 
-	if (ev->de_op == DQ_OP_RESOLVE)
-		return (dq_tree_resolve(t, ev));
+	if (ev->de_op == DQ_OP_RESOLVE) {
+		ret = dq_tree_resolve(t, ev);
+		/*
+		 * An answer the kernel refused (EINVAL: the event stays in
+		 * flight) or that could not be built would hold the
+		 * requester until its deadline: EIO instead, fail closed.
+		 * ESRCH: the event is gone, nothing to answer.
+		 */
+		if (ret != 0 && errno != ESRCH) {
+			error = errno;
+			(void)dq_reply_resolve_errno(t->t_q, ev->de_id, EIO);
+			errno = error;
+		}
+		return (ret);
+	}
 	if (ev->de_object == 0)
 		return (dq_serve_file(t->t_q, ev, body, bodylen, -1, NULL));
 	o = dq_tree_find(t, ev->de_object, &i);
