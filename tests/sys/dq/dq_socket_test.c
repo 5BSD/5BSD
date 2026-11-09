@@ -1,11 +1,13 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * RESOLVE for sockets (stage 1c-ii, D139): socket(2) and socketpair(2) of
- * an attached process post one event each, after the protocol lookup and
- * the capability-mode test, before the jail's address-family test and
- * before any descriptor slot exists, with the protocol as the kernel
- * resolved it and the type without its SOCK_* flags.  The controller
+ * RESOLVE for sockets (stage 1c-ii, D139, D155): socket(2) and
+ * socketpair(2) of an attached process post one event each, after the
+ * protocol lookup, the capability-mode test and the jail's address-family
+ * test and before any descriptor slot exists, with the protocol as the
+ * kernel resolved it and the type without its SOCK_* flags.  Errors keep
+ * upstream's precedence: a full descriptor table is EMFILE to socket(2)
+ * before any other test, attached or not, and posts nothing.  The controller
  * answers PASS or an errno from the socket list; a dead controller is
  * EACCES (D136).  Kernel socket creation (socreate) is never consulted.
  * Abstract AF_UNIX names, consulted since 1c-i, are posted with
@@ -16,6 +18,7 @@
 #include <sys/capsicum.h>
 #include <sys/jail.h>
 #include <sys/procdesc.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -727,7 +730,170 @@ ATF_TC_CLEANUP(deadline_counts_failclosed, tc)
 }
 
 /*
- * jail_af_after_pass
+ * full_table_unattached and full_table_attached: upstream's falloc-first
+ * order.  socket(2) takes its descriptor before socreate, so a full table
+ * is EMFILE before a bad family, type or protocol and before ECAPMODE;
+ * socketpair(2) creates its sockets first, so there a bad type wins.
+ */
+#define	FULL_LIMIT	64
+
+struct full_arg {
+	bool		 capmode;
+};
+
+/* Every slot below a NOFILE limit of FULL_LIMIT used; the last one. */
+static int
+fill_table(void)
+{
+	struct rlimit rl;
+	int p[2], fd, last;
+
+	rl.rlim_cur = rl.rlim_max = FULL_LIMIT;
+	if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
+		_exit(6);
+	if (pipe(p) != 0)
+		_exit(7);
+	last = p[1];
+	while ((fd = dup(p[0])) != -1)
+		last = fd;
+	if (errno != EMFILE)
+		_exit(8);
+	return (last);
+}
+
+static void
+child_full(void *arg, void *result)
+{
+	struct full_arg *a = arg;
+	struct sock_res *r = result;
+	int last, sv[2];
+
+	last = fill_table();
+	if (a->capmode) {
+		if (cap_enter() != 0)
+			_exit(5);
+		/* Raw IP has no PR_CAPATTACH: ECAPMODE with room. */
+		RR(r->r[0], socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+		RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+		return;
+	}
+	RR(r->r[0], socket(AF_INET, SOCK_STREAM, 0));
+	RR(r->r[1], socket(AF_UNIX, SOCK_RAW, 0));	/* EPROTOTYPE */
+	RR(r->r[2], socket(AF_MAX + 10, SOCK_STREAM, 0)); /* EAFNOSUPPORT */
+	RR(r->r[3], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	RR(r->r[4], socketpair(AF_UNIX, SOCK_RAW, 0, sv));
+	/* One free slot: socket(2) fits, socketpair(2) does not. */
+	(void)close(last);
+	RR(r->r[5], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	RR(r->r[6], socket(AF_INET, SOCK_STREAM, 0));
+	r->nextfd = last;
+}
+
+static void
+check_full(const struct sock_res *r, bool capmode, const char *who)
+{
+
+	if (capmode) {
+		ATF_CHECK_EQ_MSG(EMFILE, r->r[0].err, "%s capmode socket: %s",
+		    who, strerror(r->r[0].err));
+		ATF_CHECK_EQ_MSG(EMFILE, r->r[1].err, "%s capmode socketpair: "
+		    "%s", who, strerror(r->r[1].err));
+		return;
+	}
+	ATF_CHECK_EQ_MSG(EMFILE, r->r[0].err, "%s socket: %s", who,
+	    strerror(r->r[0].err));
+	ATF_CHECK_EQ_MSG(EMFILE, r->r[1].err, "%s bad type: %s", who,
+	    strerror(r->r[1].err));
+	ATF_CHECK_EQ_MSG(EMFILE, r->r[2].err, "%s bad family: %s", who,
+	    strerror(r->r[2].err));
+	ATF_CHECK_EQ_MSG(EMFILE, r->r[3].err, "%s socketpair: %s", who,
+	    strerror(r->r[3].err));
+	ATF_CHECK_EQ_MSG(EPROTOTYPE, r->r[4].err, "%s socketpair bad type: "
+	    "%s", who, strerror(r->r[4].err));
+	ATF_CHECK_EQ_MSG(EMFILE, r->r[5].err, "%s socketpair, one slot: %s",
+	    who, strerror(r->r[5].err));
+	ATF_CHECK_EQ_MSG(r->nextfd, r->r[6].rv, "%s socket, one slot: %ld "
+	    "(%s)", who, r->r[6].rv, strerror(r->r[6].err));
+}
+
+ATF_TC(full_table_unattached);
+ATF_TC_HEAD(full_table_unattached, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an unattached process with a full "
+	    "descriptor table gets upstream's errors: socket(2) is EMFILE "
+	    "before a bad type or family and before ECAPMODE; socketpair(2) "
+	    "with a bad type is EPROTOTYPE, and EMFILE without room for both "
+	    "descriptors");
+}
+ATF_TC_BODY(full_table_unattached, tc)
+{
+	struct full_arg a;
+	struct sock_res r;
+
+	a.capmode = false;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_full, &a, &r, sizeof(r));
+	check_full(&r, false, "unattached");
+	a.capmode = true;
+	memset(&r, 0, sizeof(r));
+	dqt_run_child(child_full, &a, &r, sizeof(r));
+	check_full(&r, true, "unattached");
+}
+
+ATF_TC(full_table_attached);
+ATF_TC_HEAD(full_table_attached, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an attached process with a full "
+	    "descriptor table gets exactly the unattached errors and posts "
+	    "nothing for them: socket(2) is EMFILE before the protocol, "
+	    "capability-mode and jail tests and the consultation; socketpair(2) "
+	    "is EPROTOTYPE for a bad type and EMFILE without room for both "
+	    "descriptors; with one slot free socket(2) is posted and gets it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(full_table_attached, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct full_arg a;
+	struct sock_res o, r;
+	int i, status;
+
+	a.capmode = false;
+	memset(&o, 0, sizeof(o));
+	dqt_run_child(child_full, &a, &o, sizeof(o));
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_full, &a);
+	memset(&r, 0, sizeof(r));
+	status = dqt_attach_wait(&ch, &r, sizeof(r));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	check_full(&r, false, "attached");
+	for (i = 0; i < 7; i++) {
+		ATF_CHECK_EQ_MSG(o.r[i].err, r.r[i].err, "row %d: unattached "
+		    "%s, attached %s", i, strerror(o.r[i].err),
+		    strerror(r.r[i].err));
+	}
+	/* Only the socket that had its slot was posted. */
+	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, -1, -1));
+	check_socket_event(&c, nth_event(&c, DQ_ROP_SOCKET, 0), DQ_ROP_SOCKET,
+	    AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKETPAIR, -1, -1));
+	dqt_fini(&c);
+
+	a.capmode = true;
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_full, &a);
+	memset(&r, 0, sizeof(r));
+	status = dqt_attach_wait(&ch, &r, sizeof(r));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	check_full(&r, true, "attached");
+	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, -1, -1));
+	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKETPAIR, -1, -1));
+	dqt_fini(&c);
+}
+
+/*
+ * jail_af_before_consult
  */
 
 #define	JAILNAME	"dqt_sock"
@@ -788,16 +954,18 @@ spawn_jailed(struct dqt_ctl *c, struct dqt_achild *ch, int jid,
 	(void)close(go[1]);
 }
 
-ATF_TC_WITH_CLEANUP(jail_af_after_pass);
-ATF_TC_HEAD(jail_af_after_pass, tc)
+ATF_TC_WITH_CLEANUP(jail_af_before_consult);
+ATF_TC_HEAD(jail_af_before_consult, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "the jail's address-family test runs "
-	    "after the consultation: in a jail with ip4=disable, socket(AF_INET) "
-	    "is posted and, answered PASS, fails with EPROTONOSUPPORT as "
-	    "unattached; answered EACCES, the controller's errno wins");
+	    "before the consultation, where socreate runs it: in a jail with "
+	    "ip4=disable, socket(AF_INET) fails with EPROTONOSUPPORT as "
+	    "unattached and posts nothing, whatever the controller would "
+	    "answer; socket(AF_UNIX) is posted and gets the controller's "
+	    "answer");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(jail_af_after_pass, tc)
+ATF_TC_BODY(jail_af_before_consult, tc)
 {
 	struct dqt_ctl c;
 	struct dqt_achild ch;
@@ -825,21 +993,25 @@ ATF_TC_BODY(jail_af_after_pass, tc)
 	ATF_CHECK_EQ(-1, r.r[0].rv);
 	ATF_CHECK_EQ(EPROTONOSUPPORT, r.r[0].err);
 	ATF_CHECK(r.r[1].rv >= 0);
-	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, AF_INET, SOCK_STREAM));
+	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, AF_INET, -1));
+	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, AF_UNIX, SOCK_STREAM));
 	dqt_fini(&c);
 
+	/* A refusing controller is not asked about the refused family. */
 	dqt_init(&c);
 	c.resolve_errno[DQ_ROP_SOCKET] = EACCES;
 	spawn_jailed(&c, &ch, jid, child_jail_inet);
 	memset(&r, 0, sizeof(r));
 	status = dqt_attach_wait(&ch, &r, sizeof(r));
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	ATF_CHECK_EQ(EACCES, r.r[0].err);
+	ATF_CHECK_EQ(EPROTONOSUPPORT, r.r[0].err);
 	ATF_CHECK_EQ(EACCES, r.r[1].err);
+	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKET, AF_INET, -1));
+	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, AF_UNIX, SOCK_STREAM));
 	dqt_fini(&c);
 	(void)jail_remove(jid);
 }
-ATF_TC_CLEANUP(jail_af_after_pass, tc)
+ATF_TC_CLEANUP(jail_af_before_consult, tc)
 {
 	int jid;
 
@@ -1019,7 +1191,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, dead_controller_eacces);
 	ATF_TP_ADD_TC(tp, dead_controller_probe);
 	ATF_TP_ADD_TC(tp, deadline_counts_failclosed);
-	ATF_TP_ADD_TC(tp, jail_af_after_pass);
+	ATF_TP_ADD_TC(tp, full_table_unattached);
+	ATF_TP_ADD_TC(tp, full_table_attached);
+	ATF_TP_ADD_TC(tp, jail_af_before_consult);
 	ATF_TP_ADD_TC(tp, kernel_socreate_not_consulted);
 	ATF_TP_ADD_TC(tp, abstract_names);
 	return (atf_no_error());

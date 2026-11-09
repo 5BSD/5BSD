@@ -1979,10 +1979,24 @@ and
 the socket ignores it and
 .Dv SO_PROTOCOL
 reports 0.
-The event is posted after the MAC check, the protocol lookup and the
-capability-mode test, which fail with no event, and before the jail's
-address-family test and before any descriptor is allocated: a refused
-socket leaves nothing behind.
+The event is posted after the MAC check, the protocol lookup, the
+capability-mode test and the jail's address-family test, which fail with
+no event, and before any descriptor is allocated: a refused socket
+leaves nothing behind.
+The errors keep their unattached precedence:
+.Xr socket 2
+with a full descriptor table fails with
+.Er EMFILE
+before any other test, and
+.Xr socketpair 2
+without room for both descriptors fails with
+.Er EMFILE
+after the protocol, capability-mode and jail tests; neither posts an
+event.
+A descriptor taken by another thread while the controller decides makes
+the call fail with
+.Er EMFILE
+after a pass.
 .Pp
 Only
 .Xr socket 2

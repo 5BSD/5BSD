@@ -2230,6 +2230,8 @@ fdgrowtable_exp(struct filedesc *fdp, int nfd)
 
 /*
  * Grow the file table to accommodate (at least) nfd descriptors.
+ * fdroom() predicts the size fdalloc() asks for (and charges to racct);
+ * keep the two in step.
  */
 static void
 fdgrowtable(struct filedesc *fdp, int nfd)
@@ -2383,6 +2385,7 @@ fdalloc(struct thread *td, int minfd, int *result)
 	if (__predict_false(fd >= maxfd))
 		return (EMFILE);
 	if (__predict_false(fd >= fdp->fd_nfiles)) {
+		/* fdroom() repeats this growth and limit test: keep in step. */
 		allocfd = min(fd * 2, maxfd);
 #ifdef RACCT
 		if (RACCT_ENABLED()) {
@@ -2436,6 +2439,51 @@ fdallocn(struct thread *td, int minfd, int *fds, int n)
 	}
 
 	return (0);
+}
+
+/*
+ * Whether n more descriptors would fit in td's table now, by fdalloc's
+ * limit test: the first n free descriptors from fd_freefile must be below
+ * getmaxfd (RLIMIT_NOFILE, maxfilesperproc), and growing the table to hold
+ * them must stay within the racct NOFILE deny limit.  Nothing is reserved,
+ * the table is not grown and racct is not charged (racct_get_available
+ * instead of racct_set, so no rctl log/signal action runs).  Returns 0 or
+ * EMFILE; a later fdalloc can still fail if the table fills meanwhile.
+ * kern_socket and kern_socketpair of a DescriptorQueue-attached process
+ * use it to refuse with EMFILE before the consultation, as upstream's
+ * falloc-first order would (D155).
+ */
+int
+fdroom(struct thread *td, int n)
+{
+	struct proc *p;
+	struct filedesc *fdp;
+	int error, fd, maxfd, nfiles;
+
+	MPASS(n > 0);
+	p = td->td_proc;
+	fdp = p->p_fd;
+	maxfd = getmaxfd(td);
+	error = 0;
+	FILEDESC_SLOCK(fdp);
+	nfiles = fdp->fd_nfiles;
+	fd = fdp->fd_freefile - 1;
+	while (n-- > 0) {
+		fd = fd_first_free(fdp, fd + 1, fdp->fd_nfiles);
+		if (__predict_false(fd >= maxfd)) {
+			error = EMFILE;
+			break;
+		}
+		if (fd >= nfiles)
+			nfiles = min(fd * 2, maxfd);
+	}
+#ifdef RACCT
+	if (error == 0 && RACCT_ENABLED() && nfiles > fdp->fd_nfiles &&
+	    (uint64_t)nfiles > racct_get_available(p, RACCT_NOFILE))
+		error = EMFILE;
+#endif
+	FILEDESC_SUNLOCK(fdp);
+	return (error);
 }
 
 /*

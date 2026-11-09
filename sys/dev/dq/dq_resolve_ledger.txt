@@ -261,8 +261,11 @@ SOCKET	fs/nfs/nfs_commonkrpc.c	newnfs_connect	socreate	KERNEL:NFS RPC transport;
 SOCKET	fs/nfsclient/nfs_clvfsops.c	nfs_mountroot	socreate	KERNEL:NFS root mount, boot
 SOCKET	kern/uipc_socket.c	socreate	socreate_proto	KERNEL:socreate, the composition kernel callers use; I7
 SOCKET	kern/uipc_syscalls.c	kern_socket	socreate_proto	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socket	socreate	CONSULT
 SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate_proto	CONSULT
 SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate_proto	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate	CONSULT
 SOCKET	net/if_geneve.c	geneve_socket_init	socreate	KERNEL:geneve(4) tunnel socket; I7
 SOCKET	net/if_vxlan.c	vxlan_socket_init	socreate	KERNEL:vxlan(4) tunnel socket; I7
 SOCKET	netgraph/bluetooth/socket/ng_btsocket_rfcomm.c	ng_btsocket_rfcomm_connect	socreate	KERNEL:RFCOMM L2CAP session socket; I7

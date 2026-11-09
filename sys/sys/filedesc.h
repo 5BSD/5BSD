@@ -303,6 +303,7 @@ int	finstall_refed_prop(struct thread *td, struct file *fp, int *resultfd,
 	    const struct fdinstall_prop *prop);
 int	fdalloc(struct thread *td, int minfd, int *result);
 int	fdallocn(struct thread *td, int minfd, int *fds, int n);
+int	fdroom(struct thread *td, int n);
 int	fdcheckstd(struct thread *td);
 void	fdclose(struct thread *td, struct file *fp, int idx);
 void	fdcloseexec(struct thread *td, struct ucred *newcred);

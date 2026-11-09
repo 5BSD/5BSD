@@ -82,6 +82,9 @@ only when the controller passes it; otherwise it returns the
 controller's error, or
 .Er EACCES
 when the controller has closed the queue.
+The event is posted only for a call that would otherwise proceed: an
+unsupported domain, type or protocol, and too few free descriptors for
+both ends, fail as for an unattached process, without an event.
 .Sh RETURN VALUES
 .Rv -std socketpair
 .Sh ERRORS

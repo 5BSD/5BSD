@@ -139,19 +139,55 @@ sys_socket(struct thread *td, struct socket_args *uap)
 
 /*
  * socket(2) and socketpair(2) of an attached process (DescriptorQueue,
- * design 11, D139) are consulted after socreate_find, with the protocol it
- * resolved, before the jail's address-family test and before any
- * descriptor slot exists.  For a protosw whose pr_protocol is 0 the
- * caller's protocol number is posted as given and not validated: for raw IP
- * it is the IP protocol the socket uses; for AF_UNIX and PF_ROUTE the
- * socket ignores it (SO_PROTOCOL reports 0).  A protocol module can
- * unregister during the wait, so the protocol is found again after a PASS
- * and must be the one consulted, with the same type and posted protocol;
- * the capability-mode test is repeated without a second ktrcapfail record.
+ * design 11, D139, D155) are consulted after the protocol lookup, the
+ * capability-mode test and the jail's address-family test (socreate's own
+ * order), and before any descriptor slot exists, so a refusal posts
+ * nothing and the controller never sees a slot it could observe.  Errors
+ * keep upstream's precedence: socket(2) takes its slot before socreate, so
+ * a table without room (fdroom) is EMFILE before anything else, as
+ * upstream's falloc would be; socketpair(2) creates both sockets before
+ * its slots, so its room test follows the lookup and jail tests.  A
+ * process that is not attached takes upstream's code unchanged.
+ *
+ * For a protosw whose pr_protocol is 0 the caller's protocol number is
+ * posted as given and not validated: for raw IP it is the IP protocol the
+ * socket uses; for AF_UNIX and PF_ROUTE the socket ignores it (SO_PROTOCOL
+ * reports 0).  A protocol module can unregister during the wait, so the
+ * protocol is found again after a PASS and must be the one consulted, with
+ * the same type and posted protocol; the capability-mode and jail tests
+ * are repeated without a second ktrcapfail record.
  */
 #define	SOCKET_DQ_PROTOCOL(prp, protocol)				\
 	((prp)->pr_protocol != 0 ? (prp)->pr_protocol : (protocol))
 
+/*
+ * An attached process's checks before the consultation, in socreate's
+ * order and with its errors: the protocol lookup and capability-mode test
+ * (socreate_find), the jail's family test, then, for socketpair(2), room
+ * for nfds descriptors (socket(2) tests its room first and passes 0).
+ */
+static int
+socket_dq_find(struct thread *td, int domain, int type, int protocol,
+    int nfds, struct protosw **prpp)
+{
+	struct protosw *prp;
+	int error;
+
+	error = socreate_find(domain, type, protocol, td, &prp);
+	if (error != 0)
+		return (error);
+	if (prison_check_af(td->td_ucred, prp->pr_domain->dom_family) != 0)
+		return (EPROTONOSUPPORT);
+	if (nfds != 0) {
+		error = fdroom(td, nfds);
+		if (error != 0)
+			return (error);
+	}
+	*prpp = prp;
+	return (0);
+}
+
+/* After a PASS: the same protosw, and its tests again. */
 static int
 socket_dq_refind(struct thread *td, int domain, int type, int protocol,
     struct protosw *prp, int posted)
@@ -164,6 +200,8 @@ socket_dq_refind(struct thread *td, int domain, int type, int protocol,
 		return (EPROTONOSUPPORT);
 	if ((nprp->pr_flags & PR_CAPATTACH) == 0 && IN_CAPABILITY_MODE(td))
 		return (ECAPMODE);
+	if (prison_check_af(td->td_ucred, nprp->pr_domain->dom_family) != 0)
+		return (EPROTONOSUPPORT);
 	return (0);
 }
 
@@ -174,6 +212,7 @@ kern_socket(struct thread *td, int domain, int type, int protocol)
 	struct socket *so;
 	struct file *fp;
 	int fd, error, oflag, fflag;
+	bool dq;
 
 	AUDIT_ARG_SOCKET(domain, type, protocol);
 
@@ -197,29 +236,35 @@ kern_socket(struct thread *td, int domain, int type, int protocol)
 		return (error);
 #endif
 	/*
-	 * The parts of socreate(), with the consultation between them and the
-	 * descriptor slot taken only after it (D139).
+	 * Attached (D155): EMFILE first, as falloc below would be upstream,
+	 * then socreate's checks and the consultation; the slot is taken
+	 * only after a PASS.
 	 */
-	error = socreate_find(domain, type, protocol, td, &prp);
-	if (error != 0)
-		return (error);
-	if (DQRES_ATTACHED_TD(td)) {
-		error = dqres_consult_socket(td, DQ_ROP_SOCKET, domain, type,
-		    SOCKET_DQ_PROTOCOL(prp, protocol));
+	dq = DQRES_ATTACHED_TD(td);
+	prp = NULL;
+	if (dq) {
+		error = fdroom(td, 1);
+		if (error == 0)
+			error = socket_dq_find(td, domain, type, protocol, 0,
+			    &prp);
+		if (error == 0)
+			error = dqres_consult_socket(td, DQ_ROP_SOCKET, domain,
+			    type, SOCKET_DQ_PROTOCOL(prp, protocol));
 		if (error == 0)
 			error = socket_dq_refind(td, domain, type, protocol, prp,
 			    SOCKET_DQ_PROTOCOL(prp, protocol));
 		if (error != 0)
 			return (error);
 	}
-	if (prison_check_af(td->td_ucred, prp->pr_domain->dom_family) != 0)
-		return (EPROTONOSUPPORT);
 	error = falloc(td, &fp, &fd, oflag);
 	if (error != 0)
 		return (error);
 	/* An extra reference on `fp' has been held for us by falloc(). */
-	error = socreate_proto(prp, domain, &so, type, protocol, td->td_ucred,
-	    td);
+	if (dq)
+		error = socreate_proto(prp, domain, &so, type, protocol,
+		    td->td_ucred, td);
+	else
+		error = socreate(domain, &so, type, protocol, td->td_ucred, td);
 	if (error != 0) {
 		fdclose(td, fp, fd);
 	} else {
@@ -656,29 +701,44 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	if (error != 0)
 		return (error);
 #endif
-	/* One consultation for the pair, before any socket or slot (D139). */
-	error = socreate_find(domain, type, protocol, td, &prp);
-	if (error != 0)
-		return (error);
+	/*
+	 * Attached (D155): socreate's checks, room for both descriptors, one
+	 * consultation for the pair, then the sockets; upstream's order of
+	 * errors (socreate before falloc) is kept.
+	 */
 	if (DQRES_ATTACHED_TD(td)) {
-		error = dqres_consult_socket(td, DQ_ROP_SOCKETPAIR, domain,
-		    type, SOCKET_DQ_PROTOCOL(prp, protocol));
+		error = socket_dq_find(td, domain, type, protocol, 2, &prp);
+		if (error == 0)
+			error = dqres_consult_socket(td, DQ_ROP_SOCKETPAIR,
+			    domain, type, SOCKET_DQ_PROTOCOL(prp, protocol));
 		if (error == 0)
 			error = socket_dq_refind(td, domain, type, protocol, prp,
 			    SOCKET_DQ_PROTOCOL(prp, protocol));
 		if (error != 0)
 			return (error);
+		error = socreate_proto(prp, domain, &so1, type, protocol,
+		    td->td_ucred, td);
+		if (error != 0)
+			return (error);
+#ifdef KTRACE
+		/* Upstream's second socreate records its own capfail. */
+		if ((prp->pr_flags & PR_CAPATTACH) == 0 && CAP_TRACING(td))
+			ktrcapfail(CAPFAIL_PROTO, &protocol);
+#endif
+		error = socreate_proto(prp, domain, &so2, type, protocol,
+		    td->td_ucred, td);
+		if (error != 0)
+			goto free1;
+	} else {
+		error = socreate(domain, &so1, type, protocol, td->td_ucred,
+		    td);
+		if (error != 0)
+			return (error);
+		error = socreate(domain, &so2, type, protocol, td->td_ucred,
+		    td);
+		if (error != 0)
+			goto free1;
 	}
-	if (prison_check_af(td->td_ucred, prp->pr_domain->dom_family) != 0)
-		return (EPROTONOSUPPORT);
-	error = socreate_proto(prp, domain, &so1, type, protocol, td->td_ucred,
-	    td);
-	if (error != 0)
-		return (error);
-	error = socreate_proto(prp, domain, &so2, type, protocol, td->td_ucred,
-	    td);
-	if (error != 0)
-		goto free1;
 	/* On success extra reference to `fp1' and 'fp2' is set by falloc. */
 	error = falloc(td, &fp1, &fd, oflag);
 	if (error != 0)
