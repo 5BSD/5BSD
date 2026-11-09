@@ -35,8 +35,13 @@ ATF_TESTS_C+=	dq_socket_test
 ATF_TESTS_C+=	dq_served_test
 ATF_TESTS_C+=	dq_start_test
 ATF_TESTS_C+=	dq_tree_oracle_test
+ATF_TESTS_C+=	dq_cwd_test
+ATF_TESTS_C+=	dq_getcwd_test
+ATF_TESTS_C+=	dq_kclass_test
+ATF_TESTS_C+=	dq_exec_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_oracle_test
+ATF_TESTS_SH+=	dq_tree_suites_test
 
 # Every program is a controller: the shared harness is part of each.
 .for _t in ${ATF_TESTS_C}
@@ -74,6 +79,13 @@ TEST_METADATA.dq_socket_test+=	is_exclusive="true"
 TEST_METADATA.dq_served_test+=	is_exclusive="true"
 # Sets vfs.lookup_cap_dotdot: run alone.
 TEST_METADATA.dq_start_test+=	is_exclusive="true"
+# Set kern.chroot_allow_open_directories, mount linprocfs, call acct(2),
+# ktrace(2), swapon(2) and kldload(2): run alone (1c-iii-c).
+TEST_METADATA.dq_cwd_test+=	is_exclusive="true"
+TEST_METADATA.dq_getcwd_test+=	is_exclusive="true"
+TEST_METADATA.dq_kclass_test+=	is_exclusive="true"
+# Runs whole suites in a served root and in chroot(8): alone, with time.
+TEST_METADATA.dq_tree_suites_test+=	is_exclusive="true" timeout="7200"
 # Runs whole suites twice under kyua: alone, and with time.
 TEST_METADATA.dq_oracle_test+=	is_exclusive="true" timeout="3600"
 
@@ -86,6 +98,20 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
+
+# The served-root controller the suites oracle runs kyua under, and the
+# differences from chroot(8) it expects (stage 1c-iii-c).
+PROGS+=		dqtree
+SRCS.dqtree=	dqtree.c
+MAN.dqtree=
+BINDIR.dqtree=	${TESTSDIR}
+${PACKAGE}FILES+=	dqtree.expected
+
+# dq_exec_test's dynamic image (copied into a served tree).
+PROGS+=		dq_exec_helper
+SRCS.dq_exec_helper=	dq_exec_helper.c
+MAN.dq_exec_helper=
+BINDIR.dq_exec_helper=	${TESTSDIR}
 
 # The socket commands the oracle runs (stage 1c-ii).
 PROGS+=		dq_sockprog

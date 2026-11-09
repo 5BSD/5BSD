@@ -216,7 +216,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	 */
 	strlen_ = roundup2(sizeof(*rb) + rq->rq_pathlen + 1 +
 	    rq->rq_path2len + 1 + rq->rq_startpathlen + 1 +
-	    rq->rq_startpath2len + 1, 8);
+	    rq->rq_startpath2len + 1 + rq->rq_rootpathlen + 1, 8);
 	bodylen = strlen_ + (rq->rq_setattr != NULL ?
 	    sizeof(struct dq_setattr_body) : 0);
 	rb = malloc(bodylen, M_DQ, M_WAITOK | M_ZERO);
@@ -243,6 +243,8 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	rb->drs_domain = rq->rq_domain;
 	rb->drs_type = rq->rq_type;
 	rb->drs_protocol = rq->rq_protocol;
+	rb->drs_root = rq->rq_root;
+	rb->drs_rootpathlen = rq->rq_rootpathlen;
 	p = (char *)(rb + 1);
 	memcpy(p, rq->rq_path, rq->rq_pathlen);
 	p += rq->rq_pathlen + 1;
@@ -254,6 +256,9 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	p += rq->rq_startpathlen + 1;
 	if (rq->rq_startpath2len != 0)
 		memcpy(p, rq->rq_startpath2, rq->rq_startpath2len);
+	p += rq->rq_startpath2len + 1;
+	if (rq->rq_rootpathlen != 0)
+		memcpy(p, rq->rq_rootpath, rq->rq_rootpathlen);
 
 	/*
 	 * The deadline (B1 of 1b and 0c item 1): the default for the
@@ -467,6 +472,8 @@ static const struct dqres_ops dq_resolve_ops = {
 	.dro_start = dq_resolve_start,
 	.dro_setattr = dq_resolve_setattr,
 	.dro_target = dq_file_target,
+	.dro_file_kind = dq_file_kind,
+	.dro_file_objid = dq_file_objid,
 };
 
 void
@@ -777,6 +784,29 @@ dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	return (0);
 }
 
+/* An ATTACH start descriptor of q, held (none for -1). */
+static int
+dq_attach_start_get(struct thread *td, struct dq_queue *q, int fd,
+    const cap_rights_t *rights, struct file **fpp)
+{
+	struct file *fp;
+	int error;
+
+	*fpp = NULL;
+	if (fd == -1)
+		return (0);
+	error = fget(td, fd, rights, &fp);
+	if (error != 0)
+		return (error);
+	error = dq_file_attach_start(fp, q);
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
+	}
+	*fpp = fp;
+	return (0);
+}
+
 /*
  * DQ_IOC_ATTACH (D138, D148, D150).  The target comes from a process
  * descriptor, resolved as mac_capability_resolve_proc resolves one, and
@@ -788,22 +818,45 @@ dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 {
 	struct dqres_binding *b;
 	struct procdesc *pd;
-	struct file *fp;
+	struct file *fp, *cwdfp, *rootfp;
 	struct proc *p;
 	int error;
 
-	if (args->da_version != DQ_API_VERSION || args->da_flags != 0 ||
-	    args->da_pad0 != 0)
+	if (args->da_version != DQ_API_VERSION ||
+	    (args->da_flags & ~DQ_ATTACH_F_NODIRS) != 0 || args->da_pad0 != 0)
 		return (EINVAL);
-	/* Served start directories are stage 1c-iii. */
-	if (args->da_rootfd != -1 || args->da_cwdfd != -1)
-		return (EINVAL);
+	/*
+	 * Served starts (D169): live served directories of this queue, held
+	 * before any lock; -1 for none.
+	 */
+	cwdfp = rootfp = NULL;
+	error = dq_attach_start_get(td, q, args->da_cwdfd, &cap_fchdir_rights,
+	    &cwdfp);
+	if (error == 0)
+		error = dq_attach_start_get(td, q, args->da_rootfd,
+		    &cap_fchroot_rights, &rootfp);
+	/*
+	 * With a root and no cwd the cwd is the root; a cwd must be the root
+	 * or a served directory under it (D184).  A root whose reference
+	 * count cannot take the cwd's too is EIO, as inheritance makes it a
+	 * dead start (DR_CWD_DEAD) rather than a busy one.
+	 */
+	if (error == 0 && rootfp != NULL && cwdfp == NULL) {
+		if (fhold(rootfp))
+			cwdfp = rootfp;
+		else
+			error = EIO;
+	} else if (error == 0 && rootfp != NULL && cwdfp != rootfp)
+		error = dq_file_attach_under(cwdfp, rootfp);
+	if (error != 0)
+		goto drop_starts;
 	error = fget(td, args->da_procfd, &cap_no_rights, &fp);
 	if (error != 0)
-		return (error);
+		goto drop_starts;
 	if (fp->f_type != DTYPE_PROCDESC) {
 		fdrop(fp, td);
-		return (EINVAL);
+		error = EINVAL;
+		goto drop_starts;
 	}
 	pd = fp->f_data;
 	sx_slock(&proctree_lock);
@@ -811,7 +864,8 @@ dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	if (p == NULL) {
 		sx_sunlock(&proctree_lock);
 		fdrop(fp, td);
-		return (ESRCH);
+		error = ESRCH;
+		goto drop_starts;
 	}
 	PROC_LOCK(p);
 	/* An exiting target cannot be held (or attached): ESRCH, as unreaped. */
@@ -819,7 +873,8 @@ dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 		PROC_UNLOCK(p);
 		sx_sunlock(&proctree_lock);
 		fdrop(fp, td);
-		return (ESRCH);
+		error = ESRCH;
+		goto drop_starts;
 	}
 	_PHOLD(p);
 	PROC_UNLOCK(p);
@@ -830,7 +885,8 @@ dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	DQ_UNLOCK(q);
 	if (error == 0) {
 		b = dq_binding_get(q);
-		error = dqres_attach(td, p, b, q->q_file);
+		error = dqres_attach(td, p, b, q->q_file, &cwdfp, &rootfp,
+		    args->da_flags);
 		dq_binding_rele(b);
 	}
 	if (error == 0) {
@@ -841,5 +897,10 @@ dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	}
 	PRELE(p);
 	fdrop(fp, td);
+drop_starts:
+	if (cwdfp != NULL)
+		fdrop(cwdfp, td);
+	if (rootfp != NULL)
+		fdrop(rootfp, td);
 	return (error);
 }

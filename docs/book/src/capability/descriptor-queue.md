@@ -1132,9 +1132,12 @@ decisions and inside the audited path. When the process is attached, or
 the dirfd is a served directory, the choke point calls `dq_resolve()` with
 the start (served object, or real vnode), the whole remaining path and the
 lookup's rflags. Only `NI_DQ_FD_OK` lookups may receive `FD` (I7). The ELF
-interpreter load is kernel-origin: a served-root process runs dynamic
-binaries when the controller `PASS`es `/libexec/ld-elf.so.1`, and the real
-interpreter loads from the real `pd_pwd` (D10).
+interpreter load is kernel-origin. As built in 1c-iii-c (D175, superseding
+D10): under a served root its absolute path is consulted at the served root
+(`EXEC_INTERP`, class 3, start `SERVED`) and answered `REAL` or an errno, so
+the interpreter comes from the served tree; every other kernel-consumer,
+kernel-origin or unmarked lookup that would start at a served cwd or root is
+`EXDEV` with no event.
 
 ### 11.3 `RESOLVE`
 
@@ -1197,6 +1200,26 @@ disagree (D45). `vn_getcwd` and the kinfo `CWD`/`ROOT` export answer from
 `dr_*` when set. `chroot_refuse_vdir_fds` counts served directories.
 `jail_attach` by an attached process is refused `EPERM` (I5(b)); the agent
 recipe jails first, then attaches.
+
+As built (1c-iii-c, D183, D184): `pwd_hold_dqres` takes the pwd and a
+`struct dqres_snap` (`fhold` of `dr_cwd`/`dr_root`) in one `PWDDESC_XLOCK`
+section (D177), which `namei` holds to the end; `dqres_namei_setup_start`
+makes an absolute path (not `RINROOT`) under a served root, and a relative
+`AT_FDCWD` path under a served cwd, start at the served directory through
+the served branch, with every served result held to the served root's
+subtree (`ENOTCAPABLE` otherwise, the kernel's guard behind the
+controller's clamp of `..`). `pwd_chdir`, `pwd_chroot` and
+`pwd_chroot_chdir` clear `dr_*`; `dqres_set_cwd`/`dqres_set_root` install
+them (the root under chroot's open-directory rule, where a served root
+counts as chrooted, and only an attached process's served directories
+count). `ATTACH` takes `da_rootfd`/`da_cwdfd`, sharing the controller's
+`struct file` (Q8). Paths are presented per D174: own paths
+under a served root relative to it (`ENOENT` when not underneath and for
+real objects), another process's against the viewer (an attached viewer of
+the same queue with a served root sees them against its own root, every
+other viewer the raw `di_path`); a revoked `dr_*` keeps its frozen path in
+`getcwd` and kinfo. `execpath` under a served cwd or root is the served
+name (a relative one joined lexically).
 
 ### 11.5 Global attachment (stage 4, *open*)
 
@@ -1413,7 +1436,7 @@ the same backend; of a real file, the same predicate.
 | `sendfile` | `getpages_async` | yes |
 | `execve`, `fexecve` | stage 3 | yes with `ALLOW`; `EACCES` before stage 3 |
 | `fstat`/`stat`/`lstat`/`fstatat`, `fstatfs`/`statfs`, `fpathconf`/`pathconf` | identity | yes, incl. `st_dev/ino/gen` |
-| `F_KINFO`, `procstat -f`, `procstat -v`, `/proc/self/maps`, `realpath`, `/dev/fd/N` readlink, `getcwd` | `fo_fill_kinfo`, `pgo_kinfo`, attachment | yes |
+| `F_KINFO`, `procstat -f`, `procstat -v`, `/proc/self/maps`, `realpath`, `/dev/fd/N` readlink, `getcwd` | `fo_fill_kinfo`, `pgo_kinfo`, attachment | yes; under a served root, `getcwd`/`realpath` of a real object are `ENOENT` (D174) |
 | `fcntl` flags/dup/readahead; `F_GETFL` | generic / `fo_fcntl` | yes (no served bit exists in `f_flag`) |
 | `flock`, `F_SETLK*`, `F_OFD_*`, `O_EXLOCK` | `LOCK` events; the controller can proxy to the real file's locks | yes |
 | `fchmod`, `fchown`, `futimens`, `fchflags` (any `dp_write`) | `SETATTR` | yes |
@@ -1662,6 +1685,8 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D181 | 2026-11-08 | iii-b review round 2 ("not yet") fixed. `dq_serve_tree` applies the lookup's restrictions (STRICTREL, BENEATH, RINROOT; the second path's STRICTREL2/BENEATH2): from the start's depth, a `..` above it, an absolute name or symlink target, and any `..` under capability mode with `vfs.lookup_cap_dotdot=0` are `ENOTCAPABLE` (RINROOT clamps); a restricted real lookup is PASSed without walking. Every backing access is confined with `O_RESOLVE_BENEATH`/`AT_RESOLVE_BENEATH` (mutations through an `O_RESOLVE_BENEATH` parent and the bare name; `readlinkat` through a confined `O_PATH` fd), so a swapped symlink cannot take the controller out. Symlink expansion past `MAXPATHLEN` is `ENAMETOOLONG`; names outside the prefix are canonical by `realpath(3)`. Kernel: a real second start that is restricted or unusable takes PASS only and its own lookup reports in FreeBSD's order (EXDEV for another queue's served directory and the served-second-start refusals stay early); an empty second path is `ENOENT` before posting; a REAL rewrite after a final `.` or `..` ends in `/`. FreeBSD's `linkat`/`renameat` never apply `AT_RESOLVE_BENEATH` to path 2: matched | iii-b review round 2 | |
 | D182 | 2026-11-08 | iii-b review rounds 3 and 4 fixed and qualified. A served second start's deferred error is returned before posting, and with a served first start the second path's errors follow FreeBSD's order (empty path ENOENT, ECAPMODE, absolute-path ENOTCAPABLE, the descriptor's own error, ENOTDIR/EIO, then EXDEV); a real second start that is restricted or unusable is offered PASS only. `kern_dqres.c` lacked `opt_capsicum.h`, which silently compiled out the `UF_LOOKUP_CAPMODE` check (found by VM run 47; no other non-global option is compiled out in dq). `dq_serve_tree` mirrors `vfs.lookup_cap_dotdot_nonlocal` for STRICTREL and BENEATH. Reviewed independently four times ("ready to commit"); plane-on VM run 49 (`sys/dq`, `lib/libdq`, `sys/kern`, `sys/file`, `sys/audit`): 4384/4447, all 224 dq cases and the three `sys/audit/dq_served` cases pass, no LOR or panic; the failures are the baselined ones plus the two `sys/audit` clock-setting cases the VM's time service refuses | 1c-iii-b reviews 2026-11-08, runs 43-49 | |
 | D182 | 2026-11-08 | iii-b review round 3 ("not yet") fixed. The second path's own lookup errors are recorded at fetch (`ds_ferr`: an empty path's ENOENT, ECAPMODE at `AT_FDCWD` or ENOTCAPABLE for an absolute path in capability mode, the descriptor's `fget_cap` error, `UF_LOOKUP_CAPMODE` outside capability mode, ENOTDIR for a file, EIO for a revoked served directory): behind a real first path the slot takes PASS only and its namei reports them in FreeBSD's order; behind a served first path they are returned before posting, ahead of the mixed-start EXDEV, so a `cap_lookup_capmode` served second start is refused. `dq_serve_tree` mirrors `vfs.lookup_cap_dotdot_nonlocal` (a `..` from a non-`MNT_LOCAL` directory under STRICTREL). Run 44: `open("new/", O_CREAT)` is ENOENT in FreeBSD (TRAILINGSLASH without WILLBEDIR), not EISDIR as the plan said; the kernel matched and the test compares with the real file system | iii-b review round 3, run 44 | |
+| D183 | 2026-11-08 | Stage 1c sub-series iii-c (virtual cwd and root) built, not yet run or reviewed. D177: `pwd_hold_dqres` (the pwd and `fhold` of `dr_cwd`/`dr_root` in one `PWDDESC_XLOCK` section) in `namei_setup` and for every fetched slot (`dq_islot_fetch`), so a served start and a real pwd never come from both sides of a `chdir`. Served cwd and root starts (`dqres_namei_start`): absolute non-`RINROOT` paths under a served root and relative `AT_FDCWD` paths under a served cwd start at the served directory through the served branch (`DQRES_START_ROOT`/`CWD`), after `namei_handle_root`'s capability test; ahead and two-path slots fetch the same starts (both served on one queue: one event; mixed: `EXDEV`). D175: kernel-consumer slots (ktrace, acct, swapon, kldload, mount options, ...), kernel-origin lookups other than the absolute interpreter path under a served root, and unmarked user-space lookups whose start would be served are `EXDEV` with no event (`ds2_resolve_exdev`; unmarked counted too); the interpreter (`PT_INTERP`, absolute `#!`) is consulted at the served root as class 3 accepting only `REAL`/errno, after `exec_new_vmspace` for ELF (an errno kills the image); exempt regions keep the real pwd, carried slots excepted. D172 (a): an absolute symlink target met by any lookup of a process with a served root re-consults from the served root (served kinds of slot 0, `REAL`, errno); carried second paths `EXDEV`, ahead/content slots `EIO`, class 2 and unmarked `EXDEV`; `dq_symlink_served_root` joins the `EDQRESOLVED` producers in the ledger. New kernel guard: under a served root every `FD`/`ATTR`/`LINK` result must be at or under the root's `di_path` (`ENOTCAPABLE`, object retired) — the "post-check" behind the controller's clamp of `..`. D169: chdir/chroot answered `FD(DIR)` (`dqres_take_dir`: kind, D166 `VEXEC`, bind `FREAD`), chroot's privilege rule factored to `chroot_priv_check`; fchdir/fchroot of a served dir (`dqres_fchdir_file`, `dqres_dir_check`: `UF_RESOLVE_BENEATH` `ENOTCAPABLE`, kind `ENOTDIR`, D163 `EDEADLK`, revoked `EIO`, `VEXEC`); `ATTACH` `da_rootfd`/`da_cwdfd` (live served DIRs of the queue, `EINVAL`/`ENOTDIR`/`EIO`); `pwd_chdir`/`pwd_chroot` clear `dr_*`; `chroot_refuse_vdir_fds` counts served directories (`dro_file_kind`, lock-free) and a served root counts as chrooted. D174: `vn_getcwd` (`dqres_getcwd`: served cwd presented, real cwd under a served root `ENOENT`, dead `EIO`, short `ENOMEM`→`ERANGE`), `realpath` (`ATTR` presented; any real or `REAL` object under a served root `ENOENT`), kinfo CWD/ROOT rows from `dr_*` exported after unlocking (dead: no row), `dq_fill_kinfo` presenting against `curthread` (the viewer rule), linprocfs `cwd`/`root` (`dqres_proc_dirpath`) and `fd/` (through `fo_fill_kinfo`). `execpath`: absolute names verbatim, relative ones joined lexically to the served cwd's presented path (`dqres_execpath`). `kern_proc_filedesc_out`'s error path also drops the pwd it held (an upstream leak). libdq: `dq_attach_starts`, `dq_serve_tree` `DQ_TREE_F_ROOT` (absolute names from the event's start, `..` clamped at the tree root, CHDIR/CHROOT → FD(DIR), EXEC_INTERP → REAL of the tree's interpreter). Tests: `dq_cwd_test` (9), `dq_getcwd_test` (4), `dq_kclass_test` (2), `dq_exec_test` (5), the served-root suites oracle `dq_tree_suites_test` with `dqtree` and `dqtree.expected`, and `tests/sys/kern/pwd_paths_test` (13: the real paths at base 33ef5272d53, and the same cases under dqpass). Not built: the unmarked-lookup fault injection row, the `fhold`-overflow (`DR_*_DEAD`) rows, `$ORIGIN` library loading | stage1c-iii plan rev 3, 1c-iiic notes | iii-c review |
+| D184 | 2026-11-08 | iii-c review round 1 ("not yet") fixed, with the user's decisions. An unattached process (the controller included) using a served directory as a lookup start (dirfd, fchdir, fchroot, funlinkat's descriptor) is `EACCES`; one attached to another queue keeps `EDEADLK` (D163 amended). The served root namei_setup snapshots is held by namei until it returns, and the D172 (a) re-entry uses it, so a racing chroot cannot move the re-entry to the real root (D177 completed); the re-entry also runs D165's post-check. Every served answer under a served root is guarded, from real starts too (`dqres_namei`). The `RESOLVE` body grows to 112 bytes: `drs_root` (@96), `drs_rootpathlen` (@104), `drs_pad2` (@108) and the root's `di_path` as a fifth string, so a controller resolves `/`, absolute link targets and `..` at the process's own (possibly nested) root; `dq_serve_tree` does, matching chroot(2), and answers `EIO` for a served start whose hint is missing or not the object's own path. ATTACH: a root without a cwd makes the cwd the root; a cwd must be under the root (`EINVAL`); with a root the child's open directories follow chroot's rule (`kern.chroot_allow_open_directories`, `EPERM`) unless `DQ_ATTACH_F_NODIRS` refuses any real directory (`EBUSY`); other `da_flags` bits are `EINVAL`. `DQ_TREE_F_ROOT` trees refuse real-start names outside the tree with `EACCES` unless `DQ_TREE_F_OUTSIDE_PASS`. Served CWD/ROOT kinfo rows carry `KF_FLAG_READ`. Unattached behaviour is unchanged; attached behaviour is the controller's to choose. Round 2 of the review: `DQ_API_VERSION` becomes 2, because the `RESOLVE` body's strings moved (96 → 112 bytes); every versioned ioctl accepts 2 only (`EINVAL`) and events report 2. ATTACH's default open-directory rule is chroot's rule exactly, applied with a root, so with the default `kern.chroot_allow_open_directories=1` an unchrooted child keeps its inherited real directories; `DQ_ATTACH_F_NODIRS` refuses them with or without a root, and a root whose reference count cannot take the cwd's too is `EIO` (a dead start), not `EBUSY`. Only an attached process's served directories count for the open-directory rule, so an unattached process's `chroot(2)` is exactly upstream's. A dead served root (`DR_ROOT_DEAD`) makes every consulted lookup `EIO` before posting, so no event carries `drs_root` 0 for a served root and no answer escapes the guard; the guard checks against the root identity that was posted. A slot fetched ahead keeps the served root of its own start's snapshot (`ds_root`), and D172 (b)'s symlink re-consultation posts the root and is guarded too. The snapshot is `struct dqres_snap`, held by `namei` from `namei_setup` to the end | iii-c review rounds 1-2, user decisions 2026-11-08 | |
 
 ### 20.1 Origin
 
@@ -1724,3 +1749,10 @@ system call.
     `//sys/dev/dq:resolve_ledger_test`) has not been built: `bazel query`
     stops at the unregistered `bsd_sdk` module in this checkout. The Make
     kernel build is the authoritative ledger check.
+15. `linkat(servedfd, "", AT_EMPTY_PATH, …)` with both paths served is
+    `EXDEV` like every served empty-path link (Q5, D164); serving it as a
+    link of the object itself is open.
+16. `dq_serve_tree` checks parent-directory access with the requester's
+    effective uid and gid only; supplementary groups are not presented in
+    the event (Q11), so the suites oracle lists those cases in
+    `dqtree.expected`.

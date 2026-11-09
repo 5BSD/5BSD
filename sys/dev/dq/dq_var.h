@@ -575,6 +575,10 @@ int	dq_object_ident_check(struct dq_object *o,
 int	dq_file_object_setattr(struct file *fp, struct dq_setattr_body *sb,
 	    struct ucred *cred, struct thread *td);
 int	dq_file_target(struct file *fp, char **targetp, size_t *lenp);
+uint32_t dq_file_kind(struct file *fp);
+uint64_t dq_file_objid(struct file *fp);
+int	dq_file_attach_under(struct file *cwdfp, struct file *rootfp);
+int	dq_file_attach_start(struct file *fp, struct dq_queue *q);
 int	dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
 	    uint32_t *kindp, uint64_t *objectp);
 int	dq_file_install(struct thread *td, struct dq_object *o,

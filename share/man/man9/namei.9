@@ -688,6 +688,52 @@ consults a passed user-origin lookup again with the remaining path (the
 link's directory held, unlocked, across the wait and released before
 the error exit); it never runs for paths consulted ahead, exempt
 regions, or capability-restricted lookups.
+.Pp
+An attached process can have a served working directory and root (stage
+1c-iii-c), held beside
+.Vt struct pwd ,
+which never refers to a served object.
+.Fn namei_setup
+takes the pwd and both in one
+.Dv PWDDESC_XLOCK
+section
+.Pq Fn pwd_hold_dqres , No a Vt struct dqres_snap ,
+so a racing
+.Xr chdir 2
+cannot mix them, and
+.Fn namei
+holds that snapshot until it returns.
+Once the real start is chosen
+.Po
+with
+.Fn namei_handle_root Ns 's
+capability test for an absolute path
+.Pc ,
+.Fn dqres_namei_setup_start
+may replace it: an absolute path (not
+.Dv RINROOT )
+under a served root, or a relative
+.Dv AT_FDCWD
+path under a served working directory, starts at the served directory
+through the same served branch; a kernel consumer's lookup, a
+kernel-origin one other than the interpreter's absolute path under a
+served root, and an unmarked user-space one are
+.Er EXDEV
+there with no event; exempt regions keep the real working directory and
+root.
+The served branch holds every served result to the served root's
+subtree.
+At a symbolic link with an absolute target,
+.Fn dqres_namei_symlink
+consults any lookup of a process with a served root again from the
+snapshot's root (or refuses it as above).
+.Fn pwd_chdir ,
+.Fn pwd_chroot
+and
+.Fn pwd_chroot_chdir
+clear the corresponding served directory, and
+.Fn vn_getcwd
+answers a served working directory's presented path first.
 .Sh SEE ALSO
 .Xr uio 9 ,
 .Xr uma 9 ,

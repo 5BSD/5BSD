@@ -118,6 +118,11 @@ points outside the process's allocated address space.
 An I/O error occurred while reading from or writing to the file system.
 .It Bq Er EINTEGRITY
 Corrupted data was detected while reading from the file system.
+.It Bq Er EXDEV
+The process is attached to a
+.Xr dq 4
+queue and the path would be looked up from its served working directory
+or root.
 .El
 .Sh SEE ALSO
 .Xr acct 5 ,

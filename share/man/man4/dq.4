@@ -67,10 +67,10 @@ The interface is the installed header
 fixed width, native byte order, LP64 only and additive, and the
 .Xr libdq 3
 library wraps it.
-This page describes the device as built in stage 1c-i (the
-.Dv DQ_KIND_FILE
-kind, read-only or writable, with mappings), and names every answer
-that differs from a real file.
+This page describes the device as built through stage 1c-iii (served
+files, directories and symlinks, attachment, served lookups, working
+directory and root), and names every answer that differs from a real
+file.
 .Ss Opening the device
 .Pa /dev/dq
 is created mode 0600, owner root, group wheel.
@@ -106,6 +106,14 @@ A controller should open the queue
 see
 .Sx Delivery of a minted descriptor .
 .Ss Events and replies
+.Dv DQ_API_VERSION
+is 2; version 1 had a 96-byte
+.Dv DQ_OP_RESOLVE
+body.
+Every ioctl argument that carries a version must carry this one
+.Pq Er EINVAL
+and every event reports it.
+.Pp
 Every record on the queue starts with a
 .Vt struct dq_event
 of
@@ -299,7 +307,7 @@ A queue-level event
 .Pq Va de_object No 0
 posted for a lookup by an attached process: body
 .Vt struct dq_resolve_body
-and four strings; the reply is
+and five strings; the reply is
 .Dv DQ_RESOLVE_PASS
 or an errno.
 See
@@ -942,9 +950,12 @@ see
 .Va da_rootfd
 and
 .Va da_cwdfd
-must be -1 and
+are -1 or served directories of this queue the caller holds, which
+become the process's served root and working directory
+.Pq Sx Served working directory and root ;
 .Va da_flags
-0 (served start directories come in stage 1c-iii).
+is 0 or
+.Dv DQ_ATTACH_F_NODIRS .
 .It Dv DQ_IOC_GET_STATS2 Vt "struct dq_stats2"
 Everything
 .Vt struct dq_stats
@@ -1795,7 +1806,8 @@ event before the lookup runs, and the controller decides: it answers
 and the lookup proceeds unchanged, or an errno and the system call fails
 with it.
 Stage 1c-i accepts only those two answers; served results (a minted
-object, attributes, a link) come in stage 1c-iii.
+object, attributes, a link) come in stage 1c-iii
+.Pq Sx Served answers , Sx Served directories and starts , Sx Served working directory and root .
 .Pp
 .Sy Attaching .
 .Dv DQ_IOC_ATTACH
@@ -1907,14 +1919,16 @@ descriptor
 .Pc ,
 the open flags or mode
 .Pq Va drs_mode ,
-the system call number, and four strings, each NUL-terminated after the
-96-byte
+the system call number, and five strings, each NUL-terminated after the
+112-byte
 .Vt struct dq_resolve_body
 and the record padded to 8: the path, the second path of a rename or
 link, a best-effort path of the start relative to the process's root
 .Pq Dv DQ_RF_STARTPATH_VALID ,
-and the same hint for the second path's start
-.Pq Dv DQ_RF_STARTPATH2_VALID .
+the same hint for the second path's start
+.Pq Dv DQ_RF_STARTPATH2_VALID ,
+and the presented path of the process's served root
+.Pq Va drs_root No and Va drs_rootpathlen ; No empty with a real root .
 For a rename or link the second path's own start is described by
 .Va drs_start2_kind
 .Po
@@ -2756,9 +2770,10 @@ never takes
 the operation's served kinds,
 .Dv DQ_RESOLVE_REAL
 where allowed, or an errno.
-A process not attached to the directory's queue (unattached, attached
-elsewhere, or the controller) gets
-.Er EDEADLK
+An unattached process (the controller included) gets
+.Er EACCES
+and a process attached to another queue
+.Er EDEADLK ,
 with no event; a revoked directory, or one whose queue is closing,
 .Er EIO .
 A served file or symbolic link as a directory is
@@ -2948,6 +2963,306 @@ object id
 .Pq Ql dq_start ;
 a served descriptor answered records its id
 .Pq Ql dq_object .
+.Ss Served working directory and root
+From stage 1c-iii-c a served directory can be an attached process's
+working directory and root.
+The process's real working directory and root
+.Pq the kernel's Vt struct pwd
+do not change: the served ones are held beside them, by reference to the
+directory's file, and are inherited with the attachment.
+They are set by
+.Xr chdir 2
+or
+.Xr chroot 2
+of a name the controller answers
+.Dv DQ_RESOLVE_FD
+of a served directory
+.Pq a Dv DQ_KIND_FILE No answer is Er ENOTDIR ;
+the kernel checks search permission on the presented identity
+.Pq Er EACCES ,
+.Xr chroot 2
+also its privilege rule and
+.Va kern.chroot_allow_open_directories ) ;
+by
+.Xr fchdir 2
+or
+.Xr fchroot 2
+of a served directory, which for an unattached process (the controller
+included) is
+.Er EACCES
+and for one attached to another queue
+.Er EDEADLK ,
+opened with
+.Dv O_RESOLVE_BENEATH
+.Er ENOTCAPABLE ,
+of another kind
+.Er ENOTDIR ,
+and once revoked
+.Er EIO ;
+and by
+.Dv DQ_IOC_ATTACH Ns 's
+.Va da_rootfd
+and
+.Va da_cwdfd :
+live served directories of the queue
+.Pq Er EINVAL No for another descriptor, Er ENOTDIR No for another kind, Er EIO No once revoked ,
+whose
+.Vt struct file
+the attachment shares with the controller's descriptor (its flags and
+credential are not used for lookups; closing the controller's
+descriptor keeps the start).
+With a root and no
+.Va da_cwdfd
+the working directory is the root
+.Po
+.Er EIO
+if the root's file reference count is exhausted: the start would be
+dead, as at inheritance
+.Pc ;
+a
+.Va da_cwdfd
+must be the root or a served directory under it
+.Pq Er EINVAL .
+.Pp
+The open-directory rule of
+.Dv DQ_IOC_ATTACH
+is
+.Xr chroot 2 Ns 's
+rule exactly, applied when a root is given:
+.Va kern.chroot_allow_open_directories
+0 refuses a child with any directory open, 1 only a child that is
+already chrooted, 2 none
+.Pq Er EPERM .
+So with the default of 1 and a child that is not chrooted nothing is
+refused, and the real directory descriptors the child inherited stay
+usable: they start real lookups outside the served namespace, which the
+controller sees as real starts and decides.
+A controller that wants confinement passes
+.Dv DQ_ATTACH_F_NODIRS
+in
+.Va da_flags ,
+which, with or without a root and whatever the sysctl says, refuses a
+child with any real directory open
+.Pq Er EBUSY ;
+.Xr libdq 3 Ns 's
+.Fn dq_serve_tree
+then refuses real-start lookups of names outside its tree with
+.Er EACCES
+unless
+.Dv DQ_TREE_F_OUTSIDE_PASS
+is set.
+Other
+.Va da_flags
+bits are
+.Er EINVAL .
+A real
+.Xr chdir 2
+or
+.Xr chroot 2
+(one answered
+.Dv DQ_RESOLVE_PASS
+or
+.Dv DQ_RESOLVE_REAL ,
+or a
+.Xr fchdir 2
+to a real directory) clears the served one.
+For
+.Va kern.chroot_allow_open_directories ,
+the open served directories of an attached process count as open
+directories, and a served root counts as being chrooted; an unattached
+process's served directories start no lookups and do not count.
+.Pp
+Under a served root an absolute name, and under a served working
+directory a relative
+.Dv AT_FDCWD
+name, start at the served directory
+.Pq Dv DQ_START_SERVED ,
+as a served directory descriptor does: never
+.Dv DQ_RESOLVE_PASS ,
+the operation's served kinds,
+.Dv DQ_RESOLVE_REAL
+or an errno.
+The Linux ABI root is not used.
+Every
+.Dv DQ_OP_RESOLVE
+event of a process with a served root carries the root's object in
+.Va drs_root
+and its
+.Va di_path
+as a fifth string
+.Pq Va drs_rootpathlen ,
+so the controller resolves absolute names, absolute symbolic link
+targets and
+.Ql ..
+at the root, as
+.Xr chroot 2
+does; it clamps
+.Ql ..
+at the root.
+The kernel holds every served result
+.Pq Dv DQ_RESOLVE_FD , ATTR , LINK
+under a served root, from a served start or a real one, to the root's
+subtree (its
+.Va di_path
+at or under the root's at a component boundary), else
+.Er ENOTCAPABLE
+and the object retires.
+A symbolic link with an absolute target met by a lookup of a process
+with a served root is consulted again from the served root
+.Pq Dv DQ_START_SERVED , DQ_RF_SYMLINK_RESTART ;
+a second path of
+.Xr rename 2
+or
+.Xr link 2
+meeting one is
+.Er EXDEV
+and a path consulted ahead
+.Er EIO .
+The working directory and root are read with the process's
+.Vt struct pwd
+in one critical section, so a lookup racing a
+.Xr chdir 2
+never starts from a mix of the two, and the lookup keeps the served root
+it started under until it ends: a symbolic link it follows re-enters at
+that root even if another thread changes the root meanwhile.
+A revoked or closing served directory, and one whose reference could not
+be taken (at inheritance or when a lookup starts), makes lookups from it
+.Er EIO .
+A served root whose reference could not be taken makes every consulted
+lookup of the process
+.Er EIO
+before any event is posted, from a served start or a real one: without
+the root's path the kernel cannot hold the answer to its subtree.
+.Pp
+.Sy Kernel lookups .
+A lookup the kernel makes for itself or for a kernel consumer
+.Po
+.Xr ktrace 2 ,
+.Xr acct 2 ,
+.Xr swapon 2 ,
+.Xr swapoff 2 ,
+.Xr kldload 2
+of a path,
+.Xr mount 2 Ns 's
+path options,
+.Xr quotactl 2 ,
+.Xr extattrctl 2 ,
+.Xr auditctl 2 ,
+a jail's path, an unmarked user-space lookup
+.Pc
+that would start at a served working directory or root is refused
+.Er EXDEV
+with no event
+.Pq Va ds2_resolve_exdev .
+The exception is the image's interpreter (the ELF
+.Dv PT_INTERP
+and a
+.Ql #!
+line): under a served root its absolute path is consulted at the served
+root
+.Pq Dv DQ_ROP_EXEC_INTERP , DQ_RCLASS_KERNEL , DQ_START_SERVED ,
+accepting only
+.Dv DQ_RESOLVE_REAL
+or an errno, so the interpreter comes from the served tree; a relative
+.Ql #!
+interpreter under a served working directory is
+.Er EXDEV .
+The ELF interpreter is consulted after the old image was replaced: an
+errno or a missed deadline kills the new image (it cannot fail back into
+the caller), as for the kernel's other lookups during
+.Xr execve 2 .
+Lookups in exempt regions (the linker's search, the kernel's own paths)
+use the real working directory and root.
+A kernel-space path a subsystem looks up where it cannot be consulted
+.Po
+.Xr md 4
+vnode backing files and the others the ledger lists as refused
+.Pc ,
+and a kernel-space lookup no intent marks outside an exempt region, are
+.Er EPERM
+for an attached process, with no event.
+.Pp
+.Sy Presented paths .
+A served object's
+.Va di_path
+is the controller's claim.
+Under a served root it is presented relative to the root's
+.Va di_path ,
+cut at a component boundary (the root itself is
+.Ql / ) ,
+and a
+.Va di_path
+not underneath has no presented path.
+This applies to the process's own
+.Xr getcwd 3 ,
+.Xr realpath 3
+of a name answered
+.Dv DQ_RESOLVE_ATTR ,
+.Va kf_path
+of its descriptors and of its working directory and root rows in
+.Dv KERN_PROC_FILEDESC
+and
+.Dv KERN_PROC_CWD ,
+and
+.Xr linprocfs 4 Ns 's
+.Pa cwd ,
+.Pa root
+and
+.Pa fd/
+links, including through
+.Pa /proc/self .
+.Xr getcwd 3
+of a working directory not under the served root, and
+.Xr realpath 3
+of a real object (a name answered
+.Dv DQ_RESOLVE_PASS
+from a real start or
+.Dv DQ_RESOLVE_REAL ,
+including
+.Xr realpath 3
+answered
+.Dv DQ_RESOLVE_REAL )
+under a served root, are
+.Er ENOENT ;
+a buffer too short is
+.Er ERANGE .
+With a real root,
+.Va di_path
+is shown as given: it must then be a real-namespace path, an obligation
+of the controller.
+Another process's paths are presented against the reader, as a real
+path is relative to the reader's root: a reader attached to the same
+queue with a served root sees them against its own root (an empty
+.Va kf_path
+when not underneath, as for an unreachable vnode); every other reader
+(unattached, attached elsewhere, or with a real root) sees the raw
+.Va di_path ,
+the controller's namespace.
+A revoked served working directory or root keeps its last presented path
+in
+.Xr getcwd 3
+and in its row; one whose reference could not be taken at inheritance
+has no row and
+.Xr getcwd 3
+is
+.Er EIO ;
+neither is ever replaced by the real directory.
+Real objects' rows keep the real vnode's path.
+.Pp
+.Sy Exec .
+Under a served working directory or root the image's
+.Dv AT_EXECPATH
+is the name in the served namespace: an absolute name as given, a
+relative one joined to the served working directory's presented path
+(a leading
+.Ql ./
+dropped).
+The join is lexical: through a symbolic link to a directory it keeps the
+link's name, where an unattached process gets the resolved path.
+.Xr procstat 1 Fl b
+and
+.Va kern.proc.pathname
+show the real image.
 .Sh READ-ONLY OBJECTS
 A descriptor minted without
 .Dv DQ_MINT_F_WRITE
@@ -3170,7 +3485,8 @@ as lookup starts,
 .Dv DQ_RESOLVE_REAL
 and the re-consultation at symbolic links
 .Pq Sx Served directories and starts ;
-a virtual working directory and root come in 1c-iii-c.
+stage 1c-iii-c a served working directory and root
+.Pq Sx Served working directory and root .
 Consequences of the attachment that differ from an unattached run, by
 design: set-id and authority transitions do not happen,
 .Xr jail_attach 2 ,

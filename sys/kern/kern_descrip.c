@@ -4859,10 +4859,13 @@ SYSCTL_INT(_kern, OID_AUTO, chroot_allow_open_directories, CTLFLAG_RW,
 
 /*
  * Helper function for raised chroot(2) security function:  Refuse if
- * any filedescriptors are open directories.
+ * any filedescriptors are open directories.  With served, a
+ * DescriptorQueue served directory counts too (D169): it is a lookup
+ * start only for a process attached to its queue, so only those callers
+ * pass it.
  */
 static int
-chroot_refuse_vdir_fds(struct filedesc *fdp)
+chroot_refuse_vdir_fds(struct filedesc *fdp, bool served)
 {
 	struct vnode *vp;
 	struct file *fp;
@@ -4876,8 +4879,238 @@ chroot_refuse_vdir_fds(struct filedesc *fdp)
 			if (vp->v_type == VDIR)
 				return (EPERM);
 		}
+		/* dqres_file_is_dir takes no lock. */
+		if (served && fp->f_type == DTYPE_DQ && dqres_file_is_dir(fp))
+			return (EPERM);
 	}
 	return (0);
+}
+
+/*
+ * chroot(2)'s rule for open directories, kern.chroot_allow_open_directories
+ * above, on the table fdp of the pwddesc pdp: a process already chrooted
+ * (by a real root, or by a served one, D169) may not chroot again with a
+ * directory open unless the sysctl is 2, and with 0 no process may.
+ * served as for chroot_refuse_vdir_fds.
+ */
+static int
+chroot_open_dirs_check(struct filedesc *fdp, struct pwddesc *pdp,
+    bool served)
+{
+	struct pwd *pwd;
+	struct dqres *dr;
+	bool chrooted;
+
+	FILEDESC_LOCK_ASSERT(fdp);
+	PWDDESC_ASSERT_XLOCKED(pdp);
+	pwd = PWDDESC_XLOCKED_LOAD_PWD(pdp);
+	dr = pdp->pd_dqres;
+	chrooted = pwd->pwd_rdir != rootvnode ||
+	    (dr != NULL && dr->dr_root != NULL);
+	if (chroot_allow_open_directories == 0 ||
+	    (chroot_allow_open_directories == 1 && chrooted))
+		return (chroot_refuse_vdir_fds(fdp, served));
+	return (0);
+}
+
+/*
+ * An attached pwddesc's served cwd or root (D169): detach the file the
+ * caller replaces or clears, under PWDDESC_XLOCK, with its reference;
+ * the caller drops it after unlocking (fdrop never runs under the
+ * mutex).
+ */
+static struct file *
+pwd_dqres_take(struct pwddesc *pdp, bool root)
+{
+	struct dqres *dr;
+	struct file *fp;
+
+	PWDDESC_ASSERT_XLOCKED(pdp);
+	dr = pdp->pd_dqres;
+	if (dr == NULL)
+		return (NULL);
+	if (root) {
+		fp = dr->dr_root;
+		dr->dr_root = NULL;
+		dr->dr_flags &= ~DR_ROOT_DEAD;
+	} else {
+		fp = dr->dr_cwd;
+		dr->dr_cwd = NULL;
+		dr->dr_flags &= ~DR_CWD_DEAD;
+	}
+	return (fp);
+}
+
+/*
+ * A start snapshot (struct dqres_snap, D177) of the record under
+ * PWDDESC_XLOCK: fhold of dr_cwd and dr_root, and their DR_*_DEAD bits
+ * (set here too when fhold fails on a reference count about to
+ * overflow).  All zero when pdp is not attached.
+ */
+static void
+pwd_dqres_hold_locked(struct pwddesc *pdp, struct dqres_snap *snap)
+{
+	struct dqres *dr;
+
+	PWDDESC_ASSERT_XLOCKED(pdp);
+	bzero(snap, sizeof(*snap));
+	dr = pdp->pd_dqres;
+	if (dr == NULL)
+		return;
+	snap->dsn_flags = dr->dr_flags & (DR_CWD_DEAD | DR_ROOT_DEAD);
+	if (dr->dr_cwd != NULL) {
+		if (fhold(dr->dr_cwd))
+			snap->dsn_cwd = dr->dr_cwd;
+		else
+			snap->dsn_flags |= DR_CWD_DEAD;
+	}
+	if (dr->dr_root != NULL) {
+		if (fhold(dr->dr_root))
+			snap->dsn_root = dr->dr_root;
+		else
+			snap->dsn_flags |= DR_ROOT_DEAD;
+	}
+}
+
+/*
+ * The start snapshot of an attached process (D177): the pwd and the
+ * served cwd and root, held in one PWDDESC_XLOCK section, so a
+ * concurrent chdir or chroot never yields a real pwd from one side of
+ * the change and a served directory from the other.  The caller drops
+ * the pwd and releases the snapshot (dqres_snap_release).
+ */
+struct pwd *
+pwd_hold_dqres(struct thread *td, struct dqres_snap *snap)
+{
+	struct pwddesc *pdp;
+	struct pwd *pwd;
+
+	pdp = td->td_proc->p_pd;
+	PWDDESC_XLOCK(pdp);
+	pwd = pwd_hold_pwddesc(pdp);
+	MPASS(pwd != NULL);
+	pwd_dqres_hold_locked(pdp, snap);
+	PWDDESC_XUNLOCK(pdp);
+	return (pwd);
+}
+
+/*
+ * The snapshot of another process (kinfo, linprocfs) or of the current
+ * one (getcwd, execpath), as pwd_hold_proc takes its pwd: p must be held
+ * unless it is curproc, which cannot exit under its own thread.  All zero
+ * when p has no pwddesc left.
+ */
+void
+pwd_dqres_proc(struct proc *p, struct dqres_snap *snap)
+{
+	struct pwddesc *pdp;
+
+	if (p != curproc)
+		PROC_ASSERT_HELD(p);
+	bzero(snap, sizeof(*snap));
+	PROC_LOCK(p);
+	pdp = pdhold(p);
+	PROC_UNLOCK(p);
+	if (pdp == NULL)
+		return;
+	PWDDESC_XLOCK(pdp);
+	pwd_dqres_hold_locked(pdp, snap);
+	PWDDESC_XUNLOCK(pdp);
+	pddrop(pdp);
+}
+
+/* dqres_snap_release's slow path: the references, with no lock held. */
+void
+dqres_snap_drop(struct dqres_snap *snap)
+{
+
+	if (snap->dsn_cwd != NULL) {
+		fdrop(snap->dsn_cwd, curthread);
+		snap->dsn_cwd = NULL;
+	}
+	if (snap->dsn_root != NULL) {
+		fdrop(snap->dsn_root, curthread);
+		snap->dsn_root = NULL;
+	}
+}
+
+/*
+ * ATTACH's open-directory rule for the child (D184).  With a served root
+ * the child is chrooted, so chroot(2)'s rule applies exactly (its served
+ * directories counted, as it is about to be attached): with the default
+ * kern.chroot_allow_open_directories=1 an unchrooted child keeps its open
+ * directories.  DQ_ATTACH_F_NODIRS, with or without a root, refuses any
+ * open real directory with EBUSY whatever the sysctl says, in place of
+ * chroot's rule; served directories stay, being lookups the controller
+ * answers.
+ */
+int
+dqres_attach_dirs_check(struct filedesc *fdp, struct pwddesc *pdp,
+    bool root, bool nodirs)
+{
+
+	if (nodirs)
+		return (chroot_refuse_vdir_fds(fdp, false) != 0 ? EBUSY : 0);
+	if (root)
+		return (chroot_open_dirs_check(fdp, pdp, true));
+	return (0);
+}
+
+/*
+ * A served directory becomes the cwd (D169): fp (referenced) is
+ * consumed.  The real pd_pwd is unchanged (I13).
+ */
+void
+dqres_set_cwd(struct thread *td, struct file *fp)
+{
+	struct pwddesc *pdp;
+	struct file *old;
+
+	KASSERT(dqres_file_is_dir(fp), ("dqres_set_cwd: fp %p", fp));
+	pdp = td->td_proc->p_pd;
+	PWDDESC_XLOCK(pdp);
+	KASSERT(pdp->pd_dqres != NULL, ("dqres_set_cwd: not attached"));
+	old = pwd_dqres_take(pdp, false);
+	pdp->pd_dqres->dr_cwd = fp;
+	PWDDESC_XUNLOCK(pdp);
+	if (old != NULL)
+		fdrop(old, td);
+}
+
+/*
+ * A served directory becomes the root (D169), under chroot(2)'s rules:
+ * the caller made the privilege check, the open-directory rule is made
+ * here.  fp (referenced) is consumed.  Lock order as pwd_chroot:
+ * FILEDESC_SLOCK -> PWDDESC_XLOCK.
+ */
+int
+dqres_set_root(struct thread *td, struct file *fp)
+{
+	struct pwddesc *pdp;
+	struct filedesc *fdp;
+	struct file *old;
+	int error;
+
+	KASSERT(dqres_file_is_dir(fp), ("dqres_set_root: fp %p", fp));
+	fdp = td->td_proc->p_fd;
+	pdp = td->td_proc->p_pd;
+	FILEDESC_SLOCK(fdp);
+	PWDDESC_XLOCK(pdp);
+	KASSERT(pdp->pd_dqres != NULL, ("dqres_set_root: not attached"));
+	error = chroot_open_dirs_check(fdp, pdp, true);
+	FILEDESC_SUNLOCK(fdp);
+	old = NULL;
+	if (error == 0) {
+		old = pwd_dqres_take(pdp, true);
+		pdp->pd_dqres->dr_root = fp;
+		fp = NULL;
+	}
+	PWDDESC_XUNLOCK(pdp);
+	if (old != NULL)
+		fdrop(old, td);
+	if (fp != NULL)
+		fdrop(fp, td);
+	return (error);
 }
 
 static void
@@ -5009,6 +5242,7 @@ pwd_chroot(struct thread *td, struct vnode *vp)
 	struct pwddesc *pdp;
 	struct filedesc *fdp;
 	struct pwd *newpwd, *oldpwd;
+	struct file *dqfp;
 	int error;
 
 	fdp = td->td_proc->p_fd;
@@ -5017,18 +5251,12 @@ pwd_chroot(struct thread *td, struct vnode *vp)
 	FILEDESC_SLOCK(fdp);
 	PWDDESC_XLOCK(pdp);
 	oldpwd = PWDDESC_XLOCKED_LOAD_PWD(pdp);
-	if (chroot_allow_open_directories == 0 ||
-	    (chroot_allow_open_directories == 1 &&
-	    oldpwd->pwd_rdir != rootvnode)) {
-		error = chroot_refuse_vdir_fds(fdp);
-		FILEDESC_SUNLOCK(fdp);
-		if (error != 0) {
-			PWDDESC_XUNLOCK(pdp);
-			pwd_drop(newpwd);
-			return (error);
-		}
-	} else {
-		FILEDESC_SUNLOCK(fdp);
+	error = chroot_open_dirs_check(fdp, pdp, pdp->pd_dqres != NULL);
+	FILEDESC_SUNLOCK(fdp);
+	if (error != 0) {
+		PWDDESC_XUNLOCK(pdp);
+		pwd_drop(newpwd);
+		return (error);
 	}
 
 	vrefact(vp);
@@ -5041,8 +5269,12 @@ pwd_chroot(struct thread *td, struct vnode *vp)
 	}
 	pwd_fill(oldpwd, newpwd);
 	pwd_set(pdp, newpwd);
+	/* A real chroot clears a served root (D169). */
+	dqfp = pwd_dqres_take(pdp, true);
 	PWDDESC_XUNLOCK(pdp);
 	pwd_drop(oldpwd);
+	if (dqfp != NULL)
+		fdrop(dqfp, td);
 	return (0);
 }
 
@@ -5051,6 +5283,7 @@ pwd_chdir(struct thread *td, struct vnode *vp)
 {
 	struct pwddesc *pdp;
 	struct pwd *newpwd, *oldpwd;
+	struct file *dqfp;
 
 	VNPASS(vp->v_usecount > 0, vp);
 
@@ -5061,8 +5294,12 @@ pwd_chdir(struct thread *td, struct vnode *vp)
 	newpwd->pwd_cdir = vp;
 	pwd_fill(oldpwd, newpwd);
 	pwd_set(pdp, newpwd);
+	/* A real chdir clears a served cwd (D169). */
+	dqfp = pwd_dqres_take(pdp, false);
 	PWDDESC_XUNLOCK(pdp);
 	pwd_drop(oldpwd);
+	if (dqfp != NULL)
+		fdrop(dqfp, td);
 }
 
 /*
@@ -5120,7 +5357,8 @@ pwd_chroot_chdir(struct thread *td, struct vnode *vp)
 	 * I5 (D137): jail_attach of an attached process is refused here,
 	 * under the lock ATTACH commits under, so the two cannot interleave.
 	 */
-	error = pdp->pd_dqres != NULL ? EPERM : chroot_refuse_vdir_fds(fdp);
+	error = pdp->pd_dqres != NULL ? EPERM :
+	    chroot_refuse_vdir_fds(fdp, false);
 	FILEDESC_SUNLOCK(fdp);
 	if (error != 0) {
 		PWDDESC_XUNLOCK(pdp);
@@ -5140,6 +5378,8 @@ pwd_chroot_chdir(struct thread *td, struct vnode *vp)
 	newpwd->pwd_adir = vp;
 	pwd_fill(oldpwd, newpwd);
 	pwd_set(pdp, newpwd);
+	/* Never attached here (I5 above), so no served cwd or root to clear. */
+	MPASS(pdp->pd_dqres == NULL);
 	PWDDESC_XUNLOCK(pdp);
 	pwd_drop(oldpwd);
 	return (0);
@@ -5663,6 +5903,23 @@ export_vnode_to_sb(struct vnode *vp, int fd, int fflags,
 }
 
 /*
+ * A served cwd or root row (D169, D174): the file (held by the caller)
+ * is exported with no lock held, so dq's fill_kinfo, which may sleep,
+ * can present its path against the reader.
+ */
+static int
+export_dqres_to_sb(struct file *fp, int fd, struct export_fd_buf *efbuf)
+{
+
+	if (efbuf->remainder == 0)
+		return (ENOMEM);
+	export_file_to_kinfo(fp, fd, NULL, &efbuf->kif, NULL, efbuf->flags);
+	/* As the real CWD and ROOT rows: FREAD, whatever the file's flags. */
+	efbuf->kif.kf_flags = KF_FLAG_READ;
+	return (export_kinfo_to_sb(efbuf));
+}
+
+/*
  * Store a process file descriptor information to sbuf.
  *
  * Takes a locked proc as argument, and returns with the proc unlocked.
@@ -5676,6 +5933,7 @@ kern_proc_filedesc_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen,
 	struct pwddesc *pdp;
 	struct export_fd_buf *efbuf;
 	struct vnode *cttyvp, *textvp, *tracevp;
+	struct dqres_snap snap;
 	struct pwd *pwd;
 	int error, i;
 	cap_rights_t rights;
@@ -5722,15 +5980,24 @@ kern_proc_filedesc_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen,
 	efbuf->pdp = pdp;
 	PWDDESC_XLOCK(pdp);
 	pwd = pwd_hold_pwddesc(pdp);
+	/*
+	 * A served cwd or root (D169) replaces the real row; a dead one
+	 * (DR_*_DEAD) has no row, never the real directory's.  The files
+	 * are exported after unlocking (D174).
+	 */
+	pwd_dqres_hold_locked(pdp, &snap);
 	if (pwd != NULL) {
 		/* working directory */
-		if (pwd->pwd_cdir != NULL) {
+		if (pwd->pwd_cdir != NULL && snap.dsn_cwd == NULL &&
+		    (snap.dsn_flags & DR_CWD_DEAD) == 0) {
 			vrefact(pwd->pwd_cdir);
 			error = export_vnode_to_sb(pwd->pwd_cdir,
 			    KF_FD_TYPE_CWD, FREAD, efbuf);
 		}
 		/* root directory */
-		if (error == 0 && pwd->pwd_rdir != NULL) {
+		if (error == 0 && pwd->pwd_rdir != NULL &&
+		    snap.dsn_root == NULL &&
+		    (snap.dsn_flags & DR_ROOT_DEAD) == 0) {
 			vrefact(pwd->pwd_rdir);
 			error = export_vnode_to_sb(pwd->pwd_rdir,
 			    KF_FD_TYPE_ROOT, FREAD, efbuf);
@@ -5743,6 +6010,12 @@ kern_proc_filedesc_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen,
 		}
 	}
 	PWDDESC_XUNLOCK(pdp);
+	if (error == 0 && snap.dsn_cwd != NULL)
+		error = export_dqres_to_sb(snap.dsn_cwd, KF_FD_TYPE_CWD, efbuf);
+	if (error == 0 && snap.dsn_root != NULL)
+		error = export_dqres_to_sb(snap.dsn_root, KF_FD_TYPE_ROOT,
+		    efbuf);
+	dqres_snap_release(&snap);
 	if (pwd != NULL)
 		pwd_drop(pwd);
 	if (error != 0)
@@ -5858,6 +6131,7 @@ kern_proc_cwd_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen)
 	struct pwd *pwd;
 	struct export_fd_buf *efbuf;
 	struct vnode *cdir;
+	struct dqres_snap snap;
 	int error;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
@@ -5877,13 +6151,20 @@ kern_proc_cwd_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen)
 	PWDDESC_XLOCK(pdp);
 	pwd = PWDDESC_XLOCKED_LOAD_PWD(pdp);
 	cdir = pwd->pwd_cdir;
-	if (cdir == NULL) {
+	/* A served cwd (D169, D174), exported after unlocking; dead: none. */
+	pwd_dqres_hold_locked(pdp, &snap);
+	if (snap.dsn_cwd != NULL) {
+		error = 0;
+	} else if (cdir == NULL || (snap.dsn_flags & DR_CWD_DEAD) != 0) {
 		error = EINVAL;
 	} else {
 		vrefact(cdir);
 		error = export_vnode_to_sb(cdir, KF_FD_TYPE_CWD, FREAD, efbuf);
 	}
 	PWDDESC_XUNLOCK(pdp);
+	if (snap.dsn_cwd != NULL)
+		error = export_dqres_to_sb(snap.dsn_cwd, KF_FD_TYPE_CWD, efbuf);
+	dqres_snap_release(&snap);
 	pddrop(pdp);
 	free(efbuf, M_TEMP);
 	return (error);

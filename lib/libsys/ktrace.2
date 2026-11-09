@@ -181,6 +181,11 @@ Corrupted data was detected while reading from the file system.
 The kernel was not compiled with
 .Nm
 support.
+.It Bq Er EXDEV
+The process is attached to a
+.Xr dq 4
+queue and the path would be looked up from its served working directory
+or root.
 .El
 .Pp
 A thread may be unable to log one or more tracing events due to a

@@ -1,28 +1,31 @@
 # Expected differences between a test suite run under dqpass (attached to a
 # queue that answers every RESOLVE with PASS) and the same run unattached
 # (plan stage 1c, M9).  One extended regular expression per line, matched
-# against "suite/program:case"; matching cases are left out of the
-# comparison.  Each group names the dq(4) rule that makes the difference.
+# against "suite/program:case result"; matching cases are left out of the
+# comparison.  Each group names the dq(4) rule that makes the difference,
+# and every entry ends in its owner, "# ux-N[ D###]: cause" (the Unix-
+# illusion sub-series that removes it) or "# by-design D###: reason";
+# dq_oracle_test and dq_tree_suites_test fail on an entry without one.
 
 # I5: no set-user-id or set-group-id transition while attached
 # (P2_NO_NEW_PRIVS), no authority installation.
-setuid
-setgid
-issetugid
-no_new_privs
+setuid  # by-design D137: I5, no set-id transition while attached
+setgid  # by-design D137: I5, no set-id transition while attached
+issetugid  # by-design D137: I5, no set-id transition while attached
+no_new_privs  # by-design D150: ATTACH sets P2_NO_NEW_PRIVS
 
 # I5: jail_attach(2), jail(2) with JAIL_ATTACH, and setcred(2) are refused;
 # tests run in a jail (execenv=jail), vnet and jexec tests need them.
-jail
-vnet
-jexec
-setcred
+jail  # by-design D137: I5, jail_attach(2) and JAIL_ATTACH refused
+vnet  # by-design D137: I5, vnet tests need jail_attach(2)
+jexec  # by-design D137: I5, jexec needs jail_attach(2)
+setcred  # by-design D137: I5, setcred(2) refused
 
 # The SMR fast path declines for an attached process: the fplookup dtrace
 # probes do not fire.
-fplookup
-cache_fplookup
+fplookup  # by-design D39: the SMR fast path declines for an attached process
+cache_fplookup  # by-design D39: the SMR fast path declines for an attached process
 
 # D153: an attached process dumps no core.
-coredump
-core_dump
+coredump  # ux-8 D202: an attached process dumps no core (D153)
+core_dump  # ux-8 D202: an attached process dumps no core (D153)

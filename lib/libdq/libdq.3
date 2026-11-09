@@ -33,6 +33,9 @@
 .Nm dq_push_vnode_note ,
 .Nm dq_push_invalidate ,
 .Nm dq_attach ,
+.Nm dq_attach_starts ,
+.Nm dq_attach_starts_flags ,
+.Nm dq_event_resolve_root ,
 .Nm dq_event_resolve ,
 .Nm dq_reply_resolve_pass ,
 .Nm dq_reply_resolve_errno ,
@@ -157,6 +160,17 @@ DescriptorQueue controller library
 .Fc
 .Ft int
 .Fn dq_attach "int q" "int procfd"
+.Ft int
+.Fn dq_attach_starts "int q" "int procfd" "int rootfd" "int cwdfd"
+.Ft int
+.Fo dq_attach_starts_flags
+.Fa "int q" "int procfd" "int rootfd" "int cwdfd" "uint32_t flags"
+.Fc
+.Ft int
+.Fo dq_event_resolve_root
+.Fa "const struct dq_event *ev" "const struct dq_resolve_body **body"
+.Fa "uint64_t *rootp" "const char **rootpathp"
+.Fc
 .Ft int
 .Fo dq_event_resolve
 .Fa "const struct dq_event *ev" "const struct dq_resolve_body **body"
@@ -936,6 +950,41 @@ carry
 .Va de_id
 0.
 .Ss Resolution
+.Fn dq_attach_starts
+is
+.Fn dq_attach
+with served starts: when not -1,
+.Fa rootfd
+and
+.Fa cwdfd
+are served directories of
+.Fa q
+the caller holds, which become the process's served root and working
+directory (stage 1c-iii-c; see
+.Xr dq 4 ) .
+The attachment shares their
+.Vt struct file
+with the caller's descriptors, which the caller may close.
+Without
+.Fa cwdfd
+the working directory is the root; a
+.Fa cwdfd
+must be under the root
+.Pq Er EINVAL .
+With a root the child's open directories follow
+.Xr chroot 2 Ns 's
+rule exactly
+.Pq Va kern.chroot_allow_open_directories , Er EPERM :
+with the default of 1 a child that is not chrooted keeps its open real
+directories, usable as real lookup starts.
+For confinement,
+.Fn dq_attach_starts_flags
+with
+.Dv DQ_ATTACH_F_NODIRS
+refuses a child with any real directory open
+.Pq Er EBUSY ,
+with or without a root.
+.Pp
 .Fn dq_attach
 attaches the process named by the process descriptor
 .Fa procfd
@@ -967,11 +1016,15 @@ An attached process gains no privilege; see
 .Fn dq_event_resolve
 checks a
 .Dv DQ_OP_RESOLVE
-record and returns its fixed body (96 bytes) and its four strings: the
-path, the second path of a rename or link, the start hint and the second
-path's start hint, each
+record and returns its fixed body (112 bytes) and its first four strings:
+the path, the second path of a rename or link, the start hint and the
+second path's start hint, each
 NUL-terminated, possibly empty, and checked to end where its length
 says inside the record.
+.Fn dq_event_resolve_root
+returns the fifth, the process's served root: its object
+.Pq 0 No with a real root
+and presented path.
 Any output pointer may be
 .Dv NULL .
 It fails with
@@ -1184,7 +1237,9 @@ and its object in
 .Va drs_start ,
 and never takes
 .Dv DQ_RESOLVE_PASS ) ,
-anyone else gets
+an unattached process gets
+.Er EACCES
+and one attached to another queue
 .Er EDEADLK .
 .Fn dq_policy_default_dir
 fills the policy a directory or a symbolic link admits.
@@ -1282,6 +1337,46 @@ under a restricted lookup, otherwise.
 answers exec with
 .Dv DQ_RESOLVE_REAL
 of the backing binary.
+.Pp
+.Dv DQ_TREE_F_ROOT
+(with
+.Dv DQ_TREE_F_SERVED ,
+stage 1c-iii-c) serves the tree as the attached processes' root, given
+by
+.Fn dq_attach_starts
+with the root from
+.Fn dq_tree_root ,
+or a directory under it that the process chroots to.
+A name from a served start is walked inside the tree.
+.Xr chdir 2
+and
+.Xr chroot 2
+of a directory are answered
+.Dv DQ_RESOLVE_FD
+of a served directory
+.Pq Er ENOTDIR No for anything else ,
+and the interpreter's consultation at the served root
+.Pq Dv DQ_ROP_EXEC_INTERP
+.Dv DQ_RESOLVE_REAL
+of the tree's own interpreter.
+The event carries the process's root
+.Pq Fn dq_event_resolve_root ,
+and the tree resolves absolute names and links and
+.Ql ..
+at that root, so a process chrooted to a directory inside the tree sees
+what
+.Xr chroot 2
+of the backing directory shows.
+A served start whose hint is missing or not the object's own path is
+answered
+.Er EIO .
+A real-start lookup of a name outside the tree is
+.Er EACCES ;
+with
+.Dv DQ_TREE_F_OUTSIDE_PASS
+it is passed
+.Pq Dv DQ_RESOLVE_PASS
+instead.
 Paths are resolved as
 .Xr namei 9
 resolves them: component by component, through the backing tree inside

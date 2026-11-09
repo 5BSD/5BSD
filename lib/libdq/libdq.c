@@ -864,13 +864,34 @@ dq_observe_subscribe(int svc, uint64_t queue)
 int
 dq_attach(int q, int procfd)
 {
+
+	return (dq_attach_starts(q, procfd, -1, -1));
+}
+
+/*
+ * ATTACH with served starts (D169, 1c-iii-c): rootfd and cwdfd are -1 or
+ * served directories of q the caller holds; the attachment shares their
+ * struct file (closing the caller's descriptor keeps the start alive).
+ */
+int
+dq_attach_starts(int q, int procfd, int rootfd, int cwdfd)
+{
+
+	return (dq_attach_starts_flags(q, procfd, rootfd, cwdfd, 0));
+}
+
+int
+dq_attach_starts_flags(int q, int procfd, int rootfd, int cwdfd,
+    uint32_t flags)
+{
 	struct dq_attach_args args;
 
 	memset(&args, 0, sizeof(args));
 	args.da_version = DQ_API_VERSION;
 	args.da_procfd = procfd;
-	args.da_rootfd = -1;
-	args.da_cwdfd = -1;
+	args.da_rootfd = rootfd;
+	args.da_cwdfd = cwdfd;
+	args.da_flags = flags;
 	return (ioctl(q, DQ_IOC_ATTACH, &args));
 }
 
@@ -887,8 +908,8 @@ dq_event_resolve(const struct dq_event *ev, const struct dq_resolve_body **body,
 {
 	const struct dq_resolve_body *rb;
 	const char *s;
-	size_t bodylen, need, lens[4];
-	const char **outs[4];
+	size_t bodylen, need, lens[5];
+	const char **outs[5];
 	int i;
 
 	if (dq_event_fixed(ev, DQ_OP_RESOLVE, sizeof(*rb),
@@ -899,8 +920,9 @@ dq_event_resolve(const struct dq_event *ev, const struct dq_resolve_body **body,
 	lens[1] = rb->drs_path2len;
 	lens[2] = rb->drs_startpathlen;
 	lens[3] = rb->drs_startpath2len;
+	lens[4] = rb->drs_rootpathlen;
 	need = sizeof(*rb);
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 5; i++) {
 		if (lens[i] >= bodylen) {	/* also keeps the sum small */
 			errno = EINVAL;
 			return (-1);
@@ -915,8 +937,9 @@ dq_event_resolve(const struct dq_event *ev, const struct dq_resolve_body **body,
 	outs[1] = path2;
 	outs[2] = startpath;
 	outs[3] = startpath2;
+	outs[4] = NULL;
 	s = (const char *)(const void *)(rb + 1);
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 5; i++) {
 		if (s[lens[i]] != '\0' || strnlen(s, lens[i]) != lens[i]) {
 			errno = EINVAL;
 			return (-1);
@@ -927,6 +950,27 @@ dq_event_resolve(const struct dq_event *ev, const struct dq_resolve_body **body,
 	}
 	if (body != NULL)
 		*body = rb;
+	return (0);
+}
+
+/*
+ * The process's served root (1c-iii-c): its object (0 when the root is
+ * real) and its presented path, the fifth string.
+ */
+int
+dq_event_resolve_root(const struct dq_event *ev,
+    const struct dq_resolve_body **body, uint64_t *rootp,
+    const char **rootpathp)
+{
+	const struct dq_resolve_body *rb;
+	const char *sp2;
+
+	if (dq_event_resolve(ev, &rb, NULL, NULL, NULL, &sp2) != 0)
+		return (-1);
+	if (body != NULL)
+		*body = rb;
+	*rootp = rb->drs_root;
+	*rootpathp = sp2 + rb->drs_startpath2len + 1;
 	return (0);
 }
 
@@ -991,7 +1035,8 @@ dq_event_resolve_ext(const struct dq_event *ev,
 		return (0);
 	bodylen = ev->de_size - sizeof(*ev);
 	off = sizeof(*rb) + rb->drs_pathlen + 1 + rb->drs_path2len + 1 +
-	    rb->drs_startpathlen + 1 + rb->drs_startpath2len + 1;
+	    rb->drs_startpathlen + 1 + rb->drs_startpath2len + 1 +
+	    rb->drs_rootpathlen + 1;
 	off = (off + 7) & ~(size_t)7;
 	if (off + sizeof(**setattr) > bodylen) {
 		errno = EINVAL;

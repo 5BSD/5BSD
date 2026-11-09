@@ -823,12 +823,18 @@ is set, and the process is in capability mode.
 .Dv O_NAMEDATTR
 has been specified and the file object is not a named attribute
 directory or named attribute.
+.It Bq Er EACCES
+The
+.Fa fd
+argument is a
+.Xr dq 4
+served directory and the process is not attached.
 .It Bq Er EDEADLK
 The
 .Fa fd
 argument is a
 .Xr dq 4
-served directory and the process is not attached to its queue.
+served directory and the process is attached to another queue.
 .El
 .Sh SEE ALSO
 .Xr chmod 2 ,

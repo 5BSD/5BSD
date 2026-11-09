@@ -19,21 +19,26 @@
 #include <sys/caprights.h>
 
 struct dqres_binding;
+struct filedesc;
 struct dq_ident_file;
 struct dq_object;
 struct dq_setattr_body;
 struct file;
 struct nameidata;
 struct proc;
+struct pwd;
 struct pwddesc;
 struct thread;
 struct vnode;
 
 /*
  * The per-pwddesc record (D123).  dr_binding is shared and refcounted
- * through the vector; dr_cwd and dr_root are served directories (stage 1c
- * series iii; always NULL in series i).  A pwddesc is attached when
- * pd_dqres != NULL.  Written under PWDDESC_XLOCK.
+ * through the vector.  dr_cwd and dr_root are served directories (D169),
+ * each holding one file reference of its own: set by a CHDIR or CHROOT
+ * answered FD, fchdir/fchroot of a served directory and ATTACH's starts;
+ * cleared by a real chdir or chroot in the pwd_* functions.  A pwddesc is
+ * attached when pd_dqres != NULL.  Written under PWDDESC_XLOCK; read with
+ * the pwd in one section (D177).
  */
 struct dqres {
 	struct dqres_binding	*dr_binding;
@@ -42,6 +47,20 @@ struct dqres {
 	u_int			 dr_flags;
 #define	DR_CWD_DEAD		0x0001	/* fhold overflowed at inheritance */
 #define	DR_ROOT_DEAD		0x0002
+};
+
+/*
+ * A start snapshot (D177): an attached process's served cwd and root,
+ * each held with fhold (or NULL), and DR_CWD_DEAD/DR_ROOT_DEAD for a
+ * record that has none or whose file could not be held.  Taken with the
+ * pwd by pwd_hold_dqres, or alone by pwd_dqres_proc; released with
+ * dqres_snap_release, with no lock held.  All zero for an unattached
+ * process.
+ */
+struct dqres_snap {
+	struct file	*dsn_cwd;
+	struct file	*dsn_root;
+	u_int		 dsn_flags;	/* DR_CWD_DEAD, DR_ROOT_DEAD */
 };
 
 /*
@@ -111,6 +130,9 @@ struct dq_islot {
 	uint64_t	 ds_start_obj;	/* DQ_START_SERVED: the served start's
 					   object id (never reused on its
 					   queue; 1c-iii-b) */
+	struct file	*ds_root;	/* fetched: the served root of the
+					   start's snapshot (D177), held */
+	bool		 ds_rootdead;	/* fetched: DR_ROOT_DEAD in it */
 	char		*ds_real;	/* a REAL answer (M_TEMP): a restart,
 					   or a carried slot's own lookup,
 					   applies it without waiting (D167) */
@@ -220,6 +242,11 @@ struct dqres_req {
 	uint32_t	 rq_cmode;
 	uint64_t	 rq_dev;
 	const struct dq_setattr_body *rq_setattr; /* appended to the body */
+	uint64_t	 rq_root;	/* the served root's object, or 0
+					   (D184: "/" and ".." for the
+					   controller) */
+	const char	*rq_rootpath;	/* its di_path, the 5th string */
+	size_t		 rq_rootpathlen;
 };
 
 /*
@@ -248,8 +275,8 @@ struct dqres_ops {
 	bool	(*dro_queue_closed)(uint64_t);	/* gone or DQ_Q_CLOSING */
 	/*
 	 * 1c-iii-b.  start: a served descriptor as a lookup start, its
-	 * kind and id; EDEADLK unless the caller is attached to its queue
-	 * (the binding, NULL when unattached) and is not its controller,
+	 * kind and id; EACCES when the caller is unattached (the binding
+	 * NULL), EDEADLK when attached to another queue or holding this one,
 	 * EIO once revoked or closing, ENOTTY for another file.  setattr:
 	 * the object-level setattr (D96) without the O_PATH gate.  target:
 	 * a served symlink's target (M_TEMP), EINVAL for another kind.
@@ -259,6 +286,13 @@ struct dqres_ops {
 	int	(*dro_setattr)(struct thread *, struct file *,
 		    struct dq_setattr_body *);
 	int	(*dro_target)(struct file *, char **, size_t *);
+	/*
+	 * 1c-iii-c.  file_kind and file_objid: a served file's DQ_KIND_*
+	 * and object id, both fixed at creation, so they take no lock
+	 * (chroot_refuse_vdir_fds calls file_kind under the pwddesc mutex).
+	 */
+	uint32_t (*dro_file_kind)(struct file *);
+	uint64_t (*dro_file_objid)(struct file *);
 };
 
 void	dqres_register(const struct dqres_ops *ops);
@@ -277,9 +311,23 @@ bool	dqres_same_binding(const struct dqres *a, const struct dqres *b);
 void	dqres_fork_late(struct proc *p1, struct pwddesc *child);
 void	pd_replace(struct thread *td, struct pwddesc *newpdp);
 
-/* Attaching (dev/dq's DQ_IOC_ATTACH, D138/D148). */
+/*
+ * Attaching (dev/dq's DQ_IOC_ATTACH, D138/D148).  *cwdfpp and *rootfpp
+ * (held served directories of the queue, or NULL: ATTACH's starts, D169)
+ * are consumed and set to NULL on success.
+ */
 int	dqres_attach(struct thread *td, struct proc *p,
-	    struct dqres_binding *b, struct file *qfp);
+	    struct dqres_binding *b, struct file *qfp, struct file **cwdfpp,
+	    struct file **rootfpp, uint32_t flags);
+/*
+ * ATTACH's open-directory rule (kern_descrip.c, D184: the controller
+ * chooses the confinement): with a served root, the child's table under
+ * chroot(2)'s rule (kern.chroot_allow_open_directories, EPERM); with
+ * nodirs, root or not, any open real directory is EBUSY.  Called with
+ * FILEDESC_SLOCK and PWDDESC_XLOCK held.
+ */
+int	dqres_attach_dirs_check(struct filedesc *fdp, struct pwddesc *pdp,
+	    bool root, bool nodirs);
 
 /* Intents. */
 void	dq_intent_enter(struct thread *td, struct dq_intent *di, uint32_t op,
@@ -313,10 +361,11 @@ dq_intent_slot_kconsumer(struct dq_intent *di, int slot)
 /*
  * The choke point (namei_setup): consult when attached.  dp is the start
  * namei computed (the root vnode used for an absolute path); abs is true
- * for an absolute path.
+ * for an absolute path; snap is namei_setup's snapshot, whose served root
+ * is posted with the event and must contain every served answer (D184).
  */
 int	dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
-	    bool *realp);
+	    const struct dqres_snap *snap, bool *realp);
 
 /*
  * Served starts (1c-iii-b, D162-D165, D167, D170, D172).
@@ -325,8 +374,9 @@ int	dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
  * (held) at ni_dirfd: 0 makes it a served start (a served directory with
  * a non-empty path in a process attached to its queue, or any served
  * descriptor for an O_EMPTY_PATH open); otherwise ENOTDIR (so the
- * AT_EMPTY_PATH fallbacks run), EDEADLK (a served directory outside its
- * attachment, D163) or EIO (revoked, closing).
+ * AT_EMPTY_PATH fallbacks run), EACCES (unattached) or EDEADLK (attached
+ * elsewhere) for a served directory outside its attachment (D163), or EIO
+ * (revoked, closing).
  *
  * dqres_namei_served: namei_setup's served branch, consuming fp: the
  * D165 pre-checks, the consultation from the served start, the I8
@@ -336,16 +386,76 @@ int	dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
  * ISRESTARTED and starts at the root).
  *
  * dqres_namei_symlink: namei's symlink loop, after the link was read into
- * cn_pnbuf (dp the link's directory, referenced, unlocked): a PASSed
+ * cn_pnbuf (dp the link's directory, referenced, unlocked): an absolute
+ * target under the served root of snap (namei_setup's snapshot, held by
+ * namei until it returns) re-enters there (D172 (a)); otherwise a PASSed
  * class-1 lookup's re-consultation (D172 (b)); 0 to continue, *realp as
  * above, EDQRESOLVED or an errno.
  */
 int	dqres_lookup_start(struct nameidata *ndp, struct file *fp);
 bool	namei_cap_dotdot(void);	/* vfs.lookup_cap_dotdot (vfs_lookup.c) */
-int	dqres_namei_served(struct nameidata *ndp, struct file *fp,
-	    bool capdotdot, bool *realp);
+#define	DQRES_START_DIRFD	0	/* a served dirfd (1c-iii-b) */
+#define	DQRES_START_CWD		1	/* the served cwd (1c-iii-c) */
+#define	DQRES_START_ROOT	2	/* the served root */
+int	dqres_namei_served(struct nameidata *ndp, struct file *fp, int how,
+	    const struct dqres_snap *snap, bool capdotdot, bool *realp);
 int	dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp,
-	    bool *realp);
+	    const struct dqres_snap *snap, bool *realp);
+
+/*
+ * Virtual cwd and root (1c-iii-c, D169, D174, D175, D177).
+ *
+ * pwd_hold_dqres (kern_descrip.c): the pwd and the start snapshot in one
+ * PWDDESC_XLOCK section; pwd_dqres_proc: a process's snapshot alone (p
+ * held by the caller, or curproc).  dqres_set_cwd and dqres_set_root
+ * (kern_descrip.c) install a served directory, consuming its reference
+ * (the root under chroot's open-directory rule).  dqres_namei_setup_start
+ * is namei_setup's served cwd or root start (D175); dqres_present_* give
+ * D174's presented paths against a viewer; dqres_getcwd,
+ * dqres_proc_dirpath and dqres_execpath are their consumers.
+ */
+struct pwd *pwd_hold_dqres(struct thread *td, struct dqres_snap *snap);
+void	pwd_dqres_proc(struct proc *p, struct dqres_snap *snap);
+void	dqres_snap_drop(struct dqres_snap *snap);
+
+/* Release a snapshot (no lock held); unattached ones are all zero. */
+static __inline void
+dqres_snap_release(struct dqres_snap *snap)
+{
+
+	if (__predict_false(snap->dsn_cwd != NULL || snap->dsn_root != NULL))
+		dqres_snap_drop(snap);
+	snap->dsn_flags = 0;
+}
+
+/* Does the snapshot name a served (or dead) cwd or root? */
+static __inline bool
+dqres_snap_served(const struct dqres_snap *snap)
+{
+
+	return (snap->dsn_cwd != NULL || snap->dsn_root != NULL ||
+	    snap->dsn_flags != 0);
+}
+
+void	dqres_set_cwd(struct thread *td, struct file *fp);
+int	dqres_set_root(struct thread *td, struct file *fp);
+bool	dqres_file_is_dir(struct file *fp);
+int	dqres_namei_setup_start(struct nameidata *ndp,
+	    const struct dqres_snap *snap, bool capdotdot, bool *realp);
+int	dqres_present_viewer(struct thread *viewer, uint64_t qgid,
+	    const char *path, size_t pathlen, char *out, size_t outsz);
+int	dqres_present_file(struct thread *viewer, struct file *fp, char *out,
+	    size_t outsz);
+bool	dqres_served_root(struct thread *td);
+int	dqres_getcwd(struct thread *td, char *buf, size_t *buflenp);
+int	dqres_proc_dirpath(struct thread *viewer, struct proc *p, bool root,
+	    char *buf, size_t len);
+int	dqres_fchdir_file(struct thread *td, int fd,
+	    const cap_rights_t *rights, struct file **fpp);
+int	dqres_dir_check(struct thread *td, struct file *fp);
+int	dqres_take_dir(struct thread *td, struct dq_intent *di,
+	    struct file **fpp);
+int	dqres_execpath(struct thread *td, const char *fname, char **pathp);
 /*
  * funlinkat/frmdirat's descriptor (D170), before namei: a served one is
  * returned held (0) and names the event's drs_object; ENOTTY for any
@@ -419,6 +529,9 @@ int	dqres_file_setattr(struct thread *td, struct file *fp,
 int	dqres_file_target(struct file *fp, char **targetp, size_t *lenp);
 int	dqres_file_ident(struct file *fp, struct dq_ident_file *ident,
 	    uint64_t *qgidp, bool *closedp);
+/* Is path at or under root, at a component boundary (D174)? */
+bool	dqres_path_under(const char *root, size_t rlen, const char *path,
+	    size_t plen);
 /* Is the queue with this id closing or gone (true without dev/dq)? */
 bool	dqres_queue_closed(uint64_t qgid);
 /* mac_veriexec registers whether it enforces (O_VERIFY on served files). */

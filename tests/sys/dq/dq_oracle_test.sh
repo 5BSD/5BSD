@@ -106,13 +106,23 @@ suites_head()
 }
 suites_body()
 {
-	local suite kf expected
+	local suite kf expected tagged
 
 	require_dq
 	# The fixture without its comments and blank lines (an empty pattern
 	# would match every line).
 	expected=patterns
-	sed -e '/^#/d' -e '/^[[:space:]]*$/d' \
+	# Every entry names its owner, "# ux-N: cause" or "# by-design
+	# D###: reason": an untagged entry would hide a difference no
+	# sub-series removes.
+	tagged='[^[:space:]][[:space:]]+#[[:space:]]*[^[:space:]:]+[^:]*:'
+	if grep -v -E '^[[:space:]]*(#|$)' \
+	    "$(atf_get_srcdir)/dqpass.expected" | grep -v -E "${tagged}" >&2
+	then
+		atf_fail "dqpass.expected has an entry without a" \
+		    "\"# owner: cause\" tag"
+	fi
+	sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' \
 	    "$(atf_get_srcdir)/dqpass.expected" > "${expected}"
 	: ${DQ_ORACLE_SUITES:="sys/file sys/kern/execve"}
 	for suite in ${DQ_ORACLE_SUITES}; do
@@ -128,6 +138,11 @@ suites_body()
 		results pass.db | grep -v -E -f "${expected}" > pass.res
 		if ! diff -u plain.res pass.res >&2; then
 			cat pass.report >&2
+			# The attached run's output of each case that differs.
+			diff plain.res pass.res | sed -n 's/^> \([^ ]*\) .*/\1/p' |
+			    xargs -r kyua report --results-file=pass.db --verbose \
+			    --results-filter=passed,skipped,xfail,broken,failed \
+			    >&2 2>/dev/null
 			atf_fail "${suite}: results differ under dqpass"
 		fi
 		if grep -q 'unmarked [1-9]' pass.report; then

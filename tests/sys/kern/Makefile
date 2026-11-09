@@ -194,6 +194,10 @@ ATF_TESTS_C+=	listener_wakeup
 ATF_TESTS_C+=	module_test
 ATF_TESTS_C+=	pdrfork
 ATF_TESTS_C+=	pdwait
+# Regression of the real cwd/root/path presentation paths (1c-iii-c);
+# sets kern.chroot_allow_open_directories and mounts linprocfs.
+ATF_TESTS_C+=	pwd_paths_test
+TEST_METADATA.pwd_paths_test+=	is_exclusive="true" timeout="600"
 ATF_TESTS_C+=	prace
 ATF_TESTS_C+=	procdesc
 ATF_TESTS_C+=	ptrace_test
@@ -274,12 +278,14 @@ CAPMODE_INTERP_PAD=	/${:U:range=255:@i@p@:ts}
 LDFLAGS.capmode_interp_foreign_helper+=	-Wl,--dynamic-linker=${CAPMODE_INTERP_PAD}
 PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
+PROGS+=		pwd_paths_helper
 
 CFLAGS.aslr+=				-I${SRCTOP}/tests
 LIBADD.aslr+=				util
 LIBADD.copy_file_range+=		md
 LIBADD.jail_lookup_root+=		jail util
 LIBADD.jail_thread+=			jail pthread
+LIBADD.pwd_paths_test+=			jail util
 LIBADD.jaildesc+=			kvm pthread
 LIBADD.ssl_sendfile+=			pthread crypto ssl
 CFLAGS.sys_getrandom+=			-I${SRCTOP}/sys/contrib/zstd/lib

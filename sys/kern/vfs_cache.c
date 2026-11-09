@@ -3250,6 +3250,17 @@ vn_getcwd(char *buf, char **retbuf, size_t *buflen)
 	struct pwd *pwd;
 	int error;
 
+	/*
+	 * DescriptorQueue (D174): a served cwd's presented path, ENOENT for
+	 * a real cwd under a served root.
+	 */
+	if (DQRES_ATTACHED_TD(curthread)) {
+		error = dqres_getcwd(curthread, buf, buflen);
+		if (error == 0)
+			*retbuf = buf;
+		if (error != EJUSTRETURN)
+			goto out;
+	}
 	vfs_smr_enter();
 	pwd = pwd_get_smr();
 	error = vn_fullpath_any_smr(pwd->pwd_cdir, pwd->pwd_rdir, buf, retbuf,
@@ -3262,6 +3273,7 @@ vn_getcwd(char *buf, char **retbuf, size_t *buflen)
 		pwd_drop(pwd);
 	}
 
+out:
 #ifdef KTRACE
 	if (KTRPOINT(curthread, KTR_NAMEI) && error == 0)
 		ktrnamei(*retbuf);
@@ -3294,6 +3306,14 @@ kern___realpathat_dqimpl(struct thread *td, int fd, const char *path, char *buf,
 	    pathseg, path, fd, &cap_fstat_rights);
 	if ((error = namei(&nd)) != 0)
 		return (error);
+	/*
+	 * A real object (PASS from a real start, or REAL) has no presented
+	 * path under a served root (D167, D174): ENOENT.
+	 */
+	if (DQRES_ATTACHED_TD(td) && dqres_served_root(td)) {
+		error = ENOENT;
+		goto out;
+	}
 
 	if ((nd.ni_vp->v_type == VREG || nd.ni_vp->v_type == VSOCK) &&
 	    nd.ni_dvp->v_type != VDIR &&
@@ -3344,25 +3364,36 @@ out:
 /*
  * realpath(3) answered ATTR (D160, D174): the presented di_path.  With a
  * real root (1c-iii-a) it is a real-namespace path, the controller's
- * obligation; it is shown as is.
+ * obligation; it is shown as is.  Under a served root it is shown
+ * relative to the root's di_path, ENOENT when not underneath (1c-iii-c).
  */
 static int
-kern___realpathat_dqserved(struct dq_intent *di, char *buf, size_t size,
-    enum uio_seg pathseg)
+kern___realpathat_dqserved(struct thread *td, struct dq_intent *di,
+    char *buf, size_t size, enum uio_seg pathseg)
 {
 	const struct dq_ident_file *id;
+	char *p;
 	size_t len;
+	int error;
 
 	id = dqres_ident(di, DQ_RESOLVE_ATTR);
 	if (id == NULL)
 		return (EIO);
-	len = id->di_pathlen + 1;
-	if (size < len)
-		return (ENAMETOOLONG);
-	if (pathseg == UIO_USERSPACE)
-		return (copyout(id->di_path, buf, len));
-	memcpy(buf, id->di_path, len);
-	return (0);
+	p = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+	error = dqres_present_viewer(td, di->di_res.da_qgid, id->di_path,
+	    id->di_pathlen, p, MAXPATHLEN);
+	if (error == 0) {
+		len = strlen(p) + 1;
+		if (size < len)
+			error = ENAMETOOLONG;
+		else if (pathseg == UIO_USERSPACE)
+			error = copyout(p, buf, len);
+		else
+			memcpy(buf, p, len);
+	} else if (error == EIO)
+		error = ENOENT;
+	free(p, M_TEMP);
+	return (error);
 }
 
 /*
@@ -3383,8 +3414,8 @@ kern___realpathat(struct thread *td, int fd, const char *path, char *buf,
 	    DQ_RACCEPT(DQ_RESOLVE_ATTR));
 	dq_intent_slot(&dqi, 0, path, pathseg, fd);
 	dqerror = kern___realpathat_dqimpl(td, fd, path, buf, size, flags, pathseg);
-	DQRES_SERVED(td, &dqi, dqerror, kern___realpathat_dqserved(&dqi, buf,
-	    size, pathseg));
+	DQRES_SERVED(td, &dqi, dqerror, kern___realpathat_dqserved(td, &dqi,
+	    buf, size, pathseg));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }

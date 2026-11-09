@@ -608,7 +608,8 @@ ATF_TC_BODY(real_answer, tc)
 /*
  * Who may start at a served directory (D162, D163): a served file as a
  * dirfd is ENOTDIR and an unattached process, or the controller, gets
- * EDEADLK, all with no event; a revoked directory is EIO.
+ * EACCES (D184; EDEADLK is for a process attached to another queue), all
+ * with no event; a revoked directory is EIO.
  */
 static void
 c_starts(struct srv *s, int *r)
@@ -642,8 +643,8 @@ ATF_TC_BODY(start_rules, tc)
 	CHECK_ERRNO(ENOTDIR, r[1]);
 	n = s.nseen;
 	run_child_as(&s, c_stat_root, r, false);
-	CHECK_ERRNO(EDEADLK, r[0]);
-	ATF_CHECK(fstatat(s.sroot, "a", &st, 0) != 0 && errno == EDEADLK);
+	CHECK_ERRNO(EACCES, r[0]);
+	ATF_CHECK(fstatat(s.sroot, "a", &st, 0) != 0 && errno == EACCES);
 	ATF_CHECK_EQ(n, s.nseen);
 	ATF_REQUIRE(dq_revoke(s.q, s.sroot_id) == 0);
 	run_child(&s, c_stat_root, r);

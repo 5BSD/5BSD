@@ -387,8 +387,16 @@ namei_dqres_real(struct nameidata *ndp, struct vnode **dpp, struct pwd *pwd)
 	return (error);
 }
 
+/*
+ * snap receives an attached process's DescriptorQueue start snapshot
+ * (D177), taken with the pwd: on success the caller holds it, with the
+ * pwd, until the lookup ends (a symbolic link's absolute target re-enters
+ * at its served root) and releases it with dqres_snap_release; on error
+ * it is released here.  All zero for an unattached process.
+ */
 static int
-namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
+namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp,
+    struct dqres_snap *snap)
 {
 	struct componentname *cnp;
 	struct thread *td;
@@ -403,6 +411,7 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	startdir_used = false;
 	dqreal = false;
 	dqfp = NULL;
+	bzero(snap, sizeof(*snap));
 	*pwdp = NULL;
 	*dpp = NULL;
 
@@ -437,9 +446,13 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	error = 0;
 
 	/*
-	 * Get starting point for the translation.
+	 * Get starting point for the translation.  An attached process takes
+	 * the pwd with its served cwd and root in one section (D177).
 	 */
-	pwd = pwd_hold(td);
+	if (DQRES_ATTACHED_TD(td))
+		pwd = pwd_hold_dqres(td, snap);
+	else
+		pwd = pwd_hold(td);
 	/*
 	 * The reference on ni_rootdir is acquired in the block below to avoid
 	 * back-to-back atomics for absolute lookups.
@@ -475,22 +488,36 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 			 * ends it here; REAL continues from the real root.
 			 */
 			error = dqres_namei_served(ndp, dqfp,
-			    lookup_cap_dotdot != 0, &dqreal);
+			    DQRES_START_DIRFD, snap, lookup_cap_dotdot != 0,
+			    &dqreal);
 			if (error == 0) {
 				MPASS(dqreal);
 				error = namei_dqres_real(ndp, dpp, pwd);
 			}
-			if (error != 0) {
-				if (*dpp != NULL)
-					vrele(*dpp);
-				pwd_drop(pwd);
-				return (error);
-			}
+			if (error != 0)
+				goto out;
 		} else if (error == 0 && (*dpp)->v_type != VDIR &&
 		    (cnp->cn_flags & OPENNAMED) == 0 &&
 		    (cnp->cn_pnbuf[0] != '\0' ||
 		    (cnp->cn_flags & EMPTYPATH) == 0))
 			error = ENOTDIR;
+	}
+	/*
+	 * DescriptorQueue virtual cwd and root (D169, D175): with the real
+	 * start chosen (and namei_handle_root's capability test made), an
+	 * absolute path under a served root, or a relative AT_FDCWD path
+	 * under a served cwd, starts at the served directory instead.  Like
+	 * a served dirfd it has no vnode: a served answer or an errno ends
+	 * the lookup; REAL continues from the real root (never the Linux ABI
+	 * root, I13).
+	 */
+	if (error == 0 && !dqreal && dqres_snap_served(snap)) {
+		error = dqres_namei_setup_start(ndp, snap,
+		    lookup_cap_dotdot != 0, &dqreal);
+		if (error == 0 && dqreal)
+			error = namei_dqres_real(ndp, dpp, pwd);
+		if (error != 0)
+			goto out;
 	}
 	if (error == 0 && (cnp->cn_flags & RINROOT) != 0) {
 		/* Never relax pre-existing capability or descriptor restrictions. */
@@ -530,6 +557,7 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 		if (cnp->cn_flags & AUDITVNODE2)
 			AUDIT_ARG_UPATH2_VP(td, ndp->ni_rootdir, *dpp, cnp->cn_pnbuf);
 	}
+out:
 	if (ndp->ni_startdir != NULL && !startdir_used)
 		vrele(ndp->ni_startdir);
 	/*
@@ -541,13 +569,14 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	 */
 	if (error == 0 && DQRES_ATTACHED_TD(td) && !dqreal) {
 		error = dqres_namei(ndp, *dpp,
-		    (ndp->ni_resflags & NIRES_ABS) != 0, &dqreal);
+		    (ndp->ni_resflags & NIRES_ABS) != 0, snap, &dqreal);
 		if (error == 0 && dqreal)
 			error = namei_dqres_real(ndp, dpp, pwd);
 	}
 	if (error != 0) {
 		if (*dpp != NULL)
 			vrele(*dpp);
+		dqres_snap_release(snap);
 		pwd_drop(pwd);
 		return (error);
 	}
@@ -591,6 +620,7 @@ static int
 namei_emptypath(struct nameidata *ndp)
 {
 	struct componentname *cnp;
+	struct dqres_snap dqsnap;
 	struct pwd *pwd;
 	struct vnode *dp;
 	int error;
@@ -604,7 +634,7 @@ namei_emptypath(struct nameidata *ndp)
 	ndp->ni_dvp = NULL;
 
 	ndp->ni_resflags |= NIRES_EMPTYPATH;
-	error = namei_setup(ndp, &dp, &pwd);
+	error = namei_setup(ndp, &dp, &pwd, &dqsnap);
 	if (error != 0) {
 		goto errout;
 	}
@@ -613,6 +643,7 @@ namei_emptypath(struct nameidata *ndp)
 	 * Usecount on dp already provided by namei_setup.
 	 */
 	ndp->ni_vp = dp;
+	dqres_snap_release(&dqsnap);
 	pwd_drop(pwd);
 	NDVALIDATE(ndp);
 	if ((cnp->cn_flags & LOCKLEAF) != 0) {
@@ -737,6 +768,7 @@ namei(struct nameidata *ndp)
 	struct componentname *cnp;
 	struct thread *td;
 	struct pwd *pwd;
+	struct dqres_snap dqsnap;
 	int error;
 	enum cache_fpl_status status;
 
@@ -774,6 +806,8 @@ namei(struct nameidata *ndp)
 	MPASS(ndp->ni_startdir == NULL || ndp->ni_startdir->v_type == VDIR ||
 	    ndp->ni_startdir->v_type == VBAD);
 
+	/* Held from namei_setup to the end (D177); fplookup takes none. */
+	bzero(&dqsnap, sizeof(dqsnap));
 restart:
 	ndp->ni_lcf = 0;
 	ndp->ni_loopcnt = 0;
@@ -845,7 +879,7 @@ restart:
 			    false, ndp);
 			return (ENOENT);
 		}
-		error = namei_setup(ndp, &dp, &pwd);
+		error = namei_setup(ndp, &dp, &pwd, &dqsnap);
 		if (error != 0) {
 			namei_cleanup_cnp(cnp);
 			nameicap_cleanup(ndp, error);
@@ -872,6 +906,7 @@ restart:
 				goto out;
 			nameicap_cleanup(ndp, error);
 			pwd_drop(pwd);
+			dqres_snap_release(&dqsnap);
 			namei_cleanup_cnp(cnp);
 			NDRESET(ndp);
 			if (abi_restart)
@@ -888,6 +923,7 @@ restart:
 			    ndp->ni_vp, false, ndp);
 			nameicap_cleanup(ndp, 0);
 			pwd_drop(pwd);
+			dqres_snap_release(&dqsnap);
 			NDVALIDATE(ndp);
 			return (0);
 		}
@@ -908,7 +944,7 @@ restart:
 		if (DQRES_ATTACHED_TD(td)) {
 			bool dqreal;
 
-			error = dqres_namei_symlink(ndp, dp, &dqreal);
+			error = dqres_namei_symlink(ndp, dp, &dqsnap, &dqreal);
 			if (error == 0 && dqreal) {
 				vrele(dp);
 				dp = NULL;
@@ -953,6 +989,7 @@ out:
 	namei_cleanup_cnp(cnp);
 	nameicap_cleanup(ndp, error);
 	pwd_drop(pwd);
+	dqres_snap_release(&dqsnap);
 	return (error);
 }
 

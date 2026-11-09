@@ -37,6 +37,7 @@
 #include <sys/poll.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/dqres.h>
 #include <sys/rangelock.h>
 #include <sys/refcount.h>
 #include <sys/rwlock.h>
@@ -1148,7 +1149,15 @@ dq_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 	kif->kf_un.kf_file.kf_file_type = o->o_kind == DQ_KIND_DIR ?
 	    KF_VTYPE_VDIR : o->o_kind == DQ_KIND_SYMLINK ? KF_VTYPE_VLNK :
 	    KF_VTYPE_VREG;
-	strlcpy(kif->kf_path, di->di_path, sizeof(kif->kf_path));
+	/*
+	 * The path presented against the reader (D174): curthread is the
+	 * sysctl's or linprocfs's reader, never the target.  A path the
+	 * reader's served root does not contain is empty, as an
+	 * unreachable vnode's.
+	 */
+	if (dqres_present_viewer(curthread, o->o_queue->q_gid, di->di_path,
+	    di->di_pathlen, kif->kf_path, sizeof(kif->kf_path)) != 0)
+		kif->kf_path[0] = '\0';
 	kif->kf_un.kf_file.kf_file_fsid = di->di_dev;
 	kif->kf_un.kf_file.kf_file_fsid_freebsd11 = di->di_dev;
 	kif->kf_un.kf_file.kf_file_fileid = di->di_ino;
@@ -2301,9 +2310,9 @@ dq_file_target(struct file *fp, char **targetp, size_t *lenp)
 
 /*
  * A served descriptor as a lookup start (D162, D163): its kind and id,
- * EDEADLK unless the caller is attached to the object's queue (q, the
- * binding's queue, NULL when unattached) and is not its controller, EIO
- * once revoked or closing.
+ * EACCES for an unattached caller (q, the binding's queue, NULL), EDEADLK
+ * for one attached to another queue or holding this one, EIO once revoked
+ * or closing.
  */
 int
 dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
@@ -2316,9 +2325,85 @@ dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
 	o = fp->f_data;
 	*kindp = o->o_kind;
 	*objectp = o->o_id;
-	if (q == NULL || o->o_queue != q ||
-	    dq_caller_holds_queue(o->o_queue, td))
+	/*
+	 * An unattached process (the controller included) gets EACCES, as
+	 * for a directory it may not search (D184); one attached to another
+	 * queue, or holding this one, EDEADLK.
+	 */
+	if (q == NULL)
+		return (EACCES);
+	if (o->o_queue != q || dq_caller_holds_queue(o->o_queue, td))
 		return (EDEADLK);
+	return (dq_object_usable(o));
+}
+
+/* dro_file_objid: the id is fixed at creation (no lock). */
+uint64_t
+dq_file_objid(struct file *fp)
+{
+
+	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops ||
+	    fp->f_data == NULL)
+		return (0);
+	return (((struct dq_object *)fp->f_data)->o_id);
+}
+
+/*
+ * ATTACH's cwd must be its root or a served directory under it (D184):
+ * its di_path at or under the root's, at a component boundary (D174).
+ * Both are live served directories of the queue (dq_file_attach_start).
+ */
+int
+dq_file_attach_under(struct file *cwdfp, struct file *rootfp)
+{
+	struct dq_ident_file *ci, *ri;
+	uint64_t qgid;
+	int error;
+	bool closed;
+
+	if (cwdfp->f_data == rootfp->f_data)
+		return (0);
+	ci = malloc(sizeof(*ci), M_DQ, M_WAITOK);
+	ri = malloc(sizeof(*ri), M_DQ, M_WAITOK);
+	error = dqres_file_ident(cwdfp, ci, &qgid, &closed);
+	if (error == 0)
+		error = dqres_file_ident(rootfp, ri, &qgid, &closed);
+	if (error == 0 && !dqres_path_under(ri->di_path, ri->di_pathlen,
+	    ci->di_path, ci->di_pathlen))
+		error = EINVAL;
+	free(ci, M_DQ);
+	free(ri, M_DQ);
+	return (error);
+}
+
+/* dro_file_kind: the kind is fixed at creation (no lock). */
+uint32_t
+dq_file_kind(struct file *fp)
+{
+
+	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops ||
+	    fp->f_data == NULL)
+		return (0);
+	return (((struct dq_object *)fp->f_data)->o_kind);
+}
+
+/*
+ * ATTACH's served starts (D169): a live served directory of q.  The
+ * descriptor is the controller's own; its struct file is shared with the
+ * attachment (f_cred and f_flag are not consulted for lookups).
+ */
+int
+dq_file_attach_start(struct file *fp, struct dq_queue *q)
+{
+	struct dq_object *o;
+
+	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+		return (EINVAL);
+	o = fp->f_data;
+	if (o->o_queue != q)
+		return (EINVAL);
+	if (o->o_kind != DQ_KIND_DIR)
+		return (ENOTDIR);
 	return (dq_object_usable(o));
 }
 
