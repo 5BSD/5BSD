@@ -742,11 +742,22 @@ vmm_hyp_handle_guest_exit(struct hypctx *hypctx, uint64_t *ret)
 				     READ_SPECIALREG(hpfar_el2));
 	} else {
 		/*
+		 * AT S1E1R translates the guest's stage 1 table walk through
+		 * stage 2, but the world switch has already loaded the host
+		 * VTTBR: the walk would read whatever lies at physical address
+		 * 0 as stage 2 tables, and can take an external abort there.
+		 * Load the guest's stage 2 for the translation.
+		 *
 		 * TODO: There is a risk the at instruction could cause an
 		 * exception here. We should handle it & return a failure.
 		 */
 		host_far_el2 = hypctx_read_sys_reg(hypctx, HOST_FAR_EL2);
+		WRITE_SPECIALREG(vttbr_el2,
+		    hypctx_read_sys_reg(hypctx, HOST_VTTBR_EL2));
+		isb();
 		s1e1r = arm64_address_translate_s1e1r(host_far_el2);
+		WRITE_SPECIALREG(vttbr_el2, VTTBR_HOST);
+		isb();
 		if (PAR_SUCCESS(s1e1r)) {
 			hpfar_el2 = (s1e1r & PAR_PA_MASK) >> PAR_PA_SHIFT;
 			hpfar_el2 <<= HPFAR_EL2_FIPA_SHIFT;
