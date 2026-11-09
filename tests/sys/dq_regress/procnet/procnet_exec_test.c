@@ -24,6 +24,8 @@
 
 #include <elf.h>
 #include <pthread.h>
+#include <sched.h>
+#include <time.h>
 
 #include "procnet_common.h"
 
@@ -1041,17 +1043,44 @@ ATF_TC_BODY(fexecve_paths, tc)
 /* --- exec racing a sibling thread's chdir ---------------------------- */
 
 static volatile bool chdir_stop;
+static volatile u_int chdir_gen;
 static const char *chdir_dir;
 
+/*
+ * Flip the cwd, counting each chdir(2) that returned.  The count lets the
+ * exec loop wait for a completed flip between attempts: execve(2)
+ * single-threads the process, which restarts a sibling's interruptible
+ * sleep (ERESTART), so a chdir(2) that sleeps, as an attached process's
+ * consultation does, could otherwise be restarted by every attempt and
+ * never return.
+ */
 static void *
 chdir_loop(void *arg __unused)
 {
 
 	while (!chdir_stop) {
 		(void)chdir("/");
+		__atomic_add_fetch(&chdir_gen, 1, __ATOMIC_RELEASE);
 		(void)chdir(chdir_dir);
+		__atomic_add_fetch(&chdir_gen, 1, __ATOMIC_RELEASE);
 	}
 	return (NULL);
+}
+
+/* Wait (60 s at most) for a chdir(2) completed after generation g. */
+static bool
+chdir_wait(u_int g)
+{
+	struct timespec t0, t;
+
+	(void)clock_gettime(CLOCK_MONOTONIC, &t0);
+	while (__atomic_load_n(&chdir_gen, __ATOMIC_ACQUIRE) == g) {
+		(void)clock_gettime(CLOCK_MONOTONIC, &t);
+		if (t.tv_sec - t0.tv_sec >= 60)
+			return (false);
+		sched_yield();
+	}
+	return (true);
 }
 
 ATF_TC(exec_chdir_race);
@@ -1072,6 +1101,7 @@ ATF_TC_BODY(exec_chdir_race, tc)
 	ssize_t n;
 	int i, status, p[2], ran, attempts;
 	char out[2 * PATH_MAX + 8];
+	u_int gen;
 
 	pn_helper(tc, helper, sizeof(helper));
 	ATF_REQUIRE(mkdir("racedir", 0755) == 0);
@@ -1092,9 +1122,14 @@ ATF_TC_BODY(exec_chdir_race, tc)
 			if (pthread_create(&thr, NULL, chdir_loop, NULL) != 0)
 				_exit(PN_X_SETUP);
 			for (attempts = 0; attempts < 10000; attempts++) {
+				gen = __atomic_load_n(&chdir_gen,
+				    __ATOMIC_ACQUIRE);
 				execve("./procnet_race_img", argv, environ);
 				if (errno != ENOENT)
 					_exit(errno);
+				/* The next attempt races a newer cwd. */
+				if (!chdir_wait(gen))
+					_exit(ETIMEDOUT);
 			}
 			_exit(ENOENT);
 		}

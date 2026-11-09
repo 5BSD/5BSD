@@ -123,14 +123,27 @@ securelevel_raised(void)
 	return (v > 0);
 }
 
-/* Unmount a work-directory mount point if a body left it mounted. */
+/*
+ * Unmount a work-directory mount point if a body left it mounted.  By
+ * file system id, not by name: a renamed mount point (unmount_fallback)
+ * no longer matches its f_mntonname, and an attached caller has no
+ * literal-name fallback (D127).  name is a mount point only when its
+ * ".." is on another device.
+ */
 static void
 cleanup_unmount(const char *name)
 {
-	char p[PATH_MAX];
+	char dotdot[PATH_MAX], id[64];
+	struct statfs sf;
+	struct stat sb, psb;
 
-	if (realpath(name, p) != NULL)
-		(void)unmount(p, MNT_FORCE);
+	snprintf(dotdot, sizeof(dotdot), "%s/..", name);
+	if (stat(name, &sb) != 0 || stat(dotdot, &psb) != 0 ||
+	    sb.st_dev == psb.st_dev || statfs(name, &sf) != 0)
+		return;
+	snprintf(id, sizeof(id), "FSID:%d:%d", sf.f_fsid.val[0],
+	    sf.f_fsid.val[1]);
+	(void)unmount(id, MNT_BYFSID | MNT_FORCE);
 }
 
 /* --- mount, unmount -------------------------------------------------- */
