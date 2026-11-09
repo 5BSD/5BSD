@@ -4910,6 +4910,19 @@ kern_renameat_mac(struct thread *td, int fromfd, const char *from, int tofd,
 	    ndflags, pathseg, from, fromfd, &cap_renameat_source_rights);
 	if ((error = namei(fromnd)) != 0)
 		return (error);
+	/*
+	 * AT_RENAME_EXCHANGE looks the source up with RENAME, which succeeds
+	 * with no vnode for a missing last component.  Fail as the non-MAC
+	 * path in kern_renameat() does (EBUSY for a non-directory parent,
+	 * then ENOENT) instead of handing the policy a NULL vnode.
+	 */
+	if (fromnd->ni_vp == NULL) {
+		error = fromnd->ni_dvp->v_type != VDIR ? EBUSY : ENOENT;
+		VOP_UNLOCK(fromnd->ni_dvp);
+		NDFREE_PNBUF(fromnd);
+		vrele(fromnd->ni_dvp);
+		return (error);
+	}
 	error = mac_vnode_check_rename_from(td->td_ucred, fromnd->ni_dvp,
 	    fromnd->ni_vp, &fromnd->ni_cnd);
 	VOP_UNLOCK(fromnd->ni_dvp);
