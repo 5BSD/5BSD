@@ -232,7 +232,13 @@ unionfs_lookup(struct vop_cachedlookup_args *ap)
 		lcn = *cnp;
 		/* always op is LOOKUP */
 		lcn.cn_nameiop = LOOKUP;
-		lcn.cn_flags = cnflags;
+		/*
+		 * lcn is a stack copy, not the ni_cnd of a nameidata, so
+		 * NAMEILOOKUP must not be set.  Otherwise a lower filesystem
+		 * calling vfs_lookup_nameidata() (e.g. fdescfs in nodup mode)
+		 * would write through a pointer into our stack frame.
+		 */
+		lcn.cn_flags = cnflags & ~NAMEILOOKUP;
 		is_dot = false;
 
 		if (udvp == NULL)
@@ -246,8 +252,9 @@ unionfs_lookup(struct vop_cachedlookup_args *ap)
 			goto unionfs_lookup_cleanup;
 		}
 
+		/* cnp may be embedded in a nameidata: keep it marked. */
 		if (udvp == NULL)
-			cnp->cn_flags = lcn.cn_flags;
+			cnp->cn_flags = lcn.cn_flags | (cnflags & NAMEILOOKUP);
 
 		if (lerror == 0) {
 			if (ldvp == lvp) {	/* is dot */
