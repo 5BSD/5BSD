@@ -858,7 +858,8 @@ arm64_handle_world_switch(struct hypctx *hypctx, int excp_type,
 	return (handled);
 }
 
-static void
+/* Inline: the probe context walk calls it with a NULL cookie. */
+static __always_inline void
 ptp_release(void **cookie)
 {
 	if (*cookie != NULL) {
@@ -878,21 +879,78 @@ ptp_hold(struct vcpu *vcpu, vm_paddr_t ptpphys, size_t len, void **cookie)
 }
 
 /*
- * A guest translation table page, for a walker that holds the guest's locked
- * stage 2 pmap and so can neither hold the page nor take the lock again:
- * resolve it through the stage 2 tables and read it through the direct map.
- * Only RAM is read; a table in device memory fails the walk.
+ * DTrace probe context can neither fault, sleep nor take a lock, and must not
+ * reach a function that fbt instruments: a probe there recurses into
+ * dtrace_probe().  The functions below run in probe context, so they are
+ * named dtrace_, which fbt never instruments, and call nothing but each other
+ * and memcpy().  vm_hypertrace_probe() holds the VM's stage 2 pmap lock across
+ * the probe, so the stage 2 tables stay put while they are read through the
+ * direct map.
+ */
+
+/*
+ * True if pa is RAM, and so in the direct map.  vm_phys_segs is fixed once
+ * the VM system starts; scan it rather than call vm_phys_paddr_to_vm_page().
+ */
+static bool
+dtrace_vmm_is_ram(vm_paddr_t pa)
+{
+	int i;
+
+	if (!PHYS_IN_DMAP_RANGE(pa))
+		return (false);
+	for (i = 0; i < vm_phys_nsegs; i++)
+		if (pa >= vm_phys_segs[i].start && pa < vm_phys_segs[i].end)
+			return (true);
+	return (false);
+}
+
+/*
+ * The direct map address of ipa in a stage 2 pmap whose lock the caller
+ * holds, or NULL unless ipa maps RAM with every access in prot.  Walk from
+ * pm_l0, as pmap_pte() does; a 3 level stage 2 pmap provides one too.  A
+ * stage 2 mapping is writable only once its page is dirty, so a store through
+ * the direct map loses nothing.
  */
 static void *
-ptp_map_locked(pmap_t pmap, vm_paddr_t ptpphys)
+dtrace_vmm_s2_map(pmap_t pmap, uint64_t ipa, vm_prot_t prot)
 {
+	volatile pd_entry_t *table;
+	pt_entry_t pte;
 	vm_paddr_t pa;
+	uint64_t mask;
+	int level, shift;
 
-	pa = pmap_s2_extract_locked(pmap, ptpphys, VM_PROT_READ);
-	if (pa == 0 || !PHYS_IN_DMAP(pa) ||
-	    vm_phys_paddr_to_vm_page(pa) == NULL)
+	if ((ipa >> (L0_SHIFT + L0_ENTRIES_SHIFT)) != 0)
 		return (NULL);
-	return ((void *)PHYS_TO_DMAP(pa));
+	table = pmap->pm_l0;
+	for (level = 0;; level++) {
+		shift = L0_SHIFT - level * Ln_ENTRIES_SHIFT;
+		pte = table[(ipa >> shift) &
+		    (level == 0 ? L0_ADDR_MASK : Ln_ADDR_MASK)];
+		if (level < 3 && (pte & ATTR_DESCR_MASK) == L1_TABLE) {
+			pa = PTE_TO_PHYS(pte);
+			if (!dtrace_vmm_is_ram(pa))
+				return (NULL);
+			table = PHYS_TO_DMAP(pa);
+			continue;
+		}
+		if ((level == 3 && (pte & ATTR_DESCR_MASK) == L3_PAGE) ||
+		    ((level == 1 || level == 2) &&
+		    (pte & ATTR_DESCR_MASK) == L1_BLOCK))
+			break;
+		return (NULL);
+	}
+	if (((prot & VM_PROT_READ) != 0 &&
+	    (pte & ATTR_S2_S2AP(ATTR_S2_S2AP_READ)) == 0) ||
+	    ((prot & VM_PROT_WRITE) != 0 &&
+	    (pte & ATTR_S2_S2AP(ATTR_S2_S2AP_WRITE)) == 0))
+		return (NULL);
+	mask = (UINT64_C(1) << shift) - 1;
+	pa = (PTE_TO_PHYS(pte) & ~mask) | (ipa & mask);
+	if (!dtrace_vmm_is_ram(pa))
+		return (NULL);
+	return (PHYS_TO_DMAP(pa));
 }
 
 /* log2 of the number of bytes in a page table entry */
@@ -900,11 +958,12 @@ ptp_map_locked(pmap_t pmap, vm_paddr_t ptpphys)
 
 /*
  * Translate a guest virtual address.  With a NULL pmap, hold each table page;
- * otherwise the caller holds that stage 2 pmap's lock and the tables are read
- * without blocking (ptp_map_locked()).
+ * that path may sleep and is not safe in probe context.  Otherwise the caller
+ * holds that stage 2 pmap's lock, this runs in probe context and the tables
+ * are read without blocking (dtrace_vmm_s2_map()).
  */
 static int
-gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
+dtrace_vmm_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
     int prot, uint64_t *gpa, int *is_fault, pmap_t locked)
 {
 	struct hypctx *hypctx;
@@ -1062,7 +1121,8 @@ gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
 		}
 
 		if (locked != NULL)
-			ptep = ptp_map_locked(locked, pte_addr);
+			ptep = dtrace_vmm_s2_map(locked, pte_addr,
+			    VM_PROT_READ);
 		else
 			ptep = ptp_hold(hypctx->vcpu, pte_addr, PAGE_SIZE,
 			    &cookie);
@@ -1146,20 +1206,50 @@ vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
     int prot, uint64_t *gpa, int *is_fault)
 {
 
-	return (gla2gpa(vcpui, paging, gla, prot, gpa, is_fault, NULL));
+	return (dtrace_vmm_gla2gpa(vcpui, paging, gla, prot, gpa, is_fault,
+	    NULL));
 }
 
 /*
- * As vmmops_gla2gpa(), for DTrace probe context: the caller holds the VM's
- * stage 2 pmap lock, and nothing here sleeps, faults or takes a lock.
+ * Copy len bytes to or from guest virtual address gla in DTrace probe
+ * context; the caller holds the lock of pmap, the VM's stage 2 pmap.
+ * Resolve every page before copying, so a failure leaves no partial copy.
+ * Every granule is a multiple of 4K, so a 4K-aligned piece of guest memory
+ * is contiguous in both the guest and the host.
  */
 int
-arm64_gla2gpa_locked(void *vcpui, struct vm_guest_paging *paging,
-    uint64_t gla, int prot, uint64_t *gpa, int *is_fault, pmap_t pmap)
+dtrace_vmm_guest_copy(void *vcpui, struct vm_guest_paging *paging,
+    pmap_t pmap, uint64_t gla, void *buf, size_t len, vm_prot_t prot)
 {
+	void *hva[2];
+	size_t chunk[2], done;
+	uint64_t gpa;
+	int count, error, fault, i;
 
-	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
-	return (gla2gpa(vcpui, paging, gla, prot, gpa, is_fault, pmap));
+	if (len == 0 || len > PAGE_SIZE_4K || gla == 0 ||
+	    gla > UINT64_MAX - (len - 1) ||
+	    (prot != VM_PROT_READ && prot != VM_PROT_WRITE) ||
+	    pmap == NULL || !PMAP_OWNED(pmap))
+		return (EFAULT);
+	for (done = 0, count = 0; done < len; count++) {
+		error = dtrace_vmm_gla2gpa(vcpui, paging, gla + done, prot,
+		    &gpa, &fault, pmap);
+		if (error != 0 || fault != 0)
+			return (EFAULT);
+		chunk[count] = MIN(len - done,
+		    PAGE_SIZE_4K - ((gla + done) & (PAGE_SIZE_4K - 1)));
+		hva[count] = dtrace_vmm_s2_map(pmap, gpa, prot);
+		if (hva[count] == NULL)
+			return (EFAULT);
+		done += chunk[count];
+	}
+	for (done = 0, i = 0; i < count; done += chunk[i], i++) {
+		if (prot == VM_PROT_WRITE)
+			memcpy(hva[i], (const char *)buf + done, chunk[i]);
+		else
+			memcpy((char *)buf + done, hva[i], chunk[i]);
+	}
+	return (0);
 }
 
 int

@@ -235,6 +235,7 @@ struct vm_guest_paging {
 struct vm_hdl {
 	struct vcpu *vcpu;
 	struct vm_guest_paging *paging;
+	struct pmap *pmap;		/* locked across the probe */
 	lwpid_t tid;
 };
 
