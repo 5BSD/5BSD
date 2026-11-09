@@ -696,6 +696,9 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	struct sigframe *fp, frame;
 	struct sigacts *psp;
 	vm_offset_t addr;
+#ifdef KDTRACE_HOOKS
+	register_t elr;
+#endif
 	int onstack, sig;
 
 	td = curthread;
@@ -708,8 +711,16 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 
 	tf = td->td_frame;
 #ifdef KDTRACE_HOOKS
-	if (dtrace_sendsig_ptr != NULL)
+	if (dtrace_sendsig_ptr != NULL) {
+		elr = tf->tf_elr;
 		dtrace_sendsig_ptr(td, tf);
+		/*
+		 * A fault in an instruction fasttrap runs out of line is
+		 * reported at the traced instruction, as it is untraced.
+		 */
+		if (tf->tf_elr != elr && ksi->ksi_addr == (void *)elr)
+			ksi->ksi_addr = (void *)tf->tf_elr;
+	}
 #endif
 	onstack = sigonstack(tf->tf_sp);
 

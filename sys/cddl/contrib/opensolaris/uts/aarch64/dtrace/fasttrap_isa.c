@@ -62,10 +62,21 @@
 #define	FASTTRAP_NOP		0xd503201f
 #define	FASTTRAP_AUTIASP	0xd50323bf
 #define	FASTTRAP_AUTIBSP	0xd50323ff
+#define	FASTTRAP_AUTIA		0xdac11000	/* autia xd, xn|sp */
+#define	FASTTRAP_AUTIB		0xdac11400	/* autib xd, xn|sp */
+#define	FASTTRAP_AUTIZA		0xdac133e0	/* autiza xd */
+#define	FASTTRAP_AUTIZB		0xdac137e0	/* autizb xd */
 #define	FASTTRAP_CLREX		0xd503305f
 
 #define	FASTTRAP_SCR_RET	4	/* offset of the second brk */
 #define	FASTTRAP_SCR_LIT	16	/* offset of a copied literal */
+
+/*
+ * t_dtrace_reg for an authenticated branch: one more than the target
+ * register, and whether the branch also links.
+ */
+#define	FASTTRAP_REG_MASK	0x1f
+#define	FASTTRAP_REG_LINK	0x80
 
 /* How far before a tracepoint to look for an open exclusive sequence. */
 #define	FASTTRAP_EXCL_WINDOW	16
@@ -217,11 +228,31 @@ fasttrap_decode(fasttrap_tracepoint_t *tp, uint32_t instr, uintptr_t pc)
 			tp->ftt_type = FASTTRAP_T_RET_AUTH;
 			tp->ftt_instr = op3 == 2 ? FASTTRAP_AUTIASP :
 			    FASTTRAP_AUTIBSP;
-		} else {
+		} else if ((opc == 0 || opc == 1 || opc == 8 || opc == 9) &&
+		    (op3 == 2 || op3 == 3) && rn != 31 &&
+		    (opc >= 8 || op4 == 31)) {
 			/*
-			 * The other authenticated branches would leave their
-			 * register authenticated if run in two steps.
+			 * braaz, brabz, blraaz and blrabz (opc 0 and 1) and
+			 * braa, brab, blraa and blrab (opc 8 and 9, modifier
+			 * xm or sp in op4) authenticate xn out of line with the
+			 * autia, autib, autiza or autizb that computes the same
+			 * value into xn; fasttrap_scratch_pc() then branches
+			 * to it and gives xn back the value the branch leaves.
+			 * A pointer that fails authentication faults at the
+			 * autia* with FEAT_FPAC, where without FEAT_FPACCOMBINE
+			 * the branch itself would jump to the poisoned target.
 			 */
+			tp->ftt_type = (opc & 1) != 0 ? FASTTRAP_T_BLR_AUTH :
+			    FASTTRAP_T_BR_AUTH;
+			tp->ftt_reg = rn;
+			if (opc >= 8)
+				tp->ftt_instr = (op3 == 2 ? FASTTRAP_AUTIA :
+				    FASTTRAP_AUTIB) | (op4 << 5) | rn;
+			else
+				tp->ftt_instr = (op3 == 2 ? FASTTRAP_AUTIZA :
+				    FASTTRAP_AUTIZB) | rn;
+		} else {
+			/* eretaa, eretab and unallocated encodings. */
 			return (-1);
 		}
 	}
@@ -637,6 +668,8 @@ fasttrap_pid_probe(struct trapframe *tf)
 	case FASTTRAP_T_COMMON:
 	case FASTTRAP_T_LDR_LIT:
 	case FASTTRAP_T_RET_AUTH:
+	case FASTTRAP_T_BR_AUTH:
+	case FASTTRAP_T_BLR_AUTH:
 		scrspace = fasttrap_scraddr(curthread, tp->ftt_proc);
 		if (scrspace == NULL) {
 			/*
@@ -675,6 +708,14 @@ fasttrap_pid_probe(struct trapframe *tf)
 		curthread->t_dtrace_npc = pc + 4;
 		curthread->t_dtrace_scrpc = scrspace->ftss_addr;
 		curthread->t_dtrace_ret = tp->ftt_type == FASTTRAP_T_RET_AUTH;
+		if (tp->ftt_type == FASTTRAP_T_BR_AUTH ||
+		    tp->ftt_type == FASTTRAP_T_BLR_AUTH) {
+			curthread->t_dtrace_reg = (tp->ftt_reg + 1) |
+			    (tp->ftt_type == FASTTRAP_T_BLR_AUTH ?
+			    FASTTRAP_REG_LINK : 0);
+			curthread->t_dtrace_regv = fasttrap_getreg(tf,
+			    tp->ftt_reg);
+		}
 		curthread->t_dtrace_on = 1;
 		tf->tf_spsr &= ~PSR_BTYPE;
 		tf->tf_elr = scrspace->ftss_addr;
@@ -697,6 +738,31 @@ done:
 	return (0);
 }
 
+/*
+ * The pc after the displaced instruction has run and reached the second brk:
+ * lr after an authenticated return.  After an authenticated branch, the
+ * scratch autia, autib, autiza or autizb left the target in its register;
+ * branch to it, give the register back the value the branch would have left
+ * there, and link for blraa and friends.
+ */
+static uintptr_t
+fasttrap_scratch_pc(struct thread *td, struct trapframe *tf)
+{
+	uintptr_t new_pc;
+	u_int reg;
+
+	if (td->t_dtrace_ret)
+		return (tf->tf_lr);
+	if (td->t_dtrace_reg == 0)
+		return (td->t_dtrace_npc);
+	reg = (td->t_dtrace_reg & FASTTRAP_REG_MASK) - 1;
+	new_pc = fasttrap_getreg(tf, reg);
+	fasttrap_setreg(tf, reg, td->t_dtrace_regv);
+	if ((td->t_dtrace_reg & FASTTRAP_REG_LINK) != 0)
+		tf->tf_lr = td->t_dtrace_pc + 4;
+	return (new_pc);
+}
+
 int
 fasttrap_return_probe(struct trapframe *tf)
 {
@@ -710,7 +776,7 @@ fasttrap_return_probe(struct trapframe *tf)
 		return (-1);
 
 	pc = td->t_dtrace_pc;
-	new_pc = td->t_dtrace_ret ? tf->tf_lr : td->t_dtrace_npc;
+	new_pc = fasttrap_scratch_pc(td, tf);
 	fasttrap_clear_thread();
 
 	/* A vfork(2) child shares its parent's tracepoints. */
@@ -744,7 +810,7 @@ fasttrap_sendsig(struct thread *td, struct trapframe *tf)
 		tf->tf_elr = td->t_dtrace_pc;
 		fasttrap_clear_thread();
 	} else if (tf->tf_elr == td->t_dtrace_scrpc + FASTTRAP_SCR_RET) {
-		tf->tf_elr = td->t_dtrace_ret ? tf->tf_lr : td->t_dtrace_npc;
+		tf->tf_elr = fasttrap_scratch_pc(td, tf);
 		fasttrap_clear_thread();
 	}
 }

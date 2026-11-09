@@ -105,10 +105,14 @@ dt_pid_create_return_probe(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 				continue;
 		} else if ((text[i] & 0xfffffc1f) != 0xd65f0000 &&
 		    text[i] != 0xd65f0bff && text[i] != 0xd65f0fff &&
-		    (text[i] & 0xfffffc1f) != 0xd61f0000) {
+		    (text[i] & 0xfffffc1f) != 0xd61f0000 &&
+		    (((text[i] & 0xfffff81f) != 0xd61f081f &&
+		    (text[i] & 0xfffff800) != 0xd71f0800) ||
+		    ((text[i] >> 5) & 0x1f) == 31)) {
 			/*
-			 * Not ret, retaa, retab or br.  A br may stay within
-			 * the function, which the kernel checks when it runs.
+			 * Not ret, retaa, retab, br, braaz, brabz, braa or
+			 * brab.  A branch to a register may stay within the
+			 * function, which the kernel checks when it runs.
 			 */
 			continue;
 		}

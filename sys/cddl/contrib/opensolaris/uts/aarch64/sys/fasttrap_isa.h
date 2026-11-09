@@ -81,6 +81,8 @@ typedef struct fasttrap_machtp {
 #define	FASTTRAP_T_BLR		0x09
 #define	FASTTRAP_T_LDR_LIT	0x0a	/* out of line, literal copied */
 #define	FASTTRAP_T_RET_AUTH	0x0b	/* out of line autixsp, then ret */
+#define	FASTTRAP_T_BR_AUTH	0x0c	/* out of line autix*, then br */
+#define	FASTTRAP_T_BLR_AUTH	0x0d	/* out of line autix*, then blr */
 
 struct thread;
 struct trapframe;
