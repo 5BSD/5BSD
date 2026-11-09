@@ -3460,9 +3460,6 @@ dirty pages can be dropped at close.
 A revoke or the queue closing drops dirty pages the controller had not
 taken.
 .It
-.Dv O_TRUNC
-at open is a vnode's alone (served files are not opened by path yet).
-.It
 The controller's word is the end of file of an append; the kernel applies
 .Dv RLIMIT_FSIZE
 to an append at the presented size.

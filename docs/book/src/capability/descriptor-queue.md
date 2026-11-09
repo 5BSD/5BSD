@@ -1445,11 +1445,12 @@ the same backend; of a real file, the same predicate.
 | `inotify` on a served dir | `INOTIFY` push | yes |
 | every `*at()` relative to a served dir; absolute paths under a served root; `socket`, `socketpair` | `RESOLVE` | yes |
 | `getdirentries` | `fo_readdir` | yes |
-| `dup`, `fork`, `rfork` (any flags), `pdfork`, `vfork`, `SCM_RIGHTS` within the attachment, `/dev/fd/N` reopen | shared file | yes |
+| `dup`, `fork`, `rfork` (any flags), `pdfork`, `vfork`, `/dev/fd/N` reopen | shared file | yes |
+| `SCM_RIGHTS` within the attachment | refused `ENOTCAPABLE` (`CAP_XFER_NONE`) until 1c-iv | **no** until 1c-iv |
 | `SCM_RIGHTS` or channel transfer to a process outside the attachment | refused (I6) | **no**, by design |
 | ACLs, extattrs | events / `EOPNOTSUPP` | yes |
 | `getfh` | `RESOLVE ATTR` with a handle; `fhopen` of it `ESTALE` | **partial**, documented (*open* 21.2) |
-| `__mac_get_fd` | empty label | yes (D22) |
+| `__mac_get_fd` | `EINVAL` (no label; dq.4) | **no**, documented (D22 superseded as built) |
 | `/dev/fd/N/child` on a served `N` | `ENOTDIR` | **no**, documented (D29) |
 | `O_NAMEDATTR` on a served start | `EOPNOTSUPP` | **no**, documented (D43) |
 | `kcmp` | `fo_cmp` | yes |
@@ -1707,7 +1708,7 @@ system call.
 
 ## 21. Open items
 
-1. Stage 4 attach-decision inputs (11.5).
+1. Stage 4 attach-decision inputs (11.5). Direction from the owner (2026-11-08): **userspace supervisors**. A supervisor is a unit launched by Switchboard (or Capsule for early boot), possibly on demand as Switchboard launches providers; a program is marked for supervision (a brand: protected extended attribute or embedded ELF entitlement); OpenES holds its exec as an authorisation event until a supervisor has claimed it, and the supervisor attaches through its descriptor queue before the new image runs any code. The supervisor stands in for the kernel and keeps its ABI; unattached programs see no difference. Open: the brand, the attach-during-exec hook, set-id brands versus I5, and whether a trusted supervisor may grant privilege.
 2. `getfh`: present a handle that only `fhopen`s to `ESTALE`, or refuse.
 3. Per-site VM dispatch decisions (10), recorded in the ledger in stage 1b.
 4. Tunable defaults after stage 1a measurements.
@@ -1757,3 +1758,6 @@ system call.
     effective uid and gid only; supplementary groups are not presented in
     the event (Q11), so the suites oracle lists those cases in
     `dqtree.expected`.
+17. **Pass-through I/O for proxy descriptors** (planned, its own series after the Unix-illusion series; owner, 2026-11-08). A supervisor attaches a real backing descriptor to a proxy object, at mint or later, and the kernel then performs that object's reads, writes and mappings on the backing file directly, with no round trip, while the supervisor keeps lookups, attributes, locks, close, revocation and policy; it can detach the backing file again. Comparable to Linux FUSE passthrough (2024). Open: revocation must still cut access at once (mappings of the backing file included), identity and size come from the object or the backing file, and how the data cache and the pager interact with a backing vnode.
+18. **Stage order and the last stage** (owner, 2026-11-08). Stages after 1c and the Unix-illusion series: 2 sockets, 3 exec of proxy files, 4 devices, 5 every remaining descriptor type (each kind of descriptor gets a proxy form, from a type-by-type inventory), and 6, last, discovery and association: how the system decides that a program needs a confinement and which userspace supervisor provides it. Stage 6 keeps the direct-child attachment already built and adds (a) responsible processes, so that a program Switchboard execs on someone's behalf is matched by the party that asked, not by Switchboard; (b) registration, so that supervisors declare interest like device drivers (match on a brand, signing identity, path, responsible process or user, or a launcher's request, with probe priorities as in newbus) and are called, or launched on demand by Switchboard, for arbitrary programs; (c) the OpenES exec hold until a supervisor has claimed and attached the program; and (d) the policy when nothing matches. Terms: a confinement is built from proxy descriptors, the supervisor queue (this device), OpenES, Capsicum rights and the transfer controls, and capability-plane isolates. Direction for (b) (owner, 2026-11-08): a confinement is a capability bundle (`.cap`) whose manifest declares that it provides a confinement and what it matches: an identifier (a target bundle's reverse-DNS name or a signing identity), a path, or a MAC label stored in the program's extended attributes (the brand). Switchboard launches and supervises the bundle like any other; matching happens in one place, so the forms coexist.
+19. **Readiness for every proxy descriptor type** (owner, 2026-11-08: proxy descriptors must work anywhere a descriptor does, poll, select and kqueue included, and inside any kqueue). Proxy files already behave as vnodes do (always ready under poll and select; EVFILT_READ, EVFILT_WRITE and EVFILT_VNODE in any kqueue). Stages 2, 4 and 5 need a readiness protocol: the supervisor pushes readiness (readable, writable, hang-up, error, with counts) through the supervisor queue; the kernel keeps each object's readiness so poll, select and kqueue answer without a round trip and wake waiters on change; kqueue keeps full semantics (kn_data, EV_EOF, NOTE_LOWAT, EVFILT_EXCEPT); non-blocking I/O returns EAGAIN exactly when not ready; tests compare each proxy type with its real counterpart, alone and mixed in one kqueue. ux-5 adds the file oracle (poll, select, kqueue against a vnode, including EVFILT_READ kn_data).
