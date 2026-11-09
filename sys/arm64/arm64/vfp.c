@@ -538,10 +538,15 @@ vfp_save_state_common(struct thread *td, struct pcb *pcb, bool full_save)
 		 * heavy userspace code. This would require us to disable
 		 * SVE for all system calls and trap the next use of them.
 		 * As an optimisation only disable SVE on context switch.
+		 *
+		 * A thread interrupted in userspace is not in a system call
+		 * (the interrupt entry clears the frame's syndrome), and
+		 * sigreturn sets td_sa.code to -1 to keep the state it
+		 * restores.
 		 */
 		if (td->td_frame == NULL ||
-		    (ESR_ELx_EXCEPTION(td->td_frame->tf_esr) != EXCP_SVC64 &&
-		    td->td_sa.code != (u_int)-1))
+		    ESR_ELx_EXCEPTION(td->td_frame->tf_esr) != EXCP_SVC64 ||
+		    td->td_sa.code == (u_int)-1)
 			save_sve = true;
 	}
 
