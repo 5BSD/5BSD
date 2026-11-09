@@ -84,6 +84,22 @@ count_by_tag()
 	}' "$3" "$2" | sort
 }
 
+# While a served-root run lasts, every 10 seconds, the kernel stacks of
+# the threads waiting in dq(4), with the time: a stall (a requester that
+# waits until kern.dq.default_deadline_ms) shows which wait it is and what
+# it holds.  Written to $1 until killed.
+stall_sampler()
+{
+
+	while :; do
+		sleep 10
+		{
+			date -u +%T
+			procstat -kka 2>/dev/null | grep -E 'dq_|dqres_'
+		} >> "$1"
+	done
+}
+
 # A failure recorded for the end of the case (suites_body's "failed").
 fail_later()
 {
@@ -119,7 +135,7 @@ suites_head()
 }
 suites_body()
 {
-	local root suite kf expected env failed
+	local root suite kf expected env failed sampler stalled
 
 	[ -c /dev/dq ] || atf_skip "/dev/dq is absent"
 	[ -x "$(atf_get_srcdir)/dqtree" ] || atf_fail "dqtree is not installed"
@@ -153,9 +169,15 @@ suites_body()
 		rm -f "${root}/tmp/chroot.db" "${root}/tmp/tree.db"
 		${env} chroot "${root}" kyua test \
 		    --results-file=/tmp/chroot.db -k "${kf}" >/dev/null 2>&1
+		: > stalls
+		stalled=
+		stall_sampler stalls &
+		sampler=$!
 		${env} "$(atf_get_srcdir)/dqtree" -o tree.report "${root}" \
 		    kyua test --results-file=/tmp/tree.db -k "${kf}" \
 		    >/dev/null 2>&1
+		kill "${sampler}" 2>/dev/null
+		wait "${sampler}" 2>/dev/null
 		kyua test --results-file=plain.db -k "${kf}" >/dev/null 2>&1
 		results "${root}/tmp/chroot.db" > chroot.all
 		results "${root}/tmp/tree.db" > tree.all
@@ -175,6 +197,17 @@ suites_body()
 			    --results-filter=passed,skipped,xfail,broken,failed \
 			    >&2 2>/dev/null
 			fail_later "${suite}: results differ in the served root"
+			stalled=yes
+		fi
+		# A requester that waited out its deadline: the reference
+		# controller held or lost an event for kern.dq.default_deadline_ms.
+		if ! grep -q ' deadline_misses 0 ' tree.report; then
+			fail_later "${suite}: a requester waited until its deadline"
+			stalled=yes
+		fi
+		if [ -n "${stalled}" ]; then
+			echo "=== ${suite}: dq(4) waits sampled every 10 s" >&2
+			tail -n 400 stalls >&2
 		fi
 		grep -q 'unmarked 0 failclosed 0 dropped 0 bad_replies 0' \
 		    tree.report ||
@@ -183,7 +216,7 @@ suites_body()
 		grep -q 'objects 0$' tree.report ||
 		    fail_later "${suite}: served objects left live"
 		rm -f plain.db chroot.res tree.res plain.res tree.report \
-		    chroot.all tree.all
+		    chroot.all tree.all stalls
 	done
 	[ -z "${failed}" ] || atf_fail "${failed}"
 }

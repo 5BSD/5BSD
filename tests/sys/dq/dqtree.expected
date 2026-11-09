@@ -120,3 +120,11 @@ fts_misc_test:xdev[[:space:]]  # by-design D175: nmount(2) "fspath" from a serve
 # childerr's chmod 0) of a directory it created is EPERM: the identity is
 # the controller's (N1).  All 28 cases fail there, before any ls(1) run.
 ^ls_tests:  # ux-6 N1: mkdir -m chmods the new directory; the identity is the controller's (dq_file.c:1286)
+
+# usr.bin/find (run 61).  setextattr(8) of a name in the served tree is
+# refused EOPNOTSUPP: dq_serve_tree answers every XATTR consultation so
+# (lib/libdq/libdq_tree.c:1110), and served objects carry no extended
+# attributes until ux-9 (DQ_OP_EXTATTR); the tests skip.  The entries
+# name the case, so they match its lines on both sides of the diff.
+^find_test:find_xattr[[:space:]]  # ux-9: setextattr EOPNOTSUPP from dq_serve_tree (libdq_tree.c:1110), the test skips
+^find_test:find_xattrname[[:space:]]  # ux-9: setextattr EOPNOTSUPP from dq_serve_tree (libdq_tree.c:1110), the test skips
