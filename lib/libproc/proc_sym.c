@@ -655,6 +655,34 @@ proc_name2ctf(struct proc_handle *p, const char *name)
 #endif
 }
 
+/*
+ * The TYPE_* class of an ELF symbol type.  A common symbol is data and an
+ * indirect function is code.  A thread-local symbol's value is an offset in
+ * the TLS block, not an address, so it matches no class, like any unknown
+ * type: a TYPE_FUNC walk sees neither.
+ */
+static int
+proc_symtype_mask(int type)
+{
+
+	switch (type) {
+	case STT_NOTYPE:
+		return (TYPE_NOTYPE);
+	case STT_OBJECT:
+	case STT_COMMON:
+		return (TYPE_OBJECT);
+	case STT_FUNC:
+	case STT_GNU_IFUNC:
+		return (TYPE_FUNC);
+	case STT_SECTION:
+		return (TYPE_SECTION);
+	case STT_FILE:
+		return (TYPE_FILE);
+	default:
+		return (0);
+	}
+}
+
 int
 proc_iter_symbyaddr(struct proc_handle *p, const char *object, int which,
     int mask, proc_sym_f *func, void *cd)
@@ -692,20 +720,7 @@ proc_iter_symbyaddr(struct proc_handle *p, const char *object, int which,
 		if (GELF_ST_BIND(sym.st_info) == STB_WEAK &&
 		    (mask & BIND_WEAK) == 0)
 			continue;
-		if (GELF_ST_TYPE(sym.st_info) == STT_NOTYPE &&
-		    (mask & TYPE_NOTYPE) == 0)
-			continue;
-		if (GELF_ST_TYPE(sym.st_info) == STT_OBJECT &&
-		    (mask & TYPE_OBJECT) == 0)
-			continue;
-		if (GELF_ST_TYPE(sym.st_info) == STT_FUNC &&
-		    (mask & TYPE_FUNC) == 0)
-			continue;
-		if (GELF_ST_TYPE(sym.st_info) == STT_SECTION &&
-		    (mask & TYPE_SECTION) == 0)
-			continue;
-		if (GELF_ST_TYPE(sym.st_info) == STT_FILE &&
-		    (mask & TYPE_FILE) == 0)
+		if ((proc_symtype_mask(GELF_ST_TYPE(sym.st_info)) & mask) == 0)
 			continue;
 		s = elf_strptr(file->elf, symtab->stridx, sym.st_name);
 		if (file->ehdr.e_type == ET_DYN)
