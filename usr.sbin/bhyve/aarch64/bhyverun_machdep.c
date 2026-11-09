@@ -127,6 +127,9 @@ bhyve_usage(int code)
 	    "       -N: don't reboot while in monitor mode\n"
 	    "       -o: set config 'var' to 'value'\n"
 	    "       -p: pin 'vcpu' to 'hostcpu'\n"
+#ifdef BHYVE_SNAPSHOT
+	    "       -r: path to checkpoint file\n"
+#endif
 	    "       -S: guest memory cannot be swapped\n"
 	    "       -s: <slot,driver,configinfo> PCI slot config\n"
 	    "       -U: UUID\n"
@@ -142,7 +145,11 @@ bhyve_optparse(int argc, char **argv)
 	const char *optstr;
 	int c;
 
+#ifdef BHYVE_SNAPSHOT
+	optstr = "dhCDMNSWk:f:o:p:G:c:s:m:U:r:R:";
+#else
 	optstr = "dhCDMNSWk:f:o:p:G:c:s:m:U:";
+#endif
 	while ((c = getopt(argc, argv, optstr)) != -1) {
 		switch (c) {
 		case 'd':
@@ -189,6 +196,21 @@ bhyve_optparse(int argc, char **argv)
 				    optarg);
 			}
 			break;
+#ifdef BHYVE_SNAPSHOT
+		case 'r':
+			restore_file = optarg;
+			break;
+		case 'R':
+			/*
+			 * Stand up as an inbound live-migration destination on an
+			 * already-connected stream descriptor (the operator/
+			 * monitor passes the accepted socket fd).  The guest is
+			 * configured normally but held fenced until the migration
+			 * commits and releases it.
+			 */
+			set_config_value("migrate.receive_fd", optarg);
+			break;
+#endif
 		case 's':
 			if (strncmp(optarg, "help", strlen(optarg)) == 0) {
 				pci_print_supported_devices();

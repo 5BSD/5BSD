@@ -54,6 +54,9 @@
 #include "debug.h"
 #include "gdb.h"
 #include "mem.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "vmexit.h"
 
 cpuset_t running_cpumask;
@@ -138,7 +141,14 @@ static int
 vmexit_debug(struct vmctx *ctx __unused, struct vcpu *vcpu,
     struct vm_run *vmrun __unused)
 {
+
+#ifdef BHYVE_SNAPSHOT
+	checkpoint_cpu_suspend(vcpu_id(vcpu));
+#endif
 	gdb_cpu_suspend(vcpu);
+#ifdef BHYVE_SNAPSHOT
+	checkpoint_cpu_resume(vcpu_id(vcpu));
+#endif
 	/*
 	 * XXX-MJ sleep for a short period to avoid chewing up the CPU in the
 	 * window between activation of the vCPU thread and the STARTUP IPI.
@@ -291,7 +301,14 @@ vmexit_brk(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_run *vmrun)
 static int
 vmexit_ss(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_run *vmrun)
 {
+
+#ifdef BHYVE_SNAPSHOT
+	checkpoint_cpu_suspend(vcpu_id(vcpu));
+#endif
 	gdb_cpu_debug(vcpu, vmrun->vm_exit);
+#ifdef BHYVE_SNAPSHOT
+	checkpoint_cpu_resume(vcpu_id(vcpu));
+#endif
 	return (VMEXIT_CONTINUE);
 }
 

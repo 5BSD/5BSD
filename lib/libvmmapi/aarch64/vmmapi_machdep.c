@@ -52,7 +52,10 @@ const char *vm_capstrmap[] = {
 	VM_ATTACH_VGIC,		\
 	VM_ASSERT_IRQ,		\
 	VM_DEASSERT_IRQ,	\
-	VM_RAISE_MSI
+	VM_RAISE_MSI,		\
+	VM_SNAPSHOT_REQ,	\
+	VM_SNAPSHOT_SESSION,	\
+	VM_RESTORE_TIME
 
 const cap_ioctl_t vm_ioctl_cmds[] = {
 	VM_COMMON_IOCTLS,
