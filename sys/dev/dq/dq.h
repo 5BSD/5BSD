@@ -38,7 +38,14 @@
 #pragma push_macro("dr_data")
 #undef dr_data
 
-#define	DQ_API_VERSION		1
+/*
+ * The version every ioctl argument carries and every event header
+ * reports; the kernel accepts this one only.  2 (D184): the RESOLVE body
+ * grew from 96 to 112 bytes and moved its strings (drs_root,
+ * drs_rootpathlen, the served root's path), which a version-1 controller
+ * would misparse.
+ */
+#define	DQ_API_VERSION		2
 
 #define	DQ_PATH_MAX		1024	/* presented path, NUL included */
 #define	DQ_MNAMELEN		1024	/* == MNAMELEN, sys/mount.h */
@@ -746,10 +753,14 @@ struct dq_push_args {
  * RESOLVE body: struct dq_resolve_body, then drs_pathlen bytes of path,
  * NUL, drs_path2len bytes of the second path (RENAME, LINK), NUL,
  * drs_startpathlen bytes of the start hint, NUL, drs_startpath2len bytes
- * of the second path's start hint, NUL; the record is padded to a
- * multiple of 8.  Every length excludes its NUL.  The second path has its
- * own start kind (drs_start2_kind, from its own dirfd and leading '/'; 0
- * when there is no second path); a hint is present only when
+ * of the second path's start hint, NUL, drs_rootpathlen bytes of the
+ * process's served root's di_path (1c-iii-c), NUL; the record is padded
+ * to a multiple of 8.  drs_root is that root's object (0 when the root is
+ * real; then the fifth string is empty): a controller resolves absolute
+ * names, absolute symbolic link targets and ".." at the root against it,
+ * as chroot(2) does.  Every length excludes its NUL.  The second path has
+ * its own start kind (drs_start2_kind, from its own dirfd and leading
+ * '/'; 0 when there is no second path); a hint is present only when
  * DQ_RF_STARTPATH_VALID (path) or DQ_RF_STARTPATH2_VALID (path2) is set.
  * drs_rflags describe the first path's lookup; the second path's own
  * lookup flags are not known when the event is posted.
@@ -778,6 +789,10 @@ struct dq_resolve_body {
 	uint32_t	drs_accept;		/* DQ_RACCEPT(DQ_RESOLVE_*): the
 						   answers this event takes (was
 						   drs_pad1, 1c-iii) */
+	uint64_t	drs_root;		/* the served root's object, or
+						   0 (D184) */
+	uint32_t	drs_rootpathlen;	/* its path, the 5th string */
+	uint32_t	drs_pad2;		/* 0 */
 };
 #define	DQ_RACCEPT(k)		(1u << (k))
 
@@ -919,15 +934,27 @@ struct dq_resolve_mint {		/* stage 1c-iii */
  * da_procfd to this queue.  It must be a child that has not exec'd, not
  * already attached, not sharing its pwddesc or descriptor table, holding
  * no descriptor of this queue, and debuggable by the caller.  ATTACH sets
- * P2_NO_NEW_PRIVS on it (D150).  da_rootfd and da_cwdfd (served
- * directories) are stage 1c-iii: -1 here.
+ * P2_NO_NEW_PRIVS on it (D150).  da_rootfd and da_cwdfd (1c-iii-c, D169)
+ * are -1 or live served directories (DQ_KIND_DIR) of this queue held by
+ * the caller, which become the process's served root and cwd (EINVAL for
+ * another descriptor, ENOTDIR for another kind, EIO once revoked); the
+ * attachment holds the controller's struct file itself.  With a root and
+ * no cwd the cwd is the root (EIO if the root's reference count is
+ * exhausted); a cwd must be the root or a served directory under it
+ * (EINVAL).  Open directories (D184): with a root, the child's table is
+ * held to chroot(2)'s rule exactly (kern.chroot_allow_open_directories,
+ * EPERM), so with the default of 1 an unchrooted child keeps its open
+ * real directories.  DQ_ATTACH_F_NODIRS, with or without a root, refuses
+ * any open real directory instead (EBUSY).  Other da_flags bits are
+ * EINVAL.
  */
+#define	DQ_ATTACH_F_NODIRS	0x00000001
 struct dq_attach_args {
 	uint32_t	da_version;
 	int32_t		da_procfd;
-	int32_t		da_rootfd;		/* -1 */
-	int32_t		da_cwdfd;		/* -1 */
-	uint32_t	da_flags;		/* 0 */
+	int32_t		da_rootfd;		/* -1 or a served DIR */
+	int32_t		da_cwdfd;		/* -1 or a served DIR */
+	uint32_t	da_flags;		/* DQ_ATTACH_F_* */
 	uint32_t	da_pad0;
 };
 #define	DQ_IOC_ATTACH		_IOW('j', 10, struct dq_attach_args)
@@ -972,7 +999,11 @@ _Static_assert(sizeof(struct dq_unlock_all_body) == 16, "dq_unlock_all_body");
 _Static_assert(sizeof(struct dq_ioctl_body) == 16, "dq_ioctl_body");
 _Static_assert(sizeof(struct dq_stats2) == 320, "dq_stats2");
 _Static_assert(sizeof(struct dq_push_args) == 40, "dq_push_args");
-_Static_assert(sizeof(struct dq_resolve_body) == 96, "dq_resolve_body");
+_Static_assert(sizeof(struct dq_resolve_body) == 112, "dq_resolve_body");
+_Static_assert(__offsetof(struct dq_resolve_body, drs_root) == 96 &&
+    __offsetof(struct dq_resolve_body, drs_rootpathlen) == 104 &&
+    __offsetof(struct dq_resolve_body, drs_pad2) == 108,
+    "dq_resolve_body: the 1c-iii-c served root is appended");
 _Static_assert(__offsetof(struct dq_resolve_body, drs_cmode) == 84 &&
     __offsetof(struct dq_resolve_body, drs_startpath2len) == 88 &&
     __offsetof(struct dq_resolve_body, drs_accept) == 92,

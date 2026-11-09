@@ -49,6 +49,7 @@
 #include <sys/conf.h>
 #include <sys/ctype.h>
 #include <sys/cpuset.h>
+#include <sys/dqres.h>
 #include <sys/priv.h>
 #include <sys/exec.h>
 #include <sys/event.h>
@@ -1525,6 +1526,29 @@ linprocfs_doprocstatus(PFS_FILL_ARGS)
 }
 
 /*
+ * A DescriptorQueue served cwd or root (D169, D174): its path presented
+ * against the reader, as kinfo shows it, or "unknown" when it has none
+ * (not under the reader's served root, or dead).  False when the
+ * directory is real and the caller prints it.
+ */
+static bool
+linprocfs_dqres_dir(struct thread *td, struct proc *p, bool root,
+    struct sbuf *sb)
+{
+	char *buf;
+	int error;
+
+	if (!dqres_proc_attached(p))
+		return (false);
+	buf = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+	error = dqres_proc_dirpath(td, p, root, buf, MAXPATHLEN);
+	if (error != ENOTTY)
+		sbuf_printf(sb, "%s", error == 0 ? buf : "unknown");
+	free(buf, M_TEMP);
+	return (error != ENOTTY);
+}
+
+/*
  * Filler function for proc/pid/cwd
  */
 static int
@@ -1534,6 +1558,8 @@ linprocfs_doproccwd(PFS_FILL_ARGS)
 	char *fullpath = "unknown";
 	char *freepath = NULL;
 
+	if (linprocfs_dqres_dir(td, p, false, sb))
+		return (0);
 	pwd = pwd_hold_proc(p);
 	vn_fullpath(pwd->pwd_cdir, &fullpath, &freepath);
 	sbuf_printf(sb, "%s", fullpath);
@@ -1554,6 +1580,8 @@ linprocfs_doprocroot(PFS_FILL_ARGS)
 	char *fullpath = "unknown";
 	char *freepath = NULL;
 
+	if (linprocfs_dqres_dir(td, p, true, sb))
+		return (0);
 	pwd = pwd_hold_proc(p);
 	vp = jailed(p->p_ucred) ? pwd->pwd_jdir : pwd->pwd_rdir;
 	vn_fullpath(vp, &fullpath, &freepath);

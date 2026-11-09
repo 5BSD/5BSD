@@ -483,6 +483,7 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	bool credential_changing;
 	bool dq_attached;
 	struct dq_intent dqi;
+	int dqerror;
 	struct cap_authority *exec_authority = NULL;
 #ifdef MAC
 	struct ucred *relabelcred = NULL;
@@ -597,6 +598,17 @@ interpret:
 		 */
 		if (args->fname[0] == '/') {
 			imgp->execpath = args->fname;
+		} else if (DQRES_ATTACHED_TD(td) &&
+		    (dqerror = dqres_execpath(td, args->fname,
+		    &imgp->freepath)) != ENOTTY) {
+			/*
+			 * Under a served cwd or root (D167, 1c-iii-c): the
+			 * name in the served namespace, a lexical join with
+			 * the served cwd's presented path (not IS_PATH's real
+			 * path of a REAL answer), or the name as given.
+			 */
+			imgp->execpath = dqerror == 0 ? imgp->freepath :
+			    args->fname;
 		} else if (IS_PATH(imgp, &imgp->execpath,
 		    &imgp->freepath) != 0) {
 			imgp->execpath = args->fname;

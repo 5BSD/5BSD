@@ -81,13 +81,19 @@ srv_main(void *arg)
 }
 
 static void
-srv_start(struct srv *s)
+srv_start(const atf_tc_t *tc, struct srv *s)
 {
 	char cwd[PATH_MAX], prefix[PATH_MAX];
 	int fd;
 
 	if (access("/dev/dq", F_OK) != 0)
 		atf_tc_skip("no /dev/dq");
+	/*
+	 * A baseline on the kernel from before stage 1c (-v pre1c=yes) has
+	 * dq(4) but no served directories (1c-iii-b): dq_tree_root() fails.
+	 */
+	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
+		atf_tc_skip("pre1c: the kernel has no served directories");
 	memset(s, 0, sizeof(*s));
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	snprintf(s->backing, sizeof(s->backing), "%s/backing", cwd);
@@ -181,7 +187,7 @@ ATF_TC_BODY(served_start_stat, tc)
 {
 	struct srv s;
 
-	srv_start(&s);
+	srv_start(tc, &s);
 	pipestream = setup(fds, "fa");
 	run_attached(&s, c_stat);
 	/* The path token is the name as given ("a"), then dq_start. */
@@ -203,7 +209,7 @@ ATF_TC_BODY(served_object_open, tc)
 {
 	struct srv s;
 
-	srv_start(&s);
+	srv_start(tc, &s);
 	pipestream = setup(fds, "fr");
 	run_attached(&s, c_open);
 	check_audit(fds, "openat.*dq_start.*dq_object", pipestream);
@@ -224,7 +230,7 @@ ATF_TC_BODY(real_rewrite_path, tc)
 {
 	struct srv s;
 
-	srv_start(&s);
+	srv_start(tc, &s);
 	pipestream = setup(fds, "fa");
 	run_attached(&s, c_real);
 	/*

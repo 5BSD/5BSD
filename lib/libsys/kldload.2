@@ -85,6 +85,11 @@ was unrecognized.
 The supplied
 .Fa file
 has already been loaded.
+.It Bq Er EXDEV
+The process is attached to a
+.Xr dq 4
+queue and the path would be looked up from its served working directory
+or root.
 .El
 .Sh SEE ALSO
 .Xr kldfind 2 ,

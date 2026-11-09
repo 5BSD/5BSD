@@ -449,6 +449,11 @@ instead answer an error, which
 .Fn socket
 returns.
 No descriptor is allocated while the controller decides.
+The event is posted only for a call that would otherwise proceed: the
+errors below that do not mention
+.Xr dq 4
+are returned in the same order as for an unattached process, without
+an event.
 .Sh RETURN VALUES
 A -1 is returned if an error occurs, otherwise the return
 value is a descriptor referencing the socket.

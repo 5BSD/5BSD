@@ -22,7 +22,8 @@
 #              usr.sbin/switchboard".  Each must have a Kyuafile in the stage.
 #   TIMEOUT_S  host-side deadline for the whole VM (default 10800).
 #
-# Environment: CPUS (default 8), MEM_MB (8192), PARALLELISM (kyua, default 1),
+# Environment: FATAL_LOR (yes; no logs a lock order reversal without
+# stopping the run), CPUS (default 8), MEM_MB (8192), PARALLELISM (kyua, default 1),
 #   GATE_TIMEOUT (guest seconds to wait for provider convergence, 600),
 #   REQUIRE_UNITS (space-separated SwitchBoard labels that must be "running"
 #   before tests start; default: the twelve core providers that
@@ -469,15 +470,41 @@ echo "$qpid" > "$work/qemu.pid"
 python3.12 "$work/qmp-events.py" "$qmp" "$work/qmp-events.jsonl" 2>"$work/qmp.err" &
 mpid=$!
 end=$(( $(date +%s) + timeout )) forced=0
-fatal='panic:|Fatal trap|lock order reversal|entering recovery|Enter full pathname of shell|mountroot>|Going nowhere without my init|could not quiesce init|init died'
+fatal='panic:|Fatal trap|entering recovery|Enter full pathname of shell|mountroot>|Going nowhere without my init|could not quiesce init|init died'
+# A lock order reversal stops the run unless it matches known-lor.txt (a
+# recorded false positive, reported as KNOWN_LOR) or FATAL_LOR=no, which a
+# comparison sweep sets and then reads the reversals from the serial log.
+known_lor=$(dirname "$0")/known-lor.txt
+unknown_lor() {
+	[ "${FATAL_LOR:-yes}" = no ] && return 1
+	grep -aq 'lock order reversal' "$log" 2>/dev/null || return 1
+	python3.12 -I - "$log" "$known_lor" <<'PYEOF'
+import re, sys
+log = open(sys.argv[1], errors="replace").read()
+try:
+    pats = [re.compile(l.strip()) for l in open(sys.argv[2])
+            if l.strip() and not l.lstrip().startswith("#")]
+except OSError:
+    pats = []
+blocks = log.split("lock order reversal:")[1:]
+for b in blocks:
+    b = "\n".join(b.splitlines()[:40])
+    if not any(p.search(b) for p in pats):
+        sys.exit(0)
+sys.exit(1)
+PYEOF
+}
 while kill -0 "$qpid" 2>/dev/null; do
-	if grep -aqE "$fatal" "$log" 2>/dev/null; then
+	if grep -aqE "$fatal" "$log" 2>/dev/null || unknown_lor; then
 		echo "KERNEL/INIT PROBLEM in serial log"; sleep 5; forced=1; kill "$qpid"; break
 	fi
 	if [ "$(date +%s)" -ge "$end" ]; then echo TIMEOUT; forced=1; kill "$qpid"; break; fi
 	sleep 10
 done
 rc=0; wait "$qpid" 2>/dev/null || rc=$?
+n=$(grep -ac 'lock order reversal' "$log" 2>/dev/null || true)
+[ "${n:-0}" -gt 0 ] && ! unknown_lor && [ "${FATAL_LOR:-yes}" != no ] &&
+    echo "KNOWN_LOR=$n (matched known-lor.txt; see the serial log)"
 wait "$mpid" 2>/dev/null || true
 mkdir -p "$work/results"
 bsdtar -xf "$work/results.img" -C "$work/results" 2>/dev/null || echo "results disk: no archive"

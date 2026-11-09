@@ -190,12 +190,15 @@ where 5BSD splits `socreate()` into `socreate_find()` and
 `socreate_proto()` so `socket(2)` and `socketpair(2)` of a process
 attached to a DescriptorQueue are consulted between the parts (an
 upstream change to `socreate()` must be carried into the parts).
-`kern_socket()` therefore runs the protocol lookup and the jail's
-address-family test before `falloc()` for every process: with a full
-descriptor table a bad domain or protocol, `ECAPMODE` or a jail family
-refusal is returned instead of upstream's `EMFILE`, `ktrcapfail` is
-recorded even with a full table, and a failed request no longer briefly
-occupies a descriptor slot.
+Only an attached process takes the split path; every other process runs
+upstream's code unchanged (`kern_socket()`: MAC, `falloc()`, `socreate()`;
+`kern_socketpair()`: MAC, `socreate()` twice, `falloc()` twice), so its
+errors, audit, ktrace and SDT records are upstream's (D155, as amended).
+An attached `socket(2)` tests for a free descriptor first (`fdroom()` in
+`kern_descrip.c`, `fdalloc()`'s limit test without allocating), so
+`EMFILE` still wins over a bad domain or protocol, `ECAPMODE` or a jail
+family refusal; an attached `socketpair(2)` tests for two after the
+protocol and jail tests, where upstream's `falloc()` calls sit.
 
 After a merge on either side, check for things both sides added (the same
 definition twice) and for 5BSD numbers that upstream has started to use.

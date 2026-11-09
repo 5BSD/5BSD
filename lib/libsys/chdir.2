@@ -112,9 +112,34 @@ The file descriptor does not reference a directory.
 The argument
 .Fa fd
 is not a valid file descriptor.
+.It Bq Er EACCES
+The
+.Fa fd
+argument is a
+.Xr dq 4
+served descriptor and the process is not attached.
+.It Bq Er EDEADLK
+The
+.Fa fd
+argument is a
+.Xr dq 4
+served descriptor and the process is attached to another queue.
+.It Bq Er ENOTCAPABLE
+The
+.Fa fd
+argument was opened with
+.Dv O_RESOLVE_BENEATH .
 .El
+.Pp
+For a process attached to a
+.Xr dq 4
+queue, a served working directory and root, and the errors they add
+.Pq Er EIO , EXDEV ,
+are described in
+.Xr dq 4 .
 .Sh SEE ALSO
-.Xr chroot 2
+.Xr chroot 2 ,
+.Xr dq 4
 .Sh STANDARDS
 The
 .Fn chdir

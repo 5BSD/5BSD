@@ -1054,9 +1054,11 @@ soattach(struct socket *so, int proto, struct thread *td, struct socket *head)
  * It is the composition of socreate_find (the protocol for domain, type
  * and protocol, and the capability-mode test), the jail's address-family
  * test and socreate_proto (the socket itself).  socket(2) and
- * socketpair(2) call the parts, so that an attached process's request is
- * consulted between them with the protocol resolved (DescriptorQueue,
- * design 11, D139); kernel callers use socreate and are never consulted.
+ * socketpair(2) of a DescriptorQueue-attached process call the parts, so
+ * that the request is consulted after the jail's test and before
+ * socreate_proto, with the protocol resolved (design 11, D139, D155); an
+ * unattached process and kernel callers use socreate, and kernel callers
+ * are never consulted.
  */
 int
 socreate(int dom, struct socket **aso, int type, int proto,

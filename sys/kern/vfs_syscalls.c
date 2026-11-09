@@ -118,6 +118,8 @@ static int kern_readlink_vp(struct vnode *vp, char *buf, enum uio_seg bufseg,
     size_t count, struct thread *td);
 static int kern_linkat_vp(struct thread *td, struct vnode *vp, int fd,
     const char *path, enum uio_seg segflag);
+static int chroot_priv_check(struct thread *td);
+static void chroot_knote(struct thread *td);
 
 uint64_t
 at2cnpflags(u_int at_flags, u_int mask)
@@ -890,6 +892,36 @@ struct fchdir_args {
 	int	fd;
 };
 #endif
+
+/*
+ * fchdir(2), fchroot(2) of a served directory (D135, D163, D166, D169):
+ * fp held by dqres_fchdir_file (UF_RESOLVE_BENEATH already refused),
+ * consumed.  chroot's privilege rule first, then the attachment (EACCES
+ * unattached, EDEADLK attached elsewhere), a revoked object (EIO), the
+ * kind and the search check; the reference becomes dr_cwd or dr_root.
+ */
+static int
+fchdir_dqres(struct thread *td, struct file *fp, bool root)
+{
+	int error;
+
+	error = root ? chroot_priv_check(td) : 0;
+	if (error == 0)
+		error = dqres_dir_check(td, fp);
+	if (error != 0) {
+		fdrop(fp, td);
+		return (error);
+	}
+	if (!root) {
+		dqres_set_cwd(td, fp);
+		return (0);
+	}
+	error = dqres_set_root(td, fp);
+	if (error == 0)
+		chroot_knote(td);
+	return (error);
+}
+
 int
 sys_fchdir(struct thread *td, struct fchdir_args *uap)
 {
@@ -902,6 +934,15 @@ sys_fchdir(struct thread *td, struct fchdir_args *uap)
 	AUDIT_ARG_FD(uap->fd);
 	error = getvnode_path(td, uap->fd, &cap_fchdir_rights, &fdflags,
 	    &fp);
+	if (error == EINVAL) {
+		/* A vnode-less descriptor: a served directory (D169)? */
+		error = dqres_fchdir_file(td, uap->fd, &cap_fchdir_rights, &fp);
+		if (error == 0)
+			return (fchdir_dqres(td, fp, false));
+		if (error == ENOTTY)
+			error = EINVAL;
+		return (error);
+	}
 	if (error != 0)
 		return (error);
 	if ((fdflags & UF_RESOLVE_BENEATH) != 0) {
@@ -970,6 +1011,25 @@ kern_chdir_dqimpl(struct thread *td, const char *path, enum uio_seg pathseg)
 }
 
 /*
+ * chdir(2) answered FD (D169): a served directory, the D166 search
+ * check, then the served cwd.  The real pd_pwd is unchanged.
+ */
+static int
+kern_chdir_dqserved(struct thread *td, struct dq_intent *di)
+{
+	struct file *fp;
+	int error;
+
+	if (di->di_res.da_kind != DQ_RESOLVE_FD)
+		return (EIO);
+	error = dqres_take_dir(td, di, &fp);
+	if (error != 0)
+		return (error);
+	dqres_set_cwd(td, fp);
+	return (0);
+}
+
+/*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_CHDIR; kernel callers pass kernel-space paths and
  * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
@@ -982,9 +1042,11 @@ kern_chdir(struct thread *td, const char *path, enum uio_seg pathseg)
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_chdir_dqimpl(td, path, pathseg));
-	dq_intent_enter(td, &dqi, DQ_ROP_CHDIR, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_CHDIR, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_FD));
 	dq_intent_slot(&dqi, 0, path, pathseg, AT_FDCWD);
 	dqerror = kern_chdir_dqimpl(td, path, pathseg);
+	DQRES_SERVED(td, &dqi, dqerror, kern_chdir_dqserved(td, &dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -993,6 +1055,42 @@ static int unprivileged_chroot = 0;
 SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_chroot, CTLFLAG_RW,
     &unprivileged_chroot, 0,
     "Unprivileged processes can use chroot(2)");
+
+/*
+ * chroot(2)'s privilege rule, shared by a real and a served root (D169):
+ * PRIV_VFS_CHROOT, or security.bsd.unprivileged_chroot with
+ * PROC_NO_NEW_PRIVS.
+ */
+static int
+chroot_priv_check(struct thread *td)
+{
+	struct proc *p;
+	int error;
+
+	error = priv_check(td, PRIV_VFS_CHROOT);
+	if (error != 0) {
+		p = td->td_proc;
+		if (unprivileged_chroot == 0)
+			return (EXTERROR(EPERM,
+		    "security.bsd.unprivileged_chroot sysctl not enabled"));
+		if ((p->p_flag2 & P2_NO_NEW_PRIVS) == 0)
+			return (EXTERROR(EPERM,
+			    "PROC_NO_NEW_PRIVS not enabled"));
+	}
+	return (0);
+}
+
+/* A chroot, real or served, done: NOTE_CHROOT for process descriptors. */
+static void
+chroot_knote(struct thread *td)
+{
+	struct proc *p;
+
+	p = td->td_proc;
+	PROC_LOCK(p);
+	procdesc_knote(p, NOTE_CHROOT);
+	PROC_UNLOCK(p);
+}
 
 /*
  * Takes locked vnode, unlocks it before returning.
@@ -1004,23 +1102,11 @@ SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_chroot, CTLFLAG_RW,
 int
 kern_chroot(struct thread *td, struct vnode *vp)
 {
-	struct proc *p;
 	int error;
 
-	error = priv_check(td, PRIV_VFS_CHROOT);
-	if (error != 0) {
-		p = td->td_proc;
-		if (unprivileged_chroot == 0) {
-			error = EXTERROR(EPERM,
-		    "security.bsd.unprivileged_chroot sysctl not enabled");
-			goto e_vunlock;
-		}
-		if ((p->p_flag2 & P2_NO_NEW_PRIVS) == 0) {
-			error = EXTERROR(EPERM,
-			    "PROC_NO_NEW_PRIVS not enabled");
-			goto e_vunlock;
-		}
-	}
+	error = chroot_priv_check(td);
+	if (error != 0)
+		goto e_vunlock;
 
 	error = change_dir(vp, td);
 	if (error != 0)
@@ -1032,12 +1118,8 @@ kern_chroot(struct thread *td, struct vnode *vp)
 #endif
 	VOP_UNLOCK(vp);
 	error = pwd_chroot(td, vp);
-	if (error == 0) {
-		p = td->td_proc;
-		PROC_LOCK(p);
-		procdesc_knote(p, NOTE_CHROOT);
-		PROC_UNLOCK(p);
-	}
+	if (error == 0)
+		chroot_knote(td);
 	SDT_PROBE3(vfs, , , chroot, vp, td->td_ucred, error);
 	vrele(vp);
 	return (error);
@@ -1072,6 +1154,32 @@ sys_chroot_dqimpl(struct thread *td, struct chroot_args *uap)
 }
 
 /*
+ * chroot(2) answered FD (D169): chroot's privilege rule, a served
+ * directory, the D166 search check, the open-directory rule (served
+ * directories counted), then the served root and NOTE_CHROOT.
+ */
+static int
+sys_chroot_dqserved(struct thread *td, struct dq_intent *di)
+{
+	struct file *fp;
+	int error;
+
+	if (di->di_res.da_kind != DQ_RESOLVE_FD)
+		return (EIO);
+	/* A refusal leaves the answer to dq_intent_leave, which retires it. */
+	error = chroot_priv_check(td);
+	if (error != 0)
+		return (error);
+	error = dqres_take_dir(td, di, &fp);
+	if (error != 0)
+		return (error);
+	error = dqres_set_root(td, fp);
+	if (error == 0)
+		chroot_knote(td);
+	return (error);
+}
+
+/*
  * DescriptorQueue (stage 1c, D126/D127): the lookup intent of a
  * user-supplied path, DQ_ROP_CHROOT; kernel callers pass kernel-space paths and
  * are not marked.  Entries recorded in sys/dev/dq/dq_resolve_ledger.txt.
@@ -1084,9 +1192,11 @@ sys_chroot(struct thread *td, struct chroot_args *uap)
 
 	if (!(true) || !DQRES_ATTACHED_TD(td))
 		return (sys_chroot_dqimpl(td, uap));
-	dq_intent_enter(td, &dqi, DQ_ROP_CHROOT, DQI_USER);
+	dq_intent_enter_served(td, &dqi, DQ_ROP_CHROOT, DQI_USER,
+	    DQ_RACCEPT(DQ_RESOLVE_FD));
 	dq_intent_slot(&dqi, 0, uap->path, UIO_USERSPACE, AT_FDCWD);
 	dqerror = sys_chroot_dqimpl(td, uap);
+	DQRES_SERVED(td, &dqi, dqerror, sys_chroot_dqserved(td, &dqi));
 	dq_intent_leave(td, &dqi);
 	return (dqerror);
 }
@@ -1108,6 +1218,16 @@ sys_fchroot(struct thread *td, struct fchroot_args *uap)
 	uint8_t fdflags;
 
 	error = getvnode_path(td, uap->fd, &cap_fchroot_rights, &fdflags, &fp);
+	if (error == EINVAL) {
+		/* A vnode-less descriptor: a served directory (D169)? */
+		error = dqres_fchdir_file(td, uap->fd, &cap_fchroot_rights,
+		    &fp);
+		if (error == 0)
+			return (fchdir_dqres(td, fp, true));
+		if (error == ENOTTY)
+			error = EINVAL;
+		return (error);
+	}
 	if (error != 0)
 		return (error);
 	if ((fdflags & UF_RESOLVE_BENEATH) != 0) {
@@ -2390,9 +2510,15 @@ restart:
 	    sb.st_ino != oldinum) {
 		error = EIDRM;	/* Identifier removed */
 	} else if (fp != NULL && fp->f_vnode != vp) {
-		/* A served descriptor never names a real vnode (D170). */
+		/*
+		 * A served descriptor never names a real vnode (D170); an
+		 * unattached process holding one is refused EACCES, as for any
+		 * use of a served directory outside its attachment.
+		 */
 		if (fp->f_vnode != NULL && VN_IS_DOOMED(fp->f_vnode))
 			error = EBADF;
+		else if (fp->f_vnode == NULL && !DQRES_ATTACHED_TD(td))
+			error = EACCES;
 		else
 			error = EDEADLK;
 	} else {
@@ -4614,6 +4740,14 @@ kern_utimensat(struct thread *td, int fd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_utimensat_dqimpl(td, fd, path, pathseg, tptr, tptrseg, flag));
+	/*
+	 * The implementation refuses unknown flags before it reads the
+	 * times: so must this copy, or a bad times pointer would be EFAULT
+	 * where an unattached caller gets EINVAL.
+	 */
+	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_RESOLVE_BENEATH |
+	    AT_EMPTY_PATH)) != 0)
+		return (EINVAL);
 	/* D161: the times are copied in once, only from user space. */
 	ktp = tptr;
 	tseg = tptrseg;
@@ -4910,6 +5044,19 @@ kern_renameat_mac(struct thread *td, int fromfd, const char *from, int tofd,
 	    ndflags, pathseg, from, fromfd, &cap_renameat_source_rights);
 	if ((error = namei(fromnd)) != 0)
 		return (error);
+	/*
+	 * AT_RENAME_EXCHANGE looks the source up with RENAME, which succeeds
+	 * with no vnode for a missing last component.  Fail as the non-MAC
+	 * path in kern_renameat() does (EBUSY for a non-directory parent,
+	 * then ENOENT) instead of handing the policy a NULL vnode.
+	 */
+	if (fromnd->ni_vp == NULL) {
+		error = fromnd->ni_dvp->v_type != VDIR ? EBUSY : ENOENT;
+		VOP_UNLOCK(fromnd->ni_dvp);
+		NDFREE_PNBUF(fromnd);
+		vrele(fromnd->ni_dvp);
+		return (error);
+	}
 	error = mac_vnode_check_rename_from(td->td_ucred, fromnd->ni_dvp,
 	    fromnd->ni_vp, &fromnd->ni_cnd);
 	VOP_UNLOCK(fromnd->ni_dvp);
@@ -5370,9 +5517,15 @@ restart:
 	}
 
 	if (fp != NULL && fp->f_vnode != vp) {
-		/* A served descriptor never names a real vnode (D170). */
+		/*
+		 * A served descriptor never names a real vnode (D170); an
+		 * unattached process holding one is refused EACCES, as for any
+		 * use of a served directory outside its attachment.
+		 */
 		if (fp->f_vnode != NULL && VN_IS_DOOMED(fp->f_vnode))
 			error = EBADF;
+		else if (fp->f_vnode == NULL && !DQRES_ATTACHED_TD(td))
+			error = EACCES;
 		else
 			error = EDEADLK;
 		goto out;

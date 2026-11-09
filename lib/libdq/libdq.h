@@ -238,13 +238,23 @@ int	dq_resolve_errno_allowed(uint32_t rop, int error);
  * dq(4)).  It gets P2_NO_NEW_PRIVS and its descendants stay attached.
  */
 int	dq_attach(int q, int procfd);
+/*
+ * ATTACH with served starts (1c-iii-c, D169): rootfd and cwdfd are -1 or
+ * served directories of q; flags are DQ_ATTACH_F_* (dq(4)).
+ */
+int	dq_attach_starts(int q, int procfd, int rootfd, int cwdfd);
+int	dq_attach_starts_flags(int q, int procfd, int rootfd, int cwdfd,
+	    uint32_t flags);
 
 /*
- * A RESOLVE event's fixed body and its four strings (the path, the second
- * path of RENAME/LINK, the start hint, the second path's start hint),
- * each NUL-terminated and possibly empty; checked to lie within the
- * record.  Output pointers may be NULL.  -1 with EINVAL for another
- * operation or a malformed record.
+ * A RESOLVE event's fixed body and its strings (the path, the second path
+ * of RENAME/LINK, the start hint, the second path's start hint, and the
+ * process's served root's path), each NUL-terminated and possibly empty;
+ * all five are checked to lie within the record.  dq_event_resolve
+ * returns the first four, dq_event_resolve_root the served root's object
+ * (0 when the root is real) and path.  Output pointers of
+ * dq_event_resolve may be NULL.  -1 with EINVAL for another operation or
+ * a malformed record.
  */
 int	dq_event_resolve(const struct dq_event *ev,
 	    const struct dq_resolve_body **body, const char **path,
@@ -280,6 +290,9 @@ int	dq_reply_resolve_errno(int q, uint64_t id, int error);
 int	dq_resolve_accepts(const struct dq_resolve_body *rb, uint32_t kind);
 int	dq_resolve_errno_allowed_ev(const struct dq_resolve_body *rb,
 	    int error);
+int	dq_event_resolve_root(const struct dq_event *ev,
+	    const struct dq_resolve_body **body, uint64_t *rootp,
+	    const char **rootpathp);
 int	dq_event_resolve_ext(const struct dq_event *ev,
 	    const struct dq_resolve_body **body, const char **path,
 	    const char **path2, const char **startpath,
@@ -298,9 +311,10 @@ int	dq_reply_resolve_ok(int q, uint64_t id);
  *
  * dq_mint_dir(): a served directory (DQ_KIND_DIR) minted in the
  * controller, as dq_mint_file() mints a file; given to an attached child
- * by inheritance it is a lookup start inside the attachment (EDEADLK
- * outside it).  dq_policy_default_dir(): the policy a directory or a
- * symbolic link admits (nothing written, executed or mapped shared).
+ * by inheritance it is a lookup start inside the attachment (EACCES for
+ * an unattached process, EDEADLK for one attached elsewhere).
+ * dq_policy_default_dir(): the policy a directory or a symbolic link
+ * admits (nothing written, executed or mapped shared).
  * dq_ident_from_lstat(): the identity of name relative to dirfd, not
  * following a final symbolic link, presented as presented.
  * dq_reply_resolve_fd() also mints DQ_KIND_DIR; a DQ_KIND_SYMLINK object
@@ -462,12 +476,27 @@ int	dq_serve_file(int q, const struct dq_event *ev, const void *body,
  * operations the tree does not serve are answered REAL with the real path
  * when the event takes it (the backing path under prefix), PASS from a
  * real start, ENOTCAPABLE under a restricted lookup.
- * DQ_TREE_F_EXEC_REAL answers exec REAL of the backing binary.
+ * DQ_TREE_F_EXEC_REAL answers exec, and an O_EXEC open of a regular file
+ * (for fexecve(2)), REAL of the backing binary.
  */
 struct dq_tree;
 #define	DQ_TREE_F_WRITE		0x00000001
 #define	DQ_TREE_F_SERVED	0x00000002	/* 1c-iii-b mode */
 #define	DQ_TREE_F_EXEC_REAL	0x00000004
+/*
+ * DQ_TREE_F_ROOT (1c-iii-c, with DQ_TREE_F_SERVED): the attached
+ * processes' served roots are directories of the tree.  A name from a
+ * served start is walked inside the tree as chroot(2) walks it from the
+ * process's own root, which the event names (drs_root): absolute names
+ * and absolute symbolic link targets start there and ".." stops there.
+ * An event whose root is outside the tree, or whose served start has a
+ * missing or foreign hint, is EIO.  CHDIR and CHROOT of a directory are
+ * answered FD of a served DIR, and EXEC_INTERP at the served root REAL of
+ * the backing interpreter.  A real-start name outside the tree is EACCES,
+ * or PASS with DQ_TREE_F_OUTSIDE_PASS.
+ */
+#define	DQ_TREE_F_ROOT		0x00000008
+#define	DQ_TREE_F_OUTSIDE_PASS	0x00000010
 struct dq_tree *dq_tree_create(int q, int rootfd, const char *prefix,
 	    uint32_t flags);
 int	dq_tree_root(struct dq_tree *t, int *fdp, uint64_t *objectp);

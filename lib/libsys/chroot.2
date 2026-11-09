@@ -172,10 +172,28 @@ The argument
 is not a valid file descriptor.
 .It Bq Er ENOTDIR
 The file descriptor does not reference a directory.
+.It Bq Er EACCES
+The
+.Fa fd
+argument is a
+.Xr dq 4
+served descriptor and the process is not attached.
+.It Bq Er EDEADLK
+The
+.Fa fd
+argument is a
+.Xr dq 4
+served descriptor and the process is attached to another queue.
 .El
+.Pp
+For a process attached to a
+.Xr dq 4
+queue, a served root is described in
+.Xr dq 4 .
 .Sh SEE ALSO
 .Xr chdir 2 ,
-.Xr jail 2
+.Xr jail 2 ,
+.Xr dq 4
 .Sh HISTORY
 The
 .Fn chroot

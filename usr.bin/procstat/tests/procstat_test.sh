@@ -180,12 +180,25 @@ kernel_stacks_head()
 {
 	atf_set "descr" "Captures kernel stacks for all visible threads"
 }
+# With the capability plane on, mac_capability shields its protected
+# processes (init, the capability services) from debugging: p_candebug()
+# fails with EACCES, which libprocstat reports (it is silent only for
+# FreeBSD's EPERM).  Those warnings are the only stderr allowed.
+check_kstack_stderr()
+{
+	atf_check -s exit:1 grep -v -E \
+	    '^procstat: sysctl: kern\.proc\.kstack: [0-9]+: Permission denied$' \
+	    "$1"
+}
+
 kernel_stacks_body()
 {
-	atf_check -o save:procstat.out procstat -a kstack
+	atf_check -o save:procstat.out -e save:procstat.err procstat -a kstack
+	check_kstack_stderr procstat.err
 	atf_check -o not-empty awk '{if ($3 == "procstat") print}' procstat.out
 
-	atf_check -o save:procstat.out procstat -kka
+	atf_check -o save:procstat.out -e save:procstat.err procstat -kka
+	check_kstack_stderr procstat.err
 	atf_check -o not-empty awk '{if ($3 == "procstat") print}' procstat.out
 }
 

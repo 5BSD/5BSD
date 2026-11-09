@@ -50,6 +50,7 @@ SYSNDI	kern/kern_alq.c	alq_open_flags	file	REFUSED
 SYSNDI	kern/kern_ctf.c	link_elf_ctf_get	lf->pathname	via:exempt@kern/kern_linker.c:linker_ctf_get
 CONSULT	kern/kern_descrip.c	fgetvp_lookup_start	START	1
 SLOT	kern/kern_dqres.c	dq_intent_slot_content	slot	kpath
+CONSULT	kern/kern_dqres.c	dqres_namei_setup_start	SERVED	1
 MARK	kern/kern_dqres.c	dqres_consult_sun	op	DQI_USER	PASS	-	-
 SLOT	kern/kern_dqres.c	dqres_consult_sun	0	buf
 MARK	kern/kern_exec.c	do_execve	DQ_ROP_EXEC	DQI_USER	PASS	-	-
@@ -76,6 +77,7 @@ CONSULT	kern/uipc_syscalls.c	kern_connectat	DQ_ROP_CONNECT	1
 CONSULT	kern/uipc_syscalls.c	kern_socketpair	DQ_ROP_SOCKETPAIR	1
 CONSULT	kern/uipc_syscalls.c	kern_sendit	DQ_ROP_CONNECT	1
 SYSNDI	kern/uipc_usrreq.c	uipc_bindat	buf	via:content@kern/uipc_syscalls.c:kern_bindat
+SYSNDI	kern/uipc_usrreq.c	unp_connectat_emptypath	""	EXEMPT
 SYSNDI	kern/uipc_usrreq.c	unp_connectat_peer	buf	via:content@kern/uipc_syscalls.c:kern_connectat
 USERNDI	kern/vfs_acl.c	kern___acl_get_path_dqimpl	path	slot0
 MARK	kern/vfs_acl.c	kern___acl_get_path	DQ_ROP_ACL	DQI_USER	PASS	-	-
@@ -117,6 +119,7 @@ USERNDI	kern/vfs_inotify.c	kern_inotify_add_watch_dqimpl	path	slot0
 MARK	kern/vfs_inotify.c	kern_inotify_add_watch	DQ_ROP_INOTIFY	DQI_USER	PASS	-	-
 SLOT	kern/vfs_inotify.c	kern_inotify_add_watch	0	path
 CONSULT	kern/vfs_lookup.c	namei_setup	SERVED	1
+CONSULT	kern/vfs_lookup.c	namei_setup	CWDROOT	1
 CONSULT	kern/vfs_lookup.c	namei	SYMLINK	1
 MARK	kern/vfs_mount.c	vfs_donmount_dqres	DQ_ROP_INTERNAL	DQI_KCONSUMER	PASS	-	-
 SLOT	kern/vfs_mount.c	vfs_donmount_dqres	slot	value
@@ -143,10 +146,10 @@ VARSEG	kern/vfs_syscalls.c	kern_statfs_dqimpl	pathseg	slot0
 MARK	kern/vfs_syscalls.c	kern_statfs	DQ_ROP_STAT	DQI_USER	PASS+ATTR	kern_statfs_dqserved	-
 SLOT	kern/vfs_syscalls.c	kern_statfs	0	path
 VARSEG	kern/vfs_syscalls.c	kern_chdir_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	kern_chdir	DQ_ROP_CHDIR	DQI_USER	PASS	-	-
+MARK	kern/vfs_syscalls.c	kern_chdir	DQ_ROP_CHDIR	DQI_USER	PASS+FD	kern_chdir_dqserved	-
 SLOT	kern/vfs_syscalls.c	kern_chdir	0	path
 USERNDI	kern/vfs_syscalls.c	sys_chroot_dqimpl	uap->path	slot0
-MARK	kern/vfs_syscalls.c	sys_chroot	DQ_ROP_CHROOT	DQI_USER	PASS	-	-
+MARK	kern/vfs_syscalls.c	sys_chroot	DQ_ROP_CHROOT	DQI_USER	PASS+FD	sys_chroot_dqserved	-
 SLOT	kern/vfs_syscalls.c	sys_chroot	0	uap->path
 VARSEG	kern/vfs_syscalls.c	openatfp_dqimpl	pathseg	slot0
 MARK	kern/vfs_syscalls.c	openatfp	DQ_ROP_OPEN	DQI_USER	PASS+FD	openatfp_dqserved	ENXIO+ENODEV
@@ -261,8 +264,11 @@ SOCKET	fs/nfs/nfs_commonkrpc.c	newnfs_connect	socreate	KERNEL:NFS RPC transport;
 SOCKET	fs/nfsclient/nfs_clvfsops.c	nfs_mountroot	socreate	KERNEL:NFS root mount, boot
 SOCKET	kern/uipc_socket.c	socreate	socreate_proto	KERNEL:socreate, the composition kernel callers use; I7
 SOCKET	kern/uipc_syscalls.c	kern_socket	socreate_proto	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socket	socreate	CONSULT
 SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate_proto	CONSULT
 SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate_proto	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate	CONSULT
+SOCKET	kern/uipc_syscalls.c	kern_socketpair	socreate	CONSULT
 SOCKET	net/if_geneve.c	geneve_socket_init	socreate	KERNEL:geneve(4) tunnel socket; I7
 SOCKET	net/if_vxlan.c	vxlan_socket_init	socreate	KERNEL:vxlan(4) tunnel socket; I7
 SOCKET	netgraph/bluetooth/socket/ng_btsocket_rfcomm.c	ng_btsocket_rfcomm_connect	socreate	KERNEL:RFCOMM L2CAP session socket; I7
@@ -284,6 +290,7 @@ SOCKET	nlm/nlm_prot_impl.c	nlm_server_main	socreate	KERNEL:NLM server sockets; I
 SOCKET	rpc/rpc_generic.c	__rpc_nconf2socket	socreate	KERNEL:kernel RPC client sockets; I7
 EDQRESOLVED	kern/kern_dqres.c:dqres_namei	ALLOWED
 EDQRESOLVED	kern/kern_dqres.c:dqres_namei_served	ALLOWED
+EDQRESOLVED	kern/kern_dqres.c:dq_symlink_served_root	ALLOWED
 EDQRESOLVED	kern/kern_dqres.c:dqres_namei_symlink	ALLOWED
 EDQRESOLVED	kern/subr_syscall.c:syscall_dq_stray	ALLOWED
 EDQRESOLVED	kern/subr_syscall.c:syscallret	ALLOWED

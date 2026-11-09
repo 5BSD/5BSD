@@ -168,7 +168,9 @@ struct ktr_io_params {
 	struct ucred	*cr;
 	off_t		lim;
 	u_int		refs;
+	SLIST_ENTRY(ktr_io_params) link;	/* deferred free, ktrops() */
 };
+SLIST_HEAD(ktr_io_params_list, ktr_io_params);
 
 static void ktrace_init(void *dummy);
 static int sysctl_kern_ktrace_request_pool(SYSCTL_HANDLER_ARGS);
@@ -182,9 +184,9 @@ static void ktr_freerequest_locked(struct ktr_request *req);
 static void ktr_writerequest(struct thread *td, struct ktr_request *req);
 static int ktrcanset(struct thread *,struct proc *);
 static int ktrsetchildren(struct thread *, struct proc *, int, int,
-    struct ktr_io_params *);
+    struct ktr_io_params *, struct ktr_io_params_list *);
 static int ktrops(struct thread *, struct proc *, int, int,
-    struct ktr_io_params *);
+    struct ktr_io_params *, struct ktr_io_params_list *);
 static void ktrprocctor_entered(struct thread *, struct proc *);
 
 /*
@@ -1116,6 +1118,7 @@ sys_ktrace_dqimpl(struct thread *td, struct ktrace_args *uap)
 	int flags, error = 0;
 	struct nameidata nd;
 	struct ktr_io_params *kiop, *old_kiop;
+	struct ktr_io_params_list old_kiops;
 
 	/*
 	 * Need something to (un)trace.
@@ -1174,7 +1177,14 @@ restart:
 	}
 	/*
 	 * do it
+	 *
+	 * Trace files whose last reference ktrops() drops are queued on
+	 * old_kiops and closed only after proctree_lock is released:
+	 * vn_close() locks the vnode, and vnode locks are ordered before
+	 * proctree_lock (uprintf() is called with a vnode locked, e.g. by
+	 * the ELF image activator and by the UFS quota code).
 	 */
+	SLIST_INIT(&old_kiops);
 	sx_slock(&proctree_lock);
 	if (uap->pid < 0) {
 		/*
@@ -1188,7 +1198,7 @@ restart:
 		}
 
 		/*
-		 * ktrops() may call vrele(). Lock pg_members
+		 * ktrsetchildren() needs proctree_lock. Lock pg_members
 		 * by the proctree_lock rather than pg_mtx.
 		 */
 		PGRP_UNLOCK(pg);
@@ -1200,9 +1210,11 @@ restart:
 		LIST_FOREACH(p, &pg->pg_members, p_pglist) {
 			PROC_LOCK(p);
 			if (descend)
-				ret |= ktrsetchildren(td, p, ops, facs, kiop);
+				ret |= ktrsetchildren(td, p, ops, facs, kiop,
+				    &old_kiops);
 			else
-				ret |= ktrops(td, p, ops, facs, kiop);
+				ret |= ktrops(td, p, ops, facs, kiop,
+				    &old_kiops);
 		}
 	} else {
 		/*
@@ -1215,11 +1227,16 @@ restart:
 			goto done;
 		}
 		if (descend)
-			ret |= ktrsetchildren(td, p, ops, facs, kiop);
+			ret |= ktrsetchildren(td, p, ops, facs, kiop,
+			    &old_kiops);
 		else
-			ret |= ktrops(td, p, ops, facs, kiop);
+			ret |= ktrops(td, p, ops, facs, kiop, &old_kiops);
 	}
 	sx_sunlock(&proctree_lock);
+	while ((old_kiop = SLIST_FIRST(&old_kiops)) != NULL) {
+		SLIST_REMOVE_HEAD(&old_kiops, link);
+		ktr_io_params_free(old_kiop);
+	}
 	if (!ret)
 		error = EPERM;
 done:
@@ -1291,9 +1308,13 @@ sys_utrace(struct thread *td, struct utrace_args *uap)
 }
 
 #ifdef KTRACE
+/*
+ * Called with proctree_lock held.  A trace file released by this process
+ * is not closed here but added to old_kiops; see sys_ktrace().
+ */
 static int
 ktrops(struct thread *td, struct proc *p, int ops, int facs,
-    struct ktr_io_params *new_kiop)
+    struct ktr_io_params *new_kiop, struct ktr_io_params_list *old_kiops)
 {
 	struct ktr_io_params *old_kiop;
 
@@ -1348,14 +1369,15 @@ ktrops(struct thread *td, struct proc *p, int ops, int facs,
 	if ((p->p_traceflag & KTRFAC_MASK) != 0)
 		ktrprocctor_entered(td, p);
 	PROC_UNLOCK(p);
-	ktr_io_params_free(old_kiop);
+	if (old_kiop != NULL)
+		SLIST_INSERT_HEAD(old_kiops, old_kiop, link);
 
 	return (1);
 }
 
 static int
 ktrsetchildren(struct thread *td, struct proc *top, int ops, int facs,
-    struct ktr_io_params *new_kiop)
+    struct ktr_io_params *new_kiop, struct ktr_io_params_list *old_kiops)
 {
 	struct proc *p;
 	int ret = 0;
@@ -1364,7 +1386,7 @@ ktrsetchildren(struct thread *td, struct proc *top, int ops, int facs,
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	sx_assert(&proctree_lock, SX_LOCKED);
 	for (;;) {
-		ret |= ktrops(td, p, ops, facs, new_kiop);
+		ret |= ktrops(td, p, ops, facs, new_kiop, old_kiops);
 		/*
 		 * If this process has children, descend to them next,
 		 * otherwise do any siblings, and if done with this level,

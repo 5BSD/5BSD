@@ -173,11 +173,15 @@ ATF_TC_BODY(attach_refusals, tc)
 	args.da_procfd = s.pd;
 	args.da_rootfd = args.da_cwdfd = -1;
 	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
+	/* Version 1 had a 96-byte RESOLVE body: refused (D184). */
+	ATF_REQUIRE_EQ(2, DQ_API_VERSION);
+	args.da_version = 1;
+	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_version = DQ_API_VERSION;
-	args.da_flags = 1;
+	args.da_flags = ~(uint32_t)DQ_ATTACH_F_NODIRS;	/* undefined bits */
 	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_flags = 0;
-	args.da_rootfd = 0;	/* served start dirs are 1c-iii */
+	args.da_rootfd = 0;	/* not a served directory */
 	REFUSED(ioctl(c.q, DQ_IOC_ATTACH, &args), EINVAL);
 	args.da_rootfd = -1;
 	args.da_pad0 = 1;

@@ -222,11 +222,13 @@ ATF_TC_BODY(resolve_accessor, tc)
 	const struct dq_resolve_body *rbp;
 	struct dq_resolve_body *rb;
 	struct dq_event *ev;
-	const char *p1, *p2, *sp, *sp2;
+	const char *p1, *p2, *sp, *sp2, *rp;
+	uint64_t root;
 	size_t off;
 	char *s;
 
-	ATF_REQUIRE_EQ(96, sizeof(struct dq_resolve_body));
+	/* 1c-iii-c appended the served root (drs_root, a fifth string). */
+	ATF_REQUIRE_EQ(112, sizeof(struct dq_resolve_body));
 	memset(body, 0, sizeof(body));
 	rb = (struct dq_resolve_body *)(void *)body;
 	rb->drs_op = DQ_ROP_RENAME;
@@ -236,13 +238,19 @@ ATF_TC_BODY(resolve_accessor, tc)
 	rb->drs_startpathlen = 0;
 	rb->drs_startpath2len = 2;
 	rb->drs_rflags = DQ_RF_STARTPATH2_VALID;
+	rb->drs_root = 7;
+	rb->drs_rootpathlen = 2;
 	s = (char *)(rb + 1);
-	memcpy(s, "a/b\0c/de\0\0/x\0", 13);
+	memcpy(s, "a/b\0c/de\0\0/x\0/r\0", 16);
 	off = 0;
 	ev = put_record(buf, &off, DQ_OP_RESOLVE, 0, body,
-	    sizeof(*rb) + 13);
+	    sizeof(*rb) + 16);
 	ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
 	ATF_CHECK_STREQ("/x", sp2);
+	ATF_REQUIRE_EQ(0, dq_event_resolve_root(ev, NULL, &root, &rp));
+	ATF_CHECK_EQ(7, root);
+	ATF_CHECK_STREQ("/r", rp);
+	ATF_CHECK_EQ(0, rbp->drs_pad2);
 	ATF_CHECK_EQ(0, rbp->drs_accept);
 	ATF_CHECK_EQ(0, rbp->drs_cmode);
 	ATF_CHECK_EQ(DQ_ROP_RENAME, rbp->drs_op);
@@ -259,8 +267,13 @@ ATF_TC_BODY(resolve_accessor, tc)
 	ATF_CHECK_EQ(-1, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
 	ATF_CHECK_EQ(EINVAL, errno);
 	((struct dq_resolve_body *)(void *)(ev + 1))->drs_path2len = 4;
-	/* The fourth string must end where its length says too. */
+	/* The fourth and fifth strings must end where their lengths say. */
 	((struct dq_resolve_body *)(void *)(ev + 1))->drs_startpath2len = 5;
+	errno = 0;
+	ATF_CHECK_EQ(-1, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
+	ATF_CHECK_EQ(EINVAL, errno);
+	((struct dq_resolve_body *)(void *)(ev + 1))->drs_startpath2len = 2;
+	((struct dq_resolve_body *)(void *)(ev + 1))->drs_rootpathlen = 1;
 	errno = 0;
 	ATF_CHECK_EQ(-1, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
 	ATF_CHECK_EQ(EINVAL, errno);
@@ -279,7 +292,7 @@ ATF_TC_BODY(resolve_accessor, tc)
 	ATF_CHECK(!dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOBUFS));
 	ATF_CHECK(dq_resolve_errno_allowed(DQ_ROP_OPEN, ENOENT));
 
-	/* A SOCKET body: four empty strings, the request in the fixed part. */
+	/* A SOCKET body: five empty strings, the request in the fixed part. */
 	memset(body, 0, sizeof(body));
 	rb->drs_op = DQ_ROP_SOCKET;
 	rb->drs_flags = DQ_RCLASS_USER;
@@ -289,7 +302,7 @@ ATF_TC_BODY(resolve_accessor, tc)
 	rb->drs_type = 1;
 	rb->drs_protocol = 6;
 	off = 0;
-	ev = put_record(buf, &off, DQ_OP_RESOLVE, 0, body, sizeof(*rb) + 4);
+	ev = put_record(buf, &off, DQ_OP_RESOLVE, 0, body, sizeof(*rb) + 5);
 	ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rbp, &p1, &p2, &sp, &sp2));
 	ATF_CHECK_STREQ("", p1);
 	ATF_CHECK_EQ(DQ_ROP_SOCKET, rbp->drs_op);

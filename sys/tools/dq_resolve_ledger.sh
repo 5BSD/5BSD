@@ -25,9 +25,17 @@
 #                                             points (1c-iii-b): op
 #                                             SERVED (namei_setup's served
 #                                             branch), SYMLINK (namei's
-#                                             re-consultation, D172) and
+#                                             re-consultation, D172),
 #                                             START (fgetvp_lookup_start
-#                                             asking the vector)
+#                                             asking the vector) and
+#                                             CWDROOT (1c-iii-c: namei_setup
+#                                             choosing a served cwd or
+#                                             root through
+#                                             dqres_namei_setup_start, the
+#                                             D175 EXDEV refusal of class
+#                                             2/3 and unmarked lookups,
+#                                             and the served-root
+#                                             EXEC_INTERP consultation)
 #   USERNDI  file function pointer coverage   NDINIT* of UIO_USERSPACE
 #   VARSEG   file function segment coverage   NDINIT* whose segment is a
 #                                             variable
@@ -77,7 +85,8 @@
 # EDQRESOLVED containment (D157): every file and function or macro whose
 # code (not comments) names EDQRESOLVED is a row, ALLOWED only for its
 # definition (errno.h), the consumer macro DQRES_SERVED (dqres.h), the
-# producers dqres_namei, dqres_namei_served and dqres_namei_symlink
+# producers dqres_namei, dqres_namei_served, dqres_namei_symlink and
+# dq_symlink_served_root (1c-iii-c)
 # (1c-iii-b) and the stray mapping in syscall_dq_stray and syscallret,
 # STRAY otherwise (the build fails).  A MARK row is FLAG when
 # a served intent has no DQRES_SERVED completion or the reverse, when the
@@ -321,13 +330,17 @@ scan()
 			printf("C\t%s\t%s\t%s\t1\n", file, fn, op)
 		}
 		# The served-start choke points (1c-iii-b).
-		/dqres_(namei_served|namei_symlink|lookup_start)\(/ && \
+		/dqres_(namei_(served|symlink|setup_start)|lookup_start)\(/ && \
 		    !/^dqres_/ && fn != "" {
 			op = $0
 			sub(/.*dqres_/, "", op); sub(/\(.*/, "", op)
 			op = op == "namei_served" ? "SERVED" : \
-			    op == "namei_symlink" ? "SYMLINK" : "START"
-			printf("C\t%s\t%s\t%s\t1\n", file, fn, op)
+			    op == "namei_symlink" ? "SYMLINK" : \
+			    op == "namei_setup_start" ? "CWDROOT" : "START"
+			if (!((file SUBSEP fn SUBSEP op) in crow)) {
+				crow[file, fn, op] = 1
+				printf("C\t%s\t%s\t%s\t1\n", file, fn, op)
+			}
 		}
 		# The lookup after a pending kernel-space NDINIT.
 		pend && !nd && /namei\(|vn_open/ {
@@ -557,6 +570,7 @@ scan_edq()
 					    key == "kern/kern_dqres.c:dqres_namei" ||
 					    key == "kern/kern_dqres.c:dqres_namei_served" ||
 					    key == "kern/kern_dqres.c:dqres_namei_symlink" ||
+					    key == "kern/kern_dqres.c:dq_symlink_served_root" ||
 					    key == "kern/subr_syscall.c:syscall_dq_stray" ||
 					    key == "kern/subr_syscall.c:syscallret"
 					printf("EDQRESOLVED\t%s\t%s\n", key,

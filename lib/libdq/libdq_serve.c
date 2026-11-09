@@ -903,21 +903,35 @@ dq_serve_resolve(int q, const struct dq_event *ev,
 	return (dq_reply_resolve_errno(q, ev->de_id, error));
 }
 
-int
-dq_serve_file(int q, const struct dq_event *ev, const void *body,
-    size_t bodylen, int backing_fd, const struct dq_serve_opts *opts)
+/*
+ * A waited event whose answer was not delivered (the kernel refused the
+ * reply body, EINVAL, and kept the event in flight; or the reply could not
+ * be built) would hold its requester until the deadline.  Answer EIO so it
+ * fails at once.  ESRCH means the event is gone (answered, or abandoned by
+ * its requester): nothing is left to answer.  ret and errno pass through.
+ */
+static int
+dq_serve_failclosed(int q, const struct dq_event *ev, int ret)
+{
+	int error;
+
+	if (ret == 0 || ev->de_id == 0 || errno == ESRCH)
+		return (ret);
+	error = errno;
+	(void)dq_reply(q, ev->de_id, EIO, NULL, 0);
+	errno = error;
+	return (ret);
+}
+
+static int
+dq_serve_file_op(int q, const struct dq_event *ev, int backing_fd,
+    const struct dq_serve_opts *opts)
 {
 	const struct dq_unlock_all_body *ub;
 	const struct dq_interrupt_body *ib;
 	const struct dq_lock_body *lb;
 	struct dq_serve_state *st;
 
-	(void)body;
-	(void)bodylen;
-	if (ev == NULL || ev->de_size < sizeof(*ev)) {
-		errno = EINVAL;
-		return (-1);
-	}
 	st = opts != NULL ? opts->so_state : NULL;
 	switch (ev->de_op) {
 	case DQ_OP_READ:
@@ -963,4 +977,19 @@ dq_serve_file(int q, const struct dq_event *ev, const void *body,
 			return (dq_reply(q, ev->de_id, EIO, NULL, 0));
 		return (0);
 	}
+}
+
+int
+dq_serve_file(int q, const struct dq_event *ev, const void *body,
+    size_t bodylen, int backing_fd, const struct dq_serve_opts *opts)
+{
+
+	(void)body;
+	(void)bodylen;
+	if (ev == NULL || ev->de_size < sizeof(*ev)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (dq_serve_failclosed(q, ev,
+	    dq_serve_file_op(q, ev, backing_fd, opts)));
 }

@@ -12,6 +12,23 @@
  * Lock order added: FILEDESC_SLOCK -> PROC_LOCK -> PWDDESC_XLOCK (ATTACH,
  * pd_replace, do_fork's late inheritance).  fdrop of dr_cwd/dr_root and the
  * binding release always happen after unlocking.
+ *
+ * Served cwd and root (1c-iii-c).  dr_cwd and dr_root each hold one file
+ * reference of their own, taken by fhold and released by fdrop with no
+ * lock held; they are read and written only under PWDDESC_XLOCK, a
+ * mutex, under which nothing sleeps: pointer loads and stores, fhold,
+ * pwd_hold_pwddesc and the lock-free dro_file_kind.  Every reader takes a
+ * struct dqres_snap (fhold inside that section) and works after
+ * unlocking (namei_setup, fetched slots, kinfo, getcwd, linprocfs).  The
+ * snapshot namei_setup takes is held by namei until it returns (D177), so
+ * a symbolic link re-enters at the root the lookup started under, and a
+ * slot fetched ahead keeps the root its start came with.  The root's
+ * open-directory checks (dqres_set_root, ATTACH) run under
+ * FILEDESC_SLOCK -> PWDDESC_XLOCK, as pwd_chroot's do.  Presenting a path
+ * against a viewer (dqres_present_viewer) takes the viewer's PROC_LOCK and
+ * then its PWDDESC_XLOCK, one after the other, never nested, and may sleep
+ * (M_WAITOK, a served object's o_mtx): it is called with at most an sx
+ * held (the target's FILEDESC_SLOCK in kinfo).
  */
 
 #include "opt_capsicum.h"
@@ -208,7 +225,8 @@ dqres_fork_late(struct proc *p1, struct pwddesc *child)
  */
 int
 dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
-    struct file *qfp)
+    struct file *qfp, struct file **cwdfpp, struct file **rootfpp,
+    uint32_t flags)
 {
 	struct filedesc *fdp;
 	struct fdescenttbl *fdt;
@@ -268,8 +286,18 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 			goto unlock;
 		}
 	}
+	/* A served root is a chroot: its open-directory rule (D184). */
+	error = dqres_attach_dirs_check(fdp, pdp, *rootfpp != NULL,
+	    (flags & DQ_ATTACH_F_NODIRS) != 0);
+	if (error != 0)
+		goto unlock;
 	dqres_ops->dro_hold(b);
 	dr->dr_binding = b;
+	/* ATTACH's served starts (D169): their references pass here. */
+	dr->dr_cwd = *cwdfpp;
+	*cwdfpp = NULL;
+	dr->dr_root = *rootfpp;
+	*rootfpp = NULL;
 	pdp->pd_dqres = dr;
 	dr = NULL;
 	p->p_flag2 |= P2_NO_NEW_PRIVS;
@@ -439,6 +467,11 @@ dq_islot_forget(struct dq_islot *s)
 		free(s->ds_real, M_TEMP);
 		s->ds_real = NULL;
 	}
+	if (s->ds_root != NULL) {
+		fdrop(s->ds_root, curthread);
+		s->ds_root = NULL;
+	}
+	s->ds_rootdead = false;
 	s->ds_start_obj = 0;
 	s->ds_frf = 0;
 	s->ds_ferr = 0;
@@ -549,6 +582,62 @@ dq_fullpath(struct vnode *vp, char **retbuf, char **freebuf)
 	error = vn_fullpath(vp, retbuf, freebuf);
 	DQRES_NORESOLVE_LEAVE(save);
 	return (error);
+}
+
+/*
+ * The process's served root in an event (D184): its object and di_path,
+ * so the controller resolves "/", absolute link targets and ".." at it.
+ * rootfp is a snapshot's served root (NULL: real) and dead its
+ * DR_ROOT_DEAD.  A dead root, or one whose identity cannot be read, is
+ * EIO and nothing is posted: without the root's di_path the kernel could
+ * not guard the answer (dq_served_root_guard), and with drs_root 0 the
+ * controller would resolve as if the root were real.  *identp is the
+ * root's identity (M_TEMP; NULL for a real root), kept for the guard.
+ */
+static int
+dq_req_root(struct dqres_req *rq, struct file *rootfp, bool dead,
+    struct dq_ident_file **identp)
+{
+	struct dq_ident_file *ident;
+	uint64_t qgid;
+	bool closed;
+
+	*identp = NULL;
+	if (dead)
+		return (EIO);
+	if (rootfp == NULL)
+		return (0);
+	ident = malloc(sizeof(*ident), M_TEMP, M_WAITOK);
+	if (dqres_ops->dro_file_ident(rootfp, ident, &qgid, &closed) != 0) {
+		free(ident, M_TEMP);
+		return (EIO);
+	}
+	rq->rq_root = dqres_ops->dro_file_objid(rootfp);
+	rq->rq_rootpath = ident->di_path;
+	rq->rq_rootpathlen = ident->di_pathlen;
+	*identp = ident;
+	return (0);
+}
+
+/*
+ * Under a served root every served answer must be presentable (D174):
+ * its di_path at or under the root's.  The controller clamps ".." at the
+ * root (D184); this is the kernel's guard, whatever the start.  root is
+ * the identity dq_req_root posted (NULL when the root is real), so the
+ * answer is checked against the root the controller was told.  OK
+ * carries no identity.
+ */
+static int
+dq_served_root_guard(const struct dq_ident_file *root,
+    const struct dqres_answer *ans)
+{
+
+	if (root == NULL || ans->da_ident == NULL)
+		return (0);
+	if (!dqres_path_under(root->di_path, root->di_pathlen,
+	    ans->da_ident->di_path, ans->da_ident->di_pathlen))
+		return (ENOTCAPABLE);
+	return (0);
 }
 
 /*
@@ -702,24 +791,80 @@ dq_islot_fetch_dirfd(struct thread *td, struct dq_islot *s, char **hintp,
 }
 
 /*
+ * A fetched slot whose start is the served cwd (relative, AT_FDCWD) or
+ * the served root (absolute) of its snapshot (D177): the start SERVED,
+ * its object and di_path the hint.  Only class 1 starts there; a kernel
+ * consumer's slot (swapon, kldload, ...) is EXDEV (D175).  A dead or
+ * revoked start is EIO, and so is any served start while the root is
+ * dead (no root to post or guard by).  *handledp is false when the start
+ * is real.
+ */
+static int
+dq_islot_fetch_served(struct thread *td, struct dq_islot *s,
+    const struct dqres_snap *snap, bool abs, uint32_t class, char **hintp,
+    char **freep, bool *handledp)
+{
+	struct dq_ident_file *ident;
+	struct dqres *dr;
+	struct file *fp;
+	uint64_t obj, qgid;
+	uint32_t kind;
+	int error;
+	bool closed, dead;
+
+	*handledp = false;
+	fp = abs ? s->ds_root : snap->dsn_cwd;
+	dead = (snap->dsn_flags & (abs ? DR_ROOT_DEAD : DR_CWD_DEAD)) != 0;
+	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
+	if ((fp == NULL && !dead) || dr == NULL)
+		return (0);
+	*handledp = true;
+	if (class != 1) {
+		dqres_ops->dro_exdev(dr->dr_binding);
+		return (EXDEV);
+	}
+	if (dead || s->ds_rootdead)
+		return (EIO);
+	error = dqres_ops->dro_start(td, dr->dr_binding, fp, &kind, &obj);
+	if (error == 0 && kind != DQ_KIND_DIR)
+		error = EIO;
+	if (error != 0)
+		return (error);
+	s->ds_start_kind = DQ_START_SERVED;
+	s->ds_start_obj = obj;
+	ident = malloc(sizeof(*ident), M_TEMP, M_WAITOK);
+	if (dqres_ops->dro_file_ident(fp, ident, &qgid, &closed) == 0) {
+		*hintp = *freep = malloc(ident->di_pathlen + 1, M_TEMP,
+		    M_WAITOK);
+		memcpy(*hintp, ident->di_path, ident->di_pathlen + 1);
+	}
+	free(ident, M_TEMP);
+	return (0);
+}
+
+/*
  * Consult a declared slot before its own namei (slot 1 of a DQI_PATH2
  * intent, or dqres_consult_slot): copy the declared path, derive the
  * slot's own start kind from its leading '/' and its dirfd, and hold the
  * start it names now: the cwd or the dirfd's vnode, or for an absolute
  * path both roots namei may start at (the ABI root it tries first and the
  * process root of its restart).  The first namei checks it starts there.
+ * The start and the served root it is posted with come from one snapshot
+ * (D177); the slot keeps the root (ds_root) for its consultation.
  * *hintp is the start hint (best effort, *freep to free; none for an
  * absolute path).
  */
 static int
-dq_islot_fetch(struct thread *td, struct dq_islot *s, char **hintp,
-    char **freep)
+dq_islot_fetch(struct thread *td, struct dq_islot *s, uint32_t class,
+    char **hintp, char **freep)
 {
+	struct dqres_snap snap;
 	struct pwd *pwd;
 	struct vnode *vp;
 	char *buf;
 	size_t len;
 	int error;
+	bool served;
 
 	*hintp = *freep = NULL;
 	buf = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
@@ -728,8 +873,22 @@ dq_islot_fetch(struct thread *td, struct dq_islot *s, char **hintp,
 	else
 		error = copyinstr(s->ds_path, buf, MAXPATHLEN, &len);
 	if (error != 0) {
-		free(buf, M_TEMP);
-		return (error);
+		if ((s->ds_flags & DQS_F_PATH2) == 0) {
+			free(buf, M_TEMP);
+			return (error);
+		}
+		/*
+		 * A second path that cannot be copied (EFAULT, ENAMETOOLONG)
+		 * is deferred with its lookup's other errors (below): it is
+		 * posted empty.  kern_renameat and kern_linkat copy it only
+		 * in its own namei, after the first path's lookup and
+		 * link(2)'s directory test, whose errors come first.
+		 */
+		buf[0] = '\0';
+		len = 1;
+		s->ds_frf |= DQS_FRF_UNUSABLE;
+		s->ds_ferr = error;
+		error = 0;
 	}
 	s->ds_bytes = buf;
 	s->ds_len = len - 1;
@@ -744,7 +903,8 @@ dq_islot_fetch(struct thread *td, struct dq_islot *s, char **hintp,
 	 * refuses it before namei_setup), then capability mode's ECAPMODE at
 	 * AT_FDCWD, then the descriptor's.
 	 */
-	if ((s->ds_flags & DQS_F_PATH2) != 0 && buf[0] == '\0') {
+	if ((s->ds_flags & DQS_F_PATH2) != 0 && buf[0] == '\0' &&
+	    s->ds_ferr == 0) {
 		s->ds_frf |= DQS_FRF_UNUSABLE;
 		s->ds_ferr = ENOENT;
 	}
@@ -761,21 +921,35 @@ dq_islot_fetch(struct thread *td, struct dq_islot *s, char **hintp,
 				s->ds_ferr = ENOTCAPABLE;
 		}
 	}
+	pwd = pwd_hold_dqres(td, &snap);
+	KASSERT(s->ds_root == NULL, ("%s: slot root already held", __func__));
+	s->ds_root = snap.dsn_root;
+	snap.dsn_root = NULL;
+	s->ds_rootdead = (snap.dsn_flags & DR_ROOT_DEAD) != 0;
+	error = 0;
+	/* A served cwd or root (D175, D177). */
+	if ((buf[0] == '/' || s->ds_dirfd == AT_FDCWD) && s->ds_ferr == 0 &&
+	    buf[0] != '\0') {
+		error = dq_islot_fetch_served(td, s, &snap, buf[0] == '/',
+		    class, hintp, freep, &served);
+		if (error == 0 && served && (s->ds_flags & DQS_F_PATH2) != 0)
+			error = dq_path_precheck(buf, s->ds_frf,
+			    (s->ds_frf & DQ_RF_STRICTREL) != 0,
+			    namei_cap_dotdot());
+		if (error != 0 || served)
+			goto out;
+	}
 	if (buf[0] == '/') {
 		s->ds_start_kind = DQ_START_REAL_ROOT;
-		pwd = pwd_hold(td);
 		vref(pwd->pwd_adir);
 		s->ds_start_vp = pwd->pwd_adir;
 		vref(pwd->pwd_rdir);
 		s->ds_rdir_vp = pwd->pwd_rdir;
-		pwd_drop(pwd);
-		return (0);
+		goto out;
 	} else if (s->ds_dirfd == AT_FDCWD) {
 		s->ds_start_kind = DQ_START_REAL_CWD;
-		pwd = pwd_hold(td);
 		vp = pwd->pwd_cdir;
 		vref(vp);
-		pwd_drop(pwd);
 	} else {
 		s->ds_start_kind = DQ_START_REAL_DIRFD;
 		/* A bad dirfd fails the namei itself; no hint then. */
@@ -789,17 +963,22 @@ dq_islot_fetch(struct thread *td, struct dq_islot *s, char **hintp,
 		if (error != 0) {
 			if (vp != NULL)
 				vrele(vp);
-			free(*freep, M_TEMP);
-			*hintp = *freep = NULL;
-			return (error);
+			goto out;
 		}
 		if (s->ds_start_kind == DQ_START_SERVED)
-			return (0);
+			goto out;
 	}
 	s->ds_start_vp = vp;
 	if (vp != NULL && dq_fullpath(vp, hintp, freep) != 0)
 		*hintp = *freep = NULL;
-	return (0);
+out:
+	dqres_snap_release(&snap);
+	pwd_drop(pwd);
+	if (error != 0) {
+		free(*freep, M_TEMP);
+		*hintp = *freep = NULL;
+	}
+	return (error);
 }
 
 /*
@@ -963,7 +1142,8 @@ dq_islot_take_real(struct dq_islot *s, struct dqres_answer *ans)
  * what it took).
  */
 int
-dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs, bool *realp)
+dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs,
+    const struct dqres_snap *snap, bool *realp)
 {
 	struct componentname *cnp;
 	struct thread *td;
@@ -973,6 +1153,7 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs, bool *realp)
 	struct dq_islot *s, *s1;
 	struct dqres_req rq;
 	struct dqres_answer ans;
+	struct dq_ident_file *rootid;
 	char *fullpath, *freepath, *hint2, *freehint2;
 	size_t len;
 	uint32_t rflags, start_kind;
@@ -1120,7 +1301,8 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs, bool *realp)
 		 */
 		s1 = &di->di_slot[1];
 		dq_islot_forget(s1);
-		error = dq_islot_fetch(td, s1, &hint2, &freehint2);
+		error = dq_islot_fetch(td, s1, dq_islot_class(di, s1), &hint2,
+		    &freehint2);
 		if (error == 0 && s1->ds_start_kind == DQ_START_SERVED) {
 			/* Mixed starts (D170): EXDEV, no event. */
 			dqres_ops->dro_exdev(dr->dr_binding);
@@ -1160,10 +1342,24 @@ dqres_namei(struct nameidata *ndp, struct vnode *dp, bool abs, bool *realp)
 		rq.rq_startpathlen = strlen(fullpath);
 		rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
 	}
-	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	error = dq_req_root(&rq, snap->dsn_root,
+	    (snap->dsn_flags & DR_ROOT_DEAD) != 0, &rootid);
+	if (error == 0)
+		error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(freepath, M_TEMP);
 	free(freehint2, M_TEMP);
 	if (error != 0) {
+		free(rootid, M_TEMP);
+		if (s1 != NULL)
+			dq_islot_forget(s1);
+		return (error);
+	}
+	/* Under a served root, every served answer from any start (D184). */
+	if (ans.da_kind != DQ_RESOLVE_PASS && ans.da_kind != DQ_RESOLVE_REAL)
+		error = dq_served_root_guard(rootid, &ans);
+	free(rootid, M_TEMP);
+	if (error != 0) {
+		dqres_answer_free(td, &ans);
 		if (s1 != NULL)
 			dq_islot_forget(s1);
 		return (error);
@@ -1253,9 +1449,9 @@ dq_emptypath_open(struct thread *td, struct nameidata *ndp)
  * descriptor itself: ENOTDIR, so the AT_EMPTY_PATH fallbacks run (D164),
  * except an attached process's O_EMPTY_PATH open of a descriptor of its
  * own queue.  With a path, only a served directory starts, and only
- * inside its attachment: EDEADLK for an unattached process, a process
- * attached elsewhere and the controller (D163); EIO once revoked or
- * closing.  Anything else is ENOTDIR, as before.
+ * inside its attachment: EACCES for an unattached process (the
+ * controller included), EDEADLK for one attached elsewhere (D163); EIO
+ * once revoked or closing.  Anything else is ENOTDIR, as before.
  */
 int
 dqres_lookup_start(struct nameidata *ndp, struct file *fp)
@@ -1303,8 +1499,9 @@ dq_served_precheck(struct nameidata *ndp, uint32_t rflags, bool capdotdot)
 }
 
 /* Is path at or under the directory dir (a component-boundary prefix)? */
-static bool
-dq_path_under(const char *dir, size_t dlen, const char *path, size_t plen)
+bool
+dqres_path_under(const char *dir, size_t dlen, const char *path,
+    size_t plen)
 {
 
 	if (dlen == 1 && dir[0] == '/')
@@ -1329,8 +1526,8 @@ dq_served_postcheck(const struct dq_ident_file *start, uint32_t rflags,
 	if (id == NULL)
 		return (0);
 	if ((rflags & (DQ_RF_STRICTREL | DQ_RF_BENEATH | DQ_RF_RINROOT)) != 0 &&
-	    !dq_path_under(start->di_path, start->di_pathlen, id->di_path,
-	    id->di_pathlen))
+	    !dqres_path_under(start->di_path, start->di_pathlen,
+	    id->di_path, id->di_pathlen))
 		return (ENOTCAPABLE);
 	if ((rflags & DQ_RF_NOXDEV) != 0 &&
 	    (id->di_statfs.ds_fsid[0] != start->di_statfs.ds_fsid[0] ||
@@ -1342,26 +1539,31 @@ dq_served_postcheck(const struct dq_ident_file *start, uint32_t rflags,
 
 /*
  * namei_setup's served branch (plan 4.5 step 4), with fp (held, consumed)
- * the served start fgetvp_lookup_start returned and no vnode taken.  Only
- * a class-1 lookup of a marked entry point starts at a served directory;
- * a kernel consumer, a kernel lookup, an unmarked one and an exempt region
- * get ENOTDIR as for any vnode-less descriptor.
+ * the served start and no vnode taken: a dirfd fgetvp_lookup_start
+ * returned (how DQRES_START_DIRFD), or the served cwd or root that
+ * dqres_namei_setup_start chose.  Only a class-1 lookup of a marked entry
+ * point starts at a served directory, and, at the served root, the exec
+ * interpreter's class-3 lookup (D175: REAL or an errno); from a
+ * dirfd a kernel consumer, a kernel lookup, an unmarked one and an exempt
+ * region get ENOTDIR as for any vnode-less descriptor.  snap is
+ * namei_setup's snapshot: its served root is posted and must contain
+ * every served answer (D184).
  */
 int
-dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
-    bool *realp)
+dqres_namei_served(struct nameidata *ndp, struct file *fp, int how,
+    const struct dqres_snap *snap, bool capdotdot, bool *realp)
 {
 	struct componentname *cnp;
 	struct thread *td;
 	struct dqres *dr;
 	struct dq_intent *di;
 	struct dq_islot *s, *s1;
-	struct dq_ident_file *start;
+	struct dq_ident_file *start, *rootid;
 	struct dqres_req rq;
 	struct dqres_answer ans;
 	char *hint2, *freehint2;
 	uint64_t obj, qgid;
-	uint32_t kind, rflags;
+	uint32_t class, kind, rflags;
 	size_t len;
 	int error, slot;
 	bool carried, closed;
@@ -1370,6 +1572,8 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 	cnp = &ndp->ni_cnd;
 	*realp = false;
 	start = NULL;
+	rootid = NULL;
+	class = 1;
 	s1 = NULL;
 	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
 	di = td->td_dqintent;
@@ -1390,8 +1594,10 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 		/* Unmarked (M2): counted, and no served start. */
 		dqres_ops->dro_unmarked(dr->dr_binding);
 		error = ENOTDIR;
-	} else if (dq_islot_class(di, s) != 1)
-		error = ENOTDIR;
+	} else if ((class = dq_islot_class(di, s)) != 1 &&
+	    !(class == 3 && how == DQRES_START_ROOT &&
+	    di->di_op == DQ_ROP_EXEC_INTERP))
+		error = how == DQRES_START_DIRFD ? ENOTDIR : EXDEV;
 	else if ((cnp->cn_flags & OPENNAMED) != 0)
 		error = EOPNOTSUPP;		/* D43 */
 	else if ((di->di_flags & DQI_REALFD) != 0 && slot == 0)
@@ -1406,7 +1612,7 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 		    &obj);
 	if (error != 0)
 		goto out;
-	rflags = dq_rflags(ndp, 1);
+	rflags = dq_rflags(ndp, class);
 	len = strlen(cnp->cn_pnbuf);
 	carried = (s->ds_flags & (DQS_F_PATH2 | DQS_F_AHEAD)) != 0 &&
 	    (s->ds_state == DQS_CARRIED || s->ds_state == DQS_PASSED);
@@ -1436,7 +1642,7 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 		goto out;
 
 	bzero(&rq, sizeof(rq));
-	rq.rq_class = 1;
+	rq.rq_class = class;
 	rq.rq_op = di->di_op;
 	rq.rq_mode = di->di_mode;
 	rq.rq_object = slot == 0 ? di->di_drs_object : 0;
@@ -1450,7 +1656,9 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 	rq.rq_start = obj;
 	rq.rq_path = cnp->cn_pnbuf;
 	rq.rq_pathlen = len;
-	rq.rq_accept = dq_accept(di, s, slot, 1, rflags, ndp, true, false);
+	/* The interpreter from a served root: REAL or an errno (D175). */
+	rq.rq_accept = class == 3 ? DQ_RACCEPT(DQ_RESOLVE_REAL) :
+	    dq_accept(di, s, slot, 1, rflags, ndp, true, false);
 	if (slot == 0) {
 		rq.rq_cmode = di->di_cmode;
 		rq.rq_dev = di->di_dev;
@@ -1468,7 +1676,8 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 		 */
 		s1 = &di->di_slot[1];
 		dq_islot_forget(s1);
-		error = dq_islot_fetch(td, s1, &hint2, &freehint2);
+		error = dq_islot_fetch(td, s1, dq_islot_class(di, s1), &hint2,
+		    &freehint2);
 		/*
 		 * Behind a served first path the second's own errors come
 		 * first, in FreeBSD's order (round 4: an empty path, ECAPMODE,
@@ -1512,6 +1721,12 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 	rq.rq_startpath = start->di_path;
 	rq.rq_startpathlen = start->di_pathlen;
 	rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
+	error = dq_req_root(&rq, snap->dsn_root,
+	    (snap->dsn_flags & DR_ROOT_DEAD) != 0, &rootid);
+	if (error != 0) {
+		free(freehint2, M_TEMP);
+		goto out;
+	}
 	/* Audit (D151, plan 4.13): the raw path and the start object. */
 	if (AUDITING_TD(td)) {
 		if ((cnp->cn_flags & AUDITVNODE1) != 0)
@@ -1543,6 +1758,8 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 	    di->di_res.da_kind == 0, ("dq: served-start answer %u",
 	    ans.da_kind));
 	error = dq_served_postcheck(start, rflags, &ans);
+	if (error == 0)
+		error = dq_served_root_guard(rootid, &ans);
 	if (error != 0) {
 		/* The object retires (D171). */
 		dqres_answer_free(td, &ans);
@@ -1554,7 +1771,8 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 	di->di_res = ans;
 	di->di_startobj = obj;
 	di->di_resflags = ndp->ni_resflags;
-	di->di_startlimited = true;
+	/* A served cwd or root has no descriptor rights to intersect. */
+	di->di_startlimited = how == DQRES_START_DIRFD;
 	di->di_startrights = ndp->ni_filecaps.fc_rights;
 	di->di_startfcntls = ndp->ni_filecaps.fc_fcntls;
 	/* The start's ioctl list, installed as real openat would (D159). */
@@ -1573,8 +1791,149 @@ dqres_namei_served(struct nameidata *ndp, struct file *fp, bool capdotdot,
 out:
 	if (s1 != NULL)
 		dq_islot_forget(s1);
+	free(rootid, M_TEMP);
 	free(start, M_TEMP);
 	fdrop(fp, td);
+	return (error);
+}
+
+/*
+ * D172 (a), 1c-iii-c: a symlink with an absolute target met by any lookup
+ * of a process with a served root.  A class-1 slot that can wait is
+ * consulted again from the served root (start SERVED, the remaining path,
+ * DQ_RF_SYMLINK_RESTART), accepting the op's served kinds (slot 0), REAL
+ * and an errno; the exec interpreter's class-3 slot REAL or an errno
+ * (D175).  A carried second path is EXDEV and a slot consulted ahead or
+ * by content EIO (they never wait); a kernel consumer and an unmarked
+ * lookup EXDEV (D175); a dead root EIO.  *handledp is false when the
+ * root is real.
+ */
+static int
+dq_symlink_served_root(struct nameidata *ndp, struct dqres *dr,
+    struct dq_intent *di, const struct dqres_snap *snap, bool *realp,
+    bool *handledp)
+{
+	struct componentname *cnp;
+	struct thread *td;
+	struct dq_islot *s;
+	struct dq_ident_file *start;
+	struct dqres_req rq;
+	struct dqres_answer ans;
+	struct file *rootfp;
+	uint64_t obj, qgid;
+	uint32_t class, kind;
+	int error, slot;
+	bool closed;
+
+	td = curthread;
+	cnp = &ndp->ni_cnd;
+	*handledp = false;
+	/*
+	 * The served root of namei_setup's snapshot, held for the whole
+	 * namei (D177): a racing chroot cannot move the re-entry point to
+	 * the real root.
+	 */
+	rootfp = snap->dsn_root;
+	if (rootfp == NULL && (snap->dsn_flags & DR_ROOT_DEAD) == 0)
+		return (0);
+	*handledp = true;
+	start = NULL;
+	slot = di != NULL ? dq_islot_find(di, ndp) : -1;
+	s = slot >= 0 ? &di->di_slot[slot] : NULL;
+	if (s == NULL) {
+		dqres_ops->dro_unmarked(dr->dr_binding);
+		error = EXDEV;
+		goto out;
+	}
+	KASSERT((di->di_flags & DQI_COMPLETING) == 0,
+	    ("dq: lookup inside a completion, syscall %d", td->td_sa.code));
+	class = dq_islot_class(di, s);
+	if (class == 2 || (class == 3 && di->di_op != DQ_ROP_EXEC_INTERP) ||
+	    (s->ds_flags & DQS_F_PATH2) != 0) {
+		dqres_ops->dro_exdev(dr->dr_binding);
+		error = EXDEV;
+		goto out;
+	}
+	if ((s->ds_flags & (DQS_F_AHEAD | DQS_F_CONTENT)) != 0 ||
+	    rootfp == NULL) {
+		error = EIO;
+		goto out;
+	}
+	error = dqres_ops->dro_start(td, dr->dr_binding, rootfp, &kind, &obj);
+	if (error != 0)
+		goto out;
+	start = malloc(sizeof(*start), M_TEMP, M_WAITOK);
+	if (dqres_ops->dro_file_ident(rootfp, start, &qgid, &closed) != 0) {
+		error = EIO;
+		goto out;
+	}
+	bzero(&rq, sizeof(rq));
+	rq.rq_class = class;
+	rq.rq_op = di->di_op;
+	rq.rq_mode = di->di_mode;
+	rq.rq_object = slot == 0 ? di->di_drs_object : 0;
+	rq.rq_syscall = di->di_syscall;
+	rq.rq_expected_locks = di->di_expected_locks;
+	rq.rq_no_erestart = (di->di_flags & DQI_NO_ERESTART) != 0;
+	rq.rq_may_restart = false;
+	rq.rq_rflags = dq_rflags(ndp, class) | DQ_RF_SYMLINK_RESTART |
+	    DQ_RF_STARTPATH_VALID;
+	rq.rq_start_kind = DQ_START_SERVED;
+	rq.rq_start = obj;
+	rq.rq_startpath = start->di_path;
+	rq.rq_startpathlen = start->di_pathlen;
+	/* The start is the root: the root is the start's identity. */
+	rq.rq_root = obj;
+	rq.rq_rootpath = start->di_path;
+	rq.rq_rootpathlen = start->di_pathlen;
+	rq.rq_path = cnp->cn_pnbuf;
+	rq.rq_pathlen = strlen(cnp->cn_pnbuf);
+	rq.rq_accept = class == 3 ? DQ_RACCEPT(DQ_RESOLVE_REAL) :
+	    dq_accept(di, s, slot, 1, rq.rq_rflags, ndp, true, true);
+	if (slot == 0) {
+		rq.rq_cmode = di->di_cmode;
+		rq.rq_dev = di->di_dev;
+		rq.rq_setattr = di->di_setattr;
+		if (di->di_text != NULL) {
+			rq.rq_path2 = di->di_text;
+			rq.rq_path2len = di->di_textlen;
+		}
+	}
+	if (AUDITING_TD(td))
+		AUDIT_ARG_DQSTART(obj);
+	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	MPASS(error != ERESTART);
+	if (error != 0)
+		goto out;
+	if (ans.da_kind == DQ_RESOLVE_REAL) {
+		*realp = true;
+		error = dq_real_rewrite(ndp, ans.da_target);
+		free(ans.da_target, M_TEMP);
+		goto out;
+	}
+	KASSERT(ans.da_kind != DQ_RESOLVE_PASS && slot == 0 &&
+	    di->di_res.da_kind == 0, ("dq: served-root re-entry answered %u",
+	    ans.da_kind));
+	/*
+	 * D165's post-check from the root as start (NOXDEV), and the guard:
+	 * the start is the root, so its identity is the root's.
+	 */
+	error = dq_served_postcheck(start, rq.rq_rflags, &ans);
+	if (error == 0)
+		error = dq_served_root_guard(start, &ans);
+	if (error != 0) {
+		dqres_answer_free(td, &ans);
+		goto out;
+	}
+	if (ans.da_kind == DQ_RESOLVE_FD)
+		AUDIT_ARG_DQOBJ(ans.da_objid);
+	di->di_res = ans;
+	di->di_startobj = obj;
+	di->di_resflags = ndp->ni_resflags;
+	di->di_startlimited = false;
+	error = EDQRESOLVED;
+out:
+	free(start, M_TEMP);
 	return (error);
 }
 
@@ -1591,7 +1950,8 @@ out:
  * one more.
  */
 int
-dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp, bool *realp)
+dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp,
+    const struct dqres_snap *snap, bool *realp)
 {
 	struct componentname *cnp;
 	struct thread *td;
@@ -1600,9 +1960,10 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp, bool *realp)
 	struct dq_islot *s;
 	struct dqres_req rq;
 	struct dqres_answer ans;
+	struct dq_ident_file *rootid;
 	char *fullpath, *freepath;
 	int error, slot;
-	bool abs;
+	bool abs, handled;
 
 	td = curthread;
 	cnp = &ndp->ni_cnd;
@@ -1611,7 +1972,21 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp, bool *realp)
 		return (0);
 	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
 	di = td->td_dqintent;
-	if (dr == NULL || di == NULL)
+	if (dr == NULL)
+		return (0);
+	/*
+	 * D172 (a): an absolute target under a served root re-enters at the
+	 * served root, unless the lookup is scoped (RINROOT keeps its own
+	 * root) or strict (namei_handle_root refuses it).
+	 */
+	if (cnp->cn_pnbuf[0] == '/' && (cnp->cn_flags & RINROOT) == 0 &&
+	    (ndp->ni_lcf & (NI_LCF_STRICTREL | NI_LCF_SCOPEDROOT)) == 0) {
+		error = dq_symlink_served_root(ndp, dr, di, snap, realp,
+		    &handled);
+		if (handled)
+			return (error);
+	}
+	if (di == NULL)
 		return (0);
 	KASSERT((di->di_flags & DQI_COMPLETING) == 0,
 	    ("dq: lookup inside a completion, syscall %d", td->td_sa.code));
@@ -1652,6 +2027,11 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp, bool *realp)
 			rq.rq_path2len = di->di_textlen;
 		}
 	}
+	/* The served root, as the lookup's first consultation had it. */
+	error = dq_req_root(&rq, snap->dsn_root,
+	    (snap->dsn_flags & DR_ROOT_DEAD) != 0, &rootid);
+	if (error != 0)
+		return (error);
 	freepath = NULL;
 	if (!abs && dp != NULL && dq_fullpath(dp, &fullpath, &freepath) == 0) {
 		rq.rq_startpath = fullpath;
@@ -1661,22 +2041,414 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp, bool *realp)
 	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
 	free(freepath, M_TEMP);
 	MPASS(error != ERESTART);
-	if (error != 0)
+	if (error != 0) {
+		free(rootid, M_TEMP);
 		return (error);
+	}
 	switch (ans.da_kind) {
 	case DQ_RESOLVE_PASS:
-		return (0);
+		break;
 	case DQ_RESOLVE_REAL:
 		*realp = true;
 		error = dq_real_rewrite(ndp, ans.da_target);
 		free(ans.da_target, M_TEMP);
-		return (error);
+		break;
 	default:
 		KASSERT(slot == 0 && di->di_res.da_kind == 0,
 		    ("dq: re-consultation answered %u", ans.da_kind));
+		error = dq_served_root_guard(rootid, &ans);
+		if (error != 0) {
+			dqres_answer_free(td, &ans);
+			break;
+		}
 		di->di_res = ans;
-		return (EDQRESOLVED);
+		error = EDQRESOLVED;
+		break;
 	}
+	free(rootid, M_TEMP);
+	return (error);
+}
+
+/*
+ * Served cwd and root as lookup starts (D175, D177), from namei_setup
+ * once it chose the real start (*dpp, which the caller releases if this
+ * one is used): an absolute path (not RINROOT; namei_handle_root has
+ * already made capability mode's test) starts at the snapshot's served
+ * root, a relative AT_FDCWD path at its served cwd.  A class-1 slot
+ * starts there; so does, at the served root only, the exec interpreter's
+ * class-3 lookup.  A kernel consumer's slot, any other class-3 lookup and
+ * an unmarked user-space one are EXDEV with no event (an unmarked
+ * kernel-space one EPERM, both counted); a dead start is EIO, and so is
+ * any served start while the root is dead.  An exempt region keeps the
+ * real pd_pwd (kernel-computed paths), except for a slot carried into
+ * it.  Returns as dqres_namei_served: 0 with *realp false when the start
+ * is real (or the answer was REAL, *realp true), else EDQRESOLVED or an
+ * errno.
+ */
+int
+dqres_namei_setup_start(struct nameidata *ndp, const struct dqres_snap *snap,
+    bool capdotdot, bool *realp)
+{
+	struct componentname *cnp;
+	struct thread *td;
+	struct dqres *dr;
+	struct dq_intent *di;
+	struct dq_islot *s;
+	struct file *fp;
+	uint32_t class;
+	int slot;
+	bool abs, carried, dead;
+
+	*realp = false;
+	td = curthread;
+	cnp = &ndp->ni_cnd;
+	if (dqres_ops == NULL)
+		return (0);
+	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
+	if (dr == NULL)
+		return (0);
+	abs = cnp->cn_pnbuf[0] == '/' && (cnp->cn_flags & RINROOT) == 0;
+	if (abs) {
+		fp = snap->dsn_root;
+		dead = (snap->dsn_flags & DR_ROOT_DEAD) != 0;
+	} else if (ndp->ni_dirfd == AT_FDCWD && ndp->ni_startdir == NULL) {
+		fp = snap->dsn_cwd;
+		dead = (snap->dsn_flags & DR_CWD_DEAD) != 0;
+	} else
+		return (0);
+	if (fp == NULL && !dead)
+		return (0);
+	di = td->td_dqintent;
+	slot = di != NULL ? dq_islot_find(di, ndp) : -1;
+	s = slot >= 0 ? &di->di_slot[slot] : NULL;
+	carried = s != NULL &&
+	    (s->ds_flags & (DQS_F_PATH2 | DQS_F_AHEAD)) != 0 &&
+	    (s->ds_state == DQS_CARRIED || s->ds_state == DQS_PASSED);
+	if ((td->td_pflags2 & TDP2_DQ_NORESOLVE) != 0 && !carried)
+		return (0);
+	if (s == NULL) {
+		dqres_ops->dro_unmarked(dr->dr_binding);
+		return (ndp->ni_segflg == UIO_USERSPACE ? EXDEV : EPERM);
+	}
+	class = dq_islot_class(di, s);
+	if (class == 2 ||
+	    (class == 3 && !(abs && di->di_op == DQ_ROP_EXEC_INTERP))) {
+		dqres_ops->dro_exdev(dr->dr_binding);
+		return (EXDEV);
+	}
+	if (dead || (snap->dsn_flags & DR_ROOT_DEAD) != 0 || !fhold(fp))
+		return (EIO);
+	return (dqres_namei_served(ndp, fp, abs ? DQRES_START_ROOT :
+	    DQRES_START_CWD, snap, capdotdot, realp));
+}
+
+/*
+ * The presented-path contract (D174, B4).  A served object's di_path is
+ * the controller's claim.  Under a served root it is shown relative to
+ * the root's di_path, cut at a component boundary (the root itself is
+ * "/"); a path not underneath is ENOENT.  Another process's paths are
+ * presented against the viewer, as vn_fullpath is relative to the
+ * reader's root: a viewer attached to the object's queue with a served
+ * root sees them against its own root; every other viewer sees the raw
+ * di_path.  A process reading its own paths is its own viewer.  A dead
+ * viewer root (DR_ROOT_DEAD) presents nothing (EIO).
+ */
+static int
+dq_present_rel(const char *root, size_t rlen, const char *path, size_t plen,
+    char *out, size_t outsz)
+{
+	const char *rest;
+	size_t n;
+
+	if (!dqres_path_under(root, rlen, path, plen))
+		return (ENOENT);
+	if (rlen == 1 && root[0] == '/')
+		rest = path;
+	else
+		rest = path + rlen;
+	n = strlen(rest);
+	if (n == 0) {
+		rest = "/";
+		n = 1;
+	}
+	if (n + 1 > outsz)
+		return (ENAMETOOLONG);
+	memcpy(out, rest, n + 1);
+	return (0);
+}
+
+int
+dqres_present_viewer(struct thread *viewer, uint64_t qgid, const char *path,
+    size_t pathlen, char *out, size_t outsz)
+{
+	struct dq_ident_file *root;
+	struct dqres_snap snap;
+	uint64_t rqgid;
+	int error;
+	bool closed;
+
+	bzero(&snap, sizeof(snap));
+	root = NULL;
+	if (dqres_ops != NULL && dqres_proc_attached(viewer->td_proc))
+		pwd_dqres_proc(viewer->td_proc, &snap);
+	if ((snap.dsn_flags & DR_ROOT_DEAD) != 0) {
+		error = EIO;
+		goto out;
+	}
+	if (snap.dsn_root != NULL) {
+		root = malloc(sizeof(*root), M_TEMP, M_WAITOK);
+		error = dqres_ops->dro_file_ident(snap.dsn_root, root, &rqgid,
+		    &closed);
+		if (error != 0)
+			goto out;
+		if (rqgid == qgid) {
+			error = dq_present_rel(root->di_path, root->di_pathlen,
+			    path, pathlen, out, outsz);
+			goto out;
+		}
+	}
+	/* Any other viewer sees the raw di_path. */
+	if (pathlen + 1 > outsz) {
+		error = ENAMETOOLONG;
+		goto out;
+	}
+	memcpy(out, path, pathlen);
+	out[pathlen] = '\0';
+	error = 0;
+out:
+	dqres_snap_release(&snap);
+	free(root, M_TEMP);
+	return (error);
+}
+
+/* A served file's path presented against the viewer (dq's fill_kinfo). */
+int
+dqres_present_file(struct thread *viewer, struct file *fp, char *out,
+    size_t outsz)
+{
+	struct dq_ident_file *ident;
+	uint64_t qgid;
+	int error;
+	bool closed;
+
+	ident = malloc(sizeof(*ident), M_TEMP, M_WAITOK);
+	error = dqres_file_ident(fp, ident, &qgid, &closed);
+	if (error == 0)
+		error = dqres_present_viewer(viewer, qgid, ident->di_path,
+		    ident->di_pathlen, out, outsz);
+	free(ident, M_TEMP);
+	return (error);
+}
+
+/* Does the process have a served (or dead) root? */
+bool
+dqres_served_root(struct thread *td)
+{
+	struct dqres_snap snap;
+	bool served;
+
+	if (dqres_ops == NULL || !dqres_proc_attached(td->td_proc))
+		return (false);
+	pwd_dqres_proc(td->td_proc, &snap);
+	served = snap.dsn_root != NULL ||
+	    (snap.dsn_flags & DR_ROOT_DEAD) != 0;
+	dqres_snap_release(&snap);
+	return (served);
+}
+
+/*
+ * getcwd of an attached process (vn_getcwd, D174): a served cwd's
+ * presented path (a revoked one keeps its frozen path); a real cwd under a
+ * served root ENOENT; a dead cwd or root EIO; a short buffer ENOMEM, as
+ * vn_fullpath answers it.  EJUSTRETURN: neither is served, the real path
+ * applies.  The path is written at the start of buf.
+ */
+int
+dqres_getcwd(struct thread *td, char *buf, size_t *buflenp)
+{
+	struct dqres_snap snap;
+	int error;
+
+	if (dqres_ops == NULL || !dqres_proc_attached(td->td_proc))
+		return (EJUSTRETURN);
+	pwd_dqres_proc(td->td_proc, &snap);
+	if ((snap.dsn_flags & (DR_CWD_DEAD | DR_ROOT_DEAD)) != 0)
+		error = EIO;
+	else if (snap.dsn_cwd != NULL)
+		error = dqres_present_file(td, snap.dsn_cwd, buf, *buflenp);
+	else
+		error = snap.dsn_root != NULL ? ENOENT : EJUSTRETURN;
+	dqres_snap_release(&snap);
+	if (error == ENAMETOOLONG)
+		error = ENOMEM;
+	if (error == 0)
+		*buflenp = strlen(buf) + 1;
+	return (error);
+}
+
+/*
+ * A served cwd or root of another process (linprocfs), presented against
+ * the viewer (D174): ENOTTY when that one is real, EIO when dead.
+ */
+int
+dqres_proc_dirpath(struct thread *viewer, struct proc *p, bool root,
+    char *buf, size_t len)
+{
+	struct dqres_snap snap;
+	struct file *fp;
+	int error;
+
+	if (dqres_ops == NULL || !dqres_proc_attached(p))
+		return (ENOTTY);
+	pwd_dqres_proc(p, &snap);
+	fp = root ? snap.dsn_root : snap.dsn_cwd;
+	if (fp != NULL)
+		error = dqres_present_file(viewer, fp, buf, len);
+	else if ((snap.dsn_flags & (root ? DR_ROOT_DEAD : DR_CWD_DEAD)) != 0)
+		error = EIO;
+	else
+		error = ENOTTY;
+	dqres_snap_release(&snap);
+	return (error);
+}
+
+/*
+ * fchdir(2), fchroot(2) of a vnode-less descriptor (D135, D163): a served
+ * descriptor held (0), checked as far as the caller's privilege check:
+ * UF_RESOLVE_BENEATH ENOTCAPABLE as for a vnode.  ENOTTY for any other
+ * descriptor (the caller keeps its own error).
+ */
+int
+dqres_fchdir_file(struct thread *td, int fd, const cap_rights_t *rights,
+    struct file **fpp)
+{
+	struct file *fp;
+	uint8_t fl;
+	int error;
+
+	*fpp = NULL;
+	if (dqres_ops == NULL)
+		return (ENOTTY);
+	error = fget_unlocked_flags(td, fd, rights, &fl, &fp);
+	if (error != 0)
+		return (ENOTTY);
+	if (fp->f_type != DTYPE_DQ) {
+		fdrop(fp, td);
+		return (ENOTTY);
+	}
+	if ((fl & UF_RESOLVE_BENEATH) != 0) {
+		fdrop(fp, td);
+		return (ENOTCAPABLE);
+	}
+	*fpp = fp;
+	return (0);
+}
+
+/*
+ * The served directory fchdir(2) or fchroot(2) names: EACCES for an
+ * unattached process and EDEADLK for one attached elsewhere (D163), EIO
+ * once revoked or closing, ENOTDIR for another kind, then the D166 search
+ * check on its identity with the caller's credential.
+ */
+int
+dqres_dir_check(struct thread *td, struct file *fp)
+{
+	struct dq_ident_file *ident;
+	struct dqres *dr;
+	uint64_t obj, qgid;
+	uint32_t kind;
+	int error;
+	bool closed;
+
+	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
+	error = dqres_ops->dro_start(td, dr != NULL ? dr->dr_binding : NULL,
+	    fp, &kind, &obj);
+	if (error != 0)
+		return (error == ENOTTY ? ENOTDIR : error);
+	if (kind != DQ_KIND_DIR)
+		return (ENOTDIR);
+	ident = malloc(sizeof(*ident), M_TEMP, M_WAITOK);
+	error = dqres_ops->dro_file_ident(fp, ident, &qgid, &closed);
+	if (error == 0)
+		error = dqres_ident_access(ident, VEXEC, td->td_ucred);
+	free(ident, M_TEMP);
+	return (error);
+}
+
+/*
+ * A CHDIR or CHROOT answered FD (D169): a directory (else ENOTDIR), the
+ * D166 search check, then a file of the requester (FREAD), held only by
+ * dr_*.  Any failure retires the object (D171).
+ */
+int
+dqres_take_dir(struct thread *td, struct dq_intent *di, struct file **fpp)
+{
+	struct dqres_answer *ans;
+	int error;
+
+	*fpp = NULL;
+	ans = &di->di_res;
+	KASSERT(ans->da_kind == DQ_RESOLVE_FD && ans->da_obj != NULL,
+	    ("dq: take_dir of kind %u", ans->da_kind));
+	error = ans->da_okind != DQ_KIND_DIR ? ENOTDIR :
+	    dqres_ident_access(ans->da_ident, VEXEC, td->td_ucred);
+	if (error != 0) {
+		dqres_ops->dro_answer_release(td, ans);
+		return (error);
+	}
+	return (dqres_ops->dro_bind(td, ans, FREAD, fpp));
+}
+
+/*
+ * execpath of an exec under a served cwd or root (D167, 0s): a relative
+ * name joined lexically to the served cwd's presented path (leading "./"
+ * dropped), which can differ from IS_PATH's resolution through symlinked
+ * directories (documented).  An absolute name is used verbatim by
+ * do_execve itself.  0 with *pathp (M_TEMP); EJUSTRETURN: use the name as
+ * given (a real cwd under a served root has no presented path);
+ * ENOTTY: neither is served, IS_PATH applies.
+ */
+int
+dqres_execpath(struct thread *td, const char *fname, char **pathp)
+{
+	struct dqres_snap snap;
+	char *buf;
+	size_t len, n;
+	int error;
+	bool served;
+
+	*pathp = NULL;
+	if (dqres_ops == NULL || !dqres_proc_attached(td->td_proc))
+		return (ENOTTY);
+	pwd_dqres_proc(td->td_proc, &snap);
+	if (snap.dsn_cwd == NULL) {
+		served = dqres_snap_served(&snap);
+		dqres_snap_release(&snap);
+		return (served ? EJUSTRETURN : ENOTTY);
+	}
+	buf = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+	error = dqres_present_file(td, snap.dsn_cwd, buf, MAXPATHLEN);
+	dqres_snap_release(&snap);
+	if (error != 0) {
+		free(buf, M_TEMP);
+		return (EJUSTRETURN);
+	}
+	while (fname[0] == '.' && fname[1] == '/') {
+		fname += 2;
+		while (fname[0] == '/')
+			fname++;
+	}
+	len = strlen(buf);
+	n = strlen(fname);
+	if (len + 1 + n + 1 > MAXPATHLEN) {
+		free(buf, M_TEMP);
+		return (EJUSTRETURN);
+	}
+	if (len > 0 && buf[len - 1] != '/')
+		buf[len++] = '/';
+	memcpy(buf + len, fname, n + 1);
+	*pathp = buf;
+	return (0);
 }
 
 /*
@@ -1684,8 +2456,9 @@ dqres_namei_symlink(struct nameidata *ndp, struct vnode *dp, bool *realp)
  * (D170).  A served descriptor of the caller's queue becomes the event's
  * drs_object, and the path must then start served (a real start is
  * EDEADLK in dqres_namei); a served descriptor of another queue is
- * EDEADLK at once.  An unattached caller keeps the descriptor and its
- * real lookup fails EDEADLK, as for a mismatched vnode.
+ * EDEADLK at once.  An unattached caller keeps the descriptor; its real
+ * lookup then names another vnode, which is EACCES for a served
+ * descriptor.
  */
 int
 dqres_unlink_fd(struct thread *td, int fd, const cap_rights_t *rights,
@@ -1773,6 +2546,7 @@ dqres_consult_slot(struct thread *td, int slot)
 	struct dq_islot *s;
 	struct dqres_req rq;
 	struct dqres_answer ans;
+	struct dq_ident_file *rootid;
 	char *hint, *freehint;
 	int error;
 
@@ -1788,7 +2562,7 @@ dqres_consult_slot(struct thread *td, int slot)
 	dr = atomic_load_ptr(&pdp->pd_dqres);
 	if (dr == NULL)
 		return (0);
-	error = dq_islot_fetch(td, s, &hint, &freehint);
+	error = dq_islot_fetch(td, s, dq_islot_class(di, s), &hint, &freehint);
 	if (error != 0) {
 		dq_islot_forget(s);
 		return (error);
@@ -1831,7 +2605,11 @@ dqres_consult_slot(struct thread *td, int slot)
 		rq.rq_startpathlen = strlen(hint);
 		rq.rq_rflags |= DQ_RF_STARTPATH_VALID;
 	}
-	error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	/* The served root of the start's snapshot (D177, D184). */
+	error = dq_req_root(&rq, s->ds_root, s->ds_rootdead, &rootid);
+	if (error == 0)
+		error = dqres_ops->dro_consult(td, dr->dr_binding, &rq, &ans);
+	free(rootid, M_TEMP);
 	KASSERT(error != 0 || ans.da_kind == DQ_RESOLVE_PASS ||
 	    ans.da_kind == DQ_RESOLVE_REAL,
 	    ("dq: ahead slot answered %u", ans.da_kind));
@@ -2380,6 +3158,15 @@ dqres_file_ident(struct file *fp, struct dq_ident_file *ident,
 	if (dqres_ops == NULL || fp->f_type != DTYPE_DQ)
 		return (ENOTTY);
 	return (dqres_ops->dro_file_ident(fp, ident, qgidp, closedp));
+}
+
+/* Is fp a served directory?  Lock-free (chroot_refuse_vdir_fds). */
+bool
+dqres_file_is_dir(struct file *fp)
+{
+
+	return (dqres_ops != NULL && fp->f_type == DTYPE_DQ &&
+	    dqres_ops->dro_file_kind(fp) == DQ_KIND_DIR);
 }
 
 bool
