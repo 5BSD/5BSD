@@ -163,6 +163,9 @@ attach_starts_fn(void *arg __unused, void *out)
 	r->err[22] = TS_ERR(lstat(".", &st));
 	r->err[23] = TS_ERR(stat("e/..", &st));
 	r->err[24] = TS_ERR(stat("/..", &st));
+	/* An empty symbolic link: readlink(2) 0 bytes, followed ENOENT. */
+	r->err[25] = (int)readlink("/empty", buf, sizeof(buf));
+	r->err[26] = TS_ERR(stat("/empty/a", &st));
 }
 
 TS_TC(attach_starts);
@@ -173,8 +176,10 @@ ATF_TC_BODY(attach_starts, tc)
 	int status;
 
 	ts_make_tree("t");
+	ts_symlink("t", "empty", "");
 	ts_start(&s, "t", DQ_TREE_F_ROOT);
 	memset(&r, 0, sizeof(r));
+	r.err[25] = -2;
 	status = ts_child_ex(&s, s.sroot, s.sroot, false, true,
 	    attach_starts_fn, NULL, &r, sizeof(r));
 	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
@@ -198,6 +203,9 @@ ATF_TC_BODY(attach_starts, tc)
 	TS_CHECK_ERRNO(0, r.err[22], "lstat . from /d");
 	TS_CHECK_ERRNO(0, r.err[23], "stat e/.. from /d");
 	TS_CHECK_ERRNO(0, r.err[24], "stat /.. at the served root");
+	ATF_CHECK_EQ_MSG(0, r.err[25], "readlink of an empty link: %d",
+	    r.err[25]);
+	TS_CHECK_ERRNO(ENOENT, r.err[26], "stat through an empty link");
 	TS_CHECK_ERRNO(ENOTDIR, r.err[14], "fchdir served file");
 	TS_CHECK_ERRNO(ENOTCAPABLE, r.err[15], "fchdir O_RESOLVE_BENEATH");
 	TS_CHECK_ERRNO(0, r.err[16], "fchdir served dir");

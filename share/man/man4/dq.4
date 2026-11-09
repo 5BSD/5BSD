@@ -2347,6 +2347,15 @@ is the target's length, then a
 .Va drt_len
 bytes, a NUL and zeros to the next 8-byte boundary, no inner NUL; at
 most 4936 bytes.
+A symbolic link's target, here and in a
+.Dv DQ_KIND_SYMLINK
+mint, may be empty
+.Pq Va drt_len No and Va di_size No 0 ,
+as
+.Xr symlink 2
+allows;
+.Xr readlink 2
+then returns 0 bytes.
 .It Dv DQ_RESOLVE_REAL
 The reply and a
 .Vt struct dq_resolve_target

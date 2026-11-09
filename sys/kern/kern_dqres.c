@@ -873,8 +873,22 @@ dq_islot_fetch(struct thread *td, struct dq_islot *s, uint32_t class,
 	else
 		error = copyinstr(s->ds_path, buf, MAXPATHLEN, &len);
 	if (error != 0) {
-		free(buf, M_TEMP);
-		return (error);
+		if ((s->ds_flags & DQS_F_PATH2) == 0) {
+			free(buf, M_TEMP);
+			return (error);
+		}
+		/*
+		 * A second path that cannot be copied (EFAULT, ENAMETOOLONG)
+		 * is deferred with its lookup's other errors (below): it is
+		 * posted empty.  kern_renameat and kern_linkat copy it only
+		 * in its own namei, after the first path's lookup and
+		 * link(2)'s directory test, whose errors come first.
+		 */
+		buf[0] = '\0';
+		len = 1;
+		s->ds_frf |= DQS_FRF_UNUSABLE;
+		s->ds_ferr = error;
+		error = 0;
 	}
 	s->ds_bytes = buf;
 	s->ds_len = len - 1;
@@ -889,7 +903,8 @@ dq_islot_fetch(struct thread *td, struct dq_islot *s, uint32_t class,
 	 * refuses it before namei_setup), then capability mode's ECAPMODE at
 	 * AT_FDCWD, then the descriptor's.
 	 */
-	if ((s->ds_flags & DQS_F_PATH2) != 0 && buf[0] == '\0') {
+	if ((s->ds_flags & DQS_F_PATH2) != 0 && buf[0] == '\0' &&
+	    s->ds_ferr == 0) {
 		s->ds_frf |= DQS_FRF_UNUSABLE;
 		s->ds_ferr = ENOENT;
 	}

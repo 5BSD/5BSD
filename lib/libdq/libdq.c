@@ -1111,8 +1111,9 @@ dq_reply_resolve_link(int q, uint64_t id, const struct dq_ident_file *ident,
 	char *buf;
 	int error, ret;
 
+	/* A symlink's target may be empty, as symlink(2) allows. */
 	tlen = strlen(target);
-	if (tlen == 0 || tlen >= DQ_PATH_MAX) {
+	if (tlen >= DQ_PATH_MAX) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -1241,8 +1242,9 @@ dq_reply_resolve_fd_symlink(int q, uint64_t id,
 		errno = EINVAL;
 		return (-1);
 	}
+	/* A symlink's target may be empty, as symlink(2) allows. */
 	tlen = strlen(target);
-	if (tlen == 0 || tlen >= DQ_PATH_MAX) {
+	if (tlen >= DQ_PATH_MAX) {
 		errno = EINVAL;
 		return (-1);
 	}

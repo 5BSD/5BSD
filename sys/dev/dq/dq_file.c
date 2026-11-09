@@ -237,9 +237,10 @@ dq_ident_validate(u_int kind, const struct dq_ident_file *di, int *reason)
 		type = S_IFDIR;
 		break;
 	case DQ_KIND_SYMLINK:		/* 1c-iii-b, D168: the size is the
-					   target's length */
+					   target's length, 0 for an empty
+					   target as symlink(2) allows */
 		type = S_IFLNK;
-		if (di->di_size == 0 || di->di_size >= DQ_PATH_MAX) {
+		if (di->di_size >= DQ_PATH_MAX) {
 			*reason = DQ_REASON_SIZE;
 			return (EINVAL);
 		}

@@ -476,7 +476,8 @@ int	dq_serve_file(int q, const struct dq_event *ev, const void *body,
  * operations the tree does not serve are answered REAL with the real path
  * when the event takes it (the backing path under prefix), PASS from a
  * real start, ENOTCAPABLE under a restricted lookup.
- * DQ_TREE_F_EXEC_REAL answers exec REAL of the backing binary.
+ * DQ_TREE_F_EXEC_REAL answers exec, and an O_EXEC open of a regular file
+ * (for fexecve(2)), REAL of the backing binary.
  */
 struct dq_tree;
 #define	DQ_TREE_F_WRITE		0x00000001

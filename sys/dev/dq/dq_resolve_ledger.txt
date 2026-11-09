@@ -77,6 +77,7 @@ CONSULT	kern/uipc_syscalls.c	kern_connectat	DQ_ROP_CONNECT	1
 CONSULT	kern/uipc_syscalls.c	kern_socketpair	DQ_ROP_SOCKETPAIR	1
 CONSULT	kern/uipc_syscalls.c	kern_sendit	DQ_ROP_CONNECT	1
 SYSNDI	kern/uipc_usrreq.c	uipc_bindat	buf	via:content@kern/uipc_syscalls.c:kern_bindat
+SYSNDI	kern/uipc_usrreq.c	unp_connectat_emptypath	""	EXEMPT
 SYSNDI	kern/uipc_usrreq.c	unp_connectat_peer	buf	via:content@kern/uipc_syscalls.c:kern_connectat
 USERNDI	kern/vfs_acl.c	kern___acl_get_path_dqimpl	path	slot0
 MARK	kern/vfs_acl.c	kern___acl_get_path	DQ_ROP_ACL	DQI_USER	PASS	-	-

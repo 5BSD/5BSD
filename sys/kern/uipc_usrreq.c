@@ -3843,6 +3843,22 @@ unp_dupfd_peer(struct vnode *vp, struct thread *td, struct socket **so2p)
  * The caller must release the returned socket with sorele().  If the mutex
  * and vnode pointers are filled, they must be released as well.
  */
+/*
+ * The descriptor fd itself as the peer's vnode (an empty name, EMPTYPATH):
+ * no name is resolved, so dqres_consult_sun posted nothing and the lookup
+ * is exempt (D127); an attached caller gets the errno an unattached one
+ * gets.  rights must stay valid until the caller is done with ndp.
+ */
+static int
+unp_connectat_emptypath(int fd, struct nameidata *ndp, cap_rights_t *rights)
+{
+
+	NDINIT_ATRIGHTS(ndp, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF |
+	    EMPTYPATH, UIO_SYSSPACE, "", fd,
+	    cap_rights_init_one(rights, CAP_CONNECTAT));
+	return (DQRES_EXEMPT(namei(ndp)));
+}
+
 static int
 unp_connectat_peer(struct thread *td, int fd, const char *buf,
     struct socket **so2p, struct mtx **mtxp, struct vnode **vpp)
@@ -3867,16 +3883,20 @@ unp_connectat_peer(struct thread *td, int fd, const char *buf,
 			return (error);
 	}
 
-	/*
-	 * Resolve the path to a vnode.  An attached caller's name was
-	 * consulted in a content slot at kern_connectat or kern_sendit; this
-	 * lookup is checked against it.
-	 * dq-ledger: content via kern/uipc_syscalls.c:kern_connectat
-	 */
-	NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF |
-	    (fd == AT_FDCWD ? 0 : EMPTYPATH), UIO_SYSSPACE, buf, fd,
-	    cap_rights_init_one(&rights, CAP_CONNECTAT));
-	error = namei(&nd);
+	if (*buf == '\0' && fd != AT_FDCWD) {
+		error = unp_connectat_emptypath(fd, &nd, &rights);
+	} else {
+		/*
+		 * Resolve the path to a vnode.  An attached caller's name
+		 * was consulted in a content slot at kern_connectat or
+		 * kern_sendit; this lookup is checked against it.
+		 * dq-ledger: content via kern/uipc_syscalls.c:kern_connectat
+		 */
+		NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF |
+		    (fd == AT_FDCWD ? 0 : EMPTYPATH), UIO_SYSSPACE, buf, fd,
+		    cap_rights_init_one(&rights, CAP_CONNECTAT));
+		error = namei(&nd);
+	}
 	if (error != 0)
 		return (error);
 	NDFREE_PNBUF(&nd);

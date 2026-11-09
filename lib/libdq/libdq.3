@@ -1149,7 +1149,10 @@ with an
 identity and the target (its
 .Va di_size
 must be
-.Fn strlen target ) .
+.Fn strlen target ;
+the target may be empty, as
+.Xr symlink 2
+allows).
 .Fn dq_reply_resolve_ok
 says the controller performed a mutating operation.
 .Pp
@@ -1334,7 +1337,11 @@ from a real start, and
 .Er ENOTCAPABLE
 under a restricted lookup, otherwise.
 .Dv DQ_TREE_F_EXEC_REAL
-answers exec with
+answers exec, and an
+.Dv O_EXEC
+open of a regular file (for
+.Xr fexecve 2 ) ,
+with
 .Dv DQ_RESOLVE_REAL
 of the backing binary.
 .Pp

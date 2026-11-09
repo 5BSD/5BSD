@@ -546,16 +546,20 @@ dq_resolve_ev_body(const struct dq_event_k *ev)
 
 /*
  * A symlink target or a REAL path in a reply: drt_len bytes (1 ..
- * DQ_PATH_MAX - 1) with no NUL, then a NUL and zeros to the end of the
- * reply, which is exactly the next 8-byte boundary.
+ * DQ_PATH_MAX - 1, or 0 for a symlink target when emptyok) with no NUL,
+ * then a NUL and zeros to the end of the reply, which is exactly the next
+ * 8-byte boundary.  symlink(2) accepts an empty target, which readlink(2)
+ * returns as 0 bytes and namei follows to ENOENT; a REAL path is never
+ * empty.
  */
 static int
-dq_resolve_target_validate(const struct dq_resolve_target *rt, size_t avail)
+dq_resolve_target_validate(const struct dq_resolve_target *rt, size_t avail,
+    bool emptyok)
 {
 	size_t i, need;
 
-	if (avail < sizeof(*rt) || rt->drt_pad0 != 0 || rt->drt_len == 0 ||
-	    rt->drt_len >= DQ_PATH_MAX)
+	if (avail < sizeof(*rt) || rt->drt_pad0 != 0 ||
+	    (rt->drt_len == 0 && !emptyok) || rt->drt_len >= DQ_PATH_MAX)
 		return (EINVAL);
 	need = roundup2(sizeof(*rt) + rt->drt_len + 1, 8);
 	if (avail != need ||
@@ -613,11 +617,12 @@ dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
 		return (dq_resolve_target_validate(
 		    (const struct dq_resolve_target *)((const char *)(rr + 1) +
 		    sizeof(struct dq_resolve_mint)),
-		    len - sizeof(struct dq_resolve_mint)));
+		    len - sizeof(struct dq_resolve_mint), true));
 	case DQ_RESOLVE_REAL:
 		/* D167: an absolute, normalized real path. */
 		if (dq_resolve_target_validate(
-		    (const struct dq_resolve_target *)(rr + 1), len) != 0)
+		    (const struct dq_resolve_target *)(rr + 1), len,
+		    false) != 0)
 			return (EINVAL);
 		rt = (const struct dq_resolve_target *)(rr + 1);
 		return (dq_path_normalized(rt->drt_target, rt->drt_len) ? 0 :
@@ -637,7 +642,7 @@ dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
 		if (!S_ISLNK(ra->dra_ident.di_mode) ||
 		    dq_resolve_target_validate(
 		    (const struct dq_resolve_target *)(ra + 1),
-		    len - sizeof(*ra)) != 0 ||
+		    len - sizeof(*ra), true) != 0 ||
 		    ra->dra_ident.di_size !=
 		    ((const struct dq_resolve_target *)(ra + 1))->drt_len)
 			return (EINVAL);
@@ -727,7 +732,7 @@ dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 		break;
 	case DQ_KIND_SYMLINK:
 		rt = (const struct dq_resolve_target *)(rm + 1);
-		if (dq_resolve_target_validate(rt, extra) != 0)
+		if (dq_resolve_target_validate(rt, extra, true) != 0)
 			return (dq_resolve_mint_reason(rm, DQ_REASON_TARGET,
 			    EINVAL));
 		if ((rflags & DQ_RF_NOFOLLOW) == 0)

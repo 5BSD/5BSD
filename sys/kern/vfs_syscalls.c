@@ -4740,6 +4740,14 @@ kern_utimensat(struct thread *td, int fd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (kern_utimensat_dqimpl(td, fd, path, pathseg, tptr, tptrseg, flag));
+	/*
+	 * The implementation refuses unknown flags before it reads the
+	 * times: so must this copy, or a bad times pointer would be EFAULT
+	 * where an unattached caller gets EINVAL.
+	 */
+	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_RESOLVE_BENEATH |
+	    AT_EMPTY_PATH)) != 0)
+		return (EINVAL);
 	/* D161: the times are copied in once, only from user space. */
 	ktp = tptr;
 	tseg = tptrseg;

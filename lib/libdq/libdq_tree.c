@@ -28,8 +28,8 @@
  * and the operations the tree does not serve are answered REAL with the
  * real path (the backing path for names under the prefix), when the
  * event accepts it.  A symbolic link in the backing tree leading out of
- * the prefix is followed by REAL too.  DQ_TREE_F_EXEC_REAL answers exec
- * REAL as well.
+ * the prefix is followed by REAL too.  DQ_TREE_F_EXEC_REAL answers exec,
+ * and an O_EXEC open of a regular file, REAL as well.
  *
  * Stage 1c-iii-c (DQ_TREE_F_ROOT, with DQ_TREE_F_SERVED): the attached
  * processes' served roots are directories of the tree (ATTACH's
@@ -614,8 +614,15 @@ dq_tree_ident(struct dq_tree *t, const struct dq_tree_res *res,
 	else {
 		/* The presented mount is "/": a prefix of every name. */
 		strlcpy(sfs.f_mntonname, "/", sizeof(sfs.f_mntonname));
+		/*
+		 * pathconf(2) values for every type but a symbolic link, as
+		 * dq_ident_from_lstat gives them: fpathconf(2) answers through
+		 * the O_PATH descriptor's vnode.  A directory without them
+		 * makes pathconf(2) EINVAL (sysconf(_SC_TTY_NAME_MAX) asks
+		 * "/dev/").
+		 */
 		if (dq_ident_from_stat(ident, res->tr_name, &res->tr_st, &sfs,
-		    S_ISREG(res->tr_st.st_mode) ? fd : -1) != 0)
+		    S_ISLNK(res->tr_st.st_mode) ? -1 : fd) != 0)
 			error = errno;
 	}
 	close(fd);
@@ -688,8 +695,9 @@ dq_tree_reply_fd(struct dq_tree *t, uint64_t evid, const struct dq_tree_res *res
 		fd = openat(t->t_rootfd, res->tr_rel, O_PATH | O_NOFOLLOW |
 		    DQ_TREE_O);
 		n = fd < 0 ? -1 : readlinkat(fd, "", tgt, sizeof(tgt) - 1);
-		if (n <= 0) {
-			error = n < 0 ? errno : EINVAL;
+		/* An empty target is a link too (readlink(2) returns 0). */
+		if (n < 0) {
+			error = errno;
 			if (fd >= 0)
 				close(fd);
 			return (dq_reply_resolve_errno(t->t_q, evid, error));
@@ -1194,6 +1202,18 @@ dq_tree_resolve(struct dq_tree *t, const struct dq_event *ev)
 			goto out;
 		}
 		/*
+		 * O_EXEC, with or without O_PATH: a served file cannot be
+		 * executed (the kernel refuses FEXEC of one, and fexecve(2)
+		 * needs a vnode), so where exec runs the backing binary the
+		 * descriptor for fexecve(2) is the backing file's too, with
+		 * the real open's VEXEC check.
+		 */
+		if ((flags & O_EXEC) != 0 &&
+		    (t->t_flags & DQ_TREE_F_EXEC_REAL) != 0) {
+			ret = dq_tree_real(t, ev->de_id, rb, norm);
+			goto out;
+		}
+		/*
 		 * O_TRUNC is applied by the kernel through the object after
 		 * its access check (a SETATTR); the backing file opens for
 		 * writing when the open writes or truncates.
@@ -1254,8 +1274,9 @@ dq_tree_resolve(struct dq_tree *t, const struct dq_event *ev)
 			break;
 		}
 		n = dq_tree_readlink(t, res->tr_rel, tgt, sizeof(tgt) - 1);
-		if (n <= 0) {
-			error = n < 0 ? errno : EINVAL;
+		/* An empty target: LINK of 0 bytes, as readlink(2) gives. */
+		if (n < 0) {
+			error = errno;
 			break;
 		}
 		tgt[n] = '\0';
