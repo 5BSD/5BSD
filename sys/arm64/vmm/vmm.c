@@ -1205,6 +1205,9 @@ vm_handle_wfi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 		if (vcpu_should_yield(vcpu))
 			break;
 
+		if (vcpu_debugged(vcpu))
+			break;
+
 		vcpu_require_state_locked(vcpu, VCPU_SLEEPING);
 		/*
 		 * XXX msleep_spin() cannot be interrupted by signals so
