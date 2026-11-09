@@ -379,3 +379,15 @@ exclude SKIP hypertrace/ustack/tst.spin.ksh
 
 # https://bugs.freebsd.org/237641
 exclude SKIPCI hypertrace/misc/tst.dynopt.d
+
+# A probe fired by a direct dtrace_probe() call, such as BEGIN, has no
+# arguments beyond arg4.  amd64 and i386 read whatever lies on the stack above
+# dtrace_probe(); other architectures report an illegal operation.
+case "${MACHINE_CPUARCH}" in
+""|amd64|i386)
+	;;
+*)
+	exclude EXFAIL common/builtinvar/tst.arg1to8.d
+	exclude EXFAIL hypertrace/builtinvar/tst.arg1to8.d
+	;;
+esac
