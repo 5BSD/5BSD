@@ -38,7 +38,8 @@
 
 #pragma D option quiet
 
-#if defined(__i386) || defined(__amd64)
+/* DTrace permits unaligned loads where the hardware does (DTRACE_ALIGNCHECK). */
+#if defined(__i386) || defined(__amd64) || defined(__aarch64__)
 #define __x86 1
 #endif
 
@@ -64,8 +65,8 @@ BEGIN
 	printf("*r: 0x%x\n", *r);
 
 	/*
-	 * On x86, the above unaligned memory accesses are allowed and should
-	 * not result in the ERROR probe firing.
+	 * On x86 and arm64, the above unaligned memory accesses are allowed
+	 * and should not result in the ERROR probe firing.
 	 */
 #ifdef __x86
 	exit(1);
