@@ -1,0 +1,10 @@
+# WITNESS lock order reversals that are known false positives. vm-provider.sh
+# does not stop a run for a reversal whose report (the two lock lines and both
+# stacks) matches one of these extended regular expressions; it reports it as
+# KNOWN_LOR instead. Every entry names its analysis. Keep this list short: an
+# entry hides every reversal it matches.
+
+# unionfs stacked over another filesystem: unmounting or looking up through
+# the stack records both orders between different vnodes of one WITNESS class
+# (5bsd-issues 2026-11-08-unionfs-fdescfs-unmount-witness-fp.md).
+unionfs_(root|lock|nodeget|lookup|unmount)
