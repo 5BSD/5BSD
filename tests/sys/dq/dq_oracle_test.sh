@@ -9,9 +9,9 @@
 # their output and exit status must agree, and dqpass must report no
 # dropped, failed-closed or unmarked consultation (it exits 125 if so).
 #
-# suites: the kyua suites named in DQ_ORACLE_SUITES (default sys/file and
-# sys/kern/execve) run under dqpass and unattached; the per-case results
-# must agree, except the cases dqpass.expected lists (I5, jail, setcred,
+# suites: the kyua suites named in DQ_ORACLE_SUITES (default sys/file,
+# sys/kern/execve and sys/dq_regress) run under dqpass and unattached;
+# the per-case results must agree, except the cases dqpass.expected lists (I5, jail, setcred,
 # fplookup, core dumps).
 #
 
@@ -124,7 +124,7 @@ suites_body()
 	fi
 	sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' \
 	    "$(atf_get_srcdir)/dqpass.expected" > "${expected}"
-	: ${DQ_ORACLE_SUITES:="sys/file sys/kern/execve"}
+	: ${DQ_ORACLE_SUITES:="sys/file sys/kern/execve sys/dq_regress"}
 	for suite in ${DQ_ORACLE_SUITES}; do
 		kf="/usr/tests/${suite}/Kyuafile"
 		if [ ! -f "${kf}" ]; then
