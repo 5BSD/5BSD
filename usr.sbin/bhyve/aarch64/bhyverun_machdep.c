@@ -498,12 +498,21 @@ bhyve_init_platform_late(struct vmctx *ctx, struct vcpu *bsp __unused)
 }
 
 int
-bhyve_resume_powered_cpus(struct vmctx *ctx __unused)
+bhyve_resume_powered_cpus(struct vmctx *ctx)
 {
+	cpuset_t suspended;
 	int error;
 
+	/*
+	 * A powered-on vCPU outside the debug set is already running, and
+	 * resuming it fails; that happens when a suspend failed before it
+	 * took effect.
+	 */
+	if (vm_debug_cpus(ctx, &suspended) != 0)
+		return (-1);
 	for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++) {
-		if (!CPU_ISSET(vcpuid, &running_cpumask))
+		if (!CPU_ISSET(vcpuid, &running_cpumask) ||
+		    !CPU_ISSET(vcpuid, &suspended))
 			continue;
 		error = vm_resume_cpu(fbsdrun_vcpu(vcpuid));
 		if (error != 0)
