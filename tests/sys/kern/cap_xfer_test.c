@@ -9,7 +9,9 @@
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/ioctl.h>
+#include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -17,6 +19,8 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -660,6 +664,266 @@ ATF_TC_BODY(xfer_caps_attenuate_scm_rights, tc)
 
 /* ---- test registration ---- */
 
+/* ---- what an installed descriptor looks like, kind by kind ---- */
+
+/*
+ * For each kind of descriptor: what F_GETFD and F_GETFL say right after
+ * it is made, whether dup(2) works and what the copy's flags are,
+ * whether a fork(2) child and a program it then execs still have the
+ * number, whether SCM_RIGHTS accepts it and what flags the received
+ * copy has, and whether the parent can take it with pddupfd(2) and what
+ * flags that copy has.
+ *
+ * The supervisor-control series adds a way to install descriptors into
+ * a process; this table is what every existing way of getting one
+ * produces today, so that a change to the shared install paths shows.
+ * The numbers were recorded by running the case on the kernel before
+ * the series.
+ */
+enum is_kind {
+	IS_REGULAR,
+	IS_PIPE,
+	IS_SOCKET,
+	IS_KQUEUE,
+	IS_DEVNULL,
+	IS_PROCDESC,
+	IS_XFER_NONE,		/* regular file, cap_xfer_limit NONE */
+	IS_CLOEXEC_LOCKED,	/* regular file, cap_cloexec_limit LOCKED */
+	IS_RESTRICTED,		/* both, and cap_clofork_limit LOCKED */
+	IS_NKINDS
+};
+
+/* -1 in a row means "not applicable": the step before it failed. */
+struct is_row {
+	int	fd;		/* the subject's number for it */
+	int	getfd;		/* F_GETFD */
+	int	getfl;		/* F_GETFL */
+	int	dup_errno;	/* dup(2): 0 or errno */
+	int	dup_getfd;	/* F_GETFD of the dup */
+	int	fork_errno;	/* fstat(2) in a fork(2) child: 0 or errno */
+	int	exec_status;	/* sh -c ': <&fd' after fork: 0 has it, 2 not */
+	int	scm_errno;	/* sendmsg(SCM_RIGHTS): 0 or errno */
+	int	scm_getfd;	/* F_GETFD of the received copy */
+	int	pddup_errno;	/* the parent's pddupfd(2): 0 or errno */
+	int	pddup_getfd;	/* F_GETFD of the parent's copy */
+};
+
+static const struct {
+	const char	*name;
+	struct is_row	want;
+} is_table[IS_NKINDS] = {
+	[IS_REGULAR] = { "regular file",
+	    { 0, 0, O_RDWR, 0, 0, 0, 0, 0, 0, 0, FD_CLOEXEC } },
+	[IS_PIPE] = { "pipe",
+	    { 0, 0, O_RDWR, 0, 0, 0, 0, 0, 0, 0, FD_CLOEXEC } },
+	[IS_SOCKET] = { "socket",
+	    { 0, 0, O_RDWR, 0, 0, 0, 0, 0, 0, 0, FD_CLOEXEC } },
+	[IS_KQUEUE] = { "kqueue",
+	    { 0, 0, O_RDWR, 0, 0, EBADF, 2, EOPNOTSUPP, -1, EOPNOTSUPP,
+	    -1 } },
+	[IS_DEVNULL] = { "/dev/null",
+	    { 0, 0, O_RDWR, 0, 0, 0, 0, 0, 0, 0, FD_CLOEXEC } },
+	[IS_PROCDESC] = { "process descriptor",
+	    { 0, 0, O_RDWR, 0, 0, 0, 0, 0, 0, 0, FD_CLOEXEC } },
+	[IS_XFER_NONE] = { "regular file, transfer NONE",
+	    { 0, 0, O_RDWR, 0, 0, 0, 0, ENOTCAPABLE, -1, ENOTCAPABLE,
+	    -1 } },
+	[IS_CLOEXEC_LOCKED] = { "regular file, close-on-exec LOCKED",
+	    { 0, 0, O_RDWR, 0, 0, 0, 2, 0, 0, 0, FD_CLOEXEC } },
+	[IS_RESTRICTED] = { "regular file, NONE and both LOCKED",
+	    { 0, 0, O_RDWR, 0, 0, EBADF, 2, ENOTCAPABLE, -1, ENOTCAPABLE,
+	    -1 } },
+};
+
+/* Runs in the subject process: no ATF calls.  Returns the fd or -1. */
+static int
+is_make(enum is_kind kind)
+{
+	int fd, pd, pfd[2];
+
+	switch (kind) {
+	case IS_REGULAR:
+	case IS_XFER_NONE:
+	case IS_CLOEXEC_LOCKED:
+	case IS_RESTRICTED:
+		fd = open("install_states.file", O_RDWR | O_CREAT, 0600);
+		if (fd == -1)
+			return (-1);
+		if ((kind == IS_XFER_NONE || kind == IS_RESTRICTED) &&
+		    cap_xfer_limit(fd, CAP_XFER_NONE) != 0)
+			return (-1);
+		if ((kind == IS_CLOEXEC_LOCKED || kind == IS_RESTRICTED) &&
+		    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) != 0)
+			return (-1);
+		if (kind == IS_RESTRICTED &&
+		    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) != 0)
+			return (-1);
+		return (fd);
+	case IS_PIPE:
+		if (pipe(pfd) != 0)
+			return (-1);
+		return (pfd[0]);
+	case IS_SOCKET:
+		if (socketpair(PF_UNIX, SOCK_STREAM, 0, pfd) != 0)
+			return (-1);
+		return (pfd[0]);
+	case IS_KQUEUE:
+		return (kqueue());
+	case IS_DEVNULL:
+		return (open("/dev/null", O_RDWR));
+	case IS_PROCDESC:
+		switch (pdfork(&pd, 0)) {
+		case -1:
+			return (-1);
+		case 0:
+			for (;;)
+				pause();
+		}
+		return (pd);
+	default:
+		return (-1);
+	}
+}
+
+/* Run fn-less probes in a fork(2) child; returns its exit status. */
+static int
+is_fork_probe(int fd, bool exec)
+{
+	struct stat sb;
+	char cmd[32];
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid == -1)
+		return (-1);
+	if (pid == 0) {
+		if (!exec)
+			_exit(fstat(fd, &sb) == 0 ? 0 : errno);
+		snprintf(cmd, sizeof(cmd), ": <&%d", fd);
+		execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+		_exit(127);
+	}
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+static void
+is_subject(enum is_kind kind, int rep, int cmd)
+{
+	struct is_row row;
+	int d, fd, sp[2];
+	char c;
+
+	memset(&row, 0xff, sizeof(row));
+	fd = is_make(kind);
+	row.fd = fd;
+	/* sh(1) takes a single digit in "<&n". */
+	if (fd == -1 || fd > 9)
+		goto out;
+	row.getfd = fcntl(fd, F_GETFD);
+	row.getfl = fcntl(fd, F_GETFL);
+	d = dup(fd);
+	row.dup_errno = d == -1 ? errno : 0;
+	if (d != -1) {
+		row.dup_getfd = fcntl(d, F_GETFD);
+		close(d);
+	}
+	row.fork_errno = is_fork_probe(fd, false);
+	row.exec_status = is_fork_probe(fd, true);
+	if (socketpair(PF_UNIX, SOCK_STREAM, 0, sp) != 0) {
+		row.fd = -1;
+		goto out;
+	}
+	row.scm_errno = sendfd(sp[0], fd);
+	if (row.scm_errno == 0 && recvfd(sp[1], &d) == 0) {
+		row.scm_getfd = fcntl(d, F_GETFD);
+		close(d);
+	}
+	close(sp[0]);
+	close(sp[1]);
+out:
+	if (write(rep, &row, sizeof(row)) != sizeof(row))
+		_exit(1);
+	/* Hold the descriptor until the parent has tried pddupfd(2). */
+	(void)read(cmd, &c, 1);
+	_exit(0);
+}
+
+#define	IS_CHECK(field)							\
+	ATF_CHECK_EQ_MSG(want->field, row.field,			\
+	    "%s: " #field " is %d (%#x), expected %d (%#x)", name,	\
+	    row.field, row.field, want->field, want->field)
+
+ATF_TC_WITHOUT_HEAD(install_states_unchanged);
+ATF_TC_BODY(install_states_unchanged, tc)
+{
+	const struct is_row *want;
+	struct is_row row;
+	const char *name;
+	pid_t pid;
+	int cmd[2], copy, kind, pd, rep[2], status;
+	char c;
+
+	for (kind = 0; kind < IS_NKINDS; kind++) {
+		name = is_table[kind].name;
+		want = &is_table[kind].want;
+
+		ATF_REQUIRE_EQ(0, pipe(rep));
+		ATF_REQUIRE_EQ(0, pipe(cmd));
+		pid = pdfork(&pd, 0);
+		ATF_REQUIRE_MSG(pid != -1, "pdfork: %s", strerror(errno));
+		if (pid == 0) {
+			/* Keep the numbers low and the same for every kind. */
+			if (dup2(rep[1], 3) == -1 || dup2(cmd[0], 4) == -1)
+				_exit(1);
+			closefrom(5);
+			is_subject(kind, 3, 4);
+		}
+		close(rep[1]);
+		close(cmd[0]);
+		ATF_REQUIRE_EQ_MSG(sizeof(row), (size_t)read(rep[0], &row,
+		    sizeof(row)), "%s: no report", name);
+		ATF_REQUIRE_MSG(row.fd >= 0 && row.fd <= 9,
+		    "%s: could not be made (fd %d)", name, row.fd);
+
+		errno = 0;
+		copy = pddupfd(pd, row.fd, 0);
+		row.pddup_errno = copy == -1 ? errno : 0;
+		row.pddup_getfd = -1;
+		if (copy != -1) {
+			row.pddup_getfd = fcntl(copy, F_GETFD);
+			ATF_REQUIRE_EQ(0, close(copy));
+		}
+
+		c = 'x';
+		ATF_REQUIRE_EQ(1, write(cmd[1], &c, 1));
+		ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
+		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "%s: subject status %#x", name, status);
+		close(pd);
+		close(rep[0]);
+		close(cmd[1]);
+
+		printf("%s: fd %d getfd %#x getfl %#x dup %d/%#x fork %d "
+		    "exec %d scm %d/%#x pddupfd %d/%#x\n", name, row.fd,
+		    row.getfd, row.getfl, row.dup_errno, row.dup_getfd,
+		    row.fork_errno, row.exec_status, row.scm_errno,
+		    row.scm_getfd, row.pddup_errno, row.pddup_getfd);
+		IS_CHECK(getfd);
+		IS_CHECK(getfl);
+		IS_CHECK(dup_errno);
+		IS_CHECK(dup_getfd);
+		IS_CHECK(fork_errno);
+		IS_CHECK(exec_status);
+		IS_CHECK(scm_errno);
+		IS_CHECK(scm_getfd);
+		IS_CHECK(pddup_errno);
+		IS_CHECK(pddup_getfd);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -686,6 +950,7 @@ ATF_TP_ADD_TCS(tp)
 	/* capability mode */
 	ATF_TP_ADD_TC(tp, xfer_capmode);
 	ATF_TP_ADD_TC(tp, xfer_caps_attenuate_scm_rights);
+	ATF_TP_ADD_TC(tp, install_states_unchanged);
 
 	return (atf_no_error());
 }
