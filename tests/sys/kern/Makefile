@@ -252,6 +252,8 @@ TEST_METADATA.sigsys+=	is_exclusive="true"
 
 ATF_TESTS_SH+=	coredump_phnum_test
 ATF_TESTS_SH+=	dtrace_catalog_test
+ATF_TESTS_SH+=	dtrace_fbt_exclusion_test
+TEST_METADATA.dtrace_fbt_exclusion_test+=	is_exclusive="true"
 ATF_TESTS_SH+=	logsigexit_test
 ATF_TESTS_SH+=	jailmeta
 ATF_TESTS_SH+=	sonewconn_overflow

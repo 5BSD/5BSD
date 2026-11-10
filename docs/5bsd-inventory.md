@@ -966,6 +966,7 @@ This area is everything between `git clone` and a booted 5BSD machine: the build
 | Container proofs | `tools/test/capability-containers` | reclaim/reconcile model | QEMU rig, plane-on (`run-all.sh`) | 14 proofs |
 | Anointments | `tools/tools/anointments` | elevation scenarios | live VM plane-on, manual | 1 driver |
 | DTrace catalog | `tests/sys/kern/dtrace_catalog_test.sh` | shipped D scripts compile | in-session root | 14 scripts |
+| DTrace fbt exclusion | `tests/sys/kern/dtrace_fbt_exclusion_test.sh` | fbt keeps out of DTrace's own modules; every fbt entry probe with a kinst probe | VM root (enables every fbt entry probe) | 2 cases |
 | ktest sglist | `tests/sys/kern/sglist_boundary_test.py` | kernel sglist boundaries | in-session root (kmod) | 1 |
 | Release integrity | `tests/release` | base-integrity tool | in-session | 2 cases |
 

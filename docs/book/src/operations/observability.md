@@ -584,6 +584,7 @@ as on FreeBSD. See [system.Audit](../providers/audit.md).
 | Suite | Where | Needs |
 |---|---|---|
 | `dtrace_catalog_test` | `/usr/tests/sys/kern` | root, kernel providers loaded |
+| `dtrace_fbt_exclusion_test` | `/usr/tests/sys/kern` | root, `kinst.ko` loaded; fails from the probe listing, without enabling a probe, on a kernel whose fbt instruments DTrace's own modules |
 | `bsdinstruments_test`, `hwstat_test`, `bsdtrace_test`, `otelexport_test` | `/usr/tests/usr.sbin/*`, `/usr/tests/lib/libotelexport` | unprivileged for the compile checks; capture cases need Intel PT and root |
 | BSDTrace `policy_test`, `session_test`, `bundle_test` | `/usr/tests/usr.sbin/BSDTrace` | in-session for the parser; a plane-off VM for the session tests |
 
