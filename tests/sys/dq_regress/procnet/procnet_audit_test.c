@@ -29,6 +29,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 
@@ -293,6 +294,110 @@ ATF_TC_CLEANUP(audit_socket, tc)
 	cleanup();
 }
 
+/* The whole text of a record, which check_record() does not look at. */
+static void
+check_text(const struct record *r, const char *re)
+{
+	regex_t rx;
+
+	ATF_REQUIRE(regcomp(&rx, re, REG_EXTENDED | REG_NOSUB) == 0);
+	ATF_CHECK_MSG(regexec(&rx, r->text, 0, NULL, 0) == 0,
+	    "record does not match %s\nrecord: %s", re, r->text);
+	regfree(&rx);
+}
+
+ATF_TC_WITH_CLEANUP(pd_records_exact);
+ATF_TC_HEAD(pd_records_exact, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "pdkill(2), pdwait(2) and exit(2) "
+	    "records of a process no queue is attached to: the exact tokens "
+	    "and no dq token");
+}
+ATF_TC_BODY(pd_records_exact, tc)
+{
+	/* The descriptor, the signal, the target. */
+	static const char *const kill_ok[] = { "header", "argument",
+	    "argument", "process_ex", "subject", "return", "trailer" };
+	/*
+	 * The descriptor, twice: the AUE_PDWAIT conversion runs on into
+	 * the AUE_IOCTL one.  Pinned as it is.
+	 */
+	static const char *const wait_ok[] = { "header", "argument",
+	    "argument", "subject", "return", "trailer" };
+	static const char *const exit_ok[] = { "header", "exit", "subject",
+	    "return", "trailer" };
+	char re[512];
+	struct record r;
+	FILE *pipestream;
+	pid_t child, me;
+	int go[2], pd, status;
+	char c;
+
+	me = getpid();
+	ATF_REQUIRE(pipe(go) == 0);
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child != -1);
+	if (child == 0) {
+		close(go[1]);
+		if (read(go[0], &c, 1) != 1)
+			_exit(1);
+		_exit(11);
+	}
+	close(go[0]);
+
+	pipestream = setup(fds, "pc");
+
+	/*
+	 * Signal 0 through the descriptor: recorded, nothing sent.  In
+	 * each pattern the three fields after the event name are the
+	 * rest of the header (modifier, date, milliseconds), so the
+	 * tokens that follow are the first of the record.
+	 */
+	ATF_REQUIRE(pdkill(pd, 0) == 0);
+	snprintf(re, sizeof(re), "pdkill\\(2\\).*subject,([^,]*,){5}%d,",
+	    (int)me);
+	find_record(pipestream, re, &r);
+	check_record(&r, kill_ok, (int)nitems(kill_ok));
+	snprintf(re, sizeof(re), "pdkill\\(2\\),([^,]*,){3}"
+	    "argument,1,0x%x,fd,argument,2,0x0,signal,"
+	    "process_ex,([^,]*,){5}%d,([^,]*,){3}"
+	    "subject,([^,]*,){5}%d,([^,]*,){3}return,success,0,trailer,",
+	    pd, (int)child, (int)me);
+	check_text(&r, re);
+
+	/* The child's own exit record: status 11, in the token's slot. */
+	c = 'g';
+	ATF_REQUIRE(write(go[1], &c, 1) == 1);
+	snprintf(re, sizeof(re), "exit\\(2\\).*subject,([^,]*,){5}%d,",
+	    (int)child);
+	find_record(pipestream, re, &r);
+	check_record(&r, exit_ok, (int)nitems(exit_ok));
+	snprintf(re, sizeof(re), "exit\\(2\\),([^,]*,){3}exit,[^,]*,0,"
+	    "subject,([^,]*,){5}%d,([^,]*,){3}return,success,0,trailer,",
+	    (int)child);
+	check_text(&r, re);
+
+	ATF_REQUIRE(pdwait(pd, &status, WEXITED, NULL, NULL) == 0);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 11);
+	snprintf(re, sizeof(re), "pdwait\\(2\\).*subject,([^,]*,){5}%d,",
+	    (int)me);
+	find_record(pipestream, re, &r);
+	check_record(&r, wait_ok, (int)nitems(wait_ok));
+	snprintf(re, sizeof(re), "pdwait\\(2\\),([^,]*,){3}"
+	    "argument,1,0x%x,fd,argument,1,0x%x,fd,"
+	    "subject,([^,]*,){5}%d,([^,]*,){3}return,success,0,trailer,",
+	    pd, pd, (int)me);
+	check_text(&r, re);
+
+	fclose(pipestream);
+	close(pd);
+	close(go[1]);
+}
+ATF_TC_CLEANUP(pd_records_exact, tc)
+{
+	cleanup();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -300,5 +405,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, audit_stat);
 	ATF_TP_ADD_TC(tp, audit_rename);
 	ATF_TP_ADD_TC(tp, audit_socket);
+	ATF_TP_ADD_TC(tp, pd_records_exact);
 	return (atf_no_error());
 }
