@@ -7,6 +7,7 @@
 PACKAGE=	tests
 TESTSDIR=	${TESTSBASE}/sys/dq_regress
 
+TESTS_SUBDIRS+=	fdops
 TESTS_SUBDIRS+=	paths
 TESTS_SUBDIRS+=	procnet
 

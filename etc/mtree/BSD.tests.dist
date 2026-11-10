@@ -1014,6 +1014,8 @@
         dq
         ..
         dq_regress
+            fdops
+            ..
             paths
             ..
             procnet

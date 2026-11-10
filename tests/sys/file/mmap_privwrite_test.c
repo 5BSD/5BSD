@@ -52,6 +52,18 @@ check_write_refused(int fd, int flags, int expected)
 		munmap(p, PAGE_SIZE);
 }
 
+/*
+ * A run on a kernel from before the fix (kyua -v
+ * test_suites.FreeBSD.base_panics=yes) skips the cases that panic it.
+ */
+static void
+skip_on_base_panics(const atf_tc_t *tc)
+{
+
+	if (atf_tc_get_config_var_as_bool_wd(tc, "base_panics", false))
+		atf_tc_skip("asserts on a kernel without the fix");
+}
+
 ATF_TC_WITHOUT_HEAD(regular_file);
 ATF_TC_BODY(regular_file, tc)
 {
@@ -100,6 +112,7 @@ ATF_TC_BODY(shm, tc)
 {
 	int fd;
 
+	skip_on_base_panics(tc);
 	fd = shm_open(SHM_ANON, O_RDWR, 0600);
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_EQ(0, ftruncate(fd, PAGE_SIZE));
