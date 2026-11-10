@@ -1556,7 +1556,7 @@ static int64_t
 dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 {
 	uintptr_t pos = (uintptr_t)input;
-	uint64_t val = 0, maxval;
+	uint64_t val = 0;
 	int x;
 	boolean_t neg = B_FALSE;
 	char c, cc, ccc;
@@ -1597,8 +1597,6 @@ dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 		if (DTRACE_CPUFLAG_ISSET(CPU_DTRACE_FAULT))
 			return (0);
 	}
-	maxval = neg ? (uint64_t)INT64_MAX + 1 : INT64_MAX;
-
 	/*
 	 * Check for an explicit hexadecimal prefix ("0x" or "0X") and skip it
 	 * if present.
@@ -1619,13 +1617,12 @@ dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 	}
 
 	/*
-	 * Read in contiguous digits until the first non-digit character.
+	 * Read in contiguous digits until the first non-digit character.  An
+	 * out-of-range value wraps modulo 2^64, as in illumos and FreeBSD;
+	 * accumulate unsigned so that the wrap is defined.
 	 */
 	for (; c != '\0' && lisalnum(c) && (x = DIGIT(c)) < base;) {
-		if (val > (maxval - x) / base)
-			val = maxval;
-		else
-			val = val * base + x;
+		val = val * base + x;
 		if (++pos == end)
 			break;
 		c = dtrace_load8(vmhdl, pos);
@@ -1633,9 +1630,7 @@ dtrace_strtoll(const void *vmhdl, char *input, int base, size_t limit)
 			return (0);
 	}
 
-	if (neg && val == (uint64_t)INT64_MAX + 1)
-		return (INT64_MIN);
-	return (neg ? -(int64_t)val : (int64_t)val);
+	return ((int64_t)(neg ? 0 - val : val));
 }
 
 /*
