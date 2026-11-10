@@ -193,6 +193,28 @@ fbt_doubletrap(void)
 	}
 }
 
+/*
+ * Does the file hold a module that declares a dependency on the dtrace
+ * module?  This looks at what the file declares with MODULE_DEPEND() and not
+ * at the files it was linked against: when DTrace is compiled into the
+ * kernel the dependency is satisfied by the kernel, and the only file that a
+ * provider module depends on is "kernel".
+ */
+static bool
+fbt_depends_on_dtrace(modctl_t *lf)
+{
+	struct mod_metadata **start, **stop, **mdp;
+
+	if (linker_file_lookup_set(lf, MDT_SETNAME, &start, &stop, NULL) != 0)
+		return (false);
+	for (mdp = start; mdp < stop; mdp++) {
+		if ((*mdp)->md_type == MDT_DEPEND &&
+		    strcmp((*mdp)->md_cval, "dtrace") == 0)
+			return (true);
+	}
+	return (false);
+}
+
 static void
 fbt_provide_module(void *arg, modctl_t *lf)
 {
@@ -221,6 +243,23 @@ fbt_provide_module(void *arg, modctl_t *lf)
 	for (i = 0; i < lf->ndeps; i++)
 		if (strncmp(lf->deps[i]->filename, "dtrace", 6) == 0)
 			return;
+
+	/*
+	 * The same rule when DTrace is compiled into the kernel, where the
+	 * test above cannot match: kinst.ko, fasttrap.ko and hypertrace.ko
+	 * then depend on the file "kernel" only.  They hold breakpoint
+	 * handlers and code that runs in probe context, and an fbt probe
+	 * there re-enters DTrace from inside DTrace.
+	 *
+	 * Two files declare the dependency and stay eligible.  The kernel
+	 * does once a provider is compiled into it; fbt_excluded() keeps fbt
+	 * out of the DTrace code in it.  vmm uses DTrace, for the HyperTrace
+	 * configuration lock, and is not a part of it; its fbt probes are in
+	 * use for bhyve debugging.
+	 */
+	if (lf != linker_kernel_file && strcmp(modname, "vmm") != 0 &&
+	    fbt_depends_on_dtrace(lf))
+		return;
 
 	if (lf->fbt_nentries) {
 		/*
