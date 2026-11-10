@@ -604,6 +604,9 @@ struct vm_hdl {
 	struct vm_guest_paging *paging;
 	int vcpuid;
 	lwpid_t tid;
+	/* Guest registers read before the probe, with a valid bit for each. */
+	uint64_t regs_valid;
+	uint64_t regs[VM_REG_LAST];
 };
 
 /*

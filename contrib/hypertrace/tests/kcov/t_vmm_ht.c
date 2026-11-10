@@ -451,16 +451,33 @@ case_reset(void)
 static void
 case_hypercall_probe(void)
 {
+	/* The registers a D program can name (dtrace_guest_reg_name()). */
+	static const int named[] = {
+		VM_REG_GUEST_RAX, VM_REG_GUEST_RBX, VM_REG_GUEST_RCX,
+		VM_REG_GUEST_RDX, VM_REG_GUEST_RSI, VM_REG_GUEST_RDI,
+		VM_REG_GUEST_RBP, VM_REG_GUEST_R8, VM_REG_GUEST_R9,
+		VM_REG_GUEST_R10, VM_REG_GUEST_R11, VM_REG_GUEST_R12,
+		VM_REG_GUEST_R13, VM_REG_GUEST_R14, VM_REG_GUEST_R15,
+		VM_REG_GUEST_RSP, VM_REG_GUEST_RIP, VM_REG_GUEST_RFLAGS,
+		VM_REG_GUEST_ES, VM_REG_GUEST_CS, VM_REG_GUEST_SS,
+		VM_REG_GUEST_DS, VM_REG_GUEST_FS, VM_REG_GUEST_GS,
+	};
 	struct vm *vm;
 	struct vcpu *vcpu;
+	struct khx_vcpu *kv;
 	hypertrace_args_t *a;
-	uint64_t *pcs;
+	uint64_t *pcs, expected;
 	long probes;
+	int reg;
 
 	khx_host_case("hypercall-probe");
 	guest_map();
 	vm = vm_new("probevm");
 	vcpu = vcpu_new(vm, 1, 0);
+	kv = khx_vmm_vcpu(vcpu);
+	/* hypercall() sets the registers of the call itself. */
+	for (reg = 0; reg < VM_REG_LAST; reg++)
+		kv->regs[reg] = 0x5000 + reg;
 
 	/* hypercall_dtrace_probe(id 42, &args, tid 900) from ring 0. */
 	a = guest_args(GLA_KDATA + 0x100);
@@ -489,6 +506,30 @@ case_hypercall_probe(void)
 	 * the probe runs. */
 	KHX_EQ(khx_ht_last.rax, HYPERCALL_DTRACE_PROBE);
 	KHX_EQ(khx_ht_last.getreg_bad, EINVAL);
+	/* The registers were read before the probe: it sees those a D program
+	 * can name, no others, and does not go back to the backend. */
+	expected = 0;
+	for (size_t i = 0; i < nitems(named); i++) {
+		expected |= (uint64_t)1 << named[i];
+		/* The call's result has since replaced its number in RAX. */
+		if (named[i] != VM_REG_GUEST_RAX)
+			KHX_EQ(khx_ht_last.regs[named[i]], kv->regs[named[i]]);
+	}
+	KHX_EQ(khx_ht_last.regs[VM_REG_GUEST_RAX], HYPERCALL_DTRACE_PROBE);
+	KHX_EQ(khx_ht_last.regs_ok, expected);
+	KHX_EQ(khx_ht_last.getreg_backend, 0);
+	/* A register that cannot be read is missing from the probe's view;
+	 * the probe still fires. */
+	kv->getreg_error = EIO;
+	kv->getreg_only = VM_REG_GUEST_FS + 1;
+	KHX_EQ(hypercall(vcpu, HYPERCALL_DTRACE_PROBE, 42, GLA_KDATA + 0x100,
+	    900, 0), HYPERCALL_RET_SUCCESS);
+	kv->getreg_error = kv->getreg_only = 0;
+	KHX_EQ(khx_ht_probes, probes + 2);
+	KHX_EQ(khx_ht_last.regs_ok,
+	    expected & ~((uint64_t)1 << VM_REG_GUEST_FS));
+	KHX_EQ(khx_ht_last.getreg_backend, 0);
+	probes++;
 	KHX_EQ(khx_ht_last.pcstack_count, 2);
 	KHX_EQ(khx_ht_last.copyin_error, 0);
 	KHX_EQ(khx_ht_last.pc0, 0xffffffff80123456ULL);
@@ -775,20 +816,23 @@ case_accessors(void)
 	KHX_EQ(vmm_getepoch(&h), vm_get_hypertrace_epoch(vm));
 	KHX_EQ(strcmp(vmm_getname(&h), "accvm"), 0);
 
-	/* Registers. */
-	khx_vmm_vcpu(vcpu)->regs[VM_REG_GUEST_RBP] = 0xbeef;
+	/* Registers: the handle's snapshot alone, never the backend. */
+	khx_vmm_vcpu(vcpu)->regs[VM_REG_GUEST_RBP] = 0xdead;
+	khx_vmm_vcpu(vcpu)->getreg_error = EIO;
+	KHX_EQ(vmm_getreg(&h, VM_REG_GUEST_RBP, &v), EINVAL);
+	h.regs[VM_REG_GUEST_RBP] = 0xbeef;
+	h.regs_valid = (uint64_t)1 << VM_REG_GUEST_RBP;
 	KHX_EQ(vmm_getreg(&h, VM_REG_GUEST_RBP, &v), 0);
 	KHX_EQ(v, 0xbeef);
+	KHX_EQ(vmm_getreg(&h, VM_REG_GUEST_RAX, &v), EINVAL);
+	khx_vmm_vcpu(vcpu)->getreg_error = 0;
 	KHX_EQ(vmm_getreg(NULL, VM_REG_GUEST_RBP, &v), EINVAL);
-	bad = h;
-	bad.vcpu = NULL;
-	KHX_EQ(vmm_getreg(&bad, VM_REG_GUEST_RBP, &v), EINVAL);
 	KHX_EQ(vmm_getreg(&h, VM_REG_GUEST_RBP, NULL), EINVAL);
+	h.regs_valid = ~(uint64_t)0;
 	KHX_EQ(vmm_getreg(&h, -1, &v), EINVAL);
 	KHX_EQ(vmm_getreg(&h, VM_REG_LAST, &v), EINVAL);
-	khx_vmm_vcpu(vcpu)->getreg_error = EIO;
-	KHX_EQ(vmm_getreg(&h, VM_REG_GUEST_RBP, &v), EIO);
-	khx_vmm_vcpu(vcpu)->getreg_error = 0;
+	bad = h;
+	bad.vcpu = NULL;
 
 	/* Kernel copyin: argument validation. */
 	KHX_EQ(vmm_guest_copyin(NULL, GLA_KDATA, buf, 8), EINVAL);
@@ -846,8 +890,13 @@ case_accessors(void)
 	bad = h;
 	bad.vcpu = NULL;
 	KHX_EQ(vmm_guest_user_copyin(&bad, GLA_USER, &v, 8), EINVAL);
+	/* No address, or a read that would wrap. */
+	KHX_EQ(vmm_guest_user_copyin(&h, 0, &v, 8), EINVAL);
+	KHX_EQ(vmm_guest_user_copyin(&h, UINT64_MAX - 6, &v, 8), EINVAL);
 	h.paging = &flat;
 	KHX_EQ(vmm_guest_user_copyin(&h, GLA_USER, &v, 8), EOPNOTSUPP);
+	/* Without paging there is no user address to refuse. */
+	KHX_EQ(vmm_guest_user_copyin(&h, 0, &v, 8), EOPNOTSUPP);
 
 	/* User copyout writes only pages the guest user could write. */
 	KHX_EQ(vmm_guest_user_copyout(&h, GLA_USER, &v, 8), EOPNOTSUPP);

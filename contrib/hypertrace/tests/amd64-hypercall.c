@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -8,7 +9,6 @@
 #define HYPERCALL_RET_ERROR -1
 #define HYPERTRACE_ARGS_WALLTIME_VALID 1ULL
 #define HYPERTRACE_STACK_MAX_FRAMES 64U
-#define VM_REG_GUEST_DS 1
 #define KASSERT(condition, message) assert(condition)
 
 typedef int hypertrace_id_t;
@@ -22,10 +22,24 @@ typedef struct { uint64_t value; unsigned htr_curcpu;
 struct vm { int unused; };
 struct vcpu { struct vm *vm; unsigned id; };
 struct vm_guest_paging { void *pmap; };
+typedef unsigned int u_int;
+#define nitems(x) (sizeof((x)) / sizeof((x)[0]))
+enum {
+	VM_REG_GUEST_RAX, VM_REG_GUEST_RBX, VM_REG_GUEST_RCX, VM_REG_GUEST_RDX,
+	VM_REG_GUEST_RSI, VM_REG_GUEST_RDI, VM_REG_GUEST_RBP, VM_REG_GUEST_R8,
+	VM_REG_GUEST_R9, VM_REG_GUEST_R10, VM_REG_GUEST_R11, VM_REG_GUEST_R12,
+	VM_REG_GUEST_R13, VM_REG_GUEST_R14, VM_REG_GUEST_R15, VM_REG_GUEST_CR0,
+	VM_REG_GUEST_CR3, VM_REG_GUEST_CR4, VM_REG_GUEST_DR7, VM_REG_GUEST_RSP,
+	VM_REG_GUEST_RIP, VM_REG_GUEST_RFLAGS, VM_REG_GUEST_ES, VM_REG_GUEST_CS,
+	VM_REG_GUEST_SS, VM_REG_GUEST_DS, VM_REG_GUEST_FS, VM_REG_GUEST_GS,
+	VM_REG_LAST
+};
 struct vm_hdl {
 	struct vcpu *vcpu;
 	struct vm_guest_paging *paging;
 	uint64_t tid;
+	uint64_t regs_valid;
+	uint64_t regs[VM_REG_LAST];
 };
 struct seg_desc { uintptr_t base; };
 
@@ -67,6 +81,19 @@ PMAP_UNLOCK(pmap_t pmap)
 	assert(pmap != NULL && pmap_locked);
 	pmap_locked = 0;
 }
+/* The guest register file; FS cannot be read. */
+static int register_reads;
+static int
+vm_get_register(struct vcpu *vcpu, int reg, uint64_t *value)
+{
+	assert(vcpu != NULL && !pmap_locked);
+	register_reads++;
+	if (reg == VM_REG_GUEST_FS)
+		return (EINVAL);
+	*value = 0x1000 + reg;
+	return (0);
+}
+/* REGS */
 static int
 vm_get_seg_desc(struct vcpu *vcpu, int reg, struct seg_desc *desc)
 {
@@ -111,6 +138,23 @@ hypertrace_probe(const void *handle, hypertrace_id_t id,
 	    args->htr_present == HYPERTRACE_ARGS_WALLTIME_VALID);
 	assert(vmhdl->paging != NULL && vmhdl->paging->pmap != NULL);
 	assert(pmap_locked);
+	/* Registers were read before the probe; DIF reads only the copy. */
+	{
+		uint64_t value;
+		int reads = register_reads;
+
+		assert(dtrace_vmm_getreg(handle, VM_REG_GUEST_RIP, &value) == 0 &&
+		    value == 0x1000 + VM_REG_GUEST_RIP);
+		assert(dtrace_vmm_getreg(handle, VM_REG_GUEST_GS, &value) == 0 &&
+		    value == 0x1000 + VM_REG_GUEST_GS);
+		assert(dtrace_vmm_getreg(handle, VM_REG_GUEST_FS, &value) ==
+		    EINVAL);
+		assert(dtrace_vmm_getreg(handle, VM_REG_GUEST_CR3, &value) ==
+		    EINVAL);
+		assert(dtrace_vmm_getreg(handle, -1, &value) == EINVAL &&
+		    dtrace_vmm_getreg(handle, VM_REG_LAST, &value) == EINVAL);
+		assert(register_reads == reads);
+	}
 	observed_tid = vmhdl->tid;
 	firings++;
 	return (probe_error);

@@ -29,6 +29,10 @@ subprocess.run([sys.executable,str(root/'tests/probe-dispatch.py')],
                check=True,timeout=30)
 subprocess.run([sys.executable,str(root/'tests/amd64-hypercall.py')],
                check=True,timeout=30)
+subprocess.run([sys.executable,str(root/'tests/guest-reg-snapshot.py')],
+               check=True,timeout=30)
+subprocess.run([sys.executable,str(root/'tests/arm64-probe-entry.py')],
+               check=True,timeout=30)
 work=out/'patched';shutil.copytree(root/'upstream',work)
 for name in (root/'patches/series').read_text().splitlines():
  if name and not name.startswith('#'):

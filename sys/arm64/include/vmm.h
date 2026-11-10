@@ -237,6 +237,9 @@ struct vm_hdl {
 	struct vm_guest_paging *paging;
 	struct pmap *pmap;		/* locked across the probe */
 	lwpid_t tid;
+	/* Guest registers read before the probe, with a valid bit for each. */
+	uint64_t regs_valid;
+	uint64_t regs[VM_REG_LAST];
 };
 
 extern uint64_t (*vmm_getepoch)(const void *);

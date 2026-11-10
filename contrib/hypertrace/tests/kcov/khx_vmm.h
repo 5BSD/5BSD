@@ -54,6 +54,7 @@ extern uint16_t khx_ht_release_fail_vmid; /* ... only for this VM (0: any) */
 extern int khx_ht_probe_error;		/* hypertrace_probe result */
 extern long khx_ht_live;		/* allocated, unreleased identities */
 extern long khx_ht_probes;
+extern long khx_vmm_getreg_calls;	/* vmmops_getreg calls */
 struct khx_ht_probe_record {
 	int id;
 	uint16_t vmid;			/* vmm_getid(handle) */
@@ -62,6 +63,9 @@ struct khx_ht_probe_record {
 	char name[64];			/* vmm_getname(handle) */
 	uint64_t rax;			/* vmm_getreg(handle, RAX) */
 	int getreg_bad;			/* vmm_getreg(handle, -1) */
+	uint64_t regs[64];		/* vmm_getreg(handle, n) ... */
+	uint64_t regs_ok;		/* ... for each n that succeeded */
+	long getreg_backend;		/* backend reads made by the above */
 	u_int vcpu;			/* htr_curcpu */
 	uintptr_t args0, args9;
 	uint64_t pcstack_count;
