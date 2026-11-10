@@ -422,7 +422,8 @@ disc1:
 # empty root.  Media assembly has to be idempotent.
 	rm -rf ${.TARGET}/usr/5bsd-packages ${.OBJDIR}/pkgdb-disc1
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
-	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua disc \
+	env PKG_CMD=${PKG_CMD:Q} MEDIA_KERNEL=${KERNCONF:U:[1]:Q} \
+	    ${.CURDIR}/scripts/pkgbase-stage.lua disc \
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/5bsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-disc1
@@ -567,7 +568,8 @@ dvd:
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
-	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua dvd \
+	env PKG_CMD=${PKG_CMD:Q} MEDIA_KERNEL=${KERNCONF:U:[1]:Q} \
+	    ${.CURDIR}/scripts/pkgbase-stage.lua dvd \
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/5bsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-dvd
