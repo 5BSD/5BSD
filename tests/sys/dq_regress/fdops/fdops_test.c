@@ -121,7 +121,12 @@
  * Differences that exist but that a native, unprivileged-or-root program
  * cannot see without a MAC policy (D235's ordering; fchmod/fchown MAC
  * errno on a ptmx master; the "MAC errno first" part of D230) are not
- * cells here: they need a denying mac_test policy.
+ * cells here: they need a denying mac_test policy.  One such difference
+ * needs no denial and shows once any policy registering
+ * mpo_file_check_fcntl is loaded (mac_test, which an earlier test in a
+ * full run may leave loaded): fcntl(badfd, ...) answers EBADF ahead of
+ * the checks base made before the descriptor (declared in D79).  The
+ * fcntl_kinfo row probes for that hook and expects D79's order only then.
  *
  * NOT COVERED, AND WHY.
  *  - Linux-ABI rows (linux_file.c, linux_stats.c, linux_xattr.c,
@@ -329,6 +334,7 @@ static bool	g_tmpfs;
 static char	g_tmpfs_err[128];
 static bool	g_pre1c;
 static bool	g_invariants;
+static bool	g_fcntl_hook;
 static int	g_seq;
 static const char *g_row = "?";
 static int	g_cells;
@@ -370,6 +376,34 @@ sysctl_bool(const char *name)
 	return (sysctlbyname(name, &v, &len, NULL, 0) == 0 && v != 0);
 }
 
+/*
+ * Whether a MAC policy registering mpo_file_check_fcntl is loaded.  With
+ * one, kern_fcntl's prologue (kern_descrip.c:649-657) looks the
+ * descriptor up before every command, so a bad descriptor answers EBADF
+ * where base checked the command first (declared in D79).  mac_test is
+ * the in-tree registrant and stays loaded once a test loads it; its
+ * counter moving across one fcntl(2) proves the hook runs.  Without it
+ * (and on base, which has no such hook) base's order is pinned.
+ */
+static bool
+fcntl_hook_registered(void)
+{
+	static const char ctr[] = "security.mac.test.counter.file_check_fcntl";
+	size_t len;
+	int after, before, fd;
+
+	len = sizeof(before);
+	if (sysctlbyname(ctr, &before, &len, NULL, 0) != 0)
+		return (false);
+	fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	(void)fcntl(fd, F_GETFD);
+	(void)close(fd);
+	len = sizeof(after);
+	ATF_REQUIRE(sysctlbyname(ctr, &after, &len, NULL, 0) == 0);
+	return (after != before);
+}
+
 static void
 fx_setup(const atf_tc_t *tc, const char *row)
 {
@@ -380,6 +414,7 @@ fx_setup(const atf_tc_t *tc, const char *row)
 	ATF_REQUIRE(realpath(".", g_cwd) != NULL);
 	g_pre1c = atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false);
 	g_invariants = sysctl_bool("kern.features.invariants");
+	g_fcntl_hook = fcntl_hook_registered();
 	ATF_REQUIRE(mkdir("tmpfs", 0755) == 0);
 	g_tmpfs = mount_fs("tmpfs", "tmpfs", NULL) == 0;
 	if (!g_tmpfs)
@@ -2065,6 +2100,7 @@ row_fcntl_kinfo(struct kinst *ki)
 	cap_rights_t need;
 	const char *why;
 	struct want w;
+	bool hooked;
 	int e, t;
 
 	e = fget_err(ki, cap_rights_init(&need, CAP_FCNTL));
@@ -2082,18 +2118,28 @@ row_fcntl_kinfo(struct kinst *ki)
 		    "base %d (%s)", g_row, ki->k->name, kif.kf_type, t, why);
 	}
 
+	/*
+	 * Base fails the cells below before the descriptor.  Under a policy
+	 * registering file_check_fcntl the prologue's lookup comes first
+	 * (D79), which only a bad descriptor can see.
+	 */
+	hooked = g_fcntl_hook && HAS(ki, A_BAD);
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = 1;
 	(void)cell("kinfo_bad_size", ki, NULL, CALL(fcntl(ki->fd, F_KINFO,
-	    &kif)), want_err(EINVAL, "kern_descrip.c:1101-1106 size, before "
-	    "the descriptor"));
+	    &kif)), hooked ? want_err(EBADF, "D79: file_check_fcntl prologue "
+	    "lookup, kern_descrip.c:649-652") : want_err(EINVAL,
+	    "kern_descrip.c:1101-1106 size, before the descriptor"));
 
 	/* The kernel-only Linux hint commands are not fcntl(2) commands. */
 	(void)cell("rw_hint_cmd", ki, NULL, CALL(fcntl(ki->fd, 0x1000, 0)),
-	    want_err(EINVAL, "kern_descrip.c:1129-1131 unknown command, "
-	    "before the descriptor"));
+	    hooked ? want_err(EBADF, "D79: file_check_fcntl prologue lookup, "
+	    "kern_descrip.c:649-652") : want_err(EINVAL, "kern_descrip.c:"
+	    "1129-1131 unknown command, before the descriptor"));
 	(void)cell("set_rw_hint_cmd", ki, NULL, CALL(fcntl(ki->fd, 0x1001,
-	    0)), want_err(EINVAL, "kern_descrip.c:1129-1131 unknown command"));
+	    0)), hooked ? want_err(EBADF, "D79: file_check_fcntl prologue "
+	    "lookup, kern_descrip.c:649-652") : want_err(EINVAL,
+	    "kern_descrip.c:1129-1131 unknown command"));
 }
 
 /* ------------------------------------------------------------------ */
