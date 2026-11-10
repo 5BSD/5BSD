@@ -66,7 +66,29 @@ for plist in "$stage"/*.plist; do
 done
 [ -s "$work/staged" ] || { echo "no staged world package plists" >&2; exit 1; }
 LC_ALL=C sort "$work/staged" > "$work/staged.sorted"
-LC_ALL=C comm -23 "$work/staged.sorted" "$work/sorted" > "$work/missing"
+LC_ALL=C comm -23 "$work/staged.sorted" "$work/sorted" > "$work/unpackaged"
+# A plist of directories alone, for a package that exists in the tree but is
+# not built for this target, carries no payload.  The include mtree creates
+# /usr/include/libipt for libipt-dev on every architecture, while the libipt
+# package is built only on amd64.  Accept exactly that case; an orphan for a
+# package that exists nowhere (a mistyped tag) still fails, directories or not.
+: > "$work/inactive"
+for makefile in "$packages"/*/Makefile; do
+    directory=${makefile%/Makefile}
+    directory=${directory##*/}
+    grep -qxF "$directory" "$work/subdirs" && continue
+    "$@" -C "$packages/$directory" -V '${_ALLPACKAGES}' > "$work/names.raw"
+    names < "$work/names.raw" >> "$work/inactive"
+done
+: > "$work/missing"
+while IFS= read -r name; do
+    if ! grep -qv '^@dir([^)]*) ' "$stage/$name.plist" &&
+        grep -qxF "$name" "$work/inactive"; then
+        echo "$name: package not built for this target (only @dir entries staged)" >&2
+    else
+        printf '%s\n' "$name" >> "$work/missing"
+    fi
+done < "$work/unpackaged"
 if [ -s "$work/missing" ]; then
     echo "staged payloads lack active world package targets:" >&2
     cat "$work/missing" >&2
