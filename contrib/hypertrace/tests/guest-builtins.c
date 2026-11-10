@@ -31,7 +31,6 @@ typedef struct { struct { int dtdt_kind; } dtdo_rtype; } dtrace_difo_t;
 #define B_TRUE true
 #define ipaddr_t in_addr_t
 #define DTRACE_V4MAPPED_OFFSET (sizeof(uint32_t) * 3)
-#define ASSERT assert
 #define CPU_DTRACE_NOSCRATCH 4
 #define CPU_DTRACE_ILLOP 8
 #define CPU_DTRACE_KPRIV 16

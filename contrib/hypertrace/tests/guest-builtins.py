@@ -21,8 +21,9 @@ def function(name):
     if not match: raise SystemExit('Missing function: ' + name)
     end = source.index('\n}', match.start()) + 2
     return source[match.start():end]
+# pagewalk.c, included first, defines ASSERT and dtrace_strncmp().
 parts = [function(name) for name in ('dtrace_canload_tagged', 'dtrace_guest_user_copy',
-         'dtrace_strtoll', 'dtrace_strncmp', 'dtrace_strlen', 'dtrace_strjoin',
+         'dtrace_strtoll', 'dtrace_strlen', 'dtrace_strjoin',
          'dtrace_store_by_ref')]
 start = source.index('typedef enum dtrace_json_state {')
 end = source.index('} dtrace_json_state_t;', start) + len('} dtrace_json_state_t;')

@@ -50,6 +50,23 @@ vmspace_pmap(struct vm *vm)
 {
 	return (vm);
 }
+typedef void *pmap_t;
+static int pmap_locked, pmap_contended;
+static int
+PMAP_TRYLOCK(pmap_t pmap)
+{
+	assert(pmap != NULL && !pmap_locked);
+	if (pmap_contended)
+		return (0);
+	pmap_locked = 1;
+	return (1);
+}
+static void
+PMAP_UNLOCK(pmap_t pmap)
+{
+	assert(pmap != NULL && pmap_locked);
+	pmap_locked = 0;
+}
 static int
 vm_get_seg_desc(struct vcpu *vcpu, int reg, struct seg_desc *desc)
 {
@@ -93,6 +110,7 @@ hypertrace_probe(const void *handle, hypertrace_id_t id,
 	    args->htr_walltimestamp == 0x3456789a &&
 	    args->htr_present == HYPERTRACE_ARGS_WALLTIME_VALID);
 	assert(vmhdl->paging != NULL && vmhdl->paging->pmap != NULL);
+	assert(pmap_locked);
 	observed_tid = vmhdl->tid;
 	firings++;
 	return (probe_error);
@@ -148,13 +166,19 @@ main(void)
 	    HYPERCALL_RET_ERROR && copies == 7 && firings == 0);
 	supplied_stack = NULL;
 	supplied_stack_count = 0;
+	/* A contended pmap lock drops the event without firing. */
+	pmap_contended = 1;
+	assert(hc_handle_dtrace_probe(&vcpu, args, &paging) ==
+	    HYPERCALL_RET_ERROR && copies == 8 && firings == 0);
+	pmap_contended = 0;
 	probe_error = 13;
 	assert(hc_handle_dtrace_probe(&vcpu, args, &paging) ==
-	    HYPERCALL_RET_ERROR && copies == 8 && firings == 1);
+	    HYPERCALL_RET_ERROR && copies == 9 && firings == 1 && !pmap_locked);
 	probe_error = 0;
 	assert(hc_handle_dtrace_probe(&vcpu, args, &paging) ==
-	    HYPERCALL_RET_SUCCESS && copies == 9 && firings == 2 &&
-	    observed_tid == 4);
-	puts("PASS: amd64 call bounds, guest entry context, and attested vCPU ID");
+	    HYPERCALL_RET_SUCCESS && copies == 10 && firings == 2 &&
+	    observed_tid == 4 && !pmap_locked);
+	puts("PASS: amd64 call bounds, guest entry context, attested vCPU ID, "
+	    "and probe under the pmap lock");
 	return (0);
 }
