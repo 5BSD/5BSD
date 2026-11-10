@@ -29,7 +29,9 @@ FILESGROUPS+=	BOOK_CAPABILITY
 BOOK_CAPABILITY=	${BOOKSRC}/capability/authority-model.md \
 		${BOOKSRC}/capability/capability-mode-and-launch.md \
 		${BOOKSRC}/capability/coalitions-and-accounting.md \
+		${BOOKSRC}/capability/descriptor-operations.md \
 		${BOOKSRC}/capability/descriptor-protections.md \
+		${BOOKSRC}/capability/descriptor-queue.md \
 		${BOOKSRC}/capability/mac-abac.md \
 		${BOOKSRC}/capability/mac-capability.md \
 		${BOOKSRC}/capability/oes.md \
