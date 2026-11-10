@@ -8,6 +8,13 @@ alternative. Sections marked *decision* carry an entry in section 20;
 *open* names an item in section 21. Line references are to the
 `proxy/objects` branch at the time of writing.
 
+Direction of 2026-11-10 (D300, D303; decided, design under review, not
+built): the supervisor answers an acquisition by **swapping in** a
+descriptor it controls, first a real one and later a proxy object through
+the same machinery. "Direction: swap first, then proxy" in section 1 states
+the model and what it changes here. Text elsewhere saying that nothing real
+stands behind a served object describes proxy objects as built.
+
 ## 1. Purpose and principles
 
 A DescriptorQueue lets one process, the **controller**, hand another
@@ -35,14 +42,20 @@ the capability plane: the program still calls `open("/etc/passwd")` and
    directory, not for the root. Where the kernel today reaches past a
    descriptor to a vnode, the kernel is changed so it does not (sections
    4 and 6); that change stands on its own and lands first.
+   This describes proxy objects. A descriptor swapped in under D303 is the
+   real object itself and needs no stand-in.
 2. **Transparency to the requester is required; performance is not.**
    The kernel caches only what the controller permits.
+   Principle 7 bounds the cost: where a real object exists the kernel
+   works on it directly and the controller is not asked again.
 3. **Fail closed.** When a controller goes away, everything it served stops
    answering; nothing falls through to a real object; the kernel never
    invents an answer. I10 lists the exceptions physics imposes and nothing
    else is excepted.
    A process attached to a controller dies with it (D186): a served
    program never outlives its supervisor.
+   A swapped real descriptor (D303) cannot be revoked and does not stop
+   answering; for it, D186 is the whole of this principle.
 4. **Observers are not fooled.** Transparency is owed to the requester.
    The plane's policy modules and audit see every served operation, marked
    as served, from the first stage that serves anything; they see metadata,
@@ -54,6 +67,13 @@ the capability plane: the program still calls `open("/etc/passwd")` and
    (11.6). It decides what names and sockets mean to a process; it does
    not remove the process's other global namespaces. The agent consumer
    pairs it with a jail and a plane rule.
+7. **The supervisor acquires and decides; the kernel executes against the
+   real object whenever one exists** (D300). The default answers are to
+   let the kernel proceed on the object named, or to give the program a
+   different real descriptor. A proxy object fills in where no real object
+   can stand, and presents as whatever kind was asked for. Objects whose
+   bytes the supervisor produces itself stay supported and are the
+   exception.
 
 ### Non-goals
 
@@ -64,6 +84,95 @@ the capability plane: the program still calls `open("/etc/passwd")` and
 - Not an ABI emulation layer: no per-process syscall table. The kernel's
   own enforcement (Capsicum, audit, MAC) runs before the controller is
   consulted; a syscall table would run before it.
+
+### Direction: swap first, then proxy (D300, D303)
+
+*Decided by the owner on 2026-11-10. The design note is under independent
+review and nothing in this subsection is built. Where it disagrees with a
+later section, that section describes what exists today.*
+
+A program asks for something and the supervisor answers one of:
+
+| Answer | What the program holds afterwards | Status |
+|---|---|---|
+| proceed | the object it named, opened by the kernel as always | built |
+| refuse | an errno | built |
+| swap in a real descriptor | a real descriptor the supervisor controls, of the kind the system call would have produced; every later operation is the kernel's own on that object | next: the first deliverable |
+| swap in a proxy descriptor | a proxy object the supervisor controls, presenting as that kind; its operations are messages to the supervisor | built with its own installation path; moves onto the swap machinery |
+| swap in a proxy over a real object | a proxy that presents an identity and can be revoked, while the kernel performs data, locks and mappings on a real descriptor behind it | after the two above; replaces open item 17 |
+
+**One mechanism.** There is one mechanism, the swap: the supervisor
+answers with a descriptor it holds and the kernel installs it in the
+program as the result of the system call, in one step. What differs is the
+thing swapped in. The kernel applies one rule to all of them: the supplied
+descriptor must present as the kind, access mode and flags the program
+asked for. A reply that does not is refused; the program gets an errno and
+the supervisor learns that its reply was refused. The first version accepts
+real objects only and refuses a proxy object or the queue descriptor
+cleanly. Admitting proxy objects is a later commit on the same path, and
+the installation path proxy objects use today is folded into it; there are
+never two.
+
+**The first use: a redacting supervisor.** The program's `open` is already
+held in the kernel until the supervisor answers. The supervisor copies the
+file, redacts the copy, and answers with a descriptor for the copy. The
+program continues on the copy at the kernel's own speed, and no descriptor
+for the original reaches it. This is the series' example program and its
+end-to-end test.
+
+**What each form provides.** The third column is the intent; it is not
+designed yet.
+
+| Property | swapped real descriptor | proxy descriptor | proxy over a real object |
+|---|---|---|---|
+| every operation behaves as on FreeBSD | yes, by construction: it is a real object | as far as each operation has been made so | data, locks and mappings yes; the rest as a proxy |
+| messages to the supervisor after the open | none | every operation | none for data, locks and mappings |
+| identity the program sees (device, inode, path, file system) | the real object's own | the supervisor's choice | the supervisor's choice |
+| revocation | no | yes | yes |
+| stops when the supervisor dies | no; the program is killed instead (D186) | yes | yes |
+| bytes produced by the supervisor on demand | no; the supervisor prepares a real object first | yes | no |
+| each operation seen and decided by the supervisor | no; decided once, at the acquisition | yes | lookup, attributes, close and policy |
+
+The table is the rule for choosing: swap in a real descriptor unless the
+program must not see the real object's identity, the object must be
+revocable, or the bytes do not exist until asked for.
+
+**What this changes in the rest of this document.**
+
+- Principle 1, I13 and two rows of section 19 (the `struct file` wrapper
+  and the kernel lock table) are about proxy objects. A swapped real
+  descriptor is not a wrapper: the program holds the real `struct file`,
+  so there is no type test for it to leak through and its locks are the
+  kernel's own.
+- Principle 3 and I10: a real descriptor cannot be revoked and outlives
+  the supervisor. D186 (served programs die with their supervisor) is the
+  backstop, so the swap relies on the supervisor-control series (open item
+  20) for its fail-closed property.
+- I2 and I6 govern proxy objects. A swapped descriptor conveys exactly the
+  authority of the real descriptor the supervisor chose to give, narrowed
+  by any Capsicum rights the supervisor set on it; a supervisor cannot give
+  what it does not hold. The swap design states the rules for transfer
+  onward.
+- I8 applies unchanged: the kernel enforces the lookup's Capsicum
+  restrictions on whatever is swapped in.
+- I9: the swap is audited and visible to observers (the path asked for,
+  the object supplied, whose decision). Operations afterwards are ordinary
+  operations on a real object and are seen as such.
+- Work that makes proxy objects indistinguishable from files (advisory
+  locks, the remaining errno and ordering differences of served
+  operations, open item 17) is parked until the swap works end to end. It
+  is not dropped.
+- `dq_serve_tree` already holds a real descriptor for every object it
+  serves, and re-implements name resolution, access checks and mutations
+  in userspace in order to mint proxy objects. It becomes a supervisor
+  that swaps; the fully served mode stays as an option and as the
+  comparison oracle.
+- Tests (section 17): the descriptor-operation matrices run in three
+  columns, unattached, swapped and proxied. Swapped must equal unattached
+  exactly; proxied may differ only where a difference is listed and
+  justified.
+
+Open questions are in section 21, item 21.
 
 ## 2. Terms
 
@@ -78,6 +187,11 @@ the capability plane: the program still calls `open("/etc/passwd")` and
 | user-origin lookup | a name resolution or socket creation requested by a system call of the requester itself, marked `NI_DQ_FD_OK`; everything else is kernel-origin |
 | presented identity | what the kernel reports for an object: `st_dev/ino/gen`, mode, owner, size, times, path, `statfs`/`pathconf` fields; or domain, type, protocol, local and peer addresses |
 | event / reply / push | kernel→controller operation with an id; the controller's answer; unsolicited controller→kernel message |
+| supervisor, userspace supervisor | the controller. The owner's term since 2026-11-08; sections written earlier say controller |
+| supervisor queue | the queue |
+| proxy descriptor | an object: a descriptor whose operations the supervisor answers. Identifiers keep `dq_` and `DTYPE_DQ` |
+| swap | the supervisor's answer to an acquisition with a descriptor it controls, which the kernel installs in the requester (D303). The descriptor is a real object or, later, a proxy object |
+| confinement | what a supervisor builds for a program from swapped and proxy descriptors, the supervisor queue, OpenES, Capsicum rights and the transfer controls (open item 18) |
 
 ## 3. Invariants
 
@@ -99,6 +213,10 @@ Enforced by the kernel, not by controller policy. Each has tests (section
 | I11 | **The kernel never waits on a controller where it cannot be interrupted or must not sleep**: not under `exit1`, `fo_close`, `pgo_dealloc`, the page daemon or laundry, `vm_object_terminate`. Those post and continue; the queue owns the result. |
 | I12 | A waiting requester is bounded: signals interrupt syscall waits (`PCATCH`); page-fault waits break only on `SIGKILL`, `P_WEXIT` or the deadline (an interrupted fault would be `SIGBUS`, `vm_fault.c:1491-1505`); `SIGKILL` and `P_WEXIT` always break every wait (dq tests them in its own sleep loop; `cursig` ignores `P_WEXIT`); the deadline (`kern.dq.default_deadline_ms`, 30000, per-object override, `0` = none, explicit) turns a wait into `EIO`. |
 | I13 | Nothing about a served object is stored in a vnode, `struct pwd`, the namecache, a mount, or `f_flag`. |
+
+These invariants govern proxy objects and attachments. A descriptor swapped
+in under D303 is a real object; section 1 ("Direction") lists the
+invariants its design restates.
 
 ## 4. Where the kernel changes
 
@@ -1538,6 +1656,20 @@ resolution of stage 1c, while stage 2 depends on neither. Stage 0 is not
 blocked by any open item; stage 1c depends on D38-D46 as recorded.
 `build-bsd` is unaffected until stage 4 adds a provider bundle.
 
+**Order from 2026-11-10 (D303).** After stage 1c and the first slice of the
+Unix-illusion series (an unattached program behaves exactly as on FreeBSD):
+
+1. the swap with real descriptors, and the redacting-supervisor example;
+2. the same machinery admits proxy objects, and the installation path
+   proxy objects use today moves onto it;
+3. a proxy over a real object (open item 17 in its new form);
+4. the remaining Unix-illusion work for proxy objects, then the stages of
+   open item 18. Stage 2 (sockets) and stage 4 (devices) are expected to
+   answer through the same swap.
+
+Supervisor control keeps its place in the order (open item 20). Until it
+lands, a swapped descriptor outlives a supervisor that dies.
+
 ## 19. Alternatives considered
 
 | Alternative | Why not |
@@ -1562,6 +1694,13 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | `OBJ_SWAP`-based pager (rev 2) | `vm_fault` zero-fills without `getpages`; swap pager asserts |
 | local lock table in the kernel (rev 2 `dp_lock = LOCAL`) | `kern_lockf.c` is vnode-coupled and a KBI for NLM/NFS; a kernel table cannot conflict with the real file's locks |
 | `f_ops` swap for revoke (rev 2) | no precedent, no ordering |
+
+D300 and D303 (2026-11-10) leave these rows standing and narrow two of
+them. The wrapper row is about presenting one object as another; the swap
+installs the real file itself, with nothing wrapped. The kernel lock table
+row is about a table separate from the real file's locks; a swapped real
+descriptor uses the real file's lock state because it is the real file,
+and a proxy over a real object is to use that same state.
 
 ## 20. Decision record
 
@@ -1692,6 +1831,12 @@ blocked by any open item; stage 1c depends on D38-D46 as recorded.
 | D186 | 2026-11-09 | Owner decisions on supervisor control (open item 20). (1) Dynamic attachment carries control: ATTACH, whether of a child or of a process attached by Switchboard or an OpenES exec hold, gives the supervisor a process descriptor for the target (pdkill, pdwait; kill and stop/continue without a credential check), bounded to processes attached to that queue and to the descriptor's rights. (2) A reply may carry a signal that the kernel raises on the requesting thread with the errno, synchronously, as for SIGPIPE, SIGXFSZ, SIGBUS, SIGSEGV and SIGSYS. (3) Supervisor death kills its served processes, with a kernel-style signal (SIGKILL), instead of the fail-closed EIO they get today (the "Fail closed" rule above, D154); a dead supervisor never leaves a served program running. (4) Deep audit: attach, detach, every kill/stop/continue through the descriptor, every reply-raised signal, every revoke and every death-of-supervisor kill produce an audit record naming the supervisor, the target, the queue and the reason, and an OpenES event; the served process's death record says it was killed by its supervisor. (2) lands in ux-2; (1), (3), (4) in series sc before stage 4. | owner, 2026-11-09 | |
 | D185 | 2026-11-09 | Served symlink targets may be empty, as on UFS: a `LINK` answer and a SYMLINK mint (`di_size` 0) accept a zero-length target (`dq_resolve_target_validate(..., emptyok)`), and the tree server returns readlink(2)'s 0; namei already answers `ENOENT` for an empty link before any D172 re-consult (`vfs_lookup.c:721`), so `stat` through it is `ENOENT` as upstream. A `REAL` path stays non-empty. Pathconf values are presented for every served type but symlinks (plan D248, done early): `sysconf(_SC_TTY_NAME_MAX)` in a served root works. Attached behaviour only. | run-59 triage (realpath2 empty symlink; ttyname listing abort) | |
 | D184 | 2026-11-08 | iii-c review round 1 ("not yet") fixed, with the user's decisions. An unattached process (the controller included) using a served directory as a lookup start (dirfd, fchdir, fchroot, funlinkat's descriptor) is `EACCES`; one attached to another queue keeps `EDEADLK` (D163 amended). The served root namei_setup snapshots is held by namei until it returns, and the D172 (a) re-entry uses it, so a racing chroot cannot move the re-entry to the real root (D177 completed); the re-entry also runs D165's post-check. Every served answer under a served root is guarded, from real starts too (`dqres_namei`). The `RESOLVE` body grows to 112 bytes: `drs_root` (@96), `drs_rootpathlen` (@104), `drs_pad2` (@108) and the root's `di_path` as a fifth string, so a controller resolves `/`, absolute link targets and `..` at the process's own (possibly nested) root; `dq_serve_tree` does, matching chroot(2), and answers `EIO` for a served start whose hint is missing or not the object's own path. ATTACH: a root without a cwd makes the cwd the root; a cwd must be under the root (`EINVAL`); with a root the child's open directories follow chroot's rule (`kern.chroot_allow_open_directories`, `EPERM`) unless `DQ_ATTACH_F_NODIRS` refuses any real directory (`EBUSY`); other `da_flags` bits are `EINVAL`. `DQ_TREE_F_ROOT` trees refuse real-start names outside the tree with `EACCES` unless `DQ_TREE_F_OUTSIDE_PASS`. Served CWD/ROOT kinfo rows carry `KF_FLAG_READ`. Unattached behaviour is unchanged; attached behaviour is the controller's to choose. Round 2 of the review: `DQ_API_VERSION` becomes 2, because the `RESOLVE` body's strings moved (96 → 112 bytes); every versioned ioctl accepts 2 only (`EINVAL`) and events report 2. ATTACH's default open-directory rule is chroot's rule exactly, applied with a root, so with the default `kern.chroot_allow_open_directories=1` an unchrooted child keeps its inherited real directories; `DQ_ATTACH_F_NODIRS` refuses them with or without a root, and a root whose reference count cannot take the cwd's too is `EIO` (a dead start), not `EBUSY`. Only an attached process's served directories count for the open-directory rule, so an unattached process's `chroot(2)` is exactly upstream's. A dead served root (`DR_ROOT_DEAD`) makes every consulted lookup `EIO` before posting, so no event carries `drs_root` 0 for a served root and no answer escapes the guard; the guard checks against the root identity that was posted. A slot fetched ahead keeps the served root of its own start's snapshot (`ds_root`), and D172 (b)'s symlink re-consultation posts the root and is guarded too. The snapshot is `struct dqres_snap`, held by `namei` from `namei_setup` to the end | iii-c review rounds 1-2, user decisions 2026-11-08 | |
+| D300 | 2026-11-10 | **The supervisor acquires and decides; the kernel executes against the real object whenever one exists.** The default answers are to proceed on the object named or to provide a different real descriptor; proxy objects fill in where neither exists and are one mechanism presenting as whatever kind was asked for; objects whose bytes the supervisor produces stay supported as the exception. Applies to locks at once and to sockets in stage 2. Principle 7 | owner | a userspace re-implementation of kernel behaviour (lock table, access checks, mutations) can only approximate the kernel; executing on the real object is exact and needs no round trip |
+| D303 | 2026-11-10 | **Swap first, then proxy; one mechanism.** The next deliverable is the swap: a program's acquisition is answered with a real descriptor the supervisor controls, of the same kind, installed by the kernel. The same machinery then swaps in a proxy object the supervisor controls, and after that a proxy over a real object. First use: a supervisor that holds the program's open, copies and redacts the file, and provides a descriptor for the redacted copy. Proxy-only work (advisory lock fixes, remaining served-operation differences, open item 17) is parked until the swap works end to end. Design note reviewed independently before any code; tests in three columns (unattached, swapped, proxied) | owner | the simplest path to a working confinement; a real descriptor behaves as FreeBSD by construction; one installation path instead of two |
+
+D187-D299 are allocated to the Unix-illusion and supervisor-control series
+and enter this record as those series land; D301 and D302 belong to the
+first Unix-illusion slice.
 
 ### 20.1 Origin
 
@@ -1761,7 +1906,8 @@ system call.
     effective uid and gid only; supplementary groups are not presented in
     the event (Q11), so the suites oracle lists those cases in
     `dqtree.expected`.
-17. **Pass-through I/O for proxy descriptors** (planned, its own series after the Unix-illusion series; owner, 2026-11-08). A supervisor attaches a real backing descriptor to a proxy object, at mint or later, and the kernel then performs that object's reads, writes and mappings on the backing file directly, with no round trip, while the supervisor keeps lookups, attributes, locks, close, revocation and policy; it can detach the backing file again. Comparable to Linux FUSE passthrough (2024). Open: revocation must still cut access at once (mappings of the backing file included), identity and size come from the object or the backing file, and how the data cache and the pager interact with a backing vnode.
-18. **Stage order and the last stage** (owner, 2026-11-08). Stages after 1c and the Unix-illusion series: 2 sockets, 3 exec of proxy files, 4 devices, 5 every remaining descriptor type (each kind of descriptor gets a proxy form, from a type-by-type inventory), and 6, last, discovery and association: how the system decides that a program needs a confinement and which userspace supervisor provides it. Stage 6 keeps the direct-child attachment already built and adds (a) responsible processes, so that a program Switchboard execs on someone's behalf is matched by the party that asked, not by Switchboard; (b) registration, so that supervisors declare interest like device drivers (match on a brand, signing identity, path, responsible process or user, or a launcher's request, with probe priorities as in newbus) and are called, or launched on demand by Switchboard, for arbitrary programs; (c) the OpenES exec hold until a supervisor has claimed and attached the program; and (d) the policy when nothing matches. Terms: a confinement is built from proxy descriptors, the supervisor queue (this device), OpenES, Capsicum rights and the transfer controls, and capability-plane isolates. Direction for (b) (owner, 2026-11-08): a confinement is a capability bundle (`.cap`) whose manifest declares that it provides a confinement and what it matches: an identifier (a target bundle's reverse-DNS name or a signing identity), a path, or a MAC label stored in the program's extended attributes (the brand). Switchboard launches and supervises the bundle like any other; matching happens in one place, so the forms coexist.
+17. **Pass-through I/O for proxy descriptors** (owner, 2026-11-08; since D303 this is "a proxy over a real object", built on the swap machinery as step 3 of section 18's order, and it covers locks as well as data). A supervisor attaches a real backing descriptor to a proxy object, at mint or later, and the kernel then performs that object's reads, writes and mappings on the backing file directly, with no round trip, while the supervisor keeps lookups, attributes, locks, close, revocation and policy; it can detach the backing file again. Comparable to Linux FUSE passthrough (2024). Open: revocation must still cut access at once (mappings of the backing file included), identity and size come from the object or the backing file, and how the data cache and the pager interact with a backing vnode.
+18. **Stage order and the last stage** (owner, 2026-11-08; section 18 gives what D303 places before these stages). Stages after 1c and the Unix-illusion series: 2 sockets, 3 exec of proxy files, 4 devices, 5 every remaining descriptor type (each kind of descriptor gets a proxy form, from a type-by-type inventory), and 6, last, discovery and association: how the system decides that a program needs a confinement and which userspace supervisor provides it. Stage 6 keeps the direct-child attachment already built and adds (a) responsible processes, so that a program Switchboard execs on someone's behalf is matched by the party that asked, not by Switchboard; (b) registration, so that supervisors declare interest like device drivers (match on a brand, signing identity, path, responsible process or user, or a launcher's request, with probe priorities as in newbus) and are called, or launched on demand by Switchboard, for arbitrary programs; (c) the OpenES exec hold until a supervisor has claimed and attached the program; and (d) the policy when nothing matches. Terms: a confinement is built from proxy descriptors, the supervisor queue (this device), OpenES, Capsicum rights and the transfer controls, and capability-plane isolates. Direction for (b) (owner, 2026-11-08): a confinement is a capability bundle (`.cap`) whose manifest declares that it provides a confinement and what it matches: an identifier (a target bundle's reverse-DNS name or a signing identity), a path, or a MAC label stored in the program's extended attributes (the brand). Switchboard launches and supervises the bundle like any other; matching happens in one place, so the forms coexist.
 19. **Readiness for every proxy descriptor type** (owner, 2026-11-08: proxy descriptors must work anywhere a descriptor does, poll, select and kqueue included, and inside any kqueue). Proxy files already behave as vnodes do (always ready under poll and select; EVFILT_READ, EVFILT_WRITE and EVFILT_VNODE in any kqueue). Stages 2, 4 and 5 need a readiness protocol: the supervisor pushes readiness (readable, writable, hang-up, error, with counts) through the supervisor queue; the kernel keeps each object's readiness so poll, select and kqueue answer without a round trip and wake waiters on change; kqueue keeps full semantics (kn_data, EV_EOF, NOTE_LOWAT, EVFILT_EXCEPT); non-blocking I/O returns EAGAIN exactly when not ready; tests compare each proxy type with its real counterpart, alone and mixed in one kqueue. ux-5 adds the file oracle (poll, select, kqueue against a vnode, including EVFILT_READ kn_data).
 20. **Supervisor control over served processes** (owner, 2026-11-09; decided, see D186). A supervisor is the served program's kernel. Decided: (a) control without being the parent, for dynamic attachment: the kernel hands the supervisor a process descriptor for every process attached to its queue, however it was attached, so pdkill/pdwait give kill, stop/continue and exit notice with no credential check, limited to its own attached processes and by the descriptor's rights; (b) replies can raise a signal synchronously on the requesting thread with the errno, as the kernel does (ux-2); (c) when the supervisor dies, the programs it serves die too (this replaces failing closed with EIO for attached processes); (d) deep audit: every supervisor action and every consequence for a served process is audited and visible to OpenES. Scheduled: (b) in ux-2; (a), (c) and (d) in the "supervisor control" series (sc), after ux-2 and before stage 4. Attached processes gain no control over their supervisor.
+21. **The swap** (D303; design under review). Open until the design note is accepted: (a) whether the supervisor's open file description is moved to the program or shared with it (offset, status flags and `flock` ownership follow the description); (b) how the kernel narrows or refuses a supplied descriptor whose access mode or flags differ from what the program asked for; (c) what a system call that takes a path and returns no descriptor (stat, unlink, rename, exec, chdir) does under this model: today's path rewrite, or an anchor descriptor the kernel operates at; (d) what the program can observe that differs from having opened the path it named (the real object's device, inode and path; relative lookups and `..` from a swapped directory), each either accepted as the supervisor's choice or listed as a reason to use a proxy; (e) rules for passing a swapped descriptor onward; (f) how the proxy installation path of today is folded into the swap without a period of two paths.
