@@ -8,6 +8,7 @@
 #include <sys/param.h>
 #include <sys/event.h>
 #include <sys/mount.h>
+#include <sys/procctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/user.h>
@@ -17,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -393,6 +395,145 @@ ATF_TC_BODY(controller_exit, tc)
 	(void)close(oracle);
 }
 
+/* What the unattached holder saw, in the order it saw it. */
+struct holder_res {
+	struct dqt_rr	 before;	/* read while the supervisor lives */
+	struct dqt_rr	 after;		/* read after it has exited */
+	struct dqt_rr	 st;		/* fstat after */
+	struct dqt_rr	 cl;		/* close after */
+	int		 attached;	/* PROC_NO_NEW_PRIVS_STATUS: ATTACH sets it */
+};
+
+ATF_TC(unattached_holder_survives);
+ATF_TC_HEAD(unattached_holder_survives, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a process that inherited a minted "
+	    "descriptor but was never attached outlives the exit of the "
+	    "supervisor process: its next read fails EIO, nothing signals "
+	    "it, and it exits 0 by itself");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(unattached_holder_survives, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_object *o;
+	struct holder_res r;
+	struct procctl_reaper_status rs;
+	struct stat sb;
+	unsigned char buf[100];
+	sigset_t all, pend;
+	pid_t holder, sup;
+	int go[2], hp[2], oracle, ready[2], res[2], sig, status;
+	char b;
+
+	dqt_require_plane();
+	/*
+	 * The holder is the supervisor's child and is orphaned by its exit;
+	 * as the reaper this process becomes its parent and reads its exit
+	 * status, which is the pin.
+	 */
+	ATF_REQUIRE_EQ(0, procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL));
+	ATF_REQUIRE_EQ(0, pipe(go));
+	ATF_REQUIRE_EQ(0, pipe(hp));
+	ATF_REQUIRE_EQ(0, pipe(ready));
+	ATF_REQUIRE_EQ(0, pipe(res));
+	dqt_fill(data, sizeof(data), 56);
+	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
+	    sizeof(oracle_path));
+
+	sup = fork();
+	ATF_REQUIRE_MSG(sup != -1, "fork: %s", strerror(errno));
+	if (sup == 0) {
+		/* The supervisor: a queue, one object, one reader thread. */
+		dqt_init(&c);
+		o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data),
+		    NULL);
+		holder = fork();
+		if (holder == -1)
+			_exit(70);
+		if (holder == 0) {
+			/*
+			 * The holder: every signal blocked, so that one sent
+			 * to it stays pending and is seen below.
+			 */
+			sigfillset(&all);
+			(void)sigprocmask(SIG_BLOCK, &all, NULL);
+			memset(&r, 0, sizeof(r));
+			r.before.rv = read(o->fd, buf, sizeof(buf));
+			r.before.err = r.before.rv == -1 ? errno : 0;
+			if (procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_STATUS,
+			    &r.attached) != 0)
+				r.attached = -1;
+			if (write(ready[1], "r", 1) != 1)
+				_exit(71);
+			if (read(go[0], &b, 1) != 1)
+				_exit(72);
+			r.after.rv = pread(o->fd, buf, sizeof(buf), 4096);
+			r.after.err = r.after.rv == -1 ? errno : 0;
+			r.st.rv = fstat(o->fd, &sb);
+			r.st.err = r.st.rv == -1 ? errno : 0;
+			r.cl.rv = close(o->fd);
+			r.cl.err = r.cl.rv == -1 ? errno : 0;
+			if (write(res[1], &r, sizeof(r)) != sizeof(r))
+				_exit(73);
+			/* Still here a while later, with nothing pending. */
+			dqt_msleep(500);
+			sigemptyset(&pend);
+			(void)sigpending(&pend);
+			for (sig = 1; sig < NSIG; sig++)
+				if (sigismember(&pend, sig))
+					_exit(100 + sig);
+			_exit(0);
+		}
+		if (write(hp[1], &holder, sizeof(holder)) != sizeof(holder))
+			_exit(74);
+		/* Serve the holder's first read, then exit: not a close. */
+		if (read(ready[0], &b, 1) != 1)
+			_exit(75);
+		_exit(0);
+	}
+	(void)close(go[0]);
+	(void)close(ready[1]);
+	(void)close(res[1]);
+	(void)close(hp[1]);
+	ATF_REQUIRE_EQ((ssize_t)sizeof(holder), read(hp[0], &holder,
+	    sizeof(holder)));
+
+	/* The supervisor has exited and been reaped: its queue is closed. */
+	ATF_REQUIRE_EQ(sup, waitpid(sup, &status, 0));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "supervisor status %#x", status);
+
+	/* The holder is this process's child now, and alive. */
+	ATF_REQUIRE_EQ(0, procctl(P_PID, getpid(), PROC_REAP_STATUS, &rs));
+	ATF_CHECK_EQ_MSG(1, (int)rs.rs_children, "%u children",
+	    rs.rs_children);
+	dqt_msleep(200);
+	ATF_CHECK_EQ_MSG(0, waitpid(holder, &status, WNOHANG),
+	    "the holder did not outlive the supervisor: status %#x", status);
+	ATF_CHECK_EQ(0, kill(holder, 0));
+
+	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
+	memset(&r, 0xff, sizeof(r));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(r), read(res[0], &r, sizeof(r)));
+	ATF_CHECK_EQ_MSG((long)sizeof(buf), r.before.rv,
+	    "read while served: %ld errno %d", r.before.rv, r.before.err);
+	ATF_CHECK_EQ_MSG(PROC_NO_NEW_PRIVS_DISABLE, r.attached,
+	    "the holder looks attached (no_new_privs %d)", r.attached);
+	ATF_CHECK_EQ(-1, r.after.rv);
+	ATF_CHECK_EQ_MSG(EIO, r.after.err, "read after: errno %d",
+	    r.after.err);
+	ATF_CHECK_EQ_MSG(0, r.st.rv, "fstat after: errno %d", r.st.err);
+	ATF_CHECK_EQ_MSG(0, r.cl.rv, "close after: errno %d", r.cl.err);
+
+	/* It exits by itself, 0, no signal having been sent to it. */
+	ATF_REQUIRE_EQ(holder, waitpid(holder, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "holder status %#x (exit 100+N: signal N was pending)", status);
+	(void)close(oracle);
+}
+
 ATF_TC(scm_rights_refused);
 ATF_TC_HEAD(scm_rights_refused, tc)
 {
@@ -494,6 +635,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, revoke);
 	ATF_TP_ADD_TC(tp, revoke_wakes_waiter);
 	ATF_TP_ADD_TC(tp, controller_exit);
+	ATF_TP_ADD_TC(tp, unattached_holder_survives);
 	ATF_TP_ADD_TC(tp, scm_rights_refused);
 	ATF_TP_ADD_TC(tp, devfd_reopen_shares_queue);
 	return (atf_no_error());
