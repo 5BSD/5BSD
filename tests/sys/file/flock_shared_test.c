@@ -27,6 +27,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define	FILENAME	"lockfile"
@@ -712,6 +713,91 @@ ATF_TC_BODY(unlock_before_grant_then_unlock, tc)
 	CHECK_FREE();
 }
 
+struct race {
+	pthread_barrier_t	start;
+	pthread_barrier_t	end;
+	int			fd;
+	bool			done;
+};
+
+struct racer {
+	struct race	*race;
+	int		how;
+	int		error;
+};
+
+static void *
+race_thread(void *arg)
+{
+	struct racer *r;
+
+	r = arg;
+	for (;;) {
+		(void)pthread_barrier_wait(&r->race->start);
+		if (r->race->done)
+			break;
+		if (flock(r->race->fd, r->how) != 0 && r->error == 0)
+			r->error = errno;
+		(void)pthread_barrier_wait(&r->race->end);
+	}
+	return (NULL);
+}
+
+#define	RACE_ROUNDS	20000
+#define	RACE_SECONDS	10
+
+/*
+ * The same, with nothing asleep: one thread locks an open file that holds
+ * no lock and that nothing contends for while another unlocks it, both let
+ * go together.  Whichever way they interleave, whatever the open file
+ * holds afterwards must go with its last close.  The unlock has to land
+ * between two steps of the lock request for a lock to be left behind, so
+ * a kernel with the defect can pass this by luck; a kernel without it
+ * cannot fail it.  Bounded by rounds and by time, whichever ends first.
+ */
+ATF_TC_WITHOUT_HEAD(unlock_races_lock);
+ATF_TC_BODY(unlock_races_lock, tc)
+{
+	struct race race;
+	struct racer locker, unlocker;
+	struct timespec end, now;
+	pthread_t tl, tu;
+	int i, p;
+
+	ATF_REQUIRE_EQ(0, pthread_barrier_init(&race.start, NULL, 3));
+	ATF_REQUIRE_EQ(0, pthread_barrier_init(&race.end, NULL, 3));
+	race.done = false;
+	locker = (struct racer){ .race = &race, .how = LOCK_EX };
+	unlocker = (struct racer){ .race = &race, .how = LOCK_UN };
+	ATF_REQUIRE_EQ(0, pthread_create(&tl, NULL, race_thread, &locker));
+	ATF_REQUIRE_EQ(0, pthread_create(&tu, NULL, race_thread, &unlocker));
+	/* Opened first: see unlock_before_grant() on address reuse. */
+	p = open_file(0);
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &end));
+	end.tv_sec += RACE_SECONDS;
+	for (i = 0; i < RACE_ROUNDS; i++) {
+		race.fd = open_file(0);
+		(void)pthread_barrier_wait(&race.start);
+		(void)pthread_barrier_wait(&race.end);
+		ATF_REQUIRE_EQ(0, close(race.fd));
+		ATF_REQUIRE_EQ_MSG(0, flock(p, LOCK_EX | LOCK_NB),
+		    "round %d: the lock outlived the last close of its open "
+		    "file: %s", i, strerror(errno));
+		ATF_REQUIRE_EQ(0, flock(p, LOCK_UN));
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &now));
+		if (timespeccmp(&now, &end, >=))
+			break;
+	}
+	race.done = true;
+	(void)pthread_barrier_wait(&race.start);
+	ATF_REQUIRE_EQ(0, pthread_join(tl, NULL));
+	ATF_REQUIRE_EQ(0, pthread_join(tu, NULL));
+	ATF_CHECK_EQ(0, locker.error);
+	ATF_CHECK_EQ(0, unlocker.error);
+	ATF_CHECK_EQ(0, close(p));
+	CHECK_FREE();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unlock_without_lock);
@@ -731,5 +817,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, unlock_before_grant_thread);
 	ATF_TP_ADD_TC(tp, unlock_before_grant_upgrade);
 	ATF_TP_ADD_TC(tp, unlock_before_grant_then_unlock);
+	ATF_TP_ADD_TC(tp, unlock_races_lock);
 	return (atf_no_error());
 }
