@@ -4744,6 +4744,18 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	if (error == EOPNOTSUPP)
 		atomic_clear_int(&fp->f_flag, FHASLOCK);
 done:
+	/*
+	 * A granted request marks the open file again.  The mark set before
+	 * the request may be gone: every descriptor of the open file reaches
+	 * the same struct file, and a LOCK_UN through any of them clears the
+	 * mark while this request sleeps or races it.  The last close unlocks
+	 * only a marked file, so a lock granted to an unmarked one would stay
+	 * on the vnode with no open file to release it.  Set after the grant,
+	 * the mark can only be cleared by an unlock that also removes the
+	 * lock; a mark without a lock costs one unlock at close.
+	 */
+	if (error == 0 && (uap->how & LOCK_UN) == 0)
+		atomic_set_int(&fp->f_flag, FHASLOCK);
 	fdrop(fp, td);
 	return (error);
 }

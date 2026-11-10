@@ -34,7 +34,7 @@ LIBADD.closefrom_test=	util
 
 LIBADD.flock_helper=	pthread
 
-LIBADD.flock_shared_test=	util
+LIBADD.flock_shared_test=	pthread util
 
 LIBADD.newfileops_on_fork_test=	pthread
 

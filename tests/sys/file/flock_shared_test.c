@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libutil.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -611,6 +612,106 @@ ATF_TC_BODY(interrupted_upgrade, tc)
 	CHECK_FREE();
 }
 
+static void *
+thread_locker(void *arg)
+{
+	return ((void *)(intptr_t)(flock(*(int *)arg, LOCK_EX) == 0 ? 0 :
+	    errno));
+}
+
+/*
+ * A holder of the open file unlocks it while another holder's request
+ * sleeps.  The request is granted later, and the lock it got must still
+ * go with the last close of the open file: the unlock that came before
+ * the grant must not make the open file forget the lock it then takes.
+ */
+static void
+unlock_before_grant(int first, bool thread)
+{
+	pthread_t td;
+	pid_t pid;
+	void *res;
+	int p, x, y;
+
+	x = open_file(0);
+	y = open_file(0);
+	if (first != 0)
+		ATF_REQUIRE_EQ(0, flock(x, first));
+	ATF_REQUIRE_EQ(0, flock(y, first != 0 ? first : LOCK_EX));
+	if (thread) {
+		pid = getpid();
+		ATF_REQUIRE_EQ(0, pthread_create(&td, NULL, thread_locker, &x));
+	} else
+		pid = fork_locker(x, LOCK_EX, 0);
+	wait_blocked(pid);
+	/* x holds nothing now: a blocking upgrade gave its lock up. */
+	ATF_REQUIRE_EQ(0, flock(x, LOCK_UN));
+	ATF_REQUIRE_EQ(0, flock(y, LOCK_UN));
+	if (thread) {
+		ATF_REQUIRE_EQ(0, pthread_join(td, &res));
+		ATF_CHECK_EQ(0, (int)(intptr_t)res);
+	} else
+		ATF_CHECK_EQ(0, reap(pid));
+	CHECK_HELD_EX();
+	ATF_CHECK(has_lock_flag(x));
+	/*
+	 * Probe through an open file that exists before x goes away.  A lock
+	 * left behind is owned by the freed struct file of x, and an open file
+	 * created afterwards may be given the same address and pass for the
+	 * owner.
+	 */
+	p = open_file(0);
+	ATF_CHECK_EQ(0, close(x));
+	ATF_CHECK_EQ_MSG(0, flock(p, LOCK_EX | LOCK_NB),
+	    "the lock outlived the last close of its open file: %s",
+	    strerror(errno));
+	ATF_CHECK_EQ(0, close(p));
+	CHECK_FREE();
+	ATF_CHECK_EQ(0, close(y));
+}
+
+ATF_TC_WITHOUT_HEAD(unlock_before_grant_process);
+ATF_TC_BODY(unlock_before_grant_process, tc)
+{
+	unlock_before_grant(0, false);
+}
+
+ATF_TC_WITHOUT_HEAD(unlock_before_grant_thread);
+ATF_TC_BODY(unlock_before_grant_thread, tc)
+{
+	unlock_before_grant(0, true);
+}
+
+ATF_TC_WITHOUT_HEAD(unlock_before_grant_upgrade);
+ATF_TC_BODY(unlock_before_grant_upgrade, tc)
+{
+	unlock_before_grant(LOCK_SH, false);
+}
+
+/* The grant survives the early unlock: an explicit unlock still works. */
+ATF_TC_WITHOUT_HEAD(unlock_before_grant_then_unlock);
+ATF_TC_BODY(unlock_before_grant_then_unlock, tc)
+{
+	pid_t pid;
+	int x, y;
+
+	x = open_file(0);
+	y = open_file(0);
+	ATF_REQUIRE_EQ(0, flock(y, LOCK_EX));
+	pid = fork_locker(x, LOCK_EX, 0);
+	wait_blocked(pid);
+	ATF_REQUIRE_EQ(0, flock(x, LOCK_UN));
+	ATF_REQUIRE_EQ(0, flock(y, LOCK_UN));
+	ATF_CHECK_EQ(0, reap(pid));
+	CHECK_HELD_EX();
+	ATF_CHECK_EQ(0, flock(x, LOCK_UN));
+	ATF_CHECK(!has_lock_flag(x));
+	CHECK_FREE();
+	ATF_CHECK_EQ(0, close(x));
+	ATF_CHECK_EQ(0, close(y));
+	CHECK_FREE();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unlock_without_lock);
@@ -626,5 +727,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, blocking_upgrade_drops_shared);
 	ATF_TP_ADD_TC(tp, interrupted_sleeper);
 	ATF_TP_ADD_TC(tp, interrupted_upgrade);
+	ATF_TP_ADD_TC(tp, unlock_before_grant_process);
+	ATF_TP_ADD_TC(tp, unlock_before_grant_thread);
+	ATF_TP_ADD_TC(tp, unlock_before_grant_upgrade);
+	ATF_TP_ADD_TC(tp, unlock_before_grant_then_unlock);
 	return (atf_no_error());
 }
