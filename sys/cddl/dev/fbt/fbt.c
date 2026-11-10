@@ -152,6 +152,16 @@ fbt_excluded(const char *name)
 		return (1);
 
 	/*
+	 * So are the dtps_getargval() methods of the providers that can be
+	 * compiled into the kernel: dtrace_dif_variable() calls them to
+	 * fetch arg5 and up.  As modules these providers are ineligible as
+	 * a whole, see fbt_provide_module().
+	 */
+	if (strcmp(name, "sdt_getargval") == 0 ||
+	    strcmp(name, "systrace_getargval") == 0)
+		return (1);
+
+	/*
 	 * The KMSAN runtime can't be instrumented safely.
 	 */
 	if (strncmp(name, "__msan", 6) == 0 ||
