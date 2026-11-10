@@ -116,7 +116,6 @@ main(int argc, char **argv)
 
     assert(argc == 2);
     assert(setenv("TMPDIR", argv[1], 1) == 0);
-    assert(freopen("/dev/null", "w", stderr) != NULL);
     memset(message, 'x', sizeof(message) - 1);
     message[sizeof(message) - 1] = '\0';
 

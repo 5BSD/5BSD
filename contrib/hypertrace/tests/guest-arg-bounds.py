@@ -31,15 +31,22 @@ fixture = r'''
 #include <setjmp.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/hypertrace.h>
 
 /* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
 static jmp_buf assert_trap;
 static int assert_armed;
+static const char *assert_text;
 #define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
-    longjmp(assert_trap, 1); } } while (0)
-#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    assert_text = #x; longjmp(assert_trap, 1); } } while (0)
+/* Only the named assertion will do: say which one tripped instead. */
+#define ASSERT_TRIPS(stmt, text) do { assert_armed = 1; \
     if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    if (strcmp(assert_text, text) != 0) { fprintf(stderr, \
+    "tripped ASSERT(%s), not ASSERT(%s)\n", assert_text, text); abort(); } \
     assert_armed = 0; } while (0)
 typedef struct {
     uint64_t dttr_value;
@@ -86,12 +93,14 @@ int main(void)
     /* The caller only asks for indexes past the cached arguments. */
     slot = SIZE_MAX;
     for (uint64_t i = 0; i < 5; i++)
-        ASSERT_TRIPS(dtrace_minion_stackarg_slot(&mstate, i, &slot));
+        ASSERT_TRIPS(dtrace_minion_stackarg_slot(&mstate, i, &slot),
+            "slot != NULL && ndx >= base");
     for (uint64_t i = 10; i < 18; i++)
         assert(!dtrace_minion_stackarg_slot(&mstate, i, &slot));
     assert(!dtrace_minion_stackarg_slot(&mstate, UINT64_MAX, &slot));
     assert(slot == SIZE_MAX);
-    ASSERT_TRIPS(dtrace_minion_stackarg_slot(&mstate, 5, NULL));
+    ASSERT_TRIPS(dtrace_minion_stackarg_slot(&mstate, 5, NULL),
+        "slot != NULL && ndx >= base");
     return 0;
 }
 '''.replace('SLOT_HELPER', slot_helper).replace('HELPER', helper)

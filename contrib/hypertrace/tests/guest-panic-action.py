@@ -29,6 +29,8 @@ fixture = r'''
 #include <assert.h>
 #include <setjmp.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct { const char *dtpv_name; } dtrace_provider_t;
@@ -52,10 +54,14 @@ static char thread;
 /* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
 static jmp_buf assert_trap;
 static int assert_armed;
+static const char *assert_text;
 #define ASSERT(expr) do { if (!(expr)) { assert(assert_armed); \
-    longjmp(assert_trap, 1); } } while (0)
-#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    assert_text = #expr; longjmp(assert_trap, 1); } } while (0)
+/* Only the named assertion will do: say which one tripped instead. */
+#define ASSERT_TRIPS(stmt, text) do { assert_armed = 1; \
     if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    if (strcmp(assert_text, text) != 0) { fprintf(stderr, \
+    "tripped ASSERT(%s), not ASSERT(%s)\n", assert_text, text); abort(); } \
     assert_armed = 0; } while (0)
 #define DTRACE_CPUFLAG_SET(flag) (cpu_flags |= (flag))
 static int dtrace_priv_kernel_destructive(void *state)
@@ -106,7 +112,7 @@ int main(void)
     assert(panic_calls == 0 && claim_calls == 0 && dtrace_panicked == NULL);
     /* dtrace_probe() refuses it first; the helper never sees a guest. */
     cpu_flags = 0;
-    ASSERT_TRIPS(dtrace_action_panic(&ecb));
+    ASSERT_TRIPS(dtrace_action_panic(&ecb), "probe->dtpr_vmid == 0");
     assert(panic_calls == 0 && claim_calls == 0 && dtrace_panicked == NULL);
 
     cpu_flags = 0;

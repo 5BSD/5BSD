@@ -21,15 +21,20 @@ fixture = r'''
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
 static jmp_buf assert_trap;
 static int assert_armed;
+static const char *assert_text;
 #define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
-    longjmp(assert_trap, 1); } } while (0)
-#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    assert_text = #x; longjmp(assert_trap, 1); } } while (0)
+/* Only the named assertion will do: say which one tripped instead. */
+#define ASSERT_TRIPS(stmt, text) do { assert_armed = 1; \
     if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    if (strcmp(assert_text, text) != 0) { fprintf(stderr, \
+    "tripped ASSERT(%s), not ASSERT(%s)\n", assert_text, text); abort(); } \
     assert_armed = 0; } while (0)
 #define DIF_SUBR_JSON 1
 #define DTRACEOPT_STRSIZE 0
@@ -165,7 +170,8 @@ main(void)
     /* DTRACEOPT_STRSIZE is a non-negative option. */
     opt.dts_options[0] = UINT64_MAX;
     flags = 0; reads = 0;
-    ASSERT_TRIPS(run(&ms, &opt, args, result, &flags));
+    ASSERT_TRIPS(run(&ms, &opt, args, result, &flags),
+        "size <= INT64_MAX");
     assert(flags == 0 && reads == 0);
     puts("PASS: JSON scratch partition and guest faults");
     return 0;

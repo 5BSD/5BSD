@@ -28,15 +28,20 @@ fixture = r'''
 #include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
 static jmp_buf assert_trap;
 static int assert_armed;
+static const char *assert_text;
 #define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
-    longjmp(assert_trap, 1); } } while (0)
-#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    assert_text = #x; longjmp(assert_trap, 1); } } while (0)
+/* Only the named assertion will do: say which one tripped instead. */
+#define ASSERT_TRIPS(stmt, text) do { assert_armed = 1; \
     if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    if (strcmp(assert_text, text) != 0) { fprintf(stderr, \
+    "tripped ASSERT(%s), not ASSERT(%s)\n", assert_text, text); abort(); } \
     assert_armed = 0; } while (0)
 enum {
     DTRACEACT_SYM = 1, DTRACEACT_MOD, DTRACEACT_USYM,
@@ -114,7 +119,8 @@ main(void)
     mstate.dtms_htrargs = NULL;
     memset(output, 0x5a, sizeof(output));
     flags = 0;
-    ASSERT_TRIPS(run(DTRACEACT_UADDR, &guest, &flags, output));
+    ASSERT_TRIPS(run(DTRACEACT_UADDR, &guest, &flags, output),
+        "act->dta_kind == DTRACEACT_UADDR && mstate.dtms_htrargs != NULL");
     assert(flags == 0 && output[0] == 0x5a);
     curproc = &process;
     memset(output, 0x5a, sizeof(output));

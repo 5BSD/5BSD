@@ -93,11 +93,15 @@ static void dtrace_vprobe_discard(uint16_t vmid, hypertrace_id_t id)
 #define INVARIANTS
 static jmp_buf assert_trap;
 static int assert_armed;
+static const char *assert_text;
 #undef ASSERT
 #define ASSERT(x) do { if (!(x)) { CHECK(assert_armed); \
-    longjmp(assert_trap, 1); } } while (0)
-#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    assert_text = #x; longjmp(assert_trap, 1); } } while (0)
+/* Only the named assertion will do: say which one tripped instead. */
+#define ASSERT_TRIPS(stmt, text) do { assert_armed = 1; \
     if (setjmp(assert_trap) == 0) { stmt; CHECK(!"ASSERT held"); } \
+    if (strcmp(assert_text, text) != 0) { fprintf(stderr, \
+    "tripped ASSERT(%s), not ASSERT(%s)\n", assert_text, text); abort(); } \
     assert_armed = 0; } while (0)
 #include "batch.inc"
 static void empty(void)
@@ -166,7 +170,8 @@ int main(void)
     CHECK(fired == 1 && interrupts == 1 && thread.t_hypertrace_vmhdl == &batch);
     CHECK(hypertrace_priv_create_probes(1, 42, batch + 1, 1) == ESTALE);
     /* An ID is reallocated only once its probes are gone, as checked below. */
-    ASSERT_TRIPS(hypertrace_priv_create_probes(1, 43, batch + 1, 1));
+    ASSERT_TRIPS(hypertrace_priv_create_probes(1, 43, batch + 1, 1),
+        "probe == NULL || probe->htpb_epoch == epoch");
     CHECK(core[1] && !core[2]);
     hypertrace_vm_epochs[1] = live_epoch = 42;
     CHECK(hypertrace_vm_release(1, 42) == 0);

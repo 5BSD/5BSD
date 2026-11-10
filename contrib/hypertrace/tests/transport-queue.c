@@ -58,10 +58,14 @@ static void test_free(void *p) { if (p != NULL) { live--; free(p); } }
 /* A failed KASSERT is a panic: trap it where a case expects one. */
 static jmp_buf assert_trap;
 static int assert_armed;
+static const char *assert_text;
 #define KASSERT(exp, msg) do { if (!(exp)) { assert(assert_armed); \
-    longjmp(assert_trap, 1); } } while (0)
-#define KASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    assert_text = #exp; longjmp(assert_trap, 1); } } while (0)
+/* Only the named assertion will do: say which one tripped instead. */
+#define KASSERT_TRIPS(stmt, text) do { assert_armed = 1; \
     if (setjmp(assert_trap) == 0) { stmt; assert(!"KASSERT held"); } \
+    if (strcmp(assert_text, text) != 0) { fprintf(stderr, \
+    "tripped KASSERT(%s), not KASSERT(%s)\n", assert_text, text); abort(); } \
     assert_armed = 0; } while (0)
 static void dtt_queue_remove(struct dtt_softc *sc, dtt_qentry_t *entry) {
     TAILQ_REMOVE(&sc->dataq, entry, next);
@@ -134,7 +138,7 @@ int main(void) {
     assert(pop(&sc) == DTT_SESSION_STOP && live == 0);
     /* Unload withdraws gsc before it marks the softc dying. */
     sc.dying = true;
-    KASSERT_TRIPS(dtt_queue_enqueue_front(&rekey));
+    KASSERT_TRIPS(dtt_queue_enqueue_front(&rekey), "!sc->dying");
     sx_sunlock(&dtt_transport_lock);
     assert(live == 0 && sc.queued == 0);
     sc.dying = false;

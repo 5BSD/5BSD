@@ -267,8 +267,9 @@ whenever pkgbase is in use, builds the world's repository with the same
 `/usr/5bsd-packages/offline` together with
 `release/scripts/5BSD-base-offline.conf`, so the installer never needs a
 network for the base system. `release/scripts/pkgbase-stage.lua` selects the
-packages and must list `5BSD-kernel-generic`, as must
-`usr.sbin/bsdinstall/scripts/pkgbase.in`. The knobs:
+packages, among them the kernel package: `5BSD-kernel-<name>` for the first
+configuration in `KERNCONF`, or the only kernel in the repository when
+`KERNCONF` is not set. The knobs:
 
 | Variable | Meaning |
 |---|---|
@@ -331,6 +332,10 @@ Everything above is committed. Known rough edges: src.conf(5) still prints
 i386 and armv7 defaults that the 64-bit-only universe never uses; the
 repository is unsigned unless you set `PKG_REPO_SIGNING_KEY`; and while
 `make packages` cuts one `5BSD-kernel-<name>` package per configuration in
-`KERNCONF` (`Makefile.inc1`, `create-kernel-packages`), the installer and
-`release/scripts/pkgbase-stage.lua` only know `5BSD-kernel-generic`, so a
-custom kernel is installable with `pkg` but not selectable in `bsdinstall`.
+`KERNCONF` (`Makefile.inc1`, `create-kernel-packages`; `<name>` is the
+configuration name in lower case with a hyphen for each underscore), a
+repository with several kernels needs the kernel named: media that
+`release/Makefile` assembles from the repository it builds take the first
+word of `KERNCONF` (passed to `release/scripts/pkgbase-stage.lua`), and
+`bsdinstall` takes `BSDINSTALL_KERNEL`. The installer has no menu to choose
+a kernel.

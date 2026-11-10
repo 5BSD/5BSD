@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 root = Path(__file__).resolve().parents[3]
 out = Path(sys.argv[1]).resolve()
@@ -20,11 +21,21 @@ source = (common / 'dt_error.c').read_text()
 start = source.index('/*\n * Append "; reason" to dp_err.')
 source.index('\nint\ndt_set_progerr(', start)
 (out / 'prog-error.inc').write_text(source[start:])
-scratch = out / 'tmp'
-scratch.mkdir(exist_ok=True)
+# A new directory each run: a file left by a failed run must not fail the next.
+scratch = Path(tempfile.mkdtemp(prefix='tmp.', dir=out))
 subprocess.run(['cc', '-std=gnu17', '-Wall', '-Wextra', '-Werror', '-UNDEBUG',
     '-fsanitize=address,undefined', '-DDT_PROG_ERRLEN=' + length.group(1),
     '-I' + str(out), str(Path(__file__).with_suffix('.c')),
     '-o', str(out / 'prog-error-test')], check=True)
-subprocess.run([str(out / 'prog-error-test'), str(scratch)], check=True,
-    timeout=30)
+# The errors under test are printed on stderr.  Keep them off the terminal,
+# but show the end of them, where a failed assertion is, when the test fails.
+log = out / 'prog-error.stderr'
+try:
+    with log.open('w') as stderr:
+        status = subprocess.run([str(out / 'prog-error-test'), str(scratch)],
+            stderr=stderr, timeout=30).returncode
+except subprocess.TimeoutExpired:
+    status = 'timed out'
+if status != 0:
+    sys.stderr.write(log.read_text(errors='replace')[-2000:])
+    raise SystemExit(f'prog-error-test: status {status}; stderr is in {log}')

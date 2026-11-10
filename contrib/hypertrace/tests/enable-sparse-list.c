@@ -15,10 +15,14 @@
 /* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
 static jmp_buf assert_trap;
 static int assert_armed;
+static const char *assert_text;
 #define ASSERT(expr) do { if (!(expr)) { assert(assert_armed); \
-    longjmp(assert_trap, 1); } } while (0)
-#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    assert_text = #expr; longjmp(assert_trap, 1); } } while (0)
+/* Only the named assertion will do: say which one tripped instead. */
+#define ASSERT_TRIPS(stmt, text) do { assert_armed = 1; \
     if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    if (strcmp(assert_text, text) != 0) { fprintf(stderr, \
+    "tripped ASSERT(%s), not ASSERT(%s)\n", assert_text, text); abort(); } \
     assert_armed = 0; } while (0)
 #define ASSERT3S(a, op, b) assert((a) op (b))
 #define MUTEX_HELD(lock) (*(lock) == 1)
@@ -95,7 +99,8 @@ main(void)
 	dtrace_enabling_t enab = { .dten_probelistsize = 100000,
 	    .dten_probelist = new_slots(100000) };
 	dtrace_probedesc_t *list;
-	size_t bytes = 0;
+	/* Written by a call that a trapped ASSERT leaves with longjmp(). */
+	static size_t bytes;
 	int count = -1, error = -1;
 
 	enab.dten_probelist[1] = &host;
@@ -137,7 +142,8 @@ main(void)
 	/* Only called after a match recorded at least one probe. */
 	bytes = 9;
 	allocated_bytes = 0;
-	ASSERT_TRIPS(dtrace_enabling_list(&enab, &count, &bytes, &error));
+	ASSERT_TRIPS(dtrace_enabling_list(&enab, &count, &bytes, &error),
+	    "count > 0");
 	assert(bytes == 0 && allocated_bytes == 0 &&
 	    enab.dten_probelist != NULL);
 	free(enab.dten_probelist);
