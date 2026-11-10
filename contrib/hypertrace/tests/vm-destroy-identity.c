@@ -10,6 +10,7 @@
 #define VMMCTL_VM_CREATE 1
 #define VMMCTL_VM_DESTROY 2
 #define VMMCTL_VM_DESTROY_IDENTITY 3
+#define VMMCTL_VM_LIFETIME_QUERY 4
 #define nitems(x) (sizeof(x)/sizeof((x)[0]))
 #define PRIV_VMM_DESTROY 1
 #define VM_SUSPEND_DESTROY 1
@@ -65,6 +66,20 @@ int main(void) {
 	struct thread td = { &creator };
 	struct vmmctl_vm_destroy_identity request = { .epoch = 9, .vmid = 7, .name = "source" };
 	machine.id = 7; machine.epoch = 9;
+	struct vmmctl_vm_lifetime_query query = { .name = "source" };
+	memset(query.name, 'x', sizeof(query.name));
+	assert(vmmctl_ioctl(NULL, VMMCTL_VM_LIFETIME_QUERY, (void *)&query, 0, &td) == EINVAL);
+	strcpy(query.name, "source"); query.reserved[0] = 1;
+	assert(vmmctl_ioctl(NULL, VMMCTL_VM_LIFETIME_QUERY, (void *)&query, 0, &td) == EINVAL);
+	query.reserved[0] = 0; missing = true;
+	assert(vmmctl_ioctl(NULL, VMMCTL_VM_LIFETIME_QUERY, (void *)&query, 0, &td) == ENOENT);
+	missing = false; td.td_ucred = &stranger; privilege_error = EPERM;
+	assert(vmmctl_ioctl(NULL, VMMCTL_VM_LIFETIME_QUERY, (void *)&query, 0, &td) == EPERM);
+	assert(query.vmid == 0 && query.epoch == 0);
+	privilege_error = 0;
+	assert(vmmctl_ioctl(NULL, VMMCTL_VM_LIFETIME_QUERY, (void *)&query, 0, &td) == 0);
+	assert(query.vmid == 7 && query.epoch == 9 && !global_lock && !mem_lock);
+	td.td_ucred = &creator;
 	request.vmid = 0;
 	assert(vmmctl_ioctl(NULL, VMMCTL_VM_DESTROY_IDENTITY, (void *)&request, 0, &td) == EINVAL);
 	request.vmid = 7; request.reserved[1] = 1;

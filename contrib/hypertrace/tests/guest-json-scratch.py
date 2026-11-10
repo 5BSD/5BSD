@@ -17,11 +17,20 @@ arm = source[start:end]
 fixture = r'''
 #include <assert.h>
 #include <limits.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
 #define DIF_SUBR_JSON 1
 #define DTRACEOPT_STRSIZE 0
 #define CPU_DTRACE_BADADDR 1
@@ -41,6 +50,7 @@ static const unsigned char json_bytes[] = {'{', '}', 0};
 static const unsigned char selector_bytes[] = {'k', 0};
 static unsigned *active_flags;
 static int reads, fault_on_read, parser_fault;
+static uintptr_t illegal;
 
 static uint8_t
 dtrace_load8(const void *tag, uintptr_t addr)
@@ -99,7 +109,6 @@ run(struct state *mstate, struct options *state, struct treg tupregs[2],
     struct reg regs[1], unsigned *flags)
 {
     const int rd = 0;
-    uintptr_t illegal = 0;
     uintptr_t *illval = &illegal;
     void *vstate = NULL;
     active_flags = flags;
@@ -145,10 +154,19 @@ main(void)
     run(&ms, &opt, args, result, &flags);
     assert(flags == CPU_DTRACE_NOSCRATCH && result[0].dttr_value == 0);
 
+    /* A JSON address whose string limit wraps is refused before reading. */
+    args[0].dttk_value = UINTPTR_MAX - 4;
+    flags = 0; reads = 0; illegal = 0;
+    run(&ms, &opt, args, result, &flags);
+    assert(flags == CPU_DTRACE_BADADDR && reads == 0 &&
+        illegal == UINTPTR_MAX - 4 && result[0].dttr_value == 0);
+    args[0].dttk_value = 0x1000;
+
+    /* DTRACEOPT_STRSIZE is a non-negative option. */
     opt.dts_options[0] = UINT64_MAX;
     flags = 0; reads = 0;
-    run(&ms, &opt, args, result, &flags);
-    assert(flags == CPU_DTRACE_BADADDR && reads == 0);
+    ASSERT_TRIPS(run(&ms, &opt, args, result, &flags));
+    assert(flags == 0 && reads == 0);
     puts("PASS: JSON scratch partition and guest faults");
     return 0;
 }

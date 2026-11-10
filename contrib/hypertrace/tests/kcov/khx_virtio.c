@@ -301,6 +301,7 @@ struct virtqueue {
 	void *intr_arg;
 	long notifies;
 	int intr_enabled;
+	int no_sdt;
 	long fail_nth;
 	int fail_error;
 	int race;
@@ -420,6 +421,12 @@ int
 khx_vq_intr_enabled(struct virtqueue *vq)
 {
 	return (vq->intr_enabled);
+}
+
+int
+khx_vq_sdt_disabled(struct virtqueue *vq)
+{
+	return (vq->no_sdt);
 }
 
 void
@@ -620,6 +627,15 @@ void
 virtqueue_disable_intr(struct virtqueue *vq)
 {
 	vq->intr_enabled = 0;
+}
+
+void
+virtqueue_disable_sdt(struct virtqueue *vq)
+{
+	if (vq->free != vq->size)
+		panic("virtqueue_disable_sdt: disabling SDT on a non-empty "
+		    "queue");
+	vq->no_sdt = 1;
 }
 
 /* ---- pmap for sglist(9) ------------------------------------------------ */

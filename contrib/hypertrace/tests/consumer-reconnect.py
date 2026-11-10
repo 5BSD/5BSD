@@ -17,10 +17,13 @@ b = library.index('\n/* Serialize complete frames', a)
 send_start = b + 1
 send_end = library.index('\ntypedef struct {', send_start)
 c = command.index('static int\ndtraced_connection_lost(')
-d = command.index('\nstatic void *\nlisten_dtraced(', c)
+d = command.index('\n}\n', c) + 3
+# The derived program backoff between the two belongs to consumer-derived-replay.
+e = command.index('static int\nreconnect_dtraced(', d)
+f = command.index('\nstatic void *\nlisten_dtraced(', e)
 (out / 'consumer-reconnect.inc').write_text(
     library[a:b] + '\n' + library[send_start:send_end] + '\n' +
-    command[c:d])
+    command[c:d] + '\n' + command[e:f])
 subprocess.run(['cc', '-pthread', '-Wall', '-Wextra', '-Werror',
     '-fsanitize=address,undefined', '-include', str(root / 'contrib/hypertrace/tests/consumer-birth-mock.h'), '-I' + str(out),
     '-I' + str(root / 'usr.sbin/dtraced'), '-I' + str(root / 'sys'),

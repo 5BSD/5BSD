@@ -18,8 +18,16 @@ while depth:
     depth += (source[end] == '{') - (source[end] == '}')
     end += 1
 helper = source[start:end]
+early_start = source.index('\t\t\t/* These actions operate on or resolve')
+early_end = source.index('\n\t\t\tswitch (act->dta_kind) {', early_start)
+early = source[early_start:early_end]
+arm_start = source.index('\n\t\t\tcase DTRACEACT_PANIC:\n', early_end) + 1
+arm = source[arm_start:source.index('\t\t\t\tcontinue;\n', arm_start) +
+    len('\t\t\t\tcontinue;\n')]
+assert 'dtrace_action_panic(ecb);' in arm
 fixture = r'''
 #include <assert.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -31,13 +39,30 @@ typedef struct {
 } dtrace_probe_t;
 typedef struct { dtrace_probe_t *dte_probe; } dtrace_ecb_t;
 enum { CPU_DTRACE_ILLOP = 1 };
-static unsigned flags;
+enum {
+    DTRACEACT_STOP = 1, DTRACEACT_BREAKPOINT, DTRACEACT_PANIC,
+    DTRACEACT_CHILL, DTRACEACT_RAISE, DTRACEACT_IMMSTACK, DTRACEACT_JSTACK,
+    DTRACEACT_SYM, DTRACEACT_MOD, DTRACEACT_USYM, DTRACEACT_UMOD
+};
+static unsigned cpu_flags;
 static int dtrace_destructive_disallow, panic_calls, claim_calls;
 static void *dtrace_panicked;
 static char thread;
 #define curthread (&thread)
-#define ASSERT(expr) assert(expr)
-#define DTRACE_CPUFLAG_SET(flag) (flags |= (flag))
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define ASSERT(expr) do { if (!(expr)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
+#define DTRACE_CPUFLAG_SET(flag) (cpu_flags |= (flag))
+static int dtrace_priv_kernel_destructive(void *state)
+{
+    (void)state;
+    return 1;
+}
 static void *dtrace_casptr(void **where, void *old, void *new_value)
 {
     void *prior = *where;
@@ -52,6 +77,23 @@ static void dtrace_panic(const char *fmt, ...)
     ++panic_calls;
 }
 PRODUCTION_HELPER
+static void
+run_action(dtrace_ecb_t *ecb)
+{
+    dtrace_probe_t *probe = ecb->dte_probe;
+    struct action { int dta_kind; } action_record = {DTRACEACT_PANIC};
+    struct action *act = &action_record;
+    unsigned *flags = &cpu_flags;
+    void *state = NULL;
+
+    for (int action = 0; action < 1; action++) {
+PRODUCTION_EARLY
+        switch (act->dta_kind) {
+PRODUCTION_ARM
+        default: assert(0);
+        }
+    }
+}
 int main(void)
 {
     dtrace_provider_t provider = {"test"};
@@ -59,19 +101,23 @@ int main(void)
     dtrace_probe_t host = {0, &provider, "mod", "func", "name"};
     dtrace_ecb_t ecb = {&guest};
 
-    dtrace_action_panic(&ecb);
-    assert(flags == CPU_DTRACE_ILLOP);
+    run_action(&ecb);
+    assert(cpu_flags == CPU_DTRACE_ILLOP);
+    assert(panic_calls == 0 && claim_calls == 0 && dtrace_panicked == NULL);
+    /* dtrace_probe() refuses it first; the helper never sees a guest. */
+    cpu_flags = 0;
+    ASSERT_TRIPS(dtrace_action_panic(&ecb));
     assert(panic_calls == 0 && claim_calls == 0 && dtrace_panicked == NULL);
 
-    flags = 0;
+    cpu_flags = 0;
     ecb.dte_probe = &host;
     dtrace_destructive_disallow = 1;
-    dtrace_action_panic(&ecb);
-    assert(flags == 0 && panic_calls == 0 && claim_calls == 0);
+    run_action(&ecb);
+    assert(cpu_flags == 0 && panic_calls == 0 && claim_calls == 0);
 
     dtrace_destructive_disallow = 0;
-    dtrace_action_panic(&ecb);
-    assert(flags == 0 && panic_calls == 1 && claim_calls == 1);
+    run_action(&ecb);
+    assert(cpu_flags == 0 && panic_calls == 1 && claim_calls == 1);
     assert(dtrace_panicked == curthread);
     dtrace_action_panic(&ecb);
     assert(panic_calls == 1 && claim_calls == 1);
@@ -79,7 +125,8 @@ int main(void)
 }
 '''
 path = out / 'guest-panic-action.c'
-path.write_text(fixture.replace('PRODUCTION_HELPER', helper))
+path.write_text(fixture.replace('PRODUCTION_HELPER', helper)
+    .replace('PRODUCTION_EARLY', early).replace('PRODUCTION_ARM', arm))
 binary = out / 'guest-panic-action'
 subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-UNDEBUG',
                 '-fsanitize=address,undefined', str(path), '-o', str(binary)],

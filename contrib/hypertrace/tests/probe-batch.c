@@ -2,6 +2,7 @@
 #define main map_main
 #include "probe-map.c"
 #undef main
+#include <setjmp.h>
 #include <stdbool.h>
 #define HYPERTRACE_HOSTID 0
 #define DTRACE_IDNONE 0
@@ -88,6 +89,16 @@ static void dtrace_vprobe_discard(uint16_t vmid, hypertrace_id_t id)
 {
     CHECK(vmid == 1 && id > 0 && id < 16 && core[id]); core[id] = false;
 }
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+#define INVARIANTS
+static jmp_buf assert_trap;
+static int assert_armed;
+#undef ASSERT
+#define ASSERT(x) do { if (!(x)) { CHECK(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; CHECK(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
 #include "batch.inc"
 static void empty(void)
 {
@@ -154,7 +165,9 @@ int main(void)
     CHECK(hypertrace_probe(&args, 1, &args) == ESTALE);
     CHECK(fired == 1 && interrupts == 1 && thread.t_hypertrace_vmhdl == &batch);
     CHECK(hypertrace_priv_create_probes(1, 42, batch + 1, 1) == ESTALE);
-    CHECK(hypertrace_priv_create_probes(1, 43, batch + 1, 1) == EBUSY);
+    /* An ID is reallocated only once its probes are gone, as checked below. */
+    ASSERT_TRIPS(hypertrace_priv_create_probes(1, 43, batch + 1, 1));
+    CHECK(core[1] && !core[2]);
     hypertrace_vm_epochs[1] = live_epoch = 42;
     CHECK(hypertrace_vm_release(1, 42) == 0);
     CHECK(hypertrace_vm_alloc(&second, &second_epoch) == 0 && second == 2);

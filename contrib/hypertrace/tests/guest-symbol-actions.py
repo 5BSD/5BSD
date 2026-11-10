@@ -15,22 +15,34 @@ start = source.index('\t\t\tcase DTRACEACT_SYM:',
     source.index('\t\t\tcase DTRACEACT_PRINTM: {'))
 end = source.index('\n\t\t\tcase DTRACEACT_EXIT:', start)
 arms = source[start:end]
-early = source[source.index('/* These actions operate on or resolve'):
-    source.index('case DTRACEACT_USYM:',
-        source.index('/* These actions operate on or resolve')) + 256]
+early_start = source.index('\t\t\t/* These actions operate on or resolve')
+early = source[early_start:
+    source.index('\n\t\t\tswitch (act->dta_kind) {', early_start)]
+assert 'case DTRACEACT_USYM:' in early
 assert 'case DTRACEACT_UADDR:' not in early
 header = (root / 'sys/sys/hypertrace.h').read_text()
 macros = header[header.index('#define HYPERTRACE_USTACK_GUEST_TAG'):
     header.index('/* Version 2', header.index('#define HYPERTRACE_USTACK_GUEST_TAG'))]
 fixture = r'''
 #include <assert.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
 enum {
     DTRACEACT_SYM = 1, DTRACEACT_MOD, DTRACEACT_USYM,
-    DTRACEACT_UMOD, DTRACEACT_UADDR
+    DTRACEACT_UMOD, DTRACEACT_UADDR, DTRACEACT_STOP, DTRACEACT_BREAKPOINT,
+    DTRACEACT_PANIC, DTRACEACT_CHILL, DTRACEACT_RAISE, DTRACEACT_IMMSTACK,
+    DTRACEACT_JSTACK
 };
 #define CPU_DTRACE_ILLOP 8
 #define DTRACE_STORE(type, base, offset, value) \
@@ -57,6 +69,7 @@ run(int kind, struct probe *probe, unsigned *flags, unsigned char output[32])
     struct action *act = &action_record;
 
     for (int action = 0; action < 1; action++) {
+PRODUCTION_EARLY
         switch (kind) {
 PRODUCTION_ARMS
         default: assert(0);
@@ -97,11 +110,12 @@ main(void)
     assert(run(DTRACEACT_UADDR, &guest, &flags, output) == 0 &&
         flags == 0 && output[0] == 0x5a);
     allow_proc = 1;
+    /* dtrace_probe() passes hypertrace arguments for every virtual probe. */
     mstate.dtms_htrargs = NULL;
     memset(output, 0x5a, sizeof(output));
     flags = 0;
-    assert(run(DTRACEACT_UADDR, &guest, &flags, output) == 0 &&
-        flags == CPU_DTRACE_ILLOP && output[0] == 0x5a);
+    ASSERT_TRIPS(run(DTRACEACT_UADDR, &guest, &flags, output));
+    assert(flags == 0 && output[0] == 0x5a);
     curproc = &process;
     memset(output, 0x5a, sizeof(output));
     flags = 0;
@@ -120,7 +134,8 @@ main(void)
     puts("PASS: guest UADDR records VM/PID/PC; symbol actions reject host context");
     return 0;
 }
-'''.replace('PRODUCTION_ARMS', arms).replace('UADDR_MACROS', macros)
+'''.replace('PRODUCTION_EARLY', early).replace('PRODUCTION_ARMS', arms) \
+    .replace('UADDR_MACROS', macros)
 path = out / 'guest-symbol-actions.c'
 path.write_text(fixture)
 binary = out / 'guest-symbol-actions'

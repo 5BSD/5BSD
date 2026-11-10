@@ -19,7 +19,7 @@ suites = {
  'list-model': ('cc', [tests/'list-model.c',common/'dt_list.c'], [common], []),
  'config-properties': ('c++', [tests/'config-properties.cc'], [root/'usr.sbin/dtraced'], ['-std=c++17']),
  'migration-fd-faults': ('cc', [tests/'migration-fd-faults.c',root/'usr.sbin/bhyve/migration_session.c'],
-                        [root/'usr.sbin/bhyve'], ['-Wl,--wrap=read,--wrap=write,--wrap=poll','-lz','-lnv']),
+                        [root/'usr.sbin/bhyve'], ['-Wl,--wrap=recv,--wrap=send,--wrap=poll','-lz','-lnv']),
 }
 def run(item):
  name, (compiler, sources, includes, extra) = item

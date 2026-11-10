@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <setjmp.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,6 +55,14 @@ static void test_free(void *p) { if (p != NULL) { live--; free(p); } }
 #define mtx_lock(mtx) ((void)(mtx))
 #define mtx_unlock(mtx) ((void)(mtx))
 #define cv_signal(cv) ((cv)->signaled++)
+/* A failed KASSERT is a panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define KASSERT(exp, msg) do { if (!(exp)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define KASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"KASSERT held"); } \
+    assert_armed = 0; } while (0)
 static void dtt_queue_remove(struct dtt_softc *sc, dtt_qentry_t *entry) {
     TAILQ_REMOVE(&sc->dataq, entry, next);
     sc->queued--;
@@ -123,8 +132,11 @@ int main(void) {
     assert(dtt_queue_session_stop(&stop) == 0);
     assert(sc.queued == 1 && live == 2);
     assert(pop(&sc) == DTT_SESSION_STOP && live == 0);
+    /* Unload withdraws gsc before it marks the softc dying. */
     sc.dying = true;
-    assert(dtt_queue_enqueue_front(&rekey) == ENXIO && live == 0);
+    KASSERT_TRIPS(dtt_queue_enqueue_front(&rekey));
+    sx_sunlock(&dtt_transport_lock);
+    assert(live == 0 && sc.queued == 0);
     sc.dying = false;
     sx_xlock(&dtt_transport_lock);
     pthread_t thread;

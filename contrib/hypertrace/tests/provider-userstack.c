@@ -40,6 +40,10 @@ static struct {
 	uintptr_t cpuc_dtrace_illval;
 } cpu_core[1];
 static uint64_t stack_args[2];
+static struct dtrace_error_arg {
+	uintptr_t illval;
+	bool active;
+} dtrace_error_arg[1];
 static bool
 kstack_contains(struct thread *td, uintptr_t p, size_t size)
 {
@@ -139,6 +143,18 @@ main(void)
 	stack_args[1] = 0x82;
 	tf.tf_sp = (uintptr_t)stack_args;
 	assert(dtrace_getarg(0, 0) == 0x71);
+	/* The ERROR probe's sixth argument bypasses the trapframe. */
+#if TEST_ARM64
+	tf.tf_x[5] = 0x75;
+#else
+	tf.tf_a[5] = 0x75;
+#endif
+	assert(dtrace_getarg(5, 0) == 0x75);
+	dtrace_error_arg[0].illval = 0xbad;
+	dtrace_error_arg[0].active = true;
+	assert(dtrace_getarg(5, 0) == 0xbad && dtrace_getarg(0, 0) == 0x71);
+	dtrace_error_arg[0].active = false;
+	assert(dtrace_getarg(5, 0) == 0x75);
 	assert(dtrace_getarg(8, 0) == 0x81);
 	assert(dtrace_getarg(9, 0) == 0x82);
 	assert(dtrace_getarg(-1, 0) == 0);

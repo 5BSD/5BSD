@@ -1,5 +1,7 @@
 /* Build the current kernel dtrace_enabling_list() body in this fixture. */
 #include <assert.h>
+#include <errno.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,7 +12,14 @@
 #define DTRACE_FUNCNAMELEN 16
 #define DTRACE_NAMELEN 16
 #define KM_NOSLEEP 0
-#define ASSERT(expr) assert(expr)
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define ASSERT(expr) do { if (!(expr)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
 #define ASSERT3S(a, op, b) assert((a) op (b))
 #define MUTEX_HELD(lock) (*(lock) == 1)
 
@@ -87,12 +96,12 @@ main(void)
 	    .dten_probelist = new_slots(100000) };
 	dtrace_probedesc_t *list;
 	size_t bytes = 0;
-	int count = -1;
+	int count = -1, error = -1;
 
 	enab.dten_probelist[1] = &host;
 	enab.dten_probelist[89999] = &guest;
-	list = dtrace_enabling_list(&enab, &count, &bytes);
-	assert(list != NULL && count == 2);
+	list = dtrace_enabling_list(&enab, &count, &bytes, &error);
+	assert(list != NULL && count == 2 && error == 0);
 	assert(bytes == 2 * sizeof(*list) && allocated_bytes == bytes);
 	assert(freed_list_bytes == 100000 * sizeof(dtrace_probe_t *));
 	assert(enab.dten_probelist == NULL && enab.dten_probelistsize == 0);
@@ -108,7 +117,9 @@ main(void)
 	enab.dten_probelist[0] = &malformed;
 	allocated_bytes = 0;
 	bytes = 0;
-	assert(dtrace_enabling_list(&enab, &count, &bytes) == NULL);
+	/* A name the description cannot hold is not a memory shortage. */
+	assert(dtrace_enabling_list(&enab, &count, &bytes, &error) == NULL);
+	assert(error == ENAMETOOLONG);
 	assert(freed_desc_bytes == 2 * sizeof(*list) + sizeof(*list));
 	assert(enab.dten_probelist != NULL);
 	free(enab.dten_probelist);
@@ -117,15 +128,18 @@ main(void)
 	enab.dten_probelist[0] = &host;
 	fail_alloc = 1;
 	bytes = 0;
-	assert(dtrace_enabling_list(&enab, &count, &bytes) == NULL);
-	assert(bytes == 0 && enab.dten_probelist != NULL);
+	assert(dtrace_enabling_list(&enab, &count, &bytes, &error) == NULL);
+	assert(bytes == 0 && error == ENOMEM && enab.dten_probelist != NULL);
 	fail_alloc = 0;
 	free(enab.dten_probelist);
 
 	enab.dten_probelist = new_slots(4);
+	/* Only called after a match recorded at least one probe. */
 	bytes = 9;
-	assert(dtrace_enabling_list(&enab, &count, &bytes) == NULL);
-	assert(bytes == 0 && enab.dten_probelist != NULL);
+	allocated_bytes = 0;
+	ASSERT_TRIPS(dtrace_enabling_list(&enab, &count, &bytes, &error));
+	assert(bytes == 0 && allocated_bytes == 0 &&
+	    enab.dten_probelist != NULL);
 	free(enab.dten_probelist);
 	puts("enable sparse list: pass");
 	return (0);

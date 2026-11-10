@@ -2,9 +2,18 @@
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
 #define ALIGNBYTES 7
 #define P2ROUNDUP(x, align) (((x) + (align) - 1) & ~((align) - 1))
 typedef int64_t dtrace_optval_t;
@@ -79,8 +88,9 @@ main(void)
 	size = 99;
 	assert(dtrace_ustack_record_size(0, 0, 0, &size) == EINVAL &&
 	    size == 99);
-	assert(dtrace_ustack_record_size(1, -1, 0, &size) == EINVAL &&
-	    size == 99);
+	/* strsize is an unsigned record field or a non-negative option. */
+	ASSERT_TRIPS(dtrace_ustack_record_size(1, -1, 0, &size));
+	assert(size == 99);
 	assert(dtrace_ustack_record_size(max_frames + 1, 0, 0, &size) == EINVAL &&
 	    size == 99);
 	assert(dtrace_ustack_record_size(1, max_strings + 1, 0, &size) == EINVAL &&

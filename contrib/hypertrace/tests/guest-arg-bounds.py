@@ -21,15 +21,26 @@ argument_arm = source[source.index('\tcase DIF_VAR_ARGS:'):
                       source.index('\tcase DIF_VAR_REGS:')]
 if 'return (dtrace_guest_argument(mstate, ndx));' not in argument_arm:
     raise SystemExit('Virtual args[] no longer uses the bounded reader')
-if ('!dtrace_minion_stackarg_slot(mstate, ndx,' not in argument_arm or
+if ('if (ndx >= numcached) {' not in argument_arm or
+        '!dtrace_minion_stackarg_slot(mstate, ndx,\n\t\t\t    &minion_slot)'
+        not in argument_arm or
         'mstate->dtms_stackarg[minion_slot] = val;' not in argument_arm):
     raise SystemExit('Minion args[] no longer bounds its stack cache')
 fixture = r'''
 #include <assert.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <sys/hypertrace.h>
 
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
 typedef struct {
     uint64_t dttr_value;
     const void *dttr_vmhdl;
@@ -72,12 +83,15 @@ int main(void)
         assert(dtrace_minion_stackarg_slot(&mstate, i, &slot));
         assert(slot == i - 5);
     }
+    /* The caller only asks for indexes past the cached arguments. */
+    slot = SIZE_MAX;
     for (uint64_t i = 0; i < 5; i++)
-        assert(!dtrace_minion_stackarg_slot(&mstate, i, &slot));
+        ASSERT_TRIPS(dtrace_minion_stackarg_slot(&mstate, i, &slot));
     for (uint64_t i = 10; i < 18; i++)
         assert(!dtrace_minion_stackarg_slot(&mstate, i, &slot));
     assert(!dtrace_minion_stackarg_slot(&mstate, UINT64_MAX, &slot));
-    assert(!dtrace_minion_stackarg_slot(&mstate, 5, NULL));
+    assert(slot == SIZE_MAX);
+    ASSERT_TRIPS(dtrace_minion_stackarg_slot(&mstate, 5, NULL));
     return 0;
 }
 '''.replace('SLOT_HELPER', slot_helper).replace('HELPER', helper)

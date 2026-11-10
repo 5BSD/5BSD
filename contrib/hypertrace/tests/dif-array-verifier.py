@@ -23,6 +23,10 @@ for name in names:
     if match is None:
         raise SystemExit(f'Missing {name}')
     defines.append(f'#define {name} {match.group(1)}')
+# ldga/ldta carry the array in r1; guest and host arrays have no encoding.
+if not re.search(r'^#define\s+DIF_INSTR_R1\(i\)\s+\(\(\(i\) >> 16\) & 0xff\)',
+                 header, re.MULTILINE):
+    raise SystemExit('DIF_INSTR_R1 is no longer 8 bits')
 start = source.index('\t\tcase DIF_OP_LDGA:',
                      source.index('\ndtrace_difo_validate('))
 end = source.index('\t\tcase DIF_OP_LDGS:', start)
@@ -53,10 +57,10 @@ ARMS
 }
 int main(void)
 {
-    const unsigned accepted[] = { 0, 0xff, 0x150, 0x24f,
-        0x300, 0x302, 0x3ff };
-    const unsigned rejected[] = { 0x100, 0x14f, 0x250, 0x2ff,
-        0x400, 0xffff };
+    const unsigned accepted[] = { 0, 0x80, 0xff };
+    const unsigned rejected[] = { 0x100, 0x14f, DIF_VAR_ARRAY_GMIN,
+        DIF_VAR_ARRAY_GMAX, 0x250, 0x2ff, DIF_VAR_ARRAY_HMIN, 0x302,
+        DIF_VAR_ARRAY_HMAX, 0x400, 0xffff };
     for (unsigned op = DIF_OP_LDGA; op <= DIF_OP_LDTA; op++) {
         for (unsigned i = 0; i < sizeof(accepted) / sizeof(*accepted); i++)
             assert(verify(op, accepted[i], 1, 2) == 0);

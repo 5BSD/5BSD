@@ -20,11 +20,20 @@ helper = source[start:end]
 fixture = r'''
 #include <assert.h>
 #include <errno.h>
+#include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/hypertrace.h>
+/* A failed ASSERT is a debug-kernel panic: trap it where a case expects one. */
+static jmp_buf assert_trap;
+static int assert_armed;
+#define ASSERT(x) do { if (!(x)) { assert(assert_armed); \
+    longjmp(assert_trap, 1); } } while (0)
+#define ASSERT_TRIPS(stmt) do { assert_armed = 1; \
+    if (setjmp(assert_trap) == 0) { stmt; assert(!"ASSERT held"); } \
+    assert_armed = 0; } while (0)
 #undef __amd64__
 #undef __aarch64__
 #undef __riscv
@@ -175,8 +184,13 @@ int main(void)
     assert(dtrace_guest_ucaller(&state) == 0 && user_reads == 0 &&
         cpu_core[0].cpuc_dtrace_flags == CPU_DTRACE_ILLOP);
     args.htr_entry = 0;
+    /* DIF emulation stops at the first fault. */
     reset(); DTRACE_CPUFLAG_SET(CPU_DTRACE_BADADDR);
-    assert(dtrace_guest_ucaller(&state) == 0 && user_reads == 0);
+    ASSERT_TRIPS(dtrace_guest_ucaller(&state));
+    assert(user_reads == 0 && kernel_reads == 0);
+    reset(); DTRACE_CPUFLAG_SET(CPU_DTRACE_BADADDR);
+    ASSERT_TRIPS(dtrace_guest_ustackdepth(&state));
+    assert(user_reads == 0 && kernel_reads == 0);
     reset(); state.dtms_htrargs = NULL;
     assert(dtrace_guest_ucaller(&state) == 0 && user_reads == 0 &&
         cpu_core[0].cpuc_dtrace_flags == CPU_DTRACE_ILLOP);

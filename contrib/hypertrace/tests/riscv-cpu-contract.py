@@ -15,6 +15,9 @@ start = source.index('static void\nrecord_scalar(')
 common = (root / 'usr.sbin/bhyve/checkpoint_cpu.c').read_text()
 match_start = common.index('int\ncheckpoint_cpu_contract_validate(')
 match_end = common.index('\nint\ncheckpoint_cpu_contract_encode(', match_start)
+describe_start = common.index('/*\n * Name one register of a contract record')
+describe_end = common.index('\n}\n', common.index(
+    '\ncheckpoint_cpu_contract_match(', describe_start)) + 3
 vmexit = (root / 'usr.sbin/bhyve/riscv/vmexit.c').read_text()
 sbi_start = vmexit.index('static int\nvmm_sbi_probe_extension(')
 sbi_end = vmexit.index('\nstatic int\nvmexit_ecall_hsm(', sbi_start)
@@ -33,7 +36,8 @@ fixture = fixture.replace('/* PRODUCTION_SBI_MASK */',
     vmexit[sbi_start:sbi_end], 1)
 fixture = fixture.replace('/* PRODUCTION_CAPTURE */', source[start:], 1)
 fixture = fixture.replace('/* PRODUCTION_MATCH */',
-    common[match_start:match_end], 1)
+    common[match_start:match_end] + '\n' +
+    common[describe_start:describe_end], 1)
 path = out / 'riscv-cpu-contract.c'
 path.write_text(fixture)
 binary = out / 'riscv-cpu-contract'
