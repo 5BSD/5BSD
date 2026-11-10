@@ -29,6 +29,7 @@
 #include <sys/ktrace.h>
 #include <sys/mman.h>
 #include <sys/procctl.h>
+#include <sys/procdesc.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/rtprio.h>
@@ -38,6 +39,7 @@
 #include <sys/wait.h>
 
 #include <atf-c.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
@@ -1585,6 +1587,148 @@ ATF_TC_CLEANUP(cap_getmode_failure, tc)
 }
 
 
+/*
+ * pdkill(2) and pdwait(2) records, token by token between the header
+ * (whose last three fields are the modifier, the date and the
+ * milliseconds) and the subject.  These are the records of a process that no
+ * supervisor has anything to do with; they are pinned here because the
+ * supervisor-control series adds its own way to signal and wait for a
+ * process and must leave these alone.
+ *
+ * pdkill: the descriptor, the signal, then the target process.
+ * pdwait: the descriptor twice.  The AUE_PDWAIT conversion has no
+ * "break" and runs on into the AUE_IOCTL one, which writes the
+ * descriptor again; the options are recorded as a value and never
+ * converted.  That is what the kernel does today, and what is pinned.
+ */
+static char pdregex[256];
+
+static pid_t
+pd_child(int *pdp)
+{
+	pid_t child;
+
+	child = pdfork(pdp, 0);
+	ATF_REQUIRE(child != -1);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	return (child);
+}
+
+ATF_TC_WITH_CLEANUP(pdkill_success);
+ATF_TC_HEAD(pdkill_success, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Tests the audit of a successful "
+					"pdkill(2) call");
+}
+
+ATF_TC_BODY(pdkill_success, tc)
+{
+	int pd;
+
+	pid = pd_child(&pd);
+	snprintf(pdregex, sizeof(pdregex), "pdkill\\(2\\),([^,]*,){3}"
+	    "argument,1,0x%x,fd,argument,2,0x%x,signal,"
+	    "process_ex,([^,]*,){5}%d,([^,]*,){3}subject,.*return,success,0",
+	    pd, SIGKILL, pid);
+
+	FILE *pipefd = setup(fds, auclass);
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	check_audit(fds, pdregex, pipefd);
+	close(pd);
+}
+
+ATF_TC_CLEANUP(pdkill_success, tc)
+{
+	cleanup();
+}
+
+
+ATF_TC_WITH_CLEANUP(pdkill_failure);
+ATF_TC_HEAD(pdkill_failure, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Tests the audit of an unsuccessful "
+					"pdkill(2) call");
+}
+
+ATF_TC_BODY(pdkill_failure, tc)
+{
+	snprintf(pdregex, sizeof(pdregex), "pdkill\\(2\\),([^,]*,){3}"
+	    "argument,1,0xffffffff,fd,argument,2,0x%x,signal,"
+	    "subject,.*return,failure : Bad file descriptor,"
+	    "4294967295,trailer", SIGKILL);
+
+	FILE *pipefd = setup(fds, auclass);
+	/* Failure reason: invalid file descriptor */
+	ATF_REQUIRE_ERRNO(EBADF, pdkill(-1, SIGKILL) == -1);
+	check_audit(fds, pdregex, pipefd);
+}
+
+ATF_TC_CLEANUP(pdkill_failure, tc)
+{
+	cleanup();
+}
+
+
+ATF_TC_WITH_CLEANUP(pdwait_success);
+ATF_TC_HEAD(pdwait_success, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Tests the audit of a successful "
+					"pdwait(2) call");
+}
+
+ATF_TC_BODY(pdwait_success, tc)
+{
+	int pd;
+
+	pid = pd_child(&pd);
+	snprintf(pdregex, sizeof(pdregex), "pdwait\\(2\\),([^,]*,){3}"
+	    "argument,1,0x%x,fd,argument,1,0x%x,fd,"
+	    "subject,.*return,success,0", pd, pd);
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+
+	FILE *pipefd = setup(fds, auclass);
+	ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
+	check_audit(fds, pdregex, pipefd);
+	ATF_REQUIRE(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+	close(pd);
+}
+
+ATF_TC_CLEANUP(pdwait_success, tc)
+{
+	cleanup();
+}
+
+
+ATF_TC_WITH_CLEANUP(pdwait_failure);
+ATF_TC_HEAD(pdwait_failure, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Tests the audit of an unsuccessful "
+					"pdwait(2) call");
+}
+
+ATF_TC_BODY(pdwait_failure, tc)
+{
+	snprintf(pdregex, sizeof(pdregex), "pdwait\\(2\\),([^,]*,){3}"
+	    "argument,1,0xffffffff,fd,argument,1,0xffffffff,fd,"
+	    "subject,.*return,failure : Bad file descriptor,"
+	    "4294967295,trailer");
+
+	FILE *pipefd = setup(fds, auclass);
+	/* Failure reason: invalid file descriptor */
+	ATF_REQUIRE_ERRNO(EBADF,
+	    pdwait(-1, &status, WEXITED, NULL, NULL) == -1);
+	check_audit(fds, pdregex, pipefd);
+}
+
+ATF_TC_CLEANUP(pdwait_failure, tc)
+{
+	cleanup();
+}
+
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, fork_success);
@@ -1657,6 +1801,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_enter_success);
 	ATF_TP_ADD_TC(tp, cap_getmode_success);
 	ATF_TP_ADD_TC(tp, cap_getmode_failure);
+
+	ATF_TP_ADD_TC(tp, pdkill_success);
+	ATF_TP_ADD_TC(tp, pdkill_failure);
+	ATF_TP_ADD_TC(tp, pdwait_success);
+	ATF_TP_ADD_TC(tp, pdwait_failure);
 
 	return (atf_no_error());
 }
