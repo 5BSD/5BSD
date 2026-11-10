@@ -437,13 +437,13 @@ static int8_t ring_plevel[VMM_MAX_MODES][HYPERCALL_INDEX_MAX] = {
 };
 
 
-static lwpid_t vmm_priv_gettid(const void *);
-static uint16_t vmm_priv_getid(const void *);
-static const char *vmm_priv_getname(const void *);
+static lwpid_t dtrace_vmm_gettid(const void *);
+static uint16_t dtrace_vmm_getid(const void *);
+static const char *dtrace_vmm_getname(const void *);
 static int vmm_priv_getreg(const void *, int, uint64_t *);
-static int vmm_priv_guest_copyin(const void *, uint64_t, void *, size_t);
-static int vmm_priv_guest_user_copyin(const void *, uint64_t, void *, size_t);
-static int vmm_priv_guest_user_copyout(const void *, uint64_t, const void *, size_t);
+static int dtrace_vmm_guest_copyin(const void *, uint64_t, void *, size_t);
+static int dtrace_vmm_guest_user_copyin(const void *, uint64_t, void *, size_t);
+static int dtrace_vmm_guest_user_copyout(const void *, uint64_t, const void *, size_t);
 
 static int
 sysctl_vmm_hypervisor_mode(SYSCTL_HANDLER_ARGS)
@@ -650,14 +650,14 @@ vmm_modinit(void)
 	}
 	if (error == 0) {
 		dtrace_hypertrace_config_lock();
-		vmm_gettid = vmm_priv_gettid;
-		vmm_getid = vmm_priv_getid;
+		vmm_gettid = dtrace_vmm_gettid;
+		vmm_getid = dtrace_vmm_getid;
 		vmm_getepoch = vmm_priv_getepoch;
-		vmm_getname = vmm_priv_getname;
+		vmm_getname = dtrace_vmm_getname;
 		vmm_getreg = vmm_priv_getreg;
-		vmm_guest_copyin = vmm_priv_guest_copyin;
-		vmm_guest_user_copyin = vmm_priv_guest_user_copyin;
-		vmm_guest_user_copyout = vmm_priv_guest_user_copyout;
+		vmm_guest_copyin = dtrace_vmm_guest_copyin;
+		vmm_guest_user_copyin = dtrace_vmm_guest_user_copyin;
+		vmm_guest_user_copyout = dtrace_vmm_guest_user_copyout;
 		dtrace_hypertrace_config_unlock();
 	}
 	return (error);
@@ -3695,7 +3695,7 @@ vm_copyout(const void *kaddr, struct vm_copyinfo *copyinfo, size_t len)
 }
 
 static lwpid_t
-vmm_priv_gettid(const void *xvhdl)
+dtrace_vmm_gettid(const void *xvhdl)
 {
 
 	const struct vm_hdl *vhdl = xvhdl;
@@ -3703,7 +3703,7 @@ vmm_priv_gettid(const void *xvhdl)
 }
 
 static uint16_t
-vmm_priv_getid(const void *xvhdl)
+dtrace_vmm_getid(const void *xvhdl)
 {
 
 	const struct vm_hdl *vhdl = xvhdl;
@@ -3711,13 +3711,19 @@ vmm_priv_getid(const void *xvhdl)
 }
 
 static const char *
-vmm_priv_getname(const void *xvhdl)
+dtrace_vmm_getname(const void *xvhdl)
 {
 
 	const struct vm_hdl *vhdl = xvhdl;
 	return (vhdl->vcpu->vm->name);
 }
 
+/*
+ * XXX Also called in probe context, but through vm_get_register() and the
+ * backend's getreg, which fbt can instrument when vmm is compiled into the
+ * kernel: tracing them while a guest probe reads a register recurses into
+ * dtrace_probe().  A module build is not affected.
+ */
 static int
 vmm_priv_getreg(const void *xvhdl, int reg, uint64_t *value)
 {
@@ -3732,10 +3738,12 @@ vmm_priv_getreg(const void *xvhdl, int reg, uint64_t *value)
 /*
  * Probe context cannot fault or sleep.  The hypercall acquired the pmap
  * before entering DTrace; the copier publishes nothing unless both pages
- * translate through resident mappings.
+ * translate through resident mappings.  The guest memory hooks, like the
+ * tid, id and name accessors, are named dtrace_ to keep fbt off them when
+ * vmm is compiled into the kernel.
  */
 static int
-vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
+dtrace_vmm_guest_copyin(const void *handle, uint64_t gla, void *dst,
     size_t length)
 {
 	const struct vm_hdl *vhdl = handle;
@@ -3749,7 +3757,7 @@ vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
 }
 
 static int
-vmm_priv_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
+dtrace_vmm_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
     size_t length)
 {
 	const struct vm_hdl *vhdl = handle;
@@ -3765,13 +3773,13 @@ vmm_priv_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
 	user_paging.cpl = 3;
 	user_handle = *vhdl;
 	user_handle.paging = &user_paging;
-	return (vmm_priv_guest_copyin(&user_handle, gla, dst, length));
+	return (dtrace_vmm_guest_copyin(&user_handle, gla, dst, length));
 }
 
 /* A virtual probe may only write a guest user page that the guest itself
  * could write.  The vCPU is frozen in the HyperTrace exit callback. */
 static int
-vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
+dtrace_vmm_guest_user_copyout(const void *handle, uint64_t gla,
     const void *src, size_t length)
 {
 	const struct vm_hdl *vhdl = handle;
