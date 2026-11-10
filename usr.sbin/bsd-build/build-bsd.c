@@ -80,7 +80,7 @@ struct request {
  const char *action, *target, *arch;
  char *run, *native;
  unsigned jobs;
- bool plan, json, packages, cross, production;
+ bool plan, json, packages, cross, production, hardware;
  struct step steps[MAX_STEPS]; size_t count;
 };
 static struct request request;
@@ -241,6 +241,47 @@ parse(int argc,char **argv)
  if(!oneof(get("format"),"text|json"))fail("--format must be text or json");
  if(request.json && !request.plan)fail("--format json requires plan");
 }
+/* category/port[@flavor], as release/scripts/native-hardware.py accepts it. */
+static bool
+port_origin(const char *s)
+{
+ const char *category="abcdefghijklmnopqrstuvwxyz0123456789+_.-";
+ const char *name="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+_.-";
+ size_t n=strspn(s,category);
+ if(!n || s[n]!='/')return false;
+ s+=n+1;n=strspn(s,name);
+ if(!n)return false;
+ s+=n;
+ if(*s=='@'){n=strspn(++s,name);if(!n)return false;s+=n;}
+ return !*s;
+}
+/*
+ * A profile whose only entry is no-hardware-ports builds no hardware ports.
+ * The hardware stage reads the same grammar in native-hardware.py, and
+ * tests/hardware-profile-cases pins both readers: ASCII text in lines ended
+ * by a newline, "#" starts a comment, and blanks, tabs and carriage returns
+ * around an entry are ignored.
+ */
+static bool
+profile_has_ports(const char *path)
+{
+ FILE *fp=fopen(path,"r");char *line=NULL;size_t size=0;ssize_t length;unsigned none=0,ports=0;
+ if(!fp)err(1,"hardware profile");
+ while((length=getline(&line,&size,fp))>=0){
+  for(ssize_t i=0;i<length;i++)if(!line[i] || (line[i]&0x80))fail("hardware profile must be ASCII text");
+  line[strcspn(line,"#\n")]='\0';
+  char *entry=line+strspn(line," \t\r");size_t end=strlen(entry);
+  while(end && strchr(" \t\r",entry[end-1]))entry[--end]='\0';
+  if(!strcmp(entry,"no-hardware-ports"))none++;
+  else if(port_origin(entry))ports++;
+  else if(*entry)errx(1,"invalid port in hardware profile: %s",entry);
+ }
+ if(ferror(fp))err(1,"hardware profile");
+ free(line);fclose(fp);
+ if(!none && !ports)fail("empty hardware profile");
+ if(none && (ports || none>1))fail("no-hardware-ports must be the only hardware profile entry");
+ return !none;
+}
 static void
 validate(void)
 {
@@ -332,12 +373,17 @@ validate(void)
  for(size_t i=0;i<nitems(keys);i++)if(*get(keys[i]) && under(get(keys[i]),get("publish-repository")))fail("private keys must be outside the publication destination");
  if(!strcmp(get("signing"),"unsigned") && yes("relaxed-signatures"))fail("relaxed signatures require signing");
  if(request.packages){
-  if(request.cross)fail("native hardware backend cannot publish a foreign target");
   if(*get("output"))fail("packages uses maintained package staging directories");
   if(!*get("hardware-profile"))set("hardware-profile",format(SOURCE "/release/tools/hardware-ports.%s",request.arch),false);
-  if(access(get("hardware-profile"),R_OK)<0)fail("native hardware backend requires a readable hardware profile");
-  regular(get("hardware-profile"),false);canonical("hardware-profile");if(access(format("%s/Mk/bsd.port.mk",get("ports")),R_OK)<0)fail("ports checkout is missing");regular(format("%s/Mk/bsd.port.mk",get("ports")),false);canonical("ports");
-  if(!*get("distfiles"))set("distfiles",format("%s/distfiles",get("ports")),false);canonical("distfiles");
+  if(access(get("hardware-profile"),R_OK)<0)errx(1,"native hardware backend requires a readable hardware profile: %s",get("hardware-profile"));
+  regular(get("hardware-profile"),false);canonical("hardware-profile");
+  /* Without ports nothing is compiled for the target, so no ports checkout or native builder is needed. */
+  request.hardware=profile_has_ports(get("hardware-profile"));
+  if(request.hardware){
+   if(request.cross)fail("native hardware backend cannot publish a foreign target");
+   if(access(format("%s/Mk/bsd.port.mk",get("ports")),R_OK)<0)fail("ports checkout is missing");regular(format("%s/Mk/bsd.port.mk",get("ports")),false);canonical("ports");
+   if(!*get("distfiles"))set("distfiles",format("%s/distfiles",get("ports")),false);canonical("distfiles");
+  }
  } else if(*get("hardware-profile") || *get("distfiles"))fail("hardware profile and distfiles apply only to build or packages");
  if(selected("media-format") && !action("media"))fail("--media-format applies only to media");
  if(!oneof(get("media-format"),"all|iso|memstick"))fail("invalid media format");
@@ -758,7 +804,13 @@ plan(void)
    s=backend.make(targets[i],i==3);arg(s,"NO_ROOT=yes");assignment(s,"DESTDIR",get("output"));arg(s,targets[i]);
   }
  } else if(request.packages){
-  s=backend.make("system-packages",true);assignment(s,"PORTSDIR",get("ports"));assignment(s,"HARDWARE_PORT_LIST",get("hardware-profile"));assignment(s,"DISTDIR",get("distfiles"));arg(s,"REPODIR=" REPOSITORY);assignment(s,"PUBLISH_REPODIR",get("publish-repository"));
+  s=backend.make("system-packages",true);
+  /* The hardware stage refuses a profile that no longer selects the planned backend. */
+  assignment(s,"HARDWARE_BACKEND",request.hardware?"native-ports":"kernel-identity-only");
+  if(request.hardware)assignment(s,"PORTSDIR",get("ports"));
+  assignment(s,"HARDWARE_PORT_LIST",get("hardware-profile"));
+  if(request.hardware)assignment(s,"DISTDIR",get("distfiles"));
+  arg(s,"REPODIR=" REPOSITORY);assignment(s,"PUBLISH_REPODIR",get("publish-repository"));
   /* Incremental compilation must not reuse signed installation output. */
   assignment(s,"WSTAGEDIR",format("%s/package-stage/world",request.run));
   assignment(s,"KSTAGEDIR",format("%s/package-stage/kernel",request.run));
@@ -781,10 +833,13 @@ json_string(const char *s)
 static void
 show_request(void)
 {
- if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s bundle-signing-mode=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));puts(action("bazel-test")?(*get("bazel-inputs")?"qualification: scope=source-configured-qualification workspace-mode=explicit-inputs bazel=9-or-later runtime=selected-by-inputs system-backend=not-qualified":"qualification: scope=bazel-compile-comparison bazel=9-or-later module-resolution=offline-pinned-lockfile make-install-reference=requested runtime=not-performed system-backend=not-qualified"):firmware_test()?"security: verification-scope=firmware-only boot-verification=qemu-qualification-requested system-image-verification=not-performed root-protection-verification=not-performed":action("loader-build")?"security: verification-scope=trusted-builder-loader-compilation boot-verification=not-performed root-protection-verification=not-performed activation-authorized=no":action("inventory")?"security: verification-scope=package-payload-inventory input-authentication=not-performed activation-authorized=no":action("inventory-audit")?"security: verification-scope=selected-package-review-inventory input-authentication=not-performed program-compatibility-verification=not-performed authority-assigned=no":action("state-storage")?"security: verification-scope=offline-state-provisioning generation-authentication=not-performed activation-authorized=no":action("snapshot")?"security: verification-scope=signed-repository-snapshot consumer-verification=requested generation-authentication=not-performed activation-authorized=no":action("compose-config")?"security: verification-scope=explicit-configuration-composition input-authentication=not-performed service-policy-validation=not-performed activation-authorized=no":action("boot-observe")?"security: verification-scope=installed-boot-observation boot-verification=not-performed program-compatibility-verification=not-performed activation-authorized=no":action("boot-stage")?"security: verification-scope=boot-transport-makefs-input generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("boot-check")?"security: verification-scope=collected-boot-transport-consistency generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("image")?"security: verification-scope=trusted-builder-filesystem-image input-authentication=not-performed generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("construct")?"security: verification-scope=trusted-builder-construction input-authentication=not-performed generation-authentication=not-performed activation-authorized=no":action("deploy")?"security: verification-scope=packages-bundles-and-filesystem generation-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("reconcile")?"security: verification-scope=offline-filesystem-reconciliation input-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("secureboot-test")?"security: verification-scope=uefi-and-loader boot-verification=qemu-qualification-requested system-image-verification=qemu-qualification-requested root-protection-verification=not-performed bootstrap-integrity-verification=kernel-dependent program-compatibility-verification=bounded-vm-fixture-requested":"security: verification-scope=system-bundles boot-verification=not-performed root-protection-verification=not-performed");return;}
+ if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s bundle-signing-mode=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));puts(action("bazel-test")?(*get("bazel-inputs")?"qualification: scope=source-configured-qualification workspace-mode=explicit-inputs bazel=9-or-later runtime=selected-by-inputs system-backend=not-qualified":"qualification: scope=bazel-compile-comparison bazel=9-or-later module-resolution=offline-pinned-lockfile make-install-reference=requested runtime=not-performed system-backend=not-qualified"):firmware_test()?"security: verification-scope=firmware-only boot-verification=qemu-qualification-requested system-image-verification=not-performed root-protection-verification=not-performed":action("loader-build")?"security: verification-scope=trusted-builder-loader-compilation boot-verification=not-performed root-protection-verification=not-performed activation-authorized=no":action("inventory")?"security: verification-scope=package-payload-inventory input-authentication=not-performed activation-authorized=no":action("inventory-audit")?"security: verification-scope=selected-package-review-inventory input-authentication=not-performed program-compatibility-verification=not-performed authority-assigned=no":action("state-storage")?"security: verification-scope=offline-state-provisioning generation-authentication=not-performed activation-authorized=no":action("snapshot")?"security: verification-scope=signed-repository-snapshot consumer-verification=requested generation-authentication=not-performed activation-authorized=no":action("compose-config")?"security: verification-scope=explicit-configuration-composition input-authentication=not-performed service-policy-validation=not-performed activation-authorized=no":action("boot-observe")?"security: verification-scope=installed-boot-observation boot-verification=not-performed program-compatibility-verification=not-performed activation-authorized=no":action("boot-stage")?"security: verification-scope=boot-transport-makefs-input generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("boot-check")?"security: verification-scope=collected-boot-transport-consistency generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("image")?"security: verification-scope=trusted-builder-filesystem-image input-authentication=not-performed generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("construct")?"security: verification-scope=trusted-builder-construction input-authentication=not-performed generation-authentication=not-performed activation-authorized=no":action("deploy")?"security: verification-scope=packages-bundles-and-filesystem generation-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("reconcile")?"security: verification-scope=offline-filesystem-reconciliation input-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("secureboot-test")?"security: verification-scope=uefi-and-loader boot-verification=qemu-qualification-requested system-image-verification=qemu-qualification-requested root-protection-verification=not-performed bootstrap-integrity-verification=kernel-dependent program-compatibility-verification=bounded-vm-fixture-requested":"security: verification-scope=system-bundles boot-verification=not-performed root-protection-verification=not-performed");
+  /* A profile without ports publishes the kernel identity and no hardware packages. */
+  if(request.packages && !request.hardware)puts("hardware: backend=kernel-identity-only hardware-packages=none hardware-compilation=not-performed");
+  return;}
  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":");json_string(request.action);
  const char *names[]={"target","target_arch","kernel","board","build_profile","signing","signing_scope","build_backend","hardware_backend","verification_scope","boot_verification","root_protection_verification","system_image_verification","bootstrap_integrity_verification","program_compatibility_verification"};
- const char *values[]={request.target,request.arch,get("kernel"),get("board"),get("build-profile"),get("signing"),"system-bundles",backend.name,"native-ports",action("bazel-test")?(*get("bazel-inputs")?(!strcmp(request.arch,"amd64")?"native-configured-qualification":"cross-configured-qualification"):"bazel-compile-comparison"):firmware_test()?"firmware-only":action("loader-build")?"trusted-builder-loader-compilation":action("inventory")?"package-payload-inventory":action("inventory-audit")?"selected-package-review-inventory":action("state-storage")?"offline-state-provisioning":action("snapshot")?"signed-repository-snapshot":action("compose-config")?"explicit-configuration-composition":action("boot-observe")?"installed-boot-observation":action("boot-stage")?"boot-transport-makefs-input":action("boot-check")?"collected-boot-transport-consistency":action("image")?"trusted-builder-filesystem-image":action("construct")?"trusted-builder-construction":action("deploy")?"packages-bundles-and-filesystem":action("reconcile")?"offline-filesystem-reconciliation":action("secureboot-test")?"uefi-and-loader":"system-bundles",action("secureboot-test")?"qemu-qualification-requested":"not-performed","not-performed",(action("secureboot-test") && !firmware_test())?"qemu-qualification-requested":"not-performed",(action("secureboot-test") && !firmware_test())?"kernel-dependent":"not-performed",(action("secureboot-test") && !firmware_test())?"bounded-vm-fixture-requested":"not-performed"};
+ const char *values[]={request.target,request.arch,get("kernel"),get("board"),get("build-profile"),get("signing"),"system-bundles",backend.name,(request.packages && !request.hardware)?"kernel-identity-only":"native-ports",action("bazel-test")?(*get("bazel-inputs")?(!strcmp(request.arch,"amd64")?"native-configured-qualification":"cross-configured-qualification"):"bazel-compile-comparison"):firmware_test()?"firmware-only":action("loader-build")?"trusted-builder-loader-compilation":action("inventory")?"package-payload-inventory":action("inventory-audit")?"selected-package-review-inventory":action("state-storage")?"offline-state-provisioning":action("snapshot")?"signed-repository-snapshot":action("compose-config")?"explicit-configuration-composition":action("boot-observe")?"installed-boot-observation":action("boot-stage")?"boot-transport-makefs-input":action("boot-check")?"collected-boot-transport-consistency":action("image")?"trusted-builder-filesystem-image":action("construct")?"trusted-builder-construction":action("deploy")?"packages-bundles-and-filesystem":action("reconcile")?"offline-filesystem-reconciliation":action("secureboot-test")?"uefi-and-loader":"system-bundles",action("secureboot-test")?"qemu-qualification-requested":"not-performed","not-performed",(action("secureboot-test") && !firmware_test())?"qemu-qualification-requested":"not-performed",(action("secureboot-test") && !firmware_test())?"kernel-dependent":"not-performed",(action("secureboot-test") && !firmware_test())?"bounded-vm-fixture-requested":"not-performed"};
  for(size_t i=0;i<nitems(names);i++){printf(",\"%s\":",names[i]);json_string(values[i]);}if(action("bazel-test"))printf(",\"make_install_reference\":\"%s\",\"bazel_minimum_major\":9,\"module_resolution\":\"%s\"",*get("bazel-inputs")?"not-performed":"requested",*get("bazel-inputs")?"native-inputs":"offline-pinned-lockfile");printf(",\"jobs\":%u}\n",request.jobs);
 }
 static void
@@ -873,7 +928,7 @@ media_checksums(void)
 static void
 sanitize(void)
 {
- const char *names[]={"MAKEFLAGS","MFLAGS","MAKEOVERRIDES","MAKELEVEL","MAKEOBJDIRPREFIX","DESTDIR","DISTDIR","SRCCONF","SRC_ENV_CONF","__MAKE_CONF","ALLOW_DEBUG_MALLOC","TARGET","TARGET_ARCH","PKG_REPO_SIGNING_KEY","HARDWARE_SIGNING_KEY","KERNCONFDIR","REPODIR","PUBLISH_REPODIR","BASE_REPOSITORY","HARDWARE_REPO","COMPLETE_REPOSITORY","WSTAGEDIR","KSTAGEDIR","SSTAGEDIR"};
+ const char *names[]={"MAKEFLAGS","MFLAGS","MAKEOVERRIDES","MAKELEVEL","MAKEOBJDIRPREFIX","DESTDIR","DISTDIR","SRCCONF","SRC_ENV_CONF","__MAKE_CONF","ALLOW_DEBUG_MALLOC","TARGET","TARGET_ARCH","PKG_REPO_SIGNING_KEY","HARDWARE_SIGNING_KEY","KERNCONFDIR","REPODIR","PUBLISH_REPODIR","BASE_REPOSITORY","HARDWARE_REPO","COMPLETE_REPOSITORY","HARDWARE_ABI","HARDWARE_ABI_FILE","HARDWARE_BACKEND","WSTAGEDIR","KSTAGEDIR","SSTAGEDIR"};
  for(size_t i=0;i<nitems(names);i++)unsetenv(names[i]);
 }
 int

@@ -1,0 +1,61 @@
+# Hardware profile grammar cases.  bsd_build_test.sh gives them to build-bsd
+# and release/tests/hardware_packages_test.py to native-hardware.py: the two
+# readers must agree on every profile.
+#
+# Each line is an outcome, a blank, and the profile as a printf(1) format
+# using only \n, \t, \r, \\ and three-digit octal escapes.  "none" selects no
+# hardware ports, "ports" selects port origins, "refuse" is rejected.  Write
+# a blank at either end of a profile as \040.
+none no-hardware-ports\n
+none no-hardware-ports
+none # no ports for this target yet\n\n\040\tno-hardware-ports\040\t# kernel identity\n
+none no-hardware-ports\r\n
+none \r\tno-hardware-ports\r\r\n# trailing comment
+none no-hardware-ports#comment\n
+none no-hardware-ports\n# a carriage return does not end a comment\rgraphics/drm-kmod\n
+ports graphics/drm-kmod\n
+ports graphics/drm-kmod
+ports graphics/drm-kmod\nnet/wifi-firmware-kmod@iwlwifi\r\n
+ports # graphics\n\040graphics/drm-66-kmod\040# pinned\n
+ports x/no-hardware-ports\n
+ports graphics/drm-kmod\n# no-hardware-ports\n
+refuse
+refuse \n\n
+refuse \040\t\r\n
+refuse # no-hardware-ports\n
+refuse # comment\rno-hardware-ports\n
+refuse # comment\013no-hardware-ports\n
+refuse no-hardware-ports\nno-hardware-ports\n
+refuse no-hardware-ports\ngraphics/drm-kmod\n
+refuse graphics/drm-kmod\nno-hardware-ports\n
+refuse no-hardware-ports extra\n
+refuse no-hardware-ports graphics/drm-kmod\n
+refuse no-hardware-ports\tno-hardware-ports\n
+refuse no-hardware-ports\rno-hardware-ports\n
+refuse no-hardware-ports\000\n
+refuse no-hardware-ports\n\000graphics/drm-kmod\n
+refuse no-hardware-ports\n# comment \000\n
+refuse no-hardware-ports\014graphics/drm-kmod\n
+refuse no-hardware-ports\014\n
+refuse \013no-hardware-ports\n
+refuse \034no-hardware-ports\n
+refuse no-hardware-ports\037\n
+refuse \240no-hardware-ports\n
+refuse \302\240no-hardware-ports\n
+refuse no-hardware-ports\302\205
+refuse \342\200\250no-hardware-ports\n
+refuse \343\200\200no-hardware-ports\n
+refuse no-hardware-ports\n# caf\303\251\n
+refuse graphics/drm-kmod\302\240\n
+refuse NO-HARDWARE-PORTS\n
+refuse no-hardware-port\n
+refuse no-hardware-ports-\n
+refuse graphics\n
+refuse Graphics/drm-kmod\n
+refuse graphics/drm kmod\n
+refuse graphics/drm-kmod@\n
+refuse graphics/drm-kmod@a@b\n
+refuse graphics/drm-kmod/extra\n
+refuse /drm-kmod\n
+refuse graphics/\n
+refuse graphics/drm-kmod\n\\\n

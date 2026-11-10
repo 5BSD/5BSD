@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd November 6, 2026
+.Dd November 10, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -70,6 +70,9 @@ Packages defaults to a production world/kernel build and invokes
 system-packages,
 which checks production malloc and kernel/hardware identity, stages base and
 hardware separately, and publishes one combined repository.
+A target whose hardware profile contains only no-hardware-ports is published
+with its base packages and sealed kernel identity and without hardware
+packages; the plan reports that as the kernel-identity-only hardware backend.
 World package creation rejects conflicting installation metadata before
 sorting METALOG and generating package lists.
 Each invocation selects fresh world, kernel and source package stages beneath
@@ -1397,6 +1400,19 @@ publisher's responsibility.
 Hardware port selection for build/packages, passed as HARDWARE_PORT_LIST.
 Defaults to the maintained hardware-ports file for the target architecture.
 The profile and ports checkout are checked before compilation.
+A profile whose only entry is no-hardware-ports selects no hardware ports:
+the kernel package is sealed with its identity as usual, no hardware package
+is built or published, and the ports checkout and distfiles settings are not
+used.
+The entry appears once and cannot be combined with ports.
+A profile is ASCII text with one entry per line; a number sign starts a
+comment, and an empty profile or an entry that is not a port origin is refused
+before compilation.
+The hardware stage reads the profile again by the same rules and receives the
+planned backend as HARDWARE_BACKEND; it refuses a profile that no longer
+selects that backend.
+The maintained arm64 profile is such a profile until arm64 hardware builds are
+added.
 .It Fl -distfiles Ar directory
 Absolute ports download-cache directory for build/packages.
 Defaults to distfiles beneath the selected ports checkout.
@@ -1554,15 +1570,31 @@ The tool reports permission failures instead of relocating output to a home
 directory.
 Inherited make output-directory overrides are cleared.
 .Pp
-Complete hardware publication currently requires a native target and an
+Publication with hardware ports currently requires a native target and an
 installed hardware profile.
-Foreign targets are rejected before compilation; stage remains available
-for cross-compiling a private world/kernel image.
+A foreign target with such a profile is rejected before compilation; stage
+remains available for cross-compiling a private world/kernel image.
+A foreign target is published only when its profile selects no hardware
+ports, because nothing is then compiled outside the cross-built world and
+kernel.
+That publication carries the same production-malloc, single-kernel and
+kernel-object identity checks; it makes no statement about hardware support
+on the target.
+The profile is selected by architecture, so an arm64 board kernel is published
+the same way.
+Such a generation holds no hardware packages for
+.Xr fwget 8
+to install: on a machine where a device selects one, hardware installation
+fails rather than fetching a foreign module, and a scripted installation
+there needs BSDINSTALL_SKIP_FIRMWARE.
 .Sh MACHINE-READABLE PLANS
 The plan-only option
 .Fl -format Cm json
 emits newline-delimited JSON records with schema org.5bsd.build-plan.v1.
 The first record describes the selected request and backend identifiers.
+The hardware_backend field is native-ports, or kernel-identity-only when a
+packages request uses a profile without hardware ports; the text plan then
+adds a hardware line saying that no hardware packages are compiled.
 The verification_scope field is packages-bundles-and-filesystem for deploy,
 offline-filesystem-reconciliation for reconcile, trusted-builder-construction
 for construct, and system-bundles for other

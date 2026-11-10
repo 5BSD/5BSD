@@ -339,7 +339,10 @@ DRM and the full graphics and Wi-Fi firmware metaports, including USB Wi-Fi,
 plus Intel and Realtek Bluetooth firmware. The inclusion and qualification
 policy is in `release/tools/hardware-amd64.md`.
 Extend the profile for other device families; use a separate validated profile
-for other architectures. The build checks the literal package names in all
+for other architectures. An architecture without hardware ports has a profile
+whose only entry is `no-hardware-ports`, as `release/tools/hardware-ports.aarch64`
+does for now: its generation carries the kernel identity and no hardware
+packages, and says so in the `publication.json` scope. The build checks the literal package names in all
 fwget providers against the produced dependency closure. A missing dependency
 or supported-device package fails the build instead of fetching a binary module.
 Firmware already shipped in the base kernel remains part of the base packages.

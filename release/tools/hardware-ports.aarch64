@@ -1,0 +1,6 @@
+# arm64 has no hardware ports profile yet.  This entry publishes the base
+# packages and the kernel with its sealed identity, and no hardware packages;
+# it is accepted from a cross builder because nothing is compiled.  Replace it
+# with port origins, as in hardware-ports.amd64, when arm64 hardware builds
+# are added: a profile with ports needs a target-native builder.
+no-hardware-ports

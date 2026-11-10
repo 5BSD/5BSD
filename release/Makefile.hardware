@@ -9,7 +9,30 @@ KERNCONF?= GENERIC
 # MAKEOBJDIRPREFIX cannot be used here: an environment setting was dropped and
 # the paths fell back to the source tree.
 REPODIR?= ${OBJROOT}repo
+# TARGET and TARGET_ARCH select the target's object tree only as a pair
+# (src.sys.obj.mk).  One without the other would pair one architecture's
+# profile with another's objects and repository.
+.if (defined(TARGET) && !defined(TARGET_ARCH)) || \
+    (!defined(TARGET) && defined(TARGET_ARCH))
+.error TARGET and TARGET_ARCH must be set together
+.endif
+# Repositories are named for the target's package ABI.  A native build asks
+# pkg.  A cross build has no target pkg to ask, so pkg reads the ABI from a
+# target binary in the object tree, as Makefile.inc1 does from the staged
+# world; that tree exists before any of these targets can succeed.
+HARDWARE_ARCH= ${TARGET_ARCH:U${MACHINE_ARCH}}
+.if ${HARDWARE_ARCH} == ${MACHINE_ARCH}
 HARDWARE_ABI!= ${PKG_CMD} config ABI
+.elif !defined(HARDWARE_ABI)
+HARDWARE_ABI_FILE?= ${OBJTOP}/usr.bin/uname/uname
+.if !exists(${HARDWARE_ABI_FILE})
+.error ${HARDWARE_ABI_FILE} is missing: build the ${HARDWARE_ARCH} world first
+.endif
+HARDWARE_ABI!= ${PKG_CMD} -o ABI_FILE=${HARDWARE_ABI_FILE:Q} config ABI
+.endif
+.if empty(HARDWARE_ABI)
+.error ${PKG_CMD} did not report the ${HARDWARE_ARCH} package ABI
+.endif
 BASE_REPOSITORY?= ${REPODIR}/${HARDWARE_ABI}/latest-built
 HARDWARE_REPO?= ${BASE_REPOSITORY:tA}.hardware
 # Final publication can live independently of disposable base/hardware staging.
@@ -21,7 +44,12 @@ PUBLISH_ADVANCE_LATEST?= yes
 .endif
 COMPLETE_REPOSITORY?= ${PUBLISH_REPODIR}/${HARDWARE_ABI}/${BASE_REPOSITORY:tA:T}.complete
 KERNBUILDDIR?= ${OBJTOP}/sys/${KERNCONF}
-HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${MACHINE_ARCH}
+# A profile holding only "no-hardware-ports" seals the kernel identity and
+# builds nothing; only such a profile is accepted from a cross builder.
+HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${HARDWARE_ARCH}
+# build-bsd sets HARDWARE_BACKEND to the backend its plan reported for the
+# profile, kernel-identity-only or native-ports; the hardware stage refuses a
+# profile that selects the other.
 # make(1) treats ':' in WRKDIRPREFIX as a dependency separator, so keep port
 # work out of the ABI-named repository directory.
 HARDWARE_WORKDIR?= ${OBJROOT}hardware-work/${BASE_REPOSITORY:tA:T}
@@ -43,6 +71,7 @@ hardware-packages hardware-packages-check: .PHONY
 	    --ports ${PORTSDIR:Q} --profile ${HARDWARE_PORT_LIST:Q} \
 	    --work ${HARDWARE_WORKDIR:Q} --output ${HARDWARE_REPO:Q} \
 	    --distfiles ${DISTDIR:Q} --pkg ${PKG_CMD:Q} \
+	    ${HARDWARE_BACKEND:D--expect-backend ${HARDWARE_BACKEND:Q}} \
 	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
 
 # Optional offline bootstrap input: PKGBASE_PKG_PACKAGE and PKGBASE_PKG_SHA256

@@ -604,6 +604,17 @@ def add_application_packages(selection_path, candidate, info):
             'packages': sorted(records, key=lambda row: row['name'])}
 
 
+def publication_scope(info, applications):
+    """Say what the generation holds; a profile without ports seals no hardware."""
+    if info['packages']:
+        return ('complete base, matching hardware and selected applications generation'
+                if applications is not None else
+                'complete base and matching hardware generation')
+    return ('complete base and selected applications generation with kernel identity; '
+            'no hardware packages' if applications is not None else
+            'complete base generation with kernel identity; no hardware packages')
+
+
 def publish(args):
     """Publish a complete generation, optionally advancing latest atomically."""
     bootstrap = getattr(args, 'pkg_package', None)
@@ -662,9 +673,7 @@ def publish(args):
                 'package_count': len(combined),
                 'bootstrap_pkg': bootstrap_record,
                 'applications': application_record,
-                'scope': ('complete base, matching hardware and selected applications generation'
-                          if application_record is not None else
-                          'complete base and matching hardware generation')}, indent=2) + '\n')
+                'scope': publication_scope(info, application_record)}, indent=2) + '\n')
             candidate.rename(output)
             if not getattr(args, 'no_latest', False):
                 pointer = Path(temp) / 'latest'

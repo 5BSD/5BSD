@@ -520,7 +520,8 @@ publication_destination_body()
 {
     setup
     destination=/var/db/5bsd/repositories/bsd-build-plan-only-$$
-    atf_check -s exit:0 -o save:custom -e empty env PUBLISH_REPODIR=/home/incorrect "$tool" plan packages --publish-repository "$destination"
+    printf 'graphics/drm-kmod\n' > hardware
+    atf_check -s exit:0 -o save:custom -e empty env PUBLISH_REPODIR=/home/incorrect "$tool" plan packages --publish-repository "$destination" --hardware-profile "$(pwd)/hardware"
     atf_check -s exit:0 -o ignore grep "REPODIR=/usr/obj/usr/src/repo PUBLISH_REPODIR=$destination" custom
     atf_check -s exit:0 -o ignore grep 'PORTSDIR=/usr/obj/5BSD-ports' custom
     atf_check -s exit:1 -o empty grep /home/incorrect custom
@@ -549,7 +550,8 @@ build_profiles_body()
     atf_check -s exit:0 -o ignore grep WITH_MALLOC_PRODUCTION=yes override
     foreign=arm64
     [ "$(uname -p)" != aarch64 ] || foreign=amd64
-    atf_check -s not-exit:0 -o empty -e match:'native hardware backend cannot publish' "$tool" plan packages --arch "$foreign"
+    printf 'graphics/drm-kmod\n' > hardware
+    atf_check -s not-exit:0 -o empty -e match:'native hardware backend cannot publish' "$tool" plan packages --arch "$foreign" --hardware-profile "$(pwd)/hardware"
 }
 atf_test_case boards
 boards_body()
@@ -576,10 +578,90 @@ hardware_inputs_body()
     printf 'graphics/drm-kmod\n' > hardware
     atf_check -s exit:0 -o save:plan -e empty "$tool" plan packages --hardware-profile "$(pwd)/hardware" --distfiles /usr/obj/usr/src/distfiles
     atf_check -s exit:0 -o ignore grep "HARDWARE_PORT_LIST=$(pwd)/hardware DISTDIR=/usr/obj/usr/src/distfiles" plan
-    atf_check -s not-exit:0 -o empty -e match:'readable hardware profile' "$tool" plan packages --hardware-profile /nonexistent/profile
-    atf_check -s not-exit:0 -o empty -e match:'ports checkout is missing' "$tool" plan packages --ports /nonexistent/ports
-    atf_check -s not-exit:0 -o empty -e match:'must be absolute' "$tool" plan packages --distfiles relative
+    # The hardware stage is told which backend this plan reported.
+    atf_check -s exit:0 -o ignore grep '^system-packages:.* HARDWARE_BACKEND=native-ports PORTSDIR=' plan
+    atf_check -s not-exit:0 -o empty -e match:'readable hardware profile: /nonexistent/profile' "$tool" plan packages --hardware-profile /nonexistent/profile
+    atf_check -s exit:1 -o empty grep '^hardware:' plan
+    atf_check -s not-exit:0 -o empty -e match:'ports checkout is missing' "$tool" plan packages --hardware-profile "$(pwd)/hardware" --ports /nonexistent/ports
+    atf_check -s not-exit:0 -o empty -e match:'must be absolute' "$tool" plan packages --hardware-profile "$(pwd)/hardware" --distfiles relative
     atf_check -s not-exit:0 -o empty -e match:'apply only to build or packages' "$tool" plan stage --hardware-profile "$(pwd)/hardware"
+}
+atf_test_case kernel_identity_only
+kernel_identity_only_head()
+{
+    atf_set require.progs python3.12
+}
+kernel_identity_only_body()
+{
+    setup
+    foreign=arm64
+    [ "$(uname -p)" != aarch64 ] || foreign=amd64
+    # A profile without ports compiles nothing for the target, so it needs
+    # neither a ports checkout nor a native builder; the plan says what it is.
+    printf '# no hardware ports for this target yet\nno-hardware-ports # kernel identity only\n' > none
+    for target in "--arch $foreign" ""; do
+        atf_check -s exit:0 -o save:plan -e empty "$tool" plan packages $target --hardware-profile "$(pwd)/none" --ports /nonexistent/ports
+        atf_check -s exit:0 -o ignore grep -x 'hardware: backend=kernel-identity-only hardware-packages=none hardware-compilation=not-performed' plan
+        atf_check -s exit:0 -o ignore grep -x 'security: verification-scope=system-bundles boot-verification=not-performed root-protection-verification=not-performed' plan
+        atf_check -s exit:0 -o ignore grep "^system-packages:.* HARDWARE_BACKEND=kernel-identity-only HARDWARE_PORT_LIST=$(pwd)/none REPODIR=/usr/obj/usr/src/repo .* system-packages\$" plan
+        atf_check -s exit:0 -o ignore grep '^buildworld:.* WITH_MALLOC_PRODUCTION=yes ' plan
+        atf_check -s exit:1 -o empty grep -E 'PORTSDIR=|DISTDIR=|nonexistent' plan
+    done
+    atf_check -s exit:0 -o ignore grep "^system-packages:.* TARGET_ARCH=$(uname -p) " plan
+    atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan packages --arch "$foreign" --hardware-profile "$(pwd)/none" --format json
+    atf_check -s exit:0 -o empty -e empty python3.12 -c '
+import json
+rows=[json.loads(line) for line in open("plan.jsonl")]
+assert rows[0]["record"]=="request" and rows[0]["hardware_backend"]=="kernel-identity-only"
+assert rows[0]["boot_verification"]=="not-performed"
+assert rows[0]["root_protection_verification"]=="not-performed"
+packages=next(s for s in rows[1:] if s["name"]=="system-packages")
+assert not any(a.startswith(("PORTSDIR=","DISTDIR=")) for a in packages["argv"])
+'
+    printf 'graphics/drm-kmod\n' > hardware
+    atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan packages --hardware-profile "$(pwd)/hardware" --format json
+    atf_check -s exit:0 -o ignore grep '"record":"request".*"hardware_backend":"native-ports"' plan.jsonl
+    # The entry cannot be combined with ports to pass a foreign target.
+    printf 'no-hardware-ports\ngraphics/drm-kmod\n' > mixed
+    atf_check -s not-exit:0 -o empty -e match:'must be the only hardware profile entry' "$tool" plan packages --arch "$foreign" --hardware-profile "$(pwd)/mixed"
+    atf_check -s not-exit:0 -o empty -e match:'must be the only hardware profile entry' "$tool" plan packages --hardware-profile "$(pwd)/mixed"
+    # An empty profile selects nothing and is refused for any target.
+    printf '# nothing\n' > empty
+    atf_check -s not-exit:0 -o empty -e match:'empty hardware profile' "$tool" plan packages --arch "$foreign" --hardware-profile "$(pwd)/empty"
+    atf_check -s not-exit:0 -o empty -e match:'empty hardware profile' "$tool" plan packages --hardware-profile "$(pwd)/empty"
+    # The maintained arm64 profile has no ports, so a cross builder plans it
+    # by default; a target without a maintained profile is told which file.
+    if [ "$(uname -p)" != aarch64 ]; then
+        atf_check -s exit:0 -o save:plan -e empty "$tool" plan packages --arch arm64
+        atf_check -s exit:0 -o ignore grep '^hardware: backend=kernel-identity-only ' plan
+        atf_check -s exit:0 -o ignore grep '^system-packages:.* HARDWARE_PORT_LIST=[^ ]*/release/tools/hardware-ports.aarch64 ' plan
+    fi
+    atf_check -s not-exit:0 -o empty -e match:'readable hardware profile: .*/release/tools/hardware-ports.riscv64$' "$tool" plan packages --arch riscv64
+}
+atf_test_case hardware_profile_grammar
+hardware_profile_grammar_body()
+{
+    setup
+    foreign=arm64
+    [ "$(uname -p)" != aarch64 ] || foreign=amd64
+    cases=$(atf_config_get hardware_profile_cases "$(atf_get_srcdir)/hardware-profile-cases")
+    # release/tests/hardware_packages_test.py gives the same cases to the
+    # hardware stage, so the plan and the stage read every profile alike.  A
+    # foreign target tells the three outcomes apart without a ports checkout.
+    count=0
+    while read -r outcome profile <&3; do
+        case "$outcome" in ''|'#'*) continue;; esac
+        echo "profile case: $outcome $profile"
+        printf "$profile" > profile
+        case "$outcome" in
+        none) atf_check -s exit:0 -o match:'^hardware: backend=kernel-identity-only ' -e empty "$tool" plan packages --arch "$foreign" --hardware-profile "$(pwd)/profile";;
+        ports) atf_check -s not-exit:0 -o empty -e match:'cannot publish a foreign target' "$tool" plan packages --arch "$foreign" --hardware-profile "$(pwd)/profile";;
+        refuse) atf_check -s not-exit:0 -o empty -e match:'empty hardware profile|must be the only hardware profile entry|hardware profile must be ASCII text|invalid port in hardware profile' "$tool" plan packages --arch "$foreign" --hardware-profile "$(pwd)/profile";;
+        *) atf_fail "unknown outcome: $outcome";;
+        esac
+        count=$((count+1))
+    done 3< "$cases"
+    [ "$count" -ge 50 ] || atf_fail "only $count profile cases were read"
 }
 atf_test_case json_plan
 json_plan_head()
@@ -1566,6 +1648,8 @@ atf_init_test_cases()
     atf_add_test_case publication_destination
     atf_add_test_case json_plan
     atf_add_test_case hardware_inputs
+    atf_add_test_case kernel_identity_only
+    atf_add_test_case hardware_profile_grammar
     atf_add_test_case boards
     atf_add_test_case build_profiles
     atf_add_test_case media_orchestration

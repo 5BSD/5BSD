@@ -10,6 +10,7 @@ ${PACKAGE}FILES+= inventory_audit.py ${SRCTOP}/tools/test/construction/inventory
 ${PACKAGE}FILES+= loader_build_test.py loader_build.py loader_production_test.py
 ${PACKAGE}FILES+= elf_dependencies.py elf_dependencies_test.py elf_features_build_test.py
 ${PACKAGE}FILES+= sign-stage.sh signing_custody_test.py
+${PACKAGE}FILES+= hardware-profile-cases
 ${PACKAGE}FILES+= generation_boot.py generation_boot_test.py
 ${PACKAGE}FILES+= seed_initialize.py seed_dataset.py state_storage.py state_storage_test.py
 ${PACKAGE}FILES+= generation_image.py generation_image_test.py generation_check.py generation_check_test.py

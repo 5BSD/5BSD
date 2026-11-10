@@ -6,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,23 @@ OSVERSION = subprocess.check_output([PKG, 'config', 'OSVERSION'], text=True).str
 _host_spec = importlib.util.spec_from_file_location('native_hardware', SRC / 'release/scripts/native-hardware.py')
 host = importlib.util.module_from_spec(_host_spec)
 _host_spec.loader.exec_module(host)
+PROFILE_CASES = SRC / 'usr.sbin/bsd-build/tests/hardware-profile-cases'
+
+
+def profile_cases():
+    """Yield (outcome, profile bytes) from the table shared with build-bsd."""
+    escapes = {b'n': b'\n', b't': b'\t', b'r': b'\r', b'\\': b'\\'}
+    def byte(match):
+        code = match.group(1)
+        return escapes[code] if code in escapes else bytes([int(code, 8)])
+    for line in PROFILE_CASES.read_bytes().split(b'\n'):
+        if not line or line.startswith(b'#'):
+            continue
+        outcome, _, text = line.partition(b' ')
+        # Only what printf(1) and this reader decode alike.
+        assert not re.search(rb'%|\\(?![0-7]{3}|[ntr\\])', text), line
+        assert text == text.strip(b' \t'), line
+        yield outcome.decode(), re.sub(rb'\\([0-7]{3}|[ntr\\])', byte, text)
 
 
 class HardwarePackages(unittest.TestCase):
@@ -72,7 +90,8 @@ class HardwarePackages(unittest.TestCase):
         self.counter = 0
 
     def package(self, name, files=None, deps=None, version='1', origin=None,
-                abi=ABI, osversion=OSVERSION, directories=None):
+                abi=ABI, osversion=OSVERSION, directories=None,
+                arch='freebsd:16:x86:64'):
         self.counter += 1
         root = self.base / ('payload' + str(self.counter))
         root.mkdir()
@@ -83,7 +102,7 @@ class HardwarePackages(unittest.TestCase):
             p.write_bytes(data if isinstance(data, bytes) else data.encode())
             entries[f] = hw.sha256(p)
         meta = dict(name=name, version=version, origin=origin or 'test/' + name,
-                    abi=abi, arch='freebsd:16:x86:64', prefix='/',
+                    abi=abi, arch=arch, prefix='/',
                     comment='test package', desc='test package',
                     maintainer='test@example.org', www='https://example.org',
                     files=entries, deps=deps or {},
@@ -207,7 +226,7 @@ class HardwarePackages(unittest.TestCase):
         return SimpleNamespace(base=self.inputs, kernel_build=obj, ports=ports,
             bootstrap=bootstrap, profile=profile, pkg=PKG, check=True,
             output=self.base / 'hardware', distfiles=self.base / 'distfiles',
-            work=self.base / 'native-work')
+            work=self.base / 'native-work', expect_backend=None)
 
     def test_host_preflight_rejects_foreign_kernel_architecture(self):
         from unittest.mock import patch
@@ -261,6 +280,130 @@ class HardwarePackages(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'empty hardware profile'):
             host.build(args)
         self.assertFalse(args.work.exists())
+
+    def foreign_inputs(self):
+        """Inputs for a target the builder cannot run, with a profile without ports."""
+        foreign = dict(abi='FreeBSD:16:foreign', arch='freebsd:16:foreign:64')
+        kernel = self.package('5BSD-kernel-generic',
+                              {'/boot/kernel/kernel': 'kernel'}, **foreign)
+        self.package('5BSD-runtime', {'/bin/example': 'runtime'}, **foreign)
+        obj = self.base / 'obj'; obj.mkdir(); (obj / 'kernel').write_text('kernel')
+        profile = self.base / 'profile'
+        profile.write_text('# no hardware ports for this target yet\n'
+                           'no-hardware-ports  # kernel identity only\n')
+        return kernel, SimpleNamespace(base=self.inputs, kernel_build=obj,
+            ports=self.base / 'no-ports-tree', profile=profile, pkg=PKG,
+            check=False, output=self.base / 'hardware',
+            distfiles=self.base / 'distfiles', work=self.base / 'native-work',
+            expect_backend=None)
+
+    def test_profile_without_ports_publishes_kernel_identity_from_foreign_builder(self):
+        kernel, args = self.foreign_inputs()
+        original = hw.sha256(kernel)
+        # Nothing is compiled: no ports tree, packaged source or work directory.
+        host.build(args)
+        self.assertFalse(args.work.exists())
+        self.assertFalse(args.ports.exists())
+        info = hw.verify(args.output, kernel)
+        self.assertEqual(info['packages'], {})
+        self.assertEqual(info['abi'], 'FreeBSD:16:foreign')
+        self.assertEqual(info['kernel_sha256'], hw.kernel_hash(kernel))
+        sealed = hw.inventory(args.output)
+        token = '5BSD-hardware-abi-' + hw.kernel_hash(kernel)
+        self.assertEqual(set(sealed), {'5BSD-kernel-generic', token})
+        self.assertEqual(sealed[token][1]['abi'], 'FreeBSD:16:foreign')
+        self.assertIn(token, sealed['5BSD-kernel-generic'][1]['deps'])
+        record = json.loads((args.output / 'native-build.json').read_text())
+        self.assertEqual(record['ports_built'], [])
+        self.assertEqual(record['profile'], args.profile.read_text())
+        self.assertEqual(record['kernel_sha256'], hw.kernel_hash(kernel))
+        output = self.base / 'published'
+        hw.publish(SimpleNamespace(repository=args.output, base_repository=self.inputs,
+                                   output=output, signing_key=None, pkg=PKG))
+        self.assertEqual((self.base / 'latest').readlink(), Path('published'))
+        self.assertEqual(set(hw.inventory(output)),
+                         {'5BSD-kernel-generic', '5BSD-runtime', token})
+        publication = json.loads((output / 'publication.json').read_text())
+        self.assertEqual(publication['scope'],
+            'complete base generation with kernel identity; no hardware packages')
+        self.assertEqual(publication['kernel_sha256'], hw.kernel_hash(kernel))
+        self.assertEqual(hw.sha256(kernel), original)
+
+    def test_profile_without_ports_check_writes_nothing(self):
+        _, args = self.foreign_inputs()
+        args.check = True
+        before = sorted(str(x) for x in self.base.rglob('*'))
+        host.build(args)
+        self.assertEqual(before, sorted(str(x) for x in self.base.rglob('*')))
+
+    def test_profile_without_ports_keeps_kernel_identity_checks(self):
+        _, args = self.foreign_inputs()
+        (args.kernel_build / 'kernel').write_text('wrong')
+        with self.assertRaisesRegex(ValueError, 'kernel objects'):
+            host.build(args)
+        (args.kernel_build / 'kernel').write_text('kernel')
+        args.output.mkdir()
+        with self.assertRaisesRegex(ValueError, 'output already exists'):
+            host.build(args)
+        args.output.rmdir()
+        self.package('5BSD-kernel-other', {'/boot/kernel/kernel': 'other'},
+                     abi='FreeBSD:16:foreign', arch='freebsd:16:foreign:64')
+        with self.assertRaisesRegex(ValueError, 'one kernel'):
+            host.build(args)
+        self.assertFalse(args.output.exists())
+
+    def test_profile_without_ports_must_be_the_only_entry(self):
+        # A profile with ports is never accepted from a foreign builder, and
+        # the keyword cannot be combined with ports to avoid that refusal.
+        _, args = self.foreign_inputs()
+        for text in ('no-hardware-ports\ngraphics/drm-kmod\n',
+                     'graphics/drm-kmod\nno-hardware-ports\n',
+                     'no-hardware-ports\nno-hardware-ports\n'):
+            with self.subTest(text=text):
+                args.profile.write_text(text)
+                with self.assertRaisesRegex(ValueError, 'must be the only'):
+                    host.build(args)
+                self.assertFalse(args.output.exists())
+        args.profile.write_text('graphics/drm-kmod\n')
+        with self.assertRaisesRegex(ValueError, 'target-native builder'):
+            host.build(args)
+        self.assertFalse(args.output.exists())
+
+    def test_profile_grammar_cases_shared_with_build_bsd(self):
+        cases = list(profile_cases())
+        self.assertGreaterEqual(len(cases), 50)
+        for outcome, text in cases:
+            with self.subTest(outcome=outcome, profile=text):
+                if outcome == 'refuse':
+                    with self.assertRaises(ValueError):
+                        host.parse_profile(text)
+                else:
+                    self.assertIn(outcome, ('none', 'ports'))
+                    origins = host.parse_profile(text)
+                    self.assertEqual(origins is None, outcome == 'none')
+                    self.assertTrue(origins is None or origins)
+
+    def test_maintained_profiles_select_their_backends(self):
+        tools = SRC / 'release/tools'
+        self.assertIsNone(host.parse_profile((tools / 'hardware-ports.aarch64').read_bytes()))
+        self.assertTrue(host.parse_profile((tools / 'hardware-ports.amd64').read_bytes()))
+
+    def test_profile_must_select_the_planned_backend(self):
+        # build-bsd passes the backend its plan reported.  A profile changed
+        # since then is refused before anything is written, in both directions.
+        _, args = self.foreign_inputs()
+        args.expect_backend = 'native-ports'
+        with self.assertRaisesRegex(ValueError, 'selects kernel-identity-only, not the planned native-ports'):
+            host.build(args)
+        self.assertFalse(args.output.exists())
+        args.profile.write_text('graphics/drm-kmod\n')
+        args.expect_backend = 'kernel-identity-only'
+        with self.assertRaisesRegex(ValueError, 'selects native-ports, not the planned kernel-identity-only'):
+            host.build(args)
+        self.assertFalse(args.output.exists())
+        args.profile.write_text('no-hardware-ports\n')
+        host.build(args)
+        hw.verify(args.output, hw.inventory(args.output)['5BSD-kernel-generic'][0])
 
     def test_native_preflight_accepts_existing_output_without_mutation(self):
         args = self.host_inputs()
@@ -631,6 +774,8 @@ class HardwarePackages(unittest.TestCase):
         self.assertIn('5BSD-kernel-generic', packages)
         self.assertEqual(hw.sha256(kernel), original)
         self.assertEqual(hw.verify(repo)['kernel_sha256'], hw.kernel_hash(kernel))
+        self.assertEqual(json.loads((repo / 'publication.json').read_text())['scope'],
+                         'complete base and matching hardware generation')
         with self.assertRaisesRegex(ValueError, 'new generation'):
             hw.publish(SimpleNamespace(repository=hardware,
                 base_repository=self.base / 'complete-base', output=repo,
@@ -1007,6 +1152,82 @@ class HardwarePackages(unittest.TestCase):
         self.assertEqual(names.count('5BSD-hardware-abi-'), 1)
         self.assertIn('5BSD-kernel-generic-nodebug-101', names)
         self.assertEqual((root / 'boot/kernel/kernel').read_text(), 'new')
+
+
+@unittest.skipUnless(shutil.which('make'), 'make is not available')
+class HardwareMakefile(unittest.TestCase):
+    """Target selection in release/Makefile.hardware, with a stand-in pkg."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        self.binary = self.base / 'uname'
+        self.binary.write_text('target binary')
+        (self.base / 'unknown').write_text('not a target binary')
+        # Answer the builder's ABI and the ABI of the one known target binary.
+        self.pkg = self.base / 'pkg'
+        self.pkg.write_text('#!/bin/sh\ncase "$*" in\n'
+            '"config ABI") echo FreeBSD:16:builder;;\n'
+            '"-o ABI_FILE=' + str(self.binary) + ' config ABI") echo FreeBSD:16:target;;\n'
+            'esac\n')
+        self.pkg.chmod(0o755)
+        self.machine = self.make_output('-f', '/dev/null', '-V', 'MACHINE_ARCH').stdout.strip()
+        self.assertTrue(self.machine)
+
+    def make_output(self, *arguments):
+        environment = {'PATH': os.environ.get('PATH', '/bin:/usr/bin')}
+        return subprocess.run(['make', *arguments], cwd=self.base, env=environment,
+                              capture_output=True, text=True)
+
+    def select(self, *arguments):
+        return self.make_output('-f', str(SRC / 'release/Makefile.hardware'),
+            'PKG_CMD=' + str(self.pkg), *arguments,
+            '-V', 'HARDWARE_ABI', '-V', 'HARDWARE_PORT_LIST', '-V', 'BASE_REPOSITORY')
+
+    def selected(self, *arguments):
+        result = self.select(*arguments)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        return result.stdout.splitlines()
+
+    def refused(self, message, *arguments):
+        result = self.select(*arguments)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(message, result.stderr)
+        self.assertNotIn('FreeBSD:16:', result.stdout)
+
+    def profile(self, arch):
+        return str(self.base / 'release/tools' / ('hardware-ports.' + arch))
+
+    def test_native_build_uses_the_builders_abi_and_profile(self):
+        expected = ['FreeBSD:16:builder', self.profile(self.machine),
+                    'repo/FreeBSD:16:builder/latest-built']
+        self.assertEqual(self.selected(), expected)
+        self.assertEqual(self.selected('TARGET=native', 'TARGET_ARCH=' + self.machine), expected)
+
+    def test_cross_build_takes_abi_and_profile_from_the_target(self):
+        expected = ['FreeBSD:16:target', self.profile('foreign'),
+                    'repo/FreeBSD:16:target/latest-built']
+        self.assertEqual(self.selected('TARGET=foreign', 'TARGET_ARCH=foreign',
+                                       'HARDWARE_ABI_FILE=' + str(self.binary)), expected)
+        self.assertEqual(self.selected('TARGET=foreign', 'TARGET_ARCH=foreign',
+                                       'HARDWARE_ABI=FreeBSD:16:target'), expected)
+
+    def test_cross_build_requires_the_target_world(self):
+        self.refused('is missing: build the foreign world first',
+                     'TARGET=foreign', 'TARGET_ARCH=foreign')
+        self.refused('did not report the foreign package ABI', 'TARGET=foreign',
+                     'TARGET_ARCH=foreign', 'HARDWARE_ABI_FILE=' + str(self.base / 'unknown'))
+
+    def test_target_and_architecture_are_selected_together(self):
+        # Half a target would pair one architecture's profile with another's
+        # objects and repository.
+        for arch in ('foreign', self.machine):
+            with self.subTest(arch=arch):
+                self.refused('TARGET and TARGET_ARCH must be set together',
+                             'TARGET_ARCH=' + arch, 'HARDWARE_ABI_FILE=' + str(self.binary))
+                self.refused('TARGET and TARGET_ARCH must be set together',
+                             'TARGET=' + arch, 'HARDWARE_ABI_FILE=' + str(self.binary))
 
 
 if __name__ == '__main__':
