@@ -1280,8 +1280,7 @@ ATF_TC_HEAD(channel_send_xfer_none, tc)
 	    "a regular file limited to CAP_XFER_NONE is refused ENOTCAPABLE "
 	    "by SENDMSG and CALL to an ordinary service and is exempt when "
 	    "the service is the coalition (MAC_CAPABILITY_SVC_REFATTACH)");
-	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_coalition mac_capability_channel");
+	/* No require.kmods: a missing service fails the case, see the body. */
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(channel_send_xfer_none, tc)
@@ -1293,7 +1292,10 @@ ATF_TC_BODY(channel_send_xfer_none, tc)
 	struct mac_capability_recvmsg_args ra;
 	char rx[16];
 
-	ATF_REQUIRE(chan_create_or_skip(P) == 0);
+	/* A pin does not skip: no channel service is a failure. */
+	ATF_REQUIRE_MSG(chan_sysno() >= 0,
+	    "the mac_capability channel service is not loaded");
+	ATF_REQUIRE_MSG(chan_create(P) == 0, "create: %s", strerror(errno));
 	file_lim = open("xfer_none", O_RDWR | O_CREAT, 0600);
 	ATF_REQUIRE(file_lim >= 0);
 	file_ctl = open("xfer_none", O_RDWR);
