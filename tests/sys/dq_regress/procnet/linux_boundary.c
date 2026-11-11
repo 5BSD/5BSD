@@ -535,7 +535,7 @@ sysv(void)
 	struct lsembuf op;
 	struct lmsg m;
 	unsigned short vals[2];
-	long key, pid, r, self, shm, sem, msg, pshm, psem, pmsg;
+	long key, pid, r, self, shm, sem, msg, pshm, psem, pmsg, v;
 	int ids[3], p[2], status;
 	char *a;
 
@@ -695,7 +695,9 @@ sysv(void)
 	    0));
 	row("the mapping still reads", a[0] == 's' && a[3] == 'v');
 	row("shmget(key) after", S3(SYS_shmget, key, 0, 0));
-	row("shmat(the id) after", S3(SYS_shmat, shm, 0, 0));
+	/* An address, not a result: 1 for mapped, or the negative errno. */
+	v = S3(SYS_shmat, shm, 0, 0);
+	row("shmat(the id) after", v < 0 && v > -4096 ? v : 1);
 	row("shmdt", S1(SYS_shmdt, a));
 	row("msgctl(IPC_RMID)", S3(SYS_msgctl, msg, IPC_RMID, 0));
 	row("msgget(key) after", S2(SYS_msgget, key, 0));

@@ -67,7 +67,8 @@ main(int argc, char **argv)
 	len = snprintf(buf, sizeof(buf), "%d %ld\n", (int)getpid(), tid);
 	if (write(1, buf, (size_t)len) != len)
 		return (67);
-	while (read(0, buf, sizeof(buf)) > 0)
+	/* Until the test closes its end; a read error is not that. */
+	while ((len = (int)read(0, buf, sizeof(buf))) > 0)
 		continue;
-	return (0);
+	return (len == 0 ? 0 : 71);
 }

@@ -21,6 +21,8 @@
 #include <sys/cap_process.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -41,6 +43,26 @@
 #include <sysctlcmp.h>
 
 #include "dq_test.h"
+
+/*
+ * A pin does not skip: the plane and the queue device are there.  Without
+ * this, dqt_open_queue() would turn a missing /dev/dq into a skip.
+ */
+static void
+pin_require_plane(void)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
+
+	len = sizeof(kp);
+	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), &kp, &len, NULL, 0));
+	ATF_REQUIRE_MSG(strcmp(kp.ki_comm, "capsule") == 0, "the capability "
+	    "plane is off (PID 1 is %s): this pin runs with it on",
+	    kp.ki_comm);
+	ATF_REQUIRE_MSG(access("/dev/dq", F_OK) == 0, "/dev/dq: %s",
+	    strerror(errno));
+}
 
 #define	NA	(-9999)		/* a step that was not reached */
 #define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
@@ -200,6 +222,7 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	char tag_a[] = "attached", tag_u[] = "unattached";
 	int pair[2], status;
 
+	pin_require_plane();
 	ATF_REQUIRE_MSG(chan_create(pair) == 0, "channel: %s",
 	    strerror(errno));
 	ATF_REQUIRE_EQ_MSG(0, cap_proc(MAC_CAP_PROCESS_SET, pair[0], NULL),
@@ -288,22 +311,14 @@ lookup_child(void *arg, void *result)
 /*
  * What each consumer returns: with the route, and with it cleared.
  *
- * With the route, notify_client_open() fails with EPIPE although
- * service_open("system.Notify") succeeded: SwitchBoard resolves the name
- * and connects the caller (it logs the connection, under the label
- * org.5bsd.user-session), and BSDNotify then drops the session before
- * the first reply.  notifyctl(8) "stats" from a root shell of the same
- * guest fails the same way ("open system.Notify: Broken pipe"), so this
- * is the state of the base notify service for such a caller today and
- * not an effect of the attach: the attached row and its control agree.
- * It is pinned as found; the design expected 0.  A repair of BSDNotify
- * turns both rows to 0 together; BS-1 must change the attached row only.
+ * notify_client_open() is 0 with the route since the BSDNotify
+ * NOFDRECV repair (5b1325c979a); before it both rows were EPIPE.
  */
 struct lookup_want {
 	int			 open_notify, open_log, open_sysctl;
 	int			 notify, logcmp, sysctlcmp;
 };
-static const struct lookup_want want_route = { 0, 0, 0, EPIPE, 0, 0 };
+static const struct lookup_want want_route = { 0, 0, 0, 0, 0, 0 };
 static const struct lookup_want want_cleared = {
 	ENOENT, ENOENT, ENOENT, ENOENT, ENOENT, ENOENT
 };
@@ -373,6 +388,7 @@ ATF_TC_HEAD(public_lookup, tc)
 ATF_TC_BODY(public_lookup, tc)
 {
 
+	pin_require_plane();
 	lookup_pair(false);
 }
 
@@ -391,6 +407,7 @@ ATF_TC_HEAD(cleared_lookup, tc)
 ATF_TC_BODY(cleared_lookup, tc)
 {
 
+	pin_require_plane();
 	lookup_pair(true);
 }
 

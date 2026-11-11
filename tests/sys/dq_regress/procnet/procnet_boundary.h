@@ -38,7 +38,11 @@
 
 #include "procnet_common.h"
 
-/* A row that the scenario cannot drive (no descriptor to pass). */
+/*
+ * A row that the scenario cannot drive (no descriptor to pass).  pddupfd()
+ * is this in every refusing column: it needs the descriptor pdopenpid()
+ * was refused there, so its own p_candebug() refusal is not pinned.
+ */
 #define	BP_NA		(-2)
 
 enum bp_row {

@@ -9,8 +9,8 @@
  * the rest of the system, by name and in every listing.  For processes
  * nothing is attached to, every name, id, listing and errno below must
  * stay what it is: the rows are what the kernel of commit f52f6da3d34
- * does, recorded by running this program on it.  The slice that touches
- * these paths is b7; no row here is expected to change at any slice.
+ * does, recorded by running this program on it.  The slices that touch
+ * these paths are b6a (POSIX) and b6b (System V); no row here is expected to change at any slice.
  *
  * Each case runs its rows in children that have dropped to an
  * unprivileged uid and are not each other's parent.  A row prints its
@@ -76,9 +76,8 @@ static char	nm_shm[64], nm_shm2[64], nm_sem[64], nm_mq[64];
 static key_t	key_shm, key_sem, key_msg;
 
 static void
-names(const char *tag)
+names_of(const char *tag, int pid)
 {
-	int pid = (int)getpid();
 
 	(void)snprintf(nm_shm, sizeof(nm_shm), "/pn_%s_shm_%d", tag, pid);
 	(void)snprintf(nm_shm2, sizeof(nm_shm2), "/pn_%s_shm2_%d", tag, pid);
@@ -87,6 +86,38 @@ names(const char *tag)
 	key_shm = 0x504e0000 | (pid & 0xffff);
 	key_sem = 0x504f0000 | (pid & 0xffff);
 	key_msg = 0x50500000 | (pid & 0xffff);
+}
+
+static void	sweep(void);
+
+/* The names of this body, and a note of its pid for the cleanup. */
+static void
+names(const char *tag)
+{
+	FILE *f;
+
+	names_of(tag, (int)getpid());
+	f = fopen("names.pid", "w");
+	ATF_REQUIRE(f != NULL);
+	(void)fprintf(f, "%d\n", (int)getpid());
+	ATF_REQUIRE_EQ(0, fclose(f));
+}
+
+/* The cleanup part: the names of the body that left the note. */
+static void
+names_cleanup(const char *tag)
+{
+	FILE *f;
+	int pid;
+
+	f = fopen("names.pid", "r");
+	if (f == NULL)
+		return;
+	if (fscanf(f, "%d", &pid) == 1) {
+		names_of(tag, pid);
+		sweep();
+	}
+	(void)fclose(f);
 }
 
 /* Remove what a failed body may have left (as root; all best effort). */
@@ -329,7 +360,8 @@ ATF_TC_BODY(named_ipc_shared, tc)
 }
 ATF_TC_CLEANUP(named_ipc_shared, tc)
 {
-	/* The names carry the body's pid; the body sweeps.  Nothing here. */
+	/* A body that died half way did not sweep. */
+	names_cleanup("share");
 }
 
 /* --- item 14: names, listings and lifetime ------------------------------ */
@@ -484,6 +516,7 @@ ATF_TC_BODY(named_ipc_lifetime, tc)
 }
 ATF_TC_CLEANUP(named_ipc_lifetime, tc)
 {
+	names_cleanup("life");
 	(void)unmount("/tmp/procnet.ipc_mqfs", MNT_FORCE);
 	pn_pubdir_remove("ipc_mqfs");
 }

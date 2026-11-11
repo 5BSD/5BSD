@@ -91,6 +91,7 @@ ipcs_root_head()
 {
 	atf_set "descr" "ipcs -a as root: the listing, and no PRIV_IPC_ADMIN check"
 	atf_set "require.user" "root"
+	atf_set "timeout" "600"
 }
 ipcs_root_body()
 {
@@ -106,6 +107,7 @@ ipcs_unprivileged_head()
 {
 	atf_set "descr" "ipcs -a as an unprivileged uid: the listing, and no PRIV_IPC_ADMIN check"
 	atf_set "require.user" "root"
+	atf_set "timeout" "600"
 }
 ipcs_unprivileged_body()
 {

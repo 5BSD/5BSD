@@ -33,6 +33,8 @@
 #include <sys/procdesc.h>
 #include <sys/ptrace.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -49,6 +51,26 @@
 #include <unistd.h>
 
 #include "dq_test.h"
+
+/*
+ * A pin does not skip: the plane and the queue device are there.  Without
+ * this, dqt_open_queue() would turn a missing /dev/dq into a skip.
+ */
+static void
+pin_require_plane(void)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
+
+	len = sizeof(kp);
+	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), &kp, &len, NULL, 0));
+	ATF_REQUIRE_MSG(strcmp(kp.ki_comm, "capsule") == 0, "the capability "
+	    "plane is off (PID 1 is %s): this pin runs with it on",
+	    kp.ki_comm);
+	ATF_REQUIRE_MSG(access("/dev/dq", F_OK) == 0, "/dev/dq: %s",
+	    strerror(errno));
+}
 
 #define	NA	(-9999)		/* a step that was not reached */
 #define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
@@ -417,6 +439,7 @@ ATF_TC_BODY(nonparent_attach, tc)
 	struct timespec ts = { 10, 0 };
 	int kq, sv[2], status;
 
+	pin_require_plane();
 	/* (a) SCM_RIGHTS: the actor exists before the target does. */
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	ra.sock = sv[1];
@@ -470,6 +493,7 @@ ATF_TC_BODY(unprivileged_attach, tc)
 	struct act_res r;
 	struct idle s;
 
+	pin_require_plane();
 	idle_spawn(&s, 0, NULL);
 	r = act_run(s.pd, s.pid, ACT_SETUID, -1);
 	ROW("setuid", r.setuid, 0);
@@ -540,6 +564,7 @@ ATF_TC_BODY(shielded_attach, tc)
 	char b;
 	int status;
 
+	pin_require_plane();
 	dqt_init_manual(&c);
 	idle_spawn(&s, 0, NULL);
 	pa.pd = s.pd;
@@ -588,6 +613,7 @@ ATF_TC_BODY(pd_protected_attach, tc)
 	struct act_res r;
 	struct idle s;
 
+	pin_require_plane();
 	dqt_init_manual(&c);
 	idle_spawn(&s, PD_PROTECTED, NULL);
 	errno = 0;
@@ -687,6 +713,7 @@ ATF_TC_BODY(shield_not_inherited, tc)
 	struct act_res r;
 	int pd, status, sv[2];
 
+	pin_require_plane();
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	sa.sock = sv[1];
 	dqt_spawn(&ch, shielded_parent, &sa);
@@ -774,6 +801,7 @@ ATF_TC_BODY(mint_attach_bit, tc)
 	struct mint_res r;
 	u_int i;
 
+	pin_require_plane();
 	ATF_REQUIRE_EQ(0, CP_SF_ALL & LA_ATTACH_BIT);
 	for (i = 0; i < nitems(shields); i++) {
 		ma.shield_flags = shields[i].flags;
@@ -808,6 +836,7 @@ ATF_TC_BODY(token_attach, tc)
 	struct idle s;
 	int chan[2], shield, tok;
 
+	pin_require_plane();
 	idle_spawn(&s, 0, NULL);
 	shield = cp_shield(s.pd, CP_SF_PTRACE);
 	ATF_REQUIRE_MSG(shield != -1, "CP_OP_PROTECT: %s", strerror(errno));
@@ -908,6 +937,7 @@ ATF_TC_BODY(nnp_seen_by_others, tc)
 	struct nnp_res r;
 	struct idle s;
 
+	pin_require_plane();
 	dqt_init_manual(&c);
 	idle_spawn(&s, 0, NULL);
 	memset(&r, 0, sizeof(r));

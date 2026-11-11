@@ -8,7 +8,7 @@
  * process descriptor.
  *
  * Today attachment makes no difference to any of it: the boundary slices
- * (b3 visibility, b5 signals and terminals, b6 plane services) are what
+ * (b3 visibility, b4 signals and terminals, b5 plane services) are what
  * introduce one, and only for an actor that is itself attached.  An
  * unattached actor, which is every row here, must get these answers after
  * every slice.  The tables are what the kernel of commit f52f6da3d34
@@ -326,7 +326,7 @@ setown_fn(void *arg)
  * Item 13.  A process group with one attached and one unattached member,
  * named as the SIGIO owner of a pipe by a third, unattached process of
  * the same uid and session: F_SETOWN is accepted and SIGIO reaches both
- * members.  b5 filters group delivery for an ATTACHED setter (members
+ * members.  b4 filters group delivery for an ATTACHED setter (members
  * outside its confinement are passed over); for an unattached setter the
  * whole group still gets the signal.
  */
@@ -430,6 +430,12 @@ ATF_TC_HEAD(linux_probe_attached_target, tc)
 	atf_tc_set_md_var(tc, "descr", "Every by-pid Linux call of an "
 	    "unattached Linux process on an attached one of its uid");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/*
+	 * The Linux test data is amd64.  The prober is built here with
+	 * the base compiler and linker; a guest without them fails this
+	 * case, it does not skip it (the same in linux_boundary_test).
+	 */
+	atf_tc_set_md_var(tc, "require.arch", "amd64");
 	atf_tc_set_md_var(tc, "timeout", "300");
 }
 ATF_TC_BODY(linux_probe_attached_target, tc)
@@ -480,7 +486,7 @@ ATF_TC_BODY(linux_probe_attached_target, tc)
 		fd = open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (fd == -1 || dup2(fd, 1) != 1)
 			_exit(PN_X_SETUP);
-		(void)alarm(120);
+		(void)alarm(280);
 		(void)execl(linux_prog, linux_prog, "probe", pidstr, tidstr,
 		    NULL);
 		_exit(PN_X_SETUP);
@@ -533,6 +539,8 @@ enum {
 	SV_ACCT_CONNECT, SV_ACCT_CALL, SV_ACCT_STATUS,
 	SV_IDENT_CONNECT, SV_IDENT_CALL, SV_IDENT_STATUS, SV_IDENT_NONCE,
 	SV_COAL_CONNECT, SV_COAL_RESP_CALL, SV_COAL_RESP_STATUS,
+	SV_COAL_ENLIST_CALL, SV_COAL_ENLIST_STATUS,
+	SV_COAL_RESP2_CALL, SV_COAL_RESP2_STATUS,
 	SV_AUTH_NO_ISSUER, SV_AUTH_PD_ISSUER,
 	SV_CP_CONNECT, SV_CP_CALL, SV_CP_KILL0,
 	SV_N
@@ -546,7 +554,10 @@ static const char *const sv_names[SV_N] = {
 	"identity: connect", "identity: QUERY call", "identity: QUERY status",
 	"identity: QUERY nonce is not 0",
 	"coalition: connect", "coalition: SET_RESPONSIBLE call",
-	"coalition: SET_RESPONSIBLE status",
+	"coalition: SET_RESPONSIBLE status, target in no coalition",
+	"coalition: ENLIST call", "coalition: ENLIST status",
+	"coalition: SET_RESPONSIBLE call, target enlisted",
+	"coalition: SET_RESPONSIBLE status, target enlisted",
 	"authority: CHECK_INVOCATION, no issuer",
 	"authority: CHECK_INVOCATION, the procdesc as issuer",
 	"capprotect: connect", "capprotect: PROTECT call",
@@ -555,7 +566,7 @@ static const char *const sv_names[SV_N] = {
 
 /* Every plane service that takes a process descriptor, on pd. */
 static void
-services(int pd, pid_t pid, int *r)
+services(int pd, pid_t pid, int *r, int *coalp)
 {
 	struct node_request nreq;
 	struct node_stat_reply nrep;
@@ -564,6 +575,7 @@ services(int pd, pid_t pid, int *r)
 	struct identity_request ireq;
 	struct identity_reply irep;
 	struct coalition_set_responsible_req rreq;
+	struct coalition_req_hdr ereq;
 	struct coalition_reply rrep;
 	struct cap_authority_check_invocation ci;
 	struct cp_request creq;
@@ -615,7 +627,15 @@ services(int pd, pid_t pid, int *r)
 		(void)close(fd);
 	}
 
-	/* A fresh coalition; the edge goes with it at close. */
+	/*
+	 * A fresh coalition; the edge goes with it at close.  The process
+	 * descriptor is resolved to its process and the process to the
+	 * coalition it is a member of (coalition_resolve_responsible_fd()).
+	 * The target is in none at first, so the status is the ESRCH of
+	 * coalition_of_proc_ref(): the descriptor did resolve.  Then the
+	 * target is enlisted in a second coalition, which the caller keeps
+	 * until the target is dead, and a third names it: status 0.
+	 */
 	fd = mac_capability_connect("coalition");
 	r[SV_COAL_CONNECT] = fd < 0 ? errno : 0;
 	if (fd >= 0) {
@@ -628,12 +648,36 @@ services(int pd, pid_t pid, int *r)
 			r[SV_COAL_RESP_STATUS] = rrep.status;
 		(void)close(fd);
 	}
+	*coalp = mac_capability_connect("coalition");
+	if (*coalp >= 0) {
+		memset(&ereq, 0, sizeof(ereq));
+		memset(&rrep, 0xff, sizeof(rrep));
+		ereq.op = COALITION_OP_ENLIST;
+		r[SV_COAL_ENLIST_CALL] = PN_ERR(svc_call(*coalp, &ereq,
+		    sizeof(ereq), &pd, 1, &rrep, sizeof(rrep)));
+		if (r[SV_COAL_ENLIST_CALL] == 0)
+			r[SV_COAL_ENLIST_STATUS] = rrep.status;
+	}
+	fd = mac_capability_connect("coalition");
+	if (fd >= 0 && r[SV_COAL_ENLIST_STATUS] == 0) {
+		memset(&rreq, 0, sizeof(rreq));
+		memset(&rrep, 0xff, sizeof(rrep));
+		rreq.op = COALITION_OP_SET_RESPONSIBLE;
+		r[SV_COAL_RESP2_CALL] = PN_ERR(svc_call(fd, &rreq,
+		    sizeof(rreq), &pd, 1, &rrep, sizeof(rrep)));
+		if (r[SV_COAL_RESP2_CALL] == 0)
+			r[SV_COAL_RESP2_STATUS] = rrep.status;
+	}
+	if (fd >= 0)
+		(void)close(fd);
 
 	/*
 	 * Software authority is cap_process(2), not a service.  Only PID 1
 	 * can make an issuer, and the issuer is validated before the
 	 * process descriptor is looked at: what a plain root process can
-	 * reach is the refusal.
+	 * reach is the refusal.  These two rows pin the issuer refusal
+	 * only; the path that resolves the process descriptor needs a
+	 * fixture launched by SwitchBoard and is not pinned here.
 	 */
 	memset(&ci, 0, sizeof(ci));
 	ci.token_fd = -1;
@@ -678,9 +722,9 @@ services_check(const char *scenario, const int *got, const int *want)
  * capprotect; and software authority, a system call), called by an
  * unattached root process with the descriptor of an unattached child and
  * of an attached one: the result and status of the cheapest operation of
- * each.  Today the two columns are the same.  b6 refuses an ATTACHED
- * caller naming an outside process; it does not change either column
- * here.
+ * each.  Today the two columns are the same.  b5 (the plane's process
+ * descriptor resolutions, D321) refuses an ATTACHED caller naming an
+ * outside process; it does not change either column here.
  */
 ATF_TC_WITHOUT_HEAD(plane_services_procdesc);
 ATF_TC_BODY(plane_services_procdesc, tc)
@@ -691,35 +735,41 @@ ATF_TC_BODY(plane_services_procdesc, tc)
 		0, 0, ACCT_STATUS_OK,
 		0, 0, IDENTITY_STATUS_OK, 1,
 		0, 0, ESRCH,
+		0, 0, 0, 0,
 		EBADF, EINVAL,
 		0, 0, 0,
 	};
 	struct dqt_ctl c;
 	struct attached in, out;
-	int got[SV_N];
+	int coal, got[SV_N];
 
 	require_plane();
 	dqt_init(&c);
 	held_child(NULL, &out, pause_fn, NULL);
-	services(out.pd, out.pid, got);
+	services(out.pd, out.pid, got, &coal);
 	services_check("unattached target", got, want);
 	held_kill(&out);
+	if (coal >= 0)
+		(void)close(coal);
 
 	held_child(&c, &in, pause_fn, NULL);
-	services(in.pd, in.pid, got);
+	services(in.pd, in.pid, got, &coal);
 	services_check("attached target", got, want);
 	held_kill(&in);
+	if (coal >= 0)
+		(void)close(coal);
 	dqt_fini(&c);
 }
 
 /* --- the queue ABI rows of item 18 -------------------------------------- */
 
 /*
- * Item 18.  The next free command of the queue, _IOWR('j', 13, 16 bytes),
- * is ENOTTY today on a queue; an observer's descriptor is limited to its
- * own commands and answers ENOTCAPABLE.  b1 defines the command
- * (DQ_IOC_SET_BOUNDARY) and the queue's row flips there; the observer's
- * does not.
+ * Item 18.  Command 13 of the queue, _IOWR('j', 13, 16 bytes), is ENOTTY
+ * today on a queue; an observer's descriptor is limited to its own
+ * commands and answers ENOTCAPABLE.  The number is DQ_IOC_QUEUE_FLAGS,
+ * defined by ux-2 or by b6c, whichever lands first: the queue's row
+ * flips there; the observer's does not (the command is not added to the
+ * observer's ioctl list).
  */
 ATF_TC_WITHOUT_HEAD(queue_ioctl_13_enotty);
 ATF_TC_BODY(queue_ioctl_13_enotty, tc)
@@ -742,9 +792,9 @@ ATF_TC_BODY(queue_ioctl_13_enotty, tc)
 
 /*
  * Item 18.  GET_STATS2 answers ds2_size 320 and ds2_pad0 0 on a queue and
- * on an observer.  The boundary counters are appended to dq_stats2 by b1:
- * ds2_size grows there (the command word changes with it) and ds2_pad0
- * stays 0.
+ * on an observer.  No slice changes the size: it stays 320.  b6c renames
+ * ds2_pad0 ds2_qflags and reports the queue's user flag word in it, which
+ * is 0 for a queue that set none.
  */
 ATF_TC_WITHOUT_HEAD(stats2_size);
 ATF_TC_BODY(stats2_size, tc)

@@ -107,7 +107,7 @@ sysv: the sleeper's exit 11008
 sysv: shmctl(IPC_RMID) while mapped 0
 sysv: the mapping still reads 1
 sysv: shmget(key) after -2
-sysv: shmat(the id) after 34361876480
+sysv: shmat(the id) after 1
 sysv: shmdt 0
 sysv: msgctl(IPC_RMID) 0
 sysv: msgget(key) after -2

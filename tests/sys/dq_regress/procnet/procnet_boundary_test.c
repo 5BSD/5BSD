@@ -178,7 +178,16 @@ BP_CASE(probe_other_uid, "Every by-pid call on a process of another uid")
 {
 	int want[BP_NROWS];
 
+	size_t len;
+	int see;
+
 	bp_setup(tc, "probe_other_uid");
+	/* With it off the column is ESRCH: another pin, not this one. */
+	len = sizeof(see);
+	ATF_REQUIRE_EQ(0, sysctlbyname("security.bsd.see_other_uids", &see,
+	    &len, NULL, 0));
+	ATF_REQUIRE_MSG(see == 1, "security.bsd.see_other_uids is %d: this "
+	    "pin records the default, 1", see);
 	bp_fill(want, EPERM);
 	want[BP_PDDUPFD] = BP_NA;
 	want[BP_SC_ARGS] = 0;
@@ -431,7 +440,7 @@ tiocsti_child(const char *slave, int *r)
  * Item 6.  TIOCSTI by an unattached, unprivileged process: accepted on
  * its controlling terminal (security.bsd.allow_tiocsti is on by default)
  * and the byte is read back as input; EACCES on a terminal that is not
- * its controlling terminal.  b5 refuses an attached caller only.
+ * its controlling terminal.  b4 refuses an attached caller only.
  */
 ATF_TC_WITHOUT_HEAD(tiocsti_controlling_tty);
 ATF_TC_BODY(tiocsti_controlling_tty, tc)
@@ -579,8 +588,9 @@ jc_child(const char *slave, int *r)
  * group of another session and for none; setpgid() into an existing group
  * of the session, refused (EPERM) for another session's; a background
  * write passes without TOSTOP; a background read stops its whole group
- * with SIGTTIN and a background write under TOSTOP with SIGTTOU.  b5 adds refusals for
- * groups across the confinement boundary only.
+ * with SIGTTIN and a background write under TOSTOP with SIGTTOU.  The
+ * design adds no rule to setpgid() or TIOCSPGRP: its T3 (b3) requires
+ * that they keep working, so every row here must stay.
  */
 ATF_TC_WITHOUT_HEAD(job_control);
 ATF_TC_BODY(job_control, tc)
@@ -673,7 +683,7 @@ sh_who(register_t v, pid_t shell, pid_t launcher)
  * TIOCSPGRP is made by a member of the launcher's group.  The pin
  * is the sequence of setpgid() calls and TIOCSPGRP ioctls the shell
  * makes, each with its result, from a ktrace(2) of the shell alone.
- * This is the oracle of the design's T3: b5 must let an attached shell
+ * This is the oracle of the design's T3 (b3): an attached shell must
  * make the same four calls when the launcher's group is outside.
  * The Linux bash(1) half is not written: the Linux test data has no
  * shell.
@@ -847,7 +857,7 @@ sigio_child(const char *unused __unused, int *r)
 /*
  * Item 8.  F_SETOWN to a process and to a process group of the caller's
  * session, all unattached: accepted, and SIGIO reaches the process and
- * every member of the group.  b5 refuses or filters across the boundary
+ * every member of the group.  b4 refuses or filters across the boundary
  * only.  The group with an attached member is
  * procnet_outside_test:sigio_group_with_attached.
  */
@@ -931,6 +941,9 @@ ATF_TC_BODY(no_new_privs_fork, tc)
 
 /* --- a child killed by a third process ---------------------------------- */
 
+/* How long a victim waits to be killed before it gives up. */
+#define	VICTIM_BOUND	280
+
 static int
 kill_it(void *arg)
 {
@@ -939,19 +952,54 @@ kill_it(void *arg)
 	return (PN_ERR(kill(a[0], a[1])));
 }
 
+/*
+ * A child of this process that runs as PN_UID and waits to be killed.
+ * It says so on a pipe once it has dropped its uid: a killer of PN_UID
+ * that ran before the drop would be refused (EPERM) and leave the
+ * parent waiting for a death that never comes.  Its own alarm bounds
+ * that wait in any case; a victim that dies of SIGALRM fails the
+ * status rows.
+ */
 static pid_t
 victim(int *pdp)
 {
 	pid_t pid;
+	int p[2];
+	char c;
 
+	ATF_REQUIRE_EQ(0, pipe(p));
 	pid = pdp != NULL ? pdfork(pdp, 0) : fork();
 	ATF_REQUIRE(pid != -1);
 	if (pid == 0) {
+		(void)close(p[0]);
+		(void)alarm(VICTIM_BOUND);
 		pn_drop(PN_UID, PN_GID);
+		if (write(p[1], "u", 1) != 1)
+			_exit(PN_X_SETUP);
+		(void)close(p[1]);
 		for (;;)
 			(void)pause();
 	}
+	(void)close(p[1]);
+	ATF_REQUIRE_EQ_MSG(1, read(p[0], &c, 1),
+	    "the victim did not report its uid drop");
+	(void)close(p[0]);
 	return (pid);
+}
+
+/* The third process kills; a refusal ends the case, and the victim. */
+static void
+third_party_kill(pid_t pid, int sig)
+{
+	int a[2], error;
+
+	a[0] = pid;
+	a[1] = sig;
+	error = pn_child(kill_it, a, PN_UID, PN_GID);
+	if (error != 0) {
+		(void)kill(pid, SIGKILL);
+		atf_tc_fail("kill by a third process: %d", error);
+	}
 }
 
 /*
@@ -969,15 +1017,12 @@ ATF_TC_BODY(third_party_kill_status, tc)
 	siginfo_t si;
 	pid_t pid;
 	size_t i;
-	int a[2], pd, status;
+	int pd, status;
 
 	for (i = 0; i < nitems(sigs); i++) {
 		/* wait6 */
 		pid = victim(NULL);
-		a[0] = pid;
-		a[1] = sigs[i];
-		PN_CHECK_ERRNO(0, pn_child(kill_it, a, PN_UID, PN_GID),
-		    "kill by a third process");
+		third_party_kill(pid, sigs[i]);
 		memset(&si, 0, sizeof(si));
 		status = 0;
 		ATF_REQUIRE_EQ(pid, wait6(P_PID, pid, &status, WEXITED, &wru,
@@ -991,9 +1036,7 @@ ATF_TC_BODY(third_party_kill_status, tc)
 
 		/* pdwait */
 		pid = victim(&pd);
-		a[0] = pid;
-		PN_CHECK_ERRNO(0, pn_child(kill_it, a, PN_UID, PN_GID),
-		    "kill by a third process");
+		third_party_kill(pid, sigs[i]);
 		memset(&si, 0, sizeof(si));
 		status = 0;
 		ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, &wru, &si));
