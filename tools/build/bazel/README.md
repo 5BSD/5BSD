@@ -10,19 +10,17 @@ qualification pass Switchboard, the inventory helper and all 11 selected tests.
 The service-aware VM upgrade and useful provider operations remain unqualified;
 gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
 
-Current-source full-build attempt `bazel-system-upgrade-native-r3-20261111`
-fails during analysis because the selected DQ module has no module BUILD file.
-The new module producer and explicit source header dependencies pass native
-compilation in `bazel-dq-module-native-r2-20261111`, including all nine built-in
-objects, module link, CTF merge, export processing and debug split. This run has
-no selected tests and is not a full-system rebuild or Make binary parity proof.
-Its options follow the standalone Make module, including DEV_DQ even when the
-selected kernel omits the built-in device. ARM64/RISC-V producers are declared
-but not qualified by this AMD64 result. The existing resolution-ledger test
-reads the live workspace without declaring its entire scanned source closure;
-its cache/sandbox contract and mandatory kernel-build integration remain open
-under gate 3. The frontend's existing target interface and normal module/package
-backends cover this addition; no new frontend option is required.
+Current-source full candidates R3, R4 and R5 retain real analysis/compile
+failures. DQ's missing module producer and header closure now pass native R2;
+mac_abac's configured DQ option visibility is fixed. R5 then reaches compilation
+and fails on fdescfs's newly used but undeclared MAC framework header. The fix
+passes builtin/module compilation in `bazel-fdescfs-native-r1-20261111`, together
+with the native upgrade-policy test. Next is a fresh complete candidate; none of
+these focused passes closes full-system, ARM64 or Make-parity qualification.
+The existing DQ resolution-ledger test reads undeclared live workspace sources;
+its source closure, cache/sandbox behavior and mandatory kernel-build integration
+remain open under gate 3. Maintained frontend target interfaces cover these BUILD
+changes; production remains Make.
 
 
 ## Closeout status and required gates (2026-11-11)

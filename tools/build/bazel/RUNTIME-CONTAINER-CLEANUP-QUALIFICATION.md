@@ -184,3 +184,12 @@ header provider. No source include, MAC hook, warning or failure is suppressed.
 Focused native compilation and the next full candidate remain to be qualified.
 These are maintained BUILD dependency edits; the existing frontend/package
 interfaces require no additional options.
+
+## Focused fdescfs and upgrade-policy native acceptance
+
+`bazel-fdescfs-native-r1-20261111/receipt.json` passes the actual AMD64 module
+source group, builtin vnode objects and native upgrade-policy test. The test
+uses the declared module/comparator inputs and executes its three Python methods;
+this does not qualify real guest added/obsolete-package transitions. The next
+full candidate must use the newly committed kernel revision and preserve the
+failed full R5 evidence. No host installation or VM run occurred in this step.
