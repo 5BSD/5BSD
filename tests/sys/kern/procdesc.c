@@ -1081,27 +1081,25 @@ ATF_TC_BODY(daemon_close_then_exit, tc)
  * P3.  The last descriptor closes while the child is stopped under a
  * debugger that is neither its parent nor the closer.
  *
- * The SIGKILL of the close is queued: a traced, stopped process is not
- * woken by it (tdsendsignal), so the child stays stopped until the
- * debugger lets go.
+ * The SIGKILL of the close is queued: the debugger may hold a tracee
+ * stopped with SIGKILL pending, so the child stays stopped until the
+ * debugger lets go.  It dies then, with nothing else sent to it.
  *
- * Recorded, and not what one would expect: it does not die then either.
- * The child was asleep in pause(3) when the debugger attached, and an
+ * The child is asleep in pause(3) when the debugger attaches, and an
  * attach leaves a sleeping thread asleep (debug.ptrace_attach_transparent,
- * the default).  PT_DETACH does not wake it, so the SIGKILL stays pending
- * on a process that is neither stopped nor traced until something else
- * wakes the thread; here, a second SIGKILL.  This is a defect (a lost
- * wakeup, also in FreeBSD), recorded as open in the project's issue list
- * (2026-11-11, "SIGKILL to a traced sleeper").  The case pins the value
- * as found, it does not endorse it: the commit that fixes the defect
- * changes these expectations.  See
- * ptrace__sigkill_third_party_stopped_detach in ptrace_test.c for a
- * tracee that stopped itself and does die at the detach.
+ * the default).  Until the fix in kern_sig.c ("do not lose SIGKILL sent
+ * to a tracee stopped in its sleep") the SIGKILL was lost for such a
+ * child: after the detach it slept on with the signal pending, and this
+ * case recorded that.  It now requires the death.  The kill itself, by
+ * every sender and release, is the subject of sigkill_traced_test.c;
+ * what this case adds is whose child the process is meanwhile and what
+ * its parent is told.
  *
- * Who it belongs to afterwards depends on the parent's zombie reference:
- *  - pdfork(0): the parent keeps it; at the detach the parent gets a
- *    SIGCHLD for the continue, and after the second SIGKILL one for the
- *    death, and reaps the SIGKILL status.
+ * Who it belongs to depends on the parent's zombie reference:
+ *  - pdfork(0): the parent keeps it; the parent gets a SIGCHLD for the
+ *    death and reaps the SIGKILL status.  A SIGCHLD for the continue at
+ *    the detach may be seen first: the child has one siginfo for its
+ *    parent, and the death replaces a continue not yet collected.
  *  - pdfork(PD_NOWAITPID): there is no parent reference, so the close
  *    gives the child to the reaper.  It is traced, so it cannot simply
  *    be reparented: its "real parent" (p_oppid) becomes the reaper and
@@ -1169,6 +1167,8 @@ traced_child_close(int pdflags)
 	ppid = -1;
 	st = proc_stat(pid, &ppid);
 	ATF_CHECK_EQ_MSG(SSTOP, st, "state %d after the close", st);
+	ATF_CHECK_EQ_MSG(1, proc_sigpending(pid, SIGKILL),
+	    "SIGKILL not pending while the debugger holds the child");
 	ATF_CHECK_EQ_MSG(0, sigchld_take(0, NULL), "SIGCHLD before detach");
 	if ((pdflags & PD_NOWAITPID) == 0) {
 		ATF_CHECK_EQ_MSG(getpid(), ppid, "real parent %d", (int)ppid);
@@ -1183,7 +1183,7 @@ traced_child_close(int pdflags)
 	}
 
 	/*
-	 * Let the debugger detach and exit.  The SIGCHLDs are counted
+	 * Let the debugger detach and exit.  The SIGCHLDs are collected
 	 * before anything is reaped: reaping a child takes its pending
 	 * SIGCHLD back (proc_reap).
 	 */
@@ -1191,25 +1191,40 @@ traced_child_close(int pdflags)
 	ATF_REQUIRE_EQ(1, write(cmd[1], &b, 1));
 
 	if ((pdflags & PD_NOWAITPID) == 0) {
-		/* Two, in either order: the debugger's exit, the continue. */
-		bool saw_child = false, saw_dbg = false;
-		int i;
+		/*
+		 * The debugger's exit and the child's death, in either
+		 * order; at most one continue of the child before its
+		 * death.
+		 */
+		bool saw_dbg = false, saw_killed = false;
+		int ncont = 0;
 
-		for (i = 0; i < 2; i++) {
+		while (!saw_dbg || !saw_killed) {
 			memset(&si, 0, sizeof(si));
 			ATF_REQUIRE_MSG(sigchld_take(WAIT_MS, &si) == 1,
-			    "SIGCHLD %d missing", i);
-			if (si.si_pid == pid) {
-				saw_child = true;
-				ATF_CHECK_EQ_MSG(CLD_CONTINUED, si.si_code,
-				    "si_code %d", si.si_code);
-				ATF_CHECK_EQ_MSG(SIGCONT, si.si_status,
-				    "si_status %d", si.si_status);
-			} else if (si.si_pid == dbg)
+			    "SIGCHLD missing: debugger %d, death %d",
+			    saw_dbg, saw_killed);
+			if (si.si_pid == dbg) {
+				ATF_REQUIRE_MSG(!saw_dbg,
+				    "two SIGCHLDs for the debugger");
 				saw_dbg = true;
+				continue;
+			}
+			ATF_REQUIRE_EQ_MSG(pid, si.si_pid, "si_pid %d",
+			    (int)si.si_pid);
+			if (si.si_code == CLD_CONTINUED) {
+				ATF_REQUIRE_MSG(ncont++ == 0,
+				    "two continues of the child");
+				continue;
+			}
+			ATF_REQUIRE_MSG(!saw_killed,
+			    "two deaths of the child");
+			ATF_CHECK_EQ_MSG(CLD_KILLED, si.si_code,
+			    "si_code %d", si.si_code);
+			ATF_CHECK_EQ_MSG(SIGKILL, si.si_status,
+			    "si_status %d", si.si_status);
+			saw_killed = true;
 		}
-		ATF_CHECK(saw_child);
-		ATF_CHECK(saw_dbg);
 	} else {
 		/* Only the debugger's; the child is the reaper's business. */
 		memset(&si, 0, sizeof(si));
@@ -1220,48 +1235,20 @@ traced_child_close(int pdflags)
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "debugger status %#x", status);
 
-	/*
-	 * Detached, and still there a second later: asleep, not stopped,
-	 * with the SIGKILL of the close pending.
-	 */
-	ATF_CHECK_EQ_MSG(0, sigchld_take(1000, NULL),
-	    "a SIGCHLD after the detach");
-	ppid = -1;
-	st = proc_stat(pid, &ppid);
-	ATF_CHECK_EQ_MSG(SSLEEP, st, "child state %d after the detach", st);
-	ATF_CHECK_EQ_MSG(1, proc_sigpending(pid, SIGKILL),
-	    "SIGKILL not pending after the detach");
+	/* Dead of the SIGKILL of the close, with nothing else sent. */
+	st = proc_stat_wait(pid, SZOMB, -ESRCH, WAIT_MS);
 	if ((pdflags & PD_NOWAITPID) == 0) {
-		ATF_CHECK_EQ_MSG(getpid(), ppid, "parent %d", (int)ppid);
-		ATF_CHECK_EQ(0, waitpid(pid, &status, WNOHANG));
-	} else {
-		ATF_CHECK_EQ_MSG(rs.rs_reaper, ppid, "parent %d, reaper %d",
-		    (int)ppid, (int)rs.rs_reaper);
-		errno = 0;
-		ATF_CHECK_EQ(-1, waitpid(pid, &status, WNOHANG));
-		ATF_CHECK_EQ_MSG(ECHILD, errno, "errno %d", errno);
-	}
-
-	/* A second SIGKILL wakes the thread, and the process dies. */
-	ATF_REQUIRE_EQ(0, kill(pid, SIGKILL));
-	if ((pdflags & PD_NOWAITPID) == 0) {
-		memset(&si, 0, sizeof(si));
-		ATF_REQUIRE_MSG(sigchld_take(WAIT_MS, &si) == 1,
-		    "no SIGCHLD for the death");
-		ATF_CHECK_EQ_MSG(pid, si.si_pid, "si_pid %d", (int)si.si_pid);
-		ATF_CHECK_EQ_MSG(CLD_KILLED, si.si_code, "si_code %d",
-		    si.si_code);
-		ATF_CHECK_EQ_MSG(SIGKILL, si.si_status, "si_status %d",
-		    si.si_status);
+		ATF_CHECK_EQ_MSG(SZOMB, st,
+		    "child state %d after the detach", st);
 		status = 0;
 		ATF_REQUIRE_EQ_MSG(pid, waitpid(pid, &status, 0),
 		    "waitpid: %s", strerror(errno));
 		ATF_CHECK_MSG(WIFSIGNALED(status) &&
 		    WTERMSIG(status) == SIGKILL, "status %#x", status);
 	} else {
-		st = proc_stat_wait(pid, -ESRCH, SZOMB, WAIT_MS);
+		/* A zombie until the reaper collects it, then gone. */
 		ATF_CHECK_MSG(st == -ESRCH || st == SZOMB,
-		    "child state %d after the second SIGKILL", st);
+		    "child state %d after the detach", st);
 		ATF_CHECK_EQ_MSG(0, sigchld_take(300, NULL),
 		    "SIGCHLD for a child given to the reaper");
 		errno = 0;
