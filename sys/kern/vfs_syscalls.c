@@ -4010,7 +4010,13 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 	if (error != 0)
 		return (error);
 #ifdef MAC
-	{
+	/*
+	 * The vnode's policy check comes before the table answers, so a
+	 * descriptor whose table refuses (O_PATH, a /dev/ptmx master) gets
+	 * the policy's errno first.  A served file has no vnode; its check
+	 * is the file-level one.
+	 */
+	if (fp->f_type == DTYPE_DQ) {
 		struct vattr va;
 
 		VATTR_NULL(&va);
@@ -4018,6 +4024,17 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
 		if (error != 0)
 			goto out;
+	} else {
+		struct vnode *vp = fp->f_vnode;
+
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setmode(td->td_ucred, vp,
+			    uap->mode & ALLPERMS);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
+		}
 	}
 #endif
 	error = fo_chmod(fp, uap->mode, td->td_ucred, td);
@@ -4232,7 +4249,8 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 	if (error != 0)
 		return (error);
 #ifdef MAC
-	{
+	/* As fchmod(2): the vnode's check first; the file's when served. */
+	if (fp->f_type == DTYPE_DQ) {
 		struct vattr va;
 
 		VATTR_NULL(&va);
@@ -4241,6 +4259,17 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
 		if (error != 0)
 			goto out;
+	} else {
+		struct vnode *vp = fp->f_vnode;
+
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setowner(td->td_ucred, vp,
+			    uap->uid, uap->gid);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
+		}
 	}
 #endif
 	error = fo_chown(fp, uap->uid, uap->gid, td->td_ucred, td);

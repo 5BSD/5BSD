@@ -6630,13 +6630,18 @@ invfo_fsync(struct file *fp, int mode, struct thread *td)
  * The attributes that have direct operations, size, mode and owner,
  * applied through the descriptor's table in that order: the table's own
  * answers stand (badfo_* for an O_PATH descriptor, a type's EINVAL, the
- * vnode bodies' MAC checks and audit records).  Every fo_setattr body
- * starts here; the rest of the vattr is the body's own.
+ * vnode bodies' audit records).  For mode and owner the vnode's MAC check
+ * comes ahead of the table, as in fchmod(2) and fchown(2); fo_truncate
+ * makes its own.  Every fo_setattr body starts here; the rest of the vattr
+ * is the body's own.
  */
 int
 file_setattr_direct(struct file *fp, struct vattr *vap,
     struct ucred *active_cred, struct thread *td)
 {
+#ifdef MAC
+	struct vnode *vp;
+#endif
 	int error;
 
 	if (vap->va_size != VNOVAL) {
@@ -6644,13 +6649,38 @@ file_setattr_direct(struct file *fp, struct vattr *vap,
 		if (error != 0)
 			return (error);
 	}
+#ifdef MAC
+	vp = fp->f_vnode;
+#endif
 	if (vap->va_mode != (mode_t)VNOVAL) {
+#ifdef MAC
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setmode(active_cred, vp,
+			    vap->va_mode & ALLPERMS);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				return (error);
+		}
+#endif
 		error = fo_chmod(fp, vap->va_mode, active_cred, td);
 		if (error != 0)
 			return (error);
 	}
-	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL)
-		return (fo_chown(fp, vap->va_uid, vap->va_gid, active_cred, td));
+	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL) {
+#ifdef MAC
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setowner(active_cred, vp,
+			    vap->va_uid, vap->va_gid);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				return (error);
+		}
+#endif
+		return (fo_chown(fp, vap->va_uid, vap->va_gid, active_cred,
+		    td));
+	}
 	return (0);
 }
 

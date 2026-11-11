@@ -3739,18 +3739,6 @@ vn_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
 	struct vnode *vp;
 
 	vp = fp->f_vnode;
-#ifdef MAC
-	{
-		int error;
-
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		error = mac_vnode_check_setmode(active_cred, vp,
-		    mode & ALLPERMS);
-		VOP_UNLOCK(vp);
-		if (error != 0)
-			return (error);
-	}
-#endif
 #ifdef AUDIT
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
@@ -3766,17 +3754,6 @@ vn_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	struct vnode *vp;
 
 	vp = fp->f_vnode;
-#ifdef MAC
-	{
-		int error;
-
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		error = mac_vnode_check_setowner(active_cred, vp, uid, gid);
-		VOP_UNLOCK(vp);
-		if (error != 0)
-			return (error);
-	}
-#endif
 #ifdef AUDIT
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);

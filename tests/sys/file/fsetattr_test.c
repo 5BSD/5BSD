@@ -10,10 +10,12 @@
 
 #include <sys/param.h>
 #include <sys/event.h>
+#include <sys/linker.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 
@@ -71,7 +73,111 @@ umount_fdesc(void)
 	(void)unmount("fdesc", MNT_FORCE);
 }
 
+
+/*
+ * The mac_test_hooks policy counts the calls of each hook it implements
+ * and, while a hook's deny toggle is set, returns the toggle's value from
+ * it.  A toggle acts on every process, so the cases that set one are
+ * exclusive, keep it set for one system call, and clear every toggle
+ * again in their cleanup.  The cases skip on a kernel whose policy lacks
+ * the hook (the pre-project module has none of the vnode setattr hooks).
+ */
+#define	MAC_HOOKS		"mac_test_hooks"
+#define	MAC_HOOKS_LOADED	"mac_test_hooks.loaded"
+#define	MAC_HOOKS_SYSCTL	"security.mac.test_hooks"
+
+static const char *const mac_hooks_used[] = {
+	"vnode_check_setmode",
+	"vnode_check_setowner",
+	"vnode_check_setutimes",
+};
+
+static void
+mac_hooks_require(void)
+{
+	char name[128];
+	size_t len;
+	u_int i;
+	int fd, v;
+
+	if (kldfind(MAC_HOOKS) == -1) {
+		/* The capability plane refuses a module load this late. */
+		if (kldload(MAC_HOOKS) == -1)
+			atf_tc_skip("%s is not loaded and cannot be loaded "
+			    "now (%s); preload it", MAC_HOOKS, strerror(errno));
+		/* Loaded here, so the cleanup unloads it. */
+		fd = open(MAC_HOOKS_LOADED, O_CREAT | O_WRONLY, 0600);
+		ATF_REQUIRE(fd >= 0);
+		close(fd);
+	}
+	for (i = 0; i < nitems(mac_hooks_used); i++) {
+		snprintf(name, sizeof(name), "%s.counter.%s",
+		    MAC_HOOKS_SYSCTL, mac_hooks_used[i]);
+		len = sizeof(v);
+		if (sysctlbyname(name, &v, &len, NULL, 0) == 0)
+			continue;
+		if (errno == ENOENT)
+			atf_tc_skip("this kernel's %s has no %s hook",
+			    MAC_HOOKS, mac_hooks_used[i]);
+		atf_tc_fail("%s: %s", name, strerror(errno));
+	}
+}
+
+static void
+mac_hooks_cleanup(void)
+{
+	char name[128];
+	u_int i;
+	int id, v;
+
+	for (i = 0; i < nitems(mac_hooks_used); i++) {
+		snprintf(name, sizeof(name), "%s.deny.%s", MAC_HOOKS_SYSCTL,
+		    mac_hooks_used[i]);
+		v = 0;
+		(void)sysctlbyname(name, NULL, NULL, &v, sizeof(v));
+	}
+	if (access(MAC_HOOKS_LOADED, F_OK) == 0 &&
+	    (id = kldfind(MAC_HOOKS)) != -1)
+		(void)kldunload(id);
+}
+
+static int
+mac_hook_count(const char *hook)
+{
+	char name[128];
+	size_t len;
+	int v;
+
+	snprintf(name, sizeof(name), "%s.counter.%s", MAC_HOOKS_SYSCTL, hook);
+	len = sizeof(v);
+	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(name, &v, &len, NULL, 0),
+	    "%s: %s", name, strerror(errno));
+	return (v);
+}
+
+static void
+mac_hook_deny(const char *hook, int error)
+{
+	char name[128];
+
+	snprintf(name, sizeof(name), "%s.deny.%s", MAC_HOOKS_SYSCTL, hook);
+	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(name, NULL, NULL, &error,
+	    sizeof(error)), "%s: %s", name, strerror(errno));
+}
+
 typedef int setattr_op(int fd);
+
+static int
+op_fchmod(int fd)
+{
+	return (fchmod(fd, 0600));
+}
+
+static int
+op_fchown(int fd)
+{
+	return (fchown(fd, 0, 0));
+}
 
 /* Neither time is set: both seconds are the kernel's "no value". */
 static int
@@ -101,6 +207,18 @@ static int
 op_errno(setattr_op *op, int fd)
 {
 	return (op(fd) == 0 ? 0 : errno);
+}
+
+/* The same while the policy's hook denies with EACCES. */
+static int
+op_errno_denied(const char *hook, setattr_op *op, int fd)
+{
+	int error;
+
+	mac_hook_deny(hook, EACCES);
+	error = op_errno(op, fd);
+	mac_hook_deny(hook, 0);
+	return (error);
 }
 
 static void
@@ -591,6 +709,79 @@ ATF_TC_BODY(bad_fd, tc)
 }
 
 /*
+ * fchmod(2) and fchown(2) check the vnode with the policies before the
+ * descriptor's table is asked (D301), so for any descriptor that has a
+ * vnode a policy's refusal comes before the table's own answer: EBADF for
+ * O_PATH, EINVAL for a /dev/ptmx master.
+ */
+ATF_TC_WITH_CLEANUP(fchmod_fchown_mac_first);
+ATF_TC_HEAD(fchmod_fchown_mac_first, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(fchmod_fchown_mac_first, tc)
+{
+	struct stat before, after;
+	int calls, fd, fds[2], mfd, pfd;
+
+	mac_hooks_require();
+	fd = open("file", O_RDWR | O_CREAT, 0644);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, fstat(fd, &before));
+	pfd = open("file", O_PATH);
+	ATF_REQUIRE(pfd >= 0);
+	mfd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
+	ATF_REQUIRE(mfd >= 0);
+	ATF_REQUIRE_EQ(0, pipe(fds));
+
+	/* The tables' own answers, each after the vnode was checked. */
+	calls = mac_hook_count("vnode_check_setmode");
+	ATF_CHECK_EQ(EBADF, op_errno(op_fchmod, pfd));
+	ATF_CHECK(mac_hook_count("vnode_check_setmode") > calls);
+	calls = mac_hook_count("vnode_check_setowner");
+	ATF_CHECK_EQ(EBADF, op_errno(op_fchown, pfd));
+	ATF_CHECK(mac_hook_count("vnode_check_setowner") > calls);
+	calls = mac_hook_count("vnode_check_setmode");
+	ATF_CHECK_EQ(EINVAL, op_errno(op_fchmod, mfd));
+	ATF_CHECK(mac_hook_count("vnode_check_setmode") > calls);
+	calls = mac_hook_count("vnode_check_setowner");
+	ATF_CHECK_EQ(EINVAL, op_errno(op_fchown, mfd));
+	ATF_CHECK(mac_hook_count("vnode_check_setowner") > calls);
+
+	/* The policy's refusal comes first. */
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setmode", op_fchmod,
+	    pfd));
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setowner",
+	    op_fchown, pfd));
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setmode", op_fchmod,
+	    mfd));
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setowner",
+	    op_fchown, mfd));
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setmode", op_fchmod,
+	    fd));
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setowner",
+	    op_fchown, fd));
+	ATF_REQUIRE_EQ(0, fstat(fd, &after));
+	ATF_CHECK_EQ(before.st_mode, after.st_mode);
+
+	/* A descriptor without a vnode has none to check. */
+	ATF_CHECK_EQ(EINVAL, op_errno_denied("vnode_check_setmode", op_fchmod,
+	    fds[0]));
+	ATF_CHECK_EQ(EINVAL, op_errno_denied("vnode_check_setowner",
+	    op_fchown, fds[0]));
+	close(fds[0]);
+	close(fds[1]);
+	close(mfd);
+	close(pfd);
+	close(fd);
+}
+ATF_TC_CLEANUP(fchmod_fchown_mac_first, tc)
+{
+	mac_hooks_cleanup();
+}
+
+/*
  * futimens(2) and futimes(2) given no time to set (both seconds -1, the
  * kernel's "no value") still go to the filesystem, which changes nothing.
  */
@@ -626,6 +817,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fdescfs_no_attributes);
 	ATF_TP_ADD_TC(tp, fdescfs_shm);
 	ATF_TP_ADD_TC(tp, fdescfs_ptmx_direct);
+	ATF_TP_ADD_TC(tp, fchmod_fchown_mac_first);
 	ATF_TP_ADD_TC(tp, times_none);
 	ATF_TP_ADD_TC(tp, fdescfs_fifo);
 	ATF_TP_ADD_TC(tp, pts_master_openpt);
