@@ -135,3 +135,23 @@ which supplies the shared-library dependency closure. PIE and linker checking
 remain enabled; no compiler warning/error or test was disabled. Fresh SDK
 materialization and all strict origin/runtime verification succeed. NEXT: build
 the complete current-source candidate and run the service-aware VM upgrade.
+
+## Current-source candidate graph blockers
+
+The fresh current-source full candidate R3 fails analysis because DQ's selected
+module has no BUILD producer. Commit 29782836293 adds the normal module producer,
+standalone DEV_DQ option, and declared MAC/SipHash headers. Native DQ R2 passes
+built-in objects and module/CTF/debug output, with no selected tests. Full
+candidate R4 then fails analysis because mac_abac's legitimate opt_dq.h dependency
+is not visible. Its Make module also lists opt_dq.h and its source gates served
+hooks on DEV_DQ. The AMD64, ARM64 and RISC-V option targets now admit this named
+consumer; their source options remain generated from the selected kernel config.
+No broad public visibility, source omission or fixture alternative is introduced.
+The existing build-bsd target interface, config extraction and package helpers
+require no interface change. Full current-source build/VM qualification remains
+pending; ARM64/RISC-V visibility edits do not prove those platforms build.
+
+The next VM run has an explicit service policy at
+`bazel-system-service-policy-r1-20261111.json`, validated against the retained
+baseline image and native R3 helper capture. It derives boot-unit requirements
+from installed manifests. It is not per-provider operation qualification.
