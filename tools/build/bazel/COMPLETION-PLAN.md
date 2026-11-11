@@ -1,5 +1,19 @@
 # Native Bazel completion plan
 
+## Independent Make closeout comparison (2026-11-11)
+
+Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass
+at clean source d44de404cb7. The installed comparison against captured native R10
+finds 245 additional Make paths and unaccepted raw byte/package diagnostics;
+this is not parity acceptance. Seventy confirmed omitted installation paths now
+have source-owned declarations/root edges. Focused native archive builds and
+independent metadata/link/data/debug-CRC checks pass all 70 paths; raw binary
+parity and full root/pkgbase integration remain open.
+Certificate generated state and zfsd test selection still need reconciliation.
+See [MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md](MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md)
+for exact evidence, observer limits and the independent configuration/bootstrap
+input checks. All six completion gates remain; Make stays production/default.
+
 ## Runtime cleanup implementation (2026-11-11)
 
 The confirmed early-read-only cleanup bug has a source fix. Cleanup runs once

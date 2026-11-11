@@ -2145,6 +2145,15 @@ This does not qualify the complete loader, kernel and installed-system chain.
 .Cm bazel-test
 runs maintained native amd64 qualification and explicitly selected
 cross-target kernel artifact qualification.
+.Pp
+The maintained format-5 installation targets include the lex runtime archives,
+protobuf compiler plugins, DQ manual aliases/examples and DTrace/OpenTelemetry
+startup and log-rotation files through their normal installation owners.
+An independent Make staging comparison found these omitted contributions;
+full installed/package parity and generated certificate-state qualification
+remain separate requirements. See
+.Pa tools/build/bazel/MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md .
+.Pp
 Bazel 9 or later is the only supported Bazel, with Bzlmod and rules_cc;
 Bazel 5 and the WORKSPACE mode are no longer supported.
 .Pp

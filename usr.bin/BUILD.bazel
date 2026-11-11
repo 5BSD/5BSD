@@ -470,6 +470,7 @@ _ARCHIVES = _ARCHIVES + select({
         "//usr.bin/gprof:install_archive",
         "//usr.bin/indent:install_archive",
         "//usr.bin/lex:install_archive",
+        "//usr.bin/lex/lib:install_archive",
         "//usr.bin/lorder:install_archive",
         "//usr.bin/mkstr:install_archive",
         "//usr.bin/rpcgen:install_archive",

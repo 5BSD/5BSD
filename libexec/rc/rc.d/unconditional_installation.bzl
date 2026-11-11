@@ -3,7 +3,8 @@
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
 
 _GROUPS = {
-    "CONFS": ("rc", ["DAEMON", "FILESYSTEMS", "LOGIN", "NETWORKING", "SERVERS", "adjkerntz", "backlight", "bgfsck", "bridge", "cfumass", "cleanvar", "cleartmp", "ddb", "defaultroute", "devfs", "dmesg", "dumpon", "fsck", "growfs", "growfs_fstab", "growfs_postboot", "hostid", "hostid_save", "hostname", "iovctl", "ip6addrctl", "ipsec", "kld", "kldxref", "ldconfig", "linux", "local", "localpkg", "motd", "mountcritlocal", "mountcritremote", "mountlate", "mdconfig", "mdconfig2", "msgs", "netif", "netoptions", "netwait", "noshutdown", "os-release", "pwcheck", "quota", "random", "rarpd", "rctl", "root", "routing", "rpcbind", "rtadvd", "rtsold", "savecore", "securelevel", "static_arp", "static_ndp", "swap", "swaplate", "sysctl", "sysctl_lastload", "sysvipc", "tmp", "var", "var_run", "watchdogd"]),
+    "CONFS": ("rc", ["DAEMON", "FILESYSTEMS", "LOGIN", "NETWORKING", "SERVERS", "adjkerntz", "backlight", "bgfsck", "bridge", "cfumass", "cleanvar", "cleartmp", "ddb", "defaultroute", "devfs", "dmesg", "dtraced", "dumpon", "fsck", "growfs", "growfs_fstab", "growfs_postboot", "hostid", "hostid_save", "hostname", "iovctl", "ip6addrctl", "ipsec", "kld", "kldxref", "ldconfig", "linux", "local", "localpkg", "motd", "mountcritlocal", "mountcritremote", "mountlate", "mdconfig", "mdconfig2", "msgs", "netif", "netoptions", "netwait", "noshutdown", "os-release", "pwcheck", "quota", "random", "rarpd", "rctl", "root", "routing", "rpcbind", "rtadvd", "rtsold", "savecore", "securelevel", "static_arp", "static_ndp", "swap", "swaplate", "sysctl", "sysctl_lastload", "sysvipc", "tmp", "var", "var_run", "watchdogd"]),
+    "OTEL": ("otel", ["otel_dtrace", "otel_hwstat", "otelauditd", "otelpfd"]),
     "DEVD": ("devd", ["devd"]),
     "MAC_ABAC": ("mac-abac", ["mac_abacd"]),
     "DEVMATCH": ("devmatch", ["devmatch"]),
