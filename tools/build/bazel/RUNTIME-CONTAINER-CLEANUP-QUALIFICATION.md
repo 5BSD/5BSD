@@ -376,3 +376,13 @@ checks no longer demand the incompatible restriction. This correction is not yet
 VM-qualified: real candidate rebuild and the complete upgrade scenario must pass.
 The existing production/frontend interfaces accept this ordinary source change;
 no build input, packaging, staging, signing or publication interface changes.
+
+The correction is committed as 5b1325c979a. Native
+`bazel-notify-admission-native-r1-20261111/receipt.json` passes the real daemon,
+PIE/shared consumer client and four broker/transport/policy/dispatcher targets
+(68 reported cases passed). These fixtures do not run the normal provider's
+protected process lifecycle, so they do not establish the admission fix at
+runtime. Diagnostic R2's receipt binds its outputs and three actual failures;
+that owned child VM powered off normally. Full candidate R10 is rebuilding
+with 16 jobs, production malloc, kernel debug/CTF and the corrected source
+revision. The complete signed upgrade scenario remains required.
