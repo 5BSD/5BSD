@@ -264,3 +264,16 @@ Full R8 is still collecting failures at this update: mac_capability_dev.c's MAC
 header, vfs_syscalls.c's quota header and vfs_aio.c's MAC header. Reviewed patches
 are prepared under `bazel-current-closure-review-r1-20261111` but not applied to
 the live build inputs. No full-system pass or VM upgrade is established.
+
+## Power and Device consumer operations pending native/VM execution
+
+The test-only client now has six operation modes. Power queries supported states
+without requiring any particular virtual-hardware sleep state or requesting a
+transition. Device enumerates and validates one owner-scoped page without opening
+hardware; an empty default-deny list is valid. These checks do not qualify all
+power actions, device opens or pagination. Shared dependencies are declared in
+the existing native target, and the frontend manual/runner README are updated.
+Host strict syntax passes in
+`bazel-service-operations-host-syntax-r3-20261111/receipt.json`. Native linking,
+runner integration and actual VM execution remain open; no host providers were
+contacted. The ongoing full R8 graph still reports the same three header gaps.

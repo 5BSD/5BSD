@@ -305,6 +305,11 @@ Select one operation per invocation:
   This belongs in the ordinary authenticated user session, not a privileged
   consumer granted the Memory producer's identity.
 
+* `power`: query supported ACPI states through the real provider. Zero supported
+  sleep states is valid on virtual hardware; no transition is requested.
+* `device`: enumerate and validate one owner-scoped device page. An empty list
+  is valid default-deny policy. This does not open devices or qualify all pages.
+
 The client has a 20-second process deadline and notification receive has a
 five-second deadline. Any open, RPC, content or cleanup failure exits nonzero.
 It reports one exact JSON success record only after completing the operation.
@@ -313,7 +318,7 @@ Shared dependencies are declared through native cc_binary.dynamic_deps.
 
 At this update, host syntax checking with -Wall -Wextra -Werror passes. Native
 linking and VM operations remain unqualified, and the runner does not yet invoke
-this helper. The four probes do not cover all providers. BSDMemory is a
+this helper. The six probes do not cover all providers. BSDMemory is a
 memory-pressure sampler/publisher, not a memory-allocation factory; its manifest
 intentionally has no IPC endpoint. The earlier factory wording was incorrect.
 The memory probe exercises the actual Sysctl-to-Memory-to-Notify path, but does

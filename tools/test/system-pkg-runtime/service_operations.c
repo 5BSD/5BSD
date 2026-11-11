@@ -13,6 +13,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <devicecmp.h>
+#include <powercmp.h>
 #include <notify.h>
 #include <notify_pressure.h>
 #include <sysctlcmp.h>
@@ -165,11 +167,52 @@ memory_operation(void)
 	notify_client_close(client);
 }
 
+static void
+power_operation(void)
+{
+	struct powercmp_client *client;
+	uint32_t states;
+
+	if (powercmp_client_open(&client) == -1)
+		err(1, "power provider open");
+	if (powercmp_states(client, &states) == -1)
+		err(1, "power supported-state query");
+	powercmp_client_close(client);
+	/* ACPI defines S0 through S5. No particular sleep state is required
+	 * on virtual hardware, and the probe never requests a transition. */
+	if ((states & ~UINT32_C(0x3f)) != 0)
+		errx(1, "power provider returned undefined sleep states");
+}
+
+static void
+device_operation(void)
+{
+	struct devicecmp_list_entry entries[DEVICECMP_LIST_MAX];
+	uint32_t count, next;
+
+	if (devicecmp_list(NULL, 0, entries, DEVICECMP_LIST_MAX, &count,
+	    &next) == -1)
+		err(1, "device provider enumeration");
+	if (count > DEVICECMP_LIST_MAX)
+		errx(1, "device enumeration exceeds requested capacity");
+	for (uint32_t i = 0; i < count; i++) {
+		if (memchr(entries[i].name, '\0', sizeof(entries[i].name)) == NULL ||
+		    entries[i].name[0] == '\0' || entries[i].name[0] == '.' ||
+		    strchr(entries[i].name, '/') != NULL ||
+		    strstr(entries[i].name, "..") != NULL ||
+		    (entries[i].rights & ~DEVICECMP_RIGHT_ALL) != 0 ||
+		    (entries[i].flags & ~DEVICECMP_LIST_FLAG_IOCTL_WHITELIST) != 0)
+			errx(1, "invalid device enumeration record");
+	}
+	/* An empty owner-scoped list is valid default-deny policy. This checks
+	 * one real page, not arbitrary-device opening or all pagination. */
+}
+
 int
 main(int argc, char **argv)
 {
 	if (argc != 2)
-		errx(64, "usage: service_operations time|sysctl|notify|memory");
+		errx(64, "usage: service_operations time|sysctl|notify|memory|power|device");
 	alarm(20);
 	if (strcmp(argv[1], "time") == 0)
 		clock_operation();
@@ -179,6 +222,10 @@ main(int argc, char **argv)
 		notify_operation();
 	else if (strcmp(argv[1], "memory") == 0)
 		memory_operation();
+	else if (strcmp(argv[1], "power") == 0)
+		power_operation();
+	else if (strcmp(argv[1], "device") == 0)
+		device_operation();
 	else
 		errx(64, "unknown operation %s", argv[1]);
 	printf("{\"format\":1,\"operation\":\"%s\",\"status\":\"passed\"}\n", argv[1]);
