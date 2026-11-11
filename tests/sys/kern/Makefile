@@ -207,6 +207,10 @@ ATF_TESTS_C+=	resolve_beneath_test
 ATF_TESTS_C+=	sched_affinity
 ATF_TESTS_C+=	shutdown_dgram
 ATF_TESTS_C+=	sigaltstack
+# SIGKILL to a debugger-held tracee; sets debug.ptrace_attach_transparent
+# and kern.kill_on_debugger_exit.
+ATF_TESTS_C+=	sigkill_traced_test
+TEST_METADATA.sigkill_traced_test+=	is_exclusive="true" timeout="300"
 ATF_TESTS_C+=	sigwait
 ATF_TESTS_C+=	socket_accept
 ATF_TESTS_C+=	socket_accf
@@ -305,6 +309,7 @@ LIBADD.ktls_test+=			crypto util
 LIBADD.listener_wakeup+=		pthread
 LIBADD.procdesc+=			kvm pthread
 LIBADD.shutdown_dgram+=			pthread
+LIBADD.sigkill_traced_test+=		pthread
 LIBADD.socket_msg_waitall+=		pthread
 LIBADD.socket_splice+=			pthread
 LIBADD.fdgrowtable_test+=		util pthread kvm procstat
