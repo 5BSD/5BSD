@@ -1,0 +1,120 @@
+live: kill(pid, 0) 0
+live: tgkill(pid, pid, 0) 0
+live: tgkill(pid, tid, 0) 0
+live: pidfd_open(pid) 0
+live: pidfd_send_signal(pidfd, 0) 0
+live: pidfd_getfd(pidfd, 0) 0
+live: pidfd_open(tid of a second thread) -22
+live: kcmp(self, pid, KCMP_FILE, 0, 0) 0
+live: process_vm_readv(pid) 8
+live:   read the target's word 1
+live: get_robust_list(tid of a second thread) -1
+live: get_robust_list(pid) -1
+live: open(/proc/pid/mem, O_RDONLY) 0
+live: open(/proc/pid/fd, O_DIRECTORY) 0
+live: readlink(/proc/pid/cwd) 0
+live: readlink(/proc/pid/exe) 0
+live: ptrace(PTRACE_ATTACH, pid) 0
+live:   wait4 reports the stop 4991
+live:   ptrace(PTRACE_DETACH, pid) 0
+the actor's exit 0
+the target's exit 0
+dead: kill(pid, 0) -3
+dead: tgkill(pid, pid, 0) -3
+dead: tgkill(pid, tid, 0) -3
+dead: pidfd_open(pid) -3
+dead: pidfd_send_signal(pidfd, 0) -9999
+dead: pidfd_getfd(pidfd, 0) -9999
+dead: pidfd_open(tid of a second thread) -3
+dead: kcmp(self, pid, KCMP_FILE, 0, 0) -3
+dead: process_vm_readv(pid) -3
+dead:   read the target's word -9999
+dead: get_robust_list(tid of a second thread) -3
+dead: get_robust_list(pid) -3
+dead: open(/proc/pid/mem, O_RDONLY) -2
+dead: open(/proc/pid/fd, O_DIRECTORY) -2
+dead: readlink(/proc/pid/cwd) -2
+dead: readlink(/proc/pid/exe) -2
+dead: ptrace(PTRACE_ATTACH, pid) -3
+dead:   wait4 reports the stop -9999
+dead:   ptrace(PTRACE_DETACH, pid) -9999
+tty: open(/dev/ptmx) 0
+tty: ioctl(TIOCSPTLCK) 0
+tty: ioctl(TIOCGPTN) 0
+tty: setsid() 0
+tty: open(the slave) 0
+tty: ioctl(TIOCSTI, 'x') -5
+tty: ioctl(TIOCSTI, newline) -5
+tty: the session leader's exit 0
+sysv: shmget(key, IPC_CREAT|IPC_EXCL) 0
+sysv: shmat 0
+sysv: semget(key, IPC_CREAT|IPC_EXCL) 0
+sysv: msgget(key, IPC_CREAT|IPC_EXCL) 0
+sysv: msgsnd 0
+sysv: shmget(IPC_PRIVATE) 0
+sysv: semget(IPC_PRIVATE) 0
+sysv: msgget(IPC_PRIVATE) 0
+sysv: /proc/sysvipc/shm lists the key 0
+sysv: /proc/sysvipc/sem lists the key 0
+sysv: /proc/sysvipc/msg lists the key 0
+other: shmget(key) is the maker's id 1
+other: shmget(key, IPC_CREAT|IPC_EXCL) -17
+other: semget(key) is the maker's id 1
+other: semget(key, IPC_CREAT|IPC_EXCL) -17
+other: msgget(key) is the maker's id 1
+other: msgget(key, IPC_CREAT|IPC_EXCL) -17
+other: msgrcv of the maker's message 3
+other: msgrcv with none left -42
+other: read of the ids 12
+other: shmat(the IPC_PRIVATE id) 0
+other: semop(the IPC_PRIVATE id, +3) 0
+other: msgsnd(the IPC_PRIVATE id) 0
+other: semop(+2, SEM_UNDO) 0
+other: GETVAL before exit 2
+sysv: the other process's exit 0
+sysv: GETVAL after its exit 0
+sysv: the IPC_PRIVATE segment has its bytes 1
+sysv: GETVAL of the IPC_PRIVATE set 3
+sysv: msgrcv from the IPC_PRIVATE queue 4
+sysv: shmctl(IPC_STAT) 0
+sysv: shmctl(IPC_SET) of what IPC_STAT gave 0
+sysv: shmctl(SHM_STAT) by index is the id 1
+sysv: shmctl(IPC_INFO) 0
+sysv: shmctl(SHM_INFO) 0
+sysv: shmctl(no such command) -22
+sysv: semctl(IPC_STAT) 0
+sysv: semctl(IPC_SET) of what IPC_STAT gave 0
+sysv: semctl(SEM_STAT) by index is the id 1
+sysv: semctl(IPC_INFO) 0
+sysv: semctl(SEM_INFO) 0
+sysv: semctl(SETVAL, 5) 0
+sysv: semctl(GETVAL) 5
+sysv: semctl(GETPID) is the caller 0
+sysv: semctl(GETNCNT) 0
+sysv: semctl(GETZCNT) 0
+sysv: semctl(SETALL) 0
+sysv: semctl(GETALL) 0
+sysv:   values 4
+sysv: semctl(no such command) -22
+sysv: msgctl(IPC_STAT) 0
+sysv: msgctl(IPC_SET) of what IPC_STAT gave 0
+sysv: msgctl(IPC_INFO) 0
+sysv: msgctl(MSG_INFO) 0
+sysv: msgctl(no such command) -22
+sysv: a fork sleeps in semop(-1): GETNCNT 1
+sysv: semctl(IPC_RMID) under the sleeper 0
+sysv: the sleeper's exit 11008
+sysv: shmctl(IPC_RMID) while mapped 0
+sysv: the mapping still reads 1
+sysv: shmget(key) after -2
+sysv: shmat(the id) after 34361876480
+sysv: shmdt 0
+sysv: msgctl(IPC_RMID) 0
+sysv: msgget(key) after -2
+sysv: semget(key) after -2
+sysv: /proc/sysvipc/shm lists the key after 0
+sysv: /proc/sysvipc/sem lists the key after 0
+sysv: /proc/sysvipc/msg lists the key after 0
+sysv: shmctl(invalid id) -22
+sysv: semctl(invalid id) -22
+sysv: msgctl(invalid id) -22

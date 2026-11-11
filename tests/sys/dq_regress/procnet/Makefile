@@ -33,6 +33,37 @@ NO_SHARED.procnet_helper_static=	yes
 MAN.procnet_helper_static=
 BINDIR.procnet_helper_static=	${TESTSDIR}
 
+# The process boundary today (dq-boundary design, part b0): the by-pid
+# calls, terminals, job control, SIGIO, fork; named IPC; and the half that
+# needs a queue and the capability plane (procnet_outside_test, which is
+# the controller of the processes it attaches).
+ATF_TESTS_C+=	procnet_boundary_test
+ATF_TESTS_C+=	procnet_ipc_test
+ATF_TESTS_C+=	procnet_outside_test
+ATF_TESTS_SH+=	procnet_ipcs_test
+PROGS+=		procnet_boundary_helper
+SRCS.procnet_boundary_helper=	procnet_boundary_helper.c
+MAN.procnet_boundary_helper=
+BINDIR.procnet_boundary_helper=	${TESTSDIR}
+LIBADD.procnet_boundary_test+=	pthread
+LIBADD.procnet_ipc_test+=	rt
+.PATH:		${SRCTOP}/tests/sys/dq
+SRCS.procnet_outside_test=	procnet_outside_test.c dq_test.c
+CFLAGS.procnet_outside_test.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq \
+		-I${SRCTOP}/tests/sys/dq \
+		-I${SRCTOP}/sys/dev/mac_capability \
+		-I${SRCTOP}/tests/sys/mac_capability
+CFLAGS.dq_test.c+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
+LIBADD.procnet_outside_test+=	dq pthread util
+
+# The Linux-ABI half: a freestanding static Linux program (no Linux libc)
+# compiled at test time (clang --target=x86_64-linux-gnu), run under
+# linux64.ko; the .exp files are the rows it printed when recorded.
+ATF_TESTS_SH+=	linux_boundary_test
+${PACKAGE}FILES+=	linux_boundary.c
+${PACKAGE}FILES+=	linux_boundary_main.exp
+${PACKAGE}FILES+=	linux_boundary_attached.exp
+
 LIBADD.procnet_exec_test+=	pthread
 LIBADD.procnet_jail_test+=	jail pthread
 LIBADD.procnet_socket_test+=	jail
@@ -62,6 +93,13 @@ TEST_METADATA.procnet_audit_test+=	is_exclusive="true" timeout="60"
 TEST_METADATA.procnet_audit_test+=	required_files="/etc/rc.d/auditd /dev/auditpipe"
 # Creates jails.
 TEST_METADATA.procnet_jail_test+=	is_exclusive="true"
+# Jails and security.bsd.unprivileged_proc_debug; System V ids and
+# listings of the whole system; shields and a controller.
+TEST_METADATA.procnet_boundary_test+=	is_exclusive="true"
+TEST_METADATA.procnet_ipc_test+=	is_exclusive="true"
+TEST_METADATA.procnet_outside_test+=	is_exclusive="true"
+TEST_METADATA.procnet_ipcs_test+=	is_exclusive="true" required_user="root"
+TEST_METADATA.linux_boundary_test+=	is_exclusive="true" required_user="root"
 TEST_METADATA.procnet_socket_test+=	is_exclusive="true"
 
 WARNS?=		6
