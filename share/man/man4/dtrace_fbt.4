@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2025 Mateusz Piotrowski <0mp@FreeBSD.org>
 .\"
-.Dd July 16, 2025
+.Dd November 10, 2026
 .Dt DTRACE_FBT 4
 .Os
 .Sh NAME
@@ -330,3 +330,18 @@ of
 The
 .Nm fbt
 provider cannot attach to functions inside DTrace provider kernel modules.
+This includes every kernel module that declares a dependency on the
+.Pa dtrace
+module with
+.Xr MODULE_DEPEND 9 ,
+whether DTrace is loaded as a module or compiled into the kernel,
+and a few functions outside those modules that DTrace calls while a probe
+fires.
+The
+.Pa vmm
+module is the one exception:
+it keeps its
+.Nm fbt
+probes except for the
+.Fn vmm_priv_*
+functions.

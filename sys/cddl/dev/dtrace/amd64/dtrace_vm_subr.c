@@ -295,6 +295,19 @@ dtrace_gla2hva(struct vm_guest_paging *paging, uint64_t gla, uint64_t *hva)
 }
 
 /*
+ * memcpy() carries fbt probes and this runs in probe context.
+ */
+static void
+dtrace_guest_bytecopy(void *dst, const void *src, size_t len)
+{
+	const uint8_t *s = src;
+	uint8_t *d = dst;
+
+	while (len-- != 0)
+		*d++ = *s++;
+}
+
+/*
  * HyperTrace runs with interrupts disabled.  Its memory access must neither
  * fault in a host page nor acquire an instrumented VM lock.  The VMM holds
  * the pmap lock across probe execution, keeping managed mappings and their
@@ -348,10 +361,10 @@ dtrace_guest_copy(struct vm_guest_paging *paging, uint64_t gla, void *buffer,
 			 */
 			atomic_set_long(leaves[i], modified);
 			pages[i]->dirty = VM_PAGE_BITS_ALL;
-			memcpy((void *)(uintptr_t)addresses[i],
+			dtrace_guest_bytecopy((void *)(uintptr_t)addresses[i],
 			    (const char *)buffer + done, chunks[i]);
 		} else {
-			memcpy((char *)buffer + done,
+			dtrace_guest_bytecopy((char *)buffer + done,
 			    (const void *)(uintptr_t)addresses[i], chunks[i]);
 		}
 		done += chunks[i];
