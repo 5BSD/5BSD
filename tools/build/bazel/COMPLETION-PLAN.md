@@ -1,5 +1,22 @@
 # Native Bazel completion plan
 
+## Qualification priorities (2026-11-10)
+
+AMD64 and ARM64 are the Tier 1 platforms for completing this migration and
+qualifying a production/default Bazel backend. Their required world, kernel,
+module, package, runtime, correctness and performance gates still apply.
+
+RISC-V (riscv64) is Tier 2. Continue its implementation, builds and tests, retain
+its existing targets, and report its evidence and unresolved failures separately.
+Its unfinished qualification does not block Tier 1 completion or a justified
+Bazel default decision. Do not label RISC-V qualified without its own evidence.
+Shared correctness, bootstrap, dependency/cache/sandbox, reproducibility,
+hardware/publication and resource gates are not waived by this priority change.
+This current policy supersedes historical references below that make all three
+architectures prerequisites for completion. Make stays production/default until
+the required gates pass. BIP remains out of scope.
+
+
 ## Real BE upgrade exposes capability-service restart failure (2026-11-07)
 
 `bazel-system-upgrade-vm-r1-20261107` completes the signed network upgrade of all

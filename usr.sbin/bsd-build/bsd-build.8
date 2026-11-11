@@ -7972,3 +7972,13 @@ The native format-5 targets/tests interface accepts
 //tools/test/system-pkg-runtime:startup_diagnostics_test.
 This diagnostic gate does not establish complete service health; Make remains
 the production system backend until all qualification gates pass.
+
+.Ss Qualification platform priorities
+AMD64 and ARM64 are Tier 1 completion platforms for the Bazel migration.
+RISC-V (riscv64) remains supported implementation and test work at Tier 2;
+its incomplete qualification does not block Tier 1 completion or a justified
+default-backend decision.
+Report its qualification evidence and remaining failures separately.
+This prioritization changes no accepted architecture options or build targets
+and waives none of the required shared correctness and performance gates.
+Make remains the production default until those gates pass.

@@ -10,6 +10,7 @@ ATF_TESTS_C+=	closefrom_test
 TAP_TESTS_C+=	dup_test
 ATF_TESTS_C+=	fcntlflags_test
 TAP_TESTS_SH+=	flock_test
+ATF_TESTS_C+=	flock_shared_test
 ATF_TESTS_SH+=	fileops_dtrace_test
 PLAIN_TESTS_C+=	ftruncate_test
 PLAIN_TESTS_C+=	newfileops_on_fork_test
@@ -32,6 +33,8 @@ PROGS+=		flock_helper
 LIBADD.closefrom_test=	util
 
 LIBADD.flock_helper=	pthread
+
+LIBADD.flock_shared_test=	pthread util
 
 LIBADD.newfileops_on_fork_test=	pthread
 
