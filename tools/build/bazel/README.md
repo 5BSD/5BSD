@@ -9,7 +9,9 @@ this is not parity acceptance. Seventy confirmed omitted installation paths now
 have source-owned declarations/root edges. Focused native archive builds and
 independent metadata/link/data/debug-CRC checks pass all 70 paths; raw binary
 parity and full root/pkgbase integration remain open.
-Certificate generated state and zfsd test selection still need reconciliation.
+The zfsd Make selector now respects TESTS and GOOGLETEST; fresh staging and
+the original complete-directory plist/package coverage preflight pass.
+Certificate generated state and final artifact/package parity remain open.
 See [MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md](MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md)
 for exact evidence, observer limits and the independent configuration/bootstrap
 input checks. All six completion gates remain; Make stays production/default.
