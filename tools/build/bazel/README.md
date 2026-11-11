@@ -1,5 +1,49 @@
 # Bazel qualification
 
+## Closeout status and required gates (2026-11-11)
+
+The last proven complete AMD64 build is the November 7 configured snapshot:
+447 pkgbase packages, kernel/modules and selected native tests. This is not proof
+that the subsequently merged current source tree builds, or that every optional
+configuration is qualified. The complete baseline VM passes 14 checks, including
+normal login/SSH/su and the declared installed-tree/firstboot audit.
+
+The strict upgrade retry is terminal **failed**, not running:
+`bazel-system-upgrade-vm-r2-20261107/result.json`. Its serial log confirms cleanup
+returns EROFS while root is still read-only. Switchboard still calls the sweep
+before rc. Cleanup logging and failure detection are committed; a lifecycle fix
+has not been implemented. R1's upgrade/rollback/removal mechanism observations do
+not override this failure or establish service health.
+
+Close out in this order, retaining evidence for each required gate:
+
+1. Fix runtime-container initialization ordering and error handling without
+   adopting stale service directories. Check required services from installed
+   manifests, then repeat complete upgrade/new-kernel boot, useful service
+   operations, rollback, shared-data persistence and unused-BE removal in a VM.
+2. Rebuild current AMD64 sources and complete maintained Make comparison for the
+   required world/kernel/modules/pkgbase configuration, installation/debug/
+   metadata contracts and outstanding configuration selections. Report exact
+   scope; the previous snapshot is not current-head qualification.
+3. Close native bootstrap/output-query and reproducible input boundaries; prove
+   declared dependencies, incremental invalidation, cache reuse and sandbox
+   isolation. The existing prepared Make-built SDK is not a native bootstrap proof.
+4. Compare clean and incremental Make/Bazel builds with CPU, peak memory, disk I/O
+   and retained disk usage. Include debug-package compression/cache behavior.
+5. Integrate the qualified production backend into maintained build-bsd targets:
+   world, kernel and pkgbase; preserve Make-based ports, separate hardware builds,
+   kernel/hardware identity checks and verified combined publication under
+   /usr/obj/usr/src/repo using /usr/obj/5BSD-ports. The current frontend exposes
+   bazel-test qualification; its normal build backend remains bsd-make.
+6. Complete ARM64's required Tier 1 qualification. RISC-V implementation/tests
+   continue as Tier 2 and do not block this closeout.
+
+These are the outstanding completion gates, not a new architecture project.
+Make remains production/default until the required gates pass; only then decide
+whether to change the default. BIP remains excluded. Historical progress entries
+below retain their original context and are superseded by this current status.
+
+
 ## Qualification priorities (2026-11-10)
 
 AMD64 and ARM64 are the Tier 1 platforms for completing this migration and

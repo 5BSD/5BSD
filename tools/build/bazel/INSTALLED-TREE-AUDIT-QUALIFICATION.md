@@ -1,5 +1,16 @@
 # Installed baseline audit and ZFS image flags (2026-11-07)
 
+## Strict retry result: cleanup errno confirmed (2026-11-11 review)
+
+The November 7 R2 VM is terminal failed. All 14 baseline checks passed; the
+upgraded boot then reports runtime-directory unlink/rmdir failures with
+`Read-only file system`, and the strengthened gate correctly rejects the run.
+The source still sweeps before rc makes root writable. The lifecycle fix and
+successful service-aware upgrade qualification remain outstanding. See
+COMPLETION-PLAN.md for the current six closeout gates. Earlier statements that
+this retry is running or that the cleanup errno is unproven are superseded.
+
+
 ## Real BE upgrade exposes capability-service restart failure (2026-11-07)
 
 `bazel-system-upgrade-vm-r1-20261107` completes the signed network upgrade of all
