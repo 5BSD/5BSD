@@ -1,33 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""The DescriptorQueue resolution ledger check as a Bazel test.
+"""Expose the required declared-input ledger action as a native Bazel test.
 
-The Make kernel build (sys/conf/files dq_resolve_ledger.chk) is the
-authoritative check.  This test runs the same sys/tools/dq_resolve_ledger.sh
-over the workspace's real sources; it must be tagged "local" and
-"no-sandbox", since the ledger scans whole source trees.
+The checker executes in the producing action. A stale/invalid ledger fails that
+build before this adapter can run. No test reads the live checkout.
 """
 
-_SCRIPT = """#!/bin/sh
-set -e
-ws="${BUILD_WORKSPACE_DIRECTORY:-}"
-if [ -z "$ws" ]; then
-	# The ledger's runfiles entry is a symlink into the workspace.
-	r="${TEST_SRCDIR:-$0.runfiles}/${TEST_WORKSPACE:-_main}"
-	ledger=$(realpath "$r/sys/dev/dq/dq_resolve_ledger.txt")
-	ws=${ledger%/sys/dev/dq/dq_resolve_ledger.txt}
-fi
-exec sh "$ws/sys/tools/dq_resolve_ledger.sh" check "$ws/sys" \\
-    "$ws/sys/dev/dq/dq_resolve_ledger.txt"
-"""
-
-def _dq_ledger_test_impl(ctx):
+def _impl(ctx):
+    check = ctx.file.check
     script = ctx.actions.declare_file(ctx.label.name + ".sh")
-    ctx.actions.write(script, _SCRIPT, is_executable = True)
-    return [DefaultInfo(executable = script,
-        runfiles = ctx.runfiles(files = ctx.files.data))]
+    ctx.actions.write(script, "#!/bin/sh\nset -eu\ntest -f \"${TEST_SRCDIR}/${TEST_WORKSPACE}/" + check.short_path + "\"\n", is_executable = True)
+    return [DefaultInfo(executable = script, runfiles = ctx.runfiles(files = [check]))]
 
-dq_ledger_test = rule(
-    implementation = _dq_ledger_test_impl,
-    test = True,
-    attrs = {"data": attr.label_list(allow_files = True)},
-)
+dq_ledger_test = rule(implementation = _impl, test = True, attrs = {
+    "check": attr.label(allow_single_file = True, mandatory = True),
+})

@@ -445,3 +445,7 @@ bsd_python_test(name = "kernel_stack_protector_test", src = "kernel-stack-protec
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 
 exports_files(["qualification_artifacts.py"], visibility = ["//tools/test/system-pkg-runtime:__pkg__"])
+
+exports_files(["kernel_audit_sources.py"])
+bsd_python_test(name = "kernel_audit_sources_test", src = "kernel-audit-sources-test.py",
+    data = ["kernel_audit_sources.py"])

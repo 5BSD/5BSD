@@ -31,9 +31,10 @@ The complete signed private R5 repository passes verification and wrong-key
 refusal. A fresh 2 GB VM R4 is running; upgraded operations and later phases
 remain unproven until its terminal result is reviewed.
 The probes do not cover all providers or authorized SYSTEM Device access.
-The existing DQ resolution-ledger test reads undeclared live workspace sources;
-its source closure, cache/sandbox behavior and mandatory kernel-build integration
-remain open under gate 3. Maintained frontend target interfaces cover these BUILD
+The DQ resolution-ledger action now has declared inputs and is required before
+native kernel linking; focused native R3 passes the checker and actual AMD64 link.
+Source-addition/content/deletion invalidation, no-op reuse and broader sandbox
+isolation remain open under gate 3. See DQ-SOURCE-AUDIT-QUALIFICATION.md. Maintained frontend target interfaces cover these BUILD
 changes; production remains Make.
 
 

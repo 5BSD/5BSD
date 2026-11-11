@@ -8046,3 +8046,17 @@ Positive SYSTEM-only Device enumeration cannot be requested in this context.
 Selected ordinary operations do not establish complete provider coverage.
 Active-system kernel, checksum, authentication and service checks also run after
 inactive installation, before activating the candidate.
+
+.Pp
+Native kernel links now require the maintained DQ resolution-ledger check as
+an ordinary declared-input build action.
+Repository discovery records every regular C/header file and watches source
+directory entries, including files owned by nested Bazel packages.
+The checker accepts an explicit complete file list so recursive-grep symlink
+semantics cannot omit sandbox inputs.
+Source C/header links and directory links currently produce an explicit
+unsupported-layout error.
+The normal Make checker invocation is retained.
+The existing format-5 target/test interface needs no additional frontend option.
+This check does not establish native bootstrap or host filesystem/network
+sandbox isolation; Make remains the production backend.

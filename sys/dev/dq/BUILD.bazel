@@ -43,15 +43,29 @@ load("//tools/build/bazel:bsd_public_headers.bzl", "public_header_installation")
 public_header_installation(name = "public_group_dq_install", directory = "dev/dq",
     files = {"dq.h": "dq.h", "dq_observe_proto.h": "dq_observe_proto.h"}, enabled = "//tools/build/bazel/config:includes_enabled")
 
-# The resolution ledger check (stage 1c, plan 0c item 1).  The Make kernel
-# build is the authoritative check: sys/conf/files dq_resolve_ledger.chk
-# (standard) runs sys/tools/dq_resolve_ledger.sh check over the real source
-# tree in every buildkernel.  This is its Bazel counterpart: a local,
-# unsandboxed test that runs the same script over the workspace sources (the
-# ledger scans whole trees, which no declared input list can follow), found
-# through the ledger's runfiles symlink or BUILD_WORKSPACE_DIRECTORY.
+# The repository view declares all C/header files across package boundaries.
+# The checker's explicit file list avoids grep -r skipping sandbox symlinks.
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+bsd_script_output(name = "resolve_ledger_check", script = "//sys/tools:dq_resolve_ledger.sh",
+    src = "@kernel_audit_src//:sources/.dq-audit-root", input_mode = "directory",
+    directory_anchor = ".dq-audit-root", arguments = ["check"],
+    inputs = ["@kernel_audit_src//:sources"],
+    additional_sources = ["dq_resolve_ledger.txt", "@kernel_audit_src//:source.list"],
+    output = "resolve_ledger.checked",
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk", "@bsd_sdk//toolchain:sed": "sed",
+        "@bsd_sdk//toolchain:rm": "rm", "@bsd_sdk//toolchain:extra_grep": "grep",
+        "@bsd_sdk//toolchain:extra_sort": "sort", "@bsd_sdk//toolchain:extra_mktemp": "mktemp",
+        "//usr.bin/find:find": "find", "//usr.bin/xargs:xargs": "xargs",
+        "//usr.bin/cmp:cmp": "cmp", "//usr.bin/diff:diff": "diff"},
+    runtime_libraries = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime",
+        "@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:rm_runtime",
+        "@bsd_sdk//toolchain:extra_grep_runtime", "@bsd_sdk//toolchain:extra_sort_runtime",
+        "@bsd_sdk//toolchain:extra_mktemp_runtime", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"],
+    visibility = ["//visibility:public"])
+# The output is a required link input, not an opt-in test over live sources.
 load(":ledger_test.bzl", "dq_ledger_test")
-
-dq_ledger_test(name = "resolve_ledger_test",
-    data = ["dq_resolve_ledger.txt", "//sys/tools:dq_resolve_ledger.sh"],
-    tags = ["local", "no-sandbox"])
+dq_ledger_test(name = "resolve_ledger_test", check = ":resolve_ledger_check",
+    visibility = ["//visibility:public"])
