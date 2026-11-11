@@ -802,6 +802,68 @@ ATF_TC_BODY(times_none, tc)
 	close(fd);
 }
 
+/*
+ * The filesystem is asked: UFS refuses any attribute change of an
+ * immutable file, a request that names no attribute included.
+ */
+ATF_TC_WITH_CLEANUP(times_none_immutable);
+ATF_TC_HEAD(times_none_immutable, tc)
+{
+}
+ATF_TC_BODY(times_none_immutable, tc)
+{
+	struct statfs sfs;
+	struct stat sb;
+	int fd;
+
+	fd = open("file", O_RDWR | O_CREAT, 0644);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, fstatfs(fd, &sfs));
+	if (strcmp(sfs.f_fstypename, "ufs") != 0)
+		atf_tc_skip("%s is not UFS", sfs.f_fstypename);
+	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
+	ATF_REQUIRE_EQ(0, fchflags(fd, sb.st_flags | UF_IMMUTABLE));
+	ATF_CHECK_EQ(EPERM, op_errno(op_futimens_none, fd));
+	ATF_CHECK_EQ(EPERM, op_errno(op_futimes_none, fd));
+	ATF_REQUIRE_EQ(0, fchflags(fd, sb.st_flags));
+	close(fd);
+}
+ATF_TC_CLEANUP(times_none_immutable, tc)
+{
+	(void)chflags("file", 0);
+}
+
+/* They are checked by the policies all the same, and can be refused. */
+ATF_TC_WITH_CLEANUP(times_none_mac);
+ATF_TC_HEAD(times_none_mac, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(times_none_mac, tc)
+{
+	int calls, fd;
+
+	mac_hooks_require();
+	fd = open("file", O_RDWR | O_CREAT, 0644);
+	ATF_REQUIRE(fd >= 0);
+	calls = mac_hook_count("vnode_check_setutimes");
+	ATF_CHECK_EQ(0, op_errno(op_futimens_none, fd));
+	ATF_CHECK(mac_hook_count("vnode_check_setutimes") > calls);
+	calls = mac_hook_count("vnode_check_setutimes");
+	ATF_CHECK_EQ(0, op_errno(op_futimes_none, fd));
+	ATF_CHECK(mac_hook_count("vnode_check_setutimes") > calls);
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setutimes",
+	    op_futimens_none, fd));
+	ATF_CHECK_EQ(EACCES, op_errno_denied("vnode_check_setutimes",
+	    op_futimes_none, fd));
+	close(fd);
+}
+ATF_TC_CLEANUP(times_none_mac, tc)
+{
+	mac_hooks_cleanup();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, regular_file_times);
@@ -819,6 +881,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fdescfs_ptmx_direct);
 	ATF_TP_ADD_TC(tp, fchmod_fchown_mac_first);
 	ATF_TP_ADD_TC(tp, times_none);
+	ATF_TP_ADD_TC(tp, times_none_immutable);
+	ATF_TP_ADD_TC(tp, times_none_mac);
 	ATF_TP_ADD_TC(tp, fdescfs_fifo);
 	ATF_TP_ADD_TC(tp, pts_master_openpt);
 	ATF_TP_ADD_TC(tp, pts_master_ptmx);

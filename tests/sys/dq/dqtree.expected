@@ -30,6 +30,7 @@ mount  # ux-7: item 11, the controller's mount view
 # D166 and D176: no vnode MAC hooks or veriexec fingerprints for served
 # objects.
 mac_  # by-design D166: no vnode MAC hooks for served objects
+fsetattr_test:times_none_mac[[:space:]]  # by-design D166: a served file is checked by mac_file_check_setattr, not the vnode hooks the case counts
 veriexec  # by-design D176: no veriexec fingerprints for served objects
 
 # fcntl(2) F_GETPATH / F_KINFO, procstat, and kinfo-based path checks

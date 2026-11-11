@@ -458,18 +458,28 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	struct vattr cur, rest;
 	struct vnode *vp;
 	struct mount *mp;
-	bool settimes;
+	bool direct, settimes;
 	int error;
 
 	error = file_setattr_direct(fp, vap, active_cred, td);
 	if (error != 0)
 		return (error);
 	vp = fp->f_vnode;
+	direct = vap->va_size != VNOVAL || vap->va_mode != (mode_t)VNOVAL ||
+	    vap->va_uid != VNOVAL || vap->va_gid != VNOVAL;
 	settimes = vap->va_atime.tv_sec != VNOVAL ||
 	    vap->va_mtime.tv_sec != VNOVAL;
 	if (!settimes && vap->va_birthtime.tv_sec == VNOVAL &&
-	    vap->va_flags == VNOVAL)
-		return (0);
+	    vap->va_flags == VNOVAL) {
+		if (direct)
+			return (0);
+		/*
+		 * A vattr that names nothing is futimes(2) or futimens(2)
+		 * given two times of VNOVAL.  It is still a request to set
+		 * the times: audited, checked and passed to the filesystem.
+		 */
+		settimes = true;
+	}
 #ifdef AUDIT
 	if (AUDITING_TD(td)) {
 		vn_lock(vp, LK_SHARED | LK_RETRY);
@@ -485,7 +495,8 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 		 * chown can't fail when done as root.
 		 */
 		if (VN_ISDEV(vp)) {
-			error = priv_check_cred(active_cred, PRIV_VFS_CHFLAGS_DEV);
+			error = priv_check_cred(active_cred,
+			    PRIV_VFS_CHFLAGS_DEV);
 			if (error != 0)
 				return (error);
 		}
@@ -494,7 +505,8 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	error = 0;
 	if (vap->va_flags != VNOVAL)
-		error = mac_vnode_check_setflags(active_cred, vp, vap->va_flags);
+		error = mac_vnode_check_setflags(active_cred, vp,
+		    vap->va_flags);
 	if (error == 0 && settimes)
 		error = mac_vnode_check_setutimes(active_cred, vp,
 		    vap->va_atime, vap->va_mtime);
@@ -514,7 +526,7 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	    VOP_GETATTR(vp, &cur, active_cred) == 0 &&
 	    timespeccmp(&vap->va_mtime, &cur.va_birthtime, <))
 		vap->va_birthtime = vap->va_mtime;
-	/* Size, mode and owner went to their operations; VOP_SETATTR the rest. */
+	/* Size, mode and owner went to their operations; the rest goes here. */
 	rest = *vap;
 	rest.va_size = VNOVAL;
 	rest.va_mode = (mode_t)VNOVAL;
@@ -524,7 +536,8 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 #ifdef MAC
 	if (error == 0) {
 		if (vap->va_flags != VNOVAL)
-			mac_vnode_notify_setflags(active_cred, vp, vap->va_flags);
+			mac_vnode_notify_setflags(active_cred, vp,
+			    vap->va_flags);
 		if (settimes)
 			mac_vnode_notify_setutimes(active_cred, vp);
 	}
