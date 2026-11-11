@@ -8,7 +8,7 @@ import tempfile
 import unittest
 root = Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"] if "TEST_SRCDIR" in os.environ else Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(root / "tools/build/bazel"))
-from service_health import inventory, manager_states, required_services, load
+from service_health import operation_settings, operation_result, inventory, manager_states, required_services, load, exercise
 
 
 def document():
@@ -97,6 +97,69 @@ class ServiceCoverage(unittest.TestCase):
         services = inventory(json.dumps(document()), ['/caps'])
         for service in services.values():service['boot'] = False
         with self.assertRaises(ValueError):required_services(services, {})
+
+    def test_operations_reject_wrong_context_and_unbounded_inputs(self):
+        good=dict(qualification='/capture',target='//test:client',output='client',guest_directory='/tmp',cases=['time','device-denied'])
+        self.assertEqual(operation_settings(good),good)
+        for bad in [dict(good,cases=['device']),dict(good,cases=[]),
+                    dict(good,cases=['time','time']),dict(good,cases='time'),
+                    dict(good,cases=['unknown']),dict(good,guest_directory='/tmp/../root'),
+                    dict(good,qualification=''),dict(good,unexpected=True)]:
+            with self.subTest(bad=bad),self.assertRaises(ValueError):operation_settings(bad)
+
+    def test_operations_require_matching_complete_success(self):
+        good=dict(format=1,operation='notify',status='passed')
+        self.assertEqual(operation_result(json.dumps(good),'notify'),good)
+        for bad in [dict(good,format=True),dict(good,operation='time'),
+                    dict(good,status='failed'),dict(good,extra=True),{},[]]:
+            with self.subTest(bad=bad),self.assertRaises(ValueError):
+                operation_result(json.dumps(bad),'notify')
+
+    def test_operation_policy_requires_an_ordinary_callback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError,'ordinary-session'):
+                exercise({'policy':{},'operations':{'cases':['time']}},
+                         lambda *args:self.fail('guest mutation before callback validation'),
+                         Path(directory),'fixture')
+
+    def test_failed_operation_fails_the_whole_service_check(self):
+        loaded={'policy':dict(roots=['/caps'],control_program='/caps/control',deadline_seconds=1),
+                'helper':Path('/fixture/inventory'),'helper_binding':{'fixture':True},
+                'operation_helper':Path('/fixture/operations'),'operation_helper_binding':{'fixture':True},
+                'operations':dict(guest_directory='/tmp',cases=['time'])}
+        def invoke(name,command,source=None):
+            if name.endswith('-inventory'):return json.dumps(document()).encode()
+            if '-status-' in name:
+                return status(['org.test/daemon running  pid 42 restart=on-failure mgmt=core'])
+            return b''
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                exercise(loaded,invoke,Path(directory),'fixture',
+                         user_invoke=lambda *args:json.dumps(dict(format=1,operation='time',status='failed')))
+            report=json.loads((Path(directory)/'fixture-service-health.json').read_text())
+            self.assertEqual(report['status'],'failed')
+            self.assertFalse(report['all_provider_operations_qualified'])
+
+    def test_every_selected_operation_runs_and_coverage_stays_explicit(self):
+        loaded={'policy':dict(roots=['/caps'],control_program='/caps/control',deadline_seconds=1),
+                'helper':Path('/fixture/inventory'),'helper_binding':{'fixture':True},
+                'operation_helper':Path('/fixture/operations'),'operation_helper_binding':{'fixture':True},
+                'operations':dict(guest_directory='/tmp',cases=['time','notify'])}
+        seen=[]
+        def invoke(name,command,source=None):
+            if name.endswith('-inventory'):return json.dumps(document()).encode()
+            if '-status-' in name:
+                return status(['org.test/daemon running  pid 42 restart=on-failure mgmt=core'])
+            return b''
+        def ordinary(name,command):
+            case=name.rsplit('-',1)[-1];seen.append(case)
+            return json.dumps(dict(format=1,operation=case,status='passed'))
+        with tempfile.TemporaryDirectory() as directory:
+            report=exercise(loaded,invoke,Path(directory),'fixture',user_invoke=ordinary)
+            self.assertEqual(seen,['time','notify'])
+            self.assertEqual(len(report['ordinary_operations']),2)
+            self.assertEqual(report['status'],'passed')
+            self.assertFalse(report['all_provider_operations_qualified'])
 
 
 if __name__ == '__main__':unittest.main()

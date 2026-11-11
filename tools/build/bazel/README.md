@@ -10,19 +10,18 @@ qualification pass Switchboard, the inventory helper and all 11 selected tests.
 The service-aware VM upgrade and useful provider operations remain unqualified;
 gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
 
-Full current-source R8 is terminal failed after collecting three compile
-failures: MAC framework headers in mac_capability_dev.c/vfs_aio.c and the quota
-header in vfs_syscalls.c. All three declared dependency corrections pass native
-`bazel-current-closure-native-r1-20261111`, including MAC builtin/module variants,
-both VFS object groups and PIE/shared linking of the seven-mode provider client.
-Both native backend regression targets pass. No provider client operation has
-run in a VM yet, and the runner does not yet invoke that client.
+Full current-source R9 passes the selected AMD64 world/kernel/module/pkgbase
+graph and both selected native tests at kernel revision ccf8f8bbc42c. Its captured
+inventory contains 450 packages, including dq/dq-dbg/dq-dev. The complete signed
+private VM repository passes verification and real wrong-key refusal. This is
+not fresh Make parity, native bootstrap, ARM64 or performance acceptance.
 
-The backend now retains independent main and test-artifact JSON profiles; native
-profile UUIDs match their own BEP invocations. R8's actual failed main trace is
-retained separately; its previous default trace was only the inventory query.
-These correctness/trace observations are not controlled performance, complete
-Make parity, ARM64 or full-system acceptance. A fresh full candidate is next.
+The service-aware VM plan is prepared against the retained 447-package baseline
+and the current 450-package candidate, with actual signed-archive kernel bytes.
+The runner now executes selected ordinary-user operations after manifest-derived
+readiness and also checks the active system after inactive installation. Native
+service/inventory/upgrade policy tests pass. VM execution remains pending; the
+ordinary probes do not cover all providers or authorized SYSTEM Device access.
 The existing DQ resolution-ledger test reads undeclared live workspace sources;
 its source closure, cache/sandbox behavior and mandatory kernel-build integration
 remain open under gate 3. Maintained frontend target interfaces cover these BUILD
@@ -31,11 +30,11 @@ changes; production remains Make.
 
 ## Closeout status and required gates (2026-11-11)
 
-The last proven complete AMD64 build is the November 7 configured snapshot:
-447 pkgbase packages, kernel/modules and selected native tests. This is not proof
-that the subsequently merged current source tree builds, or that every optional
-configuration is qualified. The complete baseline VM passes 14 checks, including
-normal login/SSH/su and the declared installed-tree/firstboot audit.
+The latest complete selected AMD64 build is November 11 R9: 450 packages,
+kernel/modules and both selected native tests. It does not establish independent
+Make parity or every optional configuration. The retained November 7 baseline is
+447 packages and passes its original 14 normal login/SSH/su and installed-tree/
+firstboot checks. The new service-aware upgrade/operation VM remains pending.
 
 The strict upgrade retry is terminal **failed**, not running:
 `bazel-system-upgrade-vm-r2-20261107/result.json`. Its serial log confirms cleanup

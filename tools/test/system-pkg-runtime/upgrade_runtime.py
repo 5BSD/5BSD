@@ -229,6 +229,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
         command('install-work-cleanup','/bin/rm -rf -- '+q(prefix))
         if sha('active-db-after-install','/var/db/pkg/local.sqlite')!=old_db:raise ValueError('inactive installation modified active package DB')
         packages('active-still-old',p['baseline_version'],expected=baseline_names)
+        verify_boot('active-before-activate',old,p['baseline_version'],p['baseline_kernel_revision'],old_kernel,old_guid)
         command('activate',be+' activate '+q(p['candidate']))
         if text('next-boot','/sbin/zpool get -Hp -o value bootfs '+q(build_report['pool']))!=new:raise ValueError('new BE not selected')
         console.send('/sbin/shutdown -r now');login('new-boot')

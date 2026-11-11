@@ -310,3 +310,31 @@ hash-bound in its phase receipt. The actual native main and materialization
 profiles have distinct UUIDs, each matching its own BEP started event. The new
 regression protects that phase ownership. The frontend manual is updated; no new
 C frontend option or production backend change is required. Full R9 is next.
+
+## Full current candidate and operation-runner native acceptance
+
+`bazel-system-upgrade-native-r9-20261111/receipt.json` passes the complete selected
+AMD64 graph, kernel stack-protector and package-solver targets. The actual family
+inventory is 450 packages; dq, dq-dbg and dq-dev are the additions to the old
+447-package baseline. `bazel-system-upgrade-repository-r4-20261111/receipt.json`
+passes complete archive/catalogue verification and actual wrong-key rejection.
+The actual kernel extracted from that signed archive is 39,943,080 bytes, SHA256
+d99073670cafc428a909458b0138573833c0dd75bb6c052f745043ecf0dc1c4e,
+revision ccf8f8bbc42c. These do not close independent Make parity, bootstrap,
+reproducibility, resource, publication or ARM64 gates.
+
+The format-2 service policy binds the captured client and its selected ordinary
+operations. The runner executes them over pinned user SSH, enforces the expected
+UID and phase deadline, validates exact JSON results, and propagates failures.
+It also checks that the active old system remains healthy after offline install.
+Native service-health, real inventory-fixture and upgrade-policy tests pass in
+`bazel-service-operations-native-r1-20261111`. Service-health's 11 Python methods
+include failure propagation and ensuring every selected operation is invoked;
+these controller fixtures are not real provider operation proof.
+
+`bazel-system-upgrade-plan-r3-20261111.json` uses the real 447/450 inventories,
+signed candidate and actual new kernel identity. It selects time, sysctl, notify,
+memory, power and device-denied. Full provider coverage remains explicitly false;
+SYSTEM Device and the other provider operations remain open. VM execution is
+next. The frontend manual and runner README document the schema; its existing
+format-5 interface needs no new C option. Normal production remains Make.

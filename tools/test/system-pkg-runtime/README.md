@@ -331,3 +331,36 @@ The memory probe exercises the actual Sysctl-to-Memory-to-Notify path, but does
 not inject pressure, stop/restart providers or prove periodic publication over
 an extended interval. Manifest-derived readiness remains separate from useful
 operation coverage; gate 1 stays open until the required real VM checks pass.
+
+## Ordinary-login operations (service policy format 2)
+
+VM plan format 5 also accepts a service policy with format 2. It retains every
+format-1 field and adds `operations`, with exact fields `qualification`, `target`,
+`output`, `guest_directory` and `cases`. The first three select the captured
+native service_operations binary. `guest_directory` is an explicit canonical
+absolute guest staging parent (the current fixture selects /tmp).
+
+`cases` is a distinct nonempty list drawn from time, sysctl, notify, memory, power
+and device-denied. Positive Device enumeration is deliberately rejected here:
+it requires a legitimate SYSTEM context, not an ordinary login or changed
+visibility policy. The selected helper is hash-bound alongside the inventory
+helper. Root creates a fresh owned staging directory and read/execute-only
+program; each operation runs through pinned authenticated SSH as the declared
+ordinary user, with an actual UID check before exec. Operation failures or
+mismatched/incomplete success JSON fail the service check. The existing service
+phase deadline also bounds SSH launch/execution. Successful staging cleanup is
+required; failures preserve diagnostic evidence.
+
+The runner repeats these selected operations at baseline, after inactive install
+while the old system is still active, after new boot and after rollback. The
+post-install active-system check also repeats kernel, package checksum and
+authentication checks before activation. This tests that offline pkg scripts do
+not leave the running system broken.
+
+Readiness still derives every required boot unit from installed manifests. A
+passed ordinary-operation subset explicitly records
+`all_provider_operations_qualified=false`; it does not qualify the other
+providers, authorized Device access, every provider method or fault recovery.
+The goal remains open until all required operation contexts are qualified.
+Native service_health/inventory/upgrade-policy targets pass; actual VM acceptance
+of format 2 remains pending at this update.
