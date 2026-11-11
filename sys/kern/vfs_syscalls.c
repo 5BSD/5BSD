@@ -3757,6 +3757,7 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 {
 	struct vattr vattr;
 	struct file *fp;
+	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(uap->fd);
@@ -3764,29 +3765,55 @@ sys_fchflags(struct thread *td, struct fchflags_args *uap)
 	error = fget(td, uap->fd, &cap_fchflags_rights, &fp);
 	if (error != 0)
 		return (error);
-	/* getvnode() never accepted an O_PATH descriptor here. */
-	if ((fp->f_flag & O_PATH) != 0) {
-		SDT_PROBE4(fd, , , refused, "fchflags", fp, 0, EBADF);
-		error = EBADF;
+	error = getvnode_fp(fp, false);
+	if (error != 0) {
+		SDT_PROBE4(fd, , , refused, "fchflags", fp, 0, error);
 		goto out;
 	}
-	/*
-	 * We can't support the value matching VNOVAL; refused once the
-	 * descriptor is known, as before (a type with no attributes used to
-	 * answer EINVAL to it instead).
-	 */
-	if (uap->flags == VNOVAL) {
-		error = EOPNOTSUPP;
-		goto out;
-	}
-	VATTR_NULL(&vattr);
-	vattr.va_flags = uap->flags;
+	if (fp->f_type == DTYPE_DQ) {
+		/* A served file answers through its table. */
+		if (uap->flags == VNOVAL) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
+		VATTR_NULL(&vattr);
+		vattr.va_flags = uap->flags;
 #ifdef MAC
-	error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &vattr);
+		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd,
+		    &vattr);
+		if (error != 0)
+			goto out;
+#endif
+		error = fo_setattr(fp, &vattr, td->td_ucred, td);
+		goto out;
+	}
+	vp = fp->f_vnode;
+#ifdef AUDIT
+	if (AUDITING_TD(td)) {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
+	}
+#endif
+	/*
+	 * Prevent non-root users from setting flags on devices.  When
+	 * a device is reused, users can retain ownership of the device
+	 * if they are allowed to set flags and programs assume that
+	 * chown can't fail when done as root.
+	 */
+	if (VN_ISDEV(vp)) {
+		error = priv_check(td, PRIV_VFS_CHFLAGS_DEV);
+		if (error != 0)
+			goto out;
+	}
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setflags(td->td_ucred, vp, uap->flags);
+	VOP_UNLOCK(vp);
 	if (error != 0)
 		goto out;
 #endif
-	error = fo_setattr(fp, &vattr, td->td_ucred, td);
+	error = setfflags(td, vp, uap->flags);
 out:
 	fdrop(fp, td);
 	return (error);
@@ -3983,7 +4010,13 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 	if (error != 0)
 		return (error);
 #ifdef MAC
-	{
+	/*
+	 * The vnode's policy check comes before the table answers, so a
+	 * descriptor whose table refuses (O_PATH, a /dev/ptmx master) gets
+	 * the policy's errno first.  A served file has no vnode; its check
+	 * is the file-level one.
+	 */
+	if (fp->f_type == DTYPE_DQ) {
 		struct vattr va;
 
 		VATTR_NULL(&va);
@@ -3991,6 +4024,17 @@ sys_fchmod(struct thread *td, struct fchmod_args *uap)
 		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
 		if (error != 0)
 			goto out;
+	} else {
+		struct vnode *vp = fp->f_vnode;
+
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setmode(td->td_ucred, vp,
+			    uap->mode & ALLPERMS);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
+		}
 	}
 #endif
 	error = fo_chmod(fp, uap->mode, td->td_ucred, td);
@@ -4205,7 +4249,8 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 	if (error != 0)
 		return (error);
 #ifdef MAC
-	{
+	/* As fchmod(2): the vnode's check first; the file's when served. */
+	if (fp->f_type == DTYPE_DQ) {
 		struct vattr va;
 
 		VATTR_NULL(&va);
@@ -4214,6 +4259,17 @@ sys_fchown(struct thread *td, struct fchown_args *uap)
 		error = mac_file_check_setattr(td->td_ucred, fp, uap->fd, &va);
 		if (error != 0)
 			goto out;
+	} else {
+		struct vnode *vp = fp->f_vnode;
+
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setowner(td->td_ucred, vp,
+			    uap->uid, uap->gid);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				goto out;
+		}
 	}
 #endif
 	error = fo_chown(fp, uap->uid, uap->gid, td->td_ucred, td);
@@ -4578,7 +4634,7 @@ sys_futimes(struct thread *td, struct futimes_args *uap)
 
 /*
  * futimes(2) and futimens(2): the descriptor sets its own times.  Neither
- * ever accepted an O_PATH descriptor (getvnode() refused it).
+ * ever accepted a descriptor without a vnode or an O_PATH one.
  */
 static int
 kern_fsetutimes(struct thread *td, int fd, const struct timespec *ts,
@@ -4591,10 +4647,9 @@ kern_fsetutimes(struct thread *td, int fd, const struct timespec *ts,
 	error = fget(td, fd, &cap_futimes_rights, &fp);
 	if (error != 0)
 		return (error);
-	/* getvnode() never accepted an O_PATH descriptor here. */
-	if ((fp->f_flag & O_PATH) != 0) {
-		SDT_PROBE4(fd, , , refused, "futimens", fp, 0, EBADF);
-		error = EBADF;
+	error = getvnode_fp(fp, false);
+	if (error != 0) {
+		SDT_PROBE4(fd, , , refused, "futimens", fp, 0, error);
 		goto out;
 	}
 	VATTR_NULL(&vattr);
@@ -4603,9 +4658,12 @@ kern_fsetutimes(struct thread *td, int fd, const struct timespec *ts,
 	if (nullflag)
 		vattr.va_vaflags |= VA_UTIMES_NULL;
 #ifdef MAC
-	error = mac_file_check_setattr(td->td_ucred, fp, fd, &vattr);
-	if (error != 0)
-		goto out;
+	/* A served file's check; a vnode's are made by vn_setattr(). */
+	if (fp->f_type == DTYPE_DQ) {
+		error = mac_file_check_setattr(td->td_ucred, fp, fd, &vattr);
+		if (error != 0)
+			goto out;
+	}
 #endif
 	error = fo_setattr(fp, &vattr, td->td_ucred, td);
 out:
@@ -4955,13 +5013,15 @@ kern_fsync(struct thread *td, int fd, bool fullsync)
 	if (error != 0)
 		return (error);
 	/*
-	 * fsync(2) and fdatasync(2) never accepted an O_PATH descriptor
-	 * (getvnode() refused it), although aio_fsync(2) and syncfs do.
+	 * fsync(2) and fdatasync(2) never accepted a descriptor without a
+	 * vnode, or an O_PATH one.  aio_fsync(2) makes the same two tests
+	 * in aio_aqueue(); Linux syncfs(2) takes an O_PATH descriptor and
+	 * does not come this way.
 	 */
-	if ((fp->f_flag & O_PATH) != 0) {
-		SDT_PROBE4(fd, , , refused, "fsync", fp, 0, EBADF);
-		error = EBADF;
-	} else
+	error = getvnode_fp(fp, false);
+	if (error != 0)
+		SDT_PROBE4(fd, , , refused, "fsync", fp, 0, error);
+	else
 		error = kern_fsync_fp(td, fp, fullsync);
 	fdrop(fp, td);
 	return (error);
@@ -5796,11 +5856,13 @@ kern_getdirentries(struct thread *td, int fd, char *buf, size_t count,
 	error = fget(td, fd, &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
-	/* getvnode() refused O_PATH descriptors and files opened write-only. */
-	if ((fp->f_flag & (O_PATH | FREAD)) != FREAD) {
-		SDT_PROBE4(fd, , , refused, "getdirentries", fp, 0, EBADF);
+	error = getvnode_fp(fp, false);
+	if (error == 0 && (fp->f_flag & FREAD) == 0)
+		error = EBADF;
+	if (error != 0) {
+		SDT_PROBE4(fd, , , refused, "getdirentries", fp, 0, error);
 		fdrop(fp, td);
-		return (EBADF);
+		return (error);
 	}
 	aiov.iov_base = buf;
 	aiov.iov_len = count;
@@ -6036,6 +6098,26 @@ getvnode(struct thread *td, int fd, const cap_rights_t *rightsp,
 	}
 
 	return (error);
+}
+
+/*
+ * The tests getvnode() and, when "path" is true, getvnode_path() make, on
+ * a file the caller already holds: EINVAL for a file without a vnode,
+ * EBADF for an O_PATH file unless "path" accepts it.  A served (DTYPE_DQ)
+ * file has no vnode but answers through its table, so only the O_PATH
+ * test applies to it.
+ */
+int
+getvnode_fp(struct file *fp, bool path)
+{
+
+	if (fp->f_type == DTYPE_DQ)
+		return (!path && (fp->f_flag & O_PATH) != 0 ? EBADF : 0);
+	if (__predict_false(fp->f_vnode == NULL || fp->f_ops == &badfileops))
+		return (EINVAL);
+	if (!path && __predict_false(fp->f_ops == &path_fileops))
+		return (EBADF);
+	return (0);
 }
 
 /*
@@ -6715,12 +6797,21 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		error = EBADF;
 		goto out;
 	}
+	/* A served file answers through its table; others need a vnode. */
+	if (infp->f_vnode == NULL && infp->f_type != DTYPE_DQ) {
+		error = EINVAL;
+		goto out;
+	}
 	error = fget_write(td, outfd,
 	    outoffp != NULL ? &cap_pwrite_rights : &cap_write_rights, &outfp);
 	if (error != 0)
 		goto out;
 	if (outfp->f_ops == &badfileops) {
 		error = EBADF;
+		goto out;
+	}
+	if (outfp->f_vnode == NULL && outfp->f_type != DTYPE_DQ) {
+		error = EINVAL;
 		goto out;
 	}
 

@@ -91,7 +91,12 @@ has_lock_flag(int fd)
 	return (kinfo);
 }
 
-/* True once a thread of pid sleeps on an advisory lock. */
+/*
+ * True once a thread of pid sleeps on an advisory lock.  A request on a file
+ * served by a supervisor queue sleeps in the consultation ("dqwait") while
+ * the supervisor holds the lock table; the wait message is not program
+ * behaviour, so both are the sleeper.
+ */
 static bool
 sleeps_on_lock(pid_t pid)
 {
@@ -118,7 +123,8 @@ sleeps_on_lock(pid_t pid)
 			kp = (struct kinfo_proc *)(void *)p;
 			if (kp->ki_structsize < (int)sizeof(*kp))
 				break;
-			if (strcmp(kp->ki_wmesg, "lockf") == 0) {
+			if (strcmp(kp->ki_wmesg, "lockf") == 0 ||
+			    strcmp(kp->ki_wmesg, "dqwait") == 0) {
 				found = true;
 				break;
 			}

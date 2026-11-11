@@ -129,9 +129,9 @@ error_to_xattrerror(int attrnamespace, int error)
 }
 
 /*
- * Look up the file for the f*xattr() family: one whose fileops answer
- * extended attributes (EINVAL otherwise, as getvnode() gave).  Like Linux,
- * a user-supplied O_PATH descriptor fails with EBADF.  The *xattrat() family
+ * Look up the vnode-backed file for the f*xattr() family, or a served file
+ * whose table answers for its attributes (see getvnode_fp()).  Like Linux, a
+ * user-supplied O_PATH descriptor fails with EBADF.  The *xattrat() family
  * resolves dfd-relative paths through a temporary internal O_PATH
  * descriptor (see xattrat_resolve()), which must be accepted.
  */
@@ -145,10 +145,7 @@ xattr_getvnode(struct thread *td, int fd, bool opath, cap_rights_t *rightsp,
 	error = fget(td, fd, rightsp, &fp);
 	if (error != 0)
 		return (error);
-	if (!opath && (fp->f_flag & O_PATH) != 0)
-		error = EBADF;
-	else if (fp->f_ops->fo_extattr == NULL)
-		error = EINVAL;
+	error = getvnode_fp(fp, opath);
 	if (error != 0) {
 		fdrop(fp, td);
 		return (error);
@@ -471,9 +468,10 @@ done:
 }
 
 /*
- * The descriptor form of linux_extattr_get_vp(): Linux getxattr() semantics
- * (a null buffer asks for the size; a short buffer is ERANGE) through the
- * file's own fo_extattr, as a size probe followed by the read.
+ * linux_extattr_get_vp() for a served file, which has no vnode: Linux
+ * getxattr() semantics (a null buffer asks for the size; a short buffer is
+ * ERANGE) through the file's own fo_extattr, as a size probe followed by
+ * the read.
  */
 static int
 linux_extattr_get_fp(struct file *fp, int attrnamespace, const char *attrname,
@@ -525,12 +523,13 @@ getxattr_dqimpl(struct thread *td, struct getxattr_args *args)
 
 	error = xattr_to_extattr(args->name, &attrnamespace, attrname);
 	if (error == 0) {
-		if (fp != NULL)
+		if (fp != NULL && fp->f_type == DTYPE_DQ)
 			error = linux_extattr_get_fp(fp, attrnamespace,
 			    attrname, args->value, args->size, td);
 		else
-			error = linux_extattr_get_vp(vp, attrnamespace,
-			    attrname, args->value, args->size, td);
+			error = linux_extattr_get_vp(fp != NULL ?
+			    fp->f_vnode : vp, attrnamespace, attrname,
+			    args->value, args->size, td);
 		if (error == EPERM || error == EOPNOTSUPP)
 			error = ENOATTR;
 	}

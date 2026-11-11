@@ -30,6 +30,7 @@ mount  # ux-7: item 11, the controller's mount view
 # D166 and D176: no vnode MAC hooks or veriexec fingerprints for served
 # objects.
 mac_  # by-design D166: no vnode MAC hooks for served objects
+fsetattr_test:times_none_mac[[:space:]]  # by-design D166: a served file is checked by mac_file_check_setattr, not the vnode hooks the case counts
 veriexec  # by-design D176: no veriexec fingerprints for served objects
 
 # fcntl(2) F_GETPATH / F_KINFO, procstat, and kinfo-based path checks
@@ -70,6 +71,8 @@ copy_file_range_test:same_file[[:space:]]  # ux-2 D246: no fo_copy_file_range in
 # per-owner reopen of the backing file (lib/libdq/libdq_serve.c:256,440).
 advlock_fd_test:directory[[:space:]]  # ux-0 D247: flock(LOCK_EX) on a served directory: an OFD write lock on the read-only reopen of a directory (libdq_serve.c:229,440), base allows
 flock_test:main[[:space:]]  # ux-0 D247: lock events on flock_helper's open-unlinked temp file answer EIO (owner reopen libdq_serve.c:229, dq_serve_map EIO); test 2's parent then blocks reading its own pipe (flock_helper.c:221), a test-side wait, not a kernel hang
+flock_shared_test:blocking_upgrade_drops_shared[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file keeps its shared lock while it sleeps (one atomic F_OFD_SETLKW conversion on the owner reopen, libdq_serve.c:309); base unlocks first, so another shared holder gets LOCK_EX|LOCK_NB there and EWOULDBLOCK here
+flock_shared_test:interrupted_upgrade[[:space:]]  # ux-0 D247, parked: a blocking flock SH-to-EX upgrade on a served file that ends in EINTR still holds its shared lock (the cancelled F_OFD_SETLKW converted nothing, libdq_serve.c:309), so LOCK_EX|LOCK_NB by others stays EWOULDBLOCK until it unlocks or closes; base has dropped the shared lock
 
 # fspacectl(2) past EOF: the reply invariant requires dscr_len == end -
 # dscr_offset (sys/dev/dq/dq_queue.c:1860); FreeBSD's VOP_DEALLOCATE
@@ -81,6 +84,7 @@ fspacectl_test:unaligned_dealloc_offmax[[:space:]]  # ux-1: FSPACECTL reply for 
 
 # A kernel consumer's relative path from a served cwd (nmount's fspath).
 fsetattr_test:fdescfs_[a-z_]*[[:space:]]  # by-design D175: mount(2) "fspath" from a served cwd is a class-2 path, EXDEV (kern_dqres.c:2137)
+fsetattr_test:fdesc_setattr_atomic[[:space:]]  # by-design D175: the case mounts fdescfs the same way
 
 # Requester credentials (ux-6, items 3 and N1).
 path_test:path_directory_not_root[[:space:]]  # ux-6: the directory the unprivileged requester made is owned by the controller (N1), chmod needs DQ_SAPRIV_ADMIN (kern_dqres.c:3102): EPERM

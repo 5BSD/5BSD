@@ -620,6 +620,31 @@ open_to_fde_flags(int open_flags, bool sticky_orb)
 	    (sticky_orb ? 0 : 1), open_flags));
 }
 
+/*
+ * Validate filesystem support while excluding vnode reclamation.  A served
+ * file has no filesystem here; its table answers the lock request.
+ */
+static int
+fcntl_ofd_check(struct file *fp, const struct flock *flp)
+{
+	struct vnode *vp;
+	int error;
+
+	if (flp->l_pid != 0)
+		return (EINVAL);
+	if (fp->f_type == DTYPE_DQ)
+		return (0);
+	vp = fp->f_vnode;
+	error = vn_lock(vp, LK_SHARED | LK_RETRY);
+	if (error != 0)
+		return (error);
+	if (vp->v_mount == NULL ||
+	    (vp->v_mount->mnt_vfc->vfc_flags & VFCF_OFDLOCKS) == 0)
+		error = EOPNOTSUPP;
+	VOP_UNLOCK(vp);
+	return (error);
+}
+
 int
 kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 {
@@ -720,7 +745,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_SETFL, &fp);
 		if (error != 0)
 			break;
-		if (fp->f_ops == &path_fileops) {
+		if (FILE_IS_OPATH(fp)) {
 			fdrop(fp, td);
 			error = EBADF;
 			break;
@@ -833,10 +858,12 @@ revert_flags:
 			break;
 		}
 #endif
-		if ((flg & F_OFD) != 0 && flp->l_pid != 0) {
-			error = EINVAL;
-			fdrop(fp, td);
-			break;
+		if ((flg & F_OFD) != 0) {
+			error = fcntl_ofd_check(fp, flp);
+			if (error != 0) {
+				fdrop(fp, td);
+				break;
+			}
 		}
 
 		if (flp->l_whence == SEEK_CUR) {
@@ -901,13 +928,6 @@ revert_flags:
 			error = EINVAL;
 			break;
 		}
-		/*
-		 * A filesystem that takes no open-file-description locks
-		 * answered EOPNOTSUPP before the flag was set; it can hold
-		 * none, so the flag comes off again.
-		 */
-		if (error == EOPNOTSUPP && (flg & F_OFD) != 0)
-			atomic_clear_int(&fp->f_flag, FHASOFDLOCK);
 		if (error != 0 || (flg & F_OFD) != 0 ||
 		    flp->l_type == F_UNLCK ||
 		    flp->l_type == F_UNLCKSYS) {
@@ -976,10 +996,12 @@ revert_flags:
 			break;
 		}
 #endif
-		if ((flg & F_OFD) != 0 && flp->l_pid != 0) {
-			error = EINVAL;
-			fdrop(fp, td);
-			break;
+		if ((flg & F_OFD) != 0) {
+			error = fcntl_ofd_check(fp, flp);
+			if (error != 0) {
+				fdrop(fp, td);
+				break;
+			}
 		}
 
 		if (flp->l_whence == SEEK_CUR) {
@@ -4438,7 +4460,7 @@ _fget(struct thread *td, int fd, struct file **fpp, int flags,
 			error = EBADF;
 		break;
 	case FEXEC:
-		if (fp->f_ops != &path_fileops &&
+		if (!FILE_IS_OPATH(fp) &&
 		    ((fp->f_flag & (FREAD | FEXEC)) == 0 ||
 		    (fp->f_flag & FWRITE) != 0))
 			error = EBADF;
@@ -4705,8 +4727,12 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	error = fget(td, uap->fd, &cap_flock_rights, &fp);
 	if (error != 0)
 		return (error);
-	/* A table that takes no flock(2) locks, refused as the type test did. */
-	if ((fp->f_ops->fo_flags & DFLAG_FLOCK) == 0) {
+	/*
+	 * A table that takes no flock(2) locks, or an anonymous pipe (which
+	 * shares the FIFO table), is refused as the type test did.
+	 */
+	if ((fp->f_ops->fo_flags & DFLAG_FLOCK) == 0 ||
+	    fp->f_type == DTYPE_PIPE) {
 		SDT_PROBE4(fd, , , refused, "flock", fp, DFLAG_FLOCK,
 		    EOPNOTSUPP);
 		error = EOPNOTSUPP;
@@ -4751,15 +4777,11 @@ sys_flock(struct thread *td, struct flock_args *uap)
 		 * the vnode with no open file to release it.  A LOCK_UN that
 		 * clears the mark set here goes on to unlock after this
 		 * grant; a mark without a lock costs one unlock at close.
-		 * Two clears are not covered: the one below, on a file that
-		 * takes no locks at all, and that of a LOCK_UN whose unlock
+		 * One clear is not covered: that of a LOCK_UN whose unlock
 		 * then fails, which leaves the lock unmarked as it always
 		 * has.
 		 */
 		atomic_set_int(&fp->f_flag, FHASLOCK);
-	} else if (error == EOPNOTSUPP) {
-		/* An anonymous pipe shares the FIFO table and takes none. */
-		atomic_clear_int(&fp->f_flag, FHASLOCK);
 	}
 done:
 	fdrop(fp, td);
@@ -6626,13 +6648,18 @@ invfo_fsync(struct file *fp, int mode, struct thread *td)
  * The attributes that have direct operations, size, mode and owner,
  * applied through the descriptor's table in that order: the table's own
  * answers stand (badfo_* for an O_PATH descriptor, a type's EINVAL, the
- * vnode bodies' MAC checks and audit records).  Every fo_setattr body
- * starts here; the rest of the vattr is the body's own.
+ * vnode bodies' audit records).  For mode and owner the vnode's MAC check
+ * comes ahead of the table, as in fchmod(2) and fchown(2); fo_truncate
+ * makes its own.  Every fo_setattr body starts here; the rest of the vattr
+ * is the body's own.
  */
 int
 file_setattr_direct(struct file *fp, struct vattr *vap,
     struct ucred *active_cred, struct thread *td)
 {
+#ifdef MAC
+	struct vnode *vp;
+#endif
 	int error;
 
 	if (vap->va_size != VNOVAL) {
@@ -6640,13 +6667,38 @@ file_setattr_direct(struct file *fp, struct vattr *vap,
 		if (error != 0)
 			return (error);
 	}
+#ifdef MAC
+	vp = fp->f_vnode;
+#endif
 	if (vap->va_mode != (mode_t)VNOVAL) {
+#ifdef MAC
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setmode(active_cred, vp,
+			    vap->va_mode & ALLPERMS);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				return (error);
+		}
+#endif
 		error = fo_chmod(fp, vap->va_mode, active_cred, td);
 		if (error != 0)
 			return (error);
 	}
-	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL)
-		return (fo_chown(fp, vap->va_uid, vap->va_gid, active_cred, td));
+	if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL) {
+#ifdef MAC
+		if (vp != NULL) {
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = mac_vnode_check_setowner(active_cred, vp,
+			    vap->va_uid, vap->va_gid);
+			VOP_UNLOCK(vp);
+			if (error != 0)
+				return (error);
+		}
+#endif
+		return (fo_chown(fp, vap->va_uid, vap->va_gid, active_cred,
+		    td));
+	}
 	return (0);
 }
 

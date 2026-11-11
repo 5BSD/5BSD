@@ -213,6 +213,32 @@ TEST_F(FlockRemote, eagain)
 }
 
 /*
+ * flock(2) marks the descriptor as holding a lock before the filesystem is
+ * asked, and the mark stays when the filesystem refuses, EOPNOTSUPP
+ * included.  F_GETFL shows it: the kernel's FHASLOCK.
+ */
+TEST_F(FlockRemote, eopnotsupp_keeps_haslock)
+{
+	const char FULLPATH[] = "mountpoint/some_file.txt";
+	const char RELPATH[] = "some_file.txt";
+	const int fhaslock = 0x4000;
+	uint64_t ino = 42;
+	int fd;
+
+	expect_lookup(RELPATH, ino);
+	expect_open(ino, 0, 1);
+	expect_setlk(ino, F_WRLCK, EOPNOTSUPP);
+
+	fd = open(FULLPATH, O_RDWR);
+	ASSERT_LE(0, fd) << strerror(errno);
+	ASSERT_EQ(0, fcntl(fd, F_GETFL) & fhaslock);
+	ASSERT_NE(0, flock(fd, LOCK_EX | LOCK_NB));
+	ASSERT_EQ(EOPNOTSUPP, errno);
+	EXPECT_EQ(fhaslock, fcntl(fd, F_GETFL) & fhaslock);
+	leak(fd);
+}
+
+/*
  * If the fuse filesystem does not support posix file locks, then the kernel
  * should fall back to local locks.
  */

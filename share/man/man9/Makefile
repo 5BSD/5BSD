@@ -1173,7 +1173,9 @@ MLINKS+=fileops.9 fo_acl.9 \
 	fileops.9 fo_pathconf.9 \
 	fileops.9 fo_readdir.9 \
 	fileops.9 fo_setattr.9 \
-	fileops.9 fo_statfs.9
+	fileops.9 fo_statfs.9 \
+	fileops.9 getvnode_fp.9 \
+	fileops.9 vn_setattr_checked.9
 MLINKS+=firmware.9 firmware_get.9 \
 	firmware.9 firmware_put.9 \
 	firmware.9 firmware_register.9 \

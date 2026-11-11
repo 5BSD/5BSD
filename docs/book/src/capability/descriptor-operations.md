@@ -36,6 +36,20 @@ terminal masters, devices, shared memory, kqueues and `O_PATH` descriptors
 all answer through it today, exactly as they did before, and the ledger
 (below) records every place the kernel still reaches past a table and why.
 
+"Exactly as they did before" is the stronger half of the rule. A program
+that no controller serves must get the errno upstream FreeBSD gives it, in
+the order upstream gives it, from every one of these calls. So where a
+system call refused a descriptor before doing anything else — it has no
+vnode, it is `O_PATH`, it is the wrong type — the call still makes that
+refusal first, with upstream's predicate, and a served file (`DTYPE_DQ`) is
+the one type let past it to its table. `getvnode_fp(fp, path)` is
+`getvnode()` and `getvnode_path()` for a file the caller already holds:
+`EINVAL` without a vnode, then `EBADF` for `O_PATH` unless `path` accepts
+it; a served file is exempt from the first test. The regression matrices
+in `tests/sys/dq_regress/fdops` pin the cells a test program can reach to
+upstream's source, each with its citation; the header of each matrix lists
+what it cannot reach and why.
+
 ## Vocabulary
 
 | Term | Meaning |
@@ -45,7 +59,7 @@ all answer through it today, exactly as they did before, and the ledger
 | **vnode body** | `vn_*(fp)`: the operation on `fp->f_vnode`, moved out of the system call without change. Installed by `vnops`, the per-open vnode tables, both devfs tables and the `O_PATH` table. |
 | **sometimes-vnode table** | a table whose descriptors carry a vnode on some creation paths only. A FIFO carries one, an anonymous pipe does not (`pipeops`); a master opened through `/dev/ptmx` does, one from `posix_openpt(2)` does not (`ptsdev_ops`); a linuxkpi file opened through devfs does, one made by `fd_install()` does not (`linuxfileops`). Such a table installs `vn_*_opt`, which answers through the vnode when it is there and with the default otherwise. It keeps a function of its own only where it has its own answer: `pipe_pathconf` says `PIPE_BUF`, `pipe_advlock` says `EOPNOTSUPP` to `flock(2)` on a pipe. |
 | **capability flag** | a `DFLAG_*` bit in the table's `fo_flags`: the table's declaration about itself. `DFLAG_PRIVWRITE`: private mappings are copy-on-write, so `mmap(2)` grants `PROT_WRITE` on a private mapping without the `CAP_MMAP_W` right. `DFLAG_FLOCK`, `DFLAG_RECLOCK`: the type takes `flock(2)` locks, record locks. |
-| **open-mode flag** | `fp->f_flag & O_PATH`: the descriptor was opened as a path. The refusals `getvnode()` used to make for `O_PATH` descriptors (`fsync`, `fchflags`, `futimens`, ACL changes, read-ahead, `getdirentries`) test this flag of the descriptor, never the identity of its table. |
+| **open-mode flag** | `fp->f_flag & O_PATH`: the descriptor was opened as a path. Read-ahead tests this flag of the descriptor. The refusals `getvnode()` made (`fsync`, `fchflags`, `futimens`, ACL changes, `getdirentries`) go through `getvnode_fp()`, which answers `EINVAL` for a descriptor without a vnode first and then `EBADF` for the `O_PATH` table (the flag, for a served file). |
 | **image source** | `imgp->is_ops`: how `execve(2)` reaches the image it activates — check, first page, reads, mappings, text references, path, MAC phases, authority, install, close — through the `IS_*` wrappers of `image_source(9)`. The vnode backend is `sys/kern/exec_image_vnode.c`. |
 | **pager seam** | `pgo_sync` and `pgo_kinfo`: how `msync(2)` and the mapping observers (`procstat`, `kinfo_getvmmap(3)`, linprocfs, `vm.objects`) reach a mapping's object. |
 | **boundary check** | `mac_file_check_*`: a MAC entry point on the descriptor, whatever its type, beside the vnode entry points (`docs/macf-new-hooks.md` §3). |
@@ -60,41 +74,66 @@ One idiom per situation, applied everywhere:
   know before dispatch — the record-lock commands and `flock(2)`, which set
   `P_ADVLOCK`, `FHASLOCK` or `FHASOFDLOCK` ahead of the request — consult
   the capability flags instead, so the refusal comes before any argument is
-  looked at and leaves no side effect, as the type tests did. When a table
-  answers `EOPNOTSUPP` to a lock request anyway (an anonymous pipe through
-  the FIFO table, a filesystem without open-file-description locks) the
-  flag set ahead of the request comes off again. The close paths skip a
-  table whose `fo_advlock` is `NULL` because there is nothing to unlock.
+  looked at and leaves no side effect, as the type tests did. An anonymous
+  pipe shares the FIFO table, so `flock(2)` refuses it by type beside the
+  flag; an `F_OFD` request is checked against the filesystem's
+  `VFCF_OFDLOCKS` (`fcntl_ofd_check`) before anything else about it is
+  looked at, a served file excepted. `FHASLOCK` stays set whatever the
+  table then answers to an `flock(2)` request, as upstream leaves it. The
+  close paths skip a table whose `fo_advlock` is `NULL` because there is
+  nothing to unlock.
 - **Bridges speak their own vocabulary.** fdescfs (`/dev/fd/N`) and the
-  Linux compatibility layer give the fileop's answer. Where their ABI
-  demands a different errno (`ENOTTY` from a Linux ioctl on a type without
-  the operation, `EOPNOTSUPP` from Linux `fileattr` on a table without
-  `fo_setattr`) the bridge maps the *lack of a member*, never a returned
-  errno: a returned `EINVAL` may be the filesystem's own.
+  Linux compatibility layer make upstream's type test first and give its
+  errno (`ENOTTY` from Linux `FS_IOC_SETFLAGS` on anything that is not a
+  vnode file, `EOPNOTSUPP` from Linux `fileattr` on a descriptor without a
+  vnode, `ESPIPE`, `ENODEV` or `EINVAL` from `fadvise64`, `fallocate`,
+  `readahead` and `sync_file_range` by vnode type); a served file passes
+  the test and reports its type through `fo_stat`. The bridge maps the
+  *test*, never a returned errno: a returned `EINVAL` may be the
+  filesystem's own.
 - **`fo_setattr` is the whole `vattr`.** Size, mode and owner have direct
   operations of their own, and every `fo_setattr` body applies them through
   those first (`file_setattr_direct`: `fo_truncate`, `fo_chmod`, `fo_chown`,
   in that order), so the table's own answers stand: the `badfo_*` refusals
   of an `O_PATH` descriptor, a pty master's `EINVAL`, the vnode bodies' MAC
   checks and audit records. The vnode body then sets times and flags
-  through `VOP_SETATTR`; the default returns `EINVAL` for them. fdescfs sets
-  attributes with one call and no caller decomposes a `vattr`; for a table
-  without the member it keeps the answer `getvnode()` gave it (`chflags`
-  refused with `EOPNOTSUPP`, every other change silently dropped), which
-  maps the lack of the member, not an errno.
-- **`O_PATH` is the descriptor's flag.** The refusals test `f_flag`, so an
-  anonymous pipe reopened with `O_PATH` through Linux `/proc/PID/fd/N`
-  (which carries `pipeops`, not `path_fileops`) is refused as `O_PATH` by
-  `fsync`, `fchflags`, `futimens`, the ACL changes and the Linux
-  fileattr/xattr bridges, where it used to get the pipe's `EINVAL`; that is
-  the Linux answer for an `O_PATH` descriptor and the deliberate reading of
-  the rule. Upstream's own five `path_fileops` identity tests (`F_SETFL`, the
-  `FEXEC` check in `fget`, `aio`, Linux `mmap`, `getvnode()` itself) predate
-  the layer and are left as they are.
+  through `VOP_SETATTR`; the default returns `EINVAL` for them. A served
+  file takes `fchflags(2)`, the Linux flags and a `/dev/fd/N` change through
+  `fo_setattr` in one call. For every other file those three keep
+  upstream's bodies: `setfflags()` on the vnode, and for fdescfs one
+  `VOP_SETATTR` of the whole `vattr` after every check has passed
+  (`vn_setattr_checked`), so a `/dev/fd/N` change is made in full or not at
+  all; a descriptor without a vnode keeps the answer `getvnode()` gave
+  fdescfs (`chflags` refused with `EOPNOTSUPP`, every other change silently
+  dropped).
+- **No vnode comes before `O_PATH`.** `getvnode()` returned `EINVAL` for a
+  descriptor without a vnode before it looked for `O_PATH`, and
+  `getvnode_fp()` keeps that order. An anonymous pipe reopened with `O_PATH`
+  through Linux `/proc/PID/fd/N` (which carries `pipeops`, not
+  `path_fileops`, and no vnode) therefore gets the pipe's `EINVAL` from
+  `fsync`, `fchflags`, `futimens`, the ACL changes, `getdirentries` and the
+  Linux xattr bridge, as upstream gives it; the Linux fileattr bridge maps
+  the same refusal to its own `EOPNOTSUPP`. A served file opened
+  `O_PATH` carries its own table (`dq_path_fileops`), which answers member
+  by member as `path_fileops` does. Upstream's `path_fileops` identity
+  tests predate the layer; the four a served file can reach (`F_SETFL`, the
+  `FEXEC` check in `fget`, `aio`, Linux `mmap`) use `FILE_IS_OPATH()`, which
+  is the identity test for every other descriptor and the open flag for a
+  served one, so a served `O_PATH` file is refused where an `O_PATH` vnode
+  is. `getvnode()` itself and Linux `fchroot` keep the bare identity test:
+  a served file never gets that far, having no vnode.
 - **MAC checks precede dispatch.** `mac_file_check_*` runs before the table
-  answers, for every type: a descriptor a policy denies gets the policy's
-  errno even where the table would have refused it (`copy_file_range` on a
-  socket, say), as `read` and `write` have always done.
+  answers: a descriptor a policy denies gets the policy's errno even where
+  the table would have refused it, as `read` and `write` have always done.
+  Where upstream made a refusal ahead of any check (`copy_file_range` on a
+  descriptor without a vnode, say) the refusal still comes first. The
+  attribute changes are the exception to "every type": a descriptor that is
+  not served gets exactly upstream's checks in upstream's order (the
+  vnode's `setmode`/`setowner` check ahead of `fo_chmod`/`fo_chown`, so the
+  policy's errno precedes the `O_PATH` table's `EBADF` and a pty master's
+  `EINVAL`), and only a served file, which has no vnode, gets
+  `mac_file_check_setattr` — on every call that sets an attribute through
+  the descriptor.
 - **Sometimes-vnode is `vn_*_opt`.** Nothing else in the kernel inspects
   `f_vnode` to decide how to answer.
 - **Observers take the vnode under the object lock.** `vm_object_kinfo_hold`
@@ -119,7 +158,7 @@ has no member — the first thing to look at when a program gets `EINVAL`
 from an operation on an unusual descriptor. `fd:::refused` fires when a
 system call refuses a descriptor before looking at its arguments, by
 capability flag (`why` is the `DFLAG_*` bit the table lacks) or because the
-descriptor is `O_PATH` (`why` is 0). The exec probes show which entry form
+descriptor has no vnode or is `O_PATH` (`why` is 0). The exec probes show which entry form
 built an image source (`IS_FORM_PATH`, `IS_FORM_INTERP_VNODE`, `IS_FORM_FD`,
 `IS_FORM_INTERP_LOADER`) and whether its close dropped the reference. The
 existing `fd:::advlock-start`/`advlock-done`, `vfs:::chflags` and every
@@ -149,7 +188,8 @@ dtrace -n 'fd:::refused { printf("%s %s why=%x errno=%d", execname, stringof(arg
    `O_PATH` for the operation, `path_fileops`. Write `vn_X_opt` and install
    it in the three sometimes-vnode tables.
 4. Convert the system call: `fget` with the rights it always required, the
-   `O_PATH` refusal through `f_flag` if it had one, then `fo_X`. Audit
+   refusals `getvnode()` made through `getvnode_fp()` if it used one (and
+   any type test it made, with `DTYPE_DQ` let through), then `fo_X`. Audit
    arguments, capability rights and generic argument validation stay in the
    system call; everything that touched the vnode moves.
 5. Add `tests/sys/file/X_test.c`: the fd form against the path form on a

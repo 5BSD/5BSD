@@ -12,6 +12,10 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/file.h>
+#include <sys/filio.h>
+#include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/procdesc.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -21,6 +25,7 @@
 #include <sys/user.h>
 #include <sys/wait.h>
 
+#include <aio.h>
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -33,6 +38,8 @@
 #include <unistd.h>
 
 #include <libdq.h>
+
+#include "dq_test.h"
 
 #define	SRV_MAX_SEEN	256
 
@@ -1107,6 +1114,298 @@ ATF_TC_BODY(opath_exlock_xfer, tc)
 }
 
 /*
+ * An O_PATH served file answers as an O_PATH vnode does (D244).  The same
+ * calls are made on the served file by an attached child and on its
+ * backing file by an unattached one, and the answers are compared; the
+ * rows aio(4), fdescfs and F_SETFL used to answer differently are also
+ * checked by value.  Changes by name go through a private fdescfs.
+ */
+enum {
+	OP_OPEN, OP_READ, OP_LSEEK, OP_IOCTL, OP_POLL, OP_MMAP, OP_FSYNC,
+	OP_FDATASYNC, OP_FTRUNCATE, OP_FCHMOD, OP_FCHOWN, OP_FUTIMENS,
+	OP_FCHFLAGS, OP_FLOCK, OP_SETLK, OP_SETFL, OP_FSTAT, OP_FSTATFS,
+	OP_FPATHCONF, OP_AIO_FSYNC, OP_LIO_NOP, OP_LIO_NOP_ERROR,
+	OP_FD_CHMOD, OP_FD_CHOWN, OP_FD_UTIMES, OP_FD_TRUNCATE, OP__N
+};
+_Static_assert(OP__N <= RES_MAX, "RES_MAX");
+
+static const char *const opath_op_names[OP__N] = {
+	"open", "read", "lseek", "ioctl", "poll", "mmap", "fsync",
+	"fdatasync", "ftruncate", "fchmod", "fchown", "futimens",
+	"fchflags", "flock", "F_SETLK", "F_SETFL", "fstat", "fstatfs",
+	"fpathconf", "aio_fsync", "lio_listio", "LIO_NOP aio_error",
+	"chmod /dev/fd/N", "chown /dev/fd/N", "utimes /dev/fd/N",
+	"truncate /dev/fd/N",
+};
+
+#define	OPATH_UID	65534
+
+static bool opath_served;
+
+static int
+opath_open(struct srv *s, int flags)
+{
+	char path[PATH_MAX];
+
+	if (opath_served)
+		snprintf(path, sizeof(path), "%s/a", s->prefix);
+	else
+		snprintf(path, sizeof(path), "%s/a", s->backing);
+	return (open(path, flags));
+}
+
+static void
+c_opath_calls(struct srv *s, int *r)
+{
+	struct aiocb cb, *list[1];
+	struct flock fl;
+	struct pollfd pfd;
+	struct stat st;
+	struct statfs sf;
+	char path[32], c;
+	void *p;
+	int fd, n;
+
+	fd = opath_open(s, O_PATH);
+	r[OP_OPEN] = ERR(fd);
+	if (fd < 0)
+		return;
+	r[OP_READ] = ERR(read(fd, &c, 1));
+	r[OP_LSEEK] = ERR(lseek(fd, 0, SEEK_CUR));
+	r[OP_IOCTL] = ERR(ioctl(fd, FIONREAD, &n));
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	r[OP_POLL] = poll(&pfd, 1, 0) == 1 ? pfd.revents : -1;
+	p = mmap(NULL, getpagesize(), PROT_READ, MAP_PRIVATE, fd, 0);
+	r[OP_MMAP] = p == MAP_FAILED ? errno : 0;
+	r[OP_FSYNC] = ERR(fsync(fd));
+	r[OP_FDATASYNC] = ERR(fdatasync(fd));
+	r[OP_FTRUNCATE] = ERR(ftruncate(fd, 7));
+	r[OP_FCHMOD] = ERR(fchmod(fd, 0600));
+	r[OP_FCHOWN] = ERR(fchown(fd, OPATH_UID, -1));
+	r[OP_FUTIMENS] = ERR(futimens(fd, NULL));
+	r[OP_FCHFLAGS] = ERR(fchflags(fd, 0));
+	r[OP_FLOCK] = ERR(flock(fd, LOCK_SH | LOCK_NB));
+	memset(&fl, 0, sizeof(fl));
+	fl.l_type = F_RDLCK;
+	fl.l_whence = SEEK_SET;
+	r[OP_SETLK] = ERR(fcntl(fd, F_SETLK, &fl));
+	r[OP_SETFL] = ERR(fcntl(fd, F_SETFL, O_NONBLOCK));
+	r[OP_FSTAT] = ERR(fstat(fd, &st));
+	r[OP_FSTATFS] = ERR(fstatfs(fd, &sf));
+	r[OP_FPATHCONF] = ERR(fpathconf(fd, _PC_NAME_MAX));
+
+	memset(&cb, 0, sizeof(cb));
+	cb.aio_fildes = fd;
+	r[OP_AIO_FSYNC] = ERR(aio_fsync(O_SYNC, &cb));
+	memset(&cb, 0, sizeof(cb));
+	cb.aio_fildes = fd;
+	cb.aio_lio_opcode = LIO_NOP;
+	list[0] = &cb;
+	r[OP_LIO_NOP] = ERR(lio_listio(LIO_NOWAIT, list, 1, NULL));
+	r[OP_LIO_NOP_ERROR] = aio_error(&cb);
+
+	snprintf(path, sizeof(path), DQT_FDESC_DIR "/%d", fd);
+	r[OP_FD_CHMOD] = ERR(chmod(path, 0600));
+	r[OP_FD_CHOWN] = ERR(chown(path, OPATH_UID, -1));
+	r[OP_FD_UTIMES] = ERR(utimes(path, NULL));
+	r[OP_FD_TRUNCATE] = ERR(truncate(path, 0));
+	close(fd);
+}
+
+/* What the calls by name left on the backing file; put it back. */
+static void
+opath_backing_changed(const char *who)
+{
+	struct stat st;
+
+	ATF_REQUIRE_EQ(0, stat("backing/a", &st));
+	ATF_CHECK_EQ_MSG(0600, st.st_mode & ALLPERMS, "%s: mode %o", who,
+	    st.st_mode & ALLPERMS);
+	ATF_CHECK_EQ_MSG(OPATH_UID, st.st_uid, "%s: owner %d", who,
+	    st.st_uid);
+	ATF_CHECK_EQ_MSG(7, st.st_size, "%s: size %jd", who,
+	    (intmax_t)st.st_size);
+	ATF_REQUIRE_EQ(0, chmod("backing/a", 0644));
+	ATF_REQUIRE_EQ(0, chown("backing/a", 0, -1));
+}
+
+ATF_TC_WITH_CLEANUP(opath_as_vnode);
+ATF_TC_HEAD(opath_as_vnode, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(opath_as_vnode, tc)
+{
+	struct srv s;
+	int i, served[RES_MAX], vnode[RES_MAX];
+
+	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
+		atf_tc_skip("pre1c: the kernel has no served directories");
+	srv_start(&s, 0);
+	dqt_mount_fdesc(NULL);
+	opath_served = false;
+	run_child_as(&s, c_opath_calls, vnode, (uid_t)-1, false);
+	ATF_REQUIRE_EQ(0, vnode[OP_OPEN]);
+	opath_backing_changed("vnode");
+	opath_served = true;
+	run_child(&s, c_opath_calls, served);
+	ATF_REQUIRE_EQ_MSG(0, served[OP_OPEN], "open: %s",
+	    strerror(served[OP_OPEN]));
+	opath_backing_changed("served");
+	for (i = 0; i < OP__N; i++)
+		ATF_CHECK_EQ_MSG(vnode[i], served[i],
+		    "%s: vnode %d, served %d", opath_op_names[i], vnode[i],
+		    served[i]);
+
+	ATF_CHECK_EQ(EBADF, served[OP_AIO_FSYNC]);
+	ATF_CHECK_EQ(EIO, served[OP_LIO_NOP]);
+	ATF_CHECK_EQ(EBADF, served[OP_LIO_NOP_ERROR]);
+	ATF_CHECK_EQ(0, served[OP_FD_CHMOD]);
+	ATF_CHECK_EQ(0, served[OP_FD_CHOWN]);
+	ATF_CHECK_EQ(0, served[OP_FD_UTIMES]);
+	ATF_CHECK_EQ(EBADF, served[OP_FD_TRUNCATE]);
+	ATF_CHECK_EQ(EBADF, served[OP_SETFL]);
+	ATF_CHECK_EQ(EBADF, served[OP_FCHMOD]);
+	ATF_CHECK_EQ(EOPNOTSUPP, served[OP_FLOCK]);
+	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
+	srv_stop(&s);
+}
+ATF_TC_CLEANUP(opath_as_vnode, tc)
+{
+	dqt_umount_fdesc();
+}
+
+/*
+ * fexecve(2) lets an O_PATH descriptor past its open-mode test, a served
+ * one too, and then wants a vnode: a served file, however it was opened,
+ * has none to execute.  aio_fsync(2) on a served file that is not O_PATH
+ * is queued as any request on a file aio(4) does not know to be safe is:
+ * refused unless vfs.aio.enable_unsafe is set, the descriptor's own fsync
+ * if it is.
+ */
+static void
+c_served_fexecve_aio(struct srv *s, int *r)
+{
+	char *const argv[] = { __DECONST(char *, "a"), NULL };
+	char *const envp[] = { NULL };
+	struct aiocb cb, *done;
+	int fd;
+
+	opath_served = true;
+	fd = opath_open(s, O_PATH);
+	r[0] = ERR(fd);
+	r[1] = ERR(fexecve(fd, argv, envp));
+	close(fd);
+	fd = opath_open(s, O_RDONLY);
+	r[2] = ERR(fd);
+	r[3] = ERR(fexecve(fd, argv, envp));
+	memset(&cb, 0, sizeof(cb));
+	cb.aio_fildes = fd;
+	r[4] = ERR(aio_fsync(O_SYNC, &cb));
+	if (r[4] == 0) {
+		r[5] = aio_waitcomplete(&done, NULL) < 0 ? errno : 0;
+		r[6] = done == &cb;
+	}
+	close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(served_fexecve_aio_fsync);
+ATF_TC_BODY(served_fexecve_aio_fsync, tc)
+{
+	struct srv s;
+	size_t len;
+	int r[RES_MAX], unsafe;
+
+	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
+		atf_tc_skip("pre1c: the kernel has no served directories");
+	len = sizeof(unsafe);
+	ATF_REQUIRE_EQ(0, sysctlbyname("vfs.aio.enable_unsafe", &unsafe, &len,
+	    NULL, 0));
+	srv_start(&s, 0);
+	run_child(&s, c_served_fexecve_aio, r);
+	ATF_REQUIRE_EQ(0, r[0]);
+	ATF_CHECK_EQ(EINVAL, r[1]);
+	ATF_REQUIRE_EQ(0, r[2]);
+	ATF_CHECK_EQ(EINVAL, r[3]);
+	if (unsafe == 0) {
+		ATF_CHECK_EQ(EOPNOTSUPP, r[4]);
+	} else {
+		ATF_CHECK_EQ(0, r[4]);
+		ATF_CHECK_EQ(0, r[5]);
+		ATF_CHECK(r[6]);
+	}
+	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
+	srv_stop(&s);
+}
+
+/*
+ * The Linux calls that tell an O_PATH descriptor apart: mmap(2) is EBADF
+ * and syncfs(2) succeeds, for a served file as for a vnode.  A Linux
+ * program built here inherits the descriptor.
+ */
+#define	OPATH_LINUX_FD	9
+
+static void
+c_opath_linux(struct srv *s, int *r)
+{
+	char *const argv[] = { __DECONST(char *, "dq_opath_linux"), NULL };
+	char *const envp[] = { NULL };
+	pid_t pid;
+	int fd, status;
+
+	fd = opath_open(s, O_PATH);
+	r[0] = ERR(fd);
+	if (fd < 0)
+		return;
+	pid = fork();
+	if (pid == 0) {
+		if (dup2(fd, OPATH_LINUX_FD) != OPATH_LINUX_FD)
+			_exit(126);
+		execve("./dq_opath_linux", argv, envp);
+		_exit(127);
+	}
+	r[1] = pid < 0 || waitpid(pid, &status, 0) != pid ||
+	    !WIFEXITED(status) ? -1 : WEXITSTATUS(status);
+	close(fd);
+}
+
+ATF_TC(opath_linux);
+ATF_TC_HEAD(opath_linux, tc)
+{
+	atf_tc_set_md_var(tc, "require.arch", "amd64");
+	atf_tc_set_md_var(tc, "require.progs", "clang");
+	atf_tc_set_md_var(tc, "require.kmods", "linux64");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(opath_linux, tc)
+{
+	struct srv s;
+	char cmd[PATH_MAX + 256];
+	int r[RES_MAX];
+
+	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
+		atf_tc_skip("pre1c: the kernel has no served directories");
+	snprintf(cmd, sizeof(cmd), "clang --target=x86_64-linux-gnu "
+	    "-fuse-ld=lld -nostdlib -static -fno-stack-protector "
+	    "-fno-builtin -O2 -Wall -Wextra -Werror -o dq_opath_linux "
+	    "%s/dq_opath_linux.c", atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+
+	srv_start(&s, 0);
+	opath_served = false;
+	run_child_as(&s, c_opath_linux, r, (uid_t)-1, false);
+	ATF_REQUIRE_EQ(0, r[0]);
+	ATF_CHECK_EQ_MSG(0, r[1], "vnode: mmap/syncfs bits %#x", r[1]);
+	opath_served = true;
+	run_child(&s, c_opath_linux, r);
+	ATF_REQUIRE_EQ(0, r[0]);
+	ATF_CHECK_EQ_MSG(0, r[1], "served: mmap/syncfs bits %#x", r[1]);
+	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
+	srv_stop(&s);
+}
+
+/*
  * AT_EMPTY_PATH on a served descriptor (D164), held by an unattached
  * process (the minted descriptor inherited; the queue is O_CLOFORK): the
  * descriptor's own operation with no RESOLVE; fchmodat reaches the
@@ -1733,6 +2032,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, dropped_completion_eio);
 	ATF_TP_ADD_TC(tp, vm_create_enomem);
 	ATF_TP_ADD_TC(tp, opath_exlock_xfer);
+	ATF_TP_ADD_TC(tp, opath_as_vnode);
+	ATF_TP_ADD_TC(tp, served_fexecve_aio_fsync);
+	ATF_TP_ADD_TC(tp, opath_linux);
 	ATF_TP_ADD_TC(tp, emptypath_fallbacks);
 	ATF_TP_ADD_TC(tp, emptypath_attached);
 	ATF_TP_ADD_TC(tp, object_reply_not_mint);

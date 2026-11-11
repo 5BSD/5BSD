@@ -113,6 +113,9 @@ SRCS.dq_exec_helper=	dq_exec_helper.c
 MAN.dq_exec_helper=
 BINDIR.dq_exec_helper=	${TESTSDIR}
 
+# dq_served_test's Linux program for the O_PATH rows, built by the test.
+${PACKAGE}FILES+=	dq_opath_linux.c
+
 # The socket commands the oracle runs (stage 1c-ii).
 PROGS+=		dq_sockprog
 SRCS.dq_sockprog=	dq_sockprog.c

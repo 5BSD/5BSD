@@ -11,8 +11,8 @@
 # all at 3b9f9873d291).  Where base hands the call to a filesystem the
 # expectation is the same binary run on the vnode's own path (an oracle).
 #
-# Cells whose base value differs from the current tree (each fails on the
-# current kernel until ux-0 restores it):
+# Cells restored by ux-0 slice 1 (their base value differed from the tree
+# before it, proxy/objects at f9e922d244b; "now" is what that tree answered):
 #   chown /dev/fd/N    pipe   base 0 (dropped)              now EINVAL   D232
 #   touch -h /dev/fd/N pipe   base 0 (dropped)              now EINVAL   D232
 #   chown /dev/fd/N    ptmx   base 0                        now EINVAL   D233

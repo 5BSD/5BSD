@@ -53,6 +53,7 @@
 #include <sys/proc.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
+#include <sys/sysctl.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
 
@@ -585,20 +586,15 @@ fdesc_getattr(struct vop_getattr_args *ap)
 }
 
 /*
- * Attributes set on /dev/fd/N go to descriptor N's own fileops: size to
- * fo_truncate, mode to fo_chmod, owner to fo_chown, times and flags to
- * fo_setattr.  A table with no fo_setattr member has no settable attributes
- * and keeps the old behaviour: every change is silently dropped except
- * chflags(2), which is refused.  A table with one answers for its
- * descriptor: an anonymous pipe or a pseudo-terminal master opened with
- * posix_openpt(2) now reports EINVAL where the lack of a vnode once meant
- * "dropped".
+ * Attributes set on /dev/fd/N are set on descriptor N's vnode, where it has
+ * one, with one VOP_SETATTR after the checks the system calls make
+ * (vn_setattr_checked()).  A served descriptor sets the whole vattr through
+ * its own table.
  *
  * The fdesc vnode contributes only the descriptor number, so its lock is
- * dropped while the descriptor's fileops run: they lock the file's own
- * vnode, and holding the fdesc lock over that orders fdescfs before every
- * other filesystem, the reverse of what unmounting fdescfs (covered vnode,
- * then fdesc root) establishes.
+ * dropped while the file's vnode is locked: holding the fdesc lock over
+ * that orders fdescfs before every other filesystem, the reverse of what
+ * unmounting fdescfs (covered vnode, then fdesc root) establishes.
  */
 static int
 fdesc_setattr(struct vop_setattr_args *ap)
@@ -622,28 +618,99 @@ fdesc_setattr(struct vop_setattr_args *ap)
 	    &fp);
 	if (error != 0)
 		return (error);
+	if (fp->f_type == DTYPE_DQ) {
+		VOP_UNLOCK(vp);
+#ifdef MAC
+		error = mac_file_check_setattr(ap->a_cred, fp, fd, vap);
+		if (error == 0)
+#endif
+			error = fo_setattr(fp, vap, ap->a_cred, td);
+		goto out;
+	}
+
 	/*
-	 * fdescfs's own answer for a type without the member, what getvnode()'s
-	 * EINVAL always became here: chflags(2) is refused, every other change
-	 * is silently dropped.
+	 * Allow setattr where there is an underlying vnode.
+	 * For O_PATH descriptors, disallow truncate.
 	 */
-	if (fp->f_ops->fo_setattr == NULL) {
+	error = getvnode_fp(fp, vap->va_size == VNOVAL);
+	if (error != 0) {
 		fdrop(fp, td);
-		return (vap->va_flags != VNOVAL ? EOPNOTSUPP : 0);
+		/*
+		 * getvnode() returns EINVAL if the file descriptor is not
+		 * backed by a vnode.  Silently drop all changes except
+		 * chflags(2) in this case.
+		 */
+		if (error == EINVAL) {
+			if (vap->va_flags != VNOVAL)
+				error = EOPNOTSUPP;
+			else
+				error = 0;
+		}
+		return (error);
 	}
 	VOP_UNLOCK(vp);
-#ifdef MAC
-	error = mac_file_check_setattr(ap->a_cred, fp, fd, vap);
-	if (error != 0)
-		goto out;
-#endif
-	/* The descriptor sets the whole vattr; its answer stands. */
-	error = fo_setattr(fp, vap, ap->a_cred, td);
+	error = vn_setattr_checked(fp, vap, ap->a_cred);
 out:
 	fdrop(fp, td);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	return (error);
 }
+
+#ifdef INVARIANTS
+/*
+ * A test hook: one VOP_SETATTR on a /dev/fd/N vnode that names a mode and
+ * an owner together, which no system call asks for.  The vnode is given by
+ * an O_PATH descriptor of it.  tests/sys/file/fsetattr_test uses this to
+ * show that fdesc_setattr() applies a vattr whole or not at all; the
+ * checks are fdesc_setattr()'s own, so nothing is reached that chmod(2)
+ * and chown(2) on the same name do not reach.
+ */
+struct fdesc_setattr_test {
+	int32_t		fst_fd;
+	uint32_t	fst_mode;
+	uint32_t	fst_uid;
+	uint32_t	fst_gid;
+};
+
+static int
+sysctl_fdesc_setattr_test(SYSCTL_HANDLER_ARGS)
+{
+	struct fdesc_setattr_test fst;
+	struct vattr va;
+	struct thread *td;
+	struct file *fp;
+	struct vnode *vp;
+	int error;
+
+	if (req->newptr == NULL || req->newlen != sizeof(fst))
+		return (EINVAL);
+	error = SYSCTL_IN(req, &fst, sizeof(fst));
+	if (error != 0)
+		return (error);
+	td = req->td;
+	error = getvnode_path(td, fst.fst_fd, &cap_no_rights, NULL, &fp);
+	if (error != 0)
+		return (error);
+	vp = fp->f_vnode;
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	if (vp->v_op != &fdesc_vnodeops) {
+		error = EINVAL;
+	} else {
+		VATTR_NULL(&va);
+		va.va_mode = fst.fst_mode;
+		va.va_uid = fst.fst_uid;
+		va.va_gid = fst.fst_gid;
+		error = VOP_SETATTR(vp, &va, td->td_ucred);
+	}
+	VOP_UNLOCK(vp);
+	fdrop(fp, td);
+	return (error);
+}
+SYSCTL_PROC(_debug, OID_AUTO, fdescfs_setattr,
+    CTLTYPE_OPAQUE | CTLFLAG_WR | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_fdesc_setattr_test, "S,fdesc_setattr_test",
+    "Set a mode and an owner on a /dev/fd/N vnode at once (test hook)");
+#endif
 
 #define UIO_MX _GENERIC_DIRLEN(10) /* number of symbols in INT_MAX printout */
 
@@ -744,17 +811,19 @@ fdesc_reclaim(struct vop_reclaim_args *ap)
 static int
 fdesc_readlink(struct vop_readlink_args *va)
 {
-	struct vnode *vn;
+	struct vnode *vp, *vn;
 	struct thread *td;
 	struct uio *uio;
 	struct file *fp;
 	struct filedesc *fdp;
 	struct kinfo_file *kif;
-	const char *fullpath;
+	char *freepath, *fullpath;
 	size_t pathlen;
 	int lockflags, fd_fd;
 	int error;
 
+	freepath = NULL;
+	kif = NULL;
 	vn = va->a_vp;
 	if (VTOFDESC(vn)->fd_type != Fdesc)
 		panic("fdesc_readlink: not fdescfs link");
@@ -767,39 +836,44 @@ fdesc_readlink(struct vop_readlink_args *va)
 	if (error != 0)
 		goto out;
 
-	/*
-	 * The link's target is whatever the descriptor presents as its path
-	 * (fo_fill_kinfo, as F_KINFO and procstat see it): a vnode's full
-	 * path, a served object's presented path, and for the descriptor
-	 * types that have none the Linux-style anonymous inode.  A vnode
-	 * whose path cannot be resolved keeps answering ENOENT.
-	 * vn_fill_kinfo expects the caller's filedesc lock, as
-	 * kern_proc_filedesc_out holds it.
-	 */
-	kif = malloc(sizeof(*kif), M_TEMP, M_WAITOK | M_ZERO);
-	fdp = td->td_proc->p_fd;
-	FILEDESC_SLOCK(fdp);
-	error = fo_fill_kinfo(fp, kif, fdp);
-	FILEDESC_SUNLOCK(fdp);
-	if (error == 0) {
+	switch (fp->f_type) {
+	case DTYPE_VNODE:
+		vp = fp->f_vnode;
+		error = vn_fullpath(vp, &fullpath, &freepath);
+		break;
+	case DTYPE_DQ:
 		/*
-		 * Other tables put other strings in kf_path (a socket's
-		 * domain, "pts/N", a shm name): only a presented vnode's path
-		 * is a link target.
+		 * A served file's link target is its presented path, as
+		 * F_KINFO and procstat see it.  fo_fill_kinfo expects the
+		 * caller's filedesc lock, as kern_proc_filedesc_out holds it.
 		 */
+		kif = malloc(sizeof(*kif), M_TEMP, M_WAITOK | M_ZERO);
+		fdp = td->td_proc->p_fd;
+		FILEDESC_SLOCK(fdp);
+		error = fo_fill_kinfo(fp, kif, fdp);
+		FILEDESC_SUNLOCK(fdp);
+		if (error != 0)
+			break;
 		if (kif->kf_type != KF_TYPE_VNODE)
 			fullpath = "anon_inode:[unknown]";
 		else if (kif->kf_path[0] != '\0')
 			fullpath = kif->kf_path;
 		else
 			error = ENOENT;
+		break;
+	default:
+		fullpath = "anon_inode:[unknown]";
+		break;
 	}
 	if (error == 0) {
 		uio = va->a_uio;
 		pathlen = strlen(fullpath);
-		error = uiomove(__DECONST(char *, fullpath), pathlen, uio);
+		error = uiomove(fullpath, pathlen, uio);
 	}
-	free(kif, M_TEMP);
+	if (freepath != NULL)
+		free(freepath, M_TEMP);
+	if (kif != NULL)
+		free(kif, M_TEMP);
 	fdrop(fp, td);
 
 out:

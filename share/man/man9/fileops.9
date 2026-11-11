@@ -1,7 +1,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd November 6, 2026
+.Dd November 10, 2026
 .Dt FILEOPS 9
 .Os
 .Sh NAME
@@ -16,7 +16,9 @@
 .Nm fo_acl ,
 .Nm fo_extattr ,
 .Nm fo_fcntl ,
-.Nm fo_advlock
+.Nm fo_advlock ,
+.Nm getvnode_fp ,
+.Nm vn_setattr_checked
 .Nd operations on an open file descriptor
 .Sh SYNOPSIS
 .In sys/param.h
@@ -43,6 +45,12 @@
 .Fn fo_fcntl "struct file *fp" "int cmd" "intptr_t arg" "struct thread *td"
 .Ft int
 .Fn fo_advlock "struct file *fp" "void *id" "int op" "struct flock *fl" "int flags" "struct thread *td"
+.In sys/filedesc.h
+.Ft int
+.Fn getvnode_fp "struct file *fp" "bool path"
+.In sys/vnode.h
+.Ft int
+.Fn vn_setattr_checked "struct file *fp" "struct vattr *vap" "struct ucred *active_cred"
 .Sh DESCRIPTION
 Every open file
 .Pq Vt "struct file"
@@ -59,11 +67,63 @@ or through a vnode the file may carry
 .Pq Va f_vnode ;
 where one must tell an
 .Dv O_PATH
-descriptor apart it compares the table itself
-.Pq Va f_ops ,
-not a type.
+descriptor apart it uses
+.Fn FILE_IS_OPATH ,
+which compares the table itself
+.Pq Va f_ops
+with
+.Va path_fileops
+and, for a served file, which has a table of its own for
+.Dv O_PATH ,
+tests the open flag.
 A descriptor type therefore answers for itself, and a type that is not
 backed by a vnode is complete without one.
+.Pp
+A program must nevertheless see the errors it always saw, in the order it
+always saw them.
+Where a system call refused a descriptor before doing anything else
+\(em because it carries no vnode, because it is an
+.Dv O_PATH
+descriptor, or because of its type \(em
+it still makes that refusal first, and only a served file
+.Pq Dv DTYPE_DQ ,
+which carries no vnode and answers through its table, is let past it.
+.Fn getvnode_fp
+makes the two tests of
+.Fn getvnode
+on a file the caller already holds, in their order:
+.Er EINVAL
+for a file without a vnode, then
+.Er EBADF
+for an
+.Dv O_PATH
+file unless the caller accepts one, as
+.Fn getvnode_path
+did.
+A served file is exempt from the first.
+.Pp
+The MAC entry points follow the same rule.
+A descriptor that is not served gets exactly the checks it always got, in
+the order it always got them: where
+.Xr fchmod 2
+and
+.Xr fchown 2
+made the vnode's check before the table was asked, they still do, so a
+policy's errno comes before the table's refusal of an
+.Dv O_PATH
+descriptor or a pseudo-terminal master; no file-level check is added in
+front of them.
+A served file has no vnode to check and gets
+.Fn mac_file_check_setattr
+on every call that sets an attribute through its descriptor:
+.Xr fchmod 2 ,
+.Xr fchown 2 ,
+.Xr fchflags 2 ,
+.Xr ftruncate 2 ,
+.Xr futimens 2 ,
+.Xr futimes 2 ,
+the Linux file attribute flags and a change through
+.Pa /dev/fd/N .
 .Pp
 Each member has an inline dispatch function of the same name.
 Members that a table leaves
@@ -113,7 +173,10 @@ the record-lock commands a table without the second with
 both before looking at their arguments, as the type tests did.
 The FIFO table carries
 .Dv DFLAG_FLOCK
-only.
+only; an anonymous pipe shares that table, and
+.Xr flock 2
+refuses it by its type with the same
+.Er EOPNOTSUPP .
 .Pp
 The vnode bodies of the per-open vnode tables run inside the file context
 .Pq Fn vn_file_context_enter
@@ -271,15 +334,21 @@ files use it;
 .Xr fsync 2
 and
 .Xr fdatasync 2
-refuse an
+refuse a descriptor without a vnode with
+.Er EINVAL
+and then an
 .Dv O_PATH
 descriptor with
 .Er EBADF
-before reaching the table, as they always did, while
+before reaching the table
+.Pq Fn getvnode_fp ,
+as they always did.
 .Xr aio_fsync 2
-and
+makes the same two refusals when the request is queued, and Linux
 .Fn syncfs
-accept one, as they always did.
+accepts an
+.Dv O_PATH
+descriptor, both as they always did.
 .It everything else
 .Fn invfo_fsync
 returns
@@ -296,14 +365,30 @@ flags; a field holding
 .Dv VNOVAL
 is left alone.
 It answers
-.Xr futimens 2 ,
-.Xr futimes 2 ,
+.Xr futimens 2
+and
+.Xr futimes 2
+for every descriptor, and for a served file also
 .Xr fchflags 2 ,
-Linux file attribute flags, and attribute changes made through
+the Linux file attribute flags and the attribute changes made through
 .Pa /dev/fd/N ,
 which
 .Xr fdescfs 4
 forwards in one call.
+For any other file those three keep the bodies they always had:
+.Xr fchflags 2
+and the Linux flags call
+.Fn setfflags
+on the vnode after the audit record and the checks they always made,
+and
+.Xr fdescfs 4
+sets the whole
+.Vt "struct vattr"
+with one
+.Xr VOP_SETATTR 9
+through
+.Fn vn_setattr_checked ,
+so that a change is made in full or not at all.
 Size, mode and owner have direct operations of their own,
 .Fn fo_truncate ,
 .Fn fo_chmod
@@ -336,11 +421,15 @@ files use it;
 .Xr futimes 2
 and
 .Xr fchflags 2
-refuse an
+refuse a descriptor without a vnode with
+.Er EINVAL
+and then an
 .Dv O_PATH
 descriptor with
 .Er EBADF
-before reaching the table, as they always did.
+before reaching the table
+.Pq Fn getvnode_fp ,
+as they always did.
 .It everything else
 .Fn invfo_setattr
 runs the direct operations and returns
@@ -348,9 +437,9 @@ runs the direct operations and returns
 for times and flags, what
 .Fn getvnode
 returned.
-A table without the member is not reached by
+A file without a vnode is not reached by
 .Xr fdescfs 4
-at all: it keeps the answer
+at all, unless it is a served file: it keeps the answer
 .Fn getvnode
 gave there, refusing
 .Xr chflags 2
@@ -403,13 +492,14 @@ leaves
 .Va uio_offset
 at the next entry, and stores the offset the read began from through
 .Fa basep .
-The system call holds the file's offset lock around the call, checks
-.Dv FREAD ,
-and refuses
+The system call refuses a descriptor without a vnode with
+.Er EINVAL
+.Pq Fn getvnode_fp ,
+then
 .Dv O_PATH
-descriptors with
+descriptors and files not opened for reading with
 .Er EBADF ,
-as it always did.
+as it always did, and holds the file's offset lock around the call.
 .Bl -tag -width "devfs nodes"
 .It vnode files
 .Fn vn_readdir
@@ -436,11 +526,10 @@ dispatched on the input file's table.
 carries the requested length in and the copied length out; the offsets
 are updated whatever the result.
 The system call validates the flags, clamps the length, takes both files'
-offset locks, checks the open modes, returns 0 for a zero length and
-refuses negative offsets; then the input descriptor's table answers, and a
-type without the operation gets the default's
-.Er EINVAL ,
-which is what descriptors without a vnode received.
+offset locks, refuses a file without a vnode with
+.Er EINVAL
+as it always did, checks the open modes, returns 0 for a zero length and
+refuses negative offsets; then the input descriptor's table answers.
 .Bl -tag -width "vnode files"
 .It vnode files
 .Fn vn_copy_range
@@ -474,7 +563,9 @@ for the
 .Vt acl_type_t
 .Fa type .
 The system calls record the descriptor audit argument and refuse set and
-delete on an
+delete on a descriptor without a vnode with
+.Er EINVAL
+and then on an
 .Dv O_PATH
 descriptor with
 .Er EBADF ,
@@ -640,14 +731,23 @@ a table without
 with
 .Er EOPNOTSUPP ,
 both before looking at their arguments, as the type tests did.
-When the table answers
-.Er EOPNOTSUPP
-to a request \(em an anonymous pipe through the FIFO table, or a
-filesystem without open-file-description locks \(em the
+For an
+.Dv F_OFD
+request
+.Xr fcntl 2
+also checks, before the request is looked at any further, that the
+owner field is zero
+.Pq Er EINVAL
+and that the vnode's filesystem declares
+.Dv VFCF_OFDLOCKS
+.Pq Er EOPNOTSUPP ,
+as it always did; a served file has no filesystem to ask and its table
+answers.
 .Dv FHASLOCK
-or
-.Dv FHASOFDLOCK
-flag set ahead of the request comes off again, since no lock can be held.
+is set ahead of an
+.Xr flock 2
+request and stays set whatever the table answers, as it always did; the
+unlock at close is harmless when no lock was taken.
 .Pp
 The close-time unlock carries the kernel-private flag
 .Dv F_CLOSEUNLCK
@@ -678,12 +778,7 @@ strips it before
 .Bl -tag -width "devfs nodes"
 .It vnode files
 .Fn vn_advlock
-checks, for
-.Dv F_OFD ,
-that the filesystem declares
-.Dv VFCF_OFDLOCKS
-.Pq Er EOPNOTSUPP otherwise
-and calls
+calls
 .Xr VOP_ADVLOCK 9
 inside the file context.
 Regular files, directories and devfs nodes use it.
@@ -702,9 +797,9 @@ descriptor that takes no locks;
 never reaches it, having refused a table without
 .Dv DFLAG_FLOCK
 first.
-An anonymous pipe reaches the FIFO table and answers
+An anonymous pipe shares the FIFO table and is refused by
 .Xr flock 2
-with its own
+itself, by its type, with
 .Er EOPNOTSUPP .
 Pseudo-terminal masters and linuxkpi files do not install the member: the
 type tests these system calls used to make refused them, and they stay
@@ -740,7 +835,7 @@ the
 .Fa arg2
 the
 .Dv DFLAG_*
-bit the table lacks, or 0 for an
+bit the table lacks, or 0 for a descriptor without a vnode or an
 .Dv O_PATH
 descriptor,
 .Fa arg3

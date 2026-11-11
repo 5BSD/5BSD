@@ -347,6 +347,15 @@ extern const struct fileops vnops;
 extern const struct fileops badfileops;
 extern const struct fileops path_fileops;
 extern const struct fileops socketops;
+
+/*
+ * An O_PATH descriptor, whichever table answers for it: path_fileops for a
+ * vnode, the descriptor queue's own for a served file.
+ */
+#define	FILE_IS_OPATH(fp)						\
+	((fp)->f_ops == &path_fileops ||				\
+	    ((fp)->f_type == DTYPE_DQ && ((fp)->f_flag & O_PATH) != 0))
+
 extern int maxfiles;		/* kernel limit on number of open files */
 extern int maxfilesperproc;	/* per process limit on number of open files */
 
@@ -626,8 +635,11 @@ fo_fsync(struct file *fp, int mode, struct thread *td)
 }
 
 /*
- * Set the times and flags in *vap (VNOVAL leaves a field alone).  Mode,
- * owner and size have their own operations and are refused here.
+ * Set the attributes named in *vap (VNOVAL leaves a field alone).  Size,
+ * mode and owner have their own operations and every body applies them
+ * through those (file_setattr_direct()); times and flags are the body's.
+ * futimes(2) and futimens(2) call it for every file; the other callers
+ * only for a file served through a descriptor queue.
  */
 static __inline int
 fo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,

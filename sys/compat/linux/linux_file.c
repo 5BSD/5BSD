@@ -506,9 +506,9 @@ linux_file_getattr(struct thread *td, struct linux_file_getattr_args *args)
 }
 
 /*
- * Linux fd_empty() refuses O_PATH descriptors (EBADF) and filesystems
- * without fileattr operations report EOPNOTSUPP: a descriptor with no
- * settable attributes is the latter.
+ * Linux fd_empty() rejects O_PATH descriptors here (EBADF), and filesystems
+ * without fileattr operations report EOPNOTSUPP: a descriptor with no vnode
+ * is the latter.
  */
 static int
 linux_fileattr_fget(struct thread *td, int fd, const cap_rights_t *rightsp,
@@ -520,13 +520,10 @@ linux_fileattr_fget(struct thread *td, int fd, const cap_rights_t *rightsp,
 	error = fget(td, fd, rightsp, &fp);
 	if (error != 0)
 		return (error);
-	if ((fp->f_flag & O_PATH) != 0)
-		error = EBADF;
-	else if (fp->f_ops->fo_setattr == NULL)
-		error = EOPNOTSUPP;
+	error = getvnode_fp(fp, false);
 	if (error != 0) {
 		fdrop(fp, td);
-		return (error);
+		return (error == EINVAL ? EOPNOTSUPP : error);
 	}
 	*fpp = fp;
 	return (0);
@@ -537,6 +534,7 @@ linux_fileattr_fsetflags(struct thread *td, int fd, u_long flags)
 {
 	struct vattr vattr;
 	struct file *fp;
+	struct vnode *vp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
@@ -544,18 +542,35 @@ linux_fileattr_fsetflags(struct thread *td, int fd, u_long flags)
 	error = linux_fileattr_fget(td, fd, &cap_fchflags_rights, &fp);
 	if (error != 0)
 		return (error);
-	VATTR_NULL(&vattr);
-	vattr.va_flags = flags;
+	if (fp->f_type == DTYPE_DQ) {
+		/* A served file answers through its table, as fchflags(2). */
+		VATTR_NULL(&vattr);
+		vattr.va_flags = flags;
 #ifdef MAC
-	/* The boundary check fchflags(2) makes (D94). */
-	error = mac_file_check_setattr(td->td_ucred, fp, fd, &vattr);
-	if (error != 0) {
-		fdrop(fp, td);
-		return (error);
+		error = mac_file_check_setattr(td->td_ucred, fp, fd, &vattr);
+		if (error != 0)
+			goto out;
+#endif
+		error = fo_setattr(fp, &vattr, td->td_ucred, td);
+		goto out;
+	}
+	vp = fp->f_vnode;
+#ifdef AUDIT
+	if (AUDITING_TD(td)) {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
 	}
 #endif
-	/* The descriptor's own answer, as the FS_IOC_SETFLAGS ioctl gives. */
-	error = fo_setattr(fp, &vattr, td->td_ucred, td);
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setflags(td->td_ucred, vp, flags);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
+#endif
+	error = setfflags(td, vp, flags);
+out:
 	fdrop(fp, td);
 	return (error);
 }
@@ -638,7 +653,7 @@ linux_fchroot(struct thread *td, struct linux_fchroot_args *args)
 	if (error != 0)
 		return (error == EINVAL ? ENOTDIR : error);
 	/* Linux fd_empty() rejects O_PATH descriptors. */
-	if ((fp->f_flag & O_PATH) != 0) {
+	if (fp->f_ops == &path_fileops) {
 		fdrop(fp, td);
 		return (EBADF);
 	}
@@ -774,27 +789,48 @@ linux_lseek(struct thread *td, struct linux_lseek_args *args)
  * trash user stack.
  */
 
+/*
+ * The vnode type that the type tests in this file switch on.  A served
+ * (DTYPE_DQ) file has no vnode and reports its type through its table;
+ * any other file that is not DTYPE_VNODE has none (VNON).
+ */
+static int
+linux_file_vtype(struct thread *td, struct file *fp,
+    __enum_uint8(vtype) *typep)
+{
+	struct stat sb;
+	int error;
+
+	*typep = VNON;
+	if (fp->f_type == DTYPE_VNODE) {
+		*typep = fp->f_vnode->v_type;
+	} else if (fp->f_type == DTYPE_DQ) {
+		error = fo_stat(fp, &sb, td->td_ucred);
+		if (error != 0)
+			return (error);
+		*typep = IFTOVT(sb.st_mode);
+	}
+	return (0);
+}
+
 static int
 linux_getdents_error(struct thread *td, int fd, int err)
 {
-	struct stat sb;
 	struct file *fp;
+	__enum_uint8(vtype) type;
 	int error;
 
 	/* Linux return ENOTDIR in case when fd is not a directory. */
 	error = fget(td, fd, &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
-	if ((fp->f_flag & O_PATH) != 0)
-		error = EBADF;
-	else if (fp->f_ops->fo_readdir == NULL)
-		error = EINVAL;	/* no directory entries, as getvnode() said */
-	else
-		error = fo_stat(fp, &sb, td->td_ucred);
-	if (error == 0 && !S_ISDIR(sb.st_mode))
-		error = ENOTDIR;
+	error = getvnode_fp(fp, false);
+	if (error == 0)
+		error = linux_file_vtype(td, fp, &type);
 	fdrop(fp, td);
-	return (error != 0 ? error : err);
+	if (error != 0)
+		return (error);
+	return (type != VDIR ? ENOTDIR : err);
 }
 
 struct l_dirent {
@@ -1402,9 +1438,9 @@ linux_fdatasync(struct thread *td, struct linux_fdatasync_args *uap)
 int
 linux_sync_file_range(struct thread *td, struct linux_sync_file_range_args *uap)
 {
-	struct stat sb;
 	struct file *fp;
 	off_t nbytes, offset;
+	__enum_uint8(vtype) type;
 	int error;
 
 	nbytes = uap->nbytes;
@@ -1421,15 +1457,10 @@ linux_sync_file_range(struct thread *td, struct linux_sync_file_range_args *uap)
 		error = EINVAL;
 		goto out;
 	}
-	/*
-	 * Linux returns ESPIPE for anything that is not a file, directory,
-	 * block device or symlink; ask the descriptor what it is.
-	 */
-	error = fo_stat(fp, &sb, td->td_ucred);
+	error = linux_file_vtype(td, fp, &type);
 	if (error != 0)
 		goto out;
-	if (!S_ISREG(sb.st_mode) && !S_ISBLK(sb.st_mode) &&
-	    !S_ISDIR(sb.st_mode) && !S_ISLNK(sb.st_mode)) {
+	if (type != VREG && type != VBLK && type != VDIR && type != VLNK) {
 		error = ESPIPE;
 		goto out;
 	}
@@ -1445,8 +1476,8 @@ int
 linux_pread(struct thread *td, struct linux_pread_args *uap)
 {
 	struct file *fp;
-	struct stat sb;
 	off_t offset;
+	__enum_uint8(vtype) type;
 	int error;
 
 	offset = uap->offset;
@@ -1457,7 +1488,7 @@ linux_pread(struct thread *td, struct linux_pread_args *uap)
 		error = fget(td, uap->fd, &cap_pread_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (fo_stat(fp, &sb, td->td_ucred) == 0 && S_ISDIR(sb.st_mode))
+		if (linux_file_vtype(td, fp, &type) == 0 && type == VDIR)
 			error = EISDIR;
 		fdrop(fp, td);
 	}
@@ -2337,16 +2368,20 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 
 	case LINUX_F_GET_RW_HINT:
 		/*
-		 * The hint lives with the file; a descriptor whose fileops
-		 * have no fcntl commands has none (EINVAL, as Linux says).
+		 * The hint lives with the vnode; a served file's table
+		 * answers for it.  No other descriptor has one.
 		 */
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
+		if (fp->f_type != DTYPE_VNODE && fp->f_type != DTYPE_DQ) {
+			fdrop(fp, td);
+			return (EINVAL);
+		}
 		error = fo_fcntl(fp, F_GET_RW_HINT, 0, td);
 		fdrop(fp, td);
 		if (error != 0)
-			return (error == EBADF ? EINVAL : error);
+			return (error);
 		hint = td->td_retval[0];
 		td->td_retval[0] = 0;
 		return (copyout(&hint, PTRIN(args->arg), sizeof(hint)));
@@ -2354,17 +2389,30 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (fp->f_ops->fo_fcntl == NULL) {
+		if (fp->f_type != DTYPE_VNODE && fp->f_type != DTYPE_DQ) {
 			fdrop(fp, td);
 			return (EINVAL);
 		}
-		error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
+		/*
+		 * The caller must own the vnode, which is checked before
+		 * the hint is read; vn_fcntl() checks again when storing it.
+		 */
+		if (fp->f_type == DTYPE_VNODE) {
+			error = vn_lock(fp->f_vnode, LK_SHARED | LK_RETRY);
+			if (error == 0) {
+				error = VOP_ACCESS(fp->f_vnode, VADMIN,
+				    td->td_ucred, td);
+				VOP_UNLOCK(fp->f_vnode);
+			}
+		}
+		if (error == 0)
+			error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
 		if (error == 0 && hint > LINUX_RWH_WRITE_LIFE_EXTREME)
 			error = EINVAL;
 		if (error == 0)
 			error = fo_fcntl(fp, F_SET_RW_HINT, (intptr_t)hint, td);
 		fdrop(fp, td);
-		return (error == EBADF ? EINVAL : error);
+		return (error);
 
 	case LINUX_F_CREATED_QUERY:
 		error = fget(td, args->fd, &cap_no_rights, &fp);
@@ -2561,18 +2609,17 @@ int
 linux_kern_fadvise(struct thread *td, int fd, off_t offset, off_t len,
     int linux_advice)
 {
-	struct stat sb;
 	struct file *fp;
+	__enum_uint8(vtype) type;
 	int advice, error;
 
 	error = fget(td, fd, &cap_posix_fadvise_rights, &fp);
 	if (error != 0)
 		return (error);
-	/* Pipes and FIFOs are ESPIPE; every other non-file is a no-op. */
-	error = fo_stat(fp, &sb, td->td_ucred);
+	error = linux_file_vtype(td, fp, &type);
 	if (error != 0)
 		goto out;
-	if (S_ISFIFO(sb.st_mode)) {
+	if (fp->f_type == DTYPE_PIPE || type == VFIFO) {
 		error = ESPIPE;
 		goto out;
 	}
@@ -2586,7 +2633,7 @@ linux_kern_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 		goto out;
 	}
 	AUDIT_ARG_VALUE(advice);
-	if (!S_ISREG(sb.st_mode)) {
+	if (type != VREG) {
 		error = 0;
 		goto out;
 	}
@@ -2736,23 +2783,31 @@ linux_dup3(struct thread *td, struct linux_dup3_args *args)
 static int
 linux_fallocate_check(struct file *fp)
 {
-	struct stat sb;
+	__enum_uint8(vtype) type;
 	int error;
 
-	/*
-	 * The descriptor's own stat answers for its type: a FIFO or pipe is
-	 * ESPIPE, a directory EISDIR, anything but a regular file (shm
-	 * objects report one) ENODEV.
-	 */
-	error = fo_stat(fp, &sb, curthread->td_ucred);
+	error = linux_file_vtype(curthread, fp, &type);
 	if (error != 0)
 		return (error);
-	if (S_ISFIFO(sb.st_mode))
+	switch (fp->f_type) {
+	case DTYPE_VNODE:
+	case DTYPE_DQ:
+		if (type == VFIFO)
+			error = ESPIPE;
+		else if (type == VDIR)
+			error = EISDIR;
+		else if (type != VREG)
+			error = ENODEV;
+		break;
+	case DTYPE_SHM:
+		break;
+	case DTYPE_PIPE:
 		error = ESPIPE;
-	else if (S_ISDIR(sb.st_mode))
-		error = EISDIR;
-	else if (!S_ISREG(sb.st_mode))
+		break;
+	default:
 		error = ENODEV;
+		break;
+	}
 	if (error == 0 && (fp->f_flag & FWRITE) == 0)
 		error = EBADF;
 	return (error);
@@ -2867,16 +2922,16 @@ linux_copy_file_range(struct thread *td, struct linux_copy_file_range_args
 int
 linux_readahead(struct thread *td, struct linux_readahead_args *args)
 {
-	struct stat sb;
 	struct file *fp;
 	off_t len;
+	__enum_uint8(vtype) type;
 	int error;
 
 	error = fget_read(td, args->fd, &cap_no_rights, &fp);
 	if (error != 0)
 		return (EBADF);
-	error = fo_stat(fp, &sb, td->td_ucred);
-	if (error == 0 && !S_ISREG(sb.st_mode))
+	error = linux_file_vtype(td, fp, &type);
+	if (error == 0 && type != VREG)
 		error = EINVAL;
 	fdrop(fp, td);
 	if (error != 0)

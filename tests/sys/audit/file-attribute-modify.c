@@ -23,17 +23,21 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/extattr.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "utils.h"
@@ -238,6 +242,61 @@ ATF_TC_BODY(chmod_failure, tc)
 
 ATF_TC_CLEANUP(chmod_failure, tc)
 {
+	cleanup();
+}
+
+
+/*
+ * chmod(2) of /dev/fd/N changes the file the descriptor is open on, and
+ * the record carries that file's attributes, not the /dev/fd/N node's
+ * (D235).  The pre-project kernel recorded the node's.
+ */
+ATF_TC_WITH_CLEANUP(chmod_fdescfs_success);
+ATF_TC_HEAD(chmod_fdescfs_success, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Tests the audit of a successful "
+					"chmod(2) call through fdescfs");
+}
+
+ATF_TC_BODY(chmod_fdescfs_success, tc)
+{
+	struct iovec iov[4];
+	struct stat sb;
+	char fdpath[32], regex[160];
+
+	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
+		atf_tc_skip("pre1c: the record carries the fdescfs node's "
+		    "attributes");
+	ATF_REQUIRE((filedesc = open(path, O_CREAT | O_RDWR, mode)) != -1);
+	ATF_REQUIRE_EQ(0, fstat(filedesc, &sb));
+	ATF_REQUIRE_EQ(0, mkdir("fdesc", 0755));
+	iov[0].iov_base = __DECONST(char *, "fstype");
+	iov[0].iov_len = sizeof("fstype");
+	iov[1].iov_base = __DECONST(char *, "fdescfs");
+	iov[1].iov_len = sizeof("fdescfs");
+	iov[2].iov_base = __DECONST(char *, "fspath");
+	iov[2].iov_len = sizeof("fspath");
+	iov[3].iov_base = __DECONST(char *, "fdesc");
+	iov[3].iov_len = sizeof("fdesc");
+	ATF_REQUIRE_MSG(nmount(iov, nitems(iov), 0) == 0,
+	    "mount fdescfs: %s", strerror(errno));
+	snprintf(fdpath, sizeof(fdpath), "fdesc/%d", filedesc);
+	/* attribute,mode,uid,gid,fsid,nodeid,dev */
+	snprintf(regex, sizeof(regex), "chmod.*%s.*"
+	    "attribute,[0-7]+,[^,]+,[^,]+,[0-9]+,%ju,.*return,success",
+	    fdpath, (uintmax_t)sb.st_ino);
+
+	FILE *pipefd = setup(fds, auclass);
+	ATF_REQUIRE_EQ(0, chmod(fdpath, 0640));
+	check_audit(fds, regex, pipefd);
+	ATF_REQUIRE_EQ(0, fstat(filedesc, &sb));
+	ATF_CHECK_EQ(0640, sb.st_mode & ALLPERMS);
+	close(filedesc);
+}
+
+ATF_TC_CLEANUP(chmod_fdescfs_success, tc)
+{
+	(void)unmount("fdesc", MNT_FORCE);
 	cleanup();
 }
 
@@ -1341,6 +1400,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, chmod_success);
 	ATF_TP_ADD_TC(tp, chmod_failure);
+	ATF_TP_ADD_TC(tp, chmod_fdescfs_success);
 	ATF_TP_ADD_TC(tp, fchmod_success);
 	ATF_TP_ADD_TC(tp, fchmod_failure);
 	ATF_TP_ADD_TC(tp, lchmod_success);
