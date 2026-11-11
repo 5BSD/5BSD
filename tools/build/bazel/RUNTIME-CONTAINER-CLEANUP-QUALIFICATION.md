@@ -406,3 +406,15 @@ The full 2 GB VM R4 is running; no upgraded-operation, rollback, removal or
 performance acceptance is inferred before its terminal evidence is reviewed.
 This remains BIOS qualification, not Secure Boot. No production publication or
 host installation/upgrade/reboot occurred.
+
+## Corrected upgraded operations pass; rollback still running
+
+VM R4 passes new-kernel console, SSH/su positive and negative cases, all 13
+manifest-required services and all six selected operations, including Notify,
+memory-pressure observation and Device visibility denial. This is actual
+production-provider execution on the corrected candidate, not process readiness
+alone or fixture acceptance. The Notify receive-restriction correction now has
+real upgraded-boot evidence. Rollback, post-rollback persistence, unused-BE
+removal and final shutdown remain pending at this update. Other providers'
+operations, SYSTEM Device access and all-method coverage remain outside the six
+selected ordinary operations.

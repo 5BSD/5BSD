@@ -69,3 +69,8 @@ bsd_script_output(name = "resolve_ledger_check", script = "//sys/tools:dq_resolv
 load(":ledger_test.bzl", "dq_ledger_test")
 dq_ledger_test(name = "resolve_ledger_test", check = ":resolve_ledger_check",
     visibility = ["//visibility:public"])
+
+# Public qualification metadata; source bytes remain declared action inputs.
+filegroup(name = "resolve_ledger_inventory",
+    srcs = ["@kernel_audit_src//:inventory.json", "@kernel_audit_src//:source.list"],
+    visibility = ["//visibility:public"])

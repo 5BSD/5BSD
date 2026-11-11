@@ -28,13 +28,16 @@ are not reached. The original failed evidence is retained. Notify's two descript
 processes now omit the incompatible NOFDRECV restriction, retaining the other
 protections. Focused native qualification passes 68 cases; R10 contains the fix.
 The complete signed private R5 repository passes verification and wrong-key
-refusal. A fresh 2 GB VM R4 is running; upgraded operations and later phases
-remain unproven until its terminal result is reviewed.
+refusal. Fresh 2 GB VM R4 passes the corrected upgraded boot, authentication,
+all 13 required boot services and all six selected operations. Rollback is now
+running; persistence/removal and the terminal result remain unproven.
 The probes do not cover all providers or authorized SYSTEM Device access.
 The DQ resolution-ledger action now has declared inputs and is required before
 native kernel linking; focused native R3 passes the checker and actual AMD64 link.
-Source-addition/content/deletion invalidation, no-op reuse and broader sandbox
-isolation remain open under gate 3. See DQ-SOURCE-AUDIT-QUALIFICATION.md. Maintained frontend target interfaces cover these BUILD
+Actual source-addition/content/deletion invalidation and no-op reuse now pass
+(R4-R8); independent captured-inventory and Make-checker comparisons pass too.
+Broader sandbox isolation, sealed inputs and native bootstrap remain open under
+gate 3. See DQ-SOURCE-AUDIT-QUALIFICATION.md. Maintained frontend target interfaces cover these BUILD
 changes; production remains Make.
 
 

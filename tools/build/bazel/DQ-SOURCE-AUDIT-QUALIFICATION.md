@@ -37,8 +37,23 @@ All paths below use /usr/obj/usr/src.
   methods covering nested BUILD boundaries, content-independent selection,
   addition/deletion, new directories, unsupported source/directory links,
   special files, unsafe names and missing roots.
-- No-op reuse and actual source addition/content-corruption/deletion invalidation
-  checks remain pending. R3 is not the full-system R10 candidate and does not
+- bazel-dq-invalidation-r1-20261111/receipt.json passes five actual native
+  frontend runs (R4-R8). R4 covers the added manifest-readability guard. R5
+  executes neither the ledger action nor the kernel linker on unchanged inputs.
+  Adding a uniquely named neutral C source reruns the checker; changing only its
+  bytes to contain a stray EDQRESOLVED use makes R7 fail the required build action.
+  Its raw diff names that file and STRAY. R7 produces no passing receipt despite
+  an existing cached kernel output. Deleting the trial source restores a passing
+  R8; the driver removes only its own verified bytes in finally.
+- R9 passes both selected native targets and exposes hash-bound inventory/list
+  metadata through //sys/dev/dq:resolve_ledger_inventory.
+- bazel-dq-audit-review-r1-20261111/receipt.json independently matches the actual
+  captured filenames against BSD find: 14,621 C/header files and 3,164 non-root
+  directories. Original Make and declared-list checker invocations both pass.
+  A missing manifest fails explicitly with status 2. All source bytes and bound
+  script/ledger/tool hashes remain identical before and after those comparisons.
+  These are observed stable inputs, not a sealed source checkout.
+- These focused runs are not the full-system R10 candidate and do not
   retroactively qualify that earlier build with the new mandatory audit.
 - Processwrapper-sandbox execution does not prove host read/network isolation.
   Native bootstrap, sealed sources, reproducibility, controlled resources, full
