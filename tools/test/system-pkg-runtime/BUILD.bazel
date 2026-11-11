@@ -22,3 +22,17 @@ bsd_python_test(name = "upgrade_policy_test", src = "upgrade-policy-test.py",
 
 bsd_python_test(name = "startup_diagnostics_test", src = "startup-diagnostics-test.py",
     data = ["startup_diagnostics.py"], visibility = ["//visibility:public"])
+
+cc_binary(name = "service_inventory", srcs = ["service_inventory.c"],
+    deps = ["//lib/libcapbundle:capbundle"], copts = ["-fPIE"],
+    linkopts = ["-pie"], visibility = ["//visibility:public"])
+bsd_python_test(name = "service_health_test", src = "service-health-test.py",
+    data = ["service_health.py", "//tools/build/bazel:qualification_artifacts.py"], visibility = ["//visibility:public"])
+bsd_python_test(name = "service_inventory_test", src = "service-inventory-test.py",
+    data = [":service_inventory", "service_health.py", "//tools/build/bazel:qualification_artifacts.py"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libthr.so.3",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libm.so.5"],
+    visibility = ["//visibility:public"])

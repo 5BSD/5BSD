@@ -74,3 +74,23 @@ compiler, resources and SDK libraries under the standard object root. It does no
 install the host or establish native Bazel bootstrap. Once it succeeds, regenerate
 the SDK with the maintained planner/materializer, then rerun native tests and the
 service-aware upgrade. The toolchain build is still in progress at this update.
+
+## Manifest-derived readiness coverage
+
+The package-runtime runner now defines a format-5 plan with explicit installed
+bundle roots, a captured native inventory helper and a service deadline. The
+helper calls the real libcapbundle parser; its inventory determines all required
+boot labels. Baseline, upgraded boot and rollback require those labels running
+with PIDs and no pending cleanup. Manager counts, duplicate rows and terminated
+output detect incomplete status responses. New boot declarations require no
+runner list change. Post-boot non-config package checksums run as well.
+
+Host `service-health-test.py` passes six methods, including strict policy input checks, newly added boot
+units, stopped/missing services, duplicates and truncated manager output.
+`bazel-service-inventory-host-r1-20261111` builds the actual C helper against host
+libraries and passes three fixture methods using real boot/on-demand manifests
+and malformed/missing bundle roots. These are host results; native Bazel tests
+and actual format-5 VM execution remain pending the SDK rebuild. The frontend
+uses its existing format-5 target/test interface, with no new C frontend option.
+This is readiness and a useful manager RPC, not per-provider operation coverage
+or on-demand activation qualification. Those remain part of gate 1.

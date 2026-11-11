@@ -7990,3 +7990,14 @@ format-5 target/test inputs as
 //usr.sbin/switchboard/tests:run_container_cleanup_test_failure_and_retry, and
 //usr.sbin/switchboard/tests:run_container_cleanup_test_invalid_names.
 Passing host regressions does not establish a successful upgraded-system boot.
+
+.Pp
+The package-runtime VM driver's format-5 plan adds an explicit service_policy.
+A captured native service_inventory helper reads the installed bundle manifests
+through libcapbundle; the runner requires every boot unit to be running after
+baseline startup, upgrade and rollback.
+Roots, control executable and deadline are inputs.
+The existing native target/test interface accepts
+//tools/test/system-pkg-runtime:service_health_test and
+//tools/test/system-pkg-runtime:service_inventory_test.
+This readiness check is not individual provider operation qualification.
