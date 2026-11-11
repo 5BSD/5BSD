@@ -444,12 +444,15 @@ SDT_PROBE_DECLARE(vfs, , , chflags);
 /*
  * Set attributes on any descriptor that carries a vnode: the whole vattr.
  * Size, mode and owner go through the descriptor's own direct operations
- * (file_setattr_direct: fo_truncate, fo_chmod, fo_chown, so the table's
- * answers stand, vn_chmod's MAC check and audit record included); times
- * and flags through VOP_SETATTR with the checks the system calls used to
- * make before setfflags()/setutimes(): the vnode audit record, the device
- * flag privilege, the MAC checks, and setutimes()'s birth-time adjustment.
- * fdescfs sets attributes on /dev/fd/N with one call.
+ * (file_setattr_direct(): the vnode's MAC check, then fo_truncate, fo_chmod
+ * and fo_chown, so the table's answers stand, vn_chmod()'s audit record
+ * included); times and flags through VOP_SETATTR with the checks the system
+ * calls make before setfflags()/setutimes(): the vnode audit record, the
+ * device flag privilege, the MAC checks, and setutimes()'s birth-time
+ * adjustment.  futimes(2) and futimens(2) arrive here for every vnode file.
+ * The other callers pass a vnode file only on behalf of a process attached
+ * to a descriptor queue; fchflags(2) and fdescfs do not come this way
+ * (setfflags(), vn_setattr_checked()).
  */
 int
 vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
@@ -559,6 +562,89 @@ vn_openfile_setattr(struct file *fp, struct vattr *vap,
 	vn_file_context_enter(&ctx, fp, NULL, 0);
 	error = vn_setattr(fp, vap, active_cred, td);
 	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/*
+ * Set the whole vattr on a file's vnode with one VOP_SETATTR, after the
+ * checks the system call for each attribute makes: the device-flags
+ * privilege and the MAC checks for size (as truncate), mode, owner, flags
+ * and times, with the vnode audit record.  Nothing is changed unless every
+ * check passes.  fdescfs sets attributes on /dev/fd/N this way.
+ */
+int
+vn_setattr_checked(struct file *fp, struct vattr *vap,
+    struct ucred *active_cred)
+{
+	struct mount *mp;
+	struct vnode *vp;
+	void *rl_cookie;
+	int error;
+
+	vp = fp->f_vnode;
+	/*
+	 * Prevent non-root users from setting flags on devices, as
+	 * chflags(2) does.
+	 */
+	if (vap->va_flags != VNOVAL && VN_ISDEV(vp)) {
+		error = priv_check_cred(active_cred, PRIV_VFS_CHFLAGS_DEV);
+		if (error != 0)
+			return (error);
+	}
+	/* Lock the whole range for a truncation, as truncate(2) does. */
+	rl_cookie = NULL;
+	if (vap->va_size != VNOVAL)
+		rl_cookie = vn_rangelock_wlock(vp, 0, OFF_MAX);
+	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
+	if (error != 0)
+		goto unrange;
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	AUDIT_ARG_VNODE1(vp);
+#ifdef MAC
+	if (vap->va_size != VNOVAL) {
+		error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
+		if (error == 0)
+			error = mac_vnode_check_truncate(active_cred, vp);
+	}
+	if (error == 0 && vap->va_mode != (mode_t)VNOVAL)
+		error = mac_vnode_check_setmode(active_cred, vp, vap->va_mode);
+	if (error == 0 && (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL))
+		error = mac_vnode_check_setowner(active_cred, vp, vap->va_uid,
+		    vap->va_gid);
+	if (error == 0 && vap->va_flags != VNOVAL)
+		error = mac_vnode_check_setflags(active_cred, vp,
+		    vap->va_flags);
+	if (error == 0 && (vap->va_atime.tv_sec != VNOVAL ||
+	    vap->va_mtime.tv_sec != VNOVAL))
+		error = mac_vnode_check_setutimes(active_cred, vp,
+		    vap->va_atime, vap->va_mtime);
+	if (error != 0)
+		goto unlock;
+#endif
+	error = VOP_SETATTR(vp, vap, active_cred);
+#ifdef MAC
+	if (error == 0) {
+		if (vap->va_size != VNOVAL)
+			mac_vnode_notify_truncate(active_cred, vp);
+		if (vap->va_mode != (mode_t)VNOVAL)
+			mac_vnode_notify_setmode(active_cred, vp, vap->va_mode);
+		if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL)
+			mac_vnode_notify_setowner(active_cred, vp, vap->va_uid,
+			    vap->va_gid);
+		if (vap->va_flags != VNOVAL)
+			mac_vnode_notify_setflags(active_cred, vp,
+			    vap->va_flags);
+		if (vap->va_atime.tv_sec != VNOVAL ||
+		    vap->va_mtime.tv_sec != VNOVAL)
+			mac_vnode_notify_setutimes(active_cred, vp);
+	}
+unlock:
+#endif
+	VOP_UNLOCK(vp);
+	vn_finished_write(mp);
+unrange:
+	if (rl_cookie != NULL)
+		vn_rangelock_unlock(vp, rl_cookie);
 	return (error);
 }
 
