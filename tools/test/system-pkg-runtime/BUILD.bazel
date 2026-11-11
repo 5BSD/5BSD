@@ -24,7 +24,8 @@ bsd_python_test(name = "startup_diagnostics_test", src = "startup-diagnostics-te
     data = ["startup_diagnostics.py"], visibility = ["//visibility:public"])
 
 cc_binary(name = "service_inventory", srcs = ["service_inventory.c"],
-    deps = ["//lib/libcapbundle:capbundle"], copts = ["-fPIE"],
+    deps = ["//lib/libcapbundle:capbundle"],
+    dynamic_deps = ["//lib/libcapbundle:capbundle_shared"], copts = ["-fPIE"],
     linkopts = ["-pie"], visibility = ["//visibility:public"])
 bsd_python_test(name = "service_health_test", src = "service-health-test.py",
     data = ["service_health.py", "//tools/build/bazel:qualification_artifacts.py"], visibility = ["//visibility:public"])

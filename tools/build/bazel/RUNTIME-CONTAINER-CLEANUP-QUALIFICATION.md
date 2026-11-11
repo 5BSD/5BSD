@@ -118,3 +118,20 @@ as libdevicecmp/tests/devicecmp_api_test.c and the daemon-runtime suites describ
 in their README. These must not substitute for useful operations against the
 installed production providers. Host inventory is diagnostic discovery, not VM
 service acceptance; the operation coverage portion of gate 1 remains open.
+
+## Native source build and regression acceptance
+
+`bazel-run-cleanup-native-r3-20261111/receipt.json` passes the actual traced
+Switchboard build, captured native inventory helper and all 11 selected test
+targets. This includes the three cleanup cases, fresh-only creation, real native
+parser fixtures and strict readiness/policy validation. Ten targets were reused
+from the preceding run; the previously unexecuted inventory fixture now runs and
+passes. This is not full-world or VM upgrade acceptance.
+
+The retained R2 native attempt correctly fails while linking the new inventory
+helper: its initial PIE declaration selected a non-PIC static crypto archive.
+The helper now declares capbundle_shared through native cc_binary.dynamic_deps,
+which supplies the shared-library dependency closure. PIE and linker checking
+remain enabled; no compiler warning/error or test was disabled. Fresh SDK
+materialization and all strict origin/runtime verification succeed. NEXT: build
+the complete current-source candidate and run the service-aware VM upgrade.
