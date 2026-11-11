@@ -307,8 +307,14 @@ Select one operation per invocation:
 
 * `power`: query supported ACPI states through the real provider. Zero supported
   sleep states is valid on virtual hardware; no transition is requested.
-* `device`: enumerate and validate one owner-scoped device page. An empty list
-  is valid default-deny policy. This does not open devices or qualify all pages.
+* `device`: in an authorized SYSTEM lookup context, enumerate and validate one
+  owner-scoped device page. An empty list is valid default-deny policy. This does
+  not open devices or qualify all pages. The shipped Device manifest is
+  SYSTEM-only: a normal login session must not be made eligible for this probe.
+* `device-denied`: in the ordinary login session, first complete a permitted
+  Time operation, require Device lookup/enumeration to be hidden or denied, then
+  repeat the permitted Time operation. An absent lookup transport or arbitrary RPC failure is not accepted as a
+  policy denial. This is visibility qualification, not a successful Device RPC.
 
 The client has a 20-second process deadline and notification receive has a
 five-second deadline. Any open, RPC, content or cleanup failure exits nonzero.
@@ -318,7 +324,7 @@ Shared dependencies are declared through native cc_binary.dynamic_deps.
 
 At this update, host syntax checking with -Wall -Wextra -Werror passes. Native
 linking and VM operations remain unqualified, and the runner does not yet invoke
-this helper. The six probes do not cover all providers. BSDMemory is a
+this helper. The seven operation modes do not cover all providers. BSDMemory is a
 memory-pressure sampler/publisher, not a memory-allocation factory; its manifest
 intentionally has no IPC endpoint. The earlier factory wording was incorrect.
 The memory probe exercises the actual Sysctl-to-Memory-to-Notify path, but does

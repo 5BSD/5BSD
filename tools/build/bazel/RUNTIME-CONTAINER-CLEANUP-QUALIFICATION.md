@@ -277,3 +277,14 @@ Host strict syntax passes in
 `bazel-service-operations-host-syntax-r3-20261111/receipt.json`. Native linking,
 runner integration and actual VM execution remain open; no host providers were
 contacted. The ongoing full R8 graph still reports the same three header gaps.
+
+## Device probe context review
+
+Source review of BSDDevice/capbundle/device.ucl confirms visible=[system]; Power
+explicitly permits user-domain lookup and returns zero supported states on absent
+ACPI. The positive Device enumeration probe requires legitimate SYSTEM context.
+A separate device-denied mode first completes Time lookup/RPC in the ordinary
+session, then requires Device to be hidden/denied. Missing transport and arbitrary
+RPC errors do not count. No visibility, attributes, signing or authority policy
+is changed to enable a test. Native/VM execution remains pending for both modes;
+seven client modes are not seven qualified provider operations.

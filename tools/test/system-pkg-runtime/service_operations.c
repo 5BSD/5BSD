@@ -208,11 +208,31 @@ device_operation(void)
 	 * one real page, not arbitrary-device opening or all pagination. */
 }
 
+static void
+device_denied_operation(void)
+{
+	struct devicecmp_list_entry entries[DEVICECMP_LIST_MAX];
+	uint32_t count, next;
+	int error;
+
+	/* Prove this ordinary session can perform a real permitted lookup/RPC,
+	 * rather than treating an absent ambient channel as access control. */
+	clock_operation();
+	errno = 0;
+	if (devicecmp_list(NULL, 0, entries, DEVICECMP_LIST_MAX, &count,
+	    &next) != -1)
+		errx(1, "ordinary lookup reached SYSTEM-only Device provider");
+	error = errno;
+	if (error != ENOENT && error != EACCES && error != EPERM)
+		errc(1, error, "unexpected Device lookup refusal");
+	clock_operation();
+}
+
 int
 main(int argc, char **argv)
 {
 	if (argc != 2)
-		errx(64, "usage: service_operations time|sysctl|notify|memory|power|device");
+		errx(64, "usage: service_operations time|sysctl|notify|memory|power|device|device-denied");
 	alarm(20);
 	if (strcmp(argv[1], "time") == 0)
 		clock_operation();
@@ -226,6 +246,8 @@ main(int argc, char **argv)
 		power_operation();
 	else if (strcmp(argv[1], "device") == 0)
 		device_operation();
+	else if (strcmp(argv[1], "device-denied") == 0)
+		device_denied_operation();
 	else
 		errx(64, "unknown operation %s", argv[1]);
 	printf("{\"format\":1,\"operation\":\"%s\",\"status\":\"passed\"}\n", argv[1]);
