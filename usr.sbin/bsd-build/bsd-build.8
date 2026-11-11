@@ -7954,6 +7954,14 @@ format-5 targets/tests interface.  This is runtime fixture qualification, not BI
 or a production mutability policy.
 .Pp
 The complete-package VM driver accepts format 4 with an explicit upgrade_policy.
+Upgrade policy format 2 adds baseline_packages, an explicit captured old
+package-family selection with qualification, target and output fields.
+Baseline and rollback require that old inventory; the candidate requires the new
+signed repository inventory.
+New base package names are installed and obsolete names removed only inside the
+inactive disposable BE, followed by exact inventory and checksum checks.
+Format 1 qualifies identical name sets only.
+This is VM qualification, not a production update backend.
 It uses a complete captured package set and a signed private qualification
 repository; preparation reuses maintained pkg catalogue/archive verification and
 rejects the wrong public key.  Target ABI/OSVERSION and test keys are inputs.

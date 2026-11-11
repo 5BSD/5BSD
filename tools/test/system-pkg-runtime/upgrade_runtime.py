@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 
-from qualification_artifacts import digest
+from qualification_artifacts import digest, resolve
 
 
 def absolute(value):
@@ -29,12 +29,31 @@ def package_rows(data,names,version):
     return len(rows)
 
 
+def family_names(document, version, count):
+    """Validate the explicit captured baseline family, not the next generation."""
+    if (not isinstance(document, dict) or type(document.get('format')) is not int or
+            document['format'] != 1 or document.get('version') != version or
+            not isinstance(document.get('prefix'), str) or
+            not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+-]*', document['prefix']) or
+            not isinstance(document.get('packages'), dict) or
+            type(count) is not int or count <= 0):
+        raise ValueError('versioned baseline package family required')
+    packages = document['packages']
+    if (len(packages) != count or
+            any(not isinstance(name, str) or
+                not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+-]*', name)
+                for name in packages) or len(packages) != len(set(packages))):
+        raise ValueError('complete distinct baseline package family required')
+    return {document['prefix'] + '-' + name for name in packages}
+
+
 def load(path,build_report):
     path=Path(path).resolve(strict=True);data=path.read_bytes();policy=json.loads(data)
     required={'format','repository','baseline_version','baseline_kernel_revision','kernel_revision',
               'kernel_sha256','candidate','guest_host_address','pkg_path','persistent_dataset','persistent_path','deadline_seconds','reclaim_deadline_seconds'}
-    if set(policy)!=required or type(policy['format']) is not int or policy['format']!=1:
-        raise ValueError('exact format-1 upgrade policy required')
+    if policy.get('format') == 2:required.add('baseline_packages')
+    if set(policy)!=required or type(policy['format']) is not int or policy['format'] not in (1,2):
+        raise ValueError('exact format-1/2 upgrade policy required')
     for field in ('baseline_version','baseline_kernel_revision','kernel_revision','candidate'):
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,62}',policy[field]):raise ValueError('invalid explicit upgrade identity')
     if not re.fullmatch(r'[a-f0-9]{64}',policy['kernel_sha256']):raise ValueError('explicit kernel digest required')
@@ -75,13 +94,22 @@ def load(path,build_report):
         if not name.endswith(suffix):raise ValueError('package identity/version differs')
         names.append(name[:-len(suffix)])
     if len(names)!=receipt['packages'] or len(names)!=len(set(names)):raise ValueError('distinct complete package set required')
+    baseline_names=set(names)
+    if policy['format']==2:
+        selection=policy['baseline_packages']
+        if not isinstance(selection,dict) or set(selection)!={'qualification','target','output'}:
+            raise ValueError('explicit captured baseline family selection required')
+        family,binding=resolve(Path(selection['qualification']),selection['target'],selection['output'])
+        baseline_names=family_names(json.loads(family.read_text()),policy['baseline_version'],build_report['packages'])
+        bindings[str(family)]=digest(family)
     return dict(policy=policy,policy_bytes=data,receipt=receipt,repository=repository,bindings=bindings,
-                names=set(names),baseline=old,parent=parent,baseline_name=baseline_name,mountpoint=mountpoint)
+                names=set(names),baseline_names=baseline_names,baseline=old,parent=parent,baseline_name=baseline_name,mountpoint=mountpoint)
 
 
 def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_probe=None):
     p=loaded['policy'];r=loaded['receipt'];q=shlex.quote
     old=loaded['baseline'];new=loaded['parent']+'/'+p['candidate'];names=loaded['names']
+    baseline_names=loaded['baseline_names']
     nonce=uuid.uuid4().hex;prefix='/root/.upgrade-'+nonce
     persistent=p['persistent_path'];shared=p['persistent_dataset'];be='/sbin/bectl -r '+q(loaded['parent'])
     pkg=q(p['pkg_path'])+' -C /dev/null -o PKG_ENABLE_PLUGINS=no -o SYSLOG=no'
@@ -96,9 +124,9 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
         data=command(label,'/sbin/mount -p')
         if not any(line.split()[:3]==[dataset,path,'zfs'] for line in data.decode().splitlines()):
             raise ValueError('expected ZFS mount missing: '+dataset)
-    def packages(label,version,program=pkg):
+    def packages(label,version,program=pkg,expected=None):
         value=command(label,program+" query -a '%n %v'")
-        return package_rows(value,names,version)
+        return package_rows(value,names if expected is None else expected,version)
     class Handler(http.server.SimpleHTTPRequestHandler):
         def log_message(self,fmt,*args):
             with (output/'upgrade-http.log').open('a') as log:log.write(fmt%args+'\n')
@@ -123,7 +151,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
         if guid(label+'-guid',dataset)!=expected_guid:raise ValueError('booted dataset identity changed')
         if revision not in text(label+'-running-kernel','/usr/bin/uname -v'):raise ValueError('running kernel revision differs')
         if sha(label+'-kernel','/boot/kernel/kernel')!=expected_kernel:raise ValueError('installed kernel digest differs')
-        packages(label+'-packages',version)
+        packages(label+'-packages',version,expected=baseline_names if dataset==old else names)
         command(label+'-checksums',pkg+' check -s -a')
         if guid(label+'-shared-guid',shared)!=shared_guid:raise ValueError('persistent dataset identity changed')
         mounted(label+'-shared-mount',shared,loaded['mountpoint'])
@@ -141,7 +169,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
         check(label+'-su-wrong-password',lambda:ssh(label+'-su-negative','su -m root -c "id -u"',plan['password'],expected=1,tty=True,answer=plan['password']+'-wrong'))
         if service_probe is not None:service_probe(label)
     try:
-        mounted('baseline-root',old,'/');packages('baseline-packages',p['baseline_version'])
+        mounted('baseline-root',old,'/');packages('baseline-packages',p['baseline_version'],expected=baseline_names)
         old_guid=guid('baseline-guid',old);shared_guid=guid('shared-guid',shared)
         old_kernel=build_report['payload_sha256']['/boot/kernel/kernel']
         if sha('baseline-kernel','/boot/kernel/kernel')!=old_kernel:raise ValueError('baseline kernel differs')
@@ -181,6 +209,16 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
         target='/usr/sbin/chroot '+q(root)+' '+q(inside+'/pkg-static')+' -C /dev/null -R '+q(inside+'/repos')+' -o PKG_ENABLE_PLUGINS=no -o REPO_AUTOUPDATE=no -o PKG_DBDIR=/var/db/pkg -o PKG_CACHEDIR='+q(inside+'/cache')
         command('target-catalogue',target+' update -f -r upgrade')
         command('install',target+' upgrade -y -r upgrade')
+        # pkg upgrade updates installed roots; newly introduced base packages
+        # must also be requested from the complete authenticated catalogue.
+        added=names-baseline_names
+        removed=baseline_names-names
+        if added:
+            command('install-added',target+' install -y -U -r upgrade '+
+                    ' '.join(q(name) for name in sorted(added)))
+        if removed:
+            command('remove-obsolete',target+' delete -y '+
+                    ' '.join(q(name) for name in sorted(removed)))
         packages('candidate-packages',r['version'],target)
         command('candidate-checksums',target+' check -s -a')
         if sha('candidate-kernel',root+'/boot/kernel/kernel')!=p['kernel_sha256']:raise ValueError('new candidate kernel differs')
@@ -190,7 +228,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
         command('unmount',be+' unmount '+q(p['candidate']))
         command('install-work-cleanup','/bin/rm -rf -- '+q(prefix))
         if sha('active-db-after-install','/var/db/pkg/local.sqlite')!=old_db:raise ValueError('inactive installation modified active package DB')
-        packages('active-still-old',p['baseline_version'])
+        packages('active-still-old',p['baseline_version'],expected=baseline_names)
         command('activate',be+' activate '+q(p['candidate']))
         if text('next-boot','/sbin/zpool get -Hp -o value bootfs '+q(build_report['pool']))!=new:raise ValueError('new BE not selected')
         console.send('/sbin/shutdown -r now');login('new-boot')
@@ -218,7 +256,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
             console.tick();time.sleep(1)
         if command('data-after-removal','/bin/cat '+q(persistent)).decode()!=after:raise ValueError('BE removal modified shared data')
         command('data-cleanup','/bin/rm -- '+q(persistent))
-        result=dict(status='passed',scope='Actual complete signed-package inactive-BE upgrade, new-kernel boot, authentication, rollback and unused-BE deletion; explicit shared-file persistence, not application database/schema rollback or exhaustive upgraded-tree metadata',baseline=old,candidate=new,old_guid=old_guid,new_guid=new_guid,shared_guid=shared_guid,packages=len(names),new_version=r['version'],new_kernel_sha256=p['kernel_sha256'],reclaimed_bytes=free_after-free_before)
+        result=dict(status='passed',scope='Actual complete signed-package inactive-BE upgrade, new-kernel boot, authentication, rollback and unused-BE deletion; explicit shared-file persistence, not application database/schema rollback or exhaustive upgraded-tree metadata',baseline=old,candidate=new,old_guid=old_guid,new_guid=new_guid,shared_guid=shared_guid,packages=len(names),baseline_packages=len(baseline_names),added_packages=sorted(names-baseline_names),removed_packages=sorted(baseline_names-names),new_version=r['version'],new_kernel_sha256=p['kernel_sha256'],reclaimed_bytes=free_after-free_before)
         (output/'upgrade-result.json').write_text(json.dumps(result,indent=2)+'\n');check('boot-environment-upgrade-rollback-removal',lambda:result)
     finally:
         server.shutdown();server.server_close();thread.join(timeout=5)

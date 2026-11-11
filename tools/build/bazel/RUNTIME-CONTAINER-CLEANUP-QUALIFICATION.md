@@ -155,3 +155,27 @@ The next VM run has an explicit service policy at
 `bazel-system-service-policy-r1-20261111.json`, validated against the retained
 baseline image and native R3 helper capture. It derives boot-unit requirements
 from installed manifests. It is not per-provider operation qualification.
+
+## Upgrade inventories across changing package sets
+
+Upgrade policy format 2 selects the baseline package-family capture explicitly.
+The old image's package count and expected version must agree with it; actual
+baseline/rollback databases are checked against that old set. Candidate checks
+use the new signed complete repository. Newly added base packages are requested
+with normal pkg install and obsolete names removed with normal pkg delete inside
+the inactive BE, followed by exact version-set and checksum checks. No package
+list is embedded in the runner. The existing target/test interface is sufficient;
+the VM runner README and frontend manual document the new policy input.
+
+`bazel-upgrade-inventory-host-r2-20261111/receipt.json` passes all three policy
+validation methods and resolves the actual 447-package baseline family plus the
+retained 447-package signed repository. The initial R1 input validation failed
+because the new validator assumed a list rather than the maintained name-keyed
+family object; R2 uses that real schema. Neither run executes guest package
+transitions. Native regression execution, new current-candidate inventory and
+actual added/obsolete-package VM transitions remain unqualified.
+
+Current full candidate R5 passes complete graph analysis and is compiling with
+16 jobs at source revision 95ce909a3c79. The package-version and kernel identity
+inputs are explicit. It remains live, not a passed full-world result at this
+update. The VM input-validation changes do not alter that package target graph.

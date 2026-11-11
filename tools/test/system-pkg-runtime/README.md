@@ -184,6 +184,22 @@ Format 4 retains all format-3 baseline/authentication/firstboot checks and adds
   outside the BE parent, and a previously absent test file beneath its mountpoint.
 * `deadline_seconds`, `reclaim_deadline_seconds`: positive bounded phase budgets.
 
+Upgrade policy format 2 adds `baseline_packages`, with exact `qualification`,
+`target` and `output` fields selecting the old captured package-family JSON.
+The captured version and distinct package count must match the explicit baseline
+version and image report. The actual guest database must then match those names
+and versions exactly. Candidate checks use the new signed repository inventory;
+rollback checks use the old inventory. Format 1 retains identical-name-set
+qualification only. Do not infer the old set from the next repository.
+
+For format 2, normal `pkg upgrade` is followed by `pkg install` for newly declared
+base packages and `pkg delete` for obsolete names, inside the inactive BE only.
+The final exact inventory and checksum checks reject incomplete transitions,
+unexpected dependency removals and leftover old packages. This is a complete-base
+VM qualification path, not a production upgrade manager or a general policy for
+removing third-party software. Real VM acceptance of these transitions remains
+required.
+
 The driver verifies every repository byte/trust key before starting. In the guest
 it verifies the signed network catalogue and rejects the wrong key using separate
 private databases; active pkg state must remain unchanged. It creates a real BE
