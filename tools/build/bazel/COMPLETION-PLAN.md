@@ -7,8 +7,8 @@ before the first native launch, returns errors, and recreates the live-marker
 directory before provider descriptor delivery. Maintained Make compilation and
 three host regression cases pass. Fresh SDK materialization and native R3
 qualification pass Switchboard, the inventory helper and all 11 selected tests.
-The service-aware VM R3 fails at Notify client admission after the new boot;
-gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+The corrected service-aware VM R4 passes the complete upgrade/rollback/removal
+scenario and selected provider operations. Broader provider coverage remains open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
 
 Full corrected-source R10 passes the selected AMD64 world/kernel/module/pkgbase
 graph and both selected native tests at kernel revision 5b1325c979ab. Its captured
@@ -28,9 +28,12 @@ are not reached. The original failed evidence is retained. Notify's two descript
 processes now omit the incompatible NOFDRECV restriction, retaining the other
 protections. Focused native qualification passes 68 cases; R10 contains the fix.
 The complete signed private R5 repository passes verification and wrong-key
-refusal. Fresh 2 GB VM R4 passes the corrected upgraded boot, authentication,
-all 13 required boot services and all six selected operations. Rollback is now
-running; persistence/removal and the terminal result remain unproven.
+refusal. Fresh 2 GB VM R4 passes all 33 checks and powers off normally. Baseline,
+active-before-activation, new boot and rollback each pass all 13 required boot
+services and the six selected operations. Shared writes survive rollback and
+unused-BE removal reclaims 2,818,023,424 bytes. Independent acceptance review
+checks raw command hashes, service reports and resource bounds. This is selected
+provider coverage and BIOS boot, not Secure Boot or complete provider coverage.
 The probes do not cover all providers or authorized SYSTEM Device access.
 The DQ resolution-ledger action now has declared inputs and is required before
 native kernel linking; focused native R3 passes the checker and actual AMD64 link.
@@ -47,16 +50,17 @@ The latest complete selected AMD64 build is November 11 R10: 450 packages,
 kernel/modules and both selected native tests. It does not establish independent
 Make parity or every optional configuration. The retained November 7 baseline is
 447 packages and passes its original 14 normal login/SSH/su and installed-tree/
-firstboot checks. New VM R3 boots the signed 450-package candidate and passes
-authentication, but fails Notify admission; later upgrade gates remain unproven.
+firstboot checks. Corrected VM R4 now passes the signed 447-to-450-package
+upgrade, new kernel, authentication, selected operations, rollback, shared-file
+persistence and unused-BE deletion. Other provider operations remain open.
 
 The strict upgrade retry is terminal **failed**, not running:
 `bazel-system-upgrade-vm-r2-20261107/result.json`. Its serial log confirms cleanup
 returns EROFS while root is still read-only. That captured candidate predates
 the lifecycle fix now committed and covered by host/native regression tests.
-The current full candidate and VM R3 supersede that cleanup failure, but R3
-fails a real Notify operation. R1's upgrade/rollback/removal observations do not
-establish service health.
+R3 then exposed the separate Notify admission defect. Corrected R10/VM R4
+supersede both failures with actual selected-operation and complete-scenario
+acceptance. R1's historical green result remains rejected and unchanged.
 
 Close out in this order, retaining evidence for each required gate:
 

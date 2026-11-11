@@ -418,3 +418,38 @@ real upgraded-boot evidence. Rollback, post-rollback persistence, unused-BE
 removal and final shutdown remain pending at this update. Other providers'
 operations, SYSTEM Device access and all-method coverage remain outside the six
 selected ordinary operations.
+
+## Full service-aware VM scenario accepted
+
+bazel-system-upgrade-vm-r4-20261111/result.json passes all 33 checks and exits
+QEMU normally after syncing buffers. It actually upgrades the inactive BE from
+447 to 450 signed packages, boots kernel 5b1325c979ab, checks authentication and
+package/kernel identities, rolls back to the original kernel/447-package BE,
+preserves the shared data written after upgrade, refuses deletion of the active
+BE and removes the unused candidate/origin snapshot. Guest pool free space rises
+by 2,818,023,424 bytes; retained baseline/shared dataset GUIDs stay unchanged.
+
+All four phases (baseline, active before activation, new boot and rollback) pass
+all 13 manifest-required services plus time, sysctl, notify, memory, power and
+device-denied operations. This verifies the runtime-directory lifecycle and
+Notify receive-restriction corrections in the real production service path.
+It does not qualify every provider/method or authorized SYSTEM Device access.
+
+bazel-system-upgrade-acceptance-r1-20261111/review.json independently verifies
+the serial hash/startup diagnostics, all 140 root command output hashes, all 479
+source/tool bindings, per-phase manifest-derived required sets, all operation
+logs, actual old/new kernel hashes, shared-data persistence, removal refusal and
+pool-space accounting. It preserves the failed R3 evidence.
+
+The declared 2,048 MiB guest completes in 1,554.207 seconds. Sampled QEMU RSS peaks
+at 3,345,072,128 bytes, below its explicit 4,096 MiB host-process budget; guest
+RAM and host-process RSS are different measures. Peak overlay allocation is
+2,151,072,256 bytes, below 8,192 MiB. These are budget checks, not controlled
+performance comparisons; sampling can miss peaks and excludes host page cache.
+The guest uses a disk-backed ZFS image, not a full-system memdisk.
+
+This is BIOS boot and repository-signature qualification, not Secure Boot or
+compromised-root integrity protection. Upgraded-tree exhaustive metadata,
+application database/schema rollback, other closeout gates and additional
+provider operations remain open. No host installation/upgrade/reboot or normal
+repository publication occurred; Make remains production/default.
