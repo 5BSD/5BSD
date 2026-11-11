@@ -15,8 +15,11 @@ failures. DQ's missing module producer and header closure now pass native R2;
 mac_abac's configured DQ option visibility is fixed. R5 then reaches compilation
 and fails on fdescfs's newly used but undeclared MAC framework header. The fix
 passes builtin/module compilation in `bazel-fdescfs-native-r1-20261111`, together
-with the native upgrade-policy test. Next is a fresh complete candidate; none of
-these focused passes closes full-system, ARM64 or Make-parity qualification.
+with the native upgrade-policy test. Full R6 then fails on the NFS server module's undeclared DQ header. Both NFS
+common/server module source groups now declare that header, and both real module
+products pass native R1 compilation/link/CTF/debug processing. The related
+builtins already declared it. Next is a fresh complete candidate; none of these
+focused passes closes full-system, ARM64 or Make-parity qualification.
 The existing DQ resolution-ledger test reads undeclared live workspace sources;
 its source closure, cache/sandbox behavior and mandatory kernel-build integration
 remain open under gate 3. Maintained frontend target interfaces cover these BUILD

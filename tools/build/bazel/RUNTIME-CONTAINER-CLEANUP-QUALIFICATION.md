@@ -193,3 +193,33 @@ uses the declared module/comparator inputs and executes its three Python methods
 this does not qualify real guest added/obsolete-package transitions. The next
 full candidate must use the newly committed kernel revision and preserve the
 failed full R5 evidence. No host installation or VM run occurred in this step.
+
+## NFS module closure correction
+
+Full R6 is terminal failed: nfs_nfsdport.c includes dev/dq/dq.h, absent from the
+module's declared inputs. Review found nfs_commonport.c's module closure also
+omitted it; both builtins already include the DQ header provider. Both module
+source groups now declare the public DQ ABI provider, shared with their ARM64
+and RISC-V declarations. No include, hook or source selection was removed.
+`bazel-nfs-dq-native-r1-20261111/receipt.json` passes both actual AMD64 module
+products with CTF/debug processing. It selects no tests, and is neither NFS
+runtime qualification nor ARM64/RISC-V qualification. Existing module/package
+backend and frontend target interfaces require no additional options.
+
+## Performance evidence boundary
+
+The existing /usr/bin/time -l around the Bazel client does not measure the
+pre-existing server and its compiler children as one complete build workload.
+Do not use its CPU or maxrss fields as whole-build comparison evidence. Likewise,
+a maximum per-process RSS is not the simultaneous aggregate memory peak, and
+block-operation counts are not physical device byte counts. The dedicated
+single-action resource runner remains scoped to the child actions it owns.
+
+For the later controlled comparison, retain explicit Bazel JSON profiles and
+server/JVM measurements alongside whole-workload CPU/RSS and disk-I/O accounting,
+with consistent source/config/cache conditions and external load accounted for.
+System-wide profile samples alone do not attribute load on this shared host.
+Bazel's maintained profiling documentation is at
+https://bazel.build/advanced/performance/json-trace-profile and
+https://bazel.build/advanced/performance/build-performance-breakdown .
+No performance gate is closed by the ongoing correctness rebuilds.
