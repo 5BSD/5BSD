@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -62,7 +63,7 @@ sb_run_container_remove_at(int parent, const char *name)
 	struct dirent *entry;
 	DIR *dir;
 	char *leaf;
-	size_t depth = 0, capacity = 0;
+	size_t depth = 0, capacity = 0, next_capacity;
 	int fd, ancestor, saved;
 
 	if (name == NULL || *name == '\0' || is_dot(name) ||
@@ -83,7 +84,14 @@ sb_run_container_remove_at(int parent, const char *name)
 		/* Iterative traversal: service-controlled nesting must not exhaust
 		 * the manager's C stack. Allocation/fd exhaustion is a clean error. */
 		if (depth == capacity) {
-			next = reallocarray(frames, capacity + 16, sizeof(*frames));
+			if (capacity > SIZE_MAX / 2) {
+				saved = ENOMEM;
+				free(leaf);
+				close(fd);
+				goto fail;
+			}
+			next_capacity = capacity == 0 ? 16 : capacity * 2;
+			next = reallocarray(frames, next_capacity, sizeof(*frames));
 			if (next == NULL) {
 				saved = errno;
 				free(leaf);
@@ -91,7 +99,7 @@ sb_run_container_remove_at(int parent, const char *name)
 				goto fail;
 			}
 			frames = next;
-			capacity += 16;
+			capacity = next_capacity;
 		}
 		dir = fdopendir(fd);
 		if (dir == NULL) {

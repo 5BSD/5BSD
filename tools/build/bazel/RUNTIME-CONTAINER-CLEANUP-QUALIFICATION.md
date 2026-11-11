@@ -94,3 +94,27 @@ and actual format-5 VM execution remain pending the SDK rebuild. The frontend
 uses its existing format-5 target/test interface, with no new C frontend option.
 This is readiness and a useful manager RPC, not per-provider operation coverage
 or on-demand activation qualification. Those remain part of gate 1.
+
+## Bounded traversal work and completed bootstrap prerequisite
+
+The explicit cleanup stack now grows geometrically, with overflow/allocation
+checks. Deep service-controlled nesting therefore does not cause quadratic
+frame-array copying. `bazel-run-cleanup-make-tests-r3-20261111/receipt.json`
+retains the updated source hashes, executable and all three passing host cases,
+including 80 nested levels and a real denied-cleanup retry. Native/VM acceptance
+is still pending.
+
+The maintained Make toolchain rebuild completed with exit zero; its receipt and
+full log are in `bazel-closeout-make-toolchain-r1-20261111`. This is a bootstrap
+prerequisite, not a controlled Make/Bazel benchmark or full world qualification.
+Fresh SDK planning succeeds in `bazel-run-cleanup-sdk-r3-20261111`; materialization
+is running. Its existing declarative tool configuration explicitly selects
+/usr/bin/llvm-objdump (LLVM 21.1.8) because the old normal-object-tree disassembler
+was cleaned. The compiler/resource-tree validation is unchanged.
+
+Read-only host inventory confirms the Memory unit has no published IPC endpoint.
+Source inspection also finds argument-validation/test-double client cases, such
+as libdevicecmp/tests/devicecmp_api_test.c and the daemon-runtime suites described
+in their README. These must not substitute for useful operations against the
+installed production providers. Host inventory is diagnostic discovery, not VM
+service acceptance; the operation coverage portion of gate 1 remains open.
