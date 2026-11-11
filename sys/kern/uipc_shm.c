@@ -2146,29 +2146,43 @@ shm_unmap(struct file *fp, void *mem, size_t size)
 	return (0);
 }
 
+/*
+ * A named object's path as the credential's jail sees it: the path itself
+ * outside a jail, the jail-rooted remainder when it lies under the jail's
+ * root, NULL when it lies elsewhere.
+ */
+static const char *
+shm_path_jailed(const char *path, struct ucred *cred)
+{
+	const char *pr_path;
+	size_t pr_pathlen;
+
+	pr_path = cred->cr_prison->pr_path;
+	if (strcmp(pr_path, "/") == 0)
+		return (path);
+	pr_pathlen = strlen(pr_path);
+	if (strncmp(path, pr_path, pr_pathlen) == 0 && path[pr_pathlen] == '/')
+		return (path + pr_pathlen);
+	return (NULL);
+}
+
 static int
 shm_fill_kinfo_locked(struct shmfd *shmfd, struct kinfo_file *kif, bool list)
 {
-	const char *path, *pr_path;
-	size_t pr_pathlen;
-	bool visible;
+	const char *path;
 
 	sx_assert(&shm_dict_lock, SA_LOCKED);
 	kif->kf_type = KF_TYPE_SHM;
 	kif->kf_un.kf_file.kf_file_mode = S_IFREG | shmfd->shm_mode;
 	kif->kf_un.kf_file.kf_file_size = shmfd->shm_size;
 	if (shmfd->shm_path != NULL) {
-		path = shmfd->shm_path;
-		pr_path = curthread->td_ucred->cr_prison->pr_path;
-		if (strcmp(pr_path, "/") != 0) {
-			/* Return the jail-rooted pathname. */
-			pr_pathlen = strlen(pr_path);
-			visible = strncmp(path, pr_path, pr_pathlen) == 0 &&
-			    path[pr_pathlen] == '/';
-			if (list && !visible)
+		/* Return the jail-rooted pathname. */
+		path = shm_path_jailed(shmfd->shm_path,
+		    curthread->td_ucred);
+		if (path == NULL) {
+			if (list)
 				return (EPERM);
-			if (visible)
-				path += pr_pathlen;
+			path = shmfd->shm_path;
 		}
 		strlcpy(kif->kf_path, path, sizeof(kif->kf_path));
 	}
@@ -2461,10 +2475,26 @@ sys_shm_open2(struct thread *td, struct shm_open2_args *uap)
 	    uap->shmflags, NULL, uap->name, NULL));
 }
 
+/*
+ * The path of a POSIX shared memory object, "anon" when it has none.  With
+ * a credential, a listing made for that observer: a named object's path
+ * is given as the observer's jail sees it and is empty when the object
+ * lies outside that jail, as kern.ipc.posix_shm_list leaves such an object
+ * out.  shm_get_path() gives the path as it is.
+ */
 int
 shm_get_path(struct vm_object *obj, char *path, size_t sz)
 {
+
+	return (shm_get_path_cred(obj, NULL, path, sz));
+}
+
+int
+shm_get_path_cred(struct vm_object *obj, struct ucred *cred, char *path,
+    size_t sz)
+{
 	struct shmfd *shmfd;
+	const char *p;
 	int error;
 
 	error = 0;
@@ -2480,9 +2510,13 @@ shm_get_path(struct vm_object *obj, char *path, size_t sz)
 			shmfd = obj->un_pager.phys.phys_priv;
 		if (shmfd == NULL) {
 			error = ENXIO;
+		} else if (shmfd->shm_path == NULL) {
+			strlcpy(path, "anon", sz);
 		} else {
-			strlcpy(path, shmfd->shm_path == NULL ? "anon" :
-			    shmfd->shm_path, sz);
+			p = shmfd->shm_path;
+			if (cred != NULL)
+				p = shm_path_jailed(p, cred);
+			strlcpy(path, p == NULL ? "" : p, sz);
 		}
 	}
 	if (error != 0)
