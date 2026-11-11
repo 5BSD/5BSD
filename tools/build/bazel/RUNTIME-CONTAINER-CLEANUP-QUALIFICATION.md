@@ -240,3 +240,27 @@ build is accepted as passed. The actual native linux64 command/receipt binds the
 updated backend. Existing host source-settings and source-test-inventory suites
 pass 29 and 23 methods respectively. The frontend manual documents the behavior;
 its C interface and production Make selection need no change. Full R8 is next.
+
+## Correct Memory operation model and pending VM consumer
+
+The native service_operations target now implements time, sysctl, notification
+round-trip and memory-pressure observation cases. It remains unlinked/unexecuted
+under native qualification and the VM runner has not yet been wired to invoke it.
+Host strict syntax checks pass in
+`bazel-service-operations-host-syntax-r2-20261111/receipt.json`; this is not provider
+acceptance. The existing frontend target selection is sufficient; the manual and
+runner README describe the new captured-consumer target and its limits.
+
+Earlier notes calling BSDMemory a memory-allocation factory were incorrect.
+BSDMemory.c and its actual Unit.ucl show that it samples three Sysctl counters and
+publishes authenticated reserved Notify state, with no published IPC endpoint.
+The memory client waits boundedly for valid pressure state, requires ordinary
+consumer set/clear attempts to be denied, and checks its read session survives.
+It does not treat unknown/missing as normal or require pressure to be normal.
+This is not induced-pressure, restart-recovery or long-interval freshness proof.
+The client must run in the ordinary authenticated guest user context.
+
+Full R8 is still collecting failures at this update: mac_capability_dev.c's MAC
+header, vfs_syscalls.c's quota header and vfs_aio.c's MAC header. Reviewed patches
+are prepared under `bazel-current-closure-review-r1-20261111` but not applied to
+the live build inputs. No full-system pass or VM upgrade is established.

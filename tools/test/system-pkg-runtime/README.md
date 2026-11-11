@@ -298,6 +298,12 @@ Select one operation per invocation:
   length with the guest kernel's value.
 * `notify`: subscribe to a fresh private user.* topic, publish a payload,
   receive and validate the exact framed topic/payload, then unsubscribe.
+* `memory`: observe BSDMemory's reserved memory-pressure state through BSDNotify.
+  Wait at most ten seconds for an actual normal/warning/critical sample; missing
+  or unknown is never normal. Require attempts to set/clear that reserved state
+  to fail with an authorization error, then confirm the read session still works.
+  This belongs in the ordinary authenticated user session, not a privileged
+  consumer granted the Memory producer's identity.
 
 The client has a 20-second process deadline and notification receive has a
 five-second deadline. Any open, RPC, content or cleanup failure exits nonzero.
@@ -307,6 +313,10 @@ Shared dependencies are declared through native cc_binary.dynamic_deps.
 
 At this update, host syntax checking with -Wall -Wextra -Werror passes. Native
 linking and VM operations remain unqualified, and the runner does not yet invoke
-this helper. These three probes do not cover the other providers or Memory's
-resource factory. Manifest-derived readiness remains separate from useful
+this helper. The four probes do not cover all providers. BSDMemory is a
+memory-pressure sampler/publisher, not a memory-allocation factory; its manifest
+intentionally has no IPC endpoint. The earlier factory wording was incorrect.
+The memory probe exercises the actual Sysctl-to-Memory-to-Notify path, but does
+not inject pressure, stop/restart providers or prove periodic publication over
+an extended interval. Manifest-derived readiness remains separate from useful
 operation coverage; gate 1 stays open until the required real VM checks pass.

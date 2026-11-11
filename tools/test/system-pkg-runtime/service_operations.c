@@ -4,6 +4,7 @@
 #include <sys/sysctl.h>
 
 #include <err.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -13,6 +14,7 @@
 #include <unistd.h>
 
 #include <notify.h>
+#include <notify_pressure.h>
 #include <sysctlcmp.h>
 #include <timecmp.h>
 
@@ -109,11 +111,65 @@ notify_operation(void)
 	notify_client_close(client);
 }
 
+static void
+memory_operation(void)
+{
+	struct notify_client *client;
+	struct notify_state_reply state;
+	struct timespec now, until, delay = { .tv_nsec = 100000000 };
+	int error;
+
+	if (notify_client_open(&client) == -1)
+		err(1, "memory pressure observation open");
+	if (clock_gettime(CLOCK_MONOTONIC, &until) == -1)
+		err(1, "memory observation deadline");
+	until.tv_sec += 10;
+	for (;;) {
+		if (notify_state_get(client, NOTIFY_PRESSURE_TOPIC, &state) == 0) {
+			if (state.state <= NOTIFY_PRESSURE_CRITICAL)
+				break;
+			if (state.state != NOTIFY_PRESSURE_UNKNOWN)
+				errx(1, "invalid memory pressure state");
+		} else if (errno != ENOENT)
+			err(1, "memory pressure observation");
+		/* The producer reports ready before its first successful sample.
+		 * Missing/unknown is never interpreted as normal pressure. */
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			err(1, "memory observation clock");
+		if (now.tv_sec > until.tv_sec || (now.tv_sec == until.tv_sec &&
+		    now.tv_nsec >= until.tv_nsec))
+			errx(1, "memory producer did not publish a valid sample");
+		if (nanosleep(&delay, NULL) == -1)
+			err(1, "memory observation wait");
+	}
+	/* The broker reserves this topic to the authenticated Memory label.
+	 * This ordinary consumer must neither forge nor remove its state. */
+	errno = 0;
+	if (notify_state_set(client, NOTIFY_PRESSURE_TOPIC,
+	    NOTIFY_PRESSURE_UNKNOWN) != -1)
+		errx(1, "ordinary consumer changed reserved memory state");
+	error = errno;
+	if (error != EPERM && error != EACCES)
+		errc(1, error, "unexpected memory state-set refusal");
+	errno = 0;
+	if (notify_state_clear(client, NOTIFY_PRESSURE_TOPIC) != -1)
+		errx(1, "ordinary consumer cleared reserved memory state");
+	error = errno;
+	if (error != EPERM && error != EACCES)
+		errc(1, error, "unexpected memory state-clear refusal");
+	/* Policy errors must leave the normal read session operational. */
+	if (notify_state_get(client, NOTIFY_PRESSURE_TOPIC, &state) == -1)
+		err(1, "memory pressure observation after refused writes");
+	if (state.state > NOTIFY_PRESSURE_CRITICAL)
+		errx(1, "memory producer sample is no longer valid");
+	notify_client_close(client);
+}
+
 int
 main(int argc, char **argv)
 {
 	if (argc != 2)
-		errx(64, "usage: service_operations time|sysctl|notify");
+		errx(64, "usage: service_operations time|sysctl|notify|memory");
 	alarm(20);
 	if (strcmp(argv[1], "time") == 0)
 		clock_operation();
@@ -121,6 +177,8 @@ main(int argc, char **argv)
 		sysctl_operation();
 	else if (strcmp(argv[1], "notify") == 0)
 		notify_operation();
+	else if (strcmp(argv[1], "memory") == 0)
+		memory_operation();
 	else
 		errx(64, "unknown operation %s", argv[1]);
 	printf("{\"format\":1,\"operation\":\"%s\",\"status\":\"passed\"}\n", argv[1]);
