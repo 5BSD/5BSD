@@ -7,7 +7,7 @@ before the first native launch, returns errors, and recreates the live-marker
 directory before provider descriptor delivery. Maintained Make compilation and
 three host regression cases pass. Fresh SDK materialization and native R3
 qualification pass Switchboard, the inventory helper and all 11 selected tests.
-The service-aware VM upgrade and useful provider operations remain unqualified;
+The service-aware VM R3 fails at Notify client admission after the new boot;
 gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
 
 Full current-source R9 passes the selected AMD64 world/kernel/module/pkgbase
@@ -20,8 +20,12 @@ The service-aware VM plan is prepared against the retained 447-package baseline
 and the current 450-package candidate, with actual signed-archive kernel bytes.
 The runner now executes selected ordinary-user operations after manifest-derived
 readiness and also checks the active system after inactive installation. Native
-service/inventory/upgrade policy tests pass. VM execution remains pending; the
-ordinary probes do not cover all providers or authorized SYSTEM Device access.
+service/inventory/upgrade policy tests pass. VM R3 passes all six selected
+operations on the baseline and active system after offline installation. On the
+new boot, Time and Sysctl pass, but Notify open fails with Broken pipe despite
+all 13 required boot services reporting running. Rollback and unused-BE removal
+are not reached. The original failed evidence is retained; diagnosis is underway.
+The probes do not cover all providers or authorized SYSTEM Device access.
 The existing DQ resolution-ledger test reads undeclared live workspace sources;
 its source closure, cache/sandbox behavior and mandatory kernel-build integration
 remain open under gate 3. Maintained frontend target interfaces cover these BUILD
@@ -34,14 +38,16 @@ The latest complete selected AMD64 build is November 11 R9: 450 packages,
 kernel/modules and both selected native tests. It does not establish independent
 Make parity or every optional configuration. The retained November 7 baseline is
 447 packages and passes its original 14 normal login/SSH/su and installed-tree/
-firstboot checks. The new service-aware upgrade/operation VM remains pending.
+firstboot checks. New VM R3 boots the signed 450-package candidate and passes
+authentication, but fails Notify admission; later upgrade gates remain unproven.
 
 The strict upgrade retry is terminal **failed**, not running:
 `bazel-system-upgrade-vm-r2-20261107/result.json`. Its serial log confirms cleanup
 returns EROFS while root is still read-only. That captured candidate predates
 the lifecycle fix now committed and covered by host/native regression tests.
-A new full candidate and service-aware VM run are still required. R1's
-upgrade/rollback/removal observations do not establish service health.
+The current full candidate and VM R3 supersede that cleanup failure, but R3
+fails a real Notify operation. R1's upgrade/rollback/removal observations do not
+establish service health.
 
 Close out in this order, retaining evidence for each required gate:
 

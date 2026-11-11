@@ -156,7 +156,7 @@ def main():
     if upgrade is not None:
         report['scope']='Complete signed-package BE upgrade, new-kernel boot, authentication, rollback and unused-BE removal; not secure boot, application schema rollback or comparative performance'
     if services is not None:
-        report['scope']+='; installed-manifest boot-unit readiness, not per-provider protocol operations'
+        report['scope']+='; installed-manifest boot-unit readiness and policy-selected operations, not complete provider protocol coverage'
     def save():(out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
     (out/'plan.json').write_text(json.dumps(plan,indent=2)+'\n')
     save();overlay=out/'guest.qcow2'

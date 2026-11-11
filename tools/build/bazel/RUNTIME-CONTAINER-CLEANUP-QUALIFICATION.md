@@ -338,3 +338,24 @@ memory, power and device-denied. Full provider coverage remains explicitly false
 SYSTEM Device and the other provider operations remain open. VM execution is
 next. The frontend manual and runner README document the schema; its existing
 format-5 interface needs no new C option. Normal production remains Make.
+
+## Service-aware upgrade VM R3 fails Notify admission
+
+`bazel-system-upgrade-vm-r3-20261111/result.json` is terminal failed. Baseline
+normal startup, installed-tree audit, authentication, all 13 manifest-required
+boot services and all six selected ordinary-user operations pass. After the
+actual signed 447-to-450-package inactive-BE installation, the active old kernel,
+package checksums, authentication, manifest readiness and all six operations
+still pass. The candidate boots kernel ccf8f8bbc42c, with the expected archive
+SHA256 and exact 450-package inventory/checksums; console, SSH and su checks pass.
+All 13 required services report running. Time and Sysctl operations pass, but
+Notify client open returns Broken pipe. This failure is preserved, not retried
+into success or accepted based on service state. Rollback, persistence after the
+new boot and unused-BE deletion were not reached in this run.
+
+A separate diagnostic child overlay of the stopped failed disk preserves the
+original disk and evidence. A rebooted diagnostic cannot reproduce the exact
+original process state; its logs are diagnostic evidence only. No host upgrade,
+installation, publication or reboot was performed. No build input, package or
+security policy changes are introduced by this diagnosis; the maintained C
+frontend and production backend require no interface change.
