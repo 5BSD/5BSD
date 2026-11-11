@@ -4907,14 +4907,13 @@ third_party_sigkill(pid_t pid)
 /*
  * The tracee is in a ptrace stop when a third process sends SIGKILL.
  * The signal is queued and the tracee stays stopped: nothing is
- * reported to the debugger.  What happens next is the debugger's
- * choice:
- *  - PT_CONTINUE: the SIGKILL is reported as a signal stop like any
- *    other signal, but without its sender; continuing with it kills.
- *  - PT_DETACH: the tracee dies of the SIGKILL with no further stop.
+ * reported to the debugger.  At PT_CONTINUE the SIGKILL is reported as
+ * a signal stop like any other signal, but without its sender;
+ * continuing with it kills.  (PT_DETACH instead: sigstop__kill__detach
+ * in sigkill_traced_test.c.)
  */
-static void
-sigkill_third_party_stopped(bool detach)
+ATF_TC_WITHOUT_HEAD(ptrace__sigkill_third_party_stopped);
+ATF_TC_BODY(ptrace__sigkill_third_party_stopped, tc)
 {
 	struct ptrace_lwpinfo pl;
 	pid_t fpid, wpid;
@@ -4941,32 +4940,28 @@ sigkill_third_party_stopped(bool detach)
 	wpid = waitpid(fpid, &status, WNOHANG);
 	REQUIRE_EQ(wpid, 0);
 
-	if (detach) {
-		REQUIRE_EQ(ptrace(PT_DETACH, fpid, (caddr_t)1, 0), 0);
-	} else {
-		/* Continue the child ignoring the SIGSTOP. */
-		REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, 0), 0);
+	/* Continue the child ignoring the SIGSTOP. */
+	REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, 0), 0);
 
-		/* The next stop is the SIGKILL, from the third process. */
-		wpid = waitpid(fpid, &status, 0);
-		REQUIRE_EQ(wpid, fpid);
-		ATF_REQUIRE_MSG(WIFSTOPPED(status), "status %#x", status);
-		REQUIRE_EQ(WSTOPSIG(status), SIGKILL);
-		ATF_REQUIRE(ptrace(PT_LWPINFO, wpid, (caddr_t)&pl,
-		    sizeof(pl)) != -1);
-		ATF_REQUIRE(pl.pl_flags & PL_FLAG_SI);
-		REQUIRE_EQ(pl.pl_siginfo.si_signo, SIGKILL);
-		/*
-		 * SIGKILL is queued without its siginfo (sigqueue_add):
-		 * the debugger sees the signal number and nothing about
-		 * the sender.
-		 */
-		REQUIRE_EQ(pl.pl_siginfo.si_code, 0);
-		REQUIRE_EQ(pl.pl_siginfo.si_pid, 0);
+	/* The next stop is the SIGKILL, from the third process. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE_MSG(WIFSTOPPED(status), "status %#x", status);
+	REQUIRE_EQ(WSTOPSIG(status), SIGKILL);
+	ATF_REQUIRE(ptrace(PT_LWPINFO, wpid, (caddr_t)&pl,
+	    sizeof(pl)) != -1);
+	ATF_REQUIRE(pl.pl_flags & PL_FLAG_SI);
+	REQUIRE_EQ(pl.pl_siginfo.si_signo, SIGKILL);
+	/*
+	 * SIGKILL is queued without its siginfo (sigqueue_add):
+	 * the debugger sees the signal number and nothing about
+	 * the sender.
+	 */
+	REQUIRE_EQ(pl.pl_siginfo.si_code, 0);
+	REQUIRE_EQ(pl.pl_siginfo.si_pid, 0);
 
-		/* Deliver it. */
-		REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, SIGKILL), 0);
-	}
+	/* Deliver it. */
+	REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, SIGKILL), 0);
 
 	/* The last wait() should report the SIGKILL. */
 	wpid = waitpid(fpid, &status, 0);
@@ -4977,20 +4972,6 @@ sigkill_third_party_stopped(bool detach)
 	wpid = wait(&status);
 	REQUIRE_EQ(wpid, -1);
 	REQUIRE_EQ(errno, ECHILD);
-}
-
-ATF_TC_WITHOUT_HEAD(ptrace__sigkill_third_party_stopped);
-ATF_TC_BODY(ptrace__sigkill_third_party_stopped, tc)
-{
-
-	sigkill_third_party_stopped(false);
-}
-
-ATF_TC_WITHOUT_HEAD(ptrace__sigkill_third_party_stopped_detach);
-ATF_TC_BODY(ptrace__sigkill_third_party_stopped_detach, tc)
-{
-
-	sigkill_third_party_stopped(true);
 }
 
 /*
@@ -5341,7 +5322,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ptrace__PT_ATTACH_no_EINTR);
 	ATF_TP_ADD_TC(tp, ptrace__PT_DETACH_continued);
 	ATF_TP_ADD_TC(tp, ptrace__sigkill_third_party_stopped);
-	ATF_TP_ADD_TC(tp, ptrace__sigkill_third_party_stopped_detach);
 	ATF_TP_ADD_TC(tp, ptrace__sigkill_third_party_running);
 	ATF_TP_ADD_TC(tp, ptrace__kill_paths_unattached);
 	ATF_TP_ADD_TC(tp, ptrace__PT_KILL_at_syscall_entry);
