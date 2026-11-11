@@ -12,9 +12,12 @@ load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objec
 _KERNEL_SOURCES = ["dq_dev.c", "dq_queue.c", "dq_file.c", "dq_observer.c", "dq_observe.c",
         "dq_pager.c", "dq_async.c", "dq_resolve.c", "dq_dir.c"]
 _KERNEL_DEPS = [":kernel_headers", "//sys/amd64/conf:generic_opt_dq_header", "//sys/amd64/conf:generic_opt_mac_header",
-        "//sys/security/mac:policy_headers", "//sys/dev/mac_capability:label_headers",
+        "//sys/security/mac:framework_headers", "//sys/security/mac:policy_headers",
+        "//sys/crypto/siphash:kernel_headers", "//sys/dev/mac_capability:label_headers",
         "//sys/dev/mac_capability:kernel_headers"]
-amd64_generic_module_objects(srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
+_MODULE_DEPS = [dep for dep in _KERNEL_DEPS if dep != "//sys/amd64/conf:generic_opt_dq_header"] + [
+    "//sys/modules/dq:module_opt_dq_header", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"]
+amd64_generic_module_objects(srcs = _KERNEL_SOURCES, deps = _MODULE_DEPS)
 amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
 
 load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
@@ -24,9 +27,11 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = _KERNEL_SOURCES,
     deps = [
         ":kernel_headers",
-        "//sys/" + arch + "/conf:generic_opt_dq_header",
+        "//sys/modules/dq:module_opt_dq_header",
+        "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers",
         "//sys/" + arch + "/conf:generic_opt_mac_header",
-        "//sys/security/mac:policy_headers",
+        "//sys/security/mac:framework_headers", "//sys/security/mac:policy_headers",
+        "//sys/crypto/siphash:kernel_headers",
         "//sys/dev/mac_capability:label_headers",
         "//sys/dev/mac_capability:kernel_headers",
     ],

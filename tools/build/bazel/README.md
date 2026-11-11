@@ -2,13 +2,27 @@
 
 ## Runtime cleanup implementation (2026-11-11)
 
-The confirmed early-read-only cleanup bug now has a source fix. Cleanup runs once
+The confirmed early-read-only cleanup bug has a source fix. Cleanup runs once
 before the first native launch, returns errors, and recreates the live-marker
-directory before provider descriptor delivery. Maintained Make builds the actual
-Switchboard binary; three new host regression cases pass. Native Bazel testing
-stopped before compilation because the old SDK's recorded compiler origin is
-missing. A fresh explicit SDK and the service-aware VM upgrade are still needed;
-gate 1 is not closed. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+directory before provider descriptor delivery. Maintained Make compilation and
+three host regression cases pass. Fresh SDK materialization and native R3
+qualification pass Switchboard, the inventory helper and all 11 selected tests.
+The service-aware VM upgrade and useful provider operations remain unqualified;
+gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+
+Current-source full-build attempt `bazel-system-upgrade-native-r3-20261111`
+fails during analysis because the selected DQ module has no module BUILD file.
+The new module producer and explicit source header dependencies pass native
+compilation in `bazel-dq-module-native-r2-20261111`, including all nine built-in
+objects, module link, CTF merge, export processing and debug split. This run has
+no selected tests and is not a full-system rebuild or Make binary parity proof.
+Its options follow the standalone Make module, including DEV_DQ even when the
+selected kernel omits the built-in device. ARM64/RISC-V producers are declared
+but not qualified by this AMD64 result. The existing resolution-ledger test
+reads the live workspace without declaring its entire scanned source closure;
+its cache/sandbox contract and mandatory kernel-build integration remain open
+under gate 3. The frontend's existing target interface and normal module/package
+backends cover this addition; no new frontend option is required.
 
 
 ## Closeout status and required gates (2026-11-11)
@@ -21,10 +35,10 @@ normal login/SSH/su and the declared installed-tree/firstboot audit.
 
 The strict upgrade retry is terminal **failed**, not running:
 `bazel-system-upgrade-vm-r2-20261107/result.json`. Its serial log confirms cleanup
-returns EROFS while root is still read-only. Switchboard still calls the sweep
-before rc. Cleanup logging and failure detection are committed; a lifecycle fix
-has not been implemented. R1's upgrade/rollback/removal mechanism observations do
-not override this failure or establish service health.
+returns EROFS while root is still read-only. That captured candidate predates
+the lifecycle fix now committed and covered by host/native regression tests.
+A new full candidate and service-aware VM run are still required. R1's
+upgrade/rollback/removal observations do not establish service health.
 
 Close out in this order, retaining evidence for each required gate:
 
