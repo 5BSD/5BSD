@@ -162,6 +162,14 @@ fbt_excluded(const char *name)
 		return (1);
 
 	/*
+	 * fasttrap's dtps_getargval() methods read the registers of the
+	 * traced thread with fill_regs().
+	 */
+	if (strcmp(name, "fill_regs") == 0 ||
+	    strcmp(name, "fill_frame_regs") == 0)
+		return (1);
+
+	/*
 	 * The KMSAN runtime can't be instrumented safely.
 	 */
 	if (strncmp(name, "__msan", 6) == 0 ||
