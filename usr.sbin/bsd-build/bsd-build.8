@@ -7982,3 +7982,11 @@ Report its qualification evidence and remaining failures separately.
 This prioritization changes no accepted architecture options or build targets
 and waives none of the required shared correctness and performance gates.
 Make remains the production default until those gates pass.
+
+.Pp
+Runtime-container cleanup regressions are available through the existing
+format-5 target/test inputs as
+//usr.sbin/switchboard/tests:run_container_cleanup_test_nested_and_symlink,
+//usr.sbin/switchboard/tests:run_container_cleanup_test_failure_and_retry, and
+//usr.sbin/switchboard/tests:run_container_cleanup_test_invalid_names.
+Passing host regressions does not establish a successful upgraded-system boot.

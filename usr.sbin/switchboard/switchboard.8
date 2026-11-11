@@ -261,6 +261,17 @@ Default:
 .Pa /Capabilities .
 Primarily useful for testing.
 .El
+.Ss Runtime directory lifecycle
+The service manager cleans leftover runtime containers immediately before its
+first native service launch. During normal boot, rc must first make runtime
+storage writable; on-demand providers may be requested while rc is still running.
+Cleanup must succeed before any native child is launched. It is not repeated
+once native services may hold live scratch directories.
+.Pp
+This also handles scratch directories copied into a new boot environment from
+a running system. Existing per-service directories are removed rather than
+adopted. Cleanup reports errors, follows no symlinks, and refuses to cross
+filesystem boundaries. A failed cleanup blocks launch and may be retried.
 .Sh SERVICE MANIFESTS
 Service manifests are UCL files embedded in capability bundles under
 .Pa etc/ .

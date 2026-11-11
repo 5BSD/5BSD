@@ -1,5 +1,16 @@
 # Bazel qualification
 
+## Runtime cleanup implementation (2026-11-11)
+
+The confirmed early-read-only cleanup bug now has a source fix. Cleanup runs once
+before the first native launch, returns errors, and recreates the live-marker
+directory before provider descriptor delivery. Maintained Make builds the actual
+Switchboard binary; three new host regression cases pass. Native Bazel testing
+stopped before compilation because the old SDK's recorded compiler origin is
+missing. A fresh explicit SDK and the service-aware VM upgrade are still needed;
+gate 1 is not closed. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+
+
 ## Closeout status and required gates (2026-11-11)
 
 The last proven complete AMD64 build is the November 7 configured snapshot:

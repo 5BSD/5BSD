@@ -4,7 +4,7 @@ PACKAGE=switchboard
 PROG=	switchboard
 BINDIR=	/usr/libexec
 MAN=	switchboard.5 switchboard.8
-SRCS=	switchboard.c account_nss.c nss_child.c nss_exchange.c nss_protocol.c activation.c anoint.c activation_calendar.c bundle_registry.c bundle_selection.c authority.c authority_policy.c boot_authority.c domain.c mac_capability_direct.c execute.c \
+SRCS=	switchboard.c account_nss.c nss_child.c nss_exchange.c nss_protocol.c activation.c anoint.c activation_calendar.c bundle_registry.c bundle_selection.c authority.c authority_policy.c boot_authority.c domain.c mac_capability_direct.c execute.c run_container_cleanup.c \
 	lifecycle.c reclaim_publish.c registry_watch.c fd_budget.c management.c manifest_compare.c \
 	naming.c on_demand.c capsule_client.c rc_adopt.c responsibility.c \
 	rc_ingest.c \
