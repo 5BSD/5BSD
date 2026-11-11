@@ -202,6 +202,8 @@ ATF_TESTS_C+=	prace
 ATF_TESTS_C+=	procdesc
 ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
+# ptrace__kill_paths_unattached sets kern.kill_on_debugger_exit.
+TEST_METADATA.ptrace_test+=		is_exclusive="true"
 ATF_TESTS_C+=	reaper
 ATF_TESTS_C+=	resolve_beneath_test
 ATF_TESTS_C+=	sched_affinity

@@ -5160,11 +5160,11 @@ ATF_TC_HEAD(ptrace__kill_paths_unattached, tc)
 {
 	/*
 	 * kern.kill_on_debugger_exit is set to both values: no other
-	 * case may run meanwhile.  The cleanup puts the saved value back
-	 * however the body ends.
+	 * test may run meanwhile, so the Makefile marks the program
+	 * is_exclusive (kyua has no such property for one case).  The
+	 * cleanup puts the saved value back however the body ends.
 	 */
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(ptrace__kill_paths_unattached, tc)
 {
