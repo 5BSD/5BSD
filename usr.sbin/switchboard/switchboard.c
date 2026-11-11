@@ -594,9 +594,6 @@ main(int argc, char *argv[])
 		    (uintmax_t)sd.root_coalition_id);
 	}
 
-	/* Reclaim any runtime containers stranded by a prior crash. */
-	svc_run_container_sweep();
-
 	/* Launch system services (tier-based parallel). */
 	if (startup_launch_system(switchboard_kq) != 0) {
 		syslog(LOG_ERR, "startup: system service launch failed");

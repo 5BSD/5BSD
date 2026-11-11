@@ -675,12 +675,16 @@ int mac_file_check_stat(struct ucred *active_cred, struct ucred *file_cred,
 - **XNU name:** none (XNU: the `mac_vnode_check_set*` family)
 - **5BSD name:** `mac_file_check_setattr`
 - **Category:** check
-- **Call site:** every descriptor-addressed attribute change, before the
-  fileop: `sys_fchmod` (`va_mode`), `sys_fchown` (`va_uid`/`va_gid`),
-  `kern_ftruncate` (`va_size`, in `sys/kern/sys_generic.c`),
-  `kern_fsetutimes` (`va_atime`/`va_mtime`, `VA_UTIMES_NULL`),
-  `sys_fchflags` (`va_flags`), and `fdesc_setattr` for `/dev/fd/N` with
-  the whole requested `vattr`. **Implemented 2026-11-07.**
+- **Call site:** every descriptor-addressed attribute change of a served
+  file (`DTYPE_DQ`), before the fileop: `sys_fchmod` (`va_mode`),
+  `sys_fchown` (`va_uid`/`va_gid`), `kern_ftruncate` (`va_size`, in
+  `sys/kern/sys_generic.c`), `kern_fsetutimes` (`va_atime`/`va_mtime`,
+  `VA_UTIMES_NULL`), `sys_fchflags` and Linux `fsetflags` (`va_flags`), and
+  `fdesc_setattr` for `/dev/fd/N` with the whole requested `vattr`. A
+  descriptor that is not served gets FreeBSD's vnode checks in FreeBSD's
+  order and not this hook (ux-0 slice 1, D301). The path-addressed
+  changes that end at a served file do not call it yet (D302).
+  **Implemented 2026-11-07; narrowed to served files 2026-11-10.**
 - **Lock context:** No locks held (`fdesc_setattr` drops the fdesc vnode
   lock first)
 - **Can sleep:** YES

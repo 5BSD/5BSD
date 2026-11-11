@@ -18,6 +18,7 @@
 
 #include "run_container_identity.h"
 #include "run_container_directory.h"
+#include "run_container_cleanup.h"
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -32,7 +33,6 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 
-#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -206,69 +206,43 @@ svc_run_container_open(const char *label, uid_t owner, uid_t uid, gid_t gid)
 	return (fd);
 }
 
-/* Best-effort recursive removal of a directory tree by descriptor. */
-static void
-svc_rmtree_at(int parent, const char *name)
-{
-	int fd;
-	DIR *dir;
-	struct dirent *de;
-
-	fd = openat(parent, name, O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-	if (fd == -1) {
-		if (unlinkat(parent, name, 0) == -1)
-			syslog(LOG_ERR, "runtime cleanup: unlink %s: %m", name);
-		return;
-	}
-	dir = fdopendir(fd);
-	if (dir == NULL) {
-		syslog(LOG_ERR, "runtime cleanup: fdopendir %s: %m", name);
-		(void)close(fd);
-		return;
-	}
-	while ((de = readdir(dir)) != NULL) {
-		if (de->d_name[0] == '.' && (de->d_name[1] == '\0' ||
-		    (de->d_name[1] == '.' && de->d_name[2] == '\0')))
-			continue;
-		if (de->d_type == DT_DIR)
-			svc_rmtree_at(fd, de->d_name);
-		else if (unlinkat(fd, de->d_name, 0) == -1)
-			syslog(LOG_ERR, "runtime cleanup: unlink %s/%s: %m",
-			    name, de->d_name);
-	}
-	(void)closedir(dir);
-	if (unlinkat(parent, name, AT_REMOVEDIR) == -1)
-		syslog(LOG_ERR, "runtime cleanup: rmdir %s: %m", name);
-}
-
 /*
- * Sweep every leftover runtime container at startup.  On a clean stop switchboard
- * removes a unit's container itself; this reclaims containers stranded by a
- * crash or panic (the belt-and-suspenders behind putting /Capabilities/Run on
- * a volatile filesystem, which wipes the tree on reboot regardless).
+ * Prepare once, immediately before the first native launch. Root is initially
+ * read-only, and rc makes runtime storage writable before requesting providers.
+ * A BE cloned from a running system can contain those providers' old scratch
+ * directories. Cleaning before rc silently left them behind. Never sweep after
+ * native children exist, and never mark failed cleanup as successful.
+ * Switchboard's single event-loop thread serializes this initialization.
  */
-void
-svc_run_container_sweep(void)
+static int
+svc_run_container_prepare(void)
 {
-	int base;
-	DIR *dir;
-	struct dirent *de;
+	static bool prepared;
+	int base, error, saved;
 
-	base = open(switchboard_run_dir, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	if (prepared)
+		return (0);
+	if (mkdir(switchboard_run_dir, 0700) == -1 && errno != EEXIST)
+		return (-1);
+	base = open(switchboard_run_dir,
+	    O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
 	if (base == -1)
-		return;
-	dir = fdopendir(base);
-	if (dir == NULL) {
-		(void)close(base);
-		return;
+		return (-1);
+	error = sb_run_container_sweep_at(base);
+	saved = errno;
+	close(base);
+	if (error == -1) {
+		errno = saved;
+		syslog(LOG_ERR, "runtime cleanup: sweep %s: %m",
+		    switchboard_run_dir);
+		return (-1);
 	}
-	while ((de = readdir(dir)) != NULL) {
-		if (de->d_name[0] == '.' && (de->d_name[1] == '\0' ||
-		    (de->d_name[1] == '.' && de->d_name[2] == '\0')))
-			continue;
-		svc_rmtree_at(base, de->d_name);
-	}
-	(void)closedir(dir);
+	/* The sweep also removed old markers; recreate their directory before
+	 * any provider can receive its descriptor. */
+	if (svc_reclaim_live_prepare() == -1)
+		return (-1);
+	prepared = true;
+	return (0);
 }
 
 /* Remove a unit's runtime container and its contents (best effort). */
@@ -285,7 +259,8 @@ svc_run_container_remove(const char *label, uid_t owner)
 		(void)close(base);
 		return;
 	}
-	svc_rmtree_at(base, leaf);
+	if (sb_run_container_remove_at(base, leaf) == -1)
+		syslog(LOG_ERR, "runtime cleanup: remove %s: %m", leaf);
 	(void)close(base);
 }
 
@@ -1447,6 +1422,11 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	if (svc->state != SVC_STATE_STOPPED) {
 		syslog(LOG_WARNING, "svc_exec %s: not stopped (state %d)",
 		    m->label, svc->state);
+		return (-1);
+	}
+
+	if (svc_run_container_prepare() == -1) {
+		syslog(LOG_ERR, "svc_exec %s: runtime container: %m", m->label);
 		return (-1);
 	}
 

@@ -514,8 +514,8 @@ vn_acl(struct file *fp, int op, int type, struct acl *aclp, struct thread *td)
 
 /*
  * The __acl_*_fd(2) family.  Get and check accept an O_PATH descriptor; set
- * and delete refuse one with EBADF; all four refused a descriptor with no
- * vnode with EINVAL, which invfo_acl keeps giving.
+ * and delete refuse one with EBADF, after refusing a descriptor with no
+ * vnode with EINVAL, which invfo_acl gives for get and check.
  */
 static int
 kern_acl_fd(struct thread *td, int fd, const cap_rights_t *rightsp, int op,
@@ -528,12 +528,12 @@ kern_acl_fd(struct thread *td, int fd, const cap_rights_t *rightsp, int op,
 	error = fget(td, fd, rightsp, &fp);
 	if (error != 0)
 		return (error);
-	/* getvnode() never accepted an O_PATH descriptor for a change. */
-	if ((op == FO_ACL_SET || op == FO_ACL_DELETE) &&
-	    (fp->f_flag & O_PATH) != 0) {
-		SDT_PROBE4(fd, , , refused, "acl", fp, 0, EBADF);
-		error = EBADF;
-	} else
+	error = 0;
+	if (op == FO_ACL_SET || op == FO_ACL_DELETE)
+		error = getvnode_fp(fp, false);
+	if (error != 0)
+		SDT_PROBE4(fd, , , refused, "acl", fp, 0, error);
+	else
 		error = fo_acl(fp, op, type, aclp, td);
 	fdrop(fp, td);
 	return (error);

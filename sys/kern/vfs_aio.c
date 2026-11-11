@@ -939,8 +939,9 @@ aio_process_sync(struct kaiocb *job)
 	    ("%s: opcode %d", __func__, job->uaiocb.aio_lio_opcode));
 
 	/*
-	 * The descriptor's own fo_fsync does the work; aio_aqueue() admitted
-	 * only descriptors that can answer it.
+	 * The descriptor's own fo_fsync does the work, as for fsync(2);
+	 * aio_aqueue() admitted only a file with a vnode or a served one,
+	 * neither opened O_PATH.
 	 */
 	td->td_ucred = job->cred;
 	error = 0;
@@ -1702,7 +1703,9 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 	if (error)
 		goto err3;
 
-	if ((opcode & LIO_SYNC) && fp->f_vnode == NULL) {
+	/* A served file has no vnode and answers fsync through its table. */
+	if ((opcode & LIO_SYNC) && fp->f_vnode == NULL &&
+	    fp->f_type != DTYPE_DQ) {
 		error = EINVAL;
 		goto err3;
 	}
@@ -1715,7 +1718,7 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 		goto err3;
 	}
 
-	if (fp != NULL && fp->f_ops == &path_fileops) {
+	if (fp != NULL && FILE_IS_OPATH(fp)) {
 		error = EBADF;
 		goto err3;
 	}

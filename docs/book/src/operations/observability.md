@@ -584,6 +584,7 @@ as on FreeBSD. See [system.Audit](../providers/audit.md).
 | Suite | Where | Needs |
 |---|---|---|
 | `dtrace_catalog_test` | `/usr/tests/sys/kern` | root, kernel providers loaded |
+| `dtrace_fbt_exclusion_test` | `/usr/tests/sys/kern` | root, `kinst.ko` and `fasttrap.ko` loaded. The listing case runs anywhere. `fbt_entry_under_load` enables every fbt entry probe and is skipped unless Kyua is given `-v test_suites.FreeBSD.allow_dtrace_fbt_selftest=yes`; set that only in a disposable VM (`KYUA_VARS` of `vm-provider.sh`) |
 | `bsdinstruments_test`, `hwstat_test`, `bsdtrace_test`, `otelexport_test` | `/usr/tests/usr.sbin/*`, `/usr/tests/lib/libotelexport` | unprivileged for the compile checks; capture cases need Intel PT and root |
 | BSDTrace `policy_test`, `session_test`, `bundle_test` | `/usr/tests/usr.sbin/BSDTrace` | in-session for the parser; a plane-off VM for the session tests |
 

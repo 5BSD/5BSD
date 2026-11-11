@@ -79,7 +79,7 @@ def load(path,build_report):
                 names=set(names),baseline=old,parent=parent,baseline_name=baseline_name,mountpoint=mountpoint)
 
 
-def exercise(loaded,invoke,console,check,ssh,plan,build_report,output):
+def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_probe=None):
     p=loaded['policy'];r=loaded['receipt'];q=shlex.quote
     old=loaded['baseline'];new=loaded['parent']+'/'+p['candidate'];names=loaded['names']
     nonce=uuid.uuid4().hex;prefix='/root/.upgrade-'+nonce
@@ -124,6 +124,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output):
         if revision not in text(label+'-running-kernel','/usr/bin/uname -v'):raise ValueError('running kernel revision differs')
         if sha(label+'-kernel','/boot/kernel/kernel')!=expected_kernel:raise ValueError('installed kernel digest differs')
         packages(label+'-packages',version)
+        command(label+'-checksums',pkg+' check -s -a')
         if guid(label+'-shared-guid',shared)!=shared_guid:raise ValueError('persistent dataset identity changed')
         mounted(label+'-shared-mount',shared,loaded['mountpoint'])
         command(label+'-sshd','/usr/sbin/service sshd status')
@@ -138,6 +139,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output):
         check(label+'-ssh-wrong-password',lambda:ssh(label+'-ssh-negative','id -u',plan['password']+'-wrong',expected=255))
         check(label+'-su',lambda:ssh(label+'-su',"su -m root -c 'test \"$(id -u)\" -eq 0 && echo UPGRADE_SU_OK'",plan['password'],tty=True,answer=plan['password']))
         check(label+'-su-wrong-password',lambda:ssh(label+'-su-negative','su -m root -c "id -u"',plan['password'],expected=1,tty=True,answer=plan['password']+'-wrong'))
+        if service_probe is not None:service_probe(label)
     try:
         mounted('baseline-root',old,'/');packages('baseline-packages',p['baseline_version'])
         old_guid=guid('baseline-guid',old);shared_guid=guid('shared-guid',shared)

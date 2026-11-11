@@ -313,6 +313,8 @@ int	shm_dotruncate(struct shmfd *shmfd, off_t length);
 bool	shm_largepage(struct shmfd *shmfd);
 void	shm_remove_prison(struct prison *pr);
 int	shm_get_path(struct vm_object *obj, char *path, size_t sz);
+int	shm_get_path_cred(struct vm_object *obj, struct ucred *cred,
+	    char *path, size_t sz);
 
 extern const struct fileops shm_ops;
 

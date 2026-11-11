@@ -695,7 +695,8 @@ kern_ftruncate(struct thread *td, int fd, off_t length)
 		return (EXTERROR(EINVAL, "non-writable"));
 	}
 #ifdef MAC
-	{
+	/* A served file's check; the other types make their own, as ever. */
+	if (fp->f_type == DTYPE_DQ) {
 		struct vattr va;
 
 		VATTR_NULL(&va);

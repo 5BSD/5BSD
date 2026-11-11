@@ -32,6 +32,10 @@ CFLAGS.nss_helper_test+= -I${SRCTOP}/usr.sbin/switchboard
 
 
 
+ATF_TESTS_C+= run_container_cleanup_test
+SRCS.run_container_cleanup_test= run_container_cleanup_test.c run_container_cleanup.c
+CFLAGS.run_container_cleanup_test+= -I${SRCTOP}/usr.sbin/switchboard
+
 ATF_TESTS_C+= run_container_directory_test
 CFLAGS.run_container_directory_test.c+= -I${SRCTOP}/usr.sbin/switchboard
 

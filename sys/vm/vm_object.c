@@ -2624,8 +2624,13 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 		}
 		if ((obj->flags & OBJ_POSIXSHM) != 0) {
 			kvo->kvo_flags |= KVMO_FLAG_POSIXSHM;
-			shm_get_path(obj, kvo->kvo_path,
-			    sizeof(kvo->kvo_path));
+			/*
+			 * A jailed reader gets the path as its jail sees
+			 * it, or none for an object outside the jail; the
+			 * vnode paths are withheld from it altogether.
+			 */
+			shm_get_path_cred(obj, curthread->td_ucred,
+			    kvo->kvo_path, sizeof(kvo->kvo_path));
 		}
 		if (held) {
 			vm_object_kinfo(&kh, &ki, curthread);

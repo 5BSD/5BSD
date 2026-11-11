@@ -219,3 +219,48 @@ runner passed authentication but omitted service failures. Replaying the full R1
 serial log now rejects it; the accepted baseline R8 log remains accepted. This
 guard is additional failure detection, not proof of complete service health.
 The diagnostic module is hash-bound with the other runner sources.
+
+## Manifest-derived boot-service readiness (format 5)
+
+A format-5 VM plan contains every format-4 field plus `service_policy`, an absolute
+path to this exact format-1 policy shape:
+
+```json
+{
+  "format": 1,
+  "qualification": "/usr/obj/usr/src/EXPLICIT-PASSED-NATIVE-CAPTURE",
+  "target": "//tools/test/system-pkg-runtime:service_inventory",
+  "output": "service_inventory",
+  "roots": ["/Capabilities/System"],
+  "control_program": "/Capabilities/System/SwitchBoardControl.cap/Units/switchboardctl.unit/bin/switchboardctl",
+  "deadline_seconds": 120
+}
+```
+
+The qualification path must name a real passed native capture; the example is
+schema documentation, not a usable receipt or fallback. Select actual configured
+bundle roots and a regular control executable present in the captured image.
+The usual `/usr/sbin/switchboardctl` alias is a symlink; the policy names its
+packaged executable. The helper is uploaded from its hash-verified capture into
+a private guest directory. Neither the frozen capture nor the image is modified.
+
+`service_inventory` uses the production libcapbundle parser to enumerate installed
+bundles and their service labels, executables, boot activation and endpoints.
+There is no hand-maintained required-daemon list. Every boot-activated service
+must appear running, with a PID and no pending cleanup, in the real control
+service's response. Missing or malformed bundles, duplicate declarations,
+truncated status, missing PIDs and missing/unready boot units fail acceptance.
+A new boot service therefore becomes required without a runner source edit.
+
+The check runs on the baseline, upgraded boot and rollback, within explicit
+service/upgrade/whole-VM deadlines. Complete non-config pkg checksum checks now
+also run after new boot and rollback. All raw root-command outputs and a separate
+service inventory/state report are retained. Full closeout runtime evidence must
+include this readiness coverage; old format-4 mechanism results do not establish it.
+
+This is boot-unit readiness and a real manager status RPC. It does **not** prove
+individual provider protocol operations, on-demand/timer/path activation or
+arbitrary configurations outside the selected installed roots. Those functional
+contracts remain required work for the closeout goal. Host parser/validator tests
+are separate from native Bazel and VM acceptance. Use the normal format-5 frontend
+target/test inputs for `service_inventory_test` and `service_health_test`.

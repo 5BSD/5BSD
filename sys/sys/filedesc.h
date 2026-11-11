@@ -326,6 +326,7 @@ int	getvnode(struct thread *td, int fd, const cap_rights_t *rightsp,
 	    struct file **fpp);
 int	getvnode_path(struct thread *td, int fd, const cap_rights_t *rightsp,
 	    uint8_t *flagsp, struct file **fpp);
+int	getvnode_fp(struct file *fp, bool path);
 void	mountcheckdirs(struct vnode *olddp, struct vnode *newdp);
 
 int	fget_cap_noref(struct filedesc *fdp, int fd,

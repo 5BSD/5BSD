@@ -444,12 +444,15 @@ SDT_PROBE_DECLARE(vfs, , , chflags);
 /*
  * Set attributes on any descriptor that carries a vnode: the whole vattr.
  * Size, mode and owner go through the descriptor's own direct operations
- * (file_setattr_direct: fo_truncate, fo_chmod, fo_chown, so the table's
- * answers stand, vn_chmod's MAC check and audit record included); times
- * and flags through VOP_SETATTR with the checks the system calls used to
- * make before setfflags()/setutimes(): the vnode audit record, the device
- * flag privilege, the MAC checks, and setutimes()'s birth-time adjustment.
- * fdescfs sets attributes on /dev/fd/N with one call.
+ * (file_setattr_direct(): the vnode's MAC check, then fo_truncate, fo_chmod
+ * and fo_chown, so the table's answers stand, vn_chmod()'s audit record
+ * included); times and flags through VOP_SETATTR with the checks the system
+ * calls make before setfflags()/setutimes(): the vnode audit record, the
+ * device flag privilege, the MAC checks, and setutimes()'s birth-time
+ * adjustment.  futimes(2) and futimens(2) arrive here for every vnode file.
+ * The other callers pass a vnode file only on behalf of a process attached
+ * to a descriptor queue; fchflags(2) and fdescfs do not come this way
+ * (setfflags(), vn_setattr_checked()).
  */
 int
 vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
@@ -458,18 +461,28 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	struct vattr cur, rest;
 	struct vnode *vp;
 	struct mount *mp;
-	bool settimes;
+	bool direct, settimes;
 	int error;
 
 	error = file_setattr_direct(fp, vap, active_cred, td);
 	if (error != 0)
 		return (error);
 	vp = fp->f_vnode;
+	direct = vap->va_size != VNOVAL || vap->va_mode != (mode_t)VNOVAL ||
+	    vap->va_uid != VNOVAL || vap->va_gid != VNOVAL;
 	settimes = vap->va_atime.tv_sec != VNOVAL ||
 	    vap->va_mtime.tv_sec != VNOVAL;
 	if (!settimes && vap->va_birthtime.tv_sec == VNOVAL &&
-	    vap->va_flags == VNOVAL)
-		return (0);
+	    vap->va_flags == VNOVAL) {
+		if (direct)
+			return (0);
+		/*
+		 * A vattr that names nothing is futimes(2) or futimens(2)
+		 * given two times of VNOVAL.  It is still a request to set
+		 * the times: audited, checked and passed to the filesystem.
+		 */
+		settimes = true;
+	}
 #ifdef AUDIT
 	if (AUDITING_TD(td)) {
 		vn_lock(vp, LK_SHARED | LK_RETRY);
@@ -485,7 +498,8 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 		 * chown can't fail when done as root.
 		 */
 		if (VN_ISDEV(vp)) {
-			error = priv_check_cred(active_cred, PRIV_VFS_CHFLAGS_DEV);
+			error = priv_check_cred(active_cred,
+			    PRIV_VFS_CHFLAGS_DEV);
 			if (error != 0)
 				return (error);
 		}
@@ -494,7 +508,8 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	error = 0;
 	if (vap->va_flags != VNOVAL)
-		error = mac_vnode_check_setflags(active_cred, vp, vap->va_flags);
+		error = mac_vnode_check_setflags(active_cred, vp,
+		    vap->va_flags);
 	if (error == 0 && settimes)
 		error = mac_vnode_check_setutimes(active_cred, vp,
 		    vap->va_atime, vap->va_mtime);
@@ -514,7 +529,7 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	    VOP_GETATTR(vp, &cur, active_cred) == 0 &&
 	    timespeccmp(&vap->va_mtime, &cur.va_birthtime, <))
 		vap->va_birthtime = vap->va_mtime;
-	/* Size, mode and owner went to their operations; VOP_SETATTR the rest. */
+	/* Size, mode and owner went to their operations; the rest goes here. */
 	rest = *vap;
 	rest.va_size = VNOVAL;
 	rest.va_mode = (mode_t)VNOVAL;
@@ -524,7 +539,8 @@ vn_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 #ifdef MAC
 	if (error == 0) {
 		if (vap->va_flags != VNOVAL)
-			mac_vnode_notify_setflags(active_cred, vp, vap->va_flags);
+			mac_vnode_notify_setflags(active_cred, vp,
+			    vap->va_flags);
 		if (settimes)
 			mac_vnode_notify_setutimes(active_cred, vp);
 	}
@@ -546,6 +562,89 @@ vn_openfile_setattr(struct file *fp, struct vattr *vap,
 	vn_file_context_enter(&ctx, fp, NULL, 0);
 	error = vn_setattr(fp, vap, active_cred, td);
 	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+/*
+ * Set the whole vattr on a file's vnode with one VOP_SETATTR, after the
+ * checks the system call for each attribute makes: the device-flags
+ * privilege and the MAC checks for size (as truncate), mode, owner, flags
+ * and times, with the vnode audit record.  Nothing is changed unless every
+ * check passes.  fdescfs sets attributes on /dev/fd/N this way.
+ */
+int
+vn_setattr_checked(struct file *fp, struct vattr *vap,
+    struct ucred *active_cred)
+{
+	struct mount *mp;
+	struct vnode *vp;
+	void *rl_cookie;
+	int error;
+
+	vp = fp->f_vnode;
+	/*
+	 * Prevent non-root users from setting flags on devices, as
+	 * chflags(2) does.
+	 */
+	if (vap->va_flags != VNOVAL && VN_ISDEV(vp)) {
+		error = priv_check_cred(active_cred, PRIV_VFS_CHFLAGS_DEV);
+		if (error != 0)
+			return (error);
+	}
+	/* Lock the whole range for a truncation, as truncate(2) does. */
+	rl_cookie = NULL;
+	if (vap->va_size != VNOVAL)
+		rl_cookie = vn_rangelock_wlock(vp, 0, OFF_MAX);
+	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
+	if (error != 0)
+		goto unrange;
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	AUDIT_ARG_VNODE1(vp);
+#ifdef MAC
+	if (vap->va_size != VNOVAL) {
+		error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
+		if (error == 0)
+			error = mac_vnode_check_truncate(active_cred, vp);
+	}
+	if (error == 0 && vap->va_mode != (mode_t)VNOVAL)
+		error = mac_vnode_check_setmode(active_cred, vp, vap->va_mode);
+	if (error == 0 && (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL))
+		error = mac_vnode_check_setowner(active_cred, vp, vap->va_uid,
+		    vap->va_gid);
+	if (error == 0 && vap->va_flags != VNOVAL)
+		error = mac_vnode_check_setflags(active_cred, vp,
+		    vap->va_flags);
+	if (error == 0 && (vap->va_atime.tv_sec != VNOVAL ||
+	    vap->va_mtime.tv_sec != VNOVAL))
+		error = mac_vnode_check_setutimes(active_cred, vp,
+		    vap->va_atime, vap->va_mtime);
+	if (error != 0)
+		goto unlock;
+#endif
+	error = VOP_SETATTR(vp, vap, active_cred);
+#ifdef MAC
+	if (error == 0) {
+		if (vap->va_size != VNOVAL)
+			mac_vnode_notify_truncate(active_cred, vp);
+		if (vap->va_mode != (mode_t)VNOVAL)
+			mac_vnode_notify_setmode(active_cred, vp, vap->va_mode);
+		if (vap->va_uid != VNOVAL || vap->va_gid != VNOVAL)
+			mac_vnode_notify_setowner(active_cred, vp, vap->va_uid,
+			    vap->va_gid);
+		if (vap->va_flags != VNOVAL)
+			mac_vnode_notify_setflags(active_cred, vp,
+			    vap->va_flags);
+		if (vap->va_atime.tv_sec != VNOVAL ||
+		    vap->va_mtime.tv_sec != VNOVAL)
+			mac_vnode_notify_setutimes(active_cred, vp);
+	}
+unlock:
+#endif
+	VOP_UNLOCK(vp);
+	vn_finished_write(mp);
+unrange:
+	if (rl_cookie != NULL)
+		vn_rangelock_unlock(vp, rl_cookie);
 	return (error);
 }
 
@@ -756,10 +855,9 @@ SDT_PROBE_DECLARE(fd, , , advlock__done);
 
 /*
  * Advisory locks on a vnode file: flock(2), the fcntl(2) record locks and
- * the unlock every close owes POSIX locks.  Open-file-description locks need
- * the filesystem's support, checked under the vnode lock so that a doomed
- * vnode is excluded.  Enters the file context itself, so the tables install
- * it directly.
+ * the unlock every close owes POSIX locks.  kern_fcntl() has checked the
+ * filesystem's support for open-file-description locks (fcntl_ofd_check()).
+ * Enters the file context itself, so the tables install it directly.
  */
 int
 vn_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
@@ -786,17 +884,6 @@ vn_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
 	    (op == F_UNLCK && (flags & F_POSIX) != 0),
 	    ("vn_advlock: F_CLOSEUNLCK with op %d flags %#x", op, flags));
 	flags &= ~F_CLOSEUNLCK;
-	if ((flags & F_OFD) != 0) {
-		error = vn_lock(vp, LK_SHARED | LK_RETRY);
-		if (error != 0)
-			return (error);
-		if (vp->v_mount == NULL ||
-		    (vp->v_mount->mnt_vfc->vfc_flags & VFCF_OFDLOCKS) == 0)
-			error = EOPNOTSUPP;
-		VOP_UNLOCK(vp);
-		if (error != 0)
-			return (error);
-	}
 	vn_file_context_enter(&ctx, fp, NULL, 0);
 	SDT_PROBE3(fd, , , advlock__start, (vp), (op), (flags));
 	error = VOP_ADVLOCK(vp, id, op, fl, flags);
@@ -3751,18 +3838,6 @@ vn_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
 	struct vnode *vp;
 
 	vp = fp->f_vnode;
-#ifdef MAC
-	{
-		int error;
-
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		error = mac_vnode_check_setmode(active_cred, vp,
-		    mode & ALLPERMS);
-		VOP_UNLOCK(vp);
-		if (error != 0)
-			return (error);
-	}
-#endif
 #ifdef AUDIT
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
@@ -3778,17 +3853,6 @@ vn_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	struct vnode *vp;
 
 	vp = fp->f_vnode;
-#ifdef MAC
-	{
-		int error;
-
-		vn_lock(vp, LK_SHARED | LK_RETRY);
-		error = mac_vnode_check_setowner(active_cred, vp, uid, gid);
-		VOP_UNLOCK(vp);
-		if (error != 0)
-			return (error);
-	}
-#endif
 #ifdef AUDIT
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);

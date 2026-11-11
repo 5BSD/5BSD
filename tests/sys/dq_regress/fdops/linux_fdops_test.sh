@@ -4,8 +4,7 @@
 # freestanding static amd64 Linux program (no Linux libc) built here, as the
 # tests/sys/kern/linux_*_test.sh programs are, and run under linux64.ko.
 # Every cell expects FreeBSD's behaviour at 3b9f9873d291; see the list at
-# the top of linux_fdops.c for the cells the current tree answers
-# differently.
+# the top of linux_fdops.c for the cells ux-0 slice 1 restored.
 #
 # Modules: the capability plane refuses a late kldload, so linux64 (and,
 # for the O_PATH reopen of a pipe, linprocfs) must be preloaded, e.g.

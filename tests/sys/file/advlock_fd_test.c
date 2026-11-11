@@ -188,7 +188,7 @@ ATF_TC_BODY(no_vnode, tc)
  * F_GETFL view of the descriptor (FHASLOCK is not masked) is unchanged.
  */
 static void
-check_refused_before_args(int fd, int flock_errno)
+check_refused_before_args(int fd)
 {
 	struct flock fl;
 	int flags;
@@ -205,7 +205,7 @@ check_refused_before_args(int fd, int flock_errno)
 	ATF_CHECK_EQ(EBADF, errno);
 	errno = 0;
 	ATF_CHECK_EQ(-1, flock(fd, 0));
-	ATF_CHECK_EQ(flock_errno, errno);
+	ATF_CHECK_EQ(EOPNOTSUPP, errno);
 	ATF_CHECK_EQ(flags, fcntl(fd, F_GETFL));
 }
 
@@ -216,14 +216,14 @@ ATF_TC_BODY(refused_before_args, tc)
 	int fds[2], fd;
 
 	/*
-	 * An anonymous pipe shares the FIFO table, which takes flock(2), so
-	 * flock(pipe, 0) validates how (EBADF) before the pipe refuses.
+	 * An anonymous pipe shares the FIFO table, which takes flock(2), but
+	 * flock(2) refuses the pipe by its type before validating how.
 	 */
 	ATF_REQUIRE_EQ(0, pipe(fds));
-	check_refused_before_args(fds[0], EBADF);
+	check_refused_before_args(fds[0]);
 	/*
-	 * A real flock(2) request on the pipe is EOPNOTSUPP, and the
-	 * FHASLOCK bit set ahead of it comes off again (F_GETFL shows it).
+	 * A real flock(2) request on the pipe is EOPNOTSUPP too, and leaves
+	 * FHASLOCK clear (F_GETFL shows it).
 	 */
 	fd = fcntl(fds[0], F_GETFL);
 	ATF_REQUIRE(fd != -1);
@@ -235,12 +235,12 @@ ATF_TC_BODY(refused_before_args, tc)
 	close(fds[1]);
 	fd = kqueue();
 	ATF_REQUIRE(fd >= 0);
-	check_refused_before_args(fd, EOPNOTSUPP);
+	check_refused_before_args(fd);
 	close(fd);
 	ATF_REQUIRE_EQ(0, close(open("file", O_RDWR | O_CREAT, 0644)));
 	fd = open("file", O_PATH);
 	ATF_REQUIRE(fd >= 0);
-	check_refused_before_args(fd, EOPNOTSUPP);
+	check_refused_before_args(fd);
 	close(fd);
 	/* A FIFO takes flock(2) only: record locks refused first, same way. */
 	ATF_REQUIRE_EQ(0, mkfifo("fifo2", 0644));

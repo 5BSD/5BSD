@@ -25,6 +25,7 @@ from startup_diagnostics import reject_failures
 from installed_audit import specification
 import firstboot_runtime
 import upgrade_runtime
+import service_health
 from mtree_reconcile import reconcile
 
 class Console:
@@ -103,9 +104,10 @@ def main():
         required.update(('metalog_output','audit_deadline_seconds'))
     if type(plan.get('format')) is int and plan['format']>=3:
         required.update(('firstboot_policy','firstboot_deadline_seconds'))
-    if plan.get('format')==4:required.add('upgrade_policy')
-    if set(plan)!=required or type(plan['format']) is not int or plan['format'] not in (1,2,3,4):
-        raise ValueError('exact format-1/2/3/4 VM plan fields required')
+    if type(plan.get('format')) is int and plan['format']>=4:required.add('upgrade_policy')
+    if plan.get('format')==5:required.add('service_policy')
+    if set(plan)!=required or type(plan['format']) is not int or plan['format'] not in (1,2,3,4,5):
+        raise ValueError('exact format-1/2/3/4/5 VM plan fields required')
     if type(plan['user_uid']) is not int or not 0<plan['user_uid']<2**31:
         raise ValueError('explicit ordinary guest user UID required')
     for field in ('console_user','ssh_user'):
@@ -133,19 +135,28 @@ def main():
     assert build_report['status']=='passed' and digest(image)==build_report['image_sha256']
     audit_spec=specification(resolved[2][0].read_bytes(),build_report) if plan['format']>=2 else None
     firstboot=firstboot_runtime.load(plan['firstboot_policy'],build_report,{plan['console_user'],plan['ssh_user']}) if plan['format']>=3 else None
-    upgrade=upgrade_runtime.load(plan['upgrade_policy'],build_report) if plan['format']==4 else None
+    upgrade=upgrade_runtime.load(plan['upgrade_policy'],build_report) if plan['format']>=4 else None
+    services=service_health.load(plan['service_policy'],build_report) if plan['format']==5 else None
+    if services is not None and services['policy']['deadline_seconds']>plan['deadline_seconds']:
+        raise ValueError('service phase exceeds whole-VM deadline')
     tools={name:Path(plan[name]).resolve(strict=True) for name in ('qemu','qemu_img','bios','ssh')}
     bindings={str(path):digest(path) for path in tools.values()}
-    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py','upgrade_runtime.py','startup_diagnostics.py')]
+    sources=[Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py','upgrade_runtime.py','startup_diagnostics.py','service_health.py')]
     source_bindings={str(path):digest(path) for path in sources}
     if firstboot is not None:source_bindings.update(firstboot['bindings'])
     if upgrade is not None:source_bindings.update(upgrade['bindings'])
+    if services is not None:source_bindings.update(services['bindings'])
     out.mkdir(mode=0o700)
     if upgrade is not None:(out/'upgrade-policy.json').write_bytes(upgrade['policy_bytes'])
     if firstboot is not None:(out/'firstboot-policy.json').write_bytes(firstboot['policy_bytes'])
+    if services is not None:(out/'service-policy.json').write_bytes(services['policy_bytes'])
     if audit_spec is not None:(out/'installed.mtree').write_bytes(audit_spec)
     monitor=HostMonitor(out/'host-resources.jsonl',plan['max_rss_mib'])
     report=dict(format=1,status='running',scope='Normal complete package-image BIOS/ZFS boot, serial login/PAM, SSH password/PAM and su; not secure boot, upgrade or comparative performance',image=[b for p,b in resolved],tools=bindings,runner_sources=source_bindings,plan_sha256=digest(args.plan),checks=[])
+    if upgrade is not None:
+        report['scope']='Complete signed-package BE upgrade, new-kernel boot, authentication, rollback and unused-BE removal; not secure boot, application schema rollback or comparative performance'
+    if services is not None:
+        report['scope']+='; installed-manifest boot-unit readiness, not per-provider protocol operations'
     def save():(out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
     (out/'plan.json').write_text(json.dumps(plan,indent=2)+'\n')
     save();overlay=out/'guest.qcow2'
@@ -262,7 +273,7 @@ def main():
                 report['root_commands'].append(record)
                 if firstboot_proof is None:report['firstboot_commands'].append(record)
                 save()
-                if child.returncode:raise RuntimeError('guest firstboot proof failed: '+label+'; see '+str(log_path))
+                if child.returncode:raise RuntimeError('guest root operation failed: '+label+'; see '+str(log_path))
                 if log_path.stat().st_size>32*1024**2:raise ValueError('root-operation output exceeds evidence budget')
                 return log_path.read_bytes()
             firstboot_proof=firstboot_runtime.exercise(firstboot,root_invoke,out,{plan['console_user'],plan['ssh_user']})
@@ -303,9 +314,22 @@ def main():
             save()
             if not audit_passed:raise RuntimeError('complete installed-tree audit differs; retain every difference for review, see installed-audit.log')
             check('installed-tree-audit',lambda:'complete captured baseline plus any independently verified firstboot transitions matches')
+        def service_probe(label):
+            nonlocal operation_until
+            previous_until=operation_until
+            operation_until=min(previous_until,time.monotonic()+services['policy']['deadline_seconds'])
+            try:
+                return check(label+'-manifest-boot-services',
+                    lambda:service_health.exercise(services,root_invoke,out,label))
+            finally:
+                operation_until=previous_until
+        if services is not None:
+            operation_until=time.monotonic()+services['policy']['deadline_seconds']
+            service_probe('baseline')
         if upgrade is not None:
             operation_until=time.monotonic()+upgrade['policy']['deadline_seconds']
-            upgrade_runtime.exercise(upgrade,root_invoke,console,check,ssh,plan,build_report,out)
+            upgrade_runtime.exercise(upgrade,root_invoke,console,check,ssh,plan,build_report,out,
+                service_probe=service_probe if services is not None else None)
         console.send('/sbin/shutdown -p now')
         until=time.monotonic()+180
         while process.poll() is None:
