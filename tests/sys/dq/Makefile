@@ -39,6 +39,7 @@ ATF_TESTS_C+=	dq_cwd_test
 ATF_TESTS_C+=	dq_getcwd_test
 ATF_TESTS_C+=	dq_kclass_test
 ATF_TESTS_C+=	dq_exec_test
+ATF_TESTS_C+=	dq_launch_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
