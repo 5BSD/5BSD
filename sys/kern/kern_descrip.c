@@ -620,6 +620,31 @@ open_to_fde_flags(int open_flags, bool sticky_orb)
 	    (sticky_orb ? 0 : 1), open_flags));
 }
 
+/*
+ * Validate filesystem support while excluding vnode reclamation.  A served
+ * file has no filesystem here; its table answers the lock request.
+ */
+static int
+fcntl_ofd_check(struct file *fp, const struct flock *flp)
+{
+	struct vnode *vp;
+	int error;
+
+	if (flp->l_pid != 0)
+		return (EINVAL);
+	if (fp->f_type == DTYPE_DQ)
+		return (0);
+	vp = fp->f_vnode;
+	error = vn_lock(vp, LK_SHARED | LK_RETRY);
+	if (error != 0)
+		return (error);
+	if (vp->v_mount == NULL ||
+	    (vp->v_mount->mnt_vfc->vfc_flags & VFCF_OFDLOCKS) == 0)
+		error = EOPNOTSUPP;
+	VOP_UNLOCK(vp);
+	return (error);
+}
+
 int
 kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 {
@@ -833,10 +858,12 @@ revert_flags:
 			break;
 		}
 #endif
-		if ((flg & F_OFD) != 0 && flp->l_pid != 0) {
-			error = EINVAL;
-			fdrop(fp, td);
-			break;
+		if ((flg & F_OFD) != 0) {
+			error = fcntl_ofd_check(fp, flp);
+			if (error != 0) {
+				fdrop(fp, td);
+				break;
+			}
 		}
 
 		if (flp->l_whence == SEEK_CUR) {
@@ -901,13 +928,6 @@ revert_flags:
 			error = EINVAL;
 			break;
 		}
-		/*
-		 * A filesystem that takes no open-file-description locks
-		 * answered EOPNOTSUPP before the flag was set; it can hold
-		 * none, so the flag comes off again.
-		 */
-		if (error == EOPNOTSUPP && (flg & F_OFD) != 0)
-			atomic_clear_int(&fp->f_flag, FHASOFDLOCK);
 		if (error != 0 || (flg & F_OFD) != 0 ||
 		    flp->l_type == F_UNLCK ||
 		    flp->l_type == F_UNLCKSYS) {
@@ -976,10 +996,12 @@ revert_flags:
 			break;
 		}
 #endif
-		if ((flg & F_OFD) != 0 && flp->l_pid != 0) {
-			error = EINVAL;
-			fdrop(fp, td);
-			break;
+		if ((flg & F_OFD) != 0) {
+			error = fcntl_ofd_check(fp, flp);
+			if (error != 0) {
+				fdrop(fp, td);
+				break;
+			}
 		}
 
 		if (flp->l_whence == SEEK_CUR) {

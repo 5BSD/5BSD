@@ -141,7 +141,7 @@ test(int argc, char **argv, char **envp)
 	/* 18: a bad pointer is EFAULT. */
 	if (sys3(SYS_ioctl, fd, FS_IOC_SETFLAGS, 0) != -EFAULT) return (18);
 	if (sys3(SYS_ioctl, fd, FS_IOC_GETFLAGS, 0) != -EFAULT) return (18);
-	/* 19: GETFLAGS/SETFLAGS on a pipe is ENOTTY. */
+	/* 19: SETFLAGS on a pipe is ENOTTY (GETFLAGS has no type test). */
 	if (sys2(SYS_pipe2, pfd, 0) != 0) return (19);
 	fl = 0;
 	if (sys3(SYS_ioctl, pfd[0], FS_IOC_SETFLAGS, &fl) != -ENOTTY) return (19);

@@ -756,10 +756,9 @@ SDT_PROBE_DECLARE(fd, , , advlock__done);
 
 /*
  * Advisory locks on a vnode file: flock(2), the fcntl(2) record locks and
- * the unlock every close owes POSIX locks.  Open-file-description locks need
- * the filesystem's support, checked under the vnode lock so that a doomed
- * vnode is excluded.  Enters the file context itself, so the tables install
- * it directly.
+ * the unlock every close owes POSIX locks.  kern_fcntl() has checked the
+ * filesystem's support for open-file-description locks (fcntl_ofd_check()).
+ * Enters the file context itself, so the tables install it directly.
  */
 int
 vn_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
@@ -786,17 +785,6 @@ vn_advlock(struct file *fp, void *id, int op, struct flock *fl, int flags,
 	    (op == F_UNLCK && (flags & F_POSIX) != 0),
 	    ("vn_advlock: F_CLOSEUNLCK with op %d flags %#x", op, flags));
 	flags &= ~F_CLOSEUNLCK;
-	if ((flags & F_OFD) != 0) {
-		error = vn_lock(vp, LK_SHARED | LK_RETRY);
-		if (error != 0)
-			return (error);
-		if (vp->v_mount == NULL ||
-		    (vp->v_mount->mnt_vfc->vfc_flags & VFCF_OFDLOCKS) == 0)
-			error = EOPNOTSUPP;
-		VOP_UNLOCK(vp);
-		if (error != 0)
-			return (error);
-	}
 	vn_file_context_enter(&ctx, fp, NULL, 0);
 	SDT_PROBE3(fd, , , advlock__start, (vp), (op), (flags));
 	error = VOP_ADVLOCK(vp, id, op, fl, flags);

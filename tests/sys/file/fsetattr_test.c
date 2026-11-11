@@ -194,11 +194,11 @@ ATF_TC_BODY(flags_vnoval, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, fchflags(fd, (u_long)-1));
 	ATF_CHECK_EQ(EBADF, errno);
-	/* A type without attributes: refused the same way, once consulted. */
+	/* A descriptor without a vnode is refused first, as getvnode() did. */
 	ATF_REQUIRE_EQ(0, pipe(fds));
 	errno = 0;
 	ATF_CHECK_EQ(-1, fchflags(fds[0], (u_long)-1));
-	ATF_CHECK_EQ(EOPNOTSUPP, errno);
+	ATF_CHECK_EQ(EINVAL, errno);
 	close(fds[0]);
 	close(fds[1]);
 }

@@ -626,8 +626,11 @@ fo_fsync(struct file *fp, int mode, struct thread *td)
 }
 
 /*
- * Set the times and flags in *vap (VNOVAL leaves a field alone).  Mode,
- * owner and size have their own operations and are refused here.
+ * Set the attributes named in *vap (VNOVAL leaves a field alone).  Size,
+ * mode and owner have their own operations and every body applies them
+ * through those (file_setattr_direct()); times and flags are the body's.
+ * futimes(2) and futimens(2) call it for every file; the other callers
+ * only for a file served through a descriptor queue.
  */
 static __inline int
 fo_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,

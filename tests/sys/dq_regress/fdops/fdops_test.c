@@ -22,9 +22,10 @@
  * extattr_get_fd(2), and so on; the l* forms for a symbolic link).  The
  * path forms were not rewired by stage 0 and reach the same vnode
  * operation, so an oracle pins the dispatch, not a filesystem's choices.
- * Where the current tree differs from base the test expects base's value:
- * those cells fail on the current kernel until ux-0 restores them, which is
- * the point.  No expectation is weakened to make the current kernel pass.
+ * Where the tree differed from base before ux-0 the test expects base's
+ * value; ux-0 slice 1 restored those cells, which are listed below with
+ * what the tree answered before.  No expectation was weakened to make a
+ * kernel pass.
  *
  * Bad descriptors (-1, a closed descriptor, INT_MAX) are kinds of their
  * own, so each row also checks which argument errors come before the
@@ -38,9 +39,10 @@
  * cells that panic a base INVARIANTS kernel (below).
  *
  * ------------------------------------------------------------------------
- * CELLS WHOSE BASE VALUE DIFFERS FROM THE CURRENT TREE (proxy/objects as of
- * 2026-11-09).  Derived by reading the current code against base; each
- * fails on the current kernel until the ux-0 decision restores base.
+ * CELLS RESTORED BY UX-0 SLICE 1: their base value differed from the tree
+ * before it (proxy/objects at f9e922d244b, 2026-11-09).  Derived by reading
+ * that code against base; "current" below is what that tree answered, and
+ * each cell failed on it.  The row that restored base is named per entry.
  * "non-vnode readable kinds" are the 17 kinds that are open for reading and
  * have no vnode in base (f_vnode == NULL): pipe_r, pipe_w, unix_stream,
  * unix_dgram, socketpair, sock_append, inet, kqueue, shm, shm_anon,
@@ -116,12 +118,13 @@
  *     fdesc_vnops.c:609 -> vfs_syscalls.c:4661-4663), current EINVAL
  *     (badfo_truncate through file_setattr_direct).          ux-0: D234
  *
- * UNOWNED: none found.  Every difference above has a ux-0 row.
+ * UNOWNED: none found.  Every difference above had a ux-0 row.
  *
- * Differences that exist but that a native, unprivileged-or-root program
- * cannot see without a MAC policy (D235's ordering; fchmod/fchown MAC
- * errno on a ptmx master; the "MAC errno first" part of D230) are not
- * cells here: they need a denying mac_test policy.  One such difference
+ * Differences that a native, unprivileged-or-root program cannot see
+ * without a MAC policy (D235's ordering; fchmod/fchown MAC errno on a ptmx
+ * master, D301; the "MAC errno first" part of D230) are not cells here:
+ * they need a denying policy, and tests/sys/file/fsetattr_test.c has them
+ * under mac_test_hooks.  One such difference
  * needs no denial and shows once any policy registering
  * mpo_file_check_fcntl is loaded (mac_test, which an earlier test in a
  * full run may leave loaded): fcntl(badfd, ...) answers EBADF ahead of

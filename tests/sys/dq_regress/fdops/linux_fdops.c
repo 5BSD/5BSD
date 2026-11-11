@@ -15,10 +15,10 @@
  * "kd:" sys/kern/kern_descrip.c, "sp:" sys/kern/sys_pipe.c, all at
  * 3b9f9873d291).  Where base hands the call to a filesystem, the expected
  * value is the path form of the same Linux call on the same vnode (an
- * oracle; the path forms were not rewired).  The current tree's value is
- * NOT what is expected where the two differ; those cells fail until ux-0
- * restores them.  Every failing cell prints one line; exit status 1 if any
- * cell is not as base, 0 otherwise.
+ * oracle; the path forms were not rewired).  Where the tree differed from
+ * base before ux-0, base's value is what is expected; ux-0 slice 1
+ * restored those cells.  Every failing cell prints one line; exit status 1
+ * if any cell is not as base, 0 otherwise.
  *
  * usage: linux_fdops LPROC FLAGS
  *   LPROC  a linprocfs mount (for the O_PATH reopen of a pipe through
@@ -28,8 +28,10 @@
  *          panics on a FIFO or ptmx master), else "-".
  *
  * ------------------------------------------------------------------------
- * CELLS WHOSE BASE VALUE DIFFERS FROM THE CURRENT TREE (derived by reading
- * the current sys/compat/linux and sys/kern against base):
+ * CELLS RESTORED BY UX-0 SLICE 1 (their base value differed from the tree
+ * before it, proxy/objects at f9e922d244b; derived by reading that tree's
+ * sys/compat/linux and sys/kern against base; "now" is what that tree
+ * answered, the last column the row that restored base):
  *
  *  fsync, fdatasync              opath_pipe          base EINVAL  now EBADF   D237
  *  utimensat(fd, NULL) (futimens) opath_pipe         base EINVAL  now EBADF   D237
@@ -56,6 +58,9 @@
  *  FS_IOC_SETFLAGS               ptmx                base ENOTTY  now 0       D237
  *  FS_IOC_SETFLAGS               fifo_rd, fifo_wr    base ENOTTY  now 0       D237*
  *  FS_IOC_SETFLAGS               opath_pipe          base ENOTTY  now EBADF   D237*
+ *  FS_IOC_GETFLAGS               (none)              base has no type test
+ *    (li:4014-4025: kern_fstat answers every kind, so 0 with no flag set;
+ *    the plan's section 0bb says ENOTTY, which base's source does not give)
  *  file_getattr, file_setattr    opath_pipe          base EOPNOTSUPP now EBADF D237
  *    (NULL path, AT_EMPTY_PATH)
  *  F_SET_RW_HINT unprivileged    devnull, bad ptr    base EPERM   now EFAULT  D237
@@ -85,10 +90,10 @@
  *
  *  D237* : D237's rule ("each Linux wrapper keeps base's type test result",
  *  plan section 1a.8) covers the cell, but the row's enumerated examples do
- *  not name that descriptor kind; the ux-0 test list should add it.
+ *  not name that descriptor kind.
  *  UNOWNED: getdents64 (linux_getdents_error) and the xattr name-before-
  *  type order (xattr_getvnode) are rewired Linux paths that no plan row
- *  names.
+ *  named; slice 1 restored them under D237's rule.
  *
  * NOT REACHABLE HERE: the Linux mount-id cap at INT_MAX-1 (needs 2^31
  * mounts); /proc/self/mountinfo (linprocfs output unchanged by the
@@ -213,6 +218,7 @@ typedef long s64;
 #define	LOCK_EX		2
 #define	LOCK_NB		4
 #define	LOCK_UN		8
+#define	FS_IOC_GETFLAGS	0x80086601UL
 #define	FS_IOC_SETFLAGS	0x40086602UL
 #define	UTIME_OMIT	((1L << 30) - 2L)
 #define	STATX_BASIC_STATS	0x7ff
@@ -980,6 +986,31 @@ row_setflags(struct kinst *ki)
 }
 
 /* ------------------------------------------------------------------ */
+/* FS_IOC_GETFLAGS: linux_ioctl_generic, li:4014-4025.  Base makes no  */
+/* type test: kern_fstat (li:4015) answers every kind, and none made   */
+/* here carries a flag Linux can see.                                  */
+/* ------------------------------------------------------------------ */
+
+static void
+row_getflags(struct kinst *ki)
+{
+	unsigned long lflags;
+	long r;
+
+	lflags = ~0UL;
+	r = S3(SYS_ioctl, ki->fd, FS_IOC_GETFLAGS, &lflags);
+	if (BAD(ki)) {
+		(void)cell("get", ki->k->name, 0, r, -EBADF,
+		    "li:4015 kern_fstat -> fget");
+		return;
+	}
+	if (cell("get", ki->k->name, 0, r, 0,
+	    "li:4015-4025 kern_fstat, no type test"))
+		(void)cell("flags", ki->k->name, 0, (long)lflags, 0,
+		    "li:4018-4024 no st_flags bit set");
+}
+
+/* ------------------------------------------------------------------ */
 /* file_getattr(2), file_setattr(2) with a NULL path and AT_EMPTY_PATH: */
 /* lf:479-503, 542-596 and linux_fileattr_stat, lf:399-439.            */
 /* ------------------------------------------------------------------ */
@@ -1649,6 +1680,7 @@ test(int argc, char **argv)
 	each_kind("readahead", row_readahead);
 	each_kind("getdents64", row_getdents64);
 	each_kind("fs_ioc_setflags", row_setflags);
+	each_kind("fs_ioc_getflags", row_getflags);
 	each_kind("file_attr", row_fileattr);
 	each_kind("rw_hint", row_rw_hint);
 	rw_hint_unpriv();
