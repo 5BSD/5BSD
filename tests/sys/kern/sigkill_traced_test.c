@@ -682,6 +682,17 @@ CASE(mt_spin_1st__kill__detach, "",
     "SIGKILL sent to a tracee stopped with its initial thread suspended "
     "and another asleep kills it at PT_DETACH",
     K_MT_SPIN_1ST, S_WAITED, H_KILL, R_DETACH, -1, -1)
+/*
+ * The initial thread, which SIGKILL is assigned to, is stopped where it
+ * slept; the thread stopped at the signal is the one that acts on it.
+ */
+CASE(mt_other_sigstop__kill__detach, "",
+    "SIGKILL sent to a tracee stopped at a signal taken by another thread, "
+    "its initial thread stopped where it slept, kills it at PT_DETACH",
+    K_MT_MASK, S_SIGSTOP, H_KILL, R_DETACH, -1, -1)
+CASE(legacy_mt_other_sigstop__kill__detach, "root",
+    "The same after a PT_ATTACH that wakes the sleepers",
+    K_MT_MASK, S_SIGSTOP, H_KILL, R_DETACH, 0, -1)
 
 /* The tracee stopped where it slept dies when the debugger lets go. */
 CASE(waited__kill__detach, "",
@@ -711,13 +722,6 @@ CASE(mt_sleepers__kill__detach, "",
     "SIGKILL sent to a tracee with every thread stopped where it slept "
     "kills it at PT_DETACH",
     K_MT_SLEEP, S_WAITED, H_KILL, R_DETACH, -1, -1)
-CASE(mt_other_sigstop__kill__detach, "",
-    "SIGKILL sent to a tracee stopped at a signal taken by another thread, "
-    "its initial thread stopped where it slept, kills it at PT_DETACH",
-    K_MT_MASK, S_SIGSTOP, H_KILL, R_DETACH, -1, -1)
-CASE(legacy_mt_other_sigstop__kill__detach, "root",
-    "The same after a PT_ATTACH that wakes the sleepers",
-    K_MT_MASK, S_SIGSTOP, H_KILL, R_DETACH, 0, -1)
 
 /*
  * SIGKILL against PT_DETACH: whichever the kernel sees first, the target
@@ -808,6 +812,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, vfork_parent__kill__detach);
 	ATF_TP_ADD_TC(tp, untraced_stopped__kill);
 	ATF_TP_ADD_TC(tp, mt_spin_1st__kill__detach);
+	ATF_TP_ADD_TC(tp, mt_other_sigstop__kill__detach);
+	ATF_TP_ADD_TC(tp, legacy_mt_other_sigstop__kill__detach);
 	ATF_TP_ADD_TC(tp, mt_spin_2nd__kill__detach);
 	ATF_TP_ADD_TC(tp, waited__kill__detach);
 	ATF_TP_ADD_TC(tp, waited__pdkill__detach);
@@ -816,8 +822,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, waited__kill__debugger_exit);
 	ATF_TP_ADD_TC(tp, attached__kill__debugger_exit);
 	ATF_TP_ADD_TC(tp, mt_sleepers__kill__detach);
-	ATF_TP_ADD_TC(tp, mt_other_sigstop__kill__detach);
-	ATF_TP_ADD_TC(tp, legacy_mt_other_sigstop__kill__detach);
 	ATF_TP_ADD_TC(tp, waited__kill_races_detach);
 	return (atf_no_error());
 }
