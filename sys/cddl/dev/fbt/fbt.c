@@ -170,6 +170,14 @@ fbt_excluded(const char *name)
 		return (1);
 
 	/*
+	 * vmm's guest accessors are what HyperTrace reads a guest's thread
+	 * id, registers and memory with while a guest probe runs.  The rest
+	 * of vmm stays eligible, see fbt_provide_module().
+	 */
+	if (strncmp(name, "vmm_priv_", 9) == 0)
+		return (1);
+
+	/*
 	 * The KMSAN runtime can't be instrumented safely.
 	 */
 	if (strncmp(name, "__msan", 6) == 0 ||
@@ -271,9 +279,10 @@ fbt_provide_module(void *arg, modctl_t *lf)
 	 *
 	 * Two files declare the dependency and stay eligible.  The kernel
 	 * does once a provider is compiled into it; fbt_excluded() keeps fbt
-	 * out of the DTrace code in it.  vmm uses DTrace, for the HyperTrace
-	 * configuration lock, and is not a part of it; its fbt probes are in
-	 * use for bhyve debugging.
+	 * out of the DTrace code in it.  vmm is a hypervisor whose fbt
+	 * probes are in use for bhyve debugging, but it also holds the guest
+	 * accessors that HyperTrace calls in probe context; fbt_excluded()
+	 * refuses those by name.
 	 */
 	if (lf != linker_kernel_file && strcmp(modname, "vmm") != 0 &&
 	    fbt_depends_on_dtrace(lf))
