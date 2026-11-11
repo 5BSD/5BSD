@@ -919,64 +919,6 @@ proc_stat_wait(pid_t pid, int want, int want2, int ms)
 	return (st);
 }
 
-static int
-pid_max_get(void)
-{
-	size_t len;
-	int pid_max;
-
-	len = sizeof(pid_max);
-	if (sysctlbyname("kern.pid_max", &pid_max, &len, NULL, 0) != 0)
-		return (-1);
-	return (pid_max);
-}
-
-/*
- * Create processes for one full cycle of the pid space, as pid_recycle
- * does.  Returns 1 if one of them was given the pid `want`, 0 if none
- * was, -1 on an error.  Takes minutes; callers run it in a process of
- * its own.
- */
-static int
-pid_handed_out(pid_t want)
-{
-	pid_t pid;
-	int i, pid_max, status;
-
-	pid_max = pid_max_get();
-	if (pid_max <= 0)
-		return (-1);
-	for (i = 0; i <= pid_max; i++) {
-		pid = vfork();
-		if (pid == -1)
-			return (-1);
-		if (pid == 0)
-			_exit(0);
-		if (waitpid(pid, &status, 0) != pid)
-			return (-1);
-		if (pid == want)
-			return (1);
-	}
-	return (0);
-}
-
-/* pid_handed_out() in a child; reaping it takes its SIGCHLD back. */
-static int
-pid_handed_out_child(pid_t want)
-{
-	pid_t prober;
-	int status;
-
-	prober = fork();
-	ATF_REQUIRE(prober != -1);
-	if (prober == 0)
-		_exit(pid_handed_out(want) & 0xff);
-	ATF_REQUIRE_EQ(prober, waitpid(prober, &status, 0));
-	ATF_REQUIRE_MSG(WIFEXITED(status), "prober status %#x", status);
-	ATF_REQUIRE_MSG(WEXITSTATUS(status) <= 1, "prober failed");
-	return (WEXITSTATUS(status));
-}
-
 /*
  * P1.  Closing the last descriptor of a pdfork(2) child made without
  * PD_DAEMON kills it with SIGKILL (procdesc_close).  The child keeps its
@@ -1397,19 +1339,15 @@ ATF_TC_BODY(kevent_exit_then_reap, tc)
  * pdopenpid(2) and sleeps in pdwait(2).  When B exits, A is told and
  * reaps exactly as if C did not exist (one SIGCHLD, one wait4(-1)), C's
  * pdwait returns the same status, and the only trace of C's descriptor
- * is that B's pid cannot be handed out again until C closes it.
+ * is that B, though reaped, stays listed as a zombie under its pid until
+ * C closes it.
  */
 struct foreign_rep {
 	int	step;		/* 1: opened, 2: pdwait returned, 3: closed */
 	int	rv, err, status;
 };
 
-ATF_TC(foreign_open_parent_wait);
-ATF_TC_HEAD(foreign_open_parent_wait, tc)
-{
-	/* Two cycles of the pid space, about a minute each; ten times that. */
-	atf_tc_set_md_var(tc, "timeout", "1800");
-}
+ATF_TC_WITHOUT_HEAD(foreign_open_parent_wait);
 ATF_TC_BODY(foreign_open_parent_wait, tc)
 {
 	struct foreign_rep fr;
@@ -1506,11 +1444,18 @@ ATF_TC_BODY(foreign_open_parent_wait, tc)
 	ATF_CHECK_EQ(0, wait4(-1, &status, WNOHANG, NULL));
 	ATF_CHECK_ERRNO(ECHILD, waitpid(b, &status, WNOHANG) == -1);
 
-	/* B is reaped, but C's descriptor keeps the pid. */
+	/*
+	 * B is reaped, but C's descriptor keeps the process entry, and
+	 * with it the pid: still listed, as a zombie, and signal 0 finds
+	 * it.  (That the pid is then not given to a new process is what
+	 * pid_recycle walks the pid space for; a walk is not repeated
+	 * here: it takes minutes, and whether the pid comes back to this
+	 * process afterwards depends on who else forks.)
+	 */
 	st = proc_stat(b, NULL);
 	ATF_CHECK_EQ_MSG(SZOMB, st, "B state %d while C holds it", st);
-	ATF_CHECK_EQ_MSG(0, pid_handed_out_child(b),
-	    "B's pid was handed out while C held its descriptor");
+	ATF_CHECK_EQ_MSG(0, kill(b, 0), "kill(B, 0) while C holds it: %s",
+	    strerror(errno));
 
 	ch = 'c';
 	ATF_REQUIRE_EQ(1, write(ccmd[1], &ch, 1));
@@ -1519,8 +1464,7 @@ ATF_TC_BODY(foreign_open_parent_wait, tc)
 	ATF_CHECK_EQ_MSG(0, fr.rv, "close in C: %s", strerror(fr.err));
 	st = proc_stat(b, NULL);
 	ATF_CHECK_EQ_MSG(-ESRCH, st, "B state %d after C closed", st);
-	ATF_CHECK_EQ_MSG(1, pid_handed_out_child(b),
-	    "B's pid was not handed out within one cycle after C closed");
+	ATF_CHECK_ERRNO(ESRCH, kill(b, 0) == -1);
 
 	ch = 'x';
 	ATF_REQUIRE_EQ(1, write(ccmd[1], &ch, 1));
@@ -1565,7 +1509,6 @@ struct nwp_res {
 	int	sigchld_late;	/* SIGCHLDs after that */
 	int	stat_end;	/* child state at the end */
 	int	kill0_errno;	/* kill(pid, 0) at the end */
-	int	reused;		/* pid handed out again within a cycle */
 };
 
 static void
@@ -1630,7 +1573,7 @@ nwp_run(bool close_first, struct nwp_res *r)
 		pfd.fd = pd;
 		pfd.events = POLLHUP;
 		pfd.revents = 0;
-		if (poll(&pfd, 1, 10000) != 1)
+		if (poll(&pfd, 1, WAIT_MS) != 1)
 			return;
 		r->setup = 5;
 		if (proc_stat_wait(pid, SZOMB, 0, WAIT_MS) != SZOMB)
@@ -1650,13 +1593,6 @@ nwp_run(bool close_first, struct nwp_res *r)
 	r->stat_end = proc_stat(pid, NULL);
 	errno = 0;
 	r->kill0_errno = kill(pid, 0) == -1 ? errno : 0;
-	/*
-	 * Only where the pid is gone.  A zombie holds its pid by being
-	 * there (stat_end, kill0_errno); a whole cycle of the pid space
-	 * to see that again proves nothing more and takes minutes on a
-	 * slow machine.
-	 */
-	r->reused = close_first ? -1 : pid_handed_out(pid);
 	r->setup = 0;
 }
 
@@ -1695,8 +1631,6 @@ ATF_TC_HEAD(nowaitpid_parent_is_reaper, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "pdfork(PD_NOWAITPID) by the child's "
 	    "own reaper; the child exits and then the descriptor closes");
-	/* One cycle of the pid space, about a minute; ten times that. */
-	atf_tc_set_md_var(tc, "timeout", "1200");
 }
 ATF_TC_BODY(nowaitpid_parent_is_reaper, tc)
 {
@@ -1713,7 +1647,6 @@ ATF_TC_BODY(nowaitpid_parent_is_reaper, tc)
 	NWP_CHECK(r, sigchld_late, 0);
 	NWP_CHECK(r, stat_end, -ESRCH);
 	NWP_CHECK(r, kill0_errno, ESRCH);
-	NWP_CHECK(r, reused, 1);
 }
 
 ATF_TC(nowaitpid_parent_is_reaper_close_first);
