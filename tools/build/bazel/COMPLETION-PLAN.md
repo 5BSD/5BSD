@@ -2,29 +2,46 @@
 
 ## Runtime cleanup implementation (2026-11-11)
 
-The confirmed early-read-only cleanup bug now has a source fix. Cleanup runs once
+The confirmed early-read-only cleanup bug has a source fix. Cleanup runs once
 before the first native launch, returns errors, and recreates the live-marker
-directory before provider descriptor delivery. Maintained Make builds the actual
-Switchboard binary; three new host regression cases pass. Native Bazel testing
-stopped before compilation because the old SDK's recorded compiler origin is
-missing. A fresh explicit SDK and the service-aware VM upgrade are still needed;
-gate 1 is not closed. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+directory before provider descriptor delivery. Maintained Make compilation and
+three host regression cases pass. Fresh SDK materialization and native R3
+qualification pass Switchboard, the inventory helper and all 11 selected tests.
+The service-aware VM upgrade and useful provider operations remain unqualified;
+gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+
+Full current-source R9 passes the selected AMD64 world/kernel/module/pkgbase
+graph and both selected native tests at kernel revision ccf8f8bbc42c. Its captured
+inventory contains 450 packages, including dq/dq-dbg/dq-dev. The complete signed
+private VM repository passes verification and real wrong-key refusal. This is
+not fresh Make parity, native bootstrap, ARM64 or performance acceptance.
+
+The service-aware VM plan is prepared against the retained 447-package baseline
+and the current 450-package candidate, with actual signed-archive kernel bytes.
+The runner now executes selected ordinary-user operations after manifest-derived
+readiness and also checks the active system after inactive installation. Native
+service/inventory/upgrade policy tests pass. VM execution remains pending; the
+ordinary probes do not cover all providers or authorized SYSTEM Device access.
+The existing DQ resolution-ledger test reads undeclared live workspace sources;
+its source closure, cache/sandbox behavior and mandatory kernel-build integration
+remain open under gate 3. Maintained frontend target interfaces cover these BUILD
+changes; production remains Make.
 
 
 ## Closeout status and required gates (2026-11-11)
 
-The last proven complete AMD64 build is the November 7 configured snapshot:
-447 pkgbase packages, kernel/modules and selected native tests. This is not proof
-that the subsequently merged current source tree builds, or that every optional
-configuration is qualified. The complete baseline VM passes 14 checks, including
-normal login/SSH/su and the declared installed-tree/firstboot audit.
+The latest complete selected AMD64 build is November 11 R9: 450 packages,
+kernel/modules and both selected native tests. It does not establish independent
+Make parity or every optional configuration. The retained November 7 baseline is
+447 packages and passes its original 14 normal login/SSH/su and installed-tree/
+firstboot checks. The new service-aware upgrade/operation VM remains pending.
 
 The strict upgrade retry is terminal **failed**, not running:
 `bazel-system-upgrade-vm-r2-20261107/result.json`. Its serial log confirms cleanup
-returns EROFS while root is still read-only. Switchboard still calls the sweep
-before rc. Cleanup logging and failure detection are committed; a lifecycle fix
-has not been implemented. R1's upgrade/rollback/removal mechanism observations do
-not override this failure or establish service health.
+returns EROFS while root is still read-only. That captured candidate predates
+the lifecycle fix now committed and covered by host/native regression tests.
+A new full candidate and service-aware VM run are still required. R1's
+upgrade/rollback/removal observations do not establish service health.
 
 Close out in this order, retaining evidence for each required gate:
 
