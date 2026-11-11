@@ -246,6 +246,9 @@ outn(long v)
 	out(p);
 }
 
+/* The number of rows recorded; test() fails on any other count. */
+#define	NROWS	92
+
 static int g_rows, g_fails;
 
 /* One row of the table; every row is printed, so a run is a record. */
@@ -476,8 +479,13 @@ test(int argc, char **argv)
 	if (pid <= 0)
 		return (3);
 	pfd = S2(SYS_pidfd_open, pid, 0);
-	if (pfd == -ENOSYS) {
-		out("pidfd_open: not implemented; pidfd rows not run\n");
+	if (pfd < 0) {
+		/*
+		 * Both kernels this was recorded on have pidfd_open; without
+		 * it the pidfd rows cannot run, and that is a failure, also
+		 * caught by the row count at the end.
+		 */
+		row("pidfd_open", pfd, 3);
 		(void)S2(SYS_kill, pid, SIGKILL);
 		(void)S4(SYS_wait4, pid, &status, 0, 0);
 	} else {
@@ -572,6 +580,13 @@ test(int argc, char **argv)
 	row("wait4(-1) at the end", S4(SYS_wait4, -1, &status, WNOHANG, 0),
 	    -ECHILD);
 
+	/* Every row must have run: none is conditional. */
+	if (g_rows != NROWS) {
+		out("FAIL row count: expected ");
+		outn(NROWS);
+		out("\n");
+		g_fails++;
+	}
 	out("linux_procctl: ");
 	outn(g_rows);
 	out(" rows, ");

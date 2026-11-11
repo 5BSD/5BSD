@@ -15,13 +15,19 @@ linux_procctl_head()
 {
 	atf_set "descr" "Linux fork, clone, exec, exit, wait and kill, unattached"
 	atf_set "require.arch" "amd64"
-	atf_set "require.progs" "clang ld.lld brandelf"
-	atf_set "require.kmods" "linux64"
 	atf_set "require.user" "root"
 	atf_set "timeout" "300"
 }
 linux_procctl_body()
 {
+	# A pin does not skip: what it needs is there, or it fails.
+	for prog in clang ld.lld brandelf; do
+		command -v $prog >/dev/null ||
+		    atf_fail "$prog is needed to build the Linux program"
+	done
+	kldstat -q -m linux64elf ||
+	    atf_fail "the 64-bit Linux ABI (linux64) is not loaded"
+
 	atf_check -s exit:0 -o empty -e empty clang --target=x86_64-linux-gnu \
 	    -fuse-ld=lld -nostdlib -static -fno-stack-protector -fno-builtin \
 	    -O2 -Wall -Wextra -Werror -o linux_procctl \
