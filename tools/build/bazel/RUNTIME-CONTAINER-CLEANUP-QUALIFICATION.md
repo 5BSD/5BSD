@@ -51,3 +51,26 @@ SDK inputs, run the native regressions and production build, then repeat the
 complete signed-package VM upgrade with manifest-derived service-health coverage,
 rollback, shared-data persistence and unused-BE deletion. Other closeout gates
 remain in COMPLETION-PLAN.md. No host installation or reboot was performed.
+
+## SDK prerequisite rebuild
+
+The new source fix is committed as b2e1c8d7e3e. The Make-built executable/test
+captures and source hashes are retained in the R2 host-test directory's
+`build-review.json` and `captured/`.
+
+SDK preparation also confirms that the current Make world selected a system
+compiler wrapper, while the maintained qualification planner requires a genuine
+staged Clang executable and resource tree. A proposed path-only input extension
+was insufficient and was removed without landing; no planner check or old SDK
+receipt was relaxed. Failed preparation logs remain in
+`bazel-run-cleanup-sdk-r1-20261111` (the first attempt also correctly refused a
+nonfresh output directory). Individually verified bootstrap-tool copies prepared
+for that experiment are not used by the running rebuild.
+
+`bazel-closeout-make-toolchain-r1-20261111` retains the command and live build log
+for the maintained Make `toolchain` target, using 16 jobs, production malloc and
+explicit WITHOUT_SYSTEM_COMPILER/WITHOUT_SYSTEM_LINKER. This rebuilds the staged
+compiler, resources and SDK libraries under the standard object root. It does not
+install the host or establish native Bazel bootstrap. Once it succeeds, regenerate
+the SDK with the maintained planner/materializer, then rerun native tests and the
+service-aware upgrade. The toolchain build is still in progress at this update.
