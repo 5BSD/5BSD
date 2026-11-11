@@ -386,3 +386,23 @@ runtime. Diagnostic R2's receipt binds its outputs and three actual failures;
 that owned child VM powered off normally. Full candidate R10 is rebuilding
 with 16 jobs, production malloc, kernel debug/CTF and the corrected source
 revision. The complete signed upgrade scenario remains required.
+
+## Full corrected candidate and signed repository acceptance
+
+`bazel-system-upgrade-native-r10-20261111/receipt.json` passes the selected full
+AMD64 world/kernel/module/pkgbase graph, including all 450 packages and both
+selected tests. Its explicit product revision is 5b1325c979ab; later commits only
+record documentation. `bazel-system-upgrade-repository-r5-20261111/receipt.json`
+passes all archive/catalogue verification and real wrong-key rejection.
+`bazel-system-upgrade-kernel-binding-r2-20261111.json` binds actual streamed
+archive kernel bytes (39,943,080 bytes), SHA256
+bed54eabaf964286cf6a5decd8add23756d48d767a63d4ade06d86a055f36742.
+The request hash matches the completed qualification receipt, and archive hash
+matches the verified repository receipt.
+
+VM plan R4 uses that new repository/kernel and retains the same baseline,
+firstboot audit, 13-service manifest coverage and six selected ordinary operations.
+The full 2 GB VM R4 is running; no upgraded-operation, rollback, removal or
+performance acceptance is inferred before its terminal evidence is reviewed.
+This remains BIOS qualification, not Secure Boot. No production publication or
+host installation/upgrade/reboot occurred.

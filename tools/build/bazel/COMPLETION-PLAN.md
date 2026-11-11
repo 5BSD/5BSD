@@ -10,8 +10,8 @@ qualification pass Switchboard, the inventory helper and all 11 selected tests.
 The service-aware VM R3 fails at Notify client admission after the new boot;
 gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
 
-Full current-source R9 passes the selected AMD64 world/kernel/module/pkgbase
-graph and both selected native tests at kernel revision ccf8f8bbc42c. Its captured
+Full corrected-source R10 passes the selected AMD64 world/kernel/module/pkgbase
+graph and both selected native tests at kernel revision 5b1325c979ab. Its captured
 inventory contains 450 packages, including dq/dq-dbg/dq-dev. The complete signed
 private VM repository passes verification and real wrong-key refusal. This is
 not fresh Make parity, native bootstrap, ARM64 or performance acceptance.
@@ -24,7 +24,12 @@ service/inventory/upgrade policy tests pass. VM R3 passes all six selected
 operations on the baseline and active system after offline installation. On the
 new boot, Time and Sysctl pass, but Notify open fails with Broken pipe despite
 all 13 required boot services reporting running. Rollback and unused-BE removal
-are not reached. The original failed evidence is retained; diagnosis is underway.
+are not reached. The original failed evidence is retained. Notify's two descriptor-receiving
+processes now omit the incompatible NOFDRECV restriction, retaining the other
+protections. Focused native qualification passes 68 cases; R10 contains the fix.
+The complete signed private R5 repository passes verification and wrong-key
+refusal. A fresh 2 GB VM R4 is running; upgraded operations and later phases
+remain unproven until its terminal result is reviewed.
 The probes do not cover all providers or authorized SYSTEM Device access.
 The existing DQ resolution-ledger test reads undeclared live workspace sources;
 its source closure, cache/sandbox behavior and mandatory kernel-build integration
@@ -34,7 +39,7 @@ changes; production remains Make.
 
 ## Closeout status and required gates (2026-11-11)
 
-The latest complete selected AMD64 build is November 11 R9: 450 packages,
+The latest complete selected AMD64 build is November 11 R10: 450 packages,
 kernel/modules and both selected native tests. It does not establish independent
 Make parity or every optional configuration. The retained November 7 baseline is
 447 packages and passes its original 14 normal login/SSH/su and installed-tree/
