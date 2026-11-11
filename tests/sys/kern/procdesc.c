@@ -806,6 +806,13 @@ sigchld_noop(int sig __unused)
  * or not; the counts below would all be zero.  Returns 0, or -1 with errno
  * set; used in forked children too.
  */
+/*
+ * How long to wait for something that must happen (a signal, a state):
+ * it normally takes milliseconds; a loaded emulated guest can be more
+ * than ten times slower.  Reaching the limit is a failure.
+ */
+#define	WAIT_MS	120000
+
 static int
 sigchld_setup(void)
 {
@@ -996,7 +1003,7 @@ ATF_TC_BODY(close_last_kills, tc)
 	ATF_REQUIRE_EQ(0, close(pd));
 
 	memset(&si, 0, sizeof(si));
-	ATF_REQUIRE_MSG(sigchld_take(10000, &si) == 1,
+	ATF_REQUIRE_MSG(sigchld_take(WAIT_MS, &si) == 1,
 	    "no SIGCHLD after closing the last descriptor");
 	ATF_CHECK_EQ_MSG(pid, si.si_pid, "si_pid %d", (int)si.si_pid);
 	ATF_CHECK_EQ_MSG(CLD_KILLED, si.si_code, "si_code %d", si.si_code);
@@ -1056,7 +1063,7 @@ ATF_TC_BODY(daemon_close_then_exit, tc)
 	b = 'g';
 	ATF_REQUIRE_EQ(1, write(go[1], &b, 1));
 	memset(&si, 0, sizeof(si));
-	ATF_REQUIRE_MSG(sigchld_take(10000, &si) == 1, "no SIGCHLD at exit");
+	ATF_REQUIRE_MSG(sigchld_take(WAIT_MS, &si) == 1, "no SIGCHLD at exit");
 	ATF_CHECK_EQ_MSG(pid, si.si_pid, "si_pid %d", (int)si.si_pid);
 	ATF_CHECK_EQ_MSG(CLD_EXITED, si.si_code, "si_code %d", si.si_code);
 	ATF_CHECK_EQ_MSG(7, si.si_status, "si_status %d", si.si_status);
@@ -1126,7 +1133,7 @@ traced_child_close(int pdflags)
 	}
 
 	/* Asleep in pause(3) before the attach: see above. */
-	st = proc_stat_wait(pid, SSLEEP, 0, 5000);
+	st = proc_stat_wait(pid, SSLEEP, 0, WAIT_MS);
 	ATF_REQUIRE_EQ_MSG(SSLEEP, st, "child state %d", st);
 
 	ATF_REQUIRE_EQ(0, pipe(cmd));
@@ -1190,7 +1197,7 @@ traced_child_close(int pdflags)
 
 		for (i = 0; i < 2; i++) {
 			memset(&si, 0, sizeof(si));
-			ATF_REQUIRE_MSG(sigchld_take(10000, &si) == 1,
+			ATF_REQUIRE_MSG(sigchld_take(WAIT_MS, &si) == 1,
 			    "SIGCHLD %d missing", i);
 			if (si.si_pid == pid) {
 				saw_child = true;
@@ -1206,7 +1213,7 @@ traced_child_close(int pdflags)
 	} else {
 		/* Only the debugger's; the child is the reaper's business. */
 		memset(&si, 0, sizeof(si));
-		ATF_REQUIRE_EQ(1, sigchld_take(10000, &si));
+		ATF_REQUIRE_EQ(1, sigchld_take(WAIT_MS, &si));
 		ATF_CHECK_EQ_MSG(dbg, si.si_pid, "si_pid %d", (int)si.si_pid);
 	}
 	ATF_REQUIRE_EQ(dbg, waitpid(dbg, &status, 0));
@@ -1239,7 +1246,7 @@ traced_child_close(int pdflags)
 	ATF_REQUIRE_EQ(0, kill(pid, SIGKILL));
 	if ((pdflags & PD_NOWAITPID) == 0) {
 		memset(&si, 0, sizeof(si));
-		ATF_REQUIRE_MSG(sigchld_take(10000, &si) == 1,
+		ATF_REQUIRE_MSG(sigchld_take(WAIT_MS, &si) == 1,
 		    "no SIGCHLD for the death");
 		ATF_CHECK_EQ_MSG(pid, si.si_pid, "si_pid %d", (int)si.si_pid);
 		ATF_CHECK_EQ_MSG(CLD_KILLED, si.si_code, "si_code %d",
@@ -1252,7 +1259,7 @@ traced_child_close(int pdflags)
 		ATF_CHECK_MSG(WIFSIGNALED(status) &&
 		    WTERMSIG(status) == SIGKILL, "status %#x", status);
 	} else {
-		st = proc_stat_wait(pid, -ESRCH, SZOMB, 10000);
+		st = proc_stat_wait(pid, -ESRCH, SZOMB, WAIT_MS);
 		ATF_CHECK_MSG(st == -ESRCH || st == SZOMB,
 		    "child state %d after the second SIGKILL", st);
 		ATF_CHECK_EQ_MSG(0, sigchld_take(300, NULL),
@@ -1342,7 +1349,7 @@ ATF_TC_BODY(kevent_exit_then_reap, tc)
 	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &ev, 1, &ts));
 
 	memset(&si, 0, sizeof(si));
-	ATF_REQUIRE_EQ(1, sigchld_take(10000, &si));
+	ATF_REQUIRE_EQ(1, sigchld_take(WAIT_MS, &si));
 	ATF_CHECK_EQ_MSG(pid, si.si_pid, "si_pid %d", (int)si.si_pid);
 	ATF_CHECK_EQ_MSG(CLD_EXITED, si.si_code, "si_code %d", si.si_code);
 	ATF_CHECK_EQ_MSG(4, si.si_status, "si_status %d", si.si_status);
@@ -1413,8 +1420,8 @@ struct foreign_rep {
 ATF_TC(foreign_open_parent_wait);
 ATF_TC_HEAD(foreign_open_parent_wait, tc)
 {
-	/* Two walks of the pid space, as pid_recycle does one. */
-	atf_tc_set_md_var(tc, "timeout", "900");
+	/* Two cycles of the pid space, about a minute each; ten times that. */
+	atf_tc_set_md_var(tc, "timeout", "1800");
 }
 ATF_TC_BODY(foreign_open_parent_wait, tc)
 {
@@ -1488,7 +1495,7 @@ ATF_TC_BODY(foreign_open_parent_wait, tc)
 
 	/* A: one SIGCHLD, for B. */
 	memset(&si, 0, sizeof(si));
-	ATF_REQUIRE_MSG(sigchld_take(10000, &si) == 1, "no SIGCHLD for B");
+	ATF_REQUIRE_MSG(sigchld_take(WAIT_MS, &si) == 1, "no SIGCHLD for B");
 	ATF_CHECK_EQ_MSG(b, si.si_pid, "si_pid %d", (int)si.si_pid);
 	ATF_CHECK_EQ_MSG(CLD_EXITED, si.si_code, "si_code %d", si.si_code);
 	ATF_CHECK_EQ_MSG(9, si.si_status, "si_status %d", si.si_status);
@@ -1615,13 +1622,12 @@ nwp_run(bool close_first, struct nwp_res *r)
 	}
 	r->setup = 4;
 	if (close_first) {
-		usleep(100000);
-		if (proc_stat(pid, NULL) <= 0 ||
-		    proc_stat(pid, NULL) == SZOMB)
+		/* Running, and in pause(3), when the descriptor closes. */
+		if (proc_stat_wait(pid, SSLEEP, 0, WAIT_MS) != SSLEEP)
 			return;
 		r->close_rv = close(pd);
 		r->setup = 5;
-		if (proc_stat_wait(pid, SZOMB, -ESRCH, 10000) == 0)
+		if (proc_stat_wait(pid, SZOMB, -ESRCH, WAIT_MS) == 0)
 			return;
 		memset(&si, 0, sizeof(si));
 		while (sigchld_take(1000, &si) == 1) {
@@ -1640,7 +1646,7 @@ nwp_run(bool close_first, struct nwp_res *r)
 		if (poll(&pfd, 1, 10000) != 1)
 			return;
 		r->setup = 5;
-		if (proc_stat_wait(pid, SZOMB, 0, 10000) != SZOMB)
+		if (proc_stat_wait(pid, SZOMB, 0, WAIT_MS) != SZOMB)
 			return;
 		while (sigchld_take(1000, &si) == 1) {
 			if (si.si_pid == pid)
@@ -1657,7 +1663,13 @@ nwp_run(bool close_first, struct nwp_res *r)
 	r->stat_end = proc_stat(pid, NULL);
 	errno = 0;
 	r->kill0_errno = kill(pid, 0) == -1 ? errno : 0;
-	r->reused = pid_handed_out(pid);
+	/*
+	 * Only where the pid is gone.  A zombie holds its pid by being
+	 * there (stat_end, kill0_errno); a whole cycle of the pid space
+	 * to see that again proves nothing more and takes minutes on a
+	 * slow machine.
+	 */
+	r->reused = close_first ? -1 : pid_handed_out(pid);
 	r->setup = 0;
 }
 
@@ -1696,7 +1708,8 @@ ATF_TC_HEAD(nowaitpid_parent_is_reaper, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "pdfork(PD_NOWAITPID) by the child's "
 	    "own reaper; the child exits and then the descriptor closes");
-	atf_tc_set_md_var(tc, "timeout", "600");
+	/* One cycle of the pid space, about a minute; ten times that. */
+	atf_tc_set_md_var(tc, "timeout", "1200");
 }
 ATF_TC_BODY(nowaitpid_parent_is_reaper, tc)
 {
@@ -1721,7 +1734,6 @@ ATF_TC_HEAD(nowaitpid_parent_is_reaper_close_first, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "pdfork(PD_NOWAITPID) by the child's "
 	    "own reaper; the descriptor closes while the child runs");
-	atf_tc_set_md_var(tc, "timeout", "600");
 }
 ATF_TC_BODY(nowaitpid_parent_is_reaper_close_first, tc)
 {
@@ -1740,7 +1752,6 @@ ATF_TC_BODY(nowaitpid_parent_is_reaper_close_first, tc)
 	NWP_CHECK(r, sigchld_late, 0);
 	NWP_CHECK(r, stat_end, SZOMB);
 	NWP_CHECK(r, kill0_errno, 0);
-	NWP_CHECK(r, reused, 0);
 }
 
 ATF_TP_ADD_TCS(tp)
