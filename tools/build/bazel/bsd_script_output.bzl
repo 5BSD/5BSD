@@ -13,8 +13,8 @@ def _generate(ctx):
         fail("this input mode requires src")
     if ctx.file.src and ctx.attr.input_mode == "file-list":
         fail("file-list input mode does not take src")
-    if ctx.files.additional_sources and ctx.attr.input_mode != "argument":
-        fail("additional sources require argument input mode")
+    if ctx.files.additional_sources and ctx.attr.input_mode not in ["argument", "directory"]:
+        fail("additional sources require argument or directory input mode")
     if ctx.attr.source_files and ctx.attr.input_mode != "file-list":
         fail("source_files require file-list input mode")
     if ctx.attr.output_mode == "argument" and ctx.attr.input_mode != "argument":
@@ -59,6 +59,7 @@ def _generate(ctx):
         args += [file.path for file in ctx.files.additional_sources]
     if directory != None:
         args.append(directory)
+        args += [file.path for file in ctx.files.additional_sources]
     source_files = sorted(ctx.files.source_files, key = lambda file: file.path)
     file_list = None
     if ctx.attr.input_mode == "file-list":

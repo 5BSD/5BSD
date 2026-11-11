@@ -1,30 +1,82 @@
 # Bazel qualification
 
+## Independent Make closeout comparison (2026-11-11)
+
+Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass
+at clean source d44de404cb7. The installed comparison against captured native R10
+finds 245 additional Make paths and unaccepted raw byte/package diagnostics;
+this is not parity acceptance. Seventy confirmed omitted installation paths now
+have source-owned declarations/root edges. Focused native archive builds and
+independent metadata/link/data/debug-CRC checks pass all 70 paths; raw binary
+parity and full root/pkgbase integration remain open.
+The zfsd Make selector now respects TESTS and GOOGLETEST; fresh staging and
+the original complete-directory plist/package coverage preflight pass.
+Certificate generated state and final artifact/package parity remain open.
+See [MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md](MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md)
+for exact evidence, observer limits and the independent configuration/bootstrap
+input checks. All six completion gates remain; Make stays production/default.
+
 ## Runtime cleanup implementation (2026-11-11)
 
-The confirmed early-read-only cleanup bug now has a source fix. Cleanup runs once
+The confirmed early-read-only cleanup bug has a source fix. Cleanup runs once
 before the first native launch, returns errors, and recreates the live-marker
-directory before provider descriptor delivery. Maintained Make builds the actual
-Switchboard binary; three new host regression cases pass. Native Bazel testing
-stopped before compilation because the old SDK's recorded compiler origin is
-missing. A fresh explicit SDK and the service-aware VM upgrade are still needed;
-gate 1 is not closed. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+directory before provider descriptor delivery. Maintained Make compilation and
+three host regression cases pass. Fresh SDK materialization and native R3
+qualification pass Switchboard, the inventory helper and all 11 selected tests.
+The corrected service-aware VM R4 passes the complete upgrade/rollback/removal
+scenario and selected provider operations. Broader provider coverage remains open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
+
+Full corrected-source R10 passes the selected AMD64 world/kernel/module/pkgbase
+graph and both selected native tests at kernel revision 5b1325c979ab. Its captured
+inventory contains 450 packages, including dq/dq-dbg/dq-dev. The complete signed
+private VM repository passes verification and real wrong-key refusal. This is
+not fresh Make parity, native bootstrap, ARM64 or performance acceptance.
+
+The service-aware VM plan is prepared against the retained 447-package baseline
+and the current 450-package candidate, with actual signed-archive kernel bytes.
+The runner now executes selected ordinary-user operations after manifest-derived
+readiness and also checks the active system after inactive installation. Native
+service/inventory/upgrade policy tests pass. VM R3 passes all six selected
+operations on the baseline and active system after offline installation. On the
+new boot, Time and Sysctl pass, but Notify open fails with Broken pipe despite
+all 13 required boot services reporting running. Rollback and unused-BE removal
+are not reached. The original failed evidence is retained. Notify's two descriptor-receiving
+processes now omit the incompatible NOFDRECV restriction, retaining the other
+protections. Focused native qualification passes 68 cases; R10 contains the fix.
+The complete signed private R5 repository passes verification and wrong-key
+refusal. Fresh 2 GB VM R4 passes all 33 checks and powers off normally. Baseline,
+active-before-activation, new boot and rollback each pass all 13 required boot
+services and the six selected operations. Shared writes survive rollback and
+unused-BE removal reclaims 2,818,023,424 bytes. Independent acceptance review
+checks raw command hashes, service reports and resource bounds. This is selected
+provider coverage and BIOS boot, not Secure Boot or complete provider coverage.
+The probes do not cover all providers or authorized SYSTEM Device access.
+The DQ resolution-ledger action now has declared inputs and is required before
+native kernel linking; focused native R3 passes the checker and actual AMD64 link.
+Actual source-addition/content/deletion invalidation and no-op reuse now pass
+(R4-R8); independent captured-inventory and Make-checker comparisons pass too.
+Broader sandbox isolation, sealed inputs and native bootstrap remain open under
+gate 3. See DQ-SOURCE-AUDIT-QUALIFICATION.md. Maintained frontend target interfaces cover these BUILD
+changes; production remains Make.
 
 
 ## Closeout status and required gates (2026-11-11)
 
-The last proven complete AMD64 build is the November 7 configured snapshot:
-447 pkgbase packages, kernel/modules and selected native tests. This is not proof
-that the subsequently merged current source tree builds, or that every optional
-configuration is qualified. The complete baseline VM passes 14 checks, including
-normal login/SSH/su and the declared installed-tree/firstboot audit.
+The latest complete selected AMD64 build is November 11 R10: 450 packages,
+kernel/modules and both selected native tests. It does not establish independent
+Make parity or every optional configuration. The retained November 7 baseline is
+447 packages and passes its original 14 normal login/SSH/su and installed-tree/
+firstboot checks. Corrected VM R4 now passes the signed 447-to-450-package
+upgrade, new kernel, authentication, selected operations, rollback, shared-file
+persistence and unused-BE deletion. Other provider operations remain open.
 
 The strict upgrade retry is terminal **failed**, not running:
 `bazel-system-upgrade-vm-r2-20261107/result.json`. Its serial log confirms cleanup
-returns EROFS while root is still read-only. Switchboard still calls the sweep
-before rc. Cleanup logging and failure detection are committed; a lifecycle fix
-has not been implemented. R1's upgrade/rollback/removal mechanism observations do
-not override this failure or establish service health.
+returns EROFS while root is still read-only. That captured candidate predates
+the lifecycle fix now committed and covered by host/native regression tests.
+R3 then exposed the separate Notify admission defect. Corrected R10/VM R4
+supersede both failures with actual selected-operation and complete-scenario
+acceptance. R1's historical green result remains rejected and unchanged.
 
 Close out in this order, retaining evidence for each required gate:
 

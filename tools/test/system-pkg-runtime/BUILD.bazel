@@ -24,7 +24,8 @@ bsd_python_test(name = "startup_diagnostics_test", src = "startup-diagnostics-te
     data = ["startup_diagnostics.py"], visibility = ["//visibility:public"])
 
 cc_binary(name = "service_inventory", srcs = ["service_inventory.c"],
-    deps = ["//lib/libcapbundle:capbundle"], copts = ["-fPIE"],
+    deps = ["//lib/libcapbundle:capbundle"],
+    dynamic_deps = ["//lib/libcapbundle:capbundle_shared"], copts = ["-fPIE"],
     linkopts = ["-pie"], visibility = ["//visibility:public"])
 bsd_python_test(name = "service_health_test", src = "service-health-test.py",
     data = ["service_health.py", "//tools/build/bazel:qualification_artifacts.py"], visibility = ["//visibility:public"])
@@ -36,3 +37,10 @@ bsd_python_test(name = "service_inventory_test", src = "service-inventory-test.p
         "@bsd_sdk//toolchain:execution-runtime/lib/libthr.so.3",
         "@bsd_sdk//toolchain:execution-runtime/lib/libm.so.5"],
     visibility = ["//visibility:public"])
+
+# Useful production-provider operations; executed inside the disposable VM,
+# not as a host test against whichever services happen to be installed.
+cc_binary(name = "service_operations", srcs = ["service_operations.c"],
+    deps = ["//lib/libtimecmp:timecmp", "//lib/libsysctlcmp:sysctlcmp", "//lib/libnotify:notify", "//lib/libpowercmp:powercmp", "//lib/libdevicecmp:devicecmp"],
+    dynamic_deps = ["//lib/libtimecmp:timecmp_shared", "//lib/libsysctlcmp:sysctlcmp_shared", "//lib/libnotify:notify_shared", "//lib/libpowercmp:powercmp_shared", "//lib/libdevicecmp:devicecmp_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])

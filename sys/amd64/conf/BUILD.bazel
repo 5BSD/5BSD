@@ -77,7 +77,7 @@ bsd_tree_file(name = "opt_dq", tree = ":generic_config", member = "opt_dq.h",
     output = "generic_options/opt_dq.h", python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_dq_header", hdrs = [":opt_dq"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/dq:__pkg__", "//sys/security/oes:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/dq:__pkg__", "//sys/security/oes:__pkg__", "//sys/security/mac_abac:__pkg__"])
 
 # USB driver options are extracted from the actual target config tree.
 [bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",

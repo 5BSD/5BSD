@@ -37,6 +37,7 @@ script_installation(name = "freebsd_version", scripts = {}, manuals = [], packag
 # dq (examples)
 script_installation(name = "dq", scripts = {}, manuals = [], package = "examples", files = {
     'dq/dqserve.c': '/usr/share/examples/dq/dqserve.c',
+    'dq/dqpass.c': '/usr/share/examples/dq/dqpass.c',
     'dq/Makefile': '/usr/share/examples/dq/Makefile',
 })
 

@@ -27,7 +27,7 @@ def _impl(ctx):
     ctx.actions.run(
         executable = ctx.attr.linker[DefaultInfo].files_to_run,
         arguments = [args],
-        inputs = selected.objects + [selected.validation, ctx.file.script] + ctx.files.script_inputs,
+        inputs = selected.objects + [selected.validation, ctx.file.script] + ctx.files.script_inputs + [ctx.file._source_audit],
         tools = ctx.files.linker_inputs,
         outputs = [output], env = {"LC_ALL": "C"},
         use_default_shell_env = False, mnemonic = "BSDKernelLink",
@@ -40,6 +40,8 @@ bsd_kernel_link = rule(implementation = _impl, attrs = {
     "shared_objects": attr.string_list(doc = "Selected shared input basenames with stable loader identities."),
     "script": attr.label(allow_single_file = True, mandatory = True),
     "script_inputs": attr.label_list(allow_files = True),
+    "_source_audit": attr.label(allow_single_file = True, default = Label("//sys/dev/dq:resolve_ledger_check"),
+        doc = "Required maintained source audits, consumed before the final kernel link."),
     "emulation": attr.string(mandatory = True),
     "linkopts": attr.string_list(),
     "output": attr.string(mandatory = True),

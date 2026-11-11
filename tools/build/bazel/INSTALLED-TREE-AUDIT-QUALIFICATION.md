@@ -1,5 +1,20 @@
 # Installed baseline audit and ZFS image flags (2026-11-07)
 
+## Current accepted service-aware scenario (2026-11-11)
+
+The corrected full AMD64 R10 candidate and VM R4 pass the complete signed
+447-to-450-package inactive-BE upgrade, new-kernel boot, authentication, selected
+provider operations, rollback, shared-file persistence and unused-BE deletion.
+All 33 checks pass; the VM powers off normally. Each of four phases passes all
+13 manifest-required services and six selected ordinary operations. Independent
+acceptance review verifies raw hashes and resource bounds. See
+RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md for exact evidence and limits.
+
+This supersedes the historical cleanup/Notify failures recorded below. It does
+not prove every provider operation, exhaustive upgraded-tree metadata parity,
+Secure Boot, application schema rollback or comparative performance. The baseline
+audit scope and explicit firstboot reconciliation limits remain unchanged.
+
 ## Strict retry result: cleanup errno confirmed (2026-11-11 review)
 
 The November 7 R2 VM is terminal failed. All 14 baseline checks passed; the

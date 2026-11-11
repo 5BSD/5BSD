@@ -156,7 +156,7 @@ def main():
     if upgrade is not None:
         report['scope']='Complete signed-package BE upgrade, new-kernel boot, authentication, rollback and unused-BE removal; not secure boot, application schema rollback or comparative performance'
     if services is not None:
-        report['scope']+='; installed-manifest boot-unit readiness, not per-provider protocol operations'
+        report['scope']+='; installed-manifest boot-unit readiness and policy-selected operations, not complete provider protocol coverage'
     def save():(out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
     (out/'plan.json').write_text(json.dumps(plan,indent=2)+'\n')
     save();overlay=out/'guest.qcow2'
@@ -211,7 +211,7 @@ def main():
         keys=re.findall(r'^ssh-ed25519 [A-Za-z0-9+/=]+',keytext,re.M);assert len(keys)==1
         known=out/'known_hosts';known.write_text('[127.0.0.1]:'+str(port)+' '+keys[0]+'\n')
         askpass=out/'askpass';askpass.write_text('#!/bin/sh\nprintf "%s\\n" "$QUAL_SSH_PASSWORD"\n');askpass.chmod(0o700)
-        def ssh(label,remote,password,expected=0,tty=False,answer=None):
+        def ssh(label,remote,password,expected=0,tty=False,answer=None,deadline=None):
             argv=[str(tools['ssh']),'-F','/dev/null','-p',str(port),'-o','UserKnownHostsFile='+str(known),
                 '-o','GlobalKnownHostsFile=/dev/null','-o','StrictHostKeyChecking=yes','-o','IdentityAgent=none',
                 '-o','PreferredAuthentications=password','-o','PubkeyAuthentication=no','-o','KbdInteractiveAuthentication=no',
@@ -220,8 +220,10 @@ def main():
             argv.extend([plan['ssh_user']+'@127.0.0.1',remote])
             env={'PATH':'/bin:/usr/bin','HOME':str(out),'LC_ALL':'C','DISPLAY':'qualification',
                 'SSH_ASKPASS_REQUIRE':'force','SSH_ASKPASS':str(askpass),'QUAL_SSH_PASSWORD':password}
+            if deadline is not None and time.monotonic()>=deadline:
+                raise TimeoutError('SSH phase deadline before launch: '+label)
             child=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env,start_new_session=True)
-            data=bytearray();until=time.monotonic()+120;sent=False
+            data=bytearray();until=min(time.monotonic()+120,deadline) if deadline is not None else time.monotonic()+120;sent=False
             try:
                 while child.poll() is None:
                     console.tick()
@@ -236,6 +238,8 @@ def main():
             finally:
                 if child.poll() is None:child.kill();child.wait()
             text=data.decode(errors='replace');(out/(label+'.log')).write_text(text)
+            if deadline is not None and time.monotonic()>deadline:
+                raise TimeoutError('SSH phase deadline: '+label)
             assert status==expected,(label,status,text[-3000:])
             if answer is not None:assert sent,'su did not request real authentication'
             if expected==255:assert 'Permission denied' in text
@@ -318,9 +322,12 @@ def main():
             nonlocal operation_until
             previous_until=operation_until
             operation_until=min(previous_until,time.monotonic()+services['policy']['deadline_seconds'])
+            def ordinary_invoke(name,command):
+                return ssh(name,'test "$(/usr/bin/id -u)" -eq '+str(plan['user_uid'])+
+                           ' && exec '+command,plan['password'],deadline=operation_until)
             try:
                 return check(label+'-manifest-boot-services',
-                    lambda:service_health.exercise(services,root_invoke,out,label))
+                    lambda:service_health.exercise(services,root_invoke,out,label,user_invoke=ordinary_invoke))
             finally:
                 operation_until=previous_until
         if services is not None:

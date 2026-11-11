@@ -102,6 +102,35 @@ def required_services(services, states):
     return sorted(required)
 
 
+USER_OPERATIONS = frozenset(('time', 'sysctl', 'notify', 'memory', 'power', 'device-denied'))
+
+
+def operation_settings(value):
+    fields = {'qualification', 'target', 'output', 'guest_directory', 'cases'}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError('explicit captured ordinary-operation helper required')
+    for field in ('qualification', 'target', 'output'):
+        if not isinstance(value[field], str) or not value[field]:
+            raise ValueError('nonempty operation helper selection required')
+    absolute(value['qualification'])
+    absolute(value['guest_directory'])
+    cases = value['cases']
+    if (not isinstance(cases, list) or not cases or
+            any(not isinstance(case, str) or case not in USER_OPERATIONS for case in cases) or
+            len(cases) != len(set(cases))):
+        raise ValueError('distinct supported ordinary-session operations required')
+    return value
+
+
+def operation_result(data, expected):
+    record = json.loads(data)
+    if (not isinstance(record, dict) or set(record) != {'format', 'operation', 'status'} or
+            type(record['format']) is not int or record['format'] != 1 or
+            record['operation'] != expected or record['status'] != 'passed'):
+        raise ValueError('complete matching provider-operation success record required')
+    return record
+
+
 def load(path, report):
     from pathlib import Path
     from qualification_artifacts import resolve, digest
@@ -110,9 +139,11 @@ def load(path, report):
     policy = json.loads(policy_bytes)
     fields = {'format', 'qualification', 'target', 'output', 'roots',
               'control_program', 'deadline_seconds'}
+    if policy.get('format') == 2:fields.add('operations')
     if (set(policy) != fields or type(policy['format']) is not int or
-            policy['format'] != 1):
-        raise ValueError('exact format-1 service qualification policy required')
+            policy['format'] not in (1, 2)):
+        raise ValueError('exact format-1/2 service qualification policy required')
+    operations = operation_settings(policy['operations']) if policy['format'] == 2 else None
     roots = policy['roots']
     if (not isinstance(roots, list) or not roots or
             any(not isinstance(root, str) for root in roots) or
@@ -125,21 +156,34 @@ def load(path, report):
     if type(policy['deadline_seconds']) is not int or policy['deadline_seconds'] <= 0:
         raise ValueError('positive service qualification deadline required')
     helper, binding = resolve(Path(policy['qualification']), policy['target'], policy['output'])
+    bindings = {str(path): digest(path), str(helper): digest(helper)}
+    operation_helper = operation_binding = None
+    if operations is not None:
+        operation_helper, operation_binding = resolve(Path(operations['qualification']), operations['target'], operations['output'])
+        bindings[str(operation_helper)] = digest(operation_helper)
     return dict(policy=policy, policy_bytes=policy_bytes, helper=helper,
-                helper_binding=binding, bindings={str(path): digest(path), str(helper): digest(helper)})
+                helper_binding=binding, bindings=bindings, operations=operations,
+                operation_helper=operation_helper, operation_helper_binding=operation_binding)
 
 
-def exercise(loaded, invoke, output, label):
+def exercise(loaded, invoke, output, label, user_invoke=None):
     import shlex
     import time
     import uuid
     policy = loaded['policy']
+    operations = loaded.get('operations')
+    if operations is not None and not callable(user_invoke):
+        raise ValueError('authenticated ordinary-session operation callback required')
     work = '/root/.service-audit-' + uuid.uuid4().hex
     q = shlex.quote
     def command(name, text, source=None):
         return invoke(label + '-service-' + name, text, source)
     result = dict(status='running', scope='Installed-manifest boot-unit readiness and manager status RPC; not per-provider operation coverage',
                   helper=loaded['helper_binding'], roots=policy['roots'])
+    if operations is not None:
+        result.update(scope='Installed-manifest boot readiness plus selected ordinary-login operations; not complete provider operation coverage',
+                      operation_helper=loaded['operation_helper_binding'], ordinary_operations=[],
+                      all_provider_operations_qualified=False)
     report = output / (label + '-service-health.json')
     def save():report.write_text(json.dumps(result, indent=2) + '\n')
     save()
@@ -169,6 +213,18 @@ def exercise(loaded, invoke, output, label):
                 if time.monotonic() >= until:
                     raise TimeoutError('manifest-derived service readiness deadline: ' + str(error)) from error
                 time.sleep(0.5)
+        if operations is not None:
+            operation_work = operations['guest_directory'].rstrip('/') + '/.provider-operations-' + uuid.uuid4().hex
+            result['operation_work'] = operation_work
+            command('operation-work', '/bin/mkdir -m 755 ' + q(operation_work))
+            program = operation_work + '/client'
+            command('operation-upload', 'umask 077; /bin/cat > ' + q(program) +
+                    ' && /bin/chmod 555 ' + q(program), loaded['operation_helper'])
+            for case in operations['cases']:
+                raw = user_invoke(label + '-provider-' + case, q(program) + ' ' + q(case))
+                result['ordinary_operations'].append(operation_result(raw, case))
+                save()
+            command('operation-cleanup', '/bin/rm -rf -- ' + q(operation_work))
         command('cleanup', '/bin/rm -rf -- ' + q(work))
         result.update(status='passed', attempts=attempt)
         result.pop('readiness_error', None)

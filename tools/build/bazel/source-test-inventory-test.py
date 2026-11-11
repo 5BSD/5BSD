@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 import json
 import unittest
-from source_graph import parse_test_inventory, test_inventory_command, test_results, validate_selected_tests, validate_requested_selector
+from pathlib import Path
+from source_graph import parse_test_inventory, test_inventory_command, test_artifact_command, test_results, validate_selected_tests, validate_requested_selector
 
 def inventory(label, compatible=True):
     return json.dumps(dict(label=label, compatible=compatible)) + '\n'
@@ -11,6 +12,17 @@ def event(label,status='PASSED'):
     return dict(id=dict(testSummary=dict(label=label)),testSummary=dict(overallStatus=status))
 
 class TestInventory(unittest.TestCase):
+    def test_profiles_belong_to_their_invocation_phase(self):
+        command=['bazel','test','--profile=/evidence/main.json.gz',
+                 '--build_event_json_file=/evidence/main.events.json',
+                 '--execution_log_compact_file=/evidence/main.compact','//:suite']
+        query=test_inventory_command(command,['//:suite'],['//:suite'])
+        self.assertFalse(any(value.startswith('--profile=') for value in query))
+        artifacts=test_artifact_command(command,['//:suite'],['//:case'],Path('/evidence'),'compact')
+        self.assertIn('--profile=/evidence/test-artifacts.profile.json.gz',artifacts)
+        self.assertNotIn('--profile=/evidence/main.json.gz',artifacts)
+        self.assertIn('--profile=/evidence/main.json.gz',command)
+
     def test_query_preserves_configuration(self):
         command=['bazel','--output_user_root=/state','test','--platforms=//:target','--//cfg:flag=false','--build_event_json_file=/events','--execution_log_json_file=/log','--noexecution_log_sort','--output_groups=default,metadata','//:archive','//:suite']
         query=test_inventory_command(command,['//:archive','//:suite'],['//:suite'])

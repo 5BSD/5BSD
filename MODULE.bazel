@@ -34,3 +34,9 @@ book_inventory_repository = use_repo_rule("//tools/build/bazel:book_inventory_re
 book_inventory_repository(name = "book_inventory_src", source_marker = "//:COPYRIGHT",
     python = "@bsd_sdk//toolchain:bin/extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json")
+
+# DQ's maintained audit scans sys, including sources owned by nested packages.
+kernel_audit_repository = use_repo_rule("//tools/build/bazel:kernel_audit_repository.bzl", "kernel_audit_repository")
+kernel_audit_repository(name = "kernel_audit_src", source_marker = "//:COPYRIGHT",
+    python = "@bsd_sdk//toolchain:bin/extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json")

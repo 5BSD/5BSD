@@ -96,11 +96,29 @@
 # an impl compares any variable with, and its switch cases.
 #
 #	dq_resolve_ledger.sh generate SRCDIR	write the ledger to stdout
-#	dq_resolve_ledger.sh check SRCDIR LEDGER	fail if LEDGER differs or
+#	dq_resolve_ledger.sh check SRCDIR LEDGER [SOURCE-LIST]
+#						fail if LEDGER differs or
 #						has an UNMARKED, FLAG or
 #						UNCLASSIFIED row
 #
 set -e
+
+# Optional complete regular C/header inventory supplied by a build system.
+# Resolve before scan_edq changes directory. find-based scans retain their
+# existing tree/filename rules; only recursive grep discovery uses this list.
+# A declared source view can contain build-system symlinks even when the real
+# source files are regular. Explicit grep operands read those declared bytes.
+DQ_LEDGER_SOURCE_LIST=
+if [ -n "${4:-}" ]; then
+	case "$4" in
+	/*) DQ_LEDGER_SOURCE_LIST=$4 ;;
+	*) DQ_LEDGER_SOURCE_LIST=$PWD/$4 ;;
+	esac
+	if [ ! -f "$DQ_LEDGER_SOURCE_LIST" ] || [ ! -r "$DQ_LEDGER_SOURCE_LIST" ]; then
+		echo "dq_resolve_ledger: unreadable source inventory: $DQ_LEDGER_SOURCE_LIST" >&2
+		exit 2
+	fi
+fi
 
 # The trees scanned: every one that can call namei for a process.
 DQ_LEDGER_DIRS="kern vm security compat fs dev cam geom netinet netinet6 \
@@ -544,7 +562,11 @@ generate()
 scan_edq()
 (
 	cd "$1"
-	grep -rlE --include='*.c' --include='*.h' 'EDQRESOLVED' . |
+	if [ -n "$DQ_LEDGER_SOURCE_LIST" ]; then
+		xargs grep -lE 'EDQRESOLVED' -- < "$DQ_LEDGER_SOURCE_LIST"
+	else
+		grep -rlE --include='*.c' --include='*.h' 'EDQRESOLVED' .
+	fi |
 	    sed 's,^\./,,' | LC_ALL=C sort | while read -r f; do
 		awk -v file="$f" '
 		/^[A-Za-z_][A-Za-z0-9_]*\(/ {
@@ -606,7 +628,7 @@ check)
 	rm -f "$tmp"
 	;;
 *)
-	echo "usage: $0 generate|check SRCDIR [LEDGER]" >&2
+	echo "usage: $0 generate|check SRCDIR [LEDGER [SOURCE-LIST]]" >&2
 	exit 2
 	;;
 esac

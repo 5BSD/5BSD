@@ -184,6 +184,22 @@ Format 4 retains all format-3 baseline/authentication/firstboot checks and adds
   outside the BE parent, and a previously absent test file beneath its mountpoint.
 * `deadline_seconds`, `reclaim_deadline_seconds`: positive bounded phase budgets.
 
+Upgrade policy format 2 adds `baseline_packages`, with exact `qualification`,
+`target` and `output` fields selecting the old captured package-family JSON.
+The captured version and distinct package count must match the explicit baseline
+version and image report. The actual guest database must then match those names
+and versions exactly. Candidate checks use the new signed repository inventory;
+rollback checks use the old inventory. Format 1 retains identical-name-set
+qualification only. Do not infer the old set from the next repository.
+
+For format 2, normal `pkg upgrade` is followed by `pkg install` for newly declared
+base packages and `pkg delete` for obsolete names, inside the inactive BE only.
+The final exact inventory and checksum checks reject incomplete transitions,
+unexpected dependency removals and leftover old packages. This is a complete-base
+VM qualification path, not a production upgrade manager or a general policy for
+removing third-party software. Real VM acceptance of these transitions remains
+required.
+
 The driver verifies every repository byte/trust key before starting. In the guest
 it verifies the signed network catalogue and rejects the wrong key using separate
 private databases; active pkg state must remain unchanged. It creates a real BE
@@ -264,3 +280,87 @@ arbitrary configurations outside the selected installed roots. Those functional
 contracts remain required work for the closeout goal. Host parser/validator tests
 are separate from native Bazel and VM acceptance. Use the normal format-5 frontend
 target/test inputs for `service_inventory_test` and `service_health_test`.
+
+## Native provider-operation client (VM execution pending)
+
+`//tools/test/system-pkg-runtime:service_operations` is a PIE consumer binary
+built through the maintained format-5 frontend target selection. It is not a
+host test and must not contact arbitrary installed host providers. Capture its
+native output, then execute it in the owned normal package-runtime VM through
+the ordinary authenticated login/service lookup context. It has no alternate
+provider transport, fallback, privilege grant or policy bypass.
+
+Select one operation per invocation:
+
+* `time`: real timecmp request, with the returned timestamp bounded by guest
+  realtime observations before/after the request.
+* `sysctl`: real sysctlcmp read of kern.ostype, compared byte-for-byte and by
+  length with the guest kernel's value.
+* `notify`: subscribe to a fresh private user.* topic, publish a payload,
+  receive and validate the exact framed topic/payload, then unsubscribe.
+* `memory`: observe BSDMemory's reserved memory-pressure state through BSDNotify.
+  Wait at most ten seconds for an actual normal/warning/critical sample; missing
+  or unknown is never normal. Require attempts to set/clear that reserved state
+  to fail with an authorization error, then confirm the read session still works.
+  This belongs in the ordinary authenticated user session, not a privileged
+  consumer granted the Memory producer's identity.
+
+* `power`: query supported ACPI states through the real provider. Zero supported
+  sleep states is valid on virtual hardware; no transition is requested.
+* `device`: in an authorized SYSTEM lookup context, enumerate and validate one
+  owner-scoped device page. An empty list is valid default-deny policy. This does
+  not open devices or qualify all pages. The shipped Device manifest is
+  SYSTEM-only: a normal login session must not be made eligible for this probe.
+* `device-denied`: in the ordinary login session, first complete a permitted
+  Time operation, require Device lookup/enumeration to be hidden or denied, then
+  repeat the permitted Time operation. An absent lookup transport or arbitrary RPC failure is not accepted as a
+  policy denial. This is visibility qualification, not a successful Device RPC.
+
+The client has a 20-second process deadline and notification receive has a
+five-second deadline. Any open, RPC, content or cleanup failure exits nonzero.
+It reports one exact JSON success record only after completing the operation.
+The libraries perform their normal protocol negotiation and authorization.
+Shared dependencies are declared through native cc_binary.dynamic_deps.
+
+Native compilation and PIE/shared linking pass in
+`bazel-current-closure-native-r1-20261111`; strict host syntax checks also pass.
+VM operations remain unqualified, and the runner does not yet invoke this helper. The seven operation modes do not cover all providers. BSDMemory is a
+memory-pressure sampler/publisher, not a memory-allocation factory; its manifest
+intentionally has no IPC endpoint. The earlier factory wording was incorrect.
+The memory probe exercises the actual Sysctl-to-Memory-to-Notify path, but does
+not inject pressure, stop/restart providers or prove periodic publication over
+an extended interval. Manifest-derived readiness remains separate from useful
+operation coverage; gate 1 stays open until the required real VM checks pass.
+
+## Ordinary-login operations (service policy format 2)
+
+VM plan format 5 also accepts a service policy with format 2. It retains every
+format-1 field and adds `operations`, with exact fields `qualification`, `target`,
+`output`, `guest_directory` and `cases`. The first three select the captured
+native service_operations binary. `guest_directory` is an explicit canonical
+absolute guest staging parent (the current fixture selects /tmp).
+
+`cases` is a distinct nonempty list drawn from time, sysctl, notify, memory, power
+and device-denied. Positive Device enumeration is deliberately rejected here:
+it requires a legitimate SYSTEM context, not an ordinary login or changed
+visibility policy. The selected helper is hash-bound alongside the inventory
+helper. Root creates a fresh owned staging directory and read/execute-only
+program; each operation runs through pinned authenticated SSH as the declared
+ordinary user, with an actual UID check before exec. Operation failures or
+mismatched/incomplete success JSON fail the service check. The existing service
+phase deadline also bounds SSH launch/execution. Successful staging cleanup is
+required; failures preserve diagnostic evidence.
+
+The runner repeats these selected operations at baseline, after inactive install
+while the old system is still active, after new boot and after rollback. The
+post-install active-system check also repeats kernel, package checksum and
+authentication checks before activation. This tests that offline pkg scripts do
+not leave the running system broken.
+
+Readiness still derives every required boot unit from installed manifests. A
+passed ordinary-operation subset explicitly records
+`all_provider_operations_qualified=false`; it does not qualify the other
+providers, authorized Device access, every provider method or fault recovery.
+The goal remains open until all required operation contexts are qualified.
+Native service_health/inventory/upgrade-policy targets pass; actual VM acceptance
+of format 2 remains pending at this update.

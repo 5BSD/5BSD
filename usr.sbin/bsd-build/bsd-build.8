@@ -2145,6 +2145,15 @@ This does not qualify the complete loader, kernel and installed-system chain.
 .Cm bazel-test
 runs maintained native amd64 qualification and explicitly selected
 cross-target kernel artifact qualification.
+.Pp
+The maintained format-5 installation targets include the lex runtime archives,
+protobuf compiler plugins, DQ manual aliases/examples and DTrace/OpenTelemetry
+startup and log-rotation files through their normal installation owners.
+An independent Make staging comparison found these omitted contributions;
+full installed/package parity and generated certificate-state qualification
+remain separate requirements. See
+.Pa tools/build/bazel/MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md .
+.Pp
 Bazel 9 or later is the only supported Bazel, with Bzlmod and rules_cc;
 Bazel 5 and the WORKSPACE mode are no longer supported.
 .Pp
@@ -3195,6 +3204,11 @@ Conflicting input hashes, duplicate component/program records, duplicate plan
 paths and stale inputs are errors. This supports incremental graph expansion
 without re-exporting unchanged components; it does not establish coverage of
 unselected world or kernel components.
+Format-5 source qualification uses Bazel's keep_going mode to finish independent
+actions after an error and retain the reachable failures from one run.
+A nonzero Bazel result still fails qualification; this never admits a partial
+build as a passed result.
+.Pp
 Input formats 3, 4 and 5 optionally accept execution-log-format as json (the
 compatibility default) or compact. Both retain the complete Bazel execution log;
 the receipt binds its format, pathname, size and SHA256. Compact logs require
@@ -7954,6 +7968,14 @@ format-5 targets/tests interface.  This is runtime fixture qualification, not BI
 or a production mutability policy.
 .Pp
 The complete-package VM driver accepts format 4 with an explicit upgrade_policy.
+Upgrade policy format 2 adds baseline_packages, an explicit captured old
+package-family selection with qualification, target and output fields.
+Baseline and rollback require that old inventory; the candidate requires the new
+signed repository inventory.
+New base package names are installed and obsolete names removed only inside the
+inactive disposable BE, followed by exact inventory and checksum checks.
+Format 1 qualifies identical name sets only.
+This is VM qualification, not a production update backend.
 It uses a complete captured package set and a signed private qualification
 repository; preparation reuses maintained pkg catalogue/archive verification and
 rejects the wrong public key.  Target ABI/OSVERSION and test keys are inputs.
@@ -8001,3 +8023,54 @@ The existing native target/test interface accepts
 //tools/test/system-pkg-runtime:service_health_test and
 //tools/test/system-pkg-runtime:service_inventory_test.
 This readiness check is not individual provider operation qualification.
+
+.Pp
+The format-5 source qualification target
+.Li //tools/test/system-pkg-runtime:service_operations
+builds a native consumer for time, sysctl, notification, memory-pressure
+publication, supported-power-state queries and device enumeration.
+Positive Device enumeration requires authorized SYSTEM lookup context;
+ordinary-session Device visibility is tested with a separate denial mode.
+It is intended for captured execution in the disposable normal package-runtime
+VM through ordinary authenticated service lookup, never against host providers.
+Compilation alone does not establish provider operation or complete service
+coverage; runner integration and actual VM acceptance remain required.
+
+.Pp
+Format-5 source qualification retains the main Bazel JSON trace as
+.Li profile.json.gz
+and, when test executables are materialized, a separate
+.Li test-artifacts.profile.json.gz .
+Their digests are recorded with the phase results.
+Inventory queries do not write either profile.
+A retained failed-build trace is diagnostic evidence, not a passed build or a
+controlled CPU, aggregate memory or physical disk-I/O comparison.
+
+.Pp
+Service policy format 2 adds an operations object selecting a captured native
+helper, guest staging parent and explicit ordinary-session cases.
+The runner uses authenticated SSH as the declared non-root user, checks its UID,
+and requires complete matching operation results within the service deadline.
+Positive SYSTEM-only Device enumeration cannot be requested in this context.
+Selected ordinary operations do not establish complete provider coverage.
+Active-system kernel, checksum, authentication and service checks also run after
+inactive installation, before activating the candidate.
+
+.Pp
+Native kernel links now require the maintained DQ resolution-ledger check as
+an ordinary declared-input build action.
+Repository discovery records every regular C/header file and watches source
+directory entries, including files owned by nested Bazel packages.
+The checker accepts an explicit complete file list so recursive-grep symlink
+semantics cannot omit sandbox inputs.
+Source C/header links and directory links currently produce an explicit
+unsupported-layout error.
+The normal Make checker invocation is retained.
+The existing format-5 target/test interface needs no additional frontend option.
+This check does not establish native bootstrap or host filesystem/network
+sandbox isolation; Make remains the production backend.
+
+The target
+.Li //sys/dev/dq:resolve_ledger_inventory
+exposes the discovered filename inventory and complete source list for immutable
+qualification capture and independent comparison.
