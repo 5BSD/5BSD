@@ -175,7 +175,12 @@ family object; R2 uses that real schema. Neither run executes guest package
 transitions. Native regression execution, new current-candidate inventory and
 actual added/obsolete-package VM transitions remain unqualified.
 
-Current full candidate R5 passes complete graph analysis and is compiling with
-16 jobs at source revision 95ce909a3c79. The package-version and kernel identity
-inputs are explicit. It remains live, not a passed full-world result at this
-update. The VM input-validation changes do not alter that package target graph.
+Full candidate R5 passes complete graph analysis, then fails compiling
+fdesc_vnops.c because its recently added MAC framework include is undeclared in
+the native target. Its failed result is retained at
+`bazel-system-upgrade-native-r5-20261111/FAILED.json`. The builtin vnode target
+and AMD64/ARM64/RISC-V module source groups now declare the actual framework
+header provider. No source include, MAC hook, warning or failure is suppressed.
+Focused native compilation and the next full candidate remain to be qualified.
+These are maintained BUILD dependency edits; the existing frontend/package
+interfaces require no additional options.
