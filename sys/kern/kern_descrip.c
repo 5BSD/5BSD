@@ -745,7 +745,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_SETFL, &fp);
 		if (error != 0)
 			break;
-		if (fp->f_ops == &path_fileops) {
+		if (FILE_IS_OPATH(fp)) {
 			fdrop(fp, td);
 			error = EBADF;
 			break;
@@ -4460,7 +4460,7 @@ _fget(struct thread *td, int fd, struct file **fpp, int flags,
 			error = EBADF;
 		break;
 	case FEXEC:
-		if (fp->f_ops != &path_fileops &&
+		if (!FILE_IS_OPATH(fp) &&
 		    ((fp->f_flag & (FREAD | FEXEC)) == 0 ||
 		    (fp->f_flag & FWRITE) != 0))
 			error = EBADF;

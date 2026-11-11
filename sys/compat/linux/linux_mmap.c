@@ -68,7 +68,7 @@ linux_mmap_check_fp(struct file *fp, int flags, int prot, int maxprot)
 {
 
 	/* Linux returns EBADF if mmap() is called on an O_PATH file descriptor */
-	if (fp->f_ops == &path_fileops)
+	if (FILE_IS_OPATH(fp))
 		return (EBADF);
 
 	/* Linux mmap() just fails for O_WRONLY files */

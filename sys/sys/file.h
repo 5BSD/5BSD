@@ -347,6 +347,15 @@ extern const struct fileops vnops;
 extern const struct fileops badfileops;
 extern const struct fileops path_fileops;
 extern const struct fileops socketops;
+
+/*
+ * An O_PATH descriptor, whichever table answers for it: path_fileops for a
+ * vnode, the descriptor queue's own for a served file.
+ */
+#define	FILE_IS_OPATH(fp)						\
+	((fp)->f_ops == &path_fileops ||				\
+	    ((fp)->f_type == DTYPE_DQ && ((fp)->f_flag & O_PATH) != 0))
+
 extern int maxfiles;		/* kernel limit on number of open files */
 extern int maxfilesperproc;	/* per process limit on number of open files */
 

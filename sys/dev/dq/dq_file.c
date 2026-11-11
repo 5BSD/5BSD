@@ -73,13 +73,18 @@ _Static_assert(DQ_MNAMELEN == MNAMELEN, "DQ_MNAMELEN");
 _Static_assert(DQ_MFSNAMELEN == MFSNAMELEN, "DQ_MFSNAMELEN");
 
 /*
- * O_PATH (D133, plan 4.7): a served file opened O_PATH answers as
- * path_fileops does: no data, no mode or owner change through it, no
- * mapping, POLLNVAL, kevent only when FKQALLOWED, no locks but the POSIX
- * release of a close; stat, statfs, pathconf, kinfo, fcntl, fsync,
- * setattr, ACLs and extended attributes as on the object.
+ * O_PATH (D133, plan 4.7, D244): a served file opened O_PATH gets
+ * dq_path_fileops, which mirrors path_fileops member by member: no data,
+ * no mode or owner change through it, no seek, mapping or flock(2) and
+ * record locks, POLLNVAL, kevent only when FKQALLOWED, no locks but the
+ * POSIX release of a close; stat, statfs, pathconf, kinfo, fcntl, fsync,
+ * setattr, ACLs and extended attributes as on the object.  Code outside
+ * this file that tests for path_fileops by identity tests for this table
+ * through the open flag (FILE_IS_OPATH()); dq_file_bind() asserts that
+ * the two agree.
  */
-#define	DQ_OPATH(fp)	(((fp)->f_flag & O_PATH) != 0)
+#define	DQ_OPATH(fp)	((fp)->f_ops == &dq_path_fileops)
+#define	DQ_FILEOPS(fp)	((fp)->f_ops == &dq_fileops || DQ_OPATH(fp))
 
 static fo_rdwr_t	dq_read;
 static fo_rdwr_t	dq_write;
@@ -148,6 +153,102 @@ const struct fileops dq_fileops = {
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE | DFLAG_FLOCK |
 	    DFLAG_RECLOCK | DFLAG_PRIVWRITE,
 };
+
+static fo_rdwr_t	dq_path_readwrite;
+static fo_truncate_t	dq_path_truncate;
+static fo_ioctl_t	dq_path_ioctl;
+static fo_poll_t	dq_path_poll;
+static fo_chmod_t	dq_path_chmod;
+static fo_chown_t	dq_path_chown;
+static fo_sendfile_t	dq_path_sendfile;
+
+/* An O_PATH served file (D244): path_fileops' members, the object's. */
+static const struct fileops dq_path_fileops = {
+	.fo_read = dq_path_readwrite,
+	.fo_write = dq_path_readwrite,
+	.fo_truncate = dq_path_truncate,
+	.fo_ioctl = dq_path_ioctl,
+	.fo_poll = dq_path_poll,
+	.fo_kqfilter = dq_kqfilter,
+	.fo_stat = dq_stat,
+	.fo_close = dq_close,
+	.fo_chmod = dq_path_chmod,
+	.fo_chown = dq_path_chown,
+	.fo_sendfile = dq_path_sendfile,
+	.fo_fill_kinfo = dq_fill_kinfo,
+	.fo_cmp = file_kcmp_generic,
+	.fo_pathconf = dq_pathconf,
+	.fo_statfs = dq_statfs,
+	.fo_fsync = dq_fsync,
+	.fo_setattr = dq_setattr,
+	.fo_acl = dq_acl,
+	.fo_extattr = dq_extattr,
+	.fo_fcntl = dq_fcntl,
+	.fo_advlock = dq_advlock,
+	.fo_flags = DFLAG_PASSABLE,	/* neither FLOCK nor RECLOCK */
+};
+
+static int
+dq_path_readwrite(struct file *fp __unused, struct uio *uio __unused,
+    struct ucred *active_cred __unused, int flags __unused,
+    struct thread *td __unused)
+{
+
+	return (EBADF);
+}
+
+/* badfo_truncate()'s answer; ftruncate(2) refuses the open mode first. */
+static int
+dq_path_truncate(struct file *fp __unused, off_t length __unused,
+    struct ucred *active_cred __unused, struct thread *td __unused)
+{
+
+	return (EINVAL);
+}
+
+static int
+dq_path_ioctl(struct file *fp __unused, u_long com __unused,
+    void *data __unused, struct ucred *active_cred __unused,
+    struct thread *td __unused)
+{
+
+	return (EBADF);
+}
+
+static int
+dq_path_poll(struct file *fp __unused, int events __unused,
+    struct ucred *active_cred __unused, struct thread *td __unused)
+{
+
+	return (POLLNVAL);
+}
+
+static int
+dq_path_chmod(struct file *fp __unused, mode_t mode __unused,
+    struct ucred *active_cred __unused, struct thread *td __unused)
+{
+
+	return (EBADF);
+}
+
+static int
+dq_path_chown(struct file *fp __unused, uid_t uid __unused,
+    gid_t gid __unused, struct ucred *active_cred __unused,
+    struct thread *td __unused)
+{
+
+	return (EBADF);
+}
+
+static int
+dq_path_sendfile(struct file *fp __unused, int sockfd __unused,
+    struct uio *hdr_uio __unused, struct uio *trl_uio __unused,
+    off_t offset __unused, size_t nbytes __unused, off_t *sent __unused,
+    int flags __unused, struct thread *td __unused)
+{
+
+	return (EBADF);
+}
 
 /*
  * Lock owners for flock(2) and OFD locks (D98, B6): a keyed hash of the
@@ -509,7 +610,11 @@ dq_file_bind(struct thread *td, struct dq_object *o, int fflags,
 	DQO_LOCK(o);
 	o->o_fp = fp;
 	DQO_UNLOCK(o);
-	finit(fp, fflags & FMASK, DTYPE_DQ, o, &dq_fileops);
+	finit(fp, fflags & FMASK, DTYPE_DQ, o, (fflags & O_PATH) != 0 ?
+	    &dq_path_fileops : &dq_fileops);
+	KASSERT(DQ_OPATH(fp) == ((fp->f_flag & O_PATH) != 0),
+	    ("%s: O_PATH flag and table disagree, f_flag %#x", __func__,
+	    fp->f_flag));
 	/* NOTE_OPEN reaches the identity's other objects (B7). */
 	dq_object_knote_siblings(o, NOTE_OPEN);
 	*fpp = fp;
@@ -529,7 +634,7 @@ static inline struct dq_object *
 dq_fp_object(struct file *fp)
 {
 
-	KASSERT(fp->f_ops == &dq_fileops, ("dq: not a dq object"));
+	KASSERT(DQ_FILEOPS(fp), ("dq: not a dq object"));
 	return (fp->f_data);
 }
 
@@ -569,7 +674,7 @@ dq_file_ident(struct file *fp, struct dq_ident_file *ident, uint64_t *objectp,
 {
 	struct dq_object *o;
 
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp))
 		return (ENOTTY);
 	o = fp->f_data;
 	DQO_LOCK(o);
@@ -585,7 +690,7 @@ dq_file_cred(struct file *fp)
 {
 	struct dq_object *o;
 
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp))
 		return (NULL);
 	o = fp->f_data;
 	return (o->o_queue->q_cred);
@@ -766,8 +871,6 @@ dq_read(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	int error;
 	bool cached;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	o = dq_fp_object(fp);
 	/* vn_read: read(2) of a directory is EISDIR (D168, the ufs oracle). */
 	if (o->o_kind != DQ_KIND_FILE)
@@ -839,8 +942,6 @@ dq_write(struct file *fp, struct uio *uio, struct ucred *active_cred __unused,
 	int error, rerror;
 	bool append, extended;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	o = dq_fp_object(fp);
 	extended = false;
 	error = dq_object_usable(o);
@@ -1412,8 +1513,6 @@ dq_truncate(struct file *fp, off_t length, struct ucred *active_cred,
 	void *cookie;
 	int error;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	o = dq_fp_object(fp);
 	error = dq_object_usable(o);
 	if (error != 0)
@@ -1436,8 +1535,6 @@ dq_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
 {
 	struct dq_setattr_body sb;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	bzero(&sb, sizeof(sb));
 	sb.dsa_mask = DQ_SETATTR_MODE;
 	sb.dsa_mode = mode;
@@ -1450,8 +1547,6 @@ dq_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 {
 	struct dq_setattr_body sb;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	bzero(&sb, sizeof(sb));
 	if (uid != (uid_t)-1) {
 		sb.dsa_mask |= DQ_SETATTR_UID;
@@ -1469,6 +1564,13 @@ dq_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
  * through their direct operations as every fo_setattr body does; the times
  * and flags are one SETATTR.  A flags word wider than st_flags has unknown
  * bits by definition.
+ *
+ * The system calls that take a descriptor refuse an O_PATH one before they
+ * come here (getvnode_fp()), so an O_PATH file arrives only for a change
+ * made by name: through /dev/fd/N or an empty path.  There a vnode opened
+ * O_PATH takes mode, owner, times and flags and refuses a new size with
+ * EBADF (fdesc_setattr()), and so does this: the table's own fchmod(2) and
+ * fchown(2) refusals are not consulted, and the change is one SETATTR.
  */
 static int
 dq_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
@@ -1477,10 +1579,27 @@ dq_setattr(struct file *fp, struct vattr *vap, struct ucred *active_cred,
 	struct dq_setattr_body sb;
 	int error;
 
-	error = file_setattr_direct(fp, vap, active_cred, td);
-	if (error != 0)
-		return (error);
 	bzero(&sb, sizeof(sb));
+	if (DQ_OPATH(fp)) {
+		if (vap->va_size != VNOVAL)
+			return (EBADF);
+		if (vap->va_mode != (mode_t)VNOVAL) {
+			sb.dsa_mask |= DQ_SETATTR_MODE;
+			sb.dsa_mode = vap->va_mode;
+		}
+		if (vap->va_uid != (uid_t)VNOVAL) {
+			sb.dsa_mask |= DQ_SETATTR_UID;
+			sb.dsa_uid = vap->va_uid;
+		}
+		if (vap->va_gid != (gid_t)VNOVAL) {
+			sb.dsa_mask |= DQ_SETATTR_GID;
+			sb.dsa_gid = vap->va_gid;
+		}
+	} else {
+		error = file_setattr_direct(fp, vap, active_cred, td);
+		if (error != 0)
+			return (error);
+	}
 	if (vap->va_flags != VNOVAL) {
 		if (vap->va_flags > UINT32_MAX)
 			return (EOPNOTSUPP);
@@ -1828,8 +1947,6 @@ dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
 	bool event;
 	int error, rerror;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	o = dq_fp_object(fp);
 	DQO_LOCK(o);
 	size = o->o_ident.di_size;
@@ -1889,12 +2006,10 @@ dq_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
 }
 
 static int
-dq_poll(struct file *fp, int events, struct ucred *active_cred __unused,
-    struct thread *td __unused)
+dq_poll(struct file *fp __unused, int events,
+    struct ucred *active_cred __unused, struct thread *td __unused)
 {
 
-	if (DQ_OPATH(fp))
-		return (POLLNVAL);
 	return (poll_no_poll(events));
 }
 
@@ -2100,8 +2215,6 @@ dq_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	bool writecnt;
 	int error;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	o = dq_fp_object(fp);
 	/* vm_mmap_vnode: only a regular file maps (EINVAL, the oracle). */
 	if (o->o_kind != DQ_KIND_FILE)
@@ -2211,8 +2324,6 @@ dq_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	struct sendfile_src ss;
 	int error;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	o = dq_fp_object(fp);
 	if (sent != NULL)
 		*sent = 0;
@@ -2263,8 +2374,6 @@ dq_readdir(struct file *fp, struct uio *uio, off_t *basep, struct thread *td)
 {
 	struct dq_object *o;
 
-	if (DQ_OPATH(fp))
-		return (EBADF);
 	o = dq_fp_object(fp);
 	if (o->o_kind != DQ_KIND_DIR)
 		return (ENOTDIR);	/* getdirentries on a regular file */
@@ -2283,7 +2392,7 @@ dq_file_object_setattr(struct file *fp, struct dq_setattr_body *sb,
     struct ucred *cred, struct thread *td)
 {
 
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp))
 		return (EBADF);
 	return (dq_setattr_post(fp->f_data, sb, cred, td));
 }
@@ -2296,7 +2405,7 @@ dq_file_target(struct file *fp, char **targetp, size_t *lenp)
 	char *t;
 
 	*targetp = NULL;
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp))
 		return (EINVAL);
 	o = fp->f_data;
 	if (o->o_kind != DQ_KIND_SYMLINK || o->o_target == NULL)
@@ -2321,7 +2430,7 @@ dq_file_start(struct file *fp, struct dq_queue *q, struct thread *td,
 {
 	struct dq_object *o;
 
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp))
 		return (ENOTTY);
 	o = fp->f_data;
 	*kindp = o->o_kind;
@@ -2343,7 +2452,7 @@ uint64_t
 dq_file_objid(struct file *fp)
 {
 
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops ||
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp) ||
 	    fp->f_data == NULL)
 		return (0);
 	return (((struct dq_object *)fp->f_data)->o_id);
@@ -2382,7 +2491,7 @@ uint32_t
 dq_file_kind(struct file *fp)
 {
 
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops ||
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp) ||
 	    fp->f_data == NULL)
 		return (0);
 	return (((struct dq_object *)fp->f_data)->o_kind);
@@ -2398,7 +2507,7 @@ dq_file_attach_start(struct file *fp, struct dq_queue *q)
 {
 	struct dq_object *o;
 
-	if (fp->f_type != DTYPE_DQ || fp->f_ops != &dq_fileops)
+	if (fp->f_type != DTYPE_DQ || !DQ_FILEOPS(fp))
 		return (EINVAL);
 	o = fp->f_data;
 	if (o->o_queue != q)
