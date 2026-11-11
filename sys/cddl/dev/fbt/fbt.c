@@ -152,6 +152,32 @@ fbt_excluded(const char *name)
 		return (1);
 
 	/*
+	 * So are the dtps_getargval() methods of the providers that can be
+	 * compiled into the kernel: dtrace_dif_variable() calls them to
+	 * fetch arg5 and up.  As modules these providers are ineligible as
+	 * a whole, see fbt_provide_module().
+	 */
+	if (strcmp(name, "sdt_getargval") == 0 ||
+	    strcmp(name, "systrace_getargval") == 0)
+		return (1);
+
+	/*
+	 * fasttrap's dtps_getargval() methods read the registers of the
+	 * traced thread with fill_regs().
+	 */
+	if (strcmp(name, "fill_regs") == 0 ||
+	    strcmp(name, "fill_frame_regs") == 0)
+		return (1);
+
+	/*
+	 * vmm's guest accessors are what HyperTrace reads a guest's thread
+	 * id, registers and memory with while a guest probe runs.  The rest
+	 * of vmm stays eligible, see fbt_provide_module().
+	 */
+	if (strncmp(name, "vmm_priv_", 9) == 0)
+		return (1);
+
+	/*
 	 * The KMSAN runtime can't be instrumented safely.
 	 */
 	if (strncmp(name, "__msan", 6) == 0 ||
@@ -193,6 +219,28 @@ fbt_doubletrap(void)
 	}
 }
 
+/*
+ * Does the file hold a module that declares a dependency on the dtrace
+ * module?  This looks at what the file declares with MODULE_DEPEND() and not
+ * at the files it was linked against: when DTrace is compiled into the
+ * kernel the dependency is satisfied by the kernel, and the only file that a
+ * provider module depends on is "kernel".
+ */
+static bool
+fbt_depends_on_dtrace(modctl_t *lf)
+{
+	struct mod_metadata **start, **stop, **mdp;
+
+	if (linker_file_lookup_set(lf, MDT_SETNAME, &start, &stop, NULL) != 0)
+		return (false);
+	for (mdp = start; mdp < stop; mdp++) {
+		if ((*mdp)->md_type == MDT_DEPEND &&
+		    strcmp((*mdp)->md_cval, "dtrace") == 0)
+			return (true);
+	}
+	return (false);
+}
+
 static void
 fbt_provide_module(void *arg, modctl_t *lf)
 {
@@ -221,6 +269,24 @@ fbt_provide_module(void *arg, modctl_t *lf)
 	for (i = 0; i < lf->ndeps; i++)
 		if (strncmp(lf->deps[i]->filename, "dtrace", 6) == 0)
 			return;
+
+	/*
+	 * The same rule when DTrace is compiled into the kernel, where the
+	 * test above cannot match: kinst.ko, fasttrap.ko and hypertrace.ko
+	 * then depend on the file "kernel" only.  They hold breakpoint
+	 * handlers and code that runs in probe context, and an fbt probe
+	 * there re-enters DTrace from inside DTrace.
+	 *
+	 * Two files declare the dependency and stay eligible.  The kernel
+	 * does once a provider is compiled into it; fbt_excluded() keeps fbt
+	 * out of the DTrace code in it.  vmm is a hypervisor whose fbt
+	 * probes are in use for bhyve debugging, but it also holds the guest
+	 * accessors that HyperTrace calls in probe context; fbt_excluded()
+	 * refuses those by name.
+	 */
+	if (lf != linker_kernel_file && strcmp(modname, "vmm") != 0 &&
+	    fbt_depends_on_dtrace(lf))
+		return;
 
 	if (lf->fbt_nentries) {
 		/*

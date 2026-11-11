@@ -891,6 +891,7 @@ uint32_t dtrace_load32(const void *, uintptr_t);
 uint64_t dtrace_load64(const void *, uintptr_t);
 uint8_t dtrace_load8(const void *, uintptr_t);
 void dtrace_dynvar_clean(dtrace_dstate_t *);
+static void dtrace_bzero(void *, size_t);
 dtrace_dynvar_t *dtrace_dynvar(dtrace_dstate_t *, uint_t, dtrace_key_t *,
     size_t, dtrace_dynvar_op_t, dtrace_mstate_t *, dtrace_vstate_t *);
 uintptr_t dtrace_dif_varstr(uintptr_t, dtrace_state_t *, dtrace_mstate_t *);
@@ -1889,7 +1890,7 @@ dtrace_vstage_dynvar(const void *vmhdl, void *src,
 	mstate->dtms_scratch_ptr += size;
 	/* dtrace_strcpy() stops at NUL; never publish stale scratch tail. */
 	if (type->dtdt_kind == DIF_TYPE_STRING && size != 0)
-		bzero((void *)scratch, size);
+		dtrace_bzero((void *)scratch, size);
 	dtrace_vcopy(vmhdl, src, (void *)scratch, type, limit);
 	if ((*flags & CPU_DTRACE_FAULT) != 0) {
 		mstate->dtms_scratch_ptr = scratch;
@@ -2293,7 +2294,7 @@ dtrace_guest_user_copy(dtrace_mstate_t *mstate, dtrace_state_t *state,
 		}
 		if (error != 0)
 			goto badaddr;
-		bcopy(&value, (char *)dst + offset, chunk);
+		dtrace_bcopy(NULL, &value, (char *)dst + offset, chunk);
 		if (string && value == 0)
 			return (1);
 	}
@@ -3118,7 +3119,7 @@ retry:
 	/* A newly published entry must never expose recycled chunk contents
 	 * while the writer is still copying its value. */
 	dvar->dtdv_vmhdl = NULL;
-	bzero(dvar->dtdv_data, dsize);
+	dtrace_bzero(dvar->dtdv_data, dsize);
 
 	for (i = 0; i < nkeys; i++) {
 		dtrace_key_t *dkey = &dvar->dtdv_tuple.dtt_key[i];
@@ -4448,7 +4449,7 @@ dtrace_guest_getupcstack(dtrace_mstate_t *mstate, uint16_t vmid,
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
 		return;
 	}
-	memset(stack, 0, slots * sizeof(*stack));
+	dtrace_bzero(stack, slots * sizeof(*stack));
 	if (DTRACE_CPUFLAG_ISSET(CPU_DTRACE_FAULT))
 		return;
 	if (mstate->dtms_htrargs == NULL ||
@@ -9189,7 +9190,8 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 				/* The variable's bytes are in host-owned storage. */
 				dvar->dtdv_vmhdl = NULL;
 				if (staged != 0)
-					bcopy((void *)staged, dvar->dtdv_data,
+					dtrace_bcopy(NULL, (void *)staged,
+					    dvar->dtdv_data,
 					    MIN(v->dtdv_type.dtdt_size, lim));
 				else
 					dtrace_vcopy(NULL,
@@ -9391,7 +9393,8 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 				/* The variable's bytes are in host-owned storage. */
 				dvar->dtdv_vmhdl = NULL;
 				if (staged != 0)
-					bcopy((void *)staged, dvar->dtdv_data,
+					dtrace_bcopy(NULL, (void *)staged,
+					    dvar->dtdv_data,
 					    MIN(v->dtdv_type.dtdt_size, lim));
 				else
 					dtrace_vcopy(NULL,
@@ -9621,7 +9624,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 				if (*flags & CPU_DTRACE_FAULT)
 					break;
 				if (stackframes != 0) {
-					bzero(pcstack,
+					dtrace_bzero(pcstack,
 					    stackframes * sizeof (pcstack[0]));
 					/* The call from the DIF interpreter adds one frame
 					 * to the ordinary stack() action's call path. */
