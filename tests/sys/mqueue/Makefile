@@ -1,5 +1,6 @@
 TESTSDIR=	${TESTSBASE}/sys/mqueue
 
+ATF_TESTS_C=	mqueuefs_readdir_test
 ATF_TESTS_SH=	mqueue_test
 
 BINDIR=		${TESTSDIR}
