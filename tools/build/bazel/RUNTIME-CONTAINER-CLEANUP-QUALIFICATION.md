@@ -359,3 +359,20 @@ original process state; its logs are diagnostic evidence only. No host upgrade,
 installation, publication or reboot was performed. No build input, package or
 security policy changes are introduced by this diagnosis; the maintained C
 frontend and production backend require no interface change.
+
+## Notify receive restriction correction awaiting qualification
+
+Diagnostic child overlay R2 reproduces ordinary Notify open failure three times.
+The provider and router remain live; process existence is insufficient. Source
+review finds both processes apply NOFDRECV while their roles require receiving
+new-client descriptors. Candidate kernel commit fdbc6085418 adds the missing
+mac_file_check_receive hook to channel receive/replies, enforcing the restriction
+that the older kernel did not enforce on that path.
+
+Notify now omits NOFDRECV for its long-lived acceptor and router. All other
+process restrictions remain; private worker-channel admission, per-hop descriptor
+attenuation and descriptor-free client FIDL queues remain. Existing source-token
+checks no longer demand the incompatible restriction. This correction is not yet
+VM-qualified: real candidate rebuild and the complete upgrade scenario must pass.
+The existing production/frontend interfaces accept this ordinary source change;
+no build input, packaging, staging, signing or publication interface changes.
