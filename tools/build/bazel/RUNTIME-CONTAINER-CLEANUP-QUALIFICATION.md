@@ -223,3 +223,20 @@ Bazel's maintained profiling documentation is at
 https://bazel.build/advanced/performance/json-trace-profile and
 https://bazel.build/advanced/performance/build-performance-breakdown .
 No performance gate is closed by the ongoing correctness rebuilds.
+
+## Linux compatibility closure and complete failure collection
+
+Full R7 is terminal failed on linux_stats.c's MAC framework header, now a direct
+dependency of its native module source group. The full linux64 module product
+passes `bazel-linux64-mac-native-r1-20261111/receipt.json`, including CTF/link/debug
+processing, with no selected tests. This is build acceptance, not Linux runtime
+or cross-platform acceptance. The related Linux files were reviewed for the
+same include; their existing dependencies already provide it.
+
+The maintained format-5 qualification backend now passes Bazel --keep_going.
+This lets independent actions complete and reports all reachable failures in one
+run. The unchanged nonzero-exit check still rejects any such run, and no partial
+build is accepted as passed. The actual native linux64 command/receipt binds the
+updated backend. Existing host source-settings and source-test-inventory suites
+pass 29 and 23 methods respectively. The frontend manual documents the behavior;
+its C interface and production Make selection need no change. Full R8 is next.

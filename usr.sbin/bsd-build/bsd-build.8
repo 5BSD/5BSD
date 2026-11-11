@@ -3195,6 +3195,11 @@ Conflicting input hashes, duplicate component/program records, duplicate plan
 paths and stale inputs are errors. This supports incremental graph expansion
 without re-exporting unchanged components; it does not establish coverage of
 unselected world or kernel components.
+Format-5 source qualification uses Bazel's keep_going mode to finish independent
+actions after an error and retain the reachable failures from one run.
+A nonzero Bazel result still fails qualification; this never admits a partial
+build as a passed result.
+.Pp
 Input formats 3, 4 and 5 optionally accept execution-log-format as json (the
 compatibility default) or compact. Both retain the complete Bazel execution log;
 the receipt binds its format, pathname, size and SHA256. Compact logs require

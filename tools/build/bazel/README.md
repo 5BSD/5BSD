@@ -18,8 +18,12 @@ passes builtin/module compilation in `bazel-fdescfs-native-r1-20261111`, togethe
 with the native upgrade-policy test. Full R6 then fails on the NFS server module's undeclared DQ header. Both NFS
 common/server module source groups now declare that header, and both real module
 products pass native R1 compilation/link/CTF/debug processing. The related
-builtins already declared it. Next is a fresh complete candidate; none of these
-focused passes closes full-system, ARM64 or Make-parity qualification.
+builtins already declared it. Full R7 next fails on linux_stats.c's undeclared
+MAC framework header; the corrected complete linux64 module product passes native
+R1. Qualification now uses standard Bazel keep_going to collect independent
+failures, while a nonzero result still fails the run. Next is a fresh complete
+candidate; none of these focused passes closes full-system, ARM64 or Make-parity
+qualification.
 The existing DQ resolution-ledger test reads undeclared live workspace sources;
 its source closure, cache/sandbox behavior and mandatory kernel-build integration
 remain open under gate 3. Maintained frontend target interfaces cover these BUILD

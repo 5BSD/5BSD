@@ -366,6 +366,9 @@ def _qualify(config, args, state):
               'test' if config['tests'] else 'build','--override_module=bsd_sdk='+str(repository),
               '--lockfile_mode=error','--repository_disable_download','--repository_cache='+str(staged_cache),
               *platforms, *cache_flags,
+              # Complete independent actions to expose all reachable failures in
+              # one qualification run. The nonzero result below still fails it.
+              '--keep_going',
               '--jobs='+str(args.jobs),'--compilation_mode=opt','--strip=never',
               '--experimental_action_resource_set',
               # Extend Bazel defaults so build-only test targets retain runfiles.
