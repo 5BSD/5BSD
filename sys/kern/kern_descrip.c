@@ -4727,8 +4727,12 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	error = fget(td, uap->fd, &cap_flock_rights, &fp);
 	if (error != 0)
 		return (error);
-	/* A table that takes no flock(2) locks, refused as the type test did. */
-	if ((fp->f_ops->fo_flags & DFLAG_FLOCK) == 0) {
+	/*
+	 * A table that takes no flock(2) locks, or an anonymous pipe (which
+	 * shares the FIFO table), is refused as the type test did.
+	 */
+	if ((fp->f_ops->fo_flags & DFLAG_FLOCK) == 0 ||
+	    fp->f_type == DTYPE_PIPE) {
 		SDT_PROBE4(fd, , , refused, "flock", fp, DFLAG_FLOCK,
 		    EOPNOTSUPP);
 		error = EOPNOTSUPP;
@@ -4762,9 +4766,6 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	atomic_set_int(&fp->f_flag, FHASLOCK);
 	error = fo_advlock(fp, (caddr_t)fp, F_SETLK, &lf,
 	    (uap->how & LOCK_NB) ? F_FLOCK : F_FLOCK | F_WAIT, td);
-	/* An anonymous pipe shares the FIFO table and takes none. */
-	if (error == EOPNOTSUPP)
-		atomic_clear_int(&fp->f_flag, FHASLOCK);
 done:
 	fdrop(fp, td);
 	return (error);

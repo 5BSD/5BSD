@@ -2090,8 +2090,9 @@ pipe_pathconf(struct file *fp, int name, long *valuep, struct thread *td)
 }
 
 /*
- * A FIFO takes flock(2) locks on its vnode.  An anonymous pipe takes none
- * and answers flock(2) with its own EOPNOTSUPP; the fcntl(2) record locks
+ * A FIFO takes flock(2) locks on its vnode.  An anonymous pipe takes none:
+ * sys_flock() refuses it before the table, and it answers EOPNOTSUPP to
+ * an flock request anyway; the fcntl(2) record locks
  * (refused ahead of the table, the FIFO table having no DFLAG_RECLOCK) and
  * the POSIX unlock a close owes get the default EBADF for both.
  */
