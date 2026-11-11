@@ -8026,3 +8026,13 @@ It is intended for captured execution in the disposable normal package-runtime
 VM through ordinary authenticated service lookup, never against host providers.
 Compilation alone does not establish provider operation or complete service
 coverage; runner integration and actual VM acceptance remain required.
+
+.Pp
+Format-5 source qualification retains the main Bazel JSON trace as
+.Li profile.json.gz
+and, when test executables are materialized, a separate
+.Li test-artifacts.profile.json.gz .
+Their digests are recorded with the phase results.
+Inventory queries do not write either profile.
+A retained failed-build trace is diagnostic evidence, not a passed build or a
+controlled CPU, aggregate memory or physical disk-I/O comparison.

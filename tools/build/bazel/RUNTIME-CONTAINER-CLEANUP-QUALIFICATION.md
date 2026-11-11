@@ -288,3 +288,25 @@ session, then requires Device to be hidden/denied. Missing transport and arbitra
 RPC errors do not count. No visibility, attributes, signing or authority policy
 is changed to enable a test. Native/VM execution remains pending for both modes;
 seven client modes are not seven qualified provider operations.
+
+## Current closure corrections and native consumer link acceptance
+
+Full R8 finishes failed with exactly the three recorded compile sites. Its main
+JSON trace is retained at `bazel-system-upgrade-native-r8-20261111/profile.json.gz`
+with a separate digest/UUID capture. The old default profile matched the earlier
+inventory query, not the build. Do not use either failed correctness run as a
+controlled performance comparison.
+
+All three header corrections now pass
+`bazel-current-closure-native-r1-20261111/receipt.json`: MAC capability builtin
+objects and real loadable-module product, both VFS object groups, and native
+PIE/shared linking of service_operations. Both backend regression targets pass
+(24 inventory/profile methods and 29 setting methods in their Python suites).
+This is not VM execution of any consumer mode or full-system acceptance.
+
+The maintained backend now gives main/test-artifact commands separate explicit
+profile paths and strips that path from inventory queries. Each profile is
+hash-bound in its phase receipt. The actual native main and materialization
+profiles have distinct UUIDs, each matching its own BEP started event. The new
+regression protects that phase ownership. The frontend manual is updated; no new
+C frontend option or production backend change is required. Full R9 is next.

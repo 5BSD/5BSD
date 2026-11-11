@@ -185,7 +185,7 @@ def test_inventory_command(argv, targets, tests, host_artifacts_only=False):
     command[command.index('test')] = 'cquery'
     command = [a for a in command if not a.startswith((
         '--build_event_json_file=', '--execution_log_json_file=', '--execution_log_compact_file=',
-        '--noexecution_log_sort', '--output_groups='))]
+        '--noexecution_log_sort', '--output_groups=', '--profile='))]
     fields = '"label":str(target.label),"compatible":not any([key.endswith("IncompatiblePlatformProvider") for key in providers(target)])'
     if host_artifacts_only:
         fields += ',"host_artifact":any([key.endswith("BsdHostArtifactTestInfo") for key in providers(target)])'
@@ -201,6 +201,7 @@ def test_artifact_command(argv, targets, tests, output, log_format):
     command[command.index('test')] = 'build'
     replacements = {
         '--build_event_json_file=': str(output / 'test-artifacts.events.json'),
+        '--profile=': str(output / 'test-artifacts.profile.json.gz'),
         '--execution_log_' + log_format + '_file=': str(output / ('test-artifacts.execution.' + log_format)),
     }
     for index, argument in enumerate(command):
@@ -290,6 +291,7 @@ def _qualify(config, args, state):
     cache_policy = action_cache_settings(config)
     log_format = execution_log_format(config)
     log_path = args.output.resolve() / ('execution.' + log_format)
+    profile_path = args.output.resolve() / 'profile.json.gz'
     settings = frontend_setting_arguments(config.get('build-settings', {}), args.jobs)
     for key in ('targets','tests'):
         values=config[key]
@@ -374,6 +376,7 @@ def _qualify(config, args, state):
               # Extend Bazel defaults so build-only test targets retain runfiles.
               '--output_groups=+metadata,+directory_metadata',
               '--symlink_prefix='+str(out/'bazel-'),'--build_event_json_file='+str(out/'events.json'),
+              '--profile='+str(profile_path),
               '--execution_log_'+log_format+'_file='+str(log_path),'--noexecution_log_sort',
               *['--distdir='+str(p) for p in distdirs],*settings,*config['targets']]
         env=dict(os.environ,JAVA_HOME=str(selected['java-home']),LC_ALL='C',BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN='1')
@@ -449,6 +452,7 @@ def _qualify(config, args, state):
             artifact_events = out / 'test-artifacts.events.json'
             artifact_log = out / ('test-artifacts.execution.' + log_format)
             test_artifact_build = dict(targets=expected,
+                profile=dict(path=str(out/'test-artifacts.profile.json.gz'), sha256=digest(out/'test-artifacts.profile.json.gz')),
                 events=dict(path=str(artifact_events), sha256=digest(artifact_events)),
                 execution_log=dict(format=log_format, path=str(artifact_log), sha256=digest(artifact_log), bytes=artifact_log.stat().st_size))
         artifacts = bep_artifacts.snapshot(out/'events.json', out/'artifacts', incompatible=incompatible)
@@ -460,10 +464,15 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),test_artifact_build=test_artifact_build,artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),test_artifact_build=test_artifact_build,artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},profile=dict(path=str(profile_path),sha256=digest(profile_path)),execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)
+        if profile_path.is_file():
+            try:
+                failure['profile'] = dict(path=str(profile_path), sha256=digest(profile_path))
+            except Exception as capture_error:
+                failure['profile_capture_error'] = str(capture_error)
         if (out/'events.json').is_file():
             failure['events_sha256'] = digest(out/'events.json')
             try:

@@ -322,9 +322,9 @@ It reports one exact JSON success record only after completing the operation.
 The libraries perform their normal protocol negotiation and authorization.
 Shared dependencies are declared through native cc_binary.dynamic_deps.
 
-At this update, host syntax checking with -Wall -Wextra -Werror passes. Native
-linking and VM operations remain unqualified, and the runner does not yet invoke
-this helper. The seven operation modes do not cover all providers. BSDMemory is a
+Native compilation and PIE/shared linking pass in
+`bazel-current-closure-native-r1-20261111`; strict host syntax checks also pass.
+VM operations remain unqualified, and the runner does not yet invoke this helper. The seven operation modes do not cover all providers. BSDMemory is a
 memory-pressure sampler/publisher, not a memory-allocation factory; its manifest
 intentionally has no IPC endpoint. The earlier factory wording was incorrect.
 The memory probe exercises the actual Sysctl-to-Memory-to-Notify path, but does

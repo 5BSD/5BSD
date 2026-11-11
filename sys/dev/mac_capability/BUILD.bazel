@@ -57,7 +57,7 @@ _CAPABILITY_GROUPS = [
     ("isolation_module", ["mac_capability_isolation.c"], [":isolation_module_headers", "//sys/security/mac:policy_headers", "//sys/netinet:address_headers", "//sys/netgraph/bluetooth/include:socket_headers"]),
     ("mount_module", ["mac_capability_mount.c"], [":mount_module_headers"]),
     ("system_module", ["mac_capability_system.c"], [":system_module_headers", "//sys/security/mac:policy_headers", "//sys/net:network_headers"]),
-    ("core_module", ["mac_capability_core.c", "mac_capability_dev.c", "mac_capability_kern.c", "mac_capability_label.c"], [":internal_headers", "//sys/security/mac:policy_headers", "//sys/amd64/conf:generic_opt_capsicum_header"]),
+    ("core_module", ["mac_capability_core.c", "mac_capability_dev.c", "mac_capability_kern.c", "mac_capability_label.c"], [":internal_headers", "//sys/security/mac:framework_headers", "//sys/security/mac:policy_headers", "//sys/amd64/conf:generic_opt_capsicum_header"]),
     ("capprotect_module", ["mac_capability_capprotect.c"], [":capprotect_module_headers", "//sys/security/mac:policy_headers"]),
 ]
 [amd64_generic_module_objects(name = name, srcs = srcs, deps = deps) for name, srcs, deps in _CAPABILITY_GROUPS]

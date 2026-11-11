@@ -10,20 +10,19 @@ qualification pass Switchboard, the inventory helper and all 11 selected tests.
 The service-aware VM upgrade and useful provider operations remain unqualified;
 gate 1 is open. See RUNTIME-CONTAINER-CLEANUP-QUALIFICATION.md.
 
-Current-source full candidates R3, R4 and R5 retain real analysis/compile
-failures. DQ's missing module producer and header closure now pass native R2;
-mac_abac's configured DQ option visibility is fixed. R5 then reaches compilation
-and fails on fdescfs's newly used but undeclared MAC framework header. The fix
-passes builtin/module compilation in `bazel-fdescfs-native-r1-20261111`, together
-with the native upgrade-policy test. Full R6 then fails on the NFS server module's undeclared DQ header. Both NFS
-common/server module source groups now declare that header, and both real module
-products pass native R1 compilation/link/CTF/debug processing. The related
-builtins already declared it. Full R7 next fails on linux_stats.c's undeclared
-MAC framework header; the corrected complete linux64 module product passes native
-R1. Qualification now uses standard Bazel keep_going to collect independent
-failures, while a nonzero result still fails the run. Next is a fresh complete
-candidate; none of these focused passes closes full-system, ARM64 or Make-parity
-qualification.
+Full current-source R8 is terminal failed after collecting three compile
+failures: MAC framework headers in mac_capability_dev.c/vfs_aio.c and the quota
+header in vfs_syscalls.c. All three declared dependency corrections pass native
+`bazel-current-closure-native-r1-20261111`, including MAC builtin/module variants,
+both VFS object groups and PIE/shared linking of the seven-mode provider client.
+Both native backend regression targets pass. No provider client operation has
+run in a VM yet, and the runner does not yet invoke that client.
+
+The backend now retains independent main and test-artifact JSON profiles; native
+profile UUIDs match their own BEP invocations. R8's actual failed main trace is
+retained separately; its previous default trace was only the inventory query.
+These correctness/trace observations are not controlled performance, complete
+Make parity, ARM64 or full-system acceptance. A fresh full candidate is next.
 The existing DQ resolution-ledger test reads undeclared live workspace sources;
 its source closure, cache/sandbox behavior and mandatory kernel-build integration
 remain open under gate 3. Maintained frontend target interfaces cover these BUILD
