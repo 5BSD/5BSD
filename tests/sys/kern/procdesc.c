@@ -1083,8 +1083,11 @@ ATF_TC_BODY(daemon_close_then_exit, tc)
  * attach leaves a sleeping thread asleep (debug.ptrace_attach_transparent,
  * the default).  PT_DETACH does not wake it, so the SIGKILL stays pending
  * on a process that is neither stopped nor traced until something else
- * wakes the thread; here, a second SIGKILL.  The case pins this as it is
- * and says so; whether it should stay is a separate question, see
+ * wakes the thread; here, a second SIGKILL.  This is a defect (a lost
+ * wakeup, also in FreeBSD), recorded as open in the project's issue list
+ * (2026-11-11, "SIGKILL to a traced sleeper").  The case pins the value
+ * as found, it does not endorse it: the commit that fixes the defect
+ * changes these expectations.  See
  * ptrace__sigkill_third_party_stopped_detach in ptrace_test.c for a
  * tracee that stopped itself and does die at the detach.
  *
@@ -1108,6 +1111,8 @@ traced_child_close(int pdflags)
 	int cmd[2], pd, rep[2], st, status;
 	char b;
 
+	/* What is recorded here is the transparent attach's behaviour. */
+	ATF_REQUIRE_SYSCTL_INT("debug.ptrace_attach_transparent", 1);
 	sigchld_block();
 	ATF_REQUIRE_EQ(0, procctl(P_PID, getpid(), PROC_REAP_STATUS, &rs));
 	ATF_REQUIRE_MSG(rs.rs_reaper != getpid(),
@@ -1547,6 +1552,10 @@ ATF_TC_BODY(foreign_open_parent_wait, tc)
  * signalled (it is the child's p_pptr and its reaper) but wait(2) finds
  * nothing to reap: the zombie stays, holding its pid, until the parent
  * itself exits.
+ * This is a defect (a zombie nobody can reap, also in FreeBSD), recorded
+ * as open in the project's issue list (2026-11-11, same entry as the
+ * traced sleeper).  The case pins it as found, it does not endorse it:
+ * the commit that fixes the defect changes these expectations.
  *
  * Each variant runs in a process of its own that acquires reaper status,
  * so the test program does not become a reaper.
