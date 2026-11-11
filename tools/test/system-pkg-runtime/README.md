@@ -280,3 +280,33 @@ arbitrary configurations outside the selected installed roots. Those functional
 contracts remain required work for the closeout goal. Host parser/validator tests
 are separate from native Bazel and VM acceptance. Use the normal format-5 frontend
 target/test inputs for `service_inventory_test` and `service_health_test`.
+
+## Native provider-operation client (VM execution pending)
+
+`//tools/test/system-pkg-runtime:service_operations` is a PIE consumer binary
+built through the maintained format-5 frontend target selection. It is not a
+host test and must not contact arbitrary installed host providers. Capture its
+native output, then execute it in the owned normal package-runtime VM through
+the ordinary authenticated login/service lookup context. It has no alternate
+provider transport, fallback, privilege grant or policy bypass.
+
+Select one operation per invocation:
+
+* `time`: real timecmp request, with the returned timestamp bounded by guest
+  realtime observations before/after the request.
+* `sysctl`: real sysctlcmp read of kern.ostype, compared byte-for-byte and by
+  length with the guest kernel's value.
+* `notify`: subscribe to a fresh private user.* topic, publish a payload,
+  receive and validate the exact framed topic/payload, then unsubscribe.
+
+The client has a 20-second process deadline and notification receive has a
+five-second deadline. Any open, RPC, content or cleanup failure exits nonzero.
+It reports one exact JSON success record only after completing the operation.
+The libraries perform their normal protocol negotiation and authorization.
+Shared dependencies are declared through native cc_binary.dynamic_deps.
+
+At this update, host syntax checking with -Wall -Wextra -Werror passes. Native
+linking and VM operations remain unqualified, and the runner does not yet invoke
+this helper. These three probes do not cover the other providers or Memory's
+resource factory. Manifest-derived readiness remains separate from useful
+operation coverage; gate 1 stays open until the required real VM checks pass.

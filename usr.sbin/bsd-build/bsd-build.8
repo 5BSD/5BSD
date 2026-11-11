@@ -8014,3 +8014,12 @@ The existing native target/test interface accepts
 //tools/test/system-pkg-runtime:service_health_test and
 //tools/test/system-pkg-runtime:service_inventory_test.
 This readiness check is not individual provider operation qualification.
+
+.Pp
+The format-5 source qualification target
+.Li //tools/test/system-pkg-runtime:service_operations
+builds a native consumer for time, sysctl and notification operations.
+It is intended for captured execution in the disposable normal package-runtime
+VM through ordinary authenticated service lookup, never against host providers.
+Compilation alone does not establish provider operation or complete service
+coverage; runner integration and actual VM acceptance remain required.

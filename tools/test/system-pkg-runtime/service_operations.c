@@ -1,0 +1,128 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Real consumer operations, run only in the owned package-runtime VM. */
+#include <sys/types.h>
+#include <sys/sysctl.h>
+
+#include <err.h>
+#include <inttypes.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <notify.h>
+#include <sysctlcmp.h>
+#include <timecmp.h>
+
+static void
+clock_operation(void)
+{
+	struct timecmp_client *client;
+	struct timespec before, value, after;
+
+	if (timecmp_client_open(&client) == -1)
+		err(1, "time provider open");
+	if (clock_gettime(CLOCK_REALTIME, &before) == -1)
+		err(1, "local realtime before request");
+	if (timecmp_get(client, &value) == -1)
+		err(1, "time provider get");
+	if (clock_gettime(CLOCK_REALTIME, &after) == -1)
+		err(1, "local realtime after request");
+	timecmp_client_close(client);
+	if (value.tv_nsec < 0 || value.tv_nsec >= 1000000000 ||
+	    value.tv_sec < before.tv_sec - 1 || value.tv_sec > after.tv_sec + 1)
+		errx(1, "provider clock differs from guest realtime");
+}
+
+static void
+sysctl_operation(void)
+{
+	struct sysctlcmp_client *client;
+	char expected[256], actual[256];
+	size_t expected_size, actual_size;
+
+	expected_size = sizeof(expected);
+	if (sysctlbyname("kern.ostype", expected, &expected_size, NULL, 0) == -1)
+		err(1, "local kernel OS type");
+	if (sysctlcmp_client_open(&client) == -1)
+		err(1, "sysctl provider open");
+	actual_size = sizeof(actual);
+	if (sysctlcmp_get(client, "kern.ostype", actual, &actual_size) == -1)
+		err(1, "sysctl provider get");
+	sysctlcmp_client_close(client);
+	if (actual_size == 0 || actual_size != expected_size ||
+	    actual_size > sizeof(actual) || memcmp(actual, expected, actual_size) != 0)
+		errx(1, "provider OS type differs from guest kernel");
+}
+
+static void
+notify_operation(void)
+{
+	struct notify_client *client;
+	const struct notify_event *event;
+	const char payload[] = "package runtime notification round trip";
+	union {
+		max_align_t align;
+		unsigned char bytes[NOTIFY_MAX_MESSAGE];
+	} buffer;
+	char topic[128];
+	ssize_t length;
+	int count;
+	size_t topic_length, payload_length;
+
+	count = snprintf(topic, sizeof(topic), "user.pkg-runtime.%jd.%08x",
+	    (intmax_t)getpid(), arc4random());
+	if (count < 0 || count >= (int)sizeof(topic))
+		errx(1, "notification topic overflow");
+	topic_length = strlen(topic);
+	payload_length = sizeof(payload) - 1;
+	if (notify_client_open(&client) == -1)
+		err(1, "notification provider open");
+	if (notify_subscribe(client, topic) == -1)
+		err(1, "notification subscribe");
+	if (notify_publish(client, topic, payload, payload_length) == -1)
+		err(1, "notification publish");
+	length = notify_next(client, (struct notify_event *)buffer.bytes,
+	    sizeof(buffer.bytes), 5000);
+	if (length < 0)
+		err(1, "notification receive");
+	if (length < (ssize_t)sizeof(*event))
+		errx(1, "short notification event");
+	event = (const struct notify_event *)buffer.bytes;
+	/* Check all lengths before indexing the decoded variable-sized body. */
+	if ((size_t)length > sizeof(buffer.bytes) ||
+	    event->type != NOTIFY_EVENT_PUBLISH ||
+	    event->topic_length != topic_length ||
+	    event->payload_length != payload_length ||
+	    event->publisher_length > (size_t)length - sizeof(*event) ||
+	    (size_t)length - sizeof(*event) - event->publisher_length !=
+	    topic_length + payload_length)
+		errx(1, "unexpected notification framing");
+	if (memcmp(event->data + event->publisher_length, topic, topic_length) != 0 ||
+	    memcmp(event->data + event->publisher_length + topic_length,
+	    payload, payload_length) != 0)
+		errx(1, "notification round trip differs");
+	if (notify_unsubscribe(client, topic) == -1)
+		err(1, "notification unsubscribe");
+	notify_client_close(client);
+}
+
+int
+main(int argc, char **argv)
+{
+	if (argc != 2)
+		errx(64, "usage: service_operations time|sysctl|notify");
+	alarm(20);
+	if (strcmp(argv[1], "time") == 0)
+		clock_operation();
+	else if (strcmp(argv[1], "sysctl") == 0)
+		sysctl_operation();
+	else if (strcmp(argv[1], "notify") == 0)
+		notify_operation();
+	else
+		errx(64, "unknown operation %s", argv[1]);
+	printf("{\"format\":1,\"operation\":\"%s\",\"status\":\"passed\"}\n", argv[1]);
+	return (fflush(stdout) == EOF ? 1 : 0);
+}
