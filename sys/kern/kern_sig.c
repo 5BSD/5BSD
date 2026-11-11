@@ -2413,13 +2413,14 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 	if (P_SHOULDSTOP(p)) {
 		KASSERT(!(p->p_flag & P_WEXIT),
 		    ("signal to stopped but exiting process"));
-		if (sig == SIGKILL) {
-			/*
-			 * If traced process is already stopped,
-			 * then no further action is necessary.
-			 */
-			if (p->p_flag & P_TRACED)
-				return (0);
+		/*
+		 * A traced process stays stopped for its debugger, which
+		 * is shown SIGKILL like any other signal.  It is handled
+		 * with the other kinds of signals below, so that a thread
+		 * stopped in its sleep is there to act on the signal once
+		 * the debugger resumes the process, detaches or exits.
+		 */
+		if (sig == SIGKILL && (p->p_flag & P_TRACED) == 0) {
 			/*
 			 * SIGKILL sets process running.
 			 * It will die elsewhere.

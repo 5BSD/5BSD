@@ -683,6 +683,91 @@ CASE(mt_spin_1st__kill__detach, "",
     "and another asleep kills it at PT_DETACH",
     K_MT_SPIN_1ST, S_WAITED, H_KILL, R_DETACH, -1, -1)
 
+/* The tracee stopped where it slept dies when the debugger lets go. */
+CASE(waited__kill__detach, "",
+    "SIGKILL from kill(2) to a tracee stopped where it slept kills it at "
+    "PT_DETACH",
+    K_READ, S_WAITED, H_KILL, R_DETACH, -1, -1)
+CASE(waited__pdkill__detach, "",
+    "SIGKILL from pdkill(2) to a tracee stopped where it slept kills it at "
+    "PT_DETACH",
+    K_READ, S_WAITED, H_PDKILL, R_DETACH, -1, -1)
+CASE(waited__pdclose__detach, "",
+    "The last close of the process descriptor of a tracee stopped where it "
+    "slept kills it at PT_DETACH",
+    K_READ, S_WAITED, H_PDCLOSE, R_DETACH, -1, -1)
+CASE(waited__kill__continue, "",
+    "SIGKILL sent to a tracee stopped where it slept is shown at PT_CONTINUE",
+    K_READ, S_WAITED, H_KILL, R_CONT, -1, -1)
+CASE(waited__kill__debugger_exit, "root",
+    "SIGKILL sent to a tracee stopped where it slept kills it when the "
+    "debugger exits without kern.kill_on_debugger_exit",
+    K_READ, S_WAITED, H_KILL, R_EXIT, 1, 0)
+CASE(attached__kill__debugger_exit, "root",
+    "SIGKILL sent to a tracee whose attach stop was never collected kills "
+    "it when the debugger exits without kern.kill_on_debugger_exit",
+    K_READ, S_ATTACHED, H_KILL, R_EXIT, 1, 0)
+CASE(mt_sleepers__kill__detach, "",
+    "SIGKILL sent to a tracee with every thread stopped where it slept "
+    "kills it at PT_DETACH",
+    K_MT_SLEEP, S_WAITED, H_KILL, R_DETACH, -1, -1)
+CASE(mt_other_sigstop__kill__detach, "",
+    "SIGKILL sent to a tracee stopped at a signal taken by another thread, "
+    "its initial thread stopped where it slept, kills it at PT_DETACH",
+    K_MT_MASK, S_SIGSTOP, H_KILL, R_DETACH, -1, -1)
+CASE(legacy_mt_other_sigstop__kill__detach, "root",
+    "The same after a PT_ATTACH that wakes the sleepers",
+    K_MT_MASK, S_SIGSTOP, H_KILL, R_DETACH, 0, -1)
+
+/*
+ * SIGKILL against PT_DETACH: whichever the kernel sees first, the target
+ * dies.
+ */
+ATF_TC(waited__kill_races_detach);
+ATF_TC_HEAD(waited__kill_races_detach, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SIGKILL racing PT_DETACH of a tracee stopped where it slept "
+	    "kills it");
+}
+ATF_TC_BODY(waited__kill_races_detach, tc)
+{
+	struct fx fx;
+	struct cmd c;
+	struct reply r;
+	volatile int spin;
+	int i, status;
+
+	if (sysctl_get(TRANSPARENT) != 1)
+		atf_tc_skip(TRANSPARENT " is not set");
+	for (i = 0; i < 24; i++) {
+		fx_start(&fx, K_READ, false);
+		STEP(dbg(&fx, OP_ATTACH, 0, &r) && r.rv == 0);
+		STEP(dbg(&fx, OP_WAIT, 0, &r) &&
+		    STOPPED_AT(r, fx.tgt, SIGSTOP));
+		/* Ask for the detach, and do not wait for it. */
+		c.op = OP_DETACH;
+		c.arg = 0;
+		STEP(write(fx.cfd, &c, sizeof(c)) == sizeof(c));
+		for (spin = 0; spin < (i % 8) * 2000; spin++)
+			;
+		STEP(kill(fx.tgt, SIGKILL) == 0);
+		STEP(read(fx.rfd, &r, sizeof(r)) == sizeof(r) && r.rv == 0);
+		if (!wait_dead(fx.tgt)) {
+			show("alive", fx.tgt);
+			atf_tc_fail_nonfatal("round %d: the target outlived "
+			    "SIGKILL", i);
+			goto out;
+		}
+		status = 0;
+		STEP(KILLED(waitpid(fx.tgt, &status, 0), status, fx.tgt));
+		fx_end(&fx);
+	}
+	return;
+out:
+	fx_end(&fx);
+}
+
 /* No debugger: SIGKILL ends a process stopped by SIGSTOP in its sleep. */
 ATF_TC(untraced_stopped__kill);
 ATF_TC_HEAD(untraced_stopped__kill, tc)
@@ -724,5 +809,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, untraced_stopped__kill);
 	ATF_TP_ADD_TC(tp, mt_spin_1st__kill__detach);
 	ATF_TP_ADD_TC(tp, mt_spin_2nd__kill__detach);
+	ATF_TP_ADD_TC(tp, waited__kill__detach);
+	ATF_TP_ADD_TC(tp, waited__pdkill__detach);
+	ATF_TP_ADD_TC(tp, waited__pdclose__detach);
+	ATF_TP_ADD_TC(tp, waited__kill__continue);
+	ATF_TP_ADD_TC(tp, waited__kill__debugger_exit);
+	ATF_TP_ADD_TC(tp, attached__kill__debugger_exit);
+	ATF_TP_ADD_TC(tp, mt_sleepers__kill__detach);
+	ATF_TP_ADD_TC(tp, mt_other_sigstop__kill__detach);
+	ATF_TP_ADD_TC(tp, legacy_mt_other_sigstop__kill__detach);
+	ATF_TP_ADD_TC(tp, waited__kill_races_detach);
 	return (atf_no_error());
 }
