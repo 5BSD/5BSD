@@ -231,6 +231,61 @@ wait_asleep(pid_t pid, int nthreads, int want)
 	}
 }
 
+/*
+ * What a case must undo is kept in its work directory, where the cleanup
+ * routine, a process of its own, finds it however the body ended.
+ */
+#define	PIDS_FILE	"pids"
+
+/* Remember a process the cleanup routine is to kill. */
+static void
+note_pid(pid_t pid)
+{
+	FILE *fp;
+
+	fp = fopen(PIDS_FILE, "a");
+	ATF_REQUIRE(fp != NULL);
+	ATF_REQUIRE(fprintf(fp, "%d\n", pid) > 0);
+	ATF_REQUIRE_EQ(0, fclose(fp));
+}
+
+/* Set a sysctl for the case, saving the value to put back. */
+static void
+sysctl_change(const char *name, int val)
+{
+	FILE *fp;
+	size_t len;
+	int old;
+
+	len = sizeof(old);
+	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(name, &old, &len, NULL, 0),
+	    "%s: %s", name, strerror(errno));
+	fp = fopen(name, "wx");
+	ATF_REQUIRE(fp != NULL);
+	ATF_REQUIRE(fprintf(fp, "%d\n", old) > 0);
+	ATF_REQUIRE_EQ(0, fclose(fp));
+	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(name, NULL, NULL, &val,
+	    sizeof(val)), "%s: %s", name, strerror(errno));
+}
+
+/* Put a changed sysctl back; without effect if it was not changed. */
+static void
+sysctl_restore(const char *name)
+{
+	FILE *fp;
+	int old;
+
+	fp = fopen(name, "r");
+	if (fp == NULL)
+		return;
+	if (fscanf(fp, "%d", &old) != 1 ||
+	    sysctlbyname(name, NULL, NULL, &old, sizeof(old)) != 0)
+		fprintf(stderr, "%s was not restored\n", name);
+	else
+		(void)unlink(name);
+	(void)fclose(fp);
+}
+
 static void *
 target_reader(void *arg)
 {
@@ -373,6 +428,8 @@ fx_start(struct fx *fx, enum kind kind, bool procdesc)
 	ATF_REQUIRE_EQ(0, pipe(yp));
 	fx->tgt = procdesc ? pdfork(&fx->pd, 0) : fork();
 	ATF_REQUIRE(fx->tgt != -1);
+	if (fx->tgt != 0)
+		note_pid(fx->tgt);
 	if (fx->tgt == 0) {
 		close(tp[1]);
 		close(yp[0]);
@@ -398,6 +455,7 @@ fx_start(struct fx *fx, enum kind kind, bool procdesc)
 	case K_VFORK:
 		ATF_REQUIRE_EQ((ssize_t)sizeof(fx->vchild),
 		    read(yp[0], &fx->vchild, sizeof(fx->vchild)));
+		note_pid(fx->vchild);
 		ATF_REQUIRE(wait_asleep(fx->vchild, 1, 1));
 		ATF_REQUIRE(wait_asleep(fx->tgt, 1, 1));
 		break;
@@ -408,6 +466,8 @@ fx_start(struct fx *fx, enum kind kind, bool procdesc)
 	ATF_REQUIRE_EQ(0, pipe(rp));
 	fx->dbg = fork();
 	ATF_REQUIRE(fx->dbg != -1);
+	if (fx->dbg != 0)
+		note_pid(fx->dbg);
 	if (fx->dbg == 0) {
 		/* Only the test holds the descriptor and the pipe. */
 		if (fx->pd != -1)
@@ -458,25 +518,51 @@ fx_end(struct fx *fx)
 	(void)close(fx->wfd);
 	(void)close(fx->cfd);
 	(void)close(fx->rfd);
+	/* Its processes are gone: nothing for the cleanup routine. */
+	(void)unlink(PIDS_FILE);
 }
 
-static int
-sysctl_get(const char *name)
+#define	TRANSPARENT	"debug.ptrace_attach_transparent"
+#define	KILL_ON_EXIT	"kern.kill_on_debugger_exit"
+
+/*
+ * The cleanup routine of every case.  The debugger of a fixture is the
+ * last process noted and the first to go, which releases its tracee for
+ * the SIGKILL that follows.  The processes are not this one's to wait for.
+ */
+static void
+cleanup(void)
+{
+	FILE *fp;
+	pid_t pids[8];
+	int n;
+
+	fp = fopen(PIDS_FILE, "r");
+	if (fp != NULL) {
+		for (n = 0; n < (int)nitems(pids) &&
+		    fscanf(fp, "%d", &pids[n]) == 1; n++)
+			;
+		(void)fclose(fp);
+		while (n-- > 0) {
+			if (kill(pids[n], SIGKILL) == 0)
+				fprintf(stderr, "killed leftover pid %d\n",
+				    pids[n]);
+		}
+	}
+	sysctl_restore(TRANSPARENT);
+	sysctl_restore(KILL_ON_EXIT);
+}
+
+static bool
+transparent_attach(void)
 {
 	size_t len;
 	int val;
 
 	len = sizeof(val);
-	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(name, &val, &len, NULL, 0),
-	    "%s: %s", name, strerror(errno));
-	return (val);
-}
-
-static void
-sysctl_set(const char *name, int val)
-{
-	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(name, NULL, NULL, &val,
-	    sizeof(val)), "%s: %s", name, strerror(errno));
+	ATF_REQUIRE_EQ_MSG(0, sysctlbyname(TRANSPARENT, &val, &len, NULL, 0),
+	    TRANSPARENT ": %s", strerror(errno));
+	return (val == 1);
 }
 
 #define	STEP(cond) do {							\
@@ -493,13 +579,11 @@ sysctl_set(const char *name, int val)
 #define	KILLED(rv, status, pid)						\
 	((rv) == (pid) && WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL)
 
-#define	TRANSPARENT	"debug.ptrace_attach_transparent"
-#define	KILL_ON_EXIT	"kern.kill_on_debugger_exit"
-
 /*
  * One case: bring the tracee to the stage, send SIGKILL, have the debugger
  * let go, and expect the death.  transparent and kill_on_exit are values
- * to run under, or -1 for the defaults (a transparent attach).
+ * to run under, which takes root, or -1: the case then runs as the system
+ * is set and needs it set for a transparent attach.
  */
 static void
 run(enum kind kind, enum stage stage, enum how how, enum rel rel,
@@ -507,20 +591,14 @@ run(enum kind kind, enum stage stage, enum how how, enum rel rel,
 {
 	struct fx fx;
 	struct reply r;
-	int nsleepers, nthreads, okill_on_exit, otransparent, status;
+	int nsleepers, nthreads, status;
 
-	otransparent = okill_on_exit = -1;
-	if (transparent == -1) {
-		if (sysctl_get(TRANSPARENT) != 1)
-			atf_tc_skip(TRANSPARENT " is not set");
-	} else {
-		otransparent = sysctl_get(TRANSPARENT);
-		sysctl_set(TRANSPARENT, transparent);
-	}
-	if (kill_on_exit != -1) {
-		okill_on_exit = sysctl_get(KILL_ON_EXIT);
-		sysctl_set(KILL_ON_EXIT, kill_on_exit);
-	}
+	if (transparent != -1)
+		sysctl_change(TRANSPARENT, transparent);
+	else if (!transparent_attach())
+		atf_tc_skip(TRANSPARENT " is not set");
+	if (kill_on_exit != -1)
+		sysctl_change(KILL_ON_EXIT, kill_on_exit);
 	nthreads = kind == K_READ || kind == K_VFORK ? 1 : 2;
 	nsleepers = kind == K_MT_SLEEP || kind == K_MT_MASK ? 2 : 1;
 
@@ -607,23 +685,28 @@ run(enum kind kind, enum stage stage, enum how how, enum rel rel,
 	}
 out:
 	fx_end(&fx);
-	if (otransparent != -1)
-		sysctl_set(TRANSPARENT, otransparent);
-	if (okill_on_exit != -1)
-		sysctl_set(KILL_ON_EXIT, okill_on_exit);
+	sysctl_restore(TRANSPARENT);
+	sysctl_restore(KILL_ON_EXIT);
 }
 
 #define	CASE(name, user, descr, ...)					\
-ATF_TC(name);								\
+ATF_TC_WITH_CLEANUP(name);						\
 ATF_TC_HEAD(name, tc)							\
 {									\
 	atf_tc_set_md_var(tc, "descr", descr);				\
-	if (user[0] != '\0')						\
+	if (user[0] != '\0') {						\
+		/* It sets a sysctl every process is subject to. */	\
 		atf_tc_set_md_var(tc, "require.user", user);		\
+		atf_tc_set_md_var(tc, "is.exclusive", "true");		\
+	}								\
 }									\
 ATF_TC_BODY(name, tc)							\
 {									\
 	run(__VA_ARGS__);						\
+}									\
+ATF_TC_CLEANUP(name, tc)						\
+{									\
+	cleanup();							\
 }
 
 /*
@@ -727,7 +810,7 @@ CASE(mt_sleepers__kill__detach, "",
  * SIGKILL against PT_DETACH: whichever the kernel sees first, the target
  * dies.
  */
-ATF_TC(waited__kill_races_detach);
+ATF_TC_WITH_CLEANUP(waited__kill_races_detach);
 ATF_TC_HEAD(waited__kill_races_detach, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -742,7 +825,7 @@ ATF_TC_BODY(waited__kill_races_detach, tc)
 	volatile int spin;
 	int i, status;
 
-	if (sysctl_get(TRANSPARENT) != 1)
+	if (!transparent_attach())
 		atf_tc_skip(TRANSPARENT " is not set");
 	for (i = 0; i < 24; i++) {
 		fx_start(&fx, K_READ, false);
@@ -771,9 +854,13 @@ ATF_TC_BODY(waited__kill_races_detach, tc)
 out:
 	fx_end(&fx);
 }
+ATF_TC_CLEANUP(waited__kill_races_detach, tc)
+{
+	cleanup();
+}
 
 /* No debugger: SIGKILL ends a process stopped by SIGSTOP in its sleep. */
-ATF_TC(untraced_stopped__kill);
+ATF_TC_WITH_CLEANUP(untraced_stopped__kill);
 ATF_TC_HEAD(untraced_stopped__kill, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
@@ -794,6 +881,10 @@ ATF_TC_BODY(untraced_stopped__kill, tc)
 	STEP(KILLED(waitpid(fx.tgt, &status, 0), status, fx.tgt));
 out:
 	fx_end(&fx);
+}
+ATF_TC_CLEANUP(untraced_stopped__kill, tc)
+{
+	cleanup();
 }
 
 ATF_TP_ADD_TCS(tp)
