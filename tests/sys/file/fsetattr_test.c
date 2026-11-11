@@ -71,6 +71,38 @@ umount_fdesc(void)
 	(void)unmount("fdesc", MNT_FORCE);
 }
 
+typedef int setattr_op(int fd);
+
+/* Neither time is set: both seconds are the kernel's "no value". */
+static int
+op_futimens_none(int fd)
+{
+	static const struct timespec none[2] = {
+		{ .tv_sec = -1, .tv_nsec = 0 },
+		{ .tv_sec = -1, .tv_nsec = 0 },
+	};
+
+	return (futimens(fd, none));
+}
+
+static int
+op_futimes_none(int fd)
+{
+	static const struct timeval none[2] = {
+		{ .tv_sec = -1, .tv_usec = 0 },
+		{ .tv_sec = -1, .tv_usec = 0 },
+	};
+
+	return (futimes(fd, none));
+}
+
+/* The errno of op(fd), 0 for success. */
+static int
+op_errno(setattr_op *op, int fd)
+{
+	return (op(fd) == 0 ? 0 : errno);
+}
+
 static void
 check_errno(int fd, int expected)
 {
@@ -558,6 +590,27 @@ ATF_TC_BODY(bad_fd, tc)
 	check_errno(fd, EBADF);
 }
 
+/*
+ * futimens(2) and futimes(2) given no time to set (both seconds -1, the
+ * kernel's "no value") still go to the filesystem, which changes nothing.
+ */
+ATF_TC_WITHOUT_HEAD(times_none);
+ATF_TC_BODY(times_none, tc)
+{
+	struct stat sb;
+	int fd;
+
+	fd = open("file", O_RDWR | O_CREAT, 0644);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, futimens(fd, times));
+	ATF_CHECK_EQ(0, op_errno(op_futimens_none, fd));
+	ATF_CHECK_EQ(0, op_errno(op_futimes_none, fd));
+	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
+	ATF_CHECK_EQ(times[0].tv_sec, sb.st_atim.tv_sec);
+	ATF_CHECK_EQ(times[1].tv_sec, sb.st_mtim.tv_sec);
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, regular_file_times);
@@ -573,6 +626,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fdescfs_no_attributes);
 	ATF_TP_ADD_TC(tp, fdescfs_shm);
 	ATF_TP_ADD_TC(tp, fdescfs_ptmx_direct);
+	ATF_TP_ADD_TC(tp, times_none);
 	ATF_TP_ADD_TC(tp, fdescfs_fifo);
 	ATF_TP_ADD_TC(tp, pts_master_openpt);
 	ATF_TP_ADD_TC(tp, pts_master_ptmx);
