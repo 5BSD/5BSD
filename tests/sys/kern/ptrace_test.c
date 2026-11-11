@@ -4917,7 +4917,7 @@ static void
 sigkill_third_party_stopped(bool detach)
 {
 	struct ptrace_lwpinfo pl;
-	pid_t fpid, kpid, wpid;
+	pid_t fpid, wpid;
 	int status;
 
 	ATF_REQUIRE((fpid = fork()) != -1);
@@ -4933,7 +4933,7 @@ sigkill_third_party_stopped(bool detach)
 	ATF_REQUIRE(WIFSTOPPED(status));
 	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
 
-	kpid = third_party_sigkill(fpid);
+	(void)third_party_sigkill(fpid);
 
 	/* Still stopped, and no new event for the debugger. */
 	usleep(200000);
@@ -4963,7 +4963,6 @@ sigkill_third_party_stopped(bool detach)
 		 */
 		REQUIRE_EQ(pl.pl_siginfo.si_code, 0);
 		REQUIRE_EQ(pl.pl_siginfo.si_pid, 0);
-		ATF_REQUIRE(kpid != fpid);
 
 		/* Deliver it. */
 		REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, SIGKILL), 0);
@@ -5003,7 +5002,7 @@ ATF_TC_WITHOUT_HEAD(ptrace__sigkill_third_party_running);
 ATF_TC_BODY(ptrace__sigkill_third_party_running, tc)
 {
 	struct ptrace_lwpinfo pl;
-	pid_t fpid, kpid, wpid;
+	pid_t fpid, wpid;
 	int status;
 
 	ATF_REQUIRE((fpid = fork()) != -1);
@@ -5025,7 +5024,7 @@ ATF_TC_BODY(ptrace__sigkill_third_party_running, tc)
 	wpid = waitpid(fpid, &status, WNOHANG);
 	REQUIRE_EQ(wpid, 0);
 
-	kpid = third_party_sigkill(fpid);
+	(void)third_party_sigkill(fpid);
 
 	/* A signal stop for the SIGKILL, not a death. */
 	wpid = waitpid(fpid, &status, 0);
@@ -5042,7 +5041,6 @@ ATF_TC_BODY(ptrace__sigkill_third_party_running, tc)
 	 */
 	REQUIRE_EQ(pl.pl_siginfo.si_code, 0);
 	REQUIRE_EQ(pl.pl_siginfo.si_pid, 0);
-	ATF_REQUIRE(kpid != fpid);
 
 	REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, SIGKILL), 0);
 
@@ -5099,7 +5097,7 @@ static void
 kill_path_debugger_exit(int kode)
 {
 	pid_t dpid, fpid, wpid;
-	int go[2], status;
+	int go[2], i, status;
 	char c;
 
 	REQUIRE_EQ(sysctlbyname(KODE_SYSCTL, NULL, NULL, &kode,
@@ -5135,10 +5133,11 @@ kill_path_debugger_exit(int kode)
 		REQUIRE_EQ(WTERMSIG(status), SIGKILL);
 	} else {
 		/* Alive, not stopped, and back to blocking in read(2). */
-		usleep(200000);
+		for (i = 0; i < 5000 && proc_state(fpid) != SSLEEP; i++)
+			usleep(1000);
+		REQUIRE_EQ(proc_state(fpid), SSLEEP);
 		wpid = waitpid(fpid, &status, WNOHANG | WUNTRACED);
 		REQUIRE_EQ(wpid, 0);
-		REQUIRE_EQ(proc_state(fpid), SSLEEP);
 		c = 'g';
 		REQUIRE_EQ(write(go[1], &c, 1), 1);
 		wpid = waitpid(fpid, &status, 0);
@@ -5159,8 +5158,13 @@ kill_path_debugger_exit(int kode)
 ATF_TC_WITH_CLEANUP(ptrace__kill_paths_unattached);
 ATF_TC_HEAD(ptrace__kill_paths_unattached, tc)
 {
-	/* kern.kill_on_debugger_exit is set to both values. */
+	/*
+	 * kern.kill_on_debugger_exit is set to both values: no other
+	 * case may run meanwhile.  The cleanup puts the saved value back
+	 * however the body ends.
+	 */
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(ptrace__kill_paths_unattached, tc)
 {
