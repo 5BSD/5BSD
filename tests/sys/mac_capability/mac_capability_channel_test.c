@@ -283,7 +283,6 @@ ATF_TC_HEAD(child_exec_fresh_nonce, tc)
 	    "A fork+exec'd child (fresh nonce) can create and use a pair");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel mac_capability_identity");
-	atf_tc_set_md_var(tc, "require.progs", "mac_capability_channel_helper");
 }
 ATF_TC_BODY(child_exec_fresh_nonce, tc)
 {
@@ -296,6 +295,12 @@ ATF_TC_BODY(child_exec_fresh_nonce, tc)
 
 	snprintf(helper, sizeof(helper), "%s/mac_capability_channel_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
+	/*
+	 * The helper is installed next to the test, not on PATH: naming it
+	 * in require.progs skipped the case wherever it ran.
+	 */
+	ATF_REQUIRE_MSG(access(helper, X_OK) == 0, "%s: %s", helper,
+	    strerror(errno));
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
@@ -817,7 +822,6 @@ ATF_TC_HEAD(capmode_full_roundtrip, tc)
 	    "Create plus bidirectional send/recv all succeed after cap_enter()");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel mac_capability_identity");
-	atf_tc_set_md_var(tc, "require.progs", "mac_capability_channel_helper");
 }
 ATF_TC_BODY(capmode_full_roundtrip, tc)
 {
@@ -830,6 +834,12 @@ ATF_TC_BODY(capmode_full_roundtrip, tc)
 
 	snprintf(helper, sizeof(helper), "%s/mac_capability_channel_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
+	/*
+	 * The helper is installed next to the test, not on PATH: naming it
+	 * in require.progs skipped the case wherever it ran.
+	 */
+	ATF_REQUIRE_MSG(access(helper, X_OK) == 0, "%s: %s", helper,
+	    strerror(errno));
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
