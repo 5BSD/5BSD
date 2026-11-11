@@ -85,6 +85,8 @@ HOOK_CHECK_IMPL(file_check_ioctl, struct ucred *cred __unused,
 HOOK_CHECK_IMPL(file_check_mmap, struct ucred *cred __unused,
     struct file *fp __unused, int fd __unused, int prot __unused,
     int flags __unused, vm_offset_t addr __unused, vm_size_t size __unused)
+HOOK_CHECK_IMPL(file_check_setattr, struct ucred *cred __unused,
+    struct file *fp __unused, int fd __unused, struct vattr *vap __unused)
 HOOK_NOTIFY_IMPL(file_notify_close, struct ucred *cred __unused,
     struct file *fp __unused, int fd __unused)
 HOOK_NOTIFY_IMPL(file_notify_reply, struct ucred *controller __unused,
@@ -167,6 +169,18 @@ HOOK_NOTIFY_IMPL(vnode_notify_setutimes, struct ucred *cred __unused,
     struct vnode *vp __unused)
 HOOK_CHECK_IMPL(vnode_check_truncate, struct ucred *cred __unused,
     struct vnode *vp __unused, struct label *vplabel __unused)
+HOOK_CHECK_IMPL(vnode_check_setflags, struct ucred *cred __unused,
+    struct vnode *vp __unused, struct label *vplabel __unused,
+    u_long flags __unused)
+HOOK_CHECK_IMPL(vnode_check_setmode, struct ucred *cred __unused,
+    struct vnode *vp __unused, struct label *vplabel __unused,
+    mode_t mode __unused)
+HOOK_CHECK_IMPL(vnode_check_setowner, struct ucred *cred __unused,
+    struct vnode *vp __unused, struct label *vplabel __unused,
+    uid_t uid __unused, gid_t gid __unused)
+HOOK_CHECK_IMPL(vnode_check_setutimes, struct ucred *cred __unused,
+    struct vnode *vp __unused, struct label *vplabel __unused,
+    struct timespec atime __unused, struct timespec mtime __unused)
 HOOK_CHECK_IMPL(vnode_check_uipc_bind, struct ucred *cred __unused,
     struct vnode *dvp __unused, struct label *dvplabel __unused,
     struct componentname *cnp __unused, struct vattr *vap __unused)
@@ -194,6 +208,7 @@ static struct mac_policy_ops test_hooks_ops = {
 	.mpo_file_check_dup = test_file_check_dup,
 	.mpo_file_check_ioctl = test_file_check_ioctl,
 	.mpo_file_check_mmap = test_file_check_mmap,
+	.mpo_file_check_setattr = test_file_check_setattr,
 	.mpo_file_notify_close = test_file_notify_close,
 	.mpo_file_notify_reply = test_file_notify_reply,
 	.mpo_mount_check_mount = test_mount_check_mount,
@@ -229,6 +244,10 @@ static struct mac_policy_ops test_hooks_ops = {
 	.mpo_vnode_notify_setacl = test_vnode_notify_setacl,
 	.mpo_vnode_notify_setutimes = test_vnode_notify_setutimes,
 	.mpo_vnode_check_truncate = test_vnode_check_truncate,
+	.mpo_vnode_check_setflags = test_vnode_check_setflags,
+	.mpo_vnode_check_setmode = test_vnode_check_setmode,
+	.mpo_vnode_check_setowner = test_vnode_check_setowner,
+	.mpo_vnode_check_setutimes = test_vnode_check_setutimes,
 	.mpo_vnode_check_uipc_bind = test_vnode_check_uipc_bind,
 	.mpo_vnode_check_uipc_connect = test_vnode_check_uipc_connect,
 	.mpo_socket_check_setsockopt = test_socket_check_setsockopt,
