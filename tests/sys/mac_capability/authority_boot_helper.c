@@ -1076,6 +1076,131 @@ constraint_flags_pins(int issuer)
 	close(other); close(revoked); close(used); close(token); close(image2); close(image);
 }
 
+/*
+ * The supervisor role bit (lg-1).  It is a carrier: this slice makes no
+ * dq check, so all that can be seen of a stored role is that the authority
+ * cannot be registered as an application.  The kernel lets the holder of
+ * the issuer descriptor, in the issuer's prison, set it; nothing here shows
+ * more than that.
+ *
+ * - The role needs exactly one image and no other bit.
+ * - A role request that fails after validation stores nothing: the token
+ *   then takes a plain constraint and registers as an application.
+ * - A role authority is written once, shows nothing in its info, refuses
+ *   registration without being consumed, takes library directories as a
+ *   plain one does, installs, and the pinned image runs with the identity.
+ * - Fork shares the authority; there is nothing to derive or widen.
+ */
+static void
+supervisor_role_tests(int issuer)
+{
+	static const uint32_t refused[] = {
+		CAP_AUTH_FLAG_RETIRED_FIXED_UID | CAP_AUTH_ROLE_DQ_SUPERVISOR,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x4,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x8,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x10,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x80000000,
+		0x4, 0x8, 0x10,
+	};
+	struct cap_authority_constraint c;
+	struct cap_authority_application app;
+	struct cap_authority_libdirs dirs = { .count = 1 };
+	struct cap_authority_info before, after;
+	cap_rights_t rights;
+	int directory, image, image2, plain, token;
+	unsigned i;
+	pid_t child;
+	char identity[32];
+
+	image = open("/sbin/authority-test", O_RDONLY); CHECK(image >= 0);
+	image2 = open("/sbin/authority-other", O_RDONLY); CHECK(image2 >= 0);
+	directory = open("/lib", O_RDONLY | O_DIRECTORY); CHECK(directory >= 0);
+	CHECK(cap_rights_limit(directory, cap_rights_init(&rights,
+	    CAP_LOOKUP, CAP_READ, CAP_FSTAT)) == 0);
+
+	/* Shapes that are refused, on a token that could take the role. */
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	before = token_info(token);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	for (i = 0; i < nitems(refused); i++) {
+		c.flags = refused[i];
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	}
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	c.reserved = 1;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	c.reserved = 0;
+	c.nexec = 2; c.executable_fds[1] = image2;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	c.nexec = 0;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* A role request that fails at its image leaves no role behind. */
+	plain = issue(issuer, CAP_AUTH_MANAGED, 0);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = plain; c.nexec = 1; c.executable_fds[0] = -1;
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EBADF);
+	c.flags = 0; c.executable_fds[0] = image2;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	app = (struct cap_authority_application){ plain, 0 };
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == 0);
+	revoke_grant(issuer, plain); /* Withdraws the registration. */
+	close(plain);
+
+	/* The role, set once. */
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	c.flags = 0;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* Not an application; the refusal consumes nothing and is repeatable. */
+	app = (struct cap_authority_application){ token, 0 };
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EINVAL);
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EINVAL);
+	CHECK(!token_info(token).consumed);
+
+	/* Library directories as for a plain authority (library_directory_tests). */
+	plain = issue(issuer, CAP_AUTH_MANAGED, 0);
+	dirs.token_fd = plain;
+	dirs.directory_fds[0] = directory;
+	c.token_fd = plain; c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_SET_LIBDIRS, issuer, &dirs) == -1 && errno == EINVAL);
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	CHECK(op(CAP_AUTH_SET_LIBDIRS, issuer, &dirs) == 0);
+	CHECK(op(CAP_AUTH_SET_LIBDIRS, issuer, &dirs) == -1 && errno == EINVAL);
+	revoke_grant(issuer, plain);
+	close(plain);
+	c.token_fd = token;
+
+	/* It installs, and the pinned image runs with the token's identity. */
+	snprintf(identity, sizeof(identity), "%ju",
+	    (uintmax_t)token_info(token).identity);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		CHECK(!info().valid);
+		execl("/sbin/authority-test", "authority-test", "--nss-attributed",
+		    identity, (char *)NULL);
+		CHECK(0);
+	}
+	wait_ok(child);
+	CHECK(token_info(token).consumed == 1);
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EALREADY);
+	revoke_grant(issuer, token);
+	close(token); close(directory); close(image2); close(image);
+}
+
 /* Failed publication must release the acquired binding; its owned authority
  * reference must not keep the issuer descriptor or endpoint alive. */
 static void
@@ -1212,6 +1337,8 @@ run_tests(void)
 	pass("dq-legitimacy-pins");
 	constraint_flags_pins(issuer);
 	pass("constraint-flags-refused-outside-the-role");
+	supervisor_role_tests(issuer);
+	pass("supervisor-role-carrier");
 
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	before = token_info(token);
