@@ -39,6 +39,7 @@ ATF_TESTS_C+=	dq_cwd_test
 ATF_TESTS_C+=	dq_getcwd_test
 ATF_TESTS_C+=	dq_kclass_test
 ATF_TESTS_C+=	dq_exec_test
+ATF_TESTS_C+=	dq_legitimacy_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
@@ -60,6 +61,11 @@ LIBADD.dq_resolve_test+=	jail
 # jail_setv(3) for the address-family row.
 LIBADD.dq_socket_test+=	jail
 
+# jail_setv(3) for the jailed rows; capability_service_connect(3) on a
+# device descriptor the caller did not open.
+LIBADD.dq_legitimacy_test+=	jail capability
+CFLAGS.dq_legitimacy_test+=	-I${SRCTOP}/lib/libcapability
+
 # The controller thread, the harness's kinfo_getfile(3) oracle.
 LIBADD+=	dq pthread util
 
@@ -77,6 +83,9 @@ TEST_METADATA.dq_resolve_test+=	is_exclusive="true"
 # net.inet.tcp.udp_tunneling_port, traces with dtrace: run alone.
 TEST_METADATA.dq_socket_test+=	is_exclusive="true"
 TEST_METADATA.dq_served_test+=	is_exclusive="true"
+# Changes the mode of /dev/dq and security.bsd.unprivileged_proc_debug,
+# creates jails: run alone.
+TEST_METADATA.dq_legitimacy_test+=	is_exclusive="true"
 # Sets vfs.lookup_cap_dotdot: run alone.
 TEST_METADATA.dq_start_test+=	is_exclusive="true"
 # Set kern.chroot_allow_open_directories, mount linprocfs, call acct(2),
@@ -115,6 +124,16 @@ BINDIR.dq_exec_helper=	${TESTSDIR}
 
 # dq_served_test's Linux program for the O_PATH rows, built by the test.
 ${PACKAGE}FILES+=	dq_opath_linux.c
+
+# dq_legitimacy_test's exec'd holder of an inherited queue, and its Linux
+# and 32-bit programs, built by the test.
+PROGS+=		dq_legitimacy_helper
+SRCS.dq_legitimacy_helper=	dq_legitimacy_helper.c
+LIBADD.dq_legitimacy_helper=	dq
+MAN.dq_legitimacy_helper=
+BINDIR.dq_legitimacy_helper=	${TESTSDIR}
+${PACKAGE}FILES+=	dq_legitimacy_linux.c
+${PACKAGE}FILES+=	dq_legitimacy_ilp32.c
 
 # The socket commands the oracle runs (stage 1c-ii).
 PROGS+=		dq_sockprog
