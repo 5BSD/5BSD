@@ -28,7 +28,7 @@ it implies `CAPENABLED`). Today one call carries it.
 | 1008 | `pdincapmode(fd)` | CAPENABLED | pdincapmode(2) | Reports whether the process behind a descriptor is in capability mode |
 | 1009 | `cap_mmap_capmode(fd)` | CAPENABLED | cap_mmap_capmode(2) | Marks a descriptor so that mmap on it requires capability mode; one-way |
 | 1010 | `cap_lookup_capmode(fd)` | CAPENABLED | cap_lookup_capmode(2) | Marks a directory descriptor so that `*at()` lookups through it require capability mode; one-way |
-| 1011 | `cap_process(op, fd, uid, data)` | CAPENABLED | cap_process(2) | Manages the calling process's kernel-held discovery context (`MAC_CAP_PROCESS_SET`, `GET`, `CLEAR`, `INFO`) and its origin attribution (`MAC_CAP_PROCESS_ORIGIN_EXPORT`, `ORIGIN_SET`); declared in `<sys/cap_process.h>`, implemented in `sys/dev/mac_capability/mac_capability_process.c` |
+| 1011 | `cap_process(op, fd, uid, data)` | CAPENABLED | cap_process(2) | Manages the calling process's kernel-held discovery context (`MAC_CAP_PROCESS_SET`, `GET`, `CLEAR`, `INFO`) and its origin attribution (`MAC_CAP_PROCESS_ORIGIN_EXPORT`, `ORIGIN_SET`); declared in `<sys/cap_process.h>`, implemented in `sys/dev/mac_capability/mac_capability_process.c`. The same call carries the issuer's software-authority operations (`CAP_AUTH_*`, `<sys/cap_authority.h>`); of those the manual describes the constraint's role flag, `CAP_AUTH_ROLE_DQ_SUPERVISOR` |
 | dynamic | `mac_capability_channel_create(int fds[2])` | CAPENABLED | none | A `SYSCALL_MODULE` in `sys/dev/mac_capability/mac_capability_channel.c`; returns a self-owned channel pair; `lib/libchannel/channel_syscall.c` finds the number with `modfind("sys/mac_capability_channel_create")` |
 
 Numbers 1000 to 1011 (twelve calls) belong to the capability core.
