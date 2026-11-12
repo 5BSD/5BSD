@@ -35,6 +35,15 @@ ATF_TESTS_SH+=	linux_ptrace_interrupt_test
 ${PACKAGE}FILES+=	linux_ptrace_interrupt.c
 ATF_TESTS_SH+=	linux_ptrace_listen_test
 ${PACKAGE}FILES+=	linux_ptrace_listen.c
+# The other ptrace programs of the linuxulator gate
+# (tools/test/linuxulator/guest-*.sh); dq_regress/procnet/linux_procctl_test
+# builds the Linux ones from these sources and runs them all.
+${PACKAGE}FILES+=	linux_ptrace_registers.c linux_ptrace_lifecycle.c
+${PACKAGE}FILES+=	linux_ptrace_user.c linux_ptrace_metadata.c
+${PACKAGE}FILES+=	linux_ptrace_sigmask.c linux_proc_task.c
+${PACKAGE}FILES+=	linux_ptrace_events.c linux_ptrace_xstate.c
+${PACKAGE}FILES+=	linux_ptrace_pending.c linux_ptrace_exit_lifecycle.c
+${PACKAGE}FILES+=	linux_ptrace_capmode.c
 ATF_TESTS_SH+=	linux_adjtime_test
 ${PACKAGE}FILES+=	linux_adjtime.c
 ATF_TESTS_SH+=	linux_fileflags_test
@@ -290,6 +299,13 @@ LDFLAGS.capmode_interp_foreign_helper+=	-Wl,--dynamic-linker=${CAPMODE_INTERP_PA
 PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
 PROGS+=		pwd_paths_helper
+.if ${MACHINE_ARCH} == "amd64"
+# Native halves of the linuxulator ptrace gate; see above.
+PROGS+=		linux_ptrace_kill_native
+PROGS+=		linux_ptrace_native
+PROGS+=		linux_ptrace_capmode
+PROGS+=		ptrace_exit_native
+.endif
 
 CFLAGS.aslr+=				-I${SRCTOP}/tests
 LIBADD.aslr+=				util
