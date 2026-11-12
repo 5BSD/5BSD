@@ -4,13 +4,27 @@
  * The pid of a process that has a process descriptor.
  *
  * A process descriptor keeps the pid of its process allocated after the
- * process was reaped: proc_reap() leaves the pid to procdesc_reap(), and
- * the number goes back to the allocator only when the last reference to
- * the descriptor is dropped (procdesc_free).  The cases here pin both
- * halves: the pid is not given to a new process while a descriptor is
- * open, and it is given out again once the last one is closed.  That the
- * process is no longer found (ESRCH) does not show the second half; a
- * leaked descriptor reference would leave the pid reserved for ever.
+ * process has exited and its parent, if it has one that may, has waited
+ * for it.  The number goes back to the allocator on one of two paths:
+ *
+ * - The process is still attached to the descriptor at the last close
+ *   (the zombie that stays listed, kept by the descriptor's zombie
+ *   reference).  procdesc_close() detaches it and sets pd_pid to -1, and
+ *   proc_reap() clears the pid itself (the proc_id_clear() of
+ *   kern_exit.c).  This is the path the three cases here take.
+ * - The process was reaped in full while still attached: proc_reap()
+ *   leaves the pid to procdesc_reap(), and procdesc_free() clears it
+ *   with the last reference to the descriptor.
+ *
+ * The cases pin both halves by behaviour, whichever path is taken: the
+ * pid is not given to a new process while a descriptor is open, and it
+ * is given out again once the last one is closed.  That the process is
+ * no longer found (ESRCH) does not show the second half; a pid left
+ * allocated would stay reserved for ever with the process gone.
+ *
+ * Not proven against a kernel that leaks the pid on purpose: no such
+ * kernel was built.  The hold check is the nearest thing to it, the same
+ * loop run on a pid that is still allocated.
  *
  * Pids are allocated in sequence from the last one given out and wrap at
  * kern.pid_max (fork_findpid).  Each case lowers kern.pid_max before it
@@ -110,14 +124,18 @@ pid_space_lower(void)
 	size_t len;
 	int mib[3], val;
 
-	/* The allocator must not be asked for a pid it does not have. */
+	/*
+	 * The allocator must not be asked for a pid it does not have.  A
+	 * system this full cannot be given the small pid space, and then
+	 * nothing is checked: that is a failure, not a skip.
+	 */
 	mib[0] = CTL_KERN;
 	mib[1] = KERN_PROC;
 	mib[2] = KERN_PROC_PROC;
 	len = 0;
 	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), NULL, &len, NULL, 0));
 	if (len / sizeof(struct kinfo_proc) > PROCS_MOST)
-		atf_tc_skip("too many processes for a pid space of %d",
+		atf_tc_fail("too many processes for a pid space of %d",
 		    PID_LOW);
 
 	len = sizeof(val);
