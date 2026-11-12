@@ -200,6 +200,9 @@ ATF_TESTS_C+=	pwd_paths_test
 TEST_METADATA.pwd_paths_test+=	is_exclusive="true" timeout="600"
 ATF_TESTS_C+=	prace
 ATF_TESTS_C+=	procdesc
+# Pid hold and release of process descriptors; lowers kern.pid_max.
+ATF_TESTS_C+=	procdesc_pid_test
+TEST_METADATA.procdesc_pid_test+=	is_exclusive="true" timeout="600"
 ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
 # ptrace__kill_paths_unattached sets kern.kill_on_debugger_exit.
