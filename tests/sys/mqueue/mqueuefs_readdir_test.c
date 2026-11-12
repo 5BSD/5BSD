@@ -3,7 +3,7 @@
  *
  * Directory reads of a mounted mqueuefs(4): getdirentries(2) and
  * readdir(3) of the root, with no queues of ours and with several, with
- * large and single-entry buffers, read to the end and past it,
+ * large, single-entry and too-small buffers, read to the end and past it,
  * and after lseek(2).
  *
  * The queue name space is global, so queues that other programs own may
@@ -424,6 +424,91 @@ ATF_TC_CLEANUP(buffer_sizes, tc)
 	mqfs_cleanup(tc);
 }
 
+/*
+ * A read that cannot hold the next entry fails with EINVAL and leaves the
+ * offset alone, as getdirentries(2) documents.
+ */
+static void
+short_read(int fd, size_t len)
+{
+	char buf[sizeof(struct dirent)];
+	off_t base, before;
+
+	ATF_REQUIRE(len <= sizeof(buf));
+	before = tell(fd);
+	errno = 0;
+	ATF_REQUIRE_EQ_MSG(-1, getdirentries(fd, buf, len, &base),
+	    "a %zu byte read at %jd did not fail", len, (intmax_t)before);
+	ATF_REQUIRE_ERRNO(EINVAL, true);
+	ATF_REQUIRE_EQ(before, tell(fd));
+}
+
+/* A read of no bytes is not an error and does not move the offset. */
+static void
+empty_read(int fd)
+{
+	char buf[1];
+	off_t base, before;
+
+	before = tell(fd);
+	ATF_REQUIRE_EQ(0, getdirentries(fd, buf, 0, &base));
+	ATF_REQUIRE_EQ(before, tell(fd));
+}
+
+ATF_TC_WITH_CLEANUP(short_buffer);
+ATF_TC_HEAD(short_buffer, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "A buffer too small for the next "
+	    "entry is EINVAL while entries remain, and the end of the "
+	    "directory once none do; neither moves the offset");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(short_buffer, tc)
+{
+	size_t i;
+	int fd, q;
+
+	fd = mqfs_setup(tc);
+	for (q = 0; q < 3; q++)
+		queue_create(tc, q);
+	dir_list(fd, sizeof(bigbuf), &l1);
+	check_all(tc, &l1, 3);
+	ATF_REQUIRE(l1.n >= 5);
+
+	/*
+	 * Walk the directory one exact-size read at a time; before each
+	 * entry, reads that are too small for it.
+	 */
+	rewind_dir(fd);
+	for (i = 0; i < l1.n; i++) {
+		empty_read(fd);
+		short_read(fd, 1);
+		short_read(fd, l1.e[i].reclen - 1);
+		l2.n = 0;
+		ATF_REQUIRE_EQ((ssize_t)l1.e[i].reclen,
+		    dir_read(fd, bigbuf, l1.e[i].reclen, &l2));
+		ATF_REQUIRE_EQ(1, l2.n);
+		ATF_REQUIRE_STREQ(l1.e[i].name, l2.e[0].name);
+		ATF_REQUIRE_EQ(l1.e[i].off, l2.e[0].off);
+	}
+
+	/* At the end the same small reads report the end, where they are. */
+	l2.n = 0;
+	empty_read(fd);
+	ATF_REQUIRE_EQ(0, dir_read(fd, bigbuf, 1, &l2));
+	ATF_REQUIRE_EQ(l1.e[l1.n - 1].off, tell(fd));
+	ATF_REQUIRE_EQ(0, dir_read(fd, bigbuf, l1.e[0].reclen - 1, &l2));
+	ATF_REQUIRE_EQ(l1.e[l1.n - 1].off, tell(fd));
+	ATF_REQUIRE_EQ(0, dir_read(fd, bigbuf, sizeof(bigbuf), &l2));
+	ATF_REQUIRE_EQ(0, l2.n);
+
+	mqfs_teardown(tc, fd);
+}
+ATF_TC_CLEANUP(short_buffer, tc)
+{
+	mqfs_cleanup(tc);
+}
+
 ATF_TC_WITH_CLEANUP(seek);
 ATF_TC_HEAD(seek, tc)
 {
@@ -612,6 +697,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, empty);
 	ATF_TP_ADD_TC(tp, queues);
 	ATF_TP_ADD_TC(tp, buffer_sizes);
+	ATF_TP_ADD_TC(tp, short_buffer);
 	ATF_TP_ADD_TC(tp, seek);
 	ATF_TP_ADD_TC(tp, libc_readdir);
 	ATF_TP_ADD_TC(tp, unprivileged);
