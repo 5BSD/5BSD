@@ -1201,6 +1201,69 @@ supervisor_role_tests(int issuer)
 	close(token); close(directory); close(image2); close(image);
 }
 
+/*
+ * The role under the two existing rules lg-3 will lean on.  Neither is new:
+ * both are the plain authority's behaviour, seen here with the role set.
+ *
+ * - Prison: a process that carries the issuer descriptor into a jail cannot
+ *   set a role there (EPERM, as for a plain constraint); a refused bit is
+ *   still EINVAL first.  The token is untouched and takes the role outside.
+ * - Image: the role authority belongs to its one pinned image.  Another
+ *   image run under it has no valid authority.
+ */
+static void
+supervisor_role_boundary_tests(int issuer)
+{
+	char path[] = "/";
+	char name[] = "authority-role-test";
+	struct jail prison = {
+		.version = JAIL_API_VERSION,
+		.path = path,
+		.hostname = name,
+		.jailname = name
+	};
+	struct cap_authority_constraint c;
+	struct cap_authority_info before, after;
+	int image, token;
+	pid_t child;
+	char identity[32];
+
+	image = open("/sbin/authority-test", O_RDONLY); CHECK(image >= 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	before = token_info(token);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(jail(&prison) > 0);
+		c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EPERM);
+		c.flags = 0;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EPERM);
+		c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x4;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		_exit(0);
+	}
+	wait_ok(child);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+
+	snprintf(identity, sizeof(identity), "%ju",
+	    (uintmax_t)token_info(token).identity);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		execl("/sbin/authority-other", "authority-other",
+		    "--role-other-image", identity, (char *)NULL);
+		CHECK(0);
+	}
+	wait_ok(child);
+	revoke_grant(issuer, token);
+	close(token); close(image);
+}
+
 /* Failed publication must release the acquired binding; its owned authority
  * reference must not keep the issuer descriptor or endpoint alive. */
 static void
@@ -1339,6 +1402,8 @@ run_tests(void)
 	pass("constraint-flags-refused-outside-the-role");
 	supervisor_role_tests(issuer);
 	pass("supervisor-role-carrier");
+	supervisor_role_boundary_tests(issuer);
+	pass("supervisor-role-prison-and-image-rules");
 
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	before = token_info(token);
@@ -2141,6 +2206,11 @@ main(int argc, char **argv)
 			CHECK(result == -1 && (errno == EPERM || errno == EACCES));
 		else
 			CHECK(result == 1);
+		return (0);
+	}
+	if (argc == 3 && strcmp(argv[1], "--role-other-image") == 0) {
+		CHECK(!info().valid);
+		CHECK(info().identity == strtoull(argv[2], NULL, 10));
 		return (0);
 	}
 	if (argc == 3 && strcmp(argv[1], "--nss-attributed") == 0) {
