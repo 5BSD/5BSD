@@ -21,41 +21,84 @@
  * given, before it rewrites them; any other failure, in particular of a
  * "preserve" row, is a finding.
  *
+ * From lg-3 on the answer depends on the kernel configuration, because
+ * most cases begin with root opening /dev/dq:
+ *
+ * P  the production kernel (GENERIC).  Root has no role, so the open is
+ *    EPERM and every case that makes one stops at that open: root_open,
+ *    attached_root_open, bearer_*, attach_*, observe_connect_gate,
+ *    linux_open_ioctl (root half) and unattached_control fail at their
+ *    first open, whatever the table says about their later rows.  Rows
+ *    marked T are not observable on P from this program.
+ * T  the test kernel (GENERIC-DQTEST, options DQ_TEST_OPEN, with
+ *    debug.dq.unverified_open=1; design 9.1).  Root's open binds a test
+ *    queue.  The owner rule applies to a test-bound queue, so the
+ *    non-owner rows change there; the attach token rule does not (no
+ *    token is needed to attach through a test-bound queue), so the root
+ *    attach rows stay 0 on T in lg-5b.
+ *
+ * Rows without a letter do not depend on the configuration.
+ *
  * case / check                          slice   answer after the slice
  * root_open: mode 0600                  lg-3    0666
- * root_open: first open                 lg-3    EPERM (root has no role)
- * root_open: second and child's open    lg-3    EPERM (EBUSY with the role)
+ * root_open: opens                      lg-3    P: EPERM.  T: 0, and each
+ *                                               open a queue of its own
  * nonroot_open: three opens             lg-3    EPERM (was EACCES)
  * nonroot_open: access R_OK, W_OK       lg-3    0
  * nonroot_open_behind_mode              -       preserve
- * jailed_open: root EPERM, mode check   lg-3    EPERM stays; mode 0666
+ * jailed_open: root EPERM               -       preserve
+ * jailed_open: mode check               lg-3    0666
  * jailed_open: non-root open            lg-3    EPERM (was EACCES)
- * capmode_open: openat by root          lg-3    EPERM; ECAPMODE row preserve
- * attached_root_open: open, stats       lg-3    EPERM, then EBADF
- * bearer_fork: stats .. FIONBIO, read   lg-3    EPERM for a non-owner
+ * capmode_open: openat by root          lg-3    P: EPERM.  T: 0
+ * capmode_open: ECAPMODE                -       preserve
+ * attached_root_open: open, stats       lg-3    EPERM, then EBADF (open
+ *                                               row 4 precedes the test
+ *                                               binding); P: stops first
+ * bearer_fork: stats .. FIONBIO, read   lg-3    T: EPERM for a non-owner
  * bearer_fork: own open EACCES          lg-3    EPERM
- * bearer_scm_rights: same slots         lg-3    EPERM for a non-owner
- * bearer_exec_attach: stats, attach 0   lg-3    EPERM (lg-5b: no token)
- * bearer_exec_attach: EPERM, knob off   -       preserve (re-home, below)
- * attach_outside_prison: jailed stats   lg-3    EPERM for a non-owner
- * attach_outside_prison: ESRCH          -       preserve (re-home, below)
- * attach_outside_prison: sibling 0      lg-3    EPERM for a non-owner
- * attach_child_jail_target: root 0      lg-5b   EPERM without a token
- * attach_child_jail_target: EBUSY/EPERM lg-3    EPERM for both (non-owner)
- * attach_errno_order: non-owner rows    lg-3    EPERM for all four
- * attach_errno_order: root rows         lg-5b   EPERM without a token
- * observe_connect_gate: root lists      lg-3    refused without the role
- * observe_connect_gate: EACCES, EPERM   -       preserve
+ * bearer_scm_rights: same slots         lg-3    T: EPERM for a non-owner
+ * bearer_exec_attach: stats, attach 0   lg-3    T: EPERM for a non-owner
+ * bearer_exec_attach: EPERM, knob off   lg-3    T: EPERM, for another
+ *                                               reason (re-home, below)
+ * attach_outside_prison: jailed stats   lg-3    T: EPERM for a non-owner
+ * attach_outside_prison: ESRCH          lg-3    T: EPERM (re-home, below)
+ * attach_outside_prison: sibling 0      lg-3    T: EPERM for a non-owner
+ * attach_child_jail_target: root 0      -       T: preserve.  On P a role
+ *                                               holder needs a token from
+ *                                               lg-5b; not seen from here
+ * attach_child_jail_target: EBUSY/EPERM lg-3    T: EPERM for both (re-home)
+ * attach_errno_order: non-owner rows    lg-3    T: EPERM for all four
+ * attach_errno_order: root rows         -       T: preserve (as above for
+ *                                               lg-5b on P)
+ * observe_connect_gate: root lists      lg-3    P: stops at the open.  T:
+ *                                               preserve (PRIV_DRIVER on
+ *                                               a test kernel)
+ * observe_connect_gate: device EACCES   -       preserve
+ * observe_connect_gate: connect EPERM,  lg-3    connect succeeds for any
+ *   non-root and jailed root                    credential; the refusal
+ *                                               moves to each call, EPERM
+ *                                               (design 2.4)
  * constrain_reserved_words: flags bits  lg-1    role bits pass (EBADF here)
  * constrain_reserved_words: reserved    lg-11k  assigned bits pass
  * constrain_reserved_words: nexec       -       preserve
- * linux_open_ioctl: root open, read     lg-3    EPERM, then EBADF
- * linux_open_ioctl: 'j' ioctl on queue  lg-10k  reaches dq_ioctl
+ * linux_open_ioctl: root open, read     lg-3    P: EPERM, then EBADF.
+ *                                               T: preserve
+ * linux_open_ioctl: 'j' ioctl on queue  lg-10k  T: reaches dq_ioctl
  * linux_open_ioctl: 'j' on /dev/null    -       preserve
  * linux_open_ioctl: non-root open       lg-3    EPERM (Linux -1)
- * unattached_control                    -       preserve, every slice
+ * unattached_control                    -       T: preserve, every slice.
+ *                                               P: fails at its open from
+ *                                               lg-3; lg-3 must give it a
+ *                                               queue from another source
+ *                                               (a role holder's), since
+ *                                               the property matters most
+ *                                               on P
  * ilp32_no_abi                          -       preserve; a failure means
  *                                               the ILP32 pins are due
+ *
+ * The slices that must record both runs are therefore lg-3 and later: the
+ * plane-on suite on P with the stops above, and the same suite on T with
+ * the per-check answers.
  *
  * Re-homing in lg-3: attach_errno_order and bearer_exec_attach (knob off),
  * like the ESRCH row of attach_outside_prison, show the errno order of
@@ -1146,9 +1189,12 @@ child_observe(void *arg, void *result)
  * the connect gate changes if Q14 is accepted).  Today the gate is
  * PRIV_DRIVER on the connecting credential and nothing else: any unjailed
  * root process lists every queue, also one it has nothing to do with.
- * Preserve: a credential without the privilege is EPERM at connect, in a
- * jail too.  The jailed row claims the errno only: whether the dq gate or
- * an earlier refusal of a jailed caller produces it is not established.
+ * A credential without the privilege is EPERM at connect, in a jail too.
+ * That also changes in lg-3 (design 2.4): connect admits any credential
+ * and each call is refused EPERM instead; only the device open's EACCES
+ * is preserved.  The jailed row claims the errno only: whether the dq
+ * gate or an earlier refusal of a jailed caller produces it is not
+ * established.
  */
 ATF_TC_WITH_CLEANUP(observe_connect_gate);
 ATF_TC_HEAD(observe_connect_gate, tc)
