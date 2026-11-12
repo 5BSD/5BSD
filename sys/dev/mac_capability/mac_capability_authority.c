@@ -59,6 +59,12 @@ struct cap_authority {
 	uint32_t kind;
 	uid_t uid;
 	uint32_t nexec;
+	/*
+	 * Role bits of the constraint.  Written once with nexec, under the
+	 * consumed == 2 exclusion, and immutable afterwards.  A reader holds
+	 * that exclusion or reads an installed authority.
+	 */
+	uint32_t roles;
 	struct vnode *executable[CAP_AUTH_EXEC_MAX];
 	unsigned nlibdirs;
 	struct file *libdirs[CAP_AUTH_LIBDIR_MAX];
@@ -967,6 +973,15 @@ get_install_token(struct thread *td, int fd, struct file **fp)
 	FILEDESC_SUNLOCK(fdp);
 	return (error);
 }
+
+/*
+ * The constraint flags this kernel accepts.  Kept out of the header: it
+ * grows, and userland learns what a running kernel accepts from EINVAL.
+ * The retired value is never accepted again.
+ */
+#define	CAP_AUTH_ROLES_ACCEPTED	(CAP_AUTH_ROLE_DQ_SUPERVISOR)
+CTASSERT((CAP_AUTH_ROLES_ACCEPTED & CAP_AUTH_FLAG_RETIRED_FIXED_UID) == 0);
+
 static int
 constrain_authority(struct thread *td, int issuer_fd, void *data)
 {
@@ -983,7 +998,10 @@ constrain_authority(struct thread *td, int issuer_fd, void *data)
 		return (error);
 	if (request.reserved != 0 || request.nexec == 0 ||
 	    request.nexec > CAP_AUTH_EXEC_MAX ||
-	    request.flags != 0)
+	    (request.flags & ~CAP_AUTH_ROLES_ACCEPTED) != 0)
+		return (EINVAL);
+	/* A role belongs to exactly one image. */
+	if (request.flags != 0 && request.nexec != 1)
 		return (EINVAL);
 	error = get_object(td, issuer_fd, &issuer_ops, CAP_WRITE, &issuer);
 	if (error != 0)
@@ -1032,6 +1050,7 @@ constrain_authority(struct thread *td, int issuer_fd, void *data)
 	}
 	memcpy(a->executable, images, request.nexec * sizeof(images[0]));
 	a->nexec = request.nexec;
+	a->roles = request.flags;
 	held = 0; /* References now belong to the immutable grant. */
 unlock:
 	while (held != 0) {
@@ -1183,7 +1202,8 @@ register_application(struct thread *td, int issuer_fd, void *data)
 		error = EALREADY;
 		goto out;
 	}
-	if (a->nexec != 1) {
+	/* A role authority is launched, never registered for ordinary exec. */
+	if (a->nexec != 1 || a->roles != 0) {
 		error = EINVAL;
 		goto reset;
 	}

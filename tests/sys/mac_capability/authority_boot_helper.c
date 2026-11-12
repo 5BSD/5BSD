@@ -28,6 +28,7 @@
 #include <dev/mac_capability/mac_capability_system_proto.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -326,7 +327,7 @@ provider_exec_tests(int issuer)
 	constraint.nexec = 2; constraint.executable_fds[1] = -1;
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == -1 && errno == EBADF);
 	constraint.nexec = 1;
-	constraint.flags = 1; /* Retired fixed-UID flag must not be accepted. */
+	constraint.flags = CAP_AUTH_FLAG_RETIRED_FIXED_UID; /* Never accepted. */
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == -1 && errno == EINVAL);
 	constraint.flags = 0;
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == 0);
@@ -943,6 +944,326 @@ dq_legitimacy_pins(int issuer)
 	_exit(0);
 }
 
+/*
+ * The constraint's flags word (lg-1 pins).
+ *
+ * lg-1 made one bit of it a role, CAP_AUTH_ROLE_DQ_SUPERVISOR.  A request
+ * with that bit alone and one image is now treated as one with flags zero,
+ * so in the loop below it gets the answers of the controls; with two
+ * images it is EINVAL.  supervisor_role_tests() covers what it grants.
+ *
+ * Every other bit of flags, the retired 0x1 and any combination among
+ * them, like every bit of reserved, is refused EINVAL, and
+ * that refusal comes before everything else the operation can answer: the
+ * issuer and token lookups (EBADF), ownership and revocation (EPERM), the write-once rule
+ * (EALREADY) and the image descriptors (EBADF).  A refused request leaves
+ * the token untouched.  With flags zero the same requests give those other
+ * answers, two images are accepted, and an authority constrained to two
+ * images cannot be registered as an application (EINVAL, not consumed) but
+ * installs.  dq_legitimacy_test:constrain_reserved_words pins the refusal
+ * only with no issuer; only PID 1 has one.
+ *
+ * No operation derives or narrows a constrained authority: the constraint
+ * is written once, and installed or not, a second one is EALREADY.
+ */
+static void
+constraint_flags_pins(int issuer)
+{
+	static const uint32_t several[] = { 0x3, 0xf, 0x80000001, 0xffffffff };
+	struct cap_authority_constraint c;
+	struct cap_authority_application app;
+	struct cap_authority_info before, after;
+	int image, image2, other, revoked, token, used;
+	uint32_t flags;
+	unsigned i;
+	bool role;
+	pid_t child;
+
+	image = open("/sbin/authority-test", O_RDONLY); CHECK(image >= 0);
+	image2 = open("/sbin/authority-other", O_RDONLY); CHECK(image2 >= 0);
+	other = op(CAP_AUTH_ISSUER_CREATE, -1, NULL); CHECK(other >= 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	used = issue(issuer, CAP_AUTH_MANAGED, 0);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = used; c.nexec = 1; c.executable_fds[0] = image;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	revoked = issue(issuer, CAP_AUTH_MANAGED, 0);
+	revoke_grant(issuer, revoked);
+	CHECK(token_info(revoked).revoked);
+	before = token_info(token);
+	CHECK(!before.consumed && !before.revoked);
+
+	for (i = 0; i < 32 + nitems(several); i++) {
+		flags = i < 32 ? (uint32_t)1 << i : several[i - 32];
+		role = flags == CAP_AUTH_ROLE_DQ_SUPERVISOR;
+		memset(&c, 0, sizeof(c));
+		c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+		c.flags = flags;
+		/* Otherwise acceptable (the role would be: not asked here). */
+		if (!role)
+			CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+			    errno == EINVAL);
+		/* Before the issuer lookup and before ownership. */
+		CHECK(op(CAP_AUTH_CONSTRAIN, -1, &c) == -1 &&
+		    errno == (role ? EBADF : EINVAL));
+		CHECK(op(CAP_AUTH_CONSTRAIN, other, &c) == -1 &&
+		    errno == (role ? EPERM : EINVAL));
+		/* Before the token lookup and before the write-once rule. */
+		c.token_fd = -1;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EBADF : EINVAL));
+		c.token_fd = used;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EALREADY : EINVAL));
+		/* Before revocation is seen. */
+		c.token_fd = revoked;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EPERM : EINVAL));
+		/* Before the images, one or two; a role never has two. */
+		c.token_fd = token; c.executable_fds[0] = -1;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EBADF : EINVAL));
+		c.nexec = 2; c.executable_fds[0] = image; c.executable_fds[1] = image2;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		/* The second word likewise. */
+		c.nexec = 1; c.executable_fds[1] = 0;
+		c.flags = 0; c.reserved = flags;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	}
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* Controls: the same requests with flags zero. */
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	CHECK(op(CAP_AUTH_CONSTRAIN, -1, &c) == -1 && errno == EBADF);
+	CHECK(op(CAP_AUTH_CONSTRAIN, other, &c) == -1 && errno == EPERM);
+	c.token_fd = -1;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EBADF);
+	c.token_fd = used;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	c.token_fd = revoked;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EPERM);
+	c.token_fd = token; c.executable_fds[0] = -1;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EBADF);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* Two images, flags zero: accepted, and nothing of it shows in the info. */
+	c.nexec = 2; c.executable_fds[0] = image; c.executable_fds[1] = image2;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	app = (struct cap_authority_application){ token, 0 };
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EINVAL);
+	CHECK(!token_info(token).consumed);
+
+	/* It installs; a refused bit is still EINVAL, a second constraint EALREADY. */
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		CHECK(!info().valid);
+		_exit(0);
+	}
+	wait_ok(child);
+	CHECK(token_info(token).consumed == 1);
+	c.flags = CAP_AUTH_FLAG_RETIRED_FIXED_UID;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	c.flags = 0;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EALREADY);
+	close(other); close(revoked); close(used); close(token); close(image2); close(image);
+}
+
+/*
+ * The supervisor role bit (lg-1).  It is a carrier: this slice makes no
+ * dq check, so all that can be seen of a stored role is that the authority
+ * cannot be registered as an application.  The kernel lets the holder of
+ * the issuer descriptor, in the issuer's prison, set it; nothing here shows
+ * more than that.
+ *
+ * - The role needs exactly one image and no other bit.
+ * - A role request that fails after validation stores nothing: the token
+ *   then takes a plain constraint and registers as an application.
+ * - A role authority is written once, shows nothing in its info, refuses
+ *   registration without being consumed, takes library directories as a
+ *   plain one does, installs, and the pinned image runs with the identity.
+ * - Fork shares the authority; there is nothing to derive or widen.
+ */
+static void
+supervisor_role_tests(int issuer)
+{
+	static const uint32_t refused[] = {
+		CAP_AUTH_FLAG_RETIRED_FIXED_UID | CAP_AUTH_ROLE_DQ_SUPERVISOR,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x4,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x8,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x10,
+		CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x80000000,
+		0x4, 0x8, 0x10,
+	};
+	struct cap_authority_constraint c;
+	struct cap_authority_application app;
+	struct cap_authority_libdirs dirs = { .count = 1 };
+	struct cap_authority_info before, after;
+	cap_rights_t rights;
+	int directory, image, image2, plain, token;
+	unsigned i;
+	pid_t child;
+	char identity[32];
+
+	image = open("/sbin/authority-test", O_RDONLY); CHECK(image >= 0);
+	image2 = open("/sbin/authority-other", O_RDONLY); CHECK(image2 >= 0);
+	directory = open("/lib", O_RDONLY | O_DIRECTORY); CHECK(directory >= 0);
+	CHECK(cap_rights_limit(directory, cap_rights_init(&rights,
+	    CAP_LOOKUP, CAP_READ, CAP_FSTAT)) == 0);
+
+	/* Shapes that are refused, on a token that could take the role. */
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	before = token_info(token);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	for (i = 0; i < nitems(refused); i++) {
+		c.flags = refused[i];
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	}
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	c.reserved = 1;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	c.reserved = 0;
+	c.nexec = 2; c.executable_fds[1] = image2;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	c.nexec = 0;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* A role request that fails at its image leaves no role behind. */
+	plain = issue(issuer, CAP_AUTH_MANAGED, 0);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = plain; c.nexec = 1; c.executable_fds[0] = -1;
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EBADF);
+	c.flags = 0; c.executable_fds[0] = image2;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	app = (struct cap_authority_application){ plain, 0 };
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == 0);
+	revoke_grant(issuer, plain); /* Withdraws the registration. */
+	close(plain);
+
+	/* The role, set once. */
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	c.flags = 0;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* Not an application; the refusal consumes nothing and is repeatable. */
+	app = (struct cap_authority_application){ token, 0 };
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EINVAL);
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EINVAL);
+	CHECK(!token_info(token).consumed);
+
+	/* Library directories as for a plain authority (library_directory_tests). */
+	plain = issue(issuer, CAP_AUTH_MANAGED, 0);
+	dirs.token_fd = plain;
+	dirs.directory_fds[0] = directory;
+	c.token_fd = plain; c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_SET_LIBDIRS, issuer, &dirs) == -1 && errno == EINVAL);
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	CHECK(op(CAP_AUTH_SET_LIBDIRS, issuer, &dirs) == 0);
+	CHECK(op(CAP_AUTH_SET_LIBDIRS, issuer, &dirs) == -1 && errno == EINVAL);
+	revoke_grant(issuer, plain);
+	close(plain);
+	c.token_fd = token;
+
+	/* It installs, and the pinned image runs with the token's identity. */
+	snprintf(identity, sizeof(identity), "%ju",
+	    (uintmax_t)token_info(token).identity);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		CHECK(!info().valid);
+		execl("/sbin/authority-test", "authority-test", "--nss-attributed",
+		    identity, (char *)NULL);
+		CHECK(0);
+	}
+	wait_ok(child);
+	CHECK(token_info(token).consumed == 1);
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EALREADY);
+	revoke_grant(issuer, token);
+	close(token); close(directory); close(image2); close(image);
+}
+
+/*
+ * The role under the two existing rules lg-3 will lean on.  Neither is new:
+ * both are the plain authority's behaviour, seen here with the role set.
+ *
+ * - Prison: a process that carries the issuer descriptor into a jail cannot
+ *   set a role there (EPERM, as for a plain constraint); a refused bit is
+ *   still EINVAL first.  The token is untouched and takes the role outside.
+ * - Image: the role authority belongs to its one pinned image.  Another
+ *   image run under it has no valid authority.
+ */
+static void
+supervisor_role_boundary_tests(int issuer)
+{
+	char path[] = "/";
+	char name[] = "authority-role-test";
+	struct jail prison = {
+		.version = JAIL_API_VERSION,
+		.path = path,
+		.hostname = name,
+		.jailname = name
+	};
+	struct cap_authority_constraint c;
+	struct cap_authority_info before, after;
+	int image, token;
+	pid_t child;
+	char identity[32];
+
+	image = open("/sbin/authority-test", O_RDONLY); CHECK(image >= 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	before = token_info(token);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(jail(&prison) > 0);
+		c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EPERM);
+		c.flags = 0;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EPERM);
+		c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR | 0x4;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		_exit(0);
+	}
+	wait_ok(child);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+	c.flags = CAP_AUTH_ROLE_DQ_SUPERVISOR;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+
+	snprintf(identity, sizeof(identity), "%ju",
+	    (uintmax_t)token_info(token).identity);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		execl("/sbin/authority-other", "authority-other",
+		    "--role-other-image", identity, (char *)NULL);
+		CHECK(0);
+	}
+	wait_ok(child);
+	revoke_grant(issuer, token);
+	close(token); close(image);
+}
+
 /* Failed publication must release the acquired binding; its owned authority
  * reference must not keep the issuer descriptor or endpoint alive. */
 static void
@@ -1077,6 +1398,12 @@ run_tests(void)
 	pass("prison-transition-invalidates-authority");
 	dq_legitimacy_pins(issuer);
 	pass("dq-legitimacy-pins");
+	constraint_flags_pins(issuer);
+	pass("constraint-flags-refused-outside-the-role");
+	supervisor_role_tests(issuer);
+	pass("supervisor-role-carrier");
+	supervisor_role_boundary_tests(issuer);
+	pass("supervisor-role-prison-and-image-rules");
 
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	before = token_info(token);
@@ -1879,6 +2206,11 @@ main(int argc, char **argv)
 			CHECK(result == -1 && (errno == EPERM || errno == EACCES));
 		else
 			CHECK(result == 1);
+		return (0);
+	}
+	if (argc == 3 && strcmp(argv[1], "--role-other-image") == 0) {
+		CHECK(!info().valid);
+		CHECK(info().identity == strtoull(argv[2], NULL, 10));
 		return (0);
 	}
 	if (argc == 3 && strcmp(argv[1], "--nss-attributed") == 0) {

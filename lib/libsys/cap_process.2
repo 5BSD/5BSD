@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 4, 2026
+.Dd November 12, 2026
 .Dt CAP_PROCESS 2
 .Os
 .Sh NAME
@@ -78,6 +78,52 @@ discovery context.
 Service admission uses the requesting software's protected identity and
 attributes; installing a route does not create or replace that identity.
 The kernel-held reference does not reconnect to a terminated peer.
+.Sh SOFTWARE AUTHORITY CONSTRAINT FLAGS
+The same system call carries the software-authority operations declared in
+.In sys/cap_authority.h .
+They are an interface between the kernel and the system's issuer and are
+not otherwise described here, with one exception that other interfaces
+depend on.
+.Pp
+.Dv CAP_AUTH_CONSTRAIN
+binds a managed authority to its executable images before it is installed.
+Its request,
+.Vt struct cap_authority_constraint ,
+has a
+.Va flags
+word:
+.Bl -tag -width CAP_AUTH_ROLE_DQ_SUPERVISOR
+.It Dv CAP_AUTH_ROLE_DQ_SUPERVISOR
+Mark the authority as a descriptor-queue supervisor.
+The role requires exactly one image
+.Pq Va nexec No of 1 .
+An authority with a role cannot be registered as an application
+.Pq Dv CAP_AUTH_REGISTER_APP No fails with Er EINVAL .
+The role is written once with the constraint and cannot be added, removed
+or changed afterwards; a child shares its parent's authority and there is
+no operation that derives another from it.
+.El
+.Pp
+Every other bit, including the retired value 0x1, and a role with more than
+one image, fails with
+.Er EINVAL
+before any descriptor in the request is examined.
+A kernel that does not know a role refuses it the same way, which is how a
+caller detects support.
+A request whose
+.Va flags
+are zero behaves as it did before roles existed.
+.Pp
+The kernel's only requirement for setting a role is the one for the
+constraint itself: the caller holds the issuer descriptor, with
+.Dv CAP_WRITE ,
+in the issuer's prison.
+The kernel does not examine a bundle, a signature or an entitlement.
+The policy that a role is given only to a program from a signed bundle that
+carries the entitlement for it belongs to the issuer,
+.Xr switchboard 8 ;
+this bit only carries the issuer's decision.
+At present no kernel interface consults the role.
 .Sh RETURN VALUES
 GET and ORIGIN_EXPORT return a descriptor on success.
 Other operations return

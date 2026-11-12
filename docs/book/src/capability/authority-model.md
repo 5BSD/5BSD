@@ -67,6 +67,28 @@ cannot create one merely because its UID is zero. SwitchBoard uses its issuer
 to register applications and constrain managed launches. The retired kernel
 user-principal authority kind is rejected.
 
+### Roles
+
+A constraint can mark a managed authority with a role. One exists:
+`CAP_AUTH_ROLE_DQ_SUPERVISOR` (`0x2` in the constraint's `flags`), the mark a
+descriptor-queue supervisor will carry. A role needs exactly one executable
+image, is written once together with the constraint, and cannot be added,
+removed or changed afterwards. Fork shares the authority; no operation derives
+a second one from it, so there is nothing to widen. An authority with a role
+cannot be registered as an application. Every other bit of the word is refused
+with `EINVAL`, including `0x1`, a value retired before the interface was first
+committed and never reassigned. A constraint with no flags behaves exactly as
+before.
+
+Be precise about what this is. The kernel checks only what it checks for any
+constraint: the caller holds the issuer descriptor, in the issuer's prison.
+It does not see a bundle, a signature or an entitlement. The rule that the
+supervisor role is granted only to a program from a signed `.cap` bundle that
+carries the named entitlement is the issuer's, SwitchBoard's, and is not yet
+implemented; SwitchBoard sets no role today. The kernel bit is the carrier of
+that decision, not the decision. Nothing in the kernel consults the role yet:
+the descriptor queue's checks arrive separately.
+
 There is also temporary, explicitly scoped authority for the boot application
 running `/etc/rc`. Its lifetime and endpoint allowlist are separate from login
 sessions. It is revoked when the boot phase ends; its discovery route can remain
