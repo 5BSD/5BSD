@@ -85,8 +85,9 @@ open_unprivileged_head()
 open_unprivileged_body()
 {
 	kernel_kind
+	# su -m runs the caller's shell, whatever it is: name sh.
 	atf_check -s not-exit:0 -o empty -e match:'Permission denied' \
-	    su -m nobody -c 'exec 3<>/dev/dq'
+	    su -m nobody -c "/bin/sh -c 'exec 3<>/dev/dq'"
 }
 
 atf_init_test_cases()

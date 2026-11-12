@@ -23,14 +23,15 @@ private_tree()
     for script in "$here"/check-*.sh; do
         cp "$script" src/release/scripts/
     done
-}
-
-publish()
-{
-    make -C "$PWD/src" -f release/Makefile.hardware "$@" \
-        PKG_CMD=/usr/bin/true HARDWARE_PYTHON=/usr/bin/false \
-        BASE_REPOSITORY="$PWD/base" HARDWARE_REPO="$PWD/hardware" \
-        COMPLETE_REPOSITORY="$PWD/published/complete" publish-packages
+    # atf_check runs programs, not shell functions.
+    cat > recipe <<SCRIPT
+#!/bin/sh
+exec make -C "$PWD/src" -f release/Makefile.hardware \\
+    PKG_CMD=/usr/bin/true HARDWARE_PYTHON=/usr/bin/false \\
+    BASE_REPOSITORY="$PWD/base" HARDWARE_REPO="$PWD/hardware" \\
+    COMPLETE_REPOSITORY="$PWD/published/complete" "\$@"
+SCRIPT
+    chmod +x recipe
 }
 
 option_configuration()
@@ -54,8 +55,13 @@ plan_option_configuration_body()
     option_configuration
     # Pin (before the option exists): the frontend does not read kernel
     # configurations, so the plan is accepted and says nothing about it.
+    # A package plan needs a hardware profile and a ports checkout.
+    mkdir -p ports/Mk ports/distfiles
+    : > ports/Mk/bsd.port.mk
+    printf 'graphics/drm-kmod\n' > hardware
     atf_check -s exit:0 -o save:plan -e empty "$tool" plan packages \
-        --kernel LG2OPTION --kernel-dir "$PWD/conf"
+        --kernel LG2OPTION --kernel-dir "$PWD/conf" \
+        --hardware-profile "$PWD/hardware" --ports "$PWD/ports"
     atf_check -s exit:0 -o ignore grep '^system-packages:.*KERNCONF=LG2OPTION' plan
     atf_check -s exit:1 -o empty grep 'kernel-test-option' plan
 }
@@ -69,12 +75,12 @@ publish_recipe_body()
 {
     setup
     private_tree
-    atf_check -s exit:0 -o save:recipe -e ignore publish -n
+    atf_check -s exit:0 -o save:recipe.out -e ignore ./recipe -n publish-packages
     # Pin (before the option exists): the destination parent is created
     # first, then the malloc(3) check; no kernel check.
-    atf_check -s exit:0 -o match:'^mkdir -p ' sed -n 1p recipe
-    atf_check -s exit:0 -o match:'check-malloc-production.sh  *-r ' sed -n 2p recipe
-    atf_check -s exit:1 -o empty grep 'check-kernel-no-dq-test' recipe
+    atf_check -s exit:0 -o match:'^mkdir -p ' sed -n 1p recipe.out
+    atf_check -s exit:0 -o match:'check-malloc-production.sh  *-r ' sed -n 2p recipe.out
+    atf_check -s exit:1 -o empty grep 'check-kernel-no-dq-test' recipe.out
     [ ! -e published ] || atf_fail 'a dry run created the destination'
 }
 
