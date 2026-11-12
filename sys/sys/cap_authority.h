@@ -58,10 +58,24 @@ struct cap_authority_stamp {
 };
 
 /* Issuer-only, before installation; executable identities are immutable. */
+
+/*
+ * Constraint flags.  A role is set once, with the constraint, by a holder
+ * of the issuer descriptor in the issuer's prison; that is all the kernel
+ * checks.  Which programs are given a role is the issuer's policy.  A role
+ * requires nexec == 1 and excludes CAP_AUTH_REGISTER_APP.  Every other bit
+ * is refused with EINVAL.
+ *
+ * 0x1 was a fixed-UID flag in development; no committed kernel accepted
+ * it, it has been refused since the header was added, and it is never
+ * reassigned.
+ */
+#define CAP_AUTH_FLAG_RETIRED_FIXED_UID	0x00000001 /* Always EINVAL. */
+#define CAP_AUTH_ROLE_DQ_SUPERVISOR	0x00000002
 #define CAP_AUTH_EXEC_MAX 8
 struct cap_authority_constraint {
 	int32_t token_fd;
-	uint32_t flags; /* Reserved; must be zero. */
+	uint32_t flags; /* CAP_AUTH_ROLE_*; other bits must be zero. */
 	uint32_t nexec;
 	uint32_t reserved;
 	int32_t executable_fds[CAP_AUTH_EXEC_MAX];

@@ -28,6 +28,7 @@
 #include <dev/mac_capability/mac_capability_system_proto.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -326,7 +327,7 @@ provider_exec_tests(int issuer)
 	constraint.nexec = 2; constraint.executable_fds[1] = -1;
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == -1 && errno == EBADF);
 	constraint.nexec = 1;
-	constraint.flags = 1; /* Retired fixed-UID flag must not be accepted. */
+	constraint.flags = CAP_AUTH_FLAG_RETIRED_FIXED_UID; /* Never accepted. */
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == -1 && errno == EINVAL);
 	constraint.flags = 0;
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == 0);
@@ -944,9 +945,15 @@ dq_legitimacy_pins(int issuer)
 }
 
 /*
- * The constraint's flags word before it carries anything (lg-1 pins).
+ * The constraint's flags word (lg-1 pins).
  *
- * Every bit of flags, like every bit of reserved, is refused EINVAL, and
+ * lg-1 made one bit of it a role, CAP_AUTH_ROLE_DQ_SUPERVISOR.  A request
+ * with that bit alone and one image is now treated as one with flags zero,
+ * so in the loop below it gets the answers of the controls; with two
+ * images it is EINVAL.  supervisor_role_tests() covers what it grants.
+ *
+ * Every other bit of flags, the retired 0x1 and any combination among
+ * them, like every bit of reserved, is refused EINVAL, and
  * that refusal comes before everything else the operation can answer: the
  * issuer and token lookups (EBADF), ownership and revocation (EPERM), the write-once rule
  * (EALREADY) and the image descriptors (EBADF).  A refused request leaves
@@ -969,6 +976,7 @@ constraint_flags_pins(int issuer)
 	int image, image2, other, revoked, token, used;
 	uint32_t flags;
 	unsigned i;
+	bool role;
 	pid_t child;
 
 	image = open("/sbin/authority-test", O_RDONLY); CHECK(image >= 0);
@@ -987,25 +995,34 @@ constraint_flags_pins(int issuer)
 
 	for (i = 0; i < 32 + nitems(several); i++) {
 		flags = i < 32 ? (uint32_t)1 << i : several[i - 32];
+		role = flags == CAP_AUTH_ROLE_DQ_SUPERVISOR;
 		memset(&c, 0, sizeof(c));
 		c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
-		/* Otherwise acceptable. */
 		c.flags = flags;
-		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		/* Otherwise acceptable (the role would be: not asked here). */
+		if (!role)
+			CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+			    errno == EINVAL);
 		/* Before the issuer lookup and before ownership. */
-		CHECK(op(CAP_AUTH_CONSTRAIN, -1, &c) == -1 && errno == EINVAL);
-		CHECK(op(CAP_AUTH_CONSTRAIN, other, &c) == -1 && errno == EINVAL);
+		CHECK(op(CAP_AUTH_CONSTRAIN, -1, &c) == -1 &&
+		    errno == (role ? EBADF : EINVAL));
+		CHECK(op(CAP_AUTH_CONSTRAIN, other, &c) == -1 &&
+		    errno == (role ? EPERM : EINVAL));
 		/* Before the token lookup and before the write-once rule. */
 		c.token_fd = -1;
-		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EBADF : EINVAL));
 		c.token_fd = used;
-		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EALREADY : EINVAL));
 		/* Before revocation is seen. */
 		c.token_fd = revoked;
-		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
-		/* Before the images, one or two. */
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EPERM : EINVAL));
+		/* Before the images, one or two; a role never has two. */
 		c.token_fd = token; c.executable_fds[0] = -1;
-		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 &&
+		    errno == (role ? EBADF : EINVAL));
 		c.nexec = 2; c.executable_fds[0] = image; c.executable_fds[1] = image2;
 		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
 		/* The second word likewise. */
@@ -1042,7 +1059,7 @@ constraint_flags_pins(int issuer)
 	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EINVAL);
 	CHECK(!token_info(token).consumed);
 
-	/* It installs; a flags bit is still EINVAL, a second constraint EALREADY. */
+	/* It installs; a refused bit is still EINVAL, a second constraint EALREADY. */
 	child = fork(); CHECK(child >= 0);
 	if (child == 0) {
 		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
@@ -1051,7 +1068,7 @@ constraint_flags_pins(int issuer)
 	}
 	wait_ok(child);
 	CHECK(token_info(token).consumed == 1);
-	c.flags = 0x2;
+	c.flags = CAP_AUTH_FLAG_RETIRED_FIXED_UID;
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
 	c.flags = 0;
 	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
@@ -1194,7 +1211,7 @@ run_tests(void)
 	dq_legitimacy_pins(issuer);
 	pass("dq-legitimacy-pins");
 	constraint_flags_pins(issuer);
-	pass("constraint-flags-refused-before-role-bits");
+	pass("constraint-flags-refused-outside-the-role");
 
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	before = token_info(token);

@@ -78,7 +78,9 @@
  *   non-root and jailed root                    credential; the refusal
  *                                               moves to each call, EPERM
  *                                               (design 2.4)
- * constrain_reserved_words: flags bits  lg-1    role bits pass (EBADF here)
+ * constrain_reserved_words: flags bits  lg-1    landed: the supervisor role
+ *                                               (0x2) passes (EBADF here);
+ *                                               the other 31 stay EINVAL
  * constrain_reserved_words: reserved    lg-11k  assigned bits pass
  * constrain_reserved_words: nexec       -       preserve
  * linux_open_ioctl: root open, read     lg-3    P: EPERM, then EBADF.
@@ -1264,9 +1266,13 @@ constrain(const struct cap_authority_constraint *c)
 }
 
 /*
- * Changes in lg-1 (flags carries the role bits; unknown bits stay EINVAL)
- * and lg-11k (the reserved word carries the jail).  Today every bit of
- * both words is refused with EINVAL, and that check comes before the
+ * Changed in lg-1: flags carries the role bits.  CAP_AUTH_ROLE_DQ_SUPERVISOR
+ * is accepted, so that request now gets as far as the bad issuer
+ * descriptor, like the control; this says nothing about who may set it,
+ * which needs an issuer (the PID 1 fixture checks that).  Every other bit
+ * of flags, the retired 0x1 among them, is still EINVAL.
+ * Changes in lg-11k (the reserved word carries the jail).  Every bit of
+ * the reserved word is refused with EINVAL.  The check comes before the
  * issuer descriptor is looked at, so any process can ask: the control with
  * both words zero gets as far as the bad issuer descriptor (EBADF).
  * Preserve: nexec of 0 or more than CAP_AUTH_EXEC_MAX is EINVAL.
@@ -1281,7 +1287,7 @@ ATF_TC_HEAD(constrain_reserved_words, tc)
 ATF_TC_BODY(constrain_reserved_words, tc)
 {
 	struct cap_authority_constraint c;
-	int bit;
+	int bit, expect;
 
 	memset(&c, 0, sizeof(c));
 	c.token_fd = -1;
@@ -1295,7 +1301,8 @@ ATF_TC_BODY(constrain_reserved_words, tc)
 		c.flags = 1U << bit;
 		errno = 0;
 		ATF_CHECK_EQ(-1, constrain(&c));
-		ATF_CHECK_EQ_MSG(EINVAL, errno, "flags bit %d: errno %d", bit,
+		expect = c.flags == CAP_AUTH_ROLE_DQ_SUPERVISOR ? EBADF : EINVAL;
+		ATF_CHECK_EQ_MSG(expect, errno, "flags bit %d: errno %d", bit,
 		    errno);
 		c.flags = 0;
 		c.reserved = 1U << bit;
