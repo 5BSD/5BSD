@@ -17,6 +17,12 @@ no_new_privs  # by-design D150: ATTACH sets P2_NO_NEW_PRIVS
 # credential, so an exec does not reset the saved ids to the effective
 # ones, as for any no_new_privs process.
 procnet_exec_test:saved_ids_reset[[:space:]]  # by-design D150: execve_nosetid() keeps the credential
+# The cases of procnet_outside_test that attach a child of the test
+# process are rows of an UNATTACHED actor.  Under dqpass the test process
+# is attached: its child inherits the attachment (dq(4), Inheritance) and
+# DQ_IOC_ATTACH refuses an attached process with EBUSY (dq(4), Attaching),
+# so the cases skip.
+procnet_outside_test:(probe_attached_target|linux_probe_attached_target|plane_services_procdesc|sigio_group_with_attached|unattached_fork_not_consulted)[[:space:]]  # by-design D138: an attached process's child is attached already, DQ_IOC_ATTACH is EBUSY
 
 # I5: jail_attach(2), jail(2) with JAIL_ATTACH, and setcred(2) are refused;
 # tests run in a jail (execenv=jail), vnet and jexec tests need them.

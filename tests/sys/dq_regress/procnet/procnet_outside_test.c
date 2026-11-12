@@ -94,6 +94,40 @@ nnp_of(pid_t pid)
 	return (v);
 }
 
+static void	held_kill(struct attached *);
+
+/*
+ * Every row here is an UNATTACHED actor that attaches its own child.  A
+ * test process that is itself attached (the suite run under dqpass by
+ * dq_oracle_test) cannot be that actor: its child inherits the attachment
+ * and its P2_NO_NEW_PRIVS, and DQ_IOC_ATTACH refuses a process that is
+ * attached already with EBUSY (dq(4), Attaching and Inheritance; D138,
+ * D150).  That is a documented refusal, not one of the answers recorded
+ * here, so the case is skipped; dqpass.expected names these cases.
+ *
+ * no_new_privs alone does not show attachment (a parent may have set it
+ * by procctl(2)), so the refusal itself is the evidence.  A test process
+ * with no_new_privs whose child can be attached is not attached: the pin
+ * that attach sets the flag cannot be made there, and the case fails.
+ */
+static void
+require_unattached_actor(struct dqt_ctl *c, struct attached *a)
+{
+
+	if (nnp_of(getpid()) != PROC_NO_NEW_PRIVS_ENABLE)
+		return;
+	if (dq_attach(c->q, a->pd) != 0 && errno == EBUSY) {
+		held_kill(a);
+		atf_tc_skip("the test process is itself attached to a dq(4) "
+		    "queue: its child inherits the attachment and cannot be "
+		    "attached again (EBUSY, D138); the case needs an "
+		    "unattached actor");
+	}
+	held_kill(a);
+	atf_tc_fail("the test process has no_new_privs set but is not "
+	    "attached: run it without no_new_privs");
+}
+
 /*
  * Fork a child that waits for a byte and then runs fn(arg); attach it if
  * c is not NULL.  The child has not exec'd, as attach requires.
@@ -119,6 +153,7 @@ held_child(struct dqt_ctl *c, struct attached *a, void (*fn)(void *),
 	(void)close(go[0]);
 	a->go = go[1];
 	if (c != NULL) {
+		require_unattached_actor(c, a);
 		ATF_REQUIRE_EQ(PROC_NO_NEW_PRIVS_DISABLE, nnp_of(a->pid));
 		ATF_REQUIRE_EQ_MSG(0, dq_attach(c->q, a->pd), "dq_attach: %s",
 		    strerror(errno));
