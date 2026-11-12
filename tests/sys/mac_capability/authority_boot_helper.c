@@ -17,6 +17,7 @@
 #include <sys/procdesc.h>
 #include <sys/procctl.h>
 #include <capability.h>
+#include <dev/dq/dq.h>
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -844,6 +845,104 @@ prison_transition_tests(int issuer)
 	close(spare);
 }
 
+/*
+ * Supervisor-queue legitimacy pins (design slice lg-0): what a holder of a
+ * valid managed authority can do with /dev/dq today.  No role exists yet,
+ * so the authority neither admits nor refuses anything here.
+ *
+ * - The holder opens /dev/dq, as any unjailed root does.  lg-3 keys the
+ *   open on the supervisor role and changes this to EPERM for a holder
+ *   without it.
+ * - Attaching a child that inherited the same authority succeeds and
+ *   leaves the child's authority valid, identity and generation unchanged.
+ *   lg-5a strips the target's authority at attach and changes this.
+ * - A fork child of the holder can PT_ATTACH its parent (same authority)
+ *   while the parent holds the queue, and the parent operates the queue
+ *   after the detach.  lg-3 refuses to debug a supervisor and changes the
+ *   attach to EPERM.
+ *
+ * The three are checked in sequence, so on the lg-3 kernel this function
+ * stops at the open and the later two are not seen to change there.  lg-3
+ * rewrites it around a role authority; the attach and ptrace answers are
+ * then recorded against that holder, in lg-3 and lg-5a.
+ */
+static void
+dq_legitimacy_pins(int issuer)
+{
+	struct dq_attach_args da;
+	struct dq_stats st;
+	struct cap_authority_info before, after;
+	pid_t child, holder, parent;
+	int gate[2], pd, q, ready[2], report[2], status, token;
+	char byte = 'q';
+
+	holder = fork(); CHECK(holder >= 0);
+	if (holder != 0) {
+		wait_ok(holder);
+		return;
+	}
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+	close(token);
+	before = info();
+	CHECK(before.valid);
+
+	q = open("/dev/dq", O_RDWR | O_CLOEXEC);
+	CHECK(q >= 0);
+
+	CHECK(pipe(ready) == 0 && pipe(gate) == 0 && pipe(report) == 0);
+	child = pdfork(&pd, 0); CHECK(child >= 0);
+	if (child == 0) {
+		/* A target holding the queue is refused (EBUSY). */
+		close(q);
+		close(ready[0]); close(gate[1]); close(report[0]);
+		CHECK(write(ready[1], &byte, 1) == 1);
+		CHECK(read(gate[0], &byte, 1) == 1);
+		after = info();
+		CHECK(write(report[1], &after, sizeof(after)) ==
+		    (ssize_t)sizeof(after));
+		_exit(0);
+	}
+	close(ready[1]); close(gate[0]); close(report[1]);
+	CHECK(read(ready[0], &byte, 1) == 1);
+	memset(&da, 0, sizeof(da));
+	da.da_version = DQ_API_VERSION;
+	da.da_procfd = pd;
+	da.da_rootfd = -1;
+	da.da_cwdfd = -1;
+	CHECK(ioctl(q, DQ_IOC_ATTACH, &da) == 0);
+	CHECK(write(gate[1], &byte, 1) == 1);
+	CHECK(read(report[0], &after, sizeof(after)) == (ssize_t)sizeof(after));
+	CHECK(after.valid);
+	CHECK(after.identity == before.identity);
+	CHECK(after.generation == before.generation);
+	CHECK(info().valid);
+	close(pd);
+	close(ready[0]); close(gate[1]); close(report[0]);
+
+	/*
+	 * The queue stays open across the debugger's visit: lg-3 changes
+	 * the answer for a process that holds one, not for one that did.
+	 */
+	parent = getpid();
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		close(q);
+		CHECK(ptrace(PT_ATTACH, parent, NULL, 0) == 0);
+		CHECK(waitpid(parent, &status, WUNTRACED) == parent);
+		CHECK(WIFSTOPPED(status));
+		CHECK(ptrace(PT_DETACH, parent, (caddr_t)1, 0) == 0);
+		_exit(0);
+	}
+	wait_ok(child);
+	/* The holder still operates its queue after the detach. */
+	memset(&st, 0, sizeof(st));
+	CHECK(ioctl(q, DQ_IOC_GET_STATS, &st) == 0);
+	CHECK(st.ds_queue_id != 0);
+	close(q);
+	_exit(0);
+}
+
 /* Failed publication must release the acquired binding; its owned authority
  * reference must not keep the issuer descriptor or endpoint alive. */
 static void
@@ -976,6 +1075,8 @@ run_tests(void)
 
 	prison_transition_tests(issuer);
 	pass("prison-transition-invalidates-authority");
+	dq_legitimacy_pins(issuer);
+	pass("dq-legitimacy-pins");
 
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	before = token_info(token);
