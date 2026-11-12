@@ -1,0 +1,19 @@
+kill(pid, 0) 0
+tgkill(pid, pid, 0) 0
+tgkill(pid, tid, 0) 0
+pidfd_open(pid) 0
+pidfd_send_signal(pidfd, 0) 0
+pidfd_getfd(pidfd, 0) 0
+pidfd_open(tid of a second thread) -22
+kcmp(self, pid, KCMP_FILE, 0, 0) 0
+process_vm_readv(pid) 8
+  read the target's word 1
+get_robust_list(tid of a second thread) -1
+get_robust_list(pid) -1
+open(/proc/pid/mem, O_RDONLY) 0
+open(/proc/pid/fd, O_DIRECTORY) 0
+readlink(/proc/pid/cwd) 0
+readlink(/proc/pid/exe) 0
+ptrace(PTRACE_ATTACH, pid) 0
+  wait4 reports the stop 4991
+  ptrace(PTRACE_DETACH, pid) 0

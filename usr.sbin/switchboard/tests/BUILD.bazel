@@ -79,7 +79,7 @@ _CLEANUP_LIBRARIES = {
     "cleanup_status_test": ["//lib/libcapbundle:capbundle", "//lib/libucl:ucl"],
     "worker_cleanup_test": ["//lib/libchannel:channel", "//lib/libcapsulert:capsulert"],
 }
-[cc_binary(name = program, srcs = [program + ".c"],
+[cc_binary(name = program, srcs = [program + ".c"] + (["//usr.sbin/switchboard:run_container_cleanup.c"] if program == "launch_gate_test" else []),
     deps = ["//usr.sbin/switchboard:" + program + "_includes", "//lib/atf/libatf-c:atf_c"] + _CLEANUP_LIBRARIES[program],
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libmd:md_shared"] if program == "reclaim_publish_test" else [],
     linkstatic = True, copts = ["-ffunction-sections", "-fdata-sections"] + (["-fPIE"] if program == "reclaim_publish_test" else []),

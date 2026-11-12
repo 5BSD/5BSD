@@ -39,6 +39,8 @@ ATF_TESTS_C+=	dq_cwd_test
 ATF_TESTS_C+=	dq_getcwd_test
 ATF_TESTS_C+=	dq_kclass_test
 ATF_TESTS_C+=	dq_exec_test
+ATF_TESTS_C+=	dq_launch_test
+ATF_TESTS_C+=	dq_bootstrap_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
@@ -54,6 +56,14 @@ CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libdq
 # The OES client side of dq_oes_test (<security/oes/oes.h>, liboes.h).
 CFLAGS.dq_oes_test+=	-I${SRCTOP}/lib/liboes
 LIBADD.dq_oes_test+=	oes
+
+# BS-0: service_open(3) and the three base clients it pins.
+CFLAGS.dq_bootstrap_test+=	-I${SRCTOP}/lib/libservice \
+				-I${SRCTOP}/lib/libcapsulert \
+				-I${SRCTOP}/lib/libnotify \
+				-I${SRCTOP}/lib/liblogcmp \
+				-I${SRCTOP}/lib/libsysctlcmp
+LIBADD.dq_bootstrap_test+=	notify logcmp sysctlcmp service
 
 # jail_setv(3) for the I5 jail_attach row.
 LIBADD.dq_resolve_test+=	jail
