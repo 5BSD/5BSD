@@ -1322,7 +1322,13 @@ ATF_TC_BODY(kevent_exit_then_reap, tc)
 		    (uintmax_t)ev.data);
 	}
 
-	/* The pid is held by the descriptor, and released by its close. */
+	/*
+	 * The reaped process stays listed under its pid while the
+	 * descriptor is open, and is gone after the close.  That says
+	 * nothing about the pid number, which the descriptor holds on its
+	 * own (procdesc_free); procdesc_pid_test:pdfork_reaped pins that
+	 * it is not handed out before the close and is after it.
+	 */
 	ATF_CHECK_EQ_MSG(SZOMB, proc_stat(pid, NULL), "state %d",
 	    proc_stat(pid, NULL));
 	ATF_CHECK_EQ(0, close(pd));
@@ -1447,10 +1453,12 @@ ATF_TC_BODY(foreign_open_parent_wait, tc)
 	/*
 	 * B is reaped, but C's descriptor keeps the process entry, and
 	 * with it the pid: still listed, as a zombie, and signal 0 finds
-	 * it.  (That the pid is then not given to a new process is what
-	 * pid_recycle walks the pid space for; a walk is not repeated
-	 * here: it takes minutes, and whether the pid comes back to this
-	 * process afterwards depends on who else forks.)
+	 * it.  After C's close the process is no longer found.  Neither
+	 * observation shows what happens to the pid number: that it is not
+	 * given to a new process while C holds the descriptor, and is
+	 * given out again after C's close, is pinned by
+	 * procdesc_pid_test:foreign_open_reaped, which can afford passes
+	 * over the pid space because it lowers kern.pid_max.
 	 */
 	st = proc_stat(b, NULL);
 	ATF_CHECK_EQ_MSG(SZOMB, st, "B state %d while C holds it", st);
@@ -1484,7 +1492,10 @@ ATF_TC_BODY(foreign_open_parent_wait, tc)
  * is left with no zombie reference at all.
  *
  * Variant "exit, then close": the parent is not signalled and cannot
- * wait(2) for the zombie; the close reaps it and frees the pid.
+ * wait(2) for the zombie; the close reaps it and frees the pid.  Here
+ * only the reaping is checked (the process is no longer found); that the
+ * pid is held until the close and handed out again after it is
+ * procdesc_pid_test:nowaitpid_reaper_close.
  *
  * Variant "close, then exit": the close kills the child.  The parent is
  * signalled (it is the child's p_pptr and its reaper) but wait(2) finds
