@@ -943,6 +943,122 @@ dq_legitimacy_pins(int issuer)
 	_exit(0);
 }
 
+/*
+ * The constraint's flags word before it carries anything (lg-1 pins).
+ *
+ * Every bit of flags, like every bit of reserved, is refused EINVAL, and
+ * that refusal comes before everything else the operation can answer: the
+ * issuer and token lookups (EBADF), ownership and revocation (EPERM), the write-once rule
+ * (EALREADY) and the image descriptors (EBADF).  A refused request leaves
+ * the token untouched.  With flags zero the same requests give those other
+ * answers, two images are accepted, and an authority constrained to two
+ * images cannot be registered as an application (EINVAL, not consumed) but
+ * installs.  dq_legitimacy_test:constrain_reserved_words pins the refusal
+ * only with no issuer; only PID 1 has one.
+ *
+ * No operation derives or narrows a constrained authority: the constraint
+ * is written once, and installed or not, a second one is EALREADY.
+ */
+static void
+constraint_flags_pins(int issuer)
+{
+	static const uint32_t several[] = { 0x3, 0xf, 0x80000001, 0xffffffff };
+	struct cap_authority_constraint c;
+	struct cap_authority_application app;
+	struct cap_authority_info before, after;
+	int image, image2, other, revoked, token, used;
+	uint32_t flags;
+	unsigned i;
+	pid_t child;
+
+	image = open("/sbin/authority-test", O_RDONLY); CHECK(image >= 0);
+	image2 = open("/sbin/authority-other", O_RDONLY); CHECK(image2 >= 0);
+	other = op(CAP_AUTH_ISSUER_CREATE, -1, NULL); CHECK(other >= 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	used = issue(issuer, CAP_AUTH_MANAGED, 0);
+	memset(&c, 0, sizeof(c));
+	c.token_fd = used; c.nexec = 1; c.executable_fds[0] = image;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	revoked = issue(issuer, CAP_AUTH_MANAGED, 0);
+	revoke_grant(issuer, revoked);
+	CHECK(token_info(revoked).revoked);
+	before = token_info(token);
+	CHECK(!before.consumed && !before.revoked);
+
+	for (i = 0; i < 32 + nitems(several); i++) {
+		flags = i < 32 ? (uint32_t)1 << i : several[i - 32];
+		memset(&c, 0, sizeof(c));
+		c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+		/* Otherwise acceptable. */
+		c.flags = flags;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		/* Before the issuer lookup and before ownership. */
+		CHECK(op(CAP_AUTH_CONSTRAIN, -1, &c) == -1 && errno == EINVAL);
+		CHECK(op(CAP_AUTH_CONSTRAIN, other, &c) == -1 && errno == EINVAL);
+		/* Before the token lookup and before the write-once rule. */
+		c.token_fd = -1;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		c.token_fd = used;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		/* Before revocation is seen. */
+		c.token_fd = revoked;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		/* Before the images, one or two. */
+		c.token_fd = token; c.executable_fds[0] = -1;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		c.nexec = 2; c.executable_fds[0] = image; c.executable_fds[1] = image2;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+		/* The second word likewise. */
+		c.nexec = 1; c.executable_fds[1] = 0;
+		c.flags = 0; c.reserved = flags;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	}
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* Controls: the same requests with flags zero. */
+	memset(&c, 0, sizeof(c));
+	c.token_fd = token; c.nexec = 1; c.executable_fds[0] = image;
+	CHECK(op(CAP_AUTH_CONSTRAIN, -1, &c) == -1 && errno == EBADF);
+	CHECK(op(CAP_AUTH_CONSTRAIN, other, &c) == -1 && errno == EPERM);
+	c.token_fd = -1;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EBADF);
+	c.token_fd = used;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	c.token_fd = revoked;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EPERM);
+	c.token_fd = token; c.executable_fds[0] = -1;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EBADF);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+
+	/* Two images, flags zero: accepted, and nothing of it shows in the info. */
+	c.nexec = 2; c.executable_fds[0] = image; c.executable_fds[1] = image2;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+	after = token_info(token);
+	CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	app = (struct cap_authority_application){ token, 0 };
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EINVAL);
+	CHECK(!token_info(token).consumed);
+
+	/* It installs; a flags bit is still EINVAL, a second constraint EALREADY. */
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		CHECK(!info().valid);
+		_exit(0);
+	}
+	wait_ok(child);
+	CHECK(token_info(token).consumed == 1);
+	c.flags = 0x2;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EINVAL);
+	c.flags = 0;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == -1 && errno == EALREADY);
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &app) == -1 && errno == EALREADY);
+	close(other); close(revoked); close(used); close(token); close(image2); close(image);
+}
+
 /* Failed publication must release the acquired binding; its owned authority
  * reference must not keep the issuer descriptor or endpoint alive. */
 static void
@@ -1077,6 +1193,8 @@ run_tests(void)
 	pass("prison-transition-invalidates-authority");
 	dq_legitimacy_pins(issuer);
 	pass("dq-legitimacy-pins");
+	constraint_flags_pins(issuer);
+	pass("constraint-flags-refused-before-role-bits");
 
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	before = token_info(token);
