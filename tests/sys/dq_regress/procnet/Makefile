@@ -20,6 +20,13 @@ ATF_TESTS_C+=	procnet_unix_test
 ATF_TESTS_C+=	procnet_admin_test
 ATF_TESTS_C+=	procnet_syscall_test
 ATF_TESTS_C+=	procnet_audit_test
+ATF_TESTS_C+=	procnet_control_test
+
+# The Linux-ABI half of procnet_control_test: a freestanding Linux program
+# compiled at test time (clang --target=x86_64-linux-gnu), run under
+# linux64.ko.
+ATF_TESTS_SH+=	linux_procctl_test
+${PACKAGE}FILES+=	linux_procctl.c
 
 # The image the exec, core and syscall cases run: dynamic, and a static
 # copy (no PT_INTERP).
@@ -37,6 +44,7 @@ LIBADD.procnet_exec_test+=	pthread
 LIBADD.procnet_jail_test+=	jail pthread
 LIBADD.procnet_socket_test+=	jail
 LIBADD.procnet_unix_test+=	pthread
+LIBADD.procnet_control_test+=	pthread
 
 # The audit cases share the audit suite's auditpipe harness.
 .PATH:		${SRCTOP}/tests/sys/audit

@@ -301,6 +301,63 @@ ATF_TC_BODY(twice, tc)
 	close(fdp);
 }
 
+/*
+ * A stop is reported once, to whichever of pdwait(2) and waitpid(2) asks
+ * first.  The child stops itself; pdwait(WUNTRACED) reports the stop
+ * and marks it as waited for (P_WAITED), after which neither a second
+ * pdwait(2) nor the parent's waitpid(2) reports it again: pdwait with
+ * WNOHANG fails with EWOULDBLOCK (it has no "nothing yet" return value
+ * of its own), waitpid with WNOHANG returns 0.
+ */
+ATF_TC_WITHOUT_HEAD(stop_report_once);
+ATF_TC_BODY(stop_report_once, tc)
+{
+	siginfo_t si;
+	pid_t pid, wpid;
+	int fdp = -1;
+	int r, status;
+
+	pid = pdfork(&fdp, 0);
+	if (pid == 0) {
+		raise(SIGSTOP);
+		_exit(42);
+	}
+	ATF_REQUIRE_MSG(pid >= 0, "pdfork failed: %s", strerror(errno));
+
+	status = 0;
+	memset(&si, 0, sizeof(si));
+	r = pdwait(fdp, &status, WUNTRACED, NULL, &si);
+	ATF_REQUIRE_EQ_MSG(0, r, "pdwait(WUNTRACED): %s", strerror(errno));
+	ATF_CHECK_MSG(WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP,
+	    "status %#x", status);
+	ATF_CHECK_EQ(SIGCHLD, si.si_signo);
+	ATF_CHECK_EQ_MSG(CLD_STOPPED, si.si_code, "si_code %d", si.si_code);
+	ATF_CHECK_EQ(pid, si.si_pid);
+	ATF_CHECK_EQ_MSG(SIGSTOP, si.si_status, "si_status %d", si.si_status);
+
+	status = -1;
+	errno = 0;
+	r = pdwait(fdp, &status, WUNTRACED | WNOHANG, NULL, NULL);
+	ATF_CHECK_EQ_MSG(-1, r, "second pdwait returned %d, status %#x", r,
+	    status);
+	ATF_CHECK_EQ_MSG(EWOULDBLOCK, errno, "second pdwait errno %d", errno);
+
+	status = -1;
+	errno = 0;
+	wpid = waitpid(pid, &status, WUNTRACED | WNOHANG);
+	ATF_CHECK_EQ_MSG(0, wpid, "waitpid returned %d (errno %d), "
+	    "status %#x", (int)wpid, errno, status);
+
+	/* The stop was consumed, not the child: it still exits normally. */
+	ATF_REQUIRE_EQ(0, pdkill(fdp, SIGCONT));
+	status = 0;
+	ATF_REQUIRE_EQ_MSG(pid, waitpid(pid, &status, 0), "waitpid: %s",
+	    strerror(errno));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 42,
+	    "status %#x", status);
+	close(fdp);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, basic);
@@ -314,6 +371,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, einval);
 	ATF_TP_ADD_TC(tp, pdwait_after_waitpid);
 	ATF_TP_ADD_TC(tp, pdkill_after_pdwait);
+	ATF_TP_ADD_TC(tp, stop_report_once);
 
 	return (atf_no_error());
 }

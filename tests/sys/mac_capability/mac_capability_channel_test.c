@@ -39,6 +39,7 @@
 #include "mac_capability_test_helpers.h"
 #include "mac_capability_identity_proto.h"
 #include "mac_capability_channel_proto.h"
+#include "mac_capability_coalition_proto.h"
 
 /* Descriptor transfer states (mirror of sys/capsicum.h enum). */
 #ifndef CAP_XFER_UNLIMITED
@@ -282,7 +283,6 @@ ATF_TC_HEAD(child_exec_fresh_nonce, tc)
 	    "A fork+exec'd child (fresh nonce) can create and use a pair");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel mac_capability_identity");
-	atf_tc_set_md_var(tc, "require.progs", "mac_capability_channel_helper");
 }
 ATF_TC_BODY(child_exec_fresh_nonce, tc)
 {
@@ -295,6 +295,12 @@ ATF_TC_BODY(child_exec_fresh_nonce, tc)
 
 	snprintf(helper, sizeof(helper), "%s/mac_capability_channel_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
+	/*
+	 * The helper is installed next to the test, not on PATH: naming it
+	 * in require.progs skipped the case wherever it ran.
+	 */
+	ATF_REQUIRE_MSG(access(helper, X_OK) == 0, "%s: %s", helper,
+	    strerror(errno));
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
@@ -816,7 +822,6 @@ ATF_TC_HEAD(capmode_full_roundtrip, tc)
 	    "Create plus bidirectional send/recv all succeed after cap_enter()");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel mac_capability_identity");
-	atf_tc_set_md_var(tc, "require.progs", "mac_capability_channel_helper");
 }
 ATF_TC_BODY(capmode_full_roundtrip, tc)
 {
@@ -829,6 +834,12 @@ ATF_TC_BODY(capmode_full_roundtrip, tc)
 
 	snprintf(helper, sizeof(helper), "%s/mac_capability_channel_helper",
 	    atf_tc_get_config_var(tc, "srcdir"));
+	/*
+	 * The helper is installed next to the test, not on PATH: naming it
+	 * in require.progs skipped the case wherever it ran.
+	 */
+	ATF_REQUIRE_MSG(access(helper, X_OK) == 0, "%s: %s", helper,
+	    strerror(errno));
 
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
@@ -1195,6 +1206,174 @@ ATF_TC_BODY(xfer_once_direct, tc)
 	close(rfds[0]);
 	close(pipefd[0]);
 	close(pipefd[1]);
+	close(P[0]);
+	close(P[1]);
+}
+
+/* One send of one descriptor: the ioctl's result, errno, reply status. */
+struct xn_res {
+	int	rv;
+	int	err;
+	int	status;
+};
+
+static struct xn_res
+xn_sendmsg(int fd, const void *req, size_t reqlen, int sendfd)
+{
+	struct mac_capability_sendmsg_args sa;
+	struct xn_res r;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = req;
+	sa.payload_len = reqlen;
+	sa.fds = &sendfd;
+	sa.nfds = 1;
+	errno = 0;
+	r.rv = ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa);
+	r.err = r.rv == -1 ? errno : 0;
+	r.status = 0;
+	return (r);
+}
+
+static struct xn_res
+xn_call(int fd, const void *req, size_t reqlen, int sendfd)
+{
+	struct mac_capability_call_args ca;
+	struct xn_res r;
+	int32_t reply[16];
+
+	memset(&ca, 0, sizeof(ca));
+	memset(reply, 0, sizeof(reply));
+	ca.req = req;
+	ca.req_len = reqlen;
+	ca.req_fds = &sendfd;
+	ca.req_nfds = 1;
+	ca.reply = reply;
+	ca.reply_len = sizeof(reply);
+	errno = 0;
+	r.rv = ioctl(fd, MAC_CAPABILITY_CALL, &ca);
+	r.err = r.rv == -1 ? errno : 0;
+	r.status = r.rv == 0 ? reply[0] : 0;
+	return (r);
+}
+
+#define	XN_SHOW(what, r)						\
+	printf("%-44s rv %d errno %d status %d\n", (what), (r).rv,	\
+	    (r).err, (r).status)
+/* The limited descriptor is refused at the send site. */
+#define	XN_REFUSED(what, lim, ctl) do {					\
+	XN_SHOW(what " (CAP_XFER_NONE)", lim);				\
+	XN_SHOW(what " (unlimited)", ctl);				\
+	ATF_CHECK_MSG((lim).rv == -1 && (lim).err == ENOTCAPABLE,	\
+	    "%s: rv %d errno %d, expected ENOTCAPABLE", what, (lim).rv,	\
+	    (lim).err);							\
+	ATF_CHECK_MSG((ctl).err != ENOTCAPABLE,				\
+	    "%s: an unlimited descriptor is ENOTCAPABLE too", what);	\
+} while (0)
+/* The limited descriptor is treated exactly as an unlimited one. */
+#define	XN_EXEMPT(what, lim, ctl) do {					\
+	XN_SHOW(what " (CAP_XFER_NONE)", lim);				\
+	XN_SHOW(what " (unlimited)", ctl);				\
+	ATF_CHECK_MSG((lim).rv == (ctl).rv && (lim).err == (ctl).err &&	\
+	    (lim).status == (ctl).status,				\
+	    "%s: limited rv %d errno %d status %d, unlimited rv %d "	\
+	    "errno %d status %d", what, (lim).rv, (lim).err,		\
+	    (lim).status, (ctl).rv, (ctl).err, (ctl).status);		\
+	ATF_CHECK_MSG((lim).err != ENOTCAPABLE,				\
+	    "%s: refused ENOTCAPABLE", what);				\
+} while (0)
+
+ATF_TC(channel_send_xfer_none);
+ATF_TC_HEAD(channel_send_xfer_none, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a regular file limited to CAP_XFER_NONE is refused ENOTCAPABLE "
+	    "by SENDMSG and CALL to an ordinary service and is exempt when "
+	    "the service is the coalition (MAC_CAPABILITY_SVC_REFATTACH)");
+	/* No require.kmods: a missing service fails the case, see the body. */
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(channel_send_xfer_none, tc)
+{
+	struct coalition_req_hdr hdr;
+	struct identity_request ireq;
+	struct xn_res ctl, lim;
+	int P[2], cfd, file_ctl, file_lim, ifd, rfds[MAC_CAPABILITY_MAX_FDS];
+	struct mac_capability_recvmsg_args ra;
+	char rx[16];
+
+	/* A pin does not skip: no channel service is a failure. */
+	ATF_REQUIRE_MSG(chan_sysno() >= 0,
+	    "the mac_capability channel service is not loaded");
+	ATF_REQUIRE_MSG(chan_create(P) == 0, "create: %s", strerror(errno));
+	file_lim = open("xfer_none", O_RDWR | O_CREAT, 0600);
+	ATF_REQUIRE(file_lim >= 0);
+	file_ctl = open("xfer_none", O_RDWR);
+	ATF_REQUIRE(file_ctl >= 0);
+	ATF_REQUIRE(cap_xfer_limit(file_lim, CAP_XFER_NONE) == 0);
+
+	/* (b) An ordinary service, SENDMSG: a channel endpoint. */
+	lim = xn_sendmsg(P[0], "fd", 2, file_lim);
+	ctl = xn_sendmsg(P[0], "fd", 2, file_ctl);
+	XN_REFUSED("channel SENDMSG", lim, ctl);
+	ATF_CHECK_EQ(0, ctl.rv);
+	/* Exactly one message arrived, with the unlimited descriptor. */
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = rx;
+	ra.payload_len = sizeof(rx);
+	ra.fds = rfds;
+	ra.nfds = MAC_CAPABILITY_MAX_FDS;
+	ATF_REQUIRE(ioctl(P[1], MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_CHECK_EQ(1, ra.nfds);
+	if (ra.nfds == 1)
+		close(rfds[0]);
+	ATF_CHECK(chan_recv_nb(P[1], rx, sizeof(rx), NULL, NULL) == -1);
+
+	/* (b) An ordinary service, CALL: identity. */
+	ifd = mac_capability_connect("identity");
+	ATF_REQUIRE_MSG(ifd >= 0, "connect identity: %s", strerror(errno));
+	memset(&ireq, 0, sizeof(ireq));
+	ireq.op = IDENTITY_OP_SELF;
+	lim = xn_call(ifd, &ireq, sizeof(ireq), file_lim);
+	ctl = xn_call(ifd, &ireq, sizeof(ireq), file_ctl);
+	XN_REFUSED("identity CALL", lim, ctl);
+	lim = xn_sendmsg(ifd, &ireq, sizeof(ireq), file_lim);
+	ctl = xn_sendmsg(ifd, &ireq, sizeof(ireq), file_ctl);
+	/*
+	 * identity has no message op: SENDMSG is EOPNOTSUPP before the
+	 * transfer state is looked at, with or without the limit.
+	 */
+	XN_SHOW("identity SENDMSG (CAP_XFER_NONE)", lim);
+	XN_SHOW("identity SENDMSG (unlimited)", ctl);
+	ATF_CHECK_MSG(lim.rv == -1 && lim.err == EOPNOTSUPP,
+	    "identity SENDMSG (CAP_XFER_NONE): rv %d errno %d, expected "
+	    "EOPNOTSUPP", lim.rv, lim.err);
+	ATF_CHECK_MSG(ctl.rv == -1 && ctl.err == EOPNOTSUPP,
+	    "identity SENDMSG (unlimited): rv %d errno %d, expected "
+	    "EOPNOTSUPP", ctl.rv, ctl.err);
+
+	/* (a) The coalition service: both send sites exempt it. */
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE_MSG(cfd >= 0, "connect coalition: %s", strerror(errno));
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.op = COALITION_OP_ENLIST;
+	lim = xn_call(cfd, &hdr, sizeof(hdr), file_lim);
+	ctl = xn_call(cfd, &hdr, sizeof(hdr), file_ctl);
+	XN_EXEMPT("coalition CALL", lim, ctl);
+	ATF_CHECK_EQ(0, lim.rv);
+	lim = xn_sendmsg(cfd, &hdr, sizeof(hdr), file_lim);
+	ctl = xn_sendmsg(cfd, &hdr, sizeof(hdr), file_ctl);
+	XN_EXEMPT("coalition SENDMSG", lim, ctl);
+
+	/* The limit itself is as it was: still refused on the channel. */
+	lim = xn_sendmsg(P[0], "fd", 2, file_lim);
+	ATF_CHECK_MSG(lim.rv == -1 && lim.err == ENOTCAPABLE,
+	    "channel SENDMSG afterwards: rv %d errno %d", lim.rv, lim.err);
+
+	close(cfd);
+	close(ifd);
+	close(file_lim);
+	close(file_ctl);
 	close(P[0]);
 	close(P[1]);
 }
@@ -1629,6 +1808,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, recv_wait_timeout_and_args);
 	ATF_TP_ADD_TC(tp, recv_wait_wakes);
 	ATF_TP_ADD_TC(tp, xfer_once_direct);
+	ATF_TP_ADD_TC(tp, channel_send_xfer_none);
 	ATF_TP_ADD_TC(tp, fd_payload_sizes);
 	ATF_TP_ADD_TC(tp, sendmsg_v2_atomic);
 	ATF_TP_ADD_TC(tp, sendmsg_v2_move_lock_paths);

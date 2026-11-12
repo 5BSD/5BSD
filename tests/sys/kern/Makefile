@@ -35,6 +35,15 @@ ATF_TESTS_SH+=	linux_ptrace_interrupt_test
 ${PACKAGE}FILES+=	linux_ptrace_interrupt.c
 ATF_TESTS_SH+=	linux_ptrace_listen_test
 ${PACKAGE}FILES+=	linux_ptrace_listen.c
+# The other ptrace programs of the linuxulator gate
+# (tools/test/linuxulator/guest-*.sh); dq_regress/procnet/linux_procctl_test
+# builds the Linux ones from these sources and runs them all.
+${PACKAGE}FILES+=	linux_ptrace_registers.c linux_ptrace_lifecycle.c
+${PACKAGE}FILES+=	linux_ptrace_user.c linux_ptrace_metadata.c
+${PACKAGE}FILES+=	linux_ptrace_sigmask.c linux_proc_task.c
+${PACKAGE}FILES+=	linux_ptrace_events.c linux_ptrace_xstate.c
+${PACKAGE}FILES+=	linux_ptrace_pending.c linux_ptrace_exit_lifecycle.c
+${PACKAGE}FILES+=	linux_ptrace_capmode.c
 ATF_TESTS_SH+=	linux_adjtime_test
 ${PACKAGE}FILES+=	linux_adjtime.c
 ATF_TESTS_SH+=	linux_fileflags_test
@@ -200,8 +209,13 @@ ATF_TESTS_C+=	pwd_paths_test
 TEST_METADATA.pwd_paths_test+=	is_exclusive="true" timeout="600"
 ATF_TESTS_C+=	prace
 ATF_TESTS_C+=	procdesc
+# Pid hold and release of process descriptors; lowers kern.pid_max.
+ATF_TESTS_C+=	procdesc_pid_test
+TEST_METADATA.procdesc_pid_test+=	is_exclusive="true" timeout="600"
 ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
+# ptrace__kill_paths_unattached sets kern.kill_on_debugger_exit.
+TEST_METADATA.ptrace_test+=		is_exclusive="true"
 ATF_TESTS_C+=	reaper
 ATF_TESTS_C+=	resolve_beneath_test
 ATF_TESTS_C+=	sched_affinity
@@ -285,6 +299,13 @@ LDFLAGS.capmode_interp_foreign_helper+=	-Wl,--dynamic-linker=${CAPMODE_INTERP_PA
 PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
 PROGS+=		pwd_paths_helper
+.if ${MACHINE_ARCH} == "amd64"
+# Native halves of the linuxulator ptrace gate; see above.
+PROGS+=		linux_ptrace_kill_native
+PROGS+=		linux_ptrace_native
+PROGS+=		linux_ptrace_capmode
+PROGS+=		ptrace_exit_native
+.endif
 
 CFLAGS.aslr+=				-I${SRCTOP}/tests
 LIBADD.aslr+=				util

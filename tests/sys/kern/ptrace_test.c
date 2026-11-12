@@ -4858,6 +4858,394 @@ ATF_TC_BODY(ptrace__PT_DETACH_continued, tc)
 
 }
 
+/*
+ * Pins of how SIGKILL reaches a traced native process that is not
+ * attached to a dq(4) queue.  The supervisor-control series changes who
+ * may stop and kill an attached process; none of this may move for
+ * anything else.
+ */
+
+/* ki_stat of a process, or -errno. */
+static int
+proc_state(pid_t pid)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4];
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID;
+	mib[3] = pid;
+	len = sizeof(kp);
+	if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) == -1)
+		return (-errno);
+	return (kp.ki_stat);
+}
+
+/*
+ * kill(pid, SIGKILL) from a process that is neither the debugger nor
+ * the tracee.  Returns the sender's pid, which the signal's siginfo
+ * names.
+ */
+static pid_t
+third_party_sigkill(pid_t pid)
+{
+	pid_t kpid, wpid;
+	int status;
+
+	ATF_REQUIRE((kpid = fork()) != -1);
+	if (kpid == 0)
+		_exit(kill(pid, SIGKILL) == 0 ? 0 : 1);
+	wpid = waitpid(kpid, &status, 0);
+	REQUIRE_EQ(wpid, kpid);
+	ATF_REQUIRE(WIFEXITED(status));
+	REQUIRE_EQ(WEXITSTATUS(status), 0);
+	return (kpid);
+}
+
+/*
+ * The tracee is in a ptrace stop when a third process sends SIGKILL.
+ * The signal is queued and the tracee stays stopped: nothing is
+ * reported to the debugger.  At PT_CONTINUE the SIGKILL is reported as
+ * a signal stop like any other signal, but without its sender;
+ * continuing with it kills.  (PT_DETACH instead: sigstop__kill__detach
+ * in sigkill_traced_test.c.)
+ */
+ATF_TC_WITHOUT_HEAD(ptrace__sigkill_third_party_stopped);
+ATF_TC_BODY(ptrace__sigkill_third_party_stopped, tc)
+{
+	struct ptrace_lwpinfo pl;
+	pid_t fpid, wpid;
+	int status;
+
+	ATF_REQUIRE((fpid = fork()) != -1);
+	if (fpid == 0) {
+		trace_me();
+		for (;;)
+			pause();
+	}
+
+	/* The first wait() should report the stop from SIGSTOP. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
+
+	(void)third_party_sigkill(fpid);
+
+	/* Still stopped, and no new event for the debugger. */
+	usleep(200000);
+	REQUIRE_EQ(proc_state(fpid), SSTOP);
+	wpid = waitpid(fpid, &status, WNOHANG);
+	REQUIRE_EQ(wpid, 0);
+
+	/* Continue the child ignoring the SIGSTOP. */
+	REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, 0), 0);
+
+	/* The next stop is the SIGKILL, from the third process. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE_MSG(WIFSTOPPED(status), "status %#x", status);
+	REQUIRE_EQ(WSTOPSIG(status), SIGKILL);
+	ATF_REQUIRE(ptrace(PT_LWPINFO, wpid, (caddr_t)&pl,
+	    sizeof(pl)) != -1);
+	ATF_REQUIRE(pl.pl_flags & PL_FLAG_SI);
+	REQUIRE_EQ(pl.pl_siginfo.si_signo, SIGKILL);
+	/*
+	 * SIGKILL is queued without its siginfo (sigqueue_add):
+	 * the debugger sees the signal number and nothing about
+	 * the sender.
+	 */
+	REQUIRE_EQ(pl.pl_siginfo.si_code, 0);
+	REQUIRE_EQ(pl.pl_siginfo.si_pid, 0);
+
+	/* Deliver it. */
+	REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, SIGKILL), 0);
+
+	/* The last wait() should report the SIGKILL. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE_MSG(WIFSIGNALED(status), "status %#x", status);
+	REQUIRE_EQ(WTERMSIG(status), SIGKILL);
+
+	wpid = wait(&status);
+	REQUIRE_EQ(wpid, -1);
+	REQUIRE_EQ(errno, ECHILD);
+}
+
+/*
+ * The tracee is running when a third process sends SIGKILL.  A native
+ * tracee does not just die: the debugger first sees a signal stop for
+ * SIGKILL, and the tracee dies once the debugger passes the signal on.
+ */
+ATF_TC_WITHOUT_HEAD(ptrace__sigkill_third_party_running);
+ATF_TC_BODY(ptrace__sigkill_third_party_running, tc)
+{
+	struct ptrace_lwpinfo pl;
+	pid_t fpid, wpid;
+	int status;
+
+	ATF_REQUIRE((fpid = fork()) != -1);
+	if (fpid == 0) {
+		trace_me();
+		for (;;)
+			sched_yield();
+	}
+
+	/* The first wait() should report the stop from SIGSTOP. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
+
+	/* Continue the child ignoring the SIGSTOP, and let it run. */
+	REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, 0), 0);
+	usleep(100000);
+	wpid = waitpid(fpid, &status, WNOHANG);
+	REQUIRE_EQ(wpid, 0);
+
+	(void)third_party_sigkill(fpid);
+
+	/* A signal stop for the SIGKILL, not a death. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE_MSG(WIFSTOPPED(status), "status %#x", status);
+	REQUIRE_EQ(WSTOPSIG(status), SIGKILL);
+	ATF_REQUIRE(ptrace(PT_LWPINFO, wpid, (caddr_t)&pl, sizeof(pl)) != -1);
+	ATF_REQUIRE(pl.pl_flags & PL_FLAG_SI);
+	REQUIRE_EQ(pl.pl_siginfo.si_signo, SIGKILL);
+	/*
+	 * SIGKILL is queued without its siginfo (sigqueue_add):
+	 * the debugger sees the signal number and nothing about
+	 * the sender.
+	 */
+	REQUIRE_EQ(pl.pl_siginfo.si_code, 0);
+	REQUIRE_EQ(pl.pl_siginfo.si_pid, 0);
+
+	REQUIRE_EQ(ptrace(PT_CONTINUE, fpid, (caddr_t)1, SIGKILL), 0);
+
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE_MSG(WIFSIGNALED(status), "status %#x", status);
+	REQUIRE_EQ(WTERMSIG(status), SIGKILL);
+
+	wpid = wait(&status);
+	REQUIRE_EQ(wpid, -1);
+	REQUIRE_EQ(errno, ECHILD);
+}
+
+#define	KODE_SYSCTL	"kern.kill_on_debugger_exit"
+#define	KODE_SAVED	"kill_on_debugger_exit.saved"
+
+/* Kill a tracee stopped at its first SIGSTOP with the given request. */
+static void
+kill_path_request(int req, int data)
+{
+	pid_t fpid, wpid;
+	int status;
+
+	ATF_REQUIRE((fpid = fork()) != -1);
+	if (fpid == 0) {
+		trace_me();
+		for (;;)
+			pause();
+	}
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
+
+	REQUIRE_EQ(ptrace(req, fpid, (caddr_t)1, data), 0);
+
+	/* No stop in between: the next event is the death. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE_MSG(WIFSIGNALED(status), "request %d: status %#x", req,
+	    status);
+	REQUIRE_EQ(WTERMSIG(status), SIGKILL);
+	wpid = wait(&status);
+	REQUIRE_EQ(wpid, -1);
+	REQUIRE_EQ(errno, ECHILD);
+}
+
+/*
+ * A debugger that is not the tracee's parent attaches and exits without
+ * detaching.  With kern.kill_on_debugger_exit set the tracee is killed;
+ * with it clear the tracee is resumed and runs on as if never traced.
+ */
+static void
+kill_path_debugger_exit(int kode)
+{
+	pid_t dpid, fpid, wpid;
+	int go[2], i, status;
+	char c;
+
+	REQUIRE_EQ(sysctlbyname(KODE_SYSCTL, NULL, NULL, &kode,
+	    sizeof(kode)), 0);
+
+	REQUIRE_EQ(pipe(go), 0);
+	ATF_REQUIRE((fpid = fork()) != -1);
+	if (fpid == 0) {
+		close(go[1]);
+		if (read(go[0], &c, 1) != 1)
+			_exit(8);
+		_exit(6);
+	}
+	close(go[0]);
+
+	ATF_REQUIRE((dpid = fork()) != -1);
+	if (dpid == 0) {
+		if (ptrace(PT_ATTACH, fpid, NULL, 0) != 0)
+			_exit(1);
+		if (waitpid(fpid, &status, 0) != fpid || !WIFSTOPPED(status))
+			_exit(2);
+		_exit(0);
+	}
+	wpid = waitpid(dpid, &status, 0);
+	REQUIRE_EQ(wpid, dpid);
+	ATF_REQUIRE(WIFEXITED(status));
+	REQUIRE_EQ(WEXITSTATUS(status), 0);
+
+	if (kode != 0) {
+		wpid = waitpid(fpid, &status, 0);
+		REQUIRE_EQ(wpid, fpid);
+		ATF_REQUIRE_MSG(WIFSIGNALED(status), "status %#x", status);
+		REQUIRE_EQ(WTERMSIG(status), SIGKILL);
+	} else {
+		/* Alive, not stopped, and back to blocking in read(2). */
+		for (i = 0; i < 5000 && proc_state(fpid) != SSLEEP; i++)
+			usleep(1000);
+		REQUIRE_EQ(proc_state(fpid), SSLEEP);
+		wpid = waitpid(fpid, &status, WNOHANG | WUNTRACED);
+		REQUIRE_EQ(wpid, 0);
+		c = 'g';
+		REQUIRE_EQ(write(go[1], &c, 1), 1);
+		wpid = waitpid(fpid, &status, 0);
+		REQUIRE_EQ(wpid, fpid);
+		ATF_REQUIRE_MSG(WIFEXITED(status), "status %#x", status);
+		REQUIRE_EQ(WEXITSTATUS(status), 6);
+	}
+	close(go[1]);
+	wpid = wait(&status);
+	REQUIRE_EQ(wpid, -1);
+	REQUIRE_EQ(errno, ECHILD);
+}
+
+/*
+ * The ways a debugger kills a native tracee: PT_KILL, PT_CONTINUE with
+ * SIGKILL, and exiting while attached (kern.kill_on_debugger_exit).
+ */
+ATF_TC_WITH_CLEANUP(ptrace__kill_paths_unattached);
+ATF_TC_HEAD(ptrace__kill_paths_unattached, tc)
+{
+	/*
+	 * kern.kill_on_debugger_exit is set to both values: no other
+	 * test may run meanwhile, so the Makefile marks the program
+	 * is_exclusive (kyua has no such property for one case).  The
+	 * cleanup puts the saved value back however the body ends.
+	 */
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(ptrace__kill_paths_unattached, tc)
+{
+	FILE *f;
+	size_t len;
+	int kode;
+
+	len = sizeof(kode);
+	REQUIRE_EQ(sysctlbyname(KODE_SYSCTL, &kode, &len, NULL, 0), 0);
+	ATF_REQUIRE((f = fopen(KODE_SAVED, "w")) != NULL);
+	fprintf(f, "%d\n", kode);
+	REQUIRE_EQ(fclose(f), 0);
+	/* The system default, which the rest of this program relies on. */
+	REQUIRE_EQ(kode, 1);
+
+	kill_path_request(PT_KILL, 0);
+	kill_path_request(PT_CONTINUE, SIGKILL);
+	kill_path_debugger_exit(1);
+	kill_path_debugger_exit(0);
+}
+ATF_TC_CLEANUP(ptrace__kill_paths_unattached, tc)
+{
+	FILE *f;
+	int kode;
+
+	if ((f = fopen(KODE_SAVED, "r")) == NULL)
+		return;
+	if (fscanf(f, "%d", &kode) == 1)
+		(void)sysctlbyname(KODE_SYSCTL, NULL, NULL, &kode,
+		    sizeof(kode));
+	fclose(f);
+}
+
+/*
+ * PT_KILL of a tracee stopped at the entry of a system call does not
+ * cancel the call: the tracee is resumed with SIGKILL pending, the call
+ * runs, and the signal is acted on when the call returns.  Here the
+ * call is an open(2) with O_CREAT, and the file exists afterwards.
+ *
+ * This is the behaviour of the kernel before the supervisor-control
+ * series, recorded by running this case on it; the series quotes it.
+ */
+ATF_TC_WITHOUT_HEAD(ptrace__PT_KILL_at_syscall_entry);
+ATF_TC_BODY(ptrace__PT_KILL_at_syscall_entry, tc)
+{
+	static const char path[] = "created_under_PT_KILL";
+	struct ptrace_lwpinfo pl;
+	pid_t fpid, wpid;
+	int i, status;
+
+	ATF_REQUIRE((fpid = fork()) != -1);
+	if (fpid == 0) {
+		trace_me();
+		(void)open(path, O_CREAT | O_WRONLY, 0600);
+		exit(1);
+	}
+
+	/* The first wait() should report the stop from SIGSTOP. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
+
+	/* Run to the entry of the open, whatever precedes it. */
+	for (i = 0;; i++) {
+		ATF_REQUIRE_MSG(i < 64, "no system call entry for the open");
+		REQUIRE_EQ(ptrace(PT_SYSCALL, fpid, (caddr_t)1, 0), 0);
+		wpid = waitpid(fpid, &status, 0);
+		REQUIRE_EQ(wpid, fpid);
+		ATF_REQUIRE_MSG(WIFSTOPPED(status), "status %#x", status);
+		REQUIRE_EQ(WSTOPSIG(status), SIGTRAP);
+		ATF_REQUIRE(ptrace(PT_LWPINFO, wpid, (caddr_t)&pl,
+		    sizeof(pl)) != -1);
+		if ((pl.pl_flags & PL_FLAG_SCE) != 0 &&
+		    (pl.pl_syscall_code == SYS_openat ||
+		    pl.pl_syscall_code == SYS_open))
+			break;
+	}
+
+	/* Stopped before the call did anything. */
+	ATF_REQUIRE_ERRNO(ENOENT, access(path, F_OK) == -1);
+
+	/* Kill the child process. */
+	REQUIRE_EQ(ptrace(PT_KILL, fpid, 0, 0), 0);
+
+	/* The last wait() should report the SIGKILL. */
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE_MSG(WIFSIGNALED(status), "status %#x", status);
+	REQUIRE_EQ(WTERMSIG(status), SIGKILL);
+
+	/* The call ran all the same. */
+	ATF_REQUIRE_MSG(access(path, F_OK) == 0,
+	    "the file was not created: %s", strerror(errno));
+
+	wpid = wait(&status);
+	REQUIRE_EQ(wpid, -1);
+	REQUIRE_EQ(errno, ECHILD);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, ptrace__parent_wait_after_trace_me);
@@ -4933,6 +5321,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ptrace__reap_kill_stopped);
 	ATF_TP_ADD_TC(tp, ptrace__PT_ATTACH_no_EINTR);
 	ATF_TP_ADD_TC(tp, ptrace__PT_DETACH_continued);
+	ATF_TP_ADD_TC(tp, ptrace__sigkill_third_party_stopped);
+	ATF_TP_ADD_TC(tp, ptrace__sigkill_third_party_running);
+	ATF_TP_ADD_TC(tp, ptrace__kill_paths_unattached);
+	ATF_TP_ADD_TC(tp, ptrace__PT_KILL_at_syscall_entry);
 
 	return (atf_no_error());
 }

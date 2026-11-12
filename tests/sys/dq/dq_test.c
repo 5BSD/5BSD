@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
@@ -32,6 +33,23 @@
 /*
  * Queue and controller threads
  */
+
+void
+dqt_require_plane(void)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
+
+	len = sizeof(kp);
+	if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) != 0)
+		atf_tc_fail("kern.proc.pid.1: %s", strerror(errno));
+	if (strcmp(kp.ki_comm, "capsule") != 0)
+		atf_tc_fail("the capability plane is off: PID 1 is %s, not "
+		    "capsule", kp.ki_comm);
+	if (access(DQ_DEVICE, F_OK) != 0)
+		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
+}
 
 int
 dqt_open_queue(void)

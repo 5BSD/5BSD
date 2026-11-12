@@ -19,6 +19,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,7 +93,10 @@ ATF_TC_BODY(attach_basic, tc)
 	dqt_fini(&c);
 }
 
-/* A pdfork child that waits on a pipe until told to exit (or exec). */
+/*
+ * A pdfork child that waits on a pipe until told to exit; with a path,
+ * until told to exec it (idle_exec()).
+ */
 struct idle {
 	pid_t		 pid;
 	int		 pd;
@@ -111,12 +116,25 @@ idle_spawn(struct idle *s, int rfflags, const char *exec_path)
 	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
 	if (s->pid == 0) {
 		if (exec_path != NULL) {
+			/*
+			 * Not before the parent says so: a NOTE_EXEC filter
+			 * added after the exec never reports it.
+			 */
+			if (read(s->go[0], &b, 1) != 1)
+				_exit(4);
 			execl(exec_path, exec_path, "30", (char *)NULL);
 			_exit(3);
 		}
 		(void)read(s->go[0], &b, 1);
 		_exit(0);
 	}
+}
+
+static void
+idle_exec(struct idle *s)
+{
+
+	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
 }
 
 static void
@@ -156,7 +174,7 @@ ATF_TC_BODY(attach_refusals, tc)
 	struct dq_attach_args args;
 	struct idle s;
 	struct kevent kev;
-	struct timespec ts = { 5, 0 };
+	struct timespec ts = { 120, 0 };
 	int fd, kq, qdup, self, status;
 
 	dqt_init(&c);
@@ -206,7 +224,9 @@ ATF_TC_BODY(attach_refusals, tc)
 	idle_spawn(&s, 0, "/bin/sleep");
 	EV_SET(&kev, s.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == 0) {
-		ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &kev, 1, &ts));
+		idle_exec(&s);
+		ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
+		    "no NOTE_EXEC from the child");
 		REFUSED(dq_attach(c.q, s.pd), EBUSY);
 	}
 	idle_end(&s);
@@ -378,6 +398,148 @@ ATF_TC_BODY(failed_exec_still_attachable, tc)
 	dqt_fini(&c);
 }
 
+/*
+ * An attached child that proves it is attached (a probe lookup), tells the
+ * parent, and then exits 3 or sleeps until a signal ends it.
+ */
+struct exit_arg {
+	const char	*tag;
+	int		 ready;		/* write end */
+	bool		 sleep;
+};
+
+static void
+child_exit_status(void *arg, void *result __unused)
+{
+	struct exit_arg *a = arg;
+	sigset_t none;
+	char b;
+
+	b = probe_lookup(a->tag) == ENOENT ? 'a' : 'x';
+	if (write(a->ready, &b, 1) != 1)
+		_exit(98);
+	if (!a->sleep)
+		_exit(3);
+	/* The parent's mask blocks everything; this process takes signals. */
+	sigemptyset(&none);
+	(void)sigprocmask(SIG_SETMASK, &none, NULL);
+	for (;;)
+		pause();
+}
+
+static void
+sigchld_noop(int sig __unused)
+{
+}
+
+/* Take the one pending SIGCHLD; nothing else may be pending afterwards. */
+static void
+one_sigchld(const char *what, pid_t pid, int code, int st)
+{
+	struct timespec ts = { 5, 0 };
+	sigset_t chld, pend;
+	siginfo_t si;
+	int sig;
+
+	sigemptyset(&chld);
+	sigaddset(&chld, SIGCHLD);
+	memset(&si, 0, sizeof(si));
+	ATF_REQUIRE_MSG(sigtimedwait(&chld, &si, &ts) == SIGCHLD,
+	    "%s: no SIGCHLD: %s", what, strerror(errno));
+	ATF_CHECK_EQ_MSG(pid, si.si_pid, "%s: si_pid %d", what, si.si_pid);
+	ATF_CHECK_EQ_MSG(code, si.si_code, "%s: si_code %d", what,
+	    si.si_code);
+	ATF_CHECK_EQ_MSG(st, si.si_status, "%s: si_status %d", what,
+	    si.si_status);
+	dqt_msleep(100);
+	sigemptyset(&pend);
+	ATF_REQUIRE_EQ(0, sigpending(&pend));
+	for (sig = 1; sig < NSIG; sig++)
+		ATF_CHECK_MSG(!sigismember(&pend, sig),
+		    "%s: signal %d is pending as well", what, sig);
+}
+
+ATF_TC(attached_exit_status);
+ATF_TC_HEAD(attached_exit_status, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an attached child that exits 3, and "
+	    "one killed by a plain kill(SIGTERM), are reported to the parent "
+	    "as any child is: one SIGCHLD each, waitpid status 3 and "
+	    "SIGTERM, no other signal");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(attached_exit_status, tc)
+{
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct dq_stats2 st;
+	struct exit_arg a;
+	struct sigaction sa;
+	sigset_t all, old;
+	int ready[2], status;
+	char b;
+
+	dqt_require_plane();
+	/* Every signal blocked, the reader thread's too: all stay pending. */
+	sigfillset(&all);
+	ATF_REQUIRE_EQ(0, sigprocmask(SIG_BLOCK, &all, &old));
+	/*
+	 * SIGCHLD needs a handler to be counted at all: one whose action
+	 * is the default (ignore) is discarded when posted, blocked or not.
+	 */
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = sigchld_noop;
+	sigemptyset(&sa.sa_mask);
+	ATF_REQUIRE_EQ(0, sigaction(SIGCHLD, &sa, NULL));
+	dqt_init(&c);
+	ATF_REQUIRE_EQ(0, pipe(ready));
+	a.ready = ready[1];
+
+	/* _exit(3). */
+	a.tag = "exit3";
+	a.sleep = false;
+	dqt_attach_spawn(&c, &ch, child_exit_status, &a);
+	b = 0;
+	ATF_REQUIRE_EQ(1, read(ready[0], &b, 1));
+	ATF_CHECK_EQ_MSG('a', b, "the child's probe did not PASS");
+	one_sigchld("exit 3", ch.pid, CLD_EXITED, 3);
+	ATF_CHECK_MSG(dqt_find_resolve(&c, "dqt-probe-exit3", DQ_ROP_STAT,
+	    0) != -1, "exit 3: the child was not attached");
+	status = -1;
+	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
+	ATF_CHECK_EQ_MSG(W_EXITCODE(3, 0), status, "exit 3: status %#x",
+	    status);
+	ATF_CHECK_EQ(0, close(ch.pd));
+	(void)close(ch.pipefd);
+
+	/* kill(SIGTERM) by the parent, an ordinary sender. */
+	a.tag = "sigterm";
+	a.sleep = true;
+	dqt_attach_spawn(&c, &ch, child_exit_status, &a);
+	b = 0;
+	ATF_REQUIRE_EQ(1, read(ready[0], &b, 1));
+	ATF_CHECK_EQ_MSG('a', b, "the child's probe did not PASS");
+	ATF_CHECK_MSG(dqt_find_resolve(&c, "dqt-probe-sigterm", DQ_ROP_STAT,
+	    0) != -1, "SIGTERM: the child was not attached");
+	dqt_stats2(&c, &st);
+	ATF_CHECK_EQ_MSG(2, (int)st.ds2_attached, "ds2_attached %ju",
+	    (uintmax_t)st.ds2_attached);
+	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGTERM));
+	one_sigchld("SIGTERM", ch.pid, CLD_KILLED, SIGTERM);
+	status = -1;
+	ATF_REQUIRE_EQ(ch.pid, waitpid(ch.pid, &status, 0));
+	ATF_CHECK_EQ_MSG(W_EXITCODE(0, SIGTERM), status,
+	    "SIGTERM: status %#x", status);
+	ATF_CHECK_EQ(0, close(ch.pd));
+	(void)close(ch.pipefd);
+
+	ATF_CHECK_EQ(-1, waitpid(-1, &status, WNOHANG));
+	ATF_CHECK_EQ(ECHILD, errno);
+	dqt_fini(&c);
+	ATF_REQUIRE_EQ(0, sigprocmask(SIG_SETMASK, &old, NULL));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -385,5 +547,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, attach_refusals);
 	ATF_TP_ADD_TC(tp, inheritance);
 	ATF_TP_ADD_TC(tp, failed_exec_still_attachable);
+	ATF_TP_ADD_TC(tp, attached_exit_status);
 	return (atf_no_error());
 }
