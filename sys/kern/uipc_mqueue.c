@@ -1472,12 +1472,14 @@ mqfs_readdir(struct vop_readdir_args *ap)
 	const void *pr_root;
 	int *tmp_ncookies = NULL;
 	off_t offset;
+	ssize_t startresid;
 	int error, i;
 
 	vp = ap->a_vp;
 	mi = VFSTOMQFS(vp->v_mount);
 	pd = VTON(vp);
 	uio = ap->a_uio;
+	startresid = uio->uio_resid;
 
 	if (vp->v_type != VDIR)
 		return (ENOTDIR);
@@ -1531,9 +1533,18 @@ mqfs_readdir(struct vop_readdir_args *ap)
 				pn->mn_type);
 		}
 		dirent_terminate(&entry);
-		if (entry.d_reclen > uio->uio_resid)
-                        break;
 		if (offset >= uio->uio_offset) {
+			if (entry.d_reclen > uio->uio_resid) {
+				/*
+				 * A buffer too small for even the first
+				 * entry wanted is an error, not an empty
+				 * read; a zero-length read stays one.
+				 */
+				if (uio->uio_resid == startresid &&
+				    startresid != 0)
+					error = EINVAL;
+				break;
+			}
 			error = vfs_read_dirent(ap, &entry, offset);
                         if (error)
                                 break;
@@ -1543,6 +1554,8 @@ mqfs_readdir(struct vop_readdir_args *ap)
 	sx_xunlock(&mi->mi_lock);
 
 	uio->uio_offset = offset;
+	if (ap->a_eofflag != NULL)
+		*ap->a_eofflag = (pn == NULL);
 
 	if (tmp_ncookies != NULL)
 		ap->a_ncookies = tmp_ncookies;
