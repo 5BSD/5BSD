@@ -856,13 +856,21 @@ prison_transition_tests(int issuer)
  * - Attaching a child that inherited the same authority succeeds and
  *   leaves the child's authority valid, identity and generation unchanged.
  *   lg-5a strips the target's authority at attach and changes this.
- * - A fork child of the holder can PT_ATTACH its parent (same authority).
- *   lg-3 refuses to debug a supervisor and changes this to EPERM.
+ * - A fork child of the holder can PT_ATTACH its parent (same authority)
+ *   while the parent holds the queue, and the parent operates the queue
+ *   after the detach.  lg-3 refuses to debug a supervisor and changes the
+ *   attach to EPERM.
+ *
+ * The three are checked in sequence, so on the lg-3 kernel this function
+ * stops at the open and the later two are not seen to change there.  lg-3
+ * rewrites it around a role authority; the attach and ptrace answers are
+ * then recorded against that holder, in lg-3 and lg-5a.
  */
 static void
 dq_legitimacy_pins(int issuer)
 {
 	struct dq_attach_args da;
+	struct dq_stats st;
 	struct cap_authority_info before, after;
 	pid_t child, holder, parent;
 	int gate[2], pd, q, ready[2], report[2], status, token;
@@ -911,11 +919,15 @@ dq_legitimacy_pins(int issuer)
 	CHECK(info().valid);
 	close(pd);
 	close(ready[0]); close(gate[1]); close(report[0]);
-	close(q);
 
+	/*
+	 * The queue stays open across the debugger's visit: lg-3 changes
+	 * the answer for a process that holds one, not for one that did.
+	 */
 	parent = getpid();
 	child = fork(); CHECK(child >= 0);
 	if (child == 0) {
+		close(q);
 		CHECK(ptrace(PT_ATTACH, parent, NULL, 0) == 0);
 		CHECK(waitpid(parent, &status, WUNTRACED) == parent);
 		CHECK(WIFSTOPPED(status));
@@ -923,6 +935,11 @@ dq_legitimacy_pins(int issuer)
 		_exit(0);
 	}
 	wait_ok(child);
+	/* The holder still operates its queue after the detach. */
+	memset(&st, 0, sizeof(st));
+	CHECK(ioctl(q, DQ_IOC_GET_STATS, &st) == 0);
+	CHECK(st.ds_queue_id != 0);
+	close(q);
 	_exit(0);
 }
 
