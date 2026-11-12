@@ -78,7 +78,10 @@ pin_require_plane(void)
 /* The attach bit LA-1k plans for capprotect tokens; undefined today. */
 #define	LA_ATTACH_BIT	0x10000u
 
-/* A pdfork child that waits on a pipe until told to exit (or exec). */
+/*
+ * A pdfork child that waits on a pipe until told to exit; with a path,
+ * until told to exec it (idle_exec()).
+ */
 struct idle {
 	pid_t		 pid;
 	int		 pd;
@@ -96,12 +99,25 @@ idle_spawn(struct idle *s, int pdflags, const char *exec_path)
 	if (s->pid == 0) {
 		(void)close(s->go[1]);
 		if (exec_path != NULL) {
+			/*
+			 * Not before the parent says so: a NOTE_EXEC filter
+			 * added after the exec never reports it.
+			 */
+			if (read(s->go[0], &b, 1) != 1)
+				_exit(4);
 			execl(exec_path, exec_path, "30", (char *)NULL);
 			_exit(3);
 		}
 		(void)read(s->go[0], &b, 1);
 		_exit(0);
 	}
+}
+
+static void
+idle_exec(struct idle *s)
+{
+
+	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
 }
 
 static void
@@ -436,7 +452,7 @@ ATF_TC_BODY(nonparent_attach, tc)
 	struct act_res r;
 	struct idle s;
 	struct kevent kev;
-	struct timespec ts = { 10, 0 };
+	struct timespec ts = { 120, 0 };
 	int kq, sv[2], status;
 
 	pin_require_plane();
@@ -469,6 +485,7 @@ ATF_TC_BODY(nonparent_attach, tc)
 	idle_spawn(&s, 0, "/bin/sleep");
 	EV_SET(&kev, s.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
 	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
+	idle_exec(&s);
 	ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
 	    "no NOTE_EXEC from the target");
 	r = act_run(s.pd, s.pid, 0, -1);

@@ -436,7 +436,7 @@ ATF_TC_HEAD(linux_probe_attached_target, tc)
 	 * case, it does not skip it (the same in linux_boundary_test).
 	 */
 	atf_tc_set_md_var(tc, "require.arch", "amd64");
-	atf_tc_set_md_var(tc, "timeout", "300");
+	atf_tc_set_md_var(tc, "timeout", "900");
 }
 ATF_TC_BODY(linux_probe_attached_target, tc)
 {
@@ -486,7 +486,7 @@ ATF_TC_BODY(linux_probe_attached_target, tc)
 		fd = open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (fd == -1 || dup2(fd, 1) != 1)
 			_exit(PN_X_SETUP);
-		(void)alarm(280);
+		(void)alarm(840);
 		(void)execl(linux_prog, linux_prog, "probe", pidstr, tidstr,
 		    NULL);
 		_exit(PN_X_SETUP);

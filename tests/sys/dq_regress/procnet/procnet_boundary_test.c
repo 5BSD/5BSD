@@ -177,7 +177,6 @@ BP_CASE(probe_names_nothing, "Every by-pid call on a pid that names no "
 BP_CASE(probe_other_uid, "Every by-pid call on a process of another uid")
 {
 	int want[BP_NROWS];
-
 	size_t len;
 	int see;
 
@@ -359,7 +358,7 @@ rows_from_child_m(void (*fn)(const char *, int *), const char *slave,
 		int r[32];
 
 		(void)close(p[0]);
-		(void)alarm(60);
+		(void)alarm(240);
 		memset(r, 0xff, sizeof(r));
 		fn(slave, r);
 		if (write(p[1], r, sizeof(int) * (size_t)nrows) !=
@@ -1120,7 +1119,12 @@ mark_ok(const struct stat *mark)
  * descriptor-table and process locks; an unattached process must not
  * notice.
  */
-ATF_TC_WITHOUT_HEAD(fork_mt_fd_churn);
+ATF_TC(fork_mt_fd_churn);
+ATF_TC_HEAD(fork_mt_fd_churn, tc)
+{
+	/* 185 s was seen on a guest slowed twenty times; leave room. */
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
 ATF_TC_BODY(fork_mt_fd_churn, tc)
 {
 	pthread_t t[NCHURN];
@@ -1142,7 +1146,12 @@ ATF_TC_BODY(fork_mt_fd_churn, tc)
 }
 
 /* Item 15: the same with vfork(2). */
-ATF_TC_WITHOUT_HEAD(vfork_mt_fd_churn);
+ATF_TC(vfork_mt_fd_churn);
+ATF_TC_HEAD(vfork_mt_fd_churn, tc)
+{
+	/* 185 s was seen on a guest slowed twenty times; leave room. */
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
 ATF_TC_BODY(vfork_mt_fd_churn, tc)
 {
 	pthread_t t[NCHURN];
@@ -1188,7 +1197,12 @@ burst(void *arg)
  * Item 15.  A burst of concurrent forks: eight threads fork and reap 32
  * children each; all 256 exist, have the marked descriptor and exit 0.
  */
-ATF_TC_WITHOUT_HEAD(fork_burst);
+ATF_TC(fork_burst);
+ATF_TC_HEAD(fork_burst, tc)
+{
+	/* 185 s was seen on a guest slowed twenty times; leave room. */
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
 ATF_TC_BODY(fork_burst, tc)
 {
 	pthread_t t[NBURST];

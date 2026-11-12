@@ -10,7 +10,8 @@
  * nothing is attached to, every name, id, listing and errno below must
  * stay what it is: the rows are what the kernel of commit f52f6da3d34
  * does, recorded by running this program on it.  The slices that touch
- * these paths are b6a (POSIX) and b6b (System V); no row here is expected to change at any slice.
+ * these paths are b6a (POSIX) and b6b (System V); no row here is expected
+ * to change at any slice.
  *
  * Each case runs its rows in children that have dropped to an
  * unprivileged uid and are not each other's parent.  A row prints its

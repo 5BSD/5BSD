@@ -20,7 +20,7 @@ linux_boundary_head()
 	atf_set "descr" "Linux by-pid calls, TIOCSTI and System V IPC, unattached"
 	atf_set "require.arch" "amd64"
 	atf_set "require.user" "root"
-	atf_set "timeout" "300"
+	atf_set "timeout" "900"
 }
 linux_boundary_body()
 {

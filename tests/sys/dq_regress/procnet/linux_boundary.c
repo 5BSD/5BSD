@@ -723,7 +723,7 @@ test_main(char *self)
 	long actor, pid, r;
 	int ids[2], status, tin[2], tout[2];
 
-	bound(280);
+	bound(840);
 	/* A target that is not the actor's child or parent. */
 	if (S1(SYS_pipe, tin) != 0 || S1(SYS_pipe, tout) != 0)
 		return (93);
