@@ -93,7 +93,10 @@ ATF_TC_BODY(attach_basic, tc)
 	dqt_fini(&c);
 }
 
-/* A pdfork child that waits on a pipe until told to exit (or exec). */
+/*
+ * A pdfork child that waits on a pipe until told to exit; with a path,
+ * until told to exec it (idle_exec()).
+ */
 struct idle {
 	pid_t		 pid;
 	int		 pd;
@@ -113,12 +116,25 @@ idle_spawn(struct idle *s, int rfflags, const char *exec_path)
 	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
 	if (s->pid == 0) {
 		if (exec_path != NULL) {
+			/*
+			 * Not before the parent says so: a NOTE_EXEC filter
+			 * added after the exec never reports it.
+			 */
+			if (read(s->go[0], &b, 1) != 1)
+				_exit(4);
 			execl(exec_path, exec_path, "30", (char *)NULL);
 			_exit(3);
 		}
 		(void)read(s->go[0], &b, 1);
 		_exit(0);
 	}
+}
+
+static void
+idle_exec(struct idle *s)
+{
+
+	ATF_REQUIRE_EQ(1, write(s->go[1], "g", 1));
 }
 
 static void
@@ -158,7 +174,7 @@ ATF_TC_BODY(attach_refusals, tc)
 	struct dq_attach_args args;
 	struct idle s;
 	struct kevent kev;
-	struct timespec ts = { 5, 0 };
+	struct timespec ts = { 120, 0 };
 	int fd, kq, qdup, self, status;
 
 	dqt_init(&c);
@@ -208,7 +224,9 @@ ATF_TC_BODY(attach_refusals, tc)
 	idle_spawn(&s, 0, "/bin/sleep");
 	EV_SET(&kev, s.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == 0) {
-		ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &kev, 1, &ts));
+		idle_exec(&s);
+		ATF_REQUIRE_EQ_MSG(1, kevent(kq, NULL, 0, &kev, 1, &ts),
+		    "no NOTE_EXEC from the child");
 		REFUSED(dq_attach(c.q, s.pd), EBUSY);
 	}
 	idle_end(&s);
