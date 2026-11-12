@@ -6,14 +6,17 @@
  * large, single-entry and too-small buffers, read to the end and past it,
  * and after lseek(2).
  *
- * The queue name space is global, so queues that other programs own may
- * be listed too.  The cases therefore make claims only about ".", ".."
- * and the queues they create, whose names start with the case's name.
+ * The queue name space is global and a directory offset is a count of
+ * entries from the newest queue, so a queue that another program creates
+ * or removes between two reads moves every later entry.  The cases compare
+ * whole listings read at different times, and therefore the program is
+ * marked exclusive in the Makefile.  Queues that exist throughout are
+ * tolerated: the cases judge ".", ".." and the queues they create, whose
+ * names start with the case's name, and otherwise only that listings
+ * agree with each other.
  */
 
 #include <sys/param.h>
-#include <sys/linker.h>
-#include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -103,9 +106,7 @@ queues_purge(const atf_tc_t *tc)
 }
 
 /*
- * Mount mqueuefs on MNTPT and return a descriptor for its root.  A kernel
- * without mqueuefs is a failure, not a skip: this file exists to exercise
- * it.  Where late kldload is refused, load it from the loader.
+ * Mount mqueuefs on MNTPT and return a descriptor for its root.
  */
 static int
 mqfs_setup(const atf_tc_t *tc)
@@ -114,10 +115,6 @@ mqfs_setup(const atf_tc_t *tc)
 	char fstype[] = "mqueuefs", path[PATH_MAX];
 	int fd;
 
-	if (modfind("mqueuefs") == -1 && kldload("mqueuefs") == -1)
-		atf_tc_fail("mqueuefs is neither in the kernel nor loadable "
-		    "(%s); set mqueuefs_load=\"YES\" in loader.conf",
-		    strerror(errno));
 	queues_purge(tc);
 
 	ATF_REQUIRE_EQ(0, mkdir(MNTPT, 0755));
@@ -310,6 +307,7 @@ ATF_TC_HEAD(empty, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Read a root directory that holds "
 	    "none of our queues to its end, and past it");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(empty, tc)
@@ -346,6 +344,7 @@ ATF_TC_HEAD(queues, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "Queues appear in and disappear from "
 	    "the listing of an open root directory");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(queues, tc)
@@ -385,6 +384,7 @@ ATF_TC_HEAD(buffer_sizes, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "The listing does not depend on the "
 	    "buffer size, down to a buffer for one entry");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(buffer_sizes, tc)
@@ -461,6 +461,7 @@ ATF_TC_HEAD(short_buffer, tc)
 	atf_tc_set_md_var(tc, "descr", "A buffer too small for the next "
 	    "entry is EINVAL while entries remain, and the end of the "
 	    "directory once none do; neither moves the offset");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(short_buffer, tc)
@@ -509,11 +510,91 @@ ATF_TC_CLEANUP(short_buffer, tc)
 	mqfs_cleanup(tc);
 }
 
+ATF_TC_WITH_CLEANUP(misaligned);
+ATF_TC_HEAD(misaligned, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "A read at an offset inside an entry "
+	    "resumes with the next whole entry; a read too small for it is "
+	    "EINVAL and leaves the offset at that entry");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(misaligned, tc)
+{
+	char buf[1];
+	off_t base, end, inside, next;
+	size_t i;
+	int fd, q;
+
+	fd = mqfs_setup(tc);
+	for (q = 0; q < 3; q++)
+		queue_create(tc, q);
+	dir_list(fd, sizeof(bigbuf), &l1);
+	check_all(tc, &l1, 3);
+	ATF_REQUIRE(l1.n >= 5);
+	end = l1.e[l1.n - 1].off;
+
+	/* Inside the second entry; the third starts at next. */
+	inside = l1.e[0].off + 3;
+	next = l1.e[1].off;
+	ATF_REQUIRE(inside < next);
+
+	/*
+	 * The entries are whole, so the read resumes with the third; base
+	 * is still the offset the read started from.
+	 */
+	ATF_REQUIRE_EQ(inside, lseek(fd, inside, SEEK_SET));
+	base = -1;
+	ATF_REQUIRE_EQ((ssize_t)(end - next), getdirentries(fd, bigbuf,
+	    sizeof(bigbuf), &base));
+	ATF_REQUIRE_EQ(inside, base);
+	ATF_REQUIRE_EQ(end, tell(fd));
+	ATF_REQUIRE_EQ(inside, lseek(fd, inside, SEEK_SET));
+	l2.n = 0;
+	ATF_REQUIRE_EQ((ssize_t)l1.e[2].reclen,
+	    dir_read(fd, bigbuf, l1.e[2].reclen, &l2));
+	ATF_REQUIRE_EQ(1, l2.n);
+	ATF_REQUIRE_STREQ(l1.e[2].name, l2.e[0].name);
+
+	/*
+	 * A read too small for the third entry fails.  The offset is not
+	 * put back inside the second entry: it is left at the entry that
+	 * did not fit, which is where a read from inside resumes anyway.
+	 * A read of no bytes succeeds and does the same.
+	 */
+	ATF_REQUIRE_EQ(inside, lseek(fd, inside, SEEK_SET));
+	errno = 0;
+	ATF_REQUIRE_EQ(-1, getdirentries(fd, buf, sizeof(buf), &base));
+	ATF_REQUIRE_ERRNO(EINVAL, true);
+	ATF_REQUIRE_EQ(next, tell(fd));
+	ATF_REQUIRE_EQ(inside, lseek(fd, inside, SEEK_SET));
+	ATF_REQUIRE_EQ(0, getdirentries(fd, buf, 0, &base));
+	ATF_REQUIRE_EQ(next, tell(fd));
+
+	/* From there the rest of the directory reads as it did. */
+	dir_list(fd, sizeof(bigbuf), &l2);
+	ATF_REQUIRE_EQ(l1.n - 2, l2.n);
+	for (i = 0; i < l2.n; i++)
+		ATF_REQUIRE_STREQ(l1.e[i + 2].name, l2.e[i].name);
+
+	/* Inside the last entry there is nothing whole left: the end. */
+	ATF_REQUIRE_EQ(end - 3, lseek(fd, end - 3, SEEK_SET));
+	ATF_REQUIRE_EQ(0, getdirentries(fd, buf, sizeof(buf), &base));
+	ATF_REQUIRE_EQ(end, tell(fd));
+
+	mqfs_teardown(tc, fd);
+}
+ATF_TC_CLEANUP(misaligned, tc)
+{
+	mqfs_cleanup(tc);
+}
+
 ATF_TC_WITH_CLEANUP(seek);
 ATF_TC_HEAD(seek, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "lseek(2) to an entry's d_off resumes "
 	    "with the entry after it; the end and beyond read as the end");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(seek, tc)
@@ -596,6 +677,7 @@ ATF_TC_HEAD(libc_readdir, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "opendir(3), readdir(3) to the end, "
 	    "rewinddir(3) and seekdir(3), as ls(1) reads a directory");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(libc_readdir, tc)
@@ -640,6 +722,7 @@ ATF_TC_HEAD(unprivileged, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "A process with no privilege opens "
 	    "the root directory and reads it to its end");
+	atf_tc_set_md_var(tc, "require.kmods", "mqueuefs");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(unprivileged, tc)
@@ -698,6 +781,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, queues);
 	ATF_TP_ADD_TC(tp, buffer_sizes);
 	ATF_TP_ADD_TC(tp, short_buffer);
+	ATF_TP_ADD_TC(tp, misaligned);
 	ATF_TP_ADD_TC(tp, seek);
 	ATF_TP_ADD_TC(tp, libc_readdir);
 	ATF_TP_ADD_TC(tp, unprivileged);
