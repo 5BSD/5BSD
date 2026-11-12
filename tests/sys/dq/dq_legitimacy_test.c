@@ -8,9 +8,62 @@
  * these answers on purpose and keep the rest.  Each case says which slice
  * is expected to change it ("changes in") or that it must stay ("preserve").
  *
- * No case skips: a missing device, compiler, linker or Linux ABI module is
- * a failure, because a skipped pin proves nothing about the kernel under
- * test.
+ * No case skips for want of a device, compiler, linker, Linux ABI module
+ * or privilege: each is a failure, because a skipped pin proves nothing
+ * about the kernel under test.  The cases that need root do not declare
+ * require.user (kyua would skip them for an unprivileged run); they fail.
+ * The one permitted skip is by architecture: linux_open_ioctl and
+ * ilp32_no_abi are amd64 programs and facts (require.arch).  A run on amd64
+ * therefore reports LG_NCASES results, none skipped.
+ *
+ * Predicted failures.  Each later slice first runs these pins unchanged on
+ * its kernel and records that exactly the rows below fail, with the answer
+ * given, before it rewrites them; any other failure, in particular of a
+ * "preserve" row, is a finding.
+ *
+ * case / check                          slice   answer after the slice
+ * root_open: mode 0600                  lg-3    0666
+ * root_open: first open                 lg-3    EPERM (root has no role)
+ * root_open: second and child's open    lg-3    EPERM (EBUSY with the role)
+ * nonroot_open: three opens             lg-3    EPERM (was EACCES)
+ * nonroot_open: access R_OK, W_OK       lg-3    0
+ * nonroot_open_behind_mode              -       preserve
+ * jailed_open: root EPERM, mode check   lg-3    EPERM stays; mode 0666
+ * jailed_open: non-root open            lg-3    EPERM (was EACCES)
+ * capmode_open: openat by root          lg-3    EPERM; ECAPMODE row preserve
+ * attached_root_open: open, stats       lg-3    EPERM, then EBADF
+ * bearer_fork: stats .. FIONBIO, read   lg-3    EPERM for a non-owner
+ * bearer_fork: own open EACCES          lg-3    EPERM
+ * bearer_scm_rights: same slots         lg-3    EPERM for a non-owner
+ * bearer_exec_attach: stats, attach 0   lg-3    EPERM (lg-5b: no token)
+ * bearer_exec_attach: EPERM, knob off   -       preserve (re-home, below)
+ * attach_outside_prison: jailed stats   lg-3    EPERM for a non-owner
+ * attach_outside_prison: ESRCH          -       preserve (re-home, below)
+ * attach_outside_prison: sibling 0      lg-3    EPERM for a non-owner
+ * attach_child_jail_target: root 0      lg-5b   EPERM without a token
+ * attach_child_jail_target: EBUSY/EPERM lg-3    EPERM for both (non-owner)
+ * attach_errno_order: non-owner rows    lg-3    EPERM for all four
+ * attach_errno_order: root rows         lg-5b   EPERM without a token
+ * observe_connect_gate: root lists      lg-3    refused without the role
+ * observe_connect_gate: EACCES, EPERM   -       preserve
+ * constrain_reserved_words: flags bits  lg-1    role bits pass (EBADF here)
+ * constrain_reserved_words: reserved    lg-11k  assigned bits pass
+ * constrain_reserved_words: nexec       -       preserve
+ * linux_open_ioctl: root open, read     lg-3    EPERM, then EBADF
+ * linux_open_ioctl: 'j' ioctl on queue  lg-10k  reaches dq_ioctl
+ * linux_open_ioctl: 'j' on /dev/null    -       preserve
+ * linux_open_ioctl: non-root open       lg-3    EPERM (Linux -1)
+ * unattached_control                    -       preserve, every slice
+ * ilp32_no_abi                          -       preserve; a failure means
+ *                                               the ILP32 pins are due
+ *
+ * Re-homing in lg-3: attach_errno_order and bearer_exec_attach (knob off),
+ * like the ESRCH row of attach_outside_prison, show the errno order of
+ * ATTACH through a holder that is not the queue's owner, the only
+ * unprivileged holder there is today.  lg-3 refuses that holder outright
+ * (EPERM), which hides the order.  The property to preserve is the order
+ * seen by an unprivileged owner; lg-3 must move these rows onto one (it
+ * exists from lg-3 on, in the PID 1 fixture), not delete them.
  */
 
 #include <sys/param.h>
@@ -19,7 +72,11 @@
 #include <sys/event.h>
 #include <sys/filio.h>
 #include <sys/jail.h>
+#include <sys/linker.h>
+#include <sys/procctl.h>
 #include <sys/procdesc.h>
+#include <sys/ptrace.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -32,6 +89,7 @@
 #include <fcntl.h>
 #include <jail.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +104,15 @@
 #define	LG_NRES		12
 /* The descriptor number the exec'd programs find an inherited queue at. */
 #define	LG_QFD		9
+/* The cases below; a complete amd64 run reports this many, none skipped. */
+#define	LG_NCASES	17
+
+/*
+ * In place of require.user root, which would turn an unprivileged run into
+ * skips.
+ */
+#define	LG_ROOT() ATF_REQUIRE_MSG(geteuid() == 0,			\
+	"the legitimacy pins run as root and must not be skipped")
 
 /* The Linux errno values the Linux program reports (negated). */
 #define	LINUX_EBADF	9
@@ -108,8 +175,13 @@ struct idle {
 	int		 go[2];
 };
 
+/*
+ * With exec_path the child waits for idle_exec() before it execs, so that
+ * the NOTE_EXEC registration cannot lose the race; before that it enters
+ * jail jid (unless -1) and, with nobody, gives up root.
+ */
 static void
-idle_spawn(struct idle *s, const char *exec_path)
+idle_spawn_as(struct idle *s, const char *exec_path, int jid, bool nobody)
 {
 	char b;
 
@@ -117,13 +189,45 @@ idle_spawn(struct idle *s, const char *exec_path)
 	s->pid = pdfork(&s->pd, 0);
 	ATF_REQUIRE_MSG(s->pid != -1, "pdfork: %s", strerror(errno));
 	if (s->pid == 0) {
+		if (jid != -1 && jail_attach(jid) != 0)
+			_exit(5);
+		if (nobody && !become_nobody())
+			_exit(4);
+		(void)read(s->go[0], &b, 1);
 		if (exec_path != NULL) {
 			execl(exec_path, exec_path, "60", (char *)NULL);
 			_exit(3);
 		}
-		(void)read(s->go[0], &b, 1);
 		_exit(0);
 	}
+}
+
+static void
+idle_spawn(struct idle *s, const char *exec_path)
+{
+
+	idle_spawn_as(s, exec_path, -1, false);
+}
+
+/* Let a child spawned with an exec_path go, and wait until it has exec'd. */
+static void
+idle_exec(struct idle *s)
+{
+	struct kevent kev;
+	struct timespec ts = { 30, 0 };
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq != -1);
+	EV_SET(&kev, s->pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC | NOTE_EXIT, 0,
+	    NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
+	ATF_REQUIRE_EQ(1, write(s->go[1], "x", 1));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &kev, 1, &ts));
+	ATF_REQUIRE_MSG((kev.fflags & NOTE_EXIT) == 0 &&
+	    (kev.fflags & NOTE_EXEC) != 0, "the target did not exec: %#x",
+	    kev.fflags);
+	(void)close(kq);
 }
 
 static void
@@ -167,7 +271,6 @@ ATF_TC_HEAD(root_open, tc)
 	atf_tc_set_md_var(tc, "descr", "unjailed root opens /dev/dq (0600 "
 	    "root:wheel), twice, and again in a fork child; each open is a "
 	    "queue of its own that answers GET_STATS");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(root_open, tc)
 {
@@ -176,6 +279,7 @@ ATF_TC_BODY(root_open, tc)
 	struct stat sb;
 	int q, q2;
 
+	LG_ROOT();
 	ATF_REQUIRE_EQ(0, stat(DQ_DEVICE, &sb));
 	ATF_CHECK(S_ISCHR(sb.st_mode));
 	ATF_CHECK_EQ_MSG(0600, sb.st_mode & ALLPERMS, "mode %#o",
@@ -225,12 +329,12 @@ ATF_TC_HEAD(nonroot_open, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a non-root open of /dev/dq is EACCES "
 	    "from the node's mode, for every access mode; access(2) agrees");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonroot_open, tc)
 {
 	struct lg_res res;
 
+	LG_ROOT();
 	memset(&res, 0, sizeof(res));
 	dqt_run_child(child_nobody_open, NULL, &res, sizeof(res));
 	CHECK_ERR(res.r[0], EACCES);
@@ -252,12 +356,12 @@ ATF_TC_HEAD(nonroot_open_behind_mode, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "with the node chmod'ed 0666 a "
 	    "non-root open is EPERM from dq_open's privilege check");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(nonroot_open_behind_mode, tc)
 {
 	struct lg_res res;
 
+	LG_ROOT();
 	ATF_REQUIRE_EQ(0, chmod(DQ_DEVICE, 0666));
 	memset(&res, 0, sizeof(res));
 	dqt_run_child(child_nobody_open, NULL, &res, sizeof(res));
@@ -317,13 +421,13 @@ ATF_TC_HEAD(jailed_open, tc)
 	atf_tc_set_md_var(tc, "descr", "in a jail that sees the node, root's "
 	    "open is EPERM (PRIV_DRIVER is not a jail privilege) and a "
 	    "non-root open is EACCES");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(jailed_open, tc)
 {
 	struct jail_arg a;
 	struct lg_res res;
 
+	LG_ROOT();
 	a.jid = make_jail("dq_lg_open");
 	a.q = a.pd = a.dev = -1;
 	a.nobody = false;
@@ -375,12 +479,12 @@ ATF_TC_HEAD(capmode_open, tc)
 	atf_tc_set_md_var(tc, "descr", "in capability mode open(2) of the "
 	    "path is ECAPMODE; openat(2) below a /dev descriptor opens a "
 	    "working queue for root");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(capmode_open, tc)
 {
 	struct lg_res res;
 
+	LG_ROOT();
 	memset(&res, 0, sizeof(res));
 	dqt_run_child(child_capmode, NULL, &res, sizeof(res));
 	CHECK_ERR(res.r[0], ECAPMODE);
@@ -398,7 +502,6 @@ ATF_TC_HEAD(attached_root_open, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a root process attached to a queue "
 	    "opens /dev/dq and gets a second, working queue");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(attached_root_open, tc)
 {
@@ -408,6 +511,7 @@ ATF_TC_BODY(attached_root_open, tc)
 	struct lg_res res;
 	int status;
 
+	LG_ROOT();
 	dqt_init(&c);
 	dqt_stats(&c, &st);
 	memset(&res, 0, sizeof(res));
@@ -566,7 +670,6 @@ ATF_TC_HEAD(bearer_fork, tc)
 	atf_tc_set_md_var(tc, "descr", "a fork child that dropped to an "
 	    "unprivileged user operates the inherited queue: statistics, "
 	    "observer and object mint, revoke, FIONBIO, read");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(bearer_fork, tc)
 {
@@ -575,6 +678,7 @@ ATF_TC_BODY(bearer_fork, tc)
 	struct dq_stats st;
 	struct lg_res res;
 
+	LG_ROOT();
 	ident = calloc(1, sizeof(*ident));
 	ATF_REQUIRE(ident != NULL);
 	bearer_ident(ident);
@@ -598,7 +702,6 @@ ATF_TC_HEAD(bearer_scm_rights, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "the queue descriptor passes over "
 	    "SCM_RIGHTS to an unprivileged process, which operates it");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(bearer_scm_rights, tc)
 {
@@ -609,6 +712,7 @@ ATF_TC_BODY(bearer_scm_rights, tc)
 	struct lg_res res;
 	int status, sv[2];
 
+	LG_ROOT();
 	ident = calloc(1, sizeof(*ident));
 	ATF_REQUIRE(ident != NULL);
 	bearer_ident(ident);
@@ -683,7 +787,10 @@ run_helper(const atf_tc_t *tc, int q, struct helper_res *hr)
  * by an unprivileged user that merely inherited a queue across execve(2)
  * attaches its own child to it: ATTACH asks only p_candebug().  With
  * security.bsd.unprivileged_proc_debug off the same call is EPERM, which
- * is the errno order to preserve for a caller that may not debug.
+ * is the errno order to preserve for a caller that may not debug.  lg-3
+ * must re-home that row on an unprivileged owner: a holder that is not
+ * the owner is EPERM for another reason from then on (see the head of
+ * this file).
  */
 ATF_TC_WITH_CLEANUP(bearer_exec_attach);
 ATF_TC_HEAD(bearer_exec_attach, tc)
@@ -691,7 +798,6 @@ ATF_TC_HEAD(bearer_exec_attach, tc)
 	atf_tc_set_md_var(tc, "descr", "an unprivileged program that "
 	    "inherited the queue across exec reads its statistics and "
 	    "attaches its own child; EPERM with unprivileged_proc_debug off");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(bearer_exec_attach, tc)
 {
@@ -700,6 +806,7 @@ ATF_TC_BODY(bearer_exec_attach, tc)
 	u_int old;
 	int q;
 
+	LG_ROOT();
 	ATF_REQUIRE(dqt_sysctl_get_uint(PROC_DEBUG, &old));
 	f = fopen("proc_debug.save", "w");
 	ATF_REQUIRE(f != NULL);
@@ -761,7 +868,6 @@ ATF_TC_HEAD(attach_outside_prison, tc)
 	atf_tc_set_md_var(tc, "descr", "a root process that is not the "
 	    "target's parent attaches it; the same call from inside a jail "
 	    "on a process outside it is ESRCH");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(attach_outside_prison, tc)
 {
@@ -770,6 +876,7 @@ ATF_TC_BODY(attach_outside_prison, tc)
 	struct jail_arg a;
 	struct lg_res res;
 
+	LG_ROOT();
 	dqt_init_manual(&c);
 	idle_spawn(&s1, NULL);
 	idle_spawn(&s2, NULL);
@@ -805,24 +912,58 @@ ATF_TC_CLEANUP(attach_outside_prison, tc)
 	(void)jail_remove(jail_getid("dq_lg_attach"));
 }
 
+struct targets_arg {
+	int		 q;
+	int		 plain, jailed;
+};
+
+static void
+child_attach_targets(void *arg, void *result)
+{
+	struct targets_arg *a = arg;
+	struct lg_res *res = result;
+
+	if (!become_nobody())
+		_exit(4);
+	SET(res->r[0], dq_attach(a->q, a->plain));
+	SET(res->r[1], dq_attach(a->q, a->jailed));
+}
+
 /*
  * Preserve: host root attaches a target that has entered a child jail
  * (prison_check passes downward, PRIV_DEBUG_DIFFJAIL).
+ *
+ * Preserve (design 15.3, review 4 N1): an unprivileged holder of the queue
+ * may not attach a process of its own uid that is in a child jail: EPERM
+ * from p_candebug (cr_can_tamper_with_subjail: no PRIV_DEBUG_DIFFJAIL,
+ * and the jail does not allow unprivileged parent tampering).  The control
+ * is the same target outside the jail, which is past the debug check and
+ * is refused for its state (EBUSY: it has exec'd, as it must to shed
+ * P_SUGID).  With security.bsd.unprivileged_proc_debug at 1, required.
+ * The holder here is not the queue's owner; lg-3 re-homes these two rows
+ * on an unprivileged owner with the others.
  */
 ATF_TC_WITH_CLEANUP(attach_child_jail_target);
 ATF_TC_HEAD(attach_child_jail_target, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "unjailed root attaches a target "
-	    "that entered a child jail");
-	atf_tc_set_md_var(tc, "require.user", "root");
+	    "that entered a child jail; an unprivileged holder of the queue "
+	    "is EPERM for a same-uid target there, EBUSY for one outside");
 }
 ATF_TC_BODY(attach_child_jail_target, tc)
 {
 	struct dqt_ctl c;
+	struct idle plain, jailed;
+	struct targets_arg a;
+	struct lg_res res;
 	pid_t pid;
+	u_int knob;
 	int go[2], jid, pd, ready[2], status;
 	char b;
 
+	LG_ROOT();
+	ATF_REQUIRE(dqt_sysctl_get_uint(PROC_DEBUG, &knob));
+	ATF_REQUIRE_EQ_MSG(1, knob, PROC_DEBUG " is %u", knob);
 	dqt_init(&c);
 	jid = make_jail("dq_lg_target");
 	ATF_REQUIRE_EQ(0, pipe(go));
@@ -842,6 +983,23 @@ ATF_TC_BODY(attach_child_jail_target, tc)
 	(void)pdkill(pd, SIGKILL);
 	(void)pdwait(pd, &status, WEXITED, NULL, NULL);
 	(void)close(pd);
+
+	idle_spawn_as(&plain, "/bin/sleep", -1, true);
+	idle_exec(&plain);
+	idle_spawn_as(&jailed, "/bin/sleep", jid, true);
+	idle_exec(&jailed);
+	a.plain = plain.pd;
+	a.jailed = jailed.pd;
+	a.q = fcntl(c.q, F_DUPFD, 0);
+	ATF_REQUIRE(a.q != -1);
+	memset(&res, 0, sizeof(res));
+	dqt_run_child(child_attach_targets, &a, &res, sizeof(res));
+	CHECK_ERR(res.r[0], EBUSY);
+	CHECK_ERR(res.r[1], EPERM);
+	(void)close(a.q);
+	idle_end(&plain);
+	idle_end(&jailed);
+
 	ATF_REQUIRE_EQ(0, jail_remove(jid));
 	dqt_fini(&c);
 }
@@ -878,7 +1036,9 @@ child_attach_order(void *arg, void *result)
  * unprivileged holder of the queue shows the order: for a target that has
  * exec'd it is told EPERM where root is told EBUSY.  lg-3 and lg-5b put
  * their refusals (EPERM) in front for a caller without the role or the
- * token; the order behind them stays.
+ * token; the order behind them stays.  After lg-3 a holder that is not
+ * the owner is told EPERM for all four, so lg-3 must re-home the first
+ * four rows on an unprivileged owner (see the head of this file).
  */
 ATF_TC(attach_errno_order);
 ATF_TC_HEAD(attach_errno_order, tc)
@@ -886,29 +1046,22 @@ ATF_TC_HEAD(attach_errno_order, tc)
 	atf_tc_set_md_var(tc, "descr", "ATTACH by an unprivileged holder of "
 	    "the queue: EINVAL for a descriptor that is no process, ESRCH "
 	    "for an exited one, EPERM before EBUSY for one that exec'd");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(attach_errno_order, tc)
 {
 	struct dqt_ctl c;
 	struct idle exited, execed, idle;
-	struct kevent kev;
-	struct timespec ts = { 10, 0 };
 	struct order_arg a;
 	struct lg_res res;
-	int kq, status;
+	int status;
 
+	LG_ROOT();
 	dqt_init_manual(&c);
 	idle_spawn(&exited, NULL);
 	(void)write(exited.go[1], "x", 1);
 	ATF_REQUIRE_EQ(0, pdwait(exited.pd, &status, WEXITED, NULL, NULL));
 	idle_spawn(&execed, "/bin/sleep");
-	kq = kqueue();
-	ATF_REQUIRE(kq != -1);
-	EV_SET(&kev, execed.pd, EVFILT_PROCDESC, EV_ADD, NOTE_EXEC, 0, NULL);
-	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
-	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &kev, 1, &ts));
-	(void)close(kq);
+	idle_exec(&execed);
 	idle_spawn(&idle, NULL);
 
 	a.notpd = open("/dev/null", O_RDONLY);
@@ -994,7 +1147,8 @@ child_observe(void *arg, void *result)
  * PRIV_DRIVER on the connecting credential and nothing else: any unjailed
  * root process lists every queue, also one it has nothing to do with.
  * Preserve: a credential without the privilege is EPERM at connect, in a
- * jail too.
+ * jail too.  The jailed row claims the errno only: whether the dq gate or
+ * an earlier refusal of a jailed caller produces it is not established.
  */
 ATF_TC_WITH_CLEANUP(observe_connect_gate);
 ATF_TC_HEAD(observe_connect_gate, tc)
@@ -1003,7 +1157,6 @@ ATF_TC_HEAD(observe_connect_gate, tc)
 	    "process connects and finds another process's queue; a non-root "
 	    "and a jailed root credential are EPERM at connect, on a device "
 	    "descriptor root opened for them");
-	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(observe_connect_gate, tc)
 {
@@ -1013,6 +1166,7 @@ ATF_TC_BODY(observe_connect_gate, tc)
 	struct lg_res res;
 	int q;
 
+	LG_ROOT();
 	q = dq_open();
 	ATF_REQUIRE_MSG(q != -1, "dq_open: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, dq_get_stats(q, &st));
@@ -1189,13 +1343,15 @@ ATF_TC_HEAD(linux_open_ioctl, tc)
 	    "and reads a queue, a non-root open is EACCES, an inherited "
 	    "queue is read by either, and every group 'j' ioctl is EINVAL "
 	    "on a queue as on /dev/null");
-	atf_tc_set_md_var(tc, "require.user", "root");
+	/* The program is amd64 Linux: the one permitted kind of skip. */
+	atf_tc_set_md_var(tc, "require.arch", "amd64");
 }
 ATF_TC_BODY(linux_open_ioctl, tc)
 {
 	long lr[LX_NRES];
 	int i, q;
 
+	LG_ROOT();
 	build_foreign(tc, "x86_64-linux-gnu", "dq_legitimacy_linux",
 	    "dq_legitimacy_linux.c");
 	ATF_REQUIRE_EQ(0, chmod("dq_legitimacy_linux", 0755));
@@ -1233,6 +1389,101 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 	(void)close(q);
 }
 
+/*
+ * Unattached control
+ */
+
+static void
+child_control(void *arg, void *result)
+{
+	struct lg_res *res = result;
+	struct rlimit rl = { RLIM_INFINITY, RLIM_INFINITY };
+	pid_t pid;
+	int go[2], status, tracing;
+	char b;
+
+	/* No queue of its own, and none inherited. */
+	(void)close(*(int *)arg);
+
+	if (pipe(go) != 0)
+		_exit(6);
+	pid = fork();
+	if (pid == -1)
+		_exit(7);
+	if (pid == 0) {
+		(void)close(go[1]);
+		(void)read(go[0], &b, 1);
+		_exit(0);
+	}
+	SET(res->r[0], ptrace(PT_ATTACH, pid, NULL, 0));
+	status = 0;
+	SET(res->r[1], waitpid(pid, &status, WUNTRACED) == pid &&
+	    WIFSTOPPED(status) ? 0 : -1);
+	SET(res->r[2], ptrace(PT_DETACH, pid, (caddr_t)1, 0));
+	(void)close(go[1]);
+	status = -1;
+	SET(res->r[3], waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
+	    WEXITSTATUS(status) == 0 ? 0 : -1);
+
+	tracing = -2;
+	SET(res->r[4], procctl(P_PID, getpid(), PROC_TRACE_STATUS, &tracing));
+	res->id = (uint64_t)(int64_t)tracing;
+
+	/* A child that aborts leaves a core. */
+	pid = fork();
+	if (pid == -1)
+		_exit(7);
+	if (pid == 0) {
+		(void)setrlimit(RLIMIT_CORE, &rl);
+		(void)signal(SIGABRT, SIG_DFL);
+		abort();
+	}
+	status = 0;
+	SET(res->r[5], waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) &&
+	    WTERMSIG(status) == SIGABRT ? 0 : -1);
+	res->r[6].rv = WCOREDUMP(status) ? 1 : 0;
+	res->r[6].err = 0;
+}
+
+/*
+ * Preserve, in every slice: a process that holds no queue and is attached
+ * to none sees what it sees today while another process runs a queue.  The
+ * later slices refuse to debug a supervisor, to trace one and to dump its
+ * core (lg-3), and none of that may reach an unrelated process: it debugs
+ * its own child, is itself traceable, and its aborting child dumps core.
+ * The answers are compared as one transcript, byte for byte.
+ */
+ATF_TC(unattached_control);
+ATF_TC_HEAD(unattached_control, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "beside a live queue, a process "
+	    "without one debugs its child, is traceable and has a child "
+	    "dump core: one transcript, compared byte for byte");
+}
+ATF_TC_BODY(unattached_control, tc)
+{
+	static const char expected[] =
+	    "attach=0/0 stop=0/0 detach=0/0 exit=0/0 trace_status=0/0:0 "
+	    "abort=0/0 core=1";
+	struct lg_res res;
+	char transcript[256];
+	int q;
+
+	LG_ROOT();
+	q = raw_open();
+	memset(&res, 0xff, sizeof(res));
+	dqt_run_child(child_control, &q, &res, sizeof(res));
+	snprintf(transcript, sizeof(transcript),
+	    "attach=%ld/%d stop=%ld/%d detach=%ld/%d exit=%ld/%d "
+	    "trace_status=%ld/%d:%jd abort=%ld/%d core=%ld",
+	    res.r[0].rv, res.r[0].err, res.r[1].rv, res.r[1].err,
+	    res.r[2].rv, res.r[2].err, res.r[3].rv, res.r[3].err,
+	    res.r[4].rv, res.r[4].err, (intmax_t)(int64_t)res.id,
+	    res.r[5].rv, res.r[5].err, res.r[6].rv);
+	ATF_CHECK_STREQ(expected, transcript);
+	(void)close(q);
+}
+
 static int
 exec_errno(const char *image)
 {
@@ -1256,9 +1507,12 @@ exec_errno(const char *image)
  * The design's ILP32 rows (a 32-bit caller's open is EOPNOTSUPP, EACCES
  * for a non-root one until lg-3) cannot be reached on this kernel: amd64
  * GENERIC has neither COMPAT_FREEBSD32 nor a 32-bit Linux ABI, so no ILP32
- * process exists to make the call.  This pins that fact.  If either image
- * ever runs (exit status 0), the ILP32 check in dq_open has become
- * reachable and its pins must be written before lg-3 moves it.
+ * process exists to make the call.  This pins that fact, directly (the
+ * kernel does not announce the compat_freebsd32 feature and the 32-bit
+ * Linux ABI module is not loaded, where the 64-bit one is) and by its
+ * effect (neither image runs).  If any of this changes, the ILP32 check in
+ * dq_open has become reachable and its pins must be written before lg-3
+ * moves it.
  */
 ATF_TC(ilp32_no_abi);
 ATF_TC_HEAD(ilp32_no_abi, tc)
@@ -1269,6 +1523,20 @@ ATF_TC_HEAD(ilp32_no_abi, tc)
 }
 ATF_TC_BODY(ilp32_no_abi, tc)
 {
+	size_t len;
+	int feature;
+
+	len = sizeof(feature);
+	errno = 0;
+	ATF_CHECK_EQ(-1, sysctlbyname("kern.features.compat_freebsd32",
+	    &feature, &len, NULL, 0));
+	ATF_CHECK_EQ(ENOENT, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, kldfind("linux.ko"));
+	ATF_CHECK_EQ(ENOENT, errno);
+	/* The control: kldfind does find the 64-bit ABI. */
+	ATF_CHECK_MSG(kldfind("linux64.ko") != -1, "linux64.ko: %s",
+	    strerror(errno));
 
 	build_foreign(tc, "i386-unknown-freebsd", "ilp32_freebsd",
 	    "dq_legitimacy_ilp32.c");
@@ -1296,6 +1564,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, observe_connect_gate);
 	ATF_TP_ADD_TC(tp, constrain_reserved_words);
 	ATF_TP_ADD_TC(tp, linux_open_ioctl);
+	ATF_TP_ADD_TC(tp, unattached_control);
 	ATF_TP_ADD_TC(tp, ilp32_no_abi);
 	return (atf_no_error());
 }
