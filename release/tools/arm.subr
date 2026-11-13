@@ -184,6 +184,10 @@ arm_install_base() {
 		TARGET_ARCH=${EMBEDDED_TARGET_ARCH} \
 		DESTDIR=${DESTDIR} KERNCONF=${KERNEL} \
 		${CONF_FILES} installworld installkernel distribution
+	# The image carries the kernel of the object tree: never one built
+	# with the dq(4) test option.  release.sh runs under set -e.
+	chroot ${CHROOTDIR} sh ${WORLDDIR}/release/scripts/check-kernel-no-dq-test.sh \
+		-d ${DESTDIR}
 	chroot ${CHROOTDIR} mkdir -p ${DESTDIR}/boot/efi
 	# Compatibility symlink to /boot/msdos for 13.1 and earlier
 	chroot ${CHROOTDIR} ln -s efi ${DESTDIR}/boot/msdos

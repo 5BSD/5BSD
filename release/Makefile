@@ -229,6 +229,14 @@ malloc-production-check:
 	@${MALLOC_PRODUCTION_CHECK}
 
 #
+# Release media never carry a kernel or module built with the dq(4) test
+# option (options DQ_TEST_OPEN); see scripts/check-kernel-no-dq-test.sh.
+# The check reads what was staged, straight after it is installed, or the
+# package repository that goes onto the media.  There is no override.
+#
+KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/scripts/check-kernel-no-dq-test.sh
+
+#
 # Legacy distribution tarballs
 #
 base.txz: # Also (if enabled) tests, compat libs, and -dbg variants for all.
@@ -252,6 +260,7 @@ base.txz: # Also (if enabled) tests, compat libs, and -dbg variants for all.
 kernel.txz: # Also (if enabled) kernel-dbg.txz.
 	mkdir -p ${DISTDIR}
 	( cd ${WORLDDIR} && ${IMAKE} distributekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${DISTDIR}/kernel
 	( cd ${WORLDDIR} && ${IMAKE} packagekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
 	mv ${DISTDIR}/kernel*.txz .
 
@@ -326,6 +335,7 @@ dvd: ${DVD_STAGING_DEPS}
 pkgbase-repo:
 	@${MALLOC_PRODUCTION_CHECK}
 .if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+	@${KERNEL_TEST_OPTION_CHECK} -r ${PKGBASE_SIGNED_REPOSITORY:Q}
 	mkdir -p pkgbase-repo/${PKG_ABI}
 	${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py copy-signed-repository \
 	    --repository ${PKGBASE_SIGNED_REPOSITORY:Q} \
@@ -379,6 +389,7 @@ pkgbase-repo:
 	${HARDWARE_STAGE} --base-repository \
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 .endif
+	@${KERNEL_TEST_OPTION_CHECK} -r ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 
 .endif # rebuilding or snapshotting pkgbase
 
@@ -407,6 +418,7 @@ disc1:
 	    MK_TOOLCHAIN=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media.
 #
@@ -502,6 +514,7 @@ bootonly:
 	    MK_TOOLCHAIN=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if !defined(NODISTSETS) || empty(NODISTSETS)
 # Copy manifest only (no distfiles) to get checksums
 	mkdir -p ${.TARGET}/usr/5bsd-dist
@@ -561,6 +574,7 @@ dvd:
 	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
 		DESTDIR=${.OBJDIR}/${.TARGET} MK_RESCUE=no MK_KERNEL_SYMBOLS=no \
 		MK_TESTS=no MK_DEBUG_FILES=no)
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
