@@ -9,8 +9,7 @@ bsd_lex(name = "scanner", src = "lex.l", output = "lex.c",
     lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
 cc_library(name = "headers", hdrs = ["ldef.h", ":parser_header"], strip_include_prefix = ".")
 cc_binary(name = "mkesdb", srcs = [":parser_source", ":scanner"],
-    deps = [":headers", "//lib/libc/iconv:module_headers", "//lib/libc:shared_link_interface"],
-    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    deps = [":headers", "//lib/libc/iconv:module_headers", "//lib/libc:shared_abi_interface"],
     copts = ["-fPIE"], linkopts = ["-pie", "-nodefaultlibs"],
     visibility = ["//visibility:public"])
 # Execution tool carries native libc statically; no installed runtime is needed.

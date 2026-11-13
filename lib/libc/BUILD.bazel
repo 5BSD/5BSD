@@ -111,7 +111,7 @@ cc_library(name = "shared_abi_interface", deps = [":shared_abi", "//lib/libc_non
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 
 # Legacy implementation-oriented link context. Existing consumers still need
-# migration and ELF validation; packaged clients use shared_abi_interface.
+# migration and ELF validation; public clients should use shared_abi_interface.
 # Shared consumers need the nonshared public wrappers as well as the DSO.
 cc_library(features = LIBC_VARIANT_FEATURES, name = "shared_link_interface", deps = [":shared_link_objects", "//lib/libc_nonshared:nonshared"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],

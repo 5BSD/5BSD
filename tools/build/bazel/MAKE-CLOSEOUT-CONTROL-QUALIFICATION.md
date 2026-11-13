@@ -182,3 +182,80 @@ boundaries, controlled CPU/RAM/disk I/O/retained storage, maintained production
 publication and ARM64 Tier 1 qualification remain required. RISC-V is Tier 2.
 BIP remains excluded. Bundle/repository signatures do not prove Secure Boot or
 protection against compromised root.
+
+## Complete archive comparison (2026-11-13)
+
+Original Make archive creation produced all 450 selected packages under
+`/usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261111`. Both archive commands
+passed. Its receipt, `bazel-closeout-make-packages-r1-20261111/receipt.json`, retains
+`source-changed-review-required`: comparison/test files changed during packaging.
+The separately recorded `bazel-closeout-package-comparison-r1-20261111/make-review.json`
+checks the unchanged bound Make recipes, exact package identities/hashes and
+unchanged repository pointers. That review accepts the archive-command scope;
+it does not turn the original receipt into a source-clean/current-head build.
+No combined repository publication or host installation occurred.
+
+`bazel-closeout-system-native-r1-20261111/receipt.json` now passes the complete
+selected native AMD64 graph and its two selected tests. Its explicit kernel
+revision is `bda201068fe3`. The newer source tree must not be relabeled as that
+captured epoch. `bazel-closeout-package-comparison-r2-20261113/candidate-bindings.json`
+binds all 450 candidate archives to that receipt and its captured output manifest.
+
+The maintained comparator can be run with explicit inputs:
+
+```
+python3.12 tools/build/bazel/package-archive-compare.py \
+    --reference REFERENCE_INDEXED_DIRECTORY \
+    --candidate CANDIDATE_INDEXED_DIRECTORY \
+    --output FRESH_REPORT_DIRECTORY --tar EXPLICIT_BSDTAR \
+    --library EXPLICIT_LIBARCHIVE
+```
+
+Each input directory supplies a format-1 `index.json` with package names and
+SHA-256 hashes. The tool checks package selections, manifests, archive coverage,
+named/numeric owners, modes, flags, links, available timestamps and streamed
+regular-file payload hashes. It captures its source inputs and writes package
+shards and a progress journal. Unsupported ACL/xattr metadata is refused rather
+than silently omitted. A separate hardlink-group diagnostic distinguishes a
+first-stored-link choice from changed payloads; raw differences remain present.
+Neither view simulates final installed inode ownership or establishes runtime
+correctness. Compressed-byte equality is recorded separately.
+
+`bazel-closeout-package-comparison-r2-20261113/comparison/review.json` completes
+all 450 packages with **differences-found**. No package names or nondirectory
+payload paths are missing or extra. Ten directory path claims differ (dq-dev,
+kernel-generic, kernel-generic-dbg and utilities). The logical diagnostic retains
+4,168 payload-hash, 3,239 size, 36,682 mtime, 17 subsecond mtime differences,
+plus manifest differences. These are not waived or accepted as parity.
+There are no logical owner, permission, flag, symlink or hardlink-group differences
+in this comparison. The original R10 negative control remains separate and
+unsuperseded as historical evidence.
+
+Five executable dependency differences were independently confirmed against
+actual Make/native ELF payloads in `bazel-package-link-review-r1-20261111`:
+`jail` directly linked libelf, and gencat/iconv/mkcsmapper/mkesdb directly linked
+libsys. The source declarations now use the public libc ABI boundary for those
+four utilities and omit jail's unnecessary direct libelf edge. Their focused native build now passes, together with both archive test targets:
+`bazel-package-compare-native-r2-20261113/receipt.json`. All five pass the maintained
+ELF checker against actual original Make stage artifacts in
+`bazel-package-link-review-r2-20261113/results.json`: ordered NEEDED dependencies,
+versioned imports/exports, interpreter, PIE/RELRO/immediate binding and unsafe
+segment/search-path checks. Raw bytes and differing sections remain recorded.
+This is selected executable metadata acceptance, not exhaustive binary/runtime
+parity. Broader legacy consumers are not silently declared migrated.
+
+The comparison reader/fixtures pass four archive-reader and eight comparison
+host tests. Both test targets also pass through the maintained build-bsd
+format-5 interface, with explicit SDK tar/libarchive runtime inputs. The first
+attempt refused a stale SDK binding to Makefile after a source merge; the old
+receipt was preserved and the SDK was refreshed through the maintained exporter
+and materializer. This remains a Make-prepared SDK, not native bootstrap.
+No build-bsd C interface change is required for selecting these test labels.
+
+The same maintained ELF checker also passes representative complete-candidate
+accton, ls and sh comparisons against the original Make stage; their raw byte
+and section differences remain recorded under the complete comparison's
+`sample-elf` directory. The first invocation omitted the checker's explicit tool
+arguments and failed before inspection; `results-r2.json` records the corrected
+commands and their successful selected metadata checks. No conclusion about all
+4,168 differing payloads follows from those three samples.

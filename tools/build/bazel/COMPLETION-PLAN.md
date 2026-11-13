@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Current closeout execution (2026-11-13)
+
+The completed `bazel-closeout-system-native-r1-20261111` receipt passes the
+selected AMD64 world/kernel/module/450-package graph and its two selected tests.
+This is a captured source/configuration epoch, not qualification of subsequent
+merges or native bootstrap. The independent final archive comparison now covers
+all 450 packages: no package-name or nondirectory payload-path omissions remain.
+It still reports byte, timestamp, directory ownership and shared-library
+requirements differences; package parity is not accepted.
+
+The archive tests and five corrected executable targets pass focused native
+qualification. All five pass maintained ELF metadata comparison against Make.
+Their complete package-output integration remains pending.
+
+Close remaining defects in batches against the retained Make control. Reuse the
+Bazel state/cache and test the affected targets before repeating the complete
+integration graph. Do not rebuild the Make control unless its relevant inputs or
+required configuration change. Preserve raw differences and historical failures.
+See MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md for the current comparison and bounds.
+All six gates below remain the completion criteria; Make remains production/default.
+
+
 ## Independent Make closeout comparison (2026-11-11)
 
 Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass
