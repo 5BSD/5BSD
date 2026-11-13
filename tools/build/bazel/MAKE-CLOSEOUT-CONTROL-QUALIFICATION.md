@@ -285,6 +285,63 @@ cannot qualify those cases. Use the existing real upgrade tests and add the
 missing state checks where needed, rather than running target scripts against
 host paths during rootless construction.
 
+### Certificate construction in progress
+
+The new `//secure/caroot:certificate_store` action accepts the selected trusted
+and untrusted installation manifests and invokes execution-configured certctl.
+Its declared tree contains generated hash names and the bundle; neither output
+names nor trust inputs come from a maintained hash list or host trust discovery.
+`certificate_store_archive` serializes the bounded `/etc/ssl` tree through the
+existing installation-tree archive rule. The new test compares real certctl
+explicit and directory modes, selected package certificate bytes, distrust
+precedence, collisions/addition/removal, repeated construction, empty selection,
+ambient trust isolation, malformed/nonregular input refusal, producer METALOG
+and serialized contents/metadata. These targets are not yet selected by the
+production world/image composition.
+
+The Make-built-tool host control in
+`/usr/obj/usr/src/bazel-certificate-construction-host-r1-20261113/result.json`
+passes eight cases, with the producer case explicitly skipped. The expanded
+r2 control exposes a real defect: when a bundle's parent equals DESTDIR,
+certctl's `unexpand_path` retains the absolute build path in its METALOG entry.
+Its archive content check passes, but its producer metadata check fails. Do not
+rewrite that entry in the test or remove the failing assertion.
+
+An isolated proposed one-line boundary fix is retained in
+`/usr/obj/usr/src/bazel-certificate-root-metadata-fix-20261113/fix.patch`.
+That isolated host build passes all 31 maintained certctl regression cases,
+including the new staging-root dry-run/actual metadata case. The resulting r3
+construction control passes all ten cases without skips:
+`/usr/obj/usr/src/bazel-certificate-construction-host-r3-20261113/result.json`.
+This is host control evidence, not Bazel analysis/action/runfiles, complete image,
+or runtime TLS acceptance. The original r2 failure is retained. Apply the C fix
+after the active full integration run ends; its consumed certctl source has been
+left unchanged during the run.
+
+The focused native format-5 request is prepared at
+`/usr/obj/usr/src/bazel-certificate-construction-request-r1-20261113/inputs.json`.
+The maintained frontend refused its concurrent launch with `build lock:
+Resource temporarily unavailable`; the full AMD64 integration process remains
+live. Retry that same focused request after completion, then integrate dynamic
+construction declarations into world inventory/image reconciliation and qualify
+the actual image. Existing build-bsd target selection supports this interface;
+no new C frontend flag or alternate production workflow is needed.
+
+The shared `construction_inputs` adapter now exposes typed static manifests or
+installation-tree archives to image consumers. `construction_records.py` reads
+the existing serializer's installation-request records, checks bounded canonical
+paths and distinct untagged regular files, and leaves directory policy to archive
+reconciliation. Seven host cases cover selected/missing/changed state, changing
+producer output membership, duplicates, package claims, path escapes and malformed
+metadata. The actual r3 certificate metadata also reconciles all 168 generated
+files and three directories against the world inventory without listing hash
+names. Evidence is retained beside r3 as `construction-records.json` and
+`construction-inventory-control.json`. This is shared-input/host control evidence;
+the image action, native tests and world-root integration are not yet accepted.
+The coherent pending integration patch is retained with the focused request as
+`integration.patch`; it has passed `git apply --check` but is not applied while
+the original full package run remains active.
+
 The refreshed SDK snapshot differs from the previous snapshot in only
 `sys/cap_authority.h` and `sys/proc.h`; exact hashes are retained in
 `bazel-closeout-package-comparison-r2-20261113/sdk-change-review.json`.

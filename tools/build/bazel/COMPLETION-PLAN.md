@@ -27,6 +27,14 @@ using the existing Bazel state and a refreshed SDK. Its completion and package
 comparison are still pending. A two-header SDK change accompanies broad compile
 invalidation; cache efficiency must be measured rather than inferred from state reuse.
 
+Certificate-store producer/archive targets and their regression cases are in
+progress. Host controls exposed a staging-root certctl METALOG defect; an
+isolated proposed fix passes 31 certctl cases and ten construction/archive cases.
+The source C fix is pending the end of the active full build. Native target,
+world/image integration and runtime TLS acceptance remain open; see the Make
+closeout record. The concurrent focused frontend launch was refused by the
+normal build lock; it did not run or pass.
+
 Close remaining defects in batches against the retained Make control. Reuse the
 Bazel state/cache and test the affected targets before repeating the complete
 integration graph. Do not rebuild the Make control unless its relevant inputs or
