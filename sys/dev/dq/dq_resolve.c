@@ -23,6 +23,7 @@
 #include <sys/counter.h>
 #include <sys/fcntl.h>
 #include <sys/dqres.h>
+#include <sys/fdswap.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/kernel.h>
@@ -192,6 +193,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	const struct dq_resolve_target *rt;
 	struct dq_data *reply;
 	struct dq_object *robj;
+	struct fdswap rswap;
 	sbintime_t deadline;
 	size_t bodylen, strlen_;
 	char *p;
@@ -276,7 +278,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	deadline = ms > 0 ? sbinuptime() + (sbintime_t)ms * SBT_1MS : 0;
 
 	error = dq_event_post_wait_q(q, DQ_OP_RESOLVE, rb, bodylen, td,
-	    deadline, &reply, &rerror, &robj);
+	    deadline, &reply, &rerror, &robj, &rswap);
 	free(rb, M_DQ);
 	DQ_LOCK(q);
 	q->q_stats.ds2_resolves++;
@@ -296,6 +298,7 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 		return (error);
 	}
 	if (rerror != 0) {
+		KASSERT(rswap.fs_fp == NULL, ("dq: errno reply with a file"));
 		dq_reply_free(reply);
 		/*
 		 * link, fhlink and rename retry on EAGAIN (DQI_NO_ERESTART):
@@ -316,6 +319,8 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 	    ("dq: resolve kind %u outside %#x", rr->drr_kind, rq->rq_accept));
 	KASSERT((robj != NULL) == (rr->drr_kind == DQ_RESOLVE_FD),
 	    ("dq: resolve FD object"));
+	KASSERT((rswap.fs_fp != NULL) == (rr->drr_kind == DQ_RESOLVE_SWAP),
+	    ("dq: resolve SWAP file"));
 	ans->da_kind = rr->drr_kind;
 	ans->da_qgid = q->q_gid;
 	switch (rr->drr_kind) {
@@ -329,6 +334,13 @@ dq_resolve_consult(struct thread *td, struct dqres_binding *b,
 		ans->da_ident = malloc(sizeof(*ans->da_ident), M_TEMP,
 		    M_WAITOK);
 		*ans->da_ident = rm->drm_ident;
+		break;
+	case DQ_RESOLVE_SWAP:
+		/* The file taken at the reply (ev_rswap), now the answer's. */
+		ans->da_swap = malloc(sizeof(*ans->da_swap), M_TEMP, M_WAITOK);
+		*ans->da_swap = rswap;
+		ans->da_swflags = ((const struct dq_resolve_swap *)
+		    (rr + 1))->drw_flags;
 		break;
 	case DQ_RESOLVE_REAL:
 		/* An absolute, normalized real path (D167). */
@@ -398,6 +410,12 @@ dq_resolve_answer_release(struct thread *td, struct dqres_answer *ans)
 	ans->da_obj = NULL;
 	if (o != NULL)
 		dq_object_retire_unbound(o, td);
+	/* A SWAP answer nobody installed, or what its install left. */
+	if (ans->da_swap != NULL) {
+		fdswap_release(ans->da_swap, td);
+		free(ans->da_swap, M_TEMP);
+		ans->da_swap = NULL;
+	}
 }
 
 static int
@@ -618,6 +636,9 @@ dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
 		    (const struct dq_resolve_target *)((const char *)(rr + 1) +
 		    sizeof(struct dq_resolve_mint)),
 		    len - sizeof(struct dq_resolve_mint), true));
+	case DQ_RESOLVE_SWAP:
+		/* dq_resolve_swap_prepare checked the contents. */
+		return (len == sizeof(struct dq_resolve_swap) ? 0 : EINVAL);
 	case DQ_RESOLVE_REAL:
 		/* D167: an absolute, normalized real path. */
 		if (dq_resolve_target_validate(
@@ -787,6 +808,80 @@ dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	rm->drm_reasonp = NULL;
 	*robjp = o;
 	return (0);
+}
+
+/* fdswap_take's admit: the open layer's rule against the request. */
+static int
+dq_resolve_swap_admit(struct file *fp, const cap_rights_t *rights, void *arg)
+{
+
+	return (open_swap_admit(fp, *(const int *)arg, rights));
+}
+
+/*
+ * A SWAP answer, before the queue lock: peek that the event is a
+ * delivered RESOLVE that accepts SWAP and copy the request's open flags
+ * (the kernel's copy, drs_mode); check the payload; then take the file
+ * out of the replying process's table (fdswap_take: the transfer policy,
+ * the sole-reference rule, and open_swap_admit against the request, all
+ * under the table lock and before anything is consumed).  No dq lock is
+ * held across the table lock: the order is table, then q_mtx.
+ *
+ * A refusal is the controller's errno (dq.h), consumes nothing and
+ * leaves the event in flight; dq:::swap-refused carries it.  Any other
+ * reply (not a RESOLVE that accepts SWAP, or an event that is gone) is
+ * left to dq_reply_validate and the ESRCH path, with *sw empty.  On
+ * success *sw holds the reference; dq_queue_reply links it to the event
+ * or releases it.  drw_fd is cleared in dd, which observers copy: a
+ * descriptor number of the controller means nothing to them.
+ */
+int
+dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
+    struct thread *td, struct fdswap *sw)
+{
+	struct dq_resolve_swap *rw;
+	const struct dq_resolve_body *rb;
+	struct dq_event_k key, *ev;
+	int error, mode;
+
+	bzero(sw, sizeof(*sw));
+	key.ev_hdr.de_id = id;
+	DQ_LOCK(q);
+	ev = RB_FIND(dq_inflight_tree, &q->q_inflight, &key);
+	if (ev == NULL || ev->ev_hdr.de_op != DQ_OP_RESOLVE ||
+	    (dq_resolve_ev_body(ev)->drs_accept &
+	    DQ_RACCEPT(DQ_RESOLVE_SWAP)) == 0) {
+		DQ_UNLOCK(q);
+		return (0);
+	}
+	rb = dq_resolve_ev_body(ev);
+	KASSERT(rb->drs_op == DQ_ROP_OPEN, ("dq: SWAP offered for op %u",
+	    rb->drs_op));
+	mode = (int)rb->drs_mode;
+	DQ_UNLOCK(q);
+	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rw)) {
+		error = EINVAL;
+		goto refused;
+	}
+	rw = (struct dq_resolve_swap *)(dd->dd_bytes +
+	    sizeof(struct dq_resolve_reply));
+	if ((rw->drw_flags & ~DQ_SWAP_F_VALID) != 0 || rw->drw_spare[0] != 0 ||
+	    rw->drw_spare[1] != 0 || rw->drw_spare[2] != 0 ||
+	    ((rw->drw_flags & DQ_SWAP_F_CREATED) != 0 &&
+	    (mode & (O_CREAT | O_PATH)) != O_CREAT)) {
+		error = EINVAL;
+		goto refused;
+	}
+	error = fdswap_take(td, rw->drw_fd,
+	    (rw->drw_flags & DQ_SWAP_F_NOXFER) != 0 ? FDSWAP_NOXFER : 0,
+	    dq_resolve_swap_admit, &mode, sw);
+	if (error != 0)
+		goto refused;
+	rw->drw_fd = -1;
+	return (0);
+refused:
+	SDT_PROBE3(dq, , , swap__refused, q, id, error);
+	return (error);
 }
 
 /* An ATTACH start descriptor of q, held (none for -1). */

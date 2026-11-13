@@ -899,7 +899,51 @@ struct dq_resolve_reply {
 #define	DQ_RESOLVE_LINK		4	/* (iii) */
 #define	DQ_RESOLVE_OK		5	/* (iii) */
 #define	DQ_RESOLVE_REAL		6	/* + struct dq_resolve_target (iii-b) */
+#define	DQ_RESOLVE_SWAP		7	/* + struct dq_resolve_swap */
 #define	DQ_RESOLVE_REPLY_MAX	8192
+
+/*
+ * SWAP: the open file behind drw_fd, a descriptor of the replying
+ * process, becomes the result of the program's open(2).  The program then
+ * holds the real open file; no later operation on it reaches the queue.
+ * Offered (drs_accept) for DQ_ROP_OPEN where FD is.
+ *
+ * The file must be a vnode file opened for this answer and referenced by
+ * nothing else (EBUSY); a regular file or a directory, or any vnode when
+ * both it and the request are O_PATH (EOPNOTSUPP otherwise); with the
+ * request's access mode and status flags (EFTYPE), opened without
+ * O_TRUNC: the kernel truncates for an O_TRUNC request once the program's
+ * own write permission is checked.  The entry must be transferable
+ * (ENOTCAPABLE); the rights installed are the entry's, limited by its
+ * transfer ceiling.  A refused reply consumes nothing and leaves the
+ * event in flight.  After a successful reply the replying process closes
+ * drw_fd.
+ *
+ * At completion the program's thread checks its own MAC and DAC
+ * permission on the object, as its own open would have; a refusal there
+ * is the program's errno and is not reported to the replying process.
+ *
+ * No pointers: the layout is the same for every controller ABI.
+ */
+struct dq_resolve_swap {
+	int32_t		drw_fd;
+	uint32_t	drw_flags;		/* DQ_SWAP_F_* */
+	uint64_t	drw_spare[3];		/* 0 */
+};
+#define	DQ_SWAP_F_NOXFER	0x00000001	/* install as CAP_XFER_NONE */
+/*			0x00000002	   reserved */
+#define	DQ_SWAP_F_CREATED	0x00000004	/* the file did not exist and
+						   was created for this O_CREAT
+						   request (EINVAL without
+						   O_CREAT): the program's
+						   access check is skipped, and
+						   the file not truncated, if it
+						   is a regular file the
+						   program's effective uid owns
+						   with no immutable or
+						   append-only flag; otherwise
+						   the flag is ignored */
+#define	DQ_SWAP_F_VALID		(DQ_SWAP_F_NOXFER | DQ_SWAP_F_CREATED)
 
 struct dq_resolve_attr {		/* ATTR, LINK */
 	uint32_t	dra_flags;		/* 0 */
@@ -981,6 +1025,7 @@ _Static_assert(sizeof(struct dq_policy) == 56, "dq_policy");
 _Static_assert(sizeof(struct dq_caller) == 48, "dq_caller");
 _Static_assert(sizeof(struct dq_event) == 104, "dq_event");
 _Static_assert(sizeof(struct dq_read_body) == 16, "dq_read_body");
+_Static_assert(sizeof(struct dq_resolve_swap) == 32, "dq_resolve_swap");
 _Static_assert(sizeof(struct dq_reply) == 32, "dq_reply");
 _Static_assert(sizeof(struct dq_mint_args) == 3976, "dq_mint_args");
 _Static_assert(sizeof(struct dq_stats) == 144, "dq_stats");

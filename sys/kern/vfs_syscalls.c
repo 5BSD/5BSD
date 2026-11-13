@@ -50,6 +50,7 @@
 #include <sys/event.h>
 #include <sys/exterrvar.h>
 #include <sys/fcntl.h>
+#include <sys/fdswap.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/filio.h>
@@ -1528,11 +1529,168 @@ bad:
 }
 
 /*
+ * A swapped file as the result of open(2) (sys/fdswap.h): the open layer.
+ *
+ * open_swap_admit(): may this open file, held by the process answering
+ * the open, be what an open(2) with 'oflags' (the caller's, before
+ * openflags()) returns?  It must present as what the open would have
+ * produced: a vnode file, of a type and with the access mode and status
+ * flags the request asked for.  Run in the answering thread under its
+ * descriptor-table lock (fdswap_take), so it does not sleep; 'rights' are
+ * the rights that would be transferred.  A refusal goes to the answering
+ * process, never to the program:
+ *	EOPNOTSUPP	not a vnode; a full open of anything but a regular
+ *			file or a directory (a device's and a FIFO's open
+ *			acts in the opener's context, which a swap does not
+ *			run for the program)
+ *	EFTYPE		type, access mode or status flags differ
+ *	ENOTCAPABLE	O_SHLOCK/O_EXLOCK asked and CAP_FLOCK not transferred
+ *	EINVAL		the request's flags are not valid open flags
+ * O_CREAT, O_EXCL, and the choice of object are the answering process's
+ * own open; O_TRUNC is applied at completion (open_swap_check, then the
+ * caller), so the supplied file must not have been opened with it.
+ */
+#define	OPEN_SWAP_ACCMODE	(FREAD | FWRITE | FEXEC | O_PATH)
+#define	OPEN_SWAP_STATUS	(FAPPEND | FNONBLOCK | FFSYNC | FDSYNC | \
+	    O_DIRECT | FASYNC)
+
+int
+open_swap_admit(struct file *fp, int oflags, const cap_rights_t *rights)
+{
+	struct vnode *vp;
+	int fflags;
+
+	fflags = oflags;
+	if (openflags(&fflags) != 0)
+		return (EINVAL);
+	if (fp->f_type != DTYPE_VNODE || (vp = fp->f_vnode) == NULL)
+		return (EOPNOTSUPP);
+	if ((fflags & O_PATH) == 0) {
+		if (vp->v_type != VREG && vp->v_type != VDIR)
+			return (EOPNOTSUPP);
+		/* vn_open_vnode: a directory opens for reading or search. */
+		if (vp->v_type == VDIR && (fflags & (FWRITE | O_TRUNC)) != 0)
+			return (EFTYPE);
+	}
+	if ((fflags & O_DIRECTORY) != 0 && vp->v_type != VDIR)
+		return (EFTYPE);
+	if (((fp->f_flag ^ fflags) & (OPEN_SWAP_ACCMODE | OPEN_SWAP_STATUS)) !=
+	    0)
+		return (EFTYPE);
+	if ((fflags & (O_SHLOCK | O_EXLOCK)) != 0 && (fflags & O_PATH) == 0 &&
+	    !cap_rights_is_set(rights, CAP_FLOCK))
+		return (ENOTCAPABLE);
+	return (0);
+}
+
+/*
+ * open_swap_check(): the requesting thread's own permission on the file
+ * it is about to receive, MAC then DAC, in vn_open_vnode()'s order and
+ * with its access mode, so the program sees the errno its own open of
+ * this object would have given.  'fflags' are the request's flags after
+ * openflags().  VOP_OPEN is not run again: the file had its open, under
+ * the answering process's credential, and will have one close.
+ *
+ * 'declared_created': the answering process says it created the file for
+ * this O_CREAT request.  Base skips the access check for a file the open
+ * created; here that is honoured only for a regular file the requester's
+ * effective uid owns and that carries no immutable or append-only flag
+ * (what a false declaration then gains is bounded by what the owner's
+ * chmod could have).  *createdp says whether it was honoured; the caller
+ * then does not truncate, as base does not truncate a file it created.
+ */
+int
+open_swap_check(struct thread *td, struct file *fp, int fflags,
+    bool declared_created, bool *createdp)
+{
+	struct vattr va;
+	struct vnode *vp;
+	accmode_t accmode;
+	int error;
+	bool created;
+
+	*createdp = false;
+	MPASS(fp->f_type == DTYPE_VNODE);
+	vp = fp->f_vnode;
+	/* open_swap_admit made them equal; the union is belt and braces. */
+	fflags |= fp->f_flag & (FREAD | FWRITE | FEXEC);
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	if (VN_IS_DOOMED(vp)) {
+		error = EBADF;
+		goto out;
+	}
+	accmode = 0;
+	if ((fflags & O_PATH) == 0) {
+		if ((fflags & (FWRITE | O_TRUNC)) != 0)
+			accmode |= VWRITE;
+		if ((fflags & FREAD) != 0)
+			accmode |= VREAD;
+		if ((fflags & O_APPEND) != 0 && (fflags & FWRITE) != 0)
+			accmode |= VAPPEND;
+#ifdef MAC
+		if ((fflags & O_CREAT) != 0)
+			accmode |= VCREAT;
+#endif
+	}
+	if ((fflags & FEXEC) != 0)
+		accmode |= VEXEC;
+#ifdef MAC
+	if ((fflags & O_VERIFY) != 0)
+		accmode |= VVERIFY;
+	error = mac_vnode_check_open(td->td_ucred, vp, accmode);
+	if (error != 0)
+		goto out;
+	accmode &= ~(VCREAT | VVERIFY);
+#endif
+	/* The object the open returns, beside the name it asked for. */
+	AUDIT_ARG_VNODE1(vp);
+	created = false;
+	if (declared_created && (fflags & (O_CREAT | O_PATH)) == O_CREAT &&
+	    vp->v_type == VREG) {
+		error = VOP_GETATTR(vp, &va, td->td_ucred);
+		if (error != 0)
+			goto out;
+		created = va.va_uid == td->td_ucred->cr_uid &&
+		    (va.va_flags & (IMMUTABLE | APPEND)) == 0;
+	}
+	if (!created && accmode != 0) {
+		error = VOP_ACCESS(vp, accmode, td->td_ucred, td);
+		if (error != 0)
+			goto out;
+	}
+	/*
+	 * Base lets an O_PATH descriptor into a kqueue only when the opener
+	 * could read the node.  The flag is the supplied file's, which this
+	 * code does not alter: a file that has it is refused to a requester
+	 * that may not read (a documented difference from base, which would
+	 * have returned a descriptor without kqueue access).
+	 */
+	if ((fflags & O_PATH) != 0 && (fp->f_flag & FKQALLOWED) != 0 &&
+	    VOP_ACCESS(vp, VREAD, td->td_ucred, td) != 0) {
+		error = EACCES;
+		goto out;
+	}
+	*createdp = created;
+out:
+	VOP_UNLOCK(vp);
+	return (error);
+}
+
+/*
  * open(2) answered FD (D133, D159, D166, D176): the checks a real open of
  * the presented file would fail, the bind in the requester's credential,
  * O_EXLOCK/O_SHLOCK through fo_advlock (a LOCK event; a signal is EINTR,
  * never a restart after a served answer), O_TRUNC through fo_truncate,
  * then the install or *fpp.  O_CREAT and O_EXCL were the controller's.
+ *
+ * open(2) answered SWAP: the real open file the supervisor handed over.
+ * dqres_take_file makes the receive check; open_swap_check then checks
+ * this thread's own MAC and DAC permission on the object.  The lock and
+ * the truncation follow as for FD and in base's order, on the real file:
+ * the truncation is the kernel's, made only now that write permission
+ * was checked under this thread's credential, and not for a file the
+ * supervisor created for this open (base does not truncate what it
+ * created).  Any failure drops the file: nothing is installed.
  */
 static int
 openatfp_dqserved(struct thread *td, struct dq_intent *di, int flags,
@@ -1541,15 +1699,28 @@ openatfp_dqserved(struct thread *td, struct dq_intent *di, int flags,
 	struct file *fp;
 	struct flock lf;
 	int error, indx, type;
+	bool created, swap;
 
-	if (di->di_res.da_kind != DQ_RESOLVE_FD)
+	if (di->di_res.da_kind != DQ_RESOLVE_FD &&
+	    di->di_res.da_kind != DQ_RESOLVE_SWAP)
 		return (EIO);
+	swap = di->di_res.da_kind == DQ_RESOLVE_SWAP;
 	error = openflags(&flags);
 	if (error != 0)
 		return (error);
 	error = dqres_take_file(td, di, flags, &fp);
 	if (error != 0)
 		return (error);
+	created = false;
+	if (swap) {
+		error = open_swap_check(td, fp, flags,
+		    (di->di_res.da_swflags & DQ_SWAP_F_CREATED) != 0, &created);
+		if (error != 0) {
+			fdrop(fp, td);
+			return (error);
+		}
+		di->di_res.da_swcreated = created;
+	}
 	if ((flags & (O_EXLOCK | O_SHLOCK)) != 0 && (flags & O_PATH) == 0) {
 		lf.l_whence = SEEK_SET;
 		lf.l_start = 0;
@@ -1570,9 +1741,9 @@ openatfp_dqserved(struct thread *td, struct dq_intent *di, int flags,
 	/*
 	 * O_TRUNC as openatfp_dqimpl applies it, after D166 checked write
 	 * access (so O_RDONLY | O_TRUNC truncates as on a real file): the
-	 * object's SETATTR.
+	 * object's SETATTR.  For SWAP, the real file's truncation.
 	 */
-	if ((flags & O_TRUNC) != 0 && (flags & O_PATH) == 0) {
+	if ((flags & O_TRUNC) != 0 && (flags & O_PATH) == 0 && !created) {
 		error = fo_truncate(fp, 0, td->td_ucred, td);
 		if (error != 0) {
 			fdrop(fp, td);
@@ -1605,7 +1776,7 @@ openatfp(struct thread *td, int dirfd, const char *path,
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (openatfp_dqimpl(td, dirfd, path, pathseg, flags, mode, lookup_flags, fpp));
 	dq_intent_enter_served(td, &dqi, DQ_ROP_OPEN, DQI_USER,
-	    DQ_RACCEPT(DQ_RESOLVE_FD));
+	    DQ_RACCEPT(DQ_RESOLVE_FD) | DQ_RACCEPT(DQ_RESOLVE_SWAP));
 	dqi.di_cmode = ((mode & ~td->td_proc->p_pd->pd_cmask) & ALLPERMS) &
 	    ~S_ISTXT;
 	dqi.di_mode = flags;
