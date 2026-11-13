@@ -236,6 +236,45 @@ def parse_archive(nm, artifact):
     return {member: sorted(values) for member, values in sorted(symbols.items())}
 
 
+def compare_archive_symbols(candidate, reference):
+    """Compare every symbol, mapping only unambiguous path-derived DTrace IDs.
+
+    An alias ID denotes its entire archive incidence graph: member, original
+    function name and symbol kind for every definition/reference. Never erase IDs
+    independently per symbol, or guess a mapping between indistinguishable graphs.
+    This is a symbol contract, not DOF relocation or live probe qualification.
+    """
+    if candidate == reference:
+        return []
+
+    def contract(symbols):
+        ordinary, aliases = {}, {}
+        for member, entries in symbols.items():
+            ordinary[member] = []
+            for name, kind in entries:
+                match = re.fullmatch(r'\$dtrace([0-9]+)\.(.+)', name)
+                if match:
+                    key, function = match.groups()
+                    aliases.setdefault(key, []).append((member, function, kind))
+                else:
+                    ordinary[member].append((name, kind))
+            ordinary[member].sort()
+        signatures = {}
+        for key, entries in aliases.items():
+            signature = tuple(sorted(entries))
+            if signature in signatures:
+                raise ValueError('ambiguous DTrace archive alias incidence graph')
+            signatures[signature] = key
+        return ordinary, signatures
+
+    a, a_aliases = contract(candidate)
+    b, b_aliases = contract(reference)
+    if a != b or set(a_aliases) != set(b_aliases):
+        raise ValueError('archive member symbols differ from Make reference')
+    return [{'candidate_id': a_aliases[signature], 'reference_id': b_aliases[signature],
+             'incidence': signature} for signature in sorted(a_aliases)]
+
+
 def compare_archive(nm, ar, candidate, reference):
     records = {}
     for key, path in (('candidate', candidate), ('make_reference', reference)):
@@ -250,9 +289,9 @@ def compare_archive(nm, ar, candidate, reference):
     a, b = records['candidate'], records['make_reference']
     if [stem(m) for m in a['members']] != [stem(m) for m in b['members']]:
         raise ValueError('archive member set or order differs from Make reference')
-    if a['symbols'] != b['symbols']:
-        raise ValueError('archive member symbols differ from Make reference')
+    aliases = compare_archive_symbols(a['symbols'], b['symbols'])
     return {'scope': 'archive-member-symbol-comparison', **records,
+            'dtrace_alias_mapping': aliases,
             'byte_identical': sha(candidate) == sha(reference)}
 
 

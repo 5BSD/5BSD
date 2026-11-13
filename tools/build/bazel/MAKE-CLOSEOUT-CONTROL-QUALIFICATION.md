@@ -859,3 +859,35 @@ configuration, bootstrap/cache/sandbox, performance, publication and ARM64 gates
 The existing build-bsd format-5 path and documented archive source-order interface
 cover this declaration change; no C/CLI/manual input change is needed. Make stays
 production/default; BIP stays excluded.
+
+
+## DTrace archive alias symbol relationships (2026-11-13)
+
+DTrace's `hash_obj` derives alias IDs from object paths, so Make and native Bazel
+need not use the same numeric ID. The maintained checker now compares every
+ordinary symbol exactly and maps aliases only using their complete archive
+incidence signature: member identity, original function name and symbol kind at
+every definition/reference. Signatures must establish an unambiguous bijection;
+merged, split, missing, moved or renamed relationships are rejected. Reports keep
+both raw symbol tables plus each explicit ID mapping/incidence. This checks only
+symbol metadata, not address/relocation correctness or live DOF/probe behavior.
+
+`bazel-archive-dtrace-symbols-native-r1-20261113/receipt.json` passes the new
+maintained Bazel test; its retained log reports eleven actual unittest cases.
+They cover consistent remapping, broken/missing references, moved definitions,
+changed symbol kinds/functions/ordinary symbols, merged groups, ambiguous
+mappings and nonnumeric prefixes. The existing real-artifact test driver still
+passes all ten cases in `bazel-archive-pico-checker-r2-20261113/result.json`.
+
+`bazel-archive-dtrace-review-r1-20261113/review.json` freshly extracts/rechecks
+sixteen R4 archives against the preserved complete-review package/payload hashes.
+Fifteen pass complete member/symbol contracts with explicit mappings. PAM remains
+review-required: its merged static module has indistinguishable alias signatures,
+so no mapping is guessed. Actual definition/DOF relocation evidence is still
+required there. The overall report correctly remains review-required. It retains
+fresh artifacts, source copies, raw comparisons and verified input hashes; it is
+not another whole-system build or a waiver of the rejected historical reports.
+
+This checker/test change uses the maintained build-bsd format-5 test interface;
+no C/CLI input changes are required. The manual records symbol-only mapping scope.
+Make remains production/default. All remaining closeout gates remain in force.

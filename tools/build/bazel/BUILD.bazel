@@ -443,6 +443,10 @@ bsd_python_test(name = "package_archive_compare_test", src = "package-archive-co
     args = ["--tar", "$(rlocationpath @bsd_sdk//toolchain:extra_tar)", "--library", "$(rlocationpath :archive_inspection_library)"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_tar_runtime"])
 
+# Path-derived DTrace IDs require a whole-archive, bijective symbol relationship.
+bsd_python_test(name = "archive_dtrace_symbols_test", src = "archive-dtrace-symbols-test.py",
+    data = ["elf-artifact-check.py", "qualification_artifacts.py"])
+
 exports_files(["pkg_image.py"])
 
 bsd_python_test(name = "pkg_image_policy_test", src = "pkg-image-policy-test.py",

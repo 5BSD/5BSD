@@ -11,6 +11,15 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+The maintained archive symbol checker now maps path-derived DTrace IDs only by
+an unambiguous whole-archive member/function/kind incidence graph, preserving raw
+symbols and an explicit bijection. Eleven native adversarial cases and all ten
+existing real-artifact cases pass. Fresh hash-bound rechecks accept fifteen of
+the sixteen previously ID-only archive differences; PAM remains rejected because
+its merged module has ambiguous alias graphs. This is symbol metadata evidence,
+not DOF relocation, registration or live probe acceptance. Raw prior reviews stay
+unchanged; the three outstanding archive-order defects remain separate.
+
 Libzpool focused native R1 now passes archive/shared/installation construction and
 the queue selftest target (all eight selftests reported OK). Independent review
 R1 passes the full 204-member archive order/symbol contract and shared metadata.
