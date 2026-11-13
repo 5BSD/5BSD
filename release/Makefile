@@ -233,8 +233,19 @@ malloc-production-check:
 # option (options DQ_TEST_OPEN); see scripts/check-kernel-no-dq-test.sh.
 # The check reads what was staged, straight after it is installed, or the
 # package repository that goes onto the media.  There is no override.
+# Media trees are read a second time once packages and firmware have been
+# staged into them, together with every archive in the directories that
+# staging fills: the package store, the distribution sets and the staged
+# hardware repository.
 #
 KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/scripts/check-kernel-no-dq-test.sh
+MEDIA_KERNEL_TEST_OPTION_CHECK= \
+	${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET} && \
+	for store in usr/5bsd-packages usr/5bsd-dist usr/obj; do \
+		[ ! -d ${.OBJDIR}/${.TARGET}/$$store ] || \
+		    ${KERNEL_TEST_OPTION_CHECK} \
+		    -p ${.OBJDIR}/${.TARGET}/$$store || exit 1; \
+	done
 
 #
 # Legacy distribution tarballs
@@ -262,6 +273,11 @@ kernel.txz: # Also (if enabled) kernel-dbg.txz.
 	( cd ${WORLDDIR} && ${IMAKE} distributekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
 	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${DISTDIR}/kernel
 	( cd ${WORLDDIR} && ${IMAKE} packagekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
+# Every archive produced, which includes additional kernels
+# (kernel.NAME.txz) and the debug archives.
+	@for archive in ${.OBJDIR}/${DISTDIR}/kernel*.txz; do \
+		${KERNEL_TEST_OPTION_CHECK} -a "$$archive" || exit 1; \
+	done
 	mv ${DISTDIR}/kernel*.txz .
 
 src.txz:
@@ -473,6 +489,7 @@ disc1:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
+	@${MEDIA_KERNEL_TEST_OPTION_CHECK}
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -539,6 +556,7 @@ bootonly:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
+	@${MEDIA_KERNEL_TEST_OPTION_CHECK}
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -619,6 +637,7 @@ dvd:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
+	@${MEDIA_KERNEL_TEST_OPTION_CHECK}
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
