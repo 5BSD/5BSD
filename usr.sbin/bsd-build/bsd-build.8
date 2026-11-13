@@ -1737,14 +1737,23 @@ otherwise:
 .Bl -bullet -compact
 .It
 .Cm packages :
-system-packages checks the kernel object directory before packaging, the
-hardware repository after it is built, and both the base and hardware
+system-packages checks the kernel object directory of every configuration
+in
+.Va KERNCONF
+before packaging
+.Pq an empty Va KERNCONF No is refused ,
+the hardware repository after it is built, and both the base and hardware
 repositories before publication creates anything.
+hardware-packages-check, which builds nothing, reads the hardware
+repository when one exists.
 .It
 .Cm media :
-the release makefile checks the signed repository before it is copied,
-the package repository placed on the media, and each staged tree after a
-kernel is installed into it.
+the release makefile checks the signed repository before it is copied or
+the built repository after the hardware packages are merged into it, each
+staged tree after a kernel is installed into it and again after the
+packages and distribution sets are staged, and the package stores placed
+in the tree
+.Pq Pa usr/5bsd-packages , usr/5bsd-dist , usr/obj .
 .It
 .Cm snapshot :
 a kernel-test-option-check step reads the source repository before the
@@ -1765,6 +1774,9 @@ Files added through
 are not read by it.
 .El
 .Pp
+.Cm kernel ,
+.Cm stage ,
+.Cm sign ,
 .Cm construct ,
 .Cm boot-check ,
 .Cm inventory ,
@@ -1773,6 +1785,15 @@ and
 .Cm bsdinstall
 do not run the check and record
 .Cm not-performed .
+.Cm kernel
+and
+.Cm stage
+may build a test kernel on purpose, and the bundle that
+.Cm stage
+or
+.Cm sign
+signs is then a signed bundle around a test kernel: the bundle signature
+says nothing about the test option.
 .Cm inventory
 writes only an inventory.
 .Cm construct
@@ -1786,6 +1807,59 @@ and
 .Cm bsdinstall
 install from a repository; a repository published or snapshotted through
 this tool was checked then, and one obtained otherwise was not.
+.Pp
+The check sites, and how far each has been exercised:
+.Bl -column "Makefile.firecracker, vmimage.subr, arm.subr" "present, dry run"
+.It Sy Path Ta Sy Check
+.It "Makefile.hardware: system-packages," Ta "present, tested"
+.It "  hardware-packages, publish-packages" Ta ""
+.It "release/Makefile: pkgbase-repo" Ta "present, dry run"
+.It "release/Makefile: kernel.txz" Ta "present, dry run"
+.It "release/Makefile: disc1, bootonly, dvd" Ta "present, dry run"
+.It "  (memstick, iso and mini images use them)" Ta ""
+.It "Makefile.firecracker, vmimage.subr" Ta "present, dry run"
+.It "arm.subr" Ta "present, dry run on amd64"
+.It "build-bsd snapshot, image, boot-stage" Ta "present, plan tested"
+.It "Makefile.mirrors" Ta "none of its own"
+.It "Makefile.oci, make-oci-image.sh" Ta "none"
+.It "native-hardware.py, hardware-packages.py" Ta "none of their own"
+.It "Bazel kernel targets" Ta "none"
+.It "build-bsd kernel, stage, sign, construct," Ta "none"
+.It "  inventory, boot-check, deploy, bsdinstall" Ta ""
+.El
+.Pp
+.Dq tested
+means the recipe is run by the test suite from a private copy with
+fixture repositories.
+.Dq "dry run"
+means the recipe was run once by hand with the build steps replaced by
+stand-ins and a test kernel planted; no real media, image or arm64 system
+has been built through it.
+.Dq "plan tested"
+means the suite checks that the step is planned, and the script mode the
+step runs is tested by itself.
+The mirror makefile copies artifacts that the release makefile checked.
+The OCI image recipes name no kernel package and their output is not read.
+The hardware programs are checked by the makefiles that call them; the
+optional
+.Va PKGBASE_PKG_PACKAGE
+and
+.Va APPLICATION_PACKAGE_SELECTION
+archives given to publish-packages are not read by this check.
+The Bazel kernel files do not know the option and nothing checks what
+they produce.
+.Pp
+What the check reads: every file under a
+.Pa boot
+directory, and every file named as a kernel, module or their debug file
+anywhere else, in a tree or inside each package archive.
+A kernel or module that is compressed, or that the check cannot reach
+through a link, is refused.
+It does not look inside other compressed or nested content, such as an
+image or archive stored under
+.Pa boot ,
+and it does not read a kernel renamed to something else outside
+.Pa boot .
 .Pp
 Both checks find a test kernel that reaches publication by accident.
 A kernel with both signatures removed on purpose passes.

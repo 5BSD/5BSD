@@ -3611,11 +3611,16 @@ module, and no published configuration carries it.
 .Pp
 Such a kernel must never be published.
 .Pa release/scripts/check-kernel-no-dq-test.sh
-refuses a kernel or module built with the option wherever packages are
-published or release media are assembled, and
+refuses a kernel or module built with the option where the maintained
+package publication targets and the release media, virtual machine,
+Firecracker and arm image recipes run it, and
 .Xr build-bsd 8
 refuses to plan packages or media for a configuration that carries it.
 There is no override.
+Not every path that can produce a kernel runs the check;
+.Xr build-bsd 8
+lists the ones that do, how far each has been exercised, and the ones
+that do not.
 The check finds a test kernel that reaches publication by accident; it
 does not protect an installed system against someone who replaces its
 kernel.
