@@ -11,6 +11,22 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+The newer `bazel-closeout-system-native-r4-20261113` receipt passes the combined
+selected AMD64 world/GENERIC kernel/modules/450-package graph at explicit kernel
+revision `4a75f49343bb`, including all seven selected tests and digest-verified
+capture of 1,542 unique files. Independent package comparison R6 retains no
+package-name, payload-path or directory-claim differences. It still reports
+content, size, timestamps and manifest differences; complete parity is unaccepted.
+The new indexed ELF/archive review is a separate diagnostic, not implied by build
+success. The SDK is still Make-prepared and the normal backend remains Make.
+
+Bazel itself is not yet a base payload: the host uses the ports package
+`bazel9-9.3.1` at `/usr/local/bin/bazel`, and the selected 450-package index has no
+Bazel package. Shipping and qualifying Bazel in base remains required under gate
+5, including its runtime dependencies and fresh-install build usability. Keep the
+previously agreed OpenJDK build dependency boundary explicit; do not claim that
+using Bazel to build base makes Bazel part of base.
+
 The completed `bazel-closeout-system-native-r3-20261113` receipt passes the
 selected AMD64 world/kernel/module/450-package graph and all four selected tests
 at explicit kernel revision `83d696e46e20`. It captures 1,539 unique files with

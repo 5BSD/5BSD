@@ -673,3 +673,42 @@ comparison and publication integration remain required. build-bsd's existing
 format-5 source interface covers these normal dependency declarations; no C/CLI
 change is needed. The manual documents explicit LLVM components and runtime order.
 Make remains production/default.
+
+
+## Combined R4 and static libdq variants (2026-11-13)
+
+`bazel-closeout-system-native-r4-20261113/receipt.json` passes the complete
+selected AMD64 world/GENERIC kernel/module/450-package graph at explicit kernel
+revision `4a75f49343bb`, with all seven selected tests passed and 1,542 captured
+files. The R6 independent package archive comparison has no package-name,
+payload-path or directory-claim differences. It retains all content/size,
+timestamp and manifest diagnostics. The SDK is still Make-prepared; this is not
+independent bootstrap, installed runtime, full parity or performance acceptance.
+The separate complete indexed ELF R4 review retains its own source/input bindings.
+
+The remaining libdq archive mismatch was a producer defect: a target-wide
+`-fPIC` affected the ordinary objects installed in `libdq.a`, contrary to
+`lib/libdq/Makefile`. The rule now lets rules_cc compile separate ordinary/PIC
+variants and selects the existing `bsd_small_pic` toolchain feature to match
+Make's shared `PICFLAG=-fpic`. No comparator filters or output rewriting changed.
+`bazel-dq-object-variants-native-r1-20261113/receipt.json` passes the archive,
+shared library and installation archive plus all five selected device-independent
+libdq tests (no skips). `bazel-dq-object-variants-review-r1-20261113/review.json`
+passes member order/full member symbol comparison and shared-library metadata
+against hash-checked Make package payloads. These checks do not establish live
+DescriptorQueue service behavior or all architectures.
+
+Read-only classification of the earlier 17 static archive symbol mismatches
+finds that the other sixteen differ only in `$dtrace<key>.<function>` names.
+`dt_link.c:hash_obj` derives the key from the object path; removing digits alone
+would lose binding information. Their checks remain unaccepted until an explicit
+relationship-preserving comparison verifies definitions/references and retains
+raw names. Thirteen other archive cases have equal member sets/counts but differ
+in order; they remain producer review items. Duplicate-member archives and Make's
+`.pico` member spelling remain explicit checker coverage gaps.
+
+The selected package index also confirms that Bazel itself is not shipped in
+base; it is currently the host's `bazel9` ports package. Gate 5 must include a
+maintained base package, runtime dependency policy and fresh-install usability.
+No C frontend inputs change in this correction: the existing format-5 interface
+builds the declared targets. Make remains production/default and BIP is excluded.
