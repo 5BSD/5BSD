@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd November 6, 2026
+.Dd November 12, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -1580,6 +1580,11 @@ These fields describe the workflow's verification coverage, not an observed
 firmware state or a completed verification result.
 Production malloc and signed bundles do not qualify verified boot or
 protection against compromised root.
+The kernel_test_option_configuration and kernel_test_option_binary_check
+fields are described under
+.Sx TEST KERNEL REFUSAL ;
+the text format prints the same two values on a line beginning
+.Dq publication: .
 Subsequent records contain a sequence number, step name and exact argv array.
 No commands are executed and no output directories are created by a plan.
 This describes the current adapter invocation, not a completed artifact or
@@ -1675,6 +1680,119 @@ pointer.
 Creating or writing the destination requires normal filesystem
 permissions; the tool does not relocate it on permission failure.
 
+.Sh TEST KERNEL REFUSAL
+A kernel built with
+.Cd "options DQ_TEST_OPEN" ,
+the
+.Xr dq 4
+test option
+.Pq for example Pa GENERIC-DQTEST ,
+is a test kernel and is never published.
+Two separate things keep it out, and plans and results name each by what
+was actually done.
+.Pp
+First, for
+.Cm build , kernel , stage , packages
+and
+.Cm media
+the tool reads the selected kernel configuration and every file it
+includes, from each place
+.Xr config 8
+could take them from:
+.Fl -kernel-dir ,
+.Pa /usr/src/sys/ Ns Ar target Ns Pa /conf
+and
+.Pa /usr/src/sys/conf .
+.Cm packages
+.Pq and its alias Cm build
+and
+.Cm media
+are refused when the option is named anywhere in them outside a comment;
+.Cm nooptions
+does not lift the refusal, and there is no override.
+The kernel_test_option_configuration field records
+.Cm absent ,
+.Cm present
+.Pq development actions only ,
+.Cm not-read
+when some part of the configuration could not be found or read, or
+.Cm not-performed
+for actions that take no kernel configuration.
+A value of
+.Cm absent
+or
+.Cm not-read
+is a statement about configuration text, not about any kernel.
+.Pp
+Second,
+.Pa /usr/src/release/scripts/check-kernel-no-dq-test.sh
+reads the kernels and modules themselves and refuses any built with the
+option, any it cannot read, and any tree or repository that should hold a
+kernel and does not.
+The kernel_test_option_binary_check field is
+.Cm requested
+where the steps of the action run it and
+.Cm not-performed
+otherwise:
+.Bl -bullet -compact
+.It
+.Cm packages :
+system-packages checks the kernel object directory before packaging, the
+hardware repository after it is built, and both the base and hardware
+repositories before publication creates anything.
+.It
+.Cm media :
+the release makefile checks the signed repository before it is copied,
+the package repository placed on the media, and each staged tree after a
+kernel is installed into it.
+.It
+.Cm snapshot :
+a kernel-test-option-check step reads the source repository before the
+copy.
+.It
+.Cm image :
+a kernel-test-option-check step reads the image root: everything under
+its
+.Pa /boot
+and every kernel or module by name anywhere in it.
+A root without a kernel is accepted.
+.It
+.Cm boot-stage :
+a kernel-test-option-check step reads the boot archive, the kernel and
+modules the stage will carry, before anything is staged or signed.
+Files added through
+.Fl -boot-generated
+are not read by it.
+.El
+.Pp
+.Cm construct ,
+.Cm boot-check ,
+.Cm inventory ,
+.Cm deploy
+and
+.Cm bsdinstall
+do not run the check and record
+.Cm not-performed .
+.Cm inventory
+writes only an inventory.
+.Cm construct
+can extract a kernel into a private root, which
+.Cm image
+then checks.
+.Cm boot-check
+writes nothing.
+.Cm deploy
+and
+.Cm bsdinstall
+install from a repository; a repository published or snapshotted through
+this tool was checked then, and one obtained otherwise was not.
+.Pp
+Both checks find a test kernel that reaches publication by accident.
+A kernel with both signatures removed on purpose passes.
+Neither is bundle signing, neither verifies boot, and neither protects an
+installed system against a compromised root replacing its kernel; the
+boot_verification and root_protection_verification fields are unchanged
+by them.
 .Sh INSTALLED BOOT OBSERVATION
 .Cm boot-observe
 requires
