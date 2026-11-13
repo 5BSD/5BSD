@@ -342,10 +342,37 @@ selection, ambient trust isolation, malformed/nonregular refusal, producer METAL
 and archive contents/ownership/modes. The captured complete world inventory has
 447 world package families and 175 construction files, including all 168 generated
 certificate files. Kernel package families are separate from this world inventory.
-This accepts producer/archive/world-inventory construction; actual updated image,
-runtime TLS, subsequent full package integration and upgrade behavior remain open.
+The subsequent complete image run,
+`bazel-certificate-image-native-r1-20261113/receipt.json`, passes the selected full
+package/image graph and both selected tests, including the actual package solver.
+The owned 2 GiB VM `bazel-certificate-vm-r1-20261113/result.json` passes all 15
+checks and normal poweroff in 292.78 seconds: Capsule PID1, ZFS root, all 450
+installed packages, login/PAM, SSH/su positive and negative authentication,
+firstboot account/database proof, and complete installed-tree reconciliation.
+The audit accounts only for independently verified firstboot transitions and
+explicitly selected ZFS archive-bit behavior; it does not silently accept extra
+payload changes. The original backing image and bound runner sources are checked
+unchanged. Sampled QEMU RSS peaks at 2,440,413,184 bytes below the 4 GiB budget;
+maximum observed overlay allocation is 14,598,656 bytes. This is a sampled process
+bound, not an aggregate-memory or comparative disk-I/O benchmark.
+
+The optional maintained certificate runtime policy supplies installed tool paths,
+bundle/local-directory paths, loopback port and deadline. Its four parser/failure
+cases pass natively in `bazel-certificate-runtime-test-native-r1-20261113`.
+The real guest `certificate-proof.json` passes ordinary-user fetch with default
+trust and no insecure flags or CA overrides: rejection of an untrusted local TLS
+server; acceptance after normal local CA installation and certctl rehash;
+rejection after removal and rehash; byte-identical restoration of the original
+bundle. Test keys, server and private state are owned by that guest and removed.
+This proves this installed fresh candidate's selected default TLS/local-CA
+lifecycle, not every application, external public TLS, signed upgrade/rollback
+on this candidate or Secure Boot. The earlier full upgrade/service scenario stays
+separate evidence until repeated against a subsequent candidate.
+
 Existing format-5 build-bsd target inputs support this batch without a new C
-frontend flag. Make remains production/default; no host installation occurred.
+frontend flag. The maintained VM runner, test target and frontend manual describe
+the optional policy; no separate production build backend was introduced.
+Make remains production/default; no host installation occurred.
 
 The refreshed SDK snapshot differs from the previous snapshot in only
 `sys/cap_authority.h` and `sys/proc.h`; exact hashes are retained in

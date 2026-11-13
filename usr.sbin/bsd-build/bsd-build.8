@@ -8119,6 +8119,17 @@ See
 .Pa tools/build/bazel/SYSTEM-IMAGE-BOOT-QUALIFICATION.md .
 
 .Pp
+Runtime plan formats 3 through 5 may also select an explicit certificate_policy.
+The maintained example is
+.Pa tools/test/system-pkg-runtime/certificates.json .
+It specifies installed OpenSSL/certctl/fetch paths, the bundle, local trust
+directory, a guest-loopback port and a bounded phase deadline. After the installed
+tree audit, an owned guest TLS server exercises ordinary-user fetch without
+insecure flags or CA overrides: rejection before trust, acceptance after normal
+local CA installation/rehash, and rejection after removal. The probe restores the
+original bundle bytes and removes its private state. This is selected default TLS
+and local-CA lifecycle coverage, not external-server or every application coverage.
+.Pp
 The normal runtime plan also requires explicit terminal_rows and terminal_columns.
 Its serial driver answers bounded absolute-position/DSR size probes and waits for
 the actual shell prompt before sending commands, preserving normal login-profile

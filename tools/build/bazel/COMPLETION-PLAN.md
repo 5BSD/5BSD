@@ -30,9 +30,14 @@ producer/archive test (ten cases), construction-input test (seven) and world
 inventory test (eight), through the maintained frontend. The captured complete
 world inventory now includes all 168 generated certificate files, selected by
 CAROOT/OPENSSL/CRYPT and reconciled from declared tree metadata. Image composition
-uses the same declarations. The actual updated image/runtime TLS and subsequent
-whole-system package integration remain to be qualified; see the Make closeout
-record for retained failures and precise evidence.
+uses the same declarations. The complete updated image/package graph now passes
+`bazel-certificate-image-native-r1-20261113`, and its 2 GiB VM passes 15 normal
+boot/authentication/installed-tree/default TLS checks with normal poweroff.
+Ordinary-user fetch rejects an untrusted server, accepts it after normal local-CA
+installation/rehash, rejects it after removal and restores the original bundle.
+This is selected fresh-image acceptance, not a repeat of the full signed-BE
+upgrade/provider/rollback scenario on this candidate. See the Make closeout record
+for retained failures, source bindings and remaining gates.
 
 Close remaining defects in batches against the retained Make control. Reuse the
 Bazel state/cache and test the affected targets before repeating the complete
