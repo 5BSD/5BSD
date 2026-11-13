@@ -34,7 +34,8 @@
 #   before tests start; default: the twelve core providers that
 #   software-application-guest.sh requires), QEMU, QEMU_DATA,
 #   DRYRUN=1 (build and check the image, do not boot), LOADER_EXTRA (extra
-#   loader.conf lines), SRC_IMAGE (a UFS image mounted read-only at /usr/src).
+#   loader.conf lines), SRC_IMAGE and PORTS_IMAGE (UFS images mounted
+#   read-only at /usr/src and /usr/ports).
 #   ISOLATION_ENFORCE=1 retains production device isolation for deployment
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
@@ -138,6 +139,17 @@ if [ -n "$src_image" ]; then
 	/*,*|[!/]*) echo "SRC_IMAGE must be an absolute path without a comma" >&2; exit 64;;
 	esac
 	[ -f "$src_image" ] || { echo "no such SRC_IMAGE: $src_image" >&2; exit 64; }
+fi
+# PORTS_IMAGE: likewise a UFS image of a ports tree, mounted read-only at
+# /usr/ports (build-bsd's default ports checkout).  It follows the source
+# image in disk order, so it requires SRC_IMAGE.
+ports_image=${PORTS_IMAGE:-}
+if [ -n "$ports_image" ]; then
+	[ -n "$src_image" ] || { echo "PORTS_IMAGE requires SRC_IMAGE" >&2; exit 64; }
+	case $ports_image in
+	/*,*|[!/]*) echo "PORTS_IMAGE must be an absolute path without a comma" >&2; exit 64;;
+	esac
+	[ -f "$ports_image" ] || { echo "no such PORTS_IMAGE: $ports_image" >&2; exit 64; }
 fi
 linux_compat_dir=${LINUX_COMPAT_DIR:-}
 if [ -n "$linux_compat_dir" ]; then
@@ -276,8 +288,9 @@ cat > "$x/fstab" <<'EOF'
 tmpfs		/tmp	tmpfs	rw,mode=1777	0	0
 tmpfs		/Capabilities/Run	tmpfs	rw,mode=0700	0	0
 EOF
-# The third disk (after root and results); a failed mount stops rc.
+# The third and fourth disks (after root and results); a failed mount stops rc.
 [ -z "$src_image" ] || printf '/dev/vtbd2\t/usr/src\tufs\tro\t0\t0\n' >> "$x/fstab"
+[ -z "$ports_image" ] || printf '/dev/vtbd3\t/usr/ports\tufs\tro\t0\t0\n' >> "$x/fstab"
 if [ -n "$linux_compat_dir" ]; then
 	cat >> "$x/fstab" <<'EOF'
 linprocfs	/compat/linux/proc	linprocfs	rw	0	0
@@ -574,6 +587,8 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	m root/kyua-planeon.suites 0444 suites
 	m root/vm-extra.sh 0555 extra.sh
 	[ -z "$sysctl_write" ] || m "$sysctl_conf" 0644 sysctl.conf
+	# A stage has /usr/src but no /usr/ports mount point.
+	[ -z "$ports_image" ] || echo "./usr/ports type=dir uname=root gname=wheel mode=0755"
 	if [ -n "$extra_dir" ]; then
 		echo "./root/vm-extra.d type=dir uname=root gname=wheel mode=0755"
 		for f in "$extra_dir"/*; do
@@ -663,6 +678,9 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
 [ -z "$src_image" ] || set -- "$@" \
     -drive "file=$src_image,format=raw,if=none,id=src,readonly=on" \
     -device virtio-blk-pci,drive=src,serial=usr-src
+[ -z "$ports_image" ] || set -- "$@" \
+    -drive "file=$ports_image,format=raw,if=none,id=ports,readonly=on" \
+    -device virtio-blk-pci,drive=ports,serial=usr-ports
 printf '%s\n' "$@" > "$work/command.txt"
 "$@" > "$work/qemu.log" 2>&1 &
 qpid=$!
