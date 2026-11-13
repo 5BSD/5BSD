@@ -7959,6 +7959,17 @@ the GDB directory created by install -d remains an explicit package claim.
 The existing format-5 frontend selects these maintained declarations; no additional
 command-line option or pathname-based exclusion is used.
 .Pp
+The maintained package-elf-review.py diagnostic reads verified package indexes
+and a captured native installation inventory. It reviews non-debug programs,
+shared libraries and static archives with the existing ELF contract checker;
+debug-tagged artifacts and unsupported ELF kinds are separately accounted for.
+It never executes installed payloads, extracts member-named paths, rewrites
+outputs or establishes complete ABI, instruction, runtime or debug-file parity.
+Raw archive comparison remains independent. The package_elf_review_test target
+exercises bounded archive streaming, trailing-data and unsafe-path refusal.
+These diagnostics use the existing format-5 qualification interface; the normal
+production backend remains Make.
+.Pp
 The maintained world-pkg-install-fixture.py helper consumes captured native world
 and package outputs plus an explicit fixture plan to prepare disposable VM disks.
 Its native ATF driver tests complete package installation and same-version reinstall

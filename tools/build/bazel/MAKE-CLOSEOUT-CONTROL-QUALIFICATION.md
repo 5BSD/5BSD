@@ -432,3 +432,67 @@ parity, current-source control reconciliation and the other completion gates
 remain open. The maintained format-5 build-bsd interface needs no new C option;
 its manual documents world versus kernel ownership policy. Production/default
 remains Make.
+
+### Complete indexed ELF review and focused source fixes (2026-11-13)
+
+`package-elf-review.py` replaces reliance on three sampled programs with indexed
+package-wide review. It consumes the verified reference/candidate indexes and
+hash-verified native installation inventory; no filename whitelist selects the
+programs. It streams each package through declared tar, copies selected bytes to
+non-executable hash-named private files, and invokes the maintained ELF/archive
+checker. Debug-tagged artifacts, other regular files, unmodeled paths, unsupported
+ELF types and selection differences remain counted explicitly. It checks input
+hashes again at completion and retains checker source copies and per-package
+results. No payload is executed and no raw byte differences are normalized.
+The scope remains metadata/symbol/section diagnosis, not full ABI/instruction,
+debug-link, kernel/module or runtime qualification.
+
+Review R1 was stopped after a confirmed wait-before-drain deadlock on tar's
+trailing padding. R2 produced all package details but failed its final binding
+check because a string key was passed to a Path-only digest helper. Neither run
+is accepted. R3 completes the frozen 450-package candidate review after those
+tool fixes, with all final input hashes verified:
+`bazel-package-elf-review-r3-20261113/review.json` has status review-required.
+Reference and candidate each contain 1,817 selected non-debug ELF files and 232
+static archives, plus 1,809 debug-tagged regular files explicitly outside this
+review's scope. There are no selection differences or unmodeled regular paths.
+Of 2,049 contracts attempted, 1,231 pass and 818 require review: 734 relocatable
+objects outside the program/shared checker, 40 program metadata differences,
+four shared-library metadata differences, 30 archive order/symbol differences,
+six duplicate-member archives, two unhandled .pico archive spellings, the loader
+without ordinary SONAME/interpreter metadata, and the kernel outside the ordinary
+PIE-program contract. A review-required result is not parity acceptance.
+The frozen candidate predates the three focused corrections below. Library-order
+differences account for 39 program and all four shared-library discrepancies;
+zstream accounts for the remaining program import mismatch. Sampled libc/libsys
+archive inventories have equal member sets but differing order; no conclusion
+about all archives follows. These must not be silently treated as passes.
+
+Four bounded regression cases cover padding larger than a pipe, nonzero trailing
+data, duplicate members and traversal without extraction. Host execution and
+`bazel-package-elf-review-test-native-r2-20261113/receipt.json` pass all four through
+the maintained frontend. The controlled producer in this test is a diagnostic
+pipe fixture, never a substitute for an operating system build or runtime test.
+
+The source Make LIBADD order is now restored for ctfconvert and ctfmerge using
+normal deps/dynamic_deps declarations. `bazel-ctf-link-order-native-r1-20261113`
+passes the focused build and runtime-path regression target. Both captured
+production executables pass the existing ELF checker against payloads extracted
+from the independently verified Make ctf package; exact commands and native and
+reference bindings are in `bazel-ctf-link-order-review-r1-20261113/review.json`.
+
+The Make zstream dependency file selects SPL assert.h followed by the Solaris
+compatibility wrapper. Native zstream omitted that latter header dependency,
+causing an extra imported __assert symbol. Its source header group now declares
+the missing wrapper dependency for both the program and I/O compilation.
+`bazel-zstream-headers-native-r1-20261113/receipt.json` passes the production
+build and all eight maintained queue selftests. Its full existing ELF metadata
+contract now matches the verified Make package payload, including imported and
+exported symbols and ordered dependencies; retained review:
+`bazel-zstream-header-review-r1-20261113/review.json`.
+
+These focused fixes are newer than the frozen complete-package candidate and
+require subsequent complete integration. Other lookup-order/archive discrepancies,
+configuration/ARM64/bootstrap/performance/publication and broader runtime gates
+remain open. The existing format-5 frontend needs no C interface change; its
+manual now describes this diagnostic and its limits. Make stays production/default.

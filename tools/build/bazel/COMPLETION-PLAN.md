@@ -55,6 +55,17 @@ required configuration change. Preserve raw differences and historical failures.
 See MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md for the current comparison and bounds.
 All six gates below remain the completion criteria; Make remains production/default.
 
+The indexed ELF review now covers all 450 frozen candidate packages, accounting
+for 1,817 non-debug ELF files and 232 static archives without selection omissions.
+It passes 1,231 existing contracts and explicitly retains 818 review-required
+cases, including 734 relocatable objects outside its scope. This does not close
+ABI/debug/kernel/module or runtime gates. Focused newer native builds and Make
+ELF comparisons pass ctfconvert/ctfmerge source LIBADD-order corrections and
+zstream's missing Solaris compatibility-header dependency; all eight zstream
+queue selftests and four bounded reviewer regression cases pass. Complete
+integration of those newer fixes and the remaining library/archive discrepancies
+is still required. See the Make closeout record for exact receipts and failures.
+
 
 ## Independent Make closeout comparison (2026-11-11)
 

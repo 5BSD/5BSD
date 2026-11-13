@@ -84,7 +84,9 @@ cc_library(name = "pam_zfs_headers", hdrs = glob(["lib/libzpool/include/**/*.h",
     includes = [".", "lib/libzpool/include", "include/os/freebsd/zfs"], deps = [":spl_headers"], visibility = ["//cddl/lib/pam_zfs_key:__pkg__"])
 
 exports_files(['cmd/zstream/zstream.c', 'cmd/zstream/zstream_backtrace.c', 'cmd/zstream/zstream_byteswap.c', 'cmd/zstream/zstream_chain.c', 'cmd/zstream/zstream_decompress.c', 'cmd/zstream/zstream_drop_records.c', 'cmd/zstream/zstream_dump.c', 'cmd/zstream/zstream_fletcher4.c', 'cmd/zstream/zstream_io.c', 'cmd/zstream/zstream_queue.c', 'cmd/zstream/zstream_raw.c', 'cmd/zstream/zstream_recompress.c', 'cmd/zstream/zstream_redup.c', 'cmd/zstream/zstream_selftest.c', 'cmd/zstream/zstream_selftest_queue.c', 'cmd/zstream/zstream_token.c', 'cmd/zstream/zstream_util.c', 'cmd/zstream/zstream_validate.c', 'cmd/zstream/zstream.h', 'man/man8/zstream.8'], visibility = ["//cddl/usr.bin/zstream:__pkg__"])
-cc_library(name = "zstream_headers", hdrs = glob(["cmd/zstream/*.h", "lib/libzpool/include/**/*.h"]), includes = ["cmd/zstream", "lib/libzpool/include"], deps = [":spl_headers"], visibility = ["//cddl/usr.bin/zstream:__pkg__"])
+# The source zstream Make recipe includes the Solaris compatibility wrappers
+# after SPL; SPL assert.h uses include_next to reach their inline assertion API.
+cc_library(name = "zstream_headers", hdrs = glob(["cmd/zstream/*.h", "lib/libzpool/include/**/*.h"]), includes = ["cmd/zstream", "lib/libzpool/include"], deps = [":spl_headers", "//cddl/compat/opensolaris/include:headers"], visibility = ["//cddl/usr.bin/zstream:__pkg__"])
 
 exports_files(['cmd/zinject/zinject.c', 'cmd/zinject/translate.c', 'cmd/zinject/zinject.h', 'man/man8/zinject.8'], visibility = ["//cddl/usr.bin/zinject:__pkg__"])
 cc_library(name = "zinject_headers", hdrs = glob(['lib/libzpool/include/**/*.h', 'cmd/zinject/*.h']), includes = ['lib/libzpool/include', 'cmd/zinject'], deps = [":spl_headers"], visibility = ["//cddl/usr.bin/zinject:__pkg__"])
