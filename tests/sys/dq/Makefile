@@ -42,6 +42,7 @@ ATF_TESTS_C+=	dq_exec_test
 ATF_TESTS_C+=	dq_launch_test
 ATF_TESTS_C+=	dq_bootstrap_test
 ATF_TESTS_C+=	dq_legitimacy_test
+ATF_TESTS_C+=	dq_owner_test
 ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test

@@ -70,6 +70,9 @@
  * attach_errno_order: non-owner rows    lg-3    T: EPERM for all four
  * attach_errno_order: root rows         -       T: preserve (as above for
  *                                               lg-5b on P)
+ * owner_dropped_attach: every row       lg-3    re-home on a role-holding
+ *                                               owner; the answers stay
+ * owner_jailed_attach: every row        lg-3    as owner_dropped_attach
  * observe_connect_gate: root lists      lg-3    P: stops at the open.  T:
  *                                               preserve (PRIV_DRIVER on
  *                                               a test kernel)
@@ -155,7 +158,7 @@
 /* The descriptor number the exec'd programs find an inherited queue at. */
 #define	LG_QFD		9
 /* The cases below; a complete amd64 run reports this many, none skipped. */
-#define	LG_NCASES	18
+#define	LG_NCASES	20
 
 /*
  * In place of require.user root, which would turn an unprivileged run into
@@ -1657,6 +1660,297 @@ ATF_TC_BODY(ilp32_no_abi, tc)
 	ATF_CHECK_EQ(100, exec_errno("./ilp32_linux"));
 }
 
+/*
+ * An owner whose credential changed after its open
+ *
+ * ATTACH decides on the calling thread's credential (p_candebug), not on
+ * the credential the queue was opened under.  These two cases show the
+ * errno order of ATTACH to a caller that may not debug every target, and
+ * that the caller is still the process that opened the queue: it opened
+ * as unjailed root and then gave up all three user ids, or entered a jail,
+ * for good.  It is not an "unprivileged owner" in the sense of the role
+ * (lg-3): that one opens without privilege.
+ *
+ * Changes in lg-3: re-homed onto a role-holding owner.  From sc-q on these
+ * are the only unprivileged callers of ATTACH there are, a holder that is
+ * not the opener being refused before any of this is looked at.
+ */
+
+/* An attach target an unprivileged caller may debug: see the helper. */
+struct clean_target {
+	pid_t		 pid;		/* the helper, its parent */
+	int		 sock;
+	int		 pd;
+};
+
+static void
+clean_target_spawn(const atf_tc_t *tc, struct clean_target *t)
+{
+	char path[PATH_MAX];
+	int sv[2];
+
+	snprintf(path, sizeof(path), "%s/dq_legitimacy_helper",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	t->pid = fork();
+	ATF_REQUIRE(t->pid != -1);
+	if (t->pid == 0) {
+		/* The helper must see the test's close as end of file. */
+		if (sv[0] != LG_QFD)
+			(void)close(sv[0]);
+		if (sv[1] != LG_QFD) {
+			if (dup2(sv[1], LG_QFD) != LG_QFD)
+				_exit(126);
+			(void)close(sv[1]);
+		}
+		closefrom(LG_QFD + 1);
+		if (!become_nobody())
+			_exit(4);
+		execl(path, path, "target", (char *)NULL);
+		_exit(127);
+	}
+	(void)close(sv[1]);
+	t->sock = sv[0];
+	t->pd = recv_fd(t->sock);
+	ATF_REQUIRE_MSG(t->pd != -1, "%s sent no target", path);
+}
+
+static void
+clean_target_end(struct clean_target *t)
+{
+	int status;
+
+	(void)close(t->pd);
+	(void)close(t->sock);
+	ATF_REQUIRE_EQ(t->pid, waitpid(t->pid, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the target's parent: status %#x", status);
+}
+
+#define	OWNER_NTARGETS	7
+/* Result slots: three of the owner's own, then one per target. */
+#define	OWNER_T0	3
+
+struct owner_arg {
+	bool		 nobody;	/* give up root after the open */
+	int		 jid;		/* enter this jail after it, or -1 */
+	int		 t[OWNER_NTARGETS];	/* attach these in order; -1: none */
+};
+
+static void
+child_owner_after(void *arg, void *result)
+{
+	struct owner_arg *a = arg;
+	struct lg_res *res = result;
+	struct dq_stats st;
+	int i, q;
+
+	/* Unjailed root: the queue is this process's own. */
+	q = dq_open();
+	if (q == -1)
+		_exit(6);
+	if (a->jid != -1 && jail_attach(a->jid) != 0)
+		_exit(5);
+	if (a->nobody && !become_nobody())
+		_exit(4);
+	/* It could not open the queue now, and cannot go back. */
+	SET(res->r[0], open(DQ_DEVICE, O_RDWR));
+	SET(res->r[1], a->nobody ? setuid(0) : jail_attach(0));
+	SET(res->r[2], dq_get_stats(q, &st));
+	res->id = res->r[2].rv == 0 ? st.ds_queue_id : 0;
+	for (i = 0; i < OWNER_NTARGETS; i++) {
+		if (a->t[i] != -1)
+			SET(res->r[OWNER_T0 + i], dq_attach(q, a->t[i]));
+	}
+}
+
+static void
+owner_arg_init(struct owner_arg *a, bool nobody, int jid)
+{
+	int i;
+
+	a->nobody = nobody;
+	a->jid = jid;
+	for (i = 0; i < OWNER_NTARGETS; i++)
+		a->t[i] = -1;
+}
+
+static void
+proc_debug_save(void)
+{
+	FILE *f;
+	u_int old;
+
+	ATF_REQUIRE(dqt_sysctl_get_uint(PROC_DEBUG, &old));
+	f = fopen("proc_debug.save", "w");
+	ATF_REQUIRE(f != NULL);
+	fprintf(f, "%u\n", old);
+	ATF_REQUIRE_EQ(0, fclose(f));
+}
+
+static void
+proc_debug_restore(void)
+{
+	FILE *f;
+	u_int old;
+
+	f = fopen("proc_debug.save", "r");
+	if (f != NULL) {
+		if (fscanf(f, "%u", &old) == 1)
+			(void)sysctlbyname(PROC_DEBUG, NULL, NULL, &old,
+			    sizeof(old));
+		(void)fclose(f);
+	}
+}
+
+/*
+ * Preserve (attach errno order; design 15.3, review 4 N1), on the process
+ * that opened the queue: argument errors (EINVAL), a target that is gone
+ * (ESRCH), the caller's right to debug it (EPERM), the target's state
+ * (EBUSY), and success for a target it may debug that has not exec'd.
+ * The rows are those of attach_errno_order, attach_child_jail_target and
+ * bearer_exec_attach, whose caller is a holder that did not open the queue.
+ *
+ * The same-uid targets have exec'd (EBUSY) or are children of a program
+ * that has (0): a process that changed its ids and has not exec'd since
+ * is P_SUGID, which only PRIV_DEBUG_SUGID may debug.  For the same reason
+ * this owner cannot attach a child of its own (EPERM): it is P_SUGID and
+ * so are its children.
+ */
+ATF_TC_WITH_CLEANUP(owner_dropped_attach);
+ATF_TC_HEAD(owner_dropped_attach, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "ATTACH by the queue's opener after "
+	    "it dropped privilege: EINVAL, ESRCH, EPERM before EBUSY for "
+	    "another user's target that exec'd, EBUSY for its own user's, "
+	    "EPERM for that one in a child jail, 0 for one it may debug; "
+	    "EPERM with unprivileged_proc_debug off");
+}
+ATF_TC_BODY(owner_dropped_attach, tc)
+{
+	struct clean_target clean, clean2;
+	struct idle execed, exited, jailed, plain;
+	struct owner_arg a;
+	struct lg_res res;
+	int jid, notpd, status;
+
+	LG_ROOT();
+	proc_debug_save();
+	dqt_sysctl_set_uint(PROC_DEBUG, 1);
+	jid = make_jail("dq_lg_owner_target");
+
+	notpd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(notpd != -1);
+	idle_spawn(&exited, NULL);
+	(void)write(exited.go[1], "x", 1);
+	ATF_REQUIRE_EQ(0, pdwait(exited.pd, &status, WEXITED, NULL, NULL));
+	idle_spawn(&execed, "/bin/sleep");
+	idle_exec(&execed);
+	idle_spawn_as(&plain, "/bin/sleep", -1, true);
+	idle_exec(&plain);
+	idle_spawn_as(&jailed, "/bin/sleep", jid, true);
+	idle_exec(&jailed);
+	clean_target_spawn(tc, &clean);
+	clean_target_spawn(tc, &clean2);
+
+	owner_arg_init(&a, true, -1);
+	a.t[0] = notpd;
+	a.t[1] = exited.pd;
+	a.t[2] = execed.pd;
+	a.t[3] = plain.pd;
+	a.t[4] = jailed.pd;
+	a.t[5] = clean.pd;
+	memset(&res, 0, sizeof(res));
+	dqt_run_child(child_owner_after, &a, &res, sizeof(res));
+	CHECK_ERR(res.r[0], EACCES);
+	CHECK_ERR(res.r[1], EPERM);
+	CHECK_OK(res.r[2]);
+	CHECK_ERR(res.r[OWNER_T0 + 0], EINVAL);
+	CHECK_ERR(res.r[OWNER_T0 + 1], ESRCH);
+	CHECK_ERR(res.r[OWNER_T0 + 2], EPERM);
+	CHECK_ERR(res.r[OWNER_T0 + 3], EBUSY);
+	CHECK_ERR(res.r[OWNER_T0 + 4], EPERM);
+	CHECK_OK(res.r[OWNER_T0 + 5]);
+
+	/* The knob: the target that will attach below is refused. */
+	dqt_sysctl_set_uint(PROC_DEBUG, 0);
+	owner_arg_init(&a, true, -1);
+	a.t[0] = clean2.pd;
+	memset(&res, 0, sizeof(res));
+	dqt_run_child(child_owner_after, &a, &res, sizeof(res));
+	dqt_sysctl_set_uint(PROC_DEBUG, 1);
+	CHECK_OK(res.r[2]);
+	CHECK_ERR(res.r[OWNER_T0 + 0], EPERM);
+	memset(&res, 0, sizeof(res));
+	dqt_run_child(child_owner_after, &a, &res, sizeof(res));
+	CHECK_OK(res.r[OWNER_T0 + 0]);
+
+	clean_target_end(&clean);
+	clean_target_end(&clean2);
+	(void)close(notpd);
+	(void)close(exited.pd);
+	(void)close(exited.go[0]);
+	(void)close(exited.go[1]);
+	idle_end(&execed);
+	idle_end(&plain);
+	idle_end(&jailed);
+	ATF_REQUIRE_EQ(0, jail_remove(jid));
+	proc_debug_restore();
+}
+ATF_TC_CLEANUP(owner_dropped_attach, tc)
+{
+
+	proc_debug_restore();
+	(void)jail_remove(jail_getid("dq_lg_owner_target"));
+}
+
+/*
+ * Preserve: ATTACH to a process outside the caller's prison subtree is
+ * ESRCH (p_candebug's prison_check; 15.3 keeps it for jailed supervisors),
+ * here for the process that opened the queue before it entered the jail.
+ * A target inside its jail attaches.
+ */
+ATF_TC_WITH_CLEANUP(owner_jailed_attach);
+ATF_TC_HEAD(owner_jailed_attach, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "ATTACH by the queue's opener after "
+	    "it entered a jail: ESRCH for a process outside the jail, 0 for "
+	    "one inside; it cannot open the device again");
+}
+ATF_TC_BODY(owner_jailed_attach, tc)
+{
+	struct idle inside, outside;
+	struct owner_arg a;
+	struct lg_res res;
+	int jid;
+
+	LG_ROOT();
+	jid = make_jail("dq_lg_owner");
+	idle_spawn(&outside, NULL);
+	idle_spawn_as(&inside, NULL, jid, false);
+
+	owner_arg_init(&a, false, jid);
+	a.t[0] = outside.pd;
+	a.t[1] = inside.pd;
+	memset(&res, 0, sizeof(res));
+	dqt_run_child(child_owner_after, &a, &res, sizeof(res));
+	CHECK_ERR(res.r[0], EPERM);
+	/* jail_attach(0) from inside a jail: prison0 is not below it. */
+	CHECK_ERR(res.r[1], EINVAL);
+	CHECK_OK(res.r[2]);
+	CHECK_ERR(res.r[OWNER_T0 + 0], ESRCH);
+	CHECK_OK(res.r[OWNER_T0 + 1]);
+
+	idle_end(&outside);
+	idle_end(&inside);
+	ATF_REQUIRE_EQ(0, jail_remove(jid));
+}
+ATF_TC_CLEANUP(owner_jailed_attach, tc)
+{
+
+	(void)jail_remove(jail_getid("dq_lg_owner"));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1672,6 +1966,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, attach_outside_prison);
 	ATF_TP_ADD_TC(tp, attach_child_jail_target);
 	ATF_TP_ADD_TC(tp, attach_errno_order);
+	ATF_TP_ADD_TC(tp, owner_dropped_attach);
+	ATF_TP_ADD_TC(tp, owner_jailed_attach);
 	ATF_TP_ADD_TC(tp, observe_connect_gate);
 	ATF_TP_ADD_TC(tp, constrain_reserved_words);
 	ATF_TP_ADD_TC(tp, linux_open_ioctl);
