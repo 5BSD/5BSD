@@ -99,6 +99,36 @@ def main():
                    'member symbols differ')
     passed.append('archive-extra-repeated-local-symbol-rejected')
 
+    # Repeated basenames are legal. Distinct real symbol tables must remain
+    # attached to their ordered occurrence, including repeated local symbols.
+    duplicate_objects = []
+    for index, archive in enumerate(repeated_archives):
+        directory = a.work / ('duplicate-instance-' + str(index))
+        directory.mkdir()
+        obj = directory / 'same.o'
+        obj.write_bytes(subprocess.run([ar, 'p', archive], check=True,
+                                      stdout=subprocess.PIPE).stdout)
+        duplicate_objects.append(obj)
+    duplicate_archives = []
+    for label, objects in [('ordered', duplicate_objects),
+                           ('reversed', list(reversed(duplicate_objects))),
+                           ('extra', duplicate_objects + duplicate_objects[:1]),
+                           ('merged', duplicate_objects[:1] * 2)]:
+        archive = a.work / ('duplicate-' + label + '.a')
+        subprocess.run([ar, 'qc', archive, *objects], check=True)
+        duplicate_archives.append(archive)
+    duplicate = duplicate_archives[0]
+    record = m.compare_archive(nm, ar, duplicate, duplicate)
+    if record['candidate']['members'] != ['same.o', 'same.o']:
+        raise RuntimeError('fixture did not preserve duplicate member names')
+    passed.append('archive-duplicate-occurrences-identical')
+    for label, archive, message in [
+            ('reordered', duplicate_archives[1], 'member symbols differ'),
+            ('extra', duplicate_archives[2], 'member set or order'),
+            ('merged', duplicate_archives[3], 'member symbols differ')]:
+        expect_failure(lambda: m.compare_archive(nm, ar, archive, duplicate), message)
+        passed.append('archive-duplicate-occurrences-' + label + '-rejected')
+
     missing = a.work / 'missing-member.a'
     shutil.copyfile(a.archive, missing)
     subprocess.run([ar, 'd', missing, members[-1]], check=True)

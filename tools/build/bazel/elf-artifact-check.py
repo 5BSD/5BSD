@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tempfile
+from collections import Counter
 
 import qualification_artifacts
 
@@ -277,17 +279,58 @@ def compare_archive_symbols(candidate, reference):
              'incidence': signature} for signature in sorted(a_aliases)]
 
 
+def archive_record(nm, ar, path):
+    """Preserve duplicate occurrences using LLVM ar's public xN interface.
+
+    Bulk nm is sufficient for unique names. Its archive prefixes cannot identify
+    repeated names, so read those instances separately in private directories.
+    No archive-controlled pathname may escape the extraction directory.
+    """
+    members = run([ar, 't', path]).splitlines()
+    spellings = {}
+    for member in members:
+        if not member or Path(member).name != member or member.startswith('-'):
+            raise ValueError('unsafe archive member pathname: ' + member)
+        identity = stem(member)
+        if identity in spellings and spellings[identity] != member:
+            raise ValueError('ambiguous normalized archive members')
+        spellings[identity] = member
+    counts = Counter(members)
+    bulk = parse_archive(nm, path)
+    if set(bulk) - set(spellings):
+        raise ValueError('nm reported an unlisted archive member')
+    symbols = {}
+    occurrences = Counter()
+    for index, member in enumerate(members):
+        identity = stem(member)
+        occurrences[member] += 1
+        # An ordinal key binds DTrace definitions/references to this occurrence,
+        # rather than merging symbols from different objects with the same name.
+        key = str(index) + ':' + identity
+        if counts[member] == 1:
+            symbols[key] = bulk.get(identity, [])
+            continue
+        with tempfile.TemporaryDirectory(prefix='archive-occurrence-') as directory:
+            subprocess.run([str(ar), 'xN', str(occurrences[member]),
+                            str(Path(path).resolve()), member], cwd=directory,
+                           env=ENV, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            extracted = Path(directory) / member
+            if not extracted.is_file() or extracted.is_symlink():
+                raise ValueError('archive occurrence extraction did not produce a regular object')
+            entries = []
+            for line in run([nm, '--format=posix', extracted]).splitlines():
+                match = re.match(r'^(\S+)\s+(\S)\b', line)
+                if not match:
+                    raise ValueError('unparsed occurrence nm line: ' + line)
+                entries.append(match.groups())
+            symbols[key] = sorted(entries)
+    return {'path': str(path), 'sha256': sha(path), 'members': members,
+            'symbols': symbols}
+
+
 def compare_archive(nm, ar, candidate, reference):
-    records = {}
-    for key, path in (('candidate', candidate), ('make_reference', reference)):
-        members = run([ar, 't', path]).split()
-        if len(members) != len(set(members)):
-            raise ValueError(key + ': duplicate archive members')
-        identities = [stem(member) for member in members]
-        if len(identities) != len(set(identities)):
-            raise ValueError(key + ': ambiguous normalized archive members')
-        records[key] = {'path': str(path), 'sha256': sha(path), 'members': members,
-                        'symbols': parse_archive(nm, path)}
+    records = {key: archive_record(nm, ar, path)
+               for key, path in (('candidate', candidate), ('make_reference', reference))}
     a, b = records['candidate'], records['make_reference']
     if [stem(m) for m in a['members']] != [stem(m) for m in b['members']]:
         raise ValueError('archive member set or order differs from Make reference')

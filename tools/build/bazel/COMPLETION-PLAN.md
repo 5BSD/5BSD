@@ -11,6 +11,16 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Occurrence-aware archive review R2 now checks each repeated member through
+LLVM ar's public xN selector, preserving its ordinal, symbols and multiplicity.
+All sixteen real-artifact regression cases pass, including reordered, extra and
+merged duplicate-member negatives. Four of the six previously unsupported real
+archives pass; libicp_rescue and libzfs expose actual member-order differences
+and remain unaccepted. This refines the prior 743 review-required cases rather
+than retroactively changing R5. The indexed review's failure evidence now uses
+the same occurrence-aware representation. No build-bsd C/CLI input changes are
+needed; its maintained checker/manual are updated. Other six-gate work remains.
+
 The complete count-preserving indexed R5 review finishes all 450 combined-build
 packages with verified final input hashes and no selection differences. It passes
 1,306 ordinary ELF/archive contracts and retains 743 review-required cases:

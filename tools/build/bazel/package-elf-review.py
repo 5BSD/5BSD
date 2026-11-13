@@ -138,10 +138,10 @@ def review_pair(name, reference, candidate, inventory, args):
                 if kind == 'archive':
                     result['archive_evidence'] = {}
                     for label, artifact in [('candidate', product), ('reference', baseline)]:
-                        evidence = dict(members=checker.run([args.ar, 't', artifact]).split())
+                        evidence = dict(members=checker.run([args.ar, 't', artifact]).splitlines())
                         try:
-                            evidence['symbols'] = checker.parse_archive(args.nm, artifact)
-                        except ValueError as parse_error:
+                            evidence.update(checker.archive_record(args.nm, args.ar, artifact))
+                        except (ValueError, subprocess.CalledProcessError) as parse_error:
                             evidence['symbol_parse_error'] = str(parse_error)
                         result['archive_evidence'][label] = evidence
             detail['results'][path] = result

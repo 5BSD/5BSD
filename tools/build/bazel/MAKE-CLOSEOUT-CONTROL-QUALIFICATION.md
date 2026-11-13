@@ -1056,3 +1056,22 @@ existing selected environment. Positive native R1's 32 cases precede the final
 query/reproducibility, cache/sandbox efficiency or comparative performance. Those
 wider gates, special representation checks, runtime/configuration work, production
 publication and ARM64 remain required. Make stays default; BIP remains excluded.
+
+
+## Ordered duplicate archive occurrences (2026-11-13)
+
+`/usr/obj/usr/src/bazel-archive-occurrence-checker-r1-20261113/result.json`
+passes all sixteen real-artifact cases with unchanged input hashes. LLVM ar's
+public xN interface supplies each repeated name occurrence in a private directory;
+ordinal keys bind symbol/alias graphs to each instance. Different spellings that
+normalize to the same identity remain rejected. No new native runtime dependency
+or frontend flag is introduced, so build-bsd.c and format-5 inputs need no change.
+
+`/usr/obj/usr/src/bazel-duplicate-archive-review-r2-20261113/review.json`
+rechecks the six R5 archives against the recorded package and payload digests.
+libprivateabsl, libprivateprotobuf, libicp and libspl pass. libicp_rescue moves
+its specially compiled gcm member to the end; libzfs moves btree/range_tree after
+the architecture group. Both remain review-required producer differences.
+The failed R1 attempt used a nonexistent ./-prefixed package member and is not
+acceptance evidence. This selected check does not establish runtime/DOF/ABI or
+whole-system parity. The earlier complete R5 report remains unchanged.
