@@ -18,6 +18,7 @@
 #include <sys/procctl.h>
 #include <capability.h>
 #include <dev/dq/dq.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -28,7 +29,9 @@
 #include <dev/mac_capability/mac_capability_system_proto.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +85,45 @@ wait_ok(pid_t pid)
 	int status;
 	CHECK(waitpid(pid, &status, 0) == pid);
 	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+/*
+ * A pin that a later slice is predicted to change records its line and the
+ * answer it got and goes on, so that one run of the unmodified pins on the
+ * new kernel lists every changed answer instead of stopping at the first.
+ * A process that recorded a miss exits PIN_EXIT; wait_pins() carries that
+ * up to PID 1, which runs the rest of the fixture and fails at its end.
+ */
+#define PIN_EXIT 3
+static unsigned pin_misses;
+static void
+pin_miss(int line, const char *expr, intmax_t got, intmax_t want)
+{
+	pin_misses++;
+	printf("AUTHORITY_PIN_MISS line=%d check=%s got=%jd want=%jd\n", line,
+	    expr, got, want);
+	fflush(stdout);
+}
+#define PIN_EQ(got, want) do {						\
+	intmax_t pin_got = (got), pin_want = (want);			\
+	checks++;							\
+	if (pin_got != pin_want)					\
+		pin_miss(__LINE__, #got " == " #want, pin_got, pin_want); \
+} while (0)
+static void
+pins_exit(void)
+{
+	_exit(pin_misses != 0 ? PIN_EXIT : 0);
+}
+static void
+wait_pins(pid_t pid)
+{
+	int status;
+	CHECK(waitpid(pid, &status, 0) == pid);
+	CHECK(WIFEXITED(status));
+	if (WEXITSTATUS(status) == PIN_EXIT)
+		pin_misses++;
+	else
+		CHECK(WEXITSTATUS(status) == 0);
 }
 static int
 send_one(int fd, const void *payload, size_t size)
@@ -879,7 +921,7 @@ dq_legitimacy_pins(int issuer)
 
 	holder = fork(); CHECK(holder >= 0);
 	if (holder != 0) {
-		wait_ok(holder);
+		wait_pins(holder);
 		return;
 	}
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
@@ -914,9 +956,10 @@ dq_legitimacy_pins(int issuer)
 	CHECK(ioctl(q, DQ_IOC_ATTACH, &da) == 0);
 	CHECK(write(gate[1], &byte, 1) == 1);
 	CHECK(read(report[0], &after, sizeof(after)) == (ssize_t)sizeof(after));
-	CHECK(after.valid);
+	/* The two rows lg-5a changes: recorded, not fatal (PIN_EQ). */
+	PIN_EQ(after.valid, 1);
 	CHECK(after.identity == before.identity);
-	CHECK(after.generation == before.generation);
+	PIN_EQ(after.generation, before.generation);
 	CHECK(info().valid);
 	close(pd);
 	close(ready[0]); close(gate[1]); close(report[0]);
@@ -941,7 +984,465 @@ dq_legitimacy_pins(int issuer)
 	CHECK(ioctl(q, DQ_IOC_GET_STATS, &st) == 0);
 	CHECK(st.ds_queue_id != 0);
 	close(q);
-	_exit(0);
+	pins_exit();
+}
+
+/*
+ * Strip at attach (design slice lg-5a): pins written before the change.
+ *
+ * lg-5a makes DQ_IOC_ATTACH remove the target's use of its software
+ * authority: the authority stays named (identity kept) but is marked
+ * invalid, the generation is bumped and the invocation binding is dropped,
+ * as a prison transition does.  The target keeps the authority's debug
+ * protection until it execs, because until then its memory is a copy of
+ * the holder's.  The rows below are today's answers; every row lg-5a is
+ * predicted to change uses PIN_EQ, so a run of these pins on the lg-5a
+ * kernel lists exactly the lines of the "after lg-5a" column that differ.
+ * Any other miss, and any CHECK failure, is a finding.
+ *
+ * U is a target that inherited its holder's unconstrained managed
+ * authority; C is one that installed an authority constrained to one image
+ * and has not exec'd it (pending), attached by a holder that protects it
+ * (CP_OP_PROTECT), since nobody else may debug, and so attach, a pending
+ * target.  "outsider" is a root process with no authority, "sibling" a fork
+ * of U's holder (same authority, same execution).
+ *
+ * function / row                               today        after lg-5a
+ * dq_legitimacy_pins: target valid             1            0
+ * dq_legitimacy_pins: target generation        g            g + 1
+ * strip_use: after a refused attach (EBUSY)    valid, g     same
+ * strip_use: target valid                      1            0
+ * strip_use: target generation                 g            g + 1
+ * strip_use: target identity                   kept         same
+ * strip_use: send on a bound endpoint          0            EPERM
+ * strip_use: install in the target             EPERM        same
+ * strip_use: fork child valid                  1            0
+ * strip_use: fork child generation             target's     same
+ * strip_use: holder valid, generation          1, g         same
+ * strip_use: clear in the target               0, no name   same
+ * strip_use: outsider debugs it after clear    0            same
+ * strip_debug U: before attach, outsider       EPERM        same
+ * strip_debug U: before attach, sibling/holder 0            same
+ * strip_debug U: parked valid, generation      1, g         0, g + 1
+ * strip_debug U: parked, outsider              EPERM        same
+ * strip_debug U: parked, sibling and holder    0            same
+ * strip_debug U: exec'd valid, generation      1, g         0, g + 1
+ * strip_debug U: exec'd, outsider              EPERM        0
+ * strip_debug U: exec'd, sibling and holder    EPERM        0
+ * strip_debug C: before attach, outsider       EPERM        same
+ * strip_debug C: before attach, holder         0            same
+ * strip_debug C: parked valid, generation      0, g         0, g + 1
+ * strip_debug C: parked, outsider              EPERM        same
+ * strip_debug C: parked, holder                0            same
+ * strip_debug C: exec'd valid, generation      0, g + 1     same
+ * strip_debug C: exec'd, outsider              EACCES       same
+ * strip_debug C: exec'd, holder                0            same
+ *
+ * U's exec'd rows are the one answer lg-5a gives away: an attached target
+ * of an unconstrained authority kept it across exec and stayed protected;
+ * stripped, the new image has neither.  In C the authority refuses the
+ * outsider until the exec (EPERM) and the protector's shield after it
+ * (EACCES); the exec of the pinned image never activated the authority of
+ * an attached process (P2_NO_NEW_PRIVS).
+ */
+
+/* PT_ATTACH and release: 0, or the errno of the refusal. */
+static int
+debug_try(pid_t pid)
+{
+	int status;
+
+	if (ptrace(PT_ATTACH, pid, NULL, 0) != 0)
+		return (errno);
+	CHECK(waitpid(pid, &status, WUNTRACED) == pid);
+	CHECK(WIFSTOPPED(status));
+	CHECK(ptrace(PT_DETACH, pid, (caddr_t)1, 0) == 0);
+	return (0);
+}
+
+/* A process that tries to debug the pids it is sent, as it is now. */
+struct debugger {
+	pid_t	pid;
+	int	cmd;
+	int	res;
+};
+
+static void
+debugger_start(struct debugger *d)
+{
+	pid_t target;
+	int cmd[2], error, res[2];
+
+	CHECK(pipe(cmd) == 0 && pipe(res) == 0);
+	d->pid = fork(); CHECK(d->pid >= 0);
+	if (d->pid == 0) {
+		close(cmd[1]); close(res[0]);
+		while (read(cmd[0], &target, sizeof(target)) ==
+		    (ssize_t)sizeof(target)) {
+			error = debug_try(target);
+			CHECK(write(res[1], &error, sizeof(error)) ==
+			    (ssize_t)sizeof(error));
+		}
+		_exit(0);
+	}
+	close(cmd[0]); close(res[1]);
+	d->cmd = cmd[1];
+	d->res = res[0];
+}
+
+static int
+debugger_ask(struct debugger *d, pid_t target)
+{
+	int error;
+
+	CHECK(write(d->cmd, &target, sizeof(target)) == (ssize_t)sizeof(target));
+	CHECK(read(d->res, &error, sizeof(error)) == (ssize_t)sizeof(error));
+	return (error);
+}
+
+static void
+debugger_stop(struct debugger *d)
+{
+	close(d->cmd); close(d->res);
+	wait_ok(d->pid);
+}
+
+/*
+ * The least a queue's owner must do for an attached process to run: answer
+ * each name it resolves with PASS (the real object), until fd is readable
+ * or closed.  Any other event that wants a reply gets ENOSYS.
+ */
+static void
+serve_until(int q, int fd)
+{
+	static union {
+		struct dq_event	ev;
+		char		buf[65536];
+	} u;
+	struct pollfd pfd[2];
+	struct dq_resolve_reply rr;
+	struct dq_reply reply;
+	const struct dq_event *ev;
+	ssize_t n;
+	size_t off;
+
+	for (;;) {
+		pfd[0] = (struct pollfd){ .fd = q, .events = POLLIN };
+		pfd[1] = (struct pollfd){ .fd = fd, .events = POLLIN };
+		CHECK(poll(pfd, 2, 120 * 1000) > 0);
+		if ((pfd[0].revents & POLLIN) == 0) {
+			CHECK(pfd[1].revents != 0);
+			return;
+		}
+		n = read(q, u.buf, sizeof(u.buf));
+		CHECK(n >= (ssize_t)sizeof(*ev));
+		for (off = 0; off < (size_t)n; off += ev->de_size) {
+			ev = (const struct dq_event *)(const void *)(u.buf + off);
+			CHECK((size_t)n - off >= sizeof(*ev));
+			CHECK(ev->de_size >= sizeof(*ev) &&
+			    ev->de_size % 8 == 0 &&
+			    ev->de_size <= (size_t)n - off);
+			if (ev->de_id == 0)
+				continue;
+			memset(&reply, 0, sizeof(reply));
+			reply.dr_version = DQ_API_VERSION;
+			reply.dr_id = ev->de_id;
+			if (ev->de_op == DQ_OP_RESOLVE) {
+				memset(&rr, 0, sizeof(rr));
+				rr.drr_kind = DQ_RESOLVE_PASS;
+				reply.dr_len = sizeof(rr);
+				reply.dr_data = &rr;
+			} else
+				reply.dr_errno = ENOSYS;
+			CHECK(ioctl(q, DQ_IOC_REPLY, &reply) == 0);
+		}
+	}
+}
+
+static void
+served_read(int q, int fd, void *buf, size_t len)
+{
+	serve_until(q, fd);
+	CHECK(read(fd, buf, len) == (ssize_t)len);
+}
+
+static void
+attach_target(int q, int pd, uint32_t flags, int want)
+{
+	struct dq_attach_args da;
+
+	memset(&da, 0, sizeof(da));
+	da.da_version = DQ_API_VERSION;
+	da.da_procfd = pd;
+	da.da_rootfd = -1;
+	da.da_cwdfd = -1;
+	da.da_flags = flags;
+	if (want == 0)
+		CHECK(ioctl(q, DQ_IOC_ATTACH, &da) == 0);
+	else
+		CHECK(ioctl(q, DQ_IOC_ATTACH, &da) == -1 && errno == want);
+}
+
+struct strip_report {
+	struct cap_authority_info self, forked;
+	int	send_error;
+	int	install_error;
+	int	clear_error;
+	int	pad;
+};
+
+/* What the strip takes from the target, and what it leaves alone. */
+static void
+strip_use_pins(int issuer)
+{
+	struct cap_authority_info before, parked;
+	struct strip_report rep;
+	struct debugger outsider;
+	pid_t child, holder, target;
+	int dir, gate[2], inner[2], pair[2], pd, q, report[2], spare, token;
+	char byte = 'u';
+
+	holder = fork(); CHECK(holder >= 0);
+	if (holder != 0) {
+		wait_pins(holder);
+		return;
+	}
+	CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
+	debugger_start(&outsider);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	spare = issue(issuer, CAP_AUTH_MANAGED, 0);
+	CHECK(mac_capability_channel_create(pair) == 0);
+	bind_to(issuer, token, pair[0]);
+	CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+	close(token);
+	before = info();
+	CHECK(before.valid);
+	q = open("/dev/dq", O_RDWR | O_CLOEXEC);
+	CHECK(q >= 0);
+	CHECK(pipe(gate) == 0 && pipe(report) == 0);
+	target = pdfork(&pd, 0); CHECK(target >= 0);
+	if (target == 0) {
+		close(q); close(gate[1]); close(report[0]);
+		CHECK(send_one(pair[0], &byte, 1) == 0);
+		dir = open("/", O_RDONLY | O_DIRECTORY); CHECK(dir >= 0);
+		parked = info();
+		CHECK(write(report[1], &parked, sizeof(parked)) ==
+		    (ssize_t)sizeof(parked));
+		/* After the refused attach. */
+		CHECK(read(gate[0], &byte, 1) == 1);
+		parked = info();
+		CHECK(write(report[1], &parked, sizeof(parked)) ==
+		    (ssize_t)sizeof(parked));
+		/* After the attach. */
+		CHECK(read(gate[0], &byte, 1) == 1);
+		memset(&rep, 0, sizeof(rep));
+		rep.self = info();
+		rep.send_error = send_one(pair[0], &byte, 1) == 0 ? 0 : errno;
+		rep.install_error =
+		    op(CAP_AUTH_INSTALL, spare, NULL) == 0 ? 0 : errno;
+		CHECK(pipe(inner) == 0);
+		child = fork(); CHECK(child >= 0);
+		if (child == 0) {
+			rep.forked = info();
+			CHECK(write(inner[1], &rep.forked, sizeof(rep.forked)) ==
+			    (ssize_t)sizeof(rep.forked));
+			_exit(0);
+		}
+		wait_ok(child);
+		CHECK(read(inner[0], &rep.forked, sizeof(rep.forked)) ==
+		    (ssize_t)sizeof(rep.forked));
+		CHECK(write(report[1], &rep, sizeof(rep)) == (ssize_t)sizeof(rep));
+		/* The target gives the name up itself. */
+		CHECK(read(gate[0], &byte, 1) == 1);
+		memset(&rep, 0, sizeof(rep));
+		rep.clear_error = op(CAP_AUTH_CLEAR, -1, NULL) == 0 ? 0 : errno;
+		rep.self = info();
+		CHECK(write(report[1], &rep, sizeof(rep)) == (ssize_t)sizeof(rep));
+		CHECK(read(gate[0], &byte, 1) == 1);
+		_exit(0);
+	}
+	close(gate[0]); close(report[1]);
+	served_read(q, report[0], &parked, sizeof(parked));
+	CHECK(parked.valid && parked.identity == before.identity &&
+	    parked.generation == before.generation);
+
+	/* A refused attach (an open directory under NODIRS) strips nothing. */
+	attach_target(q, pd, DQ_ATTACH_F_NODIRS, EBUSY);
+	CHECK(write(gate[1], &byte, 1) == 1);
+	served_read(q, report[0], &parked, sizeof(parked));
+	PIN_EQ(parked.valid, 1);
+	PIN_EQ(parked.generation, before.generation);
+	CHECK(parked.identity == before.identity);
+
+	attach_target(q, pd, 0, 0);
+	CHECK(write(gate[1], &byte, 1) == 1);
+	served_read(q, report[0], &rep, sizeof(rep));
+	PIN_EQ(rep.self.valid, 1);
+	PIN_EQ(rep.self.generation, before.generation);
+	PIN_EQ(rep.self.identity, before.identity);
+	PIN_EQ(rep.send_error, 0);
+	PIN_EQ(rep.install_error, EPERM);
+	PIN_EQ(rep.forked.valid, 1);
+	PIN_EQ(rep.forked.generation, rep.self.generation);
+	PIN_EQ(rep.forked.identity, before.identity);
+	/* The attacher is not the target. */
+	PIN_EQ(info().valid, 1);
+	PIN_EQ(info().generation, before.generation);
+	CHECK(send_one(pair[0], &byte, 1) == 0);
+	CHECK(token_info(spare).consumed == 0);
+
+	CHECK(write(gate[1], &byte, 1) == 1);
+	served_read(q, report[0], &rep, sizeof(rep));
+	PIN_EQ(rep.clear_error, 0);
+	PIN_EQ(rep.self.valid, 0);
+	PIN_EQ(rep.self.identity, 0);
+	PIN_EQ(debugger_ask(&outsider, target), 0);
+
+	CHECK(write(gate[1], &byte, 1) == 1);
+	serve_until(q, pd);
+	wait_ok(target);
+	close(pd); close(gate[1]); close(report[0]);
+	close(pair[0]); close(pair[1]); close(spare); close(q);
+	debugger_stop(&outsider);
+	pins_exit();
+}
+
+/* The holder shields the process behind pd and so may debug it. */
+static int
+protect_target(int pd)
+{
+	struct mac_capability_call_args ca;
+	struct cp_request req;
+	int dev, fd;
+
+	dev = open("/dev/mac_capability", O_RDWR); CHECK(dev >= 0);
+	fd = capability_service_connect(dev, "capprotect"); CHECK(fd >= 0);
+	close(dev);
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_PROTECT;
+	req.flags = CP_SF_PTRACE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.req_fds = &pd;
+	ca.req_nfds = 1;
+	CHECK(ioctl(fd, MAC_CAPABILITY_CALL, &ca) == 0);
+	return (fd);
+}
+
+/*
+ * Who may debug an attach target: while it is parked (not yet exec'd, its
+ * memory a copy of the holder's) and once it has exec'd.
+ */
+static void
+strip_debug_pins(int issuer, bool constrained)
+{
+	struct cap_authority_constraint c;
+	struct cap_authority_info i0, i1, i2;
+	struct debugger outsider, sibling;
+	const char *image;
+	char gfd[16], rfd[16];
+	pid_t holder, target;
+	int gate[2], imagefd, pd, q, report[2], shield, token;
+	char byte = 'd';
+
+	holder = fork(); CHECK(holder >= 0);
+	if (holder != 0) {
+		wait_pins(holder);
+		return;
+	}
+	image = constrained ? "/sbin/authority-other" : "/sbin/authority-test";
+	shield = -1;
+	CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
+	debugger_start(&outsider);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	if (constrained) {
+		imagefd = open(image, O_RDONLY); CHECK(imagefd >= 0);
+		memset(&c, 0, sizeof(c));
+		c.token_fd = token; c.nexec = 1; c.executable_fds[0] = imagefd;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &c) == 0);
+		close(imagefd);
+	} else {
+		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		debugger_start(&sibling);
+	}
+	q = open("/dev/dq", O_RDWR | O_CLOEXEC);
+	CHECK(q >= 0);
+	CHECK(pipe(gate) == 0 && pipe(report) == 0);
+	target = pdfork(&pd, 0); CHECK(target >= 0);
+	if (target == 0) {
+		close(q); close(gate[1]); close(report[0]);
+		if (constrained)
+			CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+		close(token);
+		i0 = info();
+		CHECK(write(report[1], &i0, sizeof(i0)) == (ssize_t)sizeof(i0));
+		CHECK(read(gate[0], &byte, 1) == 1);
+		i1 = info();
+		CHECK(write(report[1], &i1, sizeof(i1)) == (ssize_t)sizeof(i1));
+		CHECK(read(gate[0], &byte, 1) == 1);
+		snprintf(rfd, sizeof(rfd), "%d", report[1]);
+		snprintf(gfd, sizeof(gfd), "%d", gate[0]);
+		execl(image, "authority-test", "--strip-exec", rfd, gfd, NULL);
+		CHECK(false);
+	}
+	close(gate[0]); close(report[1]); close(token);
+	served_read(q, report[0], &i0, sizeof(i0));
+	CHECK(i0.valid == !constrained && i0.identity != 0);
+	if (constrained)
+		shield = protect_target(pd);
+
+	/* Before the attach. */
+	PIN_EQ(debugger_ask(&outsider, target), EPERM);
+	if (!constrained)
+		PIN_EQ(debugger_ask(&sibling, target), 0);
+	PIN_EQ(debug_try(target), 0);
+
+	/* Attached and parked: the image is still the holder's. */
+	attach_target(q, pd, 0, 0);
+	CHECK(write(gate[1], &byte, 1) == 1);
+	served_read(q, report[0], &i1, sizeof(i1));
+	PIN_EQ(i1.valid, i0.valid);
+	PIN_EQ(i1.generation, i0.generation);
+	PIN_EQ(i1.identity, i0.identity);
+	PIN_EQ(debugger_ask(&outsider, target), EPERM);
+	if (!constrained)
+		PIN_EQ(debugger_ask(&sibling, target), 0);
+	PIN_EQ(debug_try(target), 0);
+
+	/* Attached and exec'd: a new image. */
+	CHECK(write(gate[1], &byte, 1) == 1);
+	served_read(q, report[0], &i2, sizeof(i2));
+	PIN_EQ(i2.valid, i0.valid);
+	PIN_EQ(i2.generation, i0.generation + (constrained ? 1 : 0));
+	PIN_EQ(i2.identity, i0.identity);
+	PIN_EQ(debugger_ask(&outsider, target), constrained ? EACCES : EPERM);
+	if (!constrained)
+		PIN_EQ(debugger_ask(&sibling, target), EPERM);
+	PIN_EQ(debug_try(target), constrained ? 0 : EPERM);
+
+	CHECK(write(gate[1], &byte, 1) == 1);
+	serve_until(q, pd);
+	wait_ok(target);
+	close(pd); close(gate[1]); close(report[0]); close(q);
+	if (shield >= 0)
+		close(shield);
+	if (!constrained)
+		debugger_stop(&sibling);
+	debugger_stop(&outsider);
+	pins_exit();
+}
+
+static void
+dq_strip_pins(int issuer)
+{
+	unsigned before = pin_misses;
+
+	strip_use_pins(issuer);
+	strip_debug_pins(issuer, false);
+	strip_debug_pins(issuer, true);
+	if (pin_misses == before)
+		pass("dq-strip-at-attach-pins");
 }
 
 /*
@@ -1374,6 +1875,7 @@ static void
 run_tests(void)
 {
 	int issuer, other, token, copy, pair[2], pipefd[2], ready[2], status;
+	unsigned misses;
 	pid_t child;
 	struct cap_authority_info before, after;
 	cap_rights_t rights;
@@ -1396,8 +1898,11 @@ run_tests(void)
 
 	prison_transition_tests(issuer);
 	pass("prison-transition-invalidates-authority");
+	misses = pin_misses;
 	dq_legitimacy_pins(issuer);
-	pass("dq-legitimacy-pins");
+	if (pin_misses == misses)
+		pass("dq-legitimacy-pins");
+	dq_strip_pins(issuer);
 	constraint_flags_pins(issuer);
 	pass("constraint-flags-refused-outside-the-role");
 	supervisor_role_tests(issuer);
@@ -2230,6 +2735,14 @@ main(int argc, char **argv)
 		CHECK(write(STDOUT_FILENO, &reply, sizeof(reply)) == sizeof(reply));
 		return (0);
 	}
+	if (argc == 4 && strcmp(argv[1], "--strip-exec") == 0) {
+		struct cap_authority_info image = info();
+		char byte;
+		CHECK(write(atoi(argv[2]), &image, sizeof(image)) ==
+		    (ssize_t)sizeof(image));
+		CHECK(read(atoi(argv[3]), &byte, 1) == 1);
+		return (0);
+	}
 	if (argc == 3 && strcmp(argv[1], "--exec") == 0) {
 		CHECK(info().valid && info().identity == strtoull(argv[2], NULL, 10));
 		return (0);
@@ -2264,6 +2777,8 @@ main(int argc, char **argv)
 	system_partial_release_test();
 	system_mixed_sysctl_test();
 	run_tests();
+	/* A recorded pin miss fails the run here, after everything ran. */
+	CHECK(pin_misses == 0);
 	printf("AUTHORITY_KERNEL_VM_PASS checks=%u\n", checks);
 	/*
 	 * Let the console finish the marker before shutdown starts printing,
