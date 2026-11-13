@@ -11,6 +11,14 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Ncurses/tinfo focused native R1 passes both static/shared products, the normal
+installation archive and the maintained API integration test. Independent review
+R1 passes both complete member/symbol and both shared-library metadata contracts.
+Their 109/60 source identity sets are unchanged; generated sources now retain
+original recipe positions through shared compilation/archive declarations.
+Four original archive-order cases remain: libc, libzpool, libarchive and liboes.
+These later focused fixes are not yet a new complete candidate or ARM64 proof.
+
 Focused libsys archive-order native R1 passes ordinary/PIC archives, shared and
 installation outputs and both selected syscall runtime tests. Independent review
 R1 passes all three Make contracts, including the complete 477-member order and

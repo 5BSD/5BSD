@@ -807,3 +807,29 @@ libncursesw_real and libtinfow. The previously frozen complete indexed review is
 preserved; later focused results still need complete-candidate integration.
 The existing build-bsd format-5 path covers these source dependencies; no C/CLI
 change is needed. Make stays production/default, BIP excluded.
+
+
+## Ncurses and tinfo archive order (2026-11-13)
+
+Ncurses and tinfo now share one ordered declaration for compilation and installed
+archive membership. Ncurses's generated expanded/lib_gen sources precede normal
+sources. Tinfo's generated codes/fallback/keyname/names/unctrl and capability-table
+sources occupy their original recipe positions. Existing 109/60 source identity
+sets are unchanged and the archive rule requires exact own-object coverage.
+Generated inputs keep their native actions and declared dependencies; no build
+reads Make output or reference archives to select order.
+
+`bazel-curses-archive-order-native-r1-20261113/receipt.json` passes both static
+archives, both shared libraries, normal ncurses installation archive and the
+maintained native public API integration test. That actual noninteractive test
+exercises terminal setup/capability expansion, key naming, wide-character cells,
+panels, menus and forms. Independent review R1 passes all four static-member/
+symbol and shared-library metadata contracts against hash-verified Make packages,
+with comparison-tool digests checked before and after. This is selected host
+API/artifact acceptance, not interactive workstation, ARM64, full ABI/debug or
+whole-system completion. Four original ordering cases remain: libc, libzpool,
+libarchive and liboes. New focused outputs still need combined integration.
+
+The existing build-bsd format-5 interface and documented source-order contract
+cover these declarations; no C/CLI/manual interface changes are needed. Make
+remains production/default and BIP remains excluded.
