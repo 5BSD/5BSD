@@ -222,6 +222,7 @@ struct cap_authority *cap_authority_exec_prepare(struct proc *, struct vnode *);
 void cap_authority_exec(struct proc *, struct vnode *, struct cap_authority *);
 void cap_authority_fork(struct proc *, struct proc *);
 void cap_authority_exit(struct proc *);
+void cap_authority_strip_locked(struct proc *);
 void cap_authority_cred_changed(struct proc *, const struct ucred *,
     const struct ucred *);
 void cap_authority_info_locked(struct proc *, struct cap_authority_info *);

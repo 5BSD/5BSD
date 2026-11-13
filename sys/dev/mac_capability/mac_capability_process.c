@@ -124,6 +124,7 @@ context_ctor(void *arg __unused, struct proc *p)
 	p->p_noambient = false;
 	p->p_cap_authority_invalid = false;
 	p->p_cap_authority_pending_exec = false;
+	p->p_cap_authority_stripped = false;
 	p->p_cap_context = NULL;
 	p->p_cap_identity = 0;
 	p->p_cap_responsible = 0;

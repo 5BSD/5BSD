@@ -97,6 +97,11 @@
  *                                               on P
  * ilp32_no_abi                          -       preserve; a failure means
  *                                               the ILP32 pins are due
+ * attach_without_authority              -       preserve, lg-5a included:
+ *                                               the strip at attach has
+ *                                               nothing to take here (the
+ *                                               targets with an authority
+ *                                               are in the PID 1 fixture)
  *
  * The slices that must record both runs are therefore lg-3 and later: the
  * plane-on suite on P with the stops above, and the same suite on T with
@@ -150,7 +155,7 @@
 /* The descriptor number the exec'd programs find an inherited queue at. */
 #define	LG_QFD		9
 /* The cases below; a complete amd64 run reports this many, none skipped. */
-#define	LG_NCASES	17
+#define	LG_NCASES	18
 
 /*
  * In place of require.user root, which would turn an unprivileged run into
@@ -1537,6 +1542,59 @@ ATF_TC_BODY(unattached_control, tc)
 	(void)close(q);
 }
 
+static void
+child_authority_info(void *arg __unused, void *result)
+{
+	struct lg_res *res = result;
+	struct cap_authority_info info;
+
+	memset(&info, 0xff, sizeof(info));
+	SET(res->r[0], syscall(SYS_cap_process, CAP_AUTH_INFO, -1, 0, &info));
+	res->r[1].rv = info.valid;
+	res->r[2].rv = info.identity != 0;
+	res->id = info.generation;
+}
+
+/*
+ * Preserve, lg-5a included.  lg-5a strips a target's software authority at
+ * ATTACH; a target without one has nothing to strip, and its generation,
+ * which every process has, must not move.  Only PID 1 can issue an
+ * authority, so the targets that hold one are in the fixture
+ * (authority_boot_helper.c, dq_strip_pins).
+ */
+ATF_TC(attach_without_authority);
+ATF_TC_HEAD(attach_without_authority, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a target without a software "
+	    "authority reports the same authority state after ATTACH as "
+	    "its parent did before it");
+}
+ATF_TC_BODY(attach_without_authority, tc)
+{
+	struct cap_authority_info before;
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct lg_res res;
+	int status;
+
+	LG_ROOT();
+	memset(&before, 0xff, sizeof(before));
+	ATF_REQUIRE_EQ(0, syscall(SYS_cap_process, CAP_AUTH_INFO, -1, 0,
+	    &before));
+	ATF_REQUIRE_EQ(0, before.valid);
+	ATF_REQUIRE_EQ(0, before.identity);
+	dqt_init(&c);
+	memset(&res, 0xff, sizeof(res));
+	dqt_attach_spawn(&c, &ch, child_authority_info, NULL);
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	CHECK_OK(res.r[0]);
+	ATF_CHECK_EQ(0, res.r[1].rv);
+	ATF_CHECK_EQ(0, res.r[2].rv);
+	ATF_CHECK_EQ(before.generation, res.id);
+	dqt_fini(&c);
+}
+
 static int
 exec_errno(const char *image)
 {
@@ -1618,6 +1676,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, constrain_reserved_words);
 	ATF_TP_ADD_TC(tp, linux_open_ioctl);
 	ATF_TP_ADD_TC(tp, unattached_control);
+	ATF_TP_ADD_TC(tp, attach_without_authority);
 	ATF_TP_ADD_TC(tp, ilp32_no_abi);
 	return (atf_no_error());
 }

@@ -36,6 +36,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
+#include <sys/cap_authority.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -301,6 +302,8 @@ dqres_attach(struct thread *td, struct proc *p, struct dqres_binding *b,
 	pdp->pd_dqres = dr;
 	dr = NULL;
 	p->p_flag2 |= P2_NO_NEW_PRIVS;
+	/* An attached process acts without its software authority (D336). */
+	cap_authority_strip_locked(p);
 unlock:
 	PWDDESC_XUNLOCK(pdp);
 	PROC_UNLOCK(p);
