@@ -13,6 +13,10 @@ requirements differences; package parity is not accepted.
 The archive tests and five corrected executable targets pass focused native
 qualification. All five pass maintained ELF metadata comparison against Make.
 Their complete package-output integration remains pending.
+The integration retry is active at explicit kernel revision `83d696e46e2`,
+using the existing Bazel state and a refreshed SDK. Its completion and package
+comparison are still pending. A two-header SDK change accompanies broad compile
+invalidation; cache efficiency must be measured rather than inferred from state reuse.
 
 Close remaining defects in batches against the retained Make control. Reuse the
 Bazel state/cache and test the affected targets before repeating the complete

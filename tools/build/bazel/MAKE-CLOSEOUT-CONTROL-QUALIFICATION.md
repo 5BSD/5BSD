@@ -259,3 +259,40 @@ and section differences remain recorded under the complete comparison's
 arguments and failed before inspection; `results-r2.json` records the corrected
 commands and their successful selected metadata checks. No conclusion about all
 4,168 differing payloads follows from those three samples.
+
+## Package lifecycle and incremental-build follow-up (2026-11-13)
+
+The complete captured-candidate manifest audit is retained in
+`bazel-closeout-package-comparison-r2-20261113/package-script-audit/scripts.json`.
+Seven packages contain lifecycle scripts, with nine distinct script bodies:
+
+| Packages | Required behavior to account for |
+| --- | --- |
+| caroot | certctl trust-store rehash after installation/removal |
+| runtime | account/database creation and migration, services database |
+| utilities | login.conf capability database |
+| otel and otel-dbg | _otel identity, spool ownership/mode |
+| rc | retired IPFW configuration backup, obsolete oracled script removal |
+| switchboard | retired policy-tree removal |
+
+This is a complete script inventory for the bound 450-package snapshot, not
+execution qualification of those scripts or every application. Image construction
+uses INSTALL_AS_USER and suppresses scripts. Existing declared account/database
+construction and flat _otel account entries do not establish certificate-store
+construction, upgrade migration behavior or all final ownership. The rc and
+Switchboard removal scripts describe legacy-state upgrades; a fresh empty stage
+cannot qualify those cases. Use the existing real upgrade tests and add the
+missing state checks where needed, rather than running target scripts against
+host paths during rootless construction.
+
+The refreshed SDK snapshot differs from the previous snapshot in only
+`sys/cap_authority.h` and `sys/proc.h`; exact hashes are retained in
+`bazel-closeout-package-comparison-r2-20261113/sdk-change-review.json`.
+The SDK exporter currently declares the complete system-header tree in
+compile_inputs. The current full integration run is rebuilding a broad closure
+following that change. Review actual compile input discovery and cache
+invalidation before accepting incremental efficiency under gate 3/4. Keeping the
+same Bazel state directory alone does not prove narrow invalidation or cache
+hits. Do not drop declared headers to hide rebuilds: qualify unrelated-header
+reuse, used-header invalidation, newly reachable headers and sandbox availability
+before changing the toolchain input contract.
