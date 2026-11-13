@@ -531,3 +531,33 @@ ARM64/bootstrap/performance/publication/runtime gates remain open. Full package
 integration of the newer fixes is still required. Existing format-5 build-bsd
 backend inputs cover these declarations; no C interface or production-default
 change is needed. The frontend manual documents the ordering policy.
+
+### Kerberos program and plugin library-order batch (2026-11-13)
+
+Native kadmin, kadmind, kdb5_util, pkinit.so.122 and k5tls.so.122 now use the
+source Make LIBADD dependency order. kadmin's static command-table library stays
+before profile/support, preserving the position of its shared editline provider;
+kadmind and kdb5_util place kdb at their respective source-defined positions.
+The plugin dependency lists preserve crypto/com_err/support order without
+changing version scripts, SONAMEs, source files or security link flags.
+
+`bazel-krb5-link-order-native-r1-20261113/receipt.json` passes all five selected
+product targets and both maintained database_test/kdc_test targets. These use an
+owned temporary database/realm and dynamically selected loopback TCP port, not
+the host's authentication database. Their declared loader runtime includes native
+libraries and SDK base runtime, so this is selected service execution, not a new
+complete installed-image or all-native-bootstrap qualification.
+
+`bazel-krb5-link-order-review-r1-20261113/review.json` records successful independent
+Make ELF contract comparisons for all three production programs and both plugin
+DSOs. It binds native receipts/outputs and verified reference package/member/data
+hashes, exact program checker commands, and the shared checker function/hash.
+Identity, hardening, ordered dependencies and dynamic symbols/versions pass;
+raw byte parity, complete ABI and installed Kerberos integration are not inferred.
+
+Sixteen of the frozen review's 43 order discrepancies now have focused corrected
+source evidence; 27 remain. The frozen all-package review is preserved unchanged,
+and a complete new-candidate package/image qualification is still required after
+the batches. The maintained build-bsd C frontend and existing ordering manual
+already cover these normal deps/dynamic_deps changes; no input schema, new CLI
+switch or production-backend change is needed. All six closeout gates remain.

@@ -69,6 +69,10 @@ Nine additional utility/RDMA executables now pass focused native builds and
 independent Make ELF comparisons after source-recipe library-order corrections.
 Together with CTF, eleven of 43 frozen-review order discrepancies have corrected
 source evidence; the remaining 32 and complete new-candidate integration stay open.
+The following Kerberos batch passes native builds, database/KDC tests and Make
+ELF comparisons for three administration programs and two plugins. Sixteen of
+the 43 frozen-review order differences now have focused corrections; 27 remain,
+with full new-candidate integration and the other gates still open.
 
 
 ## Independent Make closeout comparison (2026-11-11)
