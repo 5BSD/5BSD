@@ -965,3 +965,36 @@ required. PAM ambiguity, other representation/debug/configuration checks and all
 wider closeout gates remain open. Existing format-5 frontend inputs cover these
 native declarations, with the source-identity contract documented in the manual;
 no C/CLI change is required. Make stays production/default and BIP stays excluded.
+
+
+## Combined R5 and repeated ELF symbols (2026-11-13)
+
+`bazel-closeout-system-native-r5-20261113/receipt.json` passes the combined
+selected current AMD64 world/GENERIC kernel/modules/450-package graph at explicit
+kernel revision `5e12086b5cbd`. All thirteen selected tests pass and 1,545 files
+are captured with verified digests. The private R7 comparison captures all 451
+package/index outputs without advancing repository publication pointers. This
+build still uses a Make-prepared SDK and does not establish complete parity,
+bootstrap, runtime, performance, ARM64 or production-backend acceptance.
+
+Read-only PAM investigation found 1,093 symbols but only 528 unique name/kind
+pairs in each merged static module; repeated local names are legitimate. The
+archive parser's use of a set lost that multiplicity. The retained real ELF
+negative in `bazel-archive-symbol-multiplicity-diagnosis-r1-20261113/diagnosis.json`
+confirms that the prior checker incorrectly accepted an extra repeated local
+FUNC symbol. The parser now preserves every occurrence. Raw symbol counts are
+not waived or filtered, and ordinary and alias contracts retain multiplicity.
+Previous claims of full member-symbol comparison must be read with this former
+limitation; the old records are preserved and not retroactively accepted for it.
+
+`bazel-archive-pico-checker-r3-20261113/result.json` passes all twelve actual
+real-artifact cases, including a fixture with verified counts one versus two and
+rejection of the extra repeated symbol. Native
+`bazel-archive-dtrace-symbols-native-r2-20261113/receipt.json` passes the maintained
+alias-contract test; its retained log reports twelve unittest cases including an
+extra ordinary symbol occurrence. PAM's ambiguous ID mapping remains unaccepted.
+The new complete R5 review must use this corrected checker; earlier results do
+not substitute for it. The normal build-bsd format-5 interface runs the new case,
+with no C/CLI changes required. The manual records count-preserving scope.
+Make remains production/default; all six gates remain open where evidence is
+missing, and BIP remains excluded.

@@ -11,6 +11,17 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+The new complete `bazel-closeout-system-native-r5-20261113` run passes the selected
+current AMD64 world/GENERIC kernel/modules/450-package graph at explicit kernel
+revision `5e12086b5cbd`, all thirteen selected tests and capture of 1,545 verified
+files. It combines all focused ordering fixes. Separate review then reproduced a
+checker defect: repeated ELF local names were collapsed into sets. The parser
+now retains multiplicity; twelve real-artifact cases and twelve native alias
+contract cases pass, including the formerly accepted extra-symbol negative.
+Prior symbol-only reviews did not establish multiplicity and are not upgraded
+retroactively. Fresh complete R5 artifact review with the corrected checker is
+required. PAM's ambiguous ID mapping and all wider closeout gates remain open.
+
 Libc order native R2 passes ordinary/PIC/NOSSP/shared/install products and all seven
 runtime/identity/analysis rejection tests. Independent R2 comparison passes its
 ordinary and PIC archive member/full-symbol contracts and shared metadata against

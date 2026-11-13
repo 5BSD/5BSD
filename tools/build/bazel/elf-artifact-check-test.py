@@ -73,6 +73,32 @@ def main():
                        'ambiguous normalized archive members')
         passed.append('archive-' + variant_name + '-normalized-collision-rejected')
 
+    # Real ET_REL objects permit repeated local symbol names. One extra symbol
+    # must be rejected even if its name/kind already occurs in the same member.
+    repeated_archives = []
+    for label, count in [('one', 1), ('two', 2)]:
+        directory = a.work / ('local-symbol-' + label)
+        directory.mkdir()
+        obj = directory / members[0]
+        obj.write_bytes(subprocess.run([ar, 'p', a.archive, members[0]], check=True,
+                                      stdout=subprocess.PIPE).stdout)
+        for unused in range(count):
+            subprocess.run([objcopy, '--add-symbol',
+                '__archive_multiplicity_probe=.text:0,local,function', obj], check=True)
+        text = subprocess.run([nm, '--format=posix', obj], check=True, text=True,
+                              stdout=subprocess.PIPE).stdout
+        actual = sum(line.split()[0] == '__archive_multiplicity_probe' for line in text.splitlines())
+        if actual != count:
+            raise RuntimeError('duplicate-symbol fixture did not contain the requested count')
+        archive = a.work / ('local-symbol-' + label + '.a')
+        subprocess.run([ar, 'rcs', archive, obj], check=True)
+        repeated_archives.append(archive)
+    m.compare_archive(nm, ar, repeated_archives[0], repeated_archives[0])
+    passed.append('archive-repeated-local-symbol-fixture')
+    expect_failure(lambda: m.compare_archive(nm, ar, repeated_archives[1], repeated_archives[0]),
+                   'member symbols differ')
+    passed.append('archive-extra-repeated-local-symbol-rejected')
+
     missing = a.work / 'missing-member.a'
     shutil.copyfile(a.archive, missing)
     subprocess.run([ar, 'd', missing, members[-1]], check=True)

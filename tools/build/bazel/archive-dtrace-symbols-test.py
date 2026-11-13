@@ -54,6 +54,10 @@ class AliasContracts(unittest.TestCase):
         candidate = graph('987'); candidate['code'][0] = ('ordinary_drift', 'T')
         self.reject(candidate)
 
+    def test_ordinary_symbol_multiplicity(self):
+        candidate = graph('987'); candidate['code'].append(('ordinary', 'T'))
+        self.reject(candidate)
+
     def test_alias_groups_cannot_merge(self):
         reference = graph()
         reference['code'].append(('$dtrace456.second', 'T'))

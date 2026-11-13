@@ -5959,7 +5959,8 @@ composition sections for this interface. The checker recognizes original Make
 member spelling while preserving full symbol and member-order checks.
 Path-derived DTrace alias IDs are compared by a whole-archive member/function/
 symbol-kind incidence mapping. Reports retain raw IDs and the explicit bijection;
-ambiguous remapping is rejected. This symbol contract does not establish DOF
+ambiguous remapping is rejected. Repeated local symbol occurrences retain their
+multiplicity in both ordinary and alias contracts. This symbol contract does not establish DOF
 relocation correctness, registration or live probe behavior. Analysis rejects duplicate or omitted own objects and
 conflicting explicit order declarations. The libnv, libipsec and libelf archives
 use this interface; the build never reads Make comparison outputs to select order.

@@ -232,7 +232,9 @@ def parse_archive(nm, artifact):
         if not match:
             raise ValueError('unparsed nm line: ' + line)
         member, name, kind = match.groups()
-        symbols.setdefault(stem(member), set()).add((name, kind))
+        # ELF permits repeated local names after relocatable linking. Preserve
+        # their multiplicity so an extra definition/reference cannot disappear.
+        symbols.setdefault(stem(member), []).append((name, kind))
     return {member: sorted(values) for member, values in sorted(symbols.items())}
 
 
