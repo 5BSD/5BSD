@@ -11,6 +11,16 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Libc order native R2 passes ordinary/PIC/NOSSP/shared/install products and all seven
+runtime/identity/analysis rejection tests. Independent R2 comparison passes its
+ordinary and PIC archive member/full-symbol contracts and shared metadata against
+verified Make packages. The native configured composition data also matches all
+48 recipe-order checks across sixteen iconv/NIS/machine/DTrace combinations;
+that declarative comparison is not qualification of sixteen configured builds.
+All thirteen identified archive-order defects now have focused producer fixes.
+A fresh complete candidate is still required, as are PAM alias resolution, other
+artifact/debug/configuration checks and the remaining six-gate requirements.
+
 Libarchive/liboes provider-order native R1 passes both archive/shared/installation
 families and six maintained test targets (eleven reported cases). Independent
 review R1 passes both complete archive member/symbol contracts and both shared

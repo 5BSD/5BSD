@@ -924,3 +924,44 @@ archive/ELF representations, installation/debug/configuration boundaries and
 later complete candidate integration remain open alongside the wider gates.
 No build-bsd C/CLI/manual interface changes are needed for these source-owned
 ordering declarations. Make remains production/default and BIP remains excluded.
+
+
+## Libc configured native archive composition (2026-11-13)
+
+Libc now declares native archive composition in `lib/libc/archive_order.bzl`:
+common source-order sections, selected iconv and locale conversion objects, NIS
+objects, machine-dependent/portable implementations, the selected provider and
+static-only wrappers. This is maintained source recipe metadata, not an order
+read from an installed archive or a build-time Make query. Every selected compiler
+object must occur exactly once. The general archive rule's `member_order` matches
+canonical ordinary object identities across .o/.pic.o/.nopic.o, rejecting missing,
+extra or ambiguous identities. It neither rewrites object files nor changes the
+selected compiler variant. Existing compilation flags and group boundaries stay
+owned by their declared CcInfo producers. Stale order data fails analysis.
+
+`bazel-libc-order-matrix-review-r1-20261113/review.json` independently compares
+the native literal/select declarations with current Make source recipes across
+sixteen iconv/NIS/machine-optimization/DTrace combinations. All 48 static/PIC/NOSSP
+ordering contracts pass, with visited Make-input and specification hashes verified
+unchanged. The reviewer evaluates declarative selections in Python; it is not a
+substitute for configured Bazel builds or runtime across those combinations.
+
+`bazel-libc-archive-order-native-r2-20261113/receipt.json` passes ordinary/PIC/
+NOSSP archives, the shared library, installation archive and all seven tests:
+dynamic/static runtime, actual archive identity/extraction and four real Bazel
+analysis failures (missing, duplicate, conflicting and ambiguous member orders).
+The negative fixtures are analyzed rather than compiled/executed. Native R1 also
+passes its three original runtime/identity tests. These builds use the prepared
+SDK; neither establishes independent native bootstrap or ARM64 acceptance.
+
+`bazel-libc-archive-order-review-r2-20261113/review.json` passes the ordinary
+1,455-member archive and PIC 1,443-member archive order/full-symbol contracts and
+shared-library metadata against verified Make pkgbase payloads. Raw symbols and
+explicit unambiguous DTrace alias mappings are retained. Tool digests are checked
+before/after. NOSSP construction is accepted, but no independent NOSSP Make
+artifact contract is inferred from that. All thirteen original order defects now
+have focused producer corrections; a complete new combined build/review remains
+required. PAM ambiguity, other representation/debug/configuration checks and all
+wider closeout gates remain open. Existing format-5 frontend inputs cover these
+native declarations, with the source-identity contract documented in the manual;
+no C/CLI change is required. Make stays production/default and BIP stays excluded.

@@ -5949,7 +5949,12 @@ for original installation/binary/debug controls and host/VM/tracing scope.
 The native component archive rule can derive installed member order from its
 .Dv ordered_sources
 attribute, sharing the source declaration with compilation and including declared
-generated source outputs. The checker recognizes original Make
+generated source outputs. The alternative
+.Dv member_order
+attribute declares canonical ordinary object identities across native ordinary,
+PIC and DTrace member spellings. It preserves the selected compiler variant and
+rejects missing, extra or ambiguous identities; libc uses configured source-owned
+composition sections for this interface. The checker recognizes original Make
 .Pa .pico
 member spelling while preserving full symbol and member-order checks.
 Path-derived DTrace alias IDs are compared by a whole-archive member/function/
