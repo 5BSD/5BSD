@@ -442,6 +442,12 @@ cap_authority_cred_changed(struct proc *p, const struct ucred *old,
  * A process without a usable authority is left as it is.  Never sleeps;
  * the caller holds the process lock and may hold the pwddesc and filedesc
  * locks.
+ *
+ * A fork of the target that shares neither its descriptor table nor its
+ * working-directory state can race the attach: the child may be created
+ * unattached and still inherit this state in the fork handler.  It then has
+ * no usable authority and keeps the debug protection until it execs, which
+ * is harmless.
  */
 void
 cap_authority_strip_locked(struct proc *p)
@@ -507,7 +513,11 @@ cap_authority_exec(struct proc *p, struct vnode *image,
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	/* Called only after a successful image activation, never on failed exec. */
 	cap_authority_invocation_invalidate_locked(p);
-	/* The new image holds nothing of the authority's holder. */
+	/*
+	 * The new image holds nothing of the authority's holder.  Stored
+	 * for every process: the flag is already clear unless the process
+	 * or an ancestor was attached.
+	 */
 	p->p_cap_authority_stripped = false;
 	p->p_cap_execution = (a != NULL || selected != NULL) ? new_execution() : 0;
 	if (selected != NULL && !atomic_load_acq_int(&selected->revoked) &&
