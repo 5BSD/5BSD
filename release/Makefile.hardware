@@ -45,7 +45,12 @@ malloc-production-check: .PHONY
 	@${MALLOC_PRODUCTION_CHECK} -o ${LIBC_OBJDIR:Q}
 
 # Read-only: no kernel in the object tree carries the dq(4) test option.
+# A check that names no kernel has read nothing and fails.
 kernel-test-option-check: .PHONY
+.if empty(KERNCONF)
+	@echo "ERROR: kernel-test-option-check: KERNCONF names no kernel" >&2; \
+	    false
+.endif
 .for _kernconf in ${KERNCONF}
 	@${KERNEL_TEST_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
 .endfor
@@ -57,7 +62,13 @@ hardware-packages hardware-packages-check: .PHONY
 	    --work ${HARDWARE_WORKDIR:Q} --output ${HARDWARE_REPO:Q} \
 	    --distfiles ${DISTDIR:Q} --pkg ${PKG_CMD:Q} \
 	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
-	@${KERNEL_TEST_OPTION_CHECK} -r ${HARDWARE_REPO:Q}
+# A repository that was built is always read.  hardware-packages-check only
+# verifies inputs and creates none: it reads the repository when one is
+# there, and publish-packages refuses a missing one.
+	@if [ ${.TARGET} = hardware-packages ] || [ -e ${HARDWARE_REPO:Q} ] || \
+	    [ -L ${HARDWARE_REPO:Q} ]; then \
+		${KERNEL_TEST_OPTION_CHECK} -r ${HARDWARE_REPO:Q}; \
+	fi
 
 # Optional offline bootstrap input: PKGBASE_PKG_PACKAGE and PKGBASE_PKG_SHA256
 # must be supplied together. The combined catalogue covers the copied archive.

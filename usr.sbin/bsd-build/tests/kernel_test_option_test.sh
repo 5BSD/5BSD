@@ -45,10 +45,12 @@ private_tree()
         cp "$script" src/release/scripts/
     done
     # atf_check runs programs, not shell functions.
+    # HARDWARE_BUILDER stands in for the hardware build and check program
+    # (default: one that fails).
     cat > recipe <<SCRIPT
 #!/bin/sh
 exec make -C "$PWD/src" -f release/Makefile.hardware \\
-    PKG_CMD=/usr/bin/true HARDWARE_PYTHON=/usr/bin/false \\
+    PKG_CMD=/usr/bin/true HARDWARE_PYTHON="\${HARDWARE_BUILDER:-/usr/bin/false}" \\
     BASE_REPOSITORY="$PWD/base" HARDWARE_REPO="$PWD/hardware" \\
     COMPLETE_REPOSITORY="$PWD/published/complete" "\$@"
 SCRIPT
@@ -258,11 +260,20 @@ atf_test_case source_tree
 source_tree_head()
 {
     atf_set descr 'Configurations and includes are found in the source tree as config(8) finds them'
-    atf_set require.files '/usr/src/sys/amd64/conf/GENERIC-DQTEST /usr/src/sys/conf/std.lg2-fixture'
 }
 source_tree_body()
 {
     setup
+    # The only test configuration is amd64's.  Elsewhere this case has
+    # nothing to read and says so; on amd64 a source tree without the
+    # configuration is a failure, never a silent skip.
+    [ "$(uname -p)" = amd64 ] ||
+        atf_skip 'NOT CHECKED: no dq(4) test configuration exists for this machine'
+    for file in sys/amd64/conf/GENERIC-DQTEST sys/amd64/conf/GENERIC \
+        sys/conf/std.debug; do
+        [ -f "/usr/src/$file" ] ||
+            atf_fail "/usr/src/$file is missing: the source tree legs were not exercised"
+    done
     # The test configuration itself, from sys/amd64/conf.
     atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
         env NO_KERNEL_DIR=1 ./plan packages --kernel GENERIC-DQTEST
@@ -271,10 +282,25 @@ source_tree_body()
     # GENERIC includes sys/conf/std.debug: every part is read.
     atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
         -e empty env NO_KERNEL_DIR=1 ./plan packages --kernel GENERIC
-    # An include that only sys/conf can satisfy.
-    configuration VIACONF 'ident VIACONF' 'include "std.lg2-fixture"'
+    # An include that only sys/conf can satisfy is read there: the whole
+    # configuration was read.  The control names a file that is nowhere,
+    # which is reported as not read.
+    configuration VIACONF 'ident VIACONF' 'include "std.debug"'
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
+        -e empty ./plan packages --kernel VIACONF
+    [ ! -e /usr/src/sys/conf/std.lg2-nowhere ] &&
+        [ ! -e /usr/src/sys/amd64/conf/std.lg2-nowhere ] ||
+        atf_fail 'the control include exists'
+    configuration NOWHERE 'ident NOWHERE' 'include "std.lg2-nowhere"'
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=not-read ' \
+        -e empty ./plan packages --kernel NOWHERE
+    # The option reached through sys/conf and then sys/amd64/conf: a
+    # private file includes std.debug (sys/conf only) and the test
+    # configuration (sys/amd64/conf only).
+    configuration VIABOTH 'ident VIABOTH' 'include "std.debug"' \
+        'include GENERIC-DQTEST'
     atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
-        ./plan packages --kernel VIACONF
+        ./plan packages --kernel VIABOTH
     # One that sys/amd64/conf satisfies.
     configuration VIAARCH 'ident VIAARCH' 'include GENERIC-DQTEST'
     atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
@@ -302,12 +328,15 @@ publish_recipe_body()
     atf_check -s exit:0 -o match:'^mkdir -p ' sed -n 3p recipe.out
     [ ! -e published ] || atf_fail 'a dry run created the destination'
 
-    # The hardware repository is checked when it is built or re-checked.
+    # The hardware repository is read after the hardware step, and by
+    # nothing before it (hardware_check runs the recipe itself).
     for target in hardware-packages hardware-packages-check; do
         atf_check -s exit:0 -o save:recipe.out -e ignore ./recipe -n $target
-        atf_check -s exit:0 -o inline:"sh $PWD/src/release/scripts/check-kernel-no-dq-test.sh -r $PWD/hardware\n" \
+        atf_check -s exit:0 -o match:'native-hardware\.py' sed -n 1p recipe.out
+        atf_check -s exit:0 -o match:"check-kernel-no-dq-test.sh -r $PWD/hardware;" \
             sed -n '$p' recipe.out
     done
+    [ ! -e hardware ] || atf_fail 'a dry run created the hardware repository'
 
     # The object-tree check covers every configuration named.
     atf_check -s exit:0 -o save:recipe.out -e ignore ./recipe -n \
@@ -316,10 +345,67 @@ publish_recipe_body()
         "$PWD/src/release/scripts/check-kernel-no-dq-test.sh" ONE \
         "$PWD/src/release/scripts/check-kernel-no-dq-test.sh" TWO > expected
     atf_check -s exit:0 -o empty diff -u expected recipe.out
+    # A check that names no kernel has read nothing: it fails.
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'KERNCONF names no kernel' \
+        ./recipe KERNCONF= OBJTOP=/lg2/objtop kernel-test-option-check
     # system-packages runs it before packaging.
     atf_check -s exit:0 -o inline:'malloc-production-check\nkernel-test-option-check\npackages\nhardware-packages\npublish-packages\n' \
         sed -n '/^system-packages:/,$s/^	\${MAKE} -C \${.CURDIR} //p' \
         src/release/Makefile.hardware
+}
+
+atf_test_case hardware_check
+hardware_check_head()
+{
+    atf_set descr 'hardware-packages-check on a fresh tree passes; a repository is always read'
+}
+hardware_check_body()
+{
+    setup
+    private_tree
+    HARDWARE_BUILDER=/usr/bin/true
+    export HARDWARE_BUILDER
+
+    # A fresh tree: the check-only target verifies inputs, creates no
+    # repository and has none to read.  As before the test-option check.
+    atf_check -s exit:0 -o not-match:'checked' -e empty \
+        ./recipe hardware-packages-check
+    [ ! -e hardware ] || atf_fail 'the check-only target created the repository'
+
+    # A repository left by an earlier build is read.
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain
+    atf_check -s exit:0 -o match:'1 kernel and boot files checked' -e empty \
+        ./recipe hardware-packages-check
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg "$MARKER"
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'hardware/5BSD-kernel-generic-nodebug-1.pkg: boot/kernel/kernel was built with the dq\(4\) test option' \
+        ./recipe hardware-packages-check
+    atf_check -s not-exit:0 -o not-match:'checked' -e match:'There is no' \
+        ./recipe hardware-packages
+
+    # One that is there but cannot be read as a repository is refused.
+    rm -rf hardware
+    : > hardware
+    atf_check -s not-exit:0 -o not-match:'checked' -e not-empty \
+        ./recipe hardware-packages-check
+    rm hardware
+    ln -s nowhere hardware
+    atf_check -s not-exit:0 -o not-match:'checked' -e not-empty \
+        ./recipe hardware-packages-check
+    rm hardware
+
+    # The build target must leave a repository: a missing one is refused,
+    # and publication refuses it too (publish_refused).
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'repository does not exist' ./recipe hardware-packages
+    [ ! -e hardware ] || atf_fail 'the check created the repository'
+
+    # A hardware step that fails stops the recipe before the check.
+    unset HARDWARE_BUILDER
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain
+    atf_check -s not-exit:0 -o not-match:'checked' -e ignore \
+        ./recipe hardware-packages-check
 }
 
 atf_test_case publish_refused
@@ -380,5 +466,6 @@ atf_init_test_cases()
     atf_add_test_case plan_steps
     atf_add_test_case source_tree
     atf_add_test_case publish_recipe
+    atf_add_test_case hardware_check
     atf_add_test_case publish_refused
 }
