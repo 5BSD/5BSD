@@ -630,3 +630,46 @@ and all other existing gates remain required. build-bsd's existing format-5
 interface covers the changed source declarations and selected feature positions;
 no C/CLI change is needed. Its manual documents the caller-owned SSH order.
 Make remains production/default.
+
+### LLVM program order and executable compiler/linker probes (2026-11-13)
+
+`lib/clang/tool_libraries.bzl` owns the normal LLVM/Clang component lists and
+appends the native pthread/C++ runtime tail. A recipe can pass an explicit
+ordered component list: LLD's source Makefile places execinfo/terminal libraries
+before z/zstd, whereas clang.prog.mk and llvm.prog.mk put compression first.
+The LLVM/Clang utility macros, compiler driver, LLD and llvm-ar use that same
+contract. All link inputs remain native deps/dynamic_deps, and runtime-only
+probe closure and production installation variants remain distinct. Bootstrap
+and static recipes are not silently routed through the shared-library helper.
+
+R1 completed all seven tests but was rejected for two incorrect explicit target
+labels in the qualification request; completed actions were retained in the same
+Bazel state. R2 accepted the corrected selected family/build/tests, while its
+independent ELF review passed 13 products and rejected LLD's component order.
+That mismatch led to the explicit component-list API above. These failures and
+the original outputs remain retained, not rewritten into passing evidence.
+
+`bazel-llvm-link-order-native-r3-20261113/receipt.json` passes the complete selected
+normal installed LLVM family and all fourteen explicit production executable
+targets, plus seven maintained tests: selected-target code generation, native
+C/C++ linking, and full/thin LTO for C/C++. The captured case summary is seven
+passed. These probes use the explicitly prepared SDK/native runtime declarations;
+they do not establish independent native bootstrap, every LLVM option, or ARM64
+world/kernel qualification.
+
+`bazel-llvm-link-order-review-r2-20261113/review.json` passes all fourteen existing
+independent Make ELF metadata contracts: Clang, clang-scan-deps, LLD, and eleven
+LLVM utilities. It retains exact native output bindings, unchanged verified Make
+archive/index/member/data bindings, checker commands and statuses. Source-recipe
+library order, ELF identity, hardening and dynamic symbol/version contracts pass;
+raw section/byte differences remain recorded and full ABI is not inferred.
+
+All 43 library-order discrepancies from the frozen all-package ELF review now
+have focused corrected-source evidence. The historical review is preserved
+unchanged. A new combined world/kernel/module/pkgbase build, archive comparison,
+installed-image/runtime qualification, remaining archive/debug/kernel/loader and
+configuration work, ARM64, native bootstrap/cache/sandbox, resource/performance
+comparison and publication integration remain required. build-bsd's existing
+format-5 source interface covers these normal dependency declarations; no C/CLI
+change is needed. The manual documents explicit LLVM components and runtime order.
+Make remains production/default.

@@ -72,8 +72,11 @@ plugins, and five ZFS/C++ products. The Kerberos database/KDC tests pass; zfsd's
 newly qualified shared GoogleTest/regex closure passes all 22 unit cases. The
 failed initial non-PIC test link is preserved. SSH/SystemExtension then passes
 ten product comparisons and all 34 selected startup/policy cases. Twenty-nine
-of 43 frozen-review library-order discrepancies have focused corrections;
-fourteen LLVM cases and complete new-candidate integration remain. Archive/debug/kernel/loader,
+of 43 frozen-review library-order discrepancies then had focused corrections.
+The LLVM batch now passes all fourteen remaining product comparisons and seven
+code-generation/native-link/LTO tests. All 43 recorded library-order discrepancies
+have focused corrected-source evidence; complete new-candidate integration and
+independent archive/runtime comparison remain required. Archive/debug/kernel/loader,
 configuration, ARM64, bootstrap/cache/sandbox, performance, publication and broader
 runtime gates stay open.
 
