@@ -1,8 +1,8 @@
 .include <src.opts.mk>
 PACKAGE= bsd-build-tests
 TESTSDIR= ${TESTSBASE}/usr.sbin/bsd-build
-ATF_TESTS_SH= bsd_build_test kernel_test_option_test
-${PACKAGE}FILES+= ${SRCTOP}/release/Makefile.hardware ${SRCTOP}/release/scripts/check-malloc-production.sh
+ATF_TESTS_SH= bsd_build_test kernel_test_option_test kernel_test_check_test
+${PACKAGE}FILES+= ${SRCTOP}/release/Makefile.hardware ${SRCTOP}/release/scripts/check-malloc-production.sh ${SRCTOP}/release/scripts/check-kernel-no-dq-test.sh
 .PATH: ${SRCTOP}/tools/build/capimage
 ${PACKAGE}FILES+= deploy.py deploy_test.py installer.py installer_test.py be_vm_test.py
 ${PACKAGE}FILES+= package_closure_test.py
