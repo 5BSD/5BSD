@@ -35,6 +35,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -409,9 +410,13 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 
 	/* Jail */
 	json_kv_int(fp, depth + 1, "jid", proc->ep_jid, true);
-	if (proc->ep_jid > 0)
+	if (proc->ep_jid > 0) {
 		json_kv_str(fp, depth + 1, "jailname",
 		    oes_msg_string(msg, proc->ep_jailname_off), true);
+		/* The jail's place among nested jails, e.g. "web.db". */
+		json_kv_str(fp, depth + 1, "jail_fullname",
+		    oes_msg_string(msg, proc->ep_jail_fullname_off), true);
+	}
 
 	/* Names and paths */
 	json_kv_str(fp, depth + 1, "comm", proc->ep_comm, true);
@@ -1312,8 +1317,13 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: oeslogger [-dnp] [-m path] [-o file] [event_type ...]\n"
+	    "usage: oeslogger [-dinp] [-j jail | -J jail] [-m path] [-o file]\n"
+	    "                 [event_type ...]\n"
 	    "  -d       Observe this process and descendants only\n"
+	    "  -j jail  Observe one jail (ID or name) and the jails nested in it\n"
+	    "  -J jail  Observe one jail only, without nested jails\n"
+	    "  -i       With -j/-J: include signals, ptrace and scheduling\n"
+	    "           requests sent into the jail from outside\n"
 	    "  -n       Disable automatic self and /dev/ noise mutes\n"
 	    "  -m path  Mute a path prefix (may be repeated)\n"
 	    "  -o file  Write JSON output to file (default: stdout)\n"
@@ -1327,7 +1337,8 @@ usage(void)
 	    "  oeslogger                        # All events to stdout\n"
 	    "  oeslogger -o /var/log/oes.ndjson  # Log to file\n"
 	    "  oeslogger -p exec fork exit       # Pretty-print selected events\n"
-	    "  oeslogger exec open | jq .        # Pipe NDJSON to jq\n");
+	    "  oeslogger exec open | jq .        # Pipe NDJSON to jq\n"
+	    "  oeslogger -j web exec open        # One jail, nested jails included\n");
 	exit(EX_USAGE);
 }
 
@@ -1479,7 +1490,11 @@ dispatch_events(oes_client_t *client)
 				continue;
 			return (-1);
 		}
-		if (nready > 0 &&
+		/*
+		 * Hangup with data still readable (a jail scope that ended with
+		 * events queued): go round again and read them first.
+		 */
+		if (nready > 0 && (pfd.revents & POLLIN) == 0 &&
 		    (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
 			OESLOGGER_TRACE_DISPATCH_ERROR(2, ENXIO);
 			errno = ENXIO;
@@ -1487,6 +1502,44 @@ dispatch_events(oes_client_t *client)
 		}
 	}
 	return (0);
+}
+
+/*
+ * Create a client scoped to the jail named by -j or -J.  An argument made
+ * only of digits is a jail ID, anything else a jail name; the kernel
+ * resolves either once, now, relative to the jail this process is in.
+ */
+static oes_client_t *
+create_jail_client(const char *jail, bool jail_only, bool inbound,
+    int *scope_jid)
+{
+	oes_client_t *client;
+	const char *errstr;
+	uint32_t flags;
+	int error, jid;
+
+	flags = (jail_only ? OES_JAIL_SCOPE_NOCHILDREN : 0) |
+	    (inbound ? OES_JAIL_SCOPE_INBOUND : 0);
+	client = oes_client_create();
+	if (client == NULL)
+		err(EX_OSERR, "oes_client_create (are you root?)");
+	if (jail[0] != '\0' && jail[strspn(jail, "0123456789")] == '\0') {
+		jid = (int)strtonum(jail, 0, INT_MAX, &errstr);
+		if (errstr != NULL)
+			errx(EX_USAGE, "jail %s: jail ID is %s", jail, errstr);
+		error = oes_set_jail_scope(client, jid, flags);
+	} else
+		error = oes_set_jail_scope_name(client, jail, flags);
+	if (error < 0) {
+		if (errno == ENOENT)
+			errx(EX_NOINPUT, "jail %s: no such jail", jail);
+		if (errno == ENAMETOOLONG || errno == EINVAL)
+			errx(EX_USAGE, "jail %s: invalid jail name", jail);
+		err(EX_OSERR, "jail %s", jail);
+	}
+	if (oes_get_jail_scope(client, scope_jid, NULL, NULL, 0) < 0)
+		err(EX_OSERR, "oes_get_jail_scope");
+	return (client);
 }
 
 int
@@ -1498,14 +1551,29 @@ main(int argc, char *argv[])
 	size_t nevents = 0;
 	size_t nmute_paths = 0;
 	const char *outpath = NULL;
+	const char *jail_arg = NULL;
 	bool descendants = false;
+	bool inbound = false;
+	bool jail_only = false;
+	bool jail_removed = false;
 	bool no_default_mutes = false;
-	int ch, i;
+	uint32_t scope_flags;
+	int ch, i, saved_errno, scope_jid = 0;
 
-	while ((ch = getopt(argc, argv, "dhlm:no:p")) != -1) {
+	while ((ch = getopt(argc, argv, "dhij:J:lm:no:p")) != -1) {
 		switch (ch) {
 		case 'd':
 			descendants = true;
+			break;
+		case 'i':
+			inbound = true;
+			break;
+		case 'j':
+		case 'J':
+			if (jail_arg != NULL)
+				usage();
+			jail_arg = optarg;
+			jail_only = (ch == 'J');
 			break;
 		case 'm':
 			if (nmute_paths == nitems(mute_paths))
@@ -1529,6 +1597,10 @@ main(int argc, char *argv[])
 			usage();
 		}
 	}
+	/* One scope at most; -i qualifies a jail scope. */
+	if ((descendants && jail_arg != NULL) ||
+	    (inbound && jail_arg == NULL))
+		usage();
 	argc -= optind;
 	argv += optind;
 
@@ -1555,8 +1627,12 @@ main(int argc, char *argv[])
 	}
 
 	/* Create client */
-	client = descendants ? oes_client_create_descendants() :
-	    oes_client_create();
+	if (jail_arg != NULL)
+		client = create_jail_client(jail_arg, jail_only, inbound,
+		    &scope_jid);
+	else
+		client = descendants ? oes_client_create_descendants() :
+		    oes_client_create();
 	if (client == NULL)
 		err(EX_OSERR, "oes_client_create (are you root?)");
 
@@ -1605,12 +1681,31 @@ main(int argc, char *argv[])
 	setvbuf(outfp, NULL, _IOLBF, 0);
 
 	fprintf(stderr, "oeslogger: listening for events (Ctrl-C to stop)\n");
+	if (jail_arg != NULL)
+		fprintf(stderr, "oeslogger: jail %s (jid %d)%s%s\n", jail_arg,
+		    scope_jid, jail_only ? ", this jail only" : "",
+		    inbound ? ", inbound" : "");
 	if (outpath != NULL)
 		fprintf(stderr, "oeslogger: writing to %s\n", outpath);
 
 	/* Run the event loop */
-	if (dispatch_events(client) < 0 && running)
-		err(EX_OSERR, "oes_dispatch");
+	if (dispatch_events(client) < 0 && running) {
+		/*
+		 * A jail scope whose jail was removed reads as a hangup once
+		 * every queued event has been written: that is the end of the
+		 * log, not a failure.  A jail created later with the same name
+		 * or ID is another jail and is not waited for.
+		 */
+		saved_errno = errno;
+		if (jail_arg != NULL && saved_errno == ENXIO &&
+		    oes_get_jail_scope(client, NULL, &scope_flags, NULL, 0) == 0 &&
+		    (scope_flags & OES_JAIL_SCOPE_DEAD) != 0)
+			jail_removed = true;
+		else {
+			errno = saved_errno;
+			err(EX_OSERR, "oes_dispatch");
+		}
+	}
 
 	oes_client_destroy(client);
 
@@ -1619,6 +1714,10 @@ main(int argc, char *argv[])
 		fflush(outfp);
 		fclose(outfp);
 	}
+
+	if (jail_removed)
+		warnx("jail %s (jid %d) was removed; stopping", jail_arg,
+		    scope_jid);
 
 	return (0);
 }

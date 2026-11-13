@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd August 15, 2026
+.Dd November 13, 2026
 .Dt OESLOGGER 8
 .Os
 .Sh NAME
@@ -9,7 +9,8 @@
 .Nd log OpenEndpointSecurity events as JSON
 .Sh SYNOPSIS
 .Nm
-.Op Fl dnp
+.Op Fl dinp
+.Op Fl j Ar jail | Fl J Ar jail
 .Op Fl m Ar path
 .Op Fl o Ar file
 .Op Ar event_type ...
@@ -44,6 +45,33 @@ thread and path metadata, and event-specific objects.
 Use a descendants-scoped client.
 The logger process and its descendant subtree remain visible while unrelated
 processes are hidden.
+.It Fl i
+With
+.Fl j
+or
+.Fl J ,
+also log signal, ptrace and scheduling events that a process outside the
+jail directs at a process inside it.
+The process recorded as the source of such an event is outside the jail.
+.It Fl j Ar jail
+Log only events of processes in the jail
+.Ar jail
+and in the jails nested beneath it.
+.Ar jail
+is a jail ID if it consists only of digits and a jail name otherwise; the
+name of a nested jail is written with its parents, for example
+.Li web.db .
+Filtering is done by the kernel
+.Pq see Xr oes 4 ,
+so events of other processes are never delivered to
+.Nm .
+A process is logged while it is in the jail, including processes that enter
+it later with
+.Xr jexec 8 .
+.It Fl J Ar jail
+Like
+.Fl j ,
+but log only the named jail itself, not the jails nested beneath it.
 .It Fl l
 List accepted event names and exit.
 .It Fl m Ar path
@@ -59,8 +87,41 @@ instead of standard output.
 .It Fl p
 Pretty-print JSON instead of emitting one compact object per line.
 .El
+.Pp
+The
+.Fl d ,
+.Fl j
+and
+.Fl J
+options are mutually exclusive.
+Each process object in the output carries
+.Dq jid ,
+the jail ID, and for a jailed process
+.Dq jail_fullname ,
+the jail's hierarchical name as seen from the host, which together identify
+the nested jail a record came from;
+.Dq jailname
+is the jail's host name.
+.Pp
+The jail is resolved once, when
+.Nm
+starts.
+If it does not exist or is being removed,
+.Nm
+exits with status 66
+.Pq Dv EX_NOINPUT .
+If the jail is removed while
+.Nm
+is running,
+.Nm
+writes the events the jail generated before its removal, reports the removal
+on standard error and exits with status 0.
+It does not wait for another jail of the same name or ID: that would be a
+different jail.
 .Sh EXIT STATUS
 .Ex -std
+A usage error exits with status 64
+.Pq Dv EX_USAGE .
 .Sh EXAMPLES
 Log all observable events:
 .Bd -literal -offset indent
@@ -77,6 +138,11 @@ Observe only the logger's process subtree without default noise filters:
 oeslogger -d -n exec open
 .Ed
 .Pp
+Log what happens in one container, nested jails included:
+.Bd -literal -offset indent
+oeslogger -j web -o /var/log/web.ndjson exec open socket_connect
+.Ed
+.Pp
 Format the normal NDJSON output with
 .Xr jq 1 :
 .Bd -literal -offset indent
@@ -85,7 +151,9 @@ oeslogger exec open | jq .
 .Sh SEE ALSO
 .Xr jq 1 ,
 .Xr liboes 3 ,
-.Xr oes 4
+.Xr oes 4 ,
+.Xr jail 8 ,
+.Xr jexec 8
 .Sh HISTORY
 .Nm
 was added as the OpenEndpointSecurity event logging tool in
