@@ -11,6 +11,14 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Focused mixed-source archive native R1 now passes libdwarf, libpcap and
+libibnetdisc products plus four DWARF/packet-filter tests. Independent review R2
+passes all six archive/shared Make contracts. Generated DWARF/lex/yacc outputs
+and interleaved C/C++ members use declared source order; no runtime Make query or
+reference-output substitution selects the build. Seven of the original thirteen
+archive-order cases remain. This is newer focused evidence, not a fresh complete
+system candidate or RDMA hardware acceptance.
+
 The completed indexed ELF R4 review covers all 450 frozen combined-build packages
 with no selected payload differences: 1,275 contracts pass and 774 remain review
 required (including 734 ET_REL inputs outside the checker contract). All 43 prior

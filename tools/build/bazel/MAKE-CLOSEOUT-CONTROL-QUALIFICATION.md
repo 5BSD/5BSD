@@ -743,3 +743,33 @@ Remaining ten archive ordering cases and other unresolved checks are still open.
 The existing build-bsd format-5 interface covers these declarations; no CLI/C
 change is required. Its manual documents the archive source-order interface.
 Make remains production/default; full migration and ARM64 remain unqualified.
+
+
+## Mixed and generated archive source order (2026-11-13)
+
+The libdwarf source declaration now includes its declared m4-generated targets
+at the original SRCS positions, shared with compilation/archive construction.
+The complete 64-source identity set is unchanged. libpcap likewise places its
+lex/yacc products within its source list, with RDMA selection appended normally.
+libibnetdisc preserves the C++ member between C members while retaining separate
+language compile groups. All three use the existing `ordered_sources` interface
+with exact own-object coverage checks. No production Make subprocess, reference
+archive order lookup, synthetic member or comparator exemption is introduced.
+
+`bazel-mixed-archive-order-native-r1-20261113/receipt.json` passes the three
+static archives, shared libraries and installation archives, and all four
+maintained tests: libdwarf static/shared line-table reading and libpcap static/
+shared offline filtering. Independent review R2 passes all six static-member/
+symbol and shared-metadata contracts against hash-verified Make package payloads.
+Review R1's extraction failure remains retained: the diagnostic selected rdma
+instead of the actual rdma-lib shared-payload owner; built outputs were unchanged.
+Source metadata quote-only cleanup preserves an identical parsed declaration.
+This is selected native host evidence, not hardware/RDMA traffic, live DTrace,
+installed image, ARM64, bootstrap or full ABI/debug acceptance.
+
+Seven original archive order cases remain: libc, libsys, libzpool, libarchive,
+liboes, libncursesw_real and libtinfow. Earlier review results are preserved and
+these focused fixes still require later complete candidate integration. Existing
+build-bsd format-5 inputs cover the changed source declarations; no C/CLI change
+is necessary. The manual's source-order contract applies unchanged. Make remains
+production/default; BIP remains excluded.
