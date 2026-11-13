@@ -112,6 +112,15 @@ kernel_file_body()
 	    grep -a -q -F -e "$MARKER" "$bootfile"
 	atf_check -s exit:$status -o empty -e empty \
 	    grep -a -q -F -e "$SYMBOLS" "$bootfile"
+	# The split debug file, where one is installed: publication reads it
+	# too, and a production one carries neither signature.
+	debugfile=/usr/lib/debug$bootfile.debug
+	if [ -e "$debugfile" ]; then
+		atf_check -s exit:$status -o empty -e empty \
+		    grep -a -q -F -e "$MARKER" "$debugfile"
+		atf_check -s exit:$status -o empty -e empty \
+		    grep -a -q -F -e "$SYMBOLS" "$debugfile"
+	fi
 }
 
 atf_test_case open_root

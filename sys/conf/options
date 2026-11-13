@@ -649,6 +649,8 @@ ISAPNP			opt_dontuse.h
 DEV_BPF			opt_bpf.h
 DEV_CARP		opt_carp.h
 DEV_DQ			opt_dq.h
+# DQ_TEST_OPEN makes a test kernel that is never published (dq(4)).  It is
+# deliberately not in NOTES: LINT must not build it.
 DQ_TEST_OPEN		opt_dq.h
 DEV_NETMAP		opt_global.h
 DEV_PCI			opt_pci.h

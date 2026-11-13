@@ -409,10 +409,13 @@ struct dq_queue {
 #define	DQO_LOCK_ASSERT(o)	mtx_assert(&(o)->o_mtx, MA_OWNED)
 
 /*
- * Test access (dq_testopen.c).  Defined only in a kernel built with
- * options DQ_TEST_OPEN; the caller includes opt_dq.h.
+ * Test access (dq_testopen.c), declared and defined only in a kernel built
+ * with options DQ_TEST_OPEN: a production kernel and its debug file do not
+ * carry the name.  Whoever needs it includes opt_dq.h first.
  */
+#ifdef DQ_TEST_OPEN
 void	dq_testopen_bind(struct thread *);
+#endif
 
 /* Global state (dq_dev.c). */
 extern struct mtx dq_mtx;
