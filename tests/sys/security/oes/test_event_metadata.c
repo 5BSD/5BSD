@@ -320,7 +320,7 @@ check_process_metadata(const oes_message_t *msg, const oes_process_t *proc,
 	    "short executable path reported truncated");
 	PROC_CHECK(path[0] != '\0', "executable path is empty");
 	PROC_CHECK(strcmp(path, expected_path) == 0, "executable path mismatch");
-	PROC_CHECK(proc->ep_pad2 == 0 && proc->ep_reserved == 0,
+	PROC_CHECK(proc->ep_jail_fullname_off == 0 && proc->ep_reserved == 0,
 	    "reserved process fields are nonzero");
 
 #undef PROC_CHECK

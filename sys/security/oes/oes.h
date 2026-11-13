@@ -155,10 +155,14 @@ typedef struct {
  * Analogous to Apple's es_process_t. Contains snapshot of process
  * state at time of event.
  *
- * Path fields (ep_path, ep_cwd, ep_jailname) are stored in the
- * message's trailing string table as NUL-terminated strings.
+ * Path fields (ep_path, ep_cwd, ep_jailname, ep_jail_fullname) are stored
+ * in the message's trailing string table as NUL-terminated strings.
  * Use oes_msg_string(msg, offset) to access them.
  * An offset of 0 means the string is empty.
+ * ep_jailname is the jail's host name.  ep_jail_fullname is the jail's
+ * hierarchical name as the host sees it, for example "web.db" for the jail
+ * "db" inside the jail "web"; OES_PROC_META_JAIL_FULLNAME is set when it is
+ * present.  With ep_jid it tells which nested jail a record came from.
  * ep_path is cached during exec and inherited across fork and credential
  * changes, avoiding path resolution from inside MAC hooks.  Processes that
  * predate OES activation may report it unavailable until their next exec.
@@ -220,8 +224,8 @@ typedef struct {
 	/* Paths (variable-length, in string table) */
 	uint32_t	ep_path_off;	/* Executable path (string table offset) */
 	uint32_t	ep_cwd_off;	/* Current working directory */
-	uint32_t	ep_jailname_off; /* Jail name if jailed */
-	uint32_t	ep_pad2;	/* Alignment */
+	uint32_t	ep_jailname_off; /* Jail host name if jailed */
+	uint32_t	ep_jail_fullname_off; /* Hierarchical jail name */
 	uint32_t	ep_meta_flags;	/* OES_PROC_META_* */
 	uint32_t	ep_reserved;	/* Must be zero */
 
@@ -824,6 +828,7 @@ typedef struct {
 #define OES_PROC_META_SESSION_UNAVAILABLE 0x00000010
 #define OES_PROC_META_GROUPS_TRUNCATED	0x00000020
 #define OES_PROC_META_CREDENTIALS_UNAVAILABLE 0x00000040
+#define OES_PROC_META_JAIL_FULLNAME	0x00000080
 #define OES_FILE_META_PATH_UNAVAILABLE	0x00000001
 #define OES_FILE_META_PATH_REQUESTED	0x00000002
 #define OES_FILE_META_PATH_TRUNCATED	0x00000004

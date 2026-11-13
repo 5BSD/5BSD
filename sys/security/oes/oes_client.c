@@ -2485,6 +2485,7 @@ void
 oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
     struct oes_strtab *st, void *msg_base)
 {
+	char jail_fullname[MAXHOSTNAMELEN];
 	struct ucred *cred;
 	struct session *sess;
 	struct proc *pptr;
@@ -2591,14 +2592,27 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 		for (i = 0; i < ngroups; i++)
 			ep->ep_groups[i] = cred->cr_groups[i];
 
-		/* Jail info - name goes to string table */
+		/* Jail info - names go to the string table */
 		if (jailed(cred)) {
 			ep->ep_jid = cred->cr_prison->pr_id;
 			ep->ep_flags |= EP_FLAG_JAILED;
-			if (st != NULL && msg_base != NULL)
+			if (st != NULL && msg_base != NULL) {
 				ep->ep_jailname_off = oes_strtab_add(st,
 				    msg_base,
 				    cred->cr_prison->pr_hostname);
+				/*
+				 * jail_set(2) can rename the jail while this
+				 * reads the name without the prison lock:
+				 * take a terminated copy first.
+				 */
+				strlcpy(jail_fullname, cred->cr_prison->pr_name,
+				    sizeof(jail_fullname));
+				ep->ep_jail_fullname_off = oes_strtab_add(st,
+				    msg_base, jail_fullname);
+				if (ep->ep_jail_fullname_off != 0)
+					ep->ep_meta_flags |=
+					    OES_PROC_META_JAIL_FULLNAME;
+			}
 		}
 
 		if (cred->cr_flags & CRED_FLAG_CAPMODE) {
