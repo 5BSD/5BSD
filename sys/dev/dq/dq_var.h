@@ -408,6 +408,12 @@ struct dq_queue {
 #define	DQO_UNLOCK(o)		mtx_unlock(&(o)->o_mtx)
 #define	DQO_LOCK_ASSERT(o)	mtx_assert(&(o)->o_mtx, MA_OWNED)
 
+/*
+ * Test access (dq_testopen.c).  Defined only in a kernel built with
+ * options DQ_TEST_OPEN; the caller includes opt_dq.h.
+ */
+void	dq_testopen_bind(struct thread *);
+
 /* Global state (dq_dev.c). */
 extern struct mtx dq_mtx;
 extern LIST_HEAD(dq_queue_list, dq_queue) dq_queues;
