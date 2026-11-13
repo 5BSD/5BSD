@@ -101,31 +101,37 @@ static void	held_kill(struct attached *);
  * test process that is itself attached (the suite run under dqpass by
  * dq_oracle_test) cannot be that actor: its child inherits the attachment
  * and its P2_NO_NEW_PRIVS, and DQ_IOC_ATTACH refuses a process that is
- * attached already with EBUSY (dq(4), Attaching and Inheritance; D138,
- * D150).  That is a documented refusal, not one of the answers recorded
- * here, so the case is skipped; dqpass.expected names these cases.
+ * attached already with EBUSY (dq(4), "Attachment and resolution", the
+ * Attaching and Inheritance paragraphs).  That is a documented refusal,
+ * not one of the answers recorded here, so the case is skipped;
+ * dqpass.expected names these cases and the two results.
  *
  * no_new_privs alone does not show attachment (a parent may have set it
  * by procctl(2)), so the refusal itself is the evidence.  A test process
  * with no_new_privs whose child can be attached is not attached: the pin
- * that attach sets the flag cannot be made there, and the case fails.
+ * that attach sets the flag cannot be made there, and the case fails; so
+ * does an attach refused for any other reason.
  */
 static void
 require_unattached_actor(struct dqt_ctl *c, struct attached *a)
 {
+	int error;
 
 	if (nnp_of(getpid()) != PROC_NO_NEW_PRIVS_ENABLE)
 		return;
-	if (dq_attach(c->q, a->pd) != 0 && errno == EBUSY) {
-		held_kill(a);
+	error = dq_attach(c->q, a->pd) == 0 ? 0 : errno;
+	held_kill(a);
+	if (error == EBUSY)
 		atf_tc_skip("the test process is itself attached to a dq(4) "
 		    "queue: its child inherits the attachment and cannot be "
-		    "attached again (EBUSY, D138); the case needs an "
+		    "attached again (EBUSY, dq(4)); the case needs an "
 		    "unattached actor");
-	}
-	held_kill(a);
-	atf_tc_fail("the test process has no_new_privs set but is not "
-	    "attached: run it without no_new_privs");
+	if (error == 0)
+		atf_tc_fail("the test process has no_new_privs set but is "
+		    "not attached (its child was attached): run it without "
+		    "no_new_privs");
+	atf_tc_fail("the test process has no_new_privs set and dq_attach "
+	    "of its child failed: %s", strerror(error));
 }
 
 /*
