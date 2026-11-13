@@ -285,68 +285,73 @@ cannot qualify those cases. Use the existing real upgrade tests and add the
 missing state checks where needed, rather than running target scripts against
 host paths during rootless construction.
 
-### Certificate construction in progress
+### Completed AMD64 R3 integration and archive comparison
 
-The new `//secure/caroot:certificate_store` action accepts the selected trusted
-and untrusted installation manifests and invokes execution-configured certctl.
-Its declared tree contains generated hash names and the bundle; neither output
-names nor trust inputs come from a maintained hash list or host trust discovery.
-`certificate_store_archive` serializes the bounded `/etc/ssl` tree through the
-existing installation-tree archive rule. The new test compares real certctl
-explicit and directory modes, selected package certificate bytes, distrust
-precedence, collisions/addition/removal, repeated construction, empty selection,
-ambient trust isolation, malformed/nonregular input refusal, producer METALOG
-and serialized contents/metadata. These targets are not yet selected by the
-production world/image composition.
+`/usr/obj/usr/src/bazel-closeout-system-native-r3-20261113/receipt.json` passes
+the selected AMD64 world, GENERIC kernel/modules, 450-package graph and all four
+selected test targets. Its explicit kernel source revision is `83d696e46e20`;
+1,539 unique captured files total 647,111,696 bytes. This candidate precedes the
+certificate construction/fix batch below. It is a prepared-SDK build, not native
+bootstrap, all-option qualification or current-head/installed-system acceptance.
 
-The Make-built-tool host control in
-`/usr/obj/usr/src/bazel-certificate-construction-host-r1-20261113/result.json`
-passes eight cases, with the producer case explicitly skipped. The expanded
-r2 control exposes a real defect: when a bundle's parent equals DESTDIR,
-certctl's `unexpand_path` retains the absolute build path in its METALOG entry.
-Its archive content check passes, but its producer metadata check fails. Do not
-rewrite that entry in the test or remove the failing assertion.
+All 450 captured archives were bound through the maintained qualification-artifact
+resolver and compared against the retained independent Make repository. Evidence:
+`/usr/obj/usr/src/bazel-closeout-package-comparison-r3-20261113/comparison/review.json`.
+The two `shlibs_required` differences are gone. No package-name or nondirectory
+payload-path omissions remain; all ten entry-presence differences are directory
+claims. Logical diagnostics retain 4,174 payload hashes, 3,257 sizes, timestamps,
+manifest file/flatsize fields and directory claims. No timestamp, hash or raw
+metadata differences were rewritten or waived; final parity remains unaccepted.
 
-An isolated proposed one-line boundary fix is retained in
-`/usr/obj/usr/src/bazel-certificate-root-metadata-fix-20261113/fix.patch`.
-That isolated host build passes all 31 maintained certctl regression cases,
-including the new staging-root dry-run/actual metadata case. The resulting r3
-construction control passes all ten cases without skips:
-`/usr/obj/usr/src/bazel-certificate-construction-host-r3-20261113/result.json`.
-This is host control evidence, not Bazel analysis/action/runfiles, complete image,
-or runtime TLS acceptance. The original r2 failure is retained. Apply the C fix
-after the active full integration run ends; its consumed certctl source has been
-left unchanged during the run.
+### Certificate construction and declared state
 
-The focused native format-5 request is prepared at
-`/usr/obj/usr/src/bazel-certificate-construction-request-r1-20261113/inputs.json`.
-The maintained frontend refused its concurrent launch with `build lock:
-Resource temporarily unavailable`; the full AMD64 integration process remains
-live. Retry that same focused request after completion, then integrate dynamic
-construction declarations into world inventory/image reconciliation and qualify
-the actual image. Existing build-bsd target selection supports this interface;
-no new C frontend flag or alternate production workflow is needed.
+`//secure/caroot:certificate_store` consumes selected trusted/untrusted package
+installation manifests and execution-configured certctl. Its declared tree holds
+generated hash names and the bundle; there is no enumerated hash list or host
+trust discovery. `certificate_store_archive` uses the existing bounded-tree
+serializer with explicit root/wheel installation modes and source mtree policy.
+World construction and image declarations select this archive through the existing
+CAROOT/OPENSSL/CRYPT setting group. The shared adapter accepts typed manifests or
+installation archives; the reader checks distinct untagged regular files and
+bounded canonical paths. Exact world reconciliation still rejects missing,
+changed or unexplained state and conflicting package claims.
 
-The shared `construction_inputs` adapter now exposes typed static manifests or
-installation-tree archives to image consumers. `construction_records.py` reads
-the existing serializer's installation-request records, checks bounded canonical
-paths and distinct untagged regular files, and leaves directory policy to archive
-reconciliation. Seven host cases cover selected/missing/changed state, changing
-producer output membership, duplicates, package claims, path escapes and malformed
-metadata. The actual r3 certificate metadata also reconciles all 168 generated
-files and three directories against the world inventory without listing hash
-names. Evidence is retained beside r3 as `construction-records.json` and
-`construction-inventory-control.json`. This is shared-input/host control evidence;
-the image action, native tests and world-root integration are not yet accepted.
-The coherent pending integration patch is retained with the focused request as
-`integration.patch`; it has passed `git apply --check` but is not applied while
-the original full package run remains active.
+The original expanded host r2 control found a real certctl defect: a bundle
+whose parent equals DESTDIR retained its absolute build path in METALOG.
+The one-line boundary fix is applied in source, after the complete AMD64 R3 run
+ended. Normal component Make compilation and all 31 maintained host regression
+cases pass, including dry-run/actual staging-root metadata. The original host
+failure and isolated-fix controls remain under
+`bazel-certificate-construction-host-r2-20261113` and
+`bazel-certificate-root-metadata-fix-20261113`.
+
+The maintained native certificate R1 and R2 attempts failed in the new test
+adapter: directory artifacts appear as leaf aliases in runfiles, and Bazel's
+artifact permissions differ from installation permissions. Both failures remain
+recorded. The adapter now checks aliases against the declared tree execution
+path, inspects producer object types with lstat and compares all file bytes.
+Installation modes are still checked explicitly in METALOG and the actual tar;
+artifact-cache permissions are not used as installed-filesystem evidence.
+
+`/usr/obj/usr/src/bazel-certificate-construction-native-r3-20261113/receipt.json`
+passes all three selected native test targets: ten certificate cases, seven
+construction-input cases and eight world-inventory cases, without skips.
+The certificate cases include complete package corpus/directory-mode equivalence,
+distrust precedence, collisions/addition/removal, repeated construction, empty
+selection, ambient trust isolation, malformed/nonregular refusal, producer METALOG
+and archive contents/ownership/modes. The captured complete world inventory has
+447 world package families and 175 construction files, including all 168 generated
+certificate files. Kernel package families are separate from this world inventory.
+This accepts producer/archive/world-inventory construction; actual updated image,
+runtime TLS, subsequent full package integration and upgrade behavior remain open.
+Existing format-5 build-bsd target inputs support this batch without a new C
+frontend flag. Make remains production/default; no host installation occurred.
 
 The refreshed SDK snapshot differs from the previous snapshot in only
 `sys/cap_authority.h` and `sys/proc.h`; exact hashes are retained in
 `bazel-closeout-package-comparison-r2-20261113/sdk-change-review.json`.
 The SDK exporter currently declares the complete system-header tree in
-compile_inputs. The current full integration run is rebuilding a broad closure
+compile_inputs. The completed R3 full integration run rebuilt a broad closure
 following that change. Review actual compile input discovery and cache
 invalidation before accepting incremental efficiency under gate 3/4. Keeping the
 same Bazel state directory alone does not prove narrow invalidation or cache

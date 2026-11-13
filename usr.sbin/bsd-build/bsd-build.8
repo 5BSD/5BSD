@@ -8097,6 +8097,16 @@ interface and private database/cache, then reconciles the complete staged tree
 against source-derived directory and payload policy before native makefs/mkimg.
 It does not replace normal rc/init or load the filesystem image into memory.
 .Pp
+Fresh native construction selects the certificate store when CAROOT and OpenSSL
+are enabled, including the crypto dependency. Package certificate manifests are
+explicit inputs to execution-configured certctl; generated hash names and the
+bundle are declared tree outputs. World inventory and image composition reconcile
+those files through typed installation metadata, rather than discovering host
+trust or maintaining a list of certificate hashes. Native producer/archive and
+world-inventory tests pass; the updated image and runtime TLS require separate
+qualification. See
+.Pa tools/build/bazel/MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md .
+.Pp
 This is a private qualification fixture with explicit guest test credentials,
 serial/DHCP/SSH configuration and an SDK pkg tool. It is not production media.
 The maintained tools/test/system-pkg-runtime/run.py driver consumes its captured

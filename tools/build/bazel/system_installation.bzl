@@ -7,7 +7,7 @@ load(":bsd_world_package_inventory.bzl", "bsd_world_package_inventory")
 load(":bsd_world_package_reconciliation.bzl", "bsd_world_package_reconciliation")
 load(":bsd_world_pkg_create.bzl", "bsd_world_pkg_create")
 load(":bsd_world_pkg_solver_test.bzl", "bsd_world_pkg_solver_test")
-load(":world_installation.bzl", "world_construction_manifests")
+load(":world_installation.bzl", "world_construction_inputs")
 
 def system_pkgbase(name, kernel_packages):
     """Combine one explicit kernel graph with the source-selected world graph."""
@@ -21,7 +21,7 @@ def system_pkgbase(name, kernel_packages):
         visibility = ["//visibility:public"])
     suffixes = ["dbg", "dev", "lib"] + select({"//tools/build/bazel/config:split_manpages_enabled": ["man"], "//conditions:default": []})
     bsd_world_package_inventory(name = name + "_inventory", archives = [":" + name + "_installation"],
-        construction = world_construction_manifests(), suffix_tags = suffixes, visibility = ["//visibility:public"])
+        construction = world_construction_inputs(), suffix_tags = suffixes, visibility = ["//visibility:public"])
     bsd_world_package_reconciliation(name = name + "_reconciliation", inventory = ":" + name + "_inventory",
         families = ":" + name + "_families", visibility = ["//visibility:public"])
     bsd_world_pkg_create(name = name, families = ":" + name + "_families", archives = ":" + name + "_installation",

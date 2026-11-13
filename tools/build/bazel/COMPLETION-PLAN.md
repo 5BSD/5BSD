@@ -11,29 +11,28 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
-The completed `bazel-closeout-system-native-r1-20261111` receipt passes the
-selected AMD64 world/kernel/module/450-package graph and its two selected tests.
-This is a captured source/configuration epoch, not qualification of subsequent
-merges or native bootstrap. The independent final archive comparison now covers
-all 450 packages: no package-name or nondirectory payload-path omissions remain.
-It still reports byte, timestamp, directory ownership and shared-library
-requirements differences; package parity is not accepted.
+The completed `bazel-closeout-system-native-r3-20261113` receipt passes the
+selected AMD64 world/kernel/module/450-package graph and all four selected tests
+at explicit kernel revision `83d696e46e20`. It captures 1,539 unique files with
+verified output digests. This is the selected source/configuration epoch, not
+native bootstrap or qualification of subsequent changes.
 
-The archive tests and five corrected executable targets pass focused native
-qualification. All five pass maintained ELF metadata comparison against Make.
-Their complete package-output integration remains pending.
-The integration retry is active at explicit kernel revision `83d696e46e2`,
-using the existing Bazel state and a refreshed SDK. Its completion and package
-comparison are still pending. A two-header SDK change accompanies broad compile
-invalidation; cache efficiency must be measured rather than inferred from state reuse.
+The independent R3 archive comparison covers all 450 packages. No package-name
+or nondirectory payload-path omissions remain, and the two shared-library
+requirements mismatches are gone. Byte/size, timestamp and directory-claim
+comparison differences remain; complete package parity is not accepted.
+A two-header SDK change accompanied broad compile invalidation; keeping the
+same state directory does not establish acceptable incremental efficiency.
 
-Certificate-store producer/archive targets and their regression cases are in
-progress. Host controls exposed a staging-root certctl METALOG defect; an
-isolated proposed fix passes 31 certctl cases and ten construction/archive cases.
-The source C fix is pending the end of the active full build. Native target,
-world/image integration and runtime TLS acceptance remain open; see the Make
-closeout record. The concurrent focused frontend launch was refused by the
-normal build lock; it did not run or pass.
+After that full run ended, the certctl staging-root METALOG fix was applied and
+passes all 31 maintained host regression cases. Certificate native R3 passes the
+producer/archive test (ten cases), construction-input test (seven) and world
+inventory test (eight), through the maintained frontend. The captured complete
+world inventory now includes all 168 generated certificate files, selected by
+CAROOT/OPENSSL/CRYPT and reconciled from declared tree metadata. Image composition
+uses the same declarations. The actual updated image/runtime TLS and subsequent
+whole-system package integration remain to be qualified; see the Make closeout
+record for retained failures and precise evidence.
 
 Close remaining defects in batches against the retained Make control. Reuse the
 Bazel state/cache and test the affected targets before repeating the complete

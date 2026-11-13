@@ -3,6 +3,7 @@
 import json
 from pathlib import Path, PurePosixPath
 import sys
+from construction_records import construction_records
 
 
 def package(record, suffixes):
@@ -116,7 +117,8 @@ def main():
         records.extend(policy['directories'])
         # Physical parent policy does not itself grant package ownership.
         records.extend(dict(record, tags=[]) for record in policy['physical_directories'])
-    result = inventory(records, request['construction'], request['suffix_tags'])
+    declarations = construction_records(request['construction'], request.get('construction_trees', []))
+    result = inventory(records, declarations, request['suffix_tags'])
     result['configuration'] = request['configuration']
     result['expanded_trees'] = trees
     Path(sys.argv[2]).write_text(json.dumps(result, sort_keys=True, indent=2) + '\n')

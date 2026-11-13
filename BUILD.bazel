@@ -62,9 +62,9 @@ load("//tools/build/bazel:system_installation.bzl", "system_pkgbase")
 system_pkgbase(name = "amd64_system_packages", kernel_packages = "//sys/amd64/conf:kernel_packages")
 
 load("//tools/build/bazel:bsd_pkg_image.bzl", "bsd_pkg_image")
-load("//tools/build/bazel:world_installation.bzl", "world_construction_manifests")
+load("//tools/build/bazel:world_installation.bzl", "world_construction_inputs")
 bsd_pkg_image(name = "amd64_system_boot_test_image", packages = ":amd64_system_packages",
     families = ":amd64_system_packages_families", inventory = ":amd64_system_packages_inventory",
-    payload_inventory = ":amd64_system_packages_payload_inventory", construction = world_construction_manifests(),
+    payload_inventory = ":amd64_system_packages_payload_inventory", construction = world_construction_inputs(),
     site = "//tools/build/bazel/tests/system_pkg_boot:site", policy = "//tools/build/bazel/tests/system_pkg_boot:image.json",
     visibility = ["//visibility:public"])

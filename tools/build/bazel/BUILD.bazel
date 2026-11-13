@@ -462,6 +462,8 @@ exports_files(["kernel_audit_sources.py"])
 bsd_python_test(name = "kernel_audit_sources_test", src = "kernel-audit-sources-test.py",
     data = ["kernel_audit_sources.py"])
 
+exports_files(["certificate-store-test.py"], visibility = ["//secure/caroot:__pkg__"])
+
 bsd_python_test(
     name = "construction_records_test",
     src = "construction-records-test.py",

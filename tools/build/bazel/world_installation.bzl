@@ -10,9 +10,15 @@ load(":bsd_world_pkg_create.bzl", "bsd_world_pkg_create")
 load(":bsd_world_layout.bzl", "bsd_world_layout")
 load(":bsd_world_pkg_solver_test.bzl", "bsd_world_pkg_solver_test")
 
-def world_construction_manifests():
+def _world_construction_archives():
+    return select({
+        "//tools/build/bazel/config:package_caroot_openssl": ["//secure/caroot:certificate_store_archive"],
+        "//conditions:default": [],
+    })
+
+def world_construction_inputs():
     return ["//etc:account_install_manifest", "//:world_manual_databases_manifest",
-        "//usr.sbin/services_mkdb:construction_manifest", "//usr.bin/login:generated_manifest"]
+        "//usr.sbin/services_mkdb:construction_manifest", "//usr.bin/login:generated_manifest"] + _world_construction_archives()
 
 def world_contributions():
     package_suffixes = ["dbg", "dev", "lib"] + select({
@@ -53,12 +59,12 @@ def world_contributions():
     # Fresh-system state is separate from package payloads and upgrades. These
     # databases use declared source defaults, never an existing system's accounts.
     bsd_install_archive_set(name = "fresh_world_contributions",
-        archives = [":finalized_world_contributions", "//etc:account_install_archive", ":world_directory_layout"],
+        archives = [":finalized_world_contributions", "//etc:account_install_archive", ":world_directory_layout"] + _world_construction_archives(),
         visibility = ["//visibility:public"])
 
     bsd_world_package_inventory(name = "world_package_inventory",
         archives = [":fresh_world_contributions"],
-        construction = world_construction_manifests(),
+        construction = world_construction_inputs(),
         suffix_tags = package_suffixes, visibility = ["//visibility:public"])
 
     bsd_world_package_reconciliation(name = "world_package_reconciliation",
