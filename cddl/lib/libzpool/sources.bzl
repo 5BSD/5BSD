@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Explicit default amd64 source inventory; no Make query at build time.
-ZPOOL_SOURCES = [
+# Explicit default amd64 inventory in source recipe order; no build-time Make query.
+ZPOOL_ORDERED_SOURCES = [
     "lib/libzpool/arc_os.c",
     "lib/libzpool/kernel.c",
     "lib/libzpool/util.c",
@@ -62,9 +62,16 @@ ZPOOL_SOURCES = [
     "module/zfs/dsl_destroy.c",
     "module/zfs/dsl_userhold.c",
     "module/zfs/edonr_zfs.c",
+    "module/zstd/lib/common/entropy_common.c",
+    "module/zstd/lib/common/error_private.c",
     "module/zfs/fm.c",
+    "module/zstd/lib/compress/fse_compress.c",
+    "module/zstd/lib/common/fse_decompress.c",
     "module/zfs/gzip.c",
+    "module/zstd/lib/compress/hist.c",
     "module/zfs/hkdf.c",
+    "module/zstd/lib/compress/huf_compress.c",
+    "module/zstd/lib/decompress/huf_decompress.c",
     "module/zfs/lzjb.c",
     "module/zfs/lz4.c",
     "module/zfs/lz4_zfs.c",
@@ -73,6 +80,7 @@ ZPOOL_SOURCES = [
     "module/zfs/multilist.c",
     "module/zfs/objlist.c",
     "module/zfs/pathname.c",
+    "module/zstd/lib/common/pool.c",
     "module/zfs/range_tree.c",
     "module/zfs/refcount.c",
     "module/zfs/rrwlock.c",
@@ -154,6 +162,18 @@ ZPOOL_SOURCES = [
     "module/zfs/zle.c",
     "module/zfs/zrlock.c",
     "module/zstd/lib/common/zstd_common.c",
+    "module/zstd/lib/compress/zstd_compress.c",
+    "module/zstd/lib/compress/zstd_compress_literals.c",
+    "module/zstd/lib/compress/zstd_compress_sequences.c",
+    "module/zstd/lib/compress/zstd_compress_superblock.c",
+    "module/zstd/lib/decompress/zstd_ddict.c",
+    "module/zstd/lib/decompress/zstd_decompress.c",
+    "module/zstd/lib/decompress/zstd_decompress_block.c",
+    "module/zstd/lib/compress/zstd_double_fast.c",
+    "module/zstd/lib/compress/zstd_fast.c",
+    "module/zstd/lib/compress/zstd_lazy.c",
+    "module/zstd/lib/compress/zstd_ldm.c",
+    "module/zstd/lib/compress/zstd_opt.c",
     "module/zstd/lib/compress/zstd_preSplit.c",
     "module/zfs/zthr.c",
     "module/lua/lapi.c",
@@ -186,6 +206,8 @@ ZPOOL_SOURCES = [
     "module/zcommon/zfs_fletcher_sse.c",
     "module/zcommon/zfs_fletcher_avx512.c",
 ]
+
+# These sources retain their separate compression compile flags.
 ZPOOL_COMPRESSION_SOURCES = [
     "module/zstd/lib/common/entropy_common.c",
     "module/zstd/lib/common/error_private.c",
@@ -208,3 +230,4 @@ ZPOOL_COMPRESSION_SOURCES = [
     "module/zstd/lib/compress/zstd_ldm.c",
     "module/zstd/lib/compress/zstd_opt.c",
 ]
+ZPOOL_SOURCES = [source for source in ZPOOL_ORDERED_SOURCES if source not in ZPOOL_COMPRESSION_SOURCES]

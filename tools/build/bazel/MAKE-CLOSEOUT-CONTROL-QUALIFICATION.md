@@ -833,3 +833,29 @@ libarchive and liboes. New focused outputs still need combined integration.
 The existing build-bsd format-5 interface and documented source-order contract
 cover these declarations; no C/CLI/manual interface changes are needed. Make
 remains production/default and BIP remains excluded.
+
+
+## Libzpool archive order across compile groups (2026-11-13)
+
+The libzpool inventory now has one complete source recipe order. Sources with
+special compression compiler flags remain an explicit subset; the ordinary group
+is derived from that inventory. A declared source filegroup forwards the complete
+order to the installed archive rule. This preserves all 204 source identities,
+per-group compiler flags and exact own-object coverage. A production build does
+not query Make or a reference archive, and no comparison exclusions are added.
+
+`bazel-zpool-archive-order-native-r1-20261113/receipt.json` passes the static
+archive, shared library, installation archive and selected zstream queue test.
+The retained test log explicitly reports all eight queue selftests OK, including
+basic, edge, zero-cost, batching, torture, multi-producer, multi-queue and stress.
+Independent review R1 passes full order/symbol contracts for all 204 archive
+members and shared-library metadata against hash-verified Make payloads, with
+comparison-tool digests checked before/after. These are selected host tests, not
+ZFS filesystem/disk workload, hardware, full ABI/debug or ARM64 qualification.
+
+Three original order cases remain: libc, libarchive and liboes. Later focused
+fixes still require a complete combined candidate and the wider runtime,
+configuration, bootstrap/cache/sandbox, performance, publication and ARM64 gates.
+The existing build-bsd format-5 path and documented archive source-order interface
+cover this declaration change; no C/CLI/manual input change is needed. Make stays
+production/default; BIP stays excluded.

@@ -11,6 +11,14 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Libzpool focused native R1 now passes archive/shared/installation construction and
+the queue selftest target (all eight selftests reported OK). Independent review
+R1 passes the full 204-member archive order/symbol contract and shared metadata.
+Compression flags remain selected independently from installed member order using
+one maintained source inventory. Ten of the original thirteen archive-order cases
+are fixed; libc, libarchive and liboes remain. Focused later outputs still require
+complete candidate integration and the other six-gate requirements remain open.
+
 Ncurses/tinfo focused native R1 passes both static/shared products, the normal
 installation archive and the maintained API integration test. Independent review
 R1 passes both complete member/symbol and both shared-library metadata contracts.

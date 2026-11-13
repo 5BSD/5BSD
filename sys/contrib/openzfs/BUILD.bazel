@@ -58,7 +58,8 @@ cc_library(name = "icp_headers", textual_hdrs = ["module/icp/include/generic_imp
 
 exports_files(["module/zfs/zfs_impl.c"], visibility = ["//cddl/lib/libicp_rescue:__pkg__"])
 
-load("//cddl/lib/libzpool:sources.bzl", "ZPOOL_SOURCES", "ZPOOL_COMPRESSION_SOURCES")
+load("//cddl/lib/libzpool:sources.bzl", "ZPOOL_SOURCES", "ZPOOL_COMPRESSION_SOURCES", "ZPOOL_ORDERED_SOURCES")
+filegroup(name = "zpool_ordered_sources", srcs = ZPOOL_ORDERED_SOURCES, visibility = ["//cddl/lib/libzpool:__pkg__"])
 filegroup(name = "zpool_build_sources", srcs = ZPOOL_SOURCES, visibility = ["//cddl/lib/libzpool:__pkg__"])
 filegroup(name = "zpool_compression_sources", srcs = ZPOOL_COMPRESSION_SOURCES, visibility = ["//cddl/lib/libzpool:__pkg__"])
 cc_library(name = "zpool_build_headers", hdrs = glob(["lib/libzpool/**/*.h", "module/zfs/*.h", "module/lua/*.h", "module/zstd/**/*.h"]),
