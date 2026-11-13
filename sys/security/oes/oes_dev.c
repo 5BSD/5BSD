@@ -18,6 +18,8 @@
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/conf.h>
+#include <sys/counter.h>
+#include <sys/event.h>
 #include <sys/uio.h>
 #include <sys/malloc.h>
 #include <sys/proc.h>
@@ -25,7 +27,9 @@
 #include <sys/filedesc.h>
 #include <sys/fcntl.h>
 #include <sys/filio.h>
+#include <sys/jail.h>
 #include <sys/resourcevar.h>
+#include <sys/rmlock.h>
 #include <sys/poll.h>
 #include <sys/selinfo.h>
 #include <sys/capsicum.h>
@@ -85,6 +89,31 @@ SYSCTL_INT(_security_oes, OID_AUTO, cache_max_entries, CTLFLAG_RW,
     &oes_cache_max_entries, 0, "Maximum decision cache entries per client");
 
 /*
+ * Events dropped before anything was allocated for them, because every open
+ * client is jail-scoped and none covers the subject (oes_event_unobserved()).
+ * The counters exist only once oes_dev_init() has run.
+ */
+static int
+oes_sysctl_jail_counter(SYSCTL_HANDLER_ARGS)
+{
+	counter_u64_t *cp = arg1;
+	uint64_t value;
+
+	value = *cp != NULL ? counter_u64_fetch(*cp) : 0;
+	return (sysctl_handle_64(oidp, &value, 0, req));
+}
+
+SYSCTL_PROC(_security_oes, OID_AUTO, jail_filtered,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_jail_filtered, 0, oes_sysctl_jail_counter, "QU",
+    "Events dropped before allocation: only jail-scoped clients are open "
+    "and none covers the subject");
+SYSCTL_PROC(_security_oes, OID_AUTO, jail_filtered_auth,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+    &oes_softc.sc_jail_filtered_auth, 0, oes_sysctl_jail_counter, "QU",
+    "AUTH events among security.oes.jail_filtered");
+
+/*
  * Default muting configuration
  *
  * These sysctls define paths that are automatically muted for new clients.
@@ -134,6 +163,10 @@ static int	oes_ioctl_set_scope(struct oes_client *ec,
 		    struct oes_scope_args *args);
 static int	oes_ioctl_get_scope(struct oes_client *ec,
 		    struct oes_scope_args *args);
+static int	oes_ioctl_set_jail_scope(struct oes_client *ec,
+		    struct thread *td, struct oes_jail_scope_args *args);
+static int	oes_ioctl_get_jail_scope(struct oes_client *ec,
+		    struct thread *td, struct oes_jail_scope_args *args);
 static int	oes_ioctl_set_mode(struct oes_client *ec,
 		    struct oes_mode_args *args);
 static int	oes_ioctl_get_mode(struct oes_client *ec,
@@ -241,6 +274,8 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 		OES_UNLOCK();
 		return (EAGAIN);
 	}
+	/* A new client is not jail-scoped; see oes_event_unobserved(). */
+	atomic_add_int(&oes_softc.sc_nwide, 1);
 	atomic_add_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
 
@@ -252,6 +287,7 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	if (ec == NULL) {
 		OES_LOCK();
 		atomic_subtract_int(&oes_softc.sc_nclients, 1);
+		atomic_subtract_int(&oes_softc.sc_nwide, 1);
 		OES_UNLOCK();
 		return (ENOMEM);
 	}
@@ -277,6 +313,7 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 		oes_client_free(ec);
 		OES_LOCK();
 		atomic_subtract_int(&oes_softc.sc_nclients, 1);
+		atomic_subtract_int(&oes_softc.sc_nwide, 1);
 		OES_UNLOCK();
 		return (error);
 	}
@@ -298,6 +335,7 @@ static void
 oes_client_dtor(void *data)
 {
 	struct oes_client *ec = data;
+	struct prison *pr;
 
 	if (ec == NULL)
 		return;
@@ -309,11 +347,24 @@ oes_client_dtor(void *data)
 	ec->ec_flags |= EC_FLAG_CLOSING;
 	EC_UNLOCK(ec);
 
-	/* Remove from global list */
+	/*
+	 * Remove from global list.  A jail scope that has not ended gives up
+	 * its jail here; one that ended already did so in the delivery task.
+	 */
+	pr = NULL;
 	OES_LOCK();
 	LIST_REMOVE(ec, ec_link);
+	EC_LOCK(ec);
+	if (ec->ec_scope == OES_SCOPE_JAIL) {
+		if (ec->ec_jail_pr != NULL)
+			pr = oes_client_jail_detach_locked(ec);
+	} else
+		atomic_subtract_int(&oes_softc.sc_nwide, 1);
+	EC_UNLOCK(ec);
 	atomic_subtract_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
+	if (pr != NULL)
+		prison_free(pr);
 
 	/* Wake any waiters and clean up */
 	oes_client_free(ec);
@@ -364,54 +415,48 @@ oes_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 
 	EC_LOCK(ec);
 
-	/* Wait for events if queue is empty */
-	while (TAILQ_EMPTY(&ec->ec_pending)) {
-		if (ec->ec_flags & EC_FLAG_CLOSING) {
-			EC_UNLOCK(ec);
-			return (ENXIO);
-		}
-		if (ioflag & O_NONBLOCK) {
-			EC_UNLOCK(ec);
-			return (EAGAIN);
-		}
-		error = msleep(&ec->ec_pending, &ec->ec_mtx, PCATCH,
-		    "oesrd", 0);
-		if (error) {
-			EC_UNLOCK(ec);
-			return (error);
-		}
-	}
-
-	/* Skip expired AUTH events at head of queue */
 	for (;;) {
+		/*
+		 * Wait for events if queue is empty.  Every wakeup re-tests
+		 * the queue: the end of a jail scope wakes readers with
+		 * nothing queued, and an expired AUTH event can be unlinked
+		 * between an enqueue's wakeup and this thread running.
+		 */
+		while (TAILQ_EMPTY(&ec->ec_pending)) {
+			if (ec->ec_flags & EC_FLAG_CLOSING) {
+				EC_UNLOCK(ec);
+				return (ENXIO);
+			}
+			/*
+			 * The client's jail is gone and everything queued
+			 * for it has been read: end of file.
+			 */
+			if ((ec->ec_jail_flags & OES_JAIL_SCOPE_DEAD) != 0) {
+				EC_UNLOCK(ec);
+				return (0);
+			}
+			if (ioflag & O_NONBLOCK) {
+				EC_UNLOCK(ec);
+				return (EAGAIN);
+			}
+			error = msleep(&ec->ec_pending, &ec->ec_mtx, PCATCH,
+			    "oesrd", 0);
+			if (error) {
+				EC_UNLOCK(ec);
+				return (error);
+			}
+		}
+
 		ep = oes_event_dequeue(ec);
 		KASSERT(ep != NULL, ("oes_read: dequeue returned NULL"));
 
-		if (OES_EVENT_IS_AUTH(ep->ep_msg.em_event) &&
-		    (ep->ep_flags & EP_FLAG_EXPIRED)) {
-			EC_UNLOCK(ec);
-			oes_pending_rele(ep);
-			EC_LOCK(ec);
-
-			if (TAILQ_EMPTY(&ec->ec_pending)) {
-				if (ec->ec_flags & EC_FLAG_CLOSING) {
-					EC_UNLOCK(ec);
-					return (ENXIO);
-				}
-				if (ioflag & O_NONBLOCK) {
-					EC_UNLOCK(ec);
-					return (EAGAIN);
-				}
-				error = msleep(&ec->ec_pending, &ec->ec_mtx,
-				    PCATCH, "oesrd", 0);
-				if (error) {
-					EC_UNLOCK(ec);
-					return (error);
-				}
-			}
-			continue;
-		}
-		break;
+		/* Skip expired AUTH events at head of queue */
+		if (!OES_EVENT_IS_AUTH(ep->ep_msg.em_event) ||
+		    (ep->ep_flags & EP_FLAG_EXPIRED) == 0)
+			break;
+		EC_UNLOCK(ec);
+		oes_pending_rele(ep);
+		EC_LOCK(ec);
 	}
 
 	/*
@@ -642,6 +687,26 @@ oes_ioctl_get_scope(struct oes_client *ec, struct oes_scope_args *args)
 	oes_client_get_scope(ec, &args->esa_scope);
 	args->esa_reserved = 0;
 	return (0);
+}
+
+static int
+oes_ioctl_set_jail_scope(struct oes_client *ec, struct thread *td,
+    struct oes_jail_scope_args *args)
+{
+
+	if (args == NULL)
+		return (EINVAL);
+	return (oes_client_set_jail_scope(ec, td, args));
+}
+
+static int
+oes_ioctl_get_jail_scope(struct oes_client *ec, struct thread *td,
+    struct oes_jail_scope_args *args)
+{
+
+	if (args == NULL)
+		return (EINVAL);
+	return (oes_client_get_jail_scope(ec, td, args));
 }
 
 static int
@@ -1052,6 +1117,12 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		return (oes_ioctl_set_scope(ec, (struct oes_scope_args *)data));
 	case OES_IOC_GET_SCOPE:
 		return (oes_ioctl_get_scope(ec, (struct oes_scope_args *)data));
+	case OES_IOC_SET_JAIL_SCOPE:
+		return (oes_ioctl_set_jail_scope(ec, td,
+		    (struct oes_jail_scope_args *)data));
+	case OES_IOC_GET_JAIL_SCOPE:
+		return (oes_ioctl_get_jail_scope(ec, td,
+		    (struct oes_jail_scope_args *)data));
 
 	case OES_IOC_SET_MODE: {
 		return (oes_ioctl_set_mode(ec, (struct oes_mode_args *)data));
@@ -1248,6 +1319,9 @@ oes_poll(struct cdev *dev, int events, struct thread *td)
 
 	if (ec->ec_flags & EC_FLAG_CLOSING)
 		revents |= POLLHUP;
+	/* The jail of a jail-scoped client is gone; see oes_read(). */
+	if ((ec->ec_jail_flags & OES_JAIL_SCOPE_DEAD) != 0)
+		revents |= POLLHUP;
 
 	EC_UNLOCK(ec);
 
@@ -1306,7 +1380,27 @@ oes_kqread(struct knote *kn, long hint)
 	 */
 	EC_LOCK_ASSERT(ec);
 	kn->kn_data = ec->ec_queue_bytes;
+	if ((ec->ec_jail_flags & OES_JAIL_SCOPE_DEAD) != 0) {
+		kn->kn_flags |= EV_EOF;
+		return (1);
+	}
 	return (!TAILQ_EMPTY(&ec->ec_pending));
+}
+
+/* The sysctl handler reads the pointers: clear each before it is freed. */
+static void
+oes_jail_counters_free(void)
+{
+	counter_u64_t c;
+
+	c = oes_softc.sc_jail_filtered;
+	oes_softc.sc_jail_filtered = NULL;
+	if (c != NULL)
+		counter_u64_free(c);
+	c = oes_softc.sc_jail_filtered_auth;
+	oes_softc.sc_jail_filtered_auth = NULL;
+	if (c != NULL)
+		counter_u64_free(c);
 }
 
 /*
@@ -1321,6 +1415,12 @@ oes_dev_init(void)
 	LIST_INIT(&oes_softc.sc_clients);
 	oes_softc.sc_next_msg_id = 1;
 	oes_softc.sc_next_client_id = 1;
+
+	/* Jail-scoped clients. */
+	rm_init(&oes_softc.sc_jail_lock, "oes_jail");
+	LIST_INIT(&oes_softc.sc_jail_clients);
+	oes_softc.sc_jail_filtered = counter_u64_alloc(M_WAITOK);
+	oes_softc.sc_jail_filtered_auth = counter_u64_alloc(M_WAITOK);
 
 	/* Deferred NOSLEEP notify delivery. */
 	mtx_init(&oes_softc.sc_defer_mtx, "oes_defer", NULL, MTX_SPIN);
@@ -1346,6 +1446,8 @@ oes_dev_init(void)
 	if (oes_softc.sc_cdev == NULL) {
 		taskqueue_free(oes_softc.sc_defer_tq);
 		mtx_destroy(&oes_softc.sc_defer_mtx);
+		oes_jail_counters_free();
+		rm_destroy(&oes_softc.sc_jail_lock);
 		mtx_destroy(&oes_softc.sc_mtx);
 		return (ENXIO);
 	}
@@ -1426,6 +1528,8 @@ oes_dev_uninit(void)
 	}
 	mtx_destroy(&oes_softc.sc_defer_mtx);
 
+	oes_jail_counters_free();
+	rm_destroy(&oes_softc.sc_jail_lock);
 	mtx_destroy(&oes_softc.sc_mtx);
 }
 

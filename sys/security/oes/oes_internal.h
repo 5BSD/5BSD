@@ -14,14 +14,17 @@
 
 #include <sys/param.h>
 #include <sys/kernel.h>
+#include <sys/counter.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/rmlock.h>
 #include <sys/sx.h>
 #include <sys/queue.h>
 #include <sys/taskqueue.h>
 #include <sys/selinfo.h>
 #include <sys/proc.h>
 #include <sys/file.h>
+#include <sys/jail.h>
 #include <sys/sysctl.h>
 #include <sys/vnode.h>
 
@@ -61,6 +64,22 @@ struct oes_softc {
 	uint32_t		sc_defer_count;	/* Deferred queue depth */
 	struct task		sc_defer_task;	/* Deferred delivery task */
 	struct taskqueue	*sc_defer_tq;	/* Dedicated delivery thread */
+
+	/*
+	 * Jail scope.  sc_jail_clients lists the clients whose jail scope has
+	 * not ended.  The list, and each listed client's ec_jail_pr and
+	 * ec_jail_flags, are written with sc_mtx, the client's ec_mtx and
+	 * sc_jail_lock (write) all held, and may be read under any one of
+	 * them.  sc_jail_lock is read in MAC hooks that cannot sleep and may
+	 * hold a process lock: nothing may be locked inside it.
+	 */
+	struct rmlock		sc_jail_lock;
+	LIST_HEAD(, oes_client)	sc_jail_clients;
+	u_int			sc_njail;	/* Clients on sc_jail_clients */
+	u_int			sc_nwide;	/* Open clients, not jail-scoped */
+	u_int			sc_jail_ending;	/* Clients with EC_JAIL_ENDING */
+	counter_u64_t		sc_jail_filtered; /* Dropped before allocation */
+	counter_u64_t		sc_jail_filtered_auth; /* AUTH events of those */
 };
 
 /* Bound on the deferred queue so a burst cannot exhaust memory. */
@@ -121,6 +140,13 @@ struct oes_client {
 	uint64_t		ec_owner_genid;	/* Owner generation */
 	uint64_t		ec_scope_marker;	/* Inherited descendants marker */
 	uint32_t		ec_scope;	/* OES_SCOPE_* visibility */
+	LIST_ENTRY(oes_client)	ec_jail_link;	/* sc_jail_clients */
+	struct prison		*ec_jail_pr;	/* Held; NULL if none or dead */
+	uint32_t		ec_jail_flags;	/* NOCHILDREN, INBOUND, DEAD */
+	uint32_t		ec_jail_state;	/* EC_JAIL_*; sc_mtx */
+	int			ec_jail_jid;	/* As the setter named the jail */
+	bool			ec_jail_set_jailed; /* Setter was itself jailed */
+	char			ec_jail_name[MAXHOSTNAMELEN]; /* Likewise */
 	uint32_t		ec_mode;	/* OES_MODE_* */
 	uint32_t		ec_default_deadline_ms; /* Default AUTH deadline */
 	uint32_t		ec_deadline_miss_mode; /* OES_DEADLINE_MISS_* */
@@ -179,6 +205,15 @@ struct oes_client {
 #define EC_FLAG_MODE_SET	0x0004	/* Mode has been explicitly set */
 #define EC_FLAG_SCOPE_SETTING	0x0008	/* Scope credential update in flight */
 
+/*
+ * Jail scope teardown (ec_jail_state).  The jail's remove method only marks
+ * the scope ENDING; the deferred delivery task turns that into FINISHING,
+ * delivers every event that was queued for it until then, and only then
+ * ends the scope.  See oes_defer_task_fn().
+ */
+#define EC_JAIL_ENDING		0x0001	/* Jail removed, not yet claimed */
+#define EC_JAIL_FINISHING	0x0002	/* Claimed by the delivery task */
+
 /* Mute inversion flags */
 #define EC_MUTE_INVERT_PROCESS	0x0001	/* Process mute inversion */
 #define EC_MUTE_INVERT_PATH	0x0002	/* Path mute inversion */
@@ -229,6 +264,17 @@ struct oes_pending {
 	struct oes_auth_group	*ep_group;	/* AUTH arbitration group */
 	uint64_t		ep_scope_markers[OES_SCOPE_MARKERS_MAX];
 	uint8_t			ep_scope_count;	/* Valid inherited markers */
+
+	/*
+	 * Jail of the subject thread and, for NOTIFY events aimed at another
+	 * process, of that process, as they were when the event was
+	 * generated.  Recorded only while a jail-scoped client exists and
+	 * only on the event built by the generating thread, never on
+	 * per-client clones.  Each is a held reference unless it is prison0,
+	 * which cannot go away.
+	 */
+	struct prison		*ep_subject_pr;
+	struct prison		*ep_target_pr;
 
 	/* Variable-length message - MUST be last */
 	oes_message_t		ep_msg;
@@ -297,6 +343,37 @@ oes_mute_proc_bucket(pid_t pid)
 {
 
 	return ((uint32_t)pid & (OES_MUTE_PROC_BUCKETS - 1));
+}
+
+/*
+ * Jail scope membership.  Prisons are compared by address, never by jid or
+ * name: the scope holds a reference on its prison and the event holds one
+ * on each of its own, so neither can be mistaken for a later jail and the
+ * parent chain walked by prison_ischild() stays in place.
+ */
+static __inline bool
+oes_jail_scope_contains(struct prison *scope, uint32_t flags,
+    struct prison *pr)
+{
+
+	if (pr == scope)
+		return (true);
+	if ((flags & OES_JAIL_SCOPE_NOCHILDREN) != 0)
+		return (false);
+	return (prison_ischild(scope, pr));
+}
+
+static __inline bool
+oes_jail_scope_match(struct prison *scope, uint32_t flags,
+    struct prison *subject, struct prison *target)
+{
+
+	if (scope == NULL)
+		return (false);
+	if (subject != NULL && oes_jail_scope_contains(scope, flags, subject))
+		return (true);
+	return ((flags & OES_JAIL_SCOPE_INBOUND) != 0 && target != NULL &&
+	    oes_jail_scope_contains(scope, flags, target));
 }
 
 /*
@@ -421,6 +498,11 @@ void	oes_client_get_subscriptions(struct oes_client *ec,
 	    uint64_t auth_bitmap[2], uint64_t notify_bitmap[2]);
 int	oes_client_set_scope(struct oes_client *ec, uint32_t scope);
 void	oes_client_get_scope(struct oes_client *ec, uint32_t *scope);
+int	oes_client_set_jail_scope(struct oes_client *ec, struct thread *td,
+	    const struct oes_jail_scope_args *args);
+int	oes_client_get_jail_scope(struct oes_client *ec, struct thread *td,
+	    struct oes_jail_scope_args *args);
+struct prison *oes_client_jail_detach_locked(struct oes_client *ec);
 bool	oes_client_observes_token(const struct oes_client *ec,
 	    const oes_proc_token_t *token);
 int	oes_client_set_mode(struct oes_client *ec, uint32_t mode,
@@ -572,6 +654,8 @@ int	oes_fill_file_presented(oes_file_t *ef, struct file *fp,
 	    uint64_t *noncep);
 int	oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp);
 void	oes_scope_snapshot(struct oes_pending *ep);
+void	oes_pending_set_target_prison(struct oes_pending *ep,
+	    struct proc *target);
 
 /*
  * Sysctl variables
