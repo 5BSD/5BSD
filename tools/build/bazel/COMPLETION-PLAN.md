@@ -19,8 +19,9 @@ native bootstrap or qualification of subsequent changes.
 
 The independent R3 archive comparison covers all 450 packages. No package-name
 or nondirectory payload-path omissions remain, and the two shared-library
-requirements mismatches are gone. Byte/size, timestamp and directory-claim
-comparison differences remain; complete package parity is not accepted.
+requirements mismatches are gone. That R3 comparison retains byte/size, timestamp
+and directory-claim differences; the later R5 comparison closes the latter.
+Complete package parity is not accepted.
 The subsequent directory-policy native R3 run passes the complete 450-package
 graph and three selected tests, including immutable capture. Independent R5
 comparison now has no package-name, payload-path or directory-claim differences.
@@ -65,14 +66,16 @@ zstream's missing Solaris compatibility-header dependency; all eight zstream
 queue selftests and four bounded reviewer regression cases pass. Complete
 integration of those newer fixes and the remaining library/archive discrepancies
 is still required. See the Make closeout record for exact receipts and failures.
-Nine additional utility/RDMA executables now pass focused native builds and
-independent Make ELF comparisons after source-recipe library-order corrections.
-Together with CTF, eleven of 43 frozen-review order discrepancies have corrected
-source evidence; the remaining 32 and complete new-candidate integration stay open.
-The following Kerberos batch passes native builds, database/KDC tests and Make
-ELF comparisons for three administration programs and two plugins. Sixteen of
-the 43 frozen-review order differences now have focused corrections; 27 remain,
-with full new-candidate integration and the other gates still open.
+Focused corrected-source batches additionally pass independent ELF comparisons
+for nine utility/RDMA programs, three Kerberos administration programs and two
+plugins, and five ZFS/C++ products. The Kerberos database/KDC tests pass; zfsd's
+newly qualified shared GoogleTest/regex closure passes all 22 unit cases. The
+failed initial non-PIC test link is preserved. Twenty-one of 43 frozen-review
+library-order discrepancies have focused corrections; 22 LLVM/SSH/SystemExtension
+cases and complete new-candidate integration remain. Archive/debug/kernel/loader,
+configuration, ARM64, bootstrap/cache/sandbox, performance, publication and broader
+runtime gates stay open.
+
 
 
 ## Independent Make closeout comparison (2026-11-11)

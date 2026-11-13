@@ -561,3 +561,37 @@ and a complete new-candidate package/image qualification is still required after
 the batches. The maintained build-bsd C frontend and existing ordering manual
 already cover these normal deps/dynamic_deps changes; no input schema, new CLI
 switch or production-backend change is needed. All six closeout gates remain.
+
+### ZFS/C++ library-order and zfsd test closure batch (2026-11-13)
+
+The source dependency order is now restored for libzfsbootenv, zfs and ztest.
+Native zfsd places its component/pthread libraries before the C++ runtime, and
+kyua preserves the early Lua math dependency before sqlite/util/conditional jail
+and the C++ runtime. Source src.libnames.mk supplies the lutok -> lua -> m chain;
+no expected ELF order is inferred at build time or postprocessed into outputs.
+All providers remain ordinary declared native deps/dynamic_deps.
+
+R1 built the five products but failed linking the previously unqualified zfsd
+unit target: static GoogleTest pulled non-PIC regex objects into its PIE link.
+The source test recipe's gmock_main -> gmock -> gtest -> regex/pthread shared
+provider chain is now declared in that test's dynamic_deps. PIE stays enabled,
+and installed regex/archive variants are unchanged. R1 is retained as failed,
+not counted as acceptance. `bazel-zfs-cxx-link-order-native-r2-20261113/receipt.json`
+passes all five product targets and the unit target, whose captured report shows
+all 22 cases from six suites passed with no skipped cases.
+
+`bazel-zfs-cxx-link-order-review-r1-20261113/review.json` passes every existing
+independent Make ELF contract for libzfsbootenv.so.1, zfs, ztest, zfsd and kyua.
+Native immutable-output bindings, verified reference archive/member/data hashes,
+checker commands or function/hash, and success statuses are retained. This is
+selected metadata/hardening/symbol-version/dependency-order acceptance and unit
+execution, not raw byte identity, complete ABI, ZFS pool operations or a fresh
+installed-system/upgrade qualification.
+
+Twenty-one of the frozen review's 43 dependency-order discrepancies now have
+focused corrected-source evidence; 22 remain (LLVM/SSH/SystemExtension). New
+complete package/image integration, archive/debug/kernel/loader/configuration,
+ARM64/bootstrap/performance/publication and broader runtime gates remain open.
+The normal build-bsd format-5 backend covers the changed declarations without
+new flags or C interface changes. Its manual documents the C++ and test-runtime
+ordering boundary. Make remains production/default.

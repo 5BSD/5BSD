@@ -7968,6 +7968,9 @@ outputs or establishes complete ABI, instruction, runtime or debug-file parity.
 Component library order follows its source recipe and the terminal pthread
 ordering defined by bsd.libnames.mk. Conditional libraries retain their selected
 position. RDMA examples share one maintained ordered dependency declaration.
+ZFS/C++ qualification checks component and pthread dependencies before the
+compiler runtime providers. The zfsd unit target declares the shared GoogleTest
+and regex provider chain from the source test recipes while retaining PIE.
 Raw archive comparison remains independent. The package_elf_review_test target
 exercises bounded archive streaming, trailing-data and unsafe-path refusal.
 These diagnostics use the existing format-5 qualification interface; the normal
