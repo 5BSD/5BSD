@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd November 12, 2026
+.Dd November 13, 2026
 .Dt CAP_PROCESS 2
 .Os
 .Sh NAME
@@ -82,8 +82,8 @@ The kernel-held reference does not reconnect to a terminated peer.
 The same system call carries the software-authority operations declared in
 .In sys/cap_authority.h .
 They are an interface between the kernel and the system's issuer and are
-not otherwise described here, with one exception that other interfaces
-depend on.
+not otherwise described here, except for the two points below that other
+interfaces depend on.
 .Pp
 .Dv CAP_AUTH_CONSTRAIN
 binds a managed authority to its executable images before it is installed.
@@ -124,6 +124,39 @@ carries the entitlement for it belongs to the issuer,
 .Xr switchboard 8 ;
 this bit only carries the issuer's decision.
 At present no kernel interface consults the role.
+.Sh SOFTWARE AUTHORITY OF AN ATTACHED PROCESS
+A process attached to a descriptor queue
+.Po Dv DQ_IOC_ATTACH ,
+.Xr dq 4
+.Pc
+loses the use of its software authority at the attach, whether the
+authority was valid or installed and still waiting for its image.
+.Dv CAP_AUTH_INFO
+then reports the same identity, a
+.Va valid
+of zero and a
+.Va generation
+advanced by one, as it does after the process moves to another prison;
+operations on endpoints bound to the authority fail with
+.Er EPERM ,
+and the process's invocation binding is dropped.
+The state is inherited by children and is not undone by
+.Xr execve 2 :
+.Dv CAP_AUTH_INSTALL
+is refused for an attached process and no image activates an authority in
+one.
+.Dv CAP_AUTH_CLEAR
+still removes the authority.
+A process whose authority was already invalid, or that has none, is not
+changed, and neither is the attaching process.
+.Pp
+Until the attached process executes an image, the stripped authority
+continues to decide who may debug it exactly as before the attach: a
+process that could not debug it because of the authority still cannot.
+Once it has executed an image the authority no longer restricts debugging
+it.
+Nothing else is taken at the attach: the discovery context described above
+and endpoints that are not bound to an authority are unchanged.
 .Sh RETURN VALUES
 GET and ORIGIN_EXPORT return a descriptor on success.
 Other operations return
@@ -151,4 +184,5 @@ The INFO output address is invalid.
 .Xr closefrom 2 ,
 .Xr execve 2 ,
 .Xr fork 2 ,
-.Xr libservice 3
+.Xr libservice 3 ,
+.Xr dq 4

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 8, 2026
+.Dd November 13, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -1838,6 +1838,24 @@ start directories
 The preconditions are checked and the attachment committed in one
 section, so no fork, exec or descriptor transfer can slip between them.
 There is no detach.
+.Pp
+The attach also takes the target's software authority
+.Pq Xr cap_process 2
+out of use, in the same section.
+An authority that was valid, or installed and waiting for its image, is
+marked invalid as after a prison transition, and the target's invocation
+binding is dropped: the target still reports the authority's identity,
+with an advanced generation, but sends on endpoints bound to the authority
+fail with
+.Er EPERM ,
+and neither the target, its children nor an image it executes acts with
+the authority again.
+A target with no authority, or one already invalid, is unchanged, and so
+is the caller.
+Until the target executes an image the stripped authority still decides
+who may debug it, as before the attach; after that it does not.
+The target's capability discovery context and its endpoints not bound to
+an authority are not affected.
 ATTACH is meant for a quiesced child, one blocked waiting to be told to
 exec: a lookup or a fork the target has already begun when ATTACH commits
 finishes unattached (its checks are behind it), so a child that runs
