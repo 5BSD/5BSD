@@ -1,5 +1,8 @@
 # Bazel qualification
 
+See [BUILD-OPTIONS.md](BUILD-OPTIONS.md) for GENERIC/NODEBUG, diagnostics versus
+debug symbols, native option boundaries and remaining Make compatibility.
+
 ## Independent Make closeout comparison (2026-11-11)
 
 Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass

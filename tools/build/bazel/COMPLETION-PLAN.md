@@ -1,5 +1,14 @@
 # Native Bazel completion plan
 
+## Configuration completion checklist
+
+[BUILD-OPTIONS.md](BUILD-OPTIONS.md) separates source kernel diagnostics from
+debug artifacts and allocator mode, records current native boundaries, and lists
+required Make-option/configuration and ARM64 implementation gaps. GENERIC-NODEBUG,
+custom kernel/module selectors and the documented acceptance matrix remain open
+until their actual outputs and runtime checks pass. These belong to the existing
+six gates. The normal build-bsd backend remains Make; no frontend option changed.
+
 ## Current closeout execution (2026-11-13)
 
 The completed `bazel-closeout-system-native-r1-20261111` receipt passes the
