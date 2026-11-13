@@ -21,6 +21,15 @@ The independent R3 archive comparison covers all 450 packages. No package-name
 or nondirectory payload-path omissions remain, and the two shared-library
 requirements mismatches are gone. Byte/size, timestamp and directory-claim
 comparison differences remain; complete package parity is not accepted.
+The subsequent directory-policy native R3 run passes the complete 450-package
+graph and three selected tests, including immutable capture. Independent R5
+comparison now has no package-name, payload-path or directory-claim differences.
+Source-owned DQ/OpenSSL installation declarations and explicit world/kernel
+ancestor policy fix the ten prior directory mismatches; physical directory
+metadata remains enforced. Byte/size/timestamp and manifest-file diagnostics
+remain, so final parity is still unaccepted. Native R2's digest-capture rejection
+is preserved, not counted as acceptance. See the Make closeout record.
+
 A two-header SDK change accompanied broad compile invalidation; keeping the
 same state directory does not establish acceptable incremental efficiency.
 

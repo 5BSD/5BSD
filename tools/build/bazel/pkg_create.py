@@ -19,7 +19,15 @@ def directory_package(record, suffix_tags):
     return bases[0] + "".join("-" + tag for tag in suffix_tags if tag in tags)
 
 
+def directory_ancestors(request):
+    value = request.get("include_parent_directories", True)
+    if type(value) is not bool:
+        raise ValueError("explicit boolean directory ancestor policy required")
+    return value
+
+
 def create(request):
+    include_parents = directory_ancestors(request)
     versions = re.findall(r"^#define\s+__FreeBSD_version\s+(\d+)\s*$", Path(request["osversion_header"]).read_text(), re.M)
     if len(versions) != 1:
         raise ValueError("one target OS version definition required")
@@ -95,7 +103,8 @@ def create(request):
                     raise ValueError("directory package ownership differs from layout")
                 path = record["destination"]
                 owned_directories[name].add(path)
-                owned_directories[name].update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
+                if include_parents:
+                    owned_directories[name].update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
         policy = json.loads(Path(request["directory_metadata"]).read_text())
         if policy.get("format") != 1:
             raise ValueError("unsupported directory metadata format")
@@ -116,13 +125,15 @@ def create(request):
             if name not in owned_directories:
                 raise ValueError("directory belongs to undeclared package: " + name)
             owned_directories[name].add(path)
-            owned_directories[name].update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
+            if include_parents:
+                owned_directories[name].update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
         subprocess.run([request["tar"], "-xpf", request["archive"], "--no-same-owner", "--no-fflags", "-C", str(stage)], check=True)
         create_staged(request, stage, dirs, owned_directories, work)
 
 
 def create_staged(request, stage, dirs, owned_directories, work):
     """Package a caller-validated private stage; dirs contains validated tar metadata."""
+    include_parents = directory_ancestors(request)
     versions = re.findall(r"^#define\s+__FreeBSD_version\s+(\d+)\s*$", Path(request["osversion_header"]).read_text(), re.M)
     if len(versions) != 1:
         raise ValueError("one target OS version definition required")
@@ -147,14 +158,16 @@ def create_staged(request, stage, dirs, owned_directories, work):
             if record["type"] == "dir":
                 # Empty owned directories need the same ancestor closure as files.
                 parents.add(path)
-                parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
+                if include_parents:
+                    parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
                 continue
             kind = "config" if "config" in record["tags"] else ""
             flags = record.get("flags", "")
             if any(c in flags for c in "\n\r()"):
                 raise ValueError("unsupported plist flags field")
             lines.append("@" + kind + "(" + ",".join([record["owner"], record["group"], record["mode"], flags]) + ") " + path)
-            parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
+            if include_parents:
+                parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
         for path in sorted(parents):
             meta = dirs[path]
             flags = meta.pax_headers.get("SCHILY.fflags", "")

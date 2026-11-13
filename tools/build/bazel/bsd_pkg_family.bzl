@@ -99,7 +99,8 @@ def _family(ctx):
             use_default_shell_env = False, mnemonic = "BSDPackageFamilyManifest")
         outputs[name] = output
         declarations[name] = dict(template = templates[name].path, dependencies = dependencies,
-            vital = name in ctx.attr.vital, metadata_only = name in ctx.attr.metadata_only)
+            vital = name in ctx.attr.vital, metadata_only = name in ctx.attr.metadata_only,
+            include_parent_directories = ctx.attr.include_parent_directories)
     metadata = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(metadata, json.encode(dict(format = 1, scope = "pkgbase-family-metadata",
         family = family, prefix = prefix, version = version, packages = declarations)) + "\n")
@@ -110,6 +111,7 @@ def _family(ctx):
 
 bsd_pkg_family = rule(implementation = _family, attrs = {
     "family": attr.string(mandatory = True), "base": attr.bool(default = True),
+    "include_parent_directories": attr.bool(default = True, doc = "Claim payload ancestors as world complete_dirs does; false retains explicit directory claims only."),
     "generator_family": attr.string(doc = "Maintained UCL generator family; defaults to the package family."),
     "flavor_variable": attr.string(doc = "Optional UCL variable bound to the exact selected subpackage suffix, or empty for the base."),
     "subpackages": attr.string_list(default = ["dbg", "man"]), "extra_subpackages": attr.string_list(),

@@ -385,3 +385,50 @@ same Bazel state directory alone does not prove narrow invalidation or cache
 hits. Do not drop declared headers to hide rebuilds: qualify unrelated-header
 reuse, used-header invalidation, newly reachable headers and sandbox availability
 before changing the toolchain input contract.
+
+### Package directory ownership closeout (2026-11-13)
+
+The retained R3 comparison's ten directory-presence differences have three
+source causes: libdq claimed an ABI include directory installed by a different
+component; OpenSSL omitted the utilities-owned CONFSDIR creation; and kernel
+families inferred ancestor ownership despite Make's kernel plist mode omitting
+complete_dirs. The declarations now model these component recipes directly.
+The family boolean controls package ownership only; complete physical stage
+metadata remains required. No pathname/package-name exclusions were added to
+the comparator or package serializer.
+
+`bazel-directory-policy-native-r1-20261113/receipt.json` passes all 450 packages
+and the real-pkg directory, cross-package hardlink and package-solver tests.
+The directory fixture checks inferred and explicit-only ownership, no inferred
+claims for a file-only package and rejection of a non-boolean policy, alongside
+existing invalid-directory/ownership/payload cases. Independent comparison
+`bazel-closeout-package-comparison-r4-20261113/comparison/review.json` processes
+all 450 packages and reduces directory entry-presence differences from ten to
+two; DQ/OpenSSL and inferred kernel ancestors now match. The remaining two are
+kernel/debug roots created by plain mkdir. Their physical declarations now have
+no ownership tags, while the GDB install -d directory retains its explicit
+claim. Native R2 finished the build and all three tests, but its capture rejected
+a changed bsd-build package digest after the manual was edited during the run.
+That attempt is not accepted. With selected sources held unchanged,
+`bazel-directory-policy-native-r3-20261113/receipt.json` passes all 450 packages,
+all three tests and immutable artifact capture. Its inventory retains both
+root-owned 0755 kernel/debug physical directories with empty ownership tags.
+
+The final strict comparison is retained at
+`bazel-closeout-package-comparison-r5-20261113/comparison/review.json`. All 450
+packages are compared; package names, every payload path and every directory
+claim now match. There are no missing/extra entries or directory-manifest
+mismatches. The comparator still returns differences-found: 4,174 payload hash,
+3,257 size, 36,683 mtime and 17 nanosecond timestamp differences, plus manifest
+file/flatsize diagnostics. This closes the observed directory ownership defects,
+not the full package-parity gate.
+
+R4 retains 4,174 payload hash and 3,257 size differences plus raw timestamps
+and manifest diagnostics. Two sampled ncurses text differences are generated
+comments containing absolute Make versus relative Bazel input paths (curses.h
+and the decompressed terminfo manual); no all-payload conclusion follows.
+No bytes, timestamps or metadata have been normalized or waived. Full package
+parity, current-source control reconciliation and the other completion gates
+remain open. The maintained format-5 build-bsd interface needs no new C option;
+its manual documents world versus kernel ownership policy. Production/default
+remains Make.

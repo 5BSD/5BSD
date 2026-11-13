@@ -7949,6 +7949,16 @@ NLS aliases are selected by the NLS option.
 This layout comparison and package payload inspection do not establish normal
 startup, actual installation or upgrade qualification.
 .Pp
+Native package families declare whether their payload ancestor directories are
+package-owned.  World families use the complete-directory closure, matching
+Make's complete_dirs plist mode.  Kernel families retain explicit installation
+directory claims only.  Physical directory policy remains required in both cases;
+this choice does not bypass staging metadata or manufacture a directory claim.
+Plain kernel mkdir operations supply physical metadata without package ownership;
+the GDB directory created by install -d remains an explicit package claim.
+The existing format-5 frontend selects these maintained declarations; no additional
+command-line option or pathname-based exclusion is used.
+.Pp
 The maintained world-pkg-install-fixture.py helper consumes captured native world
 and package outputs plus an explicit fixture plan to prepare disposable VM disks.
 Its native ATF driver tests complete package installation and same-version reinstall

@@ -113,7 +113,8 @@ def plans(request):
         if not required.issubset(directories):
             raise ValueError('missing complete source directory policy')
         plan = dict(format=1, scope='world-package-plan', package=name,
-            metadata_only=declaration['metadata_only'], manifest_sha256=gate['manifest_sha256'][name],
+            metadata_only=declaration['metadata_only'],
+            include_parent_directories=declaration.get('include_parent_directories', True), manifest_sha256=gate['manifest_sha256'][name],
             records=sorted(materialized, key=lambda r: r['destination']),
             directories={p: directories[p] for p in sorted(required)},
             cross_package_hardlinks=cross_links, inspection_records=inspection,
@@ -178,7 +179,8 @@ def package(request):
             target.chmod(meta.mode)
             os.utime(target, (request['epoch'], request['epoch']))
         packaged = dict(request, packages={name: plan['records']},
-            metadata_only=[name] if plan['metadata_only'] else [], outputs={name: str(output)},
+            metadata_only=[name] if plan['metadata_only'] else [],
+            include_parent_directories=plan['include_parent_directories'], outputs={name: str(output)},
             manifests={name: request['manifest']})
         try:
             create_staged(packaged, stage, dirs, {name: owned}, work)
