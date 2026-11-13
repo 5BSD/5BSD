@@ -36,6 +36,8 @@ PLAIN_TESTS_C=	\
 	test_descendants_client \
 	test_nested_descendants \
 	test_jail_pins \
+	test_jail_scope \
+	test_oeslogger_jail \
 	test_vnode_events \
 	test_process_events \
 	test_multi_client_auth \
@@ -94,5 +96,7 @@ LIBADD.test_hook_coverage+=	dq
 
 # jail_setv(3) for the jailed subjects.
 LIBADD.test_jail_pins+=	jail
+LIBADD.test_jail_scope+=	jail
+LIBADD.test_oeslogger_jail+=	jail
 
 .include <bsd.test.mk>
