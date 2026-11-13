@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 8, 2026
+.Dd November 12, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -3589,6 +3589,66 @@ The next N
 replies find the queue closing at their link step
 .Er ( ENXIO ) .
 .El
+.Sh TEST KERNELS
+A kernel built with
+.Bd -ragged -offset indent
+.Cd "options DQ_TEST_OPEN"
+.Ed
+.Pp
+is a test kernel for the
+.Nm
+test suite.
+The configuration
+.Pa GENERIC-DQTEST
+is
+.Pa GENERIC
+with the option.
+The option requires
+.Cd "device dq" ;
+it is not available to the
+.Pa dq.ko
+module, and no published configuration carries it.
+.Pp
+Such a kernel must never be published.
+.Pa release/scripts/check-kernel-no-dq-test.sh
+refuses a kernel or module built with the option where the maintained
+package publication targets and the release media, virtual machine,
+Firecracker and arm image recipes run it, and
+.Xr build-bsd 8
+refuses to plan packages or media for a configuration that carries it.
+There is no override.
+Not every path that can produce a kernel runs the check;
+.Xr build-bsd 8
+lists the ones that do, how far each has been exercised, and the ones
+that do not.
+The check finds a test kernel that reaches publication by accident; it
+does not protect an installed system against someone who replaces its
+kernel.
+.Pp
+A test kernel has two more variables, absent from every other kernel:
+.Bl -tag -width "debug.dq.unverified_open" -offset indent -compact
+.It Va debug.dq.unverified_open
+Loader tunable, read-only after boot, default 0.
+Set to 1 in
+.Xr loader.conf 5
+it enables test access; any other value reads back as 0.
+.It Va debug.dq.test_opens
+Read-only: opens of
+.Pa /dev/dq
+that passed every check while the tunable was 1.
+.El
+.Pp
+At present the tunable changes nothing about who may open
+.Pa /dev/dq :
+with it set or clear, on a test kernel as on any other, an open must be
+a native 64-bit process's and must pass
+.Fn priv_check PRIV_DRIVER
+on a node of mode 0600, exactly as described above.
+The tunable only makes the kernel count such opens and announce itself
+on the console.
+On a kernel without the option, setting the tunable in
+.Xr loader.conf 5
+has no effect at all.
 .Sh DTRACE
 The
 .Nm

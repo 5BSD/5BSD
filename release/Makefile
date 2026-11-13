@@ -229,6 +229,25 @@ malloc-production-check:
 	@${MALLOC_PRODUCTION_CHECK}
 
 #
+# Release media never carry a kernel or module built with the dq(4) test
+# option (options DQ_TEST_OPEN); see scripts/check-kernel-no-dq-test.sh.
+# The check reads what was staged, straight after it is installed, or the
+# package repository that goes onto the media.  There is no override.
+# Media trees are read a second time once packages and firmware have been
+# staged into them, together with every archive in the directories that
+# staging fills: the package store, the distribution sets and the staged
+# hardware repository.
+#
+KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/scripts/check-kernel-no-dq-test.sh
+MEDIA_KERNEL_TEST_OPTION_CHECK= \
+	${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET} && \
+	for store in usr/5bsd-packages usr/5bsd-dist usr/obj; do \
+		[ ! -d ${.OBJDIR}/${.TARGET}/$$store ] || \
+		    ${KERNEL_TEST_OPTION_CHECK} \
+		    -p ${.OBJDIR}/${.TARGET}/$$store || exit 1; \
+	done
+
+#
 # Legacy distribution tarballs
 #
 base.txz: # Also (if enabled) tests, compat libs, and -dbg variants for all.
@@ -252,7 +271,13 @@ base.txz: # Also (if enabled) tests, compat libs, and -dbg variants for all.
 kernel.txz: # Also (if enabled) kernel-dbg.txz.
 	mkdir -p ${DISTDIR}
 	( cd ${WORLDDIR} && ${IMAKE} distributekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${DISTDIR}/kernel
 	( cd ${WORLDDIR} && ${IMAKE} packagekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
+# Every archive produced, which includes additional kernels
+# (kernel.NAME.txz) and the debug archives.
+	@for archive in ${.OBJDIR}/${DISTDIR}/kernel*.txz; do \
+		${KERNEL_TEST_OPTION_CHECK} -a "$$archive" || exit 1; \
+	done
 	mv ${DISTDIR}/kernel*.txz .
 
 src.txz:
@@ -326,6 +351,7 @@ dvd: ${DVD_STAGING_DEPS}
 pkgbase-repo:
 	@${MALLOC_PRODUCTION_CHECK}
 .if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+	@${KERNEL_TEST_OPTION_CHECK} -r ${PKGBASE_SIGNED_REPOSITORY:Q}
 	mkdir -p pkgbase-repo/${PKG_ABI}
 	${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py copy-signed-repository \
 	    --repository ${PKGBASE_SIGNED_REPOSITORY:Q} \
@@ -379,6 +405,7 @@ pkgbase-repo:
 	${HARDWARE_STAGE} --base-repository \
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 .endif
+	@${KERNEL_TEST_OPTION_CHECK} -r ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 
 .endif # rebuilding or snapshotting pkgbase
 
@@ -407,6 +434,7 @@ disc1:
 	    MK_TOOLCHAIN=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media.
 #
@@ -461,6 +489,7 @@ disc1:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
+	@${MEDIA_KERNEL_TEST_OPTION_CHECK}
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -502,6 +531,7 @@ bootonly:
 	    MK_TOOLCHAIN=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if !defined(NODISTSETS) || empty(NODISTSETS)
 # Copy manifest only (no distfiles) to get checksums
 	mkdir -p ${.TARGET}/usr/5bsd-dist
@@ -526,6 +556,7 @@ bootonly:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
+	@${MEDIA_KERNEL_TEST_OPTION_CHECK}
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -561,6 +592,7 @@ dvd:
 	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
 		DESTDIR=${.OBJDIR}/${.TARGET} MK_RESCUE=no MK_KERNEL_SYMBOLS=no \
 		MK_TESTS=no MK_DEBUG_FILES=no)
+	@${KERNEL_TEST_OPTION_CHECK} -d ${.OBJDIR}/${.TARGET}
 .if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
@@ -605,6 +637,7 @@ dvd:
 	    mtree -C -k type,mode,link,size | \
 	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
+	@${MEDIA_KERNEL_TEST_OPTION_CHECK}
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf

@@ -3,7 +3,7 @@
  *
  * libdq: the record walkers and typed accessors (no device needed), and
  * dq_serve_file() answering each stage 1b-i operation from a backing file
- * (needs /dev/dq; skipped without it).  The controller is a thread of the
+ * (needs /dev/dq; fails without it).  The controller is a thread of the
  * test process that hands every record to dq_serve_file(); requesters are
  * forked children that inherit the minted descriptor (the queue is
  * O_CLOFORK).  The oracle is the backing file itself, or a second real file
@@ -15,6 +15,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
@@ -399,6 +400,28 @@ serve_loop(void *arg)
 
 static char backing_path[PATH_MAX];
 
+/*
+ * Only a kernel built with options DQ_TEST_OPEN has this sysctl; on it the
+ * loader must have given the tests access (see tests/sys/dq/dq_test.c).
+ */
+static void
+require_test_access(void)
+{
+	size_t len;
+	int v;
+
+	len = sizeof(v);
+	if (sysctlbyname("debug.dq.unverified_open", &v, &len, NULL, 0) != 0) {
+		if (errno == ENOENT)
+			return;
+		atf_tc_fail("debug.dq.unverified_open: %s", strerror(errno));
+	}
+	if (len != sizeof(v) || v != 1)
+		atf_tc_fail("test kernel without test access: set "
+		    "debug.dq.unverified_open=\"1\" in loader.conf "
+		    "(it reads %d)", v);
+}
+
 static void
 ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 {
@@ -416,12 +439,10 @@ ctl_start(struct ctl *c, unsigned seed, uint32_t events)
 	ATF_REQUIRE_EQ((ssize_t)sizeof(data), write(fd, data, sizeof(data)));
 	ATF_REQUIRE(realpath("backing", backing_path) != NULL);
 	c->backing = fd;
+	require_test_access();
 	c->q = dq_open();
-	if (c->q == -1) {
-		if (errno == ENOENT)
-			atf_tc_skip("%s: %s", DQ_DEVICE, strerror(errno));
+	if (c->q == -1)
 		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
-	}
 	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
 	ATF_REQUIRE_EQ(0, fstatfs(fd, &sfs));
 	ATF_REQUIRE_EQ(0, dq_ident_from_stat(&c->ident, backing_path, &sb,

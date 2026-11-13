@@ -541,7 +541,7 @@ worlds: .PHONY
 
 .if make(hardware-packages) || make(hardware-packages-check) || \
     make(publish-packages) || make(system-packages) || \
-    make(malloc-production-check)
+    make(malloc-production-check) || make(kernel-test-option-check)
 .include "${.CURDIR}/release/Makefile.hardware"
 .endif
 
