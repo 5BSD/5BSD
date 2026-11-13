@@ -11,6 +11,16 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Focused duplicate-library order native R2 passes libicp_rescue/libzfs ordinary
+archives, shared-library products and installation archives plus the ZFS daemon
+unit suite (22 cases) and maintained DTrace alias test target. Independent R1
+comparison passes both complete static member-order/symbol contracts, including
+repeated member occurrences. Source groups retain the original GCM undefinition
+and hidden-visibility flags; installed order follows the source recipe across
+those groups. The first native attempt exposed a stale OpenZFS source-export
+consumer; it is corrected and its failed preflight retained. These focused fixes
+are not a new full combined candidate or ARM64 qualification.
+
 Occurrence-aware archive review R2 now checks each repeated member through
 LLVM ar's public xN selector, preserving its ordinal, symbols and multiplicity.
 All sixteen real-artifact regression cases pass, including reordered, extra and

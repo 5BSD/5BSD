@@ -5969,6 +5969,10 @@ relocation correctness, registration or live probe behavior. Analysis rejects du
 conflicting explicit order declarations. The libnv, libipsec and libelf archives
 use this interface; the build never reads Make comparison outputs to select order.
 .Pp
+The libicp_rescue and libzfs native source groups preserve source-recipe order
+across GCM-specific and hidden-visibility compilation options, including distinct
+objects with repeated archive member names.
+.Pp
 The source-owned installed static archive orders for libfidl, liblogcmp,
 libnetworkcmp, libnotify, libtimecmp and libtracecmp are compared independently
 with original Make artifacts in both normal DTrace modes. Existing format-5

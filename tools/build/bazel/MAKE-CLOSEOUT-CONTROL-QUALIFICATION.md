@@ -1075,3 +1075,28 @@ the architecture group. Both remain review-required producer differences.
 The failed R1 attempt used a nonexistent ./-prefixed package member and is not
 acceptance evidence. This selected check does not establish runtime/DOF/ABI or
 whole-system parity. The earlier complete R5 report remains unchanged.
+
+
+## Duplicate-name producer order fixes (2026-11-13)
+
+`/usr/obj/usr/src/bazel-duplicate-library-order-native-r2-20261113/receipt.json`
+passes both static/shared/installation families and two test targets. The ZFS
+daemon test reports 22 cases; the alias target runs its twelve internal cases
+under one Bazel test report. Selected test reports total 23 passed cases.
+libicp_rescue declares C groups before and after the specially compiled GCM
+source; libzfs declares user, btree, cityhash, range_tree and remaining common
+source groups. Their GCM undefinition/hidden-visibility options and complete
+source inventory remain intact. Both compilation and archive/link composition
+use these native groups; no archived outputs or Make queries select production
+order. OpenZFS exports derive from the same complete native source inventory.
+
+`/usr/obj/usr/src/bazel-duplicate-library-order-review-r1-20261113/review.json`
+passes both complete static member-order/symbol contracts against hash-verified
+Make payloads retained by duplicate archive review R2. Duplicate objects remain
+separate occurrences. Shared products were built; this selected independent review
+only compares the static archives. No full ABI/runtime/filesystem qualification
+is inferred. Native R1's stale source-export load failed product preflight and is
+retained, not counted as acceptance. A preliminary invocation missing --bazel
+failed option validation before qualification started. No build-bsd.c/CLI input
+or backend target changes are required; the maintained format-5 path was used.
+Full combined integration and the other six closeout gates remain required.

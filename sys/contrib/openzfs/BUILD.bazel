@@ -28,8 +28,8 @@ cc_library(name = "zfs_core_headers", hdrs = glob(["lib/libzfs_core/*.h", "lib/l
     includes = ["lib/libzfs_core", "lib/libzpool/include", "include/os/freebsd/zfs"],
     deps = [":spl_headers"], visibility = ["//cddl/lib/libzfs_core:__pkg__"])
 
-load("//cddl/lib/libzfs:sources.bzl", "ZFS_SOURCES", "ZFS_HIDDEN_SOURCES")
-exports_files([s.split(":", 1)[1] for s in ZFS_SOURCES + ZFS_HIDDEN_SOURCES], visibility = ["//cddl/lib/libzfs:__pkg__"])
+load("//cddl/lib/libzfs:sources.bzl", "ZFS_SOURCES")
+exports_files([s.split(":", 1)[1] for s in ZFS_SOURCES], visibility = ["//cddl/lib/libzfs:__pkg__"])
 cc_library(name = "zfs_headers", hdrs = glob(["lib/libzfs/**/*.h", "lib/libzpool/include/**/*.h"]),
     includes = ["lib/libzfs", "lib/libshare", "lib/libzpool/include", "include/os/freebsd"],
     deps = [":spl_headers"], visibility = ["//cddl/lib/libzfs:__pkg__", "//lib/libbe:__pkg__"])
