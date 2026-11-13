@@ -35,6 +35,7 @@ PLAIN_TESTS_C=	\
 	test_oeslogger_output \
 	test_descendants_client \
 	test_nested_descendants \
+	test_jail_pins \
 	test_vnode_events \
 	test_process_events \
 	test_multi_client_auth \
@@ -90,5 +91,8 @@ SRCS.test_nested_descendants=	test_nested_descendants.c liboes.c
 # writable object and dq_serve_file() answers it from a backing file.
 CFLAGS.test_hook_coverage+=	-I${SRCTOP}/lib/libdq
 LIBADD.test_hook_coverage+=	dq
+
+# jail_setv(3) for the jailed subjects.
+LIBADD.test_jail_pins+=	jail
 
 .include <bsd.test.mk>
