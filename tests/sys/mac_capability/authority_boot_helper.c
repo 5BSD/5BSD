@@ -1038,6 +1038,21 @@ dq_legitimacy_pins(int issuer)
  * strip_debug C: exec'd valid, generation      0, g + 1     same
  * strip_debug C: exec'd, outsider              EACCES       same
  * strip_debug C: exec'd, holder                0            same
+ * strip_debug C: attach, PT_ATTACH unshielded  EPERM        same
+ * strip_debug: outsider reads the vmmap        as PT_ATTACH as PT_ATTACH
+ * strip_debug: holder reads the vmmap          as PT_ATTACH as PT_ATTACH
+ * strip_debug: non-root outsider              EPERM        same
+ * strip_debug C: exec'd, non-root outsider     EACCES       same
+ * strip_debug: jailed root, every phase        ESRCH        same
+ * strip_actor: target debugs its own child     0            EPERM
+ * strip_actor: its child's PT_TRACE_ME         0            EPERM
+ * strip_actor: target debugs the holder        0            EPERM
+ * strip_actor: target debugs another target    0            EPERM
+ *
+ * The vmmap rows go through kern.proc.vmmap, a consumer of the common debug
+ * check other than ptrace.  PT_IO and the other ptrace requests need the
+ * attach these rows show refused or allowed, and this tree has no native
+ * procfs, so they add no row.
  *
  * U's exec'd rows are the one answer lg-5a gave away: an attached target
  * of an unconstrained authority kept it across exec and stayed protected;
@@ -1061,6 +1076,19 @@ debug_try(pid_t pid)
 	return (0);
 }
 
+/*
+ * A debug consumer that is not ptrace: the address-space map, which
+ * kern.proc.vmmap gives only to a process that may debug the target.
+ */
+static int
+debug_vmmap(pid_t pid)
+{
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_VMMAP, pid };
+	size_t len = 0;
+
+	return (sysctl(mib, 4, NULL, &len, NULL, 0) == 0 ? 0 : errno);
+}
+
 /* A process that tries to debug the pids it is sent, as it is now. */
 struct debugger {
 	pid_t	pid;
@@ -1068,19 +1096,42 @@ struct debugger {
 	int	res;
 };
 
+struct debugger_cmd {
+	pid_t	target;
+	int	kind;
+};
+
+enum { DEBUG_PTRACE, DEBUG_VMMAP };
+enum { DEBUGGER_ROOT, DEBUGGER_NONROOT, DEBUGGER_JAILED };
+
 static void
-debugger_start(struct debugger *d)
+debugger_start(struct debugger *d, int mode)
 {
-	pid_t target;
+	struct debugger_cmd dc;
+	char path[] = "/";
+	char name[32];
+	struct jail prison = {
+		.version = JAIL_API_VERSION,
+		.path = path,
+		.hostname = name,
+		.jailname = name
+	};
 	int cmd[2], error, res[2];
 
 	CHECK(pipe(cmd) == 0 && pipe(res) == 0);
 	d->pid = fork(); CHECK(d->pid >= 0);
 	if (d->pid == 0) {
 		close(cmd[1]); close(res[0]);
-		while (read(cmd[0], &target, sizeof(target)) ==
-		    (ssize_t)sizeof(target)) {
-			error = debug_try(target);
+		if (mode == DEBUGGER_NONROOT)
+			CHECK(setuid(2101) == 0);
+		if (mode == DEBUGGER_JAILED) {
+			snprintf(name, sizeof(name), "authority-strip-%d",
+			    (int)getpid());
+			CHECK(jail(&prison) > 0);
+		}
+		while (read(cmd[0], &dc, sizeof(dc)) == (ssize_t)sizeof(dc)) {
+			error = dc.kind == DEBUG_VMMAP ?
+			    debug_vmmap(dc.target) : debug_try(dc.target);
 			CHECK(write(res[1], &error, sizeof(error)) ==
 			    (ssize_t)sizeof(error));
 		}
@@ -1092,13 +1143,20 @@ debugger_start(struct debugger *d)
 }
 
 static int
-debugger_ask(struct debugger *d, pid_t target)
+debugger_ask_kind(struct debugger *d, pid_t target, int kind)
 {
+	struct debugger_cmd dc = { .target = target, .kind = kind };
 	int error;
 
-	CHECK(write(d->cmd, &target, sizeof(target)) == (ssize_t)sizeof(target));
+	CHECK(write(d->cmd, &dc, sizeof(dc)) == (ssize_t)sizeof(dc));
 	CHECK(read(d->res, &error, sizeof(error)) == (ssize_t)sizeof(error));
 	return (error);
+}
+
+static int
+debugger_ask(struct debugger *d, pid_t target)
+{
+	return (debugger_ask_kind(d, target, DEBUG_PTRACE));
 }
 
 static void
@@ -1130,7 +1188,11 @@ serve_until(int q, int fd)
 	for (;;) {
 		pfd[0] = (struct pollfd){ .fd = q, .events = POLLIN };
 		pfd[1] = (struct pollfd){ .fd = fd, .events = POLLIN };
-		CHECK(poll(pfd, 2, 120 * 1000) > 0);
+		/* A debugger's stop and continue interrupt the poll. */
+		do
+			n = poll(pfd, 2, 120 * 1000);
+		while (n == -1 && errno == EINTR);
+		CHECK(n > 0);
 		if ((pfd[0].revents & POLLIN) == 0) {
 			CHECK(pfd[1].revents != 0);
 			return;
@@ -1209,7 +1271,7 @@ strip_use_pins(int issuer)
 		return;
 	}
 	CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
-	debugger_start(&outsider);
+	debugger_start(&outsider, DEBUGGER_ROOT);
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	spare = issue(issuer, CAP_AUTH_MANAGED, 0);
 	CHECK(mac_capability_channel_create(pair) == 0);
@@ -1340,7 +1402,8 @@ strip_debug_pins(int issuer, bool constrained)
 {
 	struct cap_authority_constraint c;
 	struct cap_authority_info i0, i1, i2;
-	struct debugger outsider, sibling;
+	struct debugger jailed, nonroot, outsider, sibling;
+	struct dq_attach_args da;
 	const char *image;
 	char gfd[16], rfd[16];
 	pid_t holder, target;
@@ -1355,7 +1418,9 @@ strip_debug_pins(int issuer, bool constrained)
 	image = constrained ? "/sbin/authority-other" : "/sbin/authority-test";
 	shield = -1;
 	CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
-	debugger_start(&outsider);
+	debugger_start(&outsider, DEBUGGER_ROOT);
+	debugger_start(&nonroot, DEBUGGER_NONROOT);
+	debugger_start(&jailed, DEBUGGER_JAILED);
 	token = issue(issuer, CAP_AUTH_MANAGED, 0);
 	if (constrained) {
 		imagefd = open(image, O_RDONLY); CHECK(imagefd >= 0);
@@ -1365,7 +1430,7 @@ strip_debug_pins(int issuer, bool constrained)
 		close(imagefd);
 	} else {
 		CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
-		debugger_start(&sibling);
+		debugger_start(&sibling, DEBUGGER_ROOT);
 	}
 	q = open("/dev/dq", O_RDWR | O_CLOEXEC);
 	CHECK(q >= 0);
@@ -1390,14 +1455,31 @@ strip_debug_pins(int issuer, bool constrained)
 	close(gate[0]); close(report[1]); close(token);
 	served_read(q, report[0], &i0, sizeof(i0));
 	CHECK(i0.valid == !constrained && i0.identity != 0);
-	if (constrained)
+	if (constrained) {
+		/*
+		 * Nobody without its authority may debug a pending target,
+		 * its creator included, and so nobody may attach it; only
+		 * a shield's protector passes.
+		 */
+		memset(&da, 0, sizeof(da));
+		da.da_version = DQ_API_VERSION;
+		da.da_procfd = pd;
+		da.da_rootfd = -1;
+		da.da_cwdfd = -1;
+		PIN_EQ(ioctl(q, DQ_IOC_ATTACH, &da) == 0 ? 0 : errno, EPERM);
+		PIN_EQ(debug_try(target), EPERM);
 		shield = protect_target(pd);
+	}
 
 	/* Before the attach. */
 	PIN_EQ(debugger_ask(&outsider, target), EPERM);
+	PIN_EQ(debugger_ask_kind(&outsider, target, DEBUG_VMMAP), EPERM);
+	PIN_EQ(debugger_ask(&nonroot, target), EPERM);
+	PIN_EQ(debugger_ask(&jailed, target), ESRCH);
 	if (!constrained)
 		PIN_EQ(debugger_ask(&sibling, target), 0);
 	PIN_EQ(debug_try(target), 0);
+	PIN_EQ(debug_vmmap(target), 0);
 
 	/* Attached and parked: the image is still the holder's. */
 	attach_target(q, pd, 0, 0);
@@ -1407,9 +1489,13 @@ strip_debug_pins(int issuer, bool constrained)
 	PIN_EQ(i1.generation, i0.generation + 1);
 	PIN_EQ(i1.identity, i0.identity);
 	PIN_EQ(debugger_ask(&outsider, target), EPERM);
+	PIN_EQ(debugger_ask_kind(&outsider, target, DEBUG_VMMAP), EPERM);
+	PIN_EQ(debugger_ask(&nonroot, target), EPERM);
+	PIN_EQ(debugger_ask(&jailed, target), ESRCH);
 	if (!constrained)
 		PIN_EQ(debugger_ask(&sibling, target), 0);
 	PIN_EQ(debug_try(target), 0);
+	PIN_EQ(debug_vmmap(target), 0);
 
 	/* Attached and exec'd: a new image. */
 	CHECK(write(gate[1], &byte, 1) == 1);
@@ -1418,9 +1504,15 @@ strip_debug_pins(int issuer, bool constrained)
 	PIN_EQ(i2.generation, i0.generation + 1);
 	PIN_EQ(i2.identity, i0.identity);
 	PIN_EQ(debugger_ask(&outsider, target), constrained ? EACCES : 0);
+	PIN_EQ(debugger_ask_kind(&outsider, target, DEBUG_VMMAP),
+	    constrained ? EACCES : 0);
+	/* A shield answers before the credential check does. */
+	PIN_EQ(debugger_ask(&nonroot, target), constrained ? EACCES : EPERM);
+	PIN_EQ(debugger_ask(&jailed, target), ESRCH);
 	if (!constrained)
 		PIN_EQ(debugger_ask(&sibling, target), 0);
 	PIN_EQ(debug_try(target), 0);
+	PIN_EQ(debug_vmmap(target), 0);
 
 	CHECK(write(gate[1], &byte, 1) == 1);
 	serve_until(q, pd);
@@ -1430,7 +1522,110 @@ strip_debug_pins(int issuer, bool constrained)
 		close(shield);
 	if (!constrained)
 		debugger_stop(&sibling);
+	debugger_stop(&jailed);
+	debugger_stop(&nonroot);
 	debugger_stop(&outsider);
+	pins_exit();
+}
+
+/*
+ * The stripped process as the debugger.  Its authority is invalid, so it
+ * no longer passes the authority's debug check for any process the
+ * authority still protects: not for the holder, not for another target of
+ * the same holder, and not for a child it forks itself, whose PT_TRACE_ME
+ * is refused the same way.  Before lg-5a an attached target kept a valid
+ * authority and all four were allowed (0).
+ */
+static void
+strip_actor_pins(int issuer)
+{
+	pid_t child, holder, other, target;
+	int gate[2], hold[2], ogate[2], opd, pd, q, report[2], res[4], token;
+	int error;
+	char byte = 'a';
+
+	holder = fork(); CHECK(holder >= 0);
+	if (holder != 0) {
+		wait_pins(holder);
+		return;
+	}
+	CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	CHECK(op(CAP_AUTH_INSTALL, token, NULL) == 0);
+	close(token);
+	q = open("/dev/dq", O_RDWR | O_CLOEXEC);
+	CHECK(q >= 0);
+	CHECK(pipe(gate) == 0 && pipe(report) == 0 && pipe(ogate) == 0);
+	other = pdfork(&opd, 0); CHECK(other >= 0);
+	if (other == 0) {
+		close(q); close(ogate[1]);
+		close(gate[0]); close(gate[1]); close(report[0]);
+		/* Ready: the queue's descriptor is closed. */
+		CHECK(write(report[1], &byte, 1) == 1);
+		close(report[1]);
+		(void)read(ogate[0], &byte, 1);
+		_exit(0);
+	}
+	target = pdfork(&pd, 0); CHECK(target >= 0);
+	if (target == 0) {
+		close(q); close(opd); close(gate[1]); close(report[0]);
+		close(ogate[0]); close(ogate[1]);
+		CHECK(write(report[1], &byte, 1) == 1);
+		CHECK(read(gate[0], &byte, 1) == 1);
+
+		/* A child forked after the strip, debugged by its parent. */
+		CHECK(pipe(hold) == 0);
+		child = fork(); CHECK(child >= 0);
+		if (child == 0) {
+			close(hold[1]);
+			(void)read(hold[0], &byte, 1);
+			_exit(0);
+		}
+		close(hold[0]);
+		res[0] = debug_try(child);
+		close(hold[1]);
+		wait_ok(child);
+
+		/* Such a child asking to be traced by its parent. */
+		CHECK(pipe(hold) == 0);
+		child = fork(); CHECK(child >= 0);
+		if (child == 0) {
+			error = ptrace(PT_TRACE_ME, 0, NULL, 0) == 0 ? 0 : errno;
+			CHECK(write(hold[1], &error, sizeof(error)) ==
+			    (ssize_t)sizeof(error));
+			_exit(0);
+		}
+		CHECK(read(hold[0], &res[1], sizeof(res[1])) ==
+		    (ssize_t)sizeof(res[1]));
+		wait_ok(child);
+		close(hold[0]); close(hold[1]);
+
+		res[2] = debug_try(getppid());
+		res[3] = debug_try(other);
+		CHECK(write(report[1], res, sizeof(res)) == (ssize_t)sizeof(res));
+		CHECK(read(gate[0], &byte, 1) == 1);
+		_exit(0);
+	}
+	close(gate[0]); close(report[1]); close(ogate[0]);
+	CHECK(read(report[0], &byte, 1) == 1);
+	CHECK(read(report[0], &byte, 1) == 1);
+	attach_target(q, opd, 0, 0);
+	attach_target(q, pd, 0, 0);
+	CHECK(write(gate[1], &byte, 1) == 1);
+	served_read(q, report[0], res, sizeof(res));
+	PIN_EQ(res[0], EPERM);	/* its own child */
+	PIN_EQ(res[1], EPERM);	/* its own child's PT_TRACE_ME */
+	PIN_EQ(res[2], EPERM);	/* the holder */
+	PIN_EQ(res[3], EPERM);	/* another stripped target of the holder */
+	CHECK(info().valid);
+
+	CHECK(write(gate[1], &byte, 1) == 1);
+	serve_until(q, pd);
+	wait_ok(target);
+	close(ogate[1]);
+	serve_until(q, opd);
+	wait_ok(other);
+	close(pd); close(opd); close(gate[1]); close(report[0]); close(q);
 	pins_exit();
 }
 
@@ -1442,6 +1637,7 @@ dq_strip_pins(int issuer)
 	strip_use_pins(issuer);
 	strip_debug_pins(issuer, false);
 	strip_debug_pins(issuer, true);
+	strip_actor_pins(issuer);
 	if (pin_misses == before)
 		pass("dq-strip-at-attach-pins");
 }
