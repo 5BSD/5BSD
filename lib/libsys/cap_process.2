@@ -151,10 +151,19 @@ A process whose authority was already invalid, or that has none, is not
 changed, and neither is the attaching process.
 .Pp
 Until the attached process executes an image, the stripped authority
-continues to decide who may debug it exactly as before the attach: a
-process that could not debug it because of the authority still cannot.
+continues to decide who may debug it: a process that is not itself stripped
+gets the answer it got before the attach, so one that could not debug it
+because of the authority still cannot.
 Once it has executed an image the authority no longer restricts debugging
 it.
+.Pp
+The stripped process itself no longer passes that check as a debugger.
+Until they execute an image, it cannot debug the holder of the authority,
+another process stripped of the same authority, or a child it forks, and
+.Dv PT_TRACE_ME
+in such a child fails; the error is
+.Er EPERM .
+Before the attach all of these were allowed.
 Nothing else is taken at the attach: the discovery context described above
 and endpoints that are not bound to an authority are unchanged.
 .Sh RETURN VALUES

@@ -1853,7 +1853,14 @@ the authority again.
 A target with no authority, or one already invalid, is unchanged, and so
 is the caller.
 Until the target executes an image the stripped authority still decides
-who may debug it, as before the attach; after that it does not.
+who may debug it: a debugger that is not itself stripped gets the answer it
+got before the attach; after the exec the authority does not restrict it.
+The stripped target is refused as a debugger, with
+.Er EPERM ,
+for every process the authority still protects: its creator, another
+target stripped of the same authority, and its own children until they
+execute an image, including their
+.Dv PT_TRACE_ME .
 The target's capability discovery context and its endpoints not bound to
 an authority are not affected.
 ATTACH is meant for a quiesced child, one blocked waiting to be told to

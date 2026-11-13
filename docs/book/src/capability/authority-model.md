@@ -104,10 +104,30 @@ authority, or with one already invalid, is left as it is.
 
 One thing outlasts the strip. Until the attached process executes an image
 its memory is a copy of its creator's, which may hold the authority, so the
-stripped authority keeps deciding who may debug it exactly as before the
-attach. After the exec it no longer restricts debugging. The strip takes the
-authority and nothing else: the discovery context, the process identity and
-endpoints not bound to an authority are unchanged.
+stripped authority keeps deciding who may debug it: a debugger that is not
+itself stripped gets the answer it got before the attach. After the exec it no
+longer restricts debugging. The strip takes the authority and nothing else:
+the discovery context, the process identity and endpoints not bound to an
+authority are unchanged.
+
+The stripped process is a different matter as a debugger. Its authority is
+invalid, so it fails the authority's debug check for every process the
+authority still protects: the holder, another target stripped of the same
+authority, and its own children until they execute an image, whose
+`PT_TRACE_ME` fails too. The error is `EPERM`; before the attach all of these
+were allowed. Refusing the holder and the other targets is intended: the strip
+must not leave a confined process a way to the holder's memory, and a target
+stripped later may hold a newer copy of it. Refusing its own children is the
+present behaviour, not the intended end state; see below.
+
+These rules were not decided by the project owner. The form of the strip
+(D362), the debug protection lasting until exec (D363), and the rule that a
+stripped process must keep debugging its own children but never reach the
+holder or another target, were decided by the coordinating session under the
+owner's delegation and can be revised by the owner. The decision table in the
+project's descriptor-queue chapter carries the rows. The last rule is only
+half implemented: the refusals are in the kernel, the allowance for a
+stripped process's own child is not.
 
 There is also temporary, explicitly scoped authority for the boot application
 running `/etc/rc`. Its lifetime and endpoint allowlist are separate from login
