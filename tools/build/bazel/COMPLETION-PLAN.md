@@ -11,6 +11,14 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Libarchive/liboes provider-order native R1 passes both archive/shared/installation
+families and six maintained test targets (eleven reported cases). Independent
+review R1 passes both complete archive member/symbol contracts and both shared
+metadata contracts, retaining explicit DTrace ID mappings where needed. Their
+original source inventories/compile-group options remain intact. Twelve of the
+original thirteen order defects are fixed; libc remains. These later focused
+outputs still require complete system integration, and all wider gates stay open.
+
 The maintained archive symbol checker now maps path-derived DTrace IDs only by
 an unambiguous whole-archive member/function/kind incidence graph, preserving raw
 symbols and an explicit bijection. Eleven native adversarial cases and all ten

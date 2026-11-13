@@ -891,3 +891,36 @@ not another whole-system build or a waiver of the rejected historical reports.
 This checker/test change uses the maintained build-bsd format-5 test interface;
 no C/CLI input changes are required. The manual records symbol-only mapping scope.
 Make remains production/default. All remaining closeout gates remain in force.
+
+
+## Libarchive and liboes provider/member order (2026-11-13)
+
+Libarchive now derives archive member names from its maintained ARCHIVE_SOURCES
+inventory, preserving the hmac source position across the separate warning-flag
+compile group. Its declared provider is appended in normal DTrace mode; disabled
+mode uses ordinary objects. Liboes orders its ordinary sources, generated FIDL
+bindings and declared provider as in the source recipe, with explicit normal,
+disabled and experimental section-archive selections. The existing archive rule
+requires exact object coverage; none of these build selections reads a Make
+reference or rewrites finished output. The existing format-5 frontend is used.
+
+`bazel-provider-archive-order-native-r1-20261113/receipt.json` passes static,
+shared and production installation products for both libraries. Six maintained
+test targets pass, with eleven reported cases: real static/shared libarchive
+roundtrips and OES ownership/path/broker protocol/client cases. OES tests use their
+existing source/mocked client harnesses; this is not live kernel OES, capability
+service deployment or live DTrace qualification. Disabled/experimental selections
+remain declared but are not newly qualified by this normal-mode run.
+
+Independent `bazel-provider-archive-order-review-r1-20261113/review.json` passes
+all four archive-member/full-symbol and shared-metadata contracts against verified
+Make package payloads. DTrace aliases retain raw names and explicit unambiguous
+whole-archive mappings. Comparison tool digests are checked before and after.
+This is selected artifact/host evidence, not full ABI/debug or ARM64 acceptance.
+
+Twelve original archive-order defects now have focused producer corrections;
+libc is the remaining one. PAM's ambiguous alias relationships, other unsupported
+archive/ELF representations, installation/debug/configuration boundaries and
+later complete candidate integration remain open alongside the wider gates.
+No build-bsd C/CLI/manual interface changes are needed for these source-owned
+ordering declarations. Make remains production/default and BIP remains excluded.
