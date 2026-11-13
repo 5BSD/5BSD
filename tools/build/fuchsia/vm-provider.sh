@@ -34,7 +34,7 @@
 #   before tests start; default: the twelve core providers that
 #   software-application-guest.sh requires), QEMU, QEMU_DATA,
 #   DRYRUN=1 (build and check the image, do not boot), LOADER_EXTRA (extra
-#   loader.conf lines).
+#   loader.conf lines), SRC_IMAGE (a UFS image mounted read-only at /usr/src).
 #   ISOLATION_ENFORCE=1 retains production device isolation for deployment
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   With PLANE_OFF=1 the default is 1 (the enforced tier, below), and the
@@ -127,6 +127,18 @@ extra_dir=${EXTRA_DIR:-}
 # mounted at /compat/linux/proc and /compat/linux/sys.  The plane refuses a
 # late kldload, so pass linux64_load, linprocfs_load and linsysfs_load in
 # LOADER_EXTRA as well.
+# SRC_IMAGE: a host UFS image of a source tree (for example makefs of a git
+# archive), attached read-only as a third disk and mounted read-only at
+# /usr/src, for suites that read the tree (usr.sbin/bsd-build).  The image
+# is test data and is never written; without it the guest has no source tree.
+src_image=${SRC_IMAGE:-}
+if [ -n "$src_image" ]; then
+	# die is defined further down.
+	case $src_image in
+	/*,*|[!/]*) echo "SRC_IMAGE must be an absolute path without a comma" >&2; exit 64;;
+	esac
+	[ -f "$src_image" ] || { echo "no such SRC_IMAGE: $src_image" >&2; exit 64; }
+fi
 linux_compat_dir=${LINUX_COMPAT_DIR:-}
 if [ -n "$linux_compat_dir" ]; then
 	[ -d "$linux_compat_dir/compat/linux" ] ||
@@ -264,6 +276,8 @@ cat > "$x/fstab" <<'EOF'
 tmpfs		/tmp	tmpfs	rw,mode=1777	0	0
 tmpfs		/Capabilities/Run	tmpfs	rw,mode=0700	0	0
 EOF
+# The third disk (after root and results); a failed mount stops rc.
+[ -z "$src_image" ] || printf '/dev/vtbd2\t/usr/src\tufs\tro\t0\t0\n' >> "$x/fstab"
 if [ -n "$linux_compat_dir" ]; then
 	cat >> "$x/fstab" <<'EOF'
 linprocfs	/compat/linux/proc	linprocfs	rw	0	0
@@ -646,6 +660,9 @@ set -- "$qemu" -L "$qemu_data" -accel tcg,thread=multi -machine q35 -cpu max \
     -netdev hubport,id=n0,hubid=0 -device virtio-net-pci,netdev=n0 \
     -display none -monitor none -serial "file:$log" \
     -qmp "unix:$qmp,server=on,wait=off"
+[ -z "$src_image" ] || set -- "$@" \
+    -drive "file=$src_image,format=raw,if=none,id=src,readonly=on" \
+    -device virtio-blk-pci,drive=src,serial=usr-src
 printf '%s\n' "$@" > "$work/command.txt"
 "$@" > "$work/qemu.log" 2>&1 &
 qpid=$!
