@@ -998,3 +998,61 @@ not substitute for it. The normal build-bsd format-5 interface runs the new case
 with no C/CLI changes required. The manual records count-preserving scope.
 Make remains production/default; all six gates remain open where evidence is
 missing, and BIP remains excluded.
+
+
+## Complete count-preserving ELF R5 review (2026-11-13)
+
+`bazel-package-elf-review-r5-20261113/review.json` completes all 450 combined-R5
+packages with final source/tool/package/index hashes unchanged and no selected
+payload omissions. Of 2,049 non-debug ELF/archive inputs, 1,306 contracts pass.
+The remaining 743 are explicitly classified: 734 ET_REL objects outside the
+ordinary program/shared checker; six archives with repeated member names (absl,
+protobuf, icp, icp_rescue, spl, zfs); PAM's ambiguous alias graph; the loader
+without a normal SONAME/interpreter contract; and the non-PIE kernel. No normal
+program/shared or supported static archive order/full-symbol difference remains
+with counts preserved. Unsupported cases are not accepted as parity, and these
+metadata checks do not establish instruction/full ABI/debug/runtime equivalence.
+
+Strict `bazel-closeout-package-comparison-r7-20261113/comparison/review.json`
+covers all 450 packages without missing/extra package identities, payload paths
+or directory claims. It still retains raw and logical content/size/timestamp and
+manifest differences; complete Make parity remains unaccepted.
+
+## Configured product preflight in the normal frontend (2026-11-13)
+
+The source-configured backend now queries every requested product with public
+Bazel cquery before the main build/test invocation. It preserves the exact source
+settings, platform/toolchain/cache arguments and selected Java environment.
+Test and build-only invocations use the same constructor. Output-only execution
+log/profile/BEP flags are removed from queries, so analysis does not overwrite
+main execution evidence. Main test expansion and cross/kernel host-artifact
+requirements continue independently; subsequent BEP output verification remains
+mandatory. No private Bazel output-cache discovery or compiler fallback is added.
+
+Direct roots use the combined configured inventory. Aliases whose names disappear
+from cquery's actual-target labels receive a single-selector query and a checked
+binding to that combined inventory. Canonical source labels normalize consistently;
+resolved external identities are retained. Missing, duplicate, malformed,
+inconsistent or incompatible requests fail closed. Every combined result must be
+bound. The receipt hashes `target-inventory.json`; query stdout/stderr/commands and
+failed inventory reports are retained. The existing format-5 targets/tests inputs
+cover this behavior; no C/CLI input change is needed and the manual is updated.
+
+`bazel-target-preflight-review-r1-20261113/review.json` accepts the final real R2
+checks: a normal frontend run resolves libc's pic_archive alias to
+shared_objects_archive and passes all 34 inventory unit cases; real nonexistent
+and wrong-platform targets are rejected before main build/test invocation. Both
+negative runs have only cquery commands and no main stdout/stderr, BEP, execution
+log or passed receipt. Their nonzero frontend exits are expected rejection,
+not successful builds. The first missing-target attempt exposed the build-only
+constructor's test-only assumption; that failure is retained and not counted as
+acceptance. The fixed helper has explicit build/test-operation cases.
+
+Public-query probe R2 established actual alias/source/suite label behavior with
+zero actions. Probe R1 lacked the frontend's selected JAVA_HOME and failed local
+JDK detection; it is retained, and production code continues using the exact
+existing selected environment. Positive native R1's 32 cases precede the final
+34-case R2 acceptance. None of this establishes native bootstrap, complete output
+query/reproducibility, cache/sandbox efficiency or comparative performance. Those
+wider gates, special representation checks, runtime/configuration work, production
+publication and ARM64 remain required. Make stays default; BIP remains excluded.

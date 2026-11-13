@@ -7469,6 +7469,15 @@ md/crypto dependency order, shell/data fixtures and OpenSSL-controlled SHA2
 installation and Kyua registration. Fixed test suites retain incompatible case
 metadata when optional tests are disabled; incompatible cases are not passes.
 .Pp
+The source-configured backend preflights every explicit product target using
+Bazel's public configured query before main build or test actions execute.
+Queries preserve the selected configuration, platform and Java environment.
+Aliases retain an explicit binding to the configured target; missing or
+incompatible requested products are rejected. The receipt hashes
+.Pa target-inventory.json .
+This validates the selection; subsequent build output capture and verification
+remain required. It does not establish independent native bootstrap.
+.Pp
 The source-configured qualification backend requires every explicit test selector
 to expand to a compatible test. A passing unrelated test cannot hide an empty
 suite, non-test label, unexpanded suite alias or entirely incompatible selector.

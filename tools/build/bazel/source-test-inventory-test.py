@@ -3,7 +3,7 @@
 import json
 import unittest
 from pathlib import Path
-from source_graph import parse_test_inventory, test_inventory_command, test_artifact_command, test_results, validate_selected_tests, validate_requested_selector
+from source_graph import parse_target_inventory, target_inventory_command, validate_target_binding, parse_test_inventory, test_inventory_command, test_artifact_command, test_results, validate_selected_tests, validate_requested_selector
 
 def inventory(label, compatible=True):
     return json.dumps(dict(label=label, compatible=compatible)) + '\n'
@@ -117,4 +117,56 @@ class TestInventory(unittest.TestCase):
     def test_build_only_rejects_unexpected_test_execution(self):
         self.assertEqual(test_results([],[]),{})
         with self.assertRaises(ValueError):test_results([event('//:a')],[])
+
+class TargetInventory(unittest.TestCase):
+    def test_query_keeps_configuration_and_quotes_selectors(self):
+        command = ['bazel', '--output_user_root=/state', 'test', '--platforms=//:target',
+                   '--//cfg:enabled=false', '--profile=/profile', '--build_event_json_file=/events', '//:product']
+        query = target_inventory_command(command, ['//:product'], ['//:alias+name'])
+        self.assertEqual(query[:5], ['bazel', '--output_user_root=/state', 'cquery', '--platforms=//:target', '--//cfg:enabled=false'])
+        self.assertEqual(query[-1], 'set("//:alias+name")')
+        self.assertNotIn('--profile=/profile', query)
+        self.assertNotIn('--build_event_json_file=/events', query)
+
+    def test_build_only_query(self):
+        query = target_inventory_command(['bazel', 'build', '--platforms=//:target', '//:product'],
+                                         ['//:product'], ['//:product'])
+        self.assertEqual(query[:3], ['bazel', 'cquery', '--platforms=//:target'])
+
+    def test_invalid_operation_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'one build or test operation'):
+            target_inventory_command(['bazel', 'run', '//:product'], ['//:product'], ['//:product'])
+
+    def test_target_suffix_must_match(self):
+        with self.assertRaisesRegex(ValueError, 'exact selected target suffix'):
+            target_inventory_command(['bazel', 'test', '//:a'], ['//:b'], ['//:b'])
+
+    def test_canonical_and_external_labels(self):
+        self.assertEqual(parse_target_inventory(inventory('@@//:source') + inventory('@@sdk+//:tool')),
+                         {'//:source': True, '@@sdk+//:tool': True})
+
+    def test_empty_invalid_and_duplicate_records(self):
+        for text in ['', '42', inventory('//:a') + inventory('@@//:a'),
+                     json.dumps({'label': '//:a', 'compatible': 1}), inventory('//bad label:target')]:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_target_inventory(text)
+
+    def test_alias_binding_preserves_actual_identity(self):
+        self.assertEqual(validate_target_binding('//:alias', {'//:actual': True}, {'//:actual': True}),
+                         {'requested': '//:alias', 'configured': '//:actual'})
+
+    def test_external_alias_binding(self):
+        self.assertEqual(validate_target_binding('//:alias', {'@@sdk+//:tool': True},
+                         {'@@sdk+//:tool': True})['configured'], '@@sdk+//:tool')
+
+    def test_incompatible_target_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'incompatible'):
+            validate_target_binding('//:alias', {'//:actual': False}, {'//:actual': False})
+
+    def test_inconsistent_alias_queries_are_rejected(self):
+        for selected in [{}, {'//:other': True}, {'//:a': True, '//:b': True}, {'//:a': False}]:
+            with self.subTest(selected=selected), self.assertRaises(ValueError):
+                validate_target_binding('//:alias', selected, {'//:a': True})
+
+
 if __name__=='__main__':unittest.main()

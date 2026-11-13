@@ -11,6 +11,24 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+The complete count-preserving indexed R5 review finishes all 450 combined-build
+packages with verified final input hashes and no selection differences. It passes
+1,306 ordinary ELF/archive contracts and retains 743 review-required cases:
+734 ET_REL objects outside that contract, six duplicate-member archives, PAM's
+ambiguous alias mapping, and special kernel/loader representations. No ordinary
+program/shared or supported static archive order/symbol differences remain in
+this selected candidate. This is not full ABI/debug/runtime or whole-system parity.
+Strict R7 still retains content/size/timestamp/manifest diagnostics.
+
+The maintained frontend now preflights every explicit product using public cquery
+with the exact selected configuration/environment. It binds aliases to actual
+configured targets, rejects missing/incompatible requests before main build/test
+actions and hashes the resulting inventory into receipts. Final end-to-end R2
+passes a real libc alias plus all 34 inventory tests; missing and wrong-platform
+products are rejected with no main invocation. Earlier prototype failures remain
+recorded. This closes the known late-invalid-product inefficiency, not the wider
+native bootstrap/output-query/cache/sandbox gate. Make remains production/default.
+
 The new complete `bazel-closeout-system-native-r5-20261113` run passes the selected
 current AMD64 world/GENERIC kernel/modules/450-package graph at explicit kernel
 revision `5e12086b5cbd`, all thirteen selected tests and capture of 1,545 verified
