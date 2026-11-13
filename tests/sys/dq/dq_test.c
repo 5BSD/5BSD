@@ -51,17 +51,42 @@ dqt_require_plane(void)
 		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
 }
 
+/*
+ * A kernel built with options DQ_TEST_OPEN, and only such a kernel, has the
+ * debug.dq.unverified_open sysctl.  On it the tests must have been given
+ * test access by the loader (debug.dq.unverified_open="1"): a test kernel
+ * booted without the setting is a rig that was not set up, and fails here
+ * by name instead of in whatever the first refused open breaks.  A kernel
+ * without the sysctl is not a test kernel and is opened as before.
+ */
+void
+dqt_require_test_access(void)
+{
+	size_t len;
+	int v;
+
+	len = sizeof(v);
+	if (sysctlbyname("debug.dq.unverified_open", &v, &len, NULL, 0) != 0) {
+		if (errno == ENOENT)
+			return;
+		atf_tc_fail("debug.dq.unverified_open: %s", strerror(errno));
+	}
+	if (len != sizeof(v) || v != 1)
+		atf_tc_fail("test kernel without test access: set "
+		    "debug.dq.unverified_open=\"1\" in loader.conf "
+		    "(it reads %d)", v);
+}
+
+/* Never skips: a queue device that is absent or refuses is a failure. */
 int
 dqt_open_queue(void)
 {
 	int q;
 
+	dqt_require_test_access();
 	q = dq_open();
-	if (q == -1) {
-		if (errno == ENOENT)
-			atf_tc_skip("%s: %s", DQ_DEVICE, strerror(errno));
+	if (q == -1)
 		atf_tc_fail("%s: %s", DQ_DEVICE, strerror(errno));
-	}
 	return (q);
 }
 

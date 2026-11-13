@@ -167,13 +167,18 @@ struct dqt_ctl {
 	int		 ninterrupted;
 };
 
-/* Both skip with the errno when /dev/dq is absent; EPERM is a failure. */
 /*
  * Fail (not skip) unless the capability plane is on (PID 1 is capsule) and
  * the queue device exists: a case that pins what a supervisor's exit or an
  * attachment does must not pass in a guest that tested nothing.
  */
 void	dqt_require_plane(void);
+/*
+ * Fail on a test kernel (options DQ_TEST_OPEN) that was booted without
+ * debug.dq.unverified_open="1"; a kernel without the option passes.
+ */
+void	dqt_require_test_access(void);
+/* Fails, never skips, when the queue device is absent or refuses. */
 int	dqt_open_queue(void);
 void	dqt_init(struct dqt_ctl *c);		/* queue + 1 reader thread */
 void	dqt_init_manual(struct dqt_ctl *c);	/* queue, no reader thread */
