@@ -1,0 +1,471 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# The dq(4) test option and publication (design D346, D352).
+#
+# Everything here is sh: the cases run where no Python exists.  The
+# publication recipe is exercised from a private copy of
+# release/Makefile.hardware and its check scripts installed beside this
+# test, never from /usr/src and never towards /usr/obj/usr/src/repo.
+
+MARKER='@(#)5BSD DQ_TEST_OPEN test kernel: not for publication'
+REFUSAL='carries options DQ_TEST_OPEN'
+
+setup()
+{
+    tool=$(atf_config_get bsd_build /usr/sbin/build-bsd)
+    [ -f "$tool" ] || atf_fail 'build-bsd not installed'
+    [ -f /usr/src/Makefile ] || atf_fail 'the build frontend requires /usr/src/Makefile'
+    here=$(atf_get_srcdir)
+    check="$here/check-kernel-no-dq-test.sh"
+    [ -f "$check" ] || atf_fail 'check-kernel-no-dq-test.sh not installed beside the test'
+    # atf_check runs programs, not shell functions.
+    # A package plan needs a hardware profile and a ports checkout; the
+    # refusal under test comes before either is looked at.
+    mkdir -p ports/Mk ports/distfiles
+    : > ports/Mk/bsd.port.mk
+    printf 'graphics/drm-kmod\n' > profile
+    cat > plan <<SCRIPT
+#!/bin/sh
+case \$1 in
+packages|build)
+    set -- "\$@" --hardware-profile "$PWD/profile" --ports "$PWD/ports" ;;
+esac
+[ -n "\${NO_KERNEL_DIR-}" ] || set -- "\$@" --kernel-dir "$PWD/conf"
+exec "$tool" plan "\$@"
+SCRIPT
+    chmod +x plan
+}
+
+# A private source tree holding only the publication recipe.
+private_tree()
+{
+    mkdir -p src/release/scripts
+    cp "$here/Makefile.hardware" src/release/Makefile.hardware
+    for script in "$here"/check-*.sh; do
+        cp "$script" src/release/scripts/
+    done
+    # atf_check runs programs, not shell functions.
+    # HARDWARE_BUILDER stands in for the hardware build and check program
+    # (default: one that fails).
+    cat > recipe <<SCRIPT
+#!/bin/sh
+exec make -C "$PWD/src" -f release/Makefile.hardware \\
+    PKG_CMD=/usr/bin/true HARDWARE_PYTHON="\${HARDWARE_BUILDER:-/usr/bin/false}" \\
+    BASE_REPOSITORY="$PWD/base" HARDWARE_REPO="$PWD/hardware" \\
+    COMPLETE_REPOSITORY="$PWD/published/complete" "\$@"
+SCRIPT
+    chmod +x recipe
+}
+
+
+# kernel_package repository name content: a package holding one kernel.
+kernel_package()
+{
+    mkdir -p "$1" pkgroot/boot/kernel
+    printf 'ELF %s\n' "$3" > pkgroot/boot/kernel/kernel
+    tar -cf "$1/$2" -C pkgroot boot
+    rm -rf pkgroot
+}
+
+# A base repository the malloc(3) check accepts.
+clibs_package()
+{
+    mkdir -p "$1" pkgroot/lib
+    echo 'not a debug libc' > pkgroot/lib/libc.so.7
+    tar -cf "$1/5BSD-clibs-1.pkg" -C pkgroot lib
+    rm -rf pkgroot
+}
+
+# configuration name lines...: a kernel configuration in ./conf.
+configuration()
+{
+    mkdir -p conf
+    name=$1
+    shift
+    printf '%s\n' "$@" > "conf/$name"
+}
+
+
+atf_test_case plan_option_configuration
+plan_option_configuration_head()
+{
+    atf_set descr 'A package plan for a configuration carrying the dq test option is refused'
+}
+plan_option_configuration_body()
+{
+    setup
+    configuration LG2OPTION 'include GENERIC' 'ident LG2OPTION' \
+        'options 	DQ_TEST_OPEN'
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        ./plan packages --kernel LG2OPTION
+    atf_check -s exit:1 -o empty -e match:'no override' \
+        ./plan build --kernel LG2OPTION
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        ./plan media --kernel LG2OPTION
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        ./plan packages --kernel LG2OPTION --format json
+    # No environment or option lifts it.
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        env ALLOW_DEBUG_MALLOC=yes "$tool" plan packages --kernel LG2OPTION \
+        --kernel-dir "$PWD/conf" --build-profile development \
+        --allow-debug-publication
+}
+
+atf_test_case plan_option_spellings
+plan_option_spellings_head()
+{
+    atf_set descr 'Every way config(8) accepts the option is refused'
+}
+plan_option_spellings_body()
+{
+    setup
+    configuration S1 'ident S1' 'options FOO,DQ_TEST_OPEN'
+    configuration S2 'ident S2' 'options DQ_TEST_OPEN=1'
+    configuration S3 'ident S3' 'options FOO, DQ_TEST_OPEN, BAR'
+    configuration S4 'ident S4' 'options FOO' '	DQ_TEST_OPEN'
+    configuration S5 'ident S5' 'options DQ_TEST_OPEN # for the tests'
+    configuration S6 'ident S6' 'options DQ_TEST_OPEN' 'nooptions DQ_TEST_OPEN'
+    configuration S7 'ident S7' 'include S1'
+    configuration S8 'ident S8' 'include "S7"'
+    configuration S9 'ident S9' "include $PWD/conf/S2"
+    for name in S1 S2 S3 S4 S5 S6 S7 S8 S9; do
+        atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+            ./plan packages --kernel $name
+    done
+    # Not the option: a comment, a longer name, a shorter name.
+    configuration N1 'ident N1' '#options DQ_TEST_OPEN' \
+        'options FOO # DQ_TEST_OPEN' 'options DQ_TEST_OPENER' \
+        'options XDQ_TEST_OPEN' 'options DQ_TEST'
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
+        -e empty ./plan packages --kernel N1
+}
+
+atf_test_case plan_fields
+plan_fields_head()
+{
+    atf_set descr 'Plans report what was read and which check is requested'
+}
+plan_fields_body()
+{
+    setup
+    configuration PLAIN 'ident PLAIN' 'options FOO'
+    configuration OPTION 'ident OPTION' 'options DQ_TEST_OPEN'
+    configuration MISSING 'ident MISSING' 'include "lg2-no-such-file"'
+    configuration LOOP 'ident LOOP' 'include LOOP'
+    line='^publication: kernel-test-option-configuration=%s kernel-test-option-binary-check=%s$'
+
+    atf_check -s exit:0 -o save:plan.out -e empty ./plan packages --kernel PLAIN
+    atf_check -s exit:0 -o ignore \
+        grep "$(printf "$line" absent requested)" plan.out
+    atf_check -s exit:0 -o ignore grep '^system-packages:.*KERNCONF=PLAIN' plan.out
+    # The signing and boot statements are untouched and separate.
+    atf_check -s exit:0 -o ignore grep \
+        '^security: verification-scope=system-bundles boot-verification=not-performed root-protection-verification=not-performed$' plan.out
+
+    # What could not be read is said, never reported as absent.
+    for name in MISSING LOOP; do
+        atf_check -s exit:0 -o save:plan.out -e empty ./plan packages --kernel $name
+        atf_check -s exit:0 -o ignore \
+            grep "$(printf "$line" not-read requested)" plan.out
+    done
+
+    # Development actions may build a test kernel; no check is claimed.
+    for action in kernel stage; do
+        atf_check -s exit:0 -o save:plan.out -e empty ./plan $action --kernel OPTION
+        atf_check -s exit:0 -o ignore \
+            grep "$(printf "$line" present not-performed)" plan.out
+    done
+    atf_check -s exit:0 -o save:plan.out -e empty ./plan kernel --kernel PLAIN
+    atf_check -s exit:0 -o ignore \
+        grep "$(printf "$line" absent not-performed)" plan.out
+    # No kernel is involved: nothing is read.
+    atf_check -s exit:0 -o save:plan.out -e empty ./plan world --kernel OPTION
+    atf_check -s exit:0 -o ignore \
+        grep "$(printf "$line" not-performed not-performed)" plan.out
+
+    atf_check -s exit:0 -o save:plan.out -e empty ./plan packages --kernel PLAIN \
+        --format json
+    atf_check -s exit:0 -o ignore grep \
+        '"record":"request".*"kernel_test_option_configuration":"absent","kernel_test_option_binary_check":"requested"' plan.out
+    atf_check -s exit:0 -o ignore grep \
+        '"boot_verification":"not-performed","root_protection_verification":"not-performed"' plan.out
+    atf_check -s exit:0 -o save:plan.out -e empty ./plan kernel --kernel OPTION \
+        --format json
+    atf_check -s exit:0 -o ignore grep \
+        '"kernel_test_option_configuration":"present","kernel_test_option_binary_check":"not-performed"' plan.out
+}
+
+atf_test_case plan_steps
+plan_steps_head()
+{
+    atf_set descr 'Snapshot, image and boot-stage plans check before they copy, build or stage'
+}
+plan_steps_body()
+{
+    setup
+    mkdir repository root
+    printf '{}' > repository/publication.json
+    : > trust.pub
+    printf '{}' > inventory.json
+    printf '{}' > generated.json
+    printf '{}' > receipt.json
+    script=/usr/src/release/scripts/check-kernel-no-dq-test.sh
+    line='^publication: kernel-test-option-configuration=not-performed kernel-test-option-binary-check=requested$'
+
+    atf_check -s exit:0 -o save:plan.out -e empty "$tool" plan snapshot \
+        --repository "$PWD/repository" --pkg-public-key "$PWD/trust.pub" \
+        --package-tool /bin/sh --snapshot-abi FreeBSD:16:amd64 \
+        --snapshot-osversion 1600027
+    atf_check -s exit:0 -o ignore grep "$line" plan.out
+    atf_check -s exit:0 -o inline:"kernel-test-option-check: sh $script -r $(realpath repository)\n" \
+        sed -n 4p plan.out
+    atf_check -s exit:0 -o match:'^snapshot: ' sed -n 5p plan.out
+    atf_check -s exit:0 -o match:'^ *5$' wc -l < plan.out
+
+    atf_check -s exit:0 -o save:plan.out -e empty "$tool" plan image \
+        --root "$PWD/root" --inventory "$PWD/inventory.json" \
+        --generated "$PWD/generated.json" \
+        --construction-receipt "$PWD/receipt.json" --image-makefs /bin/sh \
+        --image-mdconfig /bin/sh --image-mount /bin/sh --image-umount /bin/sh
+    atf_check -s exit:0 -o ignore grep "$line" plan.out
+    atf_check -s exit:0 -o inline:"kernel-test-option-check: sh $script -i $(realpath root)\n" \
+        sed -n 4p plan.out
+    atf_check -s exit:0 -o match:'^image: ' sed -n 5p plan.out
+
+    : > image.ufs
+    : > boot.tar
+    # Staging output is accepted only under /usr/obj; a plan creates nothing.
+    staged=/usr/obj/usr/src/boot-stage-plan-lg2-$$
+    atf_check -s exit:0 -o save:plan.out -e empty "$tool" plan boot-stage \
+        --boot-image "$PWD/image.ufs" --boot-archive "$PWD/boot.tar" \
+        --image-receipt "$PWD/receipt.json" --output "$staged"
+    atf_check -s exit:0 -o ignore grep "$line" plan.out
+    atf_check -s exit:0 -o inline:"kernel-test-option-check: sh $script -a $(realpath boot.tar)\n" \
+        sed -n 4p plan.out
+    atf_check -s exit:0 -o match:'^boot-stage: ' sed -n 5p plan.out
+    [ ! -e "$staged" ] || atf_fail 'a plan created its output'
+    # boot-check writes nothing and runs no check.
+    atf_check -s exit:0 -o save:plan.out -e empty "$tool" plan boot-check \
+        --boot-image "$PWD/image.ufs" --boot-archive "$PWD/boot.tar" \
+        --image-receipt "$PWD/receipt.json"
+    atf_check -s exit:0 -o ignore grep \
+        '^publication: kernel-test-option-configuration=not-performed kernel-test-option-binary-check=not-performed$' \
+        plan.out
+    atf_check -s exit:0 -o match:'^boot-check: ' sed -n 4p plan.out
+    [ ! -e /usr/obj/usr/src/repo ] || [ -d /usr/obj/usr/src/repo ] ||
+        atf_fail 'unexpected repository object'
+}
+
+atf_test_case source_tree
+source_tree_head()
+{
+    atf_set descr 'Configurations and includes are found in the source tree as config(8) finds them'
+}
+source_tree_body()
+{
+    setup
+    # The only test configuration is amd64's.  Elsewhere this case has
+    # nothing to read and says so; on amd64 a source tree without the
+    # configuration is a failure, never a silent skip.
+    [ "$(uname -p)" = amd64 ] ||
+        atf_skip 'NOT CHECKED: no dq(4) test configuration exists for this machine'
+    for file in sys/amd64/conf/GENERIC-DQTEST sys/amd64/conf/GENERIC \
+        sys/conf/std.debug; do
+        [ -f "/usr/src/$file" ] ||
+            atf_fail "/usr/src/$file is missing: the source tree legs were not exercised"
+    done
+    # The test configuration itself, from sys/amd64/conf.
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        env NO_KERNEL_DIR=1 ./plan packages --kernel GENERIC-DQTEST
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        env NO_KERNEL_DIR=1 ./plan media --kernel GENERIC-DQTEST
+    # GENERIC includes sys/conf/std.debug: every part is read.
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
+        -e empty env NO_KERNEL_DIR=1 ./plan packages --kernel GENERIC
+    # An include that only sys/conf can satisfy is read there: the whole
+    # configuration was read.  The control names a file that is nowhere,
+    # which is reported as not read.
+    configuration VIACONF 'ident VIACONF' 'include "std.debug"'
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
+        -e empty ./plan packages --kernel VIACONF
+    [ ! -e /usr/src/sys/conf/std.lg2-nowhere ] &&
+        [ ! -e /usr/src/sys/amd64/conf/std.lg2-nowhere ] ||
+        atf_fail 'the control include exists'
+    configuration NOWHERE 'ident NOWHERE' 'include "std.lg2-nowhere"'
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=not-read ' \
+        -e empty ./plan packages --kernel NOWHERE
+    # The option reached through sys/conf and then sys/amd64/conf: a
+    # private file includes std.debug (sys/conf only) and the test
+    # configuration (sys/amd64/conf only).
+    configuration VIABOTH 'ident VIABOTH' 'include "std.debug"' \
+        'include GENERIC-DQTEST'
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        ./plan packages --kernel VIABOTH
+    # One that sys/amd64/conf satisfies.
+    configuration VIAARCH 'ident VIAARCH' 'include GENERIC-DQTEST'
+    atf_check -s exit:1 -o empty -e match:"$REFUSAL" \
+        ./plan packages --kernel VIAARCH
+    configuration VIAGENERIC 'ident VIAGENERIC' 'include GENERIC'
+    atf_check -s exit:0 -o match:'kernel-test-option-configuration=absent ' \
+        -e empty ./plan packages --kernel VIAGENERIC
+}
+
+atf_test_case publish_recipe
+publish_recipe_head()
+{
+    atf_set descr 'The order of the publication recipe'
+}
+publish_recipe_body()
+{
+    setup
+    private_tree
+    atf_check -s exit:0 -o save:recipe.out -e ignore ./recipe -n publish-packages
+    # Both inputs are checked for the test option before anything else,
+    # and the destination parent is created only after every check.
+    atf_check -s exit:0 -o inline:"sh $PWD/src/release/scripts/check-kernel-no-dq-test.sh -r $PWD/base -r $PWD/hardware\n" \
+        sed -n 1p recipe.out
+    atf_check -s exit:0 -o match:'check-malloc-production.sh  *-r ' sed -n 2p recipe.out
+    atf_check -s exit:0 -o match:'^mkdir -p ' sed -n 3p recipe.out
+    [ ! -e published ] || atf_fail 'a dry run created the destination'
+
+    # The hardware repository is read after the hardware step, and by
+    # nothing before it (hardware_check runs the recipe itself).
+    for target in hardware-packages hardware-packages-check; do
+        atf_check -s exit:0 -o save:recipe.out -e ignore ./recipe -n $target
+        atf_check -s exit:0 -o match:'native-hardware\.py' sed -n 1p recipe.out
+        atf_check -s exit:0 -o match:"check-kernel-no-dq-test.sh -r $PWD/hardware;" \
+            sed -n '$p' recipe.out
+    done
+    [ ! -e hardware ] || atf_fail 'a dry run created the hardware repository'
+
+    # The object-tree check covers every configuration named.
+    atf_check -s exit:0 -o save:recipe.out -e ignore ./recipe -n \
+        KERNCONF='ONE TWO' OBJTOP=/lg2/objtop kernel-test-option-check
+    printf 'sh %s -o /lg2/objtop/sys/%s\n' \
+        "$PWD/src/release/scripts/check-kernel-no-dq-test.sh" ONE \
+        "$PWD/src/release/scripts/check-kernel-no-dq-test.sh" TWO > expected
+    atf_check -s exit:0 -o empty diff -u expected recipe.out
+    # A check that names no kernel has read nothing: it fails.
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'KERNCONF names no kernel' \
+        ./recipe KERNCONF= OBJTOP=/lg2/objtop kernel-test-option-check
+    # system-packages runs it before packaging.
+    atf_check -s exit:0 -o inline:'malloc-production-check\nkernel-test-option-check\npackages\nhardware-packages\npublish-packages\n' \
+        sed -n '/^system-packages:/,$s/^	\${MAKE} -C \${.CURDIR} //p' \
+        src/release/Makefile.hardware
+}
+
+atf_test_case hardware_check
+hardware_check_head()
+{
+    atf_set descr 'hardware-packages-check on a fresh tree passes; a repository is always read'
+}
+hardware_check_body()
+{
+    setup
+    private_tree
+    HARDWARE_BUILDER=/usr/bin/true
+    export HARDWARE_BUILDER
+
+    # A fresh tree: the check-only target verifies inputs, creates no
+    # repository and has none to read.  As before the test-option check.
+    atf_check -s exit:0 -o not-match:'checked' -e empty \
+        ./recipe hardware-packages-check
+    [ ! -e hardware ] || atf_fail 'the check-only target created the repository'
+
+    # A repository left by an earlier build is read.
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain
+    atf_check -s exit:0 -o match:'1 kernel and boot files checked' -e empty \
+        ./recipe hardware-packages-check
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg "$MARKER"
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'hardware/5BSD-kernel-generic-nodebug-1.pkg: boot/kernel/kernel was built with the dq\(4\) test option' \
+        ./recipe hardware-packages-check
+    atf_check -s not-exit:0 -o not-match:'checked' -e match:'There is no' \
+        ./recipe hardware-packages
+
+    # One that is there but cannot be read as a repository is refused.
+    rm -rf hardware
+    : > hardware
+    atf_check -s not-exit:0 -o not-match:'checked' -e not-empty \
+        ./recipe hardware-packages-check
+    rm hardware
+    ln -s nowhere hardware
+    atf_check -s not-exit:0 -o not-match:'checked' -e not-empty \
+        ./recipe hardware-packages-check
+    rm hardware
+
+    # The build target must leave a repository: a missing one is refused,
+    # and publication refuses it too (publish_refused).
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'repository does not exist' ./recipe hardware-packages
+    [ ! -e hardware ] || atf_fail 'the check created the repository'
+
+    # A hardware step that fails stops the recipe before the check.
+    unset HARDWARE_BUILDER
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain
+    atf_check -s not-exit:0 -o not-match:'checked' -e ignore \
+        ./recipe hardware-packages-check
+}
+
+atf_test_case publish_refused
+publish_refused_head()
+{
+    atf_set descr 'Publication refuses a test kernel in either input and creates nothing'
+}
+publish_refused_body()
+{
+    setup
+    private_tree
+
+    # Control: clean inputs pass both checks, the destination parent is
+    # created and only then does the (absent) publisher fail.
+    clibs_package base
+    kernel_package base 5BSD-kernel-generic-1.pkg plain
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain
+    atf_check -s not-exit:0 -o match:'2 kernel and boot files checked' \
+        -e not-match:'DQ_TEST_OPEN' ./recipe publish-packages
+    [ -d published ] || atf_fail 'control: the destination parent was not created'
+    [ ! -e published/complete ] || atf_fail 'control: something was published'
+    rmdir published
+
+    # A test kernel in the hardware repository: the copy that is published.
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg "$MARKER"
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'hardware/5BSD-kernel-generic-nodebug-1.pkg: boot/kernel/kernel was built with the dq\(4\) test option' \
+        ./recipe publish-packages
+    [ ! -e published ] || atf_fail 'a refused publication created the destination'
+    # No override: not the malloc one, not a guess at another.
+    atf_check -s not-exit:0 -o not-match:'checked' -e match:'There is no' \
+        ./recipe ALLOW_DEBUG_MALLOC=yes ALLOW_DQ_TEST_KERNEL=yes \
+        ALLOW_TEST_KERNEL=yes publish-packages
+    [ ! -e published ] || atf_fail 'a refused publication created the destination'
+
+    # A test kernel in the base repository only.
+    kernel_package hardware 5BSD-kernel-generic-nodebug-1.pkg plain
+    kernel_package base 5BSD-kernel-generic-1.pkg 'has dq_testopen_bind in it'
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'base/5BSD-kernel-generic-1.pkg: boot/kernel/kernel was built' \
+        ./recipe publish-packages
+    [ ! -e published ] || atf_fail 'a refused publication created the destination'
+
+    # A hardware repository that cannot be checked.
+    kernel_package base 5BSD-kernel-generic-1.pkg plain
+    rm -rf hardware
+    atf_check -s not-exit:0 -o not-match:'checked' \
+        -e match:'repository does not exist' ./recipe publish-packages
+    [ ! -e published ] || atf_fail 'a refused publication created the destination'
+    [ ! -e hardware ] || atf_fail 'the check created the repository'
+}
+
+atf_init_test_cases()
+{
+    atf_add_test_case plan_option_configuration
+    atf_add_test_case plan_option_spellings
+    atf_add_test_case plan_fields
+    atf_add_test_case plan_steps
+    atf_add_test_case source_tree
+    atf_add_test_case publish_recipe
+    atf_add_test_case hardware_check
+    atf_add_test_case publish_refused
+}

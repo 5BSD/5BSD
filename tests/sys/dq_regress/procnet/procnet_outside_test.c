@@ -94,6 +94,46 @@ nnp_of(pid_t pid)
 	return (v);
 }
 
+static void	held_kill(struct attached *);
+
+/*
+ * Every row here is an UNATTACHED actor that attaches its own child.  A
+ * test process that is itself attached (the suite run under dqpass by
+ * dq_oracle_test) cannot be that actor: its child inherits the attachment
+ * and its P2_NO_NEW_PRIVS, and DQ_IOC_ATTACH refuses a process that is
+ * attached already with EBUSY (dq(4), "Attachment and resolution", the
+ * Attaching and Inheritance paragraphs).  That is a documented refusal,
+ * not one of the answers recorded here, so the case is skipped;
+ * dqpass.expected names these cases and the two results.
+ *
+ * no_new_privs alone does not show attachment (a parent may have set it
+ * by procctl(2)), so the refusal itself is the evidence.  A test process
+ * with no_new_privs whose child can be attached is not attached: the pin
+ * that attach sets the flag cannot be made there, and the case fails; so
+ * does an attach refused for any other reason.
+ */
+static void
+require_unattached_actor(struct dqt_ctl *c, struct attached *a)
+{
+	int error;
+
+	if (nnp_of(getpid()) != PROC_NO_NEW_PRIVS_ENABLE)
+		return;
+	error = dq_attach(c->q, a->pd) == 0 ? 0 : errno;
+	held_kill(a);
+	if (error == EBUSY)
+		atf_tc_skip("the test process is itself attached to a dq(4) "
+		    "queue: its child inherits the attachment and cannot be "
+		    "attached again (EBUSY, dq(4)); the case needs an "
+		    "unattached actor");
+	if (error == 0)
+		atf_tc_fail("the test process has no_new_privs set but is "
+		    "not attached (its child was attached): run it without "
+		    "no_new_privs");
+	atf_tc_fail("the test process has no_new_privs set and dq_attach "
+	    "of its child failed: %s", strerror(error));
+}
+
 /*
  * Fork a child that waits for a byte and then runs fn(arg); attach it if
  * c is not NULL.  The child has not exec'd, as attach requires.
@@ -119,6 +159,7 @@ held_child(struct dqt_ctl *c, struct attached *a, void (*fn)(void *),
 	(void)close(go[0]);
 	a->go = go[1];
 	if (c != NULL) {
+		require_unattached_actor(c, a);
 		ATF_REQUIRE_EQ(PROC_NO_NEW_PRIVS_DISABLE, nnp_of(a->pid));
 		ATF_REQUIRE_EQ_MSG(0, dq_attach(c->q, a->pd), "dq_attach: %s",
 		    strerror(errno));

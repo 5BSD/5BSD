@@ -33,9 +33,27 @@ LIBC_OBJDIR?= ${OBJTOP}/lib/libc
 MALLOC_PRODUCTION_CHECK= sh ${.CURDIR}/release/scripts/check-malloc-production.sh \
 	    ${ALLOW_DEBUG_MALLOC:U:tl:Myes:S/yes/-a/}
 
+# Publication refuses a kernel or module built with the dq(4) test option
+# (options DQ_TEST_OPEN, for example KERNCONF=GENERIC-DQTEST).  The check
+# reads the binaries; it has no override.  It finds a test kernel that
+# reaches publication by accident and says nothing about the boot chain of
+# an installed system.
+KERNEL_TEST_OPTION_CHECK= sh ${.CURDIR}/release/scripts/check-kernel-no-dq-test.sh
+
 # Read-only: the world in the object tree must use production malloc(3).
 malloc-production-check: .PHONY
 	@${MALLOC_PRODUCTION_CHECK} -o ${LIBC_OBJDIR:Q}
+
+# Read-only: no kernel in the object tree carries the dq(4) test option.
+# A check that names no kernel has read nothing and fails.
+kernel-test-option-check: .PHONY
+.if empty(KERNCONF)
+	@echo "ERROR: kernel-test-option-check: KERNCONF names no kernel" >&2; \
+	    false
+.endif
+.for _kernconf in ${KERNCONF}
+	@${KERNEL_TEST_OPTION_CHECK} -o ${OBJTOP:Q}/sys/${_kernconf}
+.endfor
 
 hardware-packages hardware-packages-check: .PHONY
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/native-hardware.py \
@@ -44,14 +62,24 @@ hardware-packages hardware-packages-check: .PHONY
 	    --work ${HARDWARE_WORKDIR:Q} --output ${HARDWARE_REPO:Q} \
 	    --distfiles ${DISTDIR:Q} --pkg ${PKG_CMD:Q} \
 	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
+# A repository that was built is always read.  hardware-packages-check only
+# verifies inputs and creates none: it reads the repository when one is
+# there, and publish-packages refuses a missing one.
+	@if [ ${.TARGET} = hardware-packages ] || [ -e ${HARDWARE_REPO:Q} ] || \
+	    [ -L ${HARDWARE_REPO:Q} ]; then \
+		${KERNEL_TEST_OPTION_CHECK} -r ${HARDWARE_REPO:Q}; \
+	fi
 
 # Optional offline bootstrap input: PKGBASE_PKG_PACKAGE and PKGBASE_PKG_SHA256
 # must be supplied together. The combined catalogue covers the copied archive.
 # APPLICATION_PACKAGE_SELECTION optionally adds a format-1 hash-bound archive
 # selection without rewriting package identities. Format 2 is not supported.
+# Both inputs are checked for the dq(4) test option before anything is
+# created: the published kernel package is the hardware repository's copy.
 publish-packages: .PHONY
-	@mkdir -p ${COMPLETE_REPOSITORY:H:Q}
+	@${KERNEL_TEST_OPTION_CHECK} -r ${BASE_REPOSITORY:Q} -r ${HARDWARE_REPO:Q}
 	@${MALLOC_PRODUCTION_CHECK} -r ${BASE_REPOSITORY:Q}
+	@mkdir -p ${COMPLETE_REPOSITORY:H:Q}
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/hardware-packages.py publish \
 	    --repository ${HARDWARE_REPO:Q} --base-repository ${BASE_REPOSITORY:Q} \
 	    --output ${COMPLETE_REPOSITORY:Q} --pkg ${PKG_CMD:Q} \
@@ -65,6 +93,7 @@ publish-packages: .PHONY
 
 system-packages: .PHONY
 	${MAKE} -C ${.CURDIR} malloc-production-check
+	${MAKE} -C ${.CURDIR} kernel-test-option-check
 	${MAKE} -C ${.CURDIR} packages
 	${MAKE} -C ${.CURDIR} hardware-packages
 	${MAKE} -C ${.CURDIR} publish-packages

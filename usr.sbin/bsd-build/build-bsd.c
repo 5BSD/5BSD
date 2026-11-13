@@ -193,6 +193,73 @@ config(const char *path)
  }
  if(ferror(fp))err(1,"read config");free(line);fclose(fp);
 }
+/*
+ * The dq(4) test option (options DQ_TEST_OPEN) makes a test kernel, which
+ * is never packaged or placed on media.  Read the kernel configuration from
+ * every place config(8) could take it or its includes from (--kernel-dir,
+ * sys/<target>/conf, sys/conf) and report whether the option is named in it:
+ * present, absent, or not-read when any part of it could not be found or
+ * read.  The name counts wherever it stands outside a comment, so nooptions
+ * does not lift it.  This is an early refusal of a plain mistake.  The check
+ * that decides reads the binaries: release/scripts/check-kernel-no-dq-test.sh.
+ * Neither says anything about the boot chain of an installed system.
+ */
+#define KERNEL_TEST_OPTION "DQ_TEST_OPEN"
+#define KERNEL_TEST_CHECK SOURCE "/release/scripts/check-kernel-no-dq-test.sh"
+enum kernel_option { KO_UNSCANNED, KO_ABSENT, KO_NOTREAD, KO_PRESENT };
+static enum kernel_option kernel_option;
+static enum kernel_option kernel_option_file(const char *path,unsigned depth);
+static enum kernel_option
+kernel_option_include(const char *name,unsigned depth)
+{
+ const char *dirs[]={get("kernel-dir"),format(SOURCE "/sys/%s/conf",request.target),SOURCE "/sys/conf"};
+ enum kernel_option result=KO_ABSENT,r;bool found=false;struct stat st;
+ if(!*name)return KO_NOTREAD;
+ if(*name=='/')return kernel_option_file(name,depth);
+ for(size_t i=0;i<nitems(dirs);i++){
+  if(!*dirs[i])continue;
+  char *path=format("%s/%s",dirs[i],name);
+  if(stat(path,&st)==0){found=true;r=kernel_option_file(path,depth);if(r>result)result=r;}
+  free(path);
+ }
+ return found?result:KO_NOTREAD;
+}
+static enum kernel_option
+kernel_option_file(const char *path,unsigned depth)
+{
+ char *line=NULL,*p,*word;size_t cap=0;ssize_t n;struct stat st;
+ enum kernel_option result=KO_ABSENT,r;
+ if(depth>16)return KO_NOTREAD;
+ int fd=open(path,O_RDONLY|O_NONBLOCK|O_CLOEXEC);if(fd<0)return KO_NOTREAD;
+ FILE *fp;
+ if(fstat(fd,&st)<0 || !S_ISREG(st.st_mode) || !(fp=fdopen(fd,"r"))){close(fd);return KO_NOTREAD;}
+ while((n=getline(&line,&cap,fp))>=0){
+  bool first=true,include=false;
+  if((size_t)n!=strlen(line) && result<KO_NOTREAD)result=KO_NOTREAD;
+  if((p=strchr(line,'#'))!=NULL)*p='\0';
+  p=line;
+  while((word=strsep(&p," \t\r\n,=\"<>"))!=NULL){
+   if(!*word)continue;
+   if(!strcmp(word,KERNEL_TEST_OPTION))result=KO_PRESENT;
+   if(first){first=false;include=!strcmp(word,"include");continue;}
+   if(include){include=false;r=kernel_option_include(word,depth+1);if(r>result)result=r;}
+  }
+  if(include && result<KO_NOTREAD)result=KO_NOTREAD;
+ }
+ if(ferror(fp) && result<KO_NOTREAD)result=KO_NOTREAD;
+ free(line);fclose(fp);return result;
+}
+static const char *
+kernel_option_configuration(void)
+{
+ return kernel_option==KO_PRESENT?"present":kernel_option==KO_ABSENT?"absent":kernel_option==KO_NOTREAD?"not-read":"not-performed";
+}
+/* The steps of these actions run the binary check; nothing else does. */
+static const char *
+kernel_option_binary_check(void)
+{
+ return (request.packages || action("media") || action("snapshot") || action("image") || action("boot-stage"))?"requested":"not-performed";
+}
 static void
 usage_status(int code)
 {
@@ -294,6 +361,11 @@ validate(void)
  const char *paths[]={"src-conf","make-conf"};
  for(size_t i=0;i<nitems(paths);i++) {if(*get(paths[i])!='/' || strchr(get(paths[i]),'$'))fail("world configuration paths must be absolute without make expansion");if(selected(paths[i]) && strcmp(get(paths[i]),"/dev/null"))regular(get(paths[i]),false);}
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
+ /* Actions that build or carry the kernel of this configuration. */
+ if(oneof(request.action,"build|kernel|stage|packages|media")){
+  kernel_option=kernel_option_include(get("kernel"),0);
+  if(kernel_option==KO_PRESENT && (request.packages || action("media")))fail("the kernel configuration carries options " KERNEL_TEST_OPTION ", the dq(4) test option: a test kernel is never packaged or placed on media, and there is no override");
+ }
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");
  if(selected("package-tool")) {
   if(!request.packages && !action("snapshot"))fail("--package-tool applies only to build, packages or snapshot");
@@ -637,13 +709,15 @@ plan(void)
   s=step("inventory");args(s,PYTHON,HELPERS "package_inventory.py","--selection",get("package-selection"),"--output",format("%s/inventory.json",get("output")),NULL);return;
  }
  if(action("state-storage")){s=step("state-storage");args(s,PYTHON,HELPERS "state_storage.py","--plan",get("state-plan"),"--output",get("output"),NULL);return;}
- if(action("snapshot")){s=step("snapshot");args(s,PYTHON,SOURCE "/release/scripts/hardware-packages.py","copy-signed-repository","--repository",get("repository"),"--output",get("output"),"--public-key",get("pkg-public-key"),"--pkg",get("package-tool"),"--abi",get("snapshot-abi"),"--osversion",get("snapshot-osversion"),NULL);return;}
+ if(action("snapshot")){s=step("kernel-test-option-check");args(s,"sh",KERNEL_TEST_CHECK,"-r",get("repository"),NULL);s=step("snapshot");args(s,PYTHON,SOURCE "/release/scripts/hardware-packages.py","copy-signed-repository","--repository",get("repository"),"--output",get("output"),"--public-key",get("pkg-public-key"),"--pkg",get("package-tool"),"--abi",get("snapshot-abi"),"--osversion",get("snapshot-osversion"),NULL);return;}
  if(action("compose-config")){s=step("compose-config");args(s,PYTHON,HELPERS "configuration_compose.py","--base",get("configuration-base"),"--changes",get("configuration-changes"),"--ucl-parser",get("configuration-parser"),"--ucl-parser-sha256",get("configuration-parser-sha256"),"--output",get("output"),NULL);if(*get("capsule-validator"))args(s,"--capsule-validator",get("capsule-validator"),"--capsule-validator-sha256",get("capsule-validator-sha256"),NULL);return;}
  if(action("boot-observe")){s=step("boot-observe");args(s,PYTHON,SOURCE "/tools/test/boot-observe/run.py","--policy",get("boot-observation-policy"),"--work",get("output"),NULL);return;}
  if(action("boot-check") || action("boot-stage")) {
+  if(action("boot-stage")){s=step("kernel-test-option-check");args(s,"sh",KERNEL_TEST_CHECK,"-a",get("boot-archive"),NULL);}
   s=step(request.action);args(s,PYTHON,HELPERS "generation_boot.py","--image",get("boot-image"),"--boot-archive",get("boot-archive"),"--image-receipt",get("image-receipt"),NULL);if(action("boot-stage"))args(s,"--output",get("output"),NULL);if(*get("boot-generated"))args(s,"--generated",get("boot-generated"),NULL);if(*get("boot-policy"))args(s,"--boot-policy",get("boot-policy"),NULL);if(*get("boot-verity-image"))args(s,"--verity-image",get("boot-verity-image"),"--verity-descriptor",get("boot-verity-descriptor"),NULL);if(*get("boot-root-path"))args(s,"--root-path",get("boot-root-path"),NULL);if(*get("boot-signing-key"))args(s,"--signing-key",get("boot-signing-key"),"--signing-certificate",get("boot-signing-certificate"),"--openssl",get("boot-openssl"),NULL);if(*get("boot-efi-path"))args(s,"--efi-path",get("boot-efi-path"),"--efi-signer",get("boot-efi-signer"),"--efi-signature-verifier",get("boot-efi-signature-verifier"),"--loader-build-receipt",get("boot-loader-build"),"--loader-build-sha256",get("boot-loader-build-sha256"),"--manifest-verifier",get("boot-manifest-verifier"),NULL);if(*get("boot-efi-signing-key"))args(s,"--efi-signing-key",get("boot-efi-signing-key"),"--efi-signing-certificate",get("boot-efi-signing-certificate"),NULL);if(*get("boot-media-makefs"))args(s,"--media-makefs",get("boot-media-makefs"),"--media-mkimg",get("boot-media-mkimg"),"--efi-fallback-name",get("boot-efi-fallback"),"--esp-mib",get("boot-esp-mib"),"--boot-free-percent",get("boot-free-percent"),NULL);return;
  }
  if(action("image")) {
+  s=step("kernel-test-option-check");args(s,"sh",KERNEL_TEST_CHECK,"-i",get("root"),NULL);
   s=step("image");args(s,PYTHON,HELPERS "generation_image.py","--root",get("root"),"--inventory",get("inventory"),"--generated",get("generated"),"--construction-receipt",get("construction-receipt"),"--output",get("output"),"--makefs",get("image-makefs"),"--mdconfig",get("image-mdconfig"),"--mount",get("image-mount"),"--umount",get("image-umount"),NULL);if(*get("image-verity-policy"))args(s,"--verity-policy",get("image-verity-policy"),NULL);if(!strcmp(get("image-boot-archive"),"yes"))args(s,"--boot-archive",NULL);if(*get("storage-layout-policy"))args(s,"--storage-layout-policy",get("storage-layout-policy"),NULL);return;
  }
  if(action("construct")) {
@@ -781,10 +855,10 @@ json_string(const char *s)
 static void
 show_request(void)
 {
- if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s bundle-signing-mode=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));puts(action("bazel-test")?(*get("bazel-inputs")?"qualification: scope=source-configured-qualification workspace-mode=explicit-inputs bazel=9-or-later runtime=selected-by-inputs system-backend=not-qualified":"qualification: scope=bazel-compile-comparison bazel=9-or-later module-resolution=offline-pinned-lockfile make-install-reference=requested runtime=not-performed system-backend=not-qualified"):firmware_test()?"security: verification-scope=firmware-only boot-verification=qemu-qualification-requested system-image-verification=not-performed root-protection-verification=not-performed":action("loader-build")?"security: verification-scope=trusted-builder-loader-compilation boot-verification=not-performed root-protection-verification=not-performed activation-authorized=no":action("inventory")?"security: verification-scope=package-payload-inventory input-authentication=not-performed activation-authorized=no":action("inventory-audit")?"security: verification-scope=selected-package-review-inventory input-authentication=not-performed program-compatibility-verification=not-performed authority-assigned=no":action("state-storage")?"security: verification-scope=offline-state-provisioning generation-authentication=not-performed activation-authorized=no":action("snapshot")?"security: verification-scope=signed-repository-snapshot consumer-verification=requested generation-authentication=not-performed activation-authorized=no":action("compose-config")?"security: verification-scope=explicit-configuration-composition input-authentication=not-performed service-policy-validation=not-performed activation-authorized=no":action("boot-observe")?"security: verification-scope=installed-boot-observation boot-verification=not-performed program-compatibility-verification=not-performed activation-authorized=no":action("boot-stage")?"security: verification-scope=boot-transport-makefs-input generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("boot-check")?"security: verification-scope=collected-boot-transport-consistency generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("image")?"security: verification-scope=trusted-builder-filesystem-image input-authentication=not-performed generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("construct")?"security: verification-scope=trusted-builder-construction input-authentication=not-performed generation-authentication=not-performed activation-authorized=no":action("deploy")?"security: verification-scope=packages-bundles-and-filesystem generation-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("reconcile")?"security: verification-scope=offline-filesystem-reconciliation input-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("secureboot-test")?"security: verification-scope=uefi-and-loader boot-verification=qemu-qualification-requested system-image-verification=qemu-qualification-requested root-protection-verification=not-performed bootstrap-integrity-verification=kernel-dependent program-compatibility-verification=bounded-vm-fixture-requested":"security: verification-scope=system-bundles boot-verification=not-performed root-protection-verification=not-performed");return;}
+ if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s bundle-signing-mode=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));puts(action("bazel-test")?(*get("bazel-inputs")?"qualification: scope=source-configured-qualification workspace-mode=explicit-inputs bazel=9-or-later runtime=selected-by-inputs system-backend=not-qualified":"qualification: scope=bazel-compile-comparison bazel=9-or-later module-resolution=offline-pinned-lockfile make-install-reference=requested runtime=not-performed system-backend=not-qualified"):firmware_test()?"security: verification-scope=firmware-only boot-verification=qemu-qualification-requested system-image-verification=not-performed root-protection-verification=not-performed":action("loader-build")?"security: verification-scope=trusted-builder-loader-compilation boot-verification=not-performed root-protection-verification=not-performed activation-authorized=no":action("inventory")?"security: verification-scope=package-payload-inventory input-authentication=not-performed activation-authorized=no":action("inventory-audit")?"security: verification-scope=selected-package-review-inventory input-authentication=not-performed program-compatibility-verification=not-performed authority-assigned=no":action("state-storage")?"security: verification-scope=offline-state-provisioning generation-authentication=not-performed activation-authorized=no":action("snapshot")?"security: verification-scope=signed-repository-snapshot consumer-verification=requested generation-authentication=not-performed activation-authorized=no":action("compose-config")?"security: verification-scope=explicit-configuration-composition input-authentication=not-performed service-policy-validation=not-performed activation-authorized=no":action("boot-observe")?"security: verification-scope=installed-boot-observation boot-verification=not-performed program-compatibility-verification=not-performed activation-authorized=no":action("boot-stage")?"security: verification-scope=boot-transport-makefs-input generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("boot-check")?"security: verification-scope=collected-boot-transport-consistency generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("image")?"security: verification-scope=trusted-builder-filesystem-image input-authentication=not-performed generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("construct")?"security: verification-scope=trusted-builder-construction input-authentication=not-performed generation-authentication=not-performed activation-authorized=no":action("deploy")?"security: verification-scope=packages-bundles-and-filesystem generation-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("reconcile")?"security: verification-scope=offline-filesystem-reconciliation input-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("secureboot-test")?"security: verification-scope=uefi-and-loader boot-verification=qemu-qualification-requested system-image-verification=qemu-qualification-requested root-protection-verification=not-performed bootstrap-integrity-verification=kernel-dependent program-compatibility-verification=bounded-vm-fixture-requested":"security: verification-scope=system-bundles boot-verification=not-performed root-protection-verification=not-performed");printf("publication: kernel-test-option-configuration=%s kernel-test-option-binary-check=%s\n",kernel_option_configuration(),kernel_option_binary_check());return;}
  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":");json_string(request.action);
- const char *names[]={"target","target_arch","kernel","board","build_profile","signing","signing_scope","build_backend","hardware_backend","verification_scope","boot_verification","root_protection_verification","system_image_verification","bootstrap_integrity_verification","program_compatibility_verification"};
- const char *values[]={request.target,request.arch,get("kernel"),get("board"),get("build-profile"),get("signing"),"system-bundles",backend.name,"native-ports",action("bazel-test")?(*get("bazel-inputs")?(!strcmp(request.arch,"amd64")?"native-configured-qualification":"cross-configured-qualification"):"bazel-compile-comparison"):firmware_test()?"firmware-only":action("loader-build")?"trusted-builder-loader-compilation":action("inventory")?"package-payload-inventory":action("inventory-audit")?"selected-package-review-inventory":action("state-storage")?"offline-state-provisioning":action("snapshot")?"signed-repository-snapshot":action("compose-config")?"explicit-configuration-composition":action("boot-observe")?"installed-boot-observation":action("boot-stage")?"boot-transport-makefs-input":action("boot-check")?"collected-boot-transport-consistency":action("image")?"trusted-builder-filesystem-image":action("construct")?"trusted-builder-construction":action("deploy")?"packages-bundles-and-filesystem":action("reconcile")?"offline-filesystem-reconciliation":action("secureboot-test")?"uefi-and-loader":"system-bundles",action("secureboot-test")?"qemu-qualification-requested":"not-performed","not-performed",(action("secureboot-test") && !firmware_test())?"qemu-qualification-requested":"not-performed",(action("secureboot-test") && !firmware_test())?"kernel-dependent":"not-performed",(action("secureboot-test") && !firmware_test())?"bounded-vm-fixture-requested":"not-performed"};
+ const char *names[]={"target","target_arch","kernel","board","build_profile","signing","signing_scope","build_backend","hardware_backend","verification_scope","boot_verification","root_protection_verification","system_image_verification","bootstrap_integrity_verification","program_compatibility_verification","kernel_test_option_configuration","kernel_test_option_binary_check"};
+ const char *values[]={request.target,request.arch,get("kernel"),get("board"),get("build-profile"),get("signing"),"system-bundles",backend.name,"native-ports",action("bazel-test")?(*get("bazel-inputs")?(!strcmp(request.arch,"amd64")?"native-configured-qualification":"cross-configured-qualification"):"bazel-compile-comparison"):firmware_test()?"firmware-only":action("loader-build")?"trusted-builder-loader-compilation":action("inventory")?"package-payload-inventory":action("inventory-audit")?"selected-package-review-inventory":action("state-storage")?"offline-state-provisioning":action("snapshot")?"signed-repository-snapshot":action("compose-config")?"explicit-configuration-composition":action("boot-observe")?"installed-boot-observation":action("boot-stage")?"boot-transport-makefs-input":action("boot-check")?"collected-boot-transport-consistency":action("image")?"trusted-builder-filesystem-image":action("construct")?"trusted-builder-construction":action("deploy")?"packages-bundles-and-filesystem":action("reconcile")?"offline-filesystem-reconciliation":action("secureboot-test")?"uefi-and-loader":"system-bundles",action("secureboot-test")?"qemu-qualification-requested":"not-performed","not-performed",(action("secureboot-test") && !firmware_test())?"qemu-qualification-requested":"not-performed",(action("secureboot-test") && !firmware_test())?"kernel-dependent":"not-performed",(action("secureboot-test") && !firmware_test())?"bounded-vm-fixture-requested":"not-performed",kernel_option_configuration(),kernel_option_binary_check()};
  for(size_t i=0;i<nitems(names);i++){printf(",\"%s\":",names[i]);json_string(values[i]);}if(action("bazel-test"))printf(",\"make_install_reference\":\"%s\",\"bazel_minimum_major\":9,\"module_resolution\":\"%s\"",*get("bazel-inputs")?"not-performed":"requested",*get("bazel-inputs")?"native-inputs":"offline-pinned-lockfile");printf(",\"jobs\":%u}\n",request.jobs);
 }
 static void

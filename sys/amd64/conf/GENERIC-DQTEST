@@ -1,0 +1,18 @@
+#
+# GENERIC-DQTEST -- GENERIC with the dq(4) test-access option, for the
+#		    kernel's own test suite on 5BSD/amd64.
+#
+# This is a test kernel.  It must never be published: publication and
+# release media refuse a kernel or module built from it
+# (release/scripts/check-kernel-no-dq-test.sh), and build-bsd(8) refuses to
+# plan packages or media for a configuration that carries the option.
+#
+# The option does nothing until the loader sets
+# debug.dq.unverified_open="1"; see dq(4).
+#
+
+include GENERIC
+
+ident		GENERIC-DQTEST
+
+options 	DQ_TEST_OPEN		# dq(4) test access: never published

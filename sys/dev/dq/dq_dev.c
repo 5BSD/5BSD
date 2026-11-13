@@ -222,6 +222,13 @@ dq_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	 */
 	if (td->td_fpop == NULL)
 		return (ENOENT);
+#ifdef DQ_TEST_OPEN
+	/*
+	 * Test kernels only (dq_testopen.c).  Every check above has passed;
+	 * this adds none and removes none.
+	 */
+	dq_testopen_bind(td);
+#endif
 	q = dq_queue_create(td, td->td_fpop);
 	error = devfs_set_cdevpriv(q, dq_cdevpriv_dtor);
 	if (error != 0)
