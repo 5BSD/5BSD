@@ -70,9 +70,10 @@ Focused corrected-source batches additionally pass independent ELF comparisons
 for nine utility/RDMA programs, three Kerberos administration programs and two
 plugins, and five ZFS/C++ products. The Kerberos database/KDC tests pass; zfsd's
 newly qualified shared GoogleTest/regex closure passes all 22 unit cases. The
-failed initial non-PIC test link is preserved. Twenty-one of 43 frozen-review
-library-order discrepancies have focused corrections; 22 LLVM/SSH/SystemExtension
-cases and complete new-candidate integration remain. Archive/debug/kernel/loader,
+failed initial non-PIC test link is preserved. SSH/SystemExtension then passes
+ten product comparisons and all 34 selected startup/policy cases. Twenty-nine
+of 43 frozen-review library-order discrepancies have focused corrections;
+fourteen LLVM cases and complete new-candidate integration remain. Archive/debug/kernel/loader,
 configuration, ARM64, bootstrap/cache/sandbox, performance, publication and broader
 runtime gates stay open.
 

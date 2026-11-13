@@ -4,10 +4,11 @@ load("//tools/build/bazel:bsd_nis.bzl", "nis_runtime_deps", "nis_runtime_linkopt
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
-def ssh_program(name, srcs, deps = [], dynamic_deps = [], bindir = "/usr/bin", man_section = "1", binary_mode = "0555", sk_client = True, aliases = [], extra_entries = [], extra_directories = {}, target_compatible_with = []):
+def ssh_program(name, srcs, deps = ["//secure/lib/libssh:ssh"], dynamic_deps = ["//secure/lib/libssh:ssh_shared"], bindir = "/usr/bin", man_section = "1", binary_mode = "0555", sk_client = True, aliases = [], extra_entries = [], extra_directories = {}, target_compatible_with = []):
+    # Callers own complete ordered library lists; defaults cover SSH-only tools.
     cc_binary(name = name, srcs = srcs + (["//crypto/openssh:ssh-sk-client.c"] if sk_client else []),
-        deps = ["//secure/lib/libssh:ssh"] + deps + nis_runtime_deps(),
-        dynamic_deps = ["//secure/lib/libssh:ssh_shared"] + dynamic_deps,
+        deps = deps + nis_runtime_deps(),
+        dynamic_deps = dynamic_deps,
         additional_compiler_inputs = ["//secure/lib/libssh:ssh_build_config"],
         copts = ["-fPIE", "-include", "$(location //secure/lib/libssh:ssh_build_config)"],
         local_defines = ["OPENSSL_API_COMPAT=0x10100000L"] + select({"//tools/build/bazel/config:ldns_enabled": ["HAVE_LDNS=1"], "//conditions:default": []}) + select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["LIBWRAP=1"], "//conditions:default": []}),

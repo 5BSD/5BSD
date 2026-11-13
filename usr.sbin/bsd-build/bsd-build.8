@@ -7968,6 +7968,8 @@ outputs or establishes complete ABI, instruction, runtime or debug-file parity.
 Component library order follows its source recipe and the terminal pthread
 ordering defined by bsd.libnames.mk. Conditional libraries retain their selected
 position. RDMA examples share one maintained ordered dependency declaration.
+SSH program declarations supply complete ordered library inputs to their helper;
+SSH-only defaults do not force SSH before other explicitly selected providers.
 ZFS/C++ qualification checks component and pthread dependencies before the
 compiler runtime providers. The zfsd unit target declares the shared GoogleTest
 and regex provider chain from the source test recipes while retaining PIE.

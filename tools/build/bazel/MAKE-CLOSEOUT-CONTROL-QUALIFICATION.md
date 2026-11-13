@@ -595,3 +595,38 @@ ARM64/bootstrap/performance/publication and broader runtime gates remain open.
 The normal build-bsd format-5 backend covers the changed declarations without
 new flags or C interface changes. Its manual documents the C++ and test-runtime
 ordering boundary. Make remains production/default.
+
+### SSH/SystemExtension library-order batch (2026-11-13)
+
+ssh_program now accepts complete ordered deps/dynamic_deps lists, with SSH-only
+defaults. All callers with explicit dependencies declare their full source
+recipe. The macro no longer unconditionally prepends SSH, which had incorrectly
+placed it before crypto for ssh-agent/keygen/keysign/pkcs11-helper. The client
+and daemon preserve selected Kerberos/wrapper/crypto order, and libssh places
+optional ldns before crypto/crypt/z. SFTP and ssh-sk-helper retain their existing
+order. This is an explicit caller-owned contract, without program-name branches.
+BSDExtension places native pthread after its ordinary dependencies, matching the
+source bsd.libnames.mk rule; source policy and DTrace declarations are unchanged.
+
+`bazel-ssh-extension-link-order-native-r1-20261113/receipt.json` passes all ten
+selected products and six expanded test targets. Captured reports record all
+34 cases passing: SSH versions/effective-config/invalid-config and extension
+allowlist/policy/drivers cases. These are selected startup/userland-policy cases;
+network authentication, SYSTEM Device operations and broader installed-provider
+coverage still require their corresponding VM gates.
+
+`bazel-ssh-extension-link-order-review-r1-20261113/review.json` passes independent
+Make ELF contract checks for libprivatessh, ssh, ssh-agent, ssh-keygen, ssh-keysign,
+ssh-pkcs11-helper, sshd, ssh-sk-helper, sftp and BSDExtension. Exact native capture
+and verified reference package/member/data bindings are retained with checker
+commands or shared-checker function/hash. This closes eight recorded order
+differences and checks two unchanged helper orders after the macro interface
+change. Dynamic symbol/version, identity, hardening and ordered-dependency
+contracts pass; raw byte/complete ABI and installed-system acceptance remain open.
+
+Twenty-nine of the 43 frozen-review order differences have focused corrected
+source evidence; fourteen LLVM cases remain. Complete new-candidate integration
+and all other existing gates remain required. build-bsd's existing format-5
+interface covers the changed source declarations and selected feature positions;
+no C/CLI change is needed. Its manual documents the caller-owned SSH order.
+Make remains production/default.
