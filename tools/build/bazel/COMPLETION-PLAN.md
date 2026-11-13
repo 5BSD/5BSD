@@ -65,6 +65,10 @@ zstream's missing Solaris compatibility-header dependency; all eight zstream
 queue selftests and four bounded reviewer regression cases pass. Complete
 integration of those newer fixes and the remaining library/archive discrepancies
 is still required. See the Make closeout record for exact receipts and failures.
+Nine additional utility/RDMA executables now pass focused native builds and
+independent Make ELF comparisons after source-recipe library-order corrections.
+Together with CTF, eleven of 43 frozen-review order discrepancies have corrected
+source evidence; the remaining 32 and complete new-candidate integration stay open.
 
 
 ## Independent Make closeout comparison (2026-11-11)

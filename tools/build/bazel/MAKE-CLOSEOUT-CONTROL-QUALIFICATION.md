@@ -496,3 +496,38 @@ require subsequent complete integration. Other lookup-order/archive discrepancie
 configuration/ARM64/bootstrap/performance/publication and broader runtime gates
 remain open. The existing format-5 frontend needs no C interface change; its
 manual now describes this diagnostic and its limits. Make stays production/default.
+
+### Utility and RDMA library-order batch (2026-11-13)
+
+The next nine production executables now preserve source link order using normal
+CcInfo deps/dynamic_deps declarations: ncal (including the cal alias), mount,
+ifconfig, ngctl, elfcopy and the mckey/rping/ucmatose/udaddy RDMA examples.
+The component Make recipes supply the order; bsd.libnames.mk moves pthread after
+ordinary libraries, including conditional jail in ngctl. ifconfig keeps wireless
+and jail selection in place and places nv after them. DTrace provider declarations
+and constructor source order are preserved. These are direct dependency fixes,
+not ELF rewriting or package/comparator exclusions.
+
+The four RDMA examples consume one source-owned libraries.bzl list reflecting
+their parent Makefile.inc contract (ibverbs, rdmacm, irdma, mlx4, mlx5, bnxtre,
+cxgb4, pthread), with the shared-target list derived from the same labels. No
+runtime Make query or inferred binary-output ordering enters product actions.
+
+`bazel-utility-link-order-native-r1-20261113/receipt.json` and
+`bazel-rdma-link-order-native-r1-20261113/receipt.json` pass their selected native
+builds and the maintained runtime-path regression target. Independent reviews
+`bazel-utility-link-order-review-r1-20261113/review.json` (five) and
+`bazel-rdma-link-order-review-r1-20261113/review.json` (four) pass every existing
+program ELF contract against payloads from verified Make package archives.
+The reports retain native receipt/output bindings, reference package/member/data
+hashes, exact checker commands and exit statuses. This establishes selected ELF
+identity, hardening, dependency order and dynamic symbol/version metadata, not
+raw byte identity, new runtime/VM acceptance or RDMA hardware operation.
+
+Together with the prior CTF fixes, eleven of the frozen review's 43 library-order
+discrepancies now have focused corrected-source evidence. That historical review
+is unchanged. The remaining 32 and the archive/debug/kernel/loader/configuration,
+ARM64/bootstrap/performance/publication/runtime gates remain open. Full package
+integration of the newer fixes is still required. Existing format-5 build-bsd
+backend inputs cover these declarations; no C interface or production-default
+change is needed. The frontend manual documents the ordering policy.

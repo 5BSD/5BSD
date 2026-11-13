@@ -3,9 +3,9 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 load(":sources.bzl", "ELFCOPY_SOURCES")
 # Default LLVM_BINUTILS profile; alternate objcopy/strip installation is pending.
 cc_binary(name = "elfcopy", srcs = ELFCOPY_SOURCES,
-    deps = ["//contrib/elftoolchain:elfcopy_headers", "//lib/libelftc:elftc_pie",
-        "//lib/libpe:pe_pie", "//lib/libelf:elf", "//lib/libarchive:archive"],
-    dynamic_deps = ["//lib/libelf:elf_shared", "//lib/libarchive:archive_shared"],
+    deps = ["//contrib/elftoolchain:elfcopy_headers", "//lib/libarchive:archive", "//lib/libelftc:elftc_pie",
+        "//lib/libelf:elf", "//lib/libpe:pe_pie"],
+    dynamic_deps = ["//lib/libarchive:archive_shared", "//lib/libelf:elf_shared"],
     local_defines = ["WITH_PE=1"], copts = ["-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 
