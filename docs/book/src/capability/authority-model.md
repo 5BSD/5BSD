@@ -113,21 +113,29 @@ authority are unchanged.
 The stripped process is a different matter as a debugger. Its authority is
 invalid, so it fails the authority's debug check for every process the
 authority still protects: the holder, another target stripped of the same
-authority, and its own children until they execute an image, whose
-`PT_TRACE_ME` fails too. The error is `EPERM`; before the attach all of these
-were allowed. Refusing the holder and the other targets is intended: the strip
-must not leave a confined process a way to the holder's memory, and a target
-stripped later may hold a newer copy of it. Refusing its own children is the
-present behaviour, not the intended end state; see below.
+authority, and a child it forks, whose `PT_TRACE_ME` fails too. The error is
+`EPERM`; before the attach all of these were allowed. All four refusals are
+the rule, a documented difference from ordinary Unix behaviour: the strip must
+not leave a confined process a way to the holder's memory, and a child or a
+target stripped later may hold a copy of it.
+
+What ends a refusal is the protected process ceasing to be protected, not
+anything the stripped process does. A stripped child or other stripped target
+stops being protected when it executes an image, and can then be debugged
+subject to the ordinary checks. The holder stays protected for as long as it
+holds the authority, across its own image executions, so the stripped process
+is refused towards it for good. The stripped process's own exec ends only the
+protection of the stripped process itself; its authority stays invalid and it
+passes the check for no process it was refused before.
 
 These rules were not decided by the project owner. The form of the strip
-(D362), the debug protection lasting until exec (D363), and the rule that a
-stripped process must keep debugging its own children but never reach the
-holder or another target, were decided by the coordinating session under the
-owner's delegation and can be revised by the owner. The decision table in the
-project's descriptor-queue chapter carries the rows. The last rule is only
-half implemented: the refusals are in the kernel, the allowance for a
-stripped process's own child is not.
+(D362), the debug protection lasting until exec (D363), and the refusal of
+the stripped process as a debugger in all four cases, were decided by the
+coordinating session under the owner's delegation and can be revised by the
+owner. The decision table in the project's descriptor-queue chapter carries
+the rows. An allowance for a stripped process to debug a child it forked
+after the strip was considered. It is a recorded option only: not built, not
+scheduled, and the kernel has no part of it.
 
 There is also temporary, explicitly scoped authority for the boot application
 running `/etc/rc`. Its lifetime and endpoint allowlist are separate from login

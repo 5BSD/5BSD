@@ -158,12 +158,20 @@ Once it has executed an image the authority no longer restricts debugging
 it.
 .Pp
 The stripped process itself no longer passes that check as a debugger.
-Until they execute an image, it cannot debug the holder of the authority,
-another process stripped of the same authority, or a child it forks, and
+It cannot debug the holder of the authority, another process stripped of
+the same authority, or a child it forks, and
 .Dv PT_TRACE_ME
 in such a child fails; the error is
 .Er EPERM .
 Before the attach all of these were allowed.
+The refusal towards a stripped process or a child ends when that process
+executes an image, because the authority then stops restricting who may
+debug it.
+The refusal towards the holder does not end: the holder is protected for as
+long as it holds the authority, also after it executes an image, and the
+stripped process never acts with the authority again.
+An image executed by the stripped process itself changes only who may debug
+that process.
 Nothing else is taken at the attach: the discovery context described above
 and endpoints that are not bound to an authority are unchanged.
 .Sh RETURN VALUES
