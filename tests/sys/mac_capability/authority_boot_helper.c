@@ -896,9 +896,9 @@ prison_transition_tests(int issuer)
  * - The holder opens /dev/dq, as any unjailed root does.  lg-3 keys the
  *   open on the supervisor role and changes this to EPERM for a holder
  *   without it.
- * - Attaching a child that inherited the same authority succeeds and
- *   leaves the child's authority valid, identity and generation unchanged.
- *   lg-5a strips the target's authority at attach and changes this.
+ * - Attaching a child that inherited the same authority succeeds.  Since
+ *   lg-5a the attach strips the child's authority: identity kept, invalid,
+ *   generation advanced by one (before lg-5a: valid, generation unchanged).
  * - A fork child of the holder can PT_ATTACH its parent (same authority)
  *   while the parent holds the queue, and the parent operates the queue
  *   after the detach.  lg-3 refuses to debug a supervisor and changes the
@@ -956,10 +956,10 @@ dq_legitimacy_pins(int issuer)
 	CHECK(ioctl(q, DQ_IOC_ATTACH, &da) == 0);
 	CHECK(write(gate[1], &byte, 1) == 1);
 	CHECK(read(report[0], &after, sizeof(after)) == (ssize_t)sizeof(after));
-	/* The two rows lg-5a changes: recorded, not fatal (PIN_EQ). */
-	PIN_EQ(after.valid, 1);
+	/* The two rows lg-5a changed: recorded, not fatal (PIN_EQ). */
+	PIN_EQ(after.valid, 0);
 	CHECK(after.identity == before.identity);
-	PIN_EQ(after.generation, before.generation);
+	PIN_EQ(after.generation, before.generation + 1);
 	CHECK(info().valid);
 	close(pd);
 	close(ready[0]); close(gate[1]); close(report[0]);
@@ -988,17 +988,18 @@ dq_legitimacy_pins(int issuer)
 }
 
 /*
- * Strip at attach (design slice lg-5a): pins written before the change.
+ * Strip at attach (design slice lg-5a).  The pins were written and proven
+ * before the change with the "before" column, then moved to the "lg-5a"
+ * column with the change.
  *
- * lg-5a makes DQ_IOC_ATTACH remove the target's use of its software
+ * DQ_IOC_ATTACH removes the target's use of its software
  * authority: the authority stays named (identity kept) but is marked
  * invalid, the generation is bumped and the invocation binding is dropped,
  * as a prison transition does.  The target keeps the authority's debug
  * protection until it execs, because until then its memory is a copy of
- * the holder's.  The rows below are today's answers; every row lg-5a is
- * predicted to change uses PIN_EQ, so a run of these pins on the lg-5a
- * kernel lists exactly the lines of the "after lg-5a" column that differ.
- * Any other miss, and any CHECK failure, is a finding.
+ * the holder's.  Every row uses PIN_EQ, so a run of the earlier pins on the
+ * lg-5a kernel listed exactly the lines whose two columns differ.  Any
+ * other miss, and any CHECK failure, is a finding.
  *
  * U is a target that inherited its holder's unconstrained managed
  * authority; C is one that installed an authority constrained to one image
@@ -1007,7 +1008,7 @@ dq_legitimacy_pins(int issuer)
  * target.  "outsider" is a root process with no authority, "sibling" a fork
  * of U's holder (same authority, same execution).
  *
- * function / row                               today        after lg-5a
+ * function / row                               before       lg-5a
  * dq_legitimacy_pins: target valid             1            0
  * dq_legitimacy_pins: target generation        g            g + 1
  * strip_use: after a refused attach (EBUSY)    valid, g     same
@@ -1038,7 +1039,7 @@ dq_legitimacy_pins(int issuer)
  * strip_debug C: exec'd, outsider              EACCES       same
  * strip_debug C: exec'd, holder                0            same
  *
- * U's exec'd rows are the one answer lg-5a gives away: an attached target
+ * U's exec'd rows are the one answer lg-5a gave away: an attached target
  * of an unconstrained authority kept it across exec and stayed protected;
  * stripped, the new image has neither.  In C the authority refuses the
  * outsider until the exec (EPERM) and the protector's shield after it
@@ -1277,12 +1278,12 @@ strip_use_pins(int issuer)
 	attach_target(q, pd, 0, 0);
 	CHECK(write(gate[1], &byte, 1) == 1);
 	served_read(q, report[0], &rep, sizeof(rep));
-	PIN_EQ(rep.self.valid, 1);
-	PIN_EQ(rep.self.generation, before.generation);
+	PIN_EQ(rep.self.valid, 0);
+	PIN_EQ(rep.self.generation, before.generation + 1);
 	PIN_EQ(rep.self.identity, before.identity);
-	PIN_EQ(rep.send_error, 0);
+	PIN_EQ(rep.send_error, EPERM);
 	PIN_EQ(rep.install_error, EPERM);
-	PIN_EQ(rep.forked.valid, 1);
+	PIN_EQ(rep.forked.valid, 0);
 	PIN_EQ(rep.forked.generation, rep.self.generation);
 	PIN_EQ(rep.forked.identity, before.identity);
 	/* The attacher is not the target. */
@@ -1402,8 +1403,8 @@ strip_debug_pins(int issuer, bool constrained)
 	attach_target(q, pd, 0, 0);
 	CHECK(write(gate[1], &byte, 1) == 1);
 	served_read(q, report[0], &i1, sizeof(i1));
-	PIN_EQ(i1.valid, i0.valid);
-	PIN_EQ(i1.generation, i0.generation);
+	PIN_EQ(i1.valid, 0);
+	PIN_EQ(i1.generation, i0.generation + 1);
 	PIN_EQ(i1.identity, i0.identity);
 	PIN_EQ(debugger_ask(&outsider, target), EPERM);
 	if (!constrained)
@@ -1413,13 +1414,13 @@ strip_debug_pins(int issuer, bool constrained)
 	/* Attached and exec'd: a new image. */
 	CHECK(write(gate[1], &byte, 1) == 1);
 	served_read(q, report[0], &i2, sizeof(i2));
-	PIN_EQ(i2.valid, i0.valid);
-	PIN_EQ(i2.generation, i0.generation + (constrained ? 1 : 0));
+	PIN_EQ(i2.valid, 0);
+	PIN_EQ(i2.generation, i0.generation + 1);
 	PIN_EQ(i2.identity, i0.identity);
-	PIN_EQ(debugger_ask(&outsider, target), constrained ? EACCES : EPERM);
+	PIN_EQ(debugger_ask(&outsider, target), constrained ? EACCES : 0);
 	if (!constrained)
-		PIN_EQ(debugger_ask(&sibling, target), EPERM);
-	PIN_EQ(debug_try(target), constrained ? 0 : EPERM);
+		PIN_EQ(debugger_ask(&sibling, target), 0);
+	PIN_EQ(debug_try(target), 0);
 
 	CHECK(write(gate[1], &byte, 1) == 1);
 	serve_until(q, pd);

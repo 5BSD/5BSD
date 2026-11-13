@@ -807,6 +807,7 @@ struct proc {
 	bool p_cap_authority_invalid; /* (c) Sticky credential invalidation. */
 	bool p_cap_authority_pending_exec; /* (c) Await approved provider image. */
 	bool		p_noambient;	/* Immutable after fork; inherited protection. */
+	bool p_cap_authority_stripped; /* (c) Stripped at dq attach, no exec yet. */
 	struct mac_cap_process_context *p_cap_context; /* (c) Held discovery. */
 	uint64_t	p_cap_identity; /* (c) Process lifetime identity. */
 	uint64_t	p_cap_responsible; /* (c) Responsible process identity. */

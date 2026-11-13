@@ -306,7 +306,13 @@ cap_authority_debug_check(struct proc *actor, struct proc *target)
 	if (target->p_noambient)
 		return (EPERM);
 	a = target->p_cap_authority;
-	if (a == NULL || target->p_cap_authority_invalid ||
+	/*
+	 * An authority stripped at supervisor-queue attach is invalid, but
+	 * until the target execs its memory is a copy of the holder's: it
+	 * keeps the answer it had before the strip.
+	 */
+	if (a == NULL || (target->p_cap_authority_invalid &&
+	    !target->p_cap_authority_stripped) ||
 	    atomic_load_acq_int(&a->revoked) ||
 	    atomic_load_acq_int(&a->issuer->revoked))
 		return (0);
@@ -391,6 +397,7 @@ cap_authority_fork(struct proc *parent, struct proc *child)
 	child->p_cap_execution = parent->p_cap_execution;
 	child->p_cap_authority_invalid = parent->p_cap_authority_invalid;
 	child->p_cap_authority_pending_exec = parent->p_cap_authority_pending_exec;
+	child->p_cap_authority_stripped = parent->p_cap_authority_stripped;
 }
 void
 cap_authority_exit(struct proc *p)
@@ -421,6 +428,32 @@ cap_authority_cred_changed(struct proc *p, const struct ucred *old,
 		p->p_cap_authority_invalid = true;
 		p->p_cap_authority_generation++;
 	}
+}
+
+/*
+ * A process attached to a supervisor queue no longer acts with its software
+ * authority.  As after a prison transition the authority stays named, so
+ * the identity remains readable, and is invalid for good: an attached
+ * process cannot install another, and exec selects none for it
+ * (P2_NO_NEW_PRIVS).  A pending authority is stripped the same way.  The
+ * authority's debug protection alone outlasts the strip, until the image is
+ * replaced (cap_authority_debug_check()).
+ *
+ * A process without a usable authority is left as it is.  Never sleeps;
+ * the caller holds the process lock and may hold the pwddesc and filedesc
+ * locks.
+ */
+void
+cap_authority_strip_locked(struct proc *p)
+{
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	cap_authority_invocation_invalidate_locked(p);
+	if (p->p_cap_authority == NULL || p->p_cap_authority_invalid)
+		return;
+	p->p_cap_authority_invalid = true;
+	p->p_cap_authority_pending_exec = false;
+	p->p_cap_authority_stripped = true;
+	p->p_cap_authority_generation++;
 }
 /* Called before image activation: privileged code needs a secure loader. */
 struct cap_authority *
@@ -474,6 +507,8 @@ cap_authority_exec(struct proc *p, struct vnode *image,
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	/* Called only after a successful image activation, never on failed exec. */
 	cap_authority_invocation_invalidate_locked(p);
+	/* The new image holds nothing of the authority's holder. */
+	p->p_cap_authority_stripped = false;
 	p->p_cap_execution = (a != NULL || selected != NULL) ? new_execution() : 0;
 	if (selected != NULL && !atomic_load_acq_int(&selected->revoked) &&
 	    !atomic_load_acq_int(&selected->issuer->revoked) &&
@@ -1463,6 +1498,7 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 			td->td_proc->p_cap_execution = new_execution();
 			td->td_proc->p_cap_authority_invalid = false;
 			td->td_proc->p_cap_authority_pending_exec = a->nexec != 0;
+			td->td_proc->p_cap_authority_stripped = false;
 			td->td_proc->p_cap_authority_generation++;
 		} else
 			old = NULL;
@@ -1478,6 +1514,7 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 		td->td_proc->p_cap_execution = 0;
 		td->td_proc->p_cap_authority_invalid = false;
 		td->td_proc->p_cap_authority_pending_exec = false;
+		td->td_proc->p_cap_authority_stripped = false;
 		td->td_proc->p_cap_authority_generation++;
 		PROC_UNLOCK(td->td_proc);
 		cap_authority_drop(old);
