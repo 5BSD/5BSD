@@ -220,6 +220,28 @@ def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
             'runtime_qualified': False, 'full_abi_parity': False}
 
 
+
+def compare_relocatable(candidate, reference):
+    """Exact allocated bytes and symbolic relocations, excluding debug-only data.
+
+    Reuse the boot object's maintained contract, preserving duplicate section
+    occurrences and all external symbol fields. This neither loads a module nor
+    normalizes code, relocation addends, build IDs or DTrace path IDs.
+    """
+    from elf_object_contract import contract
+    records = {}
+    for key, path in (('candidate', candidate), ('make_reference', reference)):
+        data = Path(path).read_bytes()
+        records[key] = {'path': str(path), 'sha256': hashlib.sha256(data).hexdigest(),
+                        'contract': contract(data, allow_duplicate_sections=True)}
+    a, b = records['candidate']['contract'], records['make_reference']['contract']
+    differences = [key for key in sorted(set(a) | set(b)) if a.get(key) != b.get(key)]
+    return {'scope': 'exact-relocatable-allocated-symbol-relocation-comparison',
+            **records, 'differences': differences,
+            'status': 'review-required' if differences else 'passed',
+            'debug_qualified': False, 'runtime_qualified': False}
+
+
 def stem(member):
     for suffix in ('.nopic.o', '.pic.o', '.pico', '.pieo', '.o'):
         if member.endswith(suffix):

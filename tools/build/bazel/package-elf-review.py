@@ -118,6 +118,14 @@ def review_pair(name, reference, candidate, inventory, args):
                     if header[4:6] != b'\x02\x01':
                         raise ValueError('unhandled ELF encoding/class')
                     elf_type = struct.unpack_from('<H', header, 16)[0]
+                    if elf_type == 1:
+                        result['comparison'] = checker.compare_relocatable(product, baseline)
+                        if result['comparison']['differences']:
+                            raise ValueError('relocatable contract differs: ' +
+                                ', '.join(result['comparison']['differences']))
+                        result['status'] = 'passed'
+                        detail['results'][path] = result
+                        continue
                     if elf_type not in (2, 3):
                         raise ValueError('ELF type not covered by program/shared contract: ' + str(elf_type))
                     raw = checker.run([args.readelf, '-h', '-l', '-d', '-W', '--dyn-syms', '--version-info', product])
@@ -181,7 +189,7 @@ def main():
                 if path in inventory:
                     raise ValueError('duplicate inventory payload')
                 inventory[path] = record
-    inputs = [Path(__file__).resolve(), Path(checker.__file__), Path(comparison.__file__),
+    inputs = [Path(__file__).resolve(), Path(checker.__file__), Path(__file__).with_name('elf_object_contract.py'), Path(comparison.__file__),
               Path(__file__).with_name('package_index.py'), Path(__file__).with_name('qualification_artifacts.py'),
               args.tar, args.readelf, args.objcopy, args.nm, args.ar,
               args.reference/'index.json', args.candidate/'index.json',

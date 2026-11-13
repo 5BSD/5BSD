@@ -11,6 +11,17 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+The indexed reviewer now applies the existing boot-object ELF contract to ET_REL
+payloads, comparing exact allocated bytes, external symbols and resolved
+relocations with duplicate section occurrences preserved. Build IDs and DTrace
+IDs are not normalized; debug-only contents and module loading remain separate.
+Native relocatable review R1 passes all three selected test targets: ten real
+ELF32/64 object tests, four archive-stream tests and twelve alias-graph cases.
+The complete frozen R5 package recheck is running as indexed ELF review R6;
+no acceptance count is inferred before its final unchanged-input checks pass.
+There is no build-bsd flag/C change; maintained reviewer inputs/runfiles and the
+manual are updated with the same check. Other closeout gates remain required.
+
 Focused duplicate-library order native R2 passes libicp_rescue/libzfs ordinary
 archives, shared-library products and installation archives plus the ZFS daemon
 unit suite (22 cases) and maintained DTrace alias test target. Independent R1

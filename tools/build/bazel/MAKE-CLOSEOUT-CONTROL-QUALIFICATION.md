@@ -1100,3 +1100,23 @@ retained, not counted as acceptance. A preliminary invocation missing --bazel
 failed option validation before qualification started. No build-bsd.c/CLI input
 or backend target changes are required; the maintained format-5 path was used.
 Full combined integration and the other six closeout gates remain required.
+
+
+## Relocatable payload contract integration (2026-11-13)
+
+`/usr/obj/usr/src/bazel-relocatable-review-native-r1-20261113/receipt.json`
+passes three native test targets through build-bsd format 5. Test logs report ten
+ELF32/64 real-object/section-identity cases, four package-stream boundary cases
+and twelve DTrace alias graph cases. Changed real instruction bytes produce a
+review-required comparison. The indexed package reviewer reuses the existing
+`elf_object_contract.py` contract with duplicate section occurrence identities;
+allocated bytes/metadata, external symbols and symbolic relocations remain exact.
+Its source digest is now part of the review bindings, and native consumers declare
+it as runfiles data. No production input option or C frontend change is needed.
+The build-bsd manual records this contract and its debug/runtime limits.
+
+The all-450 frozen R5 package recheck is in
+`/usr/obj/usr/src/bazel-package-elf-review-r6-20261113`. Until that process completes
+and final inputs remain unchanged, its intermediate reports are diagnostic only.
+In particular, a GNU build-ID-only difference remains explicit; nothing silently
+strips build identities or DTrace IDs to accept a module.

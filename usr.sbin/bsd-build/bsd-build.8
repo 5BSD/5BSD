@@ -5957,6 +5957,13 @@ rejects missing, extra or ambiguous identities; libc uses configured source-owne
 composition sections for this interface. The checker recognizes original Make
 .Pa .pico
 member spelling while preserving full symbol and member-order checks.
+Relocatable ELF payloads use the maintained boot-object contract: exact allocated
+section bytes and metadata, external symbol fields and symbol-resolved relocation
+records. Repeated section names retain occurrence identities. Debug-only data is
+outside this contract; instruction bytes, relocation addends, GNU build IDs and
+DTrace IDs are never normalized. Differences remain explicit review failures.
+This check does not load kernel modules or qualify their runtime behavior.
+.Pp
 Path-derived DTrace alias IDs are compared by a whole-archive member/function/
 symbol-kind incidence mapping. Reports retain raw IDs and the explicit bijection;
 ambiguous remapping is rejected. Repeated local symbol occurrences retain their
