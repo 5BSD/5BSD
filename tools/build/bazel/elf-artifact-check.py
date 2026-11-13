@@ -219,7 +219,7 @@ def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
 
 
 def stem(member):
-    for suffix in ('.nopic.o', '.pic.o', '.pieo', '.o'):
+    for suffix in ('.nopic.o', '.pic.o', '.pico', '.pieo', '.o'):
         if member.endswith(suffix):
             return member[:-len(suffix)]
     raise ValueError('unexpected archive member: ' + member)

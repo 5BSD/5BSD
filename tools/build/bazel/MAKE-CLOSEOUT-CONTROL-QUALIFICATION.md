@@ -773,3 +773,37 @@ these focused fixes still require later complete candidate integration. Existing
 build-bsd format-5 inputs cover the changed source declarations; no C/CLI change
 is necessary. The manual's source-order contract applies unchanged. Make remains
 production/default; BIP remains excluded.
+
+
+## libsys ordinary and PIC archive order (2026-11-13)
+
+The libsys declarations now share source-owned groups for memory functions,
+common/architecture/interface implementations, generated syscall stubs and the
+thread wrapper. The IFUNC VDSO source retains its separate sanitizer-free compile
+group and its original position in both installed archives. The existing source
+inventory and generation policy remain intact; exact own-object coverage is
+validated by the maintained archive rule. No runtime Make query or reference
+archive supplies build ordering. Production frontend inputs do not change.
+
+`bazel-libsys-archive-order-native-r1-20261113/receipt.json` passes the ordinary
+archive, PIC archive, shared library, installation archive and both direct syscall
+runtime tests. `bazel-libsys-archive-order-review-r1-20261113/review.json` passes
+all three contracts against hash-verified Make pkgbase payloads: complete member
+order/full symbols for both 477-member archives and shared-library metadata.
+This remains selected AMD64 host/runtime evidence with the explicitly prepared
+SDK, not independent bootstrap, installed-kernel qualification or ARM64 evidence.
+
+The maintained checker now recognizes Make's `.pico` suffix alongside ordinary,
+PIC, PIE and DTrace member spellings. It normalizes only source identity; order,
+full symbols, duplicate identities and collisions are still checked. The existing
+real-artifact test driver exercises `.nopic.o` and `.pico`, including collisions,
+plus missing-member, reordered-member and symbol-drift negatives. All ten cases
+pass in `bazel-archive-pico-checker-r1-20261113/result.json`, with exact argv,
+inputs hashes and stdout/stderr retained. This is host checker qualification;
+no unsupported duplicate-member or DTrace alias comparison is accepted by it.
+
+Six original order cases remain: libc, libzpool, libarchive, liboes,
+libncursesw_real and libtinfow. The previously frozen complete indexed review is
+preserved; later focused results still need complete-candidate integration.
+The existing build-bsd format-5 path covers these source dependencies; no C/CLI
+change is needed. Make stays production/default, BIP excluded.

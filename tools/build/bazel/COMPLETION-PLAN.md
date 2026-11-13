@@ -11,6 +11,14 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+Focused libsys archive-order native R1 passes ordinary/PIC archives, shared and
+installation outputs and both selected syscall runtime tests. Independent review
+R1 passes all three Make contracts, including the complete 477-member order and
+symbol table for each archive. The checker now handles Make's `.pico` spelling;
+its ten positive/adversarial host cases pass. Six of the original thirteen
+archive-order cases remain. These are later focused results, not another full
+combined system build, native bootstrap or ARM64 acceptance.
+
 Focused mixed-source archive native R1 now passes libdwarf, libpcap and
 libibnetdisc products plus four DWARF/packet-filter tests. Independent review R2
 passes all six archive/shared Make contracts. Generated DWARF/lex/yacc outputs

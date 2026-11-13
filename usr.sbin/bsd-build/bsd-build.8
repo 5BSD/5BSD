@@ -5949,7 +5949,9 @@ for original installation/binary/debug controls and host/VM/tracing scope.
 The native component archive rule can derive installed member order from its
 .Dv ordered_sources
 attribute, sharing the source declaration with compilation and including declared
-generated source outputs. Analysis rejects duplicate or omitted own objects and
+generated source outputs. The checker recognizes original Make
+.Pa .pico
+member spelling while preserving full symbol and member-order checks. Analysis rejects duplicate or omitted own objects and
 conflicting explicit order declarations. The libnv, libipsec and libelf archives
 use this interface; the build never reads Make comparison outputs to select order.
 .Pp
