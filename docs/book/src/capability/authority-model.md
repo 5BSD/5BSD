@@ -89,6 +89,26 @@ implemented; SwitchBoard sets no role today. The kernel bit is the carrier of
 that decision, not the decision. Nothing in the kernel consults the role yet:
 the descriptor queue's checks arrive separately.
 
+### Attached processes
+
+A process attached to a descriptor queue (`DQ_IOC_ATTACH`) is run by its
+supervisor, so it stops acting with a software authority at the attach. The
+kernel does there what it does when a process moves to another prison: the
+authority stays named, so `CAP_AUTH_INFO` still reports its identity, but it is
+marked invalid, the generation advances by one and the invocation binding is
+dropped. An authority that was installed and still waiting for its image is
+stripped the same way. Sends on endpoints bound to the authority then fail
+with `EPERM`. The state is inherited and permanent: an attached process cannot
+install an authority and no image it executes activates one. A target with no
+authority, or with one already invalid, is left as it is.
+
+One thing outlasts the strip. Until the attached process executes an image
+its memory is a copy of its creator's, which may hold the authority, so the
+stripped authority keeps deciding who may debug it exactly as before the
+attach. After the exec it no longer restricts debugging. The strip takes the
+authority and nothing else: the discovery context, the process identity and
+endpoints not bound to an authority are unchanged.
+
 There is also temporary, explicitly scoped authority for the boot application
 running `/etc/rc`. Its lifetime and endpoint allowlist are separate from login
 sessions. It is revoked when the boot phase ends; its discovery route can remain
