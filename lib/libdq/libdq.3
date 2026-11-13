@@ -51,6 +51,7 @@
 .Nm dq_ident_from_lstat ,
 .Nm dq_reply_resolve_fd_symlink ,
 .Nm dq_reply_resolve_real ,
+.Nm dq_reply_resolve_swap ,
 .Nm dq_event_readdir ,
 .Nm dq_dirent_add ,
 .Nm dq_reply_readdir ,
@@ -226,6 +227,8 @@ DescriptorQueue controller library
 .Fc
 .Ft int
 .Fn dq_reply_resolve_real "int q" "uint64_t id" "const char *path"
+.Ft int
+.Fn dq_reply_resolve_swap "int q" "uint64_t id" "int fd" "uint32_t flags"
 .Ft int
 .Fn dq_event_readdir "const struct dq_event *ev" "const struct dq_readdir_body **body"
 .Ft int
@@ -1268,6 +1271,48 @@ open or an operation that does not follow the link.
 answers that the name is the real absolute normalized
 .Fa path ;
 the lookup continues there.
+.Pp
+.Fn dq_reply_resolve_swap
+answers an open that accepts
+.Dv DQ_RESOLVE_SWAP
+with
+.Fa fd ,
+a descriptor of the controller: the kernel installs that open file in the
+requester as the result of its
+.Xr open 2 ,
+and the requester then works on the real file with no further events
+.Po
+.Xr dq 4 ,
+.Sx Swapped answers ,
+which also lists the duties of a controller that answers this way
+.Pc .
+Open
+.Fa fd
+afresh for each answer, with the access mode and status flags of the
+request
+.Pq Va drs_mode ,
+without
+.Dv O_TRUNC
+and with
+.Dv O_CLOFORK ,
+and close it after the call returns 0; the call never closes it.
+.Fa flags
+is 0 or a combination of
+.Dv DQ_SWAP_F_NOXFER
+and
+.Dv DQ_SWAP_F_CREATED .
+The kernel's error is returned unchanged:
+.Er EBADF , EOPNOTSUPP , EFTYPE , ENOTCAPABLE , EBUSY
+and
+.Er EINVAL
+refuse
+.Fa fd
+or the reply and leave the event in flight, so another answer may follow;
+.Er ESRCH
+means the requester is gone.
+.Er EBUSY
+(the open file has another reference, possibly a transient one taken by
+another thread) is retried once before it is returned.
 .Pp
 .Fn dq_event_readdir
 returns a
