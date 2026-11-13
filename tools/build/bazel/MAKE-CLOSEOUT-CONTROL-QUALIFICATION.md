@@ -712,3 +712,34 @@ base; it is currently the host's `bazel9` ports package. Gate 5 must include a
 maintained base package, runtime dependency policy and fresh-install usability.
 No C frontend inputs change in this correction: the existing format-5 interface
 builds the declared targets. Make remains production/default and BIP is excluded.
+
+
+## Complete ELF R4 and source-ordered archives (2026-11-13)
+
+`bazel-package-elf-review-r4-20261113/review.json` completes all 450 packages of
+combined system R4 with final input hashes verified and no selection differences.
+It passes 1,275 contracts and retains 774 review-required cases. All 43 prior
+NEEDED-order differences and zstream's imports mismatch are absent. Its remaining
+cases are 734 ET_REL inputs outside the checker scope, seventeen static symbol
+contracts, thirteen archive order contracts, six duplicate-member archives,
+two `.pico` spelling cases, and separate loader/kernel representation contracts.
+This frozen candidate precedes the focused libdq and archive-order corrections.
+
+The installed archive rule now accepts `ordered_sources`: real source target
+outputs determine member order, while exact own-object coverage, uniqueness and
+conflicting ordering declarations are checked during analysis. libnv and libipsec
+share one source list between compilation and archive construction; libelf shares
+its source list and preserves its original GENSRCS order. Generated lex/yacc/m4
+products remain declared native actions. No reference-output inventory is read
+by a production build and no Make subprocess selects the native archive order.
+
+`bazel-source-archive-order-native-r3-20261113/receipt.json` passes all three
+archives, shared libraries and installation archives plus four actual static/
+shared policy/ELF roundtrip tests. Independent review R3 passes all six selected
+archive/shared contracts against verified Make package payloads. Review R2 retains
+the initial libelf generated-member order failure (the other five contracts pass);
+its source recipe correction changes GENSRCS order, without weakening comparison.
+Remaining ten archive ordering cases and other unresolved checks are still open.
+The existing build-bsd format-5 interface covers these declarations; no CLI/C
+change is required. Its manual documents the archive source-order interface.
+Make remains production/default; full migration and ARM64 remain unqualified.

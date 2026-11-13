@@ -11,6 +11,16 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-13)
 
+The completed indexed ELF R4 review covers all 450 frozen combined-build packages
+with no selected payload differences: 1,275 contracts pass and 774 remain review
+required (including 734 ET_REL inputs outside the checker contract). All 43 prior
+NEEDED-order defects and zstream's import discrepancy are gone in that combined
+candidate. Subsequent focused libdq ordinary/PIC correction passes its five tests
+and static/shared Make contracts. Source-ordered libnv/libipsec/libelf archives
+then pass all six archive/shared contracts and four roundtrip tests in native R3.
+The original libelf generated-source order failure remains recorded in review R2.
+These later focused fixes are not yet incorporated into a new complete candidate.
+
 The newer `bazel-closeout-system-native-r4-20261113` receipt passes the combined
 selected AMD64 world/GENERIC kernel/modules/450-package graph at explicit kernel
 revision `4a75f49343bb`, including all seven selected tests and digest-verified

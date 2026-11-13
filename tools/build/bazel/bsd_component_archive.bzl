@@ -30,9 +30,20 @@ def _impl(ctx):
         objects += selected
     if len(depset(objects).to_list()) != len(objects):
         fail("component groups contain duplicate object inputs")
-    if ctx.attr.object_order:
+    if ctx.attr.object_order and ctx.attr.ordered_sources:
+        fail("choose object_order or ordered_sources")
+    order = ctx.attr.object_order
+    if ctx.attr.ordered_sources:
+        order = []
+        for target in ctx.attr.ordered_sources:
+            for source in target[DefaultInfo].files.to_list():
+                if source.extension in ["c", "cc", "cpp", "cxx", "s", "S"]:
+                    suffix = ".pic.o" if ctx.attr.pic else ".o"
+                    order.append(source.basename[:-(len(source.extension) + 1)] + suffix)
+                elif source.extension not in ["h", "hh", "hpp", "hxx", "inc"]:
+                    fail("unsupported ordered archive source: " + source.path)
+    if ctx.attr.object_order or ctx.attr.ordered_sources:
         by_name = {obj.basename: obj for obj in objects}
-        order = ctx.attr.object_order
         if len(by_name) != len(objects) or len(depset(order).to_list()) != len(order):
             fail("explicit archive order requires unique object basenames")
         if sorted(order) != sorted(by_name.keys()):
@@ -54,7 +65,8 @@ def _impl(ctx):
 bsd_component_archive = rule(implementation = _impl,
     attrs = {"groups": attr.label_list(providers = [CcInfo], mandatory = True),
              "pic": attr.bool(default = False),
-             "object_order": attr.string_list()},
+             "object_order": attr.string_list(),
+             "ordered_sources": attr.label_list(allow_files = True)},
     toolchains = use_cc_toolchain(), fragments = ["cpp"])
 
 
