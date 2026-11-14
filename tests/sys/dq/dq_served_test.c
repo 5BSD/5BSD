@@ -232,6 +232,28 @@ srv_wait_live(struct srv *s, uint64_t n)
 }
 
 /*
+ * Wait (up to 5 s) for the controller to have read n CLOSE records, and
+ * return how many it has.  The object leaves the live count before its
+ * CLOSE is posted (from dq_taskq) and read, so the count is not sampled
+ * right after srv_wait_live.
+ */
+static int
+srv_wait_closes(struct srv *s, int n)
+{
+	int closes, i;
+
+	for (i = 0; i < 500; i++) {
+		pthread_mutex_lock(&s->mtx);
+		closes = s->closes;
+		pthread_mutex_unlock(&s->mtx);
+		if (closes >= n)
+			break;
+		usleep(10000);
+	}
+	return (closes);
+}
+
+/*
  * Run fn in an attached child; its int results come back over a pipe.
  */
 #define	RES_MAX		32
@@ -772,9 +794,7 @@ ATF_TC_BODY(post_reply_emfile, tc)
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_objects_total);
 	/* Retired through the file's last close, with its CLOSE. */
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	ATF_CHECK_EQ(0, dq_tree_objects(s.tree));
 	srv_stop(&s);
 }
@@ -939,7 +959,7 @@ ATF_TC_BODY(post_reply_enfile, tc)
 	struct dq_stats2 st;
 	size_t len;
 	int filler[ENFILE_FILLERS], got, i, maxfiles, nfillers, now, want;
-	int r[RES_MAX];
+	int r[RES_MAX], status;
 
 	len = sizeof(maxfiles);
 	ATF_REQUIRE(sysctlbyname("kern.maxfiles", &maxfiles, &len, NULL,
@@ -969,8 +989,14 @@ ATF_TC_BODY(post_reply_enfile, tc)
 	now = enfile_openfiles();
 	for (i = 0; i < enfile_nfds; i++)
 		(void)close(enfile_fds[i]);
+	/*
+	 * The fillers are waited for: closing a quarter of a million files
+	 * takes them a while, and the case does not leave that running
+	 * under the next one.
+	 */
 	for (i = 0; i < nfillers; i++) {
 		(void)pdkill(filler[i], SIGKILL);
+		(void)pdwait(filler[i], &status, WEXITED, NULL, NULL);
 		(void)close(filler[i]);
 	}
 	printf("the hook opened %d files; kern.openfiles was %d\n",
@@ -982,9 +1008,7 @@ ATF_TC_BODY(post_reply_enfile, tc)
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_resolve_retired);
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
 }
 
@@ -1016,9 +1040,7 @@ ATF_TC_BODY(post_reply_enfile_inject, tc)
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK_EQ(1, st.ds2_resolve_retired);
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
 }
 
@@ -1710,9 +1732,7 @@ ATF_TC_BODY(revoke_before_bind, tc)
 	printf("revoke_before_bind: %s branch (retired %ju)\n",
 	    r[0] == EIO ? "bind" : "use", (uintmax_t)st.ds2_resolve_retired);
 	ATF_CHECK_EQ(r[0] == EIO ? 1 : 0, st.ds2_resolve_retired);
-	pthread_mutex_lock(&s.mtx);
-	ATF_CHECK_EQ(1, s.closes);
-	pthread_mutex_unlock(&s.mtx);
+	ATF_CHECK_EQ(1, srv_wait_closes(&s, 1));
 	srv_stop(&s);
 }
 
