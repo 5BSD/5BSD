@@ -2770,6 +2770,20 @@ and
 as the request asked.
 .Xr VOP_OPEN 9
 is not run again: the file had its one open, in the controller.
+Two errnos are the completion's own.
+The open fails with
+.Er EBADF
+when the supplied vnode was reclaimed after the reply
+.Pq a forced unmount .
+An
+.Dv O_PATH
+file the controller could read is usable with
+.Xr kqueue 2 ;
+when the requester may not read the node the open fails with
+.Er EACCES ,
+where its own
+.Dv O_PATH
+open would have returned a descriptor without that use.
 A failure in the completion is the requester's errno
 .Pq Er EMFILE No is the last ;
 the file is dropped and the controller is not told.
@@ -2796,6 +2810,13 @@ permission to write.
 Hand over only objects the requester's credential may open; create files
 under the requester's user, or give them to it, and declare them with
 .Dv DQ_SWAP_F_CREATED .
+.It
+For an
+.Dv O_PATH
+answer to a requester that may not read the node, open the file under the
+requester's credential, so that it carries no
+.Xr kqueue 2
+permission.
 .It
 Decide by the identity of the object opened
 .Pq Xr fstat 2 ,
