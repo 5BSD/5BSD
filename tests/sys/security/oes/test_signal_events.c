@@ -80,9 +80,10 @@ test_signal_self(void)
 {
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_SIGNAL };
 	struct sigaction sa, old_sa;
+	pid_t child;
 	int fd;
 
-	TEST_BEGIN("signal to self (SIGUSR1)");
+	TEST_BEGIN("signal to self (SIGUSR1): no event");
 	fd = open_notify(events, 1);
 	if (fd < 0)
 		return (1);
@@ -97,8 +98,50 @@ test_signal_self(void)
 	}
 	ASSERT_MSG(kill(getpid(), SIGUSR1) == 0 && got_sigusr1,
 	    "self signal was not delivered");
-	/* p_cansignal_thread returns before the MAC hook for self signals. */
-	TEST_SKIP("self-signal notification bypasses the native MAC hook");
+	/*
+	 * No event: p_cansignal() permits a process to signal itself before
+	 * it reaches any check, mac_proc_check_signal() included, so there is
+	 * nothing for OES to observe (oes.4).  The absence is judged against
+	 * a later signal to a child, which must arrive.
+	 */
+	child = fork();
+	if (child < 0) {
+		TEST_FAIL("fork: %s", strerror(errno));
+	} else {
+		test_msg_buf buf;
+		struct timespec start, now;
+		int self_events = 0, marker = 0;
+
+		if (child == 0) {
+			close(fd);
+			for (;;)
+				pause();
+		}
+		ASSERT_MSG(kill(child, SIGTERM) == 0, "kill: %s",
+		    strerror(errno));
+		clock_gettime(CLOCK_MONOTONIC, &start);
+		while (!marker) {
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			if (now.tv_sec - start.tv_sec >= 5)
+				break;
+			if (test_wait_event(fd, &buf.msg, 100) != 0 ||
+			    buf.msg.em_event != OES_EVENT_NOTIFY_SIGNAL ||
+			    buf.msg.em_process.ep_pid != getpid())
+				continue;
+			if (buf.msg.em_event_data.signal.target.ep_pid ==
+			    getpid())
+				self_events++;
+			else if (buf.msg.em_event_data.signal.target.ep_pid ==
+			    child)
+				marker = 1;
+		}
+		(void)waitpid(child, NULL, 0);
+		ASSERT_MSG(marker, "the later signal to a child was not "
+		    "delivered");
+		ASSERT_MSG(self_events == 0, "%d events for a signal a "
+		    "process sent to itself; none is documented",
+		    self_events);
+	}
 	ASSERT_MSG(sigaction(SIGUSR1, &old_sa, NULL) == 0,
 	    "restore signal handler");
 	close(fd);
