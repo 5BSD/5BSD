@@ -374,10 +374,10 @@ passed ordinary-operation subset explicitly records
 providers, authorized Device access, every provider method or fault recovery.
 The goal remains open until all required operation contexts are qualified.
 Earlier native service_health/inventory/upgrade-policy targets and the six-case
-format-2 VM scenario pass. The Log extension has 11 direct policy tests and a
-strict C syntax check; its updated native binary and all four VM phases are still
-pending while a concurrent world build refreshes shared SDK inputs. Source-input
-verification remains required.
+format-2 VM scenario pass. The Log extension now has native capture acceptance
+in bazel-bin-service-native-amd64-r2-20261114: five targets / 59 Python cases,
+including 16 service policy checks. All four live Log phases remain pending.
+Source-input and immutable capture verification remain required.
 
 Restricted provider coverage must use its normal authorization paths: existing
 approved operator binaries where they exercise the required operation, or
@@ -416,6 +416,8 @@ The runner uses each operation's required context, quotes its explicit program
 path, fails the phase on launch/protocol/output errors and repeats the operation
 at all four upgrade phases. Existing deadlines apply. This adds no guest policy,
 attributes, signed test units, provider fallback or altered service visibility.
-Complete-provider coverage remains explicitly false. The installed operators
-and the newly extended Log helper still need their respective VM acceptance;
-parser/control-flow tests alone do not establish runtime success.
+Complete-provider coverage remains explicitly false. Operator VM R1 has passed
+both installed operations at baseline, after inactive installation and after new
+boot; rollback/final shutdown remain pending. The native Log helper is captured,
+but live Log acceptance is still pending. Parser/control-flow tests alone do not
+establish runtime success.

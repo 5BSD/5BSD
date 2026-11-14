@@ -12455,3 +12455,19 @@ This batch does not establish audit delivery or require new probes in each progr
 No linked ARM64 patch-instruction, target execution, live registration/firing or
 tracing-overhead claim is made. See the complete /bin checkpoint and retained
 program/Make metadata reports in COMPLETION-PLAN.md.
+
+
+## 2026-11-14 ARM64 module administration artifact review
+
+Kldload/moduleload, kldstat/modulequery and kldunload/moduleunload preserve the
+original Make linked provider schemas and two locations each on ARM64. Their
+generator now selects the target object ABI before execution-host transition.
+All four tool ELF and complete component installation contracts match Make.
+Kldconfig has matching provider absence. No production probe source was changed.
+
+Review module-path mutation through kldconfig's sysctl and module-admission
+allow/deny/audit at their owning kernel/broker interfaces; matching absence is
+not by itself a missing audit event. These artifact checks do not execute module
+changes, validate linked ARM64 patch instructions or establish live firing,
+audit delivery or tracing overhead. The earlier general review rows remain
+applicable. Evidence is in the module-tool checkpoint in COMPLETION-PLAN.md.

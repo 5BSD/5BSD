@@ -8437,7 +8437,7 @@ The Log mode validates the exact queried record and bounded commit visibility;
 it does not use the syslog fallback.
 Compilation alone does not establish provider operation or complete service
 coverage. The existing six ordinary modes have VM evidence; the added Log mode
-requires fresh native capture and VM acceptance.
+now has native capture acceptance and still requires VM acceptance.
 
 .Pp
 Format-5 source qualification retains the main Bazel JSON trace as
@@ -8464,6 +8464,13 @@ the normal root read-only query view.
 The runner requires complete matching output and preserves payload bindings.
 These operations do not establish network traffic, DNS, module mutation or
 complete provider qualification; they change no guest authorization policy.
+The installed NetworkControl and read-only extension operations have passed
+baseline, post-inactive-install and new-boot checks; final rollback acceptance
+remains separate.
+Cross-userland testing still permits only declared host artifact inspection.
+Exploratory BSD user-mode QEMU program execution does not change that contract;
+maintained emulated-test integration and full ARM64 kernel/VM acceptance remain
+required before claiming them.
 Active-system kernel, checksum, authentication and service checks also run after
 inactive installation, before activating the candidate.
 
