@@ -1664,34 +1664,38 @@ ATF_TC_BODY(swap_noxfer, tc)
 /*
  * Case: a swap answered from a served (proxy) directory.  There the
  * supervisor is the namespace: the open of a name under the directory
- * takes no PASS, and a swapped file is installed with no more rights than
- * the directory descriptor it was opened through, as a real openat(2)
- * from a limited directory descriptor installs.
+ * takes no PASS and is offered SWAP.  Once the program has narrowed the
+ * directory descriptor the lookup is a restricted one: the kernel checks a
+ * served answer against the directory's presented path, has nothing to
+ * check a real file against, and so offers FD alone; a SWAP reply is
+ * EINVAL.  What a limited directory descriptor leaves of the installed
+ * rights is dq_start_test:fd_install_limits, for the FD answer it still
+ * takes.
  */
+static int proxydir_opens;
+static int proxydir_bits;	/* per open: 1 SWAP, 2 FD, 4 PASS offered */
+static int proxydir_swap_errno;
+
 static void
 p_proxydir(void *arg __unused, void *result)
 {
 	struct sw_res *res = result;
-	cap_rights_t dr, fr, lim;
+	cap_rights_t lim;
 	int dfd, fd;
 
 	RR(res->r[0], dfd = open("pdir", O_RDONLY | O_DIRECTORY));
 	if (dfd == -1)
 		return;
-	/* Narrow the directory descriptor: no CAP_WRITE, no CAP_SEEK. */
+	/* Through the directory as the supervisor gave it. */
+	RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
+	if (fd != -1) {
+		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		(void)close(fd);
+	}
+	/* Narrowed: no CAP_WRITE, no CAP_SEEK. */
 	RR(res->r[5], cap_rights_limit(dfd, cap_rights_init(&lim, CAP_LOOKUP,
 	    CAP_READ, CAP_FSTAT)));
-	RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
-	if (fd == -1)
-		return;
-	RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
-	RR(res->r[3], cap_rights_get(dfd, &dr));
-	RR(res->r[4], cap_rights_get(fd, &fr));
-	/* Every right of the file is a right of the directory. */
-	res->flflags = cap_rights_contains(&dr, &fr);
-	res->fdflags = cap_rights_is_set(&fr, CAP_READ);
-	res->kftype = cap_rights_is_set(&fr, CAP_WRITE);
-	(void)close(fd);
+	RR(res->r[6], openat(dfd, "f", O_RDONLY));
 	(void)close(dfd);
 }
 
@@ -1722,13 +1726,24 @@ static void
 a_proxydir_file(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb)
 {
-	int fd;
+	int bits, fd;
 
-	x->after_resolve = 1000;	/* seen */
-	ATF_CHECK(dq_resolve_accepts(rb, DQ_RESOLVE_SWAP));
-	ATF_CHECK(!dq_resolve_accepts(rb, DQ_RESOLVE_PASS));
+	bits = (dq_resolve_accepts(rb, DQ_RESOLVE_SWAP) ? 1 : 0) |
+	    (dq_resolve_accepts(rb, DQ_RESOLVE_FD) ? 2 : 0) |
+	    (dq_resolve_accepts(rb, DQ_RESOLVE_PASS) ? 4 : 0);
+	proxydir_bits |= bits << (4 * proxydir_opens);
 	fd = sw_open("subst", O_RDONLY);
-	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	if (proxydir_opens++ == 0) {
+		ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
+		    0));
+	} else {
+		/* Not offered: the reply is refused, the event still waits. */
+		errno = 0;
+		(void)dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0);
+		proxydir_swap_errno = errno;
+		ATF_CHECK_EQ(0, dq_reply_resolve_errno(x->c.q, ev->de_id,
+		    EACCES));
+	}
 	(void)close(fd);
 }
 
@@ -1740,32 +1755,56 @@ ATF_TC_BODY(swap_from_proxy_directory, tc)
 
 	ATF_REQUIRE_EQ(0, mkdir("realdir", 0755));
 	sw_write_file("subst", "SUBSTITUTE", 0644);
+	proxydir_opens = proxydir_bits = proxydir_swap_errno = 0;
 	sw_init(&x, "pdir", a_proxydir);
 	x.name2 = "f";
 	x.answer2 = a_proxydir_file;
 	sw_run(&x, p_proxydir, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open of the served directory: %s",
 	    strerror(res.r[0].err));
-	ATF_CHECK(x.after_resolve >= 1000);
+	ATF_CHECK_EQ(2, proxydir_opens);
+	/* The directory as given: SWAP and FD, no PASS; the swap answers. */
+	ATF_CHECK_EQ_MSG(1 | 2, proxydir_bits & 0xf, "accept bits %#x",
+	    proxydir_bits & 0xf);
 	ATF_CHECK_MSG(res.r[1].rv >= 0, "openat: %s", strerror(res.r[1].err));
-	ATF_CHECK_EQ(0, res.r[3].rv);
-	ATF_CHECK_EQ(0, res.r[4].rv);
-	ATF_CHECK_MSG(res.flflags, "the swapped file has a right its start "
-	    "directory lacks");
+	ATF_CHECK_EQ(10, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
+	/* Narrowed: FD alone, a SWAP reply EINVAL, the errno answer taken. */
 	ATF_CHECK_EQ(0, res.r[5].rv);
-	/*
-	 * The supervisor's entry had every right; the program narrowed the
-	 * directory descriptor first, so CAP_WRITE is not installed.
-	 */
-	ATF_CHECK_EQ(0, res.kftype);
-	if (res.fdflags) {
-		ATF_CHECK_EQ(10, res.r[2].rv);
-		ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
-	} else {
-		ATF_CHECK_EQ(-1, res.r[2].rv);
-		ATF_CHECK_EQ(ENOTCAPABLE, res.r[2].err);
-	}
+	ATF_CHECK_EQ_MSG(2, (proxydir_bits >> 4) & 0xf, "accept bits %#x",
+	    (proxydir_bits >> 4) & 0xf);
+	ATF_CHECK_EQ(EINVAL, proxydir_swap_errno);
+	ATF_CHECK_EQ(-1, res.r[6].rv);
+	ATF_CHECK_EQ(EACCES, res.r[6].err);
 	dqt_fini(&x.c);
+}
+
+/* Send fd over a socket: 0 or errno. */
+static int
+sw_sendfd(int sock, int fd)
+{
+	struct msghdr msg;
+	struct iovec iov;
+	union {
+		struct cmsghdr	hdr;
+		char		buf[CMSG_SPACE(sizeof(int))];
+	} cm;
+	char b;
+
+	memset(&msg, 0, sizeof(msg));
+	memset(&cm, 0, sizeof(cm));
+	b = 'x';
+	iov.iov_base = &b;
+	iov.iov_len = 1;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = cm.buf;
+	msg.msg_controllen = sizeof(cm.buf);
+	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
+	cm.hdr.cmsg_level = SOL_SOCKET;
+	cm.hdr.cmsg_type = SCM_RIGHTS;
+	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(fd));
+	return (sendmsg(sock, &msg, 0) == -1 ? errno : 0);
 }
 
 /*
@@ -1773,6 +1812,8 @@ ATF_TC_BODY(swap_from_proxy_directory, tc)
  * later reply finds no event (ESRCH); its descriptor stays open and
  * nothing was taken from it.
  */
+static bool killed_once;	/* the answer's entry is CAP_XFER_ONCE */
+
 static void
 a_killed(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb __unused)
@@ -1783,12 +1824,14 @@ a_killed(struct sw *x, const struct dq_event *ev,
 	char *buf;
 	size_t bodylen;
 	ssize_t got;
-	int fd, tries;
+	int fd, sv[2], tries;
 	bool interrupted;
 
 	buf = malloc(SW_BUFSIZE);
 	ATF_REQUIRE(buf != NULL);
 	fd = sw_open("subst", O_RDONLY);
+	if (killed_once)
+		ATF_REQUIRE_EQ(0, cap_xfer_limit(fd, CAP_XFER_ONCE));
 	ATF_REQUIRE_EQ(0, pdkill(x->pd, SIGKILL));
 	/* The kernel tells the supervisor the event was abandoned. */
 	interrupted = false;
@@ -1815,6 +1858,21 @@ a_killed(struct sw *x, const struct dq_event *ev,
 	ATF_CHECK_ERRNO(ESRCH, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
 	    0) == -1);
 	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
+	if (killed_once) {
+		/*
+		 * The event was gone before the reply looked for it, so the
+		 * kernel never took the file and the entry's one transfer is
+		 * still there: it can be sent once, and not twice.  (Only a
+		 * requester that leaves while the kernel holds the file
+		 * costs the entry its transfer, dq(4).)
+		 */
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+		ATF_CHECK_EQ_MSG(0, sw_sendfd(sv[0], fd), "the entry was "
+		    "consumed by a reply that found no event");
+		ATF_CHECK_EQ(ENOTCAPABLE, sw_sendfd(sv[0], fd));
+		(void)close(sv[0]);
+		(void)close(sv[1]);
+	}
 	(void)close(fd);
 	free(buf);
 }
@@ -1827,6 +1885,15 @@ ATF_TC_BODY(swap_requester_killed, tc)
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
+	killed_once = false;
+	sw_init(&x, "orig", a_killed);
+	x.expect_killed = true;
+	sw_run(&x, p_plain_open, NULL, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	dqt_fini(&x.c);
+
+	/* The same with a transfer-once entry. */
+	killed_once = true;
 	sw_init(&x, "orig", a_killed);
 	x.expect_killed = true;
 	sw_run(&x, p_plain_open, NULL, &res);

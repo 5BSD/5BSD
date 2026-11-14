@@ -3106,6 +3106,12 @@ dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
 		 * rights, fcntl limit and ioctl list intersected with the
 		 * policy's (or the swapped entry's), as a real openat under
 		 * STRICTREL installs the start's capabilities.
+		 *
+		 * For SWAP this narrows nothing today: a start descriptor
+		 * that is limited in any of the three makes the lookup
+		 * STRICTREL (filecaps_full), and dq_accept withholds SWAP
+		 * from a restricted lookup.  Kept so the rule holds if that
+		 * changes.
 		 */
 		outside = fc->fc_rights;
 		cap_rights_remove(&outside, &di->di_startrights);
