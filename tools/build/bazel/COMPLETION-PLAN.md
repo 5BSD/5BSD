@@ -11,6 +11,27 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+Full selected AMD64 R10 now passes all 25 expanded tests with the equivalent
+explicit CTF version label. Its immutable capture contains 1,554 files totaling
+647,801,494 bytes. The actual packaged kernel is independently extracted from
+the uniquely claiming package and matches both its captured payload inventory
+and focused R11's strictly qualified kernel SHA-256
+281e7f04efa2f3ef47aa73e3d5ea204e7915879c31cd6e6189997c268d2b3f3a.
+Private upgrade repository R2 verifies all 450 packages, catalogue signatures and
+actual wrong-key rejection. It is a disposable qualification fixture, not combined
+hardware publication; configured repository pointers are unchanged.
+Upgrade VM R2 is running with the same 2 GiB guest, explicit RSS/overlay bounds,
+a 3,600-second upgrade phase and a 7,200-second whole-run deadline calibrated
+from R1's measured timeout. No checks are removed. Do not report runtime success
+until its terminal result proves every upgrade/rollback/persistence/removal check.
+Evidence roots: /usr/obj/usr/src/bazel-closeout-system-native-r10-20261114,
+/usr/obj/usr/src/bazel-current-runtime-request-r2-20261114,
+/usr/obj/usr/src/bazel-current-upgrade-repository-r2-20261114 and
+/usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114.
+Normal build-bsd uses the existing maintained format-5 path; no frontend C flag
+or production/default backend change is required for these qualification inputs.
+
+
 Focused kernel R11 now passes the unchanged strict kernel parity checker R4:
 allocated section metadata/content (GNU build-ID content separately reported),
 loader symbols and merged CTF bytes match the independent current Make control.
