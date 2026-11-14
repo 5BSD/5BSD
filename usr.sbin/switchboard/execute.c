@@ -180,10 +180,11 @@ svc_run_container_open(const char *label, uid_t owner, uid_t uid, gid_t gid)
 	if (parent == -1)
 		return (-1);
 	fd = sb_run_container_create(parent, leaf);
-	saved = errno;
-	(void)close(parent);
-	if (fd == -1)
+	if (fd == -1) {
+		saved = errno;
+		(void)close(parent);
 		return (errno = saved, -1);
+	}
 	/*
 	 * Deliver with exactly the rights libservice's directory-descriptor
 	 * validation expects after child setup removes launch-only FCHDIR
@@ -200,9 +201,14 @@ svc_run_container_open(const char *label, uid_t owner, uid_t uid, gid_t gid)
 	    cap_fcntls_limit(fd, CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1) {
 		saved = errno;
 		(void)close(fd);
+		if (unlinkat(parent, leaf, AT_REMOVEDIR) == -1)
+			syslog(LOG_ERR, "runtime cleanup: failed creation %s: %m",
+			    leaf);
+		(void)close(parent);
 		errno = saved;
 		return (-1);
 	}
+	(void)close(parent);
 	return (fd);
 }
 

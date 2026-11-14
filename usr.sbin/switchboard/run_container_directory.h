@@ -10,15 +10,23 @@
 
 /* The caller must own the parent namespace against concurrent mutation.
  * Existing entries, including symlinks and empty directories, are never adopted.
- * Failed open leaves the new entry for explicit cleanup rather than guessing
- * whether a pathname still names the directory just created. */
+ * On open failure, remove only the newly created empty entry. If removal
+ * fails, it remains rejected by the next creation attempt; never adopt it. */
 static inline int
 sb_run_container_create(int parent, const char *leaf)
 {
+	int fd, saved;
+
 	if (mkdirat(parent, leaf, 0700) == -1)
 		return (-1);
-	return (openat(parent, leaf,
-	    O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+	fd = openat(parent, leaf,
+	    O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1) {
+		saved = errno;
+		(void)unlinkat(parent, leaf, AT_REMOVEDIR);
+		errno = saved;
+	}
+	return (fd);
 }
 
 /* Launch-only authority: consume it before handing the directory to service

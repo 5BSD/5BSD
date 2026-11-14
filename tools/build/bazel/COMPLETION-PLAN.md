@@ -33,6 +33,43 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The maintained ARM64 production world run 20261114T131536Z-76523 completed
+successfully at 14:23:19 UTC (4,063 seconds, 16 CPUs), source 685a13fd21e.
+Its actual WMAKE metadata phase exported 241 sorted unique assignments,
+TARGET=arm64, TARGET_ARCH=aarch64 and WITH_MALLOC_PRODUCTION=1. Evidence:
+bazel-arm64-current-world-profile-r1-20261114 under /usr/obj/usr/src.
+Although requested incremental, dependency cleanup discarded the old object
+tree because its cached profile described debug malloc. This is not an
+unchanged incremental performance baseline. The current SDK exporter then
+rejected the normal SYSTEM_COMPILER world because it assumes a staged clang;
+SDK R4 has not been created. Explicit world-selected compiler/resource binding
+must be implemented and qualified; do not substitute a stale compiler.
+
+A further SwitchBoard launch-error defect is reproduced: mkdirat succeeds,
+openat returns EMFILE, and the leftover empty directory makes every retry fail
+with EEXIST. The candidate removes only its newly created empty entry on open
+failure, preserving errno. If removal itself fails, the entry remains rejected.
+Ownership/rights-setup failure similarly removes the newly created empty entry
+while retaining the parent descriptor through setup. Successful launch adds no
+filesystem calls. Five direct host helper cases pass and the new retry case
+fails against the original header. Evidence:
+bazel-switchboard-container-open-review-r1-20261114. Native R1 now rebuilds the actual SwitchBoard and passes all three selected
+regressions (fresh-only, failed-open retry and failed-cleanup refusal), with two
+immutable captured files and manifest SHA-256
+f1a8f18582df78800e75afcd27a2a1a88a00b005f28118a1ae064e8e9de5f8ff.
+Evidence: bazel-switchboard-container-open-native-r1-20261114. This does not
+exercise the ownership/rights-setup failure branch or establish a new VM result.
+
+The runtime coverage audit retains eight required boot providers without useful
+positive-operation evidence: Audit, Crypto, Device, Filesystem, Log, Network,
+SystemExtension and Trace. Caller contexts must follow their installed manifests;
+ordinary Device denial does not qualify authorized SYSTEM access. Evidence:
+bazel-provider-operation-gap-audit-r1-20261114. The ARM64 constraint scan is
+only a static candidate inventory: 1,066 BUILD files contain literal AMD64-only
+constraints, including legitimate architecture-specific targets. It is not a
+program count or portability verdict. Full ARM64 world remains substantial work.
+All six gates remain open; Make stays production/default and BIP stays excluded.
+
 The clean original-Make ARM64 production world completed successfully at
 12:58:17 UTC (4,108 seconds, 16 CPUs), source c940c120059. Evidence:
 /usr/obj/usr/src/build-runs/20261114T114948Z-90444. This is the reference world,

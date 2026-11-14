@@ -7,7 +7,23 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
+/* Inject failure after mkdirat without exhausting the host descriptor table. */
+static int open_error;
+static int
+container_openat(int parent, const char *leaf, int flags)
+{
+	int error;
+
+	if (open_error != 0) {
+		error = open_error;
+		open_error = 0;
+		return (errno = error, -1);
+	}
+	return (openat(parent, leaf, flags));
+}
+#define openat container_openat
 #include "run_container_directory.h"
+#undef openat
 
 ATF_TC_WITHOUT_HEAD(held_directory_and_rights);
 ATF_TC_BODY(held_directory_and_rights, tc)
@@ -109,9 +125,55 @@ ATF_TC_BODY(fresh_only, tc)
 	close(parent);
 }
 
+ATF_TC_WITHOUT_HEAD(open_failure_retry);
+ATF_TC_BODY(open_failure_retry, tc)
+{
+	struct stat st;
+	int parent, fd;
+
+	parent = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(parent >= 0);
+	open_error = EMFILE;
+	ATF_REQUIRE_ERRNO(EMFILE,
+	    sb_run_container_create(parent, "container") == -1);
+	ATF_REQUIRE_ERRNO(ENOENT,
+	    fstatat(parent, "container", &st, AT_SYMLINK_NOFOLLOW) == -1);
+	fd = sb_run_container_create(parent, "container");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, fstat(fd, &st));
+	ATF_CHECK_EQ(0700, st.st_mode & 0777);
+	close(fd);
+	ATF_REQUIRE_EQ(0, unlinkat(parent, "container", AT_REMOVEDIR));
+	close(parent);
+}
+
+ATF_TC_WITHOUT_HEAD(open_cleanup_failure_refuses_adoption);
+ATF_TC_BODY(open_cleanup_failure_refuses_adoption, tc)
+{
+	struct stat st;
+	cap_rights_t rights;
+	int parent;
+
+	parent = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(parent >= 0);
+	/* Permit creation and inspection, deliberately deny failed-open cleanup. */
+	cap_rights_init(&rights, CAP_LOOKUP, CAP_MKDIRAT, CAP_FSTATAT);
+	ATF_REQUIRE_EQ(0, cap_rights_limit(parent, &rights));
+	open_error = EMFILE;
+	ATF_REQUIRE_ERRNO(EMFILE,
+	    sb_run_container_create(parent, "container") == -1);
+	ATF_REQUIRE_EQ(0, fstatat(parent, "container", &st, AT_SYMLINK_NOFOLLOW));
+	ATF_REQUIRE_ERRNO(EEXIST,
+	    sb_run_container_create(parent, "container") == -1);
+	close(parent);
+	ATF_REQUIRE_EQ(0, rmdir("container"));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, fresh_only);
+	ATF_TP_ADD_TC(tp, open_failure_retry);
+	ATF_TP_ADD_TC(tp, open_cleanup_failure_refuses_adoption);
 	ATF_TP_ADD_TC(tp, held_directory_and_rights);
 	ATF_TP_ADD_TC(tp, missing_launch_right);
 	return (atf_no_error());

@@ -1433,6 +1433,9 @@ Rejected for production profiles and non-package actions.
 Do not distribute these test generations as production releases.
 .It Fl -incremental
 Use WITHOUT_CLEAN=yes instead of the default clean build.
+The maintained dependency checks may still clean objects when recorded source
+options or the build epoch differ.
+An incremental request alone does not establish an unchanged incremental build.
 .It Fl -media-format Ar all|iso|memstick
 Media artifacts to create; all (the default) creates both disc1.iso and
 memstick.img.
