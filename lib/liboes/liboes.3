@@ -75,6 +75,12 @@ and
 .Fn oes_get_jail_scope
 reports
 .Dv OES_JAIL_SCOPE_DEAD .
+A read that returns no data was reported as
+.Er EIO
+before jail scopes existed; a caller that tested for
+.Er EIO
+to recognize it must now test for
+.Er ENXIO .
 Selecting the scope fails with
 .Er ENOENT
 if the jail does not exist, is being removed, or is not the caller's jail or
