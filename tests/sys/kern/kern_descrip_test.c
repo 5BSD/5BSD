@@ -198,12 +198,58 @@ ATF_TC_CLEANUP(kern_maxfiles__increase, tc)
 	(void)unlink(AFILE);
 }
 
+/*
+ * A refused F_SETFL leaves the status flags as they were: those the call
+ * did not change as well as those it did.  /dev/null refuses FIOASYNC
+ * with EINVAL after F_SETFL has stored the new flags, which takes the
+ * call through its revert.
+ */
+ATF_TC_WITHOUT_HEAD(setfl_failed_keeps_unchanged_flags);
+ATF_TC_BODY(setfl_failed_keeps_unchanged_flags, tc)
+{
+	int fd;
+
+	fd = open("/dev/null", O_RDWR);
+	ATF_REQUIRE_MSG(fd != -1, "/dev/null: %s", strerror(errno));
+	ATF_REQUIRE_EQ(O_RDWR, fcntl(fd, F_GETFL));
+
+	/* A flag set before and not changed by the refused call. */
+	ATF_REQUIRE_EQ(0, fcntl(fd, F_SETFL, O_NONBLOCK));
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    fcntl(fd, F_SETFL, O_NONBLOCK | O_ASYNC) == -1);
+	ATF_CHECK_EQ_MSG(O_RDWR | O_NONBLOCK, fcntl(fd, F_GETFL),
+	    "F_GETFL is %#x after a refused F_SETFL, expected %#x",
+	    fcntl(fd, F_GETFL), O_RDWR | O_NONBLOCK);
+
+	/* With one flag the refused call would clear and one unchanged. */
+	ATF_REQUIRE_EQ(0, fcntl(fd, F_SETFL, O_NONBLOCK | O_APPEND));
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    fcntl(fd, F_SETFL, O_NONBLOCK | O_ASYNC) == -1);
+	ATF_CHECK_EQ_MSG(O_RDWR | O_NONBLOCK | O_APPEND, fcntl(fd, F_GETFL),
+	    "F_GETFL is %#x after a refused F_SETFL, expected %#x",
+	    fcntl(fd, F_GETFL), O_RDWR | O_NONBLOCK | O_APPEND);
+
+	/* A refused call that changes O_NONBLOCK too (set, then put back). */
+	ATF_REQUIRE_EQ(0, fcntl(fd, F_SETFL, O_APPEND));
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    fcntl(fd, F_SETFL, O_NONBLOCK | O_APPEND | O_ASYNC) == -1);
+	ATF_CHECK_EQ_MSG(O_RDWR | O_APPEND, fcntl(fd, F_GETFL),
+	    "F_GETFL is %#x after a refused F_SETFL, expected %#x",
+	    fcntl(fd, F_GETFL), O_RDWR | O_APPEND);
+
+	/* A call that succeeds still sets exactly what it names. */
+	ATF_REQUIRE_EQ(0, fcntl(fd, F_SETFL, O_NONBLOCK));
+	ATF_CHECK_EQ(O_RDWR | O_NONBLOCK, fcntl(fd, F_GETFL));
+	ATF_REQUIRE_EQ(0, close(fd));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, dup2__simple);
 	ATF_TP_ADD_TC(tp, dup2__ebadf_when_2nd_arg_out_of_range);
 	ATF_TP_ADD_TC(tp, kern_maxfiles__increase);
+	ATF_TP_ADD_TC(tp, setfl_failed_keeps_unchanged_flags);
 
 	return (atf_no_error());
 }
