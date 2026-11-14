@@ -20,13 +20,14 @@ _SOURCES = _SOURCES_BEFORE_PF + _PF_SOURCES + _SOURCES_AFTER_PF
 cc_binary(
     name = "ifconfig",
     srcs = _SOURCES,
-    deps = ["//lib/libifconfig:ifconfig_pie", "//lib/msun:m", "//lib/libutil:util", "//lib/libnv:nv"] +
+    deps = ["//lib/libifconfig:ifconfig_pie", "//lib/msun:m", "//lib/libutil:util"] +
         select({"//tools/build/bazel/config:wireless_support_enabled": ["//lib/lib80211:80211"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail"], "//conditions:default": []}) +
+        ["//lib/libnv:nv"] +
         select({"//tools/build/bazel/config:pf_enabled": ["//sys/netpfil/openbsd-pf/user:compat_headers"], "//conditions:default": []}),
-    dynamic_deps = ["//lib/msun:m_shared", "//lib/libutil:util_shared", "//lib/libnv:nv_shared"] +
+    dynamic_deps = ["//lib/msun:m_shared", "//lib/libutil:util_shared"] +
         select({"//tools/build/bazel/config:wireless_support_enabled": ["//lib/lib80211:80211_shared"], "//conditions:default": []}) +
-        select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail_shared"], "//conditions:default": []}),
+        select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail_shared"], "//conditions:default": []}) + ["//lib/libnv:nv_shared"],
     local_defines = select({"//tools/build/bazel/config:inet_support_enabled": ["INET"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:jail_enabled": ["JAIL"], "//conditions:default": []}) +

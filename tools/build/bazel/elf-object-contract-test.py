@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Exercise the inspector against real ELF32/64 outputs and changed code/debug data."""
 import argparse
+import importlib.util
+import tempfile
 import os
 from pathlib import Path
 import struct
@@ -56,6 +58,28 @@ class ObjectContract(unittest.TestCase):
         for data in [b'not ELF', inputs[0][:52], inputs[1][:64]]:
             with self.assertRaises(ValueError):
                 contract(data)
+
+
+
+class ArtifactComparison(unittest.TestCase):
+    def test_real_objects_and_changed_code(self):
+        spec = importlib.util.spec_from_file_location('checker', Path(__file__).with_name('elf-artifact-check.py'))
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        with tempfile.TemporaryDirectory() as directory:
+            candidate, reference = (Path(directory) / name for name in ('candidate.o', 'reference.o'))
+            for data in inputs:
+                candidate.write_bytes(data); reference.write_bytes(data)
+                result = checker.compare_relocatable(candidate, reference)
+                self.assertEqual(result['status'], 'passed')
+                self.assertEqual(result['differences'], [])
+                self.assertFalse(result['runtime_qualified'])
+                section = next(h for h in section_ranges(data) if h[1] == 1 and h[2] & 4 and h[5])
+                changed = bytearray(data); changed[section[4]] ^= 1
+                candidate.write_bytes(changed)
+                result = checker.compare_relocatable(candidate, reference)
+                self.assertEqual(result['status'], 'review-required')
+                self.assertIn('allocated', result['differences'])
 
 
 def fixture(second_value=0x456, left_section=1, duplicate=True):

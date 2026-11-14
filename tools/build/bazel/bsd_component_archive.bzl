@@ -4,6 +4,10 @@
 Unlike cc_static_library's transitive PIC preference, the installed BSD archive
 contract selects a variant and includes only these groups' own objects. External
 link dependencies remain the responsibility of the component's normal CcInfo.
+
+member_order declares canonical ordinary .o identities across native .o/.pic.o/
+.nopic.o spellings. It never changes compiler variants or member names. All order
+interfaces reject missing, extra or ambiguous selected objects.
 """
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
@@ -30,9 +34,34 @@ def _impl(ctx):
         objects += selected
     if len(depset(objects).to_list()) != len(objects):
         fail("component groups contain duplicate object inputs")
-    if ctx.attr.object_order:
+    if len([value for value in [ctx.attr.object_order, ctx.attr.ordered_sources, ctx.attr.member_order] if value]) > 1:
+        fail("choose object_order, ordered_sources or member_order")
+    order = ctx.attr.object_order
+    if ctx.attr.ordered_sources:
+        order = []
+        for target in ctx.attr.ordered_sources:
+            for source in target[DefaultInfo].files.to_list():
+                if source.extension in ["c", "cc", "cpp", "cxx", "s", "S"]:
+                    suffix = ".pic.o" if ctx.attr.pic else ".o"
+                    order.append(source.basename[:-(len(source.extension) + 1)] + suffix)
+                elif source.extension not in ["h", "hh", "hpp", "hxx", "inc"]:
+                    fail("unsupported ordered archive source: " + source.path)
+    if ctx.attr.member_order:
+        by_member = {}
+        for obj in objects:
+            identity = None
+            for suffix in [".nopic.o", ".pic.o", ".o"]:
+                if obj.basename.endswith(suffix):
+                    identity = obj.basename[:-len(suffix)] + ".o"
+                    break
+            if identity == None or identity in by_member:
+                fail("ambiguous or unsupported archive object identity: " + obj.path)
+            by_member[identity] = obj
+        if sorted(ctx.attr.member_order) != sorted(by_member.keys()):
+            fail("member_order must name every selected object identity exactly once")
+        order = [by_member[identity].basename for identity in ctx.attr.member_order]
+    if ctx.attr.object_order or ctx.attr.ordered_sources or ctx.attr.member_order:
         by_name = {obj.basename: obj for obj in objects}
-        order = ctx.attr.object_order
         if len(by_name) != len(objects) or len(depset(order).to_list()) != len(order):
             fail("explicit archive order requires unique object basenames")
         if sorted(order) != sorted(by_name.keys()):
@@ -54,7 +83,9 @@ def _impl(ctx):
 bsd_component_archive = rule(implementation = _impl,
     attrs = {"groups": attr.label_list(providers = [CcInfo], mandatory = True),
              "pic": attr.bool(default = False),
-             "object_order": attr.string_list()},
+             "object_order": attr.string_list(),
+             "member_order": attr.string_list(),
+             "ordered_sources": attr.label_list(allow_files = True)},
     toolchains = use_cc_toolchain(), fragments = ["cpp"])
 
 

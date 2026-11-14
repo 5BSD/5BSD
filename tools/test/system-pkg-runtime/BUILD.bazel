@@ -44,3 +44,6 @@ cc_binary(name = "service_operations", srcs = ["service_operations.c"],
     deps = ["//lib/libtimecmp:timecmp", "//lib/libsysctlcmp:sysctlcmp", "//lib/libnotify:notify", "//lib/libpowercmp:powercmp", "//lib/libdevicecmp:devicecmp"],
     dynamic_deps = ["//lib/libtimecmp:timecmp_shared", "//lib/libsysctlcmp:sysctlcmp_shared", "//lib/libnotify:notify_shared", "//lib/libpowercmp:powercmp_shared", "//lib/libdevicecmp:devicecmp_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+
+bsd_python_test(name = "certificate_runtime_test", src = "certificate-runtime-test.py",
+    data = ["certificate_runtime.py", "certificate-store.sh"], visibility = ["//visibility:public"])

@@ -281,6 +281,20 @@ class CertificateFailures(unittest.TestCase):
         self.assertEqual(bundle.read_bytes(), self.a)
         self.assertFalse(self.store.exists(), 'environment output settings overrode CLI')
 
+    def test_bundle_at_staging_root_has_relative_metadata(self):
+        args = ['-E', '-T', str(self.trusted / 'a.pem'), '-D', str(self.store),
+                '-C', str(self.store / 'certs'), '-R', str(self.store / 'untrusted'),
+                '-b', str(self.store / 'cert.pem'), '-U', '-M', '-']
+        planned = self.run_tool(*args, '-n', 'rehash')
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        self.assertIn(b'./cert.pem type=file ', planned.stdout)
+        self.assertNotIn(str(self.store).encode(), planned.stdout)
+        self.assertFalse(self.store.exists())
+        actual = self.run_tool(*args, 'rehash')
+        self.assertEqual(actual.returncode, 0, actual.stderr)
+        self.assertEqual(actual.stdout, planned.stdout)
+        self.assertEqual((self.store / 'cert.pem').read_bytes(), self.a)
+
     def test_explicit_output_options_require_mode_and_nonempty_paths(self):
         before = self.baseline()
         for option in ('-C', '-R', '-b'):

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":tests.bzl", "failure_test")
+
+# Distinct compiler outputs with the same source basename cannot be assigned one
+# member identity. These are analyzed only; the failure tests do not compile them.
+cc_library(name = "a", srcs = ["a/item.c"], linkstatic = True)
+cc_library(name = "b", srcs = ["b/item.c"], linkstatic = True)
+bsd_component_archive(name = "ambiguous", groups = [":a", ":b"], member_order = ["item.o"])
+bsd_component_archive(name = "missing", groups = ["//lib/libdq:dq"],
+    member_order = ["libdq.o", "libdq_serve.o"])
+bsd_component_archive(name = "duplicate", groups = ["//lib/libdq:dq"],
+    member_order = ["libdq.o", "libdq_serve.o", "libdq_tree.o", "libdq.o"])
+bsd_component_archive(name = "conflicting", groups = ["//lib/libdq:dq"],
+    member_order = ["libdq.o", "libdq_serve.o", "libdq_tree.o"], object_order = ["libdq.o"])
+
+[failure_test(name = name + "_test", target_under_test = ":" + name, expected = expected)
+ for name, expected in [
+    ("ambiguous", "ambiguous or unsupported archive object identity"),
+    ("missing", "member_order must name every selected object identity exactly once"),
+    ("duplicate", "member_order must name every selected object identity exactly once"),
+    ("conflicting", "choose object_order, ordered_sources or member_order"),
+]]
+test_suite(name = "tests", tests = [":" + name + "_test" for name in ["ambiguous", "missing", "duplicate", "conflicting"]],
+    visibility = ["//visibility:public"])

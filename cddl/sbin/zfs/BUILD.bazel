@@ -4,8 +4,8 @@ _SOURCES = ["//sys/contrib/openzfs:cmd/zfs/zfs_iter.c", "//sys/contrib/openzfs:c
 cc_binary(
     name = "zfs",
     srcs = _SOURCES,
-    deps = ['//lib/libgeom:geom', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libzfs:zfs', '//cddl/lib/libzutil:zutil', '//cddl/lib/libavl:avl', '//cddl/lib/libspl:spl', '//cddl/lib/libzfs_core:zfs_core', '//lib/msun:m'] + ["//sys/contrib/openzfs:zfs_cli_headers", "//cddl/compat/opensolaris/include:headers", "//lib/libjail:jail", "//secure/lib/libcrypto:crypto"],
-    dynamic_deps = ["//lib/libjail:jail_shared", "//secure/lib/libcrypto:crypto_shared", '//lib/libgeom:geom_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libzfs:zfs_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libavl:avl_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libzfs_core:zfs_core_shared', '//lib/msun:m_shared'],
+    deps = ['//lib/libjail:jail', '//cddl/lib/libavl:avl', '//cddl/lib/libnvpair:nvpair', '//lib/libgeom:geom', '//cddl/lib/libzfs_core:zfs_core', '//cddl/lib/libspl:spl', '//cddl/lib/libzutil:zutil', '//cddl/lib/libzfs:zfs', '//lib/msun:m', '//secure/lib/libcrypto:crypto', '//sys/contrib/openzfs:zfs_cli_headers', '//cddl/compat/opensolaris/include:headers'],
+    dynamic_deps = ['//lib/libjail:jail_shared', '//cddl/lib/libavl:avl_shared', '//cddl/lib/libnvpair:nvpair_shared', '//lib/libgeom:geom_shared', '//cddl/lib/libzfs_core:zfs_core_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libzfs:zfs_shared', '//lib/msun:m_shared', '//secure/lib/libcrypto:crypto_shared'],
     local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
     copts = ["-fPIE", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"],
     linkopts = ["-pie", "-pthread"],

@@ -179,18 +179,97 @@ def platform_arguments(config, target_arch, receipt=None):
     return result
 
 
-def test_inventory_command(argv, targets, tests, host_artifacts_only=False):
-    """Ask the configured graph to expand requested tests/suites, preserving settings."""
+def _inventory_command(argv, targets, expression, host_artifacts_only=False):
+    """Use the same public configured graph and settings without executing actions."""
+    if not targets or list(argv[-len(targets):]) != list(targets):
+        raise ValueError('configured inventory requires the exact selected target suffix')
     command = list(argv[:-len(targets)])
-    command[command.index('test')] = 'cquery'
+    operations = [index for index, value in enumerate(command) if value in ('test', 'build')]
+    if len(operations) != 1:
+        raise ValueError('configured inventory requires one build or test operation')
+    command[operations[0]] = 'cquery'
     command = [a for a in command if not a.startswith((
         '--build_event_json_file=', '--execution_log_json_file=', '--execution_log_compact_file=',
         '--noexecution_log_sort', '--output_groups=', '--profile='))]
     fields = '"label":str(target.label),"compatible":not any([key.endswith("IncompatiblePlatformProvider") for key in providers(target)])'
     if host_artifacts_only:
         fields += ',"host_artifact":any([key.endswith("BsdHostArtifactTestInfo") for key in providers(target)])'
-    return command + ['--output=starlark', '--starlark:expr=json.encode({' + fields + '})',
-                      'tests(set(' + ' '.join(json.dumps(label) for label in tests) + '))']
+    return command + ['--output=starlark', '--starlark:expr=json.encode({' + fields + '})', expression]
+
+
+def target_inventory_command(argv, targets, selectors):
+    return _inventory_command(argv, targets,
+        'set(' + ' '.join(json.dumps(label) for label in selectors) + ')')
+
+
+def test_inventory_command(argv, targets, tests, host_artifacts_only=False):
+    """Ask the configured graph to expand requested tests/suites, preserving settings."""
+    return _inventory_command(argv, targets,
+        'tests(set(' + ' '.join(json.dumps(label) for label in tests) + '))', host_artifacts_only)
+
+
+def parse_target_inventory(text):
+    records = {}
+    for line in text.splitlines():
+        record = json.loads(line)
+        if (not isinstance(record, dict) or set(record) != {'label', 'compatible'} or
+                not isinstance(record['label'], str) or type(record['compatible']) is not bool):
+            raise ValueError('configured target requires an explicit label and compatibility boolean')
+        label = record['label']
+        if label.startswith('@@//'):
+            label = label[2:]
+        # Requested labels are source labels; an alias can resolve to a canonical
+        # external label. Preserve that identity rather than guessing its origin.
+        if not re.fullmatch(r'(?:@@[A-Za-z0-9_.+~-]+)?//[^:\s]*:[^:\s]+', label) or label in records:
+            raise ValueError('invalid or duplicate configured target: ' + label)
+        records[label] = record['compatible']
+    if not records:
+        raise ValueError('requested targets expand to no configured targets')
+    return records
+
+
+def validate_target_binding(selector, selected, combined):
+    if len(selected) != 1 or not set(selected).issubset(combined):
+        raise ValueError('requested target has no unique combined configured binding: ' + selector)
+    label, compatible = next(iter(selected.items()))
+    if combined[label] != compatible:
+        raise ValueError('requested target compatibility differs from combined inventory: ' + selector)
+    if not compatible:
+        raise ValueError('requested target is incompatible with the selected platform: ' + selector)
+    return dict(requested=selector, configured=label)
+
+
+def query_target_inventory(argv, targets, src, env, out, commands):
+    """Resolve direct targets and aliases before the main build can execute actions."""
+    report = dict(status='querying', requested=targets, configured={}, bindings=[])
+    destination = out / 'target-inventory.json'
+
+    def query(selectors, prefix):
+        command = target_inventory_command(argv, targets, selectors)
+        start = time.monotonic()
+        with prefix.with_suffix('.stdout').open('w') as stdout, prefix.with_suffix('.stderr').open('w') as stderr:
+            result = subprocess.run(command, cwd=src, env=env, stdout=stdout, stderr=stderr)
+        commands.append(dict(argv=command, exit_status=result.returncode, elapsed_seconds=time.monotonic()-start))
+        (out/'commands.json').write_text(json.dumps(commands, indent=2)+'\n')
+        if result.returncode:
+            raise RuntimeError('configured target inventory failed; see ' + prefix.with_suffix('.stderr').name)
+        return parse_target_inventory(prefix.with_suffix('.stdout').read_text())
+
+    try:
+        combined = query(targets, out/'target-inventory')
+        report['configured'] = combined
+        for index, selector in enumerate(targets):
+            selected = ({selector: combined[selector]} if selector in combined else
+                        query([selector], out/('target-selector-' + str(index))))
+            report['bindings'].append(validate_target_binding(selector, selected, combined))
+        if {binding['configured'] for binding in report['bindings']} != set(combined):
+            raise ValueError('configured target inventory contains unbound results')
+        report['status'] = 'passed'
+    except (ValueError, RuntimeError) as error:
+        report.update(status='failed', error=str(error))
+        raise
+    finally:
+        destination.write_text(json.dumps(report, indent=2)+'\n')
 
 
 def test_artifact_command(argv, targets, tests, output, log_format):
@@ -380,6 +459,7 @@ def _qualify(config, args, state):
               '--execution_log_'+log_format+'_file='+str(log_path),'--noexecution_log_sort',
               *['--distdir='+str(p) for p in distdirs],*settings,*config['targets']]
         env=dict(os.environ,JAVA_HOME=str(selected['java-home']),LC_ALL='C',BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN='1')
+        query_target_inventory(argv, config['targets'], src, env, out, commands)
         expected, incompatible, selector_inventories = [], [], []
         if config['tests']:
             query = test_inventory_command(argv, config['targets'], config['tests'], host_artifacts_only=host_artifacts_only)
@@ -464,7 +544,7 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),test_artifact_build=test_artifact_build,artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},profile=dict(path=str(profile_path),sha256=digest(profile_path)),execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,target_inventory_sha256=digest(out/'target-inventory.json'),test_inventory_sha256=digest(out/'test-inventory.json'),test_artifact_build=test_artifact_build,artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},profile=dict(path=str(profile_path),sha256=digest(profile_path)),execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

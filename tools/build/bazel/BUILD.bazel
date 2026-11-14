@@ -265,7 +265,7 @@ copy_file(name = "elf_contract_32", src = "//tools/build/bazel/tests/freestandin
 copy_file(name = "elf_contract_64", src = "//tools/build/bazel/tests/freestanding_boundary:resource_amd64",
     out = "elf_contract_inputs/amd64/resource.o", allow_symlink = True)
 bsd_host_artifact_test(name = "elf_object_contract_test", src = "elf-object-contract-test.py",
-    data = ["elf_object_contract.py", ":elf_contract_32", ":elf_contract_64"],
+    data = ["elf_object_contract.py", "elf-artifact-check.py", "dtrace-dof-inventory.py", "qualification_artifacts.py", ":elf_contract_32", ":elf_contract_64"],
     args = ["--elf32", "$(rlocationpath :elf_contract_32)",
             "--elf64", "$(rlocationpath :elf_contract_64)"], size = "small")
 bsd_host_artifact_test(name = "elf_object_collision_rejected", src = "elf-object-contract-test.py",
@@ -360,11 +360,11 @@ exports_files(["world_installation.bzl"])
 exports_files(["bsd_sed_output.bzl"], visibility = ["//visibility:public"])
 
 bsd_python_test(name = "elf_section_reader_test", src = "elf-section-reader-test.py",
-    data = ["elf-artifact-check.py", "qualification_artifacts.py"],
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
 
 bsd_python_test(name = "elf_runtime_path_test", src = "elf-runtime-path-test.py",
-    data = ["elf-artifact-check.py", "qualification_artifacts.py"],
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
 
 bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-test.py",
@@ -372,7 +372,7 @@ bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-te
 
 exports_files(["world_package_inventory.py"], visibility = ["//:__pkg__"])
 
-bsd_python_test(name = "world_package_inventory_test", src = "world-package-inventory-test.py", data = ["world_package_inventory.py"])
+bsd_python_test(name = "world_package_inventory_test", src = "world-package-inventory-test.py", data = ["world_package_inventory.py", "construction_records.py"])
 
 bsd_python_test(name = "world_man_option_test", src = "world-man-option-test.py", data = ["//:world_package_inventory"])
 
@@ -443,6 +443,10 @@ bsd_python_test(name = "package_archive_compare_test", src = "package-archive-co
     args = ["--tar", "$(rlocationpath @bsd_sdk//toolchain:extra_tar)", "--library", "$(rlocationpath :archive_inspection_library)"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_tar_runtime"])
 
+# Path-derived DTrace IDs require a whole-archive, bijective symbol relationship.
+bsd_python_test(name = "archive_dtrace_symbols_test", src = "archive-dtrace-symbols-test.py",
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "dtrace-relocatable-inventory-test.py", "elf_object_contract.py", "qualification_artifacts.py"])
+
 exports_files(["pkg_image.py"])
 
 bsd_python_test(name = "pkg_image_policy_test", src = "pkg-image-policy-test.py",
@@ -461,3 +465,16 @@ exports_files(["qualification_artifacts.py"], visibility = ["//tools/test/system
 exports_files(["kernel_audit_sources.py"])
 bsd_python_test(name = "kernel_audit_sources_test", src = "kernel-audit-sources-test.py",
     data = ["kernel_audit_sources.py"])
+
+exports_files(["certificate-store-test.py"], visibility = ["//secure/caroot:__pkg__"])
+
+bsd_python_test(
+    name = "construction_records_test",
+    src = "construction-records-test.py",
+    data = ["construction_records.py", "world_package_inventory.py"],
+)
+
+bsd_python_test(name = "package_elf_review_test", src = "package-elf-review-test.py",
+    data = ["package-elf-review.py", "elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "package-archive-compare.py",
+            "archive_headers.py", "package_index.py", "qualification_artifacts.py"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")

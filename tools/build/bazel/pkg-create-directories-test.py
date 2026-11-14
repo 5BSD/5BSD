@@ -49,7 +49,7 @@ def run(driver, pkg, tar, abi_file, osversion_header, output):
                     packages={'p': records}, suffix_tags=[], directory_metadata=str(policy),
                     manifests={'p': str(manifest)}, abi_file=str(abi_file), pkg=str(pkg),
                     tar=str(tar), format='tar', threads=1, epoch=0)
-        for case in ('explicit', 'file-only', 'layout-only-directories', 'wrong-owner', 'missing-directory', 'missing-payload'):
+        for case in ('explicit', 'file-only', 'layout-only-directories', 'explicit-only', 'no-implicit-parents', 'invalid-ancestor-policy', 'wrong-owner', 'missing-directory', 'missing-payload'):
             request = copy.deepcopy(base)
             request['outputs'] = {'p': str(root / (case + '-outputs') / 'Test-p-1.pkg')}
             request['index'] = str(root / (case + '-index.json'))
@@ -60,6 +60,15 @@ def run(driver, pkg, tar, abi_file, osversion_header, output):
                 request['packages']['p'] = [records[-1]]
             elif case == 'layout-only-directories':
                 declared_dirs.clear()
+            elif case == 'explicit-only':
+                request['include_parent_directories'] = False
+            elif case == 'no-implicit-parents':
+                request['include_parent_directories'] = False
+                request['packages']['p'] = [records[-1]]
+                declared_dirs.clear()
+            elif case == 'invalid-ancestor-policy':
+                request['include_parent_directories'] = 1
+                expected_error = 'explicit boolean directory ancestor policy required'
             elif case == 'wrong-owner':
                 declared_dirs[0]['tags'] = ['package=q']
                 expected_error = 'directory package ownership differs from layout'
@@ -83,9 +92,13 @@ def run(driver, pkg, tar, abi_file, osversion_header, output):
                 assert stream.extractfile(names['opt/example/data']).read() == payload
                 metadata = json.load(stream.extractfile(names['+MANIFEST']))
                 # Inspect pkg's persisted directory ownership, including empty directories.
-                owned = metadata['directories']
-                assert set(owned) == {'/opt', '/opt/example', '/opt/example/empty'}, owned
-                assert owned['/opt/example/empty']['perm'] == '0750', owned
+                owned = metadata.get('directories', {})
+                expected = ({'/opt/example', '/opt/example/empty'} if case == 'explicit-only'
+                            else set() if case == 'no-implicit-parents'
+                            else {'/opt', '/opt/example', '/opt/example/empty'})
+                assert set(owned) == expected, (case, owned)
+                if '/opt/example/empty' in owned:
+                    assert owned['/opt/example/empty']['perm'] == '0750', owned
             results.append(dict(case=case, package_sha256=hashlib.sha256(package.read_bytes()).hexdigest(),
                                 directories=owned))
         # Transition packages require an explicit declaration, never an empty

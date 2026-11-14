@@ -28,7 +28,7 @@
 /*
  * API Version - increment when the public API or ioctl contract changes
  */
-#define OES_API_VERSION		2
+#define OES_API_VERSION		3
 
 /*
  * Event Types
@@ -155,10 +155,14 @@ typedef struct {
  * Analogous to Apple's es_process_t. Contains snapshot of process
  * state at time of event.
  *
- * Path fields (ep_path, ep_cwd, ep_jailname) are stored in the
- * message's trailing string table as NUL-terminated strings.
+ * Path fields (ep_path, ep_cwd, ep_jailname, ep_jail_fullname) are stored
+ * in the message's trailing string table as NUL-terminated strings.
  * Use oes_msg_string(msg, offset) to access them.
  * An offset of 0 means the string is empty.
+ * ep_jailname is the jail's host name.  ep_jail_fullname is the jail's
+ * hierarchical name as the host sees it, for example "web.db" for the jail
+ * "db" inside the jail "web"; OES_PROC_META_JAIL_FULLNAME is set when it is
+ * present.  With ep_jid it tells which nested jail a record came from.
  * ep_path is cached during exec and inherited across fork and credential
  * changes, avoiding path resolution from inside MAC hooks.  Processes that
  * predate OES activation may report it unavailable until their next exec.
@@ -220,8 +224,8 @@ typedef struct {
 	/* Paths (variable-length, in string table) */
 	uint32_t	ep_path_off;	/* Executable path (string table offset) */
 	uint32_t	ep_cwd_off;	/* Current working directory */
-	uint32_t	ep_jailname_off; /* Jail name if jailed */
-	uint32_t	ep_pad2;	/* Alignment */
+	uint32_t	ep_jailname_off; /* Jail host name if jailed */
+	uint32_t	ep_jail_fullname_off; /* Hierarchical jail name */
 	uint32_t	ep_meta_flags;	/* OES_PROC_META_* */
 	uint32_t	ep_reserved;	/* Must be zero */
 
@@ -824,6 +828,7 @@ typedef struct {
 #define OES_PROC_META_SESSION_UNAVAILABLE 0x00000010
 #define OES_PROC_META_GROUPS_TRUNCATED	0x00000020
 #define OES_PROC_META_CREDENTIALS_UNAVAILABLE 0x00000040
+#define OES_PROC_META_JAIL_FULLNAME	0x00000080
 #define OES_FILE_META_PATH_UNAVAILABLE	0x00000001
 #define OES_FILE_META_PATH_REQUESTED	0x00000002
 #define OES_FILE_META_PATH_TRUNCATED	0x00000004
@@ -998,6 +1003,64 @@ struct oes_scope_args {
 
 #define OES_IOC_SET_SCOPE	_IOW('E', 37, struct oes_scope_args)
 #define OES_IOC_GET_SCOPE	_IOR('E', 38, struct oes_scope_args)
+
+/*
+ * Jail scope.
+ *
+ * A jail-scoped client receives AUTH and NOTIFY events only for subjects
+ * whose thread credential is, when the event is generated, in the named
+ * jail or (unless OES_JAIL_SCOPE_NOCHILDREN) in a jail nested beneath it.
+ * Processes that enter the jail later are covered; ancestry is irrelevant.
+ * The subject is the thread performing the operation: what a process
+ * outside the jail does to a file, socket or process inside it is not
+ * delivered, except that OES_JAIL_SCOPE_INBOUND adds the NOTIFY signal,
+ * ptrace and scheduling events whose target process is in the jail.
+ *
+ * The jail is named once, by jid or by name, relative to the caller's own
+ * jail: jid 0 is the caller's jail (the host for an unjailed caller) and
+ * only that jail and the jails beneath it can be named.  The kernel holds
+ * the jail itself, not its jid or name, so a reused jid or a renamed jail
+ * never changes what the scope matches.
+ *
+ * When the jail is removed the scope is dead for good.  Everything the
+ * jail generated before its removal began is still delivered and stays
+ * readable; then read(2) returns 0, poll(2) reports POLLHUP and an
+ * EVFILT_READ kevent carries EV_EOF.  Like every scope it must be selected
+ * before the mode or any subscription and can never be changed.
+ */
+#define OES_SCOPE_JAIL			2
+
+#define OES_JAIL_SCOPE_NOCHILDREN	0x00000001 /* Not nested jails */
+#define OES_JAIL_SCOPE_INBOUND		0x00000002 /* Also NOTIFY SIGNAL,
+						      PTRACE, PROC_SCHED
+						      aimed into the jail */
+#define OES_JAIL_SCOPE_BYNAME		0x00000004 /* SET: use ejs_name */
+#define OES_JAIL_SCOPE_DEAD		0x80000000 /* GET: jail was removed */
+#define OES_JAIL_SCOPE_SETMASK \
+	(OES_JAIL_SCOPE_NOCHILDREN | OES_JAIL_SCOPE_INBOUND | \
+	OES_JAIL_SCOPE_BYNAME)
+
+#define OES_JAIL_NAME_MAX		256	/* MAXHOSTNAMELEN */
+
+struct oes_jail_scope_args {
+	uint32_t	ejs_flags;	/* OES_JAIL_SCOPE_* */
+	int32_t		ejs_jid;	/* SET: jid, 0 = caller's own jail;
+					   must be 0 with BYNAME.
+					   GET: as the scope was set */
+	char		ejs_name[OES_JAIL_NAME_MAX]; /* SET with BYNAME: name
+					   relative to the caller's jail;
+					   all zero otherwise.
+					   GET: as the scope was set */
+};
+
+/*
+ * OES_IOC_GET_JAIL_SCOPE fails with ENOENT for a client without a jail
+ * scope.  It reports the jid and name as the caller that set the scope
+ * named the jail ("0" and jid 0 for its own jail); they are left zero for
+ * a jailed caller reading a scope that was set from outside any jail.
+ */
+#define OES_IOC_SET_JAIL_SCOPE	_IOW('E', 43, struct oes_jail_scope_args)
+#define OES_IOC_GET_JAIL_SCOPE	_IOR('E', 44, struct oes_jail_scope_args)
 
 /* Set client mode and parameters */
 struct oes_mode_args {
@@ -1290,6 +1353,7 @@ struct oes_stats {
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
 	  OES_IOC_GET_SUBSCRIPTIONS, \
 	  OES_IOC_SET_SCOPE, OES_IOC_GET_SCOPE, \
+	  OES_IOC_SET_JAIL_SCOPE, OES_IOC_GET_JAIL_SCOPE, \
 	  OES_IOC_SET_MODE, OES_IOC_GET_MODE, \
 	  OES_IOC_SET_DEADLINE_MAX, OES_IOC_GET_DEADLINE_MAX, \
 	  OES_IOC_SET_DEADLINE_MIN, OES_IOC_GET_DEADLINE_MIN, \

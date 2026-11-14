@@ -15,6 +15,7 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/condvar.h>
+#include <sys/jail.h>
 #include <sys/selinfo.h>
 #include <sys/poll.h>
 #include <sys/time.h>
@@ -496,6 +497,16 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 
 	ep->ep_group = NULL;
 	oes_scope_snapshot(ep);
+	if (__predict_false(atomic_load_int(&oes_softc.sc_njail) != 0)) {
+		/*
+		 * The subject is the thread running the hook.  Its credential
+		 * keeps the prison in place now; the event may be delivered
+		 * after the thread is gone, so it takes its own reference.
+		 */
+		ep->ep_subject_pr = curthread->td_ucred->cr_prison;
+		if (ep->ep_subject_pr != &prison0)
+			prison_hold(ep->ep_subject_pr);
+	}
 	{
 		struct timespec now, wall_now;
 
@@ -541,6 +552,29 @@ oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
 	return (ep);
 }
 
+/*
+ * Record the jail of a NOTIFY event's target process, for clients that
+ * asked for inbound events.  The hook must hold the target's process lock;
+ * if it does not, the target is simply not recorded.  AUTH events never
+ * record a target: only the subject of an operation may be made to wait.
+ */
+void
+oes_pending_set_target_prison(struct oes_pending *ep, struct proc *target)
+{
+	struct prison *pr;
+
+	if (ep->ep_subject_pr == NULL || ep->ep_target_pr != NULL ||
+	    target == NULL || OES_EVENT_IS_AUTH(ep->ep_msg.em_event) ||
+	    !mtx_owned(&target->p_mtx) || target->p_ucred == NULL)
+		return;
+	pr = target->p_ucred->cr_prison;
+	if (pr == ep->ep_subject_pr)
+		return;
+	if (pr != &prison0)
+		prison_hold(pr);
+	ep->ep_target_pr = pr;
+}
+
 struct oes_pending *
 oes_pending_clone(const struct oes_pending *src, int mflags)
 {
@@ -569,6 +603,7 @@ oes_pending_clone(const struct oes_pending *src, int mflags)
 	ep->ep_scope_count = src->ep_scope_count;
 	memcpy(ep->ep_scope_markers, src->ep_scope_markers,
 	    sizeof(ep->ep_scope_markers));
+	/* ep_subject_pr and ep_target_pr stay NULL: clones hold no prison. */
 
 	if (ep->ep_flags & EP_FLAG_AUTH) {
 		mtx_init(&ep->ep_mtx, "oes_pending", NULL, MTX_DEF);
@@ -587,6 +622,11 @@ oes_pending_free(struct oes_pending *ep)
 		cv_destroy(&ep->ep_cv);
 		mtx_destroy(&ep->ep_mtx);
 	}
+
+	if (ep->ep_subject_pr != NULL && ep->ep_subject_pr != &prison0)
+		prison_free(ep->ep_subject_pr);
+	if (ep->ep_target_pr != NULL && ep->ep_target_pr != &prison0)
+		prison_free(ep->ep_target_pr);
 
 	if (ep->ep_group != NULL)
 		oes_auth_group_rele(ep->ep_group);

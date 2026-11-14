@@ -1,5 +1,22 @@
 # Native complete package image and normal boot qualification
 
+## Current certificate/image qualification (2026-11-13)
+
+`bazel-certificate-image-native-r1-20261113/receipt.json` passes the complete
+selected AMD64 package/image graph and its package-solver/certificate tests.
+The resulting owned 2 GiB VM passes 15 checks in
+`bazel-certificate-vm-r1-20261113/result.json` and powers off normally: normal
+startup, console/PAM, SSH/su positive/negative authentication, firstboot database
+proof, complete installed-tree reconciliation and default TLS/local-CA lifecycle.
+Its normal ordinary-user fetch is unchanged; the test adds/removes a guest-local
+CA through standard certctl rehash and restores the original bundle bytes.
+The optional policy is documented by `tools/test/system-pkg-runtime/certificates.json`.
+See MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md for exact resource/source/evidence bounds.
+This accepts the selected fresh image, not all configurations, ARM64, Secure Boot,
+comparative performance or an updated full upgrade/provider/rollback scenario.
+Historical attempts below retain their original context.
+
+
 ## Current accepted service-aware scenario (2026-11-11)
 
 The corrected full AMD64 R10 candidate and VM R4 pass the complete signed
