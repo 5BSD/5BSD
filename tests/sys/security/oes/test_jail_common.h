@@ -255,7 +255,12 @@ jt_get_scope(int fd)
 #define JT_LOAD_WRITERS		4
 #define JT_LOAD_STEP		8
 #define JT_LOAD_MAXCLIENTS	48
-#define JT_LOAD_END_MS		60000	/* Bound for what must end under load */
+/*
+ * Bound for what must end under load.  The kernel's own bound is a number
+ * of deliveries (2 * OES_DEFER_MAX), each to every load client; in a
+ * two-CPU emulated guest that has taken from 5 to 45 seconds.
+ */
+#define JT_LOAD_END_MS		120000
 
 struct jt_load {
 	pid_t	writers[JT_LOAD_WRITERS];
@@ -342,8 +347,11 @@ jt_load_start(struct jt_load *l, int statfd)
 		clock_gettime(CLOCK_MONOTONIC, &start);
 		while (jt_elapsed_ms(&start) < 3000) {
 			usleep(100000);
-			if (jt_nosleep_drops(statfd) > drops)
+			if (jt_nosleep_drops(statfd) > drops) {
+				printf("    deferred queue full with %d "
+				    "unread clients\n", l->nclients);
 				return (0);
+			}
 		}
 	}
 	printf("    the deferred queue did not fill with %d clients\n",
