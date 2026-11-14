@@ -137,6 +137,9 @@ BINDIR.dq_exec_helper=	${TESTSDIR}
 # dq_served_test's Linux program for the O_PATH rows, built by the test.
 ${PACKAGE}FILES+=	dq_opath_linux.c
 
+# dq_swap_test's Linux program, built by the test.
+${PACKAGE}FILES+=	dq_swap_linux.c
+
 # dq_legitimacy_test's exec'd holder of an inherited queue, and its Linux
 # and 32-bit programs, built by the test.
 PROGS+=		dq_legitimacy_helper
