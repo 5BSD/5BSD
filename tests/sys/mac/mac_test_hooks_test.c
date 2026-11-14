@@ -44,6 +44,7 @@ static const char *deny_hooks[] = {
 	"vnode_check_truncate",
 	"vnode_check_uipc_bind",
 	"vnode_check_uipc_connect",
+	"socket_check_create",
 	"socket_check_setsockopt",
 	"kld_check_unload",
 	"pts_check_open",
@@ -490,7 +491,7 @@ ATF_TC_BODY(vnode_socket_checks, tc)
 {
 	char filepath[PATH_MAX], sockpath[PATH_MAX];
 	char *dir;
-	int before, client, server, one;
+	int before, client, server, one, pair[2];
 	struct sockaddr_un sun;
 
 	reset_denies();
@@ -526,6 +527,15 @@ ATF_TC_BODY(vnode_socket_checks, tc)
 	require_counter_bump("vnode_check_uipc_connect", before);
 	ATF_REQUIRE(close(client) == 0);
 	write_deny_value("vnode_check_uipc_connect", 0);
+
+	/* socket(2) and socketpair(2) ask before anything is created. */
+	before = counter("socket_check_create");
+	write_deny_value("socket_check_create", EPERM);
+	ATF_REQUIRE_ERRNO(EPERM, socket(AF_UNIX, SOCK_STREAM, 0) == -1);
+	ATF_REQUIRE_ERRNO(EPERM, socketpair(AF_UNIX, SOCK_STREAM, 0,
+	    pair) == -1);
+	write_deny_value("socket_check_create", 0);
+	require_counter_bump("socket_check_create", before);
 
 	before = counter("socket_check_setsockopt");
 	one = 1;
