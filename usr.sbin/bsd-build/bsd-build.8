@@ -2373,6 +2373,12 @@ generators and runtime libraries use the execution platform.
 Unmapped target byte orders fail analysis instead of inheriting host byte order.
 Full ARM64 world and runtime qualification remain separate requirements.
 .Pp
+Original Make generator references bind their native execution compiler and
+actual generator ELF architecture separately from the target compiler.
+Cross compilation does not require those compiler executables to be identical.
+The generator receipt, payload digests and original recipe bindings remain
+required; foreign generator artifacts are rejected.
+.Pp
 Split-debug validation checks ELF identity and symbol policy, debuglink filename
 and CRC. When either file carries a GNU build-ID note, valid matching identities
 are required on both files. Full DWARF semantic equivalence remains a separate

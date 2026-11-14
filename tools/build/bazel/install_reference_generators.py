@@ -10,7 +10,7 @@ from install_reference_libraries import digest, safe_path, verify
 from install_reference_options import generator_command_variable
 
 
-def load(config_path, execution_architecture, source_root, compiler):
+def load(config_path, execution_architecture, source_root):
     config_path = safe_path(str(config_path))
     before = digest(config_path)
     value = json.loads(config_path.read_text())
@@ -20,6 +20,7 @@ def load(config_path, execution_architecture, source_root, compiler):
         raise ValueError("nonempty generator inventory required")
     bindings = {str(config_path): before}
     records = {}
+    execution_compiler_sha = None
     for variable, item in value["generators"].items():
         if not generator_command_variable(variable):
             raise ValueError("generator override must name an uppercase command variable, excluding compiler, path and configuration controls")
@@ -38,11 +39,16 @@ def load(config_path, execution_architecture, source_root, compiler):
             raise ValueError("generator component differs from source tree")
         environment = receipt.get("environment", {})
         selected = safe_path(environment.get("compiler_selected"), True)
-        compiler_sha = digest(compiler)
-        if digest(selected) != compiler_sha or not any(
+        # A native generator's compiler is bound by its own passed Make
+        # receipt, not by the foreign target world's compiler executable.
+        compiler_sha = digest(selected)
+        if execution_compiler_sha is not None and compiler_sha != execution_compiler_sha:
+            raise ValueError("generator execution compiler identities differ")
+        execution_compiler_sha = compiler_sha
+        if not any(
                 Path(name).is_file() and selected.samefile(name) and expected == compiler_sha
                 for name, expected in environment.get("input_sha256", {}).items()):
-            raise ValueError("generator compiler differs from selected native compiler")
+            raise ValueError("generator compiler is not bound by its native reference")
         relative = item["artifact"]
         if (not isinstance(relative, str) or not relative or PurePosixPath(relative).is_absolute() or
                 ".." in relative.split("/") or str(PurePosixPath(relative)) != relative):
@@ -54,8 +60,16 @@ def load(config_path, execution_architecture, source_root, compiler):
             raise ValueError("regular executable in original component object tree required")
         if digest(artifact) != item["artifact_sha256"]:
             raise ValueError("generator artifact digest mismatch")
+        with artifact.open("rb") as stream:
+            header = stream.read(20)
+        machine = {"amd64": 62, "aarch64": 183, "riscv64": 243}[execution_architecture]
+        if (header[:6] != b"\x7fELF\x02\x01" or
+                int.from_bytes(header[16:18], "little") not in (2, 3) or
+                int.from_bytes(header[18:20], "little") != machine):
+            raise ValueError("generator must be an execution-platform ELF executable")
         records[variable] = dict(receipt=str(reference), receipt_sha256=item["receipt_sha256"], artifact=str(artifact),
-                                 artifact_sha256=item["artifact_sha256"], component=str(component))
+                                 artifact_sha256=item["artifact_sha256"], component=str(component),
+                                 execution_compiler=str(selected), execution_compiler_sha256=compiler_sha)
         bindings.update({str(reference): item["receipt_sha256"], str(artifact): item["artifact_sha256"], str(selected): compiler_sha})
     verify(bindings)
     return records, bindings

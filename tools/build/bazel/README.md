@@ -13,6 +13,17 @@ aggregate RSS. Maintained native qualification passes its seven real process
 regressions. This qualifies instrumentation; controlled performance comparisons
 remain open. See [RESOURCE-ACCOUNTING.md](RESOURCE-ACCOUNTING.md).
 
+## Library architecture selections
+
+The library aggregate now traverses AMD64 and ARM64, retaining rejection for
+incompatible children and unsupported installed tests. Its x86 display/Intel PT
+and ARM OpenCSD/PMC selections match Make with PMC on/off. Focused trace-library
+archives, shared metadata, event generation and all 123 install metadata records
+match original Make per architecture; diagnostic-path/debug differences remain.
+Native generator provenance is separate from target compiler identity. See the
+current checkpoint in [COMPLETION-PLAN.md](COMPLETION-PLAN.md); full ARM64 world
+and runtime qualification remain open.
+
 ## Cross-target locale data
 
 Locale/termcap producers share explicit target byte-order mapping and use host

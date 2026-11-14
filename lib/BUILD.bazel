@@ -173,6 +173,12 @@ config_setting(name = "radius_libraries", flag_values = {"//tools/build/bazel/co
 config_setting(name = "fido_libraries", flag_values = {
     "//tools/build/bazel/config:usb": "true", "//tools/build/bazel/config:openssh": "true",
 })
+selects.config_setting_group(name = "intel_pt_libraries", match_all = [
+    "//tools/build/bazel/config:pmc_enabled", "@platforms//cpu:x86_64",
+])
+selects.config_setting_group(name = "arm_trace_libraries", match_all = [
+    "//tools/build/bazel/config:pmc_enabled", "@platforms//cpu:aarch64",
+])
 config_setting(name = "virtual_audio_libraries", flag_values = {
     "//tools/build/bazel/config:cuse": "true", "//tools/build/bazel/config:sound": "true",
 })
@@ -197,7 +203,9 @@ _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:efi_enabled": ["//li
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:googletest_enabled": ["//lib/googletest:installation_archives"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:netgraph_enabled": ["//lib/libnetgraph:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:install_archive"], "//conditions:default": []})
-_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pmc_enabled": ["//lib/libipt:install_archive", "//lib/libpmc:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":arm_trace_libraries": ["//lib/libopencsd:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({":intel_pt_libraries": ["//lib/libipt:install_archive"], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pmc_enabled": ["//lib/libpmc:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:bhyve_enabled": ["//lib/libvmmapi:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:openmp_enabled": ["//lib/libomp:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({":fido_libraries": ["//lib/libcbor:install_archive", "//lib/libfido2:install_archive"], "//conditions:default": []})
@@ -212,8 +220,8 @@ _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:usb_enabled": ["//li
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ofed_enabled": ["//lib/ofed:installation_archives"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:veriexec_enabled": ["//lib/libveriexec:install_archive"], "//conditions:default": []})
 _ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ["//lib/libbe:installation_archives"], "//conditions:default": []})
-# AMD64 vgl is selected independently of the optional feature knobs.
-_ARCHIVES = _ARCHIVES + ["//lib/libvgl:install_archive"]
+# Make selects vgl only on x86, independently of optional feature knobs.
+_ARCHIVES = _ARCHIVES + select({"@platforms//cpu:x86_64": ["//lib/libvgl:install_archive"], "//conditions:default": []})
 _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:toolchain_enabled": ["//lib/libpe:static_archive", "//lib/libpe:pie_archive"], "//conditions:default": []})
 _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:fdt_enabled": ["//lib/libfdt:static_archive", "//lib/libfdt:pie_archive"], "//conditions:default": []})
 _BUILD_ONLY = _BUILD_ONLY + select({"//tools/build/bazel/config:pmc_enabled": ["//lib/libpmcstat:static_archive", "//lib/libpmcstat:pie_archive"], "//conditions:default": []})
@@ -226,9 +234,12 @@ _ARCHIVES = _ARCHIVES + ["//lib/libdiff:installation_archives"] + select({
     "//conditions:default": [],
 })
 
-# Existing children contain incomplete installed-test and other-ABI closures.
-# Do not silently present a production-only subset as full installation.
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+# Traverse both Tier 1 graphs; incompatible children still reject the root.
+# Installed tests remain incomplete and must not become a silent subset.
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
     "//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"],
     "//conditions:default": [],
 })
