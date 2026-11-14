@@ -1629,6 +1629,15 @@ open_swap_check(struct thread *td, struct file *fp, int fflags,
 		error = EBADF;
 		goto out;
 	}
+	created = false;
+	if (declared_created && (fflags & (O_CREAT | O_PATH)) == O_CREAT &&
+	    vp->v_type == VREG) {
+		error = VOP_GETATTR(vp, &va, td->td_ucred);
+		if (error != 0)
+			goto out;
+		created = va.va_uid == td->td_ucred->cr_uid &&
+		    (va.va_flags & (IMMUTABLE | APPEND)) == 0;
+	}
 	accmode = 0;
 	if ((fflags & O_PATH) == 0) {
 		if ((fflags & (FWRITE | O_TRUNC)) != 0)
@@ -1638,7 +1647,8 @@ open_swap_check(struct thread *td, struct file *fp, int fflags,
 		if ((fflags & O_APPEND) != 0 && (fflags & FWRITE) != 0)
 			accmode |= VAPPEND;
 #ifdef MAC
-		if ((fflags & O_CREAT) != 0)
+		/* As base, which clears O_CREAT when the file existed. */
+		if (created)
 			accmode |= VCREAT;
 #endif
 	}
@@ -1654,15 +1664,6 @@ open_swap_check(struct thread *td, struct file *fp, int fflags,
 #endif
 	/* The object the open returns, beside the name it asked for. */
 	AUDIT_ARG_VNODE1(vp);
-	created = false;
-	if (declared_created && (fflags & (O_CREAT | O_PATH)) == O_CREAT &&
-	    vp->v_type == VREG) {
-		error = VOP_GETATTR(vp, &va, td->td_ucred);
-		if (error != 0)
-			goto out;
-		created = va.va_uid == td->td_ucred->cr_uid &&
-		    (va.va_flags & (IMMUTABLE | APPEND)) == 0;
-	}
 	if (!created && accmode != 0) {
 		error = VOP_ACCESS(vp, accmode, td->td_ucred, td);
 		if (error != 0)
