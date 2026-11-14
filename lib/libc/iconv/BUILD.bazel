@@ -1,4 +1,5 @@
 load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("//lib/libc:platforms.bzl", "LIBC_PORTABLE_PLATFORMS")
 load(":nonshared_sources.bzl", "ICONV_WRAPPERS")
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
@@ -71,7 +72,7 @@ cc_library(
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:iconv_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS + select({"//tools/build/bazel/config:iconv_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
@@ -82,7 +83,7 @@ cc_library(
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:iconv_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS + select({"//tools/build/bazel/config:iconv_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
     visibility = ["//lib/libc:__pkg__"],
 )
 # Keep static-only wrappers out of shared libc's object group. The separate

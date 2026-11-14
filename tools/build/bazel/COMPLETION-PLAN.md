@@ -14,7 +14,7 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib match 412 regular/PIC object contracts, context/jump routines match 24, optimized strings match 188, and portable strings match 174 under explicit MACHDEP_OPTIMIZATIONS=no. CSU/syscall selections add 1,057 contracts; the default validated libc groups now cover 1,295 regular and 1,294 PIC members against the 1,450/1,438-member Make component reference. Full libc remains incomplete. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib match 412 regular/PIC object contracts, context/jump routines match 24, optimized strings match 188, and portable strings match 174 under explicit MACHDEP_OPTIMIZATIONS=no. CSU/syscall selections add 1,057 contracts; the default validated libc groups now cover 1,392 regular and 1,380 PIC members against the 1,450/1,438-member Make component reference. Full libc remains incomplete. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,36 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+ARM64 sized-free, jemalloc and iconv groups now use explicit portable CPU
+constraints; the existing FreeBSD jemalloc header retains actual per-CPU pointer,
+page and virtual-address definitions. Production malloc policy stays an explicit
+build input. All seven selected archives match independent original Make member
+sets, allocated ELF sections, external symbols and relocations on both CPUs:
+sized-free 2+2, jemalloc 62+62, iconv 22+22 and static-only iconv wrappers 11,
+183 object variants per CPU. The ARM64 reference explicitly selects
+MALLOC_PRODUCTION=yes (and omits test program construction only), matching the
+requested native policy; no debug-malloc comparison or allocator mode substitution
+is claimed. The separate PIC/hidden libc_nonshared interface still needs ARM64
+qualification. No implementation source or compiled payload is rewritten.
+Evidence: bazel-libc-allocator-iconv-arm64-parity-r1-20261114 and
+bazel-libc-allocator-iconv-amd64-parity-r1-20261114.
+
+AMD64 native R1 passes archive identities and static/shared libc smoke tests.
+Full static/PIC libc source-payload digests remain equal to full R15, retained in
+bazel-libc-allocator-iconv-amd64-preservation-r1-20261114. This extends target CPU
+support without changing selected AMD64 library artifacts; full R15 remains the
+latest complete selected package capture. Default ARM64 component coverage is
+now 1,392 regular and 1,380 PIC members. The corresponding original-Make production
+reference confirms 1,450/1,438 total members, leaving 58 members per variant
+outside this cumulative component proof. Joint NSS/resolver/semaphore DTrace
+processing, complete composition/order/linking, full DWARF, current ARM64 SDK/world,
+hardening, runtime and controlled performance qualification remain open.
+Existing build-bsd format-5 architecture/SDK/malloc inputs select these source
+rules; no C CLI option, backend target or staging helper change is needed.
+Manual/options updates accompany the producers. Make remains production/default;
+no host installation, upgrade, reboot or combined repository publication occurs.
+
 
 Full AMD64 R15 is terminal passed: all 450 indexed packages and 32 selected tests,
 including static/shared libc smoke probes. It captures 1,616 files / 663,908,158

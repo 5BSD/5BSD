@@ -8567,3 +8567,11 @@ loader. Semaphore, NSS and resolver DTrace contributors retain their joint
 provider-processing requirement; raw contributor compilation does not establish
 final provider or full-system qualification. Existing format-5 architecture/SDK
 inputs select the source declarations.
+
+.Pp
+Native libc allocator and iconv components retain explicit malloc policy inputs
+and source-owned CPU-dependent address, page and pointer definitions.
+Static iconv wrappers remain separate from shared libc and from the PIC/hidden
+libc_nonshared interface. Component comparisons with production malloc do not
+qualify debug malloc, complete ARM64 linking or allocator runtime performance.
+Existing format-5 architecture/SDK/malloc inputs select these declarations.

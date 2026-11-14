@@ -225,3 +225,16 @@ remains required; no probes were disabled. ARM64 cumulative component coverage i
 runtime remain open. Full AMD64 R15 refreshes all 450 selected packages and
 passes 32 tests; its fourteen helper archives match focused qualified bytes.
 Loader-header support alone does not qualify ARM64 rtld.
+
+## ARM64 allocator and iconv components (2026-11-14)
+
+Sized-free, jemalloc and iconv source groups now support explicit AMD64/AArch64
+constraints. Production malloc remains a build input; jemalloc's source-owned
+FreeBSD header selects CPU-specific address/page/pointer definitions. All 183
+regular/PIC/static-wrapper object variants match independent Make on each CPU.
+ARM64 comparison uses the explicitly production-malloc Make reference. Debug
+malloc and the PIC/hidden libc_nonshared interface remain separate qualifications.
+AMD64 archive identities and static/shared smoke tests pass, with unchanged
+whole-libc static/PIC source-payload digests against full R15. ARM64 cumulative
+component coverage is 1,392 regular / 1,380 PIC members; joint DTrace processing,
+full linking, DWARF, current world/hardening and runtime remain open.
