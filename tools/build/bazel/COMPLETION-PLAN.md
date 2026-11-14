@@ -11,6 +11,33 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+Cross-generator correction: SDK staging now declares configured_compile_inputs
+using the execution ABI from the bound host receipt, while retaining the existing
+narrow compile_inputs groups. The generator's explicit compiler-containment guard
+is unchanged. Six source declaration sites (including repeated shell/ncurses
+variants) select that configured group. An execution_c_runtime role supplies the
+host libc/libsys for source-built ncurses helpers, separately from target libraries.
+The initial ARM64 R2 experiment using all_files passed the previous analysis
+boundary but failed three ncurses generators on target libc's unsupported machine.
+Its logs remain retained. That broader input change was discarded after review
+of the documented October 26 input-size regression; no all_files workaround is
+part of the final source change.
+Fresh native SDK R6 verifies 8,345 files and component cross SDK R3 verifies
+16,193 files. AMD64 script-cpp R1 passes the new actual target/execution ABI test
+and builds the affected shell, sysdecode and ncurses generator outputs. ARM64
+CSU R3 also passes that ABI test, retaining strict narrow compiler declarations;
+its remaining host-linker/startup build and original-Make comparison are pending.
+The test preprocesses real declared OS headers in both configurations and checks
+CPU, pointer width and an expanded OS version without executing target code.
+Evidence roots: /usr/obj/usr/src/bazel-script-cpp-amd64-native-r1-20261114,
+/usr/obj/usr/src/bazel-csu-arm64-native-r3-20261114,
+/usr/obj/usr/src/bazel-closeout-sdk-r6-20261114 and
+/usr/obj/usr/src/bazel-arm64-csu-sdk-r3-20261114. SDK R3 remains an older Make
+ARM64 component seed, not a current world or native bootstrap proof. Runtime VM R2
+is still running. Normal build-bsd format-5 inputs and SDK staging helpers carry
+this change; no new C option or production backend default is introduced.
+
+
 ARM64 startup declarations now share the source-owned CSU recipe with AMD64,
 including distinct startup variants, ordered partial links and installed metadata.
 AMD64 native component R1 builds; preservation audit R2 proves all ten object

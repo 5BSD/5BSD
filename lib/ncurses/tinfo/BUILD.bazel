@@ -211,7 +211,7 @@ bsd_script_output(
     shell = "@bsd_sdk//toolchain:sh",
     redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:sh_runtime"],
-    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runtime_libraries = ["@bsd_sdk//toolchain:execution_c_runtime"],
 )
 
 [bsd_script_output(
@@ -227,7 +227,7 @@ bsd_script_output(
     shell = "@bsd_sdk//toolchain:sh",
     redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "awk", "rm"]],
-    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runtime_libraries = ["@bsd_sdk//toolchain:execution_c_runtime"],
 ) for name in ["captab", "userdefs"]]
 
 # The base system has no embedded fallback terminal entries. Supply all four
@@ -255,7 +255,7 @@ bsd_script_output(
     use_cpp = True,
     cpp_deps = [":generator_headers", "//contrib/ncurses:build_include_headers", "//contrib/ncurses:build_private_headers"],
     cpp_flags = ["-D_XOPEN_SOURCE_EXTENDED", "-DNDEBUG", "-DHAVE_CONFIG_H", "-DTERMIOS"],
-    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    compiler_inputs = "@bsd_sdk//toolchain:configured_compile_inputs",
     path_tools = {"@bsd_sdk//toolchain:" + tool: name for tool, name in [
         ("sh", "sh"), ("awk", "awk"), ("cat", "cat"), ("sed", "sed"), ("rm", "rm"), ("extra_grep", "grep"), ("extra_head", "head"),
     ]},
@@ -393,7 +393,7 @@ bsd_script_output(
     shell = "@bsd_sdk//toolchain:sh",
     redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "sed", "rm", "extra_sort", "extra_tr", "extra_mktemp"]],
-    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runtime_libraries = ["@bsd_sdk//toolchain:execution_c_runtime"],
 )
 
 load(":installation.bzl", "library_manual_installation")

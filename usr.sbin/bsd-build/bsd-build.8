@@ -8456,3 +8456,15 @@ All ten AMD64 object bytes and installation records pass preservation checks.
 ARM64 component analysis currently rejects a host-generator compiler-input bundle
 mismatch; this is not ARM64 build or runtime qualification.
 Make remains the production/default backend.
+
+.Pp
+SDK preparation declares configuration-aware narrow compiler inputs and an
+explicit execution C runtime for cross-build generators.
+The generator still rejects a bundle that omits its selected compiler.
+The existing format-5 workflow can select
+.Dq //tools/build/bazel/tests/script_cpp:configuration_test
+for actual target/execution preprocessing ABI checks without running target code.
+AMD64 and ARM64 preprocessing checks pass; ARM64's complete startup build,
+Make parity and system/runtime qualification remain separate requirements.
+This uses fresh source-bound SDK receipts and introduces no frontend C option
+or production backend default change.

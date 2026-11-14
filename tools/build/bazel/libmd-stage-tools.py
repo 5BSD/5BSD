@@ -36,6 +36,22 @@ def action_input_groups():
 
 
 
+
+def configured_input_groups(execution_cpu=None):
+    """Keep selected compiler inputs narrow and host runtime separate from target."""
+    if execution_cpu is None:
+        return [
+            'alias(name="configured_compile_inputs", actual=":compile_inputs")',
+            'filegroup(name="execution_c_runtime", srcs=["sysroot/lib/libc.so.7", "sysroot/lib/libsys.so.7"])',
+        ]
+    return [
+        'config_setting(name="execution_abi", constraint_values=%s)' % json.dumps([
+            '@platforms//os:freebsd', '@platforms//cpu:' + execution_cpu]),
+        'filegroup(name="configured_compile_inputs", srcs=select({":execution_abi":["//toolchain/host:compile_inputs"], "//conditions:default":[":compile_inputs"]}))',
+        'alias(name="execution_c_runtime", actual="//toolchain/host:execution_c_runtime")',
+    ]
+
+
 def freestanding_toolchains(target, version):
     """Native C++ toolchains for target-owned freestanding headers and libraries.
 
@@ -225,7 +241,10 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
            'toolchain(name="registered", toolchain=":compiler", toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' % json.dumps(['@platforms//os:freebsd', '@platforms//cpu:' + identity['platform_cpu'], ':selected_sdk', ':userland']),
            'cc_binary(name="stdout_redirect", srcs=["stdout_redirect.c"], linkstatic=True, features=["fully_static_link"])']
     freestanding, freestanding_metadata = freestanding_toolchains(target, version)
-    lines += runtime_groups(tool_dependencies) + action_input_groups() + freestanding
+    execution_cpu = (userland_sdk.architecture(userland_sdk.target_architecture(host['target']))['platform_cpu']
+                     if host is not None else None)
+    lines += (runtime_groups(tool_dependencies) + action_input_groups() +
+              configured_input_groups(execution_cpu) + freestanding)
     lines += ['alias(name=%s, actual=%s)'%(json.dumps(name),json.dumps('bin/'+name)) for name in [*settings['execution_tools'],*['extra_'+n for n in additional]]]
     if python_info:
         runtime_labels=[':extra_python_runtime']+[':'+name+'_runtime' for name in python_extensions]
@@ -254,7 +273,8 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
             'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", as_files=":compile_inputs", linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)',
             'toolchain(name="registered", toolchain=":compiler", toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", "//toolchain:selected_sdk"], target_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", "//toolchain:selected_sdk"])',
         ]
-        host_lines += runtime_groups(host['tool_execution_dependencies']) + action_input_groups()
+        host_lines += (runtime_groups(host['tool_execution_dependencies']) + action_input_groups() +
+                       configured_input_groups())
         (host_tc/'BUILD.bazel').write_text('\n'.join(host_lines)+'\n')
         userland_sdk.verify_snapshot(execution_workspace, host)
     (tc/'BUILD.bazel').write_text('\n'.join(lines)+'\n')

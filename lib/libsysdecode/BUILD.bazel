@@ -35,7 +35,7 @@ bsd_script_output(
     input_mode = "directory",
     directory_anchor = "sys/param.h",
     use_cpp = True,
-    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    compiler_inputs = "@bsd_sdk//toolchain:configured_compile_inputs",
     output = "tables.h",
     path_tools = {
         "@bsd_sdk//toolchain:cat": "cat",
@@ -58,7 +58,7 @@ bsd_script_output(
     input_mode = "directory",
     directory_anchor = "sys/param.h",
     use_cpp = True,
-    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    compiler_inputs = "@bsd_sdk//toolchain:configured_compile_inputs",
     environment = select({"//tools/build/bazel/config:pf_enabled": {"MK_PF": "yes"}, "//conditions:default": {"MK_PF": "no"}}),
     output = "ioctl.c",
     runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:extra_grep_runtime", "@bsd_sdk//toolchain:extra_sort_runtime"],

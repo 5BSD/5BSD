@@ -49392,3 +49392,24 @@ and dependency selection share the effective condition; unsupported Heimdal
 remains rejected. The earlier Boolean-input qualification records above are
 historical evidence, not the current input spelling. Make remains default;
 complete system/pkgbase/runtime/resource qualification is still required.
+
+### Configuration-aware narrow compiler inputs (2026-11-14)
+
+Cross SDKs now expose `configured_compile_inputs`: a source-generated Bazel
+selection between the narrow target compiler bundle and the independently bound
+execution compiler bundle. Native SDKs alias their existing narrow bundle.
+The execution ABI comes from the verified host receipt. Raw `compile_inputs`
+retains its explicit fixed-SDK meaning for other consumers. `bsd_script_output`
+keeps requiring its declared bundle to contain the selected compiler; its guard
+is unchanged. `execution_c_runtime` separately binds host libc/libsys for the
+ncurses source-built generators. Target libraries are not host runtime inputs.
+The attempted all_files variant was discarded, preserving the smaller input
+closure documented above. This establishes no controlled performance result.
+
+Fresh SDKs are required after the maintained stager change; old receipts are
+never rewritten. The ordinary build-bsd format-5 path builds the real generators
+and `//tools/build/bazel/tests/script_cpp:configuration_test`. The test uses real
+target and execution preprocessing over declared OS headers, and inspects ABI
+markers without executing target programs. AMD64 passes; ARM64 R3's test passes
+while its full CSU component build and Make comparison remain pending. See the
+completion plan for the retained failures and evidence paths.

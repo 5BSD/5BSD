@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+
+# One real preprocessing action in each configuration. The tools prerequisite
+# below transitions host_probe to the test execution configuration.
+[bsd_script_output(
+    name = name,
+    script = "preprocess.sh",
+    src = "probe.c",
+    input_mode = "argument",
+    output = name + ".txt",
+    use_cpp = True,
+    compiler_inputs = "@bsd_sdk//toolchain:configured_compile_inputs",
+    path_tools = {"@bsd_sdk//toolchain:sh": "sh"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime"],
+) for name in ["target_probe", "host_probe"]]
+
+bsd_host_artifact_test(
+    name = "configuration_test",
+    src = "check.py",
+    data = [":target_probe"],
+    tools = [":host_probe"],
+    args = ["$(rlocationpath :target_probe)", "$(rlocationpath :host_probe)"] + select({
+        "@platforms//cpu:x86_64": ["amd64"],
+        "@platforms//cpu:aarch64": ["aarch64"],
+        "@platforms//cpu:riscv64": ["riscv64"],
+    }),
+)
