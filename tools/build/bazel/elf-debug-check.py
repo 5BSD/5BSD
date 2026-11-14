@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Check an ELF GNU debug link against its separate debug file and CRC."""
+"""Check split ELF debug links, CRCs and optional GNU build-ID pairing."""
 import argparse
 import hashlib
 import json
@@ -34,11 +34,26 @@ def sections(data):
         if end < 0:
             raise ValueError('invalid section name')
         name = names[entry[0]:end].decode('ascii')
-        if name in ('.gnu_debuglink', '.debug_info', '.zdebug_info', '.symtab'):
+        if name in ('.gnu_debuglink', '.debug_info', '.zdebug_info', '.symtab', '.note.gnu.build-id'):
             if name in result:
                 raise ValueError('duplicate inspected section')
+            if name == '.note.gnu.build-id' and entry[1] != 7:
+                raise ValueError('GNU build-ID section must be a note')
             result[name] = payload(entry)
     return endian, result
+
+
+
+def build_id(note, endian):
+    """Read one GNU build-ID note without assuming its digest algorithm."""
+    if len(note) < 20:
+        raise ValueError('invalid GNU build-ID note')
+    name_size, size, kind = struct.unpack_from(endian + 'III', note)
+    if (name_size != 4 or kind != 3 or note[12:16] != b'GNU\0' or
+            not size or len(note) != 16 + ((size + 3) & ~3) or
+            any(note[16 + size:])):
+        raise ValueError('invalid GNU build-ID note')
+    return note[16:16 + size]
 
 
 def verify(binary, debug, *, module=False, kernel=False, retain_symbols=False):
@@ -79,10 +94,18 @@ def verify(binary, debug, *, module=False, kernel=False, retain_symbols=False):
     expected = struct.unpack_from(endian + 'I', link, crc_offset)[0]
     if expected != zlib.crc32(symbols):
         raise ValueError('debug link CRC differs')
+    note = '.note.gnu.build-id'
+    identity = None
+    if note in runtime_sections or note in debug_sections:
+        if note not in runtime_sections or note not in debug_sections:
+            raise ValueError('binary/debug GNU build-ID presence differs')
+        identity = build_id(runtime_sections[note], endian)
+        if identity != build_id(debug_sections[note], debug_endian):
+            raise ValueError('binary/debug GNU build IDs differ')
     return {'binary': str(binary), 'debug': str(debug),
             'binary_sha256': hashlib.sha256(runtime).hexdigest(),
             'debug_sha256': hashlib.sha256(symbols).hexdigest(),
-            'debuglink_crc32': expected, 'status': 'passed'}
+            'debuglink_crc32': expected, 'build_id': identity.hex() if identity is not None else None, 'status': 'passed'}
 
 
 if __name__ == '__main__':

@@ -33,6 +33,24 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The maintained split-debug checker now additionally requires valid GNU build-ID
+notes on both files when either has one, and equal identities within the pair.
+ELF class/type/symbol policy, debuglink filename and CRC checks remain strict;
+files with no GNU identity on either side retain their existing supported policy.
+A retained before/after real-module probe shows the legacy checker accepts five
+CRC-consistent identity/format faults, while the new checker rejects them. The
+new native module test passes seven cases; both existing retained-symbol tests
+and the runtime journal/policy tests also pass in focused checker R1. Its Bazel
+report records five outer passing test cases; script logs contain the individual
+unittest cases. Current kernel parity/debug regression R5 passes as well.
+Evidence: /usr/obj/usr/src/bazel-debug-build-id-draft-r1-20261114 and
+/usr/obj/usr/src/bazel-closeout-checker-native-r1-20261114. This strengthens own-pair
+binding; it does not accept cross-build module ID differences or establish full
+DWARF semantic equivalence. The generic module comparison remains strict.
+Existing build-bsd format-5 inputs select the maintained tests; helper, tests and
+manual change together without a new C option or production backend switch.
+
+
 Full AMD64 R11 completes with all 27 expanded tests, 450 indexed packages and
 1,556 captured files / 647,862,684 bytes. Kernel parity R5 again passes strict
 allocated/symbol/CTF checks, matches the full R11 kernel payload digest and passes
