@@ -21,6 +21,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 
@@ -910,6 +911,235 @@ ATF_TC_BODY(swap_emfile, tc)
 }
 
 /*
+ * The supervisor is gone.  Nothing is killed: the program keeps the real
+ * descriptors it holds, a swapped one included, and obtains nothing new
+ * by name.  In these cases the test closes the queue itself and keeps the
+ * program's process descriptor, so the program lives to report: a program
+ * killed with its supervisor would have tested pdfork(2), not the queue.
+ */
+struct sw_gone {
+	int		 held[2];	/* program: my open has returned */
+	int		 gone[2];	/* test: the queue is closed */
+};
+
+/* Serve the queue until the open under test has been answered n times. */
+static void
+sw_serve_answered(struct sw *x, char *buf, int n)
+{
+	struct pollfd pfd;
+	const struct dq_event *ev;
+	ssize_t got;
+
+	while (x->answered < n) {
+		pfd.fd = x->c.q;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		if (poll(&pfd, 1, 30000) <= 0)
+			atf_tc_fail("the program did not ask");
+		while (dq_read_events(x->c.q, buf, SW_BUFSIZE, &got) == 0 &&
+		    got > 0) {
+			for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
+			    ev = dq_event_next(buf, (size_t)got, ev))
+				sw_handle(x, ev);
+		}
+	}
+}
+
+/* Wait until the process sleeps on the named wait channel message. */
+static bool
+sw_wait_wmesg(pid_t pid, const char *wmesg, int ms)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4];
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID;
+	mib[3] = pid;
+	for (; ms > 0; ms -= 10) {
+		len = sizeof(kp);
+		if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) == 0 &&
+		    strcmp(kp.ki_wmesg, wmesg) == 0)
+			return (true);
+		dqt_msleep(10);
+	}
+	return (false);
+}
+
+static void
+a_rdwr(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb __unused)
+{
+	int fd;
+
+	fd = sw_open("subst", O_RDWR);
+	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	(void)close(fd);
+}
+
+/*
+ * Case: a swapped descriptor outlives the supervisor.  The program reads
+ * and writes through it after the queue is gone, and every new call that
+ * names a path fails EIO.
+ */
+static void
+p_gone_holder(void *arg, void *result)
+{
+	struct sw_res *res = result;
+	struct sw_gone *g = arg;
+	struct stat st;
+	char b;
+	int fd, fd2;
+
+	RR(res->r[0], fd = open("orig", O_RDWR));
+	b = 'h';
+	(void)write(g->held[1], &b, 1);
+	(void)read(g->gone[0], &b, 1);
+	if (fd == -1)
+		return;
+	RR(res->r[1], pwrite(fd, "AFTER", 5, 0));
+	RR(res->r[2], pread(fd, res->data, sizeof(res->data) - 1, 0));
+	RR(res->r[3], fstat(fd, &st));
+	res->ino = st.st_ino;
+	RR(res->r[4], fd2 = dup(fd));
+	RR(res->r[5], open("orig", O_RDONLY));
+	RR(res->r[6], open("subst", O_RDONLY));
+	RR(res->r[7], stat("subst", &st));
+	RR(res->r[8], close(fd));
+}
+
+ATF_TC_WITHOUT_HEAD(swap_survives_supervisor);
+ATF_TC_BODY(swap_survives_supervisor, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct sw_gone g;
+	struct dqt_achild ch;
+	struct pollfd pfd;
+	struct stat st;
+	char *buf, b;
+	char text[64];
+	int status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	ATF_REQUIRE_EQ(0, stat("subst", &st));
+	sw_init(&x, "orig", a_rdwr);
+	ATF_REQUIRE_EQ(0, pipe(g.held));
+	ATF_REQUIRE_EQ(0, pipe(g.gone));
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+	dqt_attach_spawn(&x.c, &ch, p_gone_holder, &g);
+	sw_serve_answered(&x, buf, 1);
+	pfd.fd = g.held[0];
+	pfd.events = POLLIN;
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 30000));
+	ATF_REQUIRE_EQ(1, read(g.held[0], &b, 1));
+
+	dqt_close_queue(&x.c);
+	ATF_REQUIRE_EQ(1, write(g.gone[1], &b, 1));
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	/* Not killed: it ran to its own exit. */
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the program did not survive, status %#x", status);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK_EQ(5, res.r[1].rv);
+	ATF_CHECK_EQ(10, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "AFTERITUTE", 10));
+	ATF_CHECK_EQ(0, res.r[3].rv);
+	ATF_CHECK_EQ(st.st_ino, res.ino);
+	ATF_CHECK(res.r[4].rv >= 0);
+	/* Nothing new by name: not the swapped name, not any other. */
+	ATF_CHECK_EQ(-1, res.r[5].rv);
+	ATF_CHECK_EQ(EIO, res.r[5].err);
+	ATF_CHECK_EQ(-1, res.r[6].rv);
+	ATF_CHECK_EQ(EIO, res.r[6].err);
+	ATF_CHECK_EQ(-1, res.r[7].rv);
+	ATF_CHECK_EQ(EIO, res.r[7].err);
+	ATF_CHECK_EQ(0, res.r[8].rv);
+	sw_read_file("subst", text, sizeof(text));
+	ATF_CHECK_STREQ("AFTERITUTE", text);
+	sw_read_file("orig", text, sizeof(text));
+	ATF_CHECK_STREQ("ORIGINAL", text);
+	(void)close(g.held[0]);
+	(void)close(g.held[1]);
+	(void)close(g.gone[0]);
+	(void)close(g.gone[1]);
+	free(buf);
+	dqt_fini(&x.c);
+}
+
+/*
+ * Case: the supervisor goes between its reply and the install.  The
+ * program's open asked for O_EXLOCK and the test holds that lock on
+ * another open file of the substitute, so the program, answered, sleeps
+ * in the lock with the swapped file in hand and not yet in its table.
+ * The queue is closed there; then the lock is let go.
+ *
+ * Today the completion never looks at the queue again: the descriptor is
+ * installed after the supervisor has gone.
+ */
+static void
+p_exlock_late(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	struct stat st;
+	int fd;
+
+	RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+	if (fd != -1) {
+		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		RR(res->r[8], close(fd));
+	}
+	RR(res->r[3], stat("orig", &st));
+}
+
+ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_before_install);
+ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct dqt_achild ch;
+	char *buf;
+	int lockfd, status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	lockfd = open("subst", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(lockfd != -1);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
+	sw_init(&x, "orig", a_regular);
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+	dqt_attach_spawn(&x.c, &ch, p_exlock_late, NULL);
+	sw_serve_answered(&x, buf, 1);
+	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	    "the program is not waiting for the lock");
+
+	dqt_close_queue(&x.c);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the program failed, status %#x", status);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK_EQ(10, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
+	ATF_CHECK_EQ(0, res.r[8].rv);
+	/* The next call by name finds the supervisor gone. */
+	ATF_CHECK_EQ(-1, res.r[3].rv);
+	ATF_CHECK_EQ(EIO, res.r[3].err);
+	/* The program's lock went with its descriptor. */
+	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
+	(void)close(lockfd);
+	free(buf);
+	dqt_fini(&x.c);
+}
+
+/*
  * Case: DQ_SWAP_F_NOXFER.  The installed entry may not be sent on; an
  * entry installed without the flag may, as a descriptor the program
  * opened itself.
@@ -1000,6 +1230,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swap_exlock);
 	ATF_TP_ADD_TC(tp, swap_trunc);
 	ATF_TP_ADD_TC(tp, swap_program_denied);
+	ATF_TP_ADD_TC(tp, swap_survives_supervisor);
+	ATF_TP_ADD_TC(tp, swap_supervisor_gone_before_install);
 	ATF_TP_ADD_TC(tp, swap_created);
 	ATF_TP_ADD_TC(tp, swap_opath_device);
 	ATF_TP_ADD_TC(tp, swap_directory);
