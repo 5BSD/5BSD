@@ -3803,7 +3803,8 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct filecaps *fcaps,
  *    transferred (the entry's, limited by its transfer ceiling); it runs
  *    under the table lock, so it must not sleep, and its error is
  *    returned;
- * and only then, with nothing left that can refuse: a reference is taken
+ * and only then, with nothing left that policy can refuse: a reference is
+ * taken
  * (unless the caller came with one), a CAP_XFER_ONCE entry is consumed,
  * and '*fcaps', '*prop' and O_RESOLVE_BENEATH in '*flagsp' describe the
  * entry to install.  No MAC hook runs here: the receive check is the
