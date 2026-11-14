@@ -82,8 +82,11 @@ static void
 oes_test_report_failures(void)
 {
 
-	if (oes_test_failures != 0)
+	if (oes_test_failures != 0) {
+		/* _exit() skips stdio: do not lose what explains the failure. */
+		(void)fflush(NULL);
 		_exit(1);
+	}
 }
 
 __attribute__((constructor))
