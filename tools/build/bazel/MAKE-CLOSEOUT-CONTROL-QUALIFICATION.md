@@ -1453,3 +1453,22 @@ property-note generation and handwritten wrapper selection, not reuse AMD64
 assembly. The active AMD64 R7 capture is still pending. These reference and
 documentation changes require no C frontend behavior change; Make remains
 production/default.
+
+## ARM64 compiler-runtime reference and draft (2026-11-14)
+
+`/usr/obj/usr/src/bazel-arm64-compiler-rt-make-r1-20261114/receipt.json` passes
+the maintained original-Make component reference with --make-meta and 16 jobs.
+The recorded older ARM64 SDK/profile is unchanged; no host installation or
+Bazel parity/runtime qualification is claimed. `elf-reference-audit.json`
+checks all 276 installed archive members as AArch64 ET_REL, including all 125
+outlined atomics, and binds artifact/receipt/METALOG/inspection-tool hashes.
+Audit SHA-256: `6b778912a725b7ef3599618b6f511c7078e975248f78f24c3f07db33f3423928`.
+
+The retained native-draft directory is explicitly unapplied/untested. Its
+source-owned declaration draft preserves 151 regular source selections plus
+125 independent LSE operation/size/model compiler variants and original archive
+member order. Skylib copy_file with allow_symlink supplies declared assembly
+identities, rather than executing Make or a shell compile wrapper. Actual native
+analysis/build, full member/symbol/code/metadata comparison and AMD64 preservation
+remain required after the active R7 capture finishes. No production behavior
+or C frontend flags change from this preparation; Make remains default.

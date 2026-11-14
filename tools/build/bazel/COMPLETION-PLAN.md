@@ -24,7 +24,12 @@ a temporary unapplied draft until the AMD64 capture is complete. The ARM64
 libsys original-Make component reference now also passes; its ELF audit covers
 the shared library and all 471 members of each static/PIC archive as AArch64.
 This is a comparison baseline with the recorded older SDK, not native migration
-or runtime acceptance. No maintained
+or runtime acceptance. The ARM64 compiler-runtime Make reference also passes
+with original recipe metadata: 151 regular sources and 125 separately compiled
+outlined-atomic variants. All 276 installed archive members audit as AArch64
+relocatables. A source-owned native draft preserves these variants and archive
+order; it is retained unapplied beside the reference until the AMD64 capture
+finishes and actual native comparison can run. No maintained
 frontend behavior or production backend selection changes for this audit.
 
 The refreshed original Make archive creation now passes all 450 selected packages
