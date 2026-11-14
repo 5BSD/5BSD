@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("//lib/libc:platforms.bzl", "LIBC_PORTABLE_PLATFORMS")
+# Preserve BSD's logical source identity in ordinary source/header diagnostics.
+_SOURCE_IDENTITY_COPTS = [
+    "-ffile-prefix-map=" + prefix + "lib/libc/gen/=/usr/src/lib/libc/gen/"
+    for prefix in ["", "./"]
+]
+
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 exports_files(["pw_scan.c"], visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__", "//usr.bin/chpass:__pkg__"])
@@ -45,9 +52,9 @@ cc_library(
         "//tools/build/bazel/config:nls_enabled": ["NLS"],
         "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 
@@ -65,9 +72,9 @@ cc_library(
         "//tools/build/bazel/config:nls_enabled": ["NLS"],
         "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec", "-fblocks"],
+    copts = ["-ftls-model=initial-exec", "-fblocks"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 
@@ -126,9 +133,9 @@ cc_library(
         "//tools/build/bazel/config:nls_enabled": ["NLS"],
         "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "process_archive", groups = [":process_objects"])
@@ -189,9 +196,9 @@ cc_library(
         "//tools/build/bazel/config:nls_enabled": ["NLS"],
         "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "random_archive", groups = [":random_objects"])
@@ -274,9 +281,9 @@ cc_library(
         "//tools/build/bazel/config:hesiod_enabled": ["HESIOD"],
         "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "system_helpers_archive", groups = [":system_helper_objects"])
@@ -319,9 +326,9 @@ cc_library(
         "//tools/build/bazel/config:nls_enabled": ["NLS"],
         "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "support_archive", groups = [":support_objects"])
@@ -338,9 +345,12 @@ cc_library(
         "//tools/build/bazel/config:nls_enabled": ["NLS"],
         "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS + [
+        "-ffile-prefix-map=" + prefix + "contrib/libc-vis/=/usr/src/contrib/libc-vis/"
+        for prefix in ["", "./"]
+    ],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "loader_import_archive", groups = [":loader_import_objects"])
@@ -364,9 +374,9 @@ cc_library(
     }) + select({
         "//tools/build/bazel/config:ns_caching_enabled": ["NS_CACHING"], "//conditions:default": [],
     }),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "account_archive", groups = [":account_objects"])

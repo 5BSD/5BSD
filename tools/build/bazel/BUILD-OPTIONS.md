@@ -212,3 +212,15 @@ and passes 32 tests; its 34 portable component archives match the independently
 qualified focused AMD64 artifacts. Earlier unchanged-byte claims are not final
 acceptance for this correction. Whole-system parity and new VM qualification
 remain separate requirements.
+
+## ARM64 libc general helpers (2026-11-14)
+
+Eight ordinary general-helper compiler groups now use portable CPU constraints
+and target-correct loader/TLS headers. All 174 regular and 174 PIC object contracts
+match independent Make on both CPUs. Imported vis/unvis diagnostics retain the
+original logical source identity through compiler flags. AMD64 identity and
+static/shared smoke tests pass. The shared DTrace semaphore/NSS/resolver boundary
+remains required; no probes were disabled. ARM64 cumulative component coverage is
+1,295 regular / 1,294 PIC members. Full linking, DWARF, current world/hardening and
+runtime remain open; the full AMD64 capture also needs refreshing after this
+identity correction. Loader-header support alone does not qualify ARM64 rtld.

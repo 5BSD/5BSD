@@ -8558,3 +8558,12 @@ configuration-specific output directories are not embedded in these rules.
 Existing format-5 architecture/SDK inputs select the component declarations.
 Component comparisons and host smoke checks do not qualify complete ARM64 libc
 linking, full-system boot, DWARF equivalence or performance.
+
+.Pp
+Native ordinary libc general-helper groups select target-specific loader/TLS
+headers and preserve imported source identities through compiler flags.
+Architecture-specific loader headers do not by themselves qualify a complete
+loader. Semaphore, NSS and resolver DTrace contributors retain their joint
+provider-processing requirement; raw contributor compilation does not establish
+final provider or full-system qualification. Existing format-5 architecture/SDK
+inputs select the source declarations.
