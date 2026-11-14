@@ -2539,7 +2539,10 @@ dq_extattr(struct file *fp __unused, int op __unused, int attrnamespace __unused
  * mappings and attachments.  td may be NULL (closef_nothread from the
  * unix-domain garbage collector).  Never waits for the controller: the
  * flock/OFD release vn_closefile owes the open file is an UNLOCK_ALL posted
- * without waiting, and NOTE_CLOSE (CLOSE_WRITE for a writable descriptor)
+ * without waiting.  It does wait, without a signal ending the wait, for a
+ * reply ioctl that is inside mac_file_notify_reply with this file
+ * (dq_object_close_begin): kernel code on the controller's thread, which
+ * the hook's contract bounds.  NOTE_CLOSE (CLOSE_WRITE for a writable descriptor)
  * reaches the identity's other objects (B7) before the id retires.
  */
 static int
@@ -2551,6 +2554,11 @@ dq_close(struct file *fp, struct thread *td)
 	bool live;
 
 	o = dq_fp_object(fp);
+	/*
+	 * Replies telling the policies about this file finish first: they
+	 * hold no reference on it (dq_queue_reply).
+	 */
+	dq_object_close_begin(o);
 	if ((fp->f_flag & (FHASLOCK | FHASOFDLOCK)) != 0) {
 		DQO_LOCK(o);
 		locked = o->o_locked;

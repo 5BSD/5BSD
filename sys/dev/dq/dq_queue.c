@@ -509,6 +509,8 @@ dq_object_rele(struct dq_object *o)
 	KASSERT(o->o_retired, ("dq: freeing an object still on its queue"));
 	KASSERT(o->o_async == 0 && o->o_vmusers == 0,
 	    ("dq: freeing an object with page operations"));
+	KASSERT(o->o_notify == 0,
+	    ("dq: freeing an object a reply is telling the policies about"));
 	q = o->o_queue;
 	cv_destroy(&o->o_async_cv);
 	mtx_destroy(&o->o_mtx);
@@ -1681,6 +1683,16 @@ u_int dq_fail_bind_enfile;
 SYSCTL_UINT(_debug_dq, OID_AUTO, fail_bind_enfile, CTLFLAG_RW,
     &dq_fail_bind_enfile, 0,
     "The next N binds of a RESOLVE FD answer fail as falloc would (ENFILE)");
+/*
+ * The window in which a reply ioctl has released its requester and is
+ * still telling the policies about the requester's file, made wide enough
+ * for a test to close the file in it.
+ */
+static u_int dq_delay_reply_notify;
+SYSCTL_UINT(_debug_dq, OID_AUTO, delay_reply_notify, CTLFLAG_RW,
+    &dq_delay_reply_notify, 0,
+    "The next N replies about an open file sleep one second after the "
+    "requester is released, before the policies are told");
 
 bool
 dq_fault_inject(u_int *counter)
@@ -2038,6 +2050,33 @@ dq_reply_unmint(struct dq_object *robj, uint64_t *objectp)
 		(void)copyout(&zero, objectp, sizeof(zero));
 }
 
+/* The policies have been told about o_fp: let its close go on. */
+static void
+dq_object_notify_done(struct dq_object *o)
+{
+
+	DQO_LOCK(o);
+	KASSERT(o->o_notify > 0, ("dq: object %p not being notified", o));
+	if (--o->o_notify == 0)
+		wakeup(&o->o_notify);
+	DQO_UNLOCK(o);
+}
+
+/*
+ * The first thing the last close does (dq_close): no reply finds the file
+ * from here on, and those that found it are done with it on return.
+ */
+void
+dq_object_close_begin(struct dq_object *o)
+{
+
+	DQO_LOCK(o);
+	o->o_fp = NULL;
+	while (o->o_notify > 0)
+		msleep(&o->o_notify, &o->o_mtx, PVFS, "dqntfy", 0);
+	DQO_UNLOCK(o);
+}
+
 /*
  * A reply: copy the data in before any lock, find the event among those
  * delivered, check the body against the operation, hand it to the waiter.
@@ -2198,27 +2237,41 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	/* Observers and the policies see what the controller said. */
 	dq_observer_fanout_reply(q, r->dr_id, r->dr_errno, dd);
 
-	/* D89: tell the policies, with the object's file held, no lock. */
+	/*
+	 * D89: tell the policies, with no lock held.  The requester is
+	 * running again and may close the file before the policies return.
+	 * A reference taken here would then be the file's last, and the
+	 * close the program made would release nothing: the UNLOCK_ALL of
+	 * its flock and OFD locks would be posted from this ioctl, after
+	 * whatever the program did next.  So the file is not referenced.
+	 * It is kept by o_notify: dq_close clears o_fp and waits for the
+	 * count under o_mtx before it does anything else, so a file found
+	 * here stays whole, and the object with it (the file's reference
+	 * on the object goes after dq_close), until dq_object_notify_done.
+	 * Its count may be 0 by then (that close is waiting); the policies
+	 * must not take a reference on it.
+	 */
 	fp = NULL;
 	if (o != NULL) {
 		DQO_LOCK(o);
-		/*
-		 * o_fp is cleared under o_mtx inside fo_close, so the struct
-		 * file is valid here, but its count may already be 0 (the
-		 * close is running): fhold would raise it to 1 and the fdrop
-		 * below would close the file a second time.
-		 */
 		fp = o->o_fp;
-		if (fp != NULL && !refcount_acquire_if_not_zero(&fp->f_count))
-			fp = NULL;
+		if (fp != NULL)
+			o->o_notify++;
 		DQO_UNLOCK(o);
 	}
 	DQ_UNLOCK(q);
+	/*
+	 * The list reference.  Not the event's last unless it has no file
+	 * to release: a delivered event has a waiter, which takes a SWAP
+	 * answer's file (ev_rswap) under q_mtx before it lets go.
+	 */
 	if (!async)
-		dq_event_rele(ev);	/* the list reference */
+		dq_event_rele(ev);
 	if (fp != NULL) {
+		if (dq_fault_inject(&dq_delay_reply_notify))
+			pause_sbt("dqdely", SBT_1S, 0, 0);
 		mac_file_notify_reply(q->q_cred, fp, op, r->dr_errno, len);
-		fdrop(fp, td);
+		dq_object_notify_done(o);
 	}
 	return (0);
 }
