@@ -879,6 +879,13 @@ interpret:
 	}
 
 	/*
+	 * The queues this process owns die at its exec, whether or not it
+	 * shares its table: the new image is not the program that opened
+	 * them.
+	 */
+	DQRES_OWNER_GONE(p);
+
+	/*
 	 * For security and other reasons, the file descriptor table cannot be
 	 * shared after an exec.
 	 */

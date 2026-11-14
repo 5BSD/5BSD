@@ -944,6 +944,9 @@ struct proc {
 #define	P2_HWT			0x02000000	/* Process is using HWT. */
 #define	P2_PTRACE_LISTEN	0x04000000	/* Stopped ptrace listener. */
 #define	P2_PTRACE_LCONT	0x08000000	/* LISTEN woke on SIGCONT. */
+#define	P2_DQOWNER		0x40000000	/* Has opened a dq(4) queue;
+						   never cleared, not
+						   inherited. */
 
 /* Flags protected by proctree_lock, kept in p_treeflags. */
 #define	P_TREE_ORPHANED		0x00000001	/* Reparented, on orphan list */

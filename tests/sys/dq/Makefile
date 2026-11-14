@@ -99,6 +99,8 @@ TEST_METADATA.dq_served_test+=	is_exclusive="true"
 # Changes the mode of /dev/dq and security.bsd.unprivileged_proc_debug,
 # creates jails: run alone.
 TEST_METADATA.dq_legitimacy_test+=	is_exclusive="true"
+# Counts the queues that exist, sets vfs.aio.enable_unsafe: run alone.
+TEST_METADATA.dq_owner_test+=	is_exclusive="true"
 # Sets vfs.lookup_cap_dotdot: run alone.
 TEST_METADATA.dq_start_test+=	is_exclusive="true"
 # Set kern.chroot_allow_open_directories, mount linprocfs, call acct(2),
@@ -138,11 +140,17 @@ BINDIR.dq_exec_helper=	${TESTSDIR}
 # dq_served_test's Linux program for the O_PATH rows, built by the test.
 ${PACKAGE}FILES+=	dq_opath_linux.c
 
-# dq_legitimacy_test's exec'd holder of an inherited queue, and its Linux
+# dq_owner_test's exec'd image and its Linux program, built by the test.
+PROGS+=		dq_owner_helper
+SRCS.dq_owner_helper=	dq_owner_helper.c
+MAN.dq_owner_helper=
+BINDIR.dq_owner_helper=	${TESTSDIR}
+${PACKAGE}FILES+=	dq_owner_linux.c
+
+# dq_legitimacy_test's parent of an attach target, and its Linux
 # and 32-bit programs, built by the test.
 PROGS+=		dq_legitimacy_helper
 SRCS.dq_legitimacy_helper=	dq_legitimacy_helper.c
-LIBADD.dq_legitimacy_helper=	dq
 MAN.dq_legitimacy_helper=
 BINDIR.dq_legitimacy_helper=	${TESTSDIR}
 ${PACKAGE}FILES+=	dq_legitimacy_linux.c

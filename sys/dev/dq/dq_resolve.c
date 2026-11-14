@@ -527,6 +527,7 @@ static const struct dqres_ops dq_resolve_ops = {
 	.dro_answer_release = dq_resolve_answer_release,
 	.dro_file_ident = dq_resolve_file_ident,
 	.dro_queue_closed = dq_resolve_queue_closed,
+	.dro_owner_gone = dq_queue_owner_gone,
 	.dro_start = dq_resolve_start,
 	.dro_setattr = dq_resolve_setattr,
 	.dro_target = dq_file_target,

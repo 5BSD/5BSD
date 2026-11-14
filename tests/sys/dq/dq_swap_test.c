@@ -363,11 +363,11 @@ a_refusals(struct sw *x, const struct dq_event *ev,
 	(void)close(sv[1]);
 	(void)close(kq);
 	/*
-	 * The queue itself: the reply ioctl holds a reference to it, so the
-	 * sole-reference rule refuses it before its type is looked at.  Any
+	 * The queue itself is pinned to this process and goes nowhere: the
+	 * transfer policy refuses it before any other rule sees it.  Any
 	 * other device: not a regular file.
 	 */
-	SW_REFUSED(x, ev, x->c.q, 0, EBUSY);
+	SW_REFUSED(x, ev, x->c.q, 0, ENOTCAPABLE);
 	fd = sw_open("/dev/null", O_RDONLY);
 	SW_REFUSED(x, ev, fd, 0, EOPNOTSUPP);
 	(void)close(fd);

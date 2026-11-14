@@ -4,7 +4,13 @@
  *
  * DescriptorQueue: /dev/dq, tunables, tracing and module glue.
  *
- * One open is one queue.  The node is 0600 root:wheel and every open runs
+ * One open is one queue, owned by the process that opened it and pinned
+ * to that process's descriptor table (FPINNED): the descriptor is not
+ * inherited by fork, is gone at exec and cannot be sent, only the opening
+ * process operates the queue, and the queue dies when that process exits,
+ * execs or leaves a table it shares.
+ *
+ * The node is 0600 root:wheel and every open runs
  * priv_check(PRIV_DRIVER), exactly as /dev/oes does (D85): in stage 1a
  * the device permission is the authority; the plane delivery through a
  * provider endpoint is stage 4.  Like OES the device exists only when
@@ -208,6 +214,7 @@ dq_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
     struct thread *td)
 {
 	struct dq_queue *q;
+	struct proc *p;
 	int error;
 
 	if (dq_thread_is_ilp32(td))
@@ -231,6 +238,19 @@ dq_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	 */
 	dq_testopen_bind(td);
 #endif
+	/*
+	 * Every refusal is behind us.  Pin the file before it has a table
+	 * entry: the install that follows the open forces the pinned states
+	 * (_finstall_prop).  The flag is outside FMASK and FCNTLFLAGS, so
+	 * nothing sets or clears it afterwards.  Then mark the process, so
+	 * that it tells us when it goes (DQRES_OWNER_GONE), before the queue
+	 * names it as owner; the mark stays if the open fails below.
+	 */
+	atomic_set_int(&td->td_fpop->f_flag, FPINNED);
+	p = td->td_proc;
+	PROC_LOCK(p);
+	p->p_flag2 |= P2_DQOWNER;
+	PROC_UNLOCK(p);
 	q = dq_queue_create(td, td->td_fpop);
 	error = devfs_set_cdevpriv(q, dq_cdevpriv_dtor);
 	if (error != 0)
@@ -247,6 +267,9 @@ dq_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	error = devfs_get_cdevpriv((void **)&q);
 	if (error != 0)
 		return (error);
+	error = dq_queue_enter(q, curthread);
+	if (error != 0)
+		return (error);
 	return (dq_queue_read(q, uio, ioflag));
 }
 
@@ -261,6 +284,21 @@ dq_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data, int fflag __unused
 	error = devfs_get_cdevpriv((void **)&q);
 	if (error != 0)
 		return (error);
+	error = dq_queue_enter(q, td);
+	if (error != 0)
+		return (error);
+#ifdef INVARIANTS
+	/*
+	 * I17's oracle: whoever operates a queue is its owner, and stays so
+	 * for the call, since the owner goes single-threaded before it
+	 * disowns (dq_queue_owner_gone).
+	 */
+	DQ_LOCK(q);
+	KASSERT(q->q_owner == td->td_proc,
+	    ("dq: queue %p operated by %p, owned by %p", q, td->td_proc,
+	    q->q_owner));
+	DQ_UNLOCK(q);
+#endif
 	switch (cmd) {
 	case DQ_IOC_MINT:
 		return (dq_queue_mint(q, (struct dq_mint_args *)data, td));
@@ -327,6 +365,8 @@ dq_poll(struct cdev *dev __unused, int events, struct thread *td)
 	error = devfs_get_cdevpriv((void **)&q);
 	if (error != 0)
 		return (POLLERR);
+	if (dq_queue_enter(q, td) != 0)
+		return (POLLNVAL);
 	return (dq_queue_poll(q, events, td));
 }
 
@@ -337,6 +377,9 @@ dq_kqfilter(struct cdev *dev __unused, struct knote *kn)
 	int error;
 
 	error = devfs_get_cdevpriv((void **)&q);
+	if (error != 0)
+		return (error);
+	error = dq_queue_enter(q, curthread);
 	if (error != 0)
 		return (error);
 	return (dq_queue_kqfilter(q, kn));

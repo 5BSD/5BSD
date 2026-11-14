@@ -42,6 +42,7 @@
 #include <sys/acct.h>		/* for acct_process() function prototype */
 #include <sys/capsicum.h>
 #include <sys/cap_authority.h>
+#include <sys/dqres.h>
 #include <sys/eventhandler.h>
 #include <sys/exterrvar.h>
 #include <sys/file.h>
@@ -405,6 +406,9 @@ exit1(struct thread *td, int rval, int signo)
 
 	MPASS(p->p_execblock == 0);
 	PROC_UNLOCK(p);
+
+	/* The queues this process owns die with it, before its table goes. */
+	DQRES_OWNER_GONE(p);
 
 #ifdef MAC
 	mac_proc_notify_exit(p);

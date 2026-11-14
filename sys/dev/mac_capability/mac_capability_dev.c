@@ -24,6 +24,7 @@
 #include <sys/sdt.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/filio.h>
@@ -615,6 +616,12 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				if (fde->fde_file != msg->cm_fdset->fds[i]) {
 					FILEDESC_XUNLOCK(fdesc);
 					error = EBADF;
+					goto sendmsg_fd_err;
+				}
+				/* A pinned file goes to no service at all. */
+				if ((fde->fde_file->f_flag & FPINNED) != 0) {
+					FILEDESC_XUNLOCK(fdesc);
+					error = ENOTCAPABLE;
 					goto sendmsg_fd_err;
 				}
 				if (fde->fde_xfer_state == CAP_XFER_NONE &&
@@ -1438,6 +1445,12 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 					fde = &fdesc->fd_ofiles[fdbuf[i]];
 					if (fde->fde_file != files[i]) {
 						error = EBADF;
+						break;
+					}
+					/* As in sendmsg: never a pinned file. */
+					if ((fde->fde_file->f_flag &
+					    FPINNED) != 0) {
+						error = ENOTCAPABLE;
 						break;
 					}
 					if (fde->fde_xfer_state ==

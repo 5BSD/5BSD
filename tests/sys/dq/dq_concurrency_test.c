@@ -486,9 +486,9 @@ struct pd_arg {
 ATF_TC(edeadlk_pdfork);
 ATF_TC_HEAD(edeadlk_pdfork, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "a pdfork(2)ed helper that inherited "
-	    "the queue is refused too: the test is by the queue in the table, "
-	    "not by pid (D16)");
+	atf_tc_set_md_var(tc, "descr", "a helper sharing the controller's "
+	    "descriptor table (pdrfork without RFFDG) is refused too: the "
+	    "test is by the queue in the table, not by pid (D16)");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(edeadlk_pdfork, tc)
@@ -500,24 +500,29 @@ ATF_TC_BODY(edeadlk_pdfork, tc)
 	struct dqt_rr r;
 	uint64_t object;
 	ssize_t n;
-	int fd, oracle, pd, pfd[2], q, reason;
+	int fd, oracle, pd, pfd[2], q, reason, status;
 	pid_t pid;
 
 	dqt_fill(data, sizeof(data), 66);
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	q = dqt_open_queue();
-	/* Let the helper inherit the queue: clear the close-on-fork flag. */
-	ATF_REQUIRE_EQ(0, fcntl(q, F_SETFD, FD_CLOEXEC));
 	ident = calloc(1, sizeof(*ident));
 	ATF_REQUIRE(ident != NULL);
 	dqt_ident_of(oracle, oracle_path, ident, &st, &sfs);
 	dq_policy_default(&pol);
 	ATF_REQUIRE_EQ(0, dq_mint_file(q, ident, &pol, &object, &fd, &reason));
 
+	/*
+	 * No fork child holds the queue (sc-q); the one other process that
+	 * has it in its table is one that shares the table.  It may not
+	 * operate the queue, and it is refused on the queue's objects like
+	 * the controller.  The table is shared: nothing is closed here
+	 * until the helper has reported.
+	 */
 	ATF_REQUIRE_EQ(0, pipe(pfd));
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid != -1);
+	pid = pdrfork(&pd, 0, RFPROC | RFPROCDESC);
+	ATF_REQUIRE_MSG(pid != -1, "pdrfork: %s", strerror(errno));
 	if (pid == 0) {
 		unsigned char buf[16];
 
@@ -526,12 +531,13 @@ ATF_TC_BODY(edeadlk_pdfork, tc)
 		(void)write(pfd[1], &r, sizeof(r));
 		_exit(0);
 	}
-	(void)close(pfd[1]);
 	n = read(pfd[0], &r, sizeof(r));
 	ATF_REQUIRE_EQ((ssize_t)sizeof(r), n);
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EDEADLK, r.err);
+	ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
 	(void)close(pfd[0]);
+	(void)close(pfd[1]);
 	(void)close(pd);
 	free(ident);
 	(void)close(fd);

@@ -171,6 +171,21 @@ static void	filecaps_free_finish(u_long *ioctls);
 static struct pwd *pwd_alloc(void);
 
 /*
+ * PIN: every table entry for a pinned file (FPINNED, set by the
+ * DescriptorQueue device on the file it opens and never cleared) carries
+ * the three locked states, so the file is absent after fork and exec and is
+ * refused on every transfer path.  The states only ever tighten
+ * (sys_capability.c), dup copies them, and _finstall_prop() forces them.
+ */
+#define	FDE_PIN_ASSERT(fde)						\
+	KASSERT(((fde)->fde_file->f_flag & FPINNED) == 0 ||		\
+	    ((fde)->fde_xfer_state == CAP_XFER_NONE &&			\
+	    (fde)->fde_cloexec_state == CAP_CLOEXEC_LOCKED &&		\
+	    (fde)->fde_clofork_state == CAP_CLOFORK_LOCKED),		\
+	    ("%s: pinned file %p without its states", __func__,	\
+	    (fde)->fde_file))
+
+/*
  * Each process has:
  *
  * - An array of open file descriptors (fd_ofiles)
@@ -737,7 +752,8 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_GETFL, &fp);
 		if (error != 0)
 			break;
-		td->td_retval[0] = OFLAGS(fp->f_flag & ~FHASOFDLOCK);
+		td->td_retval[0] = OFLAGS(fp->f_flag &
+		    ~(FHASOFDLOCK | FPINNED));
 		fdrop(fp, td);
 		break;
 
@@ -1272,6 +1288,12 @@ kern_dup(struct thread *td, u_int mode, int flags, int oldd, int newd)
 	    &newfde->fde_xfer_caps, nxioctls);
 	newfde->fde_flags = (oldfde->fde_flags & ~(UF_EXCLOSE | UF_FOCLOSE)) |
 	    fddup_to_fde_flags(flags);
+	/*
+	 * The states came with fde_copy.  The two flags above are rewritten
+	 * from the dup's own, as for any entry; fork and exec act on the
+	 * states.
+	 */
+	FDE_PIN_ASSERT(newfde);
 #ifdef CAPABILITIES
 	seqc_write_end(&newfde->fde_seqc);
 #endif
@@ -2603,6 +2625,7 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
  * Install a file with optional non-default descriptor propagation states.
  * The entry is initialized while the descriptor table remains exclusively
  * locked, so no fork, exec, or transfer can observe default states first.
+ * A pinned file gets the pinned states whatever the caller asked for.
  */
 void
 _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
@@ -2645,6 +2668,13 @@ _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
 		fde->fde_flags |= prop->fip_fde_flags &
 		    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 	}
+	if (__predict_false((fp->f_flag & FPINNED) != 0)) {
+		fde->fde_xfer_state = CAP_XFER_NONE;
+		fde->fde_cloexec_state = CAP_CLOEXEC_LOCKED;
+		fde->fde_clofork_state = CAP_CLOFORK_LOCKED;
+		fde->fde_flags |= UF_EXCLOSE | UF_FOCLOSE;
+	}
+	FDE_PIN_ASSERT(fde);
 	if (fcaps != NULL)
 		filecaps_move(fcaps, &fde->fde_caps);
 	else
@@ -2927,6 +2957,11 @@ fdunshare(struct thread *td)
 	if (refcount_load(&p->p_fd->fd_refcnt) == 1)
 		return;
 
+	/*
+	 * The process leaves a table others keep.  Its queues are pinned to
+	 * that table and the copy omits them: they die here.
+	 */
+	DQRES_OWNER_GONE(p);
 	tmp = fdcopy(p->p_fd, p, false);
 	fdescfree(td);
 	p->p_fd = tmp;
@@ -3129,6 +3164,9 @@ fdcopy_internal(struct filedesc *fdp, struct proc *p1, bool isfork,
 				newfdp->fd_freefile = i;
 			continue;
 		}
+		KASSERT((ofde->fde_file->f_flag & FPINNED) == 0,
+		    ("%s: pinned file %p copied to another table", __func__,
+		    ofde->fde_file));
 		nfde = &newfdp->fd_ofiles[i];
 		*nfde = *ofde;
 		if (fp != NULL)

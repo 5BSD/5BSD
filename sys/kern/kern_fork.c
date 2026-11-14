@@ -428,6 +428,8 @@ fork_norfproc(struct thread *td, int flags)
 		pdtmp = pdinit(td->td_proc->p_pd, false);
 		fdtmp = fdinit();
 		pd_replace(td, pdtmp);	/* carries the binding (D147) */
+		/* The queues this process owns die with its table. */
+		DQRES_OWNER_GONE(td->td_proc);
 		fdescfree(td);
 		p1->p_fd = fdtmp;
 	}

@@ -1378,6 +1378,73 @@ ATF_TC_BODY(channel_send_xfer_none, tc)
 	close(P[1]);
 }
 
+/*
+ * A pinned file (the DescriptorQueue device's, sc-q) goes to no service:
+ * both send sites refuse it before they look at the service, so the
+ * coalition's exemption from CAP_XFER_NONE above does not reach it.
+ */
+#define	XN_PINNED(what, r) do {						\
+	XN_SHOW(what " (queue)", r);					\
+	ATF_CHECK_MSG((r).rv == -1 && (r).err == ENOTCAPABLE,		\
+	    "%s: rv %d errno %d, expected ENOTCAPABLE", what, (r).rv,	\
+	    (r).err);							\
+} while (0)
+
+ATF_TC(channel_send_pinned);
+ATF_TC_HEAD(channel_send_pinned, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a dq(4) queue descriptor is refused ENOTCAPABLE by SENDMSG and "
+	    "CALL to an ordinary service and to the coalition service, "
+	    "which is exempt from CAP_XFER_NONE for other files");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(channel_send_pinned, tc)
+{
+	struct coalition_req_hdr hdr;
+	struct identity_request ireq;
+	struct xn_res r;
+	int P[2], cfd, ifd, q;
+	char rx[16];
+
+	/* Not skips: without the services or the device nothing is pinned. */
+	ATF_REQUIRE_MSG(chan_sysno() >= 0,
+	    "the mac_capability channel service is not loaded");
+	ATF_REQUIRE_MSG(chan_create(P) == 0, "create: %s", strerror(errno));
+	q = open("/dev/dq", O_RDWR);
+	ATF_REQUIRE_MSG(q >= 0, "/dev/dq: %s", strerror(errno));
+
+	r = xn_sendmsg(P[0], "fd", 2, q);
+	XN_PINNED("channel SENDMSG", r);
+	/* Nothing was queued for the peer. */
+	ATF_CHECK(chan_recv_nb(P[1], rx, sizeof(rx), NULL, NULL) == -1);
+
+	ifd = mac_capability_connect("identity");
+	ATF_REQUIRE_MSG(ifd >= 0, "connect identity: %s", strerror(errno));
+	memset(&ireq, 0, sizeof(ireq));
+	ireq.op = IDENTITY_OP_SELF;
+	r = xn_call(ifd, &ireq, sizeof(ireq), q);
+	XN_PINNED("identity CALL", r);
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE_MSG(cfd >= 0, "connect coalition: %s", strerror(errno));
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.op = COALITION_OP_ENLIST;
+	r = xn_call(cfd, &hdr, sizeof(hdr), q);
+	XN_PINNED("coalition CALL", r);
+	r = xn_sendmsg(cfd, &hdr, sizeof(hdr), q);
+	XN_PINNED("coalition SENDMSG", r);
+
+	/* The descriptor is still the caller's and still open. */
+	ATF_CHECK_MSG(fcntl(q, F_GETFL) != -1, "the queue: %s",
+	    strerror(errno));
+	close(cfd);
+	close(ifd);
+	close(q);
+	close(P[0]);
+	close(P[1]);
+}
+
 ATF_TC(fd_payload_sizes);
 ATF_TC_HEAD(fd_payload_sizes, tc)
 {
@@ -1809,6 +1876,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, recv_wait_wakes);
 	ATF_TP_ADD_TC(tp, xfer_once_direct);
 	ATF_TP_ADD_TC(tp, channel_send_xfer_none);
+	ATF_TP_ADD_TC(tp, channel_send_pinned);
 	ATF_TP_ADD_TC(tp, fd_payload_sizes);
 	ATF_TP_ADD_TC(tp, sendmsg_v2_atomic);
 	ATF_TP_ADD_TC(tp, sendmsg_v2_move_lock_paths);
