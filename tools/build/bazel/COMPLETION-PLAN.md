@@ -11,6 +11,22 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+Latest kernel follow-up: full AMD64 R9 passes all 25 expanded tests. Focused
+kernel R10 additionally preserves imported PF built-in source identity from the
+kernel's ../contrib declarations, without changing module source-path policy or
+rewriting ELF output. The strict kernel parity R3 reaches its CTF-only rejection:
+all allocated section contracts (GNU build-ID content reported separately) and
+loader symbol identities match the independent Make control. The maintained
+kernel split-debug check also passes. These are not complete kernel acceptance.
+CTF inspection identifies a missing explicit version-label input: native uses
+ctfconvert's unlabelled default while Make exports its source-derived VERSION.
+The string inventories differ only in that label; exact CTF equality remains
+required until an equivalent-input rebuild proves it. Automatic version-label
+selection, full package refresh and runtime qualification remain open.
+Evidence: /usr/obj/usr/src/bazel-current-kernel-native-r10-20261114/receipt.json
+and /usr/obj/usr/src/bazel-current-kernel-parity-r3-20261114/result.json.
+
+
 ARM64 preparation continues while AMD64 R7 remains the active full build.
 The component cross SDK also passes full verification of 16,193 snapshot files
 and explicit ARM64 target/AMD64 execution bindings; its recorded target seed

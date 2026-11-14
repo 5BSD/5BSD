@@ -8431,3 +8431,13 @@ AMD64 built-in kernel compilation uses BSD's reproducible logical source root
 for source macros and debug paths, independently of the physical execution root.
 These internal changes add no build-bsd flag and do not qualify the production
 Bazel backend or change the Make default.
+
+.Pp
+AMD64 kernel built-ins preserve the logical source identity declared by kernel
+configuration, including imported PF paths through sys/../contrib.
+These are compiler input prefix maps, applied separately from module policy;
+the frontend does not rewrite compiled ELF payloads.
+Focused kernel R10 matches allocated sections and loader symbols against the
+Make control and passes split-debug binding. CTF parity remains rejected because
+the explicit qualification inputs omit Make's source-derived VERSION label.
+No production backend default or frontend option changes with this correction.
