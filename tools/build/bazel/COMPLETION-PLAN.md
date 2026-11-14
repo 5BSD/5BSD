@@ -10,13 +10,13 @@ is not authorized.
 | Gate | Current evidence and remaining work |
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
-| 2. AMD64 parity/configurations | Full R12 passes 30 tests and captures all 450 selected packages, including the compiler-runtime source-identity correction. The subsequent stdio/stdlib diagnostic source-identity correction needs a full package refresh. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 2. AMD64 parity/configurations | Full R13 passes 32 tests and captures all 450 selected packages, including the compiler-runtime and stdio/stdlib source-identity corrections; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
-| 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R12 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
+| 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R13 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
 | 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib additionally match 412 regular/PIC object contracts against a fresh original-Make libc component. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
 
-Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r12-20261114.
+Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r13-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
 Kernel proof: /usr/obj/usr/src/bazel-current-kernel-parity-r5-20261114.
 Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114.
@@ -32,6 +32,21 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+Full AMD64 R13 is terminal passed: all 450 indexed packages, 32 selected tests
+(four executed, 28 cached), including newly selected static/shared libc smoke
+probes. These exercise allocation, sorting, numeric/text conversion, streams,
+regex/locale, mmap/protection, fork/pipe/wait and numeric address lookup; they are
+bounded probes, not the complete libc suites. The hash-verified capture contains
+1,568 files / 653,346,342 bytes, artifact-manifest SHA256
+f286f3f54e409aea51534587a928868b2b938f57059d4bffdf96d42b17469e34.
+All eight gdtoa/stdio/stdlib/string component archives match final focused AMD64
+R4 bytes exactly; retained binding is
+/usr/obj/usr/src/bazel-libc-full-r13-binding-r1-20261114/result.json.
+This refresh includes the diagnostic source-identity correction. VM upgrade
+proof remains bound to R11, and all remaining gates stay open. No host
+installation or combined repository publication was performed.
+
 
 ARM64 floating-point header selection now uses the ABI's actual _fpmath.h,
 arith.h and gd_qnan.h, quad-precision machdep_ldisQ/strtorQ sources and generic
@@ -56,7 +71,7 @@ both CPUs. No object or ELF payload is rewritten. Final evidence is retained in
 The earlier AMD64 preservation R2 checks all 588 affected gdtoa/stdio/stdlib/string
 raw object variants against actual full R12 package payloads, but predates the
 intentional diagnostic-source correction; it is not final byte-preservation
-acceptance. Full R12 likewise predates that correction and needs refresh.
+acceptance. Full R12 likewise predates that correction; R13 subsequently refreshes it.
 These component contracts do not establish full libc archive composition/order,
 DSO linking, DWARF equivalence, current ARM64 world/hardening or runtime.
 Existing build-bsd format-5 SDK/architecture inputs select these source producers;

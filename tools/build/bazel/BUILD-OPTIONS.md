@@ -169,5 +169,7 @@ symbol and relocation contracts for all 412 regular/PIC object variants per CPU.
 Assertion diagnostics use declared logical source identities at compilation.
 The ARM64 reference still uses its recorded older SDK/profile. Final libc archive
 composition/order, shared linking, DWARF, current full world and runtime remain
-open. The source-identity correction postdates full AMD64 R12 and requires a full
-package refresh; earlier byte-preservation evidence is not final acceptance.
+open. The source-identity correction postdates full AMD64 R12; full R13 refreshes all
+450 selected packages and passes 32 tests, including static/shared libc smoke
+probes. Earlier byte-preservation evidence is not final acceptance. The R11
+upgrade VM has not been refreshed to this candidate.
