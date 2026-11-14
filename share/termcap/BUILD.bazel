@@ -4,12 +4,11 @@ load("//tools/build/bazel:bsd_capdb.bzl", "bsd_capability_database")
 [bsd_capability_database(name = "database_" + endian, srcs = ["termcap"],
     output = endian + "/termcap.db", endian = endian,
     compiler = "//usr.bin/cap_mkdb:cap_mkdb_bootstrap",
-    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
-        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runtime_libraries = ["@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"],
     visibility = ["//visibility:public"]) for endian in ["little", "big"]]
 
-config_setting(name = "amd64", constraint_values = ["@platforms//cpu:x86_64"])
-alias(name = "database", actual = select({":amd64": ":database_little"},
+alias(name = "database", actual = select({"//tools/build/bazel/config:target_little_endian": ":database_little"},
     no_match_error = "termcap installation needs an explicit target byte-order mapping"))
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
 bsd_install_file(name = "install_source", src = "termcap", destination = "/usr/share/misc/termcap",

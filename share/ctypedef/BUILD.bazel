@@ -7,7 +7,7 @@ bsd_locale_ctype(
     src = 'C.UTF-8.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.UTF-8",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -17,7 +17,7 @@ bsd_locale_ctype(
     src = 'be_BY.CP1131.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.CP1131",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -27,7 +27,7 @@ bsd_locale_ctype(
     src = 'ca_IT.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-1",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -37,7 +37,7 @@ bsd_locale_ctype(
     src = 'ca_IT.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-15",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -47,7 +47,7 @@ bsd_locale_ctype(
     src = 'el_GR.ISO8859-7.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-7",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -57,7 +57,7 @@ bsd_locale_ctype(
     src = 'en_US.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-1",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -67,7 +67,7 @@ bsd_locale_ctype(
     src = 'en_US.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-15",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -77,7 +77,7 @@ bsd_locale_ctype(
     src = 'en_US.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.US-ASCII",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -87,7 +87,7 @@ bsd_locale_ctype(
     src = 'hi_IN.ISCII-DEV.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISCII-DEV",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -97,7 +97,7 @@ bsd_locale_ctype(
     src = 'hy_AM.ARMSCII-8.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ARMSCII-8",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -107,7 +107,7 @@ bsd_locale_ctype(
     src = 'ja_JP.eucJP.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.SJIS",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -117,7 +117,7 @@ bsd_locale_ctype(
     src = 'ja_JP.eucJP.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.eucJP",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -127,7 +127,7 @@ bsd_locale_ctype(
     src = 'ko_KR.eucKR.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.eucKR",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -137,7 +137,7 @@ bsd_locale_ctype(
     src = 'en_US.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-13",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -147,7 +147,7 @@ bsd_locale_ctype(
     src = 'be_BY.CP1131.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.CP1251",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -157,7 +157,7 @@ bsd_locale_ctype(
     src = 'be_BY.CP1131.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.CP866",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -167,7 +167,7 @@ bsd_locale_ctype(
     src = 'be_BY.CP1131.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-5",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -177,7 +177,7 @@ bsd_locale_ctype(
     src = 'be_BY.CP1131.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.KOI8-R",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -187,7 +187,7 @@ bsd_locale_ctype(
     src = 'en_US.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-2",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -197,7 +197,7 @@ bsd_locale_ctype(
     src = 'en_US.ISO8859-1.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-9",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -207,7 +207,7 @@ bsd_locale_ctype(
     src = 'uk_UA.CP1251.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.CP1251",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -217,7 +217,7 @@ bsd_locale_ctype(
     src = 'uk_UA.CP1251.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-5",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -227,7 +227,7 @@ bsd_locale_ctype(
     src = 'uk_UA.CP1251.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.KOI8-U",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -237,7 +237,7 @@ bsd_locale_ctype(
     src = 'zh_CN.eucCN.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.GB18030",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -247,7 +247,7 @@ bsd_locale_ctype(
     src = 'zh_CN.eucCN.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.GB2312",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -257,7 +257,7 @@ bsd_locale_ctype(
     src = 'zh_CN.eucCN.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.GBK",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -267,7 +267,7 @@ bsd_locale_ctype(
     src = 'zh_CN.eucCN.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.eucCN",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )
@@ -277,7 +277,7 @@ bsd_locale_ctype(
     src = 'zh_TW.Big5.src',
     charmap = "//tools/tools/locale/etc/final-maps:map.Big5",
     widths = "//tools/tools/locale/etc/final-maps:widths.txt",
-    endian = select({"@platforms//cpu:x86_64": "little"}),
+    endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
     localedef = "//usr.bin/localedef:localedef",
     visibility = ["//visibility:public"],
 )

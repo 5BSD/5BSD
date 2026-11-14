@@ -13,6 +13,15 @@ aggregate RSS. Maintained native qualification passes its seven real process
 regressions. This qualifies instrumentation; controlled performance comparisons
 remain open. See [RESOURCE-ACCOUNTING.md](RESOURCE-ACCOUNTING.md).
 
+## Cross-target locale data
+
+Locale/termcap producers share explicit target byte-order mapping and use host
+execution-runtime inputs for generation. All four complete component archives
+match original Make metadata and regular payload bytes on AMD64 and ARM64
+(785 records and 184 regular files each). The full ARM64 world root remains
+incompatible; the current diagnostic and limitations are recorded in
+[COMPLETION-PLAN.md](COMPLETION-PLAN.md). This is not ARM64 runtime acceptance.
+
 ## Independent Make closeout comparison (2026-11-11)
 
 Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass

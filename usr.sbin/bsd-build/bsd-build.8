@@ -2368,6 +2368,11 @@ Each outlined variant has a declared compilation action and archive member
 identity; source metadata preserves member order and logical source filenames.
 The normal architecture and SDK inputs select these producers.
 .Pp
+Locale and termcap databases select explicit target byte order, while their
+generators and runtime libraries use the execution platform.
+Unmapped target byte orders fail analysis instead of inheriting host byte order.
+Full ARM64 world and runtime qualification remain separate requirements.
+.Pp
 Split-debug validation checks ELF identity and symbol policy, debuglink filename
 and CRC. When either file carries a GNU build-ID note, valid matching identities
 are required on both files. Full DWARF semantic equivalence remains a separate
