@@ -14,7 +14,7 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. The 47-program original math suite now builds/installs on both platforms, with all 463 AMD64 ATF bodies passing and complete program ELF metadata matching Make on both platforms. ARM64 math execution remains open. Current five-component crypto/compression builds and crypt test installs also match Make archive/ELF/ABI-map and 188 install metadata records per architecture. ARM64 target execution remains unqualified. Eight selected data/configuration/ATF libraries and 14 installed test programs now match focused Make archive/ELF/map/install contracts (121 metadata records each platform); AMD64 reports 160 passing results and one ASan-only skip. The datagram sysctl case remains VM-only. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. The 47-program original math suite now builds/installs on both platforms, with all 463 AMD64 ATF bodies passing and complete program ELF metadata matching Make on both platforms. ARM64 math execution remains open. Current five-component crypto/compression builds and crypt test installs also match Make archive/ELF/ABI-map and 188 install metadata records per architecture. ARM64 target execution remains unqualified. Eight selected data/configuration/ATF libraries and 14 installed test programs now match focused Make archive/ELF/map/install contracts (121 metadata records each platform); AMD64 reports 160 passing results and one ASan-only skip. The datagram sysctl case remains VM-only. Five device/output libraries, the CSV plugin and two original CAM test programs now match focused Make archive/ELF/install contracts (215 records each platform); AMD64 parsing/formatting/plugin/string checks pass, while live device/I/O and ARM64 execution remain unqualified. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -230,6 +230,59 @@ Existing format-5 target/architecture/test selection covers this batch without
 new CLI, build input, security policy, staging/signing, package or publication
 defaults. The maintained frontend was used for each native run. Make remains
 production/default; all six system gates remain open and BIP stays excluded.
+
+
+### Device libraries and structured output (2026-11-14)
+
+Source declarations now admit ARM64 for libdevinfo, libdevstat, GEOM, CAM,
+libxo production traversal and the original CAM test programs. Existing CSV
+plugin construction/installation is qualified with this group. Review found
+two CAM topology_* test targets pointing to nonexistent topology_test.c. Those
+invalid declarations and their unused import were removed; no original Make
+program was removed or invented. The two actual CAM programs remain installed,
+with only their safe cam_strmatch case selected here. Device/root-sensitive
+cases remain unqualified. GEOM's missing debug-directory ownership declaration
+now uses the existing utility_debug_directories(runtime, /lib), derived from
+its actual original Make package and install-directory policy.
+
+Maintained native runs bazel-device-output-native-{aarch64,amd64}-r1-20261114
+pass with 34/40 unique captured artifacts. ARM64 passes the three explicit host
+Python targets (39 checks); no ARM64 target code executes. AMD64 passes nine
+selected test targets: those host targets, static/shared GEOM topology parsing,
+static/shared libxo formatting, the original safe CAM string case and the CSV
+plugin suite. The latter's five checks load the actual generated plugin, verify
+quoting/newlines/options and inspect declared runtime library resolution. All
+captured report manifests/logs/XML hashes verify; there are no reported skips.
+These parser/format/plugin tests do not establish hardware or disk-I/O behavior.
+
+All fourteen original Make references pass in
+bazel-device-output-make-references-r1-20261114, using 16 CPUs and actual
+production profiles. TESTS is explicitly disabled only for the focused library
+and plugin installs; the direct CAM test component retains it enabled. Both
+platforms match five archive orders/symbol inventories, five library ELF
+metadata/hardening/import/export/library-order contracts, CSV plugin SONAME and
+ELF contracts, and both original installed CAM binary ELF contracts. Of 21
+static object contracts, 19 match exactly and two differ only in diagnostic
+/usr/src string prefixes; raw artifacts remain retained, with no normalization.
+
+Full inventories, ownership/numeric IDs, modes, tags, flags, headers, manuals,
+links and noncompiled payloads match: 215 installation metadata records per
+platform across seven components. Compiled/debug byte discrepancies remain
+recorded; full code/DWARF, device access, real storage I/O, complete tests and
+ARM64 execution remain open. Evidence under /usr/obj/usr/src:
+
+- bazel-device-output-parity-{aarch64,amd64}-r1-20261114
+- bazel-device-output-{objects,literals}-{aarch64,amd64}-r1-20261114
+- bazel-csv-plugin-parity-{aarch64,amd64}-r1-20261114
+- bazel-device-output-install-parity-{aarch64,amd64}-r1-20261114
+- bazel-cam-program-parity-{aarch64,amd64}-r1-20261114
+- bazel-device-output-review-r1-20261114 (Make include closures, original CAM
+  inventory, removed invalid declarations, report hashes and frontend review).
+
+The existing maintained format-5 frontend selects the corrected source rules
+and package metadata. No new CLI, security/build-input policy, staging/signing
+or publication default. Make remains production/default, all six system gates
+remain open, and BIP stays excluded. No host installation or reboot.
 
 ## Configuration completion checklist
 

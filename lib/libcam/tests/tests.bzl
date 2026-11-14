@@ -7,7 +7,10 @@ load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive"
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 load("//lib/libc:test_policy.bzl", "libc_test_copts")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _DIRECTORY = "/usr/tests/lib/libcam"
 _PROGRAMS = ['libcam_test', 'cam_test']
 

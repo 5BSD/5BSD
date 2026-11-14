@@ -398,3 +398,23 @@ case requires a separate supported profile. ARM64 executes no target code.
 Full DWARF, sanitizer/configuration, installed-system and ARM64 runtime gates
 remain open. Existing format-5 frontend targets cover these selections;
 Make remains production/default.
+
+
+## Device and structured-output checkpoint
+
+ARM64 declarations now admit libdevinfo, libdevstat, GEOM, CAM, libxo production
+traversal and the two original CAM test programs. The existing CSV plugin is
+qualified in the same batch. Two invalid CAM topology_* targets referenced a
+nonexistent source file and were removed; the original Make CAM programs remain.
+GEOM's debug-directory ownership now uses utility_debug_directories(runtime,
+/lib), matching its original package/install policy.
+
+Both platforms match five archive member orders/symbol inventories, library
+and CSV-plugin ELF metadata/hardening/import/library-order contracts, both
+installed CAM program ELF contracts and 215 install metadata records. Nineteen
+of 21 static object contracts match exactly; the other two differ only in
+source-path diagnostic strings. Raw code/debug discrepancies remain retained.
+AMD64 formatting and topology parser static/shared checks, the original safe
+CAM string case and all five actual CSV-plugin checks pass. Those tests do not
+qualify device access or disk I/O. ARM64 executes no target code; device/root
+CAM cases, full DWARF/configurations and system gates remain open.
