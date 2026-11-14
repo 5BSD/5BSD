@@ -7,7 +7,7 @@ load("@bazel_skylib//lib:selects.bzl", "selects")
 config_setting(name = "amd64", constraint_values = ["@platforms//cpu:x86_64"])
 config_setting(name = "aarch64", constraint_values = ["@platforms//cpu:aarch64"])
 selects.config_setting_group(name = "amd64_machdep", match_all = [":amd64", "//tools/build/bazel/config:machdep_optimizations_enabled"], visibility = ["//lib/libc:__pkg__"])
-selects.config_setting_group(name = "aarch64_machdep", match_all = [":aarch64", "//tools/build/bazel/config:machdep_optimizations_enabled"])
+selects.config_setting_group(name = "aarch64_machdep", match_all = [":aarch64", "//tools/build/bazel/config:machdep_optimizations_enabled"], visibility = ["//lib/libc:__pkg__"])
 _PLATFORM = ["@platforms//os:freebsd"] + select({
     "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
     "//conditions:default": ["@platforms//:incompatible"],

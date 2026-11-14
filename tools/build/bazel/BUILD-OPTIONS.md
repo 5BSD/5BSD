@@ -249,3 +249,20 @@ the bootstrap transition, not a replacement for the frontend architecture input.
 Other provider consumers still require their own cross qualification. Relocatable
 DOF validation checks architecture-specific relocations, hidden function bindings,
 function bounds and actual patch bytes; it does not prove registration or firing.
+
+### Libc composition across architectures
+
+The native archive recipe selects architecture-owned context, syscall,
+long-double and optimized-string order while sharing portable lists. ARM64 uses
+its actual symbol map and omits the AMD64-only libsys map. Static/PIC source
+membership and order are checked independently; optimized and portable strings
+retain separate selections. Debug malloc remains selectable and keeps assertions.
+Its source aliases use declared execution paths and physical header contexts so
+assertion filenames do not depend on Bazel configuration directories.
+
+Final libc archive/shared construction and core library debug/install output now
+support the ARM64 component profile. Public/nonshared/NOSSP interfaces, the current
+SDK/hardening profile and normal ARM64 runtime still require qualification.
+An older reference drti must be refreshed explicitly; a metadata match does not
+permit ignoring its constructor code difference. The six-gate ledger retains
+these distinctions and Make remains production/default.

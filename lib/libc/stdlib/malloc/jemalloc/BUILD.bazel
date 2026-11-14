@@ -2,6 +2,7 @@
 load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("//lib/libc:platforms.bzl", "LIBC_PORTABLE_PLATFORMS")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # Match the maintained SOURCE_ALIAS inputs before compilation, preserving archive
 # member identity and avoiding basename collisions without renaming ELF outputs.
@@ -10,7 +11,7 @@ _JEMALLOC_OBJECTS_SOURCES = ['//contrib/jemalloc:src/jemalloc.c', '//contrib/jem
 [copy_file(name = "source_alias_" + src.split(":")[-1].split("/")[-1], src = src,
     out = "jemalloc_" + src.split(":")[-1].split("/")[-1], allow_symlink = True) for src in _JEMALLOC_OBJECTS_SOURCES]
 
-cc_library(features = LIBC_VARIANT_FEATURES, name = "platform_headers", hdrs = glob(["include/**/*.h"]), strip_include_prefix = "include")
+bsd_source_headers(name = "platform_headers", hdrs = glob(["include/**/*.h"]), includes = ["include"])
 cc_library(
     features = LIBC_VARIANT_FEATURES,
     name = "jemalloc_objects",
@@ -20,7 +21,18 @@ cc_library(
         select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:malloc_production_enabled": ["MALLOC_PRODUCTION"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:jemalloc_lg_vaddr_wide_enabled": ["_USE_LG_VADDR_WIDE"], "//conditions:default": []}),
-    copts = ["-ftls-model=initial-exec"],
+    # Make compiles SOURCE_ALIAS copies by basename. Use declared output paths
+    # for those aliases and physical header roots for assertion identities;
+    # neither configuration-specific bazel-out nor virtual-include paths leak.
+    copts = ["-ftls-model=initial-exec"] + [
+        "-ffile-prefix-map=" + prefix + directory + "/=/usr/src/" + directory + "/"
+        for prefix in ["", "./"]
+        for directory in ["contrib/jemalloc/include", "lib/libc/stdlib/malloc/jemalloc/include"]
+    ] + [
+        "-ffile-prefix-map=" + prefix + "$(execpath :source_alias_" + src.split(":")[-1].split("/")[-1] + ")=jemalloc_" + src.split(":")[-1].split("/")[-1]
+        for prefix in ["", "./"]
+        for src in _JEMALLOC_OBJECTS_SOURCES
+    ],
     linkstatic = True,
     target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],

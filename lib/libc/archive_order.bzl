@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Source-owned amd64 libc archive composition, independent of compile groups.
+"""Source-owned architecture-selected libc archive composition, independent of compile groups.
 
 The ordering recipe is native build input, not an installed-artifact inventory.
 Keep conditional sections in source recipe order. Archive analysis requires every
 selected compiler object exactly once and rejects stale or ambiguous identities.
 No Make evaluation or reference archive is used by a Bazel build.
 """
-_BEFORE_ICONV = [
-    "machdep_ldisx.o",
+_BEFORE_ICONV = select({"@platforms//cpu:aarch64": ['machdep_ldisQ.o'], "//conditions:default": ['machdep_ldisx.o']}) + [
     "libc_start1.o",
     "bt_close.o",
     "bt_conv.o",
@@ -223,22 +222,40 @@ _BEFORE_ICONV = [
     "vis.o",
     "cancelpoints_sem.o",
     "cancelpoints_sem_new.o",
-    "_setjmp.o",
-    "setjmp.o",
-    "sigsetjmp.o",
-    "fabs.o",
-    "infinity.o",
-    "ldexp.o",
-    "makecontext.o",
-    "signalcontext.o",
-    "flt_rounds.o",
-    "fpgetmask.o",
-    "fpsetmask.o",
-    "fpgetprec.o",
-    "fpsetprec.o",
-    "fpgetround.o",
-    "fpsetround.o",
-    "fpgetsticky.o",
+] + select({
+    "@platforms//cpu:aarch64": [
+        "_ctx_start.o",
+        "fabs.o",
+        "flt_rounds.o",
+        "fpgetmask.o",
+        "fpsetmask.o",
+        "getcontextx.o",
+        "infinity.o",
+        "ldexp.o",
+        "makecontext.o",
+        "_setjmp.o",
+        "setjmp.o",
+        "sigsetjmp.o",
+    ],
+    "//conditions:default": [
+        "_setjmp.o",
+        "setjmp.o",
+        "sigsetjmp.o",
+        "fabs.o",
+        "infinity.o",
+        "ldexp.o",
+        "makecontext.o",
+        "signalcontext.o",
+        "flt_rounds.o",
+        "fpgetmask.o",
+        "fpsetmask.o",
+        "fpgetprec.o",
+        "fpsetprec.o",
+        "fpgetround.o",
+        "fpsetround.o",
+        "fpgetsticky.o",
+    ],
+}) + [
     "gmon.o",
     "mcount.o",
 ]
@@ -592,16 +609,26 @@ _BEFORE_NIS = [
     "strptime.o",
     "timelocal.o",
     "time32.o",
-    "amd64_get_fsbase.o",
-    "amd64_get_gsbase.o",
-    "amd64_set_fsbase.o",
-    "amd64_set_gsbase.o",
-    "amd64_set_tlsbase.o",
-    "rfork_thread.o",
-    "pdrfork_thread.o",
-    "__vdso_gettc.o",
-    "pkru.o",
-    "sched_getcpu_x86.o",
+] + select({
+    "@platforms//cpu:aarch64": [
+        "__vdso_gettc.o",
+        "pdrfork_thread_gen.o",
+        "rfork_thread_gen.o",
+        "sched_getcpu_gen.o",
+    ],
+    "//conditions:default": [
+        "amd64_get_fsbase.o",
+        "amd64_get_gsbase.o",
+        "amd64_set_fsbase.o",
+        "amd64_set_gsbase.o",
+        "amd64_set_tlsbase.o",
+        "rfork_thread.o",
+        "pdrfork_thread.o",
+        "__vdso_gettc.o",
+        "pkru.o",
+        "sched_getcpu_x86.o",
+    ],
+}) + [
     "clock_gettime.o",
     "gettimeofday.o",
     "__vdso_gettimeofday.o",
@@ -610,9 +637,7 @@ _BEFORE_NIS = [
     "getpagesize.o",
     "getpagesizes.o",
     "libsys_sigwait.o",
-    "vfork.o",
-    "cerror.o",
-    "getcontext.o",
+] + select({"@platforms//cpu:aarch64": ['cerror.o'], "//conditions:default": []}) + ["vfork.o"] + select({"@platforms//cpu:aarch64": [], "//conditions:default": ['cerror.o', 'getcontext.o']}) + [
     "syscall.o",
     "_exit.o",
     "link.o",
@@ -846,6 +871,7 @@ _BEFORE_NIS = [
     "extattr_delete_link.o",
     "__mac_execve.o",
     "sigreturn.o",
+] + select({"@platforms//cpu:aarch64": ['getcontext.o'], "//conditions:default": []}) + [
     "freebsd13_swapoff.o",
     "__acl_get_link.o",
     "__acl_set_link.o",
@@ -1218,8 +1244,7 @@ _BEFORE_NIS = [
     "xdr_reference.o",
     "xdr_sizeof.o",
     "xdr_stdio.o",
-    "getcontextx.o",
-]
+] + select({"@platforms//cpu:aarch64": [], "//conditions:default": ['getcontextx.o']})
 
 _NIS = [
     "xdryp.o",
@@ -1266,12 +1291,48 @@ _MACHINE_SOURCES = [
     "timingsafe_memcmp.o",
 ]
 
+# aarch64/string source recipe order: native routines, AOR functions, MOPS.
+_AARCH64_MACHINE_SOURCES = [
+    "memchr.o",
+    "strcmp.o",
+    "strspn.o",
+    "strcspn.o",
+    "strpbrk.o",
+    "strsep.o",
+    "strcat.o",
+    "strlcpy.o",
+    "strncmp.o",
+    "memccpy.o",
+    "strncat.o",
+    "strlcat.o",
+    "strlen.o",
+    "timingsafe_bcmp.o",
+    "timingsafe_memcmp.o",
+    "bcopy.o",
+    "bzero.o",
+    "memcpy.o",
+    "memcpy_resolver.o",
+    "memmove_resolver.o",
+    "memset.o",
+    "memset_resolver.o",
+    "memset_zva64.o",
+    "memcmp.o",
+    "memmove.o",
+    "memrchr.o",
+    "stpcpy.o",
+    "strchr.o",
+    "strchrnul.o",
+    "strcpy.o",
+    "strnlen.o",
+    "strrchr.o",
+    "memcpy-mops.o",
+    "memmove-mops.o",
+    "memset-mops.o",
+]
+
+_PORTABLE_PREFIX = ["_hdtoa.o", "_hldtoa.o", "_ldtoa.o", "glue.o"] + select({"@platforms//cpu:aarch64": ['gdtoa_strtorQ.o'], "//conditions:default": ['gdtoa_strtorx.o']})
+
 _PORTABLE_SOURCES = [
-    "_hdtoa.o",
-    "_hldtoa.o",
-    "_ldtoa.o",
-    "glue.o",
-    "gdtoa_strtorx.o",
     "gdtoa_dmisc.o",
     "gdtoa_dtoa.o",
     "gdtoa_gdtoa.o",
@@ -1538,8 +1599,11 @@ _ICONV_SETTING = "//tools/build/bazel/config:iconv_enabled"
 _COMMON = (_BEFORE_ICONV + select({_ICONV_SETTING: _ICONV, "//conditions:default": []}) +
     _BEFORE_CONVERSIONS + select({_ICONV_SETTING: _CONVERSIONS_ICONV, "//conditions:default": _CONVERSIONS_PORTABLE}) +
     _BEFORE_NIS + select({"//tools/build/bazel/config:nis_enabled": _NIS, "//conditions:default": []}) + _AFTER_NIS +
-    select({"//tools/build/bazel/config:machdep_optimizations_enabled":
-        _MACHINE_SOURCES + [source for source in _PORTABLE_SOURCES if source not in _MACHINE_SOURCES],
+    select({"//lib/libc/string:amd64_machdep": _MACHINE_SOURCES,
+        "//lib/libc/string:aarch64_machdep": _AARCH64_MACHINE_SOURCES,
+        "//conditions:default": []}) + _PORTABLE_PREFIX +
+    select({"//lib/libc/string:amd64_machdep": [source for source in _PORTABLE_SOURCES if source not in _MACHINE_SOURCES],
+        "//lib/libc/string:aarch64_machdep": [source for source in _PORTABLE_SOURCES if source not in _AARCH64_MACHINE_SOURCES],
         "//conditions:default": _PORTABLE_SOURCES}) +
     select({"//tools/build/bazel/config:dtrace_enabled": ["nameres_provider.o"], "//conditions:default": []}))
 STATIC_MEMBER_ORDER = _COMMON + _STATIC_COMMON + select({_ICONV_SETTING: _STATIC_ICONV, "//conditions:default": []})

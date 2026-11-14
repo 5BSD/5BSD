@@ -14,7 +14,7 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib match 412 regular/PIC object contracts, context/jump routines match 24, optimized strings match 188, and portable strings match 174 under explicit MACHDEP_OPTIMIZATIONS=no. CSU/syscall selections add 1,057 contracts; the default validated libc groups now cover 1,392 regular and 1,380 PIC members against the 1,450/1,438-member Make component reference. Full libc remains incomplete. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | CSU/compiler-runtime/libsys and libc component evidence remains retained. Complete native libc static/PIC archives and DSO now build with architecture-owned order/maps: optimized production malloc has 1,450/1,438 members, portable strings/debug malloc has 1,443/1,431, all in exact Make order. Every non-provider member matches allocated bytes and relocations; shared metadata passes. Fresh native drti matches fresh original Make and seven core libc install records/debug binding pass. Full archive reports remain review-required for path-derived provider identities and the older reference drti; public/nonshared/NOSSP interfaces, full DWARF/current ARM64 SDK/hardening, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,61 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+ARM64 libc now builds final static/PIC archives and libc.so.7 using source-owned
+architecture selections in the common archive recipe and actual ARM64 version
+maps. Architecture-specific context, syscall, long-double and optimized-string
+order stays separate; common member lists are retained once. The archive rule
+still rejects missing, extra or duplicate object identities. The library-owned
+installation uses the no-SSP linker script selected by original Make on ARM64;
+public CcInfo/nonshared/NOSSP linkage remains a separate pending boundary.
+
+Optimized production ARM64 native R3 and portable-string/debug-malloc R2 pass
+construction. Independent Make comparisons establish exact member order and
+allocated/relocation contracts for every non-provider member: 1,450 regular /
+1,438 PIC for optimized production and 1,443/1,431 for portable/debug. Both DSOs
+pass the maintained shared metadata comparison, including SONAME, ordered NEEDED,
+versioned imports/exports, version requirements and hardening. These are older-seed
+component profiles; differing shared sections, full DWARF and runtime are not
+waived. Full archive review reports retain provider bytes and path-derived alias
+IDs as differences, rather than claiming raw byte equality.
+
+The original ARM64 reference embedded an older staged drti.o: it lacks the
+current dof_registered constructor/cleanup guard. A fresh independent original
+Make drti build passes; the captured native drti matches its complete allocated,
+external-symbol and relocation contract. Fresh reference-provider composition
+with that current object is still required. Do not relabel the existing whole
+archive reports passed. Current evidence:
+bazel-libc-compose-arm64-review-r4-20261114,
+bazel-libc-compose-arm64-portable-review-r2-20261114,
+bazel-arm64-drti-make-r1-20261114 and
+bazel-libc-compose-arm64-install-review-r2-20261114.
+The latter passes debuglink CRC/GNU build-ID binding and Make metadata/content
+checks for five core files, libxnet symlink and the debug directory. It is not
+all libc catalogs, manuals, configuration, NOSSP or public-client linking.
+
+Portable/debug comparison exposed allocator assertion identities containing
+virtual include paths. Existing source-only CcInfo header roots now preserve
+physical declared header identities; compiler prefix maps use declared source
+alias execpaths and logical BSD source paths. No bazel-out configuration path or
+compiled payload is hardcoded or rewritten. After correction, all non-provider
+portable/debug allocator bytes/relocations match. Earlier portable review R1
+retains the observed mismatches. The initial core-install request was rejected
+for the AMD64-only linker-script constraint; native R3 includes the actual script
+and passes, rather than omitting it from the payload.
+
+AMD64 native R2 passes all five selected DTrace/archive/static/shared runtime
+tests. Independent Make review R1 establishes 1,455/1,443 exact member order,
+non-provider allocated/relocation equality and shared metadata; raw provider
+alias/DOF differences remain retained for review. The ordering-only change was
+also proven byte-preserving before the allocator header identity correction
+(bazel-libc-compose-amd64-preservation-r1-20261114). Full R15 predates these
+changes and needs refresh; no new full-system or VM claim is made.
+Existing build-bsd format-5 architecture/SDK and malloc/optimization inputs select
+the native producers. No C CLI, production backend or publication default change
+is required. Documentation accompanies the source rules. Make remains production/
+default; all six gates stay open, with no host installation or reboot.
+
 
 ARM64 libc joint NSS/resolver/semaphore DTrace generation now passes with tracing
 retained. The source-built generator still executes with the host ABI; a declared

@@ -8583,3 +8583,15 @@ and instruction handling, while drti uses the target C/C++ toolchain.
 Relocatable provider checks validate actual function bindings and patch bytes;
 they do not establish provider registration, live firing or full ARM64 runtime.
 Existing format-5 architecture/SDK inputs select these declarations.
+
+.Pp
+Native libc archive order and version maps select architecture-owned inputs for
+AMD64 and ARM64 while retaining common source lists.
+Optimized and portable string configurations retain their own archive order;
+debug allocator assertions preserve source identities through declared source
+aliases and physical header roots.
+Core ARM64 library debug/install artifacts include its actual no-SSP linker
+script. Component construction and debug-file binding do not establish complete
+public/nonshared/NOSSP linkage, current ARM64 world or runtime qualification.
+Existing format-5 architecture/SDK and allocator/optimization inputs select these
+rules; Make remains the production backend.

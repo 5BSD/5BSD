@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("//lib/libc:platforms.bzl", "LIBC_PORTABLE_PLATFORMS")
 exports_files(["Versions.def"], visibility = ["//lib/libthread_db:__pkg__", "//lib/libgssapi:__pkg__", "//lib/librpcsec_gss:__pkg__", "//lib/libmp:__pkg__", "//lib/libstdthreads:__pkg__", "//lib/libuvmem:__pkg__", "//lib/libdl:__pkg__", "//lib/libulog:__pkg__", "//libexec/rtld-elf:__pkg__", "//lib/libsys:__pkg__", "//lib/libusb:__pkg__", "//lib/libthr:__pkg__", "//lib/libmixer:__pkg__", "//lib/msun:__pkg__", "//lib/libmd:__pkg__", "//lib/libutil:__pkg__", "//lib/libprocstat:__pkg__", "//lib/librt:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
@@ -66,7 +67,7 @@ _TRACE_LINK = select({"//tools/build/bazel/config:dtrace_enabled": [":traced", "
 bsd_component_archive(name = "static_archive", groups = COMMON_GROUPS + STATIC_GROUPS + _TRACE_LINK, member_order = STATIC_MEMBER_ORDER, visibility = ["//visibility:public"])
 bsd_component_archive(name = "shared_objects_archive", groups = COMMON_GROUPS + SHARED_GROUPS + _TRACE_LINK, pic = True, member_order = SHARED_MEMBER_ORDER)
 bsd_configured_version_map(name = "version_map",
-    symbol_maps = ["//lib/libc/amd64:Symbol.map"] + ["//lib/libc/csu:Symbol.map"] + ["//lib/libc/db:Symbol.map"] + ["//lib/libc/compat-43:Symbol.map"] + ["//lib/libc/gdtoa:Symbol.map"] + ["//lib/libc/gen:Symbol.map"] + ["//lib/libc/gmon:Symbol.map"] + select({"//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/inet:Symbol.map"] + ["//lib/libc/locale:Symbol.map"] + ["//lib/libc/nameser:Symbol.map"] + ["//lib/libc/net:Symbol.map"] + select({"//tools/build/bazel/config:hesiod_enabled": ["//lib/libc/net:Symbol.hesiod.map"], "//conditions:default": []}) + ["//lib/libc/nls:Symbol.map"] + ["//lib/libc/posix1e:Symbol.map"] + ["//lib/libc/regex:Symbol.map"] + ["//lib/libc/resolv:Symbol.map"] + ["//lib/libc/stdbit:Symbol.map"] + ["//lib/libc/stdio:Symbol.map"] + ["//lib/libc/stdlib:Symbol.map"] + ["//lib/libc/stdlib/malloc:Symbol.map"] + ["//lib/libc/stdtime:Symbol.map"] + ["//lib/libc/string:Symbol.map"] + ["//lib/libsys:syscalls.map"] + ["//lib/libsys:Symbol.sys.map"] + ["//lib/libsys/amd64:Symbol.sys.map"] + ["//lib/libc/sys:Symbol.map"] + ["//lib/libc/secure:Symbol.map"] + ["//lib/libc/rpc:Symbol.map"] + ["//lib/libc/uuid:Symbol.map"] + ["//lib/libc/xdr:Symbol.map"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libc/yp:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/capability:Symbol.map"],
+    symbol_maps = select({"@platforms//cpu:aarch64": ["//lib/libc/aarch64:Symbol.map"], "//conditions:default": ["//lib/libc/amd64:Symbol.map"]}) + ["//lib/libc/csu:Symbol.map"] + ["//lib/libc/db:Symbol.map"] + ["//lib/libc/compat-43:Symbol.map"] + ["//lib/libc/gdtoa:Symbol.map"] + ["//lib/libc/gen:Symbol.map"] + ["//lib/libc/gmon:Symbol.map"] + select({"//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/inet:Symbol.map"] + ["//lib/libc/locale:Symbol.map"] + ["//lib/libc/nameser:Symbol.map"] + ["//lib/libc/net:Symbol.map"] + select({"//tools/build/bazel/config:hesiod_enabled": ["//lib/libc/net:Symbol.hesiod.map"], "//conditions:default": []}) + ["//lib/libc/nls:Symbol.map"] + ["//lib/libc/posix1e:Symbol.map"] + ["//lib/libc/regex:Symbol.map"] + ["//lib/libc/resolv:Symbol.map"] + ["//lib/libc/stdbit:Symbol.map"] + ["//lib/libc/stdio:Symbol.map"] + ["//lib/libc/stdlib:Symbol.map"] + ["//lib/libc/stdlib/malloc:Symbol.map"] + ["//lib/libc/stdtime:Symbol.map"] + ["//lib/libc/string:Symbol.map"] + ["//lib/libsys:syscalls.map"] + ["//lib/libsys:Symbol.sys.map"] + select({"@platforms//cpu:aarch64": [], "//conditions:default": ["//lib/libsys/amd64:Symbol.sys.map"]}) + ["//lib/libc/sys:Symbol.map"] + ["//lib/libc/secure:Symbol.map"] + ["//lib/libc/rpc:Symbol.map"] + ["//lib/libc/uuid:Symbol.map"] + ["//lib/libc/xdr:Symbol.map"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libc/yp:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/capability:Symbol.map"],
     versions = "Versions.def", generator = "//share/mk:version_gen.awk",
     cpp_flags = ["-P", "-nostdinc", "-undef"] + select({"//tools/build/bazel/config:detect_tz_changes_enabled": ["-DDETECT_TZ_CHANGES"], "//conditions:default": []}),
     compiler = "@bsd_sdk//toolchain:bin/clang", compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
@@ -84,7 +85,7 @@ cc_shared_library(name = "c_shared", deps = [":shared_link_objects"],
     user_link_flags = ["-nodefaultlibs", "-Wl,--auxiliary,libsys.so.7", "-Wl,-soname,libc.so.7",
         "-Wl,--version-script=$(location :version_map),--no-undefined-version",
         "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//visibility:public"])
 
 load("@rules_cc//cc:defs.bzl", "cc_binary")
@@ -125,7 +126,7 @@ cc_library(features = LIBC_VARIANT_FEATURES, name = "shared_link_interface", dep
     visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_template.bzl", libc_link_template = "bsd_template")
 libc_link_template(name = "linker_script", template = "libc_nossp.ldscript", output = "libc.ld",
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     substitutions = {"@@SHLIB@@": "/lib/libc.so.7", "@@LIBDIR@@": "/usr/lib"})
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
 bsd_install_file(name = "linker_script_install", src = ":linker_script", destination = "/usr/lib/libc.so",
