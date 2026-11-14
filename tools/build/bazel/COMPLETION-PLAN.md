@@ -11,10 +11,10 @@ is not authorized.
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
 | 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
-| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; ARM64 is running. Final native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
+| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK and native comparisons remain pending. Full loader/hardening, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Full loader/hardening, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -55,7 +55,7 @@ aliases, escapes, cycles and post-copy changes. Actual AMD64 R12 and ARM64 R8 ma
 files and 8,341/16,677 final copied-source bindings. ELF checks confirm host
 compiler/native libc/drti machine 62, ARM64 target libc/drti machine 183 and
 execution libc machine 62. Evidence: bazel-current-sdk-refresh-r1-20261114.
-The copy helper/tests/manual are committed as 5074a0933b1. The fresh AMD64 SDK/loader run passes all four selected test targets (7 compiler, 29 SDK and 3 symbol-visibility Python checks, plus one ATF case), with all captured report hashes verified and 82 output files. ARM64 qualification is running; this is not native bootstrap or filesystem isolation. Candidate review: bazel-sdk-copy-binding-candidate-r3-20261114.
+The copy helper/tests/manual are committed as 5074a0933b1. The fresh AMD64 SDK/loader run passes all four selected test targets (7 compiler, 29 SDK and 3 symbol-visibility Python checks, plus one ATF case), with all captured report hashes verified and 82 output files. The fresh ARM64 qualification also passes all three host-artifact targets (39 Python checks) and captures 75 files; this is not native bootstrap or filesystem isolation. Candidate review: bazel-sdk-copy-binding-candidate-r3-20261114.
 
 The loader declarations now select actual ARM64 sources/flags and target-aware
 host DTrace generation. Review of the original Make provider recipe found that
@@ -94,8 +94,9 @@ both programs and all 13 original cases, preserving root and cleanup metadata.
 Only get_invalid_base_descriptor is selected for ordinary host execution; the
 root cases remain explicit manual/exclusive VM tests. The fresh AMD64 run builds both programs and their partial install archive and passes that one host case. The other 12 cases are declared, not executed by this run. The partial contribution
 does not replace the complete kern Kyuafile or claim full test-suite installation.
-Native compilation/parity/execution remain pending. ARM64 also needs libkvm and
-libjail producer support. Evidence: bazel-kernel-tests-gap-review-r1-20261114 and
+Both AMD64 programs compile; corrected link-order/ELF metadata parity and the safe host case now pass;
+execution of the 12 root cases remains pending. ARM64 also needs libthr, libelf, libkvm, libjail
+and ATF producer support. Evidence: bazel-kernel-tests-gap-review-r1-20261114 and
 bazel-jaildesc-native-candidate-r1-20261114. A fresh maintained ARM64 Make traversal
 with tests enabled discovers 2,094 directories; all 2,094 detailed metadata
 queries pass, with zero failed components. This is a review inventory, not a
@@ -7542,7 +7543,68 @@ loader run is live. Its source-owned architecture selections match all 60 ordere
 objects in the actual Make traversal, including the generic `_umtx_op_err.c`
 wrapper and no AMD64 `thr_machdep.c`. Evidence:
 `bazel-arm64-thr-candidate-r2-20261114`. This is an unapplied declaration review,
-not a successful native build. The independent ARM64 libthr Make install
-reference is running. Runtime, debug/provider parity, installed tests and the
+not a successful native build. The independent ARM64 and AMD64 libthr Make install references pass. Independent ARM64 libelf, libkvm, libjail and ATF references also pass; the portable library declarations remain staged outside the source tree until the loader run and descriptor link-order rerun complete. Runtime, debug/provider parity, installed tests and the
 remaining complete-world gates are still required. No frontend input/default,
 signing or publication requirement changes in this checkpoint.
+
+Descriptor follow-up caught a genuine DT_NEEDED order mismatch against both
+current original Make programs: ATF must precede kvm/pthread or jail, then libc.
+The source-owned link sequence is corrected; a fresh native rerun and exact
+metadata comparison remain required. Earlier build/host-test success is not
+reclassified as link parity. Evidence:
+`bazel-current-descriptor-amd64-parity-r1-20261114`. This unrelated package edit
+does not change the selected inputs of the live ARM64 loader run. No frontend
+input/default or backend-target interface changes are required.
+
+The descriptor link-order rerun request is prepared at
+`bazel-descriptor-link-order-request-amd64-r1-20261114`. The maintained frontend
+correctly rejects a concurrent invocation with its build-lock busy error; that
+attempt ran no qualification. Retry after the live ARM64 loader job terminates.
+The next source changes remain staged in
+`bazel-arm64-thr-candidate-r2-20261114` and
+`bazel-arm64-foundation-candidate-r1-20261114`, with a 24-target maintained input
+request in `bazel-arm64-foundation-request-r1-20261114`. These declarations and
+ARM64 descriptor binaries are not yet qualified.
+
+Resource-accounting audit: the current frontend times the Bazel client while
+the persistent JVM server is reparented to PID 1. Client `time -l`/wait4 rusage
+therefore cannot establish total build CPU or aggregate memory. A live
+process-tree observation and bound source review are retained in
+`bazel-resource-accounting-review-r2-20261114`. Controlled qualification must
+include the identified server and descendants, baseline lifetime counters,
+sample aggregate RSS, distinguish logical block operations from physical device
+bytes, and measure retained SDK/objects/cache/scratch separately. Cold and warm
+incremental workflows both matter; switching only the benchmark to batch mode
+would not qualify the ordinary persistent-server workflow. No performance gate
+is closed by current resource observations. No runtime/frontend policy is
+changed during the live loader build.
+
+### ARM64 loader and descriptor correction accepted checkpoint — 2026-11-14
+
+The fresh ARM64 loader run terminates passed with 75 immutable captured files
+and 39 Python checks across three host-artifact targets. All captured test
+report hashes verify. No ARM64 target binary executes on the AMD64 host. All
+ten startup-object allocated/symbol/relocation contracts match Make. The loader
+runtime archive member order/symbols and linked ELF metadata/hardening match;
+50 of 55 local/provider object contracts match exactly. The four diagnostic
+literal paths and raw DTrace provider differences are retained. Both actual
+providers have equal ten-probe schemas and symbol-relative probe locations,
+with validated companion-object relocations and patched instruction bytes.
+All nine loader install metadata records match, including archive flags and
+links; loader/debug payload hashes still differ. Evidence:
+`bazel-current-loader-arm64-parity-r1-20261114`,
+`bazel-current-loader-arm64-install-parity-r1-20261114`, and
+`bazel-current-startup-arm64-parity-r1-20261114`. This does not close full
+DWARF, target execution, full-world or any entire completion gate.
+
+The descriptor link-order correction is verified in a fresh terminal native
+AMD64 run: both programs now match original Make ELF metadata, hardening and
+DT_NEEDED order. Four selected test targets pass (39 Python checks plus one ATF
+host case), with hash-verified captured reports. Raw program/debug differences
+remain retained; the twelve root cases remain unexecuted. Evidence:
+`bazel-descriptor-link-order-native-amd64-r1-20261114` and
+`bazel-current-descriptor-amd64-parity-r2-20261114`.
+
+Frontend review: existing maintained format-5 target inputs and `bazel-test`
+cover both changes. No new CLI, security-policy, signing, stage-verification,
+hardware or publication interface/default is required. Make remains production.
