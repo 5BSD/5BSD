@@ -1384,6 +1384,103 @@ test_getter_views(void)
 	close(fd);
 }
 
+/*
+ * The jail a scope was set from is remembered by the client and given up
+ * by close or by that jail's removal, whichever comes first, while readers
+ * compare against it.  Race all four.
+ */
+struct gstress {
+	int		fd;
+	int		jid;
+	volatile int	stop;
+};
+
+static void *
+gstress_getter(void *arg)
+{
+	struct oes_jail_scope_args args;
+	struct gstress *g = arg;
+
+	while (!g->stop)
+		(void)ioctl(g->fd, OES_IOC_GET_JAIL_SCOPE, &args);
+	return (NULL);
+}
+
+static void *
+gstress_remover(void *arg)
+{
+	struct gstress *g = arg;
+
+	usleep((useconds_t)(arc4random_uniform(2000)));
+	(void)jail_remove(g->jid);
+	return (NULL);
+}
+
+static void
+test_getter_stress(void)
+{
+	char pname[64], cname[80];
+	struct scope_io io;
+	struct gstress g;
+	pthread_t th[2];
+	pid_t child;
+	int i, jid_c, sets;
+
+	TEST_BEGIN("T-GET-STRESS set, read, close and remove the setter's "
+	    "jail, concurrently");
+	jt_name(pname, sizeof(pname), "oesjs", "gs");
+	snprintf(cname, sizeof(cname), "%s.kid", pname);
+	sets = 0;
+	for (i = 0; i < 200; i++) {
+		memset(&g, 0, sizeof(g));
+		g.jid = jail_setv(JAIL_CREATE, "name", pname, "path", "/",
+		    "children.max", "2", "persist", NULL, NULL);
+		jid_c = g.jid == -1 ? -1 : jail_setv(JAIL_CREATE, "name",
+		    cname, "path", "/", "persist", NULL, NULL);
+		g.fd = test_open_oes();
+		if (g.jid == -1 || jid_c == -1 || g.fd < 0) {
+			TEST_FAIL("round %d: setup: %s", i, jail_errmsg);
+			if (g.jid != -1)
+				(void)jail_remove(g.jid);
+			break;
+		}
+		io.fd = g.fd;
+		io.jid = jid_c;
+		io.name = NULL;
+		fflush(NULL);
+		child = fork();
+		if (child == 0) {
+			if (jail_attach(g.jid) != 0)
+				_exit(101);
+			_exit(fn_set_scope(&io));
+		}
+		if (pthread_create(&th[0], NULL, gstress_getter, &g) != 0 ||
+		    pthread_create(&th[1], NULL, gstress_remover, &g) != 0) {
+			TEST_FAIL("pthread_create");
+			(void)jt_reap(child);
+			break;
+		}
+		usleep((useconds_t)(arc4random_uniform(3000)));
+		/* The getter may still be in its ioctl: that is the point. */
+		g.stop = 1;
+		close(g.fd);
+		pthread_join(th[0], NULL);
+		pthread_join(th[1], NULL);
+		if (jt_reap(child) == 0)
+			sets++;
+		/* The removal may have lost to nothing; make sure of it. */
+		(void)jail_remove(g.jid);
+		if (!wait_jail_gone(cname) || !wait_jail_gone(pname)) {
+			TEST_FAIL("round %d: a removed jail still exists "
+			    "(dying) after the close", i);
+			break;
+		}
+	}
+	printf("    %d of %d scopes were set before the jail went\n", sets,
+	    i);
+	ASSERT_MSG(sets > 0, "no scope was ever set: the race never ran");
+}
+
 /* ------------------------------------------------- more kinds of subject -- */
 
 struct kinds {
@@ -2027,9 +2124,12 @@ test_dead_under_load(void)
 	d0 = jt_nosleep_drops(fd);
 	remove_jail(jid);
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	rc = read_to_eof_ms(fd, pid, &exits, &events, JT_LOAD_END_MS);
+	rc = read_to_eof_ms(fd, pid, &exits, &events, load.limit_ms);
 	ms = jt_elapsed_ms(&start);
 	d1 = jt_nosleep_drops(fd);
+	if (!jt_load_still_full(fd))
+		printf("    note: the queue was no longer full after the "
+		    "wait\n");
 	ASSERT_MSG(rc == 0, "no end of file %ld ms after the removal while "
 	    "the deferred queue was kept full (%ju more events discarded at "
 	    "its limit meanwhile): %d", ms, (uintmax_t)(d1 - d0), rc);
@@ -2050,6 +2150,82 @@ test_dead_under_load(void)
 		printf("    after the load stopped: %s\n", rc == 0 ?
 		    "end of file" : "still no end of file");
 	}
+	close(fd);
+	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
+}
+
+/*
+ * The other half of the bound: the scope must not end early either.  An
+ * event that sits behind a full queue when the jail is removed is still
+ * delivered before end of file.  The writers are stopped while the event is
+ * generated, so that it is queued behind the backlog rather than discarded
+ * at the limit, and started again before the removal.
+ */
+static void
+test_dead_behind_backlog(void)
+{
+	struct oes_stats st;
+	struct jt_load load;
+	uint64_t da, db;
+	char name[64];
+	int events, exits, fd, jid, rc, try;
+	pid_t pid;
+	bool behind;
+
+	TEST_BEGIN("T-DEAD-LOAD-2 an event behind a deep queue precedes end "
+	    "of file");
+	jid = scratch_jail("ld2", name, sizeof(name), NULL);
+	fd = exit_client(jid, 0);
+	if (jid == -1 || fd < 0)
+		return;
+	if (jt_load_start(&load, fd) != 0) {
+		TEST_FAIL("cannot keep the deferred queue full");
+		close(fd);
+		return;
+	}
+	pid = -1;
+	behind = false;
+	for (try = 0; try < 5 && !behind; try++) {
+		if (try != 0) {
+			/* Fill the queue again. */
+			da = jt_nosleep_drops(fd);
+			jt_load_signal(&load, SIGCONT);
+			for (rc = 0; rc < 200 &&
+			    jt_nosleep_drops(fd) == da; rc++)
+				usleep(50000);
+		}
+		jt_load_signal(&load, SIGSTOP);
+		usleep(20000);		/* Let the writers come to rest. */
+		get_stats(fd, &st);
+		da = jt_nosleep_drops(fd);
+		pid = jt_run_true(jid);
+		db = jt_nosleep_drops(fd);
+		/*
+		 * Nothing discarded: the exit is queued.  Nothing new on
+		 * the scoped client: it is still behind the backlog.
+		 */
+		rc = (int)st.es_events_received;
+		get_stats(fd, &st);
+		behind = pid > 0 && da == db &&
+		    (int)st.es_events_received == rc;
+	}
+	jt_load_signal(&load, SIGCONT);
+	if (!behind) {
+		TEST_FAIL("could not queue an event behind the backlog in "
+		    "five attempts");
+		jt_load_stop(&load);
+		close(fd);
+		return;
+	}
+	remove_jail(jid);
+	rc = read_to_eof_ms(fd, pid, &exits, &events, load.limit_ms);
+	if (!jt_load_still_full(fd))
+		printf("    note: the queue was no longer full after the "
+		    "wait\n");
+	jt_load_stop(&load);
+	ASSERT_MSG(rc == 0, "no end of file: %d", rc);
+	ASSERT_MSG(exits == 1, "the exit queued behind the backlog: %d "
+	    "events before end of file (attempt %d)", exits, try);
 	close(fd);
 	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
 }
@@ -3130,6 +3306,7 @@ main(void)
 	test_inbound();
 	test_jailed_caller();
 	test_getter_views();
+	test_getter_stress();
 	test_mutes();
 	test_self_mute();
 	test_auth();
@@ -3138,6 +3315,7 @@ main(void)
 	test_dead_queued();
 	test_dead_poll_select();
 	test_dead_under_load();
+	test_dead_behind_backlog();
 	test_dead_last_exit();
 	test_dead_kqueue();
 	test_dead_with_process();

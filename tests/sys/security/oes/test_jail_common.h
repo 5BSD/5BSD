@@ -256,17 +256,44 @@ jt_get_scope(int fd)
 #define JT_LOAD_STEP		8
 #define JT_LOAD_MAXCLIENTS	48
 /*
- * Bound for what must end under load.  The kernel's own bound is a number
- * of deliveries (2 * OES_DEFER_MAX), each to every load client; in a
- * two-CPU emulated guest that has taken from 5 to 45 seconds.
+ * What must end under load is bounded by the kernel in deliveries, two
+ * rounds of at most OES_DEFER_MAX (16384) each, not in time.  The load
+ * measures how many events the delivery thread gets through in a second
+ * and allows four times what that bound then takes, 20 seconds at least.
  */
-#define JT_LOAD_END_MS		120000
+#define JT_LOAD_BOUND_EVENTS	(2 * 16384)
+#define JT_LOAD_MIN_MS		20000
 
 struct jt_load {
 	pid_t	writers[JT_LOAD_WRITERS];
 	int	clients[JT_LOAD_MAXCLIENTS];
 	int	nclients;
+	long	rate;		/* Deliveries per second under the load */
+	long	limit_ms;	/* Time allowed for the kernel's bound */
 };
+
+/* Events the delivery thread has offered to this client, kept or not. */
+static inline uint64_t
+jt_client_offered(int fd)
+{
+	struct oes_stats st;
+
+	memset(&st, 0, sizeof(st));
+	if (ioctl(fd, OES_IOC_GET_STATS, &st) != 0)
+		return (0);
+	return (st.es_events_received + st.es_events_dropped);
+}
+
+static inline void
+jt_load_signal(struct jt_load *l, int sig)
+{
+	int i;
+
+	for (i = 0; i < JT_LOAD_WRITERS; i++) {
+		if (l->writers[i] > 0)
+			(void)kill(l->writers[i], sig);
+	}
+}
 
 static inline uint64_t
 jt_nosleep_drops(int fd)
@@ -277,6 +304,29 @@ jt_nosleep_drops(int fd)
 	if (ioctl(fd, OES_IOC_GET_STATS, &st) != 0)
 		return (0);
 	return (st.es_nosleep_drops);
+}
+
+/*
+ * Is the load still keeping the queue full?  Asked after a wait under
+ * load and reported, so that a result obtained with a load that fell off
+ * can be told from one obtained under it: the kernel discards another
+ * event within two seconds.  Not asserted: in an emulated guest that the
+ * host leaves short of CPU the delivery thread at times keeps up.
+ */
+static inline bool
+jt_load_still_full(int statfd)
+{
+	struct timespec start;
+	uint64_t drops;
+
+	drops = jt_nosleep_drops(statfd);
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while (jt_elapsed_ms(&start) < 2000) {
+		usleep(20000);
+		if (jt_nosleep_drops(statfd) > drops)
+			return (true);
+	}
+	return (false);
 }
 
 static inline void
@@ -307,7 +357,7 @@ jt_load_start(struct jt_load *l, int statfd)
 	oes_event_type_t evs[] = { OES_EVENT_NOTIFY_PIPE_WRITE,
 	    OES_EVENT_NOTIFY_PIPE_READ };
 	struct timespec start;
-	uint64_t drops;
+	uint64_t drops, seen;
 	pid_t parent;
 	int fd, i, n, p[2];
 	char c;
@@ -347,11 +397,8 @@ jt_load_start(struct jt_load *l, int statfd)
 		clock_gettime(CLOCK_MONOTONIC, &start);
 		while (jt_elapsed_ms(&start) < 3000) {
 			usleep(100000);
-			if (jt_nosleep_drops(statfd) > drops) {
-				printf("    deferred queue full with %d "
-				    "unread clients\n", l->nclients);
-				return (0);
-			}
+			if (jt_nosleep_drops(statfd) > drops)
+				goto full;
 		}
 	}
 	printf("    the deferred queue did not fill with %d clients\n",
@@ -359,6 +406,22 @@ jt_load_start(struct jt_load *l, int statfd)
 fail:
 	jt_load_stop(l);
 	return (-1);
+full:
+	/* Every delivery is offered to each subscribed client once. */
+	seen = jt_client_offered(l->clients[0]);
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	usleep(1000000);
+	l->rate = (long)((jt_client_offered(l->clients[0]) - seen) * 1000 /
+	    (uint64_t)jt_elapsed_ms(&start));
+	if (l->rate < 1)
+		l->rate = 1;
+	l->limit_ms = 4L * JT_LOAD_BOUND_EVENTS * 1000 / l->rate;
+	if (l->limit_ms < JT_LOAD_MIN_MS)
+		l->limit_ms = JT_LOAD_MIN_MS;
+	printf("    deferred queue full with %d unread clients; %ld "
+	    "deliveries a second; limit %ld ms\n", l->nclients, l->rate,
+	    l->limit_ms);
+	return (0);
 }
 
 #endif /* !_OES_TEST_JAIL_COMMON_H_ */

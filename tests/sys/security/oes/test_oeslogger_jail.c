@@ -363,6 +363,7 @@ case_removed_under_load(void)
 	struct jt_load load;
 	struct logger lg;
 	char name[64];
+	long exited, released;
 	pid_t pid;
 	int jid, rc, statfd;
 
@@ -388,9 +389,29 @@ case_removed_under_load(void)
 		TEST_FAIL("jail_remove: %s", strerror(errno));
 	jt_forget_jail(jid);
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	rc = logger_stop_ms(&lg, false, JT_LOAD_END_MS);	/* By itself. */
-	printf("    logger %s %ld ms after the removal\n",
-	    rc == -1 ? "still running" : "exited", jt_elapsed_ms(&start));
+	/*
+	 * The kernel has ended the scope when the removed jail is no longer
+	 * held; the logger then has to notice, write its log and close.
+	 * Tell the two apart, and show where a slow logger is.
+	 */
+	released = -1;
+	while (jt_elapsed_ms(&start) < load.limit_ms) {
+		if (released == -1 && !jt_jail_exists_dying(name))
+			released = jt_elapsed_ms(&start);
+		if (waitpid(lg.pid, NULL, WNOHANG | WNOWAIT) == lg.pid)
+			break;
+		logger_collect(&lg, 50);
+	}
+	exited = jt_elapsed_ms(&start);
+	if (released == -1 && !jt_jail_exists_dying(name))
+		released = exited;
+	rc = logger_stop_ms(&lg, false, 1);		/* By itself. */
+	printf("    jail released %ld ms and logger %s %ld ms after the "
+	    "removal\n", released, rc == -1 ? "still running" : "exited",
+	    exited);
+	if (!jt_load_still_full(statfd))
+		printf("    note: the queue was no longer full after the "
+		    "wait\n");
 	jt_load_stop(&load);
 	close(statfd);
 	ASSERT_MSG(rc == 0, "exit status %d under load: %s", rc, lg.err);
