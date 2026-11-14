@@ -8441,3 +8441,10 @@ Focused kernel R10 matches allocated sections and loader symbols against the
 Make control and passes split-debug binding. CTF parity remains rejected because
 the explicit qualification inputs omit Make's source-derived VERSION label.
 No production backend default or frontend option changes with this correction.
+
+.Pp
+Focused kernel R11 supplies the independently queried Make VERSION through the
+existing explicit kernel_ctf_label setting. The unchanged checker then passes
+allocated-section, loader-symbol and exact merged-CTF comparison, and the
+split-debug check passes. Automatic source-derived label selection and complete
+package, configuration and runtime qualification remain open.

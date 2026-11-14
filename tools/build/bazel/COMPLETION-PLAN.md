@@ -11,6 +11,20 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+Focused kernel R11 now passes the unchanged strict kernel parity checker R4:
+allocated section metadata/content (GNU build-ID content separately reported),
+loader symbols and merged CTF bytes match the independent current Make control.
+The maintained split-debug checker also passes. The sole remaining R10 CTF
+string-inventory difference was the omitted version label: R11 explicitly uses
+Make's VERSION query, with command/source hashes retained in label-input.json.
+No ELF payload or comparison output was normalized. Evidence is retained under
+/usr/obj/usr/src/bazel-current-kernel-parity-r4-20261114, including captured-output
+bindings, driver and both checker reports. This proves the focused equivalent-input
+GENERIC kernel contract, not all package/debug/configuration/runtime gates or
+automatic source-derived label selection. Refresh the full graph with that input
+before constructing the next upgrade candidate.
+
+
 Latest kernel follow-up: full AMD64 R9 passes all 25 expanded tests. Focused
 kernel R10 additionally preserves imported PF built-in source identity from the
 kernel's ../contrib declarations, without changing module source-path policy or
