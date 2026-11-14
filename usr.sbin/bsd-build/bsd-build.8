@@ -7997,6 +7997,13 @@ The frontend binds build_jobs to --jobs and enables Bazel action resource
 estimates.
 The package_threads setting controls compression threads; zero uses that budget.
 The package_epoch setting defaults to zero and never reads the wall clock.
+The original Make package backend passes its declared PKG_TIMESTAMP (or
+resolved SOURCE_DATE_EPOCH) to pkg-create -t for both manifest and archive times.
+For independent comparison, select the same value as native package_epoch.
+PKG_OUTPUT_DIR controls world and kernel archive placement beneath the standard
+repository ABI directory without changing package identity/version; it does not
+advance latest or publish a repository.
+No additional build-bsd flag is introduced by these backend corrections.
 These targets create build artifacts and do not publish or install them.
 Each package also declares source-derived symlink referents needed for ELF
 inspection; those files acquire no package ownership.

@@ -45,7 +45,8 @@ _PKG_WORLDSTAGE=	${OBJTOP}/worldstage
 .endif
 
 _PKGDIR=	${SRCTOP}/packages
-_STAGEDIR=	${REPODIR}/${PKG_ABI}/${PKG_VERSION}
+PKG_OUTPUT_DIR?=	${PKG_VERSION}
+_STAGEDIR=	${REPODIR}/${PKG_ABI}/${PKG_OUTPUT_DIR}
 
 # These are the default UCL variables we pass to generate-ucl.lua.
 # Allow the caller to add additional variables via PKG_UCLVARS.
@@ -71,6 +72,14 @@ _PKG_CREATE_ARGS= \
 	-T ${PKG_CTHREADS} \
 	-r ${_PKG_WORLDSTAGE} \
 	-o ${.OBJDIR}
+
+# Pass the declared epoch to pkg itself: the packing environment alone does
+# not set the timestamps recorded in +MANIFEST.
+.if defined(PKG_TIMESTAMP)
+_PKG_CREATE_ARGS+= -t ${PKG_TIMESTAMP:Q}
+.elif defined(SOURCE_DATE_EPOCH)
+_PKG_CREATE_ARGS+= -t ${SOURCE_DATE_EPOCH:Q}
+.endif
 
 _PKG_CREATE=		${PKG_CMD} ${_PKG_ARGS} create ${_PKG_CREATE_ARGS}
 

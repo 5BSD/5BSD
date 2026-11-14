@@ -1540,3 +1540,41 @@ CRC validation. Corruption, absent symbols, wrong names and conflicting policies
 are rejected. BUILD-OPTIONS.md documents this internal helper contract; there is
 no C frontend flag or production backend change. All current package/debug/runtime,
 bootstrap/cache/sandbox/performance/publication and Tier 1 gates remain explicit.
+
+## Explicit original-Make package epoch and placement inputs (2026-11-14)
+
+Current ELF review completes with 1,325 passing and 724 review-required contracts.
+Only dq, kernel-generic, mac-abac and oes package reports retain failures. A
+streamed text diagnostic of the large kernel report finds one kernel program
+contract classification issue, 713 allocated-only and seven allocated/relocation
+differences; the three small named module reports add allocated-only differences.
+That diagnostic is not a semantic waiver or complete allocated-section diagnosis.
+
+Actual pkg_create_from_dir uses its explicit -t timestamp for +MANIFEST file
+metadata, while packing separately accepts SOURCE_DATE_EPOCH. Original Make
+package commands omitted -t. The maintained Makefile.inc1 recipes now pass the
+resolved timestamp for world, kernel, DTB, sets and source packages; recursive
+world packaging propagates it to bsd.pkg.mk. bsd.pkg.mk accepts the existing
+PKG_TIMESTAMP or SOURCE_DATE_EPOCH input, and respects PKG_OUTPUT_DIR without
+changing package identity/version. This also permits preserving earlier reference
+archives while rebuilding a matched-epoch comparison under the standard repo.
+The existing C frontend delegates to these targets; its manual documents the
+corrected input contract, with no new flag or production backend selection.
+
+The maintained tools/test/bazel-builder/pkgbase-inputs.py test builds real
+packages/bsdtrace archives from the completed Make stage. R2 passes three actual
+packages for each of PKG_TIMESTAMP=0 and SOURCE_DATE_EPOCH=946684800, with payload
+header timestamps and +MANIFEST file timestamps matching the selected input.
+Both archive groups retain version 16.0.qual.20261114 despite distinct output
+subdirectories; latest/latest-built remain unchanged. Request, original commands,
+logs, driver and hashes are retained under bazel-pkgbase-inputs-r2-20261114.
+The failed R1 and its exact driver are preserved: it mistakenly expected pkg's
++MANIFEST/+COMPACT_MANIFEST buffer headers to use the payload epoch. Source
+packing_append_buffer/packing_append_iovec leave those format headers at zero;
+R2 requires both distinct metadata headers at zero and every payload at its
+explicit epoch, without modifying staged file bytes or suppressing a comparison.
+
+All original R1 450-package comparisons remain unchanged. Fresh matched-epoch
+archive qualification is pending; no native payload/debug/runtime difference is
+accepted by this fix. Changing Makefile.inc1 invalidates R4's source binding, so
+subsequent native runs require freshly prepared SDK inputs, not an edited receipt.

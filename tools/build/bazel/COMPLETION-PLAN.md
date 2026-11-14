@@ -32,6 +32,21 @@ order; it is retained unapplied beside the reference until the AMD64 capture
 finishes and actual native comparison can run. No maintained
 frontend behavior or production backend selection changes for this audit.
 
+Current indexed ELF review completes with 1,325 passing contracts and 724
+review-required results, confined to the kernel and module packages. Raw notes,
+allocated sections and relocations remain strict; no differences are waived.
+The maintained Make package recipes now pass the resolved explicit epoch to
+pkg -t and honor PKG_OUTPUT_DIR for world as well as kernel placement. The real
+pkgbase-inputs regression R2 passes PKG_TIMESTAMP=0 and SOURCE_DATE_EPOCH=946684800
+with three actual packages each, matching payload and manifest file timestamps
+and unchanged latest/latest-built pointers. R1's incorrect expectation for the
+two format-metadata header timestamps is retained as a failed test; those
+headers are independently zero in pkg's buffer writer. Fresh independent Make
+archives with matched epoch inputs are still required. These Makefile changes
+stale the old source-bound SDK receipt; prepare a fresh SDK before further native
+runs, rather than rebinding R4. Normal build-bsd uses the maintained backend
+changes; no new C option or production backend switch is introduced.
+
 The current original-Make split-debug reference audit passes all 724 kernel/module
 pairs. The first strict userland audit passes 1,077 pairs and reports two bootloader
 DSOs whose source policy deliberately retains symbol tables. A general strict

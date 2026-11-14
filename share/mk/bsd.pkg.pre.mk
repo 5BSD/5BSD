@@ -30,6 +30,11 @@
 # 		not the host system. [${WSTAGEDIR}/usr/bin/uname}
 #
 #
+# PKG_TIMESTAMP  Explicit package payload/manifest timestamp, passed to pkg -t.
+#                SOURCE_DATE_EPOCH is used if no PKG_TIMESTAMP is supplied.
+# PKG_OUTPUT_DIR Repository subdirectory under ABI; defaults to PKG_VERSION.
+#                Changes archive placement, not package identity/version.
+#
 # Package metadata:
 #
 # PKG_METADATA_ONLY	Explicit package names (without PKG_NAME_PREFIX) which
