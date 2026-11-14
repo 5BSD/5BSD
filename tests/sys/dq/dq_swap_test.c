@@ -1227,6 +1227,98 @@ ATF_TC_BODY(swap_supervisor_gone_race, tc)
 }
 
 /*
+ * Case: two files no open could have produced.  open(O_CREAT) of an
+ * existing directory is EISDIR in base, and only an O_PATH | O_NOFOLLOW
+ * open ends at a symbolic link: neither answers any other request.
+ */
+static int types_dir, types_link;
+
+static void
+p_flags_open(void *arg, void *result)
+{
+	struct sw_res *res = result;
+	struct stat st;
+	int fd;
+
+	RR(res->r[0], fd = open("orig", *(int *)arg, 0644));
+	if (fd == -1)
+		return;
+	RR(res->r[1], fstat(fd, &st));
+	res->mode = st.st_mode;
+	RR(res->r[8], close(fd));
+}
+
+static void
+a_types(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb)
+{
+	int fd, flags;
+
+	flags = (int)rb->drs_mode & (O_ACCMODE | O_PATH);
+	if (types_dir) {
+		fd = sw_open("substdir", flags);
+		SW_REFUSED(x, ev, fd, 0, EFTYPE);
+		(void)close(fd);
+	}
+	if (types_link) {
+		fd = sw_open("substlink", O_PATH | O_NOFOLLOW);
+		if (types_link == 1) {
+			SW_REFUSED(x, ev, fd, 0, EFTYPE);
+			(void)close(fd);
+			fd = sw_open("subst", flags);
+		}
+	} else
+		fd = sw_open("subst", flags);
+	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	(void)close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(swap_refused_types);
+ATF_TC_BODY(swap_refused_types, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	int flags;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	ATF_REQUIRE_EQ(0, mkdir("substdir", 0755));
+	ATF_REQUIRE_EQ(0, symlink("subst", "substlink"));
+
+	/* O_CREAT without O_DIRECTORY: not a directory. */
+	types_dir = 1;
+	types_link = 0;
+	flags = O_RDONLY | O_CREAT;
+	sw_init(&x, "orig", a_types);
+	sw_run(&x, p_flags_open, &flags, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK(S_ISREG(res.mode));
+	dqt_fini(&x.c);
+
+	/* O_PATH that follows: not a symbolic link. */
+	types_dir = 0;
+	types_link = 1;
+	flags = O_PATH;
+	sw_init(&x, "orig", a_types);
+	sw_run(&x, p_flags_open, &flags, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK(S_ISREG(res.mode));
+	dqt_fini(&x.c);
+
+	/* O_PATH | O_NOFOLLOW: the link itself. */
+	types_link = 2;
+	flags = O_PATH | O_NOFOLLOW;
+	sw_init(&x, "orig", a_types);
+	sw_run(&x, p_flags_open, &flags, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK(S_ISLNK(res.mode));
+	dqt_fini(&x.c);
+}
+
+/*
  * Case: DQ_SWAP_F_NOXFER.  The installed entry may not be sent on; an
  * entry installed without the flag may, as a descriptor the program
  * opened itself.
@@ -1320,6 +1412,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swap_survives_supervisor);
 	ATF_TP_ADD_TC(tp, swap_supervisor_gone_before_install);
 	ATF_TP_ADD_TC(tp, swap_supervisor_gone_race);
+	ATF_TP_ADD_TC(tp, swap_refused_types);
 	ATF_TP_ADD_TC(tp, swap_created);
 	ATF_TP_ADD_TC(tp, swap_opath_device);
 	ATF_TP_ADD_TC(tp, swap_directory);

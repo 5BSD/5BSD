@@ -2733,7 +2733,14 @@ differs from the request's
 or the request has
 .Dv O_DIRECTORY
 and the file is not a directory; or the file is a directory and the
-request opens for writing or truncation.
+request opens for writing or truncation, or has
+.Dv O_CREAT
+without
+.Dv O_DIRECTORY ;
+or the file is a symbolic link and the request is not an
+.Dv O_PATH | O_NOFOLLOW
+open without
+.Dv O_EXEC .
 .It Bq Er EINVAL
 The reply is not 40 bytes, a spare word or an unknown flag is set, or
 .Dv DQ_SWAP_F_CREATED
@@ -2856,6 +2863,12 @@ permission to write.
 Hand over only objects the requester's credential may open; create files
 under the requester's user, or give them to it, and declare them with
 .Dv DQ_SWAP_F_CREATED .
+.It
+.Dv O_EXCL
+is the controller's to honour: answer
+.Er EEXIST
+when the name exists.
+The kernel resolves no name for a swap and cannot know.
 .It
 For an
 .Dv O_PATH
