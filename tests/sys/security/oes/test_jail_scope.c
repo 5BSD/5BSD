@@ -10,6 +10,8 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/mman.h>
+#include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 
@@ -381,7 +383,7 @@ membership(int fd, const char *what, const int *jids, const bool *expect,
  * The descriptor must not have been read through test_wait_event().
  */
 static int
-read_to_eof(int fd, pid_t pid, int *exits, int *events)
+read_to_eof_ms(int fd, pid_t pid, int *exits, int *events, long limit_ms)
 {
 	static uint8_t buf[OES_MSG_MAX_SIZE * 4];
 	struct timespec start;
@@ -392,7 +394,7 @@ read_to_eof(int fd, pid_t pid, int *exits, int *events)
 
 	*exits = *events = 0;
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	while (jt_elapsed_ms(&start) < WAIT_MS) {
+	while (jt_elapsed_ms(&start) < limit_ms) {
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
@@ -420,6 +422,13 @@ read_to_eof(int fd, pid_t pid, int *exits, int *events)
 	return (ETIMEDOUT);
 }
 
+static int
+read_to_eof(int fd, pid_t pid, int *exits, int *events)
+{
+
+	return (read_to_eof_ms(fd, pid, exits, events, WAIT_MS));
+}
+
 static bool
 wait_jail_gone(const char *name)
 {
@@ -441,6 +450,14 @@ remove_jail(int jid)
 	if (jail_remove(jid) != 0)
 		TEST_FAIL("jail_remove(%d): %s", jid, strerror(errno));
 	jt_forget_jail(jid);
+}
+
+static int
+scratch_jail(const char *suffix, char *name, size_t len, const char *jid)
+{
+
+	jt_name(name, len, "oesjs", suffix);
+	return (jt_make_jail(name, "oesjs-scratch", jid, "4"));
 }
 
 /* ------------------------------------------- arguments and ordering -- */
@@ -1094,6 +1111,416 @@ test_jailed_caller(void)
 	close(go[1]);
 }
 
+/* ------------------------------------------------- more kinds of subject -- */
+
+struct kinds {
+	pid_t	pid;
+	int	forks, sockets, pipes, exits;
+};
+
+static int
+fn_kinds(void *arg __unused)
+{
+	pid_t pid;
+	int p[2], s;
+
+	pid = fork();
+	if (pid < 0)
+		return (90);
+	if (pid == 0)
+		_exit(0);
+	if (jt_reap(pid) != 0)
+		return (91);
+	s = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (s < 0)
+		return (92);
+	close(s);
+	if (pipe(p) != 0 || write(p[1], "x", 1) != 1)
+		return (93);
+	return (0);
+}
+
+static void
+test_event_kinds(void)
+{
+	oes_event_type_t evs[] = { OES_EVENT_NOTIFY_FORK,
+	    OES_EVENT_NOTIFY_SOCKET_CREATE, OES_EVENT_NOTIFY_PIPE_WRITE,
+	    OES_EVENT_NOTIFY_EXIT };
+	struct kinds seen[2], *k;
+	struct timespec start;
+	test_msg_buf buf;
+	long left;
+	int fd, i, rc;
+
+	TEST_BEGIN("T-KIND fork, socket and pipe events of a jailed subject");
+	fd = jclient(j_a, 0, evs, nitems(evs));
+	if (fd < 0)
+		return;
+	memset(seen, 0, sizeof(seen));
+	for (i = 0; i < 2; i++) {
+		/*
+		 * The host process first: its events must not arrive.  No
+		 * kid_start() here: its handshake is itself a pipe write.
+		 */
+		fflush(NULL);
+		seen[i].pid = fork();
+		if (seen[i].pid == 0) {
+			if (i == 1 && jail_attach(j_a) != 0)
+				_exit(101);
+			_exit(fn_kinds(NULL));
+		}
+		rc = jt_reap(seen[i].pid);
+		ASSERT_MSG(rc == 0, "subject %d: status %d", i, rc);
+	}
+	/* All four are queued in order: the jailed exit is the last. */
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while (seen[1].exits == 0 &&
+	    (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
+		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
+		    (int)left) != 0)
+			continue;
+		for (i = 0; i < 2; i++) {
+			k = &seen[i];
+			if (buf.msg.em_process.ep_pid != k->pid)
+				continue;
+			switch (buf.msg.em_event) {
+			case OES_EVENT_NOTIFY_FORK:
+				k->forks++;
+				break;
+			case OES_EVENT_NOTIFY_SOCKET_CREATE:
+				k->sockets++;
+				ASSERT_MSG(buf.msg.em_event_data.socket_create.
+				    domain == AF_UNIX, "socket domain %d",
+				    buf.msg.em_event_data.socket_create.domain);
+				break;
+			case OES_EVENT_NOTIFY_PIPE_WRITE:
+				k->pipes++;
+				break;
+			case OES_EVENT_NOTIFY_EXIT:
+				k->exits++;
+				break;
+			default:
+				break;
+			}
+		}
+	}
+	ASSERT_MSG(seen[1].exits == 1, "exit of the jailed subject not seen");
+	ASSERT_MSG(seen[1].forks == 1 && seen[1].sockets == 1 &&
+	    seen[1].pipes == 1, "jailed subject: %d fork, %d socket, %d pipe "
+	    "events, want one each", seen[1].forks, seen[1].sockets,
+	    seen[1].pipes);
+	ASSERT_MSG(seen[0].forks == 0 && seen[0].sockets == 0 &&
+	    seen[0].pipes == 0 && seen[0].exits == 0,
+	    "host subject delivered: %d fork, %d socket, %d pipe, %d exit",
+	    seen[0].forks, seen[0].sockets, seen[0].pipes, seen[0].exits);
+	close(fd);
+}
+
+/*
+ * One thread of a process enters the jail.  The credential belongs to the
+ * process; another thread takes it up when it next enters the kernel, so
+ * what that thread does afterwards is in scope too.
+ */
+static int mt_go[2], mt_ready[2];
+
+static void *
+mt_thread(void *arg __unused)
+{
+	char c;
+	int fd;
+
+	fd = open(file2, O_RDONLY | O_CLOEXEC);		/* Before: outside */
+	if (fd < 0)
+		return ((void *)1);
+	close(fd);
+	if (write(mt_ready[1], "R", 1) != 1 || read(mt_go[0], &c, 1) != 1)
+		return ((void *)2);
+	fd = open(file1, O_RDONLY | O_CLOEXEC);		/* After: inside */
+	if (fd < 0)
+		return ((void *)3);
+	close(fd);
+	return (NULL);
+}
+
+static int
+fn_mt_attach(void *arg __unused)
+{
+	pthread_t th;
+	void *res;
+	char c;
+	int fd;
+
+	if (pipe(mt_go) != 0 || pipe(mt_ready) != 0 ||
+	    pthread_create(&th, NULL, mt_thread, NULL) != 0)
+		return (80);
+	/* The other thread is now blocked in read(2), outside the jail. */
+	if (read(mt_ready[0], &c, 1) != 1)
+		return (81);
+	usleep(50000);
+	if (jail_attach(j_a) != 0)
+		return (82);
+	fd = open(file1, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return (83);
+	close(fd);
+	if (write(mt_go[1], "G", 1) != 1 || pthread_join(th, &res) != 0)
+		return (84);
+	return (res == NULL ? 0 : 85);
+}
+
+static void
+test_multithreaded_attach(void)
+{
+	oes_event_type_t evs[] = { OES_EVENT_NOTIFY_OPEN,
+	    OES_EVENT_NOTIFY_EXIT };
+	struct kid k;
+	struct rec r;
+	int fd, rc;
+
+	TEST_BEGIN("T-MT one thread of a process enters the jail");
+	fd = jclient(j_a, 0, evs, 2);
+	if (fd < 0)
+		return;
+	if (kid_start(&k, -1, fn_mt_attach, NULL, false) != 0) {
+		TEST_FAIL("cannot start the process");
+		close(fd);
+		return;
+	}
+	rc = kid_finish(&k);
+	ASSERT_MSG(rc == 0, "threaded child status %d", rc);
+	memset(&r, 0, sizeof(r));
+	r.pid = k.pid;
+	if (scan(fd, k.pid, OES_EVENT_NOTIFY_EXIT, &r, 1) != 0)
+		TEST_FAIL("exit of the threaded process not delivered");
+	ASSERT_MSG(r.open2 == 0,
+	    "opens made before the attach were delivered: %d", r.open2);
+	ASSERT_MSG(r.open1 == 2, "opens after the attach, one by each "
+	    "thread: %d delivered, want 2", r.open1);
+	close(fd);
+}
+
+/*
+ * A jail with its own root directory.  Every other jail here is on "/".
+ * The subject names its files relative to its root, and that is the path
+ * the record carries and the path a mute is matched against; the file's
+ * identity is the same from wherever it is looked at.
+ */
+static int
+copy_file(const char *from, const char *to, mode_t mode)
+{
+	static char buf[65536];
+	ssize_t n;
+	int in, out, rc;
+
+	in = open(from, O_RDONLY | O_CLOEXEC);
+	out = open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
+	rc = (in < 0 || out < 0) ? -1 : 0;
+	while (rc == 0 && (n = read(in, buf, sizeof(buf))) > 0) {
+		if (write(out, buf, (size_t)n) != n)
+			rc = -1;
+	}
+	if (rc == 0 && n < 0)
+		rc = -1;
+	if (in >= 0)
+		close(in);
+	if (out >= 0)
+		close(out);
+	return (rc);
+}
+
+static int
+fn_exec_path(void *arg)
+{
+
+	/* A copy of the rescue binary, which acts by the name it is given. */
+	execl((const char *)arg, "sleep", "0", (char *)NULL);
+	return (102);
+}
+
+static int
+mute_path(int fd, const char *path)
+{
+	struct oes_mute_path_args args;
+
+	memset(&args, 0, sizeof(args));
+	strlcpy(args.emp_path, path, sizeof(args.emp_path));
+	args.emp_type = OES_MUTE_PATH_LITERAL;
+	return (ioctl(fd, OES_IOC_MUTE_PATH, &args));
+}
+
+/* Run a path in the jail; was its exec delivered before the marker's? */
+static int
+rooted_run(int fd, int jid, const char *path, const char *marker_path,
+    test_msg_buf *out)
+{
+	struct timespec start;
+	struct kid k, m;
+	test_msg_buf buf;
+	long left;
+	int rc, seen;
+
+	rc = kid_start(&k, jid, fn_exec_path, __DECONST(char *, path),
+	    false) == 0 ? kid_finish(&k) : -1;
+	if (rc != 0) {
+		TEST_FAIL("exec of %s in the rooted jail: status %d", path, rc);
+		return (-1);
+	}
+	rc = kid_start(&m, jid, fn_exec_path, __DECONST(char *, marker_path),
+	    false) == 0 ? kid_finish(&m) : -1;
+	if (rc != 0) {
+		TEST_FAIL("exec of the marker %s: status %d", marker_path, rc);
+		return (-1);
+	}
+	seen = 0;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while ((left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
+		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
+		    (int)left) != 0 ||
+		    buf.msg.em_event != OES_EVENT_NOTIFY_EXEC)
+			continue;
+		if (buf.msg.em_process.ep_pid == k.pid) {
+			seen++;
+			if (out != NULL)
+				memcpy(out->raw, buf.raw, buf.msg.em_size);
+		} else if (buf.msg.em_process.ep_pid == m.pid)
+			return (seen);
+	}
+	TEST_FAIL("exec of the marker %s not delivered", marker_path);
+	return (-1);
+}
+
+static void
+test_rooted_jail(void)
+{
+	oes_event_type_t ev = OES_EVENT_NOTIFY_EXEC;
+	char root[] = "/tmp/oesjs-root.XXXXXX";
+	char host1[96], host2[96], name[64];
+	const oes_event_exec_t *ex;
+	test_msg_buf buf;
+	struct stat sb;
+	int fd, jid, n;
+
+	TEST_BEGIN("T-ROOT a jail whose root is not /");
+	if (mkdtemp(root) == NULL) {
+		TEST_FAIL("mkdtemp: %s", strerror(errno));
+		return;
+	}
+	(void)chmod(root, 0755);
+	snprintf(host1, sizeof(host1), "%s/oesjs-prog", root);
+	snprintf(host2, sizeof(host2), "%s/oesjs-mark", root);
+	/* A static binary: the jail has nothing else in it. */
+	if (copy_file("/rescue/sleep", host1, 0555) != 0 ||
+	    copy_file("/rescue/sleep", host2, 0555) != 0 ||
+	    stat(host1, &sb) != 0) {
+		TEST_FAIL("cannot populate %s: %s", root, strerror(errno));
+		goto out;
+	}
+	jt_name(name, sizeof(name), "oesjs", "root");
+	jid = jail_setv(JAIL_CREATE, "name", name, "path", root,
+	    "host.hostname", "oesjs-root", "persist", NULL, NULL);
+	if (jid == -1) {
+		TEST_FAIL("jail_setv(%s): %s", name, jail_errmsg);
+		goto out;
+	}
+	if (jt_njails < JT_MAXJAILS)
+		jt_jails[jt_njails++] = jid;
+
+	fd = jclient(jid, 0, &ev, 1);
+	if (fd >= 0) {
+		n = rooted_run(fd, jid, "/oesjs-prog", "/oesjs-mark", &buf);
+		ASSERT_MSG(n == 1, "exec in the rooted jail: %d events", n);
+		if (n == 1) {
+			ex = &buf.msg.em_event_data.exec;
+			ASSERT_MSG(ex->target.ep_jid == jid, "ep_jid %d, want "
+			    "%d", ex->target.ep_jid, jid);
+			ASSERT_MSG(ex->executable.ef_ino == (uint64_t)sb.st_ino &&
+			    ex->executable.ef_dev == (uint64_t)sb.st_dev,
+			    "executable identity %ju/%ju, want %ju/%ju",
+			    (uintmax_t)ex->executable.ef_dev,
+			    (uintmax_t)ex->executable.ef_ino,
+			    (uintmax_t)sb.st_dev, (uintmax_t)sb.st_ino);
+			ASSERT_MSG(strcmp(oes_msg_string(&buf.msg,
+			    ex->executable.ef_path_off), "/oesjs-prog") == 0 &&
+			    strcmp(oes_msg_string(&buf.msg,
+			    ex->target.ep_path_off), "/oesjs-prog") == 0,
+			    "paths in the record: executable '%s' target '%s', "
+			    "want the subject's own '/oesjs-prog'",
+			    oes_msg_string(&buf.msg, ex->executable.ef_path_off),
+			    oes_msg_string(&buf.msg, ex->target.ep_path_off));
+		}
+
+		TEST_BEGIN("T-ROOT-2 a path mute matches the path in the record");
+		/* The host's name for the file is not what the record says. */
+		EXPECT_OK(mute_path(fd, host1), "mute by the host path");
+		n = rooted_run(fd, jid, "/oesjs-prog", "/oesjs-mark", NULL);
+		ASSERT_MSG(n == 1, "muted by the host's path: %d events", n);
+		EXPECT_OK(mute_path(fd, "/oesjs-prog"), "mute by the jail path");
+		n = rooted_run(fd, jid, "/oesjs-prog", "/oesjs-mark", NULL);
+		ASSERT_MSG(n == 0, "not muted by the path in the record: %d "
+		    "events", n);
+		close(fd);
+	}
+	remove_jail(jid);
+out:
+	unlink(host1);
+	unlink(host2);
+	rmdir(root);
+}
+
+/* Jail scopes on different jails and a descendants scope, all at once. */
+static void
+test_scopes_together(void)
+{
+	oes_event_type_t ev = OES_EVENT_NOTIFY_EXIT;
+	struct rec recs[3];
+	pid_t pa, ps, ph, ma, ms, mh;
+	int fa, fs, fd;
+
+	TEST_BEGIN("T-MULTI-2 two jail scopes and a descendants scope at once");
+	fa = exit_client(j_a, 0);
+	fs = exit_client(j_s, 0);
+	fd = test_open_oes();
+	if (fa < 0 || fs < 0 || fd < 0 || test_set_descendants_scope(fd) != 0 ||
+	    jt_notify_setup(fd, &ev, 1) != 0) {
+		TEST_FAIL("setup");
+		goto out;
+	}
+	pa = jt_run_true(j_b);
+	ps = jt_run_true(j_s);
+	ph = jt_run_true(-1);
+	ma = jt_run_true(j_a);
+	ms = jt_run_true(j_s);
+	mh = jt_run_true(-1);
+	if (pa <= 0 || ps <= 0 || ph <= 0 || ma <= 0 || ms <= 0 || mh <= 0) {
+		TEST_FAIL("cannot run the subjects");
+		goto out;
+	}
+#define	THREE(_fd, _marker, _what, _ea, _es, _eh) do {			\
+	memset(recs, 0, sizeof(recs));					\
+	recs[0].pid = pa;						\
+	recs[1].pid = ps;						\
+	recs[2].pid = ph;						\
+	if (scan((_fd), (_marker), OES_EVENT_NOTIFY_EXIT, recs, 3) != 0) \
+		TEST_FAIL("%s: marker not delivered", (_what));		\
+	ASSERT_MSG(recs[0].exits == (_ea) && recs[1].exits == (_es) &&	\
+	    recs[2].exits == (_eh), "%s: exits seen: A.b %d, S %d, "	\
+	    "host %d; want %d, %d, %d", (_what), recs[0].exits,		\
+	    recs[1].exits, recs[2].exits, (_ea), (_es), (_eh));		\
+} while (0)
+	THREE(fa, ma, "scope A", 1, 0, 0);
+	THREE(fs, ms, "scope S", 0, 1, 0);
+	/* Descendants are followed into whatever jail they enter. */
+	THREE(fd, mh, "descendants scope", 1, 1, 1);
+#undef THREE
+out:
+	if (fa >= 0)
+		close(fa);
+	if (fs >= 0)
+		close(fs);
+	if (fd >= 0)
+		close(fd);
+}
+
 /* ------------------------------------------------- removal and reuse -- */
 
 struct reader {
@@ -1124,14 +1551,6 @@ reader_wait(struct reader *r)
 	while (!r->done && jt_elapsed_ms(&start) < WAIT_MS)
 		usleep(20000);
 	return (r->done != 0);
-}
-
-static int
-scratch_jail(const char *suffix, char *name, size_t len, const char *jid)
-{
-
-	jt_name(name, len, "oesjs", suffix);
-	return (jt_make_jail(name, "oesjs-scratch", jid, "4"));
 }
 
 static void
@@ -1212,6 +1631,90 @@ test_dead_queued(void)
 	ASSERT_MSG(exits == 1, "exit before the removal: %d events (of %d)",
 	    exits, events);
 	ASSERT_MSG(is_dead(fd), "not dead after end of file");
+	close(fd);
+	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
+}
+
+/*
+ * What a waiting consumer is told once the scope is dead: while events are
+ * still queued the descriptor is both readable and hung up; once they are
+ * read it is hung up only, and a read that would otherwise block or fail
+ * with EAGAIN returns end of file.
+ */
+static void
+test_dead_poll_select(void)
+{
+	static uint8_t buf[OES_MSG_MAX_SIZE * 4];
+	struct timeval tv = { 0, 0 };
+	const oes_message_t *msg;
+	struct timespec start;
+	struct pollfd pfd;
+	fd_set rfds;
+	char name[64];
+	ssize_t n;
+	size_t off;
+	pid_t pid;
+	int exits, fd, jid, rc;
+
+	TEST_BEGIN("T-DEAD-8 poll, select and non-blocking read on a dead scope");
+	jid = scratch_jail("r8", name, sizeof(name), NULL);
+	fd = exit_client(jid, 0);
+	if (jid == -1 || fd < 0)
+		return;
+	pid = jt_run_true(jid);
+	remove_jail(jid);
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while (!is_dead(fd) && jt_elapsed_ms(&start) < WAIT_MS)
+		usleep(20000);
+	ASSERT_MSG(is_dead(fd), "scope not dead after the removal");
+
+	/* The exit is still queued. */
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	rc = poll(&pfd, 1, 0);
+	ASSERT_MSG(rc == 1 && (pfd.revents & (POLLIN | POLLHUP)) ==
+	    (POLLIN | POLLHUP), "poll with an event queued: rc %d revents "
+	    "0x%x, want POLLIN|POLLHUP", rc, pfd.revents);
+	FD_ZERO(&rfds);
+	FD_SET(fd, &rfds);
+	rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+	ASSERT_MSG(rc == 1 && FD_ISSET(fd, &rfds),
+	    "select with an event queued: rc %d", rc);
+
+	/* Non-blocking reads: the events, then end of file, never EAGAIN. */
+	exits = 0;
+	while ((n = read(fd, buf, sizeof(buf))) > 0) {
+		for (off = 0; off + sizeof(*msg) <= (size_t)n;
+		    off += msg->em_size) {
+			msg = (const oes_message_t *)(const void *)(buf + off);
+			if (msg->em_size < sizeof(*msg))
+				break;
+			if (msg->em_event == OES_EVENT_NOTIFY_EXIT &&
+			    msg->em_process.ep_pid == pid)
+				exits++;
+		}
+	}
+	ASSERT_MSG(n == 0, "non-blocking read after the events: %zd errno %d "
+	    "(%s), want end of file", n, n < 0 ? errno : 0,
+	    n < 0 ? strerror(errno) : "-");
+	ASSERT_MSG(exits == 1, "exit queued before the removal: %d", exits);
+
+	/* Drained: hung up, no longer readable data. */
+	pfd.revents = 0;
+	rc = poll(&pfd, 1, 0);
+	ASSERT_MSG(rc == 1 && (pfd.revents & (POLLIN | POLLHUP)) == POLLHUP,
+	    "poll once drained: rc %d revents 0x%x, want POLLHUP alone", rc,
+	    pfd.revents);
+	FD_ZERO(&rfds);
+	FD_SET(fd, &rfds);
+	tv.tv_sec = tv.tv_usec = 0;
+	rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+	ASSERT_MSG(rc == 1 && FD_ISSET(fd, &rfds),
+	    "select once drained: rc %d (end of file must be readable)", rc);
+	n = read(fd, buf, sizeof(buf));
+	ASSERT_MSG(n == 0, "second non-blocking read: %zd errno %d", n,
+	    n < 0 ? errno : 0);
 	close(fd);
 	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
 }
@@ -2282,6 +2785,10 @@ main(void)
 	test_membership();
 	test_passive();
 	test_entering();
+	test_multithreaded_attach();
+	test_event_kinds();
+	test_scopes_together();
+	test_rooted_jail();
 	test_rename_jail();
 	test_linux();
 	test_inbound();
@@ -2292,6 +2799,7 @@ main(void)
 
 	test_dead_blocked_reader();
 	test_dead_queued();
+	test_dead_poll_select();
 	test_dead_last_exit();
 	test_dead_kqueue();
 	test_dead_with_process();
