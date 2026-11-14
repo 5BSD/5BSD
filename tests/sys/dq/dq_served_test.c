@@ -951,7 +951,7 @@ ATF_TC_HEAD(post_reply_enfile, tc)
 {
 
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "1800");
+	atf_tc_set_md_var(tc, "timeout", "600");
 }
 ATF_TC_BODY(post_reply_enfile, tc)
 {
