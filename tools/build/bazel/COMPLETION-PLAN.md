@@ -23,6 +23,37 @@ Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-2026
 ARM64 CSU proof: /usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114.
 
 
+### Installed operator qualification checkpoint (2026-11-14)
+
+Service policy format 3 extends the maintained normal-runtime runner with
+explicit installed operator/program inputs bound to authenticated image payloads.
+NetworkControl performs numeric address/service resolution as the actual ordinary
+SSH user through its existing software attributes; sysextctl config enumerates
+persistent policy through the normal root read-only query view. Complete output,
+endpoint semantics, unique ready policy records and required caller contexts are
+checked. No provider visibility, attributes or guest policy is changed. Paths
+come from the request and must be regular image payloads. Configuration syntax
+checks, local module lists and UID 0 alone do not substitute for provider RPCs.
+
+Sixteen direct service-policy/parser/control-flow checks pass, including
+truncation, wrong endpoint/transport, unready/inconsistent policy, duplicate
+records, unauthorized program substitution, missing ordinary callback and failed
+operation propagation. The request under bazel-provider-operator-request-r1-20261114
+resolves both operator payloads and the two uploaded helpers against immutable
+passing qualification receipts. The fresh full upgrade VM scenario under
+bazel-provider-operator-vm-r1-20261114 is pending; direct checks alone establish no
+runtime pass. It repeats the original six ordinary cases and both operators at
+all four phases. The newly implemented Log helper is not in this older captured
+helper and still needs native capture and VM acceptance. All-provider coverage
+remains explicitly false; Trace, Crypto, Audit, authorized Device and Filesystem
+need their legitimate contexts and useful operations.
+
+Frontend integration review: existing build-bsd format-5 image/target/test inputs
+and VM plan format 5 carry this policy; the maintained backend and frontend
+manual document format 3. No C dispatch, signing, staging, publication or
+production-backend change is required. All six gates remain open.
+
+
 ### Descendant resource accounting checkpoint (2026-11-14)
 
 The original time-l wrapper omitted an already-running Bazel server. Normal

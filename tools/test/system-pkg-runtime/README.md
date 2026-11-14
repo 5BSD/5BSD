@@ -388,3 +388,34 @@ make an ordinary helper reach SYSTEM services. Filesystem container operations
 also need a legitimate bundle identity, even though discovery is user-visible.
 Required boot-unit readiness stays manifest-derived, and operation coverage must
 continue to report incomplete until every required context has real evidence.
+
+
+## Installed operator operations (service policy format 3)
+
+Format 3 retains every format-2 field and adds a nonempty `installed_operations`
+list. Each item has exact fields `operation` and `program`. Programs must be
+canonical paths to regular payloads in the authenticated image report; their
+baseline payload hashes are retained with each phase report. Paths are inputs,
+not backend guesses or compatibility-symlink substitutions.
+
+* `network-resolve`: execute the installed NetworkControl operator as the actual
+  ordinary SSH user, with `resolve -4 192.0.2.1 443`. This invokes Network.Admin
+  through the executable's existing software attributes. Require complete,
+  nonempty result rows, exact address/port/family/scope and TCP/UDP semantics.
+  The numeric documentation address requires no external DNS or reachable peer.
+  This tests the authorized admin resolver, not USER visibility, real traffic,
+  DNS, Network.State or PF.
+* `system-extension-config`: execute the installed `sysextctl config` as root.
+  Require nonempty, complete, unique, consistent policy records with persistent
+  policy ready. The normal read-only root-query view permits enumeration;
+  this does not grant load/unload or policy mutation authority. A local kernel
+  module listing or a configuration syntax check cannot substitute for its
+  provider `Info` enumeration RPC.
+
+The runner uses each operation's required context, quotes its explicit program
+path, fails the phase on launch/protocol/output errors and repeats the operation
+at all four upgrade phases. Existing deadlines apply. This adds no guest policy,
+attributes, signed test units, provider fallback or altered service visibility.
+Complete-provider coverage remains explicitly false. The installed operators
+and the newly extended Log helper still need their respective VM acceptance;
+parser/control-flow tests alone do not establish runtime success.
