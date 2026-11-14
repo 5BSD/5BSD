@@ -11,6 +11,18 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The frozen R6 PAM archive now passes its ordered member/full-symbol contract
+against the index-verified Make package. Its twenty mapped alias groups include
+nineteen merged groups resolved through validated emitted DOF context, rather
+than ID ordering or a filename exception. A real R6 archive with one corrupted
+probe instruction is rejected while its member/symbol inventories remain equal.
+Host regressions pass 22 archive alias/context, 30 relocatable DOF and four package
+stream cases. Native tests are prepared but currently blocked by the maintained
+frontend's global lock held by the fresh Make world build; they are not counted
+as native acceptance. The parser is a declared data/binding input of its consumers.
+No C frontend flag or production build setting changes. Full ABI/debug/runtime,
+current full-review integration and the wider six gates remain open.
+
 Combined native R6 passes the selected AMD64 world/GENERIC kernel/modules and
 450-package graph at explicit kernel revision `0bb24324ee7`, all fifteen selected
 expanded test reports and digest-verified capture of 1,547 files (647,575,911 bytes).

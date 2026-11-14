@@ -1169,3 +1169,48 @@ or published base package.
 current-control src.conf derived from the documented comparison profile. The
 fresh frontend's world plan selects /usr/obj, sixteen jobs, production malloc and
 clean buildworld only. It does not install, build hardware or publish repositories.
+
+
+## PAM merged DTrace context resolution (2026-11-14)
+
+`/usr/obj/usr/src/bazel-pam-context-review-r2-20261114/review.json` passes the actual
+captured R6 PAM archive's complete ordered member/full-symbol contract against
+the index-verified original Make package. Package, artifact, checker and parser
+hashes are bound and unchanged. Twenty alias groups map bijectively; nineteen
+merged groups use emitted DOF with 52 resolved probe/function bindings. The
+preliminary R1 compares retained R4 archives and is not current R6 evidence.
+
+The generic fallback is selected by ambiguous symbol incidence, not an archive
+or program pathname. It extracts the relevant defined-member occurrence using
+LLVM ar xN, then reuses the maintained AMD64 DOF resolver. It requires actual
+ELF/user relocation bindings, bounded hidden function definitions and checked
+NOP/RET/XOR probe sites. Cross-input matching preserves member identity, provider
+attributes, complete probe schema/sites, function size/bytes and symbol
+binding/type/visibility. It never matches by arbitrary ID order or uses function
+addresses as cross-input identity. Missing/co-located-unresolved metadata and
+ambiguous contexts remain rejected. This does not establish complete function
+relocation/ABI parity, registration or runtime firing.
+
+`/usr/obj/usr/src/bazel-pam-context-negative-r2-20261114/result.json` proves that
+one real probe-site byte changed from NOP to INT3 is rejected by the DOF validator.
+The test explicitly confirms unchanged archive member order and complete symbol
+inventories, so it cannot pass merely through an unrelated symbol mismatch. R1
+has the same rejection but did not explicitly compare those inventories.
+
+`/usr/obj/usr/src/bazel-pam-context-host-tests-r1-20261114/result.json` passes all
+56 host cases: 22 alias/context cases, 30 existing relocatable DOF cases and four
+package stream cases, with unchanged input hashes. The added independent real
+ELF/DOF fixtures reject code/site/attribute/member drift, absent contexts and
+ambiguous probe/provider matches. An initial fixture call used _read instead of
+the existing read interface; it was corrected before this retained passing run.
+
+Native execution is requested in
+`/usr/obj/usr/src/bazel-pam-context-request-r1-20261114/inputs.json` through the
+fresh current C frontend. The attempt was rejected by its global build lock,
+which the live Make world control holds; no native acceptance is claimed and the
+lock is not bypassed. Run the same request after the Make build finishes. Native
+runfiles now declare the parser and fixture input, and indexed review source
+bindings include the DOF parser. Existing format-5/C frontend inputs need no new
+flag. The build-bsd manual describes this conditional comparison and its limits.
+The older full indexed R6 report remains unchanged and its PAM case is superseded
+only by this selected R6-archive review, not retroactively by a whole-system pass.

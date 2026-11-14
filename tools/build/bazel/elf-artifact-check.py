@@ -9,6 +9,7 @@ differences can be explained; byte parity is not required.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -262,43 +263,134 @@ def parse_archive(nm, artifact):
     return {member: sorted(values) for member, values in sorted(symbols.items())}
 
 
-def compare_archive_symbols(candidate, reference):
-    """Compare every symbol, mapping only unambiguous path-derived DTrace IDs.
+class AmbiguousDtraceAliases(ValueError):
+    pass
 
-    An alias ID denotes its entire archive incidence graph: member, original
-    function name and symbol kind for every definition/reference. Never erase IDs
-    independently per symbol, or guess a mapping between indistinguishable graphs.
-    This is a symbol contract, not DOF relocation or live probe qualification.
+
+def _archive_symbol_groups(symbols):
+    ordinary, aliases = {}, {}
+    for member, entries in symbols.items():
+        ordinary[member] = []
+        for name, kind in entries:
+            match = re.fullmatch(r'\$dtrace([0-9]+)\.(.+)', name)
+            if match:
+                key, function = match.groups()
+                aliases.setdefault(key, []).append((member, function, kind))
+            else:
+                ordinary[member].append((name, kind))
+        ordinary[member].sort()
+    return ordinary, {key: tuple(sorted(entries)) for key, entries in aliases.items()}
+
+
+def compare_archive_symbols(candidate, reference, *, candidate_contexts=None, reference_contexts=None):
+    """Map path IDs by the complete symbol graph and optional validated DOF context.
+
+    Ambiguous graphs require actual relocated probe/function evidence, never an
+    arbitrary ordering of IDs. Contexts are constructed internally from emitted
+    DOF and bounded hidden function definitions with checked patched-site bytes.
     """
-    if candidate == reference:
+    if candidate == reference and candidate_contexts is None and reference_contexts is None:
         return []
 
-    def contract(symbols):
-        ordinary, aliases = {}, {}
-        for member, entries in symbols.items():
-            ordinary[member] = []
-            for name, kind in entries:
-                match = re.fullmatch(r'\$dtrace([0-9]+)\.(.+)', name)
-                if match:
-                    key, function = match.groups()
-                    aliases.setdefault(key, []).append((member, function, kind))
-                else:
-                    ordinary[member].append((name, kind))
-            ordinary[member].sort()
+    def contract(symbols, contexts):
+        ordinary, aliases = _archive_symbol_groups(symbols)
+        contexts = contexts or {}
+        if set(contexts) - set(aliases):
+            raise ValueError('DOF context names an absent archive alias ID')
         signatures = {}
         for key, entries in aliases.items():
-            signature = tuple(sorted(entries))
+            signature = (entries, tuple(sorted(contexts.get(key, []))))
             if signature in signatures:
-                raise ValueError('ambiguous DTrace archive alias incidence graph')
+                raise AmbiguousDtraceAliases('ambiguous DTrace archive alias incidence graph')
             signatures[signature] = key
         return ordinary, signatures
 
-    a, a_aliases = contract(candidate)
-    b, b_aliases = contract(reference)
+    a, a_aliases = contract(candidate, candidate_contexts)
+    b, b_aliases = contract(reference, reference_contexts)
     if a != b or set(a_aliases) != set(b_aliases):
         raise ValueError('archive member symbols differ from Make reference')
-    return [{'candidate_id': a_aliases[signature], 'reference_id': b_aliases[signature],
-             'incidence': signature} for signature in sorted(a_aliases)]
+    result = []
+    for signature in sorted(a_aliases):
+        row = {'candidate_id': a_aliases[signature], 'reference_id': b_aliases[signature],
+               'incidence': signature[0]}
+        if signature[1]:
+            row['validated_dof_context'] = list(signature[1])
+        result.append(row)
+    return result
+
+
+def dof_alias_contexts(metadata, member):
+    """Join validated DOF bindings to unique emitted probe records.
+
+    Function addresses locate the records within each input only. Matching uses
+    probe schema/sites, exact function bytes/size and ELF binding/type/visibility.
+    No address or arbitrary ID ordering determines the cross-input mapping.
+    """
+    contexts = {}
+    for binding in metadata['relocatable_metadata']['bindings']:
+        symbol = binding['symbol']
+        match = re.fullmatch(r'\$dtrace([0-9]+)\.(.+)', symbol['name'])
+        if match is None:
+            continue  # Non-path-derived weak aliases are compared verbatim.
+        matches = [probe for probe in metadata['probe_locations']
+                   if probe['address'] == symbol['value'] and probe['function'] == match[2]
+                   and probe['offsets'] == binding['ordinary_offsets']
+                   and probe['enabled_offsets'] == binding['enabled_offsets']]
+        if len(matches) != 1:
+            raise ValueError('DOF alias binding requires a unique emitted probe context')
+        probe = {key: value for key, value in matches[0].items() if key != 'address'}
+        providers = [row for row in metadata['providers'] if row['name'] == probe['provider']]
+        if len(providers) != 1:
+            raise ValueError('DOF alias binding requires unique provider attributes')
+        context = {'member': member, 'probe': probe, 'provider_attributes': providers[0]['attributes'],
+                   'function_sha256': binding['function_sha256'],
+                   'size': symbol['size'], 'type': symbol['type'],
+                   'binding': symbol['binding'], 'visibility': symbol['visibility']}
+        contexts.setdefault(match[1], []).append(json.dumps(context, sort_keys=True))
+    return contexts
+
+
+def _ambiguous_definition_members(symbols):
+    unused, aliases = _archive_symbol_groups(symbols)
+    groups = {}
+    for signature in aliases.values():
+        groups[signature] = groups.get(signature, 0) + 1
+    return {member for signature, count in groups.items() if count > 1
+            for member, function, kind in signature if kind in ('T', 't', 'W')}
+
+
+def archive_dof_contexts(ar, path, record):
+    """Resolve ambiguous merged members with their co-located emitted DOF.
+
+    If the metadata is absent, unresolved or ambiguous, qualification stays
+    rejected. This does not infer a module identity from its pathname or filename.
+    """
+    selected = _ambiguous_definition_members(record['symbols'])
+    if not selected:
+        raise ValueError('ambiguous archive aliases have no defined function member')
+    spec = importlib.util.spec_from_file_location('archive_dof_inventory',
+        Path(__file__).with_name('dtrace-dof-inventory.py'))
+    parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(parser)
+    contexts = {}
+    occurrences = Counter()
+    for index, member in enumerate(record['members']):
+        occurrences[member] += 1
+        identity = str(index) + ':' + stem(member)
+        if identity not in selected:
+            continue
+        # archive_record has already validated all extraction names as basenames.
+        with tempfile.TemporaryDirectory(prefix='archive-dof-context-') as directory:
+            subprocess.run([str(ar), 'xN', str(occurrences[member]),
+                            str(Path(path).resolve()), member], cwd=directory,
+                           env=ENV, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            obj = Path(directory) / member
+            if not obj.is_file() or obj.is_symlink():
+                raise ValueError('DOF extraction did not produce a regular object')
+            metadata = parser.inventory(obj, relocatable=True)
+            for key, rows in dof_alias_contexts(metadata, identity).items():
+                contexts.setdefault(key, []).extend(rows)
+    return contexts
 
 
 def archive_record(nm, ar, path):
@@ -356,7 +448,13 @@ def compare_archive(nm, ar, candidate, reference):
     a, b = records['candidate'], records['make_reference']
     if [stem(m) for m in a['members']] != [stem(m) for m in b['members']]:
         raise ValueError('archive member set or order differs from Make reference')
-    aliases = compare_archive_symbols(a['symbols'], b['symbols'])
+    try:
+        aliases = compare_archive_symbols(a['symbols'], b['symbols'])
+    except AmbiguousDtraceAliases:
+        a['dof_alias_contexts'] = archive_dof_contexts(ar, candidate, a)
+        b['dof_alias_contexts'] = archive_dof_contexts(ar, reference, b)
+        aliases = compare_archive_symbols(a['symbols'], b['symbols'],
+            candidate_contexts=a['dof_alias_contexts'], reference_contexts=b['dof_alias_contexts'])
     return {'scope': 'archive-member-symbol-comparison', **records,
             'dtrace_alias_mapping': aliases,
             'byte_identical': sha(candidate) == sha(reference)}

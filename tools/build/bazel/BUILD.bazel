@@ -265,7 +265,7 @@ copy_file(name = "elf_contract_32", src = "//tools/build/bazel/tests/freestandin
 copy_file(name = "elf_contract_64", src = "//tools/build/bazel/tests/freestanding_boundary:resource_amd64",
     out = "elf_contract_inputs/amd64/resource.o", allow_symlink = True)
 bsd_host_artifact_test(name = "elf_object_contract_test", src = "elf-object-contract-test.py",
-    data = ["elf_object_contract.py", "elf-artifact-check.py", "qualification_artifacts.py", ":elf_contract_32", ":elf_contract_64"],
+    data = ["elf_object_contract.py", "elf-artifact-check.py", "dtrace-dof-inventory.py", "qualification_artifacts.py", ":elf_contract_32", ":elf_contract_64"],
     args = ["--elf32", "$(rlocationpath :elf_contract_32)",
             "--elf64", "$(rlocationpath :elf_contract_64)"], size = "small")
 bsd_host_artifact_test(name = "elf_object_collision_rejected", src = "elf-object-contract-test.py",
@@ -360,11 +360,11 @@ exports_files(["world_installation.bzl"])
 exports_files(["bsd_sed_output.bzl"], visibility = ["//visibility:public"])
 
 bsd_python_test(name = "elf_section_reader_test", src = "elf-section-reader-test.py",
-    data = ["elf-artifact-check.py", "elf_object_contract.py", "qualification_artifacts.py"],
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
 
 bsd_python_test(name = "elf_runtime_path_test", src = "elf-runtime-path-test.py",
-    data = ["elf-artifact-check.py", "elf_object_contract.py", "qualification_artifacts.py"],
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
 
 bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-test.py",
@@ -445,7 +445,7 @@ bsd_python_test(name = "package_archive_compare_test", src = "package-archive-co
 
 # Path-derived DTrace IDs require a whole-archive, bijective symbol relationship.
 bsd_python_test(name = "archive_dtrace_symbols_test", src = "archive-dtrace-symbols-test.py",
-    data = ["elf-artifact-check.py", "elf_object_contract.py", "qualification_artifacts.py"])
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "dtrace-relocatable-inventory-test.py", "elf_object_contract.py", "qualification_artifacts.py"])
 
 exports_files(["pkg_image.py"])
 
@@ -475,6 +475,6 @@ bsd_python_test(
 )
 
 bsd_python_test(name = "package_elf_review_test", src = "package-elf-review-test.py",
-    data = ["package-elf-review.py", "elf-artifact-check.py", "elf_object_contract.py", "package-archive-compare.py",
+    data = ["package-elf-review.py", "elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "package-archive-compare.py",
             "archive_headers.py", "package_index.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")

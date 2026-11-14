@@ -194,7 +194,7 @@ def main():
                 if path in inventory:
                     raise ValueError('duplicate inventory payload')
                 inventory[path] = record
-    inputs = [Path(__file__).resolve(), Path(checker.__file__), Path(__file__).with_name('elf_object_contract.py'), Path(comparison.__file__),
+    inputs = [Path(__file__).resolve(), Path(checker.__file__), Path(__file__).with_name('dtrace-dof-inventory.py'), Path(__file__).with_name('elf_object_contract.py'), Path(comparison.__file__),
               Path(__file__).with_name('package_index.py'), Path(__file__).with_name('qualification_artifacts.py'),
               args.tar, args.readelf, args.objcopy, args.nm, args.ar,
               args.reference/'index.json', args.candidate/'index.json',

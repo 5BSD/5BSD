@@ -5968,8 +5968,15 @@ optimization; no peak-memory limit is implied.
 This check does not load kernel modules or qualify their runtime behavior.
 .Pp
 Path-derived DTrace alias IDs are compared by a whole-archive member/function/
-symbol-kind incidence mapping. Reports retain raw IDs and the explicit bijection;
-ambiguous remapping is rejected. Repeated local symbol occurrences retain their
+symbol-kind incidence mapping. Reports retain raw IDs and the explicit bijection.
+If merged definitions leave that graph ambiguous, the checker can resolve it from
+co-located emitted AMD64 DOF: actual ELF/user relocations, bounded hidden function
+definitions, patched site bytes, provider attributes, probe schemas and exact
+function bytes. It preserves the member occurrence and complete symbol graph.
+Absent, unresolved or still-ambiguous contexts remain rejected; there is no
+program-name allowlist or ID-order guess. This conditional check does not establish
+full function ABI/relocation parity, runtime registration or live probe firing.
+Repeated local symbol occurrences retain their
 multiplicity in both ordinary and alias contracts. Legal repeated archive member
 names retain distinct ordered occurrences; LLVM ar extracts each repeated
 instance through its public occurrence selector into a private directory.
