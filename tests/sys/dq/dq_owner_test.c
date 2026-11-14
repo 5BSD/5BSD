@@ -31,6 +31,7 @@
 #include <sys/filio.h>
 #include <sys/mount.h>
 #include <sys/procdesc.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -101,6 +102,7 @@ struct ops_res {
 	struct dqt_rr	 r[OP_N];
 	uint64_t	 id;		/* ds_queue_id, 0 without statistics */
 	int		 revents;
+	struct dqt_rr	 sel;		/* select(2) for reading, 100 ms */
 	bool		 done;		/* the subject got to the end */
 };
 
@@ -122,6 +124,8 @@ ops_quiet(int q, struct ops_res *res)
 	struct dq_stats2 st2;
 	struct kevent kev;
 	struct pollfd pfd;
+	struct timeval tv;
+	fd_set rset;
 	char buf[4096];
 	int fl, kq, on;
 
@@ -151,6 +155,16 @@ ops_quiet(int q, struct ops_res *res)
 	pfd.revents = 0;
 	SET(res->r[OP_POLL], poll(&pfd, 1, 0));
 	res->revents = pfd.revents;
+	/*
+	 * select(2) has no way to say POLLNVAL: for a caller the queue
+	 * refuses it never reports the queue ready, and an empty queue is
+	 * not readable for its owner either.
+	 */
+	FD_ZERO(&rset);
+	FD_SET(q, &rset);
+	tv.tv_sec = 0;
+	tv.tv_usec = 100000;
+	SET(res->sel, select(q + 1, &rset, NULL, NULL, &tv));
 	kq = kqueue();
 	if (kq == -1) {
 		res->r[OP_KEVENT].rv = -2;
@@ -205,6 +219,8 @@ check_served(const char *who, const struct ops_res *res, uint64_t id)
 	}
 	ATF_CHECK_EQ_MSG(id, res->id, "%s: queue id %ju, want %ju", who,
 	    (uintmax_t)res->id, (uintmax_t)id);
+	ATF_CHECK_EQ_MSG(0, res->sel.rv, "%s: select returned %ld errno %d",
+	    who, res->sel.rv, res->sel.err);
 	ATF_CHECK_EQ_MSG(1, res->r[OP_POLL].rv, "%s: poll returned %ld", who,
 	    res->r[OP_POLL].rv);
 	ATF_CHECK_EQ_MSG(POLLOUT, res->revents, "%s: revents %#x, want "
@@ -233,6 +249,8 @@ check_refused(const char *who, const struct ops_res *res, int want)
 	    res->r[OP_POLL].rv);
 	ATF_CHECK_EQ_MSG(POLLNVAL, res->revents, "%s: revents %#x, want "
 	    "POLLNVAL", who, res->revents);
+	ATF_CHECK_EQ_MSG(0, res->sel.rv, "%s: select returned %ld errno %d",
+	    who, res->sel.rv, res->sel.err);
 }
 
 static void
@@ -361,11 +379,45 @@ probe_child(int q)
  * A sharer of the opener's descriptor table
  */
 
+/*
+ * F_SETFL by the sharer on the queue the opener runs non-blocking.  A call
+ * that changes O_NONBLOCK or O_ASYNC asks the device, which refuses a
+ * process that is not the owner, and the flags stay as they were; a call
+ * that changes another status flag asks nobody.
+ */
+enum {
+	SF_CLEAR_NONBLOCK,	/* F_SETFL, 0 */
+	SF_SET_ASYNC,		/* F_SETFL, O_NONBLOCK | O_ASYNC */
+	SF_SET_APPEND,		/* F_SETFL, O_NONBLOCK | O_APPEND */
+	SF_RESTORE,		/* F_SETFL, O_NONBLOCK */
+	SF_N
+};
+
+struct sharer_setfl {
+	struct dqt_rr	 r[SF_N];
+	int		 getfl[SF_N];	/* F_GETFL after each */
+};
+
+static void
+sharer_setfl(int q, struct sharer_setfl *sf)
+{
+	static const int flags[SF_N] = { 0, O_NONBLOCK | O_ASYNC,
+	    O_NONBLOCK | O_APPEND, O_NONBLOCK };
+	int i;
+
+	for (i = 0; i < SF_N; i++) {
+		SET(sf->r[i], fcntl(q, F_SETFL, flags[i]));
+		sf->getfl[i] = fcntl(q, F_GETFL);
+	}
+}
+
 struct sharer_res {
 	struct ops_res	 opener;
 	struct ops_res	 sharer;
 	struct dqt_rr	 attach_sharer;	/* the opener's ATTACH of the sharer */
 	int		 sharer_status;	/* wait status, -1: not collected */
+	struct sharer_setfl setfl;	/* the sharer's F_SETFL calls */
+	struct dqt_rr	 opener_read;	/* the opener's read after them */
 };
 
 /*
@@ -382,9 +434,10 @@ child_opener_sharer(void *arg, void *result)
 	const struct dq_ident_file *ident = arg;
 	struct sharer_res *res = result;
 	struct ops_res sres;
+	struct sharer_setfl ssf;
 	pid_t pid;
 	int gp[2], pd, q, rp[2], status, t_opener, t_sharer;
-	char b;
+	char b, buf[4096];
 
 	res->sharer_status = -1;
 	q = dq_open();
@@ -404,12 +457,18 @@ child_opener_sharer(void *arg, void *result)
 		memset(&sres, 0, sizeof(sres));
 		ops_quiet(q, &sres);
 		ops_make(q, ident, t_sharer, &sres);
+		memset(&ssf, 0, sizeof(ssf));
+		sharer_setfl(q, &ssf);
 		(void)write(rp[1], &sres, sizeof(sres));
+		(void)write(rp[1], &ssf, sizeof(ssf));
 		(void)read(gp[0], &b, 1);
 		_exit(0);
 	}
-	if (!read_all(rp[0], &res->sharer, sizeof(res->sharer)))
+	if (!read_all(rp[0], &res->sharer, sizeof(res->sharer)) ||
+	    !read_all(rp[0], &res->setfl, sizeof(res->setfl)))
 		_exit(9);
+	/* Still non-blocking, whatever the sharer asked for. */
+	SET(res->opener_read, read(q, buf, sizeof(buf)));
 	/* It holds the queue (its table does): EBUSY, as before sc-q. */
 	SET(res->attach_sharer, dq_attach(q, pd));
 	(void)write(gp[1], "x", 1);
@@ -455,6 +514,33 @@ ATF_TC_BODY(sharer_cannot_operate, tc)
 	    res.attach_sharer.err == EBUSY, "ATTACH of the sharer: rv %ld "
 	    "errno %d, want EBUSY", res.attach_sharer.rv,
 	    res.attach_sharer.err);
+	/* The two refused calls change nothing, the allowed one one flag. */
+	ATF_CHECK_MSG(res.setfl.r[SF_CLEAR_NONBLOCK].rv == -1 &&
+	    res.setfl.r[SF_CLEAR_NONBLOCK].err == EPERM,
+	    "sharer: F_SETFL 0: rv %ld errno %d, want EPERM",
+	    res.setfl.r[SF_CLEAR_NONBLOCK].rv,
+	    res.setfl.r[SF_CLEAR_NONBLOCK].err);
+	ATF_CHECK_EQ_MSG(O_RDWR | O_NONBLOCK,
+	    res.setfl.getfl[SF_CLEAR_NONBLOCK], "F_GETFL %#x after the "
+	    "refused clear", res.setfl.getfl[SF_CLEAR_NONBLOCK]);
+	ATF_CHECK_MSG(res.setfl.r[SF_SET_ASYNC].rv == -1 &&
+	    res.setfl.r[SF_SET_ASYNC].err == EPERM,
+	    "sharer: F_SETFL O_NONBLOCK|O_ASYNC: rv %ld errno %d, want EPERM",
+	    res.setfl.r[SF_SET_ASYNC].rv, res.setfl.r[SF_SET_ASYNC].err);
+	ATF_CHECK_EQ_MSG(O_RDWR | O_NONBLOCK, res.setfl.getfl[SF_SET_ASYNC],
+	    "F_GETFL %#x after the refused O_ASYNC",
+	    res.setfl.getfl[SF_SET_ASYNC]);
+	ATF_CHECK_EQ_MSG(0, res.setfl.r[SF_SET_APPEND].rv,
+	    "sharer: F_SETFL O_NONBLOCK|O_APPEND: errno %d",
+	    res.setfl.r[SF_SET_APPEND].err);
+	ATF_CHECK_EQ(O_RDWR | O_NONBLOCK | O_APPEND,
+	    res.setfl.getfl[SF_SET_APPEND]);
+	ATF_CHECK_EQ(0, res.setfl.r[SF_RESTORE].rv);
+	ATF_CHECK_EQ(O_RDWR | O_NONBLOCK, res.setfl.getfl[SF_RESTORE]);
+	ATF_CHECK_MSG(res.opener_read.rv == -1 &&
+	    res.opener_read.err == EAGAIN, "the opener's read afterwards: "
+	    "rv %ld errno %d, want EAGAIN", res.opener_read.rv,
+	    res.opener_read.err);
 	free(ident);
 }
 
@@ -462,6 +548,14 @@ struct outlive_arg {
 	const struct dq_ident_file *ident;
 	int		 go;		/* read: the opener is gone */
 	int		 rep;		/* write: the sharer's ops_res */
+};
+
+/* What the sharer reads from the kqueue the opener registered the queue on. */
+struct outlive_eof {
+	struct dqt_rr	 kev;		/* kevent(2): the number of events */
+	int		 flags;		/* of the event */
+	int		 ident;		/* its descriptor */
+	int		 q;		/* the queue's number */
 };
 
 /*
@@ -476,8 +570,11 @@ child_opener_exits(void *arg, void *result)
 	struct outlive_arg *a = arg;
 	struct ops_res *res = result;
 	struct ops_res sres;
+	struct outlive_eof eof;
+	struct kevent kev;
+	struct timespec ts;
 	pid_t pid;
-	int q, target;
+	int kq, q, target;
 	char b;
 
 	q = dq_open();
@@ -487,6 +584,13 @@ child_opener_exits(void *arg, void *result)
 	if (target == -1)
 		_exit(7);
 	ops_quiet(q, res);
+	/* The owner's own registration, in a kqueue the table keeps. */
+	kq = kqueue();
+	if (kq == -1)
+		_exit(10);
+	EV_SET(&kev, q, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0)
+		_exit(11);
 	res->done = true;
 
 	pid = rfork(RFPROC);
@@ -497,12 +601,25 @@ child_opener_exits(void *arg, void *result)
 	memset(&sres, 0, sizeof(sres));
 	if (read(a->go, &b, 1) != 1)
 		_exit(9);
+	/*
+	 * The filter the owner registered reports the queue's death to
+	 * whoever reads that kqueue: readiness, not an operation.
+	 */
+	memset(&eof, 0, sizeof(eof));
+	memset(&kev, 0, sizeof(kev));
+	ts.tv_sec = 10;
+	ts.tv_nsec = 0;
+	SET(eof.kev, kevent(kq, NULL, 0, &kev, 1, &ts));
+	eof.flags = kev.flags;
+	eof.ident = (int)kev.ident;
+	eof.q = q;
 	ops_quiet(q, &sres);
 	ops_make(q, a->ident, target, &sres);
 	/* The last close of the queue. */
 	SET(sres.r[OP_CLOSE], close(q));
 	idle_target_end(target);
 	(void)write(a->rep, &sres, sizeof(sres));
+	(void)write(a->rep, &eof, sizeof(eof));
 	_exit(0);
 }
 
@@ -522,6 +639,7 @@ ATF_TC_BODY(sharer_outlives_opener, tc)
 	struct dqt_child ch;
 	struct outlive_arg a;
 	struct ops_res opener, sharer;
+	struct outlive_eof eof;
 	u_int before;
 	int go[2], rep[2], status;
 	char b;
@@ -552,6 +670,14 @@ ATF_TC_BODY(sharer_outlives_opener, tc)
 	memset(&sharer, 0, sizeof(sharer));
 	ATF_REQUIRE_MSG(read_all(rep[0], &sharer, sizeof(sharer)),
 	    "no report from the sharer");
+	memset(&eof, 0, sizeof(eof));
+	ATF_REQUIRE_MSG(read_all(rep[0], &eof, sizeof(eof)),
+	    "no kqueue report from the sharer");
+	ATF_CHECK_EQ_MSG(1, eof.kev.rv, "kevent returned %ld errno %d",
+	    eof.kev.rv, eof.kev.err);
+	ATF_CHECK_EQ(eof.q, eof.ident);
+	ATF_CHECK_MSG((eof.flags & EV_EOF) != 0, "event flags %#x lack "
+	    "EV_EOF", eof.flags);
 	/* S11.  Before sc-q the sharer was served here, as the opener. */
 	check_refused("sharer", &sharer, ENXIO);
 	ATF_CHECK_EQ_MSG(0, sharer.r[OP_CLOSE].rv, "close: errno %d",
@@ -1350,11 +1476,18 @@ struct orphan_res {
  * a last close), and exits.  The attached child is not signalled.  Once
  * the test says so it tries to obtain new things.
  */
+enum orphan_how {
+	ORPHAN_EXIT,		/* the owner exits */
+	ORPHAN_EXEC,		/* the owner execs another image */
+	ORPHAN_RFFDG		/* the owner leaves the shared table and lives */
+};
+
 static void
-orphan_supervisor(void)
+orphan_supervisor(enum orphan_how how)
 {
 	struct orphan_res res;
 	struct stat sb;
+	char *const argv[] = { helper_path, NULL };
 	pid_t pid;
 	int fds[2], pd, q, status;
 	char b;
@@ -1400,27 +1533,32 @@ orphan_supervisor(void)
 	/* The sharer's pid, for the test to end it. */
 	if (write(ORPHAN_REP, &pid, sizeof(pid)) != sizeof(pid))
 		_exit(24);
-	_exit(0);
+	switch (how) {
+	case ORPHAN_EXEC:
+		/* The image reports the queue descriptors it has: none. */
+		execv(helper_path, argv);
+		_exit(25);
+	case ORPHAN_RFFDG:
+		if (rfork(RFFDG) == -1)
+			_exit(26);
+		/* Alive, in a table of its own that has no queue. */
+		if (write(ORPHAN_REP, "u", 1) != 1)
+			_exit(27);
+		for (;;)
+			(void)pause();
+	default:
+		_exit(0);
+	}
 }
 
-ATF_TC(orphan_gets_nothing_new);
-ATF_TC_HEAD(orphan_gets_nothing_new, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "a program attached to a queue whose "
-	    "owner exited (the queue's file still held by a sharer of the "
-	    "owner's table) goes on running and obtains nothing new by "
-	    "name: stat and open are EIO, socket and socketpair EACCES, in "
-	    "a child it forks too; pipe, which names nothing, succeeds");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(orphan_gets_nothing_new, tc)
+static void
+orphan_check(enum orphan_how how)
 {
 	struct orphan_res res;
 	pid_t pid, sharer;
 	int go[2], pd, rep[2], status;
+	char b;
 
-	dqt_require_test_access();
-	dqt_require_plane();
 	ATF_REQUIRE_EQ(0, pipe(go));
 	ATF_REQUIRE_EQ(0, pipe(rep));
 	ATF_REQUIRE(go[1] < ORPHAN_GO && rep[1] < ORPHAN_GO);
@@ -1435,18 +1573,24 @@ ATF_TC_BODY(orphan_gets_nothing_new, tc)
 		(void)close(go[1]);
 		(void)close(rep[0]);
 		(void)close(rep[1]);
-		orphan_supervisor();
+		orphan_supervisor(how);
 	}
 	(void)close(go[0]);
 	(void)close(rep[1]);
 	sharer = 0;
 	ATF_REQUIRE_MSG(read_within(rep[0], &sharer, sizeof(sharer), 30000),
 	    "no report from the supervisor");
-	ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "supervisor: status %#x", status);
+	if (how == ORPHAN_RFFDG) {
+		/* The owner has left the table and goes on running. */
+		ATF_REQUIRE_MSG(read_within(rep[0], &b, 1, 30000) && b == 'u',
+		    "the supervisor did not leave its table");
+	} else {
+		ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
+		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "supervisor: status %#x", status);
+	}
 
-	/* The supervisor is gone; its attached program is still there. */
+	/* The queue has no owner; its attached program is still there. */
 	ATF_REQUIRE_EQ(1, write(go[1], "g", 1));
 	memset(&res, 0, sizeof(res));
 	ATF_REQUIRE_MSG(read_within(rep[0], &res, sizeof(res), 30000),
@@ -1468,9 +1612,50 @@ ATF_TC_BODY(orphan_gets_nothing_new, tc)
 	    "stat in a later child: rv %ld errno %d, want EIO",
 	    res.child_stat.rv, res.child_stat.err);
 	(void)kill(sharer, SIGKILL);
+	if (how == ORPHAN_RFFDG)
+		(void)pdkill(pd, SIGKILL);
 	(void)close(pd);
 	(void)close(go[1]);
 	(void)close(rep[0]);
+}
+
+ATF_TC(orphan_gets_nothing_new);
+ATF_TC_HEAD(orphan_gets_nothing_new, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "a program attached to a queue whose "
+	    "owner exited (the queue's file still held by a sharer of the "
+	    "owner's table) goes on running and obtains nothing new by "
+	    "name: stat and open are EIO, socket and socketpair EACCES, in "
+	    "a child it forks too; pipe, which names nothing, succeeds");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(orphan_gets_nothing_new, tc)
+{
+
+	dqt_require_test_access();
+	dqt_require_plane();
+	helper_locate(tc);
+	orphan_check(ORPHAN_EXIT);
+}
+
+ATF_TC(orphan_after_exec_or_unshare);
+ATF_TC_HEAD(orphan_after_exec_or_unshare, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "the same for a program attached to "
+	    "a queue whose owner called execve, and whose owner left the "
+	    "shared descriptor table with rfork(RFFDG) and is still running: "
+	    "the queue died there, the program was not signalled and "
+	    "obtains nothing new by name");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(orphan_after_exec_or_unshare, tc)
+{
+
+	dqt_require_test_access();
+	dqt_require_plane();
+	helper_locate(tc);
+	orphan_check(ORPHAN_EXEC);
+	orphan_check(ORPHAN_RFFDG);
 }
 
 /*
@@ -2199,6 +2384,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, exec_ends_queue);
 	ATF_TP_ADD_TC(tp, owner_leaves_shared_table);
 	ATF_TP_ADD_TC(tp, orphan_gets_nothing_new);
+	ATF_TP_ADD_TC(tp, orphan_after_exec_or_unshare);
 	ATF_TP_ADD_TC(tp, transfer_refused);
 	ATF_TP_ADD_TC(tp, dup_carries_states);
 	ATF_TP_ADD_TC(tp, owner_only_misc);

@@ -1160,6 +1160,75 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 }
 
 /*
+ * Case: the same with O_TRUNC.  The first test of the queue is made before
+ * the lock and the truncation and the last as the descriptor is entered;
+ * the queue dies in between, while the program sleeps in the lock.  The
+ * open fails EIO after it has truncated the file, as an open(2) that fails
+ * EMFILE has truncated: the documented remainder.
+ */
+static void
+p_exlock_trunc_late(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	int fd, next;
+
+	next = dup(0);
+	(void)close(next);
+	RR(res->r[0], fd = open("orig", O_WRONLY | O_TRUNC | O_EXLOCK));
+	if (fd != -1)
+		RR(res->r[8], close(fd));
+	else
+		RR(res->r[4], fcntl(next, F_GETFD));
+}
+
+ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_after_trunc);
+ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct dqt_achild ch;
+	char *buf;
+	char text[64];
+	int lockfd, status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	lockfd = open("subst", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(lockfd != -1);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
+	sw_init(&x, "orig", a_wronly);
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+	dqt_attach_spawn(&x.c, &ch, p_exlock_trunc_late, NULL);
+	sw_serve_answered(&x, buf, 1);
+	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	    "the program is not waiting for the lock");
+	/* Nothing is truncated while the open waits for its lock. */
+	sw_read_file("subst", text, sizeof(text));
+	ATF_CHECK_STREQ("SUBSTITUTE", text);
+
+	dqt_close_queue(&x.c);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the program failed, status %#x", status);
+	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
+	ATF_CHECK_EQ(EIO, res.r[0].err);
+	ATF_CHECK_EQ(-1, res.r[4].rv);
+	ATF_CHECK_EQ(EBADF, res.r[4].err);
+	/* Truncated by the open that then failed; the original untouched. */
+	sw_read_file("subst", text, sizeof(text));
+	ATF_CHECK_STREQ("", text);
+	sw_read_file("orig", text, sizeof(text));
+	ATF_CHECK_STREQ("ORIGINAL", text);
+	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
+	(void)close(lockfd);
+	free(buf);
+	dqt_fini(&x.c);
+}
+
+/*
  * Case: the same, with the supervisor a process of its own that exits
  * while a process sharing its descriptor table still holds the queue's
  * file.  No last close happens: the queue dies of its owner's exit, and
@@ -1397,6 +1466,9 @@ ATF_TC_BODY(swap_supervisor_gone_race, tc)
 	}
 	printf("installed before the death %d, refused %d\n", installed,
 	    refused);
+	/* A race that only ever went one way has tested one side of it. */
+	ATF_CHECK_MSG(installed > 0 && refused > 0, "the race went one way "
+	    "only: %d installed, %d refused", installed, refused);
 	free(buf);
 }
 
@@ -1585,6 +1657,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swap_program_denied);
 	ATF_TP_ADD_TC(tp, swap_survives_supervisor);
 	ATF_TP_ADD_TC(tp, swap_supervisor_gone_before_install);
+	ATF_TP_ADD_TC(tp, swap_supervisor_gone_after_trunc);
 	ATF_TP_ADD_TC(tp, swap_owner_exit_before_install);
 	ATF_TP_ADD_TC(tp, swap_supervisor_gone_race);
 	ATF_TP_ADD_TC(tp, swap_refused_types);
