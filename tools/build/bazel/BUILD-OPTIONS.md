@@ -68,6 +68,17 @@ obsolete Make implementation details into Bazel. Every supported choice needs
 one documented input, source-owned selection and matching outputs. Unsupported
 required choices must stay visible and fail clearly until implemented.
 
+## Installed OS tests remain a required configuration
+
+The full AMD64 R15 capture selected `tests=false` and `tests_support=yes`.
+Its 450 packages and 32 verification tests do not establish the installed OS test
+suite's build or payload completeness. Refreshed Make references enable tests.
+The initial native `tests/sys/kern` contribution covers the two descriptor
+programs and 13 cases only; the rest of that directory/suite remains open.
+Root cases require disposable VM execution; skipped root cases are not passes.
+ARM64 also needs the relevant `libkvm`/`libjail` producers. Complete tests-enabled
+selection and Make payload parity remain part of gates 2 and 6.
+
 ## Minimum acceptance matrix
 
 1. AMD64 and ARM64 GENERIC: complete selected world, kernel, modules and pkgbase;
