@@ -50,6 +50,10 @@ struct sw {
 	struct dqt_ctl	 c;
 	const char	*name;		/* the open to answer: path suffix */
 	sw_answer_t	*answer;
+	const char	*name2;		/* a second one, or NULL */
+	sw_answer_t	*answer2;
+	int		 pd;		/* the program, while it runs */
+	bool		 expect_killed;	/* the case kills the program */
 	int		 answered;	/* opens of name seen */
 	uint32_t	 accept;	/* of the last one */
 	uint32_t	 mode;
@@ -118,16 +122,16 @@ sw_init(struct sw *x, const char *name, sw_answer_t *answer)
 }
 
 static bool
-sw_is_target(const struct sw *x, const struct dq_resolve_body *rb,
+sw_is_target(const char *name, const struct dq_resolve_body *rb,
     const char *path)
 {
 	size_t nl, pl;
 
-	if (rb->drs_op != DQ_ROP_OPEN)
+	if (name == NULL || rb->drs_op != DQ_ROP_OPEN)
 		return (false);
-	nl = strlen(x->name);
+	nl = strlen(name);
 	pl = strlen(path);
-	return (pl >= nl && strcmp(path + pl - nl, x->name) == 0 &&
+	return (pl >= nl && strcmp(path + pl - nl, name) == 0 &&
 	    (pl == nl || path[pl - nl - 1] == '/'));
 }
 
@@ -145,11 +149,15 @@ sw_handle(struct sw *x, const struct dq_event *ev)
 		return;
 	}
 	ATF_REQUIRE_EQ(0, dq_event_resolve(ev, &rb, &path, NULL, NULL, NULL));
-	if (sw_is_target(x, rb, path)) {
+	if (sw_is_target(x->name, rb, path)) {
 		x->answered++;
 		x->accept = rb->drs_accept;
 		x->mode = rb->drs_mode;
 		x->answer(x, ev, rb);
+		return;
+	}
+	if (sw_is_target(x->name2, rb, path)) {
+		x->answer2(x, ev, rb);
 		return;
 	}
 	if (x->answered > 0)
@@ -174,6 +182,7 @@ sw_run(struct sw *x, dqt_child_fn fn, void *arg, struct sw_res *res)
 	ATF_REQUIRE(buf != NULL);
 	ATF_REQUIRE(fcntl(x->c.q, F_SETFL, O_NONBLOCK) != -1);
 	dqt_attach_spawn(&x->c, &ch, fn, arg);
+	x->pd = ch.pd;
 	for (hup = false; !hup;) {
 		pfd[0].fd = x->c.q;
 		pfd[0].events = POLLIN;
@@ -190,9 +199,15 @@ sw_run(struct sw *x, dqt_child_fn fn, void *arg, struct sw_res *res)
 				sw_handle(x, ev);
 		}
 	}
+	x->pd = -1;
 	status = dqt_attach_wait(&ch, res, sizeof(*res));
-	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "the program failed, status %#x", status);
+	if (x->expect_killed)
+		ATF_REQUIRE_MSG(WIFSIGNALED(status) &&
+		    WTERMSIG(status) == SIGKILL,
+		    "the program was not killed, status %#x", status);
+	else
+		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "the program failed, status %#x", status);
 	free(buf);
 }
 
@@ -991,6 +1006,229 @@ ATF_TC_BODY(swap_noxfer, tc)
 	dqt_fini(&x.c);
 }
 
+/*
+ * Case: a swap answered from a served (proxy) directory.  There the
+ * supervisor is the namespace: the open of a name under the directory
+ * takes no PASS, and a swapped file is installed with no more rights than
+ * the directory descriptor it was opened through, as a real openat(2)
+ * from a limited directory descriptor installs.
+ */
+static void
+p_proxydir(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	cap_rights_t dr, fr, lim;
+	int dfd, fd;
+
+	RR(res->r[0], dfd = open("pdir", O_RDONLY | O_DIRECTORY));
+	if (dfd == -1)
+		return;
+	/* Narrow the directory descriptor: no CAP_WRITE, no CAP_SEEK. */
+	RR(res->r[5], cap_rights_limit(dfd, cap_rights_init(&lim, CAP_LOOKUP,
+	    CAP_READ, CAP_FSTAT)));
+	RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
+	if (fd == -1)
+		return;
+	RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+	RR(res->r[3], cap_rights_get(dfd, &dr));
+	RR(res->r[4], cap_rights_get(fd, &fr));
+	/* Every right of the file is a right of the directory. */
+	res->flflags = cap_rights_contains(&dr, &fr);
+	res->fdflags = cap_rights_is_set(&fr, CAP_READ);
+	res->kftype = cap_rights_is_set(&fr, CAP_WRITE);
+	(void)close(fd);
+	(void)close(dfd);
+}
+
+static void
+a_proxydir(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb __unused)
+{
+	struct dq_ident_file *id;
+	struct dq_policy pol;
+	char presented[PATH_MAX];
+	uint64_t obj;
+	int32_t reason;
+
+	id = calloc(1, sizeof(*id));
+	ATF_REQUIRE(id != NULL);
+	snprintf(presented, sizeof(presented), "%s/pdir", x->cwd);
+	ATF_REQUIRE_EQ(0, dq_ident_from_lstat(id, presented, AT_FDCWD,
+	    "realdir"));
+	dq_policy_default_dir(&pol);
+	reason = 0;
+	ATF_CHECK_EQ_MSG(0, dq_reply_resolve_fd(x->c.q, ev->de_id, DQ_KIND_DIR,
+	    0, id, &pol, &obj, &reason), "FD (directory): %s, reason %d",
+	    strerror(errno), reason);
+	free(id);
+}
+
+static void
+a_proxydir_file(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb)
+{
+	int fd;
+
+	x->after_resolve = 1000;	/* seen */
+	ATF_CHECK(dq_resolve_accepts(rb, DQ_RESOLVE_SWAP));
+	ATF_CHECK(!dq_resolve_accepts(rb, DQ_RESOLVE_PASS));
+	fd = sw_open("subst", O_RDONLY);
+	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	(void)close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(swap_from_proxy_directory);
+ATF_TC_BODY(swap_from_proxy_directory, tc)
+{
+	struct sw x;
+	struct sw_res res;
+
+	ATF_REQUIRE_EQ(0, mkdir("realdir", 0755));
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	sw_init(&x, "pdir", a_proxydir);
+	x.name2 = "f";
+	x.answer2 = a_proxydir_file;
+	sw_run(&x, p_proxydir, NULL, &res);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open of the served directory: %s",
+	    strerror(res.r[0].err));
+	ATF_CHECK(x.after_resolve >= 1000);
+	ATF_CHECK_MSG(res.r[1].rv >= 0, "openat: %s", strerror(res.r[1].err));
+	ATF_CHECK_EQ(0, res.r[3].rv);
+	ATF_CHECK_EQ(0, res.r[4].rv);
+	ATF_CHECK_MSG(res.flflags, "the swapped file has a right its start "
+	    "directory lacks");
+	ATF_CHECK_EQ(0, res.r[5].rv);
+	/*
+	 * The supervisor's entry had every right; the program narrowed the
+	 * directory descriptor first, so CAP_WRITE is not installed.
+	 */
+	ATF_CHECK_EQ(0, res.kftype);
+	if (res.fdflags) {
+		ATF_CHECK_EQ(10, res.r[2].rv);
+		ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
+	} else {
+		ATF_CHECK_EQ(-1, res.r[2].rv);
+		ATF_CHECK_EQ(ENOTCAPABLE, res.r[2].err);
+	}
+	dqt_fini(&x.c);
+}
+
+/*
+ * Case: the requester is killed while its open waits.  The supervisor's
+ * later reply finds no event (ESRCH); its descriptor stays open and
+ * nothing was taken from it.
+ */
+static void
+a_killed(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb __unused)
+{
+	const struct dq_interrupt_body *ib;
+	const struct dq_event *e2;
+	struct pollfd pfd;
+	char *buf;
+	size_t bodylen;
+	ssize_t got;
+	int fd, tries;
+	bool interrupted;
+
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	fd = sw_open("subst", O_RDONLY);
+	ATF_REQUIRE_EQ(0, pdkill(x->pd, SIGKILL));
+	/* The kernel tells the supervisor the event was abandoned. */
+	interrupted = false;
+	for (tries = 0; tries < 100 && !interrupted; tries++) {
+		pfd.fd = x->c.q;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		if (poll(&pfd, 1, 100) <= 0)
+			continue;
+		if (dq_read_events(x->c.q, buf, SW_BUFSIZE, &got) != 0)
+			continue;
+		for (e2 = dq_event_first(buf, (size_t)got); e2 != NULL;
+		    e2 = dq_event_next(buf, (size_t)got, e2)) {
+			if (e2->de_op == DQ_OP_INTERRUPT) {
+				ib = dq_event_body(e2, &bodylen);
+				if (ib != NULL && bodylen >= sizeof(*ib) &&
+				    ib->din_id == ev->de_id)
+					interrupted = true;
+			} else if (e2->de_op == DQ_OP_RESOLVE)
+				(void)dq_reply_resolve_pass(x->c.q, e2->de_id);
+		}
+	}
+	ATF_CHECK_MSG(interrupted, "no INTERRUPT for the killed open");
+	ATF_CHECK_ERRNO(ESRCH, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
+	    0) == -1);
+	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
+	(void)close(fd);
+	free(buf);
+}
+
+ATF_TC_WITHOUT_HEAD(swap_requester_killed);
+ATF_TC_BODY(swap_requester_killed, tc)
+{
+	struct sw x;
+	struct sw_res res;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	sw_init(&x, "orig", a_killed);
+	x.expect_killed = true;
+	sw_run(&x, p_plain_open, NULL, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	dqt_fini(&x.c);
+}
+
+/*
+ * Case: a Linux program.  Its open(2) enters the same wrapper, so the
+ * swap answers it as it answers a native one.
+ */
+static void
+p_linux(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	char *const argv[] = { __DECONST(char *, "dq_swap_linux"), NULL };
+	char *const envp[] = { NULL };
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid == 0) {
+		execve("./dq_swap_linux", argv, envp);
+		_exit(127);
+	}
+	res->r[0].rv = pid < 0 || waitpid(pid, &status, 0) != pid ||
+	    !WIFEXITED(status) ? -1 : WEXITSTATUS(status);
+}
+
+ATF_TC(swap_linux);
+ATF_TC_HEAD(swap_linux, tc)
+{
+	atf_tc_set_md_var(tc, "require.arch", "amd64");
+	atf_tc_set_md_var(tc, "require.progs", "clang");
+	atf_tc_set_md_var(tc, "require.kmods", "linux64");
+}
+ATF_TC_BODY(swap_linux, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	char cmd[PATH_MAX + 256];
+
+	snprintf(cmd, sizeof(cmd), "clang --target=x86_64-linux-gnu "
+	    "-fuse-ld=lld -nostdlib -static -fno-stack-protector "
+	    "-fno-builtin -O2 -Wall -Wextra -Werror -o dq_swap_linux "
+	    "%s/dq_swap_linux.c", atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	sw_init(&x, "orig", a_regular);
+	sw_run(&x, p_linux, NULL, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_EQ_MSG(0, res.r[0].rv, "Linux program: bits %#lx",
+	    res.r[0].rv);
+	dqt_fini(&x.c);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1005,5 +1243,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swap_directory);
 	ATF_TP_ADD_TC(tp, swap_emfile);
 	ATF_TP_ADD_TC(tp, swap_noxfer);
+	ATF_TP_ADD_TC(tp, swap_from_proxy_directory);
+	ATF_TP_ADD_TC(tp, swap_requester_killed);
+	ATF_TP_ADD_TC(tp, swap_linux);
 	return (atf_no_error());
 }
