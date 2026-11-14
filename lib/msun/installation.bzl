@@ -18,8 +18,8 @@ def math_installation(name):
         (":" + name + "_stripped", "/lib/libm.so.5", ["package=clibs"], False),
         (":" + name + "_symbols", "/usr/lib/debug/lib/libm.so.5.debug", ["package=clibs", "dbg"], False),
     ]
-    # Current library implementation supports amd64 only.
-    for source, header in [("x86/fenv.h", "fenv.h"), ("src/math.h", "math.h")]:
+    for source, header in [(select({"@platforms//cpu:aarch64": "aarch64/fenv.h",
+            "//conditions:default": "x86/fenv.h"}), "fenv.h"), ("src/math.h", "math.h")]:
         files.append((source, "/usr/include/" + header, ["package=clibs", "dev"], False))
     for manual in MANUALS:
         target = name + "_manual_" + manual

@@ -317,5 +317,16 @@ architecture-preprocessed ABI map and appropriate frame API/math-header
 selections. AMD64 regression builds and five existing runtime programs pass.
 Both platforms match original Make archive/symbol/shared metadata, ABI-map
 bytes and complete component install metadata. This is a focused component
-result; full libm, full target execution, debug/configuration and complete world
+result; full target execution, debug/configuration and complete world
 qualification remain required. See COMPLETION-PLAN.md for receipts and limits.
+
+ARM64 libm now selects its 277 portable/binary128 sources, architecture fenv
+header, builtin policy and ordered binary128 ABI maps. AMD64 retains its 280
+optimized/ld80 sources and floating-point exception policy. Both static math
+archives preserve declared source order. All math objects match original Make
+allocated-byte/symbol/relocation contracts on their respective architecture.
+The static unwind runtime also builds on both platforms; frame APIs remain
+x86-only. Complete component installation metadata matches Make, with compiled
+payload/debug differences retained. AMD64 static/shared math smoke tests pass;
+ARM64 code execution and the full installed math suite remain unqualified.
+No new frontend input or backend default is introduced.

@@ -14,13 +14,55 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
 Kernel proof: /usr/obj/usr/src/bazel-current-kernel-parity-r5-20261114.
 Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114.
 ARM64 CSU proof: /usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114.
+
+
+### Focused math and static unwind checkpoint (2026-11-14)
+
+The source-owned libm declaration now selects the ARM64 portable/binary128
+source inventory, builtin macros, fenv header and three ordered ABI symbol maps.
+AMD64 retains its optimized/ld80 inventory, FMA renaming and maytrap policy.
+The binary128 gamma implementation is an explicit textual dependency with
+visibility restricted to libm. Static archives preserve declared source order.
+Static libgcc_eh now admits ARM64 while retaining C/C++ visibility distinctions
+and restricting frame API definitions to x86, matching original Make policy.
+
+Maintained frontend runs bazel-math-unwind-native-{aarch64,amd64}-r1-20261114
+pass with 13/16 unique captured artifacts. Both run the three host-artifact
+targets (39 Python checks); AMD64 additionally passes static/shared math smoke
+programs and the safe descriptor ATF case pulled into its verification closure.
+Captured report manifests/logs/XML hashes are verified. No ARM64 code executes.
+The three host checks are not 39 installed OS cases or a full test suite.
+
+Four isolated original Make references pass, using 16 CPUs and the actual
+production profiles with TESTS explicitly disabled for these focused component
+installs: bazel-math-unwind-make-references-r1-20261114. Both platform comparisons
+pass archive member order/symbols, libm shared ELF metadata/hardening and exact
+generated ABI-map bytes. Every math object matches allocated bytes, symbols and
+relocations: 277/277 ARM64 and 280/280 AMD64. Static unwind matches 7/9 objects
+on each platform; the other two have only diagnostic string bytes differing by
+the /usr/src prefix, with original objects retained and no normalization.
+Evidence: bazel-math-unwind-parity-{aarch64,amd64}-r1-20261114,
+bazel-math-unwind-objects-{aarch64,amd64}-r1-20261114 and
+bazel-math-unwind-literals-{aarch64,amd64}-r1-20261114.
+
+Complete installation inventory, ownership/numeric IDs, modes, tags, flags,
+headers, manual payloads and links pass: 316 libm plus six static-unwind records
+per platform. Compiled archives/DSO/debug payloads remain byte-different and
+are retained; full DWARF is not qualified. Evidence:
+bazel-math-install-parity-{aarch64,amd64}-r1-20261114 and
+bazel-static-unwind-install-parity-{aarch64,amd64}-r1-20261114. Declaration and
+frontend review: bazel-math-unwind-review-r1-20261114. These paths are all under
+/usr/obj/usr/src. The existing format-5 frontend already selects these targets;
+no CLI, signing, security policy, publication or production default changes.
+Full installed math tests, target runtime and full system/configuration gates
+remain open. Make remains production/default and BIP stays excluded.
 
 ## Configuration completion checklist
 
