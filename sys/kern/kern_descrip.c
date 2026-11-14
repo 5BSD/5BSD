@@ -795,9 +795,12 @@ revert_nonblock:
 			(void)fo_ioctl(fp, FIONBIO, &tmp, td->td_ucred, td);
 		}
 revert_flags:
+		/*
+		 * Undo what this call changed and nothing else: a flag that
+		 * was set before and that the call did not touch stays set.
+		 */
 		do {
 			tmp = flg = fp->f_flag;
-			tmp &= ~FCNTLFLAGS;
 			tmp |= got_cleared;
 			tmp &= ~got_set;
 		} while (atomic_cmpset_int(&fp->f_flag, flg, tmp) == 0);
