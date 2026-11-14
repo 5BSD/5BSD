@@ -328,5 +328,29 @@ allocated-byte/symbol/relocation contracts on their respective architecture.
 The static unwind runtime also builds on both platforms; frame APIs remain
 x86-only. Complete component installation metadata matches Make, with compiled
 payload/debug differences retained. AMD64 static/shared math smoke tests pass;
-ARM64 code execution and the full installed math suite remain unqualified.
+The original 47-program math suite now builds/installs on both platforms;
+all 463 AMD64 case bodies pass. ARM64 code execution remains unqualified.
 No new frontend input or backend default is introduced.
+
+
+## Math test cross-architecture checkpoint
+
+The original libm test inventory now supports both Tier 1 architectures,
+including ARM64's LDBL_PREC=113/builtin policy and AMD64's ld80 policy. The
+hypotl_near_underflow runtime target is x86-only because its original source
+registration requires a 64-bit long-double mantissa. Explicit compiler-rt
+supplies driver arithmetic helpers when these binaries use -nodefaultlibs;
+ARM64 binary128 operations exposed that previously missing dependency.
+All 47 installed test binaries match original Make ELF metadata/hardening,
+imports and NEEDED order on both platforms. Complete math-test and libutil
+installation metadata matches (100 and 124 records respectively per platform).
+All 463 AMD64 ATF body outcomes report passed, with no skips/expected failures.
+ARM64 has no executed math bodies; its 462-case target execution/listing remains
+required. Generated full debug/code payload equality is not established.
+
+libutil and libnetbsd now support ARM64. libutil selects the target-aware host
+DTrace generator/native drti and retains its separate provider/static anchor;
+actual probe schemas, companion-object locations and patched instructions match
+Make on both platforms. Its archive checker is explicitly a host artifact test
+and validates the declared target ELF machine, including rejecting the other
+Tier 1 machine. No frontend CLI/backend default or production policy changes.

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
 """Inspect libutil's default traced archive; never execute target objects."""
+import argparse
+import sys
 import hashlib
 import json
 import os
@@ -57,11 +59,11 @@ def members(data):
     return result
 
 
-def elf(body):
+def elf(body, machine):
     if len(body) < 64 or body[:6] != b'\x7fELF\x02\x01':
         raise ValueError('ELF64 little endian required')
-    if struct.unpack_from('<HH', body, 16) != (1, 62):
-        raise ValueError('amd64 relocatable required')
+    if struct.unpack_from('<HH', body, 16) != (1, machine):
+        raise ValueError('selected target machine relocatable required')
     shoff = struct.unpack_from('<Q', body, 40)[0]
     stride, count, names_index = struct.unpack_from('<HHH', body, 58)
     if stride != 64 or not count or names_index >= count or shoff + count * stride > len(body):
@@ -91,7 +93,7 @@ def elf(body):
     return symbols, dof
 
 
-def check(items, expected, anchor=None):
+def check(items, expected, anchor, machine):
     names = [name.removesuffix('.nopic.o') + '.o' if name.endswith('.nopic.o') else name for name, _ in items]
     if len(set(names)) != len(names):
         raise ValueError('duplicate member identity')
@@ -99,7 +101,7 @@ def check(items, expected, anchor=None):
         raise ValueError('original Make member order')
     defined, required = set(), set()
     for (name, body), normalized in zip(items, names):
-        symbols, dof = elf(body)
+        symbols, dof = elf(body, machine)
         anchors = [symbol for symbol, index, _ in symbols
                    if index != 0 and symbol.startswith('__bsd_dof_anchor_')]
         if normalized != 'logincap_provider.o' and dof:
@@ -137,34 +139,34 @@ class ArchiveContract(unittest.TestCase):
         cls.anchor = fixture.get('required_provider_anchor')
 
     def test_actual(self):
-        check(self.items, self.expected, self.anchor)
+        check(self.items, self.expected, self.anchor, self.machine)
 
     def test_order(self):
         items = self.items.copy()
         items[0], items[1] = items[1], items[0]
         with self.assertRaisesRegex(ValueError, 'order'):
-            check(items, self.expected, self.anchor)
+            check(items, self.expected, self.anchor, self.machine)
 
     def test_duplicate(self):
         with self.assertRaisesRegex(ValueError, 'duplicate'):
-            check(self.items + [self.items[0]], self.expected, self.anchor)
+            check(self.items + [self.items[0]], self.expected, self.anchor, self.machine)
 
     def test_suffix_collision(self):
         name, body = self.items[0]
         alias = (name.removesuffix('.nopic.o') + '.o' if name.endswith('.nopic.o')
                  else name.removesuffix('.o') + '.nopic.o')
         with self.assertRaisesRegex(ValueError, 'duplicate'):
-            check(self.items + [(alias, body)], self.expected, self.anchor)
+            check(self.items + [(alias, body)], self.expected, self.anchor, self.machine)
 
     def test_missing_dof(self):
         items = self.items[:-1] + [(self.items[-1][0], self.items[0][1])]
         with self.assertRaisesRegex(ValueError, 'provider DOF'):
-            check(items, self.expected, self.anchor)
+            check(items, self.expected, self.anchor, self.machine)
 
     def test_embedded_dof(self):
         items = [(self.items[0][0], self.items[-1][1])] + self.items[1:]
         with self.assertRaisesRegex(ValueError, 'embedded'):
-            check(items, self.expected, self.anchor)
+            check(items, self.expected, self.anchor, self.machine)
 
     def test_missing_anchor(self):
         name, body = self.items[-1]
@@ -172,13 +174,13 @@ class ArchiveContract(unittest.TestCase):
         self.assertIn(needle, body)
         changed = body.replace(needle, b'_' * (len(needle) - 1) + b'\0')
         with self.assertRaisesRegex(ValueError, 'static anchor'):
-            check(self.items[:-1] + [(name, changed)], self.expected, self.anchor)
+            check(self.items[:-1] + [(name, changed)], self.expected, self.anchor, self.machine)
 
     def test_machine(self):
         body = bytearray(self.items[0][1])
-        struct.pack_into('<H', body, 18, 183)
-        with self.assertRaisesRegex(ValueError, 'amd64'):
-            check([(self.items[0][0], bytes(body))] + self.items[1:], self.expected, self.anchor)
+        struct.pack_into('<H', body, 18, 183 if self.machine == 62 else 62)
+        with self.assertRaisesRegex(ValueError, 'selected target machine'):
+            check([(self.items[0][0], bytes(body))] + self.items[1:], self.expected, self.anchor, self.machine)
 
     def test_truncation(self):
         with self.assertRaises(ValueError):
@@ -186,4 +188,8 @@ class ArchiveContract(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--machine", type=int, choices=[62, 183], required=True)
+    args, remaining = parser.parse_known_args()
+    ArchiveContract.machine = args.machine
+    unittest.main(argv=[sys.argv[0]] + remaining, verbosity=2)

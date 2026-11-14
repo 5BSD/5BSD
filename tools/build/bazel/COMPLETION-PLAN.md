@@ -14,7 +14,7 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. The 47-program original math suite now builds/installs on both platforms, with all 463 AMD64 ATF bodies passing and complete program ELF metadata matching Make on both platforms. ARM64 math execution remains open. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -63,6 +63,60 @@ frontend review: bazel-math-unwind-review-r1-20261114. These paths are all under
 no CLI, signing, security policy, publication or production default changes.
 Full installed math tests, target runtime and full system/configuration gates
 remain open. Make remains production/default and BIP stays excluded.
+
+
+### Original math suite and utility dependencies (2026-11-14)
+
+The libutil/libnetbsd declarations now admit both Tier 1 architectures. libutil
+uses the target-aware source-built host DTrace generator/native drti, retaining
+its original separate provider/static-anchor semantics. The host artifact
+archive checker takes the declared target machine and rejects the other Tier 1
+machine; all nine checks pass on both platforms. Math tests select the original
+architecture's builtin and long-double policy. The one hypot near-underflow
+case requiring a 64-bit mantissa remains x86-only. The -nodefaultlibs link now
+explicitly supplies native compiler-rt, preserving ARM64 binary128 helpers.
+
+Maintained native runs bazel-math-suite-native-aarch64-r2-20261114 and
+bazel-math-suite-native-amd64-r1-20261114 pass, capturing 50/51 unique artifacts.
+Both pass four host artifact targets (39 general Python checks plus nine
+utility archive checks). AMD64 additionally executes all 463 original math
+cases: captured ATF body logs report passed for every case, with no skips or
+expected failures. All report-manifest/log/XML hashes verify. ARM64 builds all
+47 programs and their complete installation archive; none of its math bodies
+execute. Its 462-case runtime/listing qualification remains open.
+
+Original Make refs: bazel-math-suite-make-references-r1-20261114, with the stable
+ARM64 test replacement bazel-math-suite-make-tests-aarch64-r2-20261114. All final
+six component references pass using 16 CPUs, actual production profiles and
+TESTS enabled for the test component (explicitly disabled for focused library
+installs). ARM64 native R1's missing-runtime link failure is retained. The first
+ARM64 Make test capture correctly rejected a concurrent tests.bzl edit; that
+failed capture is retained and is not used for parity.
+
+Both architectures match libutil and ordinary/PIE libnetbsd archive order/symbols,
+libutil ELF metadata and generated ABI-map bytes. Every libnetbsd object (4+4)
+matches allocated-byte/symbol/relocation contracts. libutil matches 33/35; the
+two differences are diagnostic source-path strings and the provider's raw DOF,
+with actual one-probe schema/location/companion patch checks matching Make.
+All 47 installed math binaries pass original Make ELF metadata, hardening,
+imports and NEEDED-order comparison. Full installation inventories and metadata
+match: 124 utility plus 100 math-test records per architecture. Kyuafile and
+noncompiled payloads match; compiled/debug payload differences remain retained.
+Full code/DWARF equality and ARM64 execution are not established.
+
+Evidence under /usr/obj/usr/src:
+- bazel-math-suite-libraries-parity-{aarch64,amd64}-r1-20261114
+- bazel-math-suite-library-{objects,literals}-{aarch64,amd64}-r1-20261114
+- bazel-util-provider-parity-{aarch64,amd64}-r1-20261114
+- bazel-math-suite-program-parity-{aarch64,amd64}-r1-20261114
+- bazel-util-install-parity-{aarch64,amd64}-r1-20261114
+- bazel-math-suite-install-parity-{aarch64,amd64}-r1-20261114
+- bazel-math-suite-review-r1-20261114 (actual Make inventory/include closures,
+  test report hashes, all ATF body outcomes and frontend integration review).
+
+Existing format-5 qualification and explicit host artifact execution cover the
+new dependencies without new CLI or security/publication policy inputs. Make
+remains production/default. All six full-system gates remain open; BIP excluded.
 
 ## Configuration completion checklist
 
