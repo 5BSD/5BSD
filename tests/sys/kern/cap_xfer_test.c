@@ -12,6 +12,7 @@
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -924,6 +925,165 @@ ATF_TC_BODY(install_states_unchanged, tc)
 	}
 }
 
+/*
+ * ---- pddupfd(2) as a descriptor transfer: refusals, their order, and
+ * what a copy consumes and carries ----
+ *
+ * The subject holds one descriptor per rule at a fixed number; the parent
+ * copies each through the subject's process descriptor.
+ */
+#define	PD_FILE		10	/* /dev/null, nothing limited */
+#define	PD_KQUEUE	11	/* not passable */
+#define	PD_NONE		12	/* CAP_XFER_NONE */
+#define	PD_KQ_NONE	13	/* not passable and CAP_XFER_NONE */
+#define	PD_ONCE		14	/* CAP_XFER_ONCE */
+#define	PD_ONCE_FULL	15	/* CAP_XFER_ONCE, copied into a full table */
+#define	PD_CEILING	16	/* rights READ|WRITE|FSTAT, ceiling READ|FSTAT */
+#define	PD_LOCKED	17	/* close-on-exec and close-on-fork locked */
+#define	PD_CLOSED	30	/* not open */
+
+static void
+pd_subject(int rep, int cmd)
+{
+	cap_rights_t rights;
+	int fd, ok;
+	char c;
+
+	ok = 1;
+#define	PD_AT(n, expr) do {						\
+	fd = (expr);							\
+	if (fd == -1 || dup2(fd, (n)) == -1)				\
+		ok = 0;							\
+	else if (fd != (n))						\
+		(void)close(fd);					\
+} while (0)
+	PD_AT(PD_FILE, open("/dev/null", O_RDWR));
+	PD_AT(PD_KQUEUE, kqueue());
+	PD_AT(PD_NONE, open("/dev/null", O_RDWR));
+	ok &= cap_xfer_limit(PD_NONE, CAP_XFER_NONE) == 0;
+	PD_AT(PD_KQ_NONE, kqueue());
+	ok &= cap_xfer_limit(PD_KQ_NONE, CAP_XFER_NONE) == 0;
+	PD_AT(PD_ONCE, open("/dev/null", O_RDWR));
+	ok &= cap_xfer_limit(PD_ONCE, CAP_XFER_ONCE) == 0;
+	PD_AT(PD_ONCE_FULL, open("/dev/null", O_RDWR));
+	ok &= cap_xfer_limit(PD_ONCE_FULL, CAP_XFER_ONCE) == 0;
+	PD_AT(PD_CEILING, open("/dev/null", O_RDWR));
+	ok &= cap_rights_limit(PD_CEILING, cap_rights_init(&rights, CAP_READ,
+	    CAP_WRITE, CAP_FSTAT)) == 0;
+	ok &= cap_xfer_rights_limit(PD_CEILING, cap_rights_init(&rights,
+	    CAP_READ, CAP_FSTAT)) == 0;
+	PD_AT(PD_LOCKED, open("/dev/null", O_RDWR));
+	ok &= cap_cloexec_limit(PD_LOCKED, CAP_CLOEXEC_LOCKED) == 0;
+	ok &= cap_clofork_limit(PD_LOCKED, CAP_CLOFORK_LOCKED) == 0;
+#undef PD_AT
+	c = ok ? 'y' : 'n';
+	if (write(rep, &c, 1) != 1)
+		_exit(1);
+	(void)read(cmd, &c, 1);
+	_exit(0);
+}
+
+ATF_TC_WITHOUT_HEAD(pddupfd_transfer_rules);
+ATF_TC_BODY(pddupfd_transfer_rules, tc)
+{
+	cap_rights_t got, want;
+	struct rlimit rl, save;
+	pid_t pid;
+	int cmd[2], copy, fill[64], i, nfill, pd, rep[2], status, sv[2];
+	char c;
+
+	ATF_REQUIRE_EQ(0, pipe(rep));
+	ATF_REQUIRE_EQ(0, pipe(cmd));
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE_MSG(pid != -1, "pdfork: %s", strerror(errno));
+	if (pid == 0) {
+		if (dup2(rep[1], 3) == -1 || dup2(cmd[0], 4) == -1)
+			_exit(1);
+		closefrom(5);
+		pd_subject(3, 4);
+	}
+	close(rep[1]);
+	close(cmd[0]);
+	ATF_REQUIRE_EQ(1, read(rep[0], &c, 1));
+	ATF_REQUIRE_MSG(c == 'y', "the subject could not set up");
+
+	/* The refusals, and the order of the two that one entry can meet. */
+	ATF_CHECK_ERRNO(EBADF, pddupfd(pd, PD_CLOSED, 0) == -1);
+	ATF_CHECK_ERRNO(EOPNOTSUPP, pddupfd(pd, PD_KQUEUE, 0) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, pddupfd(pd, PD_NONE, 0) == -1);
+	ATF_CHECK_ERRNO(EOPNOTSUPP, pddupfd(pd, PD_KQ_NONE, 0) == -1);
+
+	/* An unlimited source: the copy may be sent on. */
+	socketpair_stream(sv);
+	copy = pddupfd(pd, PD_FILE, 0);
+	ATF_REQUIRE_MSG(copy != -1, "pddupfd: %s", strerror(errno));
+	ATF_CHECK_EQ(0, sendfd(sv[0], copy));
+	ATF_REQUIRE_EQ(0, close(copy));
+
+	/* A transfer-once source: one copy, itself CAP_XFER_NONE. */
+	copy = pddupfd(pd, PD_ONCE, 0);
+	ATF_REQUIRE_MSG(copy != -1, "pddupfd of a ONCE entry: %s",
+	    strerror(errno));
+	ATF_CHECK_EQ(ENOTCAPABLE, sendfd(sv[0], copy));
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    cap_xfer_limit(copy, CAP_XFER_UNLIMITED) == -1);
+	ATF_REQUIRE_EQ(0, close(copy));
+	ATF_CHECK_ERRNO(ENOTCAPABLE, pddupfd(pd, PD_ONCE, 0) == -1);
+
+	/*
+	 * No free number in the caller: EMFILE, after the source was
+	 * consumed, as when an SCM_RIGHTS receiver cannot allocate.
+	 */
+	ATF_REQUIRE_EQ(0, getrlimit(RLIMIT_NOFILE, &save));
+	rl = save;
+	rl.rlim_cur = 48;
+	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_NOFILE, &rl));
+	for (nfill = 0; nfill < (int)nitems(fill); nfill++) {
+		fill[nfill] = dup(sv[0]);
+		if (fill[nfill] == -1)
+			break;
+	}
+	ATF_CHECK_ERRNO(EMFILE, pddupfd(pd, PD_ONCE_FULL, 0) == -1);
+	for (i = 0; i < nfill; i++)
+		(void)close(fill[i]);
+	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_NOFILE, &save));
+	ATF_CHECK_ERRNO(ENOTCAPABLE, pddupfd(pd, PD_ONCE_FULL, 0) == -1);
+
+	/* The copy's rights are the source's under its transfer ceiling. */
+	copy = pddupfd(pd, PD_CEILING, 0);
+	ATF_REQUIRE_MSG(copy != -1, "pddupfd: %s", strerror(errno));
+	ATF_REQUIRE_EQ(0, cap_rights_get(copy, &got));
+	cap_rights_init(&want, CAP_READ, CAP_FSTAT);
+	ATF_CHECK(cap_rights_contains(&want, &got) &&
+	    cap_rights_contains(&got, &want));
+	ATF_REQUIRE_EQ(0, close(copy));
+
+	/* The two propagation locks carry: the copy cannot loosen them. */
+	copy = pddupfd(pd, PD_LOCKED, 0);
+	ATF_REQUIRE_MSG(copy != -1, "pddupfd: %s", strerror(errno));
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    cap_cloexec_limit(copy, CAP_CLOEXEC_UNLOCKED) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    cap_clofork_limit(copy, CAP_CLOFORK_UNLOCKED) == -1);
+	ATF_REQUIRE_EQ(0, close(copy));
+	/* A copy of an unlocked source has neither lock. */
+	copy = pddupfd(pd, PD_FILE, 0);
+	ATF_REQUIRE_MSG(copy != -1, "pddupfd: %s", strerror(errno));
+	ATF_CHECK_EQ(0, cap_cloexec_limit(copy, CAP_CLOEXEC_UNLOCKED));
+	ATF_CHECK_EQ(0, cap_clofork_limit(copy, CAP_CLOFORK_UNLOCKED));
+	ATF_REQUIRE_EQ(0, close(copy));
+
+	c = 'x';
+	ATF_REQUIRE_EQ(1, write(cmd[1], &c, 1));
+	ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(pd);
+	close(rep[0]);
+	close(cmd[1]);
+	close(sv[0]);
+	close(sv[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -951,6 +1111,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, xfer_capmode);
 	ATF_TP_ADD_TC(tp, xfer_caps_attenuate_scm_rights);
 	ATF_TP_ADD_TC(tp, install_states_unchanged);
+	ATF_TP_ADD_TC(tp, pddupfd_transfer_rules);
 
 	return (atf_no_error());
 }
