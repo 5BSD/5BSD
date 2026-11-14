@@ -145,4 +145,16 @@ cc_library compilation actions, preserving their member names and order. Its
 relocations, archive order and logical install comparison with independent Make
 references. Overflow-abort filenames use declared CRTSRC source identity.
 The AArch64 reference retains its recorded older SDK/profile. Full DWARF,
-current ARM64 world/hardening/runtime and updated full package capture remain open.
+current ARM64 world/hardening/runtime remain open; full AMD64 R12 refreshes the
+package capture with this correction.
+
+## ARM64 syscall-library closeout (2026-11-14)
+
+Libsys selects real AArch64 syscall assembly/feature notes, compatibility-stub
+inventory, generic helpers and version maps. Its two 471-member archives match
+original Make's allocated ELF/symbol/relocation contracts and order. Shared ABI,
+version/dependency/hardening metadata, logical installation, header/manual payloads
+and own debug binding pass. Shared section bytes still differ, so full shared-code
+and DWARF equivalence are unproven. The older component SDK/profile does not
+qualify current ARM64 world or runtime. AMD64 retains all 424 install records and
+242 file payloads exactly against full R12, with both syscall runtime tests passing.

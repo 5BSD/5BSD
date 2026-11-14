@@ -448,18 +448,26 @@ def library_installation(name):
             runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
         files.append((":" + compressed, "/usr/share/man/man" + manual.split(".")[-1] + "/" + manual + ".gz", man_tags, "", True))
     entries = []
+    aarch64_entries = []
     for source, destination, tags, flags, is_manual in files:
         target = name + "_file_" + destination.replace("/", "_")
         bsd_install_file(manual = is_manual, name = target, src = source, destination = destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = tags, flags = flags)
         entries.append(":" + target)
+        if source != ":" + name + "_manual_pkru.3":
+            aarch64_entries.append(":" + target)
     bsd_install_link(name = name + "_link", destination = "/usr/lib/libsys.so", target = "../../lib/libsys.so.7",
         kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=clibs", "dev"])
     entries.append(":" + name + "_link")
+    aarch64_entries.append(":" + name + "_link")
     for source, destination in MANUAL_LINKS:
         target = name + "_alias_" + destination
         bsd_install_link(manual = True, name = target, destination = "/usr/share/man/man" + destination.split(".")[-1] + "/" + destination + ".gz",
             target = "/usr/share/man/man" + source.split(".")[-1] + "/" + source + ".gz", kind = "hardlink",
             owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
         entries.append(":" + target)
-    bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])
+        aarch64_entries.append(":" + target)
+    bsd_install_manifest(name = name, entries = select({
+        "@platforms//cpu:aarch64": aarch64_entries,
+        "//conditions:default": entries,
+    }), visibility = ["//visibility:public"])

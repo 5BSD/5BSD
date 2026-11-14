@@ -8,25 +8,43 @@ exports_files(['clock_gettime.c', 'gettimeofday.c', '__vdso_gettimeofday.c', '__
 
 load("//tools/build/bazel:bsd_syscall_asm.bzl", "bsd_syscall_asm")
 load("//sys/sys:syscall_symbols.bzl", "SYSCALL_SYMBOLS")
-load(":syscall_policy.bzl", "AMD64_HANDWRITTEN_SYSCALLS", "PSEUDO_SYSCALLS")
+load(":syscall_policy.bzl", "AMD64_HANDWRITTEN_SYSCALLS", "AARCH64_HANDWRITTEN_SYSCALLS", "PSEUDO_SYSCALLS")
 
 _REGULAR_SYSCALLS = [s for s in SYSCALL_SYMBOLS
                      if s not in AMD64_HANDWRITTEN_SYSCALLS and s not in PSEUDO_SYSCALLS]
 _SYSCALL_STUBS = [(s, "RSYSCALL", s) for s in _REGULAR_SYSCALLS] + [
     ("_" + s, "PSEUDO", s) for s in PSEUDO_SYSCALLS
 ]
+_AARCH64_REGULAR_SYSCALLS = [s for s in SYSCALL_SYMBOLS
+    if s not in AARCH64_HANDWRITTEN_SYSCALLS and s not in PSEUDO_SYSCALLS
+    and not s.startswith("freebsd4_") and not s.startswith("freebsd6_") and not s.startswith("freebsd7_")]
+_AARCH64_SYSCALL_STUBS = [(s, "RSYSCALL", s) for s in _AARCH64_REGULAR_SYSCALLS] + [
+    ("_" + s, "PSEUDO", s) for s in PSEUDO_SYSCALLS
+]
+# Keep existing AMD64 producer labels; ARM64 additionally generates getcontext.
+_ALL_SYSCALL_STUBS = _SYSCALL_STUBS + [stub for stub in _AARCH64_SYSCALL_STUBS
+    if stub not in _SYSCALL_STUBS]
 [bsd_syscall_asm(
     name = stem + "_asm",
     generator = "gen-syscall.sh",
-    arguments = [macro, symbol, '\t.section .note.GNU-stack,"",%%progbits\n', ""],
+    arguments = [macro, symbol, '\t.section .note.GNU-stack,"",%%progbits\n'] + select({
+        "@platforms//cpu:aarch64": ['#include <sys/elf_common.h>\nGNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)\n'],
+        "//conditions:default": [""],
+    }),
     output = "generated/" + stem + ".S",
     shell = "@bsd_sdk//toolchain:sh",
     redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:sh_runtime"],
-) for stem, macro, symbol in _SYSCALL_STUBS]
+) for stem, macro, symbol in _ALL_SYSCALL_STUBS]
 filegroup(
     name = "amd64_syscall_sources",
     srcs = [":" + stem + "_asm" for stem, _, _ in _SYSCALL_STUBS],
+    visibility = ["//lib/libc/sys:__pkg__"],
+)
+
+filegroup(
+    name = "aarch64_syscall_sources",
+    srcs = [":" + stem + "_asm" for stem, _, _ in _AARCH64_SYSCALL_STUBS],
     visibility = ["//lib/libc/sys:__pkg__"],
 )
 
@@ -34,11 +52,21 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
 
 _AMD64 = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [],
+    "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _HEADERS = ["//lib/libc/include:rt_private_headers",
-    "//lib/libc/include:syscall_compat_header", "//lib/libsys/amd64:sys_headers",
-    "//sys/sys:syscall_header"]
+    "//lib/libc/include:syscall_compat_header", "//sys/sys:syscall_header"] + select({
+    "@platforms//cpu:aarch64": ["//lib/libsys/aarch64:sys_headers"],
+    "//conditions:default": ["//lib/libsys/amd64:sys_headers"],
+})
+load("@bazel_skylib//lib:selects.bzl", "selects")
+config_setting(name = "amd64", constraint_values = ["@platforms//cpu:x86_64"])
+selects.config_setting_group(name = "amd64_hyperv", match_all = [":amd64", "//tools/build/bazel/config:hyperv_enabled"])
 _DEFINES = ["LIBSYS"] + select({
-    "//tools/build/bazel/config:hyperv_enabled": ["WANT_HYPERV"],
+    ":amd64_hyperv": ["WANT_HYPERV"],
     "//conditions:default": [],
 })
 _COPTS = ["-ftls-model=initial-exec", "-fno-stack-protector"]
@@ -59,35 +87,53 @@ _INTERFACE_SOURCES = ["clock_gettime.c", "gettimeofday.c", "__vdso_gettimeofday.
     "__error.c", "__getosreldate.c", "getpagesize.c", "getpagesizes.c", "libsys_sigwait.c"]
 _HANDWRITTEN_SOURCES = ["//lib/libsys/amd64:" + name for name in ["vfork.S", "cerror.S", "getcontext.S"]]
 _THREAD_SOURCES = ["//lib/libsys/amd64:_umtx_op_err.S"]
-_ORDERED_SOURCES = (_MEMORY_SOURCES + _CORE_SOURCES + _ARCH_SOURCES + [_VDSO_SOURCE] +
+_AMD64_ORDERED_SOURCES = (_MEMORY_SOURCES + _CORE_SOURCES + _ARCH_SOURCES + [_VDSO_SOURCE] +
     _X86_SOURCES + _INTERFACE_SOURCES + _HANDWRITTEN_SOURCES + [":amd64_syscall_sources"] + _THREAD_SOURCES)
+_AARCH64_ARCH_SOURCES = ["pdrfork_thread_gen.c", "rfork_thread_gen.c", "sched_getcpu_gen.c"]
+_AARCH64_HANDWRITTEN_SOURCES = ["//lib/libsys/aarch64:cerror.S", "//lib/libsys/aarch64:vfork.S"]
+_AARCH64_ORDERED_SOURCES = (_MEMORY_SOURCES + _CORE_SOURCES + ["//lib/libsys/aarch64:__vdso_gettc.c"] +
+    _AARCH64_ARCH_SOURCES + _INTERFACE_SOURCES + _AARCH64_HANDWRITTEN_SOURCES +
+    [":aarch64_syscall_sources", "_umtx_op_err.c"])
+_ORDERED_SOURCES = select({
+    "@platforms//cpu:aarch64": _AARCH64_ORDERED_SOURCES,
+    "//conditions:default": _AMD64_ORDERED_SOURCES,
+})
 cc_library(
     name = "sys_objects",
-    srcs = (_MEMORY_SOURCES + _CORE_SOURCES + _ARCH_SOURCES + _X86_SOURCES +
-        _INTERFACE_SOURCES + _HANDWRITTEN_SOURCES + [":amd64_syscall_sources"] + _THREAD_SOURCES),
+    srcs = select({
+        "@platforms//cpu:aarch64": (_MEMORY_SOURCES + _CORE_SOURCES + _AARCH64_ARCH_SOURCES +
+            _INTERFACE_SOURCES + _AARCH64_HANDWRITTEN_SOURCES + [":aarch64_syscall_sources", "_umtx_op_err.c"]),
+        "//conditions:default": (_MEMORY_SOURCES + _CORE_SOURCES + _ARCH_SOURCES + _X86_SOURCES +
+            _INTERFACE_SOURCES + _HANDWRITTEN_SOURCES + [":amd64_syscall_sources"] + _THREAD_SOURCES),
+    }),
     # Runtime builtins are dependencies of these objects, not additional DSO
     # roots: cc_shared_library whole-links roots and normally extracts deps.
     implementation_deps = _HEADERS + [":string_implementation_headers", "//lib/libcompiler_rt:compiler_rt"],
     local_defines = _DEFINES,
     copts = _COPTS,
     linkstatic = True,
-    target_compatible_with = _AMD64,
+    target_compatible_with = _PLATFORM,
 )
 # IFUNC initialization precedes sanitizer runtime initialization.
 cc_library(
-    name = "vdso_objects", srcs = [_VDSO_SOURCE],
+    name = "vdso_objects", srcs = select({
+        "@platforms//cpu:aarch64": ["//lib/libsys/aarch64:__vdso_gettc.c"],
+        "//conditions:default": [_VDSO_SOURCE],
+    }),
     implementation_deps = _HEADERS, local_defines = _DEFINES,
     copts = _COPTS + ["-fno-sanitize=address", "-fno-sanitize=undefined"],
-    linkstatic = True, target_compatible_with = _AMD64,
+    linkstatic = True, target_compatible_with = _PLATFORM,
 )
 cc_library(name = "sys", deps = [":headers", ":sys_objects", ":vdso_objects"],
-    target_compatible_with = _AMD64, visibility = ["//visibility:public"])
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":sys_objects", ":vdso_objects"], ordered_sources = _ORDERED_SOURCES)
 bsd_component_archive(name = "pic_archive", groups = [":sys_objects", ":vdso_objects"], pic = True, ordered_sources = _ORDERED_SOURCES)
 bsd_configured_version_map(
     name = "version_map",
-    symbol_maps = ["Symbol.map", "syscalls.map", "Symbol.sys.map",
-        "//lib/libsys/amd64:Symbol.sys.map", "Symbol.thr.map"],
+    symbol_maps = ["Symbol.map", "syscalls.map", "Symbol.sys.map"] + select({
+        "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["//lib/libsys/amd64:Symbol.sys.map"],
+    }) + ["Symbol.thr.map"],
     versions = "//lib/libc:Versions.def", generator = "//share/mk:version_gen.awk",
     cpp_flags = ["-P", "-nostdinc", "-undef"],
     compiler = "@bsd_sdk//toolchain:bin/clang",
@@ -110,7 +156,7 @@ cc_shared_library(name = "sys_shared", deps = [":sys"], shared_lib_name = "libsy
     user_link_flags = ["-nodefaultlibs", "-Wl,-Bsymbolic", "-Wl,-soname,libsys.so.7",
         "-Wl,--version-script=$(location :version_map),--no-undefined-version",
         "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = _AMD64, visibility = ["//visibility:public"])
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
 cc_test(name = "syscall_shared_runtime_test",
     srcs = ["//tools/build/bazel:tests/libsys_runtime.c"],

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["__vdso_gettc.c", "vfork.S", "cerror.S"],
+    visibility = ["//lib/libsys:__pkg__", "//lib/libc/sys:__pkg__"])
+cc_library(name = "sys_headers", hdrs = ["SYS.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libsys:__pkg__", "//lib/libc/sys:__pkg__"])

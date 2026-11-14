@@ -8508,3 +8508,12 @@ included headers; other modules retain canonical source identity.
 The seven affected AMD64 module builds match Make except for reported GNU build-ID
 digests, with exact CTF and passing native debug bindings. That remaining identity
 review is not waived. No ELF output is rewritten and no frontend C option changes.
+
+.Pp
+The native libsys producer selects architecture-owned AMD64 or AArch64 syscall
+sources, generated wrappers, feature notes and version maps.
+AArch64 excludes legacy compatibility stubs according to its ABI and uses generic
+thread helpers; WANT_HYPERV and the pkru manual remain x86-specific.
+Existing format-5 architecture and SDK inputs select these declarations without
+new frontend options. Component archive and shared ABI metadata checks do not
+establish complete ARM64 world, DWARF or runtime qualification.

@@ -10,13 +10,13 @@ is not authorized.
 | Gate | Current evidence and remaining work |
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
-| 2. AMD64 parity/configurations | Full R11 passes 27 tests and captures all 450 selected packages. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 2. AMD64 parity/configurations | Full R12 passes 30 tests and captures all 450 selected packages, including the compiler-runtime source-identity correction. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
-| 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R11 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
+| 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R12 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, and compiler-runtime R3 matches all 276 members (125 outlined atomics), against the explicit older-seed Make component profile. Full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
 
-Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r11-20261114.
+Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r12-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
 Kernel proof: /usr/obj/usr/src/bazel-current-kernel-parity-r5-20261114.
 Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114.
@@ -32,6 +32,35 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+Full AMD64 R12 is terminal passed: 30 expanded tests and the full selected
+450-package target, with 1,559 captured files / 647,928,098 bytes. It refreshes
+the compiler-runtime correction that postdated R11. Its artifact-manifest SHA256
+is 29867a9b319ca61485468fe63a4656ed2f3ef271b5b48e8e960619f5c80edf75.
+This does not replace the R11 candidate's VM evidence or close remaining gates.
+
+ARM64 libsys now declares architecture-owned headers/sources, generated getcontext,
+compatibility-syscall exclusions, GNU feature notes, generic thread helpers and
+version-map inputs. WANT_HYPERV and the pkru manual stay x86-specific. Both
+471-member archives pass original-Make member/order/allocated/symbol/relocation
+contracts. Shared SONAME, imports/exports/versions, dependencies and hardening
+metadata pass, as do logical installation records, the reference-created debug
+directory, 418 header/manual payloads and native split-debug binding. Shared ELF
+section bytes still differ (including text/unwind/dynamic relocation and DWARF);
+this is not exact shared-code/full-DWARF or ARM64 runtime acceptance. The original
+Make reference uses the recorded older ARM64 SDK/profile. R1 order mismatch and
+driver tool/directory handling diagnostics remain retained. R3 also captures the
+explicit rtld PIC dependency boundary, without qualifying a complete ARM64 rtld.
+AMD64 R4 passes both syscall runtime tests and preserves all 424 install records
+and 242 file payloads exactly against completed full R12. A malformed initial
+AMD64 request was rejected because tests were not listed as selected targets;
+the corrected request adds them explicitly without relaxing validation.
+Evidence: /usr/obj/usr/src/bazel-arm64-libsys-parity-r3-20261114 and
+/usr/obj/usr/src/bazel-amd64-libsys-preservation-r1-20261114. Existing build-bsd
+format-5 architecture/SDK inputs select these producers; C CLI and backend targets
+need no new option. Source declarations, installation inventory and manual change
+together. Make remains production/default; no installation/publication occurred.
+
 
 Fresh signed full-R11 upgrade VM R3 is terminal passed: all 34 high-level checks,
 143 root operations, normal shutdown, unchanged backing image/source bindings,
@@ -67,8 +96,8 @@ Make package receipt and payload instead of inventing a field.
 Evidence: /usr/obj/usr/src/bazel-compiler-rt-arm64-parity-r3-20261114 and
 /usr/obj/usr/src/bazel-compiler-rt-amd64-parity-r2-20261114. These are component
 allocated/installation contracts, not DWARF/full-world or ARM64 runtime proof.
-The runtime producer change postdates full R11; refresh packages before calling
-that correction installed. Normal build-bsd uses the existing architecture/SDK
+The runtime producer change postdates full R11; R12 subsequently refreshes its
+package capture, but the VM scenario above remains bound to R11. Normal build-bsd uses the existing architecture/SDK
 inputs and source-owned producers; no C option or backend-default change applies.
 
 

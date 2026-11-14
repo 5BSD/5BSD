@@ -52,3 +52,5 @@ PSEUDO_SYSCALLS = [
 ] + INTERPOSED_SYSCALLS
 
 AMD64_HANDWRITTEN_SYSCALLS = ["vfork", "cerror", "getcontext"]
+
+AARCH64_HANDWRITTEN_SYSCALLS = ["vfork", "cerror"]
