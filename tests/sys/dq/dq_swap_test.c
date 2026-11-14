@@ -421,6 +421,20 @@ a_refusals(struct sw *x, const struct dq_event *ev,
 	ATF_REQUIRE(fd2 != -1);
 	SW_REFUSED(x, ev, fd, 0, EBUSY);
 	(void)close(fd2);
+	/* Nor by a reply whose header is refused. */
+	{
+		struct {
+			struct dq_resolve_reply	rr;
+			struct dq_resolve_swap	rw;
+		} r;
+
+		memset(&r, 0, sizeof(r));
+		r.rr.drr_kind = DQ_RESOLVE_SWAP;
+		r.rr.drr_pad0 = 1;
+		r.rw.drw_fd = fd;
+		ATF_CHECK_ERRNO(EINVAL, dq_reply(x->c.q, ev->de_id, 0, &r,
+		    sizeof(r)) == -1);
+	}
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
 	(void)close(fd);
 }

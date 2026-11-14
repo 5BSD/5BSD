@@ -900,7 +900,9 @@ dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	    rb->drs_op));
 	mode = (int)rb->drs_mode;
 	DQ_UNLOCK(q);
-	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rw)) {
+	/* Everything dq_resolve_reply_validate refuses, before the take. */
+	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rw) ||
+	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_pad0 != 0) {
 		error = EINVAL;
 		goto refused;
 	}

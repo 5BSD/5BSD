@@ -2689,10 +2689,11 @@ the requester gets, and whether it exists, is the controller's own
 .Pp
 The supplied open file must present as what the requester's open would
 have produced.
-A refusal is the reply's error; it consumes nothing (a
+A refusal is the reply's error; the descriptor stays open and, except for
+.Er ESRCH ,
+the event stays in flight and nothing is consumed (a
 .Dv CAP_XFER_ONCE
-entry stays usable), the descriptor stays open and the event stays in
-flight, so the controller may answer again:
+entry stays usable), so the controller may answer again:
 .Bl -tag -width "ENOTCAPABLE"
 .It Bq Er EBADF
 .Va drw_fd
@@ -2748,6 +2749,9 @@ answers a request without
 .Dv O_CREAT .
 .It Bq Er ESRCH
 The requester is no longer waiting.
+When it left while the kernel was taking the file, a
+.Dv CAP_XFER_ONCE
+entry has been consumed.
 .El
 .Pp
 Flags:
