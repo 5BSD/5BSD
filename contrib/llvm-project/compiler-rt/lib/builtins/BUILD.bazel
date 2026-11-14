@@ -24,4 +24,6 @@ filegroup(name = "standalone_sa_riscv_sources", srcs = ["bswapdi2.c", "bswapsi2.
 bsd_source_headers(name = "standalone_sa_efi_headers", hdrs = ['int_div_impl.inc', 'int_endianness.h', 'int_lib.h', 'int_types.h', 'int_util.h'], visibility = ["//stand/libsa:__pkg__"])
 
 # ARM64 builtin implementation inputs.
-exports_files(["cpu_model/aarch64.c", "floatdidf.c", "floatdisf.c", "floatundidf.c", "floatundisf.c", "aarch64/fp_mode.c", "aarch64/lse.S"], visibility = ["//lib/libcompiler_rt:__pkg__"])
+exports_files(["cpu_model/aarch64.c", "floatdidf.c", "floatdisf.c", "floatundidf.c", "floatundisf.c", "aarch64/fp_mode.c"],
+    visibility = ["//lib/libcompiler_rt:__pkg__", "//lib/libgcc_s:__pkg__"])
+exports_files(["aarch64/lse.S"], visibility = ["//lib/libcompiler_rt:__pkg__"])

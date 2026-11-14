@@ -309,3 +309,13 @@ and audits completed direct provider-link metadata recipes. It records and
 rechecks input hashes; it neither overwrites the SDK nor admits Bazel artifacts
 as an original Make runtime. This does not refresh the execution generator or
 establish a hermetic reference closure; both remain separately bound inputs.
+
+## Focused C++ cross-architecture checkpoint
+
+ARM64 libcxxrt/libc++/libgcc_s now build with the actual builtin inventory,
+architecture-preprocessed ABI map and appropriate frame API/math-header
+selections. AMD64 regression builds and five existing runtime programs pass.
+Both platforms match original Make archive/symbol/shared metadata, ABI-map
+bytes and complete component install metadata. This is a focused component
+result; full libm, full target execution, debug/configuration and complete world
+qualification remain required. See COMPLETION-PLAN.md for receipts and limits.

@@ -4,8 +4,12 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
 load(":sources.bzl", "MATH_SOURCES", "TEXTUAL_SOURCES")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-cc_library(name = "headers", hdrs = glob(["src/*.h", "x86/*.h", "ld80/*.h"]),
-    includes = ["x86", "ld80", "amd64", "src"], visibility = ["//lib/libgcc_s:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["src/*.h"]) + select({
+        "@platforms//cpu:aarch64": glob(["ld128/*.h", "aarch64/*.h"]),
+        "//conditions:default": glob(["x86/*.h", "ld80/*.h"]),
+    }),
+    includes = select({"@platforms//cpu:aarch64": ["ld128", "aarch64", "src"],
+        "//conditions:default": ["x86", "ld80", "amd64", "src"]}), visibility = ["//lib/libgcc_s:__pkg__"])
 cc_library(name = "m", srcs = MATH_SOURCES, textual_hdrs = TEXTUAL_SOURCES,
     implementation_deps = [":headers", "//lib/libc/include:math_headers"],
     local_defines = ["_RENAME_FMA", "_RENAME_FMAF"],
