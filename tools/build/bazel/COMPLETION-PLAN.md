@@ -11,6 +11,15 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+ARM64 preparation continues while AMD64 R7 remains the active full build.
+The original Make aarch64 CSU component reference passes; its separate retained
+ELF/installation audit verifies all ten startup objects as ELF64 little-endian
+AArch64 relocatables with matching payload hashes and logical clibs-dev metadata.
+This uses the recorded older ARM64 Make SDK and does not qualify a current ARM64
+world, native CSU producer or runtime. The shared CSU declaration patch remains
+a temporary unapplied draft until the AMD64 capture is complete. No maintained
+frontend behavior or production backend selection changes for this audit.
+
 The refreshed original Make archive creation now passes all 450 selected packages
 at /usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114. Its result binds
 both fresh stage results, all archive hashes, commands and unchanged latest and

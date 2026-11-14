@@ -1389,3 +1389,20 @@ positive capture. The loader returns success but resolves fifteen host library
 paths; the containment check rejects them. This establishes that successful
 execution or setting LIBRARY_PATH alone cannot qualify the native runtime
 boundary. Neither exploratory driver replaces the maintained build frontend.
+
+## ARM64 startup reference preparation (2026-11-14)
+
+`/usr/obj/usr/src/bazel-arm64-csu-make-r1-20261114/receipt.json` passes the
+maintained install-reference.py cross-Make component build for lib/csu/aarch64.
+The separate `elf-installation-audit.json` verifies all ten installed objects
+against component.METALOG: payload size/SHA-256, ELF64 little-endian ET_REL,
+AArch64 machine 183, logical root:wheel mode 0444 and package=clibs-dev.
+Audit SHA-256: `62fca304137fb495f0f8ff5cb761069b5c19cdf9c18a10ed4aea2a59085e1f09`.
+The reference uses the explicitly recorded older /usr/obj/usr/src/arm64.aarch64
+SDK/profile, not a newly qualified ARM64 world. No host installation occurs.
+
+The native shared CSU macro/ARM64 producer is an unapplied temporary draft.
+AMD64 full R7 is still live; source producer changes wait for its frozen capture.
+No ARM64 Bazel parity, boot/runtime or native bootstrap claim follows from this
+Make reference. No C frontend flag/helper/manual behavior changes are required
+by the reference audit; normal build-bsd remains Make production/default.
