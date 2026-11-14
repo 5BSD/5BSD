@@ -27,7 +27,7 @@ class TestInventory(unittest.TestCase):
         command=['bazel','--output_user_root=/state','test','--platforms=//:target','--//cfg:flag=false','--build_event_json_file=/events','--execution_log_json_file=/log','--noexecution_log_sort','--output_groups=default,metadata','//:archive','//:suite']
         query=test_inventory_command(command,['//:archive','//:suite'],['//:suite'])
         self.assertEqual(query[:5],['bazel','--output_user_root=/state','cquery','--platforms=//:target','--//cfg:flag=false'])
-        self.assertEqual(query[-1],'tests(set("//:suite"))')
+        self.assertEqual(query[-1],'config(tests(set("//:suite")), target)')
         self.assertNotIn('//:archive',query)
         self.assertFalse(any(a.startswith('--build_event_json') for a in query))
     def test_compact_log_is_not_passed_to_inventory_query(self):
@@ -36,11 +36,11 @@ class TestInventory(unittest.TestCase):
         self.assertNotIn('--execution_log_compact_file=/log',query)
         self.assertNotIn('--noexecution_log_sort',query)
         self.assertIn('--//cfg:enabled=true',query)
-        self.assertEqual(query[-1],'tests(set("//:suite"))')
+        self.assertEqual(query[-1],'config(tests(set("//:suite")), target)')
     def test_query_quotes_label_punctuation(self):
         command=['bazel','test','//:a+b']
         self.assertEqual(test_inventory_command(command,['//:a+b'],['//:a+b'])[-1],
-                         'tests(set("//:a+b"))')
+                         'config(tests(set("//:a+b")), target)')
     def test_kernel_query_requires_artifact_provider(self):
         query=test_inventory_command(['bazel','test','//:host'],['//:host'],['//:host'],host_artifacts_only=True)
         self.assertIn('BsdHostArtifactTestInfo', next(v for v in query if v.startswith('--starlark:expr=')))
@@ -124,7 +124,7 @@ class TargetInventory(unittest.TestCase):
                    '--//cfg:enabled=false', '--profile=/profile', '--build_event_json_file=/events', '//:product']
         query = target_inventory_command(command, ['//:product'], ['//:alias+name'])
         self.assertEqual(query[:5], ['bazel', '--output_user_root=/state', 'cquery', '--platforms=//:target', '--//cfg:enabled=false'])
-        self.assertEqual(query[-1], 'set("//:alias+name")')
+        self.assertEqual(query[-1], 'config(set("//:alias+name"), target)')
         self.assertNotIn('--profile=/profile', query)
         self.assertNotIn('--build_event_json_file=/events', query)
 

@@ -194,6 +194,11 @@ def _inventory_command(argv, targets, expression, host_artifacts_only=False):
     fields = '"label":str(target.label),"compatible":not any([key.endswith("IncompatiblePlatformProvider") for key in providers(target)])'
     if host_artifacts_only:
         fields += ',"host_artifact":any([key.endswith("BsdHostArtifactTestInfo") for key in providers(target)])'
+    # Target patterns can include both trimmed/untrimmed alias configurations,
+    # or configurations retained from earlier invocations. Resolve each requested
+    # root in the actual command's target configuration; duplicate checks remain
+    # strict rather than arbitrarily selecting one configured result.
+    expression = 'config(' + expression + ', target)'
     return command + ['--output=starlark', '--starlark:expr=json.encode({' + fields + '})', expression]
 
 

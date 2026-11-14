@@ -11,6 +11,27 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+Configured-output query correction: the seven-module follow-up exposed two
+configurations for the export-all superio alias (trimmed and untrimmed test
+fragments). The strict inventory correctly rejected duplicate actual labels.
+Public cquery JSON protocol inspection retains both checksums; config(..., target)
+selects all 21 requested roots once, including the alias. Maintained target and
+test inventory queries now use that operator, retaining duplicate, compatibility
+and per-selector binding rejection. All 34 source inventory unit cases pass;
+the real module R3 inventory passes and its native inventory test also passes
+while product compilation continues. Evidence roots are
+/usr/obj/usr/src/bazel-module-alias-query-r2-20261114 and r3-20261114, and
+/usr/obj/usr/src/bazel-module-source-identity-native-r3-20261114.
+The first read-only JSON diagnostic omitted the qualification JAVA_HOME and
+failed on a different local JDK discovery; the next retained attempt restores
+the declared environment. Product frontend execution already supplies it.
+The earlier module R1 also retains a rejected unsupported Starlark hex escape,
+corrected to octal before R2. R2 retains the alias ambiguity failure. No component
+is dropped to avoid these failures and no duplicate result is silently selected.
+No C option or production backend selection changes; the maintained format-5
+backend, query helper, tests and manual carry the correction together.
+
+
 ARM64 CSU native R3 now completes successfully, including the real target/host
 preprocessing ABI regression. The independent original-Make comparison passes
 all ten installed startup objects: exact allocated sections, symbols/relocations,

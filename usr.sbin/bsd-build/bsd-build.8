@@ -8475,3 +8475,11 @@ Make for all ten installed startup objects' allocated data, symbol/relocation
 contracts, AArch64 identity and logical installation metadata.
 The recorded component profile disables branch protection; this is not full
 current ARM64 world, hardening-matrix, debug or runtime qualification.
+
+.Pp
+Configured target and test inventory queries explicitly select each requested
+root's target configuration with Bazel's config query operator.
+This avoids ambiguous trimmed/untrimmed alias configurations without ignoring
+duplicate results, incompatible targets or unbound selectors.
+The existing format-5 workflow and strict artifact capture remain in use;
+Make remains the production/default backend.
