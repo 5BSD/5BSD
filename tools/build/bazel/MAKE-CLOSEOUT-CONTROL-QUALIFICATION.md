@@ -1431,3 +1431,25 @@ plugins, code generators, second-stage world builds or filesystem sandboxing.
 The existing host-fallback negative remains separate evidence, and current R7
 AMD64 capture/Make comparison/runtime qualification are still pending.
 No normal frontend behavior changes: Make remains production/default.
+
+## ARM64 libsys reference (2026-11-14)
+
+`/usr/obj/usr/src/bazel-arm64-libsys-make-r1-20261114/receipt.json` passes
+install-reference.py for the original lib/libsys component, with 16 jobs and
+private objects/NO_ROOT stage. The original older ARM64 SDK/profile remains
+unchanged; sdk_reconfigured, bazel_parity_qualified, runtime_qualified and
+host_installed are all false. This supplies the next architecture-specific
+comparison baseline; it is not a current full ARM64 world build.
+
+`elf-reference-audit.json` verifies libsys.so.7 as ELF64 AArch64 DYN and every
+member of libsys.a and libsys_pic.a (471 each) as ELF64 AArch64 REL. The retained
+llvm-readelf headers are checked against complete llvm-ar member counts;
+receipt, METALOG, artifact and inspection-tool hashes are recorded. Audit digest:
+`ad5e2eee3be185caf2fe593e502981c680e376344db767b3e899427f24894a98`.
+This identity audit does not establish symbol/instruction/ABI equivalence or
+runtime behavior. Native libsys and required compiler-runtime/libc architecture
+work remain open. ARM64 syscall stubs must retain their source-owned GNU
+property-note generation and handwritten wrapper selection, not reuse AMD64
+assembly. The active AMD64 R7 capture is still pending. These reference and
+documentation changes require no C frontend behavior change; Make remains
+production/default.

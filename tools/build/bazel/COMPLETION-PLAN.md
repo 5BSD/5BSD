@@ -20,7 +20,11 @@ ELF/installation audit verifies all ten startup objects as ELF64 little-endian
 AArch64 relocatables with matching payload hashes and logical clibs-dev metadata.
 This uses the recorded older ARM64 Make SDK and does not qualify a current ARM64
 world, native CSU producer or runtime. The shared CSU declaration patch remains
-a temporary unapplied draft until the AMD64 capture is complete. No maintained
+a temporary unapplied draft until the AMD64 capture is complete. The ARM64
+libsys original-Make component reference now also passes; its ELF audit covers
+the shared library and all 471 members of each static/PIC archive as AArch64.
+This is a comparison baseline with the recorded older SDK, not native migration
+or runtime acceptance. No maintained
 frontend behavior or production backend selection changes for this audit.
 
 The refreshed original Make archive creation now passes all 450 selected packages
