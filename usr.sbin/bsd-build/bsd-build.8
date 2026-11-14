@@ -1414,6 +1414,10 @@ Kernel configuration; defaults to KERNCONF or GENERIC.
 .It Fl -production
 Build with WITH_MALLOC_PRODUCTION=yes.
 Alias for --build-profile production.
+The maintained world metadata phase records the resolved source options,
+target architecture and allocator selection in OBJTOP/.src_opts.
+This profile is refreshed by clean and incremental world builds; SDK staging
+must use the profile belonging to the completed reference world.
 Build and packages default to production; stage defaults to development.
 .It Fl -build-profile Ar production|development|debug
 Production enables production malloc.

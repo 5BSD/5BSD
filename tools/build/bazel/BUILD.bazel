@@ -528,3 +528,8 @@ bsd_host_artifact_test(name = "archive_symbol_visibility_test",
 
 bsd_python_test(name = "install_reference_dtrace_test", src = "install-reference-dtrace-test.py",
     data = ["install_reference_dtrace.py", "install_reference_libraries.py"], size = "small")
+
+bsd_host_artifact_test(name = "world_profile_test", src = "world-profile-test.py",
+    data = ["//share/mk:bsd.srcopt-profile.mk"], tools = ["//usr.bin/bmake:make"],
+    args = ["--make", "$(rootpath //usr.bin/bmake:make)",
+            "--producer", "$(rootpath //share/mk:bsd.srcopt-profile.mk)"], size = "small")

@@ -383,6 +383,8 @@ _TOOLCHAIN_METADATA_VARS=	COMPILER_VERSION \
 				LINKER_FEATURES \
 				LINKER_TYPE \
 				LINKER_FREEBSD_VERSION
+.include <bsd.srcopt-profile.mk>
+
 toolchain-metadata.mk: .PHONY .META
 	@: > ${.TARGET}
 	@echo ".info Using cached toolchain metadata from build at $$(hostname) on $$(date)" \
@@ -1298,7 +1300,7 @@ _build-metadata:
 	@echo "--------------------------------------------------------------"
 	@echo ">>> stage 3.2: recording build metadata"
 	@echo "--------------------------------------------------------------"
-	${_+_}cd ${.CURDIR}; ${WMAKE} toolchain-metadata.mk
+	${_+_}cd ${.CURDIR}; ${WMAKE} toolchain-metadata.mk src-options-metadata
 	${_+_}cd ${.CURDIR}; ${WMAKE} host-osreldate.h
 _includes:
 	@echo

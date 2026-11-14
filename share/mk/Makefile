@@ -58,6 +58,7 @@ FILES=	\
 	bsd.suffixes-posix.mk \
 	bsd.suffixes.mk \
 	bsd.symver.mk \
+	bsd.srcopt-profile.mk \
 	bsd.sys.mk \
 	bsd.sysdir.mk \
 	bsd.test.mk \

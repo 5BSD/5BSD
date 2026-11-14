@@ -51,6 +51,7 @@ _FILES = [
     "bsd.suffixes-posix.mk",
     "bsd.suffixes.mk",
     "bsd.symver.mk",
+    "bsd.srcopt-profile.mk",
     "bsd.sys.mk",
     "bsd.sysdir.mk",
     "bsd.test.mk",
@@ -92,3 +93,5 @@ bsd_install_manifest(name = "install_manifest", entries = [":file_" + file for f
     }), visibility = ["//visibility:public"])
 script_install_archive(name = "install_archive",
     directories = {"/usr/share/mk": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bmake"]}'})
+
+exports_files(["bsd.srcopt-profile.mk"], visibility = ["//tools/build/bazel:__pkg__"])

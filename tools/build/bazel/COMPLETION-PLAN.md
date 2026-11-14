@@ -33,6 +33,29 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The clean original-Make ARM64 production world completed successfully at
+12:58:17 UTC (4,108 seconds, 16 CPUs), source c940c120059. Evidence:
+/usr/obj/usr/src/build-runs/20261114T114948Z-90444. This is the reference world,
+not a native Bazel ARM64 world, kernel, package or runtime qualification.
+
+Inspection exposed a stale October .src_opts despite the current production
+world. The maintained world metadata phase now atomically exports the resolved
+SRC_OPT_LIST into OBJTOP/.src_opts, including architecture and allocator mode.
+The inventory comes from src.opts.mk; new options need no parallel list.
+The installed Make interface includes this helper in both Make and Bazel.
+Native world-profile R2 passes five actual-Make regression cases, including
+stale-profile replacement, write failure preservation and unchanged default
+target selection. Its 72 regular share/mk installed files match the independent
+Make reference in content, modes, ownership and package tags. Evidence:
+bazel-world-profile-native-r2-20261114 and
+bazel-world-profile-install-review-r1-20261114 under /usr/obj/usr/src.
+The fresh AMD64 SDK R8 records updated build-metadata provenance and remains a
+Make-built seed. R1 correctly rejected stale SDK R6 provenance. The normal
+build-bsd world backend already invokes this maintained metadata phase; no new
+frontend switch or alternate build path is needed. A real incremental ARM64
+world/profile capture and refreshed cross SDK remain required before continuing
+current-seed native ARM64 qualification. All six gates stay open.
+
 The maintained original-Make reference producer now accepts an explicit
 --dtrace-runtime-input manifest (format 1, one receipt/object binding), requiring
 --make-meta. It validates the original Make component/target/compiler provenance,
