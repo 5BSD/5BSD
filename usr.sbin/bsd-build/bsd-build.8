@@ -8548,3 +8548,13 @@ separate compilation variants, preserving the libsys auxiliary-filter interface.
 Existing format-5 architecture/SDK inputs select these rules; component object
 comparisons do not qualify complete ARM64 libc linking, full-system boot,
 DWARF equivalence or performance.
+
+.Pp
+Portable libc source groups use explicit supported CPU constraints, retaining
+architecture-owned implementations separately.
+Compiler source identities preserve assertion filenames in ordinary sources,
+headers and copied kernel inputs. Declared source labels supply execution paths;
+configuration-specific output directories are not embedded in these rules.
+Existing format-5 architecture/SDK inputs select the component declarations.
+Component comparisons and host smoke checks do not qualify complete ARM64 libc
+linking, full-system boot, DWARF equivalence or performance.

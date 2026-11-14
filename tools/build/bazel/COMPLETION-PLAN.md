@@ -10,11 +10,11 @@ is not authorized.
 | Gate | Current evidence and remaining work |
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
-| 2. AMD64 parity/configurations | Full R13 passes 32 tests and captures all 450 selected packages, including the compiler-runtime and stdio/stdlib source-identity corrections; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 2. AMD64 parity/configurations | Full R13 passes 32 tests and captures all 450 selected packages, including the compiler-runtime and stdio/stdlib source-identity corrections; subsequent portable-group diagnostic identity corrections require another full capture. Native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R13 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib match 412 regular/PIC object contracts, context/jump routines match 24, optimized strings match 188, and portable strings match 174 under explicit MACHDEP_OPTIMIZATIONS=no. CSU/syscall selections add 1,057 contracts; the default validated libc groups now cover 841 regular and 840 PIC members against the 1,450/1,438-member Make component reference. Full libc remains incomplete. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib match 412 regular/PIC object contracts, context/jump routines match 24, optimized strings match 188, and portable strings match 174 under explicit MACHDEP_OPTIMIZATIONS=no. CSU/syscall selections add 1,057 contracts; the default validated libc groups now cover 1,121 regular and 1,120 PIC members against the 1,450/1,438-member Make component reference. Full libc remains incomplete. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r13-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,38 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+Seventeen more portable libc groups now support AMD64/AArch64 through a shared,
+explicit CPU constraint declaration: capability, compat-43, db, gmon, inet, isc,
+locale, nameser, nls, posix1e, regex, rpc, secure, stdbit, stdtime, uuid and xdr.
+All 280 regular plus 280 PIC members pass independent Make allocated ELF,
+external-symbol and relocation comparisons on both CPUs. Reference inventory
+classification accounts for imported kernel capability/ACL sources, copied ACL
+source bytes, declared RPC protocol generation and contributed timezone code.
+The original ARM64 build exposed 70 differing variants across 35 routines; their
+instruction bytes match and differences traced to assertion filename identities,
+including assertions in locale headers. Compiler source-prefix mappings now
+preserve Make's logical source identities. For the kernel ACL source that Make
+copies into its object directory, $(execpath) references the actual declared
+source label and preserves the copy's basename; no bazel-out/configuration path
+is hardcoded and no compiled output is rewritten. Official path-variable reference:
+https://bazel.build/reference/be/make-variables and C/C++ copts contract:
+https://bazel.build/reference/be/c-cpp#cc_library.copts.
+
+Evidence: bazel-libc-portable-arm64-parity-r2-20261114 and
+bazel-libc-portable-amd64-parity-r1-20261114. AMD64 native R1 also passes maintained
+archive identities and static/shared libc smoke probes. The diagnostic identity
+correction intentionally changes artifacts from full R13; earlier unchanged-byte
+results do not qualify this latest change, and full packages need refreshing.
+Cumulative default ARM64 libc component coverage is now 1,121 regular and 1,120
+PIC members against the recorded older-profile 1,450/1,438-member Make reference.
+This is not full libc composition/order/linking, DWARF, current ARM64 SDK/world,
+hardening, boot/runtime or performance acceptance. All six gates remain open.
+Existing build-bsd format-5 architecture/SDK inputs select these declarations;
+no frontend C option, backend target or tool staging change is required.
+Manual/options documentation changes with the producers. Make remains production
+and default; no host installation, publication, upgrade or reboot occurs.
+
 
 ARM64 libc startup relocation now selects its actual aarch64/reloc.c rather than
 AMD64's implementation. The syscall composition selects real ARM64 helpers,

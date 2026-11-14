@@ -197,3 +197,15 @@ profile's 1,450 / 1,438-member libc reference. This is not complete libc linking
 DWARF, current ARM64 world/hardening, full package or runtime qualification.
 AMD64 archive identities and static/shared smoke probes pass, with unchanged
 full static/PIC libc source-payload digests against R13.
+
+## ARM64 portable libc groups (2026-11-14)
+
+Seventeen portable groups now select explicit AMD64/AArch64 support without a
+fallback to another CPU. All 560 regular/PIC object contracts match independent
+Make references on each CPU, with compiler-level assertion source identities
+preserved for ordinary, header and copied inputs. Declared-input execpath
+expansion avoids hardcoded output directories. AMD64 archive identities and
+static/shared smoke tests pass. ARM64 default component coverage is now
+1,121 regular / 1,120 PIC members; complete libc linking, DWARF, current full world
+and runtime remain open. Full R13 predates this identity correction and needs
+refreshing; earlier artifact-preservation claims are not final acceptance.

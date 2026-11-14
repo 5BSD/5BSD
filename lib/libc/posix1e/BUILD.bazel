@@ -1,5 +1,19 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("//lib/libc:platforms.bzl", "LIBC_PORTABLE_PLATFORMS")
+
+# Preserve the original BSD compiler source identity in assertion diagnostics.
+_SOURCE_IDENTITY_COPTS = [
+    "-ffile-prefix-map=" + prefix + "lib/libc/posix1e/=/usr/src/lib/libc/posix1e/"
+    for prefix in ["", "./"]
+]
+# Make copies this declared kernel input into its object directory before
+# compilation. Preserve that copy's logical basename, without an output-path guess.
+_SOURCE_IDENTITY_COPTS += [
+    "-ffile-prefix-map=" + prefix + "$(execpath //sys/kern:subr_acl_nfs4.c)=subr_acl_nfs4.c"
+    for prefix in ["", "./"]
+]
+
 exports_files(["mac.conf"], visibility = ["//lib/libc:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
@@ -10,8 +24,8 @@ cc_library(features = LIBC_VARIANT_FEATURES, name = "posix1e_objects",
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
     local_defines = ["_ACL_PRIVATE", "_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
         select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
-    copts = ["-ftls-model=initial-exec"], linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS, linkstatic = True,
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 # Object qualification artifacts; final libc ABI and installation are separate.
