@@ -101,6 +101,7 @@ class ServiceCoverage(unittest.TestCase):
     def test_operations_reject_wrong_context_and_unbounded_inputs(self):
         good=dict(qualification='/capture',target='//test:client',output='client',guest_directory='/tmp',cases=['time','device-denied'])
         self.assertEqual(operation_settings(good),good)
+        self.assertEqual(operation_settings(dict(good,cases=['log']))['cases'],['log'])
         for bad in [dict(good,cases=['device']),dict(good,cases=[]),
                     dict(good,cases=['time','time']),dict(good,cases='time'),
                     dict(good,cases=['unknown']),dict(good,guest_directory='/tmp/../root'),

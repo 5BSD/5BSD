@@ -102,7 +102,7 @@ def required_services(services, states):
     return sorted(required)
 
 
-USER_OPERATIONS = frozenset(('time', 'sysctl', 'notify', 'memory', 'power', 'device-denied'))
+USER_OPERATIONS = frozenset(('time', 'sysctl', 'notify', 'log', 'memory', 'power', 'device-denied'))
 
 
 def operation_settings(value):

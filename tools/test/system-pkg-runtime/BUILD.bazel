@@ -41,8 +41,8 @@ bsd_python_test(name = "service_inventory_test", src = "service-inventory-test.p
 # Useful production-provider operations; executed inside the disposable VM,
 # not as a host test against whichever services happen to be installed.
 cc_binary(name = "service_operations", srcs = ["service_operations.c"],
-    deps = ["//lib/libtimecmp:timecmp", "//lib/libsysctlcmp:sysctlcmp", "//lib/libnotify:notify", "//lib/libpowercmp:powercmp", "//lib/libdevicecmp:devicecmp"],
-    dynamic_deps = ["//lib/libtimecmp:timecmp_shared", "//lib/libsysctlcmp:sysctlcmp_shared", "//lib/libnotify:notify_shared", "//lib/libpowercmp:powercmp_shared", "//lib/libdevicecmp:devicecmp_shared"],
+    deps = ["//lib/libtimecmp:timecmp", "//lib/libsysctlcmp:sysctlcmp", "//lib/libnotify:notify", "//lib/libpowercmp:powercmp", "//lib/libdevicecmp:devicecmp", "//lib/liblogcmp:logcmp"],
+    dynamic_deps = ["//lib/libtimecmp:timecmp_shared", "//lib/libsysctlcmp:sysctlcmp_shared", "//lib/libnotify:notify_shared", "//lib/libpowercmp:powercmp_shared", "//lib/libdevicecmp:devicecmp_shared", "//lib/liblogcmp:logcmp_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
 
 bsd_python_test(name = "certificate_runtime_test", src = "certificate-runtime-test.py",

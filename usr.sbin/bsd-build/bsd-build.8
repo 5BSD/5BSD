@@ -8427,13 +8427,17 @@ This readiness check is not individual provider operation qualification.
 The format-5 source qualification target
 .Li //tools/test/system-pkg-runtime:service_operations
 builds a native consumer for time, sysctl, notification, memory-pressure
-publication, supported-power-state queries and device enumeration.
+publication, supported-power-state queries, explicit Log emit/flush/query and
+device enumeration.
 Positive Device enumeration requires authorized SYSTEM lookup context;
 ordinary-session Device visibility is tested with a separate denial mode.
 It is intended for captured execution in the disposable normal package-runtime
 VM through ordinary authenticated service lookup, never against host providers.
+The Log mode validates the exact queried record and bounded commit visibility;
+it does not use the syslog fallback.
 Compilation alone does not establish provider operation or complete service
-coverage; runner integration and actual VM acceptance remain required.
+coverage. The existing six ordinary modes have VM evidence; the added Log mode
+requires fresh native capture and VM acceptance.
 
 .Pp
 Format-5 source qualification retains the main Bazel JSON trace as

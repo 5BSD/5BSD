@@ -9,7 +9,7 @@ is not authorized.
 
 | Gate | Current evidence and remaining work |
 | --- | --- |
-| 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
+| 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. A new ordinary Log emit/flush/exact-query operation has strict syntax and 11 policy checks, but no native/VM acceptance yet. Earlier timeout failures remain retained. |
 | 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | A source-owned reaper supervisor now accounts complete private-server descendant CPU/block operations and sampled aggregate RSS; seven real process regressions and maintained AMD64 qualification pass. Normal frontend timings explicitly identify their client-only scope. This qualifies instrumentation, not performance. Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
@@ -260,6 +260,49 @@ manual and observability ledger are updated. No new build-bsd C dispatch or CLI,
 security, signing, publication or normal Make behavior. Concurrent PF edits/build
 are other work and are preserved. Make remains production/default. All six gates,
 including full ARM64 world/kernel/modules/pkgbase/options/runtime, remain open.
+
+
+### Ordinary Log operation implementation (2026-11-14)
+
+The VM-only service_operations client now has a log mode using explicit
+liblogcmp open/create/emit/flush/query calls. It publishes one public event to a
+fresh category, then queries within its own label with exact subsystem/category
+filters. It validates every length before computing body pointers, and requires
+the expected event/message/severity/privacy plus provider receive clocks and
+sequence. A zero-result scan may be retried for up to ten seconds for commit
+visibility; transport/permission/framing errors are failures, not absent records.
+The process-wide 20-second deadline remains. No syslog fallback, visibility
+change, identity grant, root shortcut or new transport is used.
+
+The existing format-2 case list accepts log; positive Device remains rejected in
+ordinary contexts. Declared native dependencies include liblogcmp. Strict host
+C syntax checking (-Wall/-Wextra/-Werror) and all 11 direct service-policy tests
+pass. This is implementation evidence, NOT a native link or VM result. The
+review at /usr/obj/usr/src/bazel-provider-log-review-r1-20261114 explicitly records
+native_log_operation_qualified=false and vm_log_operation_qualified=false.
+The other live AMD64 buildworld remains responsible for changing shared SDK
+inputs; source verification is not bypassed while it runs.
+
+The runtime README is reconciled: its old 'runner does not invoke the helper'
+and 'format 2 VM pending' paragraphs were stale. The retained current upgrade R3
+really passes the original six ordinary operations in all four phases. It does
+not contain the new log mode. The eight implemented helper modes are distinct
+from the seven allowed ordinary cases (positive Device is SYSTEM-only).
+
+Next runtime steps remain: capture this updated native helper after SDK refresh,
+run log in baseline/active-before-activation/new-boot/rollback, and exercise
+restricted providers through existing approved operator binaries where suitable
+or normal builder-authorized signed SYSTEM/attribute test units where necessary.
+Trace's declared software requirement and SystemExtension/Device/Network scope
+must remain enforced; ordinary UID/root identity must not stand in for authority.
+Filesystem container qualification needs a real bundle identity. Required
+readiness remains installed-manifest-derived. Complete provider-operation
+coverage, runtime acceptance and the six closeout gates remain open.
+
+Frontend review: maintained format-5 targets and format-2 operation inputs cover
+the new mode. Backend C client/dependencies, policy validation/tests, runtime
+README and manual are updated together. No build-bsd C dispatch/CLI, security,
+signing or publication change. Make remains production/default; BIP excluded.
 
 
 ### Focused math and static unwind checkpoint (2026-11-14)
