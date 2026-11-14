@@ -37,7 +37,7 @@ def descriptor_tests():
         deps = ([":kvm_interface", ":pthread_interface"] if program == "jaildesc" else
             [":jail_interface", "//tests:suite_macros"])
         bsd_link_sequence(name = program + "_link",
-            deps = deps + [":atf_interface", "//lib/libc:shared_abi_interface"],
+            deps = [":atf_interface"] + deps + ["//lib/libc:shared_abi_interface"],
             target_compatible_with = _PLATFORM)
         cc_binary(name = program, srcs = [program + ".c"], deps = [":" + program + "_link"],
             copts = libc_test_copts(warnings = 3), defines = ["PIC"],
