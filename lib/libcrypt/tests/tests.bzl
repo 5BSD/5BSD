@@ -8,7 +8,10 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_man
 load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 load("//lib/libc:test_policy.bzl", "libc_test_copts")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _DIRECTORY = "/usr/tests/lib/libcrypt"
 _PROGRAMS = ["crypt_test", "crypt_tests"]
 _CASES = {"crypt_tests": ["md5", "invalid"], "crypt_test": ["crypt_salts"]}

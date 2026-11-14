@@ -2,17 +2,21 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//tools/build/bazel:bsd_link_script.bzl", "bsd_link_script")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _STRONG = "//tools/build/bazel/config:crypt_enabled"
 cc_library(name = "private_headers", hdrs = ["crypt.h"], strip_include_prefix = ".", visibility = ["//lib/libcrypt/tests:__pkg__"])
 cc_library(name = "crypt", srcs = ["crypt.c", "misc.c", "crypt-md5.c", "crypt-nthash.c", "crypt-sha256.c", "crypt-sha512.c"] + select({
     _STRONG: ["//secure/lib/libcrypt:crypt-des.c", "//secure/lib/libcrypt:crypt-blowfish.c", "//secure/lib/libcrypt:blowfish.c"], "//conditions:default": []}),
     deps = ["//lib/libmd:md_link"], implementation_deps = [":private_headers"] + select({_STRONG: ["//secure/lib/libcrypt:headers"], "//conditions:default": []}),
     local_defines = select({_STRONG: ["HAS_DES", "HAS_BLOWFISH"], "//conditions:default": []}),
-    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":crypt"], visibility = ["//visibility:public"])
 cc_shared_library(name = "crypt_shared", deps = [":crypt"], dynamic_deps = ["//lib/libmd:md_shared"],
     shared_lib_name = "libcrypt.so.5", user_link_flags = ["-Wl,-soname,libcrypt.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_link_script(name = "static_link_script", template = "libcrypt.aldscript", output = "libcrypt.ald",
     substitutions = {"@@LIB@@": "crypt", "@@STATICLIB_SUFFIX@@": "_real"})
 bsd_link_script(name = "shared_link_script", template = "libcrypt.ldscript", output = "libcrypt.ld",

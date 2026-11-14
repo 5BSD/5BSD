@@ -354,3 +354,24 @@ actual probe schemas, companion-object locations and patched instructions match
 Make on both platforms. Its archive checker is explicitly a host artifact test
 and validates the declared target ELF machine, including rejecting the other
 Tier 1 machine. No frontend CLI/backend default or production policy changes.
+
+
+## Crypto/compression cross-architecture checkpoint
+
+libcrypt and its two original test programs now admit ARM64 as well as AMD64.
+The current optimized production profiles also qualify the existing ARM64
+libmd/zlib/bzip2/liblzma selections. Both platforms match original Make static
+archive order/symbols, shared ELF metadata/hardening, generated ABI-map bytes
+and complete selected component installation metadata (188 records each).
+Each platform matches 136/138 static object contracts; the remaining two digest
+objects differ only in diagnostic /usr/src string prefixes. No artifacts are
+normalized. ARM64 target code does not execute in these runs.
+
+AMD64 zlib example and static/shared zopen tests pass. Its crypt md5 and invalid
+cases pass; the imported crypt_salts case reports the original FreeBSD expected
+failure for old-style/bad salts. That outcome is not a clean pass or a new test
+exception. Three existing host artifact checks inspect zlib/bzip2/XZ consumer
+extraction, target ABIs and archive contracts on both platforms. The two crypt
+test binaries match original Make ELF metadata/import/NEEDED-order contracts
+on both platforms. Full DWARF, alternate configurations, full-system bootstrap,
+sandbox/performance and ARM64 execution remain open; Make stays the default.
