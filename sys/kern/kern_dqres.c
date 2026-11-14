@@ -2903,16 +2903,20 @@ dqres_verify(int flags)
 
 /*
  * The install gate of the calling thread's queue.  A thread completing a
- * served answer is attached, and an attachment is never removed.
+ * served answer is attached, and an attachment is never removed; were it
+ * not, there is no queue to ask and the caller fails closed (false).
  */
-static void
+static bool
 dqres_swap_gate(struct thread *td, struct fdinstall_gate *gate)
 {
 	struct dqres *dr;
 
 	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
 	KASSERT(dr != NULL, ("dq: a swap completes in an unattached thread"));
+	if (__predict_false(dr == NULL))
+		return (false);
 	dqres_ops->dro_swap_gate(dr->dr_binding, gate);
+	return (true);
 }
 
 /*
@@ -2950,8 +2954,10 @@ dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
 		 * early test is advisory: it fails the open before the lock
 		 * and the truncation; the gate at the install decides.
 		 */
-		dqres_swap_gate(td, &gate);
-		error = gate.fg_enter(gate.fg_arg);
+		if (!dqres_swap_gate(td, &gate))
+			error = EIO;
+		else
+			error = gate.fg_enter(gate.fg_arg);
 		if (error == 0) {
 			gate.fg_exit(gate.fg_arg);
 			error = fdswap_receive(td, ans->da_swap);
@@ -3142,7 +3148,11 @@ dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
 		 * lookups do, and nothing is installed.
 		 */
 		sw->fs_fp = fp;
-		dqres_swap_gate(td, &gate);
+		if (!dqres_swap_gate(td, &gate)) {
+			/* No queue to ask: fail closed, as for a dead one. */
+			fdswap_release(sw, td);
+			return (EIO);
+		}
 		return (fdswap_install(td, sw, flags, &gate, fdp));
 	}
 	error = finstall_refed_prop(td, fp, fdp, flags, fc, &prop);
