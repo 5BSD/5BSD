@@ -1311,3 +1311,27 @@ semantics and select actual native runtime libraries before a stage-two claim.
 The package inventory supplies compiler/linker/header/library payloads; fidlc is
 build-only, with native //tools/build/fuchsia/fidlc:fidlc already used by the source
 FIDL rules. Its installed-package absence is not missing userland coverage.
+
+
+## Stable-source controls and SDK schema correction (2026-11-14)
+
+`bazel-current-make-world-r2-20261114/result.json` records successful incremental
+world refresh at unchanged clean head e4d2059c4b4; its frozen world option profile
+and logs are hash-bound. `bazel-current-make-kernel-r1-20261114/result.json`
+records successful clean GENERIC/all-selected-module compilation with CTF at the
+same unchanged source head, sixteen jobs, and no host installation/publication.
+The private NO_ROOT stages in `bazel-current-make-stage-r1-20261114` both pass,
+retaining separate world/kernel results and METALOG/kernel.meta bindings.
+These builds do not establish full package parity or controlled performance.
+
+Fresh SDK R3 stages and verifies 8,345 snapshot files, but artifact-contract native
+R2 rejects it before actions: the prior e4d2059c4b4 change replaced capability
+schema version 2 with declaration count 4. The earlier description of that field
+as a stale count was wrong. Existing receipt consumers and historical schema
+qualification documents correctly define it as a version. Restore schema 2 and
+add independently derived freestanding_toolchain_count. Retain the failed R3
+snapshot/R2 attempt unchanged; regenerate after correcting the preparer. The
+regression passes actual producer metadata to the real source consumer and
+standalone platform selection, in addition to checking emitted declarations.
+The normal frontend/backend remains unchanged; maintained helper/runfiles/tests
+and manual are updated together. Broader six-gate qualification remains open.

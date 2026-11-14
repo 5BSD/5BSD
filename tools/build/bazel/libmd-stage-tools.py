@@ -67,7 +67,11 @@ def freestanding_toolchains(target, version):
             'toolchain(name=%s, toolchain=%s, toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' %
                 (json.dumps(name+'_registered'), json.dumps(':'+name+'_compiler'), json.dumps(constraints)),
         ]
-    return lines, len(rows)
+    # This capability is a schema version, not a declaration count.
+    return lines, {
+        "freestanding_toolchains": 2,
+        "freestanding_toolchain_count": len(rows),
+    }
 
 
 def inspect_execution_dependencies(origins, inspectors):
@@ -220,7 +224,7 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
            'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", as_files=":compile_inputs", linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)',
            'toolchain(name="registered", toolchain=":compiler", toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' % json.dumps(['@platforms//os:freebsd', '@platforms//cpu:' + identity['platform_cpu'], ':selected_sdk', ':userland']),
            'cc_binary(name="stdout_redirect", srcs=["stdout_redirect.c"], linkstatic=True, features=["fully_static_link"])']
-    freestanding, freestanding_count = freestanding_toolchains(target, version)
+    freestanding, freestanding_metadata = freestanding_toolchains(target, version)
     lines += runtime_groups(tool_dependencies) + action_input_groups() + freestanding
     lines += ['alias(name=%s, actual=%s)'%(json.dumps(name),json.dumps('bin/'+name)) for name in [*settings['execution_tools'],*['extra_'+n for n in additional]]]
     if python_info:
@@ -266,7 +270,7 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
     result['sdk_source'] = {'kind': source_kind, 'root': str(sdk),
                             'plan_format': plan['format']}
     result['compiler_resource_version'] = version
-    result['freestanding_toolchains'] = freestanding_count
+    result.update(freestanding_metadata)
     if host is not None:
         result.update(format=2, scope='explicit target SDK plus independently bound native execution SDK; no world/runtime qualification',
                       execution_target=host['target'], execution_sdk={

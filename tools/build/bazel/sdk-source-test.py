@@ -71,7 +71,9 @@ class SdkSources(unittest.TestCase):
     def test_generated_toolchain_count_is_not_a_fixed_receipt_value(self):
         spec=importlib.util.spec_from_file_location('sdk_stage', Path(__file__).with_name('libmd-stage-tools.py'))
         stage=importlib.util.module_from_spec(spec);spec.loader.exec_module(stage)
-        lines,count=stage.freestanding_toolchains('x86_64-unknown-freebsd16.0','21')
+        lines,metadata=stage.freestanding_toolchains('x86_64-unknown-freebsd16.0','21')
+        count=metadata['freestanding_toolchain_count']
+        self.assertEqual(metadata['freestanding_toolchains'],2)
         declarations=[line for line in lines if line.startswith('toolchain(')]
         self.assertEqual(count,len(declarations))
         self.assertEqual(count,4)

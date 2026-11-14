@@ -8396,3 +8396,14 @@ The target
 .Li //sys/dev/dq:resolve_ledger_inventory
 exposes the discovered filename inventory and complete source list for immutable
 qualification capture and independent comparison.
+
+.Pp
+The SDK receipt's
+.Li freestanding_toolchains
+field is capability schema version 2, not the number of emitted toolchains.
+The preparer reports that number separately as
+.Li freestanding_toolchain_count .
+Source qualification rejects incompatible schema versions before Bazel actions.
+Regenerate source-bound SDKs after preparer changes; do not modify old receipts
+to bypass validation. Toolchain declarations do not establish architecture
+qualification or independent native bootstrap.

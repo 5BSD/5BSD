@@ -115,7 +115,7 @@ bsd_python_test(
 bsd_python_test(
     name = "source_settings_test",
     src = "source-settings-test.py",
-    data = ["source_graph.py", "userland_sdk.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py", "sdk_copy.py", "sdk_digests.py"],
+    data = ["libmd-stage-tools.py", "python_runtime.py", "source_graph.py", "userland_sdk.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py", "sdk_copy.py", "sdk_digests.py"],
 )
 
 # Input-boundary checks for the isolated native iconv VM fixture assembler.

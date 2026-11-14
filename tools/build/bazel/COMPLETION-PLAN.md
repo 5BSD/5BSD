@@ -11,11 +11,20 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
-The current clean Make world build finishes successfully. Its result is retained
-as build-passed/source-review-required because qualification helpers and the
-build-bsd manual changed during execution. Freeze/recheck the completed world
-profile and refresh the current-source control before full parity acceptance.
-No install, hardware build or repository publication was performed.
+Stable-head Make world refresh R2 and current GENERIC/CTF kernel/module R1 now
+pass at e4d2059c4b4, with clean unchanged source before/after. Fresh private
+NO_ROOT world and kernel stages also pass. Their original logs, input hashes and
+world option snapshot are retained under /usr/obj/usr/src/bazel-current-make-*.
+This supersedes the earlier clean-world result's source-review limitation for
+the refreshed build scope, not full package/runtime/performance acceptance.
+No host installation, hardware build or repository publication was performed.
+
+Native artifact-contract R2 is rejected before Bazel actions: the preparer confused
+freestanding_toolchains schema version 2 with four generated declarations.
+Restore the schema field and derive a separate freestanding_toolchain_count;
+keep the consumer's rejection strict. A producer-to-consumer regression runs
+actual generated metadata through source SDK/platform validation. Fresh staging
+and native rerun are required; do not repair existing receipts in place.
 
 The maintained SDK preparer now supports explicit preparation format 2: a target
 SDK root and complete execution compiler map, with no objtop or implicit Make
@@ -23,9 +32,9 @@ layout. Existing format 1 remains the declared Make-object adapter. Thirteen hos
 selection/declaration cases pass; full explicit-mode fixture R2 materializes and
 verifies 8,344 snapshot files without reading the live Make object tree. That
 fixture deliberately uses frozen older Make-produced seed bytes and is not a
-current or native-produced SDK. A stale literal receipt count of two freestanding
-toolchains is fixed to derive four from emitted declarations; declarations are
-not architecture qualification. Existing qualification/SDK ABI receipt formats
+current or native-produced SDK. The initial count change was incorrect: freestanding_toolchains is schema 2,
+not a count. The corrected producer reports a separate derived count; emitted
+declarations are not architecture qualification. Existing qualification/SDK ABI receipt formats
 and C frontend flags remain unchanged; preparation helpers/tests/manual change
 together. Old source-bound SDK receipts require fresh preparation after these
 helper/live-object changes; they are not rebound to suppress verification failures.

@@ -3,6 +3,7 @@
 """Typed source setting serialization, without accepting native flag injection."""
 import unittest
 import copy
+import importlib.util
 import os
 from pathlib import Path
 import tempfile
@@ -139,6 +140,20 @@ class StandalonePlatformTest(unittest.TestCase):
                 'freestanding_toolchains': 2, 'snapshot': {
                     'toolchain/BUILD.bazel': 'a'*64,
                     'toolchain/cc_toolchain_config.bzl': 'b'*64}}
+
+    def test_stager_metadata_satisfies_source_consumer(self):
+        spec = importlib.util.spec_from_file_location('sdk_stage',
+            Path(__file__).with_name('libmd-stage-tools.py'))
+        stage = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stage)
+        lines, metadata = stage.freestanding_toolchains('x86_64-unknown-freebsd16.0', '21')
+        receipt = dict(self.receipt(), **metadata)
+        self.assertEqual(receipt['freestanding_toolchain_count'],
+                         sum(line.startswith('toolchain(') for line in lines))
+        validate_sdk_toolchains(receipt)
+        for arch in ['amd64', 'aarch64', 'riscv64']:
+            self.assertEqual(platform_arguments({'target-kind':'standalone'}, arch, receipt)[0],
+                             '--platforms=@bsd_sdk//toolchain:standalone_' + arch)
 
     def test_native_sdk_targets_keep_native_execution(self):
         for arch in ['amd64', 'aarch64', 'riscv64']:
