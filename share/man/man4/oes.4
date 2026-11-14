@@ -239,6 +239,14 @@ File objects include vnode identity, ownership, mode and flags, size, exact
 allocated bytes, preferred block size, generation, special-device ID,
 filesystem revision and type, link count, and second-plus-nanosecond access,
 modification, change, and birth timestamps.
+The attributes are read from the object when the event is generated, after
+the other MAC policies have examined it.
+The access timestamp of the executable in an exec event therefore already
+includes the kernel's own reads of the image during that exec, such as those
+of
+.Dv MAC_VERIEXEC
+image verification, and may be later than the one the file had before the
+exec began; the other timestamps are not changed by an exec.
 The
 .Dv OES_FILE_META_*
 bits distinguish unavailable attributes, unavailable or truncated paths,
