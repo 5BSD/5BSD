@@ -478,3 +478,7 @@ bsd_python_test(name = "package_elf_review_test", src = "package-elf-review-test
     data = ["package-elf-review.py", "elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "package-archive-compare.py",
             "archive_headers.py", "package_index.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
+
+# SDK target roots and execution compilers are separate explicit inputs.
+bsd_python_test(name = "sdk_source_test", src = "sdk-source-test.py",
+    data = ["userland_sdk.py", "libmd-stage-tools.py", "python_runtime.py"], size = "small")

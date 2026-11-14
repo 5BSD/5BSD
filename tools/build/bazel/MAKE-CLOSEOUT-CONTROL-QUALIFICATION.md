@@ -1265,3 +1265,49 @@ or native dependency file is required for these existing test roots. The helper
 and build-bsd manual are updated together. Earlier whole-index evidence remains
 unchanged; selected runtime-linker metadata acceptance does not turn the old
 kernel/program contract failure or full package byte diagnostics into a pass.
+
+
+## Current Make control completion and explicit SDK sources (2026-11-14)
+
+`/usr/obj/usr/src/bazel-current-make-world-r1-20261114/result.json` records exit 0
+from the current maintained C frontend's clean production-malloc world build,
+all sixteen CPUs and no installation/publication. The starting head was feed8a35d47;
+helper/docs changes during execution require source review before using the control
+as coherent current parity evidence. The completed world profile is frozen as
+`world.src_opts` with digest 3c05e608cb90419e39d0a0550fe3730defca12aab1e2ff990b634fde17d23313.
+The raw time -l report is retained with its correct per-process/block-operation
+limits. It is not a controlled Make/Bazel or aggregate-memory/physical-I/O comparison.
+
+The SDK preparer now accepts preparation plan format 2, separating explicit
+sdk_root from a complete compiler_tools map. Legacy format 1 remains the Make
+object-root adapter. Format 2 rejects objtop, missing/unknown compiler roles,
+noncanonical/relative inputs and SDK roots outside /usr/obj. Cross SDKs retain
+their independently verified native execution workspace requirement. The mode
+selects inputs; it does not certify their ABI or native build provenance.
+No new qualification/C frontend flag or SDK ABI receipt version is required.
+The normal format-5 consumer receives the generated snapshot as before.
+
+`/usr/obj/usr/src/bazel-sdk-source-host-tests-r1-20261114/result.json` passes all
+thirteen host selection/declaration tests. They include explicit separate compiler
+roots, refusal of hidden/ambiguous selections and generated target declarations.
+`/usr/obj/usr/src/bazel-explicit-sdk-interface-fixture-r2-20261114/result.json`
+passes actual materialization and complete snapshot verification over 8,344 files.
+It has no direct input under the live amd64.amd64 object tree. Its inputs are
+frozen older Make-produced seed bytes: this is an interface fixture, not a fresh
+current-source/native SDK and not stage-two bootstrap evidence. The earlier R1
+materialization exposed stale metadata reporting two freestanding toolchains while
+emitting four. R2 derives/counts all four declarations. This is not four qualified
+world architectures. Receipt source dependencies remain strict; regenerate the
+normal seed with maintained preparation after current builds/helper changes.
+
+`/usr/obj/usr/src/bazel-native-compiler-probe-r2-20261114/result.json` executes the
+actual captured R6 clang --version successfully. Its role is an archive hardlink
+to /usr/bin/c++; direct -xOf of the hardlink emits no bytes, so the initial R1 probe
+failed before execution. R2 resolves the actual regular payload from libarchive
+metadata, verifies its size and binds the package/tool/source hashes. It uses the
+current host ELF interpreter/libraries and proves neither code generation nor a
+native-produced compiler runtime closure. Native SDK assembly must preserve hardlink
+semantics and select actual native runtime libraries before a stage-two claim.
+The package inventory supplies compiler/linker/header/library payloads; fidlc is
+build-only, with native //tools/build/fuchsia/fidlc:fidlc already used by the source
+FIDL rules. Its installed-package absence is not missing userland coverage.

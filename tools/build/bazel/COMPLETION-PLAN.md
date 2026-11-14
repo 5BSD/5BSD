@@ -11,6 +11,36 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The current clean Make world build finishes successfully. Its result is retained
+as build-passed/source-review-required because qualification helpers and the
+build-bsd manual changed during execution. Freeze/recheck the completed world
+profile and refresh the current-source control before full parity acceptance.
+No install, hardware build or repository publication was performed.
+
+The maintained SDK preparer now supports explicit preparation format 2: a target
+SDK root and complete execution compiler map, with no objtop or implicit Make
+layout. Existing format 1 remains the declared Make-object adapter. Thirteen host
+selection/declaration cases pass; full explicit-mode fixture R2 materializes and
+verifies 8,344 snapshot files without reading the live Make object tree. That
+fixture deliberately uses frozen older Make-produced seed bytes and is not a
+current or native-produced SDK. A stale literal receipt count of two freestanding
+toolchains is fixed to derive four from emitted declarations; declarations are
+not architecture qualification. Existing qualification/SDK ABI receipt formats
+and C frontend flags remain unchanged; preparation helpers/tests/manual change
+together. Old source-bound SDK receipts require fresh preparation after these
+helper/live-object changes; they are not rebound to suppress verification failures.
+
+Captured R6 clang executes --version on the host; its package role correctly
+resolves an archive hardlink to c++. This is not independent bootstrap: the thin
+compiler still loads host shared libraries. The indexed native package inventory
+contains the compiler/linker/header/library payloads. fidlc is intentionally
+build-only and already has a native source-owned execution target, so its absence
+from installed packages is not a base packaging omission. Native-produced target
+and compiler-runtime closure, full second-stage builds, cache/sandbox/dependency
+invalidation and controlled aggregate memory/disk I/O remain open. The existing
+resource wrapper measures per-command max RSS and block operations, not parallel
+aggregate RAM or physical disk bytes; it does not close gate 4.
+
 R6's runtime linker now passes a general explicit SONAME-absence DSO metadata
 contract against the index-verified Make package; named libc passes the same
 checker's strict named-library contract. The parser separates descriptive GNU

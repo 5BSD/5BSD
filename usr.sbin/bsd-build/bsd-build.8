@@ -6376,6 +6376,19 @@ execution workspace and receipt through
 .Pa tools/build/bazel/libmd-stage-tools.py .
 The composite receipt binds both target and execution closures; stale receipts
 must be replaced by maintained preparation, not rebound.
+.Pp
+The SDK preparer accepts two versioned preparation plans, independently of the
+format-5 qualification input. Preparation format 1 retains the Make object-root
+adapter. Preparation format 2 requires build_environment.sdk_root and a complete
+compiler_tools map in the tool settings for clang, cpp, ld.lld, llvm-ar, llvm-nm,
+llvm-objcopy and llvm-strip. It rejects a simultaneous objtop, relative or
+noncanonical paths and missing or unknown compiler roles. Target headers/libraries
+and execution compiler paths are separate inputs, including for cross SDKs.
+The SDK root must resolve below /usr/obj; all selected files/runtime dependencies
+remain hash-bound. Receipts record sdk_source and derive the freestanding
+registration count from the generated declarations. An explicit root does not
+certify native production, target ABI correctness or independent bootstrap.
+Execution OS/library binding and full native bootstrap remain separate checks.
 Cross userland tests require explicitly declared host artifact inspection and
 never execute foreign programs.
 Kernel profiles select their architecture separately and may use a native
