@@ -49,8 +49,8 @@ static const char *deny_hooks[] = {
 	"kld_check_unload",
 	"pts_check_open",
 	"mount_check_mount",
-	"mount_check_remount",
-	"mount_check_umount",
+	"mount_check_update",
+	"mount_check_unmount",
 	"system_check_kas_info",
 };
 
@@ -692,13 +692,13 @@ ATF_TC_BODY(mount_and_kas_info, tc)
 	}
 	require_counter_bump("mount_check_mount", before);
 
-	before = counter("mount_check_remount");
+	before = counter("mount_check_update");
 	ATF_REQUIRE(mount_tmpfs(dir, MNT_UPDATE) == 0);
-	require_counter_bump("mount_check_remount", before);
+	require_counter_bump("mount_check_update", before);
 
-	before = counter("mount_check_umount");
+	before = counter("mount_check_unmount");
 	ATF_REQUIRE(unmount(dir, 0) == 0);
-	require_counter_bump("mount_check_umount", before);
+	require_counter_bump("mount_check_unmount", before);
 
 	before = counter("mount_check_mount");
 	write_deny_value("mount_check_mount", EPERM);
