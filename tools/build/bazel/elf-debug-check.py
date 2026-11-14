@@ -41,9 +41,11 @@ def sections(data):
     return endian, result
 
 
-def verify(binary, debug, *, module=False, kernel=False):
+def verify(binary, debug, *, module=False, kernel=False, retain_symbols=False):
     if module and kernel:
         raise ValueError("choose kernel or module debug validation")
+    if retain_symbols and (module or kernel):
+        raise ValueError("choose ordinary retained-symbol, kernel or module validation")
     runtime = binary.read_bytes()
     symbols = debug.read_bytes()
     endian, runtime_sections = sections(runtime)
@@ -60,6 +62,9 @@ def verify(binary, debug, *, module=False, kernel=False):
         if not runtime_sections.get('.symtab'):
             raise ValueError('kernel lacks its loader symbol table' if kernel else
                              'kernel module lacks its loader symbol table')
+    elif retain_symbols:
+        if not runtime_sections.get('.symtab'):
+            raise ValueError('installed binary lacks its required static symbol table')
     elif '.symtab' in runtime_sections:
         raise ValueError('installed binary retains static symbol sections')
     if not any(debug_sections.get(n) for n in ('.debug_info', '.zdebug_info')):
@@ -88,8 +93,9 @@ if __name__ == '__main__':
     kind = p.add_mutually_exclusive_group()
     kind.add_argument('--module', action='store_true', help='require the loader symbol table in a kernel module')
     kind.add_argument('--kernel', action='store_true', help='require executable ELF and the kernel loader symbol table')
+    kind.add_argument('--retain-symbols', action='store_true', help='require an ordinary ELF artifact to retain its static symbol table')
     a = p.parse_args()
-    result = verify(a.binary, a.debug, module=a.module, kernel=a.kernel)
+    result = verify(a.binary, a.debug, module=a.module, kernel=a.kernel, retain_symbols=a.retain_symbols)
     with a.output.open('x') as f:
         json.dump(result, f, indent=2)
         f.write('\n')

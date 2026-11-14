@@ -83,3 +83,17 @@ required choices must stay visible and fail clearly until implemented.
 
 Track evidence in COMPLETION-PLAN.md and the qualification records. No matrix
 row is accepted merely because it appears in this document.
+
+## Split-debug symbol policy
+
+Separate debug information does not imply removing the runtime symbol table.
+Kernel/module loader symbols and source-declared retained-symbol artifacts need
+that table. `elf-debug-check.py --retain-symbols` requires an ordinary ELF to
+retain it; the default still requires ordinary stripped userland. All modes
+check the ELF identity, absence of embedded debug information, separate debug
+information, actual debug-link filename and CRC. Native host artifact tests use
+both real userboot variants and reject removed symbols, damaged debug data,
+wrong filenames and conflicting policies. Candidate policies must match their
+reference/source contract; detecting a candidate's symbol table is not authority
+to relax its expected policy. This helper change adds no build-bsd option or
+production backend change.

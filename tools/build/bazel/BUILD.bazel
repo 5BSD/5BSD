@@ -482,3 +482,15 @@ bsd_python_test(name = "package_elf_review_test", src = "package-elf-review-test
 # SDK target roots and execution compilers are separate explicit inputs.
 bsd_python_test(name = "sdk_source_test", src = "sdk-source-test.py",
     data = ["userland_sdk.py", "libmd-stage-tools.py", "python_runtime.py"], size = "small")
+
+# Source-declared bootloader policy retains static symbols after split-debug.
+[bsd_host_artifact_test(name = "retained_symbol_debug_" + interp + "_test",
+    src = "elf-retained-symbol-debug-test.py",
+    data = ["elf-debug-check.py", "//stand/userboot/userboot_" + interp + ":image",
+        "//stand/userboot/userboot_" + interp + ":debug", "@bsd_sdk//toolchain:bin/llvm-strip"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-strip_runtime"],
+    args = ["--binary", "$(rlocationpath //stand/userboot/userboot_" + interp + ":image)",
+        "--debug", "$(rlocationpath //stand/userboot/userboot_" + interp + ":debug)",
+        "--strip", "$(rlocationpath @bsd_sdk//toolchain:bin/llvm-strip)"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for interp in ["4th", "lua"]]

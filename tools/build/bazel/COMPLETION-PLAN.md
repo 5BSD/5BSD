@@ -38,9 +38,11 @@ DSOs whose source policy deliberately retains symbol tables. A general strict
 retain-symbols checker draft preserves default rejection, requires symbols in
 retain mode and passes real artifact/rejection tests. With that explicitly
 selected draft, original-Make reference policy discovery passes all 1,079 world
-pairs (1,077 stripped, two retained). There are no pathname waivers. The checker
-change is not applied while R7 is active; full current native debug-pair policy
-comparison remains required. Inputs/results are retained beside the fresh stages.
+pairs (1,077 stripped, two retained). There are no pathname waivers. After R7 completed, the checker change was applied. Both real native userboot
+artifact regression targets pass through the current frontend (twelve unittest
+cases), including missing-symbol, CRC, filename and policy-conflict rejection.
+Full current native package debug-pair policy comparison remains required.
+Inputs/results are retained beside the fresh stages.
 
 The refreshed original Make archive creation now passes all 450 selected packages
 at /usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114. Its result binds
@@ -49,8 +51,14 @@ latest-built pointers. No catalogue signing/combined publication occurred.
 Fresh corrected SDK R4 verifies 8,345 snapshot files, schema 2 and a separate
 four-declaration count. Artifact-contract native R3 passes all six suites through
 the current C frontend, including actual stager-to-source-consumer metadata.
-Full selected AMD64 native R7 is running, using the exact Make vers.c revision
-dev-n288204-e4d2059c4b4f and matching package version; no final outcome is inferred.
+Full selected AMD64 native R7 now passes all nineteen expanded tests, using the
+exact Make vers.c revision dev-n288204-e4d2059c4b4f and matching package version.
+Its verified capture contains 1,551 files / 647,563,521 bytes. The complete
+450-package copy verifies; current archive comparison reports identical package
+sets but raw payload/timestamp/size differences, not full parity. ELF review and
+the signed inactive-BE upgrade VM are running. The current manifest-derived
+service helpers and signed-repository/wrong-key controls pass. No wider gate
+is closed by build action success.
 
 Captured R6 compiler/runtime exploration now passes with a package-derived ELF
 NEEDED closure, native runtime linker and verified loaded paths: eight packages,

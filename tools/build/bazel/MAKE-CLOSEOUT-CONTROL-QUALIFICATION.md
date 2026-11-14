@@ -1501,3 +1501,42 @@ candidate's expected policy from itself. Runtime hardlink aliases resolve the
 actual debug-link filename and require alias payload digest equality. No
 program pathname is waived. Full current native archive/install/debug/DWARF
 semantic equivalence, runtime and performance acceptance remain open.
+
+## Current AMD64 R7 completion and qualification launch (2026-11-14)
+
+`bazel-closeout-system-native-r7-20261114/receipt.json` passes all nineteen
+expanded tests. Public verified capture: 1,551 files / 647,563,521 bytes; artifact
+manifest digest `1ebd4f0b04031e463047d4a80b35e1f53a77d17451a7a73f9d9c401dca07bcb5`.
+The exact current Make kernel revision and package version remain selected.
+Bazel action success establishes the selected build/test scope, not all six gates.
+
+`bazel-current-package-comparison-r1-20261114/capture.json` verifies/copies all
+450 packages through public qualification output resolution. The maintained
+archive review finishes with no missing/extra packages and differences-found: 36,686 archive mtimes, 17 mtime nanoseconds, 3,874 direct payload hashes,
+3,035 sizes and 34,112 manifest-file records differ. The logical hardlink-expanded
+counts are retained separately. No differences are suppressed. One inspected
+header record has identical hash/owner/mode but reference mtime versus native
+epoch zero; original pkg-create source distinguishes -t from the packing-only
+SOURCE_DATE_EPOCH environment. Timestamp policy needs explicit input propagation,
+not normalization of comparison reports. Full ELF/archive review is still running.
+
+`bazel-current-runtime-helper-native-r1-20261114` passes current manifest-derived
+service helper tests. `bazel-current-upgrade-repository-r1-20261114` passes complete
+private repository signing/catalogue/archive verification and actual wrong-key
+rejection. `bazel-current-runtime-request-r1-20261114/candidate-kernel-binding.json`
+extracts the actual R7 packaged kernel and matches the captured payload digest
+`1cddea0d9e22c14a001f84644108d1779691bd08439ae0f21d75e15dd800744a`
+(39,917,280 bytes). The 2 GiB QEMU upgrade runner is live at
+`bazel-current-upgrade-vm-r1-20261114`, using the prior authenticated normal-boot
+image as a real upgrade baseline. No runtime outcome is inferred before its result.
+
+After the full R7 capture completed, the strict retained-symbol checker mode was
+applied with source-owned native host artifact tests for both userboot variants.
+`bazel-retained-symbol-debug-native-r1-20261114/receipt.json` passes both suites,
+each containing six unittest cases against actual native artifacts. Both original
+Make variants also pass the same twelve host cases. The default remains strict
+for stripped userland; retain mode requires symbols and preserves ELF/debug/name/
+CRC validation. Corruption, absent symbols, wrong names and conflicting policies
+are rejected. BUILD-OPTIONS.md documents this internal helper contract; there is
+no C frontend flag or production backend change. All current package/debug/runtime,
+bootstrap/cache/sandbox/performance/publication and Tier 1 gates remain explicit.
