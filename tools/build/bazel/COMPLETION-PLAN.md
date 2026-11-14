@@ -51,8 +51,8 @@ that option disabled (and test program construction disabled for the reference).
 AMD64 keeps its optional archlevel implementation; ARM64 never selects that
 AMD64-only group. No optimized routines are disabled to obtain a passing result.
 The first build rejected a nonexistent declared zva64 assembly include; the real
-BSD zva64 wrapper includes memset.S, now correctly declared. The failed receipt
-is retained. No compiled object or ELF output is rewritten.
+BSD zva64 wrapper includes memset.S, now correctly declared. The failed build logs
+are retained; no completed receipt was produced. No compiled object or ELF output is rewritten.
 
 Final proofs: bazel-libc-string-arm64-parity-r2-20261114 and
 bazel-libc-string-arm64-portable-parity-r1-20261114. The final combined capture
