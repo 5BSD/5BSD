@@ -63,6 +63,7 @@ MANUAL_ALIASES = [
     "dq_reply_resolve_attr",
     "dq_reply_resolve_link",
     "dq_reply_resolve_ok",
+    "dq_reply_resolve_swap",
     "dq_tree_create",
     "dq_tree_destroy",
     "dq_tree_objects",

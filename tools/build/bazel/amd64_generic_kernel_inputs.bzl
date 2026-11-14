@@ -1291,6 +1291,7 @@ _INPUT_ROWS = [
     ('', '{"source":"kern/kern_event.c","origin":"kernel","object":"kern_event.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_exec.c","origin":"kernel","object":"kern_exec.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_exit.c","origin":"kernel","object":"kern_exit.o","flags":0,"compile_with":null,"depends":null}'),
+    ('', '{"source":"kern/kern_fdswap.c","origin":"kernel","object":"kern_fdswap.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_fail.c","origin":"kernel","object":"kern_fail.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_ffclock.c","origin":"kernel","object":"kern_ffclock.o","flags":0,"compile_with":null,"depends":null}'),
     ('', '{"source":"kern/kern_fork.c","origin":"kernel","object":"kern_fork.o","flags":0,"compile_with":null,"depends":null}'),
