@@ -746,8 +746,9 @@ int mac_file_check_fsync(struct ucred *cred, struct file *fp);
 - **Can sleep:** YES, briefly.  Every last close of the file (close(2),
   exit, exec, the unix-domain collector) waits for the hook without a
   signal ending the wait, so a policy must not wait here for userland,
-  for an authorization, or in an interruptible sleep that a stopped
-  controller would never leave.  The hook is also called for a file whose
+  for an authorization, or in an interruptible sleep.  The caller runs the
+  hook with stops deferred (`sigdeferstop(SIGDEFERSTOP_SILENT)`), so a
+  stopped controller does not suspend in it.  The hook is also called for a file whose
   last close has already begun (it was skipped then before 2026-11-14).
 - **Composition macro:** `MAC_POLICY_PERFORM` (sleepable)
 - **Fast-path flag:** No

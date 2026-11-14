@@ -37,6 +37,7 @@
 #include <sys/dqres.h>
 #include <sys/sdt.h>
 #include <sys/selinfo.h>
+#include <sys/signalvar.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -2096,7 +2097,7 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	uint64_t *objectp;
 	size_t len;
 	uint32_t op;
-	int error, rerrno;
+	int error, rerrno, stopdefer;
 	bool async;
 
 	if (r->dr_version != DQ_API_VERSION || r->dr_pad0 != 0 ||
@@ -2270,7 +2271,14 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	if (fp != NULL) {
 		if (dq_fault_inject(&dq_delay_reply_notify))
 			pause_sbt("dqdely", SBT_1S, 0, 0);
+		/*
+		 * A stop must not suspend this thread in a sleep a policy
+		 * makes: the file's last close, and with it its process's
+		 * exit, waits for the hook and no signal ends that wait.
+		 */
+		stopdefer = sigdeferstop(SIGDEFERSTOP_SILENT);
 		mac_file_notify_reply(q->q_cred, fp, op, r->dr_errno, len);
+		sigallowstop(stopdefer);
 		dq_object_notify_done(o);
 	}
 	return (0);
