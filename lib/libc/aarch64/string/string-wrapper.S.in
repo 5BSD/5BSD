@@ -1,0 +1,2 @@
+/* Generated Arm optimized string wrapper. */
+@ALIASES@#include "aarch64/@SOURCE@"

@@ -8527,3 +8527,15 @@ AMD64 headers. Logical compiler source identities preserve assertion filenames
 without rewriting compiled objects. Existing format-5 architecture/SDK inputs
 select these producers. Component object comparisons do not establish complete
 libc shared linking, DWARF equivalence or ARM64 runtime qualification.
+
+.Pp
+Native ARM64 libc context/jump and string component rules preserve the target's
+actual source variants. Optimized string rules retain existing ABI wrappers and
+use declared text templates for generated Arm function and MOPS wrappers.
+Imported textual assembly and headers are declared inputs.
+The existing
+.Dq machdep_optimizations
+setting selects the portable implementation when false; CPU-specific groups
+apply only to their owning architecture. These component declarations and
+comparisons do not establish complete ARM64 libc linking, DWARF equivalence,
+full-system boot or performance qualification.

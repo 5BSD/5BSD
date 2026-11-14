@@ -173,3 +173,15 @@ open. The source-identity correction postdates full AMD64 R12; full R13 refreshe
 450 selected packages and passes 32 tests, including static/shared libc smoke
 probes. Earlier byte-preservation evidence is not final acceptance. The R11
 upgrade VM has not been refreshed to this candidate.
+
+## ARM64 context and string components (2026-11-14)
+
+The twelve context/jump source members match original Make in regular/PIC form.
+Native optimized strings match all 94 members per variant, including generated
+Arm wrappers, MOPS and IFUNC resolver implementations. Explicit
+machdep_optimizations=false matches all 87 portable members per variant against
+an independently configured Make reference. AMD64's static/PIC libc source
+payload digests and string archive bytes remain preserved against full R13;
+archive-identity and static/shared runtime smoke checks pass. These are component
+results under the recorded older ARM64 SDK/profile. Full libc composition/linking,
+DWARF, world/kernel/packages, hardening, runtime and performance remain open.

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+exports_files(glob(["*.c", "*.S"]), visibility = ["//lib/libc/string:__pkg__"])
+# Existing source wrappers preserve ABI aliases; only absent wrappers are generated.
+[bsd_template(name = name + "_source", template = "string-wrapper.S.in", output = name + ".S",
+    substitutions = {"@ALIASES@": "#define __" + name + "_aarch64 " + name + "\n", "@SOURCE@": name + ".S"},
+    visibility = ["//lib/libc/string:__pkg__"])
+ for name in ["memcmp", "memrchr", "stpcpy", "strchrnul", "strcpy", "strnlen"]]
+[bsd_template(name = name + "_source", template = "string-wrapper.S.in", output = name + ".S",
+    substitutions = {"@ALIASES@": "", "@SOURCE@": name + ".S"},
+    visibility = ["//lib/libc/string:__pkg__"])
+ for name in ["memcpy-mops", "memmove-mops", "memset-mops"]]

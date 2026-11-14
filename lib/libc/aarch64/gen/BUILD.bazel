@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# Source-owned AArch64 Makefile.inc inventory; ldexp is the shared C source.
+cc_library(
+    name = "objects", features = LIBC_VARIANT_FEATURES,
+    srcs = ["_ctx_start.S", "fabs.S", "flt_rounds.c", "fpgetmask.c", "fpsetmask.c",
+        "getcontextx.c", "infinity.c", "//lib/libc/gen:ldexp.c", "makecontext.c",
+        "_setjmp.S", "setjmp.S", "sigsetjmp.S"],
+    textual_hdrs = ["//lib/msun:src/s_scalbn.c"],
+    implementation_deps = ["//lib/libsys/aarch64:sys_headers"],
+    local_defines = ["NO_COMPAT7", "_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"] + [
+        "-ffile-prefix-map=" + prefix + "lib/libc/aarch64/gen/=/usr/src/lib/libc/aarch64/gen/"
+        for prefix in ["", "./"]
+    ],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:aarch64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":objects"], pic = True,
+    visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/gen:__pkg__"])
+exports_files(["_setjmp.S"], visibility = ["//lib/libc:__pkg__"])

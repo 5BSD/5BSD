@@ -211,7 +211,7 @@ filegroup(name = "rtld_selected_objects", srcs = [":rtld_jump_objects", ":rtld_s
 libc_nossp_variant(name = "rtld_nossp_objects", dep = ":rtld_selected_objects",
     visibility = ["//libexec/rtld-elf:__pkg__"])
 
-filegroup(name = 'standalone_sa_aarch64_setjmp_source', srcs = ['//lib/libc/aarch64:gen/_setjmp.S'], visibility = ["//stand/libsa:__pkg__"])
+filegroup(name = 'standalone_sa_aarch64_setjmp_source', srcs = ['//lib/libc/aarch64/gen:_setjmp.S'], visibility = ["//stand/libsa:__pkg__"])
 
 filegroup(name = 'standalone_sa_riscv64_setjmp_source', srcs = ['riscv/gen/_setjmp.S'], visibility = ["//stand/libsa:__pkg__"])
 

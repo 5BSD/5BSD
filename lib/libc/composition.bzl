@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Native amd64 libc object selection; static/shared ABI variants stay separate."""
-COMMON_GROUPS = [
-    "//lib/libc/amd64/gen:objects",
+"""Source-owned libc object selection; static/shared ABI variants stay separate."""
+COMMON_GROUPS = select({
+    "@platforms//cpu:aarch64": ["//lib/libc/aarch64/gen:objects"],
+    "//conditions:default": ["//lib/libc/amd64/gen:objects"],
+}) + [
     "//lib/libc/capability:objects",
     "//lib/libc/compat-43:objects",
     "//lib/libc/csu:objects",
@@ -54,7 +56,7 @@ COMMON_GROUPS = [
 }) + select({
     "//tools/build/bazel/config:nis_enabled": ["//lib/libc/yp:yp_objects"], "//conditions:default": [],
 }) + select({
-    "//tools/build/bazel/config:machdep_optimizations_enabled": ["//lib/libc/string:archlevel_objects"], "//conditions:default": [],
+    "//lib/libc/string:amd64_machdep": ["//lib/libc/string:archlevel_objects"], "//conditions:default": [],
 })
 TRACE_GROUPS = ["//lib/libc/net:net_objects", "//lib/libc/resolv:resolv_objects", "//lib/libc/gen:semaphore_objects"]
 STATIC_GROUPS = ["//lib/libc/sys:static_libsys_objects", "//lib/libc/sys:amd64_objects", "//lib/libc/sys:syscall_objects"] + select({

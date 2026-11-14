@@ -14,7 +14,7 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R13 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib additionally match 412 regular/PIC object contracts against a fresh original-Make libc component. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib match 412 regular/PIC object contracts, context/jump routines match 24, optimized strings match 188, and portable strings match 174 under explicit MACHDEP_OPTIMIZATIONS=no. The default validated libc groups cover 312 object members per variant; full libc remains incomplete. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r13-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,47 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+ARM64 context/jump sources now have a native source-owned group selected by libc
+composition, with the original NO_COMPAT7/ABI flags, shared C ldexp implementation
+and declared textual scalbn input. All twelve regular and twelve PIC objects
+match original Make's allocated sections, symbols and relocations. The loader's
+standalone setjmp filegroup follows the new package boundary and matches the
+actual source bytes. Proof: bazel-libc-arm64-gen-parity-r1-20261114.
+
+ARM64 optimized strings now select actual BSD/Arm implementations, preserve
+existing alias wrappers, generate only the six absent function wrappers and
+three MOPS wrappers with normal expand_template actions, and declare the imported
+assembly/header closure. All 94 regular and 94 PIC members match independent
+Make allocated/symbol/relocation contracts, including IFUNC resolvers and MOPS.
+The explicit MACHDEP_OPTIMIZATIONS=no native configuration additionally matches
+all 87 + 87 portable members against a separate original-Make reference with
+that option disabled (and test program construction disabled for the reference).
+AMD64 keeps its optional archlevel implementation; ARM64 never selects that
+AMD64-only group. No optimized routines are disabled to obtain a passing result.
+The first build rejected a nonexistent declared zva64 assembly include; the real
+BSD zva64 wrapper includes memset.S, now correctly declared. The failed receipt
+is retained. No compiled object or ELF output is rewritten.
+
+Final proofs: bazel-libc-string-arm64-parity-r2-20261114 and
+bazel-libc-string-arm64-portable-parity-r1-20261114. The final combined capture
+bazel-libc-gen-string-arm64-native-r1-20261114 matches all previously qualified
+component bytes, retained in bazel-libc-gen-string-arm64-binding-r1-20261114.
+AMD64's archive identities and static/shared libc smoke checks pass; both string
+archives remain byte-identical to full R13 captures and full libc static/PIC
+archives retain R13 source-payload digests. That binding is retained in
+bazel-libc-string-amd64-preservation-r1-20261114. This is not a fresh full-package
+or VM acceptance. Full R13 remains the latest complete selected package capture.
+
+The default validated ARM64 libc groups now contain 312 members in each regular
+and PIC variant, against the recorded older component SDK/profile. This is not
+full libc composition/order, shared linking, DWARF equivalence, current full
+world/hardening, ARM64 runtime or controlled performance qualification. Existing
+build-bsd format-5 architecture and machdep_optimizations inputs select these
+rules; no C CLI/backend option or tool staging change is required. The manual
+and options document change with the source-owned rules. Make remains normal
+production/default. No host installation, upgrade, publication or reboot occurs.
+
 
 Full AMD64 R13 is terminal passed: all 450 indexed packages, 32 selected tests
 (four executed, 28 cached), including newly selected static/shared libc smoke

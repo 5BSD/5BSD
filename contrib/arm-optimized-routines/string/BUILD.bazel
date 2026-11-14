@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+# Declared textual assembly inputs; experimental/SVE/MTE implementations are not
+# dependencies of these BSD wrappers.
+bsd_source_headers(name = "aarch64_assembly", includes = ["."],
+    hdrs = ["aarch64/" + name for name in ["asmdefs.h", "memcmp.S", "memrchr.S", "stpcpy.S",
+        "strchr.S", "strchrnul.S", "strcpy.S", "strnlen.S", "strrchr.S", "memchr.S",
+        "memcpy-advsimd.S", "memset.S", "memcpy-mops.S", "memmove-mops.S", "memset-mops.S"]],
+    visibility = ["//lib/libc/string:__pkg__"])
