@@ -8,8 +8,11 @@
  * must arrive, not against a timeout alone.
  */
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/mman.h>
+#include <sys/ptrace.h>
+#include <sys/resource.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -578,6 +581,39 @@ test_arguments(void)
 	close(fd);
 }
 
+/*
+ * A descriptor handed to a third party is limited to
+ * OES_IOCTLS_THIRD_PARTY_INIT.  Its holder must be able to ask whether a
+ * jail scope is dead, the only way to tell the end of a scope from other
+ * failures, and must not be able to set one.
+ */
+static void
+test_third_party_ioctls(void)
+{
+	static const cap_ioctl_t allowed[] = OES_IOCTLS_THIRD_PARTY_INIT;
+	struct oes_jail_scope_args args;
+	int fd;
+
+	TEST_BEGIN("T-CAP the third-party ioctl set can read a jail scope");
+	fd = test_open_oes();
+	EXPECT_OK(cap_ioctls_limit(fd, allowed, nitems(allowed)),
+	    "cap_ioctls_limit");
+	EXPECT_ERRNO(get_jail(fd, &args), ENOENT, "GET, no jail scope");
+	EXPECT_ERRNO(set_jail(fd, j_a, NULL, 0), ENOTCAPABLE,
+	    "SET through the limited descriptor");
+	close(fd);
+
+	fd = test_open_oes();
+	EXPECT_OK(set_jail(fd, j_a, NULL, 0), "set");
+	EXPECT_OK(cap_ioctls_limit(fd, allowed, nitems(allowed)),
+	    "cap_ioctls_limit");
+	EXPECT_OK(get_jail(fd, &args), "GET through the limited descriptor");
+	ASSERT_MSG(args.ejs_jid == j_a && args.ejs_flags == 0,
+	    "GET: jid %d flags 0x%x", args.ejs_jid, args.ejs_flags);
+	ASSERT_MSG(jt_get_scope(fd) == OES_SCOPE_JAIL, "GET_SCOPE");
+	close(fd);
+}
+
 /* ---------------------------------------------------------- membership -- */
 
 static void
@@ -973,6 +1009,100 @@ out:
 	close(fd);
 }
 
+static int
+fn_ptrace_attach(void *arg)
+{
+	pid_t pid = *(pid_t *)arg;
+	int status;
+
+	if (ptrace(PT_ATTACH, pid, NULL, 0) != 0)
+		return (61);
+	if (waitpid(pid, &status, 0) != pid || !WIFSTOPPED(status))
+		return (62);
+	if (ptrace(PT_DETACH, pid, (caddr_t)1, 0) != 0)
+		return (63);
+	return (0);
+}
+
+static int
+fn_renice(void *arg)
+{
+
+	return (setpriority(PRIO_PROCESS, *(pid_t *)arg, 5) == 0 ? 0 : 64);
+}
+
+/*
+ * As inbound_case(), for the other two kinds of event that have a target
+ * process: a host process attaches to (NOTIFY_PTRACE) or renices
+ * (NOTIFY_PROC_SCHED) a process in victim_jid.  The marker is the same
+ * operation done inside jail A on a process inside it.
+ */
+static void
+inbound_proc_case(const char *what, oes_event_type_t event,
+    int (*act)(void *), uint32_t flags, int victim_jid, bool expect_seen)
+{
+	struct kid victim, inside, actor, marker;
+	struct timespec start;
+	const oes_process_t *tp;
+	test_msg_buf buf;
+	long left;
+	int fd, seen;
+	bool marked;
+
+	fd = jclient(j_a, flags, &event, 1);
+	if (fd < 0)
+		return;
+	victim.pid = inside.pid = -1;
+	victim.go = inside.go = -1;
+	if (kid_start(&victim, victim_jid, fn_pause, NULL, false) != 0 ||
+	    kid_start(&inside, j_a, fn_pause, NULL, false) != 0 ||
+	    kid_start(&actor, -1, act, &victim.pid, false) != 0) {
+		TEST_FAIL("%s: cannot start the processes", what);
+		goto out;
+	}
+	ASSERT_MSG(kid_finish(&actor) == 0, "%s: host actor failed", what);
+	if (kid_start(&marker, j_a, act, &inside.pid, false) != 0) {
+		TEST_FAIL("%s: cannot start the marker", what);
+		goto out;
+	}
+	ASSERT_MSG(kid_finish(&marker) == 0, "%s: marker actor failed", what);
+
+	seen = 0;
+	marked = false;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	while (!marked && (left = WAIT_MS - jt_elapsed_ms(&start)) > 0) {
+		if (test_wait_event(fd, &buf.msg, left > 100 ? 100 :
+		    (int)left) != 0 || buf.msg.em_event != event)
+			continue;
+		tp = event == OES_EVENT_NOTIFY_PTRACE ?
+		    &buf.msg.em_event_data.ptrace.target :
+		    &buf.msg.em_event_data.proc_sched.target;
+		if (buf.msg.em_process.ep_pid == actor.pid) {
+			seen++;
+			ASSERT_MSG(tp->ep_pid == victim.pid &&
+			    tp->ep_jid == victim_jid &&
+			    (tp->ep_flags & EP_FLAG_JAILED) != 0,
+			    "%s: target %d jid %d flags 0x%x, want %d in "
+			    "jail %d", what, tp->ep_pid, tp->ep_jid,
+			    tp->ep_flags, victim.pid, victim_jid);
+		} else if (buf.msg.em_process.ep_pid == marker.pid &&
+		    tp->ep_pid == inside.pid)
+			marked = true;
+	}
+	if (!marked)
+		TEST_FAIL("%s: the operation inside the jail not delivered",
+		    what);
+	else if (expect_seen)
+		ASSERT_MSG(seen >= 1, "%s: inbound event not delivered", what);
+	else
+		ASSERT_MSG(seen == 0, "%s: outside actor was delivered (%d)",
+		    what, seen);
+out:
+	kid_kill(&victim);
+	kid_kill(&inside);
+	close(fd);
+}
+
 static void
 test_inbound(void)
 {
@@ -990,6 +1120,27 @@ test_inbound(void)
 	TEST_BEGIN("T-IN-4 INBOUND with NOCHILDREN: nested target not covered");
 	inbound_case("T-IN-4", OES_JAIL_SCOPE_INBOUND |
 	    OES_JAIL_SCOPE_NOCHILDREN, j_b, false);
+
+	TEST_BEGIN("T-IN-6 INBOUND: ptrace attach from outside the jail");
+	inbound_proc_case("T-IN-6", OES_EVENT_NOTIFY_PTRACE, fn_ptrace_attach,
+	    OES_JAIL_SCOPE_INBOUND, j_a, true);
+	inbound_proc_case("T-IN-6 nested", OES_EVENT_NOTIFY_PTRACE,
+	    fn_ptrace_attach, OES_JAIL_SCOPE_INBOUND, j_c, true);
+	TEST_BEGIN("T-IN-6b default: ptrace from outside is not delivered");
+	inbound_proc_case("T-IN-6b", OES_EVENT_NOTIFY_PTRACE,
+	    fn_ptrace_attach, 0, j_a, false);
+	inbound_proc_case("T-IN-6b sibling", OES_EVENT_NOTIFY_PTRACE,
+	    fn_ptrace_attach, OES_JAIL_SCOPE_INBOUND, j_s, false);
+	TEST_BEGIN("T-IN-7 INBOUND: scheduling change from outside the jail");
+	inbound_proc_case("T-IN-7", OES_EVENT_NOTIFY_PROC_SCHED, fn_renice,
+	    OES_JAIL_SCOPE_INBOUND, j_a, true);
+	inbound_proc_case("T-IN-7 nested", OES_EVENT_NOTIFY_PROC_SCHED,
+	    fn_renice, OES_JAIL_SCOPE_INBOUND, j_c, true);
+	TEST_BEGIN("T-IN-7b default: scheduling from outside is not delivered");
+	inbound_proc_case("T-IN-7b", OES_EVENT_NOTIFY_PROC_SCHED, fn_renice,
+	    0, j_a, false);
+	inbound_proc_case("T-IN-7b sibling", OES_EVENT_NOTIFY_PROC_SCHED,
+	    fn_renice, OES_JAIL_SCOPE_INBOUND, j_s, false);
 }
 
 /* ------------------------------------------------------ jailed caller -- */
@@ -1109,6 +1260,128 @@ test_jailed_caller(void)
 	}
 	close(ready[0]);
 	close(go[1]);
+}
+
+/*
+ * OES_IOC_GET_JAIL_SCOPE reports the jail as the setter named it, which is
+ * the view of the setter's own jail.  The descriptor is shared by fork, so
+ * one process sets the scope from inside jail A and others read it from the
+ * host, from A and from jails that are not A.
+ */
+struct scope_io {
+	int		fd;
+	int		jid;		/* To set, or expected */
+	const char	*name;		/* To set by name (NULL: by jid), or expected */
+};
+
+static int
+fn_set_scope(void *arg)
+{
+	struct scope_io *io = arg;
+
+	return (set_jail(io->fd, io->jid, io->name, 0) == 0 ? 0 : 70);
+}
+
+static int
+fn_get_scope(void *arg)
+{
+	struct oes_jail_scope_args args;
+	struct scope_io *io = arg;
+
+	if (get_jail(io->fd, &args) != 0)
+		return (71);
+	if (args.ejs_jid != io->jid)
+		return (72);
+	if (strcmp(args.ejs_name, io->name) != 0)
+		return (73);
+	return (0);
+}
+
+static int
+run_in_jail(int jid, int (*fn)(void *), void *arg)
+{
+	struct kid k;
+
+	if (kid_start(&k, jid, fn, arg, false) != 0)
+		return (-1);
+	return (kid_finish(&k));
+}
+
+static void
+test_getter_views(void)
+{
+	struct oes_jail_scope_args args;
+	struct scope_io io;
+	char pname[64], cname[80];
+	int fd, jid_c, jid_p, rc;
+
+	TEST_BEGIN("T-GET-2 the setter's view is shown in the setter's jail only");
+	fd = test_open_oes();
+	io.fd = fd;
+	io.jid = j_b;
+	io.name = NULL;
+	rc = run_in_jail(j_a, fn_set_scope, &io);
+	ASSERT_MSG(rc == 0, "set from inside jail A: status %d", rc);
+	/* Jail A calls its child "b" and knows its jid. */
+	io.name = "b";
+	EXPECT_OK(get_jail(fd, &args), "GET from the host");
+	ASSERT_MSG(args.ejs_jid == j_b && strcmp(args.ejs_name, "b") == 0,
+	    "host reader: jid %d name '%s'", args.ejs_jid, args.ejs_name);
+	rc = run_in_jail(j_a, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "reader in the setter's jail: step %d", rc);
+	/* Nobody else is shown it: not a sibling, not the scoped jail itself. */
+	io.jid = 0;
+	io.name = "";
+	rc = run_in_jail(j_s, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "reader in a sibling jail: step %d "
+	    "(72: it was shown the jid, 73: the name)", rc);
+	rc = run_in_jail(j_b, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "reader in the scoped jail: step %d", rc);
+	close(fd);
+
+	TEST_BEGIN("T-GET-3 remembering the setter's jail does not keep it");
+	jid_p = scratch_jail("gp", pname, sizeof(pname), NULL);
+	snprintf(cname, sizeof(cname), "%s.kid", pname);
+	jid_c = jt_make_jail(cname, "oesjs-scratch", NULL, "1");
+	fd = test_open_oes();
+	if (jid_p == -1 || jid_c == -1 || fd < 0)
+		return;
+	io.fd = fd;
+	io.jid = jid_c;
+	io.name = NULL;
+	rc = run_in_jail(jid_p, fn_set_scope, &io);
+	ASSERT_MSG(rc == 0, "set from inside the scratch jail: status %d", rc);
+	/* The scope ends first; its setter's jail is still there. */
+	remove_jail(jid_c);
+	ASSERT_MSG(wait_jail_gone(cname), "removed scope jail still exists");
+	io.name = "kid";
+	rc = run_in_jail(jid_p, fn_get_scope, &io);
+	ASSERT_MSG(rc == 0, "setter's jail reading the dead scope: step %d",
+	    rc);
+	/* Then the setter's jail goes, with the descriptor still open. */
+	remove_jail(jid_p);
+	ASSERT_MSG(wait_jail_gone(pname),
+	    "the setter's jail still exists (dying) while the client is open");
+	EXPECT_OK(get_jail(fd, &args), "GET from the host afterwards");
+	ASSERT_MSG((args.ejs_flags & OES_JAIL_SCOPE_DEAD) != 0 &&
+	    args.ejs_jid == jid_c, "host reader afterwards: flags 0x%x jid %d",
+	    args.ejs_flags, args.ejs_jid);
+	close(fd);
+
+	/* The same when the setter scoped its own jail. */
+	jid_p = scratch_jail("go", pname, sizeof(pname), NULL);
+	fd = test_open_oes();
+	if (jid_p == -1 || fd < 0)
+		return;
+	io.fd = fd;
+	io.jid = 0;
+	io.name = NULL;
+	rc = run_in_jail(jid_p, fn_set_scope, &io);
+	ASSERT_MSG(rc == 0, "set own jail from inside: status %d", rc);
+	remove_jail(jid_p);
+	ASSERT_MSG(wait_jail_gone(pname),
+	    "the setter's own jail still exists while the client is open");
+	close(fd);
 }
 
 /* ------------------------------------------------- more kinds of subject -- */
@@ -2844,6 +3117,7 @@ main(void)
 	test_cache_invalidation();
 
 	test_arguments();
+	test_third_party_ioctls();
 	test_membership();
 	test_passive();
 	test_entering();
@@ -2855,6 +3129,7 @@ main(void)
 	test_linux();
 	test_inbound();
 	test_jailed_caller();
+	test_getter_views();
 	test_mutes();
 	test_self_mute();
 	test_auth();

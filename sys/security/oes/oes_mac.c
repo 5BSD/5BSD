@@ -3234,6 +3234,20 @@ oes_generate_vnode_event(oes_event_type_t event,
 					strlcpy(tp->ep_comm,
 					    info->target_proc->p_comm,
 					    sizeof(tp->ep_comm));
+					/*
+					 * The jail the event was aimed at, for
+					 * a reader of inbound events.  The
+					 * credential is stable only under the
+					 * target's lock, which p_cansched()'s
+					 * callers hold.
+					 */
+					if (mtx_owned(&info->target_proc->p_mtx) &&
+					    info->target_proc->p_ucred != NULL &&
+					    jailed(info->target_proc->p_ucred)) {
+						tp->ep_jid = info->target_proc->
+						    p_ucred->cr_prison->pr_id;
+						tp->ep_flags |= EP_FLAG_JAILED;
+					}
 				} else {
 					bool tp_owned =
 					    mtx_owned(&info->target_proc->p_mtx);
@@ -5127,17 +5141,26 @@ static struct mac_policy_conf oes_mac_policy_conf = {
  * marked and the delivery task ends them once it has delivered what the
  * jail had already generated; see oes_jail_scopes_claim().  Must not sleep
  * and must return 0.
+ *
+ * A client also remembers the jail its scope was named from
+ * (ec_jail_setter_pr).  When that is the jail being removed the reference
+ * is given up here, whether or not the scope has ended, so that an open
+ * descriptor never keeps a removed jail in the dying state; the jail's own
+ * view of the scope then has no reader left to be shown to.
  */
 static int
 oes_prison_remove(void *obj, void *data __unused)
 {
 	struct oes_client *ec;
 	struct prison *pr = obj;
+	u_int nsetter;
 	bool marked;
 
-	if (atomic_load_int(&oes_softc.sc_njail) == 0)
+	if (atomic_load_int(&oes_softc.sc_njail) == 0 &&
+	    atomic_load_int(&oes_softc.sc_jail_setters) == 0)
 		return (0);
 	marked = false;
+	nsetter = 0;
 	OES_LOCK();
 	LIST_FOREACH(ec, &oes_softc.sc_jail_clients, ec_jail_link) {
 		if (ec->ec_jail_pr != pr || ec->ec_jail_state != 0)
@@ -5146,7 +5169,23 @@ oes_prison_remove(void *obj, void *data __unused)
 		atomic_add_int(&oes_softc.sc_jail_ending, 1);
 		marked = true;
 	}
+	if (atomic_load_int(&oes_softc.sc_jail_setters) != 0) {
+		LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+			EC_LOCK(ec);
+			if (ec->ec_jail_setter_pr == pr) {
+				ec->ec_jail_setter_pr = NULL;
+				nsetter++;
+			}
+			EC_UNLOCK(ec);
+		}
+	}
 	OES_UNLOCK();
+	if (nsetter != 0) {
+		atomic_subtract_int(&oes_softc.sc_jail_setters, nsetter);
+		/* Never the last: the caller holds the prison it removes. */
+		while (nsetter-- != 0)
+			prison_free(pr);
+	}
 	if (marked)
 		taskqueue_enqueue(oes_softc.sc_defer_tq,
 		    &oes_softc.sc_defer_task);
