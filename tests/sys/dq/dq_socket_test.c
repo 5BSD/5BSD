@@ -17,6 +17,8 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/jail.h>
+#include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/procdesc.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -302,23 +304,122 @@ ATF_TC_BODY(capmode_no_event, tc)
 	dqt_fini(&c);
 }
 
-ATF_TC(mac_denial_no_event);
+/*
+ * mac_denial_no_event
+ *
+ * The mac_test_hooks policy returns a hook's deny toggle from the hook
+ * while the toggle is set.  A toggle acts on every process, so the child
+ * keeps it set for one system call at a time, the case is exclusive, and
+ * the cleanup clears it.
+ */
+#define	MAC_HOOKS		"mac_test_hooks"
+#define	MAC_HOOKS_LOADED	"mac_test_hooks.loaded"
+#define	MAC_CREATE_DENY							\
+	"security.mac.test_hooks.deny.socket_check_create"
+#define	MAC_CREATE_COUNT						\
+	"security.mac.test_hooks.counter.socket_check_create"
+
+static int
+mac_create_deny(int error)
+{
+
+	return (sysctlbyname(MAC_CREATE_DENY, NULL, NULL, &error,
+	    sizeof(error)));
+}
+
+static void
+child_mac_denied(void *arg __unused, void *result)
+{
+	struct sock_res *r = result;
+	int sv[2];
+
+	if (mac_create_deny(EPERM) != 0)
+		_exit(6);
+	RR(r->r[0], socket(AF_INET, SOCK_DGRAM, 0));
+	if (mac_create_deny(0) != 0 || mac_create_deny(EPERM) != 0)
+		_exit(7);
+	RR(r->r[1], socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	if (mac_create_deny(0) != 0)
+		_exit(8);
+	/* The same call once the policy allows it: consulted. */
+	RR(r->r[2], socket(AF_INET, SOCK_DGRAM, 0));
+}
+
+ATF_TC_WITH_CLEANUP(mac_denial_no_event);
 ATF_TC_HEAD(mac_denial_no_event, tc)
 {
 	atf_tc_set_md_var(tc, "descr", "a MAC denial of socket creation "
-	    "(mac_socket_check_create) posts nothing");
+	    "(mac_socket_check_create) is socket(2)'s and socketpair(2)'s "
+	    "result and posts nothing; the same call is consulted once the "
+	    "policy allows it");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(mac_denial_no_event, tc)
 {
+	struct dqt_ctl c;
+	struct dqt_achild ch;
+	struct sock_res r;
+	size_t len;
+	int after, before, fd, status;
 
 	/*
 	 * kern_socket and kern_socketpair call mac_socket_check_create
-	 * before socreate_find and the consultation.  No policy in the tree
-	 * refuses it: mac_abac allows every creation (abac_socket.c), OES
-	 * only notifies, mac_portacl and mac_bsdextended do not implement
-	 * the hook.
+	 * before socreate_find and the consultation.  Of the policies in
+	 * the tree only mac_test_hooks can refuse it: mac_abac allows every
+	 * creation (abac_socket.c) and OES only notifies.
 	 */
-	atf_tc_skip("no MAC policy denies socket_check_create");
+	if (kldfind(MAC_HOOKS) == -1) {
+		/* The capability plane refuses a module load this late. */
+		if (kldload(MAC_HOOKS) == -1)
+			atf_tc_skip("%s is not loaded and cannot be loaded "
+			    "now (%s); preload it", MAC_HOOKS, strerror(errno));
+		/* Loaded here, so the cleanup unloads it. */
+		fd = open(MAC_HOOKS_LOADED, O_CREAT | O_WRONLY, 0600);
+		ATF_REQUIRE(fd >= 0);
+		(void)close(fd);
+	}
+	len = sizeof(before);
+	if (sysctlbyname(MAC_CREATE_COUNT, &before, &len, NULL, 0) != 0) {
+		if (errno == ENOENT)
+			atf_tc_skip("this kernel's %s has no "
+			    "socket_check_create hook", MAC_HOOKS);
+		atf_tc_fail("%s: %s", MAC_CREATE_COUNT, strerror(errno));
+	}
+
+	dqt_init(&c);
+	dqt_attach_spawn(&c, &ch, child_mac_denied, NULL);
+	memset(&r, 0, sizeof(r));
+	status = dqt_attach_wait(&ch, &r, sizeof(r));
+	ATF_REQUIRE_EQ(0, mac_create_deny(0));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the program: status %#x", status);
+	len = sizeof(after);
+	ATF_REQUIRE_EQ(0, sysctlbyname(MAC_CREATE_COUNT, &after, &len, NULL,
+	    0));
+	ATF_CHECK_MSG(after - before >= 3, "the policy's hook ran %d times",
+	    after - before);
+
+	ATF_CHECK_EQ(-1, r.r[0].rv);
+	ATF_CHECK_EQ(EPERM, r.r[0].err);
+	ATF_CHECK_EQ(-1, r.r[1].rv);
+	ATF_CHECK_EQ(EPERM, r.r[1].err);
+	ATF_CHECK_EQ(0, count_events(&c, DQ_ROP_SOCKETPAIR, -1, -1));
+	/* The one event is the allowed call's. */
+	ATF_CHECK_MSG(r.r[2].rv >= 0, "socket once allowed: errno %d",
+	    r.r[2].err);
+	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, -1, -1));
+	ATF_CHECK_EQ(1, count_events(&c, DQ_ROP_SOCKET, AF_INET,
+	    SOCK_DGRAM));
+	dqt_fini(&c);
+}
+ATF_TC_CLEANUP(mac_denial_no_event, tc)
+{
+	int id;
+
+	(void)mac_create_deny(0);
+	if (access(MAC_HOOKS_LOADED, F_OK) == 0 &&
+	    (id = kldfind(MAC_HOOKS)) != -1)
+		(void)kldunload(id);
 }
 
 /*
