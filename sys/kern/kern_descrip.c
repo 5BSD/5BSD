@@ -2667,6 +2667,24 @@ int
 finstall_refed_prop(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps, const struct fdinstall_prop *prop)
 {
+
+	return (finstall_refed_check(td, fp, fd, flags, fcaps, prop, NULL,
+	    NULL));
+}
+
+/*
+ * As finstall_refed_prop(), with a last check made once a descriptor
+ * number is allocated and before the file becomes visible in the table.
+ * 'check' is called with the table exclusively locked: it must not sleep
+ * and must take no lock.  A non-zero return releases the number and is
+ * returned; nothing is installed and, as for an allocation failure, the
+ * caller keeps the file reference and 'fcaps'.
+ */
+int
+finstall_refed_check(struct thread *td, struct file *fp, int *fd, int flags,
+    struct filecaps *fcaps, const struct fdinstall_prop *prop,
+    int (*check)(void *), void *arg)
+{
 	struct filedesc *fdp = td->td_proc->p_fd;
 	int error;
 
@@ -2675,9 +2693,15 @@ finstall_refed_prop(struct thread *td, struct file *fp, int *fd, int flags,
 	FILEDESC_XLOCK(fdp);
 	error = fdalloc(td, 0, fd);
 	if (__predict_true(error == 0)) {
-		_finstall_prop(fdp, fp, *fd, flags, fcaps, prop);
-		SDT_PROBE6(fd, , , install, fp, *fd, td->td_proc->p_pid,
-		    td->td_ucred, fp->f_type, flags);
+		if (check != NULL)
+			error = check(arg);
+		if (__predict_true(error == 0)) {
+			_finstall_prop(fdp, fp, *fd, flags, fcaps, prop);
+			SDT_PROBE6(fd, , , install, fp, *fd,
+			    td->td_proc->p_pid, td->td_ucred, fp->f_type,
+			    flags);
+		} else
+			fdunused(fdp, *fd);
 	}
 	FILEDESC_XUNLOCK(fdp);
 	return (error);
@@ -3761,6 +3785,81 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct filecaps *fcaps,
 }
 
 /*
+ * The source half of a descriptor transfer out of a table by number:
+ * fdup_remote() and the swap core (kern_fdswap.c).  'fdp' is exclusively
+ * locked by the caller.  In this order:
+ *  - no open entry, or an entry that is no longer '*fpp' when the caller
+ *    already holds a file there: EBADF;
+ *  - a file type that cannot be passed: EOPNOTSUPP;
+ *  - a CAP_XFER_NONE entry: ENOTCAPABLE;
+ *  - 'admit', if given, with the file and the rights that would be
+ *    transferred (the entry's, limited by its transfer ceiling); it runs
+ *    under the table lock, so it must not sleep, and its error is
+ *    returned;
+ * and only then, with nothing left that can refuse: a reference is taken
+ * (unless the caller came with one), a CAP_XFER_ONCE entry is consumed,
+ * and '*fcaps', '*prop' and O_RESOLVE_BENEATH in '*flagsp' describe the
+ * entry to install.  No MAC hook runs here: the receive check is the
+ * receiver's.  'srcpid' is the pid the fd probes report for the source.
+ * On error nothing is consumed and '*fcaps' holds nothing; a reference
+ * the caller came with stays the caller's.
+ */
+int
+fdxfer_source_locked(struct thread *td, struct filedesc *fdp, int fd,
+    pid_t srcpid, struct file **fpp, struct filecaps *fcaps,
+    struct fdinstall_prop *prop, int *flagsp,
+    int (*admit)(struct file *, const cap_rights_t *, void *), void *arg)
+{
+	struct filedescent *fde;
+	struct file *fp;
+	int error;
+
+	FILEDESC_XLOCK_ASSERT(fdp);
+	fp = *fpp;
+	fde = fdeget_noref(fdp, fd);
+	if (fde == NULL || (fp != NULL && fde->fde_file != fp))
+		return (EBADF);
+	if ((fde->fde_file->f_ops->fo_flags & DFLAG_PASSABLE) == 0)
+		return (EOPNOTSUPP);
+	if (fde->fde_xfer_state == CAP_XFER_NONE) {
+		SDT_PROBE6(fd, , , xfer__deny, fde->fde_file, fd, srcpid,
+		    td->td_ucred, fde->fde_file->f_type, ENOTCAPABLE);
+		return (ENOTCAPABLE);
+	}
+	filecaps_copy(&fde->fde_caps, fcaps, true);
+	filecaps_restrict(fcaps, &fde->fde_xfer_caps);
+	if (admit != NULL) {
+		error = admit(fde->fde_file, &fcaps->fc_rights, arg);
+		if (error != 0) {
+			filecaps_free(fcaps);
+			return (error);
+		}
+	}
+	if (fp == NULL) {
+		if (!fhold(fde->fde_file)) {
+			filecaps_free(fcaps);
+			return (EBADF);
+		}
+		fp = fde->fde_file;
+	}
+	if (fde->fde_xfer_state == CAP_XFER_ONCE) {
+		fde->fde_xfer_state = CAP_XFER_NONE;
+		prop->fip_xfer_state = CAP_XFER_NONE;
+		SDT_PROBE6(fd, , , xfer__consume, fp, fd, srcpid,
+		    td->td_ucred, fp->f_type, 1);
+	} else
+		prop->fip_xfer_state = fde->fde_xfer_state;
+	prop->fip_cloexec_state = fde->fde_cloexec_state;
+	prop->fip_clofork_state = fde->fde_clofork_state;
+	prop->fip_fde_flags = fde->fde_flags &
+	    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+	if ((fde->fde_flags & UF_RESOLVE_BENEATH) != 0)
+		*flagsp |= O_RESOLVE_BENEATH;
+	*fpp = fp;
+	return (0);
+}
+
+/*
  * Duplicate descriptor 'fd' of process 'p' into the current process, for
  * pddupfd(2) and Linux pidfd_getfd(2).  The caller holds 'p', keeps it from
  * exec'ing and has checked p_candebug(); 'flags' are extra open flags
@@ -3789,7 +3888,6 @@ fdup_remote(struct thread *td, struct proc *p, int fd, int flags,
     int *newfdp)
 {
 	struct filedesc *fdp;
-	struct filedescent *fde;
 	struct file *fp;
 	struct filecaps fcaps;
 	struct fdinstall_prop prop;
@@ -3828,44 +3926,10 @@ fdup_remote(struct thread *td, struct proc *p, int fd, int flags,
 		error = ENOENT;
 		goto unlock;
 	}
-	fde = fdeget_noref(fdp, fd);
-	if (fde == NULL || (fp != NULL && fde->fde_file != fp)) {
-		error = EBADF;
+	error = fdxfer_source_locked(td, fdp, fd, p->p_pid, &fp, &fcaps,
+	    &prop, &flags, NULL, NULL);
+	if (error != 0)
 		goto unlock;
-	}
-	if ((fde->fde_file->f_ops->fo_flags & DFLAG_PASSABLE) == 0) {
-		error = EOPNOTSUPP;
-		goto unlock;
-	}
-	if (fde->fde_xfer_state == CAP_XFER_NONE) {
-		SDT_PROBE6(fd, , , xfer__deny, fde->fde_file, fd, p->p_pid,
-		    td->td_ucred, fde->fde_file->f_type, ENOTCAPABLE);
-		error = ENOTCAPABLE;
-		goto unlock;
-	}
-	if (fp == NULL) {
-		if (!fhold(fde->fde_file)) {
-			error = EBADF;
-			goto unlock;
-		}
-		fp = fde->fde_file;
-	}
-
-	filecaps_copy(&fde->fde_caps, &fcaps, true);
-	filecaps_restrict(&fcaps, &fde->fde_xfer_caps);
-	if (fde->fde_xfer_state == CAP_XFER_ONCE) {
-		fde->fde_xfer_state = CAP_XFER_NONE;
-		prop.fip_xfer_state = CAP_XFER_NONE;
-		SDT_PROBE6(fd, , , xfer__consume, fp, fd, p->p_pid,
-		    td->td_ucred, fp->f_type, 1);
-	} else
-		prop.fip_xfer_state = fde->fde_xfer_state;
-	prop.fip_cloexec_state = fde->fde_cloexec_state;
-	prop.fip_clofork_state = fde->fde_clofork_state;
-	prop.fip_fde_flags = fde->fde_flags &
-	    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
-	if ((fde->fde_flags & UF_RESOLVE_BENEATH) != 0)
-		flags |= O_RESOLVE_BENEATH;
 	FILEDESC_XUNLOCK(fdp);
 	fddrop(fdp);
 

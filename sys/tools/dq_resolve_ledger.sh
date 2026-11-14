@@ -255,6 +255,7 @@ scan()
 			r = "PASS"
 			if (e ~ /DQ_RESOLVE_FD/ || e ~ /dq_setattr_accept/)
 				r = r "+FD"
+			if (e ~ /DQ_RESOLVE_SWAP/) r = r "+SWAP"
 			if (e ~ /DQ_RESOLVE_ATTR/) r = r "+ATTR"
 			if (e ~ /DQ_RESOLVE_LINK/) r = r "+LINK"
 			if (e ~ /DQ_RESOLVE_OK/ || e ~ /dq_setattr_accept/)
@@ -300,7 +301,7 @@ scan()
 		# The kinds a completion handles: those it names.
 		fn ~ /_dqserved$/ {
 			code = $0
-			while (match(code, /DQ_RESOLVE_(FD|ATTR|LINK|OK)/)) {
+			while (match(code, /DQ_RESOLVE_(FD|SWAP|ATTR|LINK|OK)/)) {
 				printf("H\t%s\t%s\t%s\n", file, fn,
 				    substr(code, RSTART + 11, RLENGTH - 11))
 				code = substr(code, RSTART + RLENGTH)

@@ -38,6 +38,7 @@
 #include <sys/capsicum.h>
 #include <sys/cap_authority.h>
 #include <sys/fcntl.h>
+#include <sys/fdswap.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/kernel.h>
@@ -372,7 +373,8 @@ dq_intent_enter_served(struct thread *td, struct dq_intent *di, uint32_t op,
 
 	KASSERT((accept & ~(DQ_RACCEPT(DQ_RESOLVE_FD) |
 	    DQ_RACCEPT(DQ_RESOLVE_ATTR) | DQ_RACCEPT(DQ_RESOLVE_LINK) |
-	    DQ_RACCEPT(DQ_RESOLVE_OK))) == 0, ("dq: served kinds %#x", accept));
+	    DQ_RACCEPT(DQ_RESOLVE_OK) | DQ_RACCEPT(DQ_RESOLVE_SWAP))) == 0,
+	    ("dq: served kinds %#x", accept));
 	dq_intent_enter(td, di, op, flags);
 	di->di_flags |= DQI_SERVED;
 	di->di_accept = accept;
@@ -410,7 +412,7 @@ static void
 dqres_answer_free(struct thread *td, struct dqres_answer *ans)
 {
 
-	if (ans->da_obj != NULL)
+	if (ans->da_obj != NULL || ans->da_swap != NULL)
 		dqres_ops->dro_answer_release(td, ans);
 	free(ans->da_ident, M_TEMP);
 	free(ans->da_target, M_TEMP);
@@ -2910,6 +2912,26 @@ dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
 
 	*fpp = NULL;
 	ans = &di->di_res;
+	if (ans->da_kind == DQ_RESOLVE_SWAP) {
+		/*
+		 * The real file the supervisor handed over: there is no
+		 * object to bind and no presented identity to check.  The
+		 * receiver's transfer check first, before the caller acts
+		 * on the file; the caller (the open layer) then makes this
+		 * thread's own open checks.  The rights and states stay in
+		 * the carrier for dqres_install.
+		 */
+		KASSERT(ans->da_swap != NULL && ans->da_swap->fs_fp != NULL,
+		    ("dq: take_file of an empty swap"));
+		error = fdswap_receive(td, ans->da_swap);
+		if (error != 0) {
+			dqres_ops->dro_answer_release(td, ans);
+			return (error);
+		}
+		*fpp = ans->da_swap->fs_fp;
+		ans->da_swap->fs_fp = NULL;
+		return (0);
+	}
 	KASSERT(ans->da_kind == DQ_RESOLVE_FD && ans->da_obj != NULL,
 	    ("dq: take_file of kind %u", ans->da_kind));
 	id = ans->da_ident;
@@ -2993,6 +3015,20 @@ dqres_take_file_raw(struct thread *td, struct dq_intent *di, int fflags,
 	return (dqres_ops->dro_bind(td, &di->di_res, fflags, fpp));
 }
 
+/* No ioctl is allowed: drop a list a swapped entry carried. */
+static void
+dqres_caps_noioctls(struct filecaps *fc)
+{
+	struct filecaps list;
+
+	bzero(&list, sizeof(list));
+	list.fc_ioctls = fc->fc_ioctls;
+	list.fc_nioctls = fc->fc_nioctls;
+	filecaps_free(&list);
+	fc->fc_ioctls = NULL;
+	fc->fc_nioctls = 0;
+}
+
 /*
  * Install a served file in the requester's table (D159): the policy's
  * rights with the fcntl and ioctl limits a cap_rights_limit(2) to them
@@ -3006,48 +3042,76 @@ dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
     int flags, int *fdp)
 {
 	struct fdinstall_prop prop = { .fip_xfer_state = CAP_XFER_NONE };
-	struct filecaps fcaps, start, copy;
+	struct filecaps fcaps, start, copy, *fc;
+	struct fdswap *sw;
 	cap_rights_t outside;
 	int error;
 
-	filecaps_fill(&fcaps);
-	fcaps.fc_rights = di->di_res.da_rights;
+	sw = di->di_res.da_kind == DQ_RESOLVE_SWAP ? di->di_res.da_swap : NULL;
+	if (sw != NULL) {
+		/*
+		 * SWAP: the rights, fcntl limit, ioctl list and propagation
+		 * states are those of the supervisor's own entry (limited by
+		 * its transfer ceiling), carried since the reply.
+		 */
+		KASSERT(sw->fs_fp == NULL, ("dq: install over a held swap"));
+		fc = &sw->fs_caps;
+	} else {
+		fc = &fcaps;
+		filecaps_fill(fc);
+		fc->fc_rights = di->di_res.da_rights;
+	}
 	if (di->di_startlimited) {
 		/*
 		 * From a served start (D159, I8): the start descriptor's
 		 * rights, fcntl limit and ioctl list intersected with the
-		 * policy's, as a real openat under STRICTREL installs the
-		 * start's capabilities.
+		 * policy's (or the swapped entry's), as a real openat under
+		 * STRICTREL installs the start's capabilities.
 		 */
-		outside = fcaps.fc_rights;
+		outside = fc->fc_rights;
 		cap_rights_remove(&outside, &di->di_startrights);
-		cap_rights_remove(&fcaps.fc_rights, &outside);
-		fcaps.fc_fcntls &= di->di_startfcntls;
+		cap_rights_remove(&fc->fc_rights, &outside);
+		fc->fc_fcntls &= di->di_startfcntls;
 		if (di->di_startnioctls == 0)
-			fcaps.fc_nioctls = 0;
-		else if (di->di_startnioctls > 0 &&
-		    cap_rights_is_set(&fcaps.fc_rights, CAP_IOCTL)) {
+			dqres_caps_noioctls(fc);
+		else if (di->di_startnioctls > 0 && fc->fc_nioctls < 0 &&
+		    cap_rights_is_set(&fc->fc_rights, CAP_IOCTL)) {
 			/* An M_FILECAPS copy of the list, for the table. */
 			bzero(&start, sizeof(start));
 			start.fc_ioctls = di->di_startioctls;
 			start.fc_nioctls = di->di_startnioctls;
 			(void)filecaps_copy(&start, &copy, true);
-			fcaps.fc_ioctls = copy.fc_ioctls;
-			fcaps.fc_nioctls = copy.fc_nioctls;
+			fc->fc_ioctls = copy.fc_ioctls;
+			fc->fc_nioctls = copy.fc_nioctls;
+		} else if (di->di_startnioctls > 0 && fc->fc_nioctls > 0) {
+			/*
+			 * Two lists (a swapped entry with its own): the
+			 * intersection is not computed; none are allowed.
+			 */
+			dqres_caps_noioctls(fc);
 		}
 	}
-	if (!cap_rights_is_set(&fcaps.fc_rights, CAP_FCNTL))
-		fcaps.fc_fcntls = 0;
+	if (!cap_rights_is_set(&fc->fc_rights, CAP_FCNTL))
+		fc->fc_fcntls = 0;
 	/* A list is only copied with CAP_IOCTL held. */
-	if (!cap_rights_is_set(&fcaps.fc_rights, CAP_IOCTL))
-		fcaps.fc_nioctls = 0;
+	if (!cap_rights_is_set(&fc->fc_rights, CAP_IOCTL))
+		dqres_caps_noioctls(fc);
 	/* O_RESOLVE_BENEATH is inherited from a BENEATH start (D159). */
 	if ((di->di_resflags & NIRES_BENEATH) != 0)
 		flags |= O_RESOLVE_BENEATH;
-	error = finstall_refed_prop(td, fp, fdp,
-	    flags & (O_CLOEXEC | O_CLOFORK | O_RESOLVE_BENEATH), &fcaps, &prop);
+	flags &= O_CLOEXEC | O_CLOFORK | O_RESOLVE_BENEATH;
+	if (sw != NULL) {
+		/*
+		 * The carrier gets its file back and is consumed, also on
+		 * failure.  No last check is passed yet: the dead-queue test
+		 * belongs here once the queue has a dead mark.
+		 */
+		sw->fs_fp = fp;
+		return (fdswap_install(td, sw, flags, NULL, NULL, fdp));
+	}
+	error = finstall_refed_prop(td, fp, fdp, flags, fc, &prop);
 	if (error != 0) {
-		filecaps_free(&fcaps);
+		filecaps_free(fc);
 		fdrop(fp, td);
 	}
 	return (error);

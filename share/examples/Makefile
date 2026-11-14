@@ -73,6 +73,7 @@ SE_CSH=		dot.cshrc
 SE_DIRS+=	dq
 SE_DQ=		dqserve.c \
 		dqpass.c \
+		dqswap.c \
 		Makefile
 
 SE_DIRS+=	etc

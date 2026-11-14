@@ -79,6 +79,15 @@ struct dqres_answer {
 	uint64_t	 da_qgid;	/* the queue (Linux served mount ids) */
 	cap_rights_t	 da_rights;	/* FD: the policy's dp_rights */
 	uint64_t	 da_objid;	/* FD: the object's id (audit) */
+	struct fdswap	*da_swap;	/* SWAP: M_TEMP carrier of the real
+					   file (sys/fdswap.h);
+					   dqres_take_file takes the file
+					   out, dqres_install puts it back
+					   and installs; dro_answer_release
+					   drops what is left */
+	uint32_t	 da_swflags;	/* SWAP: DQ_SWAP_F_* of the reply */
+	bool		 da_swcreated;	/* SWAP: DQ_SWAP_F_CREATED honoured
+					   by the completion */
 };
 
 /*

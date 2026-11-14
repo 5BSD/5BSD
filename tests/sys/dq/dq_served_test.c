@@ -366,7 +366,9 @@ ATF_TC_BODY(open_fd, tc)
 	ATF_REQUIRE(i >= 0);
 	/* REAL is offered to unrestricted lookups too (1c-iii-b). */
 	ATF_CHECK_EQ(DQ_RACCEPT(DQ_RESOLVE_PASS) | DQ_RACCEPT(DQ_RESOLVE_FD) |
-	    DQ_RACCEPT(DQ_RESOLVE_REAL), s.seen[i].accept);
+	    DQ_RACCEPT(DQ_RESOLVE_REAL) |
+	    DQ_RACCEPT(DQ_RESOLVE_SWAP),
+	    s.seen[i].accept);
 	ATF_CHECK_EQ(0, srv_wait_live(&s, 0));
 	srv_stats(&s, &st);
 	ATF_CHECK(st.ds2_resolve_served >= 2);
