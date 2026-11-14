@@ -1498,6 +1498,7 @@ struct orphan_res {
 
 #define	ORPHAN_GO	10	/* read: the supervisor is gone */
 #define	ORPHAN_REP	11	/* write: struct orphan_res */
+#define	ORPHAN_HOLD	12	/* write: the helper's "hold" report */
 
 /*
  * The supervisor: attaches a child, leaves a sharer of its table holding
@@ -1516,7 +1517,6 @@ orphan_supervisor(enum orphan_how how)
 {
 	struct orphan_res res;
 	struct stat sb;
-	char *const argv[] = { helper_path, NULL };
 	pid_t pid;
 	int fds[2], pd, q, status;
 	char b;
@@ -1564,8 +1564,14 @@ orphan_supervisor(enum orphan_how how)
 		_exit(24);
 	switch (how) {
 	case ORPHAN_EXEC:
-		/* The image reports the queue descriptors it has: none. */
-		execv(helper_path, argv);
+		/*
+		 * The image reports the queue descriptors it has (none) and
+		 * stays: the queue is then seen to have ended at the exec,
+		 * not at the exit of the process that owned it.
+		 */
+		if (dup2(ORPHAN_REP, ORPHAN_HOLD) == -1)
+			_exit(28);
+		execl(helper_path, helper_path, "hold", (char *)NULL);
 		_exit(25);
 	case ORPHAN_RFFDG:
 		if (rfork(RFFDG) == -1)
@@ -1585,7 +1591,7 @@ orphan_check(enum orphan_how how)
 {
 	struct orphan_res res;
 	pid_t pid, sharer;
-	int go[2], pd, rep[2], status;
+	int go[2], nq, pd, rep[2], status;
 	char b;
 
 	ATF_REQUIRE_EQ(0, pipe(go));
@@ -1613,6 +1619,13 @@ orphan_check(enum orphan_how how)
 		/* The owner has left the table and goes on running. */
 		ATF_REQUIRE_MSG(read_within(rep[0], &b, 1, 30000) && b == 'u',
 		    "the supervisor did not leave its table");
+	} else if (how == ORPHAN_EXEC) {
+		/* The new image is running, with no queue descriptor. */
+		nq = -1;
+		ATF_REQUIRE_MSG(read_within(rep[0], &nq, sizeof(nq), 30000),
+		    "no report from the exec'd image");
+		ATF_REQUIRE_EQ_MSG(0, nq, "the exec'd image has %d queue "
+		    "descriptors", nq);
 	} else {
 		ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
 		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
@@ -1641,8 +1654,11 @@ orphan_check(enum orphan_how how)
 	    "stat in a later child: rv %ld errno %d, want EIO",
 	    res.child_stat.rv, res.child_stat.err);
 	(void)kill(sharer, SIGKILL);
-	if (how == ORPHAN_RFFDG)
-		(void)pdkill(pd, SIGKILL);
+	if (how != ORPHAN_EXIT) {
+		/* The owner (or the image it became) was running all along. */
+		ATF_CHECK_EQ(0, pdkill(pd, SIGKILL));
+		(void)pdwait(pd, &status, WEXITED, NULL, NULL);
+	}
 	(void)close(pd);
 	(void)close(go[1]);
 	(void)close(rep[0]);

@@ -1410,6 +1410,7 @@ ATF_TC_BODY(swap_owner_exit_before_install, tc)
  * installed; never anything else.
  */
 #define	SW_RACE_ROUNDS	200
+#define	SW_RACE_PASSES	3
 
 static void
 a_quick(struct sw *x, const struct dq_event *ev,
@@ -1437,6 +1438,40 @@ p_race_open(void *arg __unused, void *result)
 		RR(res->r[4], fcntl(next, F_GETFD));
 }
 
+/* One round: the outcome is counted; anything but the two fails. */
+static void
+sw_race_round(char *buf, int pass, int i, int *installed, int *refused)
+{
+	struct sw x;
+	struct sw_res res;
+	struct dqt_achild ch;
+	int status;
+
+	sw_init(&x, "orig", a_quick);
+	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+	dqt_attach_spawn(&x.c, &ch, p_race_open, NULL);
+	sw_serve_answered(&x, buf, 1);
+	dqt_close_queue(&x.c);
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "pass %d round %d: the program failed, status %#x", pass, i,
+	    status);
+	if (res.r[0].rv >= 0) {
+		(*installed)++;
+		ATF_REQUIRE_EQ_MSG(10, res.r[2].rv,
+		    "pass %d round %d: read %ld errno %d", pass, i,
+		    res.r[2].rv, res.r[2].err);
+		ATF_REQUIRE_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
+	} else {
+		(*refused)++;
+		ATF_REQUIRE_EQ_MSG(EIO, res.r[0].err,
+		    "pass %d round %d: open errno %d", pass, i, res.r[0].err);
+		ATF_REQUIRE_EQ(-1, res.r[4].rv);
+		ATF_REQUIRE_EQ(EBADF, res.r[4].err);
+	}
+	dqt_fini(&x.c);
+}
+
 ATF_TC(swap_supervisor_gone_race);
 ATF_TC_HEAD(swap_supervisor_gone_race, tc)
 {
@@ -1444,46 +1479,40 @@ ATF_TC_HEAD(swap_supervisor_gone_race, tc)
 }
 ATF_TC_BODY(swap_supervisor_gone_race, tc)
 {
-	struct sw x;
-	struct sw_res res;
-	struct dqt_achild ch;
 	char *buf;
-	int i, installed, refused, status;
+	size_t len;
+	int i, installed, ncpu, pass, refused;
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
 	buf = malloc(SW_BUFSIZE);
 	ATF_REQUIRE(buf != NULL);
+	len = sizeof(ncpu);
+	ATF_REQUIRE_EQ(0, sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0));
 	installed = refused = 0;
-	for (i = 0; i < SW_RACE_ROUNDS; i++) {
-		sw_init(&x, "orig", a_quick);
-		ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
-		dqt_attach_spawn(&x.c, &ch, p_race_open, NULL);
-		sw_serve_answered(&x, buf, 1);
-		dqt_close_queue(&x.c);
-		status = dqt_attach_wait(&ch, &res, sizeof(res));
-		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-		    "round %d: the program failed, status %#x", i, status);
-		if (res.r[0].rv >= 0) {
-			installed++;
-			ATF_REQUIRE_EQ_MSG(10, res.r[2].rv,
-			    "round %d: read %ld errno %d", i, res.r[2].rv,
-			    res.r[2].err);
-			ATF_REQUIRE_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
-		} else {
-			refused++;
-			ATF_REQUIRE_EQ_MSG(EIO, res.r[0].err,
-			    "round %d: open errno %d", i, res.r[0].err);
-			ATF_REQUIRE_EQ(-1, res.r[4].rv);
-			ATF_REQUIRE_EQ(EBADF, res.r[4].err);
-		}
-		dqt_fini(&x.c);
+	/*
+	 * Both outcomes are wanted, and neither is owed by a correct kernel
+	 * in any one pass: up to SW_RACE_PASSES passes, ending with the
+	 * first that has seen both.
+	 */
+	for (pass = 0; pass < SW_RACE_PASSES &&
+	    (installed == 0 || refused == 0); pass++) {
+		for (i = 0; i < SW_RACE_ROUNDS; i++)
+			sw_race_round(buf, pass, i, &installed, &refused);
 	}
-	printf("installed before the death %d, refused %d\n", installed,
-	    refused);
-	/* A race that only ever went one way has tested one side of it. */
-	ATF_CHECK_MSG(installed > 0 && refused > 0, "the race went one way "
-	    "only: %d installed, %d refused", installed, refused);
+	printf("installed before the death %d, refused %d, in %d passes of "
+	    "%d rounds\n", installed, refused, pass, SW_RACE_ROUNDS);
+	/*
+	 * A race that only ever went one way has tested one side of it.
+	 * With one CPU the close and the install cannot overlap, and which
+	 * comes first is the scheduler's choice.
+	 */
+	if (ncpu == 1)
+		printf("one CPU: the split is not required\n");
+	else
+		ATF_CHECK_MSG(installed > 0 && refused > 0, "the race went "
+		    "one way only: %d installed, %d refused in %d passes",
+		    installed, refused, pass);
 	free(buf);
 }
 
