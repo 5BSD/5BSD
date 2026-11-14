@@ -7,7 +7,10 @@ cc_library(
     deps = ["//contrib/sqlite3:headers", "//lib/libthr:thr"],
     local_defines = ['USE_PREAD=1', 'STDC_HEADERS=1', 'HAVE_SYS_TYPES_H=1', 'HAVE_SYS_STAT_H=1', 'HAVE_STDLIB_H=1', 'HAVE_STRING_H=1', 'HAVE_MEMORY_H=1', 'HAVE_STRINGS_H=1', 'HAVE_INTTYPES_H=1', 'HAVE_STDINT_H=1', 'HAVE_UNISTD_H=1', 'HAVE_DLFCN_H=1', 'HAVE_USLEEP=1', 'HAVE_LOCALTIME_R=1', 'HAVE_GMTIME_R=1', 'HAVE_DECL_STRERROR_R=1', 'HAVE_STRERROR_R=1', 'HAVE_POSIX_FALLOCATE=1', '_REENTRANT=1', 'SQLITE_THREADSAFE=1'],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = ["@platforms//os:freebsd"] + select({
+        "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     visibility = ["//visibility:public"],
 )
 bsd_component_archive(name = "static_archive", groups = [":sqlite3"], visibility = ["//visibility:public"])

@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 cc_library(name = "atf_cxx", srcs = ['//contrib/atf:atf-c++/detail/application.cpp', '//contrib/atf:atf-c++/build.cpp', '//contrib/atf:atf-c++/check.cpp', '//contrib/atf:atf-c++/detail/env.cpp', '//contrib/atf:atf-c++/detail/exceptions.cpp', '//contrib/atf:atf-c++/detail/fs.cpp', '//contrib/atf:atf-c++/detail/process.cpp', '//contrib/atf:atf-c++/tests.cpp', '//contrib/atf:atf-c++/detail/text.cpp', '//contrib/atf:atf-c++/utils.cpp'],
     deps = ["//contrib/atf:cxx_headers", "//lib/atf/libatf-c:atf_c", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
     implementation_deps = ["//contrib/atf:cxx_private_headers"],

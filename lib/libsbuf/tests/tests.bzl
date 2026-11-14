@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Original selected AMD64 library ATF programs and installation contracts."""
+"""Original selected Tier 1 library ATF programs and installation contracts."""
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
 load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
@@ -9,7 +9,10 @@ load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//lib/libc:test_policy.bzl", "libc_test_copts")
 load("//lib/libc:test_runtime.bzl", "LIBC_TEST_RUNTIME")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _DIRECTORY = "/usr/tests/lib/libsbuf"
 _PROGRAMS = ['sbuf_core_test', 'sbuf_stdio_test', 'sbuf_string_test']
 _IMPORTED = []

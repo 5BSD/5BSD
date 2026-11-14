@@ -375,3 +375,26 @@ extraction, target ABIs and archive contracts on both platforms. The two crypt
 test binaries match original Make ELF metadata/import/NEEDED-order contracts
 on both platforms. Full DWARF, alternate configurations, full-system bootstrap,
 sandbox/performance and ARM64 execution remain open; Make stays the default.
+
+
+## Data/configuration library cross-architecture checkpoint
+
+ARM64 now admits libsbuf, libnv installation/test traversal, libucl, libyaml,
+libbsdconf, private SQLite, ATF C++ and the original sbuf/libnv test programs.
+The existing XML implementation is qualified in the same batch. These reviewed
+Make selections use the same portable sources on both Tier 1 architectures.
+Both match original Make static archive order/symbols, shared ELF metadata,
+the generated sbuf ABI map and complete selected install metadata (121 records
+per platform). A missing libsbuf debug-directory ownership claim was corrected
+with the maintained utility_debug_directories helper; the original failing
+inventory comparison is retained and the verifier is unchanged.
+
+All 14 installed test programs match original Make ELF metadata/imports and
+NEEDED order on both platforms. AMD64's 161 selected test targets finish with
+160 passing reported cases and one explicit ASan-only skip. This includes
+146 passing ATF bodies, six passing TAP programs and buffer/XML smoke checks.
+The datagram sysctl writer remains a declared disposable-VM case; the ASan
+case requires a separate supported profile. ARM64 executes no target code.
+Full DWARF, sanitizer/configuration, installed-system and ARM64 runtime gates
+remain open. Existing format-5 frontend targets cover these selections;
+Make remains production/default.

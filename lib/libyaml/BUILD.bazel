@@ -4,12 +4,18 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(name = "yaml", srcs = ["//contrib/libyaml:src/api.c", "//contrib/libyaml:src/dumper.c", "//contrib/libyaml:src/emitter.c", "//contrib/libyaml:src/loader.c", "//contrib/libyaml:src/parser.c", "//contrib/libyaml:src/reader.c", "//contrib/libyaml:src/scanner.c", "//contrib/libyaml:src/writer.c"],
     deps = ["//contrib/libyaml:headers"], implementation_deps = ["//contrib/libyaml:private_headers"],
     local_defines = ['YAML_VERSION_STRING=\\\"0.2.5\\\"', "YAML_VERSION_MAJOR=0", "YAML_VERSION_MINOR=2", "YAML_VERSION_PATCH=5"],
-    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd"] + select({
+        "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }), visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":yaml"], visibility = ["//visibility:public"])
 bsd_component_archive(name = "pic_archive", groups = [":yaml"], pic = True)
 cc_shared_library(name = "yaml_shared", deps = [":yaml"], shared_lib_name = "libprivateyaml.so.1",
     user_link_flags = ["-Wl,-soname,libprivateyaml.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    target_compatible_with = ["@platforms//os:freebsd"] + select({
+        "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }), visibility = ["//visibility:public"])
 load(":installation.bzl", "library_installation")
 library_installation(name = "install_manifest")
 
