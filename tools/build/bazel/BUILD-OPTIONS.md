@@ -207,5 +207,8 @@ preserved for ordinary, header and copied inputs. Declared-input execpath
 expansion avoids hardcoded output directories. AMD64 archive identities and
 static/shared smoke tests pass. ARM64 default component coverage is now
 1,121 regular / 1,120 PIC members; complete libc linking, DWARF, current full world
-and runtime remain open. Full R13 predates this identity correction and needs
-refreshing; earlier artifact-preservation claims are not final acceptance.
+and runtime remain open. Full R14 refreshes this identity correction across all 450 selected packages
+and passes 32 tests; its 34 portable component archives match the independently
+qualified focused AMD64 artifacts. Earlier unchanged-byte claims are not final
+acceptance for this correction. Whole-system parity and new VM qualification
+remain separate requirements.
