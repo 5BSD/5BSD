@@ -8465,8 +8465,9 @@ The runner requires complete matching output and preserves payload bindings.
 These operations do not establish network traffic, DNS, module mutation or
 complete provider qualification; they change no guest authorization policy.
 The installed NetworkControl and read-only extension operations have passed
-baseline, post-inactive-install and new-boot checks; final rollback acceptance
-remains separate.
+baseline, post-inactive-install, new-boot and rollback checks in the complete
+34-check upgrade/authentication/shared-file/BE-removal scenario, with normal
+shutdown. Complete provider and fresh live Log acceptance remain separate.
 Cross-userland testing still permits only declared host artifact inspection.
 Exploratory BSD user-mode QEMU program execution does not change that contract;
 maintained emulated-test integration and full ARM64 kernel/VM acceptance remain

@@ -417,7 +417,9 @@ path, fails the phase on launch/protocol/output errors and repeats the operation
 at all four upgrade phases. Existing deadlines apply. This adds no guest policy,
 attributes, signed test units, provider fallback or altered service visibility.
 Complete-provider coverage remains explicitly false. Operator VM R1 has passed
-both installed operations at baseline, after inactive installation and after new
-boot; rollback/final shutdown remain pending. The native Log helper is captured,
-but live Log acceptance is still pending. Parser/control-flow tests alone do not
+both installed operations at baseline, after inactive installation, after new
+boot and after rollback. All 34 upgrade/authentication/shared-file/BE-removal
+checks and normal shutdown pass, with 147 verified root operations. The native
+Log helper is captured and its fresh superset VM is running; live Log acceptance
+is still pending. Parser/control-flow tests alone do not
 establish runtime success.
