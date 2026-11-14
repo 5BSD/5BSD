@@ -2379,6 +2379,17 @@ Cross compilation does not require those compiler executables to be identical.
 The generator receipt, payload digests and original recipe bindings remain
 required; foreign generator artifacts are rejected.
 .Pp
+The maintained
+.Pa tools/build/bazel/install-reference.py
+helper accepts
+.Fl -build-tools
+for isolated cross-build comparisons that need native shell or terminal
+generators before target compilation.
+It runs the original world build-tools phase with separate reference objects;
+it does not replace the normal build backend.
+Reference compiler validation honors Make's recorded system-compiler selection
+while retaining executable identity and digest bindings.
+.Pp
 Split-debug validation checks ELF identity and symbol policy, debuglink filename
 and CRC. When either file carries a GNU build-ID note, valid matching identities
 are required on both files. Full DWARF semantic equivalence remains a separate

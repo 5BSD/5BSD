@@ -251,7 +251,7 @@ bsd_host_artifact_test(name = "loader_version_test", src = "loader-version-test.
         "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7)",
         "--runtime", "$(rlocationpath @bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1)"])
 
-bsd_python_test(name = "install_reference_libraries_test", src = "install-reference-libraries-test.py",
+bsd_host_artifact_test(name = "install_reference_libraries_test", src = "install-reference-libraries-test.py",
     data = ["install_reference_libraries.py"], size = "small", visibility = ["//visibility:public"])
 
 # Runtime data follows the consumer ABI, including source-built execution tools.
@@ -334,7 +334,7 @@ bsd_host_artifact_test(name = "pxe_boot_test", src = "pxe-boot-test.py",
         item for option, target in [("image", "pxeboot"), ("prefix", "pxeldr"), ("object", "compiler_object"), ("client", "client"), ("loader", "loader"), ("archive", "install_archive")] for item in ["--" + option, "$(location //stand/i386/pxeldr:" + target + ")"]],
     size = "small", visibility = ["//visibility:public"])
 
-bsd_python_test(name = "install_reference_generators_test", src = "install-reference-generators-test.py",
+bsd_host_artifact_test(name = "install_reference_generators_test", src = "install-reference-generators-test.py",
     data = ["install_reference_generators.py", "install_reference_libraries.py", "install_reference_options.py", "directory_metadata.py"], size = "small", visibility = ["//visibility:public"])
 
 exports_files(["install_tree.py", "zoneinfo_source.py"])
@@ -527,7 +527,7 @@ bsd_host_artifact_test(name = "archive_symbol_visibility_test",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-nm_runtime"],
     args = ["--nm", "$(rootpath @bsd_sdk//toolchain:bin/llvm-nm)"], size = "small")
 
-bsd_python_test(name = "install_reference_dtrace_test", src = "install-reference-dtrace-test.py",
+bsd_host_artifact_test(name = "install_reference_dtrace_test", src = "install-reference-dtrace-test.py",
     data = ["install_reference_dtrace.py", "install_reference_libraries.py"], size = "small")
 
 bsd_host_artifact_test(name = "world_profile_test", src = "world-profile-test.py",

@@ -36,6 +36,8 @@ def main():
     parser.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
     parser.add_argument('--phase', choices=['install', 'distribution'], default='install',
                         help='maintained installation phase; distribution does not imply install/installconfig')
+    parser.add_argument('--build-tools', action='store_true',
+                        help='run the original world build-tools phase in isolated objects before target compilation')
     parser.add_argument('--make-meta', action='store_true',
                         help='record original build recipes with supported metadata mode, without filemon')
     parser.add_argument('--with-option', action='append', default=[],
@@ -177,10 +179,12 @@ def main():
                 original_directory = Path(current)
                 if not original_directory.is_absolute() or not original_directory.is_relative_to('/usr/obj'):
                     raise ValueError('original library search directory must use /usr/obj')
-                directory = str(Path(record['artifact']).parent)
-                environment.options.append(directory_variable + '=' + directory)
-                if environment.query(['-V', directory_variable]).strip() != directory:
-                    raise ValueError('original library search override is ineffective: ' + directory_variable)
+            # A recursive parent need not include src.libnames.mk. Bind the
+            # directory even there, so its children inherit the same archive.
+            directory = str(Path(record['artifact']).parent)
+            environment.options.append(directory_variable + '=' + directory)
+            if environment.query(['-V', directory_variable]).strip() != directory:
+                raise ValueError('original library search override is ineffective: ' + directory_variable)
         link_inputs = shlex.split(environment.query(['-V', 'LDADD']))
         if any(record['artifact'] not in link_inputs for record in library_inputs.values()):
             if not args.make_meta:
@@ -226,6 +230,7 @@ def main():
                'dtrace_runtime_inputs_sha256': dtrace_bindings,
                'build_utc': args.build_utc,
                'local_generated_headers': args.local_generated_header,
+               'build_tools': args.build_tools,
                'sdk_reconfigured': False, 'source_hashes': source_hashes,
                'implementation_hashes': implementations,
                'object_environment': {key: build_environment[key] for key in ('MAKEOBJDIR', 'REFERENCE_OBJROOT')},
@@ -274,6 +279,18 @@ def main():
             base += ['LDFLAGS_LAST=' + (environment.query(['-V', 'LDFLAGS_LAST']).strip() + ' ' + ' '.join('-L' + value for value in shared_directories)).strip()]
         if args.make_meta:
             base += ['.MAKE.MODE=' + install_reference_options.METADATA_MODE]
+        if args.build_tools:
+            # Use Make's own native build-tools environment and inventory. Keep
+            # the verified SDK/OBJTOP for prerequisites; MAKEOBJDIR redirects
+            # actual generated objects into this fresh reference tree.
+            bootstrap = [str(make), '-C', str(src), '-m', str(src / 'share/mk'), *environment.fixed,
+                *environment.options, '-f', 'Makefile.inc1', 'OBJTOP=' + str(objtop),
+                '-j' + str(args.jobs), '_build-tools']
+            run(bootstrap, 'build-tools')
+            if args.make_meta:
+                # Same control used by CROSSENV for normal metadata builds:
+                # target compiler flags must not rebuild native build tools.
+                base += ['BUILD_TOOLS_META=.NOMETA']
         run(buildenv(base + ['-j' + str(args.jobs), 'all']), 'build')
         if include_directories:
             receipt['dependency_header_audit'] = install_reference_libraries.audit_header_dependencies(objects, library_inputs)

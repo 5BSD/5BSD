@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shlex
 import stat
-from install_reference_libraries import digest, safe_path, verify
+from install_reference_libraries import digest, reference_compiler, safe_path, verify
 from install_reference_options import generator_command_variable
 
 
@@ -38,17 +38,11 @@ def load(config_path, execution_architecture, source_root):
         if component == source_root or not component.is_relative_to(source_root):
             raise ValueError("generator component differs from source tree")
         environment = receipt.get("environment", {})
-        selected = safe_path(environment.get("compiler_selected"), True)
-        # A native generator's compiler is bound by its own passed Make
-        # receipt, not by the foreign target world's compiler executable.
-        compiler_sha = digest(selected)
+        # Execution tools bind their own compiler, independently of the target.
+        selected, compiler_sha = reference_compiler(environment)
         if execution_compiler_sha is not None and compiler_sha != execution_compiler_sha:
             raise ValueError("generator execution compiler identities differ")
         execution_compiler_sha = compiler_sha
-        if not any(
-                Path(name).is_file() and selected.samefile(name) and expected == compiler_sha
-                for name, expected in environment.get("input_sha256", {}).items()):
-            raise ValueError("generator compiler is not bound by its native reference")
         relative = item["artifact"]
         if (not isinstance(relative, str) or not relative or PurePosixPath(relative).is_absolute() or
                 ".." in relative.split("/") or str(PurePosixPath(relative)) != relative):

@@ -13,6 +13,17 @@ aggregate RSS. Maintained native qualification passes its seven real process
 regressions. This qualifies instrumentation; controlled performance comparisons
 remain open. See [RESOURCE-ACCOUNTING.md](RESOURCE-ACCOUNTING.md).
 
+## Complete ARM64 /bin checkpoint
+
+The whole /bin aggregate builds with NIS/sendmail/tcsh enabled: 42 archives match
+all 1,469 original Make installation records, and all 41 installed ELF programs
+match checked executable metadata. Linked DTrace schemas/counts match (22 programs,
+70 locations); ARM64 execution and full code/DWARF remain open. The reference
+helper supports Make's own native build-tools phase and verified system compiler
+aliases. Forty direct provenance checks pass. Fresh AMD64/native-test qualification
+awaits stable shared SDK inputs after concurrent buildworld. See
+[COMPLETION-PLAN.md](COMPLETION-PLAN.md) for exact evidence and outstanding work.
+
 ## Library architecture selections
 
 The library aggregate now traverses AMD64 and ARM64, retaining rejection for

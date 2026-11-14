@@ -5,7 +5,7 @@ from pathlib import Path, PurePosixPath
 import shlex
 import stat
 
-from install_reference_libraries import digest, safe_path, verify
+from install_reference_libraries import digest, reference_compiler, safe_path, verify
 
 
 def load(config_path, architecture, source_root, compiler):
@@ -31,12 +31,7 @@ def load(config_path, architecture, source_root, compiler):
     if component != source_root / 'cddl/lib/drti':
         raise ValueError('DTrace runtime reference must own the drti component')
     environment = receipt.get('environment', {})
-    selected = safe_path(environment.get('compiler_selected'), True)
-    compiler_sha = digest(compiler)
-    if digest(selected) != compiler_sha or not any(
-            Path(name).is_file() and selected.samefile(name) and expected == compiler_sha
-            for name, expected in environment.get('input_sha256', {}).items()):
-        raise ValueError('DTrace runtime compiler differs from selected compiler')
+    selected, compiler_sha = reference_compiler(environment, compiler)
     relative = item['artifact']
     if (not isinstance(relative, str) or PurePosixPath(relative).is_absolute() or
             '..' in relative.split('/') or str(PurePosixPath(relative)) != relative):

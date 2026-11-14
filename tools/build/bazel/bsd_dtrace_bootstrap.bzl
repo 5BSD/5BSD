@@ -38,3 +38,17 @@ bsd_dtrace_bootstrap = rule(
         "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     },
 )
+
+
+def target_dtrace_bootstrap():
+    """Select the object ABI before the consumer transitions the tool to exec."""
+    return struct(
+        tool = select({
+            "@platforms//cpu:x86_64": "//cddl/usr.sbin/dtrace:bootstrap",
+            "@platforms//cpu:aarch64": "//cddl/usr.sbin/dtrace:bootstrap_aarch64",
+        }, no_match_error = "DTrace object generation needs an explicit target ABI"),
+        runtime = select({
+            "@platforms//cpu:x86_64": ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+            "@platforms//cpu:aarch64": ["//cddl/usr.sbin/dtrace:bootstrap_aarch64_runtime"],
+        }, no_match_error = "DTrace runtime needs an explicit target ABI"),
+    )
