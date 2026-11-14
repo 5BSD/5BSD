@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Review indexed packages with the maintained ELF/archive contract checker.
 
-Diagnostic scope: non-debug installed programs, libraries and static archives.
+Diagnostic scope: non-debug installed programs, libraries, static archives and
+relocatable ELF objects, including kernel modules.
 Other ELF kinds, unmodeled paths and failures remain explicit. This never executes
 payloads or establishes runtime, debug-link, instruction or full ABI parity.
 """
@@ -154,7 +155,11 @@ def review_pair(name, reference, candidate, inventory, args):
                         result['archive_evidence'][label] = evidence
             detail['results'][path] = result
     destination = args.output / (name + '.json')
-    destination.write_text(json.dumps(detail, indent=2) + '\n')
+    # Stream encoding: module symbol inventories can produce very large reports.
+    # Avoid a second complete serialized string while preserving all evidence.
+    with destination.open('x') as output:
+        json.dump(detail, output, indent=2)
+        output.write('\n')
     return name, dict(detail=destination.name, sha256=digest(destination),
                      statuses=dict(Counter(r['status'] for r in detail['results'].values())),
                      counts=detail['counts'], selection_difference=detail['selection_difference'])

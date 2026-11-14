@@ -5962,6 +5962,9 @@ section bytes and metadata, external symbol fields and symbol-resolved relocatio
 records. Repeated section names retain occurrence identities. Debug-only data is
 outside this contract; instruction bytes, relocation addends, GNU build IDs and
 DTrace IDs are never normalized. Differences remain explicit review failures.
+Large package review reports stream JSON encoding while retaining the complete
+comparison evidence. Per-package metadata retention remains outside that writer
+optimization; no peak-memory limit is implied.
 This check does not load kernel modules or qualify their runtime behavior.
 .Pp
 Path-derived DTrace alias IDs are compared by a whole-archive member/function/

@@ -9,6 +9,38 @@ custom kernel/module selectors and the documented acceptance matrix remain open
 until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
+## Current closeout execution (2026-11-14)
+
+Combined native R6 passes the selected AMD64 world/GENERIC kernel/modules and
+450-package graph at explicit kernel revision `0bb24324ee7`, all fifteen selected
+expanded test reports and digest-verified capture of 1,547 files (647,575,911 bytes).
+This integrates the libicp_rescue/libzfs order fixes. It still uses a Make-prepared
+SDK; no bootstrap, runtime, production publication, performance or ARM64 gate is
+closed by this build. R6 used the older qualification frontend executable; a fresh
+current-source C frontend now passes the maintained package-review test via the
+explicit --target-arch path. Wider current-frontend backend qualification remains.
+
+Indexed ELF review R6 finishes all 450 frozen R5 packages with unchanged bindings:
+1,321 contracts pass, 728 remain review-required and no selection differences exist.
+All 734 ET_REL payloads are now covered: eleven pass exactly, 711 have allocated
+GNU-build-ID-only differences (708 in the kernel package), and twelve kernel
+modules have further bytes/relocations to review. The remaining five cases are
+the two later-fixed archive orders, ambiguous PAM aliases and special kernel/loader
+contracts. Raw diagnostics remain strict. The read-only module diagnosis identifies
+canonical versus redundant-slash/../ source strings in eleven modules; mqueuefs
+also has real source fixes after the November 11 Make control. Neither observation
+waives byte/relocation differences. Refresh the coherent current Make baseline
+before treating source-epoch drift as a producer defect or claiming parity.
+
+Large review output now streams JSON encoding without constructing a second full
+serialized string; a real DTrace report remains byte-identical and the current
+frontend's four maintained package-stream cases pass. This is not a measured
+peak-RAM bound: per-package object retention still needs resource work. The kernel
+report itself is about 925 MiB. A current production-malloc Make world control is
+prepared through the freshly compiled frontend, with explicit src.conf, sixteen
+jobs, standard /usr/obj and no installation/publication. The other six-gate work,
+including Bazel in base and ARM64 Tier 1, remains required.
+
 ## Current closeout execution (2026-11-13)
 
 The indexed reviewer now applies the existing boot-object ELF contract to ET_REL

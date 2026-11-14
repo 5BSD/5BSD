@@ -1120,3 +1120,52 @@ The all-450 frozen R5 package recheck is in
 and final inputs remain unchanged, its intermediate reports are diagnostic only.
 In particular, a GNU build-ID-only difference remains explicit; nothing silently
 strips build identities or DTrace IDs to accept a module.
+
+
+## Combined R6, indexed R6 and module diagnosis (2026-11-14)
+
+- `/usr/obj/usr/src/bazel-closeout-system-native-r6-20261113/receipt.json`:
+  passed selected current AMD64 world/GENERIC/modules/450-package graph at explicit
+  kernel revision `0bb24324ee7`, fifteen expanded test reports, 1,547 captured files,
+  647,575,911 bytes. Prepared Make SDK and older qualification frontend executable;
+  no bootstrap, publication, current-front-end end-to-end or runtime gate inferred.
+- `/usr/obj/usr/src/bazel-package-elf-review-r6-20261113/review.json`:
+  completed all 450 frozen R5 packages with final unchanged-input hashes; 1,321
+  passed, 728 review-required, no selection differences. This is R5 artifact review,
+  not a comparison of the newly built R6 packages. The two order differences in R5
+  have independent focused fixes incorporated into native R6.
+- `/usr/obj/usr/src/bazel-kernel-relocatable-diagnosis-r3-20261113/diagnosis.json`:
+  incrementally decoded the entire hash-bound kernel report: 721 artifacts,
+  708 build-ID-only modules and twelve with additional allocated/relocation
+  differences, plus the special kernel. No exact comparison was relaxed. Reader R1
+  was stopped because fixed-size decode retries scaled quadratically for large
+  entries; geometric buffering R2/R3 completes with the same comparison results.
+- `/usr/obj/usr/src/bazel-module-rodata-diagnosis-r1-20261113/diagnosis.json`:
+  verifies package/payload hashes before inspecting the twelve modules. Eleven
+  show canonical source paths versus Make's doubled slashes or module/../ paths.
+  mqueuefs has no changed rodata strings; source commits af582cb93ef and b5816432c11
+  postdate Make kernel control d44de404cb7. Further exact resolution needs a
+  current, coherent source/configuration/filename policy control. No source is
+  reverted, output rewritten or path discrepancy silently accepted.
+
+`/usr/obj/usr/src/bazel-review-serialization-check-r1-20261114/result.json`
+checks that streamed JSON encoding reproduces all 648,191 bytes of a real DTrace
+package report. `json.dump` avoids a second full serialized string; this does not
+bound retained per-package metadata or establish measured peak-memory improvement.
+The kernel package report is about 925 MiB, and the review process was observed at
+about 8 GiB RSS; that sample is not a peak/aggregate resource measurement.
+
+The old `/tmp/build-bsd-native-qualification` executable was refreshed by compiling
+the maintained current C source to
+`/usr/obj/usr/src/bazel-closeout-frontend-r1-20261114/build-bsd` with host cc/libmd.
+`/usr/obj/usr/src/bazel-review-writer-native-r2-20261114/receipt.json` passes all four
+package stream regressions through its explicit --target-arch dispatch. R1 passes
+through the older executable and is retained separately. C/CLI inputs need no new
+option for the report writer; backend helper, native data inputs and manual are
+maintained together. This frontend build is a qualification tool, not an installed
+or published base package.
+
+`/usr/obj/usr/src/bazel-current-make-control-request-r1-20261114` contains an explicit
+current-control src.conf derived from the documented comparison profile. The
+fresh frontend's world plan selects /usr/obj, sixteen jobs, production malloc and
+clean buildworld only. It does not install, build hardware or publish repositories.
