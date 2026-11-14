@@ -25,6 +25,62 @@ def bind_inputs(bindings, incoming):
     bindings.update(incoming)
 
 
+def copy_bound_file(source, destination, bindings, *, metadata=False):
+    """Bind copied bytes to the previously inventoried source, not a later read."""
+    source, destination = Path(source), Path(destination)
+    expected = bindings.get(str(source))
+    if expected is None:
+        raise ValueError('copied source has no input binding: ' + str(source))
+    if metadata:
+        shutil.copy2(source, destination)
+    else:
+        shutil.copyfile(source, destination)
+    if digest(destination) != expected:
+        raise ValueError('copied payload differs from input binding: ' + str(source))
+    return {str(destination): {'source': str(source), 'sha256': expected}}
+
+
+def verify_bound_tree(source, destination, bindings, *, snapshot_root):
+    """Require the complete copied regular-file inventory and its bound bytes."""
+    source, destination = Path(source), Path(destination)
+    expected = {str(Path(name).relative_to(source)): value
+                for name, value in bindings.items() if Path(name).is_relative_to(source)}
+    snapshot_root = Path(snapshot_root).resolve(strict=True)
+    actual = {}
+    for current, dirs, files in os.walk(destination, followlinks=True):
+        for name in dirs + files:
+            path = Path(current) / name
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(snapshot_root):
+                raise ValueError('copied tree escapes snapshot: ' + str(path))
+            if path.is_symlink() and path.is_dir() and resolved in {parent.resolve(strict=True) for parent in [Path(current), *Path(current).parents] if parent.is_relative_to(snapshot_root)}:
+                raise ValueError('copied tree contains a directory cycle: ' + str(path))
+        for name in files:
+            path = Path(current) / name
+            if not path.is_file():
+                raise ValueError('copied tree contains nonregular payload: ' + str(path))
+            actual[str(path.relative_to(destination))] = digest(path)
+    if actual != expected:
+        raise ValueError('copied tree differs from input inventory: ' + str(source))
+    return {str(destination / name): {'source': str(source / name), 'sha256': value}
+            for name, value in expected.items()}
+
+
+def verify_bound_payload(copies, snapshot_root, snapshot):
+    """Bind the final snapshot hashes to copied inputs without hashing it twice."""
+    snapshot_root = Path(snapshot_root).resolve(strict=True)
+    for name, binding in copies.items():
+        path = Path(name)
+        resolved = path.resolve(strict=True)
+        if not path.is_relative_to(snapshot_root) or not resolved.is_relative_to(snapshot_root):
+            raise ValueError('copied payload escapes snapshot: ' + name)
+        # Directory symlink aliases resolve to the regular payload already in
+        # the final snapshot, rather than requiring duplicate physical reads.
+        key = str(resolved.relative_to(snapshot_root))
+        if snapshot.get(key) != binding['sha256']:
+            raise ValueError('copied payload changed before receipt: ' + name)
+
+
 def runtime_groups(tool_dependencies):
     """Declare each tool's inspected runtime without adding unrelated libraries."""
     return ['filegroup(name=%s, srcs=%s)' %
@@ -203,22 +259,25 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
     # inputs but does not redirect ELF PT_INTERP or the execution host loader.
     dependencies, tool_dependencies, commands = inspect_execution_dependencies({**origins, **python_extensions}, settings)
     tc.mkdir();(tc/'bin').mkdir()
+    copied = {}
     for directory in ('usr/include','usr/lib','lib'):
         shutil.copytree(sdk/directory,tc/'sysroot'/directory,symlinks=directory!='usr/include')
+    for directory in ('usr/include','usr/lib','lib'):
+        bind_inputs(copied, verify_bound_tree(sdk/directory, tc/'sysroot'/directory, inputs, snapshot_root=tc/'sysroot'))
     for path in (tc/'sysroot').rglob('*'):
         if path.is_symlink() and not path.resolve(strict=True).is_relative_to(tc/'sysroot'):
             raise ValueError('SDK symlink escapes snapshot: '+str(path))
-    for name,path in origins.items():shutil.copy2(path,tc/'bin'/name)
+    for name,path in origins.items():bind_inputs(copied,copy_bound_file(path,tc/'bin'/name,inputs,metadata=True))
     for relative,path in python_files.items():
-        target=tc/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
+        target=tc/relative;target.parent.mkdir(parents=True,exist_ok=True);bind_inputs(copied,copy_bound_file(path,target,inputs))
     if python_info:
         (tc/'python-home/runtime.json').write_text(json.dumps({'version':python_info['version']},indent=2)+'\n')
     for path in dependencies:
-        destination=tc/'execution-runtime'/path.lstrip('/');destination.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,destination);destination.chmod(Path(path).stat().st_mode & 0o777)
-    shutil.copy2(settings['stdout_redirect_source'],tc/'stdout_redirect.c')
-    shutil.copy2(toolchain_config,tc/'cc_toolchain_config.bzl')
+        destination=tc/'execution-runtime'/path.lstrip('/');destination.parent.mkdir(parents=True,exist_ok=True);bind_inputs(copied,copy_bound_file(path,destination,dependencies));destination.chmod(Path(path).stat().st_mode & 0o777)
+    bind_inputs(copied,copy_bound_file(Path(settings['stdout_redirect_source']).resolve(strict=True),tc/'stdout_redirect.c',inputs,metadata=True))
+    bind_inputs(copied,copy_bound_file(toolchain_config,tc/'cc_toolchain_config.bzl',inputs,metadata=True))
     if python_info:
-        shutil.copyfile(validator,tc/'bin/static_archive_check.py')
+        bind_inputs(copied,copy_bound_file(validator,tc/'bin/static_archive_check.py',inputs))
         # The selected static shell remains an explicitly recorded execution-host
         # binding, like ELF interpreters. All action data uses repository paths.
         shell=str(origins['sh'])
@@ -268,6 +327,11 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
             relative = Path(name).relative_to('toolchain')
             if digest(host_tc/relative) != expected:
                 raise ValueError('execution SDK copy changed: '+name)
+            # BUILD is regenerated below for its execution-platform role. Every
+            # unchanged copied payload must also match the final snapshot.
+            if relative != Path('BUILD.bazel'):
+                bind_inputs(copied, {str(host_tc/relative): {
+                    'source':str(execution_workspace/name), 'sha256':expected}})
         # Host BUILD is generated from explicit receipt identities, never edited
         # by opaque replacement of the source or compiler binaries.
         host_lines = [
@@ -294,7 +358,9 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
         current,_,_=python_runtime.inventory(origins['extra_python'],settings['python_stdlib'])
         if current!=python_files:raise ValueError('Python standard-library inventory changed during staging')
     snapshot={str(path.relative_to(root)):digest(path) for path in tc.rglob('*') if path.is_file()}
+    verify_bound_payload(copied, root, snapshot)
     result={'format':1,'scope':'native amd64 candidate SDK snapshot; no Bazel execution or hermeticity claim','inputs':inputs,'execution_host_dependencies':dependencies,'tool_execution_dependencies':tool_dependencies,'dependency_commands':commands,'tool_origins':{k:str(v) for k,v in origins.items()},'snapshot':snapshot,'python_runtime':python_info,'bazel_analyzed':False,'bazel_built':False,'target':target}
+    result['copied_payload_sources'] = {str(Path(name).relative_to(root)): binding for name, binding in copied.items()}
     result['sdk_source'] = {'kind': source_kind, 'root': str(sdk),
                             'plan_format': plan['format']}
     result['compiler_resource_version'] = version

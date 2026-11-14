@@ -2815,6 +2815,13 @@ and input invalidation. Evidence output must not overlap build state.
 The Bazel server exits after 300 idle seconds. SDK snapshots are copied once per
 content identity and verified before reuse; altered snapshots are rejected.
 The SDK receipt's source, host dependency and snapshot bindings must all match.
+SDK preparation also binds copied payload bytes to the inventoried source hashes.
+Files are checked before staged tools execute; the final snapshot is checked
+against those bindings before a receipt is issued. The copied_payload_sources
+receipt field records this correspondence, including contained directory aliases.
+Cross preparation checks unchanged copied execution-SDK payloads too; its
+execution-role BUILD metadata is generated separately. Final correspondence
+checks reuse the snapshot hashes rather than adding another full-SDK read. These checks do not establish OS filesystem sandbox isolation.
 This mode still uses a prepared SDK and does not establish bootstrap, installation,
 package parity, publication, full-system or performance qualification.
 .Pp

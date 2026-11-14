@@ -3,6 +3,9 @@
 from pathlib import Path
 import importlib.util
 import unittest
+import shutil
+import tempfile
+from unittest import mock
 from userland_sdk import sdk_sources, COMPILER_TOOLS
 
 
@@ -146,5 +149,80 @@ class SdkSources(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'format 1, 2 or 3'):
                 sdk_sources({'format':value,'build_environment':{}},{})
 
+
+class SdkCopyBindings(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path=Path(__file__).with_name('libmd-stage-tools.py')
+        spec=importlib.util.spec_from_file_location('sdk_copy_bindings_test',path)
+        cls.stage=importlib.util.module_from_spec(spec);spec.loader.exec_module(cls.stage)
+
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name);self.source=self.root/'source';self.source.mkdir();self.dest=self.root/'snapshot';self.dest.mkdir();self.file=self.source/'file';self.file.write_bytes(b'expected');self.bindings={str(self.file):self.stage.digest(self.file)}
+    def verify(self):self.stage.verify_bound_tree(self.source,self.dest,self.bindings,snapshot_root=self.dest)
+    def test_copied_file(self):
+        self.stage.copy_bound_file(self.file,self.dest/'file',self.bindings);self.verify()
+    def snapshot(self):
+        return {str(path.relative_to(self.dest)): self.stage.digest(path)
+                for path in self.dest.rglob('*') if path.is_file()}
+
+    def test_copy_metadata_and_final_receipt_binding(self):
+        self.file.chmod(0o755)
+        bindings=self.stage.copy_bound_file(self.file,self.dest/'file',self.bindings,metadata=True)
+        self.assertEqual((self.dest/'file').stat().st_mode & 0o777,0o755)
+        self.stage.verify_bound_payload(bindings,self.dest,self.snapshot())
+        (self.dest/'file').write_bytes(b'changed after copy')
+        with self.assertRaisesRegex(ValueError,'changed before receipt'):
+            self.stage.verify_bound_payload(bindings,self.dest,self.snapshot())
+    def test_tree_receipt_binding_rechecks_every_file(self):
+        shutil.copytree(self.source,self.dest,dirs_exist_ok=True)
+        bindings=self.stage.verify_bound_tree(self.source,self.dest,self.bindings,snapshot_root=self.dest)
+        self.assertEqual(bindings[str(self.dest/'file')]['source'],str(self.file))
+        self.stage.verify_bound_payload(bindings,self.dest,self.snapshot())
+        (self.dest/'file').write_bytes(b'changed after tree copy')
+        with self.assertRaisesRegex(ValueError,'changed before receipt'):
+            self.stage.verify_bound_payload(bindings,self.dest,self.snapshot())
+    def test_unbound_file(self):
+        with self.assertRaisesRegex(ValueError,'no input binding'):self.stage.copy_bound_file(self.file,self.dest/'file',{})
+        self.assertFalse((self.dest/'file').exists())
+    def test_transient_source_mutation_with_restoration(self):
+        original=shutil.copyfile
+        def torn(source,dest):
+            old=source.read_bytes();source.write_bytes(b'transient');original(source,dest);source.write_bytes(old)
+        with mock.patch.object(self.stage.shutil,'copyfile',side_effect=torn):
+            with self.assertRaisesRegex(ValueError,'copied payload differs'):self.stage.copy_bound_file(self.file,self.dest/'file',self.bindings)
+        self.assertEqual(self.stage.digest(self.file),self.bindings[str(self.file)])
+    def test_changed_tree_payload(self):
+        (self.dest/'file').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError,'differs from input inventory'):self.verify()
+    def test_added_and_missing_inventory(self):
+        for missing in [True,False]:
+            with self.subTest(missing=missing):
+                if not missing:(self.dest/'file').write_bytes(b'expected');(self.dest/'extra').write_bytes(b'extra')
+                with self.assertRaisesRegex(ValueError,'differs from input inventory'):self.verify()
+    def test_final_snapshot_resolves_directory_alias(self):
+        other=self.source/'other';other.mkdir()
+        (other/'library').write_bytes(b'library')
+        (self.source/'alias').symlink_to('other',target_is_directory=True)
+        for name in ['other/library','alias/library']:
+            self.bindings[str(self.source/name)]=self.stage.digest(self.source/name)
+        shutil.copytree(self.source,self.dest,dirs_exist_ok=True,symlinks=True)
+        bindings=self.stage.verify_bound_tree(self.source,self.dest,self.bindings,snapshot_root=self.dest)
+        snapshot=self.snapshot()
+        self.assertNotIn('alias/library',snapshot)
+        self.stage.verify_bound_payload(bindings,self.dest,snapshot)
+
+    def test_directory_cycle_is_rejected(self):
+        shutil.copytree(self.source,self.dest,dirs_exist_ok=True)
+        (self.dest/'cycle').symlink_to('.')
+        with self.assertRaisesRegex(ValueError,'directory cycle'):
+            self.verify()
+    def test_symlink_escape(self):
+        (self.dest/'file').symlink_to(self.file)
+        with self.assertRaisesRegex(ValueError,'escapes snapshot'):self.verify()
+    def test_symlink_between_sysroot_directories(self):
+        other=self.source/'other';other.mkdir();(other/'library').write_bytes(b'library');self.bindings[str(other/'library')]=self.stage.digest(other/'library')
+        (self.source/'alias').symlink_to('other/library');self.bindings[str(self.source/'alias')]=self.stage.digest(other/'library')
+        shutil.copytree(self.source,self.dest,dirs_exist_ok=True,symlinks=True);self.verify()
 
 if __name__ == '__main__':unittest.main()
