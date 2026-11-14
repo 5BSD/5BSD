@@ -139,3 +139,5 @@ amd64_generic_kernel_objects(name = "generic_network_policy_pf_pfsync", srcs = [
 bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["include/net/radix.h", "include/sys/pool.h", "openbsd_compat.h"],
     includes = ["include"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+
+exports_files(["kernel_source_identity.bzl"], visibility = ["//contrib/openbsd-pf:__subpackages__"])

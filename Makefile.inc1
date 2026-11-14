@@ -2287,7 +2287,8 @@ create-packages-world:	_pkgbootstrap _repodir .PHONY
 	${_+_}@cd ${.CURDIR}; \
 		PATH="${TMPPATH}" ${MAKE} -f Makefile.inc1 \
 			DESTDIR=${WSTAGEDIR} \
-			PKG_VERSION=${PKG_VERSION} create-world-packages
+			PKG_VERSION=${PKG_VERSION} \
+			SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} create-world-packages
 
 .ORDER: create-packages-world create-packages-sets
 .ORDER: create-packages-kernel create-packages-sets
@@ -2347,6 +2348,7 @@ create-source-src-package: _pkgbootstrap .PHONY
 	${PKG_CMD} -o ABI=${PKG_ABI} \
 		-o OSVERSION="${SRCRELDATE}" \
 		create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
+		-t ${SOURCE_DATE_EPOCH:Q} \
 		-M ${SSTAGEDIR}/src.ucl \
 		-p ${SSTAGEDIR}/src.plist \
 		-r ${SRCDIR} \
@@ -2378,6 +2380,7 @@ create-source-src-sys-package: _pkgbootstrap .PHONY
 	${PKG_CMD} -o ABI=${PKG_ABI} \
 		-o OSVERSION="${SRCRELDATE}" \
 		create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
+		-t ${SOURCE_DATE_EPOCH:Q} \
 		-M ${SSTAGEDIR}/src-sys.ucl \
 		-p ${SSTAGEDIR}/src-sys.plist \
 		-r ${SRCDIR} \
@@ -2433,6 +2436,8 @@ create-world-packages:	_pkgbootstrap .PHONY
 	    REPODIR=${REPODIR} \
 	    WSTAGEDIR=${WSTAGEDIR} \
 	    PKG_VERSION=${PKG_VERSION} \
+	    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
+	    PKG_OUTPUT_DIR=${PKG_OUTPUT_DIR} \
 	    MK_AUTO_OBJ=yes \
 	    stagepackages
 
@@ -2449,6 +2454,7 @@ create-sets-packages: .PHONY
 		echo "--> Processing manifest: $$manifest"; \
 		${PKG_CMD} -o ABI=${PKG_ABI} -o OSVERSION="${SRCRELDATE}" \
 			create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
+		-t ${SOURCE_DATE_EPOCH:Q} \
 			-M $$manifest \
 			-o "${REPODIR}/${PKG_ABI}/${PKG_OUTPUT_DIR}" \
 			|| exit 1; \
@@ -2479,6 +2485,7 @@ create-dtb-package:	.PHONY
 	${PKG_CMD} -o ABI=${PKG_ABI} -o ALLOW_BASE_SHLIBS=yes \
 		-o OSVERSION="${SRCRELDATE}" \
 		create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
+		-t ${SOURCE_DATE_EPOCH:Q} \
 		-M ${KSTAGEDIR}/${DISTDIR}/dtb.ucl \
 		-p ${KSTAGEDIR}/${DISTDIR}/dtb.plist \
 		-r ${KSTAGEDIR}/${DISTDIR} \
@@ -2516,6 +2523,7 @@ create-kernel-packages-flavor${flavor:C,^""$,${_default_flavor},}: _pkgbootstrap
 	${PKG_CMD} -o ABI=${PKG_ABI} -o ALLOW_BASE_SHLIBS=yes \
 		-o OSVERSION="${SRCRELDATE}" \
 		create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
+		-t ${SOURCE_DATE_EPOCH:Q} \
 		-M ${KSTAGEDIR}/${DISTDIR}/kernel.${INSTALLKERNEL}${flavor}.ucl \
 		-p ${KSTAGEDIR}/${DISTDIR}/kernel.${INSTALLKERNEL}${flavor}.plist \
 		-r ${KSTAGEDIR}/${DISTDIR} \
@@ -2559,6 +2567,7 @@ create-kernel-packages-extra-flavor${flavor:C,^""$,${_default_flavor},}-${_kerne
 	${PKG_CMD} -o ABI=${PKG_ABI} -o ALLOW_BASE_SHLIBS=yes \
 		-o OSVERSION="${SRCRELDATE}" \
 		create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
+		-t ${SOURCE_DATE_EPOCH:Q} \
 		-M ${KSTAGEDIR}/kernel.${_kernel}/kernel.${_kernel}${flavor}.ucl \
 		-p ${KSTAGEDIR}/kernel.${_kernel}/kernel.${_kernel}${flavor}.plist \
 		-r ${KSTAGEDIR}/kernel.${_kernel} \

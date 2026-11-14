@@ -152,7 +152,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
         if revision not in text(label+'-running-kernel','/usr/bin/uname -v'):raise ValueError('running kernel revision differs')
         if sha(label+'-kernel','/boot/kernel/kernel')!=expected_kernel:raise ValueError('installed kernel digest differs')
         packages(label+'-packages',version,expected=baseline_names if dataset==old else names)
-        command(label+'-checksums',pkg+' check -s -a')
+        command(label+'-checksums',pkg+' check -s -a -v')
         if guid(label+'-shared-guid',shared)!=shared_guid:raise ValueError('persistent dataset identity changed')
         mounted(label+'-shared-mount',shared,loaded['mountpoint'])
         command(label+'-sshd','/usr/sbin/service sshd status')
@@ -220,7 +220,7 @@ def exercise(loaded,invoke,console,check,ssh,plan,build_report,output,service_pr
             command('remove-obsolete',target+' delete -y '+
                     ' '.join(q(name) for name in sorted(removed)))
         packages('candidate-packages',r['version'],target)
-        command('candidate-checksums',target+' check -s -a')
+        command('candidate-checksums',target+' check -s -a -v')
         if sha('candidate-kernel',root+'/boot/kernel/kernel')!=p['kernel_sha256']:raise ValueError('new candidate kernel differs')
         if guid('candidate-identity-after-install',new)!=new_guid:raise ValueError('candidate replaced during install')
         command('target-devfs-unmount','/sbin/umount '+q(root+'/dev'))

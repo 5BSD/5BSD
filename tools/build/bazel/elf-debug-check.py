@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Check an ELF GNU debug link against its separate debug file and CRC."""
+"""Check split ELF debug links, CRCs and optional GNU build-ID pairing."""
 import argparse
 import hashlib
 import json
@@ -34,16 +34,33 @@ def sections(data):
         if end < 0:
             raise ValueError('invalid section name')
         name = names[entry[0]:end].decode('ascii')
-        if name in ('.gnu_debuglink', '.debug_info', '.zdebug_info', '.symtab'):
+        if name in ('.gnu_debuglink', '.debug_info', '.zdebug_info', '.symtab', '.note.gnu.build-id'):
             if name in result:
                 raise ValueError('duplicate inspected section')
+            if name == '.note.gnu.build-id' and entry[1] != 7:
+                raise ValueError('GNU build-ID section must be a note')
             result[name] = payload(entry)
     return endian, result
 
 
-def verify(binary, debug, *, module=False, kernel=False):
+
+def build_id(note, endian):
+    """Read one GNU build-ID note without assuming its digest algorithm."""
+    if len(note) < 20:
+        raise ValueError('invalid GNU build-ID note')
+    name_size, size, kind = struct.unpack_from(endian + 'III', note)
+    if (name_size != 4 or kind != 3 or note[12:16] != b'GNU\0' or
+            not size or len(note) != 16 + ((size + 3) & ~3) or
+            any(note[16 + size:])):
+        raise ValueError('invalid GNU build-ID note')
+    return note[16:16 + size]
+
+
+def verify(binary, debug, *, module=False, kernel=False, retain_symbols=False):
     if module and kernel:
         raise ValueError("choose kernel or module debug validation")
+    if retain_symbols and (module or kernel):
+        raise ValueError("choose ordinary retained-symbol, kernel or module validation")
     runtime = binary.read_bytes()
     symbols = debug.read_bytes()
     endian, runtime_sections = sections(runtime)
@@ -60,6 +77,9 @@ def verify(binary, debug, *, module=False, kernel=False):
         if not runtime_sections.get('.symtab'):
             raise ValueError('kernel lacks its loader symbol table' if kernel else
                              'kernel module lacks its loader symbol table')
+    elif retain_symbols:
+        if not runtime_sections.get('.symtab'):
+            raise ValueError('installed binary lacks its required static symbol table')
     elif '.symtab' in runtime_sections:
         raise ValueError('installed binary retains static symbol sections')
     if not any(debug_sections.get(n) for n in ('.debug_info', '.zdebug_info')):
@@ -74,10 +94,18 @@ def verify(binary, debug, *, module=False, kernel=False):
     expected = struct.unpack_from(endian + 'I', link, crc_offset)[0]
     if expected != zlib.crc32(symbols):
         raise ValueError('debug link CRC differs')
+    note = '.note.gnu.build-id'
+    identity = None
+    if note in runtime_sections or note in debug_sections:
+        if note not in runtime_sections or note not in debug_sections:
+            raise ValueError('binary/debug GNU build-ID presence differs')
+        identity = build_id(runtime_sections[note], endian)
+        if identity != build_id(debug_sections[note], debug_endian):
+            raise ValueError('binary/debug GNU build IDs differ')
     return {'binary': str(binary), 'debug': str(debug),
             'binary_sha256': hashlib.sha256(runtime).hexdigest(),
             'debug_sha256': hashlib.sha256(symbols).hexdigest(),
-            'debuglink_crc32': expected, 'status': 'passed'}
+            'debuglink_crc32': expected, 'build_id': identity.hex() if identity is not None else None, 'status': 'passed'}
 
 
 if __name__ == '__main__':
@@ -88,8 +116,9 @@ if __name__ == '__main__':
     kind = p.add_mutually_exclusive_group()
     kind.add_argument('--module', action='store_true', help='require the loader symbol table in a kernel module')
     kind.add_argument('--kernel', action='store_true', help='require executable ELF and the kernel loader symbol table')
+    kind.add_argument('--retain-symbols', action='store_true', help='require an ordinary ELF artifact to retain its static symbol table')
     a = p.parse_args()
-    result = verify(a.binary, a.debug, module=a.module, kernel=a.kernel)
+    result = verify(a.binary, a.debug, module=a.module, kernel=a.kernel, retain_symbols=a.retain_symbols)
     with a.output.open('x') as f:
         json.dump(result, f, indent=2)
         f.write('\n')

@@ -8,8 +8,11 @@ def _impl(ctx):
     python = ctx.executable.python
     python_home = ctx.file.python_home
     source = ctx.file.src
-    files = [python, source, python_home] + ctx.files.data + ctx.files.runtime
-    targets = [ctx.attr.python, ctx.attr.python_home] + ctx.attr.data + ctx.attr.runtime
+    tools = ctx.attr.tools if hasattr(ctx.attr, "tools") else []
+    files = [python, source, python_home] + ctx.files.data + ctx.files.runtime + [
+        file for tool in tools for file in tool[DefaultInfo].files.to_list()
+    ]
+    targets = [ctx.attr.python, ctx.attr.python_home] + ctx.attr.data + ctx.attr.runtime + tools
     # Configured outputs can share short_path while naming different files.
     # A runfiles tree cannot represent both; never silently select one ABI.
     all_files = depset(files, transitive = [target[DefaultInfo].default_runfiles.files for target in targets])
@@ -66,6 +69,8 @@ def _host_artifact(ctx):
 # Override only this rule's test execution group. Kernel ABI constraints stay on
 # artifact dependencies; the test and interpreter use the selected execution SDK.
 _HOST_ARTIFACT_ATTRS = dict(_ATTRS,
+    tools = attr.label_list(allow_files = True, cfg = config.exec("test"),
+        doc = "Host tools in the same execution configuration as the test runtime; target artifacts remain data."),
     python = attr.label(default = "@bsd_sdk//toolchain:extra_python", executable = True, allow_single_file = True, cfg = config.exec("test")),
     python_home = attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = config.exec("test")),
     runtime = attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib"], allow_files = True, cfg = config.exec("test")))

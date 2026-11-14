@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Current gate ledger (2026-11-14)
+
+All six gates remain open. Update this ledger when evidence changes; dated
+execution notes below retain history and do not override these current rows.
+Make remains production/default, BIP is excluded, and host installation/reboot
+is not authorized.
+
+| Gate | Current evidence and remaining work |
+| --- | --- |
+| 1. Runtime and upgrade | Lifecycle fixes and older complete scenarios exist. Fresh VM R2 passes new-kernel authentication/services and rollback boot, then fails the 3,600-second phase during rollback checksums. Final rollback authentication/services, shared-data persistence and unused-BE deletion remain unproven for this candidate. Preserve failure evidence and retain all checks in the next run. |
+| 2. AMD64 parity/configurations | Full R11 passes 27 tests and captures all 450 selected packages. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
+| 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R11 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
+| 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
+| 6. ARM64 Tier 1 | Native CSU R3 matches all ten installed objects against the explicit older-seed Make component profile. Full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+
+Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r11-20261114.
+Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
+Kernel proof: /usr/obj/usr/src/bazel-current-kernel-parity-r5-20261114.
+Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114.
+ARM64 CSU proof: /usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114.
+
 ## Configuration completion checklist
 
 [BUILD-OPTIONS.md](BUILD-OPTIONS.md) separates source kernel diagnostics from
@@ -11,6 +33,280 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The maintained split-debug checker now additionally requires valid GNU build-ID
+notes on both files when either has one, and equal identities within the pair.
+ELF class/type/symbol policy, debuglink filename and CRC checks remain strict;
+files with no GNU identity on either side retain their existing supported policy.
+A retained before/after real-module probe shows the legacy checker accepts five
+CRC-consistent identity/format faults, while the new checker rejects them. The
+new native module test passes seven cases; both existing retained-symbol tests
+and the runtime journal/policy tests also pass in focused checker R1. Its Bazel
+report records five outer passing test cases; script logs contain the individual
+unittest cases. Current kernel parity/debug regression R5 passes as well.
+Evidence: /usr/obj/usr/src/bazel-debug-build-id-draft-r1-20261114 and
+/usr/obj/usr/src/bazel-closeout-checker-native-r1-20261114. This strengthens own-pair
+binding; it does not accept cross-build module ID differences or establish full
+DWARF semantic equivalence. The generic module comparison remains strict.
+Existing build-bsd format-5 inputs select the maintained tests; helper, tests and
+manual change together without a new C option or production backend switch.
+
+
+Full AMD64 R11 completes with all 27 expanded tests, 450 indexed packages and
+1,556 captured files / 647,862,684 bytes. Kernel parity R5 again passes strict
+allocated/symbol/CTF checks, matches the full R11 kernel payload digest and passes
+kernel split-debug positive/five-rejection regression checks. The maintained
+focused checker run passes all five selected suites. R10/R11 index inspection
+finds only bsd-build, kernel-generic and kernel-generic-dbg archive digests changed;
+this is an index observation, not complete unpacked-payload comparison.
+
+Fresh VM R2 is terminal failed at rollback checksums after its 3,600-second phase,
+not a passing upgrade. It completed 28 checks and 116 recorded root operations,
+including new-kernel SSH/su and manifest services plus rollback console. The
+partial rollback scan reached eight progress dots. Source inspection confirms
+these are coarse per-package progress, not a completed scan or a proof of hang.
+Observed max QEMU RSS is 3,344,449,536 bytes and overlay allocation 2,176,692,736
+bytes, within declared budgets; these are not controlled performance figures.
+The runner previously omitted the failing operation's record when a deadline
+raised. It now always journals process status, elapsed time, error and partial
+output hash after child cleanup, and never binds a pre-existing log to an attempt.
+Seven actual-process tests pass locally and through maintained Bazel; policy tests
+also pass. Full checksum scans now use pkg's verbose per-package diagnostics,
+without dropping verification. No host installation or publication occurred.
+Normal frontend C options are unchanged; the maintained VM helper, tests, source
+bindings and manual are updated together.
+
+
+Seven-module source-identity follow-up R3 now builds all 21 module/full/debug
+outputs and passes the maintained inventory test. Independent per-module review
+retains only allocated GNU build-ID digest differences for if_lio, jedec_dimm,
+p2sb, sdio, superio, tcp_bbr and tcp_rack: all other allocated contracts,
+relocations and external symbols match Make. All seven CTF payloads are byte
+exact; all native split-debug checks pass and each native binary/debug build ID
+matches its own pair. Strict comparison still returns review-required; no build-ID
+waiver or completed module acceptance is claimed. Evidence is retained in
+/usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114, with public
+capture bindings, original Make references and checker/driver hashes.
+The source correction declares each module's relative source-directory identity
+from its maintained recipe, uses lexical repository-prefix mapping at compile
+time and preserves the default canonical policy elsewhere. No product action
+queries Make and no ELF bytes are rewritten. Shared AMD64/cross declarations
+support the input; cross-module builds/runtime are not established by this run.
+
+
+Configured-output query correction: the seven-module follow-up exposed two
+configurations for the export-all superio alias (trimmed and untrimmed test
+fragments). The strict inventory correctly rejected duplicate actual labels.
+Public cquery JSON protocol inspection retains both checksums; config(..., target)
+selects all 21 requested roots once, including the alias. Maintained target and
+test inventory queries now use that operator, retaining duplicate, compatibility
+and per-selector binding rejection. All 34 source inventory unit cases pass;
+the real module R3 inventory passes and its native inventory test also passes
+while product compilation continues. Evidence roots are
+/usr/obj/usr/src/bazel-module-alias-query-r2-20261114 and r3-20261114, and
+/usr/obj/usr/src/bazel-module-source-identity-native-r3-20261114.
+The first read-only JSON diagnostic omitted the qualification JAVA_HOME and
+failed on a different local JDK discovery; the next retained attempt restores
+the declared environment. Product frontend execution already supplies it.
+The earlier module R1 also retains a rejected unsupported Starlark hex escape,
+corrected to octal before R2. R2 retains the alias ambiguity failure. No component
+is dropped to avoid these failures and no duplicate result is silently selected.
+No C option or production backend selection changes; the maintained format-5
+backend, query helper, tests and manual carry the correction together.
+
+
+ARM64 CSU native R3 now completes successfully, including the real target/host
+preprocessing ABI regression. The independent original-Make comparison passes
+all ten installed startup objects: exact allocated sections, symbols/relocations,
+ELF64 AArch64 relocatable identity and logical installation metadata. The parent
+production archive selects identical child bytes. Evidence is retained under
+/usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114 with public capture bindings,
+original reference hashes, maintained checker hashes and the driver.
+This is the actual component build with recorded older Make ARM64 seed/profile,
+including WITHOUT_BRANCH_PROTECTION, not a refreshed full ARM64 world, native
+bootstrap, complete DWARF comparison or runtime acceptance. Continue compiler
+runtime/libsys/libc/threads/rtld and full Tier 1 world/kernel/pkgbase/runtime work.
+
+
+Cross-generator correction: SDK staging now declares configured_compile_inputs
+using the execution ABI from the bound host receipt, while retaining the existing
+narrow compile_inputs groups. The generator's explicit compiler-containment guard
+is unchanged. Six source declaration sites (including repeated shell/ncurses
+variants) select that configured group. An execution_c_runtime role supplies the
+host libc/libsys for source-built ncurses helpers, separately from target libraries.
+The initial ARM64 R2 experiment using all_files passed the previous analysis
+boundary but failed three ncurses generators on target libc's unsupported machine.
+Its logs remain retained. That broader input change was discarded after review
+of the documented October 26 input-size regression; no all_files workaround is
+part of the final source change.
+Fresh native SDK R6 verifies 8,345 files and component cross SDK R3 verifies
+16,193 files. AMD64 script-cpp R1 passes the new actual target/execution ABI test
+and builds the affected shell, sysdecode and ncurses generator outputs. ARM64
+CSU R3 also passes that ABI test, retaining strict narrow compiler declarations;
+its remaining host-linker/startup build and original-Make comparison are pending.
+The test preprocesses real declared OS headers in both configurations and checks
+CPU, pointer width and an expanded OS version without executing target code.
+Evidence roots: /usr/obj/usr/src/bazel-script-cpp-amd64-native-r1-20261114,
+/usr/obj/usr/src/bazel-csu-arm64-native-r3-20261114,
+/usr/obj/usr/src/bazel-closeout-sdk-r6-20261114 and
+/usr/obj/usr/src/bazel-arm64-csu-sdk-r3-20261114. SDK R3 remains an older Make
+ARM64 component seed, not a current world or native bootstrap proof. Runtime VM R2
+is still running. Normal build-bsd format-5 inputs and SDK staging helpers carry
+this change; no new C option or production backend default is introduced.
+
+
+ARM64 startup declarations now share the source-owned CSU recipe with AMD64,
+including distinct startup variants, ordered partial links and installed metadata.
+AMD64 native component R1 builds; preservation audit R2 proves all ten object
+bytes and exact installation rows unchanged against completed full R10, and the
+parent production archive selects the child bytes. Audit R1 failed in its own
+inventory parser on directory/link records without source fields; driver/result
+remain retained, and R2 selects source-bearing records explicitly.
+Fresh component cross SDK R2 verifies 16,193 files with current AMD64 execution
+SDK R5 and the explicitly recorded older Make ARM64 seed. Native ARM64 CSU R1
+is rejected during analysis: ncurses nomacros_header selects the host compiler
+but its hardwired compile_inputs names the target bundle. Preserve this declared-
+input rejection; correct the generator's selected C toolchain dependency before
+retrying. No ARM64 startup parity or full current world/runtime acceptance is
+claimed. Existing build-bsd format-5 architecture/SDK inputs are used; no C option
+or production backend default changes. Evidence roots are
+/usr/obj/usr/src/bazel-csu-amd64-preservation-r2-20261114,
+/usr/obj/usr/src/bazel-arm64-csu-sdk-r2-20261114 and
+/usr/obj/usr/src/bazel-csu-arm64-native-r1-20261114.
+
+
+Full selected AMD64 R10 now passes all 25 expanded tests with the equivalent
+explicit CTF version label. Its immutable capture contains 1,554 files totaling
+647,801,494 bytes. The actual packaged kernel is independently extracted from
+the uniquely claiming package and matches both its captured payload inventory
+and focused R11's strictly qualified kernel SHA-256
+281e7f04efa2f3ef47aa73e3d5ea204e7915879c31cd6e6189997c268d2b3f3a.
+Private upgrade repository R2 verifies all 450 packages, catalogue signatures and
+actual wrong-key rejection. It is a disposable qualification fixture, not combined
+hardware publication; configured repository pointers are unchanged.
+Upgrade VM R2 is running with the same 2 GiB guest, explicit RSS/overlay bounds,
+a 3,600-second upgrade phase and a 7,200-second whole-run deadline calibrated
+from R1's measured timeout. No checks are removed. Do not report runtime success
+until its terminal result proves every upgrade/rollback/persistence/removal check.
+Evidence roots: /usr/obj/usr/src/bazel-closeout-system-native-r10-20261114,
+/usr/obj/usr/src/bazel-current-runtime-request-r2-20261114,
+/usr/obj/usr/src/bazel-current-upgrade-repository-r2-20261114 and
+/usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114.
+Normal build-bsd uses the existing maintained format-5 path; no frontend C flag
+or production/default backend change is required for these qualification inputs.
+
+
+Focused kernel R11 now passes the unchanged strict kernel parity checker R4:
+allocated section metadata/content (GNU build-ID content separately reported),
+loader symbols and merged CTF bytes match the independent current Make control.
+The maintained split-debug checker also passes. The sole remaining R10 CTF
+string-inventory difference was the omitted version label: R11 explicitly uses
+Make's VERSION query, with command/source hashes retained in label-input.json.
+No ELF payload or comparison output was normalized. Evidence is retained under
+/usr/obj/usr/src/bazel-current-kernel-parity-r4-20261114, including captured-output
+bindings, driver and both checker reports. This proves the focused equivalent-input
+GENERIC kernel contract, not all package/debug/configuration/runtime gates or
+automatic source-derived label selection. Refresh the full graph with that input
+before constructing the next upgrade candidate.
+
+
+Latest kernel follow-up: full AMD64 R9 passes all 25 expanded tests. Focused
+kernel R10 additionally preserves imported PF built-in source identity from the
+kernel's ../contrib declarations, without changing module source-path policy or
+rewriting ELF output. The strict kernel parity R3 reaches its CTF-only rejection:
+all allocated section contracts (GNU build-ID content reported separately) and
+loader symbol identities match the independent Make control. The maintained
+kernel split-debug check also passes. These are not complete kernel acceptance.
+CTF inspection identifies a missing explicit version-label input: native uses
+ctfconvert's unlabelled default while Make exports its source-derived VERSION.
+The string inventories differ only in that label; exact CTF equality remains
+required until an equivalent-input rebuild proves it. Automatic version-label
+selection, full package refresh and runtime qualification remain open.
+Evidence: /usr/obj/usr/src/bazel-current-kernel-native-r10-20261114/receipt.json
+and /usr/obj/usr/src/bazel-current-kernel-parity-r3-20261114/result.json.
+
+
+ARM64 preparation continues while AMD64 R7 remains the active full build.
+The component cross SDK also passes full verification of 16,193 snapshot files
+and explicit ARM64 target/AMD64 execution bindings; its recorded target seed
+is older Make output, not a qualified native SDK or refreshed ARM64 world.
+The original Make aarch64 CSU component reference passes; its separate retained
+ELF/installation audit verifies all ten startup objects as ELF64 little-endian
+AArch64 relocatables with matching payload hashes and logical clibs-dev metadata.
+This uses the recorded older ARM64 Make SDK and does not qualify a current ARM64
+world, native CSU producer or runtime. The shared CSU declaration patch remains
+a temporary unapplied draft until the AMD64 capture is complete. The ARM64
+libsys original-Make component reference now also passes; its ELF audit covers
+the shared library and all 471 members of each static/PIC archive as AArch64.
+This is a comparison baseline with the recorded older SDK, not native migration
+or runtime acceptance. The ARM64 compiler-runtime Make reference also passes
+with original recipe metadata: 151 regular sources and 125 separately compiled
+outlined-atomic variants. All 276 installed archive members audit as AArch64
+relocatables. A source-owned native draft preserves these variants and archive
+order; it is retained unapplied beside the reference until the AMD64 capture
+finishes and actual native comparison can run. No maintained
+frontend behavior or production backend selection changes for this audit.
+
+AMD64 R8 passes all 21 expanded tests with SDK R5; Bazel reports 89,830
+cached actions and eight processwrapper actions. This is observed warm reuse,
+not independent bootstrap or a controlled performance comparison. Matched-epoch
+original Make archive R2 passes all 450 packages; its comparison removes every
+mtime/nanosecond difference while retaining payload/size/manifest differences.
+Bounded per-artifact diagnosis classifies 716 allocated-build-ID-digest-only
+module differences, seven other module differences and one kernel classification
+failure, without accepting any. The kernel-specific contract separately rejects
+real allocated-section differences and CTF is not equal.
+
+Two producer defects are now corrected: AMD64 built-in source paths lacked the
+logical source-root prefix, and unconditional option re-addition reordered three
+unchanged options in kern_conf. Native input-fix R4 passes all five suites,
+including eighteen actual parser cases across the three source platforms.
+Earlier failures remain recorded: execution/target runfile configuration,
+standard location expansion, precreated empty Bazel tree outputs and omitted
+RISC-V SoC metadata in the test closure. Collision and stale-content guards stay
+strict. Rebuild the full selected graph before claiming the kernel fixes pass
+allocated/symbol/CTF/debug or runtime parity.
+
+The R7 upgrade VM passes new-kernel boot/authentication/manifest service checks
+and boots back into the old BE, then exhausts its 2,400-second upgrade phase
+before rollback checksums and unused-BE removal. Its result remains failed.
+Observed installation took 910 seconds, candidate checksums 394, active checksums
+260 and new-boot checksums 237; a fresh bounded budget must cover all remaining
+checks under TCG. Keep the 2 GiB guest and memory/disk budgets, and qualify the
+corrected kernel before launching the next complete upgrade run.
+
+Current indexed ELF review completes with 1,325 passing contracts and 724
+review-required results, confined to the kernel and module packages. Raw notes,
+allocated sections and relocations remain strict; no differences are waived.
+The maintained Make package recipes now pass the resolved explicit epoch to
+pkg -t and honor PKG_OUTPUT_DIR for world as well as kernel placement. The real
+pkgbase-inputs regression R2 passes PKG_TIMESTAMP=0 and SOURCE_DATE_EPOCH=946684800
+with three actual packages each, matching payload and manifest file timestamps
+and unchanged latest/latest-built pointers. R1's incorrect expectation for the
+two format-metadata header timestamps is retained as a failed test; those
+headers are independently zero in pkg's buffer writer. Fresh independent Make
+archives with matched epoch inputs are still required. These Makefile changes
+stale the old source-bound SDK receipt; prepare a fresh SDK before further native
+runs, rather than rebinding R4. Fresh SDK R5 now passes full verification of
+8,345 files and has a byte-identical toolchain snapshot to R4, with new source
+bindings. Full AMD64 R8 is running with that SDK and both retained-symbol tests;
+cache reuse and its final outcome remain unproven until completion. Original
+Make matched-epoch archive rebuild R2 is running in a separate output directory
+under the standard repository, preserving the first 450-package reference.
+Normal build-bsd uses the maintained backend
+changes; no new C option or production backend switch is introduced.
+
+The current original-Make split-debug reference audit passes all 724 kernel/module
+pairs. The first strict userland audit passes 1,077 pairs and reports two bootloader
+DSOs whose source policy deliberately retains symbol tables. A general strict
+retain-symbols checker draft preserves default rejection, requires symbols in
+retain mode and passes real artifact/rejection tests. With that explicitly
+selected draft, original-Make reference policy discovery passes all 1,079 world
+pairs (1,077 stripped, two retained). There are no pathname waivers. After R7 completed, the checker change was applied. Both real native userboot
+artifact regression targets pass through the current frontend (twelve unittest
+cases), including missing-symbol, CRC, filename and policy-conflict rejection.
+Full current native package debug-pair policy comparison remains required.
+Inputs/results are retained beside the fresh stages.
+
 The refreshed original Make archive creation now passes all 450 selected packages
 at /usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114. Its result binds
 both fresh stage results, all archive hashes, commands and unchanged latest and
@@ -18,14 +314,25 @@ latest-built pointers. No catalogue signing/combined publication occurred.
 Fresh corrected SDK R4 verifies 8,345 snapshot files, schema 2 and a separate
 four-declaration count. Artifact-contract native R3 passes all six suites through
 the current C frontend, including actual stager-to-source-consumer metadata.
-Full selected AMD64 native R7 is running, using the exact Make vers.c revision
-dev-n288204-e4d2059c4b4f and matching package version; no final outcome is inferred.
+Full selected AMD64 native R7 now passes all nineteen expanded tests, using the
+exact Make vers.c revision dev-n288204-e4d2059c4b4f and matching package version.
+Its verified capture contains 1,551 files / 647,563,521 bytes. The complete
+450-package copy verifies; current archive comparison reports identical package
+sets but raw payload/timestamp/size differences, not full parity. ELF review and
+the signed inactive-BE upgrade VM are running. The current manifest-derived
+service helpers and signed-repository/wrong-key controls pass. No wider gate
+is closed by build action success.
 
 Captured R6 compiler/runtime exploration now passes with a package-derived ELF
 NEEDED closure, native runtime linker and verified loaded paths: eight packages,
 eighteen selected payloads, compiler/linker version checks and six compile/link
 ELF-machine checks over AMD64, ARM64 and RISC-V. The missing-library-directory
 negative reveals actual host fallback and rejects it through loaded-path checks.
+Follow-up toolset R2 extends the same package-derived runtime containment checks
+to all eight compiler-tool roles: clang, cpp, LLD, ar, nm, objcopy, strip and
+objdump. Eight packages and twenty-four selected payloads satisfy those checks;
+the six header-free compile/link checks still pass. This remains frozen R6
+exploration, not a maintained SDK producer or a complete bootstrap qualification.
 This is an explicitly retained exploratory probe, not a maintained SDK producer,
 independent second-stage world, architecture runtime or sandbox qualification.
 It supplies evidence for the remaining native SDK/runtime boundary work without

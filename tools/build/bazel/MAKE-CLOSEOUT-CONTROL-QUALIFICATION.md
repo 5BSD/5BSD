@@ -1389,3 +1389,259 @@ positive capture. The loader returns success but resolves fifteen host library
 paths; the containment check rejects them. This establishes that successful
 execution or setting LIBRARY_PATH alone cannot qualify the native runtime
 boundary. Neither exploratory driver replaces the maintained build frontend.
+
+## ARM64 startup reference preparation (2026-11-14)
+
+`/usr/obj/usr/src/bazel-arm64-csu-make-r1-20261114/receipt.json` passes the
+maintained install-reference.py cross-Make component build for lib/csu/aarch64.
+The separate `elf-installation-audit.json` verifies all ten installed objects
+against component.METALOG: payload size/SHA-256, ELF64 little-endian ET_REL,
+AArch64 machine 183, logical root:wheel mode 0444 and package=clibs-dev.
+Audit SHA-256: `62fca304137fb495f0f8ff5cb761069b5c19cdf9c18a10ed4aea2a59085e1f09`.
+The reference uses the explicitly recorded older /usr/obj/usr/src/arm64.aarch64
+SDK/profile, not a newly qualified ARM64 world. No host installation occurs.
+
+The native shared CSU macro/ARM64 producer is an unapplied temporary draft.
+AMD64 full R7 is still live; source producer changes wait for its frozen capture.
+No ARM64 Bazel parity, boot/runtime or native bootstrap claim follows from this
+Make reference. No C frontend flag/helper/manual behavior changes are required
+by the reference audit; normal build-bsd remains Make production/default.
+
+The fresh component SDK in `bazel-arm64-csu-sdk-r1-20261114` also passes
+userland_sdk.receipt_architecture and verify_snapshot over 16,193 files.
+`verification.json` records the receipt/verifier hashes and snapshot digest
+`9dac3640f9b093de44a3b1511d96c139e8cc58757e9ea1ea870734dea878d06d`.
+It separates target aarch64-unknown-freebsd16.0 from execution
+x86_64-unknown-freebsd16.0. The explicit target seed remains the older Make SDK;
+this does not establish native-produced SDK, current ARM64 world or runtime.
+
+## Native compiler toolset runtime closure (2026-11-14)
+
+`/usr/obj/usr/src/bazel-native-execution-toolset-r2-20261114/result.json` passes
+the unchanged retained exploratory driver with an expanded explicit tool-role
+request: clang/cpp, LLD, llvm-ar, llvm-nm, llvm-objcopy, llvm-strip and llvm-objdump.
+The copied request/driver and input digests are retained beside the result.
+Package-derived ELF NEEDED closure selects eight hash-verified frozen R6 packages
+and twenty-four payloads. All eight loader traces stay in captured payloads,
+and all tool --version commands pass with clean loader settings. The six
+header-free compile/link ELF-machine checks still pass across AMD64, ARM64 and
+RISC-V. This tests the compiler-tool execution roles missing from the earlier
+two-program probe; it does not qualify full SDK headers/libraries, dynamic
+plugins, code generators, second-stage world builds or filesystem sandboxing.
+The existing host-fallback negative remains separate evidence, and current R7
+AMD64 capture/Make comparison/runtime qualification are still pending.
+No normal frontend behavior changes: Make remains production/default.
+
+## ARM64 libsys reference (2026-11-14)
+
+`/usr/obj/usr/src/bazel-arm64-libsys-make-r1-20261114/receipt.json` passes
+install-reference.py for the original lib/libsys component, with 16 jobs and
+private objects/NO_ROOT stage. The original older ARM64 SDK/profile remains
+unchanged; sdk_reconfigured, bazel_parity_qualified, runtime_qualified and
+host_installed are all false. This supplies the next architecture-specific
+comparison baseline; it is not a current full ARM64 world build.
+
+`elf-reference-audit.json` verifies libsys.so.7 as ELF64 AArch64 DYN and every
+member of libsys.a and libsys_pic.a (471 each) as ELF64 AArch64 REL. The retained
+llvm-readelf headers are checked against complete llvm-ar member counts;
+receipt, METALOG, artifact and inspection-tool hashes are recorded. Audit digest:
+`ad5e2eee3be185caf2fe593e502981c680e376344db767b3e899427f24894a98`.
+This identity audit does not establish symbol/instruction/ABI equivalence or
+runtime behavior. Native libsys and required compiler-runtime/libc architecture
+work remain open. ARM64 syscall stubs must retain their source-owned GNU
+property-note generation and handwritten wrapper selection, not reuse AMD64
+assembly. The active AMD64 R7 capture is still pending. These reference and
+documentation changes require no C frontend behavior change; Make remains
+production/default.
+
+## ARM64 compiler-runtime reference and draft (2026-11-14)
+
+`/usr/obj/usr/src/bazel-arm64-compiler-rt-make-r1-20261114/receipt.json` passes
+the maintained original-Make component reference with --make-meta and 16 jobs.
+The recorded older ARM64 SDK/profile is unchanged; no host installation or
+Bazel parity/runtime qualification is claimed. `elf-reference-audit.json`
+checks all 276 installed archive members as AArch64 ET_REL, including all 125
+outlined atomics, and binds artifact/receipt/METALOG/inspection-tool hashes.
+Audit SHA-256: `6b778912a725b7ef3599618b6f511c7078e975248f78f24c3f07db33f3423928`.
+
+The retained native-draft directory is explicitly unapplied/untested. Its
+source-owned declaration draft preserves 151 regular source selections plus
+125 independent LSE operation/size/model compiler variants and original archive
+member order. Skylib copy_file with allow_symlink supplies declared assembly
+identities, rather than executing Make or a shell compile wrapper. Actual native
+analysis/build, full member/symbol/code/metadata comparison and AMD64 preservation
+remain required after the active R7 capture finishes. No production behavior
+or C frontend flags change from this preparation; Make remains default.
+
+## Current original-Make split-debug coverage (2026-11-14)
+
+Under bazel-current-make-stage-r1-20261114, kernel-debug-pair-audit.json passes
+all 724 selected kernel/module split-debug pairs with the maintained checker,
+including retained loader symbols, separate debug information and actual
+filename/CRC checks. world-debug-pair-audit.json initially passes 1,077 pairs
+and explicitly reports two retained-symbol bootloader DSOs. Make's
+stand/userboot/userboot/Makefile sets STRIP empty; native variants already use
+bsd_debug_split without a subsequent complete strip. This is an expected
+artifact policy the ordinary stripped-userland checker did not model.
+
+The retained debug-audit-inputs directory captures both diagnostic drivers and
+a general checker draft. It adds strict retain_symbols validation: symbol
+presence is required, ordinary stripped checks remain strict, and debug-file
+identity/name/CRC checks are unchanged. Five actual Make artifact cases pass
+(two positive retained-symbol cases, both default-mode rejections, and a
+missing-required-symbol rejection). The existing real-kernel positive/five
+rejection suite also passes with the draft; its receipt is retained. The draft
+is not applied to the active source graph, and native integration tests remain
+required after R7 capture. No C frontend or production behavior changes yet.
+
+world-debug-reference-policy-audit-r2.json, with the explicit draft checker,
+passes all 1,079 original-Make world pairs: 1,077 strip and two retain policies.
+Policy discovery is explicitly reference-only, not permission to infer a
+candidate's expected policy from itself. Runtime hardlink aliases resolve the
+actual debug-link filename and require alias payload digest equality. No
+program pathname is waived. Full current native archive/install/debug/DWARF
+semantic equivalence, runtime and performance acceptance remain open.
+
+## Current AMD64 R7 completion and qualification launch (2026-11-14)
+
+`bazel-closeout-system-native-r7-20261114/receipt.json` passes all nineteen
+expanded tests. Public verified capture: 1,551 files / 647,563,521 bytes; artifact
+manifest digest `1ebd4f0b04031e463047d4a80b35e1f53a77d17451a7a73f9d9c401dca07bcb5`.
+The exact current Make kernel revision and package version remain selected.
+Bazel action success establishes the selected build/test scope, not all six gates.
+
+`bazel-current-package-comparison-r1-20261114/capture.json` verifies/copies all
+450 packages through public qualification output resolution. The maintained
+archive review finishes with no missing/extra packages and differences-found: 36,686 archive mtimes, 17 mtime nanoseconds, 3,874 direct payload hashes,
+3,035 sizes and 34,112 manifest-file records differ. The logical hardlink-expanded
+counts are retained separately. No differences are suppressed. One inspected
+header record has identical hash/owner/mode but reference mtime versus native
+epoch zero; original pkg-create source distinguishes -t from the packing-only
+SOURCE_DATE_EPOCH environment. Timestamp policy needs explicit input propagation,
+not normalization of comparison reports. Full ELF/archive review is still running.
+
+`bazel-current-runtime-helper-native-r1-20261114` passes current manifest-derived
+service helper tests. `bazel-current-upgrade-repository-r1-20261114` passes complete
+private repository signing/catalogue/archive verification and actual wrong-key
+rejection. `bazel-current-runtime-request-r1-20261114/candidate-kernel-binding.json`
+extracts the actual R7 packaged kernel and matches the captured payload digest
+`1cddea0d9e22c14a001f84644108d1779691bd08439ae0f21d75e15dd800744a`
+(39,917,280 bytes). The 2 GiB QEMU upgrade runner is live at
+`bazel-current-upgrade-vm-r1-20261114`, using the prior authenticated normal-boot
+image as a real upgrade baseline. No runtime outcome is inferred before its result.
+
+After the full R7 capture completed, the strict retained-symbol checker mode was
+applied with source-owned native host artifact tests for both userboot variants.
+`bazel-retained-symbol-debug-native-r1-20261114/receipt.json` passes both suites,
+each containing six unittest cases against actual native artifacts. Both original
+Make variants also pass the same twelve host cases. The default remains strict
+for stripped userland; retain mode requires symbols and preserves ELF/debug/name/
+CRC validation. Corruption, absent symbols, wrong names and conflicting policies
+are rejected. BUILD-OPTIONS.md documents this internal helper contract; there is
+no C frontend flag or production backend change. All current package/debug/runtime,
+bootstrap/cache/sandbox/performance/publication and Tier 1 gates remain explicit.
+
+## Explicit original-Make package epoch and placement inputs (2026-11-14)
+
+Current ELF review completes with 1,325 passing and 724 review-required contracts.
+Only dq, kernel-generic, mac-abac and oes package reports retain failures. A
+streamed text diagnostic of the large kernel report finds one kernel program
+contract classification issue, 713 allocated-only and seven allocated/relocation
+differences; the three small named module reports add allocated-only differences.
+That diagnostic is not a semantic waiver or complete allocated-section diagnosis.
+
+Actual pkg_create_from_dir uses its explicit -t timestamp for +MANIFEST file
+metadata, while packing separately accepts SOURCE_DATE_EPOCH. Original Make
+package commands omitted -t. The maintained Makefile.inc1 recipes now pass the
+resolved timestamp for world, kernel, DTB, sets and source packages; recursive
+world packaging propagates it to bsd.pkg.mk. bsd.pkg.mk accepts the existing
+PKG_TIMESTAMP or SOURCE_DATE_EPOCH input, and respects PKG_OUTPUT_DIR without
+changing package identity/version. This also permits preserving earlier reference
+archives while rebuilding a matched-epoch comparison under the standard repo.
+The existing C frontend delegates to these targets; its manual documents the
+corrected input contract, with no new flag or production backend selection.
+
+The maintained tools/test/bazel-builder/pkgbase-inputs.py test builds real
+packages/bsdtrace archives from the completed Make stage. R2 passes three actual
+packages for each of PKG_TIMESTAMP=0 and SOURCE_DATE_EPOCH=946684800, with payload
+header timestamps and +MANIFEST file timestamps matching the selected input.
+Both archive groups retain version 16.0.qual.20261114 despite distinct output
+subdirectories; latest/latest-built remain unchanged. Request, original commands,
+logs, driver and hashes are retained under bazel-pkgbase-inputs-r2-20261114.
+The failed R1 and its exact driver are preserved: it mistakenly expected pkg's
++MANIFEST/+COMPACT_MANIFEST buffer headers to use the payload epoch. Source
+packing_append_buffer/packing_append_iovec leave those format headers at zero;
+R2 requires both distinct metadata headers at zero and every payload at its
+explicit epoch, without modifying staged file bytes or suppressing a comparison.
+
+All original R1 450-package comparisons remain unchanged. Fresh matched-epoch
+archive qualification is pending; no native payload/debug/runtime difference is
+accepted by this fix. Changing Makefile.inc1 invalidates R4's source binding, so
+subsequent native runs require freshly prepared SDK inputs, not an edited receipt.
+
+Fresh SDK R5 verification now passes 8,345 snapshot files, schema 2/count 4.
+Its snapshot is byte-identical to R4; only source provenance needed refreshing
+after the packaging-only Makefile change. The old receipt remains unchanged.
+R5 snapshot digest is 4a2855b47e15dd2fa93d23f03f064ad5001dc105deedb77259bc0d58811309e7.
+Full AMD64 native R8 now selects R5 and adds both native retained-symbol artifact
+tests to the full R7 graph. Its result/cache behavior are pending, not inferred
+from identical SDK bytes. Original Make archive R2 is running with epoch zero
+and PKG_OUTPUT_DIR=qualification-epoch-r2-20261114 under the standard repo; the
+prior reference is preserved. Both runs are concurrent with the live upgrade VM,
+so their timings cannot establish controlled performance acceptance.
+
+## Current matched-epoch results and kernel producer fixes (2026-11-14)
+
+Native R8 passes all 21 suites using fresh SDK R5. Bazel reports 89,830 cache
+hits and eight processwrapper actions; elapsed 210.538 seconds under concurrent
+work is not controlled comparative performance evidence. Original Make archive
+R2 completes all 450 packages in qualification-epoch-r2-20261114 under the
+standard repository, retaining version 16.0.qual.20261114 and unchanged pointers.
+archive-review-epoch-r2 reports no timestamp differences. It retains 3,874 direct
+payload hashes, 3,035 sizes, 4,168 manifest file records and 361 flatsizes;
+logical hardlink-expanded payload/size counts remain separately recorded.
+
+Module diagnosis R2 streams the existing large per-artifact records: 716 cases
+have only the allocated GNU build-ID digest difference; seven differ in rodata
+and relocations (if_lio, jedec_dimm, p2sb, sdio, superio, tcp_bbr, tcp_rack); one
+kernel fails the ordinary PIE classification. No contract is accepted by that
+classification. The largest decoded record is 103,768,833 characters; measured
+diagnostic max RSS is 979,808 KiB, not an aggregate system/build RAM measure.
+The failed initial diagnostic key-delimiter attempt is retained separately.
+
+The existing kernel-specific parity tool rejects real current kernel differences.
+Native rodata is 11,520 bytes smaller; observed paths use sys/... versus the
+Make logical /usr/src/sys/... spelling. kern_conf preserves the same length but
+moves the already-enabled TCP_HHOOK, NFS_ROOT and ZSTDIO options to its head.
+Merged CTF also differs. No allocated bytes, relocations or identifiers were
+rewritten to obtain a pass.
+
+The AMD64 builtin compiler policy now maps source macros and DWARF to BSD's
+logical source root. Kernel configuration now uses format-1 declarative requests,
+a native-parser baseline, and only effective changes. A second fresh parser
+invocation emits the actual output, preserving unchanged source order. Explicit
+auto-default checks remain strict. Active override files are declared outputs;
+the baseline directory is temporary and never copied/adopted. Bazel precreated
+empty output trees are supported; nonempty/symlink outputs remain rejected.
+
+Native kernel-input fixes R4 passes all five suites through current build-bsd:
+six actual parser cases each on AMD64, ARM64 and RISC-V source configurations,
+plus existing option/stack-protector regressions. R1/R2 retain analysis failures
+from wrongly configured test tools and unsupported argument location expansion.
+The corrected standard tools attribute uses the test execution group. R3 retains
+the empty-output guard failure and the test's missing RISC-V SoC metadata.
+The public RISC-V configuration input group now owns that existing transitive
+closure, avoiding duplicate caller inventories. Runfile collision checks remain.
+No C frontend option changes; its manual and BUILD-OPTIONS describe the contract.
+A new full kernel/selected-system build is required; the compiler fixes are not
+yet claimed to satisfy kernel parity, full CTF/debug or runtime qualification.
+
+Upgrade VM R1 retains a failed result: new-kernel boot, SSH/su positive/negative
+checks and installed-manifest services pass; rollback console/root/GUID/kernel/
+package identity pass, then the upgrade phase deadline expires before rollback
+checksums, final authentication/services and unused-BE removal. The 2,400-second
+phase budget was consumed by actual installation (910.2 seconds) and repeated
+checksums (393.9, 259.8, 236.8 seconds), boots and service work. No test is skipped
+or marked passed after timeout. A fresh complete run with an explicit calibrated
+budget must retain 2 GiB guest RAM and the existing RSS/overlay limits, using the
+corrected candidate kernel. The old VM runner has exited and its evidence stays.

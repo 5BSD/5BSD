@@ -2,7 +2,7 @@
 """GENERIC amd64 module artifacts, with declared CTF and export processing."""
 
 load(":kernel_module_artifacts.bzl", "kernel_module_artifacts")
-load(":kernel_source_paths.bzl", "module_source_path_maps")
+load(":kernel_source_paths.bzl", "module_source_path_maps", "module_identity_prefix_maps")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_FLAGS", "AMD64_KERNEL_WARNING_FLAGS", "AMD64_KERNEL_DEBUG_FLAGS", "AMD64_KERNEL_HEADER_DEPS")
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
@@ -18,7 +18,7 @@ def amd64_generic_module(module, objects, exports = [], export_all = False, pack
         export_all = export_all, package = package, object_order = object_order, aliases = aliases, ctf_object_paths = ctf_object_paths,
         script = "//sys/conf:ldscript.kmod.amd64", emulation = "elf_x86_64_fbsd")
 
-def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = [], convert_ctf = True, kernel_flags = None, features = []):
+def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = [], convert_ctf = True, kernel_flags = None, features = [], source_identity = None):
     """Compile a source group; convert_ctf controls participation in the selected kernel CTF mode.
 
     Custom original assembly recipes may explicitly skip CTF conversion. The
@@ -40,7 +40,8 @@ def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts
             # Inline code in declared transitive headers also embeds __FILE__.
             # Use the same canonical source paths as the individual sources.
             ["-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +
-            [mapping for source in srcs + textual_hdrs for mapping in module_source_path_maps(source)] + copts,
+            module_identity_prefix_maps(source_identity) +
+            [mapping for source in srcs + textual_hdrs for mapping in module_source_path_maps(source, source_identity)] + copts,
         local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"] + local_defines,
         features = features,
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

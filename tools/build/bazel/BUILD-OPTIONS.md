@@ -83,3 +83,55 @@ required choices must stay visible and fail clearly until implemented.
 
 Track evidence in COMPLETION-PLAN.md and the qualification records. No matrix
 row is accepted merely because it appears in this document.
+
+## Split-debug symbol policy
+
+Separate debug information does not imply removing the runtime symbol table.
+Kernel/module loader symbols and source-declared retained-symbol artifacts need
+that table. `elf-debug-check.py --retain-symbols` requires an ordinary ELF to
+retain it; the default still requires ordinary stripped userland. All modes
+check the ELF identity, absence of embedded debug information, separate debug
+information, actual debug-link filename and CRC. Native host artifact tests use
+both real userboot variants and reject removed symbols, damaged debug data,
+wrong filenames and conflicting policies. Candidate policies must match their
+reference/source contract; detecting a candidate's symbol table is not authority
+to relax its expected policy. This helper change adds no build-bsd option or
+production backend change.
+
+## Native kernel input preservation
+
+Configuration overrides are declarative and idempotent. The native config
+parser supplies actual baseline headers; only effective explicit changes produce
+an override file. Source defaults are still validated rather than overwritten.
+The final output is generated independently at its declared path. Tests cover
+unchanged embedded configuration, enable/disable changes, source-default drift,
+empty declared tree roots and stale-content rejection on AMD64, ARM64 and RISC-V
+source configurations. This is host metadata testing, not cross-platform boot
+qualification. Host tools use the standard tools attribute in the test execution
+group; target artifact data keeps its own configuration and runfile collisions
+remain errors. RISC-V's public configuration input group includes its existing
+SoC metadata closure, so callers do not duplicate nested file inventories.
+
+AMD64 built-ins map relative sys source identities to BSD's logical /usr/src/sys
+root using the compiler's file-prefix mapping, covering macros and DWARF.
+Generated-source overrides retain their own identities. This corrects the
+observed relative assertion paths; it does not normalize compiled payloads or
+waive kernel/module differences. Complete rebuilt-kernel allocated sections,
+loader symbols, CTF, debug pairing and runtime checks remain required.
+
+## ARM64 startup closeout (2026-11-14)
+
+The shared CSU declaration now selects real AMD64 or ARM64 production sources.
+The AMD64 preservation audit passes all ten objects and installation records.
+ARM64 analysis currently rejects the host ncurses preprocessor's compiler-input
+bundle mismatch; declarations do not establish a native ARM64 build or parity.
+The component SDK uses an explicitly recorded older Make ARM64 seed plus current
+AMD64 execution SDK R5. A current full ARM64 world, ABI closure and runtime remain
+required. Keep the compiler-input guard strict while fixing dependency selection.
+
+ARM64 CSU R3 subsequently completes and its original-Make comparison passes all
+ten installed startup objects' allocated bytes, symbol/relocation contracts,
+AArch64 identity and logical install metadata. This uses the explicitly recorded
+older component SDK/profile (WITHOUT_BRANCH_PROTECTION), not the required full
+current ARM64 world or every hardening configuration. Debug and runtime remain
+outside this component comparison. See bazel-arm64-csu-parity-r1-20261114.

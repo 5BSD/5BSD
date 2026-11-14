@@ -19,7 +19,7 @@ _TABLES = [
 [bsd_script_output(
     name = stem + "_preprocessed", script = "table-cpp.sh",
     src = ":" + stem + "_candidates", input_mode = "argument", output = prefix + "tmp.out",
-    use_cpp = True, compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    use_cpp = True, compiler_inputs = "@bsd_sdk//toolchain:configured_compile_inputs",
     path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
     shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],

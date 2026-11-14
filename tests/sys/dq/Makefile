@@ -147,6 +147,9 @@ MAN.dq_owner_helper=
 BINDIR.dq_owner_helper=	${TESTSDIR}
 ${PACKAGE}FILES+=	dq_owner_linux.c
 
+# dq_swap_test's Linux program, built by the test.
+${PACKAGE}FILES+=	dq_swap_linux.c
+
 # dq_legitimacy_test's parent of an attach target, and its Linux
 # and 32-bit programs, built by the test.
 PROGS+=		dq_legitimacy_helper

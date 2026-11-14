@@ -2335,8 +2335,19 @@ This does not qualify the complete loader, kernel and installed-system chain.
 
 .Ss Bazel build qualification
 .Cm bazel-test
-runs maintained native amd64 qualification and explicitly selected
-cross-target kernel artifact qualification.
+runs maintained native amd64 qualification and explicitly selected cross-target
+artifact qualification, with separate target and execution SDKs where required.
+.Pp
+Split-debug validation checks ELF identity and symbol policy, debuglink filename
+and CRC. When either file carries a GNU build-ID note, valid matching identities
+are required on both files. Full DWARF semantic equivalence remains a separate
+qualification requirement.
+.Pp
+Disposable package-runtime VM qualification retains unsuccessful root-operation
+records, including status, elapsed time, error and partial-output checksum.
+A pre-existing operation log is rejected rather than adopted.
+Package checksum scans retain per-package diagnostics; a timeout remains a failed
+qualification and does not establish completion of the remaining upgrade checks.
 .Pp
 The maintained format-5 installation targets include the lex runtime archives,
 protobuf compiler plugins, DQ manual aliases/examples and DTrace/OpenTelemetry
@@ -7997,6 +8008,13 @@ The frontend binds build_jobs to --jobs and enables Bazel action resource
 estimates.
 The package_threads setting controls compression threads; zero uses that budget.
 The package_epoch setting defaults to zero and never reads the wall clock.
+The original Make package backend passes its declared PKG_TIMESTAMP (or
+resolved SOURCE_DATE_EPOCH) to pkg-create -t for both manifest and archive times.
+For independent comparison, select the same value as native package_epoch.
+PKG_OUTPUT_DIR controls world and kernel archive placement beneath the standard
+repository ABI directory without changing package identity/version; it does not
+advance latest or publish a repository.
+No additional build-bsd flag is introduced by these backend corrections.
 These targets create build artifacts and do not publish or install them.
 Each package also declares source-derived symlink referents needed for ELF
 inspection; those files acquire no package ownership.
@@ -8407,3 +8425,80 @@ Source qualification rejects incompatible schema versions before Bazel actions.
 Regenerate source-bound SDKs after preparer changes; do not modify old receipts
 to bypass validation. Toolchain declarations do not establish architecture
 qualification or independent native bootstrap.
+
+.Pp
+Native kernel configuration requests use versioned declarative settings.
+The source-owned config parser first resolves the selected baseline; the runner
+applies only settings whose effective presence differs from that baseline.
+Unchanged options retain their source ordering and embedded configuration.
+Automatic defaults remain checked against generated headers and are never
+silently imposed over source drift.
+The final configuration is generated fresh; temporary baseline output is not
+adopted. Empty Bazel tree-artifact roots are accepted, but symlinks and stale
+contents are rejected.
+Host artifact tests declare tools in the test execution configuration, while
+target artifacts remain data; conflicting runfiles continue to fail analysis.
+AMD64 built-in kernel compilation uses BSD's reproducible logical source root
+for source macros and debug paths, independently of the physical execution root.
+These internal changes add no build-bsd flag and do not qualify the production
+Bazel backend or change the Make default.
+
+.Pp
+AMD64 kernel built-ins preserve the logical source identity declared by kernel
+configuration, including imported PF paths through sys/../contrib.
+These are compiler input prefix maps, applied separately from module policy;
+the frontend does not rewrite compiled ELF payloads.
+Focused kernel R10 matches allocated sections and loader symbols against the
+Make control and passes split-debug binding. CTF parity remains rejected because
+the explicit qualification inputs omit Make's source-derived VERSION label.
+No production backend default or frontend option changes with this correction.
+
+.Pp
+Focused kernel R11 supplies the independently queried Make VERSION through the
+existing explicit kernel_ctf_label setting. The unchanged checker then passes
+allocated-section, loader-symbol and exact merged-CTF comparison, and the
+split-debug check passes. Automatic source-derived label selection and complete
+package, configuration and runtime qualification remain open.
+
+.Pp
+Native CSU production declarations now select AMD64 or ARM64 startup sources
+through the existing target architecture and explicit SDK inputs.
+All ten AMD64 object bytes and installation records pass preservation checks.
+ARM64 component analysis currently rejects a host-generator compiler-input bundle
+mismatch; this is not ARM64 build or runtime qualification.
+Make remains the production/default backend.
+
+.Pp
+SDK preparation declares configuration-aware narrow compiler inputs and an
+explicit execution C runtime for cross-build generators.
+The generator still rejects a bundle that omits its selected compiler.
+The existing format-5 workflow can select
+.Dq //tools/build/bazel/tests/script_cpp:configuration_test
+for actual target/execution preprocessing ABI checks without running target code.
+AMD64 and ARM64 preprocessing checks pass; ARM64's complete startup build,
+Make parity and system/runtime qualification remain separate requirements.
+This uses fresh source-bound SDK receipts and introduces no frontend C option
+or production backend default change.
+
+.Pp
+ARM64 CSU R3 now completes through the maintained workflow and matches original
+Make for all ten installed startup objects' allocated data, symbol/relocation
+contracts, AArch64 identity and logical installation metadata.
+The recorded component profile disables branch protection; this is not full
+current ARM64 world, hardening-matrix, debug or runtime qualification.
+
+.Pp
+Configured target and test inventory queries explicitly select each requested
+root's target configuration with Bazel's config query operator.
+This avoids ambiguous trimmed/untrimmed alias configurations without ignoring
+duplicate results, incompatible targets or unbound selectors.
+The existing format-5 workflow and strict artifact capture remain in use;
+Make remains the production/default backend.
+
+.Pp
+Module source declarations can explicitly preserve a module-relative source
+directory's logical identity. Compiler prefix maps cover source files and their
+included headers; other modules retain canonical source identity.
+The seven affected AMD64 module builds match Make except for reported GNU build-ID
+digests, with exact CTF and passing native debug bindings. That remaining identity
+review is not waived. No ELF output is rewritten and no frontend C option changes.

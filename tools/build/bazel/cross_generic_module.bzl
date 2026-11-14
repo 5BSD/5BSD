@@ -3,7 +3,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load(":kernel_common.bzl", "KERNEL_WARNING_FLAGS", "KERNEL_DEBUG_FLAGS")
 load(":kernel_module_artifacts.bzl", "kernel_module_artifacts")
-load(":kernel_source_paths.bzl", "module_source_path_maps")
+load(":kernel_source_paths.bzl", "module_source_path_maps", "module_identity_prefix_maps")
 load(":bsd_ctf.bzl", "bsd_ctf_library")
 
 _ARCH = {
@@ -17,7 +17,7 @@ _ARCH = {
         headers = [], linkopts = []),
 }
 
-def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name = "generic_module", copts = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = []):
+def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name = "generic_module", copts = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = [], source_identity = None):
     policy = _ARCH[arch]
     name = arch + "_" + name
     # Preserve forced compatibility headers before the ordinary opt_global.h input.
@@ -34,7 +34,8 @@ def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name 
             "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer", "-fwrapv", "-fstack-protector-strong", "-std=gnu17",
             "-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +
             policy.copts + (KERNEL_WARNING_FLAGS if warning_flags == None else warning_flags) + KERNEL_DEBUG_FLAGS +
-            [mapping for source in srcs + textual_hdrs for mapping in module_source_path_maps(source)] + copts,
+            module_identity_prefix_maps(source_identity) +
+            [mapping for source in srcs + textual_hdrs for mapping in module_source_path_maps(source, source_identity)] + copts,
         local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"] + local_defines,
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + policy.cpu,
             "//tools/build/bazel/kernel_toolchain:kernel"])

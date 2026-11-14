@@ -15,8 +15,16 @@ def validate_header(text, expected):
                              'reconcile the source configuration and Bazel option metadata')
 
 
-def validate_directory(directory, expected):
+def directory_text(directory):
     headers = sorted(directory.glob('opt*.h'))
     if not headers:
         raise ValueError('complete generated kernel option headers required')
-    validate_header('\n'.join(path.read_text() for path in headers), expected)
+    return '\n'.join(path.read_text() for path in headers)
+
+
+def defined_options(directory):
+    return set(re.findall(r'^#define\s+([A-Z0-9_]+)\b', directory_text(directory), re.M))
+
+
+def validate_directory(directory, expected):
+    validate_header(directory_text(directory), expected)

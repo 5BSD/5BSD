@@ -20,7 +20,7 @@ bsd_script_output(name = "host_definitions", script = "host-definitions.sh", src
 bsd_script_output(name = "constants_preprocessed", script = "constants-cpp.sh", src = "//contrib/tcsh:tc.const.c",
     input_mode = "argument", output = "tc.const.preprocessed", use_cpp = True,
     cpp_deps = [":configuration", ":error_headers", "//contrib/tcsh:headers"],
-    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    compiler_inputs = "@bsd_sdk//toolchain:configured_compile_inputs", path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
     shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"])
 bsd_script_output(name = "constants", script = "constants-header.sh", src = ":constants_preprocessed",

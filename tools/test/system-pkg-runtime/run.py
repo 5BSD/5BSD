@@ -27,6 +27,7 @@ import certificate_runtime
 import firstboot_runtime
 import upgrade_runtime
 import service_health
+import root_operation
 from mtree_reconcile import reconcile
 
 class Console:
@@ -147,7 +148,7 @@ def main():
         raise ValueError('service phase exceeds whole-VM deadline')
     tools={name:Path(plan[name]).resolve(strict=True) for name in ('qemu','qemu_img','bios','ssh')}
     bindings={str(path):digest(path) for path in tools.values()}
-    sources=[Path(certificate_runtime.__file__),Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py','upgrade_runtime.py','startup_diagnostics.py','service_health.py')]
+    sources=[Path(certificate_runtime.__file__),Path(__file__),SOURCE/'tools/build/bazel/qualification_artifacts.py',SOURCE/'tools/test/daemon-runtime/host_resources.py',Path(__file__).with_name('serial_terminal.py'),Path(__file__).with_name('installed_audit.py')] + [Path(__file__).with_name(name) for name in ('firstboot_runtime.py','firstboot_accounts.py','mtree_reconcile.py','upgrade_runtime.py','startup_diagnostics.py','service_health.py','root_operation.py')]
     source_bindings={str(path):digest(path) for path in sources}
     if certificates is not None:source_bindings.update(certificates['bindings'])
     if firstboot is not None:source_bindings.update(firstboot['bindings'])
@@ -272,24 +273,16 @@ def main():
             operation_until=time.monotonic()+plan['firstboot_deadline_seconds']
             report['root_commands']=[]
             report['firstboot_commands']=[]
-            def root_invoke(label,remote,input_path=None):
-                log_path=out/(label+'.output');begin=time.monotonic()
-                with (Path(input_path) if input_path is not None else Path('/dev/null')).open('rb') as stream,log_path.open('xb') as log:
-                    child=subprocess.Popen(root_ssh+[remote],stdin=stream,stdout=log,stderr=subprocess.STDOUT,env=root_env,start_new_session=True)
-                    try:
-                        while child.poll() is None:
-                            console.tick()
-                            if time.monotonic()>operation_until:raise TimeoutError('explicit root-operation phase deadline')
-                            if log_path.stat().st_size>32*1024**2:raise ValueError('root-operation output exceeds evidence budget')
-                            time.sleep(0.2)
-                    finally:
-                        if child.poll() is None:child.kill();child.wait()
-                record=dict(label=label,command=remote,status=child.returncode,seconds=time.monotonic()-begin,output_sha256=digest(log_path))
+            def publish_root_operation(record):
                 report['root_commands'].append(record)
                 if firstboot_proof is None:report['firstboot_commands'].append(record)
                 save()
-                if child.returncode:raise RuntimeError('guest root operation failed: '+label+'; see '+str(log_path))
-                if log_path.stat().st_size>32*1024**2:raise ValueError('root-operation output exceeds evidence budget')
+            def root_invoke(label,remote,input_path=None):
+                log_path=out/(label+'.output')
+                record=root_operation.invoke(root_ssh+[remote],label=label,command=remote,
+                    input_path=input_path,output=log_path,env=root_env,deadline=operation_until,
+                    tick=console.tick,publish=publish_root_operation)
+                if record['status']:raise RuntimeError('guest root operation failed: '+label+'; see '+str(log_path))
                 return log_path.read_bytes()
             firstboot_proof=firstboot_runtime.exercise(firstboot,root_invoke,out,{plan['console_user'],plan['ssh_user']})
             check('firstboot-transitions',lambda:firstboot_proof)
