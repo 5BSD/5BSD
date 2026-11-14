@@ -1550,6 +1550,10 @@ the same backend; of a real file, the same predicate.
 6. Contexts that never wait (I11): `fo_close`, `pgo_dealloc`,
    `pgo_putpages` from `pageproc`/laundry, `vm_object_terminate`, anything
    under `exit1`. They post and continue; the queue owns the result.
+   `fo_close` does wait for a reply ioctl that is inside
+   `mac_file_notify_reply` with the file (`o_notify`): kernel code on the
+   controller's thread, bounded by the hook's contract and run with stops
+   deferred.
 7. Queue full → `EIO` at once.
 8. `REVOKE` and queue close per I10: wake waiters with `EIO`, unmap and
    drop pages, flush socket buffers, clear knotes, mark revoked, complete
@@ -1622,7 +1626,10 @@ needs the policy's `socket_check_create` toggle.
 `kern.maxfiles` for the `system.Sysctl` provider, the shipped policy lets
 no client write it, and the test asks the provider when its own write is
 refused. `SYSCTL_WRITE` changes the test image's `sysctl.conf` only; it
-lets every client of that guest's provider write the names given.
+lets every client of that guest's provider write the names given. The
+provider matches names as prefixes on a component boundary and has no
+exact-match form, so a name also grants the subtree under it;
+`kern.maxfiles` is a leaf, so the recipe grants that one variable.
 
 | Group | Tests |
 |---|---|

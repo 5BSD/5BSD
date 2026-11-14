@@ -34,7 +34,8 @@
 #   checks; the default 0 permits raw-device provider test fixtures.
 #   SYSCTL_WRITE (space-separated sysctl names; default none): the image's
 #   system.Sysctl policy lets every client write these names through the
-#   provider.  The plane reserves the provider's isolated names
+#   provider (the policy matches prefixes: each name also covers the
+#   subtree under it, so name leaves).  The plane reserves the provider's isolated names
 #   (kern.maxfiles) for the provider, so a test that must change one asks
 #   the provider; the shipped policy grants no client a write.  For
 #   sys/kern/kern_descrip_test:kern_maxfiles__increase:
