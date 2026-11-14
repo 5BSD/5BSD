@@ -32,6 +32,16 @@ order; it is retained unapplied beside the reference until the AMD64 capture
 finishes and actual native comparison can run. No maintained
 frontend behavior or production backend selection changes for this audit.
 
+The current original-Make split-debug reference audit passes all 724 kernel/module
+pairs. The first strict userland audit passes 1,077 pairs and reports two bootloader
+DSOs whose source policy deliberately retains symbol tables. A general strict
+retain-symbols checker draft preserves default rejection, requires symbols in
+retain mode and passes real artifact/rejection tests. With that explicitly
+selected draft, original-Make reference policy discovery passes all 1,079 world
+pairs (1,077 stripped, two retained). There are no pathname waivers. The checker
+change is not applied while R7 is active; full current native debug-pair policy
+comparison remains required. Inputs/results are retained beside the fresh stages.
+
 The refreshed original Make archive creation now passes all 450 selected packages
 at /usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114. Its result binds
 both fresh stage results, all archive hashes, commands and unchanged latest and

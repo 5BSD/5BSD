@@ -1472,3 +1472,32 @@ identities, rather than executing Make or a shell compile wrapper. Actual native
 analysis/build, full member/symbol/code/metadata comparison and AMD64 preservation
 remain required after the active R7 capture finishes. No production behavior
 or C frontend flags change from this preparation; Make remains default.
+
+## Current original-Make split-debug coverage (2026-11-14)
+
+Under bazel-current-make-stage-r1-20261114, kernel-debug-pair-audit.json passes
+all 724 selected kernel/module split-debug pairs with the maintained checker,
+including retained loader symbols, separate debug information and actual
+filename/CRC checks. world-debug-pair-audit.json initially passes 1,077 pairs
+and explicitly reports two retained-symbol bootloader DSOs. Make's
+stand/userboot/userboot/Makefile sets STRIP empty; native variants already use
+bsd_debug_split without a subsequent complete strip. This is an expected
+artifact policy the ordinary stripped-userland checker did not model.
+
+The retained debug-audit-inputs directory captures both diagnostic drivers and
+a general checker draft. It adds strict retain_symbols validation: symbol
+presence is required, ordinary stripped checks remain strict, and debug-file
+identity/name/CRC checks are unchanged. Five actual Make artifact cases pass
+(two positive retained-symbol cases, both default-mode rejections, and a
+missing-required-symbol rejection). The existing real-kernel positive/five
+rejection suite also passes with the draft; its receipt is retained. The draft
+is not applied to the active source graph, and native integration tests remain
+required after R7 capture. No C frontend or production behavior changes yet.
+
+world-debug-reference-policy-audit-r2.json, with the explicit draft checker,
+passes all 1,079 original-Make world pairs: 1,077 strip and two retain policies.
+Policy discovery is explicitly reference-only, not permission to infer a
+candidate's expected policy from itself. Runtime hardlink aliases resolve the
+actual debug-link filename and require alias payload digest equality. No
+program pathname is waived. Full current native archive/install/debug/DWARF
+semantic equivalence, runtime and performance acceptance remain open.
