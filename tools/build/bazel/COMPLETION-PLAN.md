@@ -11,6 +11,27 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The refreshed original Make archive creation now passes all 450 selected packages
+at /usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114. Its result binds
+both fresh stage results, all archive hashes, commands and unchanged latest and
+latest-built pointers. No catalogue signing/combined publication occurred.
+Fresh corrected SDK R4 verifies 8,345 snapshot files, schema 2 and a separate
+four-declaration count. Artifact-contract native R3 passes all six suites through
+the current C frontend, including actual stager-to-source-consumer metadata.
+Full selected AMD64 native R7 is running, using the exact Make vers.c revision
+dev-n288204-e4d2059c4b4f and matching package version; no final outcome is inferred.
+
+Captured R6 compiler/runtime exploration now passes with a package-derived ELF
+NEEDED closure, native runtime linker and verified loaded paths: eight packages,
+eighteen selected payloads, compiler/linker version checks and six compile/link
+ELF-machine checks over AMD64, ARM64 and RISC-V. The missing-library-directory
+negative reveals actual host fallback and rejects it through loaded-path checks.
+This is an explicitly retained exploratory probe, not a maintained SDK producer,
+independent second-stage world, architecture runtime or sandbox qualification.
+It supplies evidence for the remaining native SDK/runtime boundary work without
+changing source producers or normal build-bsd behavior. These documentation-only
+updates are not source inputs of the running native graph or the SDK receipt.
+
 Stable-head Make world refresh R2 and current GENERIC/CTF kernel/module R1 now
 pass at e4d2059c4b4, with clean unchanged source before/after. Fresh private
 NO_ROOT world and kernel stages also pass. Their original logs, input hashes and

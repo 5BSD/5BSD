@@ -1335,3 +1335,57 @@ regression passes actual producer metadata to the real source consumer and
 standalone platform selection, in addition to checking emitted declarations.
 The normal frontend/backend remains unchanged; maintained helper/runfiles/tests
 and manual are updated together. Broader six-gate qualification remains open.
+
+
+## Refreshed complete Make archives and native execution exploration (2026-11-14)
+
+`bazel-current-make-packages-r1-20261114/result.json` passes both maintained
+create-packages-world/kernel commands and records all 450 archive hashes under
+`/usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114`. World and kernel
+stages remain bound to the e4d2059c4b4 reference builds. Packaging starts/ends at
+clean df85d19c14e; the record checks unchanged Make/package/staging recipes since
+those builds. Both latest/latest-built symlinks remain unchanged. These are
+unsigned reference archives, not signed combined publication or host installation.
+Concurrent native execution makes these time/block-operation records unsuitable
+for controlled Make/Bazel comparisons.
+
+Corrected `bazel-closeout-sdk-r4-20261114` stages/verifies 8,345 files, with
+freestanding_toolchains schema 2 and separate generated count 4. The current
+maintained C frontend's `bazel-artifact-contract-native-r3-20261114/receipt.json`
+passes all six selected suites: archive aliases, relocatable DOF, package ELF
+review, runtime ELF metadata, SDK source selection and source settings. The
+last two include all 43 host cases and actual producer-to-consumer metadata.
+This fixes the R2 pre-action rejection without editing that attempt's receipt.
+
+`bazel-closeout-system-request-r7-20261114` now selects the full AMD64 graph,
+current package version and exact revision from the reference Make vers.c:
+`dev-n288204-e4d2059c4b4f`. Its native run remains in progress; package comparison
+must wait for the hash-verified completed capture. These documentation-only
+updates are outside the running graph/SDK's bound source inputs.
+
+`bazel-native-execution-closure-r1-20261114/result.json` records an exploratory
+runtime closure from frozen combined R6, not the running R7 or a native SDK.
+The retained driver/request select program roles, library search directories and
+three target triples explicitly. Actual NEEDED entries recursively select logical
+package owners; the captured package index/family catalogue determine archive
+names and hashes. Regular archive payloads resolve hardlink chains instead of
+assuming that the logical compiler name owns data. Logical symlinks stay within
+the selected capture. Ambiguous/missing library roles and RPATH/RUNPATH require
+explicit resolution rather than host fallback. The probe uses eight verified
+packages and eighteen payloads, including native ld-elf.so.1, compiler and linker.
+It disables libmap/hints overrides, clears inherited loader variables, and
+requires every startup trace path to resolve to an extracted native payload.
+
+Both native programs execute --version. Native clang -cc1 compiles a small
+header-free C function for AMD64, ARM64 and RISC-V; native LLD links each object.
+All six ELF machine checks pass. This deliberately does not claim target libc,
+C++/system header/SDK completeness, running cross binaries, independent full
+bootstrap or filesystem isolation. The host kernel is still the execution OS.
+Native stage-two SDK construction and the wider six gates remain required.
+
+`bazel-native-execution-closure-negative-r1-20261114/result.json` repeats the
+loader trace with an empty selected library directory without modifying the
+positive capture. The loader returns success but resolves fifteen host library
+paths; the containment check rejects them. This establishes that successful
+execution or setting LIBRARY_PATH alone cannot qualify the native runtime
+boundary. Neither exploratory driver replaces the maintained build frontend.
