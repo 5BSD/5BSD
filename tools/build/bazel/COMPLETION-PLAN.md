@@ -7526,3 +7526,23 @@ DWARF or complete installed-system qualification. The prepared ARM64 run is live
 Frontend review: these source-owned target/test additions use the maintained
 `build-bsd bazel-test --bazel-inputs` workflow; no production backend, policy,
 signing, stage-verification or publication default changes are required.
+
+Current AMD64 follow-up: all ten startup objects match the refreshed original
+Make FILES inventory and allocated/symbol/relocation contracts; raw debug bytes
+differ. Evidence: `bazel-current-startup-amd64-parity-r1-20261114`. Complete loader
+component install metadata matches all nine logical records, including physical
+archive flags and actual hardlinks; only loader/debug regular-file payload hashes
+differ. Evidence: `bazel-current-loader-amd64-install-parity-r2-20261114`. The
+first install diagnostic rejected libarchive's type-zero hardlink headers; R2
+correctly requires their regular payload targets and preserves raw header types.
+No product code was relaxed.
+
+The next ARM64 libthr candidate is staged outside the source tree while the
+loader run is live. Its source-owned architecture selections match all 60 ordered
+objects in the actual Make traversal, including the generic `_umtx_op_err.c`
+wrapper and no AMD64 `thr_machdep.c`. Evidence:
+`bazel-arm64-thr-candidate-r2-20261114`. This is an unapplied declaration review,
+not a successful native build. The independent ARM64 libthr Make install
+reference is running. Runtime, debug/provider parity, installed tests and the
+remaining complete-world gates are still required. No frontend input/default,
+signing or publication requirement changes in this checkpoint.
