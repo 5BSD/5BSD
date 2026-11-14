@@ -1775,8 +1775,14 @@ openatfp(struct thread *td, int dirfd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (openatfp_dqimpl(td, dirfd, path, pathseg, flags, mode, lookup_flags, fpp));
+	/*
+	 * A swapped file is installed with the rights and states its carrier
+	 * holds and through the queue's gate (dqres_install): it is not
+	 * offered to a caller that takes the file itself.
+	 */
 	dq_intent_enter_served(td, &dqi, DQ_ROP_OPEN, DQI_USER,
-	    DQ_RACCEPT(DQ_RESOLVE_FD) | DQ_RACCEPT(DQ_RESOLVE_SWAP));
+	    DQ_RACCEPT(DQ_RESOLVE_FD) |
+	    (fpp == NULL ? DQ_RACCEPT(DQ_RESOLVE_SWAP) : 0));
 	dqi.di_cmode = ((mode & ~td->td_proc->p_pd->pd_cmask) & ALLPERMS) &
 	    ~S_ISTXT;
 	dqi.di_mode = flags;
