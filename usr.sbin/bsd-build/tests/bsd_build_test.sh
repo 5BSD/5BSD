@@ -385,6 +385,36 @@ CONFIG
     atf_check -s not-exit:0 -o empty -e match:'only one' "$tool" plan build --config settings --config settings
     atf_check -s not-exit:0 -o empty -e match:'not readable' "$tool" plan build --src-conf /nonexistent/bsd-build-src.conf
 }
+atf_test_case source_environment_configuration
+source_environment_configuration_head()
+{
+    atf_set descr "Explicit early source configuration reaches every source Make step"
+    atf_set require.progs python3.12
+}
+source_environment_configuration_body()
+{
+    setup
+    printf 'WITH_AUTO_OBJ=yes\n' > environment.conf
+    printf 'src_env_conf=%s/environment.conf\n' "$PWD" > settings
+    atf_check -s exit:0 -o save:plan.jsonl -e empty env SRC_ENV_CONF=/nonexistent/ambient "$tool" plan build --config settings --src-conf /dev/null --make-conf /dev/null --format json
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$PWD/environment.conf" <<'PYTEST'
+import json, sys
+rows=[json.loads(line) for line in open('plan.jsonl')]
+steps=[row for row in rows if row.get('record')=='step']
+assert steps
+for row in steps:
+    argv=row['argv']
+    if 'make' in argv:
+        assert argv.count('SRC_ENV_CONF='+sys.argv[1])==1
+        assert 'SRCCONF=/dev/null' in argv and '__MAKE_CONF=/dev/null' in argv
+        assert not any('/nonexistent/ambient' in arg for arg in argv)
+PYTEST
+    atf_check -s exit:0 -o match:'SRC_ENV_CONF=/dev/null' -e empty "$tool" plan world --src-env-conf /dev/null
+    atf_check -s not-exit:0 -o empty -e match:'absolute' "$tool" plan world --src-env-conf relative
+    atf_check -s not-exit:0 -o empty -e match:'not readable' "$tool" plan world --src-env-conf /nonexistent/source-environment.conf
+    printf '{}\n' > modules.json
+    atf_check -s not-exit:0 -o empty -e match:'fixed comparison configuration' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --src-env-conf /dev/null
+}
 atf_test_case architectures
 architectures_body()
 {
@@ -1411,6 +1441,8 @@ PYTHON
     atf_check -s not-exit:0 -o ignore -e ignore "$tool" plan loader-build
     atf_check -s not-exit:0 -o ignore -e ignore "$tool" plan world --loader-anchors "$PWD/anchors.pem"
     atf_check -s not-exit:0 -o ignore -e ignore "$tool" plan loader-build --loader-anchors "$PWD/anchors.pem" --incremental
+    printf "WITH_AUTO_OBJ=yes\n" > source-environment.conf
+    atf_check -s not-exit:0 -o empty -e match:"fixed trust profile" "$tool" plan loader-build --loader-anchors "$PWD/anchors.pem" --src-env-conf "$PWD/source-environment.conf"
     atf_check -s not-exit:0 -o ignore -e ignore "$tool" plan loader-build --loader-anchors "$PWD/anchors.pem" --arch arm64
     atf_check -s exit:0 -o ignore -e ignore python3.12 -B "$(atf_get_srcdir)/loader_production_test.py"
 }
@@ -1605,6 +1637,7 @@ atf_init_test_cases()
     atf_add_test_case database_payload
     atf_add_test_case architectures
     atf_add_test_case configuration
+    atf_add_test_case source_environment_configuration
     atf_add_test_case package_tool_plan
     atf_add_test_case candidate_publication_plan
     atf_add_test_case bootstrap_pkg_plan

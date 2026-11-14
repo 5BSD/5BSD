@@ -1198,9 +1198,19 @@ The default auto uses all logical CPUs.
 .It Fl -src-conf Ar file
 World option configuration passed as SRCCONF; defaults to /etc/src.conf.
 Use /dev/null to disable that configuration file.
+.It Fl -src-env-conf Ar file
+Source-environment Make configuration; defaults to /etc/src-env.conf.
+This is read early enough for environment-only source options such as AUTO_OBJ.
+Paths must be absolute and readable when explicitly selected; /dev/null disables
+this configuration input.
+All maintained source Make backend steps receive SRC_ENV_CONF explicitly.
+The configuration file key is src_env_conf.
+Bazel qualification rejects this override because its SDK inputs define the
+comparison context. Loader construction fixes it to /dev/null along with its
+other Make configurations.
 .It Fl -make-conf Ar file
 Make configuration passed as __MAKE_CONF; defaults to /etc/make.conf.
-These two files are trusted make input, unlike the literal frontend config.
+These configuration files are trusted make input, unlike the literal frontend config.
 .It Fl -kernel-dir Ar directory
 Directory containing the selected kernel configuration, passed as KERNCONFDIR.
 .It Fl -pkg-key Ar file

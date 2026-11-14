@@ -33,6 +33,28 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The later dev merge a28032efc6f changed source headers, including fcntl.h.
+Strict SDK verification correctly rejects the earlier AMD64 R11 and ARM64 R7
+source bindings; their successful runs above remain dated evidence, not
+current-head qualification. ARM64 loader native R1 compiled and linked before
+that merge, but R2 was rejected on the changed header. Loader parity is open.
+Both reference worlds and SDKs need refreshing against stable current inputs.
+
+Replaying the recorded world profile first failed because AUTO_OBJ was placed
+in SRCCONF, where Make deliberately rejects environment-only options. The
+maintained frontend now exposes --src-env-conf (config key src_env_conf),
+forwards SRC_ENV_CONF to every source Make step, retains /dev/null isolation
+for loader construction and rejects qualification-context overrides. No Make
+validation was bypassed. The frontend compiles through its maintained Makefile.
+Six direct ATF cases pass: early configuration, ordinary configuration, plans,
+architectures, object-environment isolation and production-loader planning.
+The latter uses its packaged Python support layout; the initial source-directory
+invocation failed on missing installed support, retained in the evidence.
+The secureboot_plan case skips because virt-fw-vars is unavailable; this is
+not a Secure Boot qualification result. Evidence:
+bazel-src-env-frontend-review-r1-20261114 under /usr/obj/usr/src.
+Make remains production/default; there is no host installation or reboot.
+
 SDK preparation now distinguishes staged and explicitly Make-selected system
 compilers. System selection requires matching cached Clang type/resource and
 version macros, a target/sysroot match, and a complete LLVM tool map from the
