@@ -60,7 +60,7 @@ and C frontend flags remain unchanged; preparation helpers/tests/manual change
 together. Old source-bound SDK receipts require fresh preparation after these
 helper/live-object changes; they are not rebound to suppress verification failures.
 
-Captured R6 clang executes --version on the host; its package role correctly
+The initial R6 compiler probe R2 executes --version on the host; its package role correctly
 resolves an archive hardlink to c++. This is not independent bootstrap: the thin
 compiler still loads host shared libraries. The indexed native package inventory
 contains the compiler/linker/header/library payloads. fidlc is intentionally
@@ -70,14 +70,17 @@ and compiler-runtime closure, full second-stage builds, cache/sandbox/dependency
 invalidation and controlled aggregate memory/disk I/O remain open.
 SDK invalidation diagnosis R1 compares frozen SDK2/SDK4 metadata: 53 files change,
 including six system headers, but no compiler executables. The current mandatory
-compiler_files closure contains every SDK header. Qualify compiler_files_without_includes
-with Bazel's actual include-scanning/discovery path and used/unused/generated
-header cases after the stable AMD64 run; changing the attribute alone is not a
-fix, and declarations must not be removed to manufacture cache hits. See the
-hash-bound bazel-sdk-invalidation-diagnosis-r1-20261114/result.json and upstream
-[Bazel 9.3.1 builder](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/rules/cpp/CppCompileActionBuilder.java).
- The existing
-resource wrapper measures per-command max RSS and block operations, not parallel
+compiler_files closure contains every SDK header. Upstream follow-up R2 rules
+out enabling the experimental include scanner as a production fix: its own
+option contract explicitly excludes full preprocessing semantics. Keep complete
+declarations. After the stable AMD64 run, measure actual used/unused input
+invalidation and evaluate supported compiler-generated .d discovery with declared
+headers/CcCompilationContext, including generated, macro-selected and conditional
+headers. Changing compiler_files_without_includes alone cannot fix this boundary.
+See the hash-bound SDK invalidation diagnosis R1 and R2 records and
+[Bazel 9.3.1 options](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/rules/cpp/CppOptions.java#L828-L866).
+
+The existing resource wrapper measures per-command max RSS and block operations, not parallel
 aggregate RAM or physical disk bytes; it does not close gate 4.
 
 R6's runtime linker now passes a general explicit SONAME-absence DSO metadata
