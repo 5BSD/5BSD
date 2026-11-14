@@ -67,7 +67,16 @@ contains the compiler/linker/header/library payloads. fidlc is intentionally
 build-only and already has a native source-owned execution target, so its absence
 from installed packages is not a base packaging omission. Native-produced target
 and compiler-runtime closure, full second-stage builds, cache/sandbox/dependency
-invalidation and controlled aggregate memory/disk I/O remain open. The existing
+invalidation and controlled aggregate memory/disk I/O remain open.
+SDK invalidation diagnosis R1 compares frozen SDK2/SDK4 metadata: 53 files change,
+including six system headers, but no compiler executables. The current mandatory
+compiler_files closure contains every SDK header. Qualify compiler_files_without_includes
+with Bazel's actual include-scanning/discovery path and used/unused/generated
+header cases after the stable AMD64 run; changing the attribute alone is not a
+fix, and declarations must not be removed to manufacture cache hits. See the
+hash-bound bazel-sdk-invalidation-diagnosis-r1-20261114/result.json and upstream
+[Bazel 9.3.1 builder](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/rules/cpp/CppCompileActionBuilder.java).
+ The existing
 resource wrapper measures per-command max RSS and block operations, not parallel
 aggregate RAM or physical disk bytes; it does not close gate 4.
 
