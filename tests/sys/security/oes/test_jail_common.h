@@ -241,4 +241,116 @@ jt_get_scope(int fd)
 	return (args.esa_scope);
 }
 
+/*
+ * Sustained load on the deferred delivery queue.
+ *
+ * Every pipe read and write is a NOSLEEP event: it is queued for the one
+ * delivery thread, which hands a copy to each subscribed client.  A few
+ * processes that do nothing but write to and read from a pipe, and enough
+ * global clients that subscribe to those events and never read them, keep
+ * that queue full for as long as the load runs.  "Full" is observed, not
+ * assumed: the kernel counts the events it had to discard at the queue's
+ * limit (es_nosleep_drops), and clients are added until that count moves.
+ */
+#define JT_LOAD_WRITERS		4
+#define JT_LOAD_STEP		8
+#define JT_LOAD_MAXCLIENTS	48
+#define JT_LOAD_END_MS		60000	/* Bound for what must end under load */
+
+struct jt_load {
+	pid_t	writers[JT_LOAD_WRITERS];
+	int	clients[JT_LOAD_MAXCLIENTS];
+	int	nclients;
+};
+
+static inline uint64_t
+jt_nosleep_drops(int fd)
+{
+	struct oes_stats st;
+
+	memset(&st, 0, sizeof(st));
+	if (ioctl(fd, OES_IOC_GET_STATS, &st) != 0)
+		return (0);
+	return (st.es_nosleep_drops);
+}
+
+static inline void
+jt_load_stop(struct jt_load *l)
+{
+	int i;
+
+	for (i = 0; i < JT_LOAD_WRITERS; i++) {
+		if (l->writers[i] > 0) {
+			(void)kill(l->writers[i], SIGKILL);
+			(void)jt_reap(l->writers[i]);
+		}
+		l->writers[i] = -1;
+	}
+	for (i = 0; i < l->nclients; i++)
+		close(l->clients[i]);
+	l->nclients = 0;
+}
+
+/*
+ * Start the load and return once the queue is full.  statfd is any OES
+ * descriptor of the caller, used to read the statistics.  Returns 0, or -1
+ * (load stopped) when the queue could not be filled.
+ */
+static inline int
+jt_load_start(struct jt_load *l, int statfd)
+{
+	oes_event_type_t evs[] = { OES_EVENT_NOTIFY_PIPE_WRITE,
+	    OES_EVENT_NOTIFY_PIPE_READ };
+	struct timespec start;
+	uint64_t drops;
+	pid_t parent;
+	int fd, i, n, p[2];
+	char c;
+
+	memset(l, 0, sizeof(*l));
+	parent = getpid();
+	fflush(NULL);
+	for (i = 0; i < JT_LOAD_WRITERS; i++) {
+		l->writers[i] = fork();
+		if (l->writers[i] < 0)
+			goto fail;
+		if (l->writers[i] == 0) {
+			if (pipe(p) != 0)
+				_exit(1);
+			for (;;) {
+				for (n = 0; n < 256; n++) {
+					if (write(p[1], "x", 1) != 1 ||
+					    read(p[0], &c, 1) != 1)
+						_exit(1);
+				}
+				/* Do not outlive a test that died. */
+				if (getppid() != parent)
+					_exit(0);
+			}
+		}
+	}
+	drops = jt_nosleep_drops(statfd);
+	while (l->nclients < JT_LOAD_MAXCLIENTS) {
+		for (i = 0; i < JT_LOAD_STEP; i++) {
+			fd = test_open_oes();
+			if (fd < 0)
+				goto fail;
+			l->clients[l->nclients++] = fd;
+			if (jt_notify_setup(fd, evs, 2) != 0)
+				goto fail;
+		}
+		clock_gettime(CLOCK_MONOTONIC, &start);
+		while (jt_elapsed_ms(&start) < 3000) {
+			usleep(100000);
+			if (jt_nosleep_drops(statfd) > drops)
+				return (0);
+		}
+	}
+	printf("    the deferred queue did not fill with %d clients\n",
+	    l->nclients);
+fail:
+	jt_load_stop(l);
+	return (-1);
+}
+
 #endif /* !_OES_TEST_JAIL_COMMON_H_ */

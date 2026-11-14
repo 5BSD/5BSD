@@ -1719,6 +1719,68 @@ test_dead_poll_select(void)
 	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
 }
 
+/*
+ * The end of a scope must not wait for the deferred queue to be empty: on a
+ * busy system it never is.  With the queue kept full by other processes the
+ * removal must still be followed by end of file, and by the release of the
+ * removed jail, within a bounded number of deliveries.
+ */
+static void
+test_dead_under_load(void)
+{
+	struct timespec start;
+	struct jt_load load;
+	uint64_t d0, d1;
+	char name[64];
+	long ms;
+	int events, exits, fd, jid, rc;
+	pid_t pid;
+
+	TEST_BEGIN("T-DEAD-LOAD the scope ends while the deferred queue is busy");
+	jid = scratch_jail("ld", name, sizeof(name), NULL);
+	fd = exit_client(jid, 0);
+	if (jid == -1 || fd < 0)
+		return;
+	/*
+	 * Before the load: an event generated while the queue is full may
+	 * be discarded, and this one must be found queued at the end.
+	 */
+	pid = jt_run_true(jid);
+	if (jt_load_start(&load, fd) != 0) {
+		TEST_FAIL("cannot keep the deferred queue full");
+		close(fd);
+		return;
+	}
+	d0 = jt_nosleep_drops(fd);
+	remove_jail(jid);
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	rc = read_to_eof_ms(fd, pid, &exits, &events, JT_LOAD_END_MS);
+	ms = jt_elapsed_ms(&start);
+	d1 = jt_nosleep_drops(fd);
+	ASSERT_MSG(rc == 0, "no end of file %ld ms after the removal while "
+	    "the deferred queue was kept full (%ju more events discarded at "
+	    "its limit meanwhile): %d", ms, (uintmax_t)(d1 - d0), rc);
+	if (rc == 0) {
+		printf("    end of file %ld ms after the removal; %ju events "
+		    "were discarded at the full queue meanwhile\n", ms,
+		    (uintmax_t)(d1 - d0));
+		ASSERT_MSG(exits == 1, "exit before the removal: %d events",
+		    exits);
+		ASSERT_MSG(is_dead(fd), "not dead after end of file");
+		/* Still under load: the dead scope must not keep the jail. */
+		ASSERT_MSG(wait_jail_gone(name),
+		    "removed jail still exists while the load continues");
+	}
+	jt_load_stop(&load);
+	if (rc != 0) {
+		rc = read_to_eof(fd, pid, &exits, &events);
+		printf("    after the load stopped: %s\n", rc == 0 ?
+		    "end of file" : "still no end of file");
+	}
+	close(fd);
+	ASSERT_MSG(wait_jail_gone(name), "removed jail still exists");
+}
+
 static int
 fn_wait_exit(void *arg __unused)
 {
@@ -2800,6 +2862,7 @@ main(void)
 	test_dead_blocked_reader();
 	test_dead_queued();
 	test_dead_poll_select();
+	test_dead_under_load();
 	test_dead_last_exit();
 	test_dead_kqueue();
 	test_dead_with_process();

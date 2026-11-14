@@ -100,9 +100,12 @@ logger_start(struct logger *lg, int wait_listening, ...)
 	return (-1);
 }
 
-/* Wait for the logger to exit, sending SIGTERM first if asked. */
+/*
+ * Wait up to limit_ms for the logger to exit, sending SIGTERM first if
+ * asked.  The exit status, or -1 when it had to be killed.
+ */
 static int
-logger_stop(struct logger *lg, bool term)
+logger_stop_ms(struct logger *lg, bool term, long limit_ms)
 {
 	struct timespec start;
 	int status;
@@ -115,7 +118,7 @@ logger_stop(struct logger *lg, bool term)
 		logger_collect(lg, 50);
 		if (waitpid(lg->pid, &status, WNOHANG) == lg->pid)
 			break;
-		if (jt_elapsed_ms(&start) >= WAIT_MS) {
+		if (jt_elapsed_ms(&start) >= limit_ms) {
 			(void)kill(lg->pid, SIGKILL);
 			(void)waitpid(lg->pid, &status, 0);
 			status = -1;
@@ -129,6 +132,13 @@ logger_stop(struct logger *lg, bool term)
 		return (-1);
 	return (WIFEXITED(status) ? WEXITSTATUS(status) :
 	    256 + WTERMSIG(status));
+}
+
+static int
+logger_stop(struct logger *lg, bool term)
+{
+
+	return (logger_stop_ms(lg, term, WAIT_MS));
 }
 
 static void
@@ -342,6 +352,56 @@ case_removed(void)
 	logger_done(&lg);
 }
 
+/*
+ * The same while other processes keep the kernel's deferred delivery queue
+ * full: the logger must still be told that its jail is gone and stop.
+ */
+static void
+case_removed_under_load(void)
+{
+	struct timespec start;
+	struct jt_load load;
+	struct logger lg;
+	char name[64];
+	pid_t pid;
+	int jid, rc, statfd;
+
+	TEST_BEGIN("L7b the jail is removed while the system is busy");
+	jt_name(name, sizeof(name), "oeslj", "rl");
+	jid = jt_make_jail(name, "oeslj-rl", NULL, "1");
+	statfd = test_open_oes();
+	if (jid == -1 || statfd < 0 ||
+	    logger_start(&lg, true, "-j", name, "exit", NULL) != 0) {
+		TEST_FAIL("setup");
+		return;
+	}
+	/* Before the load: a full queue may discard what is generated. */
+	pid = jt_run_true(jid);
+	if (jt_load_start(&load, statfd) != 0) {
+		TEST_FAIL("cannot keep the deferred queue full");
+		(void)logger_stop(&lg, true);
+		logger_done(&lg);
+		close(statfd);
+		return;
+	}
+	if (jail_remove(jid) != 0)
+		TEST_FAIL("jail_remove: %s", strerror(errno));
+	jt_forget_jail(jid);
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	rc = logger_stop_ms(&lg, false, JT_LOAD_END_MS);	/* By itself. */
+	printf("    logger %s %ld ms after the removal\n",
+	    rc == -1 ? "still running" : "exited", jt_elapsed_ms(&start));
+	jt_load_stop(&load);
+	close(statfd);
+	ASSERT_MSG(rc == 0, "exit status %d under load: %s", rc, lg.err);
+	ASSERT_MSG(strstr(lg.err, "was removed; stopping") != NULL,
+	    "standard error: %s", lg.err);
+	ASSERT_MSG(log_has(&lg, "\"event_type\":\"NOTIFY_EXIT\"",
+	    pidkey(name, sizeof(name), pid), NULL),
+	    "exit before the removal is not in the log");
+	logger_done(&lg);
+}
+
 static pid_t
 sleeper(int jid)
 {
@@ -475,6 +535,7 @@ main(void)
 	case_refused("L8 -j with -d", EX_USAGE, "usage:", "-j", "1", "-d");
 	case_refused("L8 -i alone", EX_USAGE, "usage:", "-i", "exit", NULL);
 	case_removed();
+	case_removed_under_load();
 	case_inbound(true);
 	case_inbound(false);
 
