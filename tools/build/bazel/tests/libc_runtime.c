@@ -7,6 +7,9 @@
 #include <sys/wait.h>
 
 #include <errno.h>
+#ifdef LIBC_TEST_ICONV
+#include <iconv.h>
+#endif
 #include <locale.h>
 #include <netdb.h>
 #include <regex.h>
@@ -123,6 +126,12 @@ int
 main(void)
 {
 	struct addrinfo hints = { 0 }, *result;
+
+#ifdef LIBC_TEST_ICONV
+	errno = 0;
+	CHECK(iconv_close((iconv_t)-1) == -1 && errno == EBADF);
+#endif
+
 
 	CHECK(memory_and_text() == 0);
 	CHECK(streams_and_syscalls() == 0);

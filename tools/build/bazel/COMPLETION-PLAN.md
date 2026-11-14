@@ -11,10 +11,10 @@ is not authorized.
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
 | 2. AMD64 parity/configurations | Full R15 passes 32 tests and captures all 450 selected packages, including the general-helper identity corrections. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
-| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
+| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | CSU/compiler-runtime/libsys and libc component evidence remains retained. Complete native libc static/PIC archives and DSO now build with architecture-owned order/maps: optimized production malloc has 1,450/1,438 members, portable strings/debug malloc has 1,443/1,431, all in exact Make order. Every non-provider member matches allocated bytes and relocations; shared metadata passes. Fresh native drti matches fresh original Make and seven core libc install records/debug binding pass. Full archive reports remain review-required for path-derived provider identities and the older reference drti; public/nonshared/NOSSP interfaces, full DWARF/current ARM64 SDK/hardening, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. Fresh reference provider composition, full loader/current SDK/hardening, full DWARF, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,64 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+ARM64 libc_nonshared now selects the actual portable CPU boundary. All twelve
+members match the independent current-source original Make archive, including
+allocated sections, external symbols and relocations. Its staged archive payload
+and logical owner/group/mode/flags/pkgbase tags pass original Make comparison.
+The public libc CcInfo interfaces and static/shared ABI probes now support ARM64;
+the shared probe consumes the actual public ABI interface rather than the legacy
+implementation link context. With iconv enabled, both probes exercise its wrapper
+using the bounded invalid-handle error path, without conversion modules/data.
+The ARM64 shared client contains a local hidden iconv_close wrapper, imports the
+versioned __bsd_iconv_close implementation and needs only libc.so.7; the static
+client has no dynamic dependencies. These are linked clients, not ARM64 execution.
+
+ARM64 NOSSP libc builds all 1,437 members in exact Make order. Every non-provider
+allocated/relocation contract matches; raw res_send path-derived alias and
+provider differences remain retained. The six loader-extracted objects match
+original Make NOSSP members exactly. Separate ELF-based validation verifies
+provider attributes, schemas and actual instructions for all 14 ordinary and 19
+enabled NOSSP sites. The older staged reference drti discrepancy still requires
+fresh reference provider composition; these reports do not waive it or qualify
+the full ARM64 loader. Evidence: bazel-libc-public-arm64-review-r1-20261114,
+bazel-libc-nonshared-arm64-install-review-r1-20261114 and
+bazel-libc-nossp-arm64-dof-review-r2-20261114. The first DOF diagnostic attempt
+failed because LLVM nm's default AArch64 symbol filtering omitted aliases; it is
+not recorded as a completed passing review.
+
+That filtering exposed a maintained archive verifier gap: nm must explicitly use
+--special-syms on AArch64 to retain $dtrace aliases. Both bulk and duplicate-member
+symbol reads now request it. Make's .nossppico naming is also recognized. A new
+source-reviewed host artifact test creates independent ELF/ar fixtures and uses
+the declared real execution-host LLVM nm: defined and undefined aliases must be
+visible on AMD64 and ARM64, and changed function names or lost definitions must
+be rejected. Three test cases pass, including their architecture subcases. Native
+ARM64 R3 passes this host-only inspection test; native AMD64 R2 passes all six
+selected tests (public/static libc runtime, archive identities, both existing
+DTrace regressions and the new symbol-visibility regression). Older raw ELF
+allocated/DOF contracts remain independently checked; previous nm-only archive
+symbol results must not stand in for the strengthened check.
+A fresh complete NOSSP symbol review now reads all 1,437 members with special
+symbols visible and matches the full strong-alias definition/reference graph.
+Its sole ordinary-symbol difference is dof_registered in the reference provider,
+retained as review-required in bazel-libc-nossp-arm64-symbol-review-r1-20261114.
+
+A configured-graph review also found target-only NOSSP entering host DTrace's
+bootstrap configuration. Before correction, ordinary/NOSSP consumers select two
+host bootstrap configurations, one carrying nossp=true. The bootstrap transition
+now resets that private libc setting to its normal false default without changing
+target-object ABI selection. Actual before/after cqueries prove a single normal
+host generator; all thirteen captured nonshared/client/NOSSP/loader/install
+outputs remain byte-identical. Evidence: bazel-libc-bootstrap-nossp-before-20261114,
+bazel-libc-bootstrap-nossp-after-20261114 and
+bazel-libc-bootstrap-nossp-preservation-r1-20261114. This establishes configuration
+separation/output preservation, not controlled CPU, memory or disk performance.
+Existing build-bsd format-5 architecture/SDK/feature inputs select these rules;
+no C CLI, production backend or publication default changed. Documentation and
+maintained regression targets accompany the producers. Full R15/VM R11 evidence
+predates these changes; all six gates remain open and Make stays production/default.
+
 
 ARM64 libc now builds final static/PIC archives and libc.so.7 using source-owned
 architecture selections in the common archive recipe and actual ARM64 version

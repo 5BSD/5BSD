@@ -8595,3 +8595,15 @@ script. Component construction and debug-file binding do not establish complete
 public/nonshared/NOSSP linkage, current ARM64 world or runtime qualification.
 Existing format-5 architecture/SDK and allocator/optimization inputs select these
 rules; Make remains the production backend.
+
+.Pp
+Native ARM64 libc nonshared wrappers and public shared/static link clients retain
+the original target ABI and installation policy. NOSSP libc and architecture-owned
+loader extractions retain separate compiler policy; the execution-host DTrace
+generator explicitly clears that target-only setting.
+Archive inspection includes special symbols so AArch64 DTrace aliases remain
+visible. Host artifact tests inspect cross objects without executing them;
+public-client linking and NOSSP component checks do not qualify the complete
+ARM64 loader or normal-system runtime.
+Existing format-5 architecture/SDK inputs select these rules. Make remains the
+production backend pending all closeout gates.

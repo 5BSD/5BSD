@@ -284,7 +284,7 @@ def compare_relocatable(candidate, reference):
 
 
 def stem(member):
-    for suffix in ('.nopic.o', '.pic.o', '.pico', '.pieo', '.o'):
+    for suffix in ('.nopic.o', '.pic.o', '.nossppico', '.pico', '.pieo', '.o'):
         if member.endswith(suffix):
             return member[:-len(suffix)]
     raise ValueError('unexpected archive member: ' + member)
@@ -292,7 +292,7 @@ def stem(member):
 
 def parse_archive(nm, artifact):
     symbols = {}
-    for line in run([nm, '-A', '--format=posix', artifact]).splitlines():
+    for line in run([nm, '-A', '--special-syms', '--format=posix', artifact]).splitlines():
         match = re.match(r'^.*\[([^\]]+)\]:\s+(\S+)\s+(\S)\b', line)
         if not match:
             raise ValueError('unparsed nm line: ' + line)
@@ -472,7 +472,7 @@ def archive_record(nm, ar, path):
             if not extracted.is_file() or extracted.is_symlink():
                 raise ValueError('archive occurrence extraction did not produce a regular object')
             entries = []
-            for line in run([nm, '--format=posix', extracted]).splitlines():
+            for line in run([nm, '--special-syms', '--format=posix', extracted]).splitlines():
                 match = re.match(r'^(\S+)\s+(\S)\b', line)
                 if not match:
                     raise ValueError('unparsed occurrence nm line: ' + line)

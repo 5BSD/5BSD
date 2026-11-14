@@ -7,6 +7,8 @@ and toolchain. The link machine describes input objects, not the executable ABI.
 """
 def _bootstrap_config(settings, attr):
     return {
+        # NOSSP belongs to target libc/rtld, never the execution-host tool.
+        "//lib/libc:nossp": False,
         "//tools/build/bazel/config:dtrace": False,
         "//tools/build/bazel/config:dtrace_link_machine": attr.link_machine,
         "//tools/build/bazel/config:experimental_dtrace_section_archives": False,
@@ -15,7 +17,7 @@ def _bootstrap_config(settings, attr):
 _bootstrap = transition(
     implementation = _bootstrap_config,
     inputs = [],
-    outputs = ["//tools/build/bazel/config:dtrace_link_machine", "//tools/build/bazel/config:dtrace", "//tools/build/bazel/config:experimental_dtrace_section_archives"],
+    outputs = ["//lib/libc:nossp", "//tools/build/bazel/config:dtrace_link_machine", "//tools/build/bazel/config:dtrace", "//tools/build/bazel/config:experimental_dtrace_section_archives"],
 )
 
 def _impl(ctx):

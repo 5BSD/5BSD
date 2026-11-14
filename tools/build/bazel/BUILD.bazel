@@ -516,3 +516,12 @@ bsd_host_artifact_test(name = "module_build_id_debug_test",
     args = ["--binary", "$(rlocationpath //sys/modules/cd9660:generic_module)",
         "--debug", "$(rlocationpath //sys/modules/cd9660:generic_debug)"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+# Inspect independent ELF fixtures with the actual execution-host symbol tool;
+# AArch64 mapping-symbol filtering must never hide DTrace function aliases.
+bsd_host_artifact_test(name = "archive_symbol_visibility_test",
+    src = "archive-symbol-visibility-test.py",
+    data = ["elf-artifact-check.py", "qualification_artifacts.py", "dtrace-relocatable-inventory-test.py", "dtrace-dof-inventory.py"],
+    tools = ["@bsd_sdk//toolchain:bin/llvm-nm"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-nm_runtime"],
+    args = ["--nm", "$(rootpath @bsd_sdk//toolchain:bin/llvm-nm)"], size = "small")

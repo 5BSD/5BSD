@@ -266,3 +266,20 @@ SDK/hardening profile and normal ARM64 runtime still require qualification.
 An older reference drti must be refreshed explicitly; a metadata match does not
 permit ignoring its constructor code difference. The six-gate ledger retains
 these distinctions and Make remains production/default.
+
+### Public libc and target-only NOSSP
+
+Libc's ARM64 nonshared wrappers and public shared/static link interfaces now
+construct target-correct objects and clients. The selected ABI smoke probe uses
+the public interface and conditionally exercises iconv's nonshared wrapper when
+that feature is enabled. Cross construction is distinct from client execution.
+The NOSSP archive and six architecture-selected loader extractions preserve their
+own compilation policy; they do not qualify the complete loader.
+
+The host DTrace bootstrap explicitly clears target-only libc NOSSP policy while
+retaining its target-object rewriter selection. Configured-graph and artifact
+preservation checks establish that boundary, not a performance result. Archive
+symbol inspection requests LLVM special symbols so AArch64 cannot hide DTrace
+aliases; original Make NOSSP member names remain accepted. The maintained
+`archive_symbol_visibility_test` runs real host nm on independent AMD64/ARM64
+fixtures and is explicitly permitted as host artifact inspection in cross runs.

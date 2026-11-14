@@ -93,9 +93,10 @@ load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
 # Link the existing ABI probe through the native public libc interface, then
 # select native runtime runfiles. SDK headers/startup objects still apply.
 cc_binary(name = "runtime_probe", srcs = ["//tools/build/bazel:tests/libc_runtime.c"],
-    deps = [":shared_link_interface"], dynamic_deps = [":c_shared", "//lib/libsys:sys_shared"],
+    local_defines = select({"//tools/build/bazel/config:iconv_enabled": ["LIBC_TEST_ICONV"], "//conditions:default": []}),
+    deps = [":shared_abi_interface"], dynamic_deps = [":c_shared"],
     linkopts = ["-nodefaultlibs"],
-    testonly = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    testonly = True, target_compatible_with = LIBC_PORTABLE_PLATFORMS)
 bsd_program_test(name = "runtime_test", program = ":runtime_probe",
     runtime_lib = [":c_shared", "//lib/libsys:sys_shared"],
     runner = "//tools/build/bazel:program_test_runner", size = "small")
@@ -103,9 +104,10 @@ bsd_program_test(name = "runtime_test", program = ":runtime_probe",
 cc_import(name = "static_link_objects", static_library = ":static_archive",
     deps = ["//lib/libcompiler_rt:compiler_rt"], visibility = ["//visibility:public"])
 cc_binary(name = "static_runtime_probe", srcs = ["//tools/build/bazel:tests/libc_runtime.c"],
+    local_defines = select({"//tools/build/bazel/config:iconv_enabled": ["LIBC_TEST_ICONV"], "//conditions:default": []}),
     deps = [":static_link_objects"], features = ["fully_static_link"],
     linkopts = ["-nodefaultlibs"], linkstatic = True, testonly = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS)
 bsd_program_test(name = "static_runtime_test", program = ":static_runtime_probe",
     runner = "//tools/build/bazel:program_test_runner", size = "small")
 
@@ -113,16 +115,16 @@ bsd_program_test(name = "static_runtime_test", program = ":static_runtime_probe"
 # wrappers. Do not propagate the DSO implementation's libsys linking context
 # into public executable links. cc_import still depends on our native producer.
 cc_import(name = "shared_abi", shared_library = ":c_shared",
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libwrap:__pkg__", "//lib/librpcsvc:__pkg__", "//lib/libypclnt:__pkg__"])
 cc_library(name = "shared_abi_interface", deps = [":shared_abi", "//lib/libc_nonshared:nonshared"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS, visibility = ["//visibility:public"])
 
 # Legacy implementation-oriented link context. Existing consumers still need
 # migration and ELF validation; public clients should use shared_abi_interface.
 # Shared consumers need the nonshared public wrappers as well as the DSO.
 cc_library(features = LIBC_VARIANT_FEATURES, name = "shared_link_interface", deps = [":shared_link_objects", "//lib/libc_nonshared:nonshared"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_template.bzl", libc_link_template = "bsd_template")
 libc_link_template(name = "linker_script", template = "libc_nossp.ldscript", output = "libc.ld",
@@ -203,12 +205,12 @@ libc_nossp_variant(name = "nossp_pic_archive", dep = ":nossp_objects_archive",
 # Internal archive variant, selected by nossp_pic_archive's transition.
 load("@bazel_skylib//rules:common_settings.bzl", "bool_setting")
 bool_setting(name = "nossp", build_setting_default = False,
-    visibility = ["//lib/libc:__subpackages__"])
+    visibility = ["//lib/libc:__subpackages__", "//cddl/usr.sbin/dtrace:__pkg__", "//tools/build/bazel:__pkg__"])
 config_setting(name = "nossp_enabled", flag_values = {":nossp": "true"},
     visibility = ["//lib/libc:__subpackages__"])
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
-bsd_component_selected_objects(name = "rtld_jump_objects", group = "//lib/libc/amd64/gen:objects", pic = True,
+bsd_component_selected_objects(name = "rtld_jump_objects", group = select({"@platforms//cpu:aarch64": "//lib/libc/aarch64/gen:objects", "//conditions:default": "//lib/libc/amd64/gen:objects"}), pic = True,
     object_names = ["sigsetjmp.pic.o", "_setjmp.pic.o", "setjmp.pic.o"])
 bsd_component_selected_objects(name = "rtld_stat_objects", group = "//lib/libc/sys:pseudo_objects", pic = True,
     object_names = ["lstat.pic.o", "stat.pic.o"])
