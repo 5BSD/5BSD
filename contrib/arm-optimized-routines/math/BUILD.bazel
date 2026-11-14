@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# libm includes the binary128 gamma implementation into b_tgammal.c.
+cc_library(name = "tgamma128", hdrs = ["tgamma128.h"],
+    textual_hdrs = ["tgamma128.c"], includes = ["."],
+    visibility = ["//lib/msun:__pkg__"])

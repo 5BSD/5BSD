@@ -22,7 +22,7 @@ class GeneratorInputs(unittest.TestCase):
         self.reference.mkdir()
         self.artifact = self.reference / "objects" / str(self.component).lstrip("/") / "generator"
         self.artifact.parent.mkdir(parents=True)
-        self.artifact.write_bytes(b"executable fixture")
+        self.artifact.write_bytes(b"\x7fELF\x02\x01" + bytes(10) + b"\x03\x00\x3e\x00")
         self.artifact.chmod(0o755)
         self.receipt = self.reference / "receipt.json"
         self.info = dict(format=1, status="passed", scope="native-amd64-Make-installation-reference",
@@ -37,7 +37,7 @@ class GeneratorInputs(unittest.TestCase):
         self.item["receipt_sha256"] = gen.digest(self.receipt)
         self.manifest.write_text(json.dumps(self.config))
     def load(self):
-        return gen.load(self.manifest, "amd64", self.source, self.compiler)
+        return gen.load(self.manifest, "amd64", self.source)
     def test_exact_binding_and_post_load_tamper(self):
         records, bindings = self.load()
         self.assertEqual(records["MAKE_GENERATOR"]["artifact"], str(self.artifact))
@@ -51,6 +51,35 @@ class GeneratorInputs(unittest.TestCase):
         self.info = original; self.refresh()
         self.compiler.write_bytes(b"other compiler")
         with self.assertRaises(ValueError): self.load()
+    def test_foreign_or_non_executable_elf_is_rejected(self):
+        original = self.artifact.read_bytes()
+        for header in [original[:18] + b"\xb7\x00",  # ARM64 is not this host.
+                       original[:16] + b"\x01\x00" + original[18:],
+                       b"not an ELF file"]:
+            self.artifact.write_bytes(header)
+            self.item["artifact_sha256"] = gen.digest(self.artifact)
+            self.refresh()
+            with self.subTest(header=header), self.assertRaisesRegex(ValueError, "execution-platform"):
+                self.load()
+
+    def test_execution_compiler_is_bound_without_target_compiler_identity(self):
+        records, bindings = self.load()
+        self.assertEqual(records["MAKE_GENERATOR"]["execution_compiler"], str(self.compiler))
+        self.assertEqual(bindings[str(self.compiler)], gen.digest(self.compiler))
+        # Multiple host generators must agree on their explicit execution compiler.
+        other = self.root / "other-compiler"
+        other.write_bytes(b"different native compiler")
+        second_receipt = self.reference / "other-receipt.json"
+        info = copy.deepcopy(self.info)
+        info["environment"] = dict(compiler_selected=str(other),
+                                   input_sha256={str(other): gen.digest(other)})
+        second_receipt.write_text(json.dumps(info))
+        self.config["generators"]["OTHER_GENERATOR"] = dict(self.item,
+            receipt=str(second_receipt), receipt_sha256=gen.digest(second_receipt))
+        self.manifest.write_text(json.dumps(self.config))
+        with self.assertRaisesRegex(ValueError, "execution compiler identities differ"):
+            self.load()
+
     def test_source_named_generator_command(self):
         self.config["generators"] = {"JEVENTS": self.item}
         self.refresh()

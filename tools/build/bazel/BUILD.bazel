@@ -36,6 +36,7 @@ cc_binary(name = "dtrace_archive_member", srcs = ["dtrace_archive_member.c"],
     visibility = ["//visibility:public"])
 
 # Small supervisor for per-command rusage without inheriting controller RSS.
+# This legacy action meter does not include an existing Bazel server.
 cc_binary(name = "resource_run", srcs = ["resource_run.c"], linkstatic = True,
     features = ["fully_static_link"], visibility = ["//visibility:public"])
 
@@ -537,3 +538,11 @@ bsd_host_artifact_test(name = "world_profile_test", src = "world-profile-test.py
 # Compiler identity must follow the explicit Make world selection.
 bsd_host_artifact_test(name = "world_compiler_identity_test", src = "libmd-environment-test.py",
     data = ["libmd_environment.py"], size = "small")
+
+# Measure a complete private-server lifecycle, including reparented descendants.
+cc_binary(name = "resource_tree", srcs = ["resource_tree.c"], linkstatic = True,
+    features = ["fully_static_link"], visibility = ["//visibility:public"])
+
+bsd_host_artifact_test(name = "resource_tree_test", src = "resource-tree-test.py",
+    tools = [":resource_tree"],
+    args = ["--runner", "$(rootpath :resource_tree)"], size = "small")

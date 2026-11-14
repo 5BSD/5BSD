@@ -1198,9 +1198,19 @@ The default auto uses all logical CPUs.
 .It Fl -src-conf Ar file
 World option configuration passed as SRCCONF; defaults to /etc/src.conf.
 Use /dev/null to disable that configuration file.
+.It Fl -src-env-conf Ar file
+Source-environment Make configuration; defaults to /etc/src-env.conf.
+This is read early enough for environment-only source options such as AUTO_OBJ.
+Paths must be absolute and readable when explicitly selected; /dev/null disables
+this configuration input.
+All maintained source Make backend steps receive SRC_ENV_CONF explicitly.
+The configuration file key is src_env_conf.
+Bazel qualification rejects this override because its SDK inputs define the
+comparison context. Loader construction fixes it to /dev/null along with its
+other Make configurations.
 .It Fl -make-conf Ar file
 Make configuration passed as __MAKE_CONF; defaults to /etc/make.conf.
-These two files are trusted make input, unlike the literal frontend config.
+These configuration files are trusted make input, unlike the literal frontend config.
 .It Fl -kernel-dir Ar directory
 Directory containing the selected kernel configuration, passed as KERNCONFDIR.
 .It Fl -pkg-key Ar file
@@ -2341,6 +2351,13 @@ Use the independent firmware test case for its documented firmware-only scope.
 This does not qualify the complete loader, kernel and installed-system chain.
 
 .Ss Bazel build qualification
+Per-command timing in qualification logs measures the Bazel client; a persistent
+server and its compiler descendants can lie outside that boundary.
+It does not establish build CPU, aggregate peak RAM or device throughput.
+The source-owned
+.Pa tools/build/bazel/RESOURCE-ACCOUNTING.md
+specifies complete private-server lifecycle measurements and their limits.
+.Pp
 .Cm bazel-test
 runs maintained native amd64 qualification and explicitly selected cross-target
 artifact qualification, with separate target and execution SDKs where required.
@@ -2350,6 +2367,17 @@ outlined atomic variants through the configured target platform.
 Each outlined variant has a declared compilation action and archive member
 identity; source metadata preserves member order and logical source filenames.
 The normal architecture and SDK inputs select these producers.
+.Pp
+Locale and termcap databases select explicit target byte order, while their
+generators and runtime libraries use the execution platform.
+Unmapped target byte orders fail analysis instead of inheriting host byte order.
+Full ARM64 world and runtime qualification remain separate requirements.
+.Pp
+Original Make generator references bind their native execution compiler and
+actual generator ELF architecture separately from the target compiler.
+Cross compilation does not require those compiler executables to be identical.
+The generator receipt, payload digests and original recipe bindings remain
+required; foreign generator artifacts are rejected.
 .Pp
 Split-debug validation checks ELF identity and symbol policy, debuglink filename
 and CRC. When either file carries a GNU build-ID note, valid matching identities
@@ -2805,6 +2833,13 @@ and input invalidation. Evidence output must not overlap build state.
 The Bazel server exits after 300 idle seconds. SDK snapshots are copied once per
 content identity and verified before reuse; altered snapshots are rejected.
 The SDK receipt's source, host dependency and snapshot bindings must all match.
+SDK preparation also binds copied payload bytes to the inventoried source hashes.
+Files are checked before staged tools execute; the final snapshot is checked
+against those bindings before a receipt is issued. The copied_payload_sources
+receipt field records this correspondence, including contained directory aliases.
+Cross preparation checks unchanged copied execution-SDK payloads too; its
+execution-role BUILD metadata is generated separately. Final correspondence
+checks reuse the snapshot hashes rather than adding another full-SDK read. These checks do not establish OS filesystem sandbox isolation.
 This mode still uses a prepared SDK and does not establish bootstrap, installation,
 package parity, publication, full-system or performance qualification.
 .Pp

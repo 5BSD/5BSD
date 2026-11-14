@@ -3,6 +3,36 @@
 See [BUILD-OPTIONS.md](BUILD-OPTIONS.md) for GENERIC/NODEBUG, diagnostics versus
 debug symbols, native option boundaries and remaining Make compatibility.
 
+## Resource measurement boundary
+
+Normal frontend time-l timings measure the client and omit an existing Bazel
+server. They are now labelled accordingly in command records and receipts.
+The source-owned resource_tree supervisor measures a full private-server
+lifecycle, including adopted descendants, with CPU/block counters and sampled
+aggregate RSS. Maintained native qualification passes its seven real process
+regressions. This qualifies instrumentation; controlled performance comparisons
+remain open. See [RESOURCE-ACCOUNTING.md](RESOURCE-ACCOUNTING.md).
+
+## Library architecture selections
+
+The library aggregate now traverses AMD64 and ARM64, retaining rejection for
+incompatible children and unsupported installed tests. Its x86 display/Intel PT
+and ARM OpenCSD/PMC selections match Make with PMC on/off. Focused trace-library
+archives, shared metadata, event generation and all 123 install metadata records
+match original Make per architecture; diagnostic-path/debug differences remain.
+Native generator provenance is separate from target compiler identity. See the
+current checkpoint in [COMPLETION-PLAN.md](COMPLETION-PLAN.md); full ARM64 world
+and runtime qualification remain open.
+
+## Cross-target locale data
+
+Locale/termcap producers share explicit target byte-order mapping and use host
+execution-runtime inputs for generation. All four complete component archives
+match original Make metadata and regular payload bytes on AMD64 and ARM64
+(785 records and 184 regular files each). The full ARM64 world root remains
+incompatible; the current diagnostic and limitations are recorded in
+[COMPLETION-PLAN.md](COMPLETION-PLAN.md). This is not ARM64 runtime acceptance.
+
 ## Independent Make closeout comparison (2026-11-11)
 
 Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass

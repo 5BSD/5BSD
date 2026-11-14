@@ -2,19 +2,39 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
-load(":sources.bzl", "MATH_SOURCES", "TEXTUAL_SOURCES")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-cc_library(name = "headers", hdrs = glob(["src/*.h", "x86/*.h", "ld80/*.h"]),
-    includes = ["x86", "ld80", "amd64", "src"], visibility = ["//lib/libgcc_s:__pkg__"])
-cc_library(name = "m", srcs = MATH_SOURCES, textual_hdrs = TEXTUAL_SOURCES,
-    implementation_deps = [":headers", "//lib/libc/include:math_headers"],
-    local_defines = ["_RENAME_FMA", "_RENAME_FMAF"],
-    copts = ["-fno-math-errno", "-ffp-exception-behavior=maytrap", "-fno-common"],
+load(":sources.bzl", "MATH_SOURCES", "TEXTUAL_SOURCES", "AARCH64_MATH_SOURCES", "AARCH64_TEXTUAL_SOURCES")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+_SOURCES = select({"@platforms//cpu:aarch64": AARCH64_MATH_SOURCES,
+    "//conditions:default": MATH_SOURCES})
+cc_library(name = "headers", hdrs = glob(["src/*.h"]) + select({
+        "@platforms//cpu:aarch64": glob(["ld128/*.h", "aarch64/*.h"]),
+        "//conditions:default": glob(["x86/*.h", "ld80/*.h"]),
+    }),
+    includes = select({"@platforms//cpu:aarch64": ["ld128", "aarch64", "src"],
+        "//conditions:default": ["x86", "ld80", "amd64", "src"]}), visibility = ["//lib/libgcc_s:__pkg__"])
+cc_library(name = "m", srcs = _SOURCES, textual_hdrs = select({
+        "@platforms//cpu:aarch64": AARCH64_TEXTUAL_SOURCES,
+        "//conditions:default": TEXTUAL_SOURCES}),
+    implementation_deps = [":headers", "//lib/libc/include:math_headers"] + select({
+        "@platforms//cpu:aarch64": ["//contrib/arm-optimized-routines/math:tgamma128"],
+        "//conditions:default": []}),
+    local_defines = select({"@platforms//cpu:aarch64": [
+        "USE_BUILTIN_FMAF", "USE_BUILTIN_FMA", "USE_BUILTIN_FMAXF", "USE_BUILTIN_FMAX",
+        "USE_BUILTIN_FMINF", "USE_BUILTIN_FMIN", "USE_BUILTIN_SQRTF", "USE_BUILTIN_SQRT"],
+        "//conditions:default": ["_RENAME_FMA", "_RENAME_FMAF"]}),
+    copts = ["-fno-math-errno", "-fno-common"] + select({
+        "@platforms//cpu:x86_64": ["-ffp-exception-behavior=maytrap"],
+        "//conditions:default": []}),
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":m"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":m"], ordered_sources = _SOURCES, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_configured_version_map(
     name = "version_map",
-    symbol_maps = ["Symbol.map", "amd64/Symbol.map"],
+    symbol_maps = select({
+        "@platforms//cpu:aarch64": ["Symbol_f128.map", "Symbol.map", "aarch64/Symbol.map"],
+        "//conditions:default": ["Symbol.map", "amd64/Symbol.map"]}),
     versions = "//lib/libc:Versions.def",
     generator = "//share/mk:version_gen.awk",
     # This symbol inventory has no includes or target-dependent conditionals.
@@ -82,4 +102,4 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({
     "//tools/build/bazel/config:tests_enabled": ["//lib/msun/tests:installation_archives"],
     "//conditions:default": [],
-}), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+}), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

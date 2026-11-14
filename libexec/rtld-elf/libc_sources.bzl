@@ -2,13 +2,10 @@
 """Sources rebuilt with rtld's private namespace, not ordinary libc objects."""
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load(":policy.bzl", "RTLD_COPTS", "RTLD_DEFINES", "RTLD_PLATFORM")
+_DIRECTORY_SOURCES = ["fdopendir", "opendir", "opendir2", "closedir", "readdir", "telldir"]
+_GEN_SOURCES = ["errlst", "getcwd", "getprogname", "raise", "sigsetops", "sysctlnametomib", "__xuname"]
 RTLD_LIBC_SOURCES = {
-    "lib/libc/gen": [
-        "fdopendir", "opendir", "opendir2", "closedir",
-        "readdir", "telldir", "errlst", "getcwd",
-        "getprogname", "raise", "sigsetops", "sysctlnametomib",
-        "__xuname",
-    ],
+    "lib/libc/gen": _DIRECTORY_SOURCES + _GEN_SOURCES,
     "lib/libc/stdlib": [
         "reallocf", "realpath", "merge", "reallocarray",
     ],
@@ -36,7 +33,10 @@ _TEXTUAL_SOURCES = {
     "memcpy": ["//lib/libc/string:rtld_source_bcopy"],
     "memmove": ["//lib/libc/string:rtld_source_bcopy"],
 }
-RTLD_LIBC_GROUPS = [":rtld_libc_" + name for names in RTLD_LIBC_SOURCES.values() for name in names]
+# Preserve the component's declared link order independently of package grouping.
+RTLD_LIBC_GROUPS = [":rtld_libc_" + name for name in (
+    _DIRECTORY_SOURCES + RTLD_LIBC_SOURCES["libexec/rtld-elf/rtld-libc"] +
+    RTLD_LIBC_SOURCES["lib/libc/stdlib"] + _GEN_SOURCES + RTLD_LIBC_SOURCES["lib/libc/string"])]
 
 def rtld_libc_source_exports(package):
     for name in RTLD_LIBC_SOURCES[package]:

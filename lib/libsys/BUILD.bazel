@@ -195,3 +195,6 @@ bsd_component_selected_objects(name = "rtld_pic_objects", group = ":sys_objects"
 
 exports_files(["pdrfork_thread_gen.c", "rfork_thread_gen.c", "sched_getcpu_gen.c"],
     visibility = ["//lib/libc/sys:__pkg__"])
+
+# ARM64 libthr uses the original generic errno-returning umtx wrapper.
+exports_files(["_umtx_op_err.c"], visibility = ["//lib/libthr:__pkg__"])

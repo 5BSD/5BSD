@@ -6,21 +6,29 @@ load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_m
 load(":sources.bzl", "UTIL_SOURCES")
 _SECTION_TRACE = "//tools/build/bazel/config:experimental_dtrace_section_archives_enabled"
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 cc_library(name = "headers", hdrs = ["libutil.h", "login_cap.h", "mntopts.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 bsd_dtrace_spec(name = "provider", source = "logincap_provider.d", output = "logincap_provider.o",
     flags = ["-C", "-x", "nolibs"], static_anchor = True, object_path_mode = "relative",
-    dtrace = "@bsd_sdk//toolchain:extra_dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = select({"@platforms//cpu:aarch64": "//cddl/usr.sbin/dtrace:bootstrap_aarch64",
+        "//conditions:default": "//cddl/usr.sbin/dtrace:bootstrap"}), cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
-    drti = "//tools/build/bazel:dtrace_runtime_object",
-    tool_inputs = ["@bsd_sdk//toolchain:extra_dtrace_runtime", "@bsd_sdk//toolchain:compile_inputs",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = select({"@platforms//cpu:aarch64": ["//cddl/usr.sbin/dtrace:bootstrap_aarch64_runtime"],
+        "//conditions:default": ["//cddl/usr.sbin/dtrace:bootstrap_runtime"]}),
+    tool_inputs = ["@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 bsd_dtrace_spec(name = "section_provider", source = "logincap_provider.d", output = "logincap_provider.o",
     flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
-    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = select({"@platforms//cpu:aarch64": "//cddl/usr.sbin/dtrace:bootstrap_aarch64",
+        "//conditions:default": "//cddl/usr.sbin/dtrace:bootstrap"}), cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
     drti = "//cddl/lib/drti:drti",
-    runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    runtime_libraries = select({"@platforms//cpu:aarch64": ["//cddl/usr.sbin/dtrace:bootstrap_aarch64_runtime"],
+        "//conditions:default": ["//cddl/usr.sbin/dtrace:bootstrap_runtime"]}),
     tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 cc_library(name = "objects", srcs = UTIL_SOURCES + ["logincap_probes.h"], deps = [":headers"],
@@ -115,8 +123,9 @@ exports_files(["login_class.c", "logincap_probes.h"], visibility = ["//rescue/li
 
 # Inspect the original traced archive contract; experimental/untraced modes
 # retain distinct composition and their separate qualification obligations.
-load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
-bsd_python_test(name = "static_archive_contract_test", src = "static-archive-contract-test.py",
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_host_artifact_test(name = "static_archive_contract_test", src = "static-archive-contract-test.py",
+    args = select({"@platforms//cpu:aarch64": ["--machine=183"], "//conditions:default": ["--machine=62"]}),
     data = [":static_archive", "static-archive-contract.json", "Makefile", "logincap_provider.d", "logincap_probes.h"],
     target_compatible_with = _PLATFORM + select({_SECTION_TRACE: ["@platforms//:incompatible"], _TRACE: [], "//conditions:default": ["@platforms//:incompatible"]}))
 

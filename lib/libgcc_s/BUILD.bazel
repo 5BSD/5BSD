@@ -1,16 +1,23 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
-load("//lib/libcompiler_rt:sources.bzl", "AMD64_BUILTIN_SOURCES")
+load("//lib/libcompiler_rt:sources.bzl", "AMD64_BUILTIN_SOURCES", "AARCH64_BUILTIN_SOURCES")
 load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
 load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _COMMON = ["-D_LIBUNWIND_IS_NATIVE_ONLY", "-D_LIBUNWIND_USE_FRAME_HEADER_CACHE", "-DCOMPILER_RT_HAS_FLOAT16", "-DCOMPILER_RT_HAS_BFLOAT16"]
 _DEPS = ["//contrib/llvm-project/compiler-rt/lib/builtins:headers", "//contrib/llvm-project/libunwind/include:headers", "//contrib/llvm-project/libunwind/src:headers"]
 # Shared runtime builtins must retain default visibility, unlike libcompiler_rt.a.
-cc_library(name = "builtins", srcs = ["//contrib/llvm-project/compiler-rt/lib/builtins:" + n for n in AMD64_BUILTIN_SOURCES], deps = _DEPS + ["//lib/libcompiler_rt:compiler_rt"], copts = _COMMON, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "builtins", srcs = select({
+    "@platforms//cpu:aarch64": ["//contrib/llvm-project/compiler-rt/lib/builtins:" + n for n in AARCH64_BUILTIN_SOURCES],
+    "//conditions:default": ["//contrib/llvm-project/compiler-rt/lib/builtins:" + n for n in AMD64_BUILTIN_SOURCES],
+}), deps = _DEPS + ["//lib/libcompiler_rt:compiler_rt"], copts = _COMMON, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
 cc_library(name = 'personality', srcs = ['//contrib/llvm-project/compiler-rt/lib/builtins:gcc_personality_v0.c'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
 cc_library(name = 'c_unwind', srcs = ['//contrib/llvm-project/libunwind/src:Unwind-sjlj.c', '//contrib/llvm-project/libunwind/src:UnwindLevel1.c'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
-cc_library(name = 'frame', srcs = ['//contrib/llvm-project/libunwind/src:UnwindLevel1-gcc-ext.c'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables', '-D_LIBUNWIND_SUPPORT_FRAME_APIS'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = 'frame', srcs = ['//contrib/llvm-project/libunwind/src:UnwindLevel1-gcc-ext.c'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables'] + select({
+    "@platforms//cpu:x86_64": ["-D_LIBUNWIND_SUPPORT_FRAME_APIS"], "//conditions:default": []}), features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
 cc_library(name = 'cpp_unwind', srcs = ['//contrib/llvm-project/libunwind/src:Unwind-EHABI.cpp', '//contrib/llvm-project/libunwind/src:libunwind.cpp'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables', '-fno-rtti'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
 cc_library(name = 'registers', srcs = ['//contrib/llvm-project/libunwind/src:UnwindRegistersRestore.S', '//contrib/llvm-project/libunwind/src:UnwindRegistersSave.S'], deps = _DEPS, copts = _COMMON + [], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
 cc_library(name = "math", srcs = ['//lib/msun:src/s_fabs.c', '//lib/msun:src/s_fabsf.c', '//lib/msun:src/s_fabsl.c', '//lib/msun:src/s_fmax.c', '//lib/msun:src/s_fmaxf.c', '//lib/msun:src/s_logb.c', '//lib/msun:src/s_logbf.c', '//lib/msun:src/s_scalbn.c', '//lib/msun:src/s_scalbnf.c', '//lib/msun:src/s_fmaxl.c', '//lib/msun:src/s_logbl.c', '//lib/msun:src/s_scalbnl.c'], deps = ["//lib/msun:headers", "//lib/libc/include:math_headers"], copts = _COMMON, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
@@ -19,8 +26,11 @@ bsd_configured_version_map(
     symbol_maps = ["Symbol.map", "SymbolDefault.map"],
     versions = "Versions.def",
     generator = "//share/mk:version_gen.awk",
-    # This amd64-only target needs compiler architecture macros for its ABI map.
-    cpp_flags = ["-P", "-nostdinc", "--target=x86_64-unknown-freebsd"],
+    # The ABI map is preprocessed with the selected target architecture macros.
+    cpp_flags = ["-P", "-nostdinc"] + select({
+        "@platforms//cpu:aarch64": ["--target=aarch64-unknown-freebsd"],
+        "//conditions:default": ["--target=x86_64-unknown-freebsd"],
+    }),
     compiler = "@bsd_sdk//toolchain:bin/clang",
     compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
     cat = "@bsd_sdk//toolchain:cat",

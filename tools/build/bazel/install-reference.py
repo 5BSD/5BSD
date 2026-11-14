@@ -138,7 +138,7 @@ def main():
         if execution_arch is None:
             raise ValueError('original generator binding needs a qualified execution host')
         generator_inputs, generator_bindings = install_reference_generators.load(
-            args.generator_inputs, execution_arch, src, Path(environment.compiler_selected))
+            args.generator_inputs, execution_arch, src)
         for variable, record in generator_inputs.items():
             environment.options.append(variable + '=' + record['artifact'])
             if environment.query(['-V', variable]).strip() != record['artifact']:

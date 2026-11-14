@@ -36,7 +36,7 @@ static struct option options[] = {
 #define B(n) {n,"no",NULL,true,false}
  S("arch","native"), S("board","generic"), S("jobs","auto"),
  S("kernel","GENERIC"), S("kernel-dir",""), S("src-conf","/etc/src.conf"),
- S("make-conf","/etc/make.conf"), S("build-profile","auto"),
+ S("make-conf","/etc/make.conf"), S("src-env-conf","/etc/src-env.conf"), S("build-profile","auto"),
  S("signing","auto"), S("key",""),
  S("development-key","/usr/obj/usr/src/signing-keys/development.pem"),
  S("pkg-key",""), S("public-key",""), S("pkg-public-key",""),
@@ -358,7 +358,7 @@ validate(void)
  if(yes("allow-debug-publication") && (!request.packages || request.production))fail("--allow-debug-publication requires development/debug packages");
  if(strcmp(get("build-backend"),"bsd-make"))fail("unknown build backend");
  if(!*get("kernel") || strspn(get("kernel"),"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")!=strlen(get("kernel")))fail("kernel must be a configuration name");
- const char *paths[]={"src-conf","make-conf"};
+ const char *paths[]={"src-conf","make-conf","src-env-conf"};
  for(size_t i=0;i<nitems(paths);i++) {if(*get(paths[i])!='/' || strchr(get(paths[i]),'$'))fail("world configuration paths must be absolute without make expansion");if(selected(paths[i]) && strcmp(get(paths[i]),"/dev/null"))regular(get(paths[i]),false);}
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
  /* Actions that build or carry the kernel of this configuration. */
@@ -597,7 +597,7 @@ validate(void)
   }
   if(access(get("bazel"),X_OK)<0)fail("--bazel must be executable");
   if(strcmp(get("signing"),"unsigned") || yes("incremental"))fail("bazel-test requires unsigned fresh qualification output");
-  if(selected("src-conf") || selected("make-conf") || selected("build-profile") || selected("production"))fail("bazel-test uses its staged development SDK and fixed comparison configuration");
+  if(selected("src-conf") || selected("make-conf") || selected("src-env-conf") || selected("build-profile") || selected("production"))fail("bazel-test uses its staged development SDK and fixed comparison configuration");
  } else if(selected("bazel") || selected("bazel-inputs") || selected("bazel-modules"))fail("--bazel, --bazel-inputs and --bazel-modules apply only to bazel-test");
  if(action("loader-build")) {
   if(request.cross || strcmp(request.arch,"amd64"))fail("loader-build currently requires native amd64");
@@ -605,8 +605,9 @@ validate(void)
   regular(get("loader-anchors"),false);canonical("loader-anchors");
   if(strcmp(get("signing"),"unsigned") || yes("incremental"))fail("loader-build produces an unsigned loader in a fresh object tree");
   if((selected("src-conf") && strcmp(get("src-conf"),"/dev/null")) ||
-     (selected("make-conf") && strcmp(get("make-conf"),"/dev/null")))fail("loader-build uses a fixed trust profile with /dev/null make configurations");
-  set("src-conf","/dev/null",false);set("make-conf","/dev/null",false);
+     (selected("make-conf") && strcmp(get("make-conf"),"/dev/null")) ||
+     (selected("src-env-conf") && strcmp(get("src-env-conf"),"/dev/null")))fail("loader-build uses a fixed trust profile with /dev/null make configurations");
+  set("src-conf","/dev/null",false);set("make-conf","/dev/null",false);set("src-env-conf","/dev/null",false);
  } else if(selected("loader-anchors"))fail("--loader-anchors applies only to loader-build");
  if(action("secureboot-test")) {
   if(selected("test-case") && (!*get("test-case") || strlen(get("test-case"))>80 || strspn(get("test-case"),"abcdefghijklmnopqrstuvwxyz0123456789-")!=strlen(get("test-case"))))fail("--test-case requires one runner case name");
@@ -666,6 +667,12 @@ args(struct step *s,...)
 }
 static void
 assignment(struct step *s,const char *n,const char *v) { arg(s,format("%s=%s",n,v)); }
+static void
+make_configuration(struct step *s)
+{
+ assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+ assignment(s,"SRC_ENV_CONF",get("src-env-conf"));
+}
 /* Backend interface: only this adapter knows BSD make variable names. */
 static struct step *
 bsd_make(const char *name,bool signing)
@@ -673,7 +680,7 @@ bsd_make(const char *name,bool signing)
  struct step *s=step(name);
  args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"-j",format("%u",request.jobs),NULL);
  assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);
- assignment(s,"KERNCONF",get("kernel"));assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+ assignment(s,"KERNCONF",get("kernel"));make_configuration(s);
  if(*get("kernel-dir"))assignment(s,"KERNCONFDIR",get("kernel-dir"));
  if(!strcmp(get("build-profile"),"debug"))arg(s,"DEBUG_FLAGS=-g");
  if(yes("allow-debug-publication"))arg(s,"ALLOW_DEBUG_MALLOC=yes");
@@ -756,15 +763,15 @@ plan(void)
     arg(s,"WITHOUT_LOADER_EFI_TRUST_DB=yes");
     assignment(s,"TRUST_ANCHORS",get("test-generation-certificate"));
    }
-   assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));arg(s,targets[i]);
+   make_configuration(s);arg(s,targets[i]);
   }
   if(firmware_test()) {
    s=step("secureboot-firmware-probe");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
        format("BUILDENV_SHELL=make -C %s/tools/test/secureboot/firmware -j%u BOOTOBJ=%s/stand all",SOURCE,request.jobs,loader_objtop),NULL);
-   assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+   make_configuration(s);
    s=step("secureboot-firmware-update-probe");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
        format("BUILDENV_SHELL=make -C %s/tools/test/secureboot/firmware/update -j%u BOOTOBJ=%s/stand all",SOURCE,request.jobs,loader_objtop),NULL);
-   assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+   make_configuration(s);
    s=step("secureboot-firmware-evidence-tests");args(s,"env",format("FIRMWARE_TEST_OPENSSL=%s",get("test-openssl")),PYTHON,"-B","-m","unittest","discover","-s",SOURCE "/tools/test/secureboot/firmware","-p","*_test.py",NULL);
    s=step("secureboot-firmware-vm");args(s,PYTHON,"-B",SOURCE "/tools/test/secureboot/firmware/suite.py",
        "--probe",OBJECT "/usr/src/amd64.amd64/tools/test/secureboot/firmware/firmware_probe.efi",
@@ -777,10 +784,10 @@ plan(void)
   }
   s=step("secureboot-bootstrap");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
       format("BUILDENV_SHELL=sh %s/tools/test/secureboot/build-bootstrap.sh %s %u",SOURCE,SOURCE,request.jobs),NULL);
-  assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+  make_configuration(s);
   s=step("secureboot-fixture");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
       format("BUILDENV_SHELL=make -C %s/tools/test/secureboot -j%u SECUREBOOT_OBJTOP=%s all",SOURCE,request.jobs,loader_objtop),NULL);
-  assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+  make_configuration(s);
   s=step("secureboot-parser");args(s,OBJECT "/usr/src/amd64.amd64/tools/test/secureboot/efi_database_test",NULL);
   s=step("secureboot-host-tools-directory");args(s,"mkdir","-p",request.native,NULL);
   s=step("secureboot-host-tools");args(s,"make","-C",request.native,"-f",HELPERS "host-tools.mk","-j",format("%u",request.jobs),"SRCTOP=" SOURCE,"all",NULL);
@@ -817,7 +824,7 @@ plan(void)
   s=step("media-code-key");args(s,format("%s/capsign",request.native),"key-id","-p",get("public-key"),NULL);
   s=step("media-directory");args(s,"mkdir","-p",get("output"),NULL);
   s=step("media");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE "/release","-j",format("%u",request.jobs),NULL);
-  assignment(s,"HARDWARE_KLDXREF",format("%s/kldxref",request.native));assignment(s,"RELEASE_OBJDIR",get("output"));assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);assignment(s,"KERNCONF",get("kernel"));assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));assignment(s,"PORTSDIR",get("ports"));assignment(s,"PKGBASE_SIGNED_REPOSITORY",get("repository"));assignment(s,"PKGBASE_REPO_PUBLIC_KEY",get("pkg-public-key"));assignment(s,"PKGBASE_CODE_PUBLIC_KEY",get("public-key"));args(s,"HARDWARE_PYTHON=" PYTHON,"NOPKGBASE=","NODISTSETS=yes","NOPKG=yes",NULL);
+  assignment(s,"HARDWARE_KLDXREF",format("%s/kldxref",request.native));assignment(s,"RELEASE_OBJDIR",get("output"));assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);assignment(s,"KERNCONF",get("kernel"));make_configuration(s);assignment(s,"PORTSDIR",get("ports"));assignment(s,"PKGBASE_SIGNED_REPOSITORY",get("repository"));assignment(s,"PKGBASE_REPO_PUBLIC_KEY",get("pkg-public-key"));assignment(s,"PKGBASE_CODE_PUBLIC_KEY",get("public-key"));args(s,"HARDWARE_PYTHON=" PYTHON,"NOPKGBASE=","NODISTSETS=yes","NOPKG=yes",NULL);
   if(*get("kernel-dir"))assignment(s,"KERNCONFDIR",get("kernel-dir"));
   if(strcmp(get("media-format"),"memstick"))arg(s,"disc1.iso");if(strcmp(get("media-format"),"iso"))arg(s,"memstick.img");return;
  }

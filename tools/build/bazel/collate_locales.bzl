@@ -11,7 +11,7 @@ def collate_locales(version, locales, mapped, aliases):
         encoding = locale.rsplit(".", 1)[1].split("@")[0]
         bsd_locale_collate(name = locale, src = source + ".src", version = version,
             charmap = "//tools/tools/locale/etc/final-maps:map." + encoding,
-            endian = select({"@platforms//cpu:x86_64": "little"}),
+            endian = select({"//tools/build/bazel/config:target_little_endian": "little"}, no_match_error = "locale generation needs an explicit target byte-order mapping"),
             localedef = "//usr.bin/localedef:localedef", visibility = ["//visibility:public"])
         bsd_install_file(name = "install_" + locale, src = ":" + locale,
             destination = "/usr/share/locale/" + locale + "/" + category,

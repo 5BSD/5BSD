@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Original AMD64 libm tests, preserving floating-point and per-source policy."""
+"""Original Tier 1 libm tests, preserving floating-point and per-source policy."""
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
 load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
@@ -9,12 +9,16 @@ load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//lib/libc:test_policy.bzl", "libc_test_copts")
 load("//lib/libc:test_runtime.bzl", "LIBC_TEST_RUNTIME")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _DIRECTORY = "/usr/tests/lib/msun"
 _IMPORTED = ['acos_test', 'asin_test', 'atan_test', 'bit_test', 'cbrt_test', 'ceil_test', 'casinh_test', 'cos_test', 'cosh_test', 'erf_test', 'exp_test', 'fmod_test', 'fe_round_test', 'hypot_test', 'infinity_test', 'ilogb_test', 'ldexp_test', 'log_test', 'pow_test', 'precision_test', 'round_test', 'scalbn_test', 'sin_test', 'sinh_test', 'sqrt_test', 'tan_test', 'tanh_test']
 _LOCAL = ['cexp_test', 'conj_test', 'csqrt_test', 'ctrig_test', 'exponential_test', 'fenv_test', 'fma_test', 'fmaxmin_test', 'fmaximum_fminimum_test', 'ilogb2_test', 'invtrig_test', 'invctrig_test', 'logarithm_test', 'lrint_test', 'lround_test', 'nan_test', 'nearbyint_test', 'next_test', 'rem_test', 'trig_test']
 
-# Original AMD64 registrations, independently checked against actual -l output.
+# Registrations retain long-double-dependent restrictions below; AMD64 -l was
+# independently checked. ARM64 runtime/listing qualification remains separate.
 _CASES = {'acos_test': ['acos_inrange', 'acos_is_nan', 'acos_is_plus_zero'],
  'asin_test': ['asin_nan',
                'asin_inf_neg',
@@ -452,20 +456,29 @@ def msun_tests():
         deps += (["//lib/libnetbsd:netbsd_pie", "//contrib/netbsd-tests:test_headers"] if imported else [":local_headers"])
         deps += (["//contrib/netbsd-tests/lib/libm:headers"] if program in ["acos_test", "atan_test", "exp_test"] else [])
         deps += (["//contrib/netbsd-tests/lib/libc/gen:isqemu"] if program == "fmod_test" else [])
-        deps += ["//lib/libc:shared_abi_interface"]
+        # -nodefaultlibs requires the compiler driver runtime explicitly.
+        # ARM64 binary128 operations need these private arithmetic helpers.
+        deps += ["//lib/libcompiler_rt:compiler_rt", "//lib/libc:shared_abi_interface"]
         bsd_link_sequence(name = program + "_link", deps = deps, target_compatible_with = _PLATFORM)
         cc_binary(name = program, srcs = [source], deps = [":" + program + "_link"],
             copts = libc_test_copts(warnings = 6) + ["-fno-builtin", "-Wno-unknown-pragmas", "-Wno-error=ignored-pragmas"],
-            defines = ["PIC", "HAVE_FENV_H", "__HAVE_LONG_DOUBLE", "_RENAME_FMA", "_RENAME_FMAF", "LDBL_PREC=64"] + (["__HAVE_FENV"] if program == "fe_round_test" else []),
+            defines = ["PIC", "HAVE_FENV_H", "__HAVE_LONG_DOUBLE"] + select({
+                "@platforms//cpu:aarch64": ["LDBL_PREC=113", "USE_BUILTIN_FMAF", "USE_BUILTIN_FMA",
+                    "USE_BUILTIN_FMAXF", "USE_BUILTIN_FMAX", "USE_BUILTIN_FMINF", "USE_BUILTIN_FMIN",
+                    "USE_BUILTIN_SQRTF", "USE_BUILTIN_SQRT"],
+                "//conditions:default": ["_RENAME_FMA", "_RENAME_FMAF", "LDBL_PREC=64"]}) + (["__HAVE_FENV"] if program == "fe_round_test" else []),
             linkopts = ["-pie", "-nodefaultlibs"], target_compatible_with = _PLATFORM)
         utility_installation(name = program + "_install", program = program, manual = None, package = "tests", bindir = _DIRECTORY)
         manifests.append(":" + program + "_install")
         for case in _CASES[program]:
             target = program + "_" + case + "_runtime"
+            # The original registration exists only for 64-bit long-double mantissas.
+            case_platform = _PLATFORM + (["@platforms//cpu:x86_64"]
+                if program == "hypot_test" and case == "hypotl_near_underflow" else [])
             bsd_atf_test(name = target, body = ":" + program, case_name = case, interface = "program",
                 runtime_lib = LIBC_TEST_RUNTIME + ["//lib/msun:m_shared"] + (["//lib/libutil:util_shared"] if program == "fenv_test" else []),
                 runner = "//tools/build/bazel:atf_runner", test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
-                body_timeout_seconds = 300, target_compatible_with = _PLATFORM, size = "small", timeout = "long")
+                body_timeout_seconds = 300, target_compatible_with = case_platform, size = "small", timeout = "long")
             tests.append(":" + target)
     programs = sorted(_IMPORTED + _LOCAL)
     bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = programs, interfaces = {p: "atf" for p in programs})

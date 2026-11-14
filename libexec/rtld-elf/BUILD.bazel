@@ -24,32 +24,51 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
 bsd_dtrace_header(name = "trace_provider", source = "rtldtrace_provider.d", output = "rtldtrace_provider.h",
     flags = ["-xlazyload"], object_path_mode = "relative",
-    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = select({
+        "@platforms//cpu:aarch64": "//cddl/usr.sbin/dtrace:bootstrap_aarch64",
+        "//conditions:default": "//cddl/usr.sbin/dtrace:bootstrap",
+    }), cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
-    drti = "//cddl/lib/drti:drti", runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    drti = "//cddl/lib/drti:drti", runtime_libraries = select({
+        "@platforms//cpu:aarch64": ["//cddl/usr.sbin/dtrace:bootstrap_aarch64_runtime"],
+        "//conditions:default": ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    }),
     tool_inputs = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 cc_library(name = "core_headers", hdrs = ["debug.h", "libmap.h", "rtld.h", "rtld_lock.h", "rtld_printf.h",
     "rtld_paths.h", "rtld_malloc.h", "rtld_tls.h", "rtld_utrace.h", "rtldtrace_trace.h"] + select({
         "//tools/build/bazel/config:dtrace_enabled": [":trace_provider"], "//conditions:default": []}),
     strip_include_prefix = ".",
-    deps = ["//libexec/rtld-elf/amd64:headers", "//libexec/rtld-elf/rtld-libc:headers", "//lib/csu/common:notes_header"])
-cc_library(name = "core_objects", srcs = ["//libexec/rtld-elf/amd64:reloc.c", "rtld.c", "rtld_lock.c", "rtld_malloc.c",
+    deps = ["//libexec/rtld-elf/rtld-libc:headers", "//lib/csu/common:notes_header"] + select({
+        "@platforms//cpu:aarch64": ["//libexec/rtld-elf/aarch64:headers"],
+        "@platforms//cpu:x86_64": ["//libexec/rtld-elf/amd64:headers"],
+        "//conditions:default": [],
+    }))
+cc_library(name = "core_objects", srcs = select({
+        "@platforms//cpu:aarch64": ["//libexec/rtld-elf/aarch64:reloc.c"],
+        "@platforms//cpu:x86_64": ["//libexec/rtld-elf/amd64:reloc.c"],
+        "//conditions:default": [],
+    }) + ["rtld.c", "rtld_lock.c", "rtld_malloc.c",
     "rtld_printf.c", "map_object.c", "elf_signature.c", "xmalloc.c", "debug.c", "libmap.c"],
     implementation_deps = [":core_headers", "//sys/security/mac_veriexec:rtld_abi_header", "//sys/sys:capimage_headers"],
     local_defines = RTLD_DEFINES, copts = RTLD_COPTS, features = ["-bsd_ssp"],
     target_compatible_with = RTLD_PLATFORM)
-cc_library(name = "startup_objects", srcs = ["//lib/csu/common:crtbrand.S", "//libexec/rtld-elf/amd64:rtld_start.S"],
+cc_library(name = "startup_objects", srcs = ["//lib/csu/common:crtbrand.S"] + select({
+        "@platforms//cpu:aarch64": ["//libexec/rtld-elf/aarch64:rtld_start.S"],
+        "@platforms//cpu:x86_64": ["//libexec/rtld-elf/amd64:rtld_start.S"],
+        "//conditions:default": [],
+    }),
     implementation_deps = [":core_headers"], local_defines = RTLD_DEFINES + ["LOCORE"],
     copts = RTLD_COPTS, features = ["-bsd_ssp"], target_compatible_with = RTLD_PLATFORM)
-bsd_component_archive(name = "core_pic_archive", groups = [":core_objects", ":startup_objects"], pic = True)
-bsd_dtrace_cc_objects(name = "traced_core_objects", libraries = [":core_objects"],
-    provider = ":trace_provider", provider_object = "rtldtrace_provider",
-    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
-filegroup(name = "traced_core_pic", srcs = [":traced_core_objects"], output_group = "pic_objects")
-filegroup(name = "trace_provider_pic", srcs = [":traced_core_objects"], output_group = "pic_provider")
-
+bsd_component_archive(name = "core_pic_archive", groups = [":startup_objects", ":core_objects"], pic = True)
 load(":libc_sources.bzl", "RTLD_LIBC_GROUPS", "rtld_libc_objects")
 rtld_libc_objects()
+# Match the complete local object set supplied to Make's provider recipe.
+bsd_dtrace_cc_objects(name = "traced_objects", libraries = [":startup_objects", ":core_objects"] + RTLD_LIBC_GROUPS,
+    provider = ":trace_provider", provider_object = "rtldtrace_provider",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+filegroup(name = "traced_pic", srcs = [":traced_objects"], output_group = "pic_objects")
+filegroup(name = "trace_provider_pic", srcs = [":traced_objects"], output_group = "pic_provider")
+
 bsd_component_archive(name = "replacement_libc_pic_archive", groups = RTLD_LIBC_GROUPS, pic = True)
 
 load("@rules_cc//cc:defs.bzl", "cc_import")
@@ -66,13 +85,14 @@ bsd_configured_version_map(name = "version_map", symbol_maps = ["Symbol.map"],
     cat = "@bsd_sdk//toolchain:cat", cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
     awk = "@bsd_sdk//toolchain:awk", awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
     redirect = "@bsd_sdk//toolchain:stdout_redirect")
-cc_import(name = "traced_core_link", pic_objects = [":traced_core_pic", ":trace_provider_pic"])
+cc_import(name = "traced_link", pic_objects = [":traced_pic", ":trace_provider_pic"])
 cc_import(name = "selected_runtime_link", static_library = ":selected_runtime_archive")
 load(":link.bzl", "bsd_rtld_link")
 bsd_rtld_link(name = "rtld", output = "ld-elf.so.1.full", entry = ".rtld_start",
-    groups = [":startup_objects"] + RTLD_LIBC_GROUPS + select({
-        "//tools/build/bazel/config:dtrace_enabled": [":traced_core_link"],
-        "//conditions:default": [":core_objects"]}),
+    groups = select({
+        "//tools/build/bazel/config:dtrace_enabled": [":traced_link"],
+        "//conditions:default": [":startup_objects", ":core_objects"] + RTLD_LIBC_GROUPS,
+    }),
     deps = [":selected_runtime_link", "//lib/libcompiler_rt:compiler_rt"], version_map = ":version_map",
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], target_compatible_with = RTLD_PLATFORM)

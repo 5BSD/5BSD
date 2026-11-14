@@ -3,8 +3,11 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load(":sources.bzl", "CXXRT_SOURCES")
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-# This target is amd64/LP64 only. Other ABIs need their own map selection.
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+# Both selected Tier 1 targets use the LP64 new/delete version-map spelling.
 expand_template(name = "version_map", template = "Version.map", out = "Version-64.map",
     substitutions = {"%%NEW_DELETE_TYPE%%": "long"}, target_compatible_with = _PLATFORM)
 cc_library(name = "cxxrt", srcs = CXXRT_SOURCES, implementation_deps = ["//contrib/libcxxrt:headers"],

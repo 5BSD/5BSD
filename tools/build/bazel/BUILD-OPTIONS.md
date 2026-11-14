@@ -68,6 +68,18 @@ obsolete Make implementation details into Bazel. Every supported choice needs
 one documented input, source-owned selection and matching outputs. Unsupported
 required choices must stay visible and fail clearly until implemented.
 
+## Installed OS tests remain a required configuration
+
+The full AMD64 R15 capture selected `tests=false` and `tests_support=yes`.
+Its 450 packages and 32 verification tests do not establish the installed OS test
+suite's build or payload completeness. Refreshed Make references enable tests.
+The initial native `tests/sys/kern` contribution covers the two descriptor
+programs and 13 cases only; the rest of that directory/suite remains open.
+Root cases require disposable VM execution; skipped root cases are not passes.
+Bounded AMD64/ARM64 builds now cover the required `libthr`, `libelf`, `libkvm`,
+`libjail` and ATF producers. Complete tests-enabled selection, Make payload
+parity and target execution remain part of gates 2 and 6.
+
 ## Minimum acceptance matrix
 
 1. AMD64 and ARM64 GENERIC: complete selected world, kernel, modules and pkgbase;
@@ -297,3 +309,112 @@ and audits completed direct provider-link metadata recipes. It records and
 rechecks input hashes; it neither overwrites the SDK nor admits Bazel artifacts
 as an original Make runtime. This does not refresh the execution generator or
 establish a hermetic reference closure; both remain separately bound inputs.
+
+## Focused C++ cross-architecture checkpoint
+
+ARM64 libcxxrt/libc++/libgcc_s now build with the actual builtin inventory,
+architecture-preprocessed ABI map and appropriate frame API/math-header
+selections. AMD64 regression builds and five existing runtime programs pass.
+Both platforms match original Make archive/symbol/shared metadata, ABI-map
+bytes and complete component install metadata. This is a focused component
+result; full target execution, debug/configuration and complete world
+qualification remain required. See COMPLETION-PLAN.md for receipts and limits.
+
+ARM64 libm now selects its 277 portable/binary128 sources, architecture fenv
+header, builtin policy and ordered binary128 ABI maps. AMD64 retains its 280
+optimized/ld80 sources and floating-point exception policy. Both static math
+archives preserve declared source order. All math objects match original Make
+allocated-byte/symbol/relocation contracts on their respective architecture.
+The static unwind runtime also builds on both platforms; frame APIs remain
+x86-only. Complete component installation metadata matches Make, with compiled
+payload/debug differences retained. AMD64 static/shared math smoke tests pass;
+The original 47-program math suite now builds/installs on both platforms;
+all 463 AMD64 case bodies pass. ARM64 code execution remains unqualified.
+No new frontend input or backend default is introduced.
+
+
+## Math test cross-architecture checkpoint
+
+The original libm test inventory now supports both Tier 1 architectures,
+including ARM64's LDBL_PREC=113/builtin policy and AMD64's ld80 policy. The
+hypotl_near_underflow runtime target is x86-only because its original source
+registration requires a 64-bit long-double mantissa. Explicit compiler-rt
+supplies driver arithmetic helpers when these binaries use -nodefaultlibs;
+ARM64 binary128 operations exposed that previously missing dependency.
+All 47 installed test binaries match original Make ELF metadata/hardening,
+imports and NEEDED order on both platforms. Complete math-test and libutil
+installation metadata matches (100 and 124 records respectively per platform).
+All 463 AMD64 ATF body outcomes report passed, with no skips/expected failures.
+ARM64 has no executed math bodies; its 462-case target execution/listing remains
+required. Generated full debug/code payload equality is not established.
+
+libutil and libnetbsd now support ARM64. libutil selects the target-aware host
+DTrace generator/native drti and retains its separate provider/static anchor;
+actual probe schemas, companion-object locations and patched instructions match
+Make on both platforms. Its archive checker is explicitly a host artifact test
+and validates the declared target ELF machine, including rejecting the other
+Tier 1 machine. No frontend CLI/backend default or production policy changes.
+
+
+## Crypto/compression cross-architecture checkpoint
+
+libcrypt and its two original test programs now admit ARM64 as well as AMD64.
+The current optimized production profiles also qualify the existing ARM64
+libmd/zlib/bzip2/liblzma selections. Both platforms match original Make static
+archive order/symbols, shared ELF metadata/hardening, generated ABI-map bytes
+and complete selected component installation metadata (188 records each).
+Each platform matches 136/138 static object contracts; the remaining two digest
+objects differ only in diagnostic /usr/src string prefixes. No artifacts are
+normalized. ARM64 target code does not execute in these runs.
+
+AMD64 zlib example and static/shared zopen tests pass. Its crypt md5 and invalid
+cases pass; the imported crypt_salts case reports the original FreeBSD expected
+failure for old-style/bad salts. That outcome is not a clean pass or a new test
+exception. Three existing host artifact checks inspect zlib/bzip2/XZ consumer
+extraction, target ABIs and archive contracts on both platforms. The two crypt
+test binaries match original Make ELF metadata/import/NEEDED-order contracts
+on both platforms. Full DWARF, alternate configurations, full-system bootstrap,
+sandbox/performance and ARM64 execution remain open; Make stays the default.
+
+
+## Data/configuration library cross-architecture checkpoint
+
+ARM64 now admits libsbuf, libnv installation/test traversal, libucl, libyaml,
+libbsdconf, private SQLite, ATF C++ and the original sbuf/libnv test programs.
+The existing XML implementation is qualified in the same batch. These reviewed
+Make selections use the same portable sources on both Tier 1 architectures.
+Both match original Make static archive order/symbols, shared ELF metadata,
+the generated sbuf ABI map and complete selected install metadata (121 records
+per platform). A missing libsbuf debug-directory ownership claim was corrected
+with the maintained utility_debug_directories helper; the original failing
+inventory comparison is retained and the verifier is unchanged.
+
+All 14 installed test programs match original Make ELF metadata/imports and
+NEEDED order on both platforms. AMD64's 161 selected test targets finish with
+160 passing reported cases and one explicit ASan-only skip. This includes
+146 passing ATF bodies, six passing TAP programs and buffer/XML smoke checks.
+The datagram sysctl writer remains a declared disposable-VM case; the ASan
+case requires a separate supported profile. ARM64 executes no target code.
+Full DWARF, sanitizer/configuration, installed-system and ARM64 runtime gates
+remain open. Existing format-5 frontend targets cover these selections;
+Make remains production/default.
+
+
+## Device and structured-output checkpoint
+
+ARM64 declarations now admit libdevinfo, libdevstat, GEOM, CAM, libxo production
+traversal and the two original CAM test programs. The existing CSV plugin is
+qualified in the same batch. Two invalid CAM topology_* targets referenced a
+nonexistent source file and were removed; the original Make CAM programs remain.
+GEOM's debug-directory ownership now uses utility_debug_directories(runtime,
+/lib), matching its original package/install policy.
+
+Both platforms match five archive member orders/symbol inventories, library
+and CSV-plugin ELF metadata/hardening/import/library-order contracts, both
+installed CAM program ELF contracts and 215 install metadata records. Nineteen
+of 21 static object contracts match exactly; the other two differ only in
+source-path diagnostic strings. Raw code/debug discrepancies remain retained.
+AMD64 formatting and topology parser static/shared checks, the original safe
+CAM string case and all five actual CSV-plugin checks pass. Those tests do not
+qualify device access or disk I/O. ARM64 executes no target code; device/root
+CAM cases, full DWARF/configurations and system gates remain open.

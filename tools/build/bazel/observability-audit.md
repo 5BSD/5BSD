@@ -1,6 +1,6 @@
 # Bazel migration: DTrace and security-audit review log
 
-Last updated: 2026-11-05. This is an open review ledger, not a coverage certificate.
+Last updated: 2026-11-14. This is an open review ledger, not a coverage certificate.
 
 ## Review required for each migrated component
 
@@ -12416,3 +12416,21 @@ Own object archives remain byte-identical to prior captures, including traced
 notify/timecmp providers. The actual installed sysdecode rights-formatting case
 passes with native runtime; kernel policy, service endpoints and live tracing are
 not established. See LIBRARY-DYNAMIC-DEPENDENCY-QUALIFICATION.md.
+
+
+## 2026-11-14 PMC/OpenCSD architecture and generator review
+
+ARM64 PMC event generation now selects its declared architecture/test datasets;
+OpenCSD preserves all 45 original sources, and ordinary/PIE PMC support archives
+retain all six originals. Original/native Make-order, symbol and ELF comparisons
+pass; generated event C bytes match original Make. This is code generation and
+artifact evidence, not live hardware-counter/trace-decoder operation.
+
+The three reviewed library Makefiles and local PMC/support sources declare no
+DTrace provider or audit-delivery implementation to carry into this conversion.
+No production probe or audit source was rewritten. OpenCSD's ordinary diagnostic
+logging is not security audit. Review kernel PMC allocation/start/stop and trace
+access authorization/audit at their owning interfaces before claiming end-to-end
+coverage; absence of a library-specific provider alone is not a defect. No host
+PMC operations, probe firing, audit delivery or tracing overhead are qualified.
+See the focused PMC checkpoint in COMPLETION-PLAN.md and its retained evidence.

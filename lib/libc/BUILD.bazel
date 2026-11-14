@@ -210,13 +210,13 @@ config_setting(name = "nossp_enabled", flag_values = {":nossp": "true"},
     visibility = ["//lib/libc:__subpackages__"])
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
-bsd_component_selected_objects(name = "rtld_jump_objects", group = select({"@platforms//cpu:aarch64": "//lib/libc/aarch64/gen:objects", "//conditions:default": "//lib/libc/amd64/gen:objects"}), pic = True,
-    object_names = ["sigsetjmp.pic.o", "_setjmp.pic.o", "setjmp.pic.o"])
-bsd_component_selected_objects(name = "rtld_stat_objects", group = "//lib/libc/sys:pseudo_objects", pic = True,
-    object_names = ["lstat.pic.o", "stat.pic.o"])
-bsd_component_selected_objects(name = "rtld_jump_error_object", group = "//lib/libc/gen:process_objects", pic = True,
-    object_names = ["setjmperr.pic.o"])
-filegroup(name = "rtld_selected_objects", srcs = [":rtld_jump_objects", ":rtld_stat_objects", ":rtld_jump_error_object"])
+# One ordered interface preserves rtld's dependency archive extraction contract.
+bsd_component_selected_objects(name = "rtld_selected_objects", groups = select({
+        "@platforms//cpu:aarch64": ["//lib/libc/aarch64/gen:objects"],
+        "//conditions:default": ["//lib/libc/amd64/gen:objects"],
+    }) + ["//lib/libc/sys:pseudo_objects", "//lib/libc/gen:process_objects"], pic = True,
+    object_names = ["sigsetjmp.pic.o", "lstat.pic.o", "stat.pic.o",
+        "_setjmp.pic.o", "setjmp.pic.o", "setjmperr.pic.o"])
 libc_nossp_variant(name = "rtld_nossp_objects", dep = ":rtld_selected_objects",
     visibility = ["//libexec/rtld-elf:__pkg__"])
 

@@ -357,6 +357,14 @@ config_setting(name = "man_utils_enabled", flag_values = {':man_utils': 'true'},
 config_setting(name = "netgraph_enabled", flag_values = {":netgraph": "true"}, visibility = ["//visibility:public"])
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
+
+# Explicit supported target mappings from share/mk/bsd.endian.mk. No host or
+# default branch: an unmapped target must fail analysis rather than inherit
+# the build machine's byte order.
+selects.config_setting_group(name = "target_little_endian", match_any = [
+    "@platforms//cpu:x86_64", "@platforms//cpu:aarch64", "@platforms//cpu:riscv64",
+], visibility = ["//visibility:public"])
+
 selects.config_setting_group(name = "kerberos_support_default", match_all = [":kerberos_support_auto", ":kerberos_enabled"])
 selects.config_setting_group(name = "kerberos_support_enabled", match_any = [":kerberos_support_requested", ":kerberos_support_default"], visibility = ["//visibility:public"])
 # Make defaults TESTS_SUPPORT to TESTS, but permits an explicit override.

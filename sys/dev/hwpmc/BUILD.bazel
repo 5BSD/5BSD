@@ -4,7 +4,7 @@ cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
     strip_include_prefix = ".", include_prefix = "dev/hwpmc", visibility = ["//visibility:public"])
 
 # Userland PMC source ABI header closure.
-cc_library(name = "pmc_user_headers", hdrs = ['hwpmc_amd.h', 'hwpmc_core.h', 'hwpmc_ibs.h', 'hwpmc_perf.h', 'hwpmc_rapl.h', 'hwpmc_tsc.h', 'hwpmc_uncore.h', 'pmc_events.h'], visibility = ["//lib/libpmc:__pkg__"])
+cc_library(name = "pmc_user_headers", hdrs = ['hwpmc_amd.h', 'hwpmc_core.h', 'hwpmc_ibs.h', 'hwpmc_perf.h', 'hwpmc_rapl.h', 'hwpmc_tsc.h', 'hwpmc_uncore.h', 'pmc_events.h'] + select({"@platforms//cpu:aarch64": ['hwpmc_arm64.h', 'hwpmc_cmn600.h', 'hwpmc_dmc620.h'], "//conditions:default": []}), visibility = ["//lib/libpmc:__pkg__"])
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 

@@ -6,6 +6,7 @@ jobs=auto
 kernel=GENERIC
 # kernel_dir=/secure/kernel-configs
 src_conf=/etc/src.conf
+src_env_conf=/etc/src-env.conf
 make_conf=/etc/make.conf
 incremental=no
 # build/packages default to production malloc and use the maintained pkgbase path.
