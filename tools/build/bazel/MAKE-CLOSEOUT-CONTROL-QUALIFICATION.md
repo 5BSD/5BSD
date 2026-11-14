@@ -1406,3 +1406,28 @@ AMD64 full R7 is still live; source producer changes wait for its frozen capture
 No ARM64 Bazel parity, boot/runtime or native bootstrap claim follows from this
 Make reference. No C frontend flag/helper/manual behavior changes are required
 by the reference audit; normal build-bsd remains Make production/default.
+
+The fresh component SDK in `bazel-arm64-csu-sdk-r1-20261114` also passes
+userland_sdk.receipt_architecture and verify_snapshot over 16,193 files.
+`verification.json` records the receipt/verifier hashes and snapshot digest
+`9dac3640f9b093de44a3b1511d96c139e8cc58757e9ea1ea870734dea878d06d`.
+It separates target aarch64-unknown-freebsd16.0 from execution
+x86_64-unknown-freebsd16.0. The explicit target seed remains the older Make SDK;
+this does not establish native-produced SDK, current ARM64 world or runtime.
+
+## Native compiler toolset runtime closure (2026-11-14)
+
+`/usr/obj/usr/src/bazel-native-execution-toolset-r2-20261114/result.json` passes
+the unchanged retained exploratory driver with an expanded explicit tool-role
+request: clang/cpp, LLD, llvm-ar, llvm-nm, llvm-objcopy, llvm-strip and llvm-objdump.
+The copied request/driver and input digests are retained beside the result.
+Package-derived ELF NEEDED closure selects eight hash-verified frozen R6 packages
+and twenty-four payloads. All eight loader traces stay in captured payloads,
+and all tool --version commands pass with clean loader settings. The six
+header-free compile/link ELF-machine checks still pass across AMD64, ARM64 and
+RISC-V. This tests the compiler-tool execution roles missing from the earlier
+two-program probe; it does not qualify full SDK headers/libraries, dynamic
+plugins, code generators, second-stage world builds or filesystem sandboxing.
+The existing host-fallback negative remains separate evidence, and current R7
+AMD64 capture/Make comparison/runtime qualification are still pending.
+No normal frontend behavior changes: Make remains production/default.

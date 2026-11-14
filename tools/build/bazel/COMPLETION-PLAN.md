@@ -12,6 +12,9 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 ## Current closeout execution (2026-11-14)
 
 ARM64 preparation continues while AMD64 R7 remains the active full build.
+The component cross SDK also passes full verification of 16,193 snapshot files
+and explicit ARM64 target/AMD64 execution bindings; its recorded target seed
+is older Make output, not a qualified native SDK or refreshed ARM64 world.
 The original Make aarch64 CSU component reference passes; its separate retained
 ELF/installation audit verifies all ten startup objects as ELF64 little-endian
 AArch64 relocatables with matching payload hashes and logical clibs-dev metadata.
@@ -35,6 +38,11 @@ NEEDED closure, native runtime linker and verified loaded paths: eight packages,
 eighteen selected payloads, compiler/linker version checks and six compile/link
 ELF-machine checks over AMD64, ARM64 and RISC-V. The missing-library-directory
 negative reveals actual host fallback and rejects it through loaded-path checks.
+Follow-up toolset R2 extends the same package-derived runtime containment checks
+to all eight compiler-tool roles: clang, cpp, LLD, ar, nm, objcopy, strip and
+objdump. Eight packages and twenty-four selected payloads satisfy those checks;
+the six header-free compile/link checks still pass. This remains frozen R6
+exploration, not a maintained SDK producer or a complete bootstrap qualification.
 This is an explicitly retained exploratory probe, not a maintained SDK producer,
 independent second-stage world, architecture runtime or sandbox qualification.
 It supplies evidence for the remaining native SDK/runtime boundary work without
