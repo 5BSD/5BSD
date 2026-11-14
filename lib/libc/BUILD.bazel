@@ -7,9 +7,15 @@ load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header")
 # libc owns one provider shared by resolver, NSS and semaphore sources.
 bsd_dtrace_header(name = "nameres_provider", source = "nameres_provider.d", output = "nameres_provider.h",
     flags = ["-C", "-x", "nolibs"], static_anchor = True, object_path_mode = "relative",
-    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = select({
+        "@platforms//cpu:aarch64": "//cddl/usr.sbin/dtrace:bootstrap_aarch64",
+        "//conditions:default": "//cddl/usr.sbin/dtrace:bootstrap",
+    }), cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
-    drti = "//cddl/lib/drti:drti", runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    drti = "//cddl/lib/drti:drti", runtime_libraries = select({
+        "@platforms//cpu:aarch64": ["//cddl/usr.sbin/dtrace:bootstrap_aarch64_runtime"],
+        "//conditions:default": ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    }),
     tool_inputs = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 cc_library(features = LIBC_VARIANT_FEATURES, name = "nameres_provider_headers", hdrs = [":nameres_provider"], strip_include_prefix = ".",
     visibility = ["//lib/libc/resolv:__pkg__", "//lib/libc/net:__pkg__", "//lib/libc/include:__pkg__"])

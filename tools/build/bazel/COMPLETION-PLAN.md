@@ -33,6 +33,44 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+ARM64 libc joint NSS/resolver/semaphore DTrace generation now passes with tracing
+retained. The source-built generator still executes with the host ABI; a declared
+bootstrap variant selects the existing DTRACE_TARGET_AARCH64 object rewriter
+without changing the execution platform. The target-built drti remains ARM64.
+The initial native R1 failure exposed the missing cross-rewriter selection;
+R5 passes all six selected artifact targets. These are component builds against
+the explicit older ARM64 SDK profile, not a current full ARM64 world.
+
+The relocatable DOF verifier now checks AArch64 PREL64/ABS64 semantics,
+matching object machines, bounded hidden function aliases and aligned NOP/RET
+patches for both ordinary and enabled sites. Maintained regression coverage adds
+wrong-relocation, mixed-machine, malformed-patch, unaligned and out-of-bounds
+cases. All 35 verifier cases pass; AMD64 native R2 passes both maintained DTrace
+regression targets and libc archive identity/static/shared runtime tests (five
+selected tests). Existing linked AMD64 site-check semantics are unchanged.
+
+Retained ARM64 review R3 compares all 56 transformed regular and 56 PIC objects
+with independent original-Make production libc: allocated sections and relocation
+contracts match; provider attributes and all 12 probe records match, with 14
+ordinary and 19 enabled sites per variant checked against actual instructions.
+Static hidden DOF anchors are checked. The res_send path-derived alias IDs differ;
+the maintained symbol-graph verifier maps them only with equal validated DOF
+schemas, exact function bytes, bounds and binding context. Raw differences remain
+in the report. Five NSS/resolver assertion source identities were corrected by
+compiler prefix maps on both CPUs, without rewriting compiled outputs.
+Evidence: bazel-libc-dtrace-arm64-native-r5-20261114,
+bazel-libc-dtrace-arm64-review-r3-20261114 and
+bazel-libc-dtrace-amd64-native-r2-20261114. R3/R4 attempted ARM64 test selections
+were rejected by frontend validation (selection/host-artifact declarations),
+not counted as passing tests; regression execution is the explicit native AMD64
+run. Complete member-set/composition/order, lexer and provider linking, DWARF,
+current ARM64 world/hardening/runtime and full AMD64 capture refresh remain open.
+The earlier cumulative component count is not increased by this focused proof.
+Existing build-bsd format-5 architecture/SDK inputs select this implementation;
+no C CLI, production backend, signing or publication default changes are needed.
+Make remains production/default and all six gates remain open.
+
+
 ARM64 sized-free, jemalloc and iconv groups now use explicit portable CPU
 constraints; the existing FreeBSD jemalloc header retains actual per-CPU pointer,
 page and virtual-address definitions. Production malloc policy stays an explicit

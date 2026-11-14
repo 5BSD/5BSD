@@ -2,18 +2,20 @@
 """Build the DTrace generator without instrumenting its own dependency graph.
 
 The consumer applies the exec transition first. This transition changes only
-instrumentation settings, preserving that execution platform and toolchain.
+instrumentation and object-rewriter settings, preserving that execution platform
+and toolchain. The link machine describes input objects, not the executable ABI.
 """
 def _bootstrap_config(settings, attr):
     return {
         "//tools/build/bazel/config:dtrace": False,
+        "//tools/build/bazel/config:dtrace_link_machine": attr.link_machine,
         "//tools/build/bazel/config:experimental_dtrace_section_archives": False,
     }
 
 _bootstrap = transition(
     implementation = _bootstrap_config,
     inputs = [],
-    outputs = ["//tools/build/bazel/config:dtrace", "//tools/build/bazel/config:experimental_dtrace_section_archives"],
+    outputs = ["//tools/build/bazel/config:dtrace_link_machine", "//tools/build/bazel/config:dtrace", "//tools/build/bazel/config:experimental_dtrace_section_archives"],
 )
 
 def _impl(ctx):
@@ -28,6 +30,7 @@ bsd_dtrace_bootstrap = rule(
     executable = True,
     cfg = _bootstrap,
     attrs = {
+        "link_machine": attr.string(default = "native", values = ["native", "aarch64"]),
         "binary": attr.label(executable = True, cfg = "target", mandatory = True),
         "runtime_libraries": attr.label_list(allow_files = True),
         "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),

@@ -238,3 +238,14 @@ AMD64 archive identities and static/shared smoke tests pass, with unchanged
 whole-libc static/PIC source-payload digests against full R15. ARM64 cumulative
 component coverage is 1,392 regular / 1,380 PIC members; joint DTrace processing,
 full linking, DWARF, current world/hardening and runtime remain open.
+
+### Cross DTrace generator boundary
+
+Libc's ARM64 provider selects a host-executed bootstrap variant whose object
+rewriter uses the existing `DTRACE_TARGET_AARCH64` implementation. This target
+instruction/relocation selection is separate from the executable's host ABI and
+the target-built drti. The internal `dtrace_link_machine` setting is supplied by
+the bootstrap transition, not a replacement for the frontend architecture input.
+Other provider consumers still require their own cross qualification. Relocatable
+DOF validation checks architecture-specific relocations, hidden function bindings,
+function bounds and actual patch bytes; it does not prove registration or firing.

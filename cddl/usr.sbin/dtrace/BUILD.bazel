@@ -60,3 +60,9 @@ bsd_dtrace_bootstrap(name = "bootstrap", binary = ":dtrace", runtime_libraries =
     "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared",
     "//lib/libkvm:kvm_shared"], visibility = ["//visibility:public"])
 filegroup(name = "bootstrap_runtime", srcs = [":bootstrap"], output_group = "runtime_libraries", visibility = ["//visibility:public"])
+
+# Host ABI and target rewrite ABI are independent in cross builds.
+bsd_dtrace_bootstrap(name = "bootstrap_aarch64", link_machine = "aarch64", binary = ":dtrace", runtime_libraries = [library for library in DTRACE_RUNTIME if library != "//lib/libthr:thr_shared"] + ["//lib/libutil:util_shared",
+    "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared",
+    "//lib/libkvm:kvm_shared"], visibility = ["//visibility:public"])
+filegroup(name = "bootstrap_aarch64_runtime", srcs = [":bootstrap_aarch64"], output_group = "runtime_libraries", visibility = ["//visibility:public"])

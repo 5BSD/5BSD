@@ -164,7 +164,7 @@ cc_library(
         "//conditions:default": [],
     }),
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = LIBC_PORTABLE_PLATFORMS,
     visibility = ["//lib/libc:__pkg__"],
 )
 # Raw objects: final DOF processing must combine all libc provider contributors.

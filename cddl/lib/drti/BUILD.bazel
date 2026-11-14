@@ -9,7 +9,10 @@ cc_library(
     # cddl/Makefile.inc adds NEED_SOLARIS_BOOLEAN, HAVE_STRLCAT and HAVE_STRLCPY.
     local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "PIC", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
     copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = ["@platforms//os:freebsd"] + select({
+        "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
 )
 bsd_component_object(name = "drti", group = ":runtime", pic = True, out = "drti.o",
     visibility = ["//visibility:public"])

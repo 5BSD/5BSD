@@ -15,7 +15,7 @@ import subprocess
 
 
 class RelocatableDof:
-    """Resolve amd64 ET_REL DOF sites against actual function symbols and bytes."""
+    """Resolve supported ELF64 ET_REL DOF sites against actual function symbols and bytes."""
     def __init__(self, path, symbols=None):
         self.object = self.read(path)
         if isinstance(symbols, (list, tuple)):
@@ -26,6 +26,8 @@ class RelocatableDof:
             self.symbol_sources = [self.read(p) for p in symbols]
         else:
             self.symbol_sources = [self.object if symbols is None else self.read(symbols)]
+        if any(obj['machine'] != self.object['machine'] for obj in self.symbol_sources):
+            raise ValueError('DOF and symbol object machine mismatch')
         self.bindings = []
 
     @staticmethod
@@ -34,8 +36,8 @@ class RelocatableDof:
         if len(data) < 64 or data[:6] != b'\x7fELF\x02\x01':
             raise ValueError('relocatable metadata requires ELF64 little-endian input')
         h = struct.unpack_from('<HHIQQQIHHHHHH', data, 16)
-        if h[0] != 1 or h[1] != 62 or h[10] != 64 or not h[11] or h[12] >= h[11] or h[5] + h[10] * h[11] > len(data):
-            raise ValueError('relocatable metadata requires bounded amd64 ET_REL sections')
+        if h[0] != 1 or h[1] not in (62, 183) or h[10] != 64 or not h[11] or h[12] >= h[11] or h[5] + h[10] * h[11] > len(data):
+            raise ValueError('relocatable metadata requires bounded amd64/aarch64 ET_REL sections')
         sections = [struct.unpack_from('<IIQQQQIIQQ', data, h[5] + n * 64) for n in range(h[11])]
         def payload(index):
             if index >= len(sections):
@@ -83,14 +85,15 @@ class RelocatableDof:
                 relocations[key] = {'kind': info & 0xffffffff, 'addend': addend,
                     'symbol': symbols[info >> 32], 'section': index, 'offset': pos}
         return {'path': str(path), 'sha256': hashlib.sha256(data).hexdigest(),
-            'data': data, 'sections': sections, 'section_names': section_names,
+            'data': data, 'machine': h[1], 'sections': sections, 'section_names': section_names,
             'tables': tables, 'relocations': relocations}
 
     def resolve(self, section, offset, function, user_kind, ordinary, enabled):
         relocation = self.object['relocations'].get((section, offset))
         if relocation is None:
             raise ValueError('probe lacks a DOF ELF relocation')
-        if (relocation['kind'], user_kind) not in ((24, 2), (1, 1)) or relocation['addend']:
+        allowed = ((24, 2), (1, 1)) if self.object['machine'] == 62 else ((260, 2), (257, 1))
+        if (relocation['kind'], user_kind) not in allowed or relocation['addend']:
             raise ValueError('unsupported DOF ELF/user relocation semantics')
         reference = relocation['symbol']
         owners = self.symbol_sources if reference['section'] == 0 else [self.object]
@@ -113,12 +116,21 @@ class RelocatableDof:
             raise ValueError('DOF function exceeds its executable section')
         start = code[4] + symbol['value']
         data = owner['data'][start:start + symbol['size']]
-        for site in ordinary:
-            if site + 5 > len(data) or data[site] not in (0x90, 0xc3) or data[site + 1:site + 5] != b'\x90' * 4:
-                raise ValueError('relocatable ordinary site lacks bounded NOP/RET patch')
-        for site in enabled:
-            if site < 3 or site + 2 > len(data) or data[site - 3:site] != b'\x48\x33\xc0' or data[site] not in (0x90, 0xc3) or data[site + 1] != 0x90:
-                raise ValueError('relocatable enabled site lacks bounded XOR/NOP patch')
+        if owner['machine'] == 183:
+            # dt_link.c: AArch64 CALL26/JUMP26 become NOP/RET for both
+            # ordinary and is-enabled probes, one aligned 32-bit instruction.
+            for site in ordinary + enabled:
+                if (site < 0 or (symbol['value'] + site) % 4 or
+                        site + 4 > len(data) or
+                        struct.unpack_from('<I', data, site)[0] not in (0xd503201f, 0xd65f03c0)):
+                    raise ValueError('aarch64 site lacks aligned bounded NOP/RET patch')
+        else:
+            for site in ordinary:
+                if site + 5 > len(data) or data[site] not in (0x90, 0xc3) or data[site + 1:site + 5] != b'\x90' * 4:
+                    raise ValueError('relocatable ordinary site lacks bounded NOP/RET patch')
+            for site in enabled:
+                if site < 3 or site + 2 > len(data) or data[site - 3:site] != b'\x48\x33\xc0' or data[site] not in (0x90, 0xc3) or data[site + 1] != 0x90:
+                    raise ValueError('relocatable enabled site lacks bounded XOR/NOP patch')
         self.bindings.append({'dof_section': section, 'dof_offset': offset,
             'elf_relocation_kind': relocation['kind'], 'user_relocation_kind': user_kind,
             'addend': relocation['addend'], 'symbol': symbol,
@@ -270,7 +282,7 @@ def inventory(path, relocatable=False, symbols=None):
         if len(resolver.bindings) != len(resolver.object['relocations']):
             raise ValueError('unconsumed DOF ELF relocation')
         result['relocatable_metadata'] = {
-            'scope': 'amd64 ET_REL schemas, symbol-relative locations and patched bytes; no load addresses, registration or live firing',
+            'scope': ('amd64' if resolver.object['machine'] == 62 else 'aarch64') + ' ET_REL schemas, symbol-relative locations and patched bytes; no load addresses, registration or live firing',
             'symbol_objects': [{'path': obj['path'], 'sha256': obj['sha256']}
                                for obj in resolver.symbol_sources],
             'bindings': resolver.bindings}

@@ -42,7 +42,10 @@ cc_library(name = "implementation", srcs = DTRACE_SOURCES,
     deps = ["//cddl/contrib/opensolaris:dtrace_headers"] + _LIBS,
     implementation_deps = [":generated_headers", "//sys/cddl/dev/dtrace:layout_headers", "//sys/cddl/dev/dtrace/x86:headers", "//sys/cddl/dev/kinst:headers", "//sys/cddl/contrib/opensolaris:dtrace_intel_headers",
         "//usr.sbin/dtraced:headers", "//contrib/llvm-project/libcxx/include:headers", "//sys/sys:kernel_headers"],
-    local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "DIS_MEM", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
+    local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "DIS_MEM", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"] + select({
+        "//tools/build/bazel/config:dtrace_link_aarch64": ["DTRACE_TARGET_AARCH64"],
+        "//conditions:default": [],
+    }),
     copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
     cxxopts = ["-std=c++20", "-nostdinc++", "-fno-rtti"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

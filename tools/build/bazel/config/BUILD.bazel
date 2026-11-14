@@ -928,3 +928,10 @@ selects.config_setting_group(name = "module_sctp_enabled", match_any = [":kernel
 filegroup(name = "no_kernel_directory_overrides", visibility = ["//visibility:public"])
 label_flag(name = "kernel_directory_policy", build_setting_default = ":no_kernel_directory_overrides",
     visibility = ["//visibility:public"])
+
+# Host-executed DTrace can rewrite a different target ABI. Set only by the
+# generator transition; this does not change the execution C/C++ platform.
+string_flag(name = "dtrace_link_machine", build_setting_default = "native",
+    values = ["native", "aarch64"], visibility = ["//visibility:public"])
+config_setting(name = "dtrace_link_aarch64", flag_values = {":dtrace_link_machine": "aarch64"},
+    visibility = ["//visibility:public"])

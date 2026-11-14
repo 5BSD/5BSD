@@ -52,6 +52,8 @@ def fixture(*, defined=True, alias='$dtrace123.fn', machine=62, kind=24,
     symbol_table = b'\0' * 24 + struct.pack('<IBBHQQ', 1, (binding << 4) | 2, visibility,
                                           4 if defined else 0, function_value, 16)
     code = bytearray(b'\x90' * 8 + b'\x48\x33\xc0\x90\x90' + b'\x90' * 3)
+    if machine == 183:
+        code = bytearray(struct.pack('<4I', 0xd503201f, 0xd65f03c0, 0xd503201f, 0xd65f03c0))
     if bad_patch:
         code[0] = 0xcc
     relocation = struct.pack('<QQq', descriptors[1][4], (symbol_index << 32) | kind, 0)
@@ -238,8 +240,28 @@ class RelocatableInventoryTests(unittest.TestCase):
     def test_nonzero_unresolved_address_is_rejected(self):
         self.rejected('nonzero relocatable probe address', address=1)
 
+    def test_aarch64_prel64_and_both_site_types(self):
+        result = checker.inventory(self.object(machine=183, kind=260, enabled_site=4), relocatable=True)
+        self.assertEqual(result['relocatable_metadata']['bindings'][0]['elf_relocation_kind'], 260)
+        self.assertTrue(result['relocatable_metadata']['scope'].startswith('aarch64 ET_REL'))
+
+    def test_aarch64_absolute_relocation(self):
+        checker.inventory(self.object(machine=183, kind=257, user_kind=1, enabled_site=4), relocatable=True)
+
+    def test_aarch64_rejects_x86_relocation(self):
+        self.rejected('unsupported DOF ELF/user relocation', machine=183, enabled_site=4)
+
+    def test_aarch64_rejects_bad_unaligned_and_unbounded_sites(self):
+        for options in ({'bad_patch': True}, {'site': 1}, {'site': 16}, {'enabled_site': 3}, {'enabled_site': 16}):
+            self.rejected('aligned bounded NOP/RET', **({'machine': 183, 'kind': 260, 'enabled_site': 4} | options))
+
+    def test_separate_symbol_machine_must_match_provider(self):
+        with self.assertRaisesRegex(ValueError, 'machine mismatch'):
+            checker.inventory(self.object(machine=183, kind=260, enabled_site=4, defined=False),
+                relocatable=True, symbols=self.object('symbols.o'))
+
     def test_foreign_architecture_is_rejected_explicitly(self):
-        self.rejected('amd64 ET_REL', machine=183)
+        self.rejected('ET_REL', machine=243)
 
     def test_linked_default_metadata_keeps_existing_schema(self):
         result = checker.inventory(self.object(linked=True))
