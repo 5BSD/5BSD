@@ -386,6 +386,42 @@ test_wait_event_pid(int fd, pid_t pid, oes_event_type_t event, int timeout_ms,
 	return (ETIMEDOUT);
 }
 
+/*
+ * As test_wait_event_pid(), but leaves the whole message, strings and
+ * trailing data included, in *out, which must hold OES_MSG_MAX_SIZE bytes.
+ */
+static inline int
+test_wait_event_pid_full(int fd, pid_t pid, oes_event_type_t event,
+    int timeout_ms, oes_message_t *out)
+{
+	struct timespec start;
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+
+	for (;;) {
+		struct timespec now;
+		long elapsed_ms;
+		int remaining;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L +
+		    (now.tv_nsec - start.tv_nsec) / 1000000L;
+		if (elapsed_ms >= timeout_ms)
+			break;
+
+		remaining = timeout_ms - (int)elapsed_ms;
+		if (remaining > 100)
+			remaining = 100;
+
+		if (test_wait_event(fd, out, remaining) != 0)
+			continue;
+		if (out->em_process.ep_pid == pid && out->em_event == event)
+			return (0);
+	}
+
+	return (ETIMEDOUT);
+}
+
 static inline void
 test_drain_events(int fd)
 {

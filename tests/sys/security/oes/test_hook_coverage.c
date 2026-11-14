@@ -3,24 +3,30 @@
  *
  * Tests every MAC hook/event type. Some require root privileges.
  */
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/extattr.h>
 #include <sys/ioctl.h>
+#include <sys/jail.h>
+#include <sys/linker.h>
+#include <sys/mdioctl.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/poll.h>
 #include <sys/ptrace.h>
+#include <sys/reboot.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <kenv.h>
 #include <limits.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -42,6 +48,9 @@
 #define TEST_SYMLINK	TEST_DIR "/testsymlink"
 #define TEST_SUBDIR	TEST_DIR "/subdir"
 #define TEST_SOCKET	"/tmp/oes_hook_test.sock"
+#define TEST_KLD	TEST_DIR "/notamodule.ko"
+#define TEST_KENV	"oes.hook_coverage_test"
+#define TEST_UNPRIV_ID	65534		/* nobody */
 
 static int passed = 0;
 static int failed = 0;
@@ -64,6 +73,8 @@ open_oes(void)
 		perror("open /dev/oes");
 		return (-1);
 	}
+	/* The number may be reused: forget what was batched for the old one. */
+	test_forget_event_reader(oes_fd);
 	return (0);
 }
 
@@ -128,31 +139,32 @@ setup_notify(oes_event_type_t *events, size_t nevents)
 	return (0);
 }
 
+/*
+ * Wait for one event of the given type from the given process (0: any).
+ *
+ * A read of a NOTIFY client returns as many events as fit in the buffer, so
+ * every message of every read is examined: the event waited for is usually
+ * not the first of its batch when other processes generate the same type.
+ * test_wait_event() keeps the unread rest of a batch for the next call.
+ */
 static int
 wait_for_event(oes_event_type_t expected, pid_t from_pid, int timeout_ms)
 {
-	struct pollfd pfd;
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
 	struct timespec start, now;
-	ssize_t n;
+	int elapsed;
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
 
 	for (;;) {
 		clock_gettime(CLOCK_MONOTONIC, &now);
-		int elapsed = (now.tv_sec - start.tv_sec) * 1000 +
+		elapsed = (now.tv_sec - start.tv_sec) * 1000 +
 		    (now.tv_nsec - start.tv_nsec) / 1000000;
 		if (elapsed >= timeout_ms)
 			return (0);
 
-		pfd.fd = oes_fd;
-		pfd.events = POLLIN;
-		if (poll(&pfd, 1, timeout_ms - elapsed) <= 0)
-			return (0);
-
-		n = read(oes_fd, msg, OES_MSG_MAX_SIZE);
-		if (n < (ssize_t)sizeof(oes_message_t))
+		if (test_wait_event(oes_fd, msg, timeout_ms - elapsed) != 0)
 			continue;
 
 		if (from_pid != 0 && msg->em_process.ep_pid != from_pid)
@@ -163,17 +175,55 @@ wait_for_event(oes_event_type_t expected, pid_t from_pid, int timeout_ms)
 	}
 }
 
+/*
+ * Wait until one event of each listed type has arrived from the process, in
+ * whatever order they were delivered.  seen[i] is set for events[i].
+ */
+static void
+wait_for_events(const oes_event_type_t *events, int *seen, size_t nevents,
+    pid_t from_pid, int timeout_ms)
+{
+	test_msg_buf _msg_buf;
+	oes_message_t *msg = &_msg_buf.msg;
+	struct timespec start, now;
+	size_t i, nseen;
+	int elapsed;
+
+	memset(seen, 0, nevents * sizeof(*seen));
+	nseen = 0;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+
+	while (nseen < nevents) {
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		elapsed = (now.tv_sec - start.tv_sec) * 1000 +
+		    (now.tv_nsec - start.tv_nsec) / 1000000;
+		if (elapsed >= timeout_ms)
+			return;
+
+		if (test_wait_event(oes_fd, msg, timeout_ms - elapsed) != 0)
+			continue;
+		if (msg->em_process.ep_pid != from_pid)
+			continue;
+		for (i = 0; i < nevents; i++) {
+			if (msg->em_event == events[i] && !seen[i]) {
+				seen[i] = 1;
+				nseen++;
+			}
+		}
+	}
+}
+
 static void
 drain_events(void)
 {
 	struct pollfd pfd;
 	test_msg_buf _msg_buf;
-	oes_message_t *msg = &_msg_buf.msg;
 
 	pfd.fd = oes_fd;
 	pfd.events = POLLIN;
 	while (poll(&pfd, 1, 10) > 0)
-		(void)read(oes_fd, msg, OES_MSG_MAX_SIZE);
+		(void)read(oes_fd, _msg_buf.raw, sizeof(_msg_buf.raw));
+	test_forget_event_reader(oes_fd);
 }
 
 /*
@@ -184,49 +234,51 @@ test_event(const char *name, oes_event_type_t event, void (*action)(void))
 {
 	uint64_t drops_before, drops_after;
 	pid_t pid;
-	int status;
+	int attempt, seen, status;
 
-	close_oes();
-	if (setup_notify(&event, 1) < 0) {
-		FAIL(name, "setup failed");
-		return (-1);
-	}
-
-	drain_events();
-	drops_before = nosleep_drops();
-
-	pid = fork();
-	if (pid == 0) {
-		action();
-		_exit(0);
-	}
-
-	usleep(50000);
-	int seen = wait_for_event(event, pid, 1000);
-	waitpid(pid, &status, 0);
-	drops_after = nosleep_drops();
-	close_oes();
-
-	if (seen) {
-		PASS(name);
-		return (0);
-	}
 	/*
 	 * Hooks that run with VFS locks held are delivered NOSLEEP: the event
 	 * is handed to a deferred task and is dropped outright once that queue
 	 * reaches OES_DEFER_MAX, which the kernel counts in es_nosleep_drops.
 	 * An absent event with the counter moving is that bounded-queue drop
-	 * under load, not a hook that failed to fire, and reporting the two
-	 * identically turns a load-dependent miss into a phantom regression.
+	 * under load, not a hook that failed to fire, so the action is tried
+	 * again; an event absent with no drop counted is a failure.
 	 */
-	if (drops_after > drops_before) {
-		SKIP(name, "NOSLEEP event dropped: the deferred queue "
-		    "overflowed (es_nosleep_drops advanced), so delivery was "
-		    "best-effort here rather than missing");
-		return (0);
+	for (attempt = 0; attempt < 3; attempt++) {
+		close_oes();
+		if (setup_notify(&event, 1) < 0) {
+			FAIL(name, "setup failed");
+			return (-1);
+		}
+
+		drain_events();
+		drops_before = nosleep_drops();
+
+		pid = fork();
+		if (pid == 0) {
+			action();
+			_exit(0);
+		}
+
+		usleep(50000);
+		seen = wait_for_event(event, pid, 1000);
+		waitpid(pid, &status, 0);
+		drops_after = nosleep_drops();
+		close_oes();
+
+		if (seen) {
+			PASS(name);
+			return (0);
+		}
+		if (drops_after == drops_before) {
+			FAIL(name, "event not received");
+			return (-1);
+		}
 	}
-	FAIL(name, "event not received");
-	return (-1);
+	SKIP(name, "NOSLEEP event dropped in three attempts: the deferred "
+	    "queue overflowed (es_nosleep_drops advanced), so delivery was "
+	    "best-effort here rather than missing");
+	return (0);
 }
 
 /* Action helpers */
@@ -553,6 +605,117 @@ static void action_proc_sched(void) {
 	waitpid(child, NULL, 0);
 }
 
+/*
+ * reboot(2) by a process that may not reboot.  The MAC check, where the
+ * event is generated, comes before the privilege check; the privilege is
+ * then refused twice over, to an unprivileged user and to any process in a
+ * jail, so the system keeps running.  The jail is not persistent and goes
+ * away with the process.
+ */
+static void action_reboot(void) {
+	struct iovec iov[4];
+	char name[32];
+
+	snprintf(name, sizeof(name), "oes_hook_%d", (int)getpid());
+	iov[0].iov_base = __DECONST(char *, "name");
+	iov[0].iov_len = sizeof("name");
+	iov[1].iov_base = name;
+	iov[1].iov_len = strlen(name) + 1;
+	iov[2].iov_base = __DECONST(char *, "path");
+	iov[2].iov_len = sizeof("path");
+	iov[3].iov_base = __DECONST(char *, "/");
+	iov[3].iov_len = sizeof("/");
+	if (jail_set(iov, 4, JAIL_CREATE | JAIL_ATTACH) < 0)
+		_exit(1);
+	if (setgid(TEST_UNPRIV_ID) != 0 || setuid(TEST_UNPRIV_ID) != 0)
+		_exit(1);
+	(void)reboot(RB_NOSYNC);
+}
+
+/*
+ * kldload(2) of a file that is not a module: the linker opens the file,
+ * makes the MAC check and only then finds no ELF header in it.
+ */
+static void action_kldload(void) {
+	char junk[512];
+	int fd;
+
+	memset(junk, 'k', sizeof(junk));
+	fd = open(TEST_KLD, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+	if (fd >= 0) {
+		(void)write(fd, junk, sizeof(junk));
+		close(fd);
+	}
+	(void)kldload(TEST_KLD);
+	unlink(TEST_KLD);
+}
+
+static void action_kenv(void) {
+	(void)kenv(KENV_SET, TEST_KENV, __DECONST(char *, "1"), 2);
+	(void)kenv(KENV_UNSET, TEST_KENV, NULL, 0);
+}
+
+static void action_setuid(void) {
+	(void)setuid(TEST_UNPRIV_ID);
+}
+
+static void action_setgid(void) {
+	(void)setgid(TEST_UNPRIV_ID);
+}
+
+/* A small memory disk to turn swapping on and off again. */
+static int md_ctl = -1;
+static unsigned md_unit;
+static char md_path[32];
+
+static int
+md_attach(void)
+{
+	struct md_ioctl mdio;
+
+	md_ctl = open("/dev/" MDCTL_NAME, O_RDWR | O_CLOEXEC);
+	if (md_ctl < 0)
+		return (-1);
+	memset(&mdio, 0, sizeof(mdio));
+	mdio.md_version = MDIOVERSION;
+	mdio.md_type = MD_MALLOC;
+	mdio.md_mediasize = 8 * 1024 * 1024;
+	mdio.md_sectorsize = 512;
+	mdio.md_options = MD_AUTOUNIT;
+	if (ioctl(md_ctl, MDIOCATTACH, &mdio) != 0) {
+		int error = errno;
+
+		close(md_ctl);
+		md_ctl = -1;
+		errno = error;
+		return (-1);
+	}
+	md_unit = mdio.md_unit;
+	snprintf(md_path, sizeof(md_path), "/dev/%s%u", MD_NAME, md_unit);
+	return (0);
+}
+
+static void
+md_detach(void)
+{
+	struct md_ioctl mdio;
+
+	if (md_ctl < 0)
+		return;
+	(void)swapoff(md_path, 0);
+	memset(&mdio, 0, sizeof(mdio));
+	mdio.md_version = MDIOVERSION;
+	mdio.md_unit = md_unit;
+	(void)ioctl(md_ctl, MDIOCDETACH, &mdio);
+	close(md_ctl);
+	md_ctl = -1;
+}
+
+static void action_swap(void) {
+	if (swapon(md_path) == 0)
+		(void)swapoff(md_path, 0);
+}
+
 static void
 test_vnode_events(void)
 {
@@ -582,7 +745,6 @@ test_extattr_events(void)
 {
 	printf("\n=== EXTATTR EVENTS ===\n");
 
-	/* UFS required for extattr */
 	close_oes();
 	oes_event_type_t events[] = {
 		OES_EVENT_NOTIFY_SETEXTATTR,
@@ -591,7 +753,7 @@ test_extattr_events(void)
 		OES_EVENT_NOTIFY_DELETEEXTATTR,
 	};
 	if (setup_notify(events, 4) < 0) {
-		SKIP("EXTATTR events", "setup failed");
+		FAIL("EXTATTR events", "setup failed");
 		return;
 	}
 
@@ -603,19 +765,28 @@ test_extattr_events(void)
 	}
 	usleep(100000);
 
-	int set_seen = wait_for_event(OES_EVENT_NOTIFY_SETEXTATTR, pid, 500);
-	int get_seen = wait_for_event(OES_EVENT_NOTIFY_GETEXTATTR, pid, 500);
-	int list_seen = wait_for_event(OES_EVENT_NOTIFY_LISTEXTATTR, pid, 500);
-	int del_seen = wait_for_event(OES_EVENT_NOTIFY_DELETEEXTATTR, pid, 500);
+	int seen[4];
+	wait_for_events(events, seen, 4, pid, 2000);
 
 	int status;
 	waitpid(pid, &status, 0);
 	close_oes();
 
-	if (set_seen) PASS("NOTIFY_SETEXTATTR"); else SKIP("NOTIFY_SETEXTATTR", "UFS required");
-	if (get_seen) PASS("NOTIFY_GETEXTATTR"); else SKIP("NOTIFY_GETEXTATTR", "UFS required");
-	if (list_seen) PASS("NOTIFY_LISTEXTATTR"); else SKIP("NOTIFY_LISTEXTATTR", "UFS required");
-	if (del_seen) PASS("NOTIFY_DELETEEXTATTR"); else SKIP("NOTIFY_DELETEEXTATTR", "UFS required");
+	/*
+	 * The MAC checks run before the filesystem is asked, so all four
+	 * events are generated on any filesystem, tmpfs included, whether or
+	 * not the operation is supported there.
+	 */
+	static const char *names[4] = {
+		"NOTIFY_SETEXTATTR", "NOTIFY_GETEXTATTR",
+		"NOTIFY_LISTEXTATTR", "NOTIFY_DELETEEXTATTR",
+	};
+	for (int i = 0; i < 4; i++) {
+		if (seen[i])
+			PASS(names[i]);
+		else
+			FAIL(names[i], "event not received");
+	}
 }
 
 static void
@@ -647,7 +818,7 @@ test_process_events(void)
 	close_oes();
 	oes_event_type_t event = OES_EVENT_NOTIFY_PTRACE;
 	if (setup_notify(&event, 1) < 0) {
-		SKIP("NOTIFY_PTRACE", "setup failed");
+		FAIL("NOTIFY_PTRACE", "setup failed");
 		return;
 	}
 	drain_events();
@@ -661,7 +832,12 @@ test_process_events(void)
 	int status;
 	waitpid(pid, &status, 0);
 	close_oes();
-	if (seen) PASS("NOTIFY_PTRACE"); else SKIP("NOTIFY_PTRACE", "may need privileges");
+	if (seen)
+		PASS("NOTIFY_PTRACE");
+	else if (is_root)
+		FAIL("NOTIFY_PTRACE", "event not received");
+	else
+		SKIP("NOTIFY_PTRACE", "may need privileges");
 }
 
 static void
@@ -699,7 +875,7 @@ test_priv_events(void)
 	close_oes();
 	oes_event_type_t event = OES_EVENT_NOTIFY_PRIV_CHECK;
 	if (setup_notify(&event, 1) < 0) {
-		SKIP("NOTIFY_PRIV_CHECK", "setup failed");
+		FAIL("NOTIFY_PRIV_CHECK", "setup failed");
 		return;
 	}
 	drain_events();
@@ -718,7 +894,10 @@ test_priv_events(void)
 	waitpid(pid, &status, 0);
 	close_oes();
 
-	if (seen) PASS("NOTIFY_PRIV_CHECK"); else SKIP("NOTIFY_PRIV_CHECK", "event not triggered");
+	if (seen)
+		PASS("NOTIFY_PRIV_CHECK");
+	else
+		FAIL("NOTIFY_PRIV_CHECK", "event not received");
 }
 
 static void
@@ -738,11 +917,40 @@ test_system_events(void)
 		return;
 	}
 
-	SKIP("NOTIFY_REBOOT", "destructive test");
-	SKIP("NOTIFY_SWAPON", "needs swap device");
-	SKIP("NOTIFY_SWAPOFF", "needs swap device");
-	SKIP("NOTIFY_KLDLOAD", "needs safe module");
-	SKIP("NOTIFY_KENV", "requires controlled kernel environment change");
+	/*
+	 * Each of these events is generated by the MAC check of the system
+	 * call, so none needs the operation itself to succeed, and those that
+	 * would change the system are made to fail after the check.
+	 */
+	test_event("NOTIFY_REBOOT", OES_EVENT_NOTIFY_REBOOT, action_reboot);
+	test_event("NOTIFY_KLDLOAD", OES_EVENT_NOTIFY_KLDLOAD, action_kldload);
+	test_event("NOTIFY_KENV", OES_EVENT_NOTIFY_KENV, action_kenv);
+
+	/* The swap checks are made on a device that is about to be used. */
+	if (md_attach() != 0) {
+		char reason[96];
+
+		snprintf(reason, sizeof(reason),
+		    "no memory disk to swap on: %s", strerror(errno));
+		SKIP("NOTIFY_SWAPON", reason);
+		SKIP("NOTIFY_SWAPOFF", reason);
+		return;
+	}
+	test_event("NOTIFY_SWAPON", OES_EVENT_NOTIFY_SWAPON, action_swap);
+	if (swapon(md_path) != 0) {
+		/* The device was refused after the check: nothing to turn off. */
+		char reason[96];
+
+		snprintf(reason, sizeof(reason),
+		    "swapon(%s) is refused here: %s", md_path,
+		    strerror(errno));
+		SKIP("NOTIFY_SWAPOFF", reason);
+	} else {
+		(void)swapoff(md_path, 0);
+		test_event("NOTIFY_SWAPOFF", OES_EVENT_NOTIFY_SWAPOFF,
+		    action_swap);
+	}
+	md_detach();
 }
 
 static void
@@ -756,8 +964,8 @@ test_cred_events(void)
 		return;
 	}
 
-	SKIP("NOTIFY_SETUID", "test needs privileged subprocess");
-	SKIP("NOTIFY_SETGID", "test needs privileged subprocess");
+	test_event("NOTIFY_SETUID", OES_EVENT_NOTIFY_SETUID, action_setuid);
+	test_event("NOTIFY_SETGID", OES_EVENT_NOTIFY_SETGID, action_setgid);
 }
 
 /*
@@ -1070,6 +1278,7 @@ cleanup_test_files(void)
 	unlink(TEST_LINK);
 	unlink(TEST_FILE);
 	unlink(TEST_FILE2);
+	unlink(TEST_KLD);
 	rmdir(TEST_SUBDIR);
 	rmdir(TEST_DIR);
 	unlink(TEST_SOCKET);
