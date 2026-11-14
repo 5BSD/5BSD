@@ -21,6 +21,7 @@ from libmd_environment import digest
 
 
 BAZEL_IDLE_SECONDS = 300
+CLIENT_RUSAGE_SCOPE = "client and waited descendants; excludes persistent server"
 
 def setting_arguments(settings):
     """Pass typed source build settings, never arbitrary native Bazel flags."""
@@ -513,7 +514,7 @@ def _qualify(config, args, state):
         with (out/'bazel.stdout').open('w') as stdout,(out/'bazel.stderr').open('w') as stderr:
             result=subprocess.run(['/usr/bin/time','-l',*argv],cwd=src,
                 env=env,stdout=stdout,stderr=stderr)
-        commands.append(dict(argv=argv,exit_status=result.returncode,elapsed_seconds=time.monotonic()-start))
+        commands.append(dict(argv=argv,exit_status=result.returncode,elapsed_seconds=time.monotonic()-start,rusage_scope=CLIENT_RUSAGE_SCOPE))
         (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
         if result.returncode:raise RuntimeError('native source graph failed; see bazel.stderr')
         (out/'test-inventory.json').write_text(json.dumps(dict(requested=config['tests'],expanded=expected,incompatible=incompatible,selectors=selector_inventories,selected_inventory_sha256=digest(out/'selected-test-inventory.stdout') if (out/'selected-test-inventory.stdout').exists() else None),indent=2)+'\n')
@@ -530,7 +531,7 @@ def _qualify(config, args, state):
             start = time.monotonic()
             with (out/'test-artifacts.stdout').open('w') as stdout, (out/'test-artifacts.stderr').open('w') as stderr:
                 result = subprocess.run(['/usr/bin/time', '-l', *materialize], cwd=src, env=env, stdout=stdout, stderr=stderr)
-            commands.append(dict(phase='test-artifacts', argv=materialize, exit_status=result.returncode, elapsed_seconds=time.monotonic()-start))
+            commands.append(dict(phase='test-artifacts', argv=materialize, exit_status=result.returncode, elapsed_seconds=time.monotonic()-start, rusage_scope=CLIENT_RUSAGE_SCOPE))
             (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
             if result.returncode:
                 raise RuntimeError('test executable build failed; see test-artifacts.stderr')
@@ -549,7 +550,7 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,target_inventory_sha256=digest(out/'target-inventory.json'),test_inventory_sha256=digest(out/'test-inventory.json'),test_artifact_build=test_artifact_build,artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},profile=dict(path=str(profile_path),sha256=digest(profile_path)),execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),action_cache=action_cache,test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,target_inventory_sha256=digest(out/'target-inventory.json'),test_inventory_sha256=digest(out/'test-inventory.json'),test_artifact_build=test_artifact_build,artifacts=artifacts,build_state=str(state),bazel_output_user_root=str(user_root),sdk_repository=str(repository),input_sha256=bindings,sdk_verification=dict(path=str(out/'sdk-verification.json'),sha256=digest(out/'sdk-verification.json'),phases=verification),offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},profile=dict(path=str(profile_path),sha256=digest(profile_path)),execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['time -l measures '+CLIENT_RUSAGE_SCOPE+'; not complete build resource accounting.','Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

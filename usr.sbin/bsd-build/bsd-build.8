@@ -2351,6 +2351,13 @@ Use the independent firmware test case for its documented firmware-only scope.
 This does not qualify the complete loader, kernel and installed-system chain.
 
 .Ss Bazel build qualification
+Per-command timing in qualification logs measures the Bazel client; a persistent
+server and its compiler descendants can lie outside that boundary.
+It does not establish build CPU, aggregate peak RAM or device throughput.
+The source-owned
+.Pa tools/build/bazel/RESOURCE-ACCOUNTING.md
+specifies complete private-server lifecycle measurements and their limits.
+.Pp
 .Cm bazel-test
 runs maintained native amd64 qualification and explicitly selected cross-target
 artifact qualification, with separate target and execution SDKs where required.

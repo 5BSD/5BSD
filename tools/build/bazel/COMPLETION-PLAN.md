@@ -12,7 +12,7 @@ is not authorized.
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
 | 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
-| 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
+| 4. Resources/performance | A source-owned reaper supervisor now accounts complete private-server descendant CPU/block operations and sampled aggregate RSS; seven real process regressions and maintained AMD64 qualification pass. Normal frontend timings explicitly identify their client-only scope. This qualifies instrumentation, not performance. Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
 | 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. C++/unwind component builds also pass on both platforms, with 1,681 original Make install metadata records per architecture matching and byte-identical generated ABI maps. AMD64 demangling, native backtrace and static/shared C++ runtime tests pass. Focused libm/static-unwind builds now pass on both platforms: all 277 ARM64 and 280 AMD64 math object contracts and both ABI maps match Make; 322 component install metadata records match per architecture. AMD64 static/shared math smoke tests pass. The 47-program original math suite now builds/installs on both platforms, with all 463 AMD64 ATF bodies passing and complete program ELF metadata matching Make on both platforms. ARM64 math execution remains open. Current five-component crypto/compression builds and crypt test installs also match Make archive/ELF/ABI-map and 188 install metadata records per architecture. ARM64 target execution remains unqualified. Eight selected data/configuration/ATF libraries and 14 installed test programs now match focused Make archive/ELF/map/install contracts (121 metadata records each platform); AMD64 reports 160 passing results and one ASan-only skip. The datagram sysctl case remains VM-only. Five device/output libraries, the CSV plugin and two original CAM test programs now match focused Make archive/ELF/install contracts (215 records each platform); AMD64 parsing/formatting/plugin/string checks pass, while live device/I/O and ARM64 execution remain unqualified. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
@@ -21,6 +21,43 @@ Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.js
 Kernel proof: /usr/obj/usr/src/bazel-current-kernel-parity-r5-20261114.
 Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114.
 ARM64 CSU proof: /usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114.
+
+
+### Descendant resource accounting checkpoint (2026-11-14)
+
+The original time-l wrapper omitted an already-running Bazel server. Normal
+frontend command records and receipts now explicitly identify that client-only
+boundary. The new source-owned resource_tree target measures an entire bounded
+private-server lifecycle under a process reaper. It sums wait accounting once
+across waited/adopted descendants and samples simultaneous descendant RSS,
+including nested reapers, while reporting observer CPU and actual sample gaps.
+The older serial-action resource_run interface remains unchanged.
+
+Maintained build-bsd qualification bazel-resource-tree-native-amd64-r3-20261114
+passes one native test target containing seven Python regressions: simultaneous
+workers with waited/adopted CPU transfer, nested reapers, unrelated-daemon
+exclusion, timeout and signal cleanup, command failure and existing-report
+refusal. Its two captured native outputs and all report/log/XML hashes verify.
+The test's subprocesses use the declared SDK Python, not absolute host utilities.
+A complete fresh private-server startup/build/test/shutdown sequence is measured
+under bazel-resource-tree-review-r3-20261114. All descendants drain, both sequence
+commands pass, and current source copies/hashes and client timing labels verify.
+R1/R2 evidence remains retained; R1 shutdown had a Java-default startup mismatch,
+corrected with the same explicit JAVA_HOME in R2/R3. These are instrumentation
+checks on a busy host, not comparative performance trials.
+
+RSS is sampled and sums shared pages repeatedly; it is not exact physical peak
+RAM. Kernel snapshots are non-atomic and short-lived peaks can be missed. Block
+operations are not physical disk bytes. CPU/block totals cover the whole
+sequence, not individual phases. Controlled Make/Bazel clean/incremental and
+cache/compression/device/retained-storage comparisons remain open. See
+RESOURCE-ACCOUNTING.md for the maintained measurement contract.
+
+Frontend integration review: existing format-5 targets/tests/build-state inputs
+select the helper through build-bsd without new C dispatch or CLI semantics.
+The backend timing records/receipt and manual are updated in this change.
+No signing, staging, security-policy or publication change; Make stays the
+production/default backend and all six completion gates remain open.
 
 
 ### Focused math and static unwind checkpoint (2026-11-14)

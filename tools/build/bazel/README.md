@@ -3,6 +3,16 @@
 See [BUILD-OPTIONS.md](BUILD-OPTIONS.md) for GENERIC/NODEBUG, diagnostics versus
 debug symbols, native option boundaries and remaining Make compatibility.
 
+## Resource measurement boundary
+
+Normal frontend time-l timings measure the client and omit an existing Bazel
+server. They are now labelled accordingly in command records and receipts.
+The source-owned resource_tree supervisor measures a full private-server
+lifecycle, including adopted descendants, with CPU/block counters and sampled
+aggregate RSS. Maintained native qualification passes its seven real process
+regressions. This qualifies instrumentation; controlled performance comparisons
+remain open. See [RESOURCE-ACCOUNTING.md](RESOURCE-ACCOUNTING.md).
+
 ## Independent Make closeout comparison (2026-11-11)
 
 Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass
