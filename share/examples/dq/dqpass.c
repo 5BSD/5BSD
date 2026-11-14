@@ -210,7 +210,7 @@ main(int argc, char **argv)
 	if (buf == NULL)
 		err(2, "malloc");
 	memset(&c, 0, sizeof(c));
-	q = dq_open();		/* O_CLOFORK: the child never holds it */
+	q = dq_open();		/* owned: the child never holds it */
 	if (q == -1)
 		err(2, "dq_open (%s)", DQ_DEVICE);
 	if (fcntl(q, F_SETFL, O_NONBLOCK) == -1)

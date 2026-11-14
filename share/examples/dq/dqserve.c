@@ -22,8 +22,8 @@
  * controller applies to the backing file; the controller could refuse,
  * redirect or log any of them instead.
  *
- * In both modes the queue is opened O_CLOFORK (dq_open does this), so the
- * child inherits the served descriptor and not the queue, and the
+ * In both modes the child inherits the served descriptor and never the
+ * queue (the kernel keeps a queue in the process that opened it), and the
  * controller's own EDEADLK rule does not trip.
  *
  * Build with -ldq; see dq(4) and libdq(3).
@@ -281,7 +281,7 @@ main(int argc, char **argv)
 		unsigned char buf[4096];
 		ssize_t r;
 
-		(void)close(q);		/* O_CLOFORK already closed it */
+		(void)close(q);		/* no child has the queue: EBADF */
 		if (writable)
 			writable_child(s.fd);
 		else {

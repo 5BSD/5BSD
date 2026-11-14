@@ -47,9 +47,11 @@ __BEGIN_DECLS
  */
 
 /*
- * Open a queue: O_RDWR|O_CLOEXEC|O_CLOFORK, so a forked requester inherits
- * the minted descriptors and not the queue (D86: the EDEADLK rule applies to
- * any process whose table holds the queue).  Returns the queue fd or -1.
+ * Open a queue: O_RDWR|O_CLOEXEC|O_CLOFORK.  The kernel pins the queue to
+ * the calling process whatever the flags: a forked requester inherits the
+ * minted descriptors and never the queue, and only the caller operates it
+ * (dq(4); D86: the EDEADLK rule applies to any process whose table holds
+ * the queue).  Returns the queue fd or -1.
  */
 int	dq_open(void);
 

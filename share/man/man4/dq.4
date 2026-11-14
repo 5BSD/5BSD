@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 13, 2026
+.Dd November 14, 2026
 .Dt DQ 4
 .Os
 .Sh NAME
@@ -100,11 +100,167 @@ which shares the existing file rather than opening the device again, so the
 new descriptor is the same queue; only a path open of
 .Pa /dev/dq
 creates a queue.
-A controller should open the queue
-.Dv O_CLOFORK
-.Pq Xr libdq 3 Ap s Fn dq_open does ,
-see
-.Sx Delivery of a minted descriptor .
+.Ss The queue descriptor and its owner
+A queue belongs to the process that opened it, its
+.Em owner ,
+and to no other.
+Three rules follow; none can be turned off.
+.Pp
+.Sy The descriptor stays in the owner's descriptor table .
+Whatever flags the open asked for, every descriptor of the queue
+.Po
+the one
+.Xr open 2
+returned, a
+.Xr dup 2 ,
+.Xr dup2 2
+or
+.Dv F_DUPFD
+copy, an
+.Xr fdescfs 4
+reopen
+.Pc
+is closed in every child
+.Po
+.Xr fork 2 ,
+.Xr vfork 2 ,
+.Xr pdfork 2 ,
+.Xr rfork 2
+with
+.Dv RFFDG ,
+.Xr posix_spawn 3
+.Pc
+and at
+.Xr execve 2 ,
+and is refused with
+.Er ENOTCAPABLE
+by
+.Xr sendmsg 2
+with
+.Dv SCM_RIGHTS ,
+by
+.Xr pddupfd 2
+and by a send to a
+.Xr mac_capability 4
+service, the coalition service included.
+The Linux
+.Fn pidfd_getfd
+answers
+.Er EPERM .
+.Xr cap_xfer_limit 2 ,
+.Xr cap_cloexec_limit 2
+and
+.Xr cap_clofork_limit 2
+cannot loosen the descriptor
+.Pq Er ENOTCAPABLE .
+The close-on-exec and close-on-fork flags are set by the open and are
+advisory for a queue:
+.Dv F_SETFD
+may clear them and a
+.Xr dup 2
+copy reads back 0 from
+.Dv F_GETFD ,
+and the descriptor is closed by fork and exec all the same.
+.Dv F_GETFL
+shows the open flags and nothing else.
+.Pp
+.Sy Only the owner operates the queue .
+The one other process that can reach it is one that shares the owner's
+descriptor table
+.Po
+.Xr rfork 2
+without
+.Dv RFFDG ,
+the Linux
+.Fn clone
+with
+.Dv CLONE_FILES
+.Pc .
+For that process
+.Xr read 2 ,
+every
+.Xr ioctl 2
+that reaches the queue
+.Po
+an unknown command included; the kernel itself answers
+.Dv FIODTYPE ,
+and
+.Dv FIONBIO
+or
+.Dv FIOASYNC
+that asks for the state the open file already has
+.Pc
+and the registration of a
+.Xr kqueue 2
+filter fail with
+.Er EPERM ,
+.Xr poll 2
+reports
+.Dv POLLNVAL ,
+and
+.Xr select 2
+never reports the queue ready.
+.Xr aio_read 2
+is not the owner reading: it fails with
+.Er EOPNOTSUPP
+as for any device, and with
+.Er EPERM
+from
+.Xr aio_error 2
+when
+.Va vfs.aio.enable_unsafe
+is set.
+The owner is the process, not a credential: it stays the owner when it
+changes its user or enters a jail.
+.Dq Owner
+means the opening process and whatever can run system calls in it; the
+rule claims nothing against a process that may debug the owner.
+.Pp
+.Sy The queue dies with its owner .
+When the owner exits, calls
+.Xr execve 2 ,
+or leaves a descriptor table it shares
+.Po
+.Xr rfork 2
+with
+.Dv RFFDG
+or
+.Dv RFCFDG
+.Pc ,
+the queue dies at that point, whoever still holds its file, with the
+effects of
+.Sx Object lifecycle .
+A queue also dies when its last descriptor is closed.
+A dead queue answers
+.Er ENXIO
+to every operation by any caller, and
+.Dv POLLNVAL
+to
+.Xr poll 2 ;
+a process sharing the dead owner's table can only close it.
+The dead queue is counted in
+.Va kern.dq.queues
+and listed, as closing and under the pid that opened it, by the observe
+service until that last close.
+A Linux process whose descriptor table holds a queue, owner or not, is
+refused
+.Fn unshare CLONE_FILES
+and
+.Fn close_range
+with
+.Dv CLOSE_RANGE_UNSHARE
+.Pq Er EINVAL ,
+because the copy would drop the queue.
+.Pp
+A process that has opened a queue carries the flag
+.Dv P2_DQOWNER
+.Pq 0x40000000
+in the
+.Va ki_flag2
+field of its
+.Vt struct kinfo_proc
+from then on; the flag is not inherited and is not cleared when the queue
+is closed.
 .Ss Events and replies
 .Dv DQ_API_VERSION
 is 2; version 1 had a 96-byte
@@ -524,11 +680,14 @@ and
 .Xr kqueue 2
 .Pq Dv EVFILT_READ , with the queued bytes in Va data
 report readiness.
-Once the queue is closing, reads answer
+Once the queue has died every caller is refused at entry
+.Po
 .Er ENXIO ,
-poll
-.Dv POLLHUP
-and the knote
+.Dv POLLNVAL ,
+see
+.Sx The queue descriptor and its owner
+.Pc ;
+a filter registered while it lived reports
 .Dv EV_EOF .
 .Pp
 .Va de_seq
@@ -1038,7 +1197,13 @@ hook, so when the requester closed meanwhile that drop is the last
 reference and the
 .Dv DQ_OP_CLOSE
 record then carries the controller as its caller.
-When the controller closes its last descriptor to the queue, every object
+When the queue dies
+.Po
+its owner exits, execs or leaves a shared descriptor table, or its last
+descriptor is closed, see
+.Sx The queue descriptor and its owner
+.Pc ,
+every object
 is revoked, every waiter and observer woken, and later operations on the
 objects answer
 .Er EIO ;
@@ -1064,9 +1229,8 @@ and a
 .Pa /dev/fd
 reopen share it.
 Until the resolution stage installs served descriptors in a requester, a
-requester receives one by inheritance: the controller opens its queue
-.Dv O_CLOFORK ,
-mints, forks, and the child holds the object and not the queue.
+requester receives one by inheritance: the controller opens its queue,
+mints, forks, and the child holds the object and never the queue.
 .Pp
 A process whose descriptor table holds the queue is refused every operation
 on the queue's objects that would post an event with
@@ -1087,11 +1251,13 @@ is still
 .Er EBADF ) ;
 the test is by the queue's file in the caller's table, so a
 .Xr dup 2
-or a
-.Xr pdfork 2 Ns ed
-helper that inherited it is covered and a child of an
-.Dv O_CLOFORK
-queue is not.
+and a process sharing the controller's descriptor table
+.Po
+.Xr rfork 2
+without
+.Dv RFFDG
+.Pc
+are covered; a child never holds the queue.
 Operations the identity answers
 .Pq Xr fstat 2 , Dv F_KINFO , Xr fstatfs 2 , Xr fpathconf 2 , Xr lseek 2 , Xr poll 2 , Xr kqueue 2 , Xr close 2
 are never refused.
@@ -2176,7 +2342,7 @@ A queue at its depth fails the lookup with
 at once and counts a drop.
 .Pp
 .Sy Failing closed .
-When the controller's queue closes, every waiting lookup and every later
+When the controller's queue dies, every waiting lookup and every later
 lookup of an attached process fails with
 .Er EIO ,
 and every waiting and later
@@ -2669,7 +2835,7 @@ reports its real path.
 .Pp
 The requester then holds the real open file.
 Nothing it does with the descriptor afterwards posts an event, the
-controller cannot revoke it, and it keeps working when the queue closes.
+controller cannot revoke it, and it keeps working when the queue dies.
 Where one of those matters, answer
 .Dv DQ_RESOLVE_FD .
 .Bd -literal -offset indent
@@ -2824,7 +2990,12 @@ the file is dropped and the controller is not told.
 The last two steps are the queue's.
 A descriptor is installed only while the queue lives: when the queue has
 died between the reply and the installation
-.Pq the controller exited, or closed its last descriptor of the queue ,
+.Po
+its owner exited, called
+.Xr execve 2
+or left a shared descriptor table, or its last descriptor was closed, see
+.Sx The queue descriptor and its owner
+.Pc ,
 the open fails with
 .Er EIO ,
 the errno of every lookup of an attached process from then on, and nothing
@@ -2895,8 +3066,9 @@ The path of the supplied file is visible to the requester
 .Pq Dv F_KINFO , Xr procstat 1 ;
 answer an open of that path as any other.
 .It
-Attached processes are not killed when the queue closes: a requester that
-outlives its controller keeps every swapped descriptor.
+Attached processes are not killed when the queue dies: a requester that
+outlives its controller keeps every swapped descriptor, and is given no
+new one.
 .El
 .Ss Served directories and starts
 Stage 1c-iii-b serves directories and symbolic links and lets a served
