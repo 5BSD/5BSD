@@ -162,7 +162,10 @@ copy reads back 0 from
 .Dv F_GETFD ,
 and the descriptor is closed by fork and exec all the same.
 .Dv F_GETFL
-shows the open flags and nothing else.
+shows the open flags and nothing else; the
+.Va kern.file
+listing shows the kernel's mark of a pinned file, 0x80000000, in
+.Va xf_flag .
 .Pp
 .Sy Only the owner operates the queue .
 The one other process that can reach it is one that shares the owner's
@@ -199,7 +202,27 @@ reports
 .Dv POLLNVAL ,
 and
 .Xr select 2
-never reports the queue ready.
+never reports the queue ready, so a
+.Xr select 2
+without a timeout does not return.
+.Dv F_SETFL
+that changes
+.Dv O_NONBLOCK
+or
+.Dv O_ASYNC
+fails with
+.Er EPERM
+and leaves the flags as they were; the other status flags are the open
+file's and a sharer may change them.
+While such a call is being refused, a read by the owner may observe the
+requested mode once.
+What acts on the descriptor table and not on the queue is the sharer's as
+it is the owner's:
+.Xr close 2 ,
+.Xr dup2 2
+over the number, and
+.Xr cap_rights_limit 2 ,
+which then limits the owner too.
 .Xr aio_read 2
 is not the owner reading: it fails with
 .Er EOPNOTSUPP
