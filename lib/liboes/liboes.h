@@ -58,6 +58,15 @@ oes_client_t *oes_client_create(void);
 oes_client_t *oes_client_create_descendants(void);
 
 /*
+ * Create a client scoped to one jail and, unless flags contains
+ * OES_JAIL_SCOPE_NOCHILDREN, the jails nested beneath it; see
+ * oes_set_jail_scope().  On failure errno is that of the scope selection:
+ * ENOENT if there is no such jail.
+ */
+oes_client_t *oes_client_create_jail(int jid, uint32_t flags);
+oes_client_t *oes_client_create_jail_name(const char *name, uint32_t flags);
+
+/*
  * oes_client_create_from_fd - Create client from existing fd
  *
  * Used when receiving a restricted fd from a system daemon.
@@ -99,6 +108,28 @@ int oes_client_fd(oes_client_t *client);
 /* Select/query visibility.  Scope can only be narrowed before configuration. */
 int oes_set_descendants_scope(oes_client_t *client);
 int oes_get_scope(oes_client_t *client, uint32_t *scope);
+
+/*
+ * Jail scope: limit the client to the processes in one jail and, unless
+ * OES_JAIL_SCOPE_NOCHILDREN is given, in the jails nested beneath it,
+ * however and whenever they got there.  The jail is named by jail ID (0 is
+ * the caller's own jail) or by name, relative to the caller's jail.  flags
+ * may contain OES_JAIL_SCOPE_NOCHILDREN and OES_JAIL_SCOPE_INBOUND.  Must
+ * precede mode and subscriptions; cannot be changed afterwards.  The kernel
+ * holds the jail itself: a later jail with the same ID or name is not
+ * matched.  After the jail is removed, queued events can still be read;
+ * then oes_read_event() fails with ENXIO and oes_get_jail_scope() reports
+ * OES_JAIL_SCOPE_DEAD.
+ */
+int oes_set_jail_scope(oes_client_t *client, int jid, uint32_t flags);
+int oes_set_jail_scope_name(oes_client_t *client, const char *name,
+    uint32_t flags);
+/*
+ * Any of jid, flags and name may be NULL.  The jail ID and name are those
+ * the scope was set with.  Fails with ENOENT if no jail scope is set.
+ */
+int oes_get_jail_scope(oes_client_t *client, int *jid, uint32_t *flags,
+    char *name, size_t namelen);
 
 /*
  * Configuration

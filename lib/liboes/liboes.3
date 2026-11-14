@@ -1,4 +1,4 @@
-.Dd October 12, 2026
+.Dd November 13, 2026
 .Dt LIBOES 3
 .Os
 .Sh NAME
@@ -32,6 +32,60 @@ still requires
 .Fx
 device privilege because OES has no code-signing
 entitlement authority.
+.Pp
+The
+.Fn oes_client_create_jail
+and
+.Fn oes_client_create_jail_name
+constructors create a client limited to one
+.Xr jail 8
+and, by default, every jail nested beneath it.
+The jail is named by jail ID or by name, relative to the caller's own jail;
+jail ID 0 is the caller's own jail, which is the host system for an unjailed
+caller.
+Events are delivered for a process while it is in the jail, however it got
+there, including processes that enter later with
+.Xr jail_attach 2 .
+The
+.Fa flags
+argument may contain
+.Dv OES_JAIL_SCOPE_NOCHILDREN
+to exclude nested jails and
+.Dv OES_JAIL_SCOPE_INBOUND
+to also receive signal, ptrace and scheduling notifications sent from
+outside the jail to a process inside it.
+The scope may also be selected on an existing client, before its mode and
+subscriptions, with
+.Fn oes_set_jail_scope
+or
+.Fn oes_set_jail_scope_name ,
+and is inspected with
+.Fn oes_get_jail_scope ,
+which reports the jail ID and name the scope was set with and fails with
+.Er ENOENT
+for a client that has no jail scope.
+The kernel holds the jail itself: a jail created later with the same ID or
+name is a different jail and is never matched.
+When the jail is removed, the events its processes generated before that can
+still be read; after them
+.Fn oes_read_event
+fails with
+.Er ENXIO
+and
+.Fn oes_get_jail_scope
+reports
+.Dv OES_JAIL_SCOPE_DEAD .
+Selecting the scope fails with
+.Er ENOENT
+if the jail does not exist, is being removed, or is not the caller's jail or
+beneath it, with
+.Er EINVAL
+for flags other than the two above or an empty name, and with
+.Er ENAMETOOLONG
+for a name that cannot be a jail name.
+See
+.Xr oes 4
+for the complete rules.
 .Pp
 Per-AUTH-event deadline caps are configured with
 .Fn oes_set_deadline_max
@@ -120,7 +174,7 @@ The endpoint is provided by
 .Xr BSDFilesystem 8 .
 An unavailable endpoint returns the discovery error.
 Delivered clients have NOTIFY-only, global event scope and cannot be transferred
-again or changed to AUTH or descendant scope.
+again or changed to AUTH, descendant or jail scope.
 Their original opener identity is the broker worker.
 Factory-session closure does not revoke the descriptor; ordinary last-close
 semantics apply.

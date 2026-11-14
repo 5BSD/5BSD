@@ -39,7 +39,7 @@ access to protected services.
 | Tool | Purpose | Man page | Package | Example |
 |---|---|---|---|---|
 | `mac_abac_ctl` | Manage mac_abac(4): `mode disabled|permissive|enforcing`, `default allow|deny`, `status`, `stats`, `limits`, and `rule add|remove|clear|list|load|append|validate` with atomically swapped rule sets (`-s set`). | mac_abac_ctl(8) | `mac-abac` | `mac_abac_ctl rule validate /etc/mac_abac.conf` |
-| `oeslogger` | Stream OpenEndpointSecurity NOTIFY events as newline-delimited JSON; `-l` lists event types, `-o file` writes to a file, `-m path` mutes a path prefix, `-d` scopes to the logger's descendants, `-n` disables the default noise mutes, `-p` pretty-prints. AUTH (blocking) events are not exposed. | oeslogger(8) | `oes` | `oeslogger exec open \| jq .` |
+| `oeslogger` | Stream OpenEndpointSecurity NOTIFY events as newline-delimited JSON; `-l` lists event types, `-o file` writes to a file, `-m path` mutes a path prefix, `-d` scopes to the logger's descendants, `-j jail` / `-J jail` scope to one jail with / without the jails nested in it (`-i` adds signals sent into it), `-n` disables the default noise mutes, `-p` pretty-prints. AUTH (blocking) events are not exposed. | oeslogger(8) | `oes` | `oeslogger exec open \| jq .` |
 
 ## Observability
 

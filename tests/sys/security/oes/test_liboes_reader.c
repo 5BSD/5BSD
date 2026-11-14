@@ -145,8 +145,9 @@ static int
 test_scope_api_errors(void)
 {
 	oes_client_t *client;
-	uint32_t scope;
-	int fds[2], errors;
+	char longname[OES_JAIL_NAME_MAX + 1], name[OES_JAIL_NAME_MAX];
+	uint32_t flags, scope;
+	int fds[2], errors, jid;
 
 	if (pipe(fds) != 0)
 		return (1);
@@ -166,13 +167,52 @@ test_scope_api_errors(void)
 	errno = 0;
 	if (oes_get_scope(client, NULL) == 0 || errno != EINVAL)
 		errors++;
+	/* Jail scope: argument errors are local, the rest is the ioctl's. */
+	errno = 0;
+	if (oes_set_jail_scope(client, 0, 0) == 0 || errno != ENOTTY)
+		errors++;
+	errno = 0;
+	if (oes_set_jail_scope(client, 0, 0x8) == 0 || errno != EINVAL)
+		errors++;
+	errno = 0;
+	if (oes_set_jail_scope(client, 0, OES_JAIL_SCOPE_BYNAME) == 0 ||
+	    errno != EINVAL)
+		errors++;
+	errno = 0;
+	if (oes_set_jail_scope_name(client, NULL, 0) == 0 || errno != EINVAL)
+		errors++;
+	errno = 0;
+	if (oes_set_jail_scope_name(client, "", 0) == 0 || errno != EINVAL)
+		errors++;
+	errno = 0;
+	if (oes_set_jail_scope_name(client, "jail", OES_JAIL_SCOPE_DEAD) == 0 ||
+	    errno != EINVAL)
+		errors++;
+	memset(longname, 'j', sizeof(longname) - 1);
+	longname[sizeof(longname) - 1] = '\0';
+	errno = 0;
+	if (oes_set_jail_scope_name(client, longname, 0) == 0 ||
+	    errno != ENAMETOOLONG)
+		errors++;
+	errno = 0;
+	if (oes_set_jail_scope_name(client, "jail", 0) == 0 || errno != ENOTTY)
+		errors++;
+	errno = 0;
+	if (oes_get_jail_scope(client, &jid, &flags, name, sizeof(name)) == 0 ||
+	    errno != ENOTTY)
+		errors++;
+	errno = 0;
+	if (oes_client_create_jail_name(NULL, 0) != NULL ||
+	    (errno != EINVAL && errno != ENOENT && errno != EACCES &&
+	    errno != EPERM))
+		errors++;
 	oes_client_destroy(client);
 	close(fds[0]);
 	close(fds[1]);
 	if (errors != 0)
-		fprintf(stderr, "FAIL: descendants scope API error handling\n");
+		fprintf(stderr, "FAIL: scope API error handling\n");
 	else
-		printf("    PASS: descendants scope API reports ioctl errors\n");
+		printf("    PASS: scope APIs report argument and ioctl errors\n");
 	return (errors != 0);
 }
 

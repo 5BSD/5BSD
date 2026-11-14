@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 4, 2026
+.Dd November 13, 2026
 .Dt OES 4
 .Os
 .Sh NAME
@@ -90,6 +90,107 @@ All other processes are invisible, and process mute operations are rejected
 for processes outside the visible subtree.
 The default self mute is not applied to this scope because it would suppress
 the required root-process notifications.
+.Pp
+A client may instead select a jail scope with
+.Dv OES_IOC_SET_JAIL_SCOPE ,
+also before setting its mode or subscriptions.
+The argument,
+.Vt struct oes_jail_scope_args ,
+names a jail by jail ID
+.Pq Va ejs_jid ;
+0 is the caller's own jail, which is the host system for an unjailed caller
+or, with
+.Dv OES_JAIL_SCOPE_BYNAME ,
+by name
+.Pq Va ejs_name .
+The jail is looked up relative to the caller's jail: a jailed caller can name
+only its own jail, as jail ID 0, or a jail beneath it.
+Such a client receives AUTH and NOTIFY events only for threads whose
+credential is, when the event is generated, in that jail or in a jail nested
+beneath it;
+.Dv OES_JAIL_SCOPE_NOCHILDREN
+excludes nested jails.
+Membership is evaluated for every event, so processes that enter the jail
+later with
+.Xr jail_attach 2
+are covered from their first system call after it returns, and ancestry is
+irrelevant.
+Only the thread performing the operation counts: an operation by an outside
+process on a file, socket or process inside the jail is not delivered, and an
+AUTH client with a jail scope never delays a process outside its jail.
+A kernel service acting for a process is judged by the credential it acts
+under.
+With
+.Dv OES_JAIL_SCOPE_INBOUND
+the NOTIFY signal, ptrace and scheduling events whose target process is in the
+jail are delivered as well, although their source is outside it; a jailed
+caller may not request this.
+Process mute operations are rejected for processes outside the scope, and the
+mutes that are set select among the events in scope.
+.Pp
+The kernel keeps a reference to the jail itself, so a jail later created with
+the same ID or name, or a renamed jail, never changes what the scope matches.
+When the jail is removed the scope is dead and cannot be revived.
+Every event that the jail's processes generated before the removal began,
+the exit of its last process included, is still delivered, subject to the
+ordinary queue limits; then
+.Xr read 2
+returns 0,
+.Xr poll 2
+reports
+.Dv POLLHUP
+and an
+.Dv EVFILT_READ
+kevent carries
+.Dv EV_EOF .
+AUTH events already delivered can still be answered.
+When
+.Xr jail_remove 2
+kills processes that are still running, their supervision ends while they
+die: the operations they have in flight and their exits may or may not be
+delivered, and are no longer held for an AUTH decision once the scope is dead.
+.Dv OES_IOC_GET_JAIL_SCOPE
+returns the flags, with
+.Dv OES_JAIL_SCOPE_DEAD
+once the scope is dead, and the jail ID and name as the scope was set:
+a caller that named its own jail reads back jail ID 0 and the name
+.Dq 0 .
+They are left zero for a jailed caller reading a scope that was set from
+outside any jail.
+It fails with
+.Er ENOENT
+for a client without a jail scope.
+A scope cannot be changed once set, and the descendants and jail scopes cannot
+be combined.
+.Pp
+.Dv OES_IOC_SET_JAIL_SCOPE
+fails with
+.Er EINVAL
+for malformed arguments,
+.Er EBUSY
+if the client is already configured,
+.Er EPERM
+if the client already has a scope or a jailed caller requests
+.Dv OES_JAIL_SCOPE_INBOUND ,
+and
+.Er ENOENT
+if no such live jail is visible to the caller, in that order.
+.Pp
+While a jail-scoped client is open every event records the jail of its
+subject, at the cost of one reference on that jail for the life of the
+event; the host itself is not reference counted.
+While every open client is jail-scoped, events of subjects that none of them
+covers are discarded before any memory is allocated, any path is resolved or
+any lock that can sleep is taken.
+Two kinds of event are exempt and take the ordinary path, without being
+delivered to or waited on by the jail-scoped clients: AUTH events while
+.Va security.oes.require_auth_clients ,
+.Va security.oes.auth_fail_closed
+or a fail-closed
+.Va security.oes.default_deadline_miss_mode
+is set, and events that invalidate cached decisions while a jail-scoped client
+has cached any.
+A client with any other scope, descendants included, switches this off.
 .Pp
 Per-event AUTH deadlines may be configured with
 .Dv OES_IOC_SET_DEADLINE_MAX
@@ -237,8 +338,14 @@ Default client-wide AUTH deadline in milliseconds.
 Default deadline-miss behavior: zero is fail open and one is fail closed.
 .It Va security.oes.default_self_mute
 When non-zero, a new client is automatically muted against its own process.
-This default is mutable client state and may be removed; it is not applied to
-descendants-scoped clients.
+This default is mutable client state and may be removed.
+It is not applied to descendants-scoped clients; it is applied to jail-scoped
+clients.
+.It Va security.oes.jail_filtered
+Number of events discarded before any memory was allocated for them because
+every open client is jail-scoped and none covers the subject.
+.It Va security.oes.jail_filtered_auth
+The AUTH events among them.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/oes" -compact
@@ -247,8 +354,10 @@ client device
 .El
 .Sh SEE ALSO
 .Xr dtrace 1 ,
+.Xr jail_attach 2 ,
 .Xr liboes 3 ,
-.Xr mac 4
+.Xr mac 4 ,
+.Xr jail 8
 .Sh HISTORY
 The
 .Nm

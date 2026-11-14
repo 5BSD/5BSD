@@ -98,6 +98,16 @@ including descendants that existed before the scope was chosen; every other
 process is invisible and process mutes outside the subtree are rejected.
 This is the sandbox-supervisor shape, and the scope can never be widened.
 
+A client may instead become *jail-scoped* (`OES_IOC_SET_JAIL_SCOPE`,
+`oes_client_create_jail`), naming one jail by jail ID or by name. It then
+sees AUTH and NOTIFY events only for processes that are in that jail or,
+unless it asks otherwise, in a jail nested beneath it, whenever and however
+they got there; the kernel holds the jail itself, so a later jail with the
+same ID or name is never matched. When the jail is removed, what its
+processes did before that is still delivered, then the client reads end of
+file. This is the container-monitor shape: an AUTH client scoped to a jail
+never delays a process outside it.
+
 Muting is per client and is ordinary mutable state: by process token, by
 uid or gid, by path prefix or literal path on the primary object, by target
 path on the secondary object of a rename or link, per event type, and with
@@ -117,7 +127,7 @@ changes and clears every cache on namespace changes.
 
 ## The device and its ioctls
 
-The kernel interface is `sys/security/oes/oes.h`: 38 `OES_IOC_*` ioctls,
+The kernel interface is `sys/security/oes/oes.h`: 40 `OES_IOC_*` ioctls,
 `read(2)` returning one or more `oes_message_t` records, and `write(2)` of
 an `oes_response_t` or `oes_response_flags_t` to answer an AUTH event.
 Readiness is reported through `poll(2)`, `select(2)` and `kqueue(2)`.
@@ -125,7 +135,7 @@ Readiness is reported through `poll(2)`, `select(2)` and `kqueue(2)`.
 | Ioctl group | Ioctls |
 |---|---|
 | subscription | `SUBSCRIBE`, `SUBSCRIBE_BITMAP`, `GET_SUBSCRIPTIONS` |
-| scope and mode | `SET_SCOPE`, `GET_SCOPE`, `SET_MODE`, `GET_MODE` |
+| scope and mode | `SET_SCOPE`, `GET_SCOPE`, `SET_JAIL_SCOPE`, `GET_JAIL_SCOPE`, `SET_MODE`, `GET_MODE` |
 | deadlines | `SET_DEADLINE_MAX`, `GET_DEADLINE_MAX`, `SET_DEADLINE_MIN`, `GET_DEADLINE_MIN`, `SET_DEADLINE_MISS_MODE`, `GET_DEADLINE_MISS_MODE` |
 | muting | `MUTE_PROCESS`, `UNMUTE_PROCESS`, `MUTE_PATH`, `UNMUTE_PATH`, `MUTE_UID`, `UNMUTE_UID`, `MUTE_GID`, `UNMUTE_GID`, `MUTE_PROCESS_EVENTS`, `UNMUTE_PROCESS_EVENTS`, `MUTE_PATH_EVENTS`, `UNMUTE_PATH_EVENTS`, `SET_MUTE_INVERT`, `GET_MUTE_INVERT`, `GET_MUTED_PROCESSES`, `GET_MUTED_PATHS`, `UNMUTE_ALL_PROCESSES`, `UNMUTE_ALL_PATHS`, `UNMUTE_ALL_TARGET_PATHS`, `UNMUTE_ALL_UIDS`, `UNMUTE_ALL_GIDS` |
 | decision cache | `CACHE_ADD`, `CACHE_REMOVE`, `CACHE_CLEAR` |
@@ -151,8 +161,8 @@ every field is populated. The message format is version 1 of a pre-1.0 ABI
 
 | Group | Functions |
 |---|---|
-| lifecycle | `oes_client_create`, `oes_client_create_descendants`, `oes_client_create_from_fd`, `oes_client_destroy`, `oes_client_fd` |
-| configuration | `oes_set_mode`, `oes_get_mode`, `oes_set_descendants_scope`, `oes_get_scope`, `oes_set_deadline_max/min`, `oes_get_deadline_max/min`, `oes_set_deadline_miss_mode`, `oes_get_deadline_miss_mode` |
+| lifecycle | `oes_client_create`, `oes_client_create_descendants`, `oes_client_create_jail`, `oes_client_create_jail_name`, `oes_client_create_from_fd`, `oes_client_destroy`, `oes_client_fd` |
+| configuration | `oes_set_mode`, `oes_get_mode`, `oes_set_descendants_scope`, `oes_get_scope`, `oes_set_jail_scope`, `oes_set_jail_scope_name`, `oes_get_jail_scope`, `oes_set_deadline_max/min`, `oes_get_deadline_max/min`, `oes_set_deadline_miss_mode`, `oes_get_deadline_miss_mode` |
 | subscription | `oes_subscribe`, `oes_unsubscribe`, `oes_unsubscribe_all`, `oes_subscribe_all`, `oes_subscribe_bitmap`, `oes_get_subscriptions` |
 | muting | `oes_mute_self`, `oes_mute_process`, `oes_mute_path`, `oes_mute_target_path` and their unmute and unmute-all forms, `oes_set_mute_invert`, `oes_get_mute_invert` |
 | events | `oes_read_event`, `oes_message_copy`, `oes_message_free`, `oes_respond`, `oes_respond_flags`, `oes_respond_allow`, `oes_respond_deny`, `oes_dispatch` |
@@ -243,6 +253,7 @@ output or a file:
 oeslogger exec open create unlink          # selected events, NDJSON
 oeslogger -o /var/log/oes.ndjson           # everything, appended to a file
 oeslogger -d -n exec open                  # own subtree only, no noise mutes
+oeslogger -j web exec open                 # one container, nested jails included
 oeslogger -m /var/log -m /tmp exec         # mute two path prefixes
 oeslogger -l                               # list accepted event names
 ```
