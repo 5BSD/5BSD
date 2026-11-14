@@ -1183,6 +1183,7 @@ ATF_TC_BODY(open_fork_storm, tc)
 enum end_how {
 	END_EXEC,		/* execve, table not shared */
 	END_EXEC_SHARED,	/* execve while a sharer holds the table */
+	END_EXEC_HELD,		/* the same, and the new image keeps running */
 	END_EXIT_SHARED,	/* exit while a sharer holds the table */
 	END_RFCFDG_SHARED,	/* rfork(RFCFDG): leaves the shared table */
 	END_RFFDG_SHARED,	/* rfork(RFFDG): leaves the shared table */
@@ -1192,6 +1193,7 @@ enum end_how {
 static const char *const end_names[END_N] = {
 	[END_EXEC] = "execve",
 	[END_EXEC_SHARED] = "execve, shared table",
+	[END_EXEC_HELD] = "execve, shared table, image still running",
 	[END_EXIT_SHARED] = "exit, shared table",
 	[END_RFCFDG_SHARED] = "rfork(RFCFDG), shared table",
 	[END_RFFDG_SHARED] = "rfork(RFFDG), shared table",
@@ -1271,6 +1273,11 @@ end_subject(enum end_how how, const struct dq_ident_file *ident)
 			_exit(24);
 		execv(helper_path, argv);
 		_exit(25);
+	case END_EXEC_HELD:
+		if (write(END_REP, &rep, sizeof(rep)) != sizeof(rep))
+			_exit(24);
+		execl(helper_path, helper_path, "hold", (char *)NULL);
+		_exit(25);
 	case END_EXIT_SHARED:
 		if (write(END_REP, &rep, sizeof(rep)) != sizeof(rep))
 			_exit(24);
@@ -1333,7 +1340,7 @@ end_check(enum end_how how, const struct dq_ident_file *ident)
 	struct end_rep rep;
 	struct dqt_rr r;
 	pid_t pid;
-	int go[2], hrep[2], i, pd, prep[2], status;
+	int go[2], held, hrep[2], i, pd, prep[2], status;
 	bool got;
 
 	ATF_REQUIRE_EQ(0, pipe(go));
@@ -1371,14 +1378,30 @@ end_check(enum end_how how, const struct dq_ident_file *ident)
 	memset(&rep, 0, sizeof(rep));
 	ATF_REQUIRE_MSG(read_within(prep[0], &rep, sizeof(rep), 30000),
 	    "%s: no report from the subject", name);
-	ATF_REQUIRE_EQ_MSG(0, pdwait(pd, &status, WEXITED, NULL, NULL),
-	    "%s: pdwait", name);
-	/*
-	 * The subject's status is its last image's or its own probe: no
-	 * queue descriptor after the exec, none in the emptied table.
-	 */
-	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "%s: subject status %#x", name, status);
+	if (how == END_EXEC_HELD) {
+		/*
+		 * The new image says what it holds and stays.  The process
+		 * that opened the queue is alive, as another program, and a
+		 * sharer of its old table holds the queue's file: only the
+		 * exec itself can have ended the queue.  (An image that
+		 * exits at once ends it at that exit, whatever exec did.)
+		 */
+		held = -1;
+		ATF_REQUIRE_MSG(read_within(prep[0], &held, sizeof(held),
+		    30000), "%s: no report from the new image", name);
+		ATF_CHECK_EQ_MSG(0, held, "%s: the new image holds %d queue "
+		    "descriptors", name, held);
+	} else {
+		ATF_REQUIRE_EQ_MSG(0, pdwait(pd, &status, WEXITED, NULL,
+		    NULL), "%s: pdwait", name);
+		/*
+		 * The subject's status is its last image's or its own probe:
+		 * no queue descriptor after the exec, none in the emptied
+		 * table.
+		 */
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "%s: subject status %#x", name, status);
+	}
 	if (how == END_RFFDG_SHARED || how == END_DAEMON)
 		ATF_CHECK_EQ_MSG(0, rep.after, "%s: the later process holds "
 		    "a queue (%d)", name, rep.after);
@@ -1395,6 +1418,10 @@ end_check(enum end_how how, const struct dq_ident_file *ident)
 	(void)kill(rep.holder, SIGKILL);
 	if (rep.sharer != 0)
 		(void)kill(rep.sharer, SIGKILL);
+	if (how == END_EXEC_HELD) {
+		(void)pdkill(pd, SIGKILL);
+		(void)pdwait(pd, &status, WEXITED, NULL, NULL);
+	}
 	(void)close(pd);
 	(void)close(go[1]);
 	(void)close(hrep[0]);
@@ -1408,7 +1435,8 @@ ATF_TC_HEAD(exec_ends_queue, tc)
 	atf_tc_set_md_var(tc, "descr", "the owner execs with the queue's "
 	    "close-on-exec flag cleared, alone and while a process sharing "
 	    "its table still holds the queue: the new image has no queue "
-	    "descriptor and a descriptor the queue served fails EIO");
+	    "descriptor and a descriptor the queue served fails EIO, also "
+	    "while the new image is still running");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(exec_ends_queue, tc)
@@ -1424,6 +1452,7 @@ ATF_TC_BODY(exec_ends_queue, tc)
 	make_ident(ident);
 	end_check(END_EXEC, ident);
 	end_check(END_EXEC_SHARED, ident);
+	end_check(END_EXEC_HELD, ident);
 	ATF_CHECK_MSG(queues_settle(before), "kern.dq.queues is %u, was %u",
 	    queues_now(), before);
 	free(ident);
