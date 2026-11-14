@@ -97,3 +97,24 @@ wrong filenames and conflicting policies. Candidate policies must match their
 reference/source contract; detecting a candidate's symbol table is not authority
 to relax its expected policy. This helper change adds no build-bsd option or
 production backend change.
+
+## Native kernel input preservation
+
+Configuration overrides are declarative and idempotent. The native config
+parser supplies actual baseline headers; only effective explicit changes produce
+an override file. Source defaults are still validated rather than overwritten.
+The final output is generated independently at its declared path. Tests cover
+unchanged embedded configuration, enable/disable changes, source-default drift,
+empty declared tree roots and stale-content rejection on AMD64, ARM64 and RISC-V
+source configurations. This is host metadata testing, not cross-platform boot
+qualification. Host tools use the standard tools attribute in the test execution
+group; target artifact data keeps its own configuration and runfile collisions
+remain errors. RISC-V's public configuration input group includes its existing
+SoC metadata closure, so callers do not duplicate nested file inventories.
+
+AMD64 built-ins map relative sys source identities to BSD's logical /usr/src/sys
+root using the compiler's file-prefix mapping, covering macros and DWARF.
+Generated-source overrides retain their own identities. This corrects the
+observed relative assertion paths; it does not normalize compiled payloads or
+waive kernel/module differences. Complete rebuilt-kernel allocated sections,
+loader symbols, CTF, debug pairing and runtime checks remain required.

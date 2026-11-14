@@ -1589,3 +1589,59 @@ from identical SDK bytes. Original Make archive R2 is running with epoch zero
 and PKG_OUTPUT_DIR=qualification-epoch-r2-20261114 under the standard repo; the
 prior reference is preserved. Both runs are concurrent with the live upgrade VM,
 so their timings cannot establish controlled performance acceptance.
+
+## Current matched-epoch results and kernel producer fixes (2026-11-14)
+
+Native R8 passes all 21 suites using fresh SDK R5. Bazel reports 89,830 cache
+hits and eight processwrapper actions; elapsed 210.538 seconds under concurrent
+work is not controlled comparative performance evidence. Original Make archive
+R2 completes all 450 packages in qualification-epoch-r2-20261114 under the
+standard repository, retaining version 16.0.qual.20261114 and unchanged pointers.
+archive-review-epoch-r2 reports no timestamp differences. It retains 3,874 direct
+payload hashes, 3,035 sizes, 4,168 manifest file records and 361 flatsizes;
+logical hardlink-expanded payload/size counts remain separately recorded.
+
+Module diagnosis R2 streams the existing large per-artifact records: 716 cases
+have only the allocated GNU build-ID digest difference; seven differ in rodata
+and relocations (if_lio, jedec_dimm, p2sb, sdio, superio, tcp_bbr, tcp_rack); one
+kernel fails the ordinary PIE classification. No contract is accepted by that
+classification. The largest decoded record is 103,768,833 characters; measured
+diagnostic max RSS is 979,808 KiB, not an aggregate system/build RAM measure.
+The failed initial diagnostic key-delimiter attempt is retained separately.
+
+The existing kernel-specific parity tool rejects real current kernel differences.
+Native rodata is 11,520 bytes smaller; observed paths use sys/... versus the
+Make logical /usr/src/sys/... spelling. kern_conf preserves the same length but
+moves the already-enabled TCP_HHOOK, NFS_ROOT and ZSTDIO options to its head.
+Merged CTF also differs. No allocated bytes, relocations or identifiers were
+rewritten to obtain a pass.
+
+The AMD64 builtin compiler policy now maps source macros and DWARF to BSD's
+logical source root. Kernel configuration now uses format-1 declarative requests,
+a native-parser baseline, and only effective changes. A second fresh parser
+invocation emits the actual output, preserving unchanged source order. Explicit
+auto-default checks remain strict. Active override files are declared outputs;
+the baseline directory is temporary and never copied/adopted. Bazel precreated
+empty output trees are supported; nonempty/symlink outputs remain rejected.
+
+Native kernel-input fixes R4 passes all five suites through current build-bsd:
+six actual parser cases each on AMD64, ARM64 and RISC-V source configurations,
+plus existing option/stack-protector regressions. R1/R2 retain analysis failures
+from wrongly configured test tools and unsupported argument location expansion.
+The corrected standard tools attribute uses the test execution group. R3 retains
+the empty-output guard failure and the test's missing RISC-V SoC metadata.
+The public RISC-V configuration input group now owns that existing transitive
+closure, avoiding duplicate caller inventories. Runfile collision checks remain.
+No C frontend option changes; its manual and BUILD-OPTIONS describe the contract.
+A new full kernel/selected-system build is required; the compiler fixes are not
+yet claimed to satisfy kernel parity, full CTF/debug or runtime qualification.
+
+Upgrade VM R1 retains a failed result: new-kernel boot, SSH/su positive/negative
+checks and installed-manifest services pass; rollback console/root/GUID/kernel/
+package identity pass, then the upgrade phase deadline expires before rollback
+checksums, final authentication/services and unused-BE removal. The 2,400-second
+phase budget was consumed by actual installation (910.2 seconds) and repeated
+checksums (393.9, 259.8, 236.8 seconds), boots and service work. No test is skipped
+or marked passed after timeout. A fresh complete run with an explicit calibrated
+budget must retain 2 GiB guest RAM and the existing RSS/overlay limits, using the
+corrected candidate kernel. The old VM runner has exited and its evidence stays.

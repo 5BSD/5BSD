@@ -10,7 +10,11 @@ def amd64_generic_kernel_objects(name, srcs, deps = [], copts = [], warning_flag
     warnings = AMD64_KERNEL_WARNING_FLAGS if warning_flags == None else warning_flags
     cc_library(name = name + "_objects", srcs = srcs,
         deps = early_deps + AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
-        copts = pre_copts + flags + ["-fno-common"] + warnings + AMD64_KERNEL_DEBUG_FLAGS + copts,
+        # Source paths in macros and debug data use BSD's reproducible logical
+        # source root, independently of the action's physical execution root.
+        copts = pre_copts + flags + ["-fno-common",
+            "-ffile-prefix-map=sys/=/usr/src/sys/",
+            "-ffile-prefix-map=./sys/=/usr/src/sys/"] + warnings + AMD64_KERNEL_DEBUG_FLAGS + copts,
         local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
         # Removing the explicit flag alone leaves the hosted toolchain default.
         # The source compile-with exception must also opt out of that feature.

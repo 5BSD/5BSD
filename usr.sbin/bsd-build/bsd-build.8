@@ -8414,3 +8414,20 @@ Source qualification rejects incompatible schema versions before Bazel actions.
 Regenerate source-bound SDKs after preparer changes; do not modify old receipts
 to bypass validation. Toolchain declarations do not establish architecture
 qualification or independent native bootstrap.
+
+.Pp
+Native kernel configuration requests use versioned declarative settings.
+The source-owned config parser first resolves the selected baseline; the runner
+applies only settings whose effective presence differs from that baseline.
+Unchanged options retain their source ordering and embedded configuration.
+Automatic defaults remain checked against generated headers and are never
+silently imposed over source drift.
+The final configuration is generated fresh; temporary baseline output is not
+adopted. Empty Bazel tree-artifact roots are accepted, but symlinks and stale
+contents are rejected.
+Host artifact tests declare tools in the test execution configuration, while
+target artifacts remain data; conflicting runfiles continue to fail analysis.
+AMD64 built-in kernel compilation uses BSD's reproducible logical source root
+for source macros and debug paths, independently of the physical execution root.
+These internal changes add no build-bsd flag and do not qualify the production
+Bazel backend or change the Make default.

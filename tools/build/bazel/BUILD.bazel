@@ -494,3 +494,17 @@ bsd_python_test(name = "sdk_source_test", src = "sdk-source-test.py",
         "--strip", "$(rlocationpath @bsd_sdk//toolchain:bin/llvm-strip)"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
  for interp in ["4th", "lua"]]
+
+# Configuration parsing runs on the host for every supported source platform.
+[bsd_host_artifact_test(name = "kernel_config_idempotence_" + arch + "_test",
+    src = "kernel-config-idempotence-test.py",
+    tools = ["//usr.sbin/config:config"],
+    data = ["kernel_config.py", "kernel_options.py", "//sys/conf:files",
+        "//sys/conf:configuration_inputs", "//sys/" + arch + "/conf:configuration_inputs"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/libc++:cxx_shared",
+        "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+    args = ["--tool", "$(rlocationpath //usr.sbin/config:config)",
+        "--anchor", "$(rlocationpath //sys/conf:files)", "--architecture", arch])
+ for arch in ["amd64", "arm64", "riscv"]]

@@ -7,7 +7,7 @@ def _impl(ctx):
     manifest = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     output = ctx.actions.declare_directory(ctx.label.name + ".generated")
     overrides = ctx.actions.declare_file(ctx.label.name + ".options")
-    lines = []
+    requests = []
     expected = {}
     seen = {}
     for setting, option in ctx.attr.option_settings.items():
@@ -32,14 +32,9 @@ def _impl(ctx):
         if device != None:
             if not device or any([c not in "abcdefghijklmnopqrstuvwxyz0123456789_" for c in device.elems()]):
                 fail("invalid native kernel device identifier")
-            lines.append("nodevice " + device)
-            if value:
-                lines.append("device " + device)
-        else:
-            lines.append("nooptions " + option)
-            if value:
-                lines.append("options " + option)
-    ctx.actions.write(overrides, ('include "' + ctx.file.config.basename + '"\n' + "\n".join(lines) + "\n") if lines else "")
+        requests.append(dict(option = option, enabled = value, device = device))
+    ctx.actions.write(overrides, json.encode(dict(format = 1, settings = requests)) + "\n")
+    active = ctx.actions.declare_file(ctx.label.name + ".active-options")
     expectation = ctx.actions.declare_file(ctx.label.name + ".expected-options.json")
     ctx.actions.write(expectation, json.encode(expected) + "\n")
     args = ctx.actions.args()
@@ -50,14 +45,15 @@ def _impl(ctx):
     args.add(overrides.path)
     args.add(manifest.path)
     args.add(expectation.path)
+    args.add(active.path)
     args.add_all(ctx.files.libraries)
     ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run,
         arguments = [args],
         inputs = [ctx.file.runner, ctx.file.config, ctx.file.source_anchor, ctx.file.python_home, ctx.file._option_validator, overrides, expectation] + ctx.files.inputs + ctx.files.runtime + ctx.files.libraries,
-        tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [output, identity, manifest],
+        tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [output, identity, manifest, active],
         env = {"LC_ALL": "C", "PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1"},
         use_default_shell_env = False, mnemonic = "BSDKernelConfig")
-    return [DefaultInfo(files = depset([output])), OutputGroupInfo(identity = depset([identity]), manifest = depset([manifest]), metadata = depset([overrides, expectation]))]
+    return [DefaultInfo(files = depset([output])), OutputGroupInfo(identity = depset([identity]), manifest = depset([manifest]), metadata = depset([overrides, expectation, active]))]
 
 bsd_kernel_config = rule(implementation = _impl, attrs = {
     "config": attr.label(allow_single_file = True, mandatory = True),

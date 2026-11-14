@@ -32,6 +32,34 @@ order; it is retained unapplied beside the reference until the AMD64 capture
 finishes and actual native comparison can run. No maintained
 frontend behavior or production backend selection changes for this audit.
 
+AMD64 R8 passes all 21 expanded tests with SDK R5; Bazel reports 89,830
+cached actions and eight processwrapper actions. This is observed warm reuse,
+not independent bootstrap or a controlled performance comparison. Matched-epoch
+original Make archive R2 passes all 450 packages; its comparison removes every
+mtime/nanosecond difference while retaining payload/size/manifest differences.
+Bounded per-artifact diagnosis classifies 716 allocated-build-ID-digest-only
+module differences, seven other module differences and one kernel classification
+failure, without accepting any. The kernel-specific contract separately rejects
+real allocated-section differences and CTF is not equal.
+
+Two producer defects are now corrected: AMD64 built-in source paths lacked the
+logical source-root prefix, and unconditional option re-addition reordered three
+unchanged options in kern_conf. Native input-fix R4 passes all five suites,
+including eighteen actual parser cases across the three source platforms.
+Earlier failures remain recorded: execution/target runfile configuration,
+standard location expansion, precreated empty Bazel tree outputs and omitted
+RISC-V SoC metadata in the test closure. Collision and stale-content guards stay
+strict. Rebuild the full selected graph before claiming the kernel fixes pass
+allocated/symbol/CTF/debug or runtime parity.
+
+The R7 upgrade VM passes new-kernel boot/authentication/manifest service checks
+and boots back into the old BE, then exhausts its 2,400-second upgrade phase
+before rollback checksums and unused-BE removal. Its result remains failed.
+Observed installation took 910 seconds, candidate checksums 394, active checksums
+260 and new-boot checksums 237; a fresh bounded budget must cover all remaining
+checks under TCG. Keep the 2 GiB guest and memory/disk budgets, and qualify the
+corrected kernel before launching the next complete upgrade run.
+
 Current indexed ELF review completes with 1,325 passing contracts and 724
 review-required results, confined to the kernel and module packages. Raw notes,
 allocated sections and relocations remain strict; no differences are waived.
