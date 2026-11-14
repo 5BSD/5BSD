@@ -1078,21 +1078,26 @@ ATF_TC_BODY(swap_survives_supervisor, tc)
  * in the lock with the swapped file in hand and not yet in its table.
  * The queue is closed there; then the lock is let go.
  *
- * Today the completion never looks at the queue again: the descriptor is
- * installed after the supervisor has gone.
+ * A program whose supervisor is gone is given nothing new: the open fails
+ * EIO, as its lookups do from then on, nothing is installed, and the lock
+ * taken for it goes with the file.
  */
 static void
 p_exlock_late(void *arg __unused, void *result)
 {
 	struct sw_res *res = result;
 	struct stat st;
-	int fd;
+	int fd, next;
 
+	/* The number the open will be given. */
+	next = dup(0);
+	(void)close(next);
 	RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
 	if (fd != -1) {
 		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
 		RR(res->r[8], close(fd));
-	}
+	} else
+		RR(res->r[4], fcntl(next, F_GETFD));
 	RR(res->r[3], stat("orig", &st));
 }
 
@@ -1125,18 +1130,100 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "the program failed, status %#x", status);
 	ATF_CHECK_EQ(1, x.answered);
-	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
-	ATF_CHECK_EQ(10, res.r[2].rv);
-	ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
-	ATF_CHECK_EQ(0, res.r[8].rv);
-	/* The next call by name finds the supervisor gone. */
+	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
+	ATF_CHECK_EQ(EIO, res.r[0].err);
+	/* The number the descriptor would have had is still free. */
+	ATF_CHECK_EQ(-1, res.r[4].rv);
+	ATF_CHECK_EQ(EBADF, res.r[4].err);
+	/* The next call by name fails the same way. */
 	ATF_CHECK_EQ(-1, res.r[3].rv);
 	ATF_CHECK_EQ(EIO, res.r[3].err);
-	/* The program's lock went with its descriptor. */
+	/* The file was dropped: the lock taken for the program is gone. */
 	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
 	(void)close(lockfd);
 	free(buf);
 	dqt_fini(&x.c);
+}
+
+/*
+ * Case: the same, raced.  The supervisor replies and closes the queue at
+ * once, many times.  Each open either returns the working descriptor (it
+ * was installed before the queue died) or fails EIO with nothing
+ * installed; never anything else.
+ */
+#define	SW_RACE_ROUNDS	200
+
+static void
+a_quick(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb __unused)
+{
+	int fd;
+
+	fd = sw_open("subst", O_RDONLY);
+	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	(void)close(fd);
+}
+
+static void
+p_race_open(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	int fd, next;
+
+	next = dup(0);
+	(void)close(next);
+	RR(res->r[0], fd = open("orig", O_RDONLY));
+	if (fd != -1)
+		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+	else
+		RR(res->r[4], fcntl(next, F_GETFD));
+}
+
+ATF_TC(swap_supervisor_gone_race);
+ATF_TC_HEAD(swap_supervisor_gone_race, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
+ATF_TC_BODY(swap_supervisor_gone_race, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct dqt_achild ch;
+	char *buf;
+	int i, installed, refused, status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	installed = refused = 0;
+	for (i = 0; i < SW_RACE_ROUNDS; i++) {
+		sw_init(&x, "orig", a_quick);
+		ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+		dqt_attach_spawn(&x.c, &ch, p_race_open, NULL);
+		sw_serve_answered(&x, buf, 1);
+		dqt_close_queue(&x.c);
+		status = dqt_attach_wait(&ch, &res, sizeof(res));
+		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "round %d: the program failed, status %#x", i, status);
+		if (res.r[0].rv >= 0) {
+			installed++;
+			ATF_REQUIRE_EQ_MSG(10, res.r[2].rv,
+			    "round %d: read %ld errno %d", i, res.r[2].rv,
+			    res.r[2].err);
+			ATF_REQUIRE_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
+		} else {
+			refused++;
+			ATF_REQUIRE_EQ_MSG(EIO, res.r[0].err,
+			    "round %d: open errno %d", i, res.r[0].err);
+			ATF_REQUIRE_EQ(-1, res.r[4].rv);
+			ATF_REQUIRE_EQ(EBADF, res.r[4].err);
+		}
+		dqt_fini(&x.c);
+	}
+	printf("installed before the death %d, refused %d\n", installed,
+	    refused);
+	free(buf);
 }
 
 /*
@@ -1232,6 +1319,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swap_program_denied);
 	ATF_TP_ADD_TC(tp, swap_survives_supervisor);
 	ATF_TP_ADD_TC(tp, swap_supervisor_gone_before_install);
+	ATF_TP_ADD_TC(tp, swap_supervisor_gone_race);
 	ATF_TP_ADD_TC(tp, swap_created);
 	ATF_TP_ADD_TC(tp, swap_opath_device);
 	ATF_TP_ADD_TC(tp, swap_directory);

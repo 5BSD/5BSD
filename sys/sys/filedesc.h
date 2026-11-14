@@ -76,6 +76,17 @@ struct fdinstall_prop {
 	uint8_t	fip_fde_flags;	/* only UF_MMAP_CAPMODE, UF_LOOKUP_CAPMODE */
 };
 
+/*
+ * A gate on an install (finstall_refed_gate): the caller's last word,
+ * given with the table locked and the number allocated, and held until the
+ * entry is written.
+ */
+struct fdinstall_gate {
+	int	(*fg_enter)(void *arg);
+	void	(*fg_exit)(void *arg);
+	void	*fg_arg;
+};
+
 static inline void
 fde_copy(struct filedescent *from, struct filedescent *to)
 {
@@ -301,10 +312,10 @@ int	finstall_refed(struct thread *td, struct file *fp, int *resultfd, int flags,
 int	finstall_refed_prop(struct thread *td, struct file *fp, int *resultfd,
 	    int flags, struct filecaps *fcaps,
 	    const struct fdinstall_prop *prop);
-int	finstall_refed_check(struct thread *td, struct file *fp, int *resultfd,
+int	finstall_refed_gate(struct thread *td, struct file *fp, int *resultfd,
 	    int flags, struct filecaps *fcaps,
-	    const struct fdinstall_prop *prop, int (*check)(void *),
-	    void *arg);
+	    const struct fdinstall_prop *prop,
+	    const struct fdinstall_gate *gate);
 int	fdxfer_source_locked(struct thread *td, struct filedesc *fdp, int fd,
 	    pid_t srcpid, struct file **fpp, struct filecaps *fcaps,
 	    struct fdinstall_prop *prop, int *flagsp,

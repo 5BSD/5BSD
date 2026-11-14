@@ -2668,22 +2668,28 @@ finstall_refed_prop(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps, const struct fdinstall_prop *prop)
 {
 
-	return (finstall_refed_check(td, fp, fd, flags, fcaps, prop, NULL,
-	    NULL));
+	return (finstall_refed_gate(td, fp, fd, flags, fcaps, prop, NULL));
 }
 
 /*
- * As finstall_refed_prop(), with a last check made once a descriptor
- * number is allocated and before the file becomes visible in the table.
- * 'check' is called with the table exclusively locked: it must not sleep
- * and must take no lock.  A non-zero return releases the number and is
- * returned; nothing is installed and, as for an allocation failure, the
- * caller keeps the file reference and 'fcaps'.
+ * As finstall_refed_prop(), through a gate: a last test that stays true
+ * until the file is visible in the table.
+ *
+ * 'fg_enter' is called once, on the installing thread, with its process's
+ * descriptor table exclusively locked and a number allocated.  It may
+ * acquire one non-sleepable mutex and, when it returns 0, leaves it held;
+ * 'fg_exit' is then called exactly once, after the entry is written, and
+ * releases it.  So what 'fg_enter' tested under that mutex cannot change
+ * before the entry exists.  If 'fg_enter' returns non-zero it holds
+ * nothing: the number is released, the value is returned, nothing is
+ * installed and, as for an allocation failure, the caller keeps the file
+ * reference and 'fcaps'.  Neither callback sleeps.  An allocation failure
+ * (EMFILE) comes before the gate.  'gate' NULL is finstall_refed_prop().
  */
 int
-finstall_refed_check(struct thread *td, struct file *fp, int *fd, int flags,
+finstall_refed_gate(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps, const struct fdinstall_prop *prop,
-    int (*check)(void *), void *arg)
+    const struct fdinstall_gate *gate)
 {
 	struct filedesc *fdp = td->td_proc->p_fd;
 	int error;
@@ -2692,16 +2698,17 @@ finstall_refed_check(struct thread *td, struct file *fp, int *fd, int flags,
 
 	FILEDESC_XLOCK(fdp);
 	error = fdalloc(td, 0, fd);
-	if (__predict_true(error == 0)) {
-		if (check != NULL)
-			error = check(arg);
-		if (__predict_true(error == 0)) {
-			_finstall_prop(fdp, fp, *fd, flags, fcaps, prop);
-			SDT_PROBE6(fd, , , install, fp, *fd,
-			    td->td_proc->p_pid, td->td_ucred, fp->f_type,
-			    flags);
-		} else
+	if (error == 0 && gate != NULL) {
+		error = gate->fg_enter(gate->fg_arg);
+		if (error != 0)
 			fdunused(fdp, *fd);
+	}
+	if (__predict_true(error == 0)) {
+		_finstall_prop(fdp, fp, *fd, flags, fcaps, prop);
+		if (gate != NULL)
+			gate->fg_exit(gate->fg_arg);
+		SDT_PROBE6(fd, , , install, fp, *fd, td->td_proc->p_pid,
+		    td->td_ucred, fp->f_type, flags);
 	}
 	FILEDESC_XUNLOCK(fdp);
 	return (error);

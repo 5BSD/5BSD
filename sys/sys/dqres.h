@@ -19,6 +19,7 @@
 #include <sys/caprights.h>
 
 struct dqres_binding;
+struct fdinstall_gate;
 struct filedesc;
 struct dq_ident_file;
 struct dq_object;
@@ -302,6 +303,14 @@ struct dqres_ops {
 	 */
 	uint32_t (*dro_file_kind)(struct file *);
 	uint64_t (*dro_file_objid)(struct file *);
+	/*
+	 * The install gate of the binding's queue (finstall_refed_gate) for
+	 * a SWAP answer: enter refuses with EIO once the queue has died and
+	 * otherwise holds the queue's mutex, which the death takes first,
+	 * until exit.  Entered and left at once it is the advisory test.
+	 */
+	void	(*dro_swap_gate)(struct dqres_binding *,
+		    struct fdinstall_gate *);
 };
 
 void	dqres_register(const struct dqres_ops *ops);

@@ -2784,9 +2784,32 @@ when the requester may not read the node the open fails with
 where its own
 .Dv O_PATH
 open would have returned a descriptor without that use.
-A failure in the completion is the requester's errno
-.Pq Er EMFILE No is the last ;
+A failure in the completion is the requester's errno;
 the file is dropped and the controller is not told.
+.Pp
+The last two steps are the queue's.
+A descriptor is installed only while the queue lives: when the queue has
+died between the reply and the installation
+.Pq the controller exited, or closed its last descriptor of the queue ,
+the open fails with
+.Er EIO ,
+the errno of every lookup of an attached process from then on, and nothing
+is installed.
+The test is made as the completion starts, before the lock and the
+truncation, and again as the descriptor is entered in the table, where it
+is atomic with the queue's death; a queue that dies between the two leaves
+an open that failed with
+.Er EIO
+after its
+.Dv O_TRUNC
+truncated the file, as an
+.Xr open 2
+that fails with
+.Er EMFILE
+has truncated.
+An open that completed before the queue died keeps its descriptor.
+.Er EMFILE
+comes before this last test.
 The file keeps the credential of the controller's open
 .Pq Va f_cred .
 .Pp
