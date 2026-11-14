@@ -192,3 +192,6 @@ bsd_component_selected_objects(name = "rtld_pic_objects", group = ":sys_objects"
         "lseek", "_exit", "getdirentries", "_close", "_fcntl", "_open", "_openat",
         "_read", "_sigprocmask", "_write", "readlink", "___realpathat",
     ]], visibility = ["//libexec/rtld-elf:__pkg__"])
+
+exports_files(["pdrfork_thread_gen.c", "rfork_thread_gen.c", "sched_getcpu_gen.c"],
+    visibility = ["//lib/libc/sys:__pkg__"])

@@ -185,3 +185,15 @@ payload digests and string archive bytes remain preserved against full R13;
 archive-identity and static/shared runtime smoke checks pass. These are component
 results under the recorded older ARM64 SDK/profile. Full libc composition/linking,
 DWARF, world/kernel/packages, hardening, runtime and performance remain open.
+
+## ARM64 libc startup and syscall components (2026-11-14)
+
+Libc's relocation input, architecture helpers, vDSO and generated syscall sources
+now select the real ARM64 implementations. Static/shared syscall-body variants
+remain distinct, and AMD64's source/group ordering is preserved. All 1,057 object
+contracts in these component selections match original Make. Cumulative default
+component coverage is 841 regular / 840 PIC members against the recorded older
+profile's 1,450 / 1,438-member libc reference. This is not complete libc linking,
+DWARF, current ARM64 world/hardening, full package or runtime qualification.
+AMD64 archive identities and static/shared smoke probes pass, with unchanged
+full static/PIC libc source-payload digests against R13.

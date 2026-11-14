@@ -3,6 +3,11 @@ load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//lib/libsys:syscall_policy.bzl", "INTERPOSED_SYSCALLS")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
 # C wrappers and generated syscall/libsys variants remain separate.
 cc_library(
     features = LIBC_VARIANT_FEATURES,
@@ -13,7 +18,7 @@ cc_library(
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
@@ -24,7 +29,7 @@ cc_library(
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "objects_archive", groups = [":interposed_objects", ":pseudo_objects"])
@@ -40,7 +45,7 @@ cc_library(
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
@@ -51,7 +56,7 @@ cc_library(
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "static_libsys_archive", groups = [":static_libsys_objects"])
@@ -63,7 +68,7 @@ cc_library(features = LIBC_VARIANT_FEATURES, name = "common_libsys_objects",
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"], linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "common_libsys_archive", groups = [":common_libsys_objects"])
@@ -121,17 +126,47 @@ cc_library(
 bsd_component_archive(name = "x86_archive", groups = [":x86_objects", ":vdso_gettc_objects"])
 bsd_component_archive(name = "x86_pic_archive", groups = [":x86_objects", ":vdso_gettc_objects"], pic = True)
 
+# ABI-specific libsys sources retain libc's static/shared syscall body variants.
+[cc_library(name = name, features = LIBC_VARIANT_FEATURES,
+    srcs = ["//lib/libsys:" + n for n in ["pdrfork_thread_gen.c", "rfork_thread_gen.c", "sched_getcpu_gen.c"]] +
+        ["//lib/libsys/aarch64:cerror.S", "//lib/libsys/aarch64:vfork.S"],
+    implementation_deps = ["//lib/libsys/aarch64:sys_headers", "//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + defines + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:aarch64"],
+    visibility = ["//lib/libc:__pkg__"])
+ for name, defines in [("aarch64_objects", []), ("aarch64_shared_objects", ["_SYSCALL_BODY(name)="])]]
+cc_library(name = "aarch64_vdso_objects", features = LIBC_VARIANT_FEATURES,
+    srcs = ["//lib/libsys/aarch64:__vdso_gettc.c"],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec", "-fno-sanitize=address", "-fno-sanitize=undefined"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:aarch64"],
+    visibility = ["//lib/libc:__pkg__"])
+bsd_component_archive(name = "aarch64_archive", groups = [":aarch64_objects", ":aarch64_vdso_objects"])
+bsd_component_archive(name = "aarch64_shared_archive", groups = [":aarch64_shared_objects", ":aarch64_vdso_objects"], pic = True)
+
 # Full syscall implementations in static libc; shared libc exports empty bodies
 # filtered by libsys. Keep these as separate compilation groups.
 [cc_library(
     features = LIBC_VARIANT_FEATURES,
     name = name,
-    srcs = ["//lib/libsys:amd64_syscall_sources"],
-    implementation_deps = ["//lib/libsys/amd64:sys_headers",
-        "//lib/libc/include:syscall_compat_header", "//sys/sys:syscall_header"],
+    srcs = select({
+        "@platforms//cpu:aarch64": ["//lib/libsys:aarch64_syscall_sources"],
+        "//conditions:default": ["//lib/libsys:amd64_syscall_sources"],
+    }),
+    implementation_deps = ["//lib/libc/include:syscall_compat_header", "//sys/sys:syscall_header"] + select({
+        "@platforms//cpu:aarch64": ["//lib/libsys/aarch64:sys_headers"],
+        "//conditions:default": ["//lib/libsys/amd64:sys_headers"],
+    }),
     local_defines = ["NO__SCCSID", "NO__RCSID"] + defines,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 ) for name, defines in [
     ("syscall_objects", []),

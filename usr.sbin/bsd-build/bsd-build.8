@@ -8539,3 +8539,12 @@ setting selects the portable implementation when false; CPU-specific groups
 apply only to their owning architecture. These component declarations and
 comparisons do not establish complete ARM64 libc linking, DWARF equivalence,
 full-system boot or performance qualification.
+
+.Pp
+Native libc startup and syscall component declarations select target-owned
+relocation code, machine helpers and vDSO sources.
+Ordinary syscall implementations and shared-library empty-body stubs remain
+separate compilation variants, preserving the libsys auxiliary-filter interface.
+Existing format-5 architecture/SDK inputs select these rules; component object
+comparisons do not qualify complete ARM64 libc linking, full-system boot,
+DWARF equivalence or performance.

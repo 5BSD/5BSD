@@ -2,16 +2,25 @@
 load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+cc_library(features = LIBC_VARIANT_FEATURES, name = "aarch64_relocation_input", textual_hdrs = ["aarch64/reloc.c"], strip_include_prefix = "aarch64")
 cc_library(features = LIBC_VARIANT_FEATURES, name = "relocation_input", textual_hdrs = ["amd64/reloc.c"], strip_include_prefix = "amd64")
 cc_library(
     features = LIBC_VARIANT_FEATURES,
     name = "objects",
     srcs = ['libc_start1.c'],
-    implementation_deps = ['//lib/libc/include:rt_private_headers', ':relocation_input'],
+    implementation_deps = ['//lib/libc/include:rt_private_headers'] + select({
+        "@platforms//cpu:aarch64": [":aarch64_relocation_input"],
+        "//conditions:default": [":relocation_input"],
+    }),
     local_defines = ['_FORTIFY_SOURCE_read=_read', 'NO__SCCSID', 'NO__RCSID', 'CRT_IRELOC_RELA'] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "objects_archive", groups = [":objects"])

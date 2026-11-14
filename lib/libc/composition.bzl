@@ -45,13 +45,13 @@ COMMON_GROUPS = select({
     "//lib/libc/sys:interposed_objects",
     "//lib/libc/sys:pseudo_objects",
     "//lib/libc/sys:common_libsys_objects",
-    "//lib/libc/sys:x86_objects",
-    "//lib/libc/sys:vdso_gettc_objects",
-    "//lib/libc/uuid:uuid_objects",
-    "//lib/libc/x86/gen:objects",
-    "//lib/libc/xdr:xdr_objects",
-    "//lib/libc/net:lexer_objects",
 ] + select({
+    "@platforms//cpu:aarch64": ["//lib/libc/sys:aarch64_vdso_objects"],
+    "//conditions:default": ["//lib/libc/sys:x86_objects", "//lib/libc/sys:vdso_gettc_objects"],
+}) + ["//lib/libc/uuid:uuid_objects"] + select({
+    "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["//lib/libc/x86/gen:objects"],
+}) + ["//lib/libc/xdr:xdr_objects", "//lib/libc/net:lexer_objects"] + select({
     "//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:iconv_objects"], "//conditions:default": [],
 }) + select({
     "//tools/build/bazel/config:nis_enabled": ["//lib/libc/yp:yp_objects"], "//conditions:default": [],
@@ -59,11 +59,20 @@ COMMON_GROUPS = select({
     "//lib/libc/string:amd64_machdep": ["//lib/libc/string:archlevel_objects"], "//conditions:default": [],
 })
 TRACE_GROUPS = ["//lib/libc/net:net_objects", "//lib/libc/resolv:resolv_objects", "//lib/libc/gen:semaphore_objects"]
-STATIC_GROUPS = ["//lib/libc/sys:static_libsys_objects", "//lib/libc/sys:amd64_objects", "//lib/libc/sys:syscall_objects"] + select({
+STATIC_GROUPS = ["//lib/libc/sys:static_libsys_objects"] + select({
+    "@platforms//cpu:aarch64": ["//lib/libc/sys:aarch64_objects"],
+    "//conditions:default": ["//lib/libc/sys:amd64_objects"],
+}) + ["//lib/libc/sys:syscall_objects"] + select({
     "//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:static_wrapper_objects"], "//conditions:default": [],
 })
-SHARED_GROUPS = ["//lib/libc/sys:shared_libsys_objects", "//lib/libc/sys:amd64_shared_objects", "//lib/libc/sys:shared_syscall_objects"]
+SHARED_GROUPS = ["//lib/libc/sys:shared_libsys_objects"] + select({
+    "@platforms//cpu:aarch64": ["//lib/libc/sys:aarch64_shared_objects"],
+    "//conditions:default": ["//lib/libc/sys:amd64_shared_objects"],
+}) + ["//lib/libc/sys:shared_syscall_objects"]
 
 # NOSSP derives from Make OBJS with shared compilation flags, without the
 # SOBJS-only libc_stubs or STATICOBJS-only implementations/wrappers.
-NOSSP_GROUPS = ["//lib/libc/sys:amd64_shared_objects", "//lib/libc/sys:shared_syscall_objects"]
+NOSSP_GROUPS = select({
+    "@platforms//cpu:aarch64": ["//lib/libc/sys:aarch64_shared_objects"],
+    "//conditions:default": ["//lib/libc/sys:amd64_shared_objects"],
+}) + ["//lib/libc/sys:shared_syscall_objects"]
