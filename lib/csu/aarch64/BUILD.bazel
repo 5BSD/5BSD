@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/csu:startup.bzl", "csu_installation")
+
+csu_installation(cpu="aarch64")

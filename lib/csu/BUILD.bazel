@@ -1,11 +1,18 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 
-# The Make wrapper selects the target architecture plus tests when enabled.
-# Only AMD64 has a qualified native producer here; other ABIs stay incompatible
-# until their actual startup implementations and test policies are migrated.
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-_PRODUCTION = ["//lib/csu/amd64:install_archive"]
+# Source-owned production startup recipes select the actual target ABI.
+# Other CPUs remain incompatible; installed tests still have their own ABI gates.
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [],
+    "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+_PRODUCTION = select({
+    "@platforms//cpu:x86_64": ["//lib/csu/amd64:install_archive"],
+    "@platforms//cpu:aarch64": ["//lib/csu/aarch64:install_archive"],
+    "//conditions:default": [],
+})
 bsd_install_archive_set(name = "production_installation_archives", archives = _PRODUCTION,
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_install_archive_set(name = "installation_archives", archives = _PRODUCTION + select({

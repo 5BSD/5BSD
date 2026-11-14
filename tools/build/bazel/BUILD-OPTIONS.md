@@ -118,3 +118,13 @@ Generated-source overrides retain their own identities. This corrects the
 observed relative assertion paths; it does not normalize compiled payloads or
 waive kernel/module differences. Complete rebuilt-kernel allocated sections,
 loader symbols, CTF, debug pairing and runtime checks remain required.
+
+## ARM64 startup closeout (2026-11-14)
+
+The shared CSU declaration now selects real AMD64 or ARM64 production sources.
+The AMD64 preservation audit passes all ten objects and installation records.
+ARM64 analysis currently rejects the host ncurses preprocessor's compiler-input
+bundle mismatch; declarations do not establish a native ARM64 build or parity.
+The component SDK uses an explicitly recorded older Make ARM64 seed plus current
+AMD64 execution SDK R5. A current full ARM64 world, ABI closure and runtime remain
+required. Keep the compiler-input guard strict while fixing dependency selection.

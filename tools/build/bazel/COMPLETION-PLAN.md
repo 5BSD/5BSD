@@ -11,6 +11,26 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+ARM64 startup declarations now share the source-owned CSU recipe with AMD64,
+including distinct startup variants, ordered partial links and installed metadata.
+AMD64 native component R1 builds; preservation audit R2 proves all ten object
+bytes and exact installation rows unchanged against completed full R10, and the
+parent production archive selects the child bytes. Audit R1 failed in its own
+inventory parser on directory/link records without source fields; driver/result
+remain retained, and R2 selects source-bearing records explicitly.
+Fresh component cross SDK R2 verifies 16,193 files with current AMD64 execution
+SDK R5 and the explicitly recorded older Make ARM64 seed. Native ARM64 CSU R1
+is rejected during analysis: ncurses nomacros_header selects the host compiler
+but its hardwired compile_inputs names the target bundle. Preserve this declared-
+input rejection; correct the generator's selected C toolchain dependency before
+retrying. No ARM64 startup parity or full current world/runtime acceptance is
+claimed. Existing build-bsd format-5 architecture/SDK inputs are used; no C option
+or production backend default changes. Evidence roots are
+/usr/obj/usr/src/bazel-csu-amd64-preservation-r2-20261114,
+/usr/obj/usr/src/bazel-arm64-csu-sdk-r2-20261114 and
+/usr/obj/usr/src/bazel-csu-arm64-native-r1-20261114.
+
+
 Full selected AMD64 R10 now passes all 25 expanded tests with the equivalent
 explicit CTF version label. Its immutable capture contains 1,554 files totaling
 647,801,494 bytes. The actual packaged kernel is independently extracted from

@@ -8448,3 +8448,11 @@ existing explicit kernel_ctf_label setting. The unchanged checker then passes
 allocated-section, loader-symbol and exact merged-CTF comparison, and the
 split-debug check passes. Automatic source-derived label selection and complete
 package, configuration and runtime qualification remain open.
+
+.Pp
+Native CSU production declarations now select AMD64 or ARM64 startup sources
+through the existing target architecture and explicit SDK inputs.
+All ten AMD64 object bytes and installation records pass preservation checks.
+ARM64 component analysis currently rejects a host-generator compiler-input bundle
+mismatch; this is not ARM64 build or runtime qualification.
+Make remains the production/default backend.
