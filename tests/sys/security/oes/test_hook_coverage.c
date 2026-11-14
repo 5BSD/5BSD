@@ -641,7 +641,8 @@ static void action_kldload(void) {
 	int fd;
 
 	memset(junk, 'k', sizeof(junk));
-	fd = open(TEST_KLD, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+	(void)unlink(TEST_KLD);
+	fd = open(TEST_KLD, O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY, 0644);
 	if (fd >= 0) {
 		(void)write(fd, junk, sizeof(junk));
 		close(fd);

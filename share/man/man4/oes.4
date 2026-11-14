@@ -248,10 +248,9 @@ File objects include vnode identity, ownership, mode and flags, size, exact
 allocated bytes, preferred block size, generation, special-device ID,
 filesystem revision and type, link count, and second-plus-nanosecond access,
 modification, change, and birth timestamps.
-The attributes are read from the object when the event is generated, after
-the other MAC policies have examined it.
-The access timestamp of the executable in an exec event therefore already
-includes the kernel's own reads of the image during that exec, such as those
+The attributes are read from the object when the event is generated.
+The access timestamp of the executable in an exec event may already
+include the kernel's own reads of the image during that exec, such as those
 of
 .Dv MAC_VERIEXEC
 image verification, and may be later than the one the file had before the
@@ -275,6 +274,12 @@ File
 events are delivered via the
 .Fn mac_vnode_check_close
 hook; because a close cannot be denied, close is a NOTIFY-only event.
+A signal that a process sends to itself generates no event: the kernel
+permits it before any MAC check is made.
+A reboot event reports a request made with
+.Xr reboot 2 ,
+before the kernel has decided whether the caller may make it; it does not
+say that the system is going down.
 .Pp
 Descriptors served by a
 .Xr dq 4

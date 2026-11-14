@@ -64,6 +64,8 @@ and is inspected with
 which reports the jail ID and name the scope was set with and fails with
 .Er ENOENT
 for a client that has no jail scope.
+They are zero for a jailed caller that is not in the jail the scope was set
+from.
 The kernel holds the jail itself: a jail created later with the same ID or
 name is a different jail and is never matched.
 When the jail is removed, the events its processes generated before that can

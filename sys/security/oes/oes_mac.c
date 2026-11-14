@@ -1940,7 +1940,7 @@ oes_jail_scopes_finish(void)
 
 /*
  * Deferred-delivery task: drain the deferred queue, delivering each event with
- * the blocking path above.  Runs on the system taskqueue thread, so it may
+ * the blocking path above.  Runs on the OES delivery thread, so it may
  * sleep/block on the client locks.
  *
  * The queue is drained in rounds.  A round claims the jail scopes that are
