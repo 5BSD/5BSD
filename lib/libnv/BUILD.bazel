@@ -7,15 +7,13 @@ cc_library(
     hdrs = ["common_impl.h", "msgio.h"],
     strip_include_prefix = "/lib/libnv",
 )
+# The same source declaration controls compilation and installed archive order.
+_SOURCES = ["//sys/contrib/libnv:cnvlist.c", "//sys/contrib/libnv:dnvlist.c",
+    "msgio.c", "//sys/contrib/libnv:nvlist.c", "//sys/contrib/libnv:bsd_nvpair.c"]
 cc_library(
     name = "nv",
-    srcs = [
-        "msgio.c",
-        "//sys/contrib/libnv:cnvlist.c", "//sys/contrib/libnv:dnvlist.c",
-        "//sys/contrib/libnv:nvlist.c", "//sys/contrib/libnv:bsd_nvpair.c",
-        "//sys/contrib/libnv:nv_impl.h", "//sys/contrib/libnv:nvlist_impl.h",
-        "//sys/contrib/libnv:nvpair_impl.h",
-    ],
+    srcs = _SOURCES + ["//sys/contrib/libnv:nv_impl.h", "//sys/contrib/libnv:nvlist_impl.h",
+        "//sys/contrib/libnv:nvpair_impl.h"],
     deps = ["//sys/sys:nv_headers"],
     implementation_deps = [":internal_headers"],
     target_compatible_with = ["@platforms//os:freebsd"],
@@ -36,7 +34,7 @@ cc_shared_library(
 )
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-bsd_component_archive(name = "static_archive", groups = [":nv"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":nv"], ordered_sources = _SOURCES, visibility = ["//visibility:public"])
 
 load(":installation.bzl", "libnv_installation")
 libnv_installation(name = "install_manifest")

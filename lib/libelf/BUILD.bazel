@@ -3,7 +3,8 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load(":sources.bzl", "ELF_SOURCES")
 load(":generate.bzl", "libelf_generate")
-_GENERATED = ["libelf_convert", "libelf_fsize", "libelf_msize"]
+# GENSRCS order in lib/libelf/Makefile also determines archive member order.
+_GENERATED = ["libelf_fsize", "libelf_msize", "libelf_convert"]
 [
     libelf_generate(name = name, output = name + ".c",
         template = "//contrib/elftoolchain:libelf/" + name + ".m4",
@@ -12,10 +13,11 @@ _GENERATED = ["libelf_convert", "libelf_fsize", "libelf_msize"]
         runtime = ["@bsd_sdk//toolchain:extra_m4_runtime"])
     for name in _GENERATED
 ]
-cc_library(name = "elf", srcs = ELF_SOURCES + [":" + name for name in _GENERATED],
+_SOURCES = ELF_SOURCES + [":" + name for name in _GENERATED]
+cc_library(name = "elf", srcs = _SOURCES,
     deps = ["//contrib/elftoolchain:elf_headers"], implementation_deps = ["//contrib/elftoolchain:elf_internal_headers"],
     linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":elf"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":elf"], ordered_sources = _SOURCES, visibility = ["//visibility:public"])
 cc_shared_library(name = "elf_shared", deps = [":elf"], shared_lib_name = "libelf.so.2",
     additional_linker_inputs = ["//contrib/elftoolchain:libelf/Version.map"],
     user_link_flags = ["-Wl,-soname,libelf.so.2", "-Wl,--version-script=$(location //contrib/elftoolchain:libelf/Version.map)", "-Wl,--fatal-warnings,--warn-shared-textrel"],

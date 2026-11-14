@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Source order includes generated targets at their original recipe positions.
 DWARF_SOURCES = [
     "//contrib/elftoolchain:libdwarf/dwarf_abbrev.c",
     "//contrib/elftoolchain:libdwarf/dwarf_arange.c",
@@ -12,6 +13,7 @@ DWARF_SOURCES = [
     "//contrib/elftoolchain:libdwarf/dwarf_finish.c",
     "//contrib/elftoolchain:libdwarf/dwarf_form.c",
     "//contrib/elftoolchain:libdwarf/dwarf_frame.c",
+    ":dwarf_funcs",
     "//contrib/elftoolchain:libdwarf/dwarf_init.c",
     "//contrib/elftoolchain:libdwarf/dwarf_lineno.c",
     "//contrib/elftoolchain:libdwarf/dwarf_loclist.c",
@@ -22,16 +24,26 @@ DWARF_SOURCES = [
     "//contrib/elftoolchain:libdwarf/dwarf_pro_expr.c",
     "//contrib/elftoolchain:libdwarf/dwarf_pro_finish.c",
     "//contrib/elftoolchain:libdwarf/dwarf_pro_frame.c",
+    ":dwarf_pro_funcs",
     "//contrib/elftoolchain:libdwarf/dwarf_pro_init.c",
     "//contrib/elftoolchain:libdwarf/dwarf_pro_lineno.c",
     "//contrib/elftoolchain:libdwarf/dwarf_pro_macinfo.c",
+    ":dwarf_pro_pubnames",
     "//contrib/elftoolchain:libdwarf/dwarf_pro_reloc.c",
     "//contrib/elftoolchain:libdwarf/dwarf_pro_sections.c",
+    ":dwarf_pro_types",
+    ":dwarf_pro_vars",
+    ":dwarf_pro_weaks",
+    ":dwarf_pubnames",
+    ":dwarf_pubtypes",
     "//contrib/elftoolchain:libdwarf/dwarf_ranges.c",
     "//contrib/elftoolchain:libdwarf/dwarf_reloc.c",
     "//contrib/elftoolchain:libdwarf/dwarf_sections.c",
     "//contrib/elftoolchain:libdwarf/dwarf_seterror.c",
     "//contrib/elftoolchain:libdwarf/dwarf_str.c",
+    ":dwarf_types",
+    ":dwarf_vars",
+    ":dwarf_weaks",
     "//contrib/elftoolchain:libdwarf/libdwarf.c",
     "//contrib/elftoolchain:libdwarf/libdwarf_abbrev.c",
     "//contrib/elftoolchain:libdwarf/libdwarf_arange.c",
@@ -65,5 +77,5 @@ DWARF_GENERATED = [
     "dwarf_pro_weaks",
     "dwarf_pro_funcs",
     "dwarf_pro_types",
-    "dwarf_pro_vars"
+    "dwarf_pro_vars",
 ]

@@ -4,7 +4,9 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "headers", hdrs = ["libdq.h"], deps = ["//sys/dev/dq:headers"], strip_include_prefix = ".",
     visibility = ["//visibility:public"])
-cc_library(name = "dq", srcs = ["libdq.c", "libdq_serve.c", "libdq_tree.c"], copts = ["-fPIC"],
+# Make installs ordinary objects in libdq.a and uses -fpic for shared objects.
+# Let rules_cc select each variant; target-wide PIC would also change the archive.
+cc_library(name = "dq", srcs = ["libdq.c", "libdq_serve.c", "libdq_tree.c"], features = ["bsd_small_pic"],
     deps = [":headers", "//lib/libcapability:capability"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":dq"], target_compatible_with = _PLATFORM,

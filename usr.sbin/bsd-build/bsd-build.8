@@ -5946,6 +5946,40 @@ candidate remains separate. See
 .Pa tools/build/bazel/CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md
 for original installation/binary/debug controls and host/VM/tracing scope.
 .Pp
+The native component archive rule can derive installed member order from its
+.Dv ordered_sources
+attribute, sharing the source declaration with compilation and including declared
+generated source outputs. The alternative
+.Dv member_order
+attribute declares canonical ordinary object identities across native ordinary,
+PIC and DTrace member spellings. It preserves the selected compiler variant and
+rejects missing, extra or ambiguous identities; libc uses configured source-owned
+composition sections for this interface. The checker recognizes original Make
+.Pa .pico
+member spelling while preserving full symbol and member-order checks.
+Relocatable ELF payloads use the maintained boot-object contract: exact allocated
+section bytes and metadata, external symbol fields and symbol-resolved relocation
+records. Repeated section names retain occurrence identities. Debug-only data is
+outside this contract; instruction bytes, relocation addends, GNU build IDs and
+DTrace IDs are never normalized. Differences remain explicit review failures.
+This check does not load kernel modules or qualify their runtime behavior.
+.Pp
+Path-derived DTrace alias IDs are compared by a whole-archive member/function/
+symbol-kind incidence mapping. Reports retain raw IDs and the explicit bijection;
+ambiguous remapping is rejected. Repeated local symbol occurrences retain their
+multiplicity in both ordinary and alias contracts. Legal repeated archive member
+names retain distinct ordered occurrences; LLVM ar extracts each repeated
+instance through its public occurrence selector into a private directory.
+Different object spellings that collide after normalization remain rejected.
+This symbol contract does not establish DOF
+relocation correctness, registration or live probe behavior. Analysis rejects duplicate or omitted own objects and
+conflicting explicit order declarations. The libnv, libipsec and libelf archives
+use this interface; the build never reads Make comparison outputs to select order.
+.Pp
+The libicp_rescue and libzfs native source groups preserve source-recipe order
+across GCM-specific and hidden-visibility compilation options, including distinct
+objects with repeated archive member names.
+.Pp
 The source-owned installed static archive orders for libfidl, liblogcmp,
 libnetworkcmp, libnotify, libtimecmp and libtracecmp are compared independently
 with original Make artifacts in both normal DTrace modes. Existing format-5
@@ -7449,6 +7483,15 @@ Native hash-test construction retains original helper/compatibility interfaces,
 md/crypto dependency order, shell/data fixtures and OpenSSL-controlled SHA2
 installation and Kyua registration. Fixed test suites retain incompatible case
 metadata when optional tests are disabled; incompatible cases are not passes.
+.Pp
+The source-configured backend preflights every explicit product target using
+Bazel's public configured query before main build or test actions execute.
+Queries preserve the selected configuration, platform and Java environment.
+Aliases retain an explicit binding to the configured target; missing or
+incompatible requested products are rejected. The receipt hashes
+.Pa target-inventory.json .
+This validates the selection; subsequent build output capture and verification
+remain required. It does not establish independent native bootstrap.
 .Pp
 The source-configured qualification backend requires every explicit test selector
 to expand to a compatible test. A passing unrelated test cannot hide an empty

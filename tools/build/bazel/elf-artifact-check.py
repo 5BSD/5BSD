@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tempfile
+from collections import Counter
 
 import qualification_artifacts
 
@@ -218,8 +220,30 @@ def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
             'runtime_qualified': False, 'full_abi_parity': False}
 
 
+
+def compare_relocatable(candidate, reference):
+    """Exact allocated bytes and symbolic relocations, excluding debug-only data.
+
+    Reuse the boot object's maintained contract, preserving duplicate section
+    occurrences and all external symbol fields. This neither loads a module nor
+    normalizes code, relocation addends, build IDs or DTrace path IDs.
+    """
+    from elf_object_contract import contract
+    records = {}
+    for key, path in (('candidate', candidate), ('make_reference', reference)):
+        data = Path(path).read_bytes()
+        records[key] = {'path': str(path), 'sha256': hashlib.sha256(data).hexdigest(),
+                        'contract': contract(data, allow_duplicate_sections=True)}
+    a, b = records['candidate']['contract'], records['make_reference']['contract']
+    differences = [key for key in sorted(set(a) | set(b)) if a.get(key) != b.get(key)]
+    return {'scope': 'exact-relocatable-allocated-symbol-relocation-comparison',
+            **records, 'differences': differences,
+            'status': 'review-required' if differences else 'passed',
+            'debug_qualified': False, 'runtime_qualified': False}
+
+
 def stem(member):
-    for suffix in ('.nopic.o', '.pic.o', '.pieo', '.o'):
+    for suffix in ('.nopic.o', '.pic.o', '.pico', '.pieo', '.o'):
         if member.endswith(suffix):
             return member[:-len(suffix)]
     raise ValueError('unexpected archive member: ' + member)
@@ -232,27 +256,109 @@ def parse_archive(nm, artifact):
         if not match:
             raise ValueError('unparsed nm line: ' + line)
         member, name, kind = match.groups()
-        symbols.setdefault(stem(member), set()).add((name, kind))
+        # ELF permits repeated local names after relocatable linking. Preserve
+        # their multiplicity so an extra definition/reference cannot disappear.
+        symbols.setdefault(stem(member), []).append((name, kind))
     return {member: sorted(values) for member, values in sorted(symbols.items())}
 
 
+def compare_archive_symbols(candidate, reference):
+    """Compare every symbol, mapping only unambiguous path-derived DTrace IDs.
+
+    An alias ID denotes its entire archive incidence graph: member, original
+    function name and symbol kind for every definition/reference. Never erase IDs
+    independently per symbol, or guess a mapping between indistinguishable graphs.
+    This is a symbol contract, not DOF relocation or live probe qualification.
+    """
+    if candidate == reference:
+        return []
+
+    def contract(symbols):
+        ordinary, aliases = {}, {}
+        for member, entries in symbols.items():
+            ordinary[member] = []
+            for name, kind in entries:
+                match = re.fullmatch(r'\$dtrace([0-9]+)\.(.+)', name)
+                if match:
+                    key, function = match.groups()
+                    aliases.setdefault(key, []).append((member, function, kind))
+                else:
+                    ordinary[member].append((name, kind))
+            ordinary[member].sort()
+        signatures = {}
+        for key, entries in aliases.items():
+            signature = tuple(sorted(entries))
+            if signature in signatures:
+                raise ValueError('ambiguous DTrace archive alias incidence graph')
+            signatures[signature] = key
+        return ordinary, signatures
+
+    a, a_aliases = contract(candidate)
+    b, b_aliases = contract(reference)
+    if a != b or set(a_aliases) != set(b_aliases):
+        raise ValueError('archive member symbols differ from Make reference')
+    return [{'candidate_id': a_aliases[signature], 'reference_id': b_aliases[signature],
+             'incidence': signature} for signature in sorted(a_aliases)]
+
+
+def archive_record(nm, ar, path):
+    """Preserve duplicate occurrences using LLVM ar's public xN interface.
+
+    Bulk nm is sufficient for unique names. Its archive prefixes cannot identify
+    repeated names, so read those instances separately in private directories.
+    No archive-controlled pathname may escape the extraction directory.
+    """
+    members = run([ar, 't', path]).splitlines()
+    spellings = {}
+    for member in members:
+        if not member or Path(member).name != member or member.startswith('-'):
+            raise ValueError('unsafe archive member pathname: ' + member)
+        identity = stem(member)
+        if identity in spellings and spellings[identity] != member:
+            raise ValueError('ambiguous normalized archive members')
+        spellings[identity] = member
+    counts = Counter(members)
+    bulk = parse_archive(nm, path)
+    if set(bulk) - set(spellings):
+        raise ValueError('nm reported an unlisted archive member')
+    symbols = {}
+    occurrences = Counter()
+    for index, member in enumerate(members):
+        identity = stem(member)
+        occurrences[member] += 1
+        # An ordinal key binds DTrace definitions/references to this occurrence,
+        # rather than merging symbols from different objects with the same name.
+        key = str(index) + ':' + identity
+        if counts[member] == 1:
+            symbols[key] = bulk.get(identity, [])
+            continue
+        with tempfile.TemporaryDirectory(prefix='archive-occurrence-') as directory:
+            subprocess.run([str(ar), 'xN', str(occurrences[member]),
+                            str(Path(path).resolve()), member], cwd=directory,
+                           env=ENV, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            extracted = Path(directory) / member
+            if not extracted.is_file() or extracted.is_symlink():
+                raise ValueError('archive occurrence extraction did not produce a regular object')
+            entries = []
+            for line in run([nm, '--format=posix', extracted]).splitlines():
+                match = re.match(r'^(\S+)\s+(\S)\b', line)
+                if not match:
+                    raise ValueError('unparsed occurrence nm line: ' + line)
+                entries.append(match.groups())
+            symbols[key] = sorted(entries)
+    return {'path': str(path), 'sha256': sha(path), 'members': members,
+            'symbols': symbols}
+
+
 def compare_archive(nm, ar, candidate, reference):
-    records = {}
-    for key, path in (('candidate', candidate), ('make_reference', reference)):
-        members = run([ar, 't', path]).split()
-        if len(members) != len(set(members)):
-            raise ValueError(key + ': duplicate archive members')
-        identities = [stem(member) for member in members]
-        if len(identities) != len(set(identities)):
-            raise ValueError(key + ': ambiguous normalized archive members')
-        records[key] = {'path': str(path), 'sha256': sha(path), 'members': members,
-                        'symbols': parse_archive(nm, path)}
+    records = {key: archive_record(nm, ar, path)
+               for key, path in (('candidate', candidate), ('make_reference', reference))}
     a, b = records['candidate'], records['make_reference']
     if [stem(m) for m in a['members']] != [stem(m) for m in b['members']]:
         raise ValueError('archive member set or order differs from Make reference')
-    if a['symbols'] != b['symbols']:
-        raise ValueError('archive member symbols differ from Make reference')
+    aliases = compare_archive_symbols(a['symbols'], b['symbols'])
     return {'scope': 'archive-member-symbol-comparison', **records,
+            'dtrace_alias_mapping': aliases,
             'byte_identical': sha(candidate) == sha(reference)}
 
 

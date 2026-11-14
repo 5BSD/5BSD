@@ -30,14 +30,21 @@ cc_library(name = "local_headers", hdrs = ["config.h", ":parser_header", ":scann
 _RDMA = "//tools/build/bazel/config:ofed_enabled"
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 _RDMA_LIBS = ["//lib/ofed/lib" + n + ":" + n for n in ["ibverbs", "bnxtre", "mlx5"]]
-cc_library(name = "pcap", srcs = ['//contrib/libpcap:bpf_dump.c', '//contrib/libpcap:bpf_filter.c', '//contrib/libpcap:bpf_image.c', '//contrib/libpcap:etherent.c', '//contrib/libpcap:fad-getad.c', '//contrib/libpcap:fmtutils.c', '//contrib/libpcap:gencode.c', '//contrib/libpcap:nametoaddr.c', '//contrib/libpcap:optimize.c', '//contrib/libpcap:pcap-bpf.c', '//contrib/libpcap:pcap-common.c', '//contrib/libpcap:pcap-netmap.c', '//contrib/libpcap:pcap-util.c', '//contrib/libpcap:pcap.c', '//contrib/libpcap:savefile.c', '//contrib/libpcap:sf-pcap.c', '//contrib/libpcap:sf-pcapng.c'] + [":parser_source", ":scanner_source"] + select({_RDMA: ["//contrib/libpcap:pcap-rdmasniff.c"], "//conditions:default": []}),
+_SOURCES = ["//contrib/libpcap:" + name for name in [
+    "bpf_dump.c", "bpf_filter.c", "bpf_image.c", "etherent.c", "fad-getad.c", "fmtutils.c", "gencode.c",
+]] + [":parser_source"] + ["//contrib/libpcap:" + name for name in [
+    "nametoaddr.c", "optimize.c", "pcap-bpf.c", "pcap-common.c", "pcap-netmap.c", "pcap-util.c", "pcap.c", "savefile.c",
+]] + [":scanner_source", "//contrib/libpcap:sf-pcap.c", "//contrib/libpcap:sf-pcapng.c"] + select({
+    _RDMA: ["//contrib/libpcap:pcap-rdmasniff.c"], "//conditions:default": [],
+})
+cc_library(name = "pcap", srcs = _SOURCES,
     deps = [":local_headers", "//contrib/libpcap:headers"] + select({_RDMA: _RDMA_LIBS, "//conditions:default": []}),
     local_defines = ["HAVE_CONFIG_H", "_U_=__attribute__((unused))", "BUILDING_PCAP", "PCAP_SUPPORT_NETMAP"] +
         select({_RDMA: ["PCAP_SUPPORT_RDMASNIFF"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:pf_enabled": ["HAVE_NET_PFVAR_H"], "//conditions:default": []}),
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":pcap"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":pcap"], ordered_sources = _SOURCES, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "pcap_shared", deps = [":pcap"], shared_lib_name = "libpcap.so.8",
     dynamic_deps = select({_RDMA: [n + "_shared" for n in _RDMA_LIBS], "//conditions:default": []}),
     user_link_flags = ["-Wl,-soname,libpcap.so.8", "-Wl,--fatal-warnings,--warn-shared-textrel"],

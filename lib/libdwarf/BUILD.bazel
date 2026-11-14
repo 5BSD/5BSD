@@ -11,11 +11,11 @@ load(":sources.bzl", "DWARF_SOURCES", "DWARF_GENERATED")
         runtime = ["@bsd_sdk//toolchain:extra_m4_runtime"])
     for name in DWARF_GENERATED
 ]
-cc_library(name = "dwarf", srcs = DWARF_SOURCES + [":" + name for name in DWARF_GENERATED],
+cc_library(name = "dwarf", srcs = DWARF_SOURCES,
     deps = ["//contrib/elftoolchain:dwarf_headers", "//lib/libelf:elf", "//lib/libz:z"],
     implementation_deps = ["//contrib/elftoolchain:dwarf_internal_headers"],
     linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":dwarf"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":dwarf"], ordered_sources = DWARF_SOURCES, visibility = ["//visibility:public"])
 cc_shared_library(name = "dwarf_shared", deps = [":dwarf"], shared_lib_name = "libdwarf.so.4",
     dynamic_deps = ["//lib/libelf:elf_shared", "//lib/libz:z_shared"],
     user_link_flags = ["-Wl,-soname,libdwarf.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])

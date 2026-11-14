@@ -8,7 +8,7 @@ zpool_objects(name = "objects", srcs = ["//sys/contrib/openzfs:zpool_build_sourc
 zpool_objects(name = "compression_objects", srcs = ["//sys/contrib/openzfs:zpool_compression_sources"], deps = _LIBS,
     extra_copts = ["-fno-tree-vectorize", "-Wno-bitwise-instead-of-logical"])
 cc_library(name = "zpool", deps = [":objects", ":compression_objects"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":objects", ":compression_objects"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":objects", ":compression_objects"], ordered_sources = ["//sys/contrib/openzfs:zpool_ordered_sources"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "zpool_shared", deps = [":zpool"], dynamic_deps = ['//lib/libmd:md_shared', '//lib/libz:z_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libicp:icp_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libavl:avl_shared', '//cddl/lib/libumem:umem_shared'], shared_lib_name = "libzpool.so.2",
     user_link_flags = ["-Wl,-soname,libzpool.so.2", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 

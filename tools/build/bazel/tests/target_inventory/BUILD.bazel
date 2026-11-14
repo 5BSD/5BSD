@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# An explicit wrong-platform product must fail before build actions execute.
+filegroup(name = "arm_only", srcs = ["marker.txt"],
+    target_compatible_with = ["@platforms//cpu:aarch64"], visibility = ["//visibility:public"])

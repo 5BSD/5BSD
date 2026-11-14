@@ -2,10 +2,14 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-cc_library(name = "c_objects", srcs = ["//contrib/ofed/libibnetdisc:chassis.c", "//contrib/ofed/libibnetdisc:ibnetdisc.c", "//contrib/ofed/libibnetdisc:ibnetdisc_cache.c", "//contrib/ofed/libibnetdisc:query_smp.c"], deps = ["//contrib/ofed/libibnetdisc:private_headers", "//lib/ofed/complib:osmcomp", "//lib/ofed/libibmad:ibmad", "//lib/ofed/libibumad:ibumad"], local_defines = ["HAVE_CONFIG_H=1"], linkstatic = True, target_compatible_with = _PLATFORM)
-cc_library(name = "cxx_objects", srcs = ["//contrib/ofed/libibnetdisc:g_hash_table.cpp"], deps = ["//contrib/ofed/libibnetdisc:private_headers", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"], copts = ["-nostdinc++"], local_defines = ["HAVE_CONFIG_H=1"], linkstatic = True, target_compatible_with = _PLATFORM)
+_C_SOURCES = ["//contrib/ofed/libibnetdisc:chassis.c", "//contrib/ofed/libibnetdisc:ibnetdisc.c", "//contrib/ofed/libibnetdisc:ibnetdisc_cache.c", "//contrib/ofed/libibnetdisc:query_smp.c"]
+_CXX_SOURCES = ["//contrib/ofed/libibnetdisc:g_hash_table.cpp"]
+# Make interleaves the C++ member after chassis in SRCS.
+_SOURCES = _C_SOURCES[:1] + _CXX_SOURCES + _C_SOURCES[1:]
+cc_library(name = "c_objects", srcs = _C_SOURCES, deps = ["//contrib/ofed/libibnetdisc:private_headers", "//lib/ofed/complib:osmcomp", "//lib/ofed/libibmad:ibmad", "//lib/ofed/libibumad:ibumad"], local_defines = ["HAVE_CONFIG_H=1"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "cxx_objects", srcs = _CXX_SOURCES, deps = ["//contrib/ofed/libibnetdisc:private_headers", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"], copts = ["-nostdinc++"], local_defines = ["HAVE_CONFIG_H=1"], linkstatic = True, target_compatible_with = _PLATFORM)
 cc_library(name = "ibnetdisc", deps = [":c_objects", ":cxx_objects", "//contrib/ofed/libibnetdisc:headers"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":c_objects", ":cxx_objects"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":c_objects", ":cxx_objects"], ordered_sources = _SOURCES, visibility = ["//visibility:public"])
 cc_shared_library(name = "ibnetdisc_shared", deps = [":ibnetdisc"], shared_lib_name = "libibnetdisc.so.5", dynamic_deps = ["//lib/ofed/complib:osmcomp_shared", "//lib/ofed/libibmad:ibmad_shared", "//lib/ofed/libibumad:ibumad_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"], additional_linker_inputs = ["//contrib/ofed/libibnetdisc:libibnetdisc.map"], user_link_flags = ["-Wl,-soname,libibnetdisc.so.5", "-Wl,--version-script=$(location //contrib/ofed/libibnetdisc:libibnetdisc.map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
 load(":installation.bzl", "library_installation")
 library_installation(name = "install_manifest")
