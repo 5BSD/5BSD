@@ -9,12 +9,12 @@ is not authorized.
 
 | Gate | Current evidence and remaining work |
 | --- | --- |
-| 1. Runtime and upgrade | Lifecycle fixes and older complete scenarios exist. Fresh VM R2 passes new-kernel authentication/services and rollback boot, then fails the 3,600-second phase during rollback checksums. Final rollback authentication/services, shared-data persistence and unused-BE deletion remain unproven for this candidate. Preserve failure evidence and retain all checks in the next run. |
+| 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
 | 2. AMD64 parity/configurations | Full R11 passes 27 tests and captures all 450 selected packages. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R11 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Native CSU R3 matches all ten installed objects against the explicit older-seed Make component profile. Full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, and compiler-runtime R3 matches all 276 members (125 outlined atomics), against the explicit older-seed Make component profile. Full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r11-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,45 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+Fresh signed full-R11 upgrade VM R3 is terminal passed: all 34 high-level checks,
+143 root operations, normal shutdown, unchanged backing image/source bindings,
+new-kernel SSH/su positive/negative cases, rollback authentication/services,
+shared-file persistence and unused-BE deletion. It reclaims 2,828,603,392 bytes.
+Its 2 GiB guest records max sampled QEMU RSS 3,340,582,912 bytes and overlay peak
+2,155,889,152 bytes, within unchanged 4 GiB/8 GiB observation budgets.
+The declared upgrade phase is 5,400 seconds and whole run 9,000 seconds; all
+checks stay enabled with verbose per-package checksums and failure journaling.
+Actual vm_seconds is 1,679.79; this shared-host TCG run is not a controlled
+performance comparison. Each service phase validates 13 installed-manifest boot
+units and six selected ordinary-session operations, not every provider protocol;
+all_provider_operations_qualified remains false. Evidence is retained under
+/usr/obj/usr/src/bazel-current-upgrade-vm-r3-20261114 with complete signed
+repository R3 and full R11 kernel/package bindings. R1/R2 timeout results remain
+unchanged and are superseded only for this exact fresh candidate's scenario.
+
+Compiler-runtime native declarations now select actual AMD64/AArch64 sources,
+with 125 independently compiled size/model atomic variants and explicit archive
+member order. ARM64 R3 passes original-Make comparison for every one of 276
+members; final AMD64 R2 independently passes all 165 members. Both comparisons
+check allocated ELF, external symbols/relocations, order and logical installation
+metadata without rewriting outputs. AMD64 runtime tests also pass. The initial
+ARM run exposed an omitted direct CPU-model .inc input, now covered by the
+maintained CPU-model include inventory. A follow-up found 15 abort diagnostic
+filename differences; declared CRTSRC prefix maps fix them on both architectures.
+The earlier AMD preservation result predates that intentional source-identity
+correction and is not the final acceptance claim. Native metadata uses symlink
+while MTREE uses link; the diagnostic's original schema assumption was retained
+as failed, then corrected explicitly. AMD's original world METALOG has no file
+hash, so its staged reference bytes are independently bound to the completed
+Make package receipt and payload instead of inventing a field.
+Evidence: /usr/obj/usr/src/bazel-compiler-rt-arm64-parity-r3-20261114 and
+/usr/obj/usr/src/bazel-compiler-rt-amd64-parity-r2-20261114. These are component
+allocated/installation contracts, not DWARF/full-world or ARM64 runtime proof.
+The runtime producer change postdates full R11; refresh packages before calling
+that correction installed. Normal build-bsd uses the existing architecture/SDK
+inputs and source-owned producers; no C option or backend-default change applies.
+
 
 The maintained split-debug checker now additionally requires valid GNU build-ID
 notes on both files when either has one, and equal identities within the pair.

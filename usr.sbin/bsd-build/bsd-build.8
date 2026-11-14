@@ -2338,6 +2338,12 @@ This does not qualify the complete loader, kernel and installed-system chain.
 runs maintained native amd64 qualification and explicitly selected cross-target
 artifact qualification, with separate target and execution SDKs where required.
 .Pp
+Compiler-runtime targets select explicit architecture-owned source lists and
+outlined atomic variants through the configured target platform.
+Each outlined variant has a declared compilation action and archive member
+identity; source metadata preserves member order and logical source filenames.
+The normal architecture and SDK inputs select these producers.
+.Pp
 Split-debug validation checks ELF identity and symbol policy, debuglink filename
 and CRC. When either file carries a GNU build-ID note, valid matching identities
 are required on both files. Full DWARF semantic equivalence remains a separate

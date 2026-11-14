@@ -135,3 +135,14 @@ AArch64 identity and logical install metadata. This uses the explicitly recorded
 older component SDK/profile (WITHOUT_BRANCH_PROTECTION), not the required full
 current ARM64 world or every hardening configuration. Debug and runtime remain
 outside this component comparison. See bazel-arm64-csu-parity-r1-20261114.
+
+## Compiler-runtime architecture closeout (2026-11-14)
+
+The native compiler-runtime producer selects explicit AMD64/AArch64 source lists.
+AArch64 declares all 125 outlined atomic size/model specializations as independent
+cc_library compilation actions, preserving their member names and order. Its
+276 installed members and AMD64's 165 members pass allocated ELF, symbols,
+relocations, archive order and logical install comparison with independent Make
+references. Overflow-abort filenames use declared CRTSRC source identity.
+The AArch64 reference retains its recorded older SDK/profile. Full DWARF,
+current ARM64 world/hardening/runtime and updated full package capture remain open.
