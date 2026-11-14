@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test", "bsd_host_artifact_test")
 bsd_python_test(name = "serial_terminal_test", src = "serial-terminal-test.py",
     data = ["serial_terminal.py"], visibility = ["//visibility:public"])
 bsd_python_test(name = "installed_audit_test", src = "installed-audit-test.py",
@@ -47,3 +47,8 @@ cc_binary(name = "service_operations", srcs = ["service_operations.c"],
 
 bsd_python_test(name = "certificate_runtime_test", src = "certificate-runtime-test.py",
     data = ["certificate_runtime.py", "certificate-store.sh"], visibility = ["//visibility:public"])
+
+bsd_host_artifact_test(name = "root_operation_test", src = "root-operation-test.py",
+    data = ["root_operation.py"], tools = ["@bsd_sdk//toolchain:sh"],
+    args = ["--shell", "$(rlocationpath @bsd_sdk//toolchain:sh)"],
+    visibility = ["//visibility:public"])

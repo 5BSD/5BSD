@@ -1,5 +1,27 @@
 # Native Bazel completion plan
 
+## Current gate ledger (2026-11-14)
+
+All six gates remain open. Update this ledger when evidence changes; dated
+execution notes below retain history and do not override these current rows.
+Make remains production/default, BIP is excluded, and host installation/reboot
+is not authorized.
+
+| Gate | Current evidence and remaining work |
+| --- | --- |
+| 1. Runtime and upgrade | Lifecycle fixes and older complete scenarios exist. Fresh VM R2 passes new-kernel authentication/services and rollback boot, then fails the 3,600-second phase during rollback checksums. Final rollback authentication/services, shared-data persistence and unused-BE deletion remain unproven for this candidate. Preserve failure evidence and retain all checks in the next run. |
+| 2. AMD64 parity/configurations | Full R11 passes 27 tests and captures all 450 selected packages. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
+| 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R11 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
+| 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
+| 6. ARM64 Tier 1 | Native CSU R3 matches all ten installed objects against the explicit older-seed Make component profile. Full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+
+Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r11-20261114.
+Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
+Kernel proof: /usr/obj/usr/src/bazel-current-kernel-parity-r5-20261114.
+Module diagnostics: /usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114.
+ARM64 CSU proof: /usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114.
+
 ## Configuration completion checklist
 
 [BUILD-OPTIONS.md](BUILD-OPTIONS.md) separates source kernel diagnostics from
@@ -10,6 +32,31 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+Full AMD64 R11 completes with all 27 expanded tests, 450 indexed packages and
+1,556 captured files / 647,862,684 bytes. Kernel parity R5 again passes strict
+allocated/symbol/CTF checks, matches the full R11 kernel payload digest and passes
+kernel split-debug positive/five-rejection regression checks. The maintained
+focused checker run passes all five selected suites. R10/R11 index inspection
+finds only bsd-build, kernel-generic and kernel-generic-dbg archive digests changed;
+this is an index observation, not complete unpacked-payload comparison.
+
+Fresh VM R2 is terminal failed at rollback checksums after its 3,600-second phase,
+not a passing upgrade. It completed 28 checks and 116 recorded root operations,
+including new-kernel SSH/su and manifest services plus rollback console. The
+partial rollback scan reached eight progress dots. Source inspection confirms
+these are coarse per-package progress, not a completed scan or a proof of hang.
+Observed max QEMU RSS is 3,344,449,536 bytes and overlay allocation 2,176,692,736
+bytes, within declared budgets; these are not controlled performance figures.
+The runner previously omitted the failing operation's record when a deadline
+raised. It now always journals process status, elapsed time, error and partial
+output hash after child cleanup, and never binds a pre-existing log to an attempt.
+Seven actual-process tests pass locally and through maintained Bazel; policy tests
+also pass. Full checksum scans now use pkg's verbose per-package diagnostics,
+without dropping verification. No host installation or publication occurred.
+Normal frontend C options are unchanged; the maintained VM helper, tests, source
+bindings and manual are updated together.
+
 
 Seven-module source-identity follow-up R3 now builds all 21 module/full/debug
 outputs and passes the maintained inventory test. Independent per-module review

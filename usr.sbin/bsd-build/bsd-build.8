@@ -2335,8 +2335,14 @@ This does not qualify the complete loader, kernel and installed-system chain.
 
 .Ss Bazel build qualification
 .Cm bazel-test
-runs maintained native amd64 qualification and explicitly selected
-cross-target kernel artifact qualification.
+runs maintained native amd64 qualification and explicitly selected cross-target
+artifact qualification, with separate target and execution SDKs where required.
+.Pp
+Disposable package-runtime VM qualification retains unsuccessful root-operation
+records, including status, elapsed time, error and partial-output checksum.
+A pre-existing operation log is rejected rather than adopted.
+Package checksum scans retain per-package diagnostics; a timeout remains a failed
+qualification and does not establish completion of the remaining upgrade checks.
 .Pp
 The maintained format-5 installation targets include the lex runtime archives,
 protobuf compiler plugins, DQ manual aliases/examples and DTrace/OpenTelemetry
