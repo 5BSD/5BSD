@@ -2644,6 +2644,29 @@ also offers
 the controller answers with a descriptor it holds, and the kernel installs
 that open file in the requester as the result of its
 .Xr open 2 .
+A lookup from a served start that carries a restriction in
+.Va drs_rflags
+.Po
+.Dv DQ_RF_STRICTREL ,
+.Dv DQ_RF_BENEATH ,
+.Dv DQ_RF_RINROOT ,
+.Dv DQ_RF_NOXDEV ,
+.Dv DQ_RF_NOSYMLINKS
+or
+.Dv DQ_RF_NOMAGICLINKS :
+capability mode, a start descriptor with limited rights,
+.Dv O_RESOLVE_BENEATH
+and the like
+.Pc
+offers
+.Dv DQ_RESOLVE_FD
+and not
+.Dv DQ_RESOLVE_SWAP :
+the kernel checks a served answer against the start's presented path, and
+has no presented path to check a real file against.
+Under a served root a swapped file is not checked against the root, and it
+reports its real path.
+.Pp
 The requester then holds the real open file.
 Nothing it does with the descriptor afterwards posts an event, the
 controller cannot revoke it, and it keeps working when the queue closes.

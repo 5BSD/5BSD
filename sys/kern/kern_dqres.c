@@ -1069,6 +1069,13 @@ dq_accept(struct dq_intent *di, struct dq_islot *s, int slot, uint32_t class,
 		return (a);
 	if (served ? (ndp->ni_cnd.cn_flags & OPENNAMED) == 0 : unrestricted)
 		a |= di->di_accept;
+	/*
+	 * D165 checks a served answer against the start's presented path
+	 * after the reply.  A swapped real file has no presented path to
+	 * check, so a restricted lookup is not offered one.
+	 */
+	if (served && (rflags & DQ_RF_NOREAL) != 0)
+		a &= ~DQ_RACCEPT(DQ_RESOLVE_SWAP);
 	return (a);
 }
 

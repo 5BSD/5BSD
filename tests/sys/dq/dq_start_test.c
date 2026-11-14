@@ -981,6 +981,83 @@ ATF_TC_BODY(fd_install_limits, tc)
 }
 
 /*
+ * A restricted lookup from a served start is not offered SWAP: the kernel
+ * checks a served answer against the start's presented path (D165) and
+ * has nothing to check a swapped real file against.  The unrestricted
+ * open from the same start is offered it.
+ */
+static int
+h_noswap(struct srv *s, const struct dq_event *ev,
+    const struct dq_resolve_body *rb, const char *path, const void *body,
+    size_t bodylen)
+{
+	int fd, i;
+
+	(void)body; (void)bodylen;
+	if (rb == NULL || rb->drs_op != DQ_ROP_OPEN || strcmp(path, "a") != 0)
+		return (0);
+	i = s->hook_state++;
+	if (i >= 3)
+		return (0);
+	s->hook_err[i] = dq_resolve_accepts(rb, DQ_RESOLVE_SWAP) ? 1 : 0;
+	if (i > 0) {
+		fd = openat(s->rootfd, "a", O_RDONLY | O_CLOEXEC | O_CLOFORK);
+		ATF_REQUIRE(fd >= 0);
+		errno = 0;
+		if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) == -1 &&
+		    errno == EINVAL)
+			s->hook_err[i] |= 2;
+		(void)close(fd);
+	}
+	return (0);		/* the tree answers the open */
+}
+
+static void
+c_noswap(struct srv *s, int *r)
+{
+	char b[8];
+	int fd;
+
+	fd = openat(s->sroot, "a", O_RDONLY);
+	r[0] = ERR(fd);
+	(void)close(fd);
+	fd = openat(s->sroot, "a", O_RDONLY | O_RESOLVE_BENEATH);
+	r[1] = ERR(fd);
+	(void)close(fd);
+	r[2] = ERR(cap_enter());
+	fd = openat(s->sroot, "a", O_RDONLY);
+	r[3] = ERR(fd);
+	r[4] = (int)read(fd, b, sizeof(b));
+}
+
+DQ_TC(restricted_no_swap);
+ATF_TC_BODY(restricted_no_swap, tc)
+{
+	struct srv s;
+	int r[RES_MAX], i;
+
+	srv_start(&s, 0);
+	s.hook = h_noswap;
+	run_child(&s, c_noswap, r);
+	CHECK_ERRNO(0, r[0]);
+	CHECK_ERRNO(0, r[1]);
+	CHECK_ERRNO(0, r[2]);
+	CHECK_ERRNO(0, r[3]);
+	ATF_CHECK_EQ(7, r[4]);
+	ATF_CHECK_EQ(3, s.hook_state);
+	/* Offered to the unrestricted open. */
+	ATF_CHECK_EQ(1, s.hook_err[0]);
+	/* Not offered, and refused as a reply, under BENEATH and STRICTREL. */
+	ATF_CHECK_EQ(2, s.hook_err[1]);
+	ATF_CHECK_EQ(2, s.hook_err[2]);
+	i = srv_find_exact(&s, DQ_ROP_OPEN, "a");
+	ATF_REQUIRE(i >= 0);
+	ATF_CHECK((s.seen[i].rflags & DQ_RF_STRICTREL) != 0);
+	ATF_CHECK((s.seen[i].accept & DQ_RACCEPT(DQ_RESOLVE_FD)) != 0);
+	srv_stop(&s);
+}
+
+/*
  * O_EMPTY_PATH on a served directory reopens it through the controller
  * (D164: OPEN, EMPTYPATH, start SERVED); AT_EMPTY_PATH calls stay the
  * descriptor's own (no event); /dev/fd/N/child stays ENOTDIR (D29).
@@ -1935,6 +2012,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, i8_beneath);
 	ATF_TP_ADD_TC(tp, capmode_rights);
 	ATF_TP_ADD_TC(tp, fd_install_limits);
+	ATF_TP_ADD_TC(tp, restricted_no_swap);
 	ATF_TP_ADD_TC(tp, emptypath);
 	ATF_TP_ADD_TC(tp, symlink_opath);
 	ATF_TP_ADD_TC(tp, readdir_oracle);
