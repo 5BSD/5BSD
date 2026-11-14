@@ -1214,3 +1214,54 @@ bindings include the DOF parser. Existing format-5/C frontend inputs need no new
 flag. The build-bsd manual describes this conditional comparison and its limits.
 The older full indexed R6 report remains unchanged and its PAM case is superseded
 only by this selected R6-archive review, not retroactively by a whole-system pass.
+
+
+## Explicit SONAME absence and BASE version identity (2026-11-14)
+
+`/usr/obj/usr/src/bazel-sonameless-dso-review-r3-20261114/review.json` passes the
+captured R6 runtime linker's SONAME-less ET_DYN metadata contract and a named libc
+regression against the same index-verified Make package. Package/actual payloads,
+checker and inspection tools are bound; source hashes are unchanged during review.
+The earlier R1 rejected differing BASE labels as version-definition drift; its
+failure note is retrospective and does not claim a retained original checker hash.
+R2 passes before the later explicit dynamic-flag checks; R3 uses the final checker.
+
+This is a general DSO contract, not a loader-path exception. Default parsing and
+explicit named-library comparison still require the selected SONAME. A missing
+SONAME is allowed only by explicit shared-object selection and must be absent in
+both artifacts. PIE DSOs, duplicate dynamic flag tags, wrong dependencies,
+symbol/version drift and hardening failures remain rejected. The final check also
+compares dynamic FLAGS/FLAGS_1 names, including SYMBOLIC and NODELETE semantics.
+
+The initial version mismatch was a descriptive VER_FLG_BASE label:
+`bazel-out/freebsd-opt/bin/libexec/rtld-elf/librtld.so` versus `ld-elf.so.1.full`.
+The maintained [LLD implementation](../../../contrib/llvm-project/lld/ELF/SyntheticSections.cpp)
+emits that name from getFileDefName: SONAME when present, otherwise its output
+filename, with index 1 and VER_FLG_BASE. The maintained
+[rtld implementation](../../../libexec/rtld-elf/rtld.c) explicitly skips BASE entries
+in rtld_verify_object_versions when constructing its public version table.
+The checker therefore retains BASE separately from public version names. It
+validates the BASE structure, compares presence, and requires a named library's
+BASE label to match its SONAME. For SONAME-less objects it reports both differing
+labels and `version_base_names_equal=false`. Public version names, dynamic symbol
+versions and requirements remain exact. Whole-file/section differences remain
+visible and are not parity acceptance. This changes qualification semantics, not
+linked payloads or the rtld producer rule. Native bootstrap, reproducibility,
+cache/sandbox and full ABI/debug/runtime gates are not established by this check.
+
+`/usr/obj/usr/src/bazel-sonameless-host-tests-r2-20261114/result.json` passes 89 host
+cases with unchanged source bindings: 33 metadata cases, 22 archive/context cases,
+30 DOF cases and four stream cases. Cases cover explicit/default SONAME behavior,
+one-sided names, public version drift, invalid BASE/duplicate version records,
+BASE presence and named identity, hardening, flags, PIE and dependencies. The
+first new hardening test exposed the old parser's first-FLAGS_1-only behavior;
+it now rejects duplicate flag tags and tests valid PIE drift independently.
+R1's 88-case run predates the final explicit dynamic flag comparison.
+
+`/usr/obj/usr/src/bazel-artifact-contract-request-r1-20261114/inputs.json` combines
+all four native test roots for execution through the fresh maintained C frontend
+once the current Make world control releases the global lock. No new C/CLI input
+or native dependency file is required for these existing test roots. The helper
+and build-bsd manual are updated together. Earlier whole-index evidence remains
+unchanged; selected runtime-linker metadata acceptance does not turn the old
+kernel/program contract failure or full package byte diagnostics into a pass.

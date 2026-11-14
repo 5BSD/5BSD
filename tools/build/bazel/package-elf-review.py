@@ -134,7 +134,8 @@ def review_pair(name, reference, candidate, inventory, args):
                     # programs and static executables; no pathname whitelist.
                     program = '[Requesting program interpreter:' in raw or elf_type == 2
                     metadata = checker.parse_program(raw, program=program,
-                                                     static=program and '[Requesting program interpreter:' not in raw)
+                                                     static=program and '[Requesting program interpreter:' not in raw,
+                                                     allow_missing_soname=not program)
                     if program:
                         result['comparison'] = checker.compare_program(args.readelf, args.objcopy,
                             product, baseline, work, static=metadata['interpreter'] is None)

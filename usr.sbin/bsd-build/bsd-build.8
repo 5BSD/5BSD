@@ -5957,6 +5957,17 @@ rejects missing, extra or ambiguous identities; libc uses configured source-owne
 composition sections for this interface. The checker recognizes original Make
 .Pa .pico
 member spelling while preserving full symbol and member-order checks.
+Shared-object metadata accepts an explicit SONAME or explicit absence on both
+inputs; ordinary named-library checks still require their declared SONAME.
+Dependencies, imports/exports, public symbol versions, dynamic flags and hardening
+remain checked. Duplicate dynamic flag tags and PIE-marked shared objects are
+rejected. GNU VER_FLG_BASE is a descriptive linker-output identity that rtld skips
+when constructing its symbol-version table. Its raw name and equality are reported
+separately; a named library's base identity must match its SONAME. For SONAME-less
+objects the base labels may differ, with base presence still checked. Section and
+byte differences remain in the report; this metadata contract does not establish
+whole-file, instruction, debug or full ABI parity.
+.Pp
 Relocatable ELF payloads use the maintained boot-object contract: exact allocated
 section bytes and metadata, external symbol fields and symbol-resolved relocation
 records. Repeated section names retain occurrence identities. Debug-only data is

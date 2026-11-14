@@ -32,7 +32,11 @@ def run(argv):
                           text=True, check=True, env=ENV).stdout
 
 
-def parse_program(text, program=True, static=False):
+def parse_program(text, program=True, static=False, *, allow_missing_soname=False):
+    if type(allow_missing_soname) is not bool:
+        raise ValueError("missing SONAME selection must be boolean")
+    if program and allow_missing_soname:
+        raise ValueError("missing SONAME selection requires a shared object")
     def field(label):
         values = re.findall(r'^\s*' + re.escape(label) + r':\s*(.+)$', text, re.M)
         if len(values) != 1:
@@ -49,11 +53,17 @@ def parse_program(text, program=True, static=False):
             raise ValueError('static program has dynamic linking metadata')
     if program and not static and len(interp) != 1:
         raise ValueError('program interpreter metadata ambiguous')
-    if not program and (interp or len(sonames) != 1):
+    if not program and (interp or len(sonames) > 1 or (not allow_missing_soname and len(sonames) != 1)):
         raise ValueError('shared object needs one SONAME and no interpreter')
     if len(stack) != 1 or not loads or len(needed) != len(set(needed)):
         raise ValueError('stack, LOAD or NEEDED metadata ambiguous')
     flags1 = re.findall(r'\(FLAGS_1\)\s+(.*)$', text, re.M)
+    flags = re.findall(r'\(FLAGS\)\s+(.*)$', text, re.M)
+    if len(flags1) > 1 or len(flags) > 1:
+        raise ValueError('ambiguous ELF dynamic flags')
+    def flag_names(rows):
+        text = rows[0].removeprefix('Flags:').strip() if rows else ''
+        return sorted(word for word in text.split() if word not in ('None', 'none', '0x0'))
     imports, exports = set(), set()
     for line in text.splitlines():
         match = re.match(r'^\s*\d+:\s+\S+\s+\d+\s+(\w+)\s+(\w+)\s+(\w+)\s+(\w+)\s+(\S+)', line)
@@ -75,18 +85,40 @@ def parse_program(text, program=True, static=False):
                 raise ValueError('version requirement without provider file')
             requirements.add((provider, match.group(1)))
     requirements = sorted(requirements)
-    # Version definitions (a versioned library exports name@VERSION).
-    definitions = sorted(set(re.findall(r'^\s*0x[0-9a-f]+:\s+Rev:\s+\d+\s+Flags:\s+\S+\s+'
-                                        r'Index:\s+\d+\s+Cnt:\s+\d+\s+Name:\s+(\S+)', text, re.M)))
+    # VER_FLG_BASE names the link output, not a public symbol version. The
+    # runtime loader explicitly skips it when constructing its version table
+    # (rtld.c: rtld_verify_object_versions). Preserve it as descriptive metadata.
+    version_rows = re.findall(r'^\s*0x[0-9a-f]+:\s+Rev:\s+(\d+)\s+Flags:\s+(.*?)\s+'
+                              r'Index:\s+(\d+)\s+Cnt:\s+(\d+)\s+Name:\s+(\S+)\s*$', text, re.M)
+    if len(version_rows) != len(re.findall(r'^\s*0x[0-9a-f]+:\s+Rev:', text, re.M)):
+        raise ValueError('unsupported version definition row')
+    definitions, bases, indexes = [], [], set()
+    for revision, flags, index, count, name in version_rows:
+        index = int(index)
+        if revision != '1' or not index or index in indexes or int(count) < 1:
+            raise ValueError('invalid or duplicate version definition')
+        indexes.add(index)
+        if 'BASE' in flags.split():
+            if flags != 'BASE' or index != 1 or count != '1':
+                raise ValueError('invalid base version definition')
+            bases.append(name)
+        else:
+            if index == 1 or name in definitions:
+                raise ValueError('invalid or duplicate public version definition')
+            definitions.append(name)
+    if len(bases) > 1:
+        raise ValueError('ambiguous base version definition')
+    definitions.sort()
     search_paths = re.findall(r'\((RPATH|RUNPATH)\)[^\n]*\[(.*)\]\s*$', text, re.M)
     if len(search_paths) != len(re.findall(r'\((?:RPATH|RUNPATH)\)', text)):
         raise ValueError('unsupported runtime search path metadata')
     return {'class': field('Class'), 'data': field('Data'), 'osabi': field('OS/ABI'),
             'machine': field('Machine'), 'type': field('Type').split()[0],
             'interpreter': interp[0] if interp else None, 'soname': sonames[0] if sonames else None,
-            'version_definitions': definitions,
+            'version_definitions': definitions, 'version_base_definition': bases[0] if bases else None,
             'needed_order': needed, 'needed': sorted(needed),
             'pie': bool(flags1 and 'PIE' in flags1[0].split()),
+            'dynamic_flags': flag_names(flags), 'dynamic_flags_1': flag_names(flags1),
             'relro': bool(re.search(r'^\s*GNU_RELRO\s', text, re.M)),
             'now': bool(re.search(r'\(FLAGS(?:_1)?\)[^\n]*\b(?:BIND_NOW|NOW)\b', text)),
             'textrel': bool(re.search(r'\(TEXTREL\)|\(FLAGS\)[^\n]*\bTEXTREL\b', text)),
@@ -191,19 +223,23 @@ def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
     for key, path in (('candidate', candidate), ('make_reference', reference)):
         text = run([readelf, '-h', '-l', '-d', '-W', '--dyn-syms', '--version-info', path])
         records[key] = {'path': str(path), 'sha256': sha(path),
-                        'metadata': parse_program(text, program=False),
+                        'metadata': parse_program(text, program=False, allow_missing_soname=soname is None),
                         'sections': sections(objcopy, readelf, path, scratch)}
     a, b = records['candidate']['metadata'], records['make_reference']['metadata']
     for label, record in (('candidate', a), ('reference', b)):
         if record['type'] != 'DYN' or record['soname'] != soname:
             raise ValueError(label + ': incorrect shared-object type or SONAME')
+        if record['pie']:
+            raise ValueError(label + ': shared object must not declare PIE executable')
+        if soname is not None and record['version_base_definition'] not in (None, soname):
+            raise ValueError(label + ': base version identity differs from SONAME')
         if not record['relro'] or not record['now']:
             raise ValueError(label + ': RELRO and immediate binding required')
         if any(record[k] for k in ('textrel', 'search_path', 'executable_stack',
                                    'writable_executable_load')):
             raise ValueError(label + ': unsafe or installation-specific ELF metadata')
     for key in ('class', 'data', 'osabi', 'machine', 'soname', 'needed', 'imports', 'exports',
-                'version_definitions', 'version_requirements'):
+                'version_definitions', 'version_requirements', 'dynamic_flags', 'dynamic_flags_1'):
         if a[key] != b[key]:
             raise ValueError('Make shared library metadata mismatch: ' + key + ': ' +
                              json.dumps({'bazel_only': sorted(set(map(str, a[key])) - set(map(str, b[key])))[:20],
@@ -211,11 +247,15 @@ def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
     if a['needed_order'] != b['needed_order']:
         raise ValueError('Make shared library metadata mismatch: needed_order: ' +
                          json.dumps({'candidate': a['needed_order'], 'make': b['needed_order']}))
+    if bool(a['version_base_definition']) != bool(b['version_base_definition']):
+        raise ValueError('Make shared library metadata mismatch: version base presence')
     sa, sb = records['candidate']['sections'], records['make_reference']['sections']
     differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
     return {'scope': 'shared-library-metadata-comparison', 'readelf_sha256': sha(readelf),
             **records, 'needed_order_equal': a['needed_order'] == b['needed_order'],
             'exports_versioned': any('@' in x[0] for x in a['exports']),
+            'version_base_names_equal': a['version_base_definition'] == b['version_base_definition'],
+            'version_base_scope': 'descriptive link-output identity, retained separately from public symbol versions',
             'byte_identical': sha(candidate) == sha(reference),
             'section_names_equal': sorted(sa) == sorted(sb), 'differing_sections': differing,
             'runtime_qualified': False, 'full_abi_parity': False}

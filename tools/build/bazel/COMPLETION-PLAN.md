@@ -11,6 +11,20 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+R6's runtime linker now passes a general explicit SONAME-absence DSO metadata
+contract against the index-verified Make package; named libc passes the same
+checker's strict named-library contract. The parser separates descriptive GNU
+VER_FLG_BASE output labels from public symbol versions, following LLD emission
+and rtld's explicit skip of BASE entries. Raw labels/equality, section differences
+and hashes remain reported. Both sides must have the selected SONAME/absence;
+public versions, dependencies, symbols, dynamic flags and hardening remain strict.
+Duplicate dynamic flag tags, malformed version rows and PIE DSOs are rejected.
+All 89 final host cases pass (33 metadata, 22 archive/context, 30 DOF, four stream).
+The combined native request is prepared for execution after the live current
+Make world build releases its global lock. No producer/runtime bytes or frontend
+flags change. The complete previous indexed report is not retroactively upgraded;
+full ABI/debug/runtime, coherent current Make controls and all wider gates remain.
+
 The frozen R6 PAM archive now passes its ordered member/full-symbol contract
 against the index-verified Make package. Its twenty mapped alias groups include
 nineteen merged groups resolved through validated emitted DOF context, rather
