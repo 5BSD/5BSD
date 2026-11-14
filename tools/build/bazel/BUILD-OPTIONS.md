@@ -128,3 +128,10 @@ bundle mismatch; declarations do not establish a native ARM64 build or parity.
 The component SDK uses an explicitly recorded older Make ARM64 seed plus current
 AMD64 execution SDK R5. A current full ARM64 world, ABI closure and runtime remain
 required. Keep the compiler-input guard strict while fixing dependency selection.
+
+ARM64 CSU R3 subsequently completes and its original-Make comparison passes all
+ten installed startup objects' allocated bytes, symbol/relocation contracts,
+AArch64 identity and logical install metadata. This uses the explicitly recorded
+older component SDK/profile (WITHOUT_BRANCH_PROTECTION), not the required full
+current ARM64 world or every hardening configuration. Debug and runtime remain
+outside this component comparison. See bazel-arm64-csu-parity-r1-20261114.

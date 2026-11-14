@@ -11,6 +11,19 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+ARM64 CSU native R3 now completes successfully, including the real target/host
+preprocessing ABI regression. The independent original-Make comparison passes
+all ten installed startup objects: exact allocated sections, symbols/relocations,
+ELF64 AArch64 relocatable identity and logical installation metadata. The parent
+production archive selects identical child bytes. Evidence is retained under
+/usr/obj/usr/src/bazel-arm64-csu-parity-r1-20261114 with public capture bindings,
+original reference hashes, maintained checker hashes and the driver.
+This is the actual component build with recorded older Make ARM64 seed/profile,
+including WITHOUT_BRANCH_PROTECTION, not a refreshed full ARM64 world, native
+bootstrap, complete DWARF comparison or runtime acceptance. Continue compiler
+runtime/libsys/libc/threads/rtld and full Tier 1 world/kernel/pkgbase/runtime work.
+
+
 Cross-generator correction: SDK staging now declares configured_compile_inputs
 using the execution ABI from the bound host receipt, while retaining the existing
 narrow compile_inputs groups. The generator's explicit compiler-containment guard
