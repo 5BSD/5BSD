@@ -480,7 +480,7 @@ bsd_python_test(name = "package_elf_review_test", src = "package-elf-review-test
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
 
 # SDK target roots and execution compilers are separate explicit inputs.
-bsd_python_test(name = "sdk_source_test", src = "sdk-source-test.py",
+bsd_host_artifact_test(name = "sdk_source_test", src = "sdk-source-test.py",
     data = ["userland_sdk.py", "libmd-stage-tools.py", "python_runtime.py"], size = "small")
 
 # Source-declared bootloader policy retains static symbols after split-debug.
@@ -533,3 +533,7 @@ bsd_host_artifact_test(name = "world_profile_test", src = "world-profile-test.py
     data = ["//share/mk:bsd.srcopt-profile.mk"], tools = ["//usr.bin/bmake:make"],
     args = ["--make", "$(rootpath //usr.bin/bmake:make)",
             "--producer", "$(rootpath //share/mk:bsd.srcopt-profile.mk)"], size = "small")
+
+# Compiler identity must follow the explicit Make world selection.
+bsd_host_artifact_test(name = "world_compiler_identity_test", src = "libmd-environment-test.py",
+    data = ["libmd_environment.py"], size = "small")

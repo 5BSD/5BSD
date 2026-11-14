@@ -17,6 +17,14 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def bind_inputs(bindings, incoming):
+    """One source path has one expected hash across all preparation phases."""
+    for name, value in incoming.items():
+        if name in bindings and bindings[name] != value:
+            raise ValueError('conflicting SDK input binding: ' + name)
+    bindings.update(incoming)
+
+
 def runtime_groups(tool_dependencies):
     """Declare each tool's inspected runtime without adding unrelated libraries."""
     return ['filegroup(name=%s, srcs=%s)' %
@@ -166,27 +174,27 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
             raise ValueError('python_stdlib requires an explicit additional python tool and absolute path')
         python_files,python_extensions,python_info=python_runtime.inventory(origins['extra_python'],settings['python_stdlib'])
     inputs={str(path):digest(path) for path in [*origins.values(),*python_files.values()]}
-    inputs[str(Path(python_runtime.__file__).resolve())]=digest(Path(python_runtime.__file__))
-    inputs.update(environment['input_sha256'])
-    inputs.update({plan['source_origins'][k]:v for k,v in plan['source_sha256'].items()})
+    bind_inputs(inputs, {str(Path(python_runtime.__file__).resolve()):digest(Path(python_runtime.__file__))})
+    bind_inputs(inputs, environment['input_sha256'])
+    for name, value in plan['source_sha256'].items():
+        bind_inputs(inputs, {plan['source_origins'][name]:value})
     for directory in ('usr/include','usr/lib','lib'):
         for current,dirs,files in os.walk(sdk/directory,followlinks=True):
             for name in files:
                 path=Path(current)/name
-                if path.is_file():inputs[str(path)]=digest(path)
+                if path.is_file():bind_inputs(inputs, {str(path):digest(path)})
     for value in ('stdout_redirect_source','readelf','ldd'):
-        path=Path(settings[value]).resolve(strict=True);inputs[str(path)]=digest(path)
-    inputs[str(plan_path)]=digest(plan_path);inputs[str(tools_path)]=digest(tools_path)
-    inputs[str(implementation)]=digest(implementation)
-    inputs[str(Path(userland_sdk.__file__).resolve())]=digest(Path(userland_sdk.__file__))
+        path=Path(settings[value]).resolve(strict=True);bind_inputs(inputs, {str(path):digest(path)})
+    bind_inputs(inputs, {str(plan_path):digest(plan_path)});bind_inputs(inputs, {str(tools_path):digest(tools_path)})
+    bind_inputs(inputs, {str(implementation):digest(implementation)})
+    bind_inputs(inputs, {str(Path(userland_sdk.__file__).resolve()):digest(Path(userland_sdk.__file__))})
     if host is not None:
-        for name, value in {**host['inputs'], **host['execution_host_dependencies'], str(execution_receipt):digest(execution_receipt)}.items():
-            if name in inputs and inputs[name] != value:
-                raise ValueError('target and execution SDK inputs conflict: '+name)
-            inputs[name] = value
-    inputs[str(toolchain_config)]=digest(toolchain_config)
+        bind_inputs(inputs, host['inputs'])
+        bind_inputs(inputs, host['execution_host_dependencies'])
+        bind_inputs(inputs, {str(execution_receipt):digest(execution_receipt)})
+    bind_inputs(inputs, {str(toolchain_config):digest(toolchain_config)})
     validator=implementation.with_name('static_archive_check.py')
-    if python_info:inputs[str(validator)]=digest(validator)
+    if python_info:bind_inputs(inputs, {str(validator):digest(validator)})
     for path,expected in inputs.items():
         if digest(Path(path)) != expected:raise ValueError('input changed before staging: '+path)
     tc=root/'toolchain'
@@ -290,6 +298,8 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
     result['sdk_source'] = {'kind': source_kind, 'root': str(sdk),
                             'plan_format': plan['format']}
     result['compiler_resource_version'] = version
+    if plan['format'] == 3:
+        result['world_compiler_selection'] = {name:environment[name] for name in ['compiler_mode','compiler_selected','compiler_resource','sdk_compiler_resource']}
     result.update(freestanding_metadata)
     if host is not None:
         result.update(format=2, scope='explicit target SDK plus independently bound native execution SDK; no world/runtime qualification',

@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 import shlex
 import shutil
+import libmd_environment
+import userland_sdk
 from libmd_environment import BuildEnvironment
 from libmd_paths import rewrite_includes
 
@@ -34,6 +36,8 @@ def generate(src, output, make, assembly, objtop, profile, component=None, targe
     if target_architecture != 'amd64' and not sdk_only:
         raise ValueError('cross architecture opt-in supports SDK preparation, not the legacy libmd graph')
     buildenv = BuildEnvironment(src, objtop, profile, make, component, target_architecture=target_architecture)
+    if not sdk_only and buildenv.compiler_mode != "staged":
+        raise ValueError("system-compiler worlds require SDK-only export; legacy product graphs are unchanged")
     # All querying is configuration; Bazel actions never execute Make.
     output.mkdir(parents=True)
     if sdk_only:
@@ -41,10 +45,20 @@ def generate(src, output, make, assembly, objtop, profile, component=None, targe
         # An SDK-only plan freezes the real build environment without inventing
         # or advertising a cross libmd source graph.
         (output/'workspace').mkdir()
+        # Resolve LLVM tools only for SDK export. Ordinary Make references do
+        # not acquire an unrelated SDK-tool dependency or PATH fallback.
+        tools = {name:str((buildenv.compiler.resolve(strict=True).parent/name).resolve(strict=True))
+                 for name in userland_sdk.COMPILER_TOOLS}
+        tools['clang'] = str(buildenv.compiler)
+        for path in tools.values():
+            libmd_environment.bind_inputs(buildenv.inputs, {path:sha(Path(path))})
+        for path in [Path(__file__).resolve(), Path(userland_sdk.__file__).resolve()]:
+            libmd_environment.bind_inputs(buildenv.inputs, {str(path):sha(path)})
         buildenv.verify()
-        result = {'format':1, 'scope':'SDK preparation only; no product graph or compilation',
+        result = {'format':3, 'scope':'World-selected compiler SDK preparation only; no product graph or compilation',
                   'source_sha256':{}, 'source_origins':{},
                   'build_environment':buildenv.receipt()}
+        result['build_environment']['compiler_tools'] = tools
         (output/'plan.json').write_text(json.dumps(result,indent=2)+'\n')
         return result
     obj = output / 'query-obj'

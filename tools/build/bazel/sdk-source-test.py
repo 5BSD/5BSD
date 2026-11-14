@@ -80,14 +80,70 @@ class SdkSources(unittest.TestCase):
         for arch in ('amd64','i386','aarch64','riscv64'):
             self.assertTrue(any('standalone_'+arch+'_registered' in line for line in declarations))
 
+    def world(self):
+        return {'format':3, 'build_environment':{
+            'objtop':'/usr/obj/world', 'compiler_mode':'system',
+            'compiler_executable':'/opt/llvm/bin/clang',
+            'compiler_selected':'/usr/obj/world/tmp/legacy/bin/cc',
+            'compiler_resource':'/opt/llvm/lib/clang/21',
+            'sdk_compiler_resource':'/usr/obj/world/tmp/usr/lib/clang/21',
+            'compiler_tools':{name:'/opt/llvm/bin/'+name for name in COMPILER_TOOLS}}}
+
+    def test_world_selected_compiler_is_separate_from_sdk(self):
+        root, compilers, kind = sdk_sources(self.world(), {})
+        self.assertEqual(root, Path('/usr/obj/world/tmp'))
+        self.assertEqual(compilers['clang'], Path('/opt/llvm/bin/clang'))
+        self.assertEqual(kind, 'make-world-selected-tools')
+
+    def test_world_tools_cannot_fall_back_or_be_overridden(self):
+        for name in COMPILER_TOOLS:
+            plan=self.world(); del plan['build_environment']['compiler_tools'][name]
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'complete world compiler'):
+                sdk_sources(plan,{})
+        with self.assertRaisesRegex(ValueError, 'must not override'):
+            sdk_sources(self.world(), {'compiler_tools':{}})
+        plan=self.world();plan['build_environment']['compiler_tools']['clang']='/opt/other/clang'
+        with self.assertRaisesRegex(ValueError, 'differs from selected compiler'):
+            sdk_sources(plan,{})
+
+    def test_world_identity_fields_cannot_be_omitted(self):
+        for field in ['compiler_selected','compiler_executable','compiler_mode','compiler_resource','sdk_compiler_resource','compiler_tools']:
+            plan=self.world(); del plan['build_environment'][field]
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                sdk_sources(plan,{})
+        plan=self.world();plan['build_environment']['compiler_resource']='/'
+        with self.assertRaisesRegex(ValueError, 'versioned world compiler resource'):
+            sdk_sources(plan,{})
+
+    def test_world_resources_and_mode_must_match(self):
+        plan=self.world();plan['build_environment']['sdk_compiler_resource']='/usr/obj/world/tmp/usr/lib/clang/20'
+        with self.assertRaisesRegex(ValueError, 'declared version'):
+            sdk_sources(plan,{})
+        plan=self.world();plan['build_environment']['compiler_mode']='auto'
+        with self.assertRaisesRegex(ValueError, 'explicit world compiler mode'):
+            sdk_sources(plan,{})
+        plan=self.world();plan['format']=1
+        with self.assertRaisesRegex(ValueError, 'requires world-selected'):
+            sdk_sources(plan,{})
+
+    def test_preparer_never_replaces_a_conflicting_input_hash(self):
+        path=Path(__file__).with_name('libmd-stage-tools.py')
+        spec=importlib.util.spec_from_file_location('stage_binding_test',path)
+        stage=importlib.util.module_from_spec(spec);spec.loader.exec_module(stage)
+        original={'/input/compiler':'a'*64}
+        stage.bind_inputs(original, {'/input/compiler':'a'*64})
+        with self.assertRaisesRegex(ValueError, 'conflicting SDK input binding'):
+            stage.bind_inputs(original, {'/input/new':'c'*64, '/input/compiler':'b'*64})
+        self.assertEqual(original, {'/input/compiler':'a'*64})
+
     def test_nonobject_inputs_rejected(self):
         for plan, settings in [(None,{}),([],{}),({},None),({},[])]:
             with self.subTest(plan=plan,settings=settings), self.assertRaisesRegex(ValueError, 'must be objects'):
                 sdk_sources(plan,settings)
 
     def test_unknown_or_boolean_format_rejected(self):
-        for value in [None,True,False,0,3,'2']:
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'format 1 or 2'):
+        for value in [None,True,False,0,4,'2']:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'format 1, 2 or 3'):
                 sdk_sources({'format':value,'build_environment':{}},{})
 
 

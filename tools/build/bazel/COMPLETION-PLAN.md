@@ -11,10 +11,10 @@ is not authorized.
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
 | 2. AMD64 parity/configurations | Full R15 passes 32 tests and captures all 450 selected packages, including the general-helper identity corrections. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
-| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
+| 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Fresh AMD64 R11 and ARM64 R7 snapshots verify all 8,345/16,682 files and actual target/execution ELF roles. Final native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. Fresh reference provider composition, full loader/current SDK/hardening, full DWARF, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The current production Make world and its recorded profile complete; fresh SDK R7 and all ten native startup allocated/symbol/relocation contracts qualify against that reference. Full loader/hardening, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,40 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+SDK preparation now distinguishes staged and explicitly Make-selected system
+compilers. System selection requires matching cached Clang type/resource and
+version macros, a target/sysroot match, and a complete LLVM tool map from the
+resolved compiler directory. Missing tools never fall back to PATH. Plan format
+3 binds these roles and the exporter implementation; ordinary Make references
+do not acquire SDK-only LLVM-tool dependencies. The actual world compiler
+resource and selected target SDK resource are separately recorded, not claimed
+identical (the current target resource also installs ORC headers). This follows
+the explicit target/sysroot/toolchain separation described in the
+[Clang cross-compilation documentation](https://clang.llvm.org/docs/CrossCompilation.html)
+and [Bazel toolchain configuration reference](https://bazel.build/docs/cc-toolchain-config-reference).
+Fresh AMD64 R11 and ARM64 R7 snapshots fully verify source, execution-runtime
+and payload hashes (8,345 and 16,682 files), with host ELF machine 62 and ARM64
+target libc/drti machine 183. Their payload fingerprints equal the earlier
+verified R10/R6 payloads despite corrected provenance. Evidence:
+bazel-world-compiler-sdk-verify-r2-20261114 under /usr/obj/usr/src.
+
+Final native AMD64/ARM64 R3 each passes the two explicit host-test targets:
+seven compiler/world-binding cases and eighteen SDK source/staging cases. Cross
+R1 correctly refused the original generic Python test kind; host-test declarations
+were corrected rather than disabling cross-runner enforcement. Real startup
+objects compile through both SDKs. The complete original Make FILES inventory
+selects ten objects per architecture; all allocated data, symbols and relocations
+match. Final R3 preserves every previously Make-qualified native object byte.
+Raw Make equality remains 0/10 AMD64 and 2/10 ARM64; full DWARF is not qualified.
+Evidence: bazel-world-compiler-sdk-native-{amd64,aarch64}-r3-20261114 and
+bazel-world-compiler-csu-{amd64,arm64}-review-r2-20261114. No ARM64 code executes.
+
+Conflicting input hashes now fail in environment capture, SDK export and staging;
+previous bindings are not overwritten. Direct source-to-copied-payload mapping
+and mutation-during-copy qualification still need explicit coverage as part of
+gate 3. These snapshots remain Make-built seeds, not independent native bootstrap.
+No frontend C argument or production backend default changes.
 
 The maintained ARM64 production world run 20261114T131536Z-76523 completed
 successfully at 14:23:19 UTC (4,063 seconds, 16 CPUs), source 685a13fd21e.

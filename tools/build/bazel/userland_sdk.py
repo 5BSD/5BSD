@@ -19,6 +19,7 @@ COMPILER_TOOLS = ('clang', 'cpp', 'ld.lld', 'llvm-ar', 'llvm-nm', 'llvm-objcopy'
 def sdk_sources(plan, settings):
     """Resolve versioned SDK inputs without running Make or selecting host tools.
 
+    Format 3 binds the actual compiler tools selected for a Make world.
     Format 1 is the existing Make-object adapter. Format 2 separates the target
     SDK root from an explicit map of execution compiler tools, including for
     cross SDKs. An explicit root does not certify how its bytes were produced.
@@ -26,8 +27,8 @@ def sdk_sources(plan, settings):
     if not isinstance(plan, dict) or not isinstance(settings, dict):
         raise ValueError('SDK plan and tool settings must be objects')
     version = plan.get('format')
-    if type(version) is not int or version not in (1, 2):
-        raise ValueError('SDK plan format 1 or 2 required')
+    if type(version) is not int or version not in (1, 2, 3):
+        raise ValueError('SDK plan format 1, 2 or 3 required')
     environment = plan.get('build_environment')
     if not isinstance(environment, dict):
         raise ValueError('SDK build environment required')
@@ -39,7 +40,29 @@ def sdk_sources(plan, settings):
             raise ValueError('canonical absolute ' + label + ' required')
         return Path(value)
 
-    if version == 1:
+    if version == 3:
+        if 'sdk_root' in environment or 'compiler_tools' in settings:
+            raise ValueError('world-selected SDK must not override its tool map or root')
+        root = absolute(environment.get('objtop'), 'Make object root') / 'tmp'
+        values = environment.get('compiler_tools')
+        if environment.get('compiler_mode') not in ('staged', 'system'):
+            raise ValueError('explicit world compiler mode required')
+        if not isinstance(values, dict) or set(values) != set(COMPILER_TOOLS):
+            raise ValueError('complete world compiler tool map required')
+        compilers = {name:absolute(values[name], 'world compiler tool path') for name in COMPILER_TOOLS}
+        if compilers['clang'] != absolute(environment.get('compiler_executable'), 'world compiler executable'):
+            raise ValueError('world compiler tool map differs from selected compiler')
+        absolute(environment.get('compiler_selected'), 'world selected compiler alias')
+        world_resource = absolute(environment.get('compiler_resource'), 'world compiler resource')
+        if not world_resource.name:
+            raise ValueError('versioned world compiler resource required')
+        resource = absolute(environment.get('sdk_compiler_resource'), 'SDK compiler resource')
+        if resource != root / 'usr/lib/clang' / world_resource.name:
+            raise ValueError('world SDK compiler resource differs from its declared version')
+        kind = 'make-world-selected-tools'
+    elif version == 1:
+        if environment.get('compiler_mode', 'staged') != 'staged':
+            raise ValueError('system compiler requires world-selected SDK plan format 3')
         if 'sdk_root' in environment or 'compiler_tools' in settings:
             raise ValueError('explicit SDK roots/compiler maps require plan format 2')
         root = absolute(environment.get('objtop'), 'Make object root') / 'tmp'

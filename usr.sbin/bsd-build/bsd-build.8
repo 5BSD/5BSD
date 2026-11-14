@@ -8622,3 +8622,25 @@ recipe audit. Runtime-object and execution-generator freshness are separate;
 receipt/digest checks and component parity do not establish verified boot,
 compromised-root protection or full ARM64 runtime qualification.
 This qualification-helper input does not change the normal build-bsd backend.
+
+.Ss Make world compiler selection for SDK preparation
+SDK-only plan format 3 records the actual compiler used by the reference world
+and an explicit LLVM utility map selected for the SDK.
+A staged compiler retains the staged-resource check.
+A system compiler is accepted only when Make explicitly selects
+USING_SYSTEM_COMPILER=yes and its Clang identity, version, target and reported
+resource directory agree with the recorded world metadata.
+Host-tool symlinks are resolved before binding the executable; missing LLVM
+tools are errors, without a PATH fallback.
+The compiler resource reported by the world and the staged SDK resource are
+recorded separately. The latter remains the declared target SDK input used by
+Bazel; this does not claim byte identity of the two resource inventories.
+These plans do not certify native bootstrap, filesystem sandboxing or runtime.
+Existing format-5 frontend workspace/receipt inputs remain unchanged.
+
+Conflicting source hashes fail during world capture, SDK export and staging;
+a later phase must not replace an earlier binding.
+Current AMD64 and ARM64 qualification executes the metadata checks as explicit
+host tests and compares all Make-selected startup object contracts.
+This does not establish full DWARF equality, independent native bootstrap,
+complete mutation-during-copy coverage, or ARM64 runtime behavior.
