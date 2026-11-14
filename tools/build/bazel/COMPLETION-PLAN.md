@@ -11,6 +11,23 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+Seven-module source-identity follow-up R3 now builds all 21 module/full/debug
+outputs and passes the maintained inventory test. Independent per-module review
+retains only allocated GNU build-ID digest differences for if_lio, jedec_dimm,
+p2sb, sdio, superio, tcp_bbr and tcp_rack: all other allocated contracts,
+relocations and external symbols match Make. All seven CTF payloads are byte
+exact; all native split-debug checks pass and each native binary/debug build ID
+matches its own pair. Strict comparison still returns review-required; no build-ID
+waiver or completed module acceptance is claimed. Evidence is retained in
+/usr/obj/usr/src/bazel-module-source-identity-review-r1-20261114, with public
+capture bindings, original Make references and checker/driver hashes.
+The source correction declares each module's relative source-directory identity
+from its maintained recipe, uses lexical repository-prefix mapping at compile
+time and preserves the default canonical policy elsewhere. No product action
+queries Make and no ELF bytes are rewritten. Shared AMD64/cross declarations
+support the input; cross-module builds/runtime are not established by this run.
+
+
 Configured-output query correction: the seven-module follow-up exposed two
 configurations for the export-all superio alias (trimmed and untrimmed test
 fragments). The strict inventory correctly rejected duplicate actual labels.

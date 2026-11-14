@@ -8483,3 +8483,11 @@ This avoids ambiguous trimmed/untrimmed alias configurations without ignoring
 duplicate results, incompatible targets or unbound selectors.
 The existing format-5 workflow and strict artifact capture remain in use;
 Make remains the production/default backend.
+
+.Pp
+Module source declarations can explicitly preserve a module-relative source
+directory's logical identity. Compiler prefix maps cover source files and their
+included headers; other modules retain canonical source identity.
+The seven affected AMD64 module builds match Make except for reported GNU build-ID
+digests, with exact CTF and passing native debug bindings. That remaining identity
+review is not waived. No ELF output is rewritten and no frontend C option changes.
