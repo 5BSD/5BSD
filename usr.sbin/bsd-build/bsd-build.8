@@ -8607,3 +8607,11 @@ public-client linking and NOSSP component checks do not qualify the complete
 ARM64 loader or normal-system runtime.
 Existing format-5 architecture/SDK inputs select these rules. Make remains the
 production backend pending all closeout gates.
+
+.Pp
+Original Make comparisons can bind a fresh Make-built DTrace registration object
+through the maintained reference helper's explicit runtime input and metadata
+recipe audit. Runtime-object and execution-generator freshness are separate;
+receipt/digest checks and component parity do not establish verified boot,
+compromised-root protection or full ARM64 runtime qualification.
+This qualification-helper input does not change the normal build-bsd backend.

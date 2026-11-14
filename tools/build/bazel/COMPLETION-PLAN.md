@@ -33,6 +33,42 @@ six gates. The normal build-bsd backend remains Make; no frontend option changed
 
 ## Current closeout execution (2026-11-14)
 
+The maintained original-Make reference producer now accepts an explicit
+--dtrace-runtime-input manifest (format 1, one receipt/object binding), requiring
+--make-meta. It validates the original Make component/target/compiler provenance,
+receipt and object digests, canonical regular object-tree path and target ELF64
+ET_REL ABI. It rechecks runtime, manifest, receipt, compiler and generator inputs
+around each phase and at completion. Completed direct DTrace -G metadata recipes
+must select exactly the bound syslibdir; missing/duplicate/conflicting selections
+fail. The reference points directly to the original Make object, without SDK
+mutation or native Bazel outputs used as Make inputs.
+
+All four maintained reference option/generator/library/runtime test targets pass
+in bazel-reference-runtime-tests-r1-20261114. New runtime regression coverage
+checks seven cases plus invalid provenance/ABI/digest/recipe subcases. A fresh
+independent optimized-production ARM64 libc reference passes with all three
+regular/PIC/NOSSP provider recipes selecting the current Make-built drti:
+bazel-arm64-libc-current-runtime-make-r1-20261114. Its complete archive symbol
+graphs now match; provider non-DOF allocated code/data matches, including the
+registration-state guard. Static/PIC orders remain 1,450/1,438 and shared metadata
+passes. Raw provider DOF differences remain recorded, not relabeled byte parity,
+in bazel-libc-compose-arm64-current-runtime-review-r1-20261114.
+
+Further inspection isolates a separate stale generator input: the cached
+original Make cross-DTrace generator still emits DOF_SECT_UTSNAME (1,280 bytes),
+which the current dt_dof.c intentionally excludes for provider -G output. Native
+Bazel's source-built generator already has the current behavior. Text relocations
+also reflect the resulting __SUNW_dof object-size difference. A fresh current ARM64
+Make world/bootstrap baseline is therefore next; do not ignore this field or
+modify either compiled output to make the comparison pass. The reference build
+still uses the explicitly older seed/profile and is not a current full ARM64
+world/hardening/runtime result.
+Existing build-bsd format-5 inputs select the tests and native producers. This is
+a maintained comparison-helper input, with no C frontend option, production
+backend, signing or publication-default change. Make stays production/default;
+all six gates remain open and no host installation or reboot is performed.
+
+
 ARM64 libc_nonshared now selects the actual portable CPU boundary. All twelve
 members match the independent current-source original Make archive, including
 allocated sections, external symbols and relocations. Its staged archive payload

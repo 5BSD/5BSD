@@ -283,3 +283,17 @@ symbol inspection requests LLVM special symbols so AArch64 cannot hide DTrace
 aliases; original Make NOSSP member names remain accepted. The maintained
 `archive_symbol_visibility_test` runs real host nm on independent AMD64/ARM64
 fixtures and is explicitly permitted as host artifact inspection in cross runs.
+
+### Original Make DTrace runtime references
+
+`install-reference.py --dtrace-runtime-input FILE --make-meta` takes a format-1
+JSON object containing `runtime` with `receipt`, `receipt_sha256`, `artifact`
+(relative to that receipt), and `artifact_sha256`. The artifact must be the
+original Make drti component's regular target ELF64 `drti.o` in its object tree.
+The compiler and target must match the selected reference environment.
+
+The helper selects that directory through Make's existing DTrace syslibdir input
+and audits completed direct provider-link metadata recipes. It records and
+rechecks input hashes; it neither overwrites the SDK nor admits Bazel artifacts
+as an original Make runtime. This does not refresh the execution generator or
+establish a hermetic reference closure; both remain separately bound inputs.

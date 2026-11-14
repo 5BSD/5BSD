@@ -108,7 +108,7 @@ bsd_python_test(
 bsd_python_test(
     name = "install_reference_options_test",
     src = "install-reference-options-test.py",
-    data = ["directory_metadata.py", "install_reference_options.py", "install_reference_libraries.py", "install_reference_generators.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
+    data = ["directory_metadata.py", "install_reference_options.py", "install_reference_libraries.py", "install_reference_generators.py", "install_reference_dtrace.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
 )
 
 # Includes rejection of foreign userland and unqualified target execution.
@@ -525,3 +525,6 @@ bsd_host_artifact_test(name = "archive_symbol_visibility_test",
     tools = ["@bsd_sdk//toolchain:bin/llvm-nm"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-nm_runtime"],
     args = ["--nm", "$(rootpath @bsd_sdk//toolchain:bin/llvm-nm)"], size = "small")
+
+bsd_python_test(name = "install_reference_dtrace_test", src = "install-reference-dtrace-test.py",
+    data = ["install_reference_dtrace.py", "install_reference_libraries.py"], size = "small")

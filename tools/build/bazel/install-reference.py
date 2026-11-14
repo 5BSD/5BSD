@@ -16,6 +16,7 @@ import libmd_environment
 import install_reference_options
 import install_reference_libraries
 import install_reference_generators
+import install_reference_dtrace
 from libmd_environment import BuildEnvironment, digest
 
 
@@ -55,7 +56,11 @@ def main():
                         help="explicit original archive/shared ELF receipt bindings; no SDK copies")
     parser.add_argument("--generator-inputs", type=Path,
                         help="explicit original native Make generator receipt/executable bindings; requires metadata")
+    parser.add_argument("--dtrace-runtime-input", type=Path,
+                        help="explicit original Make drti receipt/object binding; requires metadata")
     args = parser.parse_args()
+    if args.dtrace_runtime_input and not args.make_meta:
+        parser.error("--dtrace-runtime-input requires --make-meta")
     if args.generator_inputs and not args.make_meta:
         parser.error('--generator-inputs requires --make-meta')
     if args.build_utc is not None and not 0 <= args.build_utc <= 2**63 - 1:
@@ -141,6 +146,19 @@ def main():
         identity = environment.query(['-V', 'OBJTOP', '-V', 'MACHINE', '-V', 'MACHINE_ARCH', '-V', '${CC}'], component=src / 'lib/libmd').splitlines()
         if len(identity) != 4 or identity[:3] != [str(objtop), environment.assignments['TARGET'], environment.assignments['TARGET_ARCH']] or shlex.split(identity[3]) != environment.cc:
             raise ValueError('generator binding changed selected SDK/compiler identity')
+    dtrace_runtime, dtrace_bindings, dtrace_generator = None, {}, []
+    if args.dtrace_runtime_input:
+        dtrace_runtime, dtrace_bindings = install_reference_dtrace.load(
+            args.dtrace_runtime_input, args.target_arch, src, Path(environment.compiler_selected))
+        runtime_flag = '-x syslibdir=' + dtrace_runtime['syslibdir']
+        environment.options.append('_DTRACE_SYSROOT_FLAG=' + runtime_flag)
+        if environment.query(['-V', '_DTRACE_SYSROOT_FLAG']).strip() != runtime_flag:
+            raise ValueError('original DTrace runtime selection is ineffective')
+        dtrace_generator = shlex.split(environment.query(['-V', 'DTRACE']).strip())
+        if not dtrace_generator:
+            raise ValueError('original DTrace generator is not configured')
+        generator = install_reference_libraries.safe_path(dtrace_generator[0], True)
+        dtrace_bindings[str(generator)] = digest(generator)
     library_inputs, library_bindings = {}, {}
     audit_library_links = False
     if args.library_inputs:
@@ -194,7 +212,8 @@ def main():
                        str(Path(libmd_environment.__file__).resolve()): digest(Path(libmd_environment.__file__)),
                        str(Path(install_reference_options.__file__).resolve()): digest(Path(install_reference_options.__file__)),
                        str(Path(install_reference_libraries.__file__).resolve()): digest(Path(install_reference_libraries.__file__)),
-                       str(Path(install_reference_generators.__file__).resolve()): digest(Path(install_reference_generators.__file__))}
+                       str(Path(install_reference_generators.__file__).resolve()): digest(Path(install_reference_generators.__file__)),
+                       str(Path(install_reference_dtrace.__file__).resolve()): digest(Path(install_reference_dtrace.__file__))}
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference' if args.target_arch == 'amd64' else 'cross-Make-installation-reference', 'target_architecture': args.target_arch,
                'component': str(component), 'jobs': args.jobs, 'installation_phase': args.phase,
                'make_metadata': {'enabled': args.make_meta,
@@ -203,6 +222,8 @@ def main():
                'component_definitions': definitions,
                'library_reference_inputs': library_inputs,
                'generator_reference_inputs': generator_inputs,
+               'dtrace_runtime_reference': dtrace_runtime,
+               'dtrace_runtime_inputs_sha256': dtrace_bindings,
                'build_utc': args.build_utc,
                'local_generated_headers': args.local_generated_header,
                'sdk_reconfigured': False, 'source_hashes': source_hashes,
@@ -219,6 +240,7 @@ def main():
         install_reference_libraries.verify(library_bindings)
         install_reference_libraries.verify_headers(library_inputs)
         install_reference_generators.verify(generator_bindings)
+        install_reference_dtrace.verify(dtrace_bindings)
         log = output / (label + '.log')
         with log.open('w') as stream:
             result = subprocess.run(command, env=build_environment, stdout=stream, stderr=subprocess.STDOUT)
@@ -227,6 +249,7 @@ def main():
         install_reference_libraries.verify(library_bindings)
         install_reference_libraries.verify_headers(library_inputs)
         install_reference_generators.verify(generator_bindings)
+        install_reference_dtrace.verify(dtrace_bindings)
         if result.returncode:
             raise RuntimeError(label + ' failed; see ' + str(log))
 
@@ -256,6 +279,9 @@ def main():
             receipt['dependency_header_audit'] = install_reference_libraries.audit_header_dependencies(objects, library_inputs)
         if generator_inputs:
             receipt['generator_recipe_audit'] = install_reference_generators.audit_recipes(objects, generator_inputs)
+        if dtrace_runtime:
+            receipt['dtrace_runtime_recipe_audit'] = install_reference_dtrace.audit_recipes(
+                objects, dtrace_runtime, dtrace_generator)
         if audit_library_links:
             receipt['library_link_audit'] = install_reference_libraries.audit_links(objects, library_inputs)
         flags = ['NO_ROOT=yes', 'DB_FROM_SRC=yes', 'BUILD_PKGS=yes',
@@ -303,6 +329,7 @@ def main():
             receipt['generated_header_audit'] = header_audit['required']
             receipt['equivalent_external_generated_headers'] = header_audit['equivalent_external_generated_headers']
         environment.verify()
+        install_reference_dtrace.verify(dtrace_bindings)
         if {str(p): digest(p) for p in component.rglob('*') if p.is_file()} != source_hashes:
             raise ValueError('component file set or contents changed during baseline')
         for implementation, expected in implementations.items():
