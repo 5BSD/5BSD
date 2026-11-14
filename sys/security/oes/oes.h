@@ -1027,6 +1027,9 @@ struct oes_scope_args {
  * readable; then read(2) returns 0, poll(2) reports POLLHUP and an
  * EVFILT_READ kevent carries EV_EOF.  Like every scope it must be selected
  * before the mode or any subscription and can never be changed.
+ *
+ * Event records are not adjusted for the reader: a jailed reader sees the
+ * jail IDs and hierarchical jail names of the host's view.
  */
 #define OES_SCOPE_JAIL			2
 

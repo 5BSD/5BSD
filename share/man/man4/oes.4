@@ -157,6 +157,8 @@ a caller that named its own jail reads back jail ID 0 and the name
 .Dq 0 .
 They are left zero for a jailed caller reading a scope that was set from
 outside any jail.
+Event records are not adjusted for the reader: a jailed reader sees the jail
+IDs and hierarchical jail names of the host's view.
 It fails with
 .Er ENOENT
 for a client without a jail scope.
