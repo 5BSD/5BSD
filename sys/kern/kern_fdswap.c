@@ -129,14 +129,15 @@ fdswap_receive(struct thread *td, const struct fdswap *sw)
  * Step 3, in the requesting thread: install at the lowest free number
  * with the carried rights and states.  'fdflags' are the per-descriptor
  * open flags of the request (O_CLOEXEC, O_CLOFORK, O_RESOLVE_BENEATH).
- * 'check' (may be NULL) is the front end's last word, called with the
- * table locked and the number allocated (finstall_refed_check): it must
- * not sleep or lock, and its error is the result.  The carrier is
- * consumed whatever the result; EMFILE is the last error.
+ * 'gate' (may be NULL) is the front end's last word, entered with the
+ * table locked and the number allocated and left once the entry is written
+ * (finstall_refed_gate): the front end's "this may still be installed"
+ * holds until the descriptor exists, and its refusal is the result.  The
+ * carrier is consumed whatever the result; EMFILE comes before the gate.
  */
 int
 fdswap_install(struct thread *td, struct fdswap *sw, int fdflags,
-    int (*check)(void *), void *arg, int *fdp)
+    const struct fdinstall_gate *gate, int *fdp)
 {
 	struct prison *pr1, *pr2;
 	int error;
@@ -148,8 +149,8 @@ fdswap_install(struct thread *td, struct fdswap *sw, int fdflags,
 	pr2 = td->td_ucred->cr_prison;
 	if (pr1 != pr2 && pr1->pr_root != pr2->pr_root && pr2 != &prison0)
 		fdflags |= O_RESOLVE_BENEATH;
-	error = finstall_refed_check(td, sw->fs_fp, fdp, fdflags,
-	    &sw->fs_caps, &sw->fs_prop, check, arg);
+	error = finstall_refed_gate(td, sw->fs_fp, fdp, fdflags,
+	    &sw->fs_caps, &sw->fs_prop, gate);
 	if (error != 0)
 		fdswap_release(sw, td);
 	else

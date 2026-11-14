@@ -14,9 +14,15 @@
  * in rangelock_*lock behind a requester whose event only it can answer.
  * foffset and the rangelock are not witness locks; the scan is taken with
  * no dq mutex held.  q_file is compared by address while the queue is not
- * CLOSING; CLOSING is set by the cdevpriv destructor after the file's count
- * hit zero, so a reused address can give one false EDEADLK in that window
+ * CLOSING.  CLOSING is set by the die (dq_queue_die): at the owner's exit,
+ * exec or leaving of a shared table, while the file may still be held, or
+ * from the cdevpriv destructor after the file's count hit zero; in that
+ * last case a reused address can give one false EDEADLK in the window
  * (accepted).
+ * q_owner is written with dq_mtx and q_mtx both held and read with either;
+ * it is cleared in the q_mtx section that sets DQ_Q_DEAD, so an owned queue
+ * is never dead.  The flags obey DIED => CLOSING => DEAD; a queue leaves
+ * dq_queues, and is freed, only once DIED.
  * Nothing sleeps under q_mtx or o_mtx except the waits that release q_mtx:
  * the ev_cv waits and the msleeps on o_inflight, q_requesters and
  * q_pending.  copyin, copyout, uiomove and M_WAITOK allocations happen
@@ -374,7 +380,14 @@ struct dq_queue {
 	struct sx		 q_rdsx;	/* serializes read(2) */
 	u_int			 q_refs;
 	u_int			 q_flags;
-#define	DQ_Q_CLOSING		0x1
+#define	DQ_Q_CLOSING		0x1	/* the controller is gone: fail */
+#define	DQ_Q_DEAD		0x2	/* the die began: no owner, no entry */
+#define	DQ_Q_DIED		0x4	/* the die's teardown is finished */
+#define	DQ_Q_PINNED		0x8	/* opened on a pinned file */
+	struct proc		*q_owner;	/* the opening process, compared
+						   and never dereferenced; NULL
+						   once DEAD */
+	struct thread		*q_dier;	/* runs the die; q_mtx */
 	uint64_t		 q_gid;		/* kernel-wide, never reused */
 	struct file		*q_file;	/* the opener's file, identity only */
 	struct ucred		*q_cred;	/* controller credential */
@@ -434,7 +447,10 @@ extern uint64_t dq_next_gid;
 struct dq_queue *dq_queue_create(struct thread *td, struct file *fp);
 void	dq_queue_hold(struct dq_queue *q);
 void	dq_queue_rele(struct dq_queue *q);
+void	dq_queue_die(struct dq_queue *q);
 void	dq_queue_close(struct dq_queue *q);
+void	dq_queue_owner_gone(struct proc *p);
+int	dq_queue_enter(struct dq_queue *q, struct thread *td);
 int	dq_queue_read(struct dq_queue *q, struct uio *uio, int ioflag);
 int	dq_queue_poll(struct dq_queue *q, int events, struct thread *td);
 int	dq_queue_kqfilter(struct dq_queue *q, struct knote *kn);

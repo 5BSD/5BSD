@@ -21,6 +21,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 
@@ -377,11 +378,11 @@ a_refusals(struct sw *x, const struct dq_event *ev,
 	(void)close(sv[1]);
 	(void)close(kq);
 	/*
-	 * The queue itself: the reply ioctl holds a reference to it, so the
-	 * sole-reference rule refuses it before its type is looked at.  Any
+	 * The queue itself is pinned to this process and goes nowhere: the
+	 * transfer policy refuses it before any other rule sees it.  Any
 	 * other device: not a regular file.
 	 */
-	SW_REFUSED(x, ev, x->c.q, 0, EBUSY);
+	SW_REFUSED(x, ev, x->c.q, 0, ENOTCAPABLE);
 	fd = sw_open("/dev/null", O_RDONLY);
 	SW_REFUSED(x, ev, fd, 0, EOPNOTSUPP);
 	(void)close(fd);
@@ -435,6 +436,20 @@ a_refusals(struct sw *x, const struct dq_event *ev,
 	ATF_REQUIRE(fd2 != -1);
 	SW_REFUSED(x, ev, fd, 0, EBUSY);
 	(void)close(fd2);
+	/* Nor by a reply whose header is refused. */
+	{
+		struct {
+			struct dq_resolve_reply	rr;
+			struct dq_resolve_swap	rw;
+		} r;
+
+		memset(&r, 0, sizeof(r));
+		r.rr.drr_kind = DQ_RESOLVE_SWAP;
+		r.rr.drr_pad0 = 1;
+		r.rw.drw_fd = fd;
+		ATF_CHECK_ERRNO(EINVAL, dq_reply(x->c.q, ev->de_id, 0, &r,
+		    sizeof(r)) == -1);
+	}
 	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
 	(void)close(fd);
 }
@@ -925,6 +940,646 @@ ATF_TC_BODY(swap_emfile, tc)
 }
 
 /*
+ * The supervisor is gone.  Nothing is killed: the program keeps the real
+ * descriptors it holds, a swapped one included, and obtains nothing new
+ * by name.  In these cases the test closes the queue itself and keeps the
+ * program's process descriptor, so the program lives to report: a program
+ * killed with its supervisor would have tested pdfork(2), not the queue.
+ */
+struct sw_gone {
+	int		 held[2];	/* program: my open has returned */
+	int		 gone[2];	/* test: the queue is closed */
+};
+
+/* Serve the queue until the open under test has been answered n times. */
+static void
+sw_serve_answered(struct sw *x, char *buf, int n)
+{
+	struct pollfd pfd;
+	const struct dq_event *ev;
+	ssize_t got;
+
+	while (x->answered < n) {
+		pfd.fd = x->c.q;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		if (poll(&pfd, 1, 30000) <= 0)
+			atf_tc_fail("the program did not ask");
+		while (dq_read_events(x->c.q, buf, SW_BUFSIZE, &got) == 0 &&
+		    got > 0) {
+			for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
+			    ev = dq_event_next(buf, (size_t)got, ev))
+				sw_handle(x, ev);
+		}
+	}
+}
+
+/* Wait until the process sleeps on the named wait channel message. */
+static bool
+sw_wait_wmesg(pid_t pid, const char *wmesg, int ms)
+{
+	struct kinfo_proc kp;
+	size_t len;
+	int mib[4];
+
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_PID;
+	mib[3] = pid;
+	for (; ms > 0; ms -= 10) {
+		len = sizeof(kp);
+		if (sysctl(mib, nitems(mib), &kp, &len, NULL, 0) == 0 &&
+		    strcmp(kp.ki_wmesg, wmesg) == 0)
+			return (true);
+		dqt_msleep(10);
+	}
+	return (false);
+}
+
+static void
+a_rdwr(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb __unused)
+{
+	int fd;
+
+	fd = sw_open("subst", O_RDWR);
+	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	(void)close(fd);
+}
+
+/*
+ * Case: a swapped descriptor outlives the supervisor.  The program reads
+ * and writes through it after the queue is gone, and every new call that
+ * names a path fails EIO.
+ */
+static void
+p_gone_holder(void *arg, void *result)
+{
+	struct sw_res *res = result;
+	struct sw_gone *g = arg;
+	struct stat st;
+	char b;
+	int fd, fd2;
+
+	RR(res->r[0], fd = open("orig", O_RDWR));
+	b = 'h';
+	(void)write(g->held[1], &b, 1);
+	(void)read(g->gone[0], &b, 1);
+	if (fd == -1)
+		return;
+	RR(res->r[1], pwrite(fd, "AFTER", 5, 0));
+	RR(res->r[2], pread(fd, res->data, sizeof(res->data) - 1, 0));
+	RR(res->r[3], fstat(fd, &st));
+	res->ino = st.st_ino;
+	RR(res->r[4], fd2 = dup(fd));
+	RR(res->r[5], open("orig", O_RDONLY));
+	RR(res->r[6], open("subst", O_RDONLY));
+	RR(res->r[7], stat("subst", &st));
+	RR(res->r[8], close(fd));
+}
+
+ATF_TC_WITHOUT_HEAD(swap_survives_supervisor);
+ATF_TC_BODY(swap_survives_supervisor, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct sw_gone g;
+	struct dqt_achild ch;
+	struct pollfd pfd;
+	struct stat st;
+	char *buf, b;
+	char text[64];
+	int status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	ATF_REQUIRE_EQ(0, stat("subst", &st));
+	sw_init(&x, "orig", a_rdwr);
+	ATF_REQUIRE_EQ(0, pipe(g.held));
+	ATF_REQUIRE_EQ(0, pipe(g.gone));
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+	dqt_attach_spawn(&x.c, &ch, p_gone_holder, &g);
+	sw_serve_answered(&x, buf, 1);
+	pfd.fd = g.held[0];
+	pfd.events = POLLIN;
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 30000));
+	ATF_REQUIRE_EQ(1, read(g.held[0], &b, 1));
+
+	dqt_close_queue(&x.c);
+	ATF_REQUIRE_EQ(1, write(g.gone[1], &b, 1));
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	/* Not killed: it ran to its own exit. */
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the program did not survive, status %#x", status);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK_EQ(5, res.r[1].rv);
+	ATF_CHECK_EQ(10, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "AFTERITUTE", 10));
+	ATF_CHECK_EQ(0, res.r[3].rv);
+	ATF_CHECK_EQ(st.st_ino, res.ino);
+	ATF_CHECK(res.r[4].rv >= 0);
+	/* Nothing new by name: not the swapped name, not any other. */
+	ATF_CHECK_EQ(-1, res.r[5].rv);
+	ATF_CHECK_EQ(EIO, res.r[5].err);
+	ATF_CHECK_EQ(-1, res.r[6].rv);
+	ATF_CHECK_EQ(EIO, res.r[6].err);
+	ATF_CHECK_EQ(-1, res.r[7].rv);
+	ATF_CHECK_EQ(EIO, res.r[7].err);
+	ATF_CHECK_EQ(0, res.r[8].rv);
+	sw_read_file("subst", text, sizeof(text));
+	ATF_CHECK_STREQ("AFTERITUTE", text);
+	sw_read_file("orig", text, sizeof(text));
+	ATF_CHECK_STREQ("ORIGINAL", text);
+	(void)close(g.held[0]);
+	(void)close(g.held[1]);
+	(void)close(g.gone[0]);
+	(void)close(g.gone[1]);
+	free(buf);
+	dqt_fini(&x.c);
+}
+
+/*
+ * Case: the supervisor goes between its reply and the install.  The
+ * program's open asked for O_EXLOCK and the test holds that lock on
+ * another open file of the substitute, so the program, answered, sleeps
+ * in the lock with the swapped file in hand and not yet in its table.
+ * The queue is closed there; then the lock is let go.
+ *
+ * A program whose supervisor is gone is given nothing new: the open fails
+ * EIO, as its lookups do from then on, nothing is installed, and the lock
+ * taken for it goes with the file.
+ */
+static void
+p_exlock_late(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	struct stat st;
+	int fd, next;
+
+	/* The number the open will be given. */
+	next = dup(0);
+	(void)close(next);
+	RR(res->r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+	if (fd != -1) {
+		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		RR(res->r[8], close(fd));
+	} else
+		RR(res->r[4], fcntl(next, F_GETFD));
+	RR(res->r[3], stat("orig", &st));
+}
+
+ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_before_install);
+ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct dqt_achild ch;
+	char *buf;
+	int lockfd, status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	lockfd = open("subst", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(lockfd != -1);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
+	sw_init(&x, "orig", a_regular);
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+	dqt_attach_spawn(&x.c, &ch, p_exlock_late, NULL);
+	sw_serve_answered(&x, buf, 1);
+	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	    "the program is not waiting for the lock");
+
+	dqt_close_queue(&x.c);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the program failed, status %#x", status);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
+	ATF_CHECK_EQ(EIO, res.r[0].err);
+	/* The number the descriptor would have had is still free. */
+	ATF_CHECK_EQ(-1, res.r[4].rv);
+	ATF_CHECK_EQ(EBADF, res.r[4].err);
+	/* The next call by name fails the same way. */
+	ATF_CHECK_EQ(-1, res.r[3].rv);
+	ATF_CHECK_EQ(EIO, res.r[3].err);
+	/* The file was dropped: the lock taken for the program is gone. */
+	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
+	(void)close(lockfd);
+	free(buf);
+	dqt_fini(&x.c);
+}
+
+/*
+ * Case: the same with O_TRUNC.  The first test of the queue is made before
+ * the lock and the truncation and the last as the descriptor is entered;
+ * the queue dies in between, while the program sleeps in the lock.  The
+ * open fails EIO after it has truncated the file, as an open(2) that fails
+ * EMFILE has truncated: the documented remainder.
+ */
+static void
+p_exlock_trunc_late(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	int fd, next;
+
+	next = dup(0);
+	(void)close(next);
+	RR(res->r[0], fd = open("orig", O_WRONLY | O_TRUNC | O_EXLOCK));
+	if (fd != -1)
+		RR(res->r[8], close(fd));
+	else
+		RR(res->r[4], fcntl(next, F_GETFD));
+}
+
+ATF_TC_WITHOUT_HEAD(swap_supervisor_gone_after_trunc);
+ATF_TC_BODY(swap_supervisor_gone_after_trunc, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct dqt_achild ch;
+	char *buf;
+	char text[64];
+	int lockfd, status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	lockfd = open("subst", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(lockfd != -1);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
+	sw_init(&x, "orig", a_wronly);
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+	dqt_attach_spawn(&x.c, &ch, p_exlock_trunc_late, NULL);
+	sw_serve_answered(&x, buf, 1);
+	ATF_REQUIRE_MSG(sw_wait_wmesg(ch.pid, "lockf", 30000),
+	    "the program is not waiting for the lock");
+	/* Nothing is truncated while the open waits for its lock. */
+	sw_read_file("subst", text, sizeof(text));
+	ATF_CHECK_STREQ("SUBSTITUTE", text);
+
+	dqt_close_queue(&x.c);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
+	status = dqt_attach_wait(&ch, &res, sizeof(res));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "the program failed, status %#x", status);
+	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
+	ATF_CHECK_EQ(EIO, res.r[0].err);
+	ATF_CHECK_EQ(-1, res.r[4].rv);
+	ATF_CHECK_EQ(EBADF, res.r[4].err);
+	/* Truncated by the open that then failed; the original untouched. */
+	sw_read_file("subst", text, sizeof(text));
+	ATF_CHECK_STREQ("", text);
+	sw_read_file("orig", text, sizeof(text));
+	ATF_CHECK_STREQ("ORIGINAL", text);
+	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
+	(void)close(lockfd);
+	free(buf);
+	dqt_fini(&x.c);
+}
+
+/*
+ * Case: the same, with the supervisor a process of its own that exits
+ * while a process sharing its descriptor table still holds the queue's
+ * file.  No last close happens: the queue dies of its owner's exit, and
+ * that is enough for the install to be refused.  The program was made
+ * with PD_DAEMON, so nothing but the queue's death reaches it.
+ */
+struct sw_exit_rep {
+	pid_t		 sharer;
+	pid_t		 prog;
+};
+
+static bool
+sw_read_within(int fd, void *buf, size_t len, int ms)
+{
+	struct pollfd pfd;
+
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	if (poll(&pfd, 1, ms) != 1)
+		return (false);
+	return (read(fd, buf, len) == (ssize_t)len);
+}
+
+/* The supervisor process; exits 0 once the program waits in the lock. */
+static void
+sw_exit_supervisor(int rep, int progrep)
+{
+	struct sw_exit_rep er;
+	struct sw_res res;
+	struct stat st;
+	const struct dq_event *ev;
+	const struct dq_resolve_body *rb;
+	const char *path;
+	char *buf, b;
+	ssize_t got;
+	size_t pl;
+	int fd, go[2], keep, pd, q;
+	bool answered;
+
+	buf = malloc(SW_BUFSIZE);
+	q = dq_open();
+	if (buf == NULL || q == -1 || pipe(go) != 0)
+		_exit(20);
+	er.prog = pdfork(&pd, PD_DAEMON);
+	if (er.prog == -1)
+		_exit(21);
+	if (er.prog == 0) {
+		if (read(go[0], &b, 1) != 1)
+			_exit(0);
+		memset(&res, 0, sizeof(res));
+		RR(res.r[1], keep = open("keep", O_RDONLY));
+		RR(res.r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+		/* What it held before, it keeps; by name, nothing new. */
+		RR(res.r[2], read(keep, res.data, sizeof(res.data) - 1));
+		RR(res.r[3], stat("subst", &st));
+		RR(res.r[5], open("keep", O_RDONLY));
+		(void)write(progrep, &res, sizeof(res));
+		_exit(0);
+	}
+	if (dq_attach(q, pd) != 0)
+		_exit(22);
+	er.sharer = rfork(RFPROC);
+	if (er.sharer == -1)
+		_exit(23);
+	if (er.sharer == 0) {
+		for (;;)
+			(void)pause();
+	}
+	if (write(rep, &er, sizeof(er)) != sizeof(er) ||
+	    write(go[1], "g", 1) != 1)
+		_exit(24);
+	for (answered = false; !answered;) {
+		if (dq_read_events(q, buf, SW_BUFSIZE, &got) != 0 || got <= 0)
+			_exit(25);
+		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
+		    ev = dq_event_next(buf, (size_t)got, ev)) {
+			if (ev->de_op != DQ_OP_RESOLVE) {
+				if (ev->de_id != 0)
+					(void)dq_reply(q, ev->de_id, EIO,
+					    NULL, 0);
+				continue;
+			}
+			if (dq_event_resolve(ev, &rb, &path, NULL, NULL,
+			    NULL) != 0)
+				_exit(26);
+			pl = strlen(path);
+			if (rb->drs_op != DQ_ROP_OPEN || pl < 4 ||
+			    strcmp(path + pl - 4, "orig") != 0) {
+				(void)dq_reply_resolve_pass(q, ev->de_id);
+				continue;
+			}
+			fd = open("subst", O_RDONLY | O_CLOEXEC | O_CLOFORK);
+			if (fd == -1 ||
+			    dq_reply_resolve_swap(q, ev->de_id, fd, 0) != 0)
+				_exit(27);
+			(void)close(fd);
+			answered = true;
+		}
+	}
+	if (!sw_wait_wmesg(er.prog, "lockf", 30000))
+		_exit(28);
+	_exit(0);
+}
+
+ATF_TC_WITHOUT_HEAD(swap_owner_exit_before_install);
+ATF_TC_BODY(swap_owner_exit_before_install, tc)
+{
+	struct sw_exit_rep er;
+	struct sw_res res;
+	pid_t pid;
+	int lockfd, prep[2], rep[2], status;
+
+	dqt_require_test_access();
+	dqt_require_plane();
+	ATF_REQUIRE_EQ(0, chmod(".", 0755));
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	sw_write_file("keep", "KEPT", 0644);
+	lockfd = open("subst", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(lockfd != -1);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
+	ATF_REQUIRE_EQ(0, pipe(rep));
+	ATF_REQUIRE_EQ(0, pipe(prep));
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0)
+		sw_exit_supervisor(rep[1], prep[1]);
+	memset(&er, 0, sizeof(er));
+	ATF_REQUIRE_MSG(sw_read_within(rep[0], &er, sizeof(er), 30000),
+	    "no report from the supervisor");
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "supervisor: status %#x", status);
+
+	/* The owner is gone, its table is not: now let the open finish. */
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
+	memset(&res, 0, sizeof(res));
+	ATF_REQUIRE_MSG(sw_read_within(prep[0], &res, sizeof(res), 30000),
+	    "no report from the program");
+	ATF_CHECK_MSG(res.r[1].rv >= 0, "open of keep: %s",
+	    strerror(res.r[1].err));
+	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
+	ATF_CHECK_EQ(EIO, res.r[0].err);
+	ATF_CHECK_EQ(4, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "KEPT", 4));
+	ATF_CHECK_EQ(-1, res.r[3].rv);
+	ATF_CHECK_EQ(EIO, res.r[3].err);
+	ATF_CHECK_EQ(-1, res.r[5].rv);
+	ATF_CHECK_EQ(EIO, res.r[5].err);
+	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
+	(void)kill(er.sharer, SIGKILL);
+	(void)close(lockfd);
+	(void)close(rep[0]);
+	(void)close(rep[1]);
+	(void)close(prep[0]);
+	(void)close(prep[1]);
+}
+
+/*
+ * Case: the same, raced.  The supervisor replies and closes the queue at
+ * once, many times.  Each open either returns the working descriptor (it
+ * was installed before the queue died) or fails EIO with nothing
+ * installed; never anything else.
+ */
+#define	SW_RACE_ROUNDS	200
+
+static void
+a_quick(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb __unused)
+{
+	int fd;
+
+	fd = sw_open("subst", O_RDONLY);
+	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	(void)close(fd);
+}
+
+static void
+p_race_open(void *arg __unused, void *result)
+{
+	struct sw_res *res = result;
+	int fd, next;
+
+	next = dup(0);
+	(void)close(next);
+	RR(res->r[0], fd = open("orig", O_RDONLY));
+	if (fd != -1)
+		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+	else
+		RR(res->r[4], fcntl(next, F_GETFD));
+}
+
+ATF_TC(swap_supervisor_gone_race);
+ATF_TC_HEAD(swap_supervisor_gone_race, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
+ATF_TC_BODY(swap_supervisor_gone_race, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	struct dqt_achild ch;
+	char *buf;
+	int i, installed, refused, status;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	buf = malloc(SW_BUFSIZE);
+	ATF_REQUIRE(buf != NULL);
+	installed = refused = 0;
+	for (i = 0; i < SW_RACE_ROUNDS; i++) {
+		sw_init(&x, "orig", a_quick);
+		ATF_REQUIRE(fcntl(x.c.q, F_SETFL, O_NONBLOCK) != -1);
+		dqt_attach_spawn(&x.c, &ch, p_race_open, NULL);
+		sw_serve_answered(&x, buf, 1);
+		dqt_close_queue(&x.c);
+		status = dqt_attach_wait(&ch, &res, sizeof(res));
+		ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "round %d: the program failed, status %#x", i, status);
+		if (res.r[0].rv >= 0) {
+			installed++;
+			ATF_REQUIRE_EQ_MSG(10, res.r[2].rv,
+			    "round %d: read %ld errno %d", i, res.r[2].rv,
+			    res.r[2].err);
+			ATF_REQUIRE_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
+		} else {
+			refused++;
+			ATF_REQUIRE_EQ_MSG(EIO, res.r[0].err,
+			    "round %d: open errno %d", i, res.r[0].err);
+			ATF_REQUIRE_EQ(-1, res.r[4].rv);
+			ATF_REQUIRE_EQ(EBADF, res.r[4].err);
+		}
+		dqt_fini(&x.c);
+	}
+	printf("installed before the death %d, refused %d\n", installed,
+	    refused);
+	/* A race that only ever went one way has tested one side of it. */
+	ATF_CHECK_MSG(installed > 0 && refused > 0, "the race went one way "
+	    "only: %d installed, %d refused", installed, refused);
+	free(buf);
+}
+
+/*
+ * Case: two files no open could have produced.  open(O_CREAT) of an
+ * existing directory is EISDIR in base, and only an O_PATH | O_NOFOLLOW
+ * open ends at a symbolic link: neither answers any other request.
+ */
+static int types_dir, types_link;
+
+static void
+p_flags_open(void *arg, void *result)
+{
+	struct sw_res *res = result;
+	struct stat st;
+	int fd;
+
+	RR(res->r[0], fd = open("orig", *(int *)arg, 0644));
+	if (fd == -1)
+		return;
+	RR(res->r[1], fstat(fd, &st));
+	res->mode = st.st_mode;
+	RR(res->r[8], close(fd));
+}
+
+static void
+a_types(struct sw *x, const struct dq_event *ev,
+    const struct dq_resolve_body *rb)
+{
+	int fd, flags;
+
+	flags = (int)rb->drs_mode & (O_ACCMODE | O_PATH);
+	if (types_dir) {
+		fd = sw_open("substdir", flags);
+		SW_REFUSED(x, ev, fd, 0, EFTYPE);
+		(void)close(fd);
+	}
+	if (types_link) {
+		fd = sw_open("substlink", O_PATH | O_NOFOLLOW);
+		if (types_link == 1) {
+			SW_REFUSED(x, ev, fd, 0, EFTYPE);
+			(void)close(fd);
+			fd = sw_open("subst", flags);
+		}
+	} else
+		fd = sw_open("subst", flags);
+	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	(void)close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(swap_refused_types);
+ATF_TC_BODY(swap_refused_types, tc)
+{
+	struct sw x;
+	struct sw_res res;
+	int flags;
+
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	ATF_REQUIRE_EQ(0, mkdir("substdir", 0755));
+	ATF_REQUIRE_EQ(0, symlink("subst", "substlink"));
+
+	/* O_CREAT without O_DIRECTORY: not a directory. */
+	types_dir = 1;
+	types_link = 0;
+	flags = O_RDONLY | O_CREAT;
+	sw_init(&x, "orig", a_types);
+	sw_run(&x, p_flags_open, &flags, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK(S_ISREG(res.mode));
+	dqt_fini(&x.c);
+
+	/* O_PATH that follows: not a symbolic link. */
+	types_dir = 0;
+	types_link = 1;
+	flags = O_PATH;
+	sw_init(&x, "orig", a_types);
+	sw_run(&x, p_flags_open, &flags, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK(S_ISREG(res.mode));
+	dqt_fini(&x.c);
+
+	/* O_PATH | O_NOFOLLOW: the link itself. */
+	types_link = 2;
+	flags = O_PATH | O_NOFOLLOW;
+	sw_init(&x, "orig", a_types);
+	sw_run(&x, p_flags_open, &flags, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	ATF_CHECK_MSG(res.r[0].rv >= 0, "open: %s", strerror(res.r[0].err));
+	ATF_CHECK(S_ISLNK(res.mode));
+	dqt_fini(&x.c);
+}
+
+/*
  * Case: DQ_SWAP_F_NOXFER.  The installed entry may not be sent on; an
  * entry installed without the flag may, as a descriptor the program
  * opened itself.
@@ -1009,34 +1664,38 @@ ATF_TC_BODY(swap_noxfer, tc)
 /*
  * Case: a swap answered from a served (proxy) directory.  There the
  * supervisor is the namespace: the open of a name under the directory
- * takes no PASS, and a swapped file is installed with no more rights than
- * the directory descriptor it was opened through, as a real openat(2)
- * from a limited directory descriptor installs.
+ * takes no PASS and is offered SWAP.  Once the program has narrowed the
+ * directory descriptor the lookup is a restricted one: the kernel checks a
+ * served answer against the directory's presented path, has nothing to
+ * check a real file against, and so offers FD alone; a SWAP reply is
+ * EINVAL.  What a limited directory descriptor leaves of the installed
+ * rights is dq_start_test:fd_install_limits, for the FD answer it still
+ * takes.
  */
+static int proxydir_opens;
+static int proxydir_bits;	/* per open: 1 SWAP, 2 FD, 4 PASS offered */
+static int proxydir_swap_errno;
+
 static void
 p_proxydir(void *arg __unused, void *result)
 {
 	struct sw_res *res = result;
-	cap_rights_t dr, fr, lim;
+	cap_rights_t lim;
 	int dfd, fd;
 
 	RR(res->r[0], dfd = open("pdir", O_RDONLY | O_DIRECTORY));
 	if (dfd == -1)
 		return;
-	/* Narrow the directory descriptor: no CAP_WRITE, no CAP_SEEK. */
+	/* Through the directory as the supervisor gave it. */
+	RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
+	if (fd != -1) {
+		RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
+		(void)close(fd);
+	}
+	/* Narrowed: no CAP_WRITE, no CAP_SEEK. */
 	RR(res->r[5], cap_rights_limit(dfd, cap_rights_init(&lim, CAP_LOOKUP,
 	    CAP_READ, CAP_FSTAT)));
-	RR(res->r[1], fd = openat(dfd, "f", O_RDONLY));
-	if (fd == -1)
-		return;
-	RR(res->r[2], read(fd, res->data, sizeof(res->data) - 1));
-	RR(res->r[3], cap_rights_get(dfd, &dr));
-	RR(res->r[4], cap_rights_get(fd, &fr));
-	/* Every right of the file is a right of the directory. */
-	res->flflags = cap_rights_contains(&dr, &fr);
-	res->fdflags = cap_rights_is_set(&fr, CAP_READ);
-	res->kftype = cap_rights_is_set(&fr, CAP_WRITE);
-	(void)close(fd);
+	RR(res->r[6], openat(dfd, "f", O_RDONLY));
 	(void)close(dfd);
 }
 
@@ -1067,13 +1726,24 @@ static void
 a_proxydir_file(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb)
 {
-	int fd;
+	int bits, fd;
 
-	x->after_resolve = 1000;	/* seen */
-	ATF_CHECK(dq_resolve_accepts(rb, DQ_RESOLVE_SWAP));
-	ATF_CHECK(!dq_resolve_accepts(rb, DQ_RESOLVE_PASS));
+	bits = (dq_resolve_accepts(rb, DQ_RESOLVE_SWAP) ? 1 : 0) |
+	    (dq_resolve_accepts(rb, DQ_RESOLVE_FD) ? 2 : 0) |
+	    (dq_resolve_accepts(rb, DQ_RESOLVE_PASS) ? 4 : 0);
+	proxydir_bits |= bits << (4 * proxydir_opens);
 	fd = sw_open("subst", O_RDONLY);
-	ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0));
+	if (proxydir_opens++ == 0) {
+		ATF_CHECK_EQ(0, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
+		    0));
+	} else {
+		/* Not offered: the reply is refused, the event still waits. */
+		errno = 0;
+		(void)dq_reply_resolve_swap(x->c.q, ev->de_id, fd, 0);
+		proxydir_swap_errno = errno;
+		ATF_CHECK_EQ(0, dq_reply_resolve_errno(x->c.q, ev->de_id,
+		    EACCES));
+	}
 	(void)close(fd);
 }
 
@@ -1085,32 +1755,56 @@ ATF_TC_BODY(swap_from_proxy_directory, tc)
 
 	ATF_REQUIRE_EQ(0, mkdir("realdir", 0755));
 	sw_write_file("subst", "SUBSTITUTE", 0644);
+	proxydir_opens = proxydir_bits = proxydir_swap_errno = 0;
 	sw_init(&x, "pdir", a_proxydir);
 	x.name2 = "f";
 	x.answer2 = a_proxydir_file;
 	sw_run(&x, p_proxydir, NULL, &res);
 	ATF_CHECK_MSG(res.r[0].rv >= 0, "open of the served directory: %s",
 	    strerror(res.r[0].err));
-	ATF_CHECK(x.after_resolve >= 1000);
+	ATF_CHECK_EQ(2, proxydir_opens);
+	/* The directory as given: SWAP and FD, no PASS; the swap answers. */
+	ATF_CHECK_EQ_MSG(1 | 2, proxydir_bits & 0xf, "accept bits %#x",
+	    proxydir_bits & 0xf);
 	ATF_CHECK_MSG(res.r[1].rv >= 0, "openat: %s", strerror(res.r[1].err));
-	ATF_CHECK_EQ(0, res.r[3].rv);
-	ATF_CHECK_EQ(0, res.r[4].rv);
-	ATF_CHECK_MSG(res.flflags, "the swapped file has a right its start "
-	    "directory lacks");
+	ATF_CHECK_EQ(10, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
+	/* Narrowed: FD alone, a SWAP reply EINVAL, the errno answer taken. */
 	ATF_CHECK_EQ(0, res.r[5].rv);
-	/*
-	 * The supervisor's entry had every right; the program narrowed the
-	 * directory descriptor first, so CAP_WRITE is not installed.
-	 */
-	ATF_CHECK_EQ(0, res.kftype);
-	if (res.fdflags) {
-		ATF_CHECK_EQ(10, res.r[2].rv);
-		ATF_CHECK_EQ(0, memcmp(res.data, "SUBSTITUTE", 10));
-	} else {
-		ATF_CHECK_EQ(-1, res.r[2].rv);
-		ATF_CHECK_EQ(ENOTCAPABLE, res.r[2].err);
-	}
+	ATF_CHECK_EQ_MSG(2, (proxydir_bits >> 4) & 0xf, "accept bits %#x",
+	    (proxydir_bits >> 4) & 0xf);
+	ATF_CHECK_EQ(EINVAL, proxydir_swap_errno);
+	ATF_CHECK_EQ(-1, res.r[6].rv);
+	ATF_CHECK_EQ(EACCES, res.r[6].err);
 	dqt_fini(&x.c);
+}
+
+/* Send fd over a socket: 0 or errno. */
+static int
+sw_sendfd(int sock, int fd)
+{
+	struct msghdr msg;
+	struct iovec iov;
+	union {
+		struct cmsghdr	hdr;
+		char		buf[CMSG_SPACE(sizeof(int))];
+	} cm;
+	char b;
+
+	memset(&msg, 0, sizeof(msg));
+	memset(&cm, 0, sizeof(cm));
+	b = 'x';
+	iov.iov_base = &b;
+	iov.iov_len = 1;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = cm.buf;
+	msg.msg_controllen = sizeof(cm.buf);
+	cm.hdr.cmsg_len = CMSG_LEN(sizeof(int));
+	cm.hdr.cmsg_level = SOL_SOCKET;
+	cm.hdr.cmsg_type = SCM_RIGHTS;
+	memcpy(CMSG_DATA(&cm.hdr), &fd, sizeof(fd));
+	return (sendmsg(sock, &msg, 0) == -1 ? errno : 0);
 }
 
 /*
@@ -1118,6 +1812,8 @@ ATF_TC_BODY(swap_from_proxy_directory, tc)
  * later reply finds no event (ESRCH); its descriptor stays open and
  * nothing was taken from it.
  */
+static bool killed_once;	/* the answer's entry is CAP_XFER_ONCE */
+
 static void
 a_killed(struct sw *x, const struct dq_event *ev,
     const struct dq_resolve_body *rb __unused)
@@ -1128,12 +1824,14 @@ a_killed(struct sw *x, const struct dq_event *ev,
 	char *buf;
 	size_t bodylen;
 	ssize_t got;
-	int fd, tries;
+	int fd, sv[2], tries;
 	bool interrupted;
 
 	buf = malloc(SW_BUFSIZE);
 	ATF_REQUIRE(buf != NULL);
 	fd = sw_open("subst", O_RDONLY);
+	if (killed_once)
+		ATF_REQUIRE_EQ(0, cap_xfer_limit(fd, CAP_XFER_ONCE));
 	ATF_REQUIRE_EQ(0, pdkill(x->pd, SIGKILL));
 	/* The kernel tells the supervisor the event was abandoned. */
 	interrupted = false;
@@ -1160,6 +1858,21 @@ a_killed(struct sw *x, const struct dq_event *ev,
 	ATF_CHECK_ERRNO(ESRCH, dq_reply_resolve_swap(x->c.q, ev->de_id, fd,
 	    0) == -1);
 	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
+	if (killed_once) {
+		/*
+		 * The event was gone before the reply looked for it, so the
+		 * kernel never took the file and the entry's one transfer is
+		 * still there: it can be sent once, and not twice.  (Only a
+		 * requester that leaves while the kernel holds the file
+		 * costs the entry its transfer, dq(4).)
+		 */
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+		ATF_CHECK_EQ_MSG(0, sw_sendfd(sv[0], fd), "the entry was "
+		    "consumed by a reply that found no event");
+		ATF_CHECK_EQ(ENOTCAPABLE, sw_sendfd(sv[0], fd));
+		(void)close(sv[0]);
+		(void)close(sv[1]);
+	}
 	(void)close(fd);
 	free(buf);
 }
@@ -1172,6 +1885,15 @@ ATF_TC_BODY(swap_requester_killed, tc)
 
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
+	killed_once = false;
+	sw_init(&x, "orig", a_killed);
+	x.expect_killed = true;
+	sw_run(&x, p_plain_open, NULL, &res);
+	ATF_CHECK_EQ(1, x.answered);
+	dqt_fini(&x.c);
+
+	/* The same with a transfer-once entry. */
+	killed_once = true;
 	sw_init(&x, "orig", a_killed);
 	x.expect_killed = true;
 	sw_run(&x, p_plain_open, NULL, &res);
@@ -1238,6 +1960,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swap_exlock);
 	ATF_TP_ADD_TC(tp, swap_trunc);
 	ATF_TP_ADD_TC(tp, swap_program_denied);
+	ATF_TP_ADD_TC(tp, swap_survives_supervisor);
+	ATF_TP_ADD_TC(tp, swap_supervisor_gone_before_install);
+	ATF_TP_ADD_TC(tp, swap_supervisor_gone_after_trunc);
+	ATF_TP_ADD_TC(tp, swap_owner_exit_before_install);
+	ATF_TP_ADD_TC(tp, swap_supervisor_gone_race);
+	ATF_TP_ADD_TC(tp, swap_refused_types);
 	ATF_TP_ADD_TC(tp, swap_created);
 	ATF_TP_ADD_TC(tp, swap_opath_device);
 	ATF_TP_ADD_TC(tp, swap_directory);

@@ -1543,7 +1543,9 @@ bad:
  *			file or a directory (a device's and a FIFO's open
  *			acts in the opener's context, which a swap does not
  *			run for the program)
- *	EFTYPE		type, access mode or status flags differ
+ *	EFTYPE		type, access mode or status flags differ; a
+ *			directory for an O_CREAT without O_DIRECTORY; a
+ *			symbolic link for anything but O_PATH | O_NOFOLLOW
  *	ENOTCAPABLE	O_SHLOCK/O_EXLOCK asked and CAP_FLOCK not transferred
  *	EINVAL		the request's flags are not valid open flags
  * O_CREAT, O_EXCL, and the choice of object are the answering process's
@@ -1572,6 +1574,14 @@ open_swap_admit(struct file *fp, int oflags, const cap_rights_t *rights)
 		if (vp->v_type == VDIR && (fflags & (FWRITE | O_TRUNC)) != 0)
 			return (EFTYPE);
 	}
+	/* vn_open_cred: O_CREAT of an existing directory is EISDIR. */
+	if (vp->v_type == VDIR &&
+	    (fflags & (O_CREAT | O_DIRECTORY)) == O_CREAT)
+		return (EFTYPE);
+	/* A symbolic link is what only O_PATH | O_NOFOLLOW opens. */
+	if (vp->v_type == VLNK && ((fflags & O_NOFOLLOW) == 0 ||
+	    (fflags & FEXEC) != 0))
+		return (EFTYPE);
 	if ((fflags & O_DIRECTORY) != 0 && vp->v_type != VDIR)
 		return (EFTYPE);
 	if (((fp->f_flag ^ fflags) & (OPEN_SWAP_ACCMODE | OPEN_SWAP_STATUS)) !=
@@ -1619,6 +1629,15 @@ open_swap_check(struct thread *td, struct file *fp, int fflags,
 		error = EBADF;
 		goto out;
 	}
+	created = false;
+	if (declared_created && (fflags & (O_CREAT | O_PATH)) == O_CREAT &&
+	    vp->v_type == VREG) {
+		error = VOP_GETATTR(vp, &va, td->td_ucred);
+		if (error != 0)
+			goto out;
+		created = va.va_uid == td->td_ucred->cr_uid &&
+		    (va.va_flags & (IMMUTABLE | APPEND)) == 0;
+	}
 	accmode = 0;
 	if ((fflags & O_PATH) == 0) {
 		if ((fflags & (FWRITE | O_TRUNC)) != 0)
@@ -1628,7 +1647,8 @@ open_swap_check(struct thread *td, struct file *fp, int fflags,
 		if ((fflags & O_APPEND) != 0 && (fflags & FWRITE) != 0)
 			accmode |= VAPPEND;
 #ifdef MAC
-		if ((fflags & O_CREAT) != 0)
+		/* As base, which clears O_CREAT when the file existed. */
+		if (created)
 			accmode |= VCREAT;
 #endif
 	}
@@ -1644,15 +1664,6 @@ open_swap_check(struct thread *td, struct file *fp, int fflags,
 #endif
 	/* The object the open returns, beside the name it asked for. */
 	AUDIT_ARG_VNODE1(vp);
-	created = false;
-	if (declared_created && (fflags & (O_CREAT | O_PATH)) == O_CREAT &&
-	    vp->v_type == VREG) {
-		error = VOP_GETATTR(vp, &va, td->td_ucred);
-		if (error != 0)
-			goto out;
-		created = va.va_uid == td->td_ucred->cr_uid &&
-		    (va.va_flags & (IMMUTABLE | APPEND)) == 0;
-	}
 	if (!created && accmode != 0) {
 		error = VOP_ACCESS(vp, accmode, td->td_ucred, td);
 		if (error != 0)
@@ -1775,8 +1786,14 @@ openatfp(struct thread *td, int dirfd, const char *path,
 
 	if (!(pathseg == UIO_USERSPACE) || !DQRES_ATTACHED_TD(td))
 		return (openatfp_dqimpl(td, dirfd, path, pathseg, flags, mode, lookup_flags, fpp));
+	/*
+	 * A swapped file is installed with the rights and states its carrier
+	 * holds and through the queue's gate (dqres_install): it is not
+	 * offered to a caller that takes the file itself.
+	 */
 	dq_intent_enter_served(td, &dqi, DQ_ROP_OPEN, DQI_USER,
-	    DQ_RACCEPT(DQ_RESOLVE_FD) | DQ_RACCEPT(DQ_RESOLVE_SWAP));
+	    DQ_RACCEPT(DQ_RESOLVE_FD) |
+	    (fpp == NULL ? DQ_RACCEPT(DQ_RESOLVE_SWAP) : 0));
 	dqi.di_cmode = ((mode & ~td->td_proc->p_pd->pd_cmask) & ALLPERMS) &
 	    ~S_ISTXT;
 	dqi.di_mode = flags;

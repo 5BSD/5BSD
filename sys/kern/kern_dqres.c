@@ -1069,6 +1069,13 @@ dq_accept(struct dq_intent *di, struct dq_islot *s, int slot, uint32_t class,
 		return (a);
 	if (served ? (ndp->ni_cnd.cn_flags & OPENNAMED) == 0 : unrestricted)
 		a |= di->di_accept;
+	/*
+	 * D165 checks a served answer against the start's presented path
+	 * after the reply.  A swapped real file has no presented path to
+	 * check, so a restricted lookup is not offered one.
+	 */
+	if (served && (rflags & DQ_RF_NOREAL) != 0)
+		a &= ~DQ_RACCEPT(DQ_RESOLVE_SWAP);
 	return (a);
 }
 
@@ -2895,6 +2902,24 @@ dqres_verify(int flags)
 }
 
 /*
+ * The install gate of the calling thread's queue.  A thread completing a
+ * served answer is attached, and an attachment is never removed; were it
+ * not, there is no queue to ask and the caller fails closed (false).
+ */
+static bool
+dqres_swap_gate(struct thread *td, struct fdinstall_gate *gate)
+{
+	struct dqres *dr;
+
+	dr = atomic_load_ptr(&td->td_proc->p_pd->pd_dqres);
+	KASSERT(dr != NULL, ("dq: a swap completes in an unattached thread"));
+	if (__predict_false(dr == NULL))
+		return (false);
+	dqres_ops->dro_swap_gate(dr->dr_binding, gate);
+	return (true);
+}
+
+/*
  * An FD answer for open (D133, D166, D176, D159): flags are the open
  * flags after openflags().  The checks a real open of the presented file
  * would fail, each with the ufs oracle's errno, then the bind.  Any
@@ -2907,6 +2932,7 @@ dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
 {
 	struct dqres_answer *ans;
 	const struct dq_ident_file *id;
+	struct fdinstall_gate gate;
 	int accmode, error;
 	bool kqok;
 
@@ -2923,7 +2949,19 @@ dqres_take_file(struct thread *td, struct dq_intent *di, int flags,
 		 */
 		KASSERT(ans->da_swap != NULL && ans->da_swap->fs_fp != NULL,
 		    ("dq: take_file of an empty swap"));
-		error = fdswap_receive(td, ans->da_swap);
+		/*
+		 * The supervisor may have gone since it replied.  This
+		 * early test is advisory: it fails the open before the lock
+		 * and the truncation; the gate at the install decides.
+		 */
+		if (!dqres_swap_gate(td, &gate))
+			error = EIO;
+		else
+			error = gate.fg_enter(gate.fg_arg);
+		if (error == 0) {
+			gate.fg_exit(gate.fg_arg);
+			error = fdswap_receive(td, ans->da_swap);
+		}
 		if (error != 0) {
 			dqres_ops->dro_answer_release(td, ans);
 			return (error);
@@ -3043,6 +3081,7 @@ dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
 {
 	struct fdinstall_prop prop = { .fip_xfer_state = CAP_XFER_NONE };
 	struct filecaps fcaps, start, copy, *fc;
+	struct fdinstall_gate gate;
 	struct fdswap *sw;
 	cap_rights_t outside;
 	int error;
@@ -3067,6 +3106,12 @@ dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
 		 * rights, fcntl limit and ioctl list intersected with the
 		 * policy's (or the swapped entry's), as a real openat under
 		 * STRICTREL installs the start's capabilities.
+		 *
+		 * For SWAP this narrows nothing today: a start descriptor
+		 * that is limited in any of the three makes the lookup
+		 * STRICTREL (filecaps_full), and dq_accept withholds SWAP
+		 * from a restricted lookup.  Kept so the rule holds if that
+		 * changes.
 		 */
 		outside = fc->fc_rights;
 		cap_rights_remove(&outside, &di->di_startrights);
@@ -3103,11 +3148,18 @@ dqres_install(struct thread *td, struct dq_intent *di, struct file *fp,
 	if (sw != NULL) {
 		/*
 		 * The carrier gets its file back and is consumed, also on
-		 * failure.  No last check is passed yet: the dead-queue test
-		 * belongs here once the queue has a dead mark.
+		 * failure.  The entry is written through the queue's gate: a
+		 * program whose supervisor is gone is given nothing new, so
+		 * once the queue has died the open fails with EIO, as its
+		 * lookups do, and nothing is installed.
 		 */
 		sw->fs_fp = fp;
-		return (fdswap_install(td, sw, flags, NULL, NULL, fdp));
+		if (!dqres_swap_gate(td, &gate)) {
+			/* No queue to ask: fail closed, as for a dead one. */
+			fdswap_release(sw, td);
+			return (EIO);
+		}
+		return (fdswap_install(td, sw, flags, &gate, fdp));
 	}
 	error = finstall_refed_prop(td, fp, fdp, flags, fc, &prop);
 	if (error != 0) {

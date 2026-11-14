@@ -212,7 +212,7 @@ dq_async_post(struct dq_object *o, vm_object_t obj, vm_page_t *ma, int count,
 	void *va;
 	size_t bodylen, n, off;
 	char *body;
-	int error, i, rv;
+	int error __diagused, i, rv;
 
 	q = o->o_queue;
 	if (write)

@@ -477,6 +477,46 @@ dq_resolve_queue_closed(uint64_t qgid)
 	return (closed);
 }
 
+/*
+ * The install gate of a SWAP answer (dro_swap_gate, finstall_refed_gate).
+ * A queue that has died gives its attached processes nothing new: the
+ * requester's descriptor-table entry is written with q_mtx held and
+ * DQ_Q_CLOSING clear.  The flag is set under q_mtx, in the first section
+ * of the queue's death, so an entry is either written before the queue
+ * died or not written at all, however long the installing thread was
+ * delayed after the reply.  The table lock is taken before q_mtx, the
+ * order dq_caller_holds_queue already has; the binding holds the queue.
+ */
+static int
+dq_swap_gate_enter(void *arg)
+{
+	struct dq_queue *q = arg;
+
+	DQ_LOCK(q);
+	if ((q->q_flags & DQ_Q_CLOSING) != 0) {
+		DQ_UNLOCK(q);
+		dq_resolve_failclosed(q, 1);
+		return (EIO);
+	}
+	return (0);			/* q_mtx held until the exit */
+}
+
+static void
+dq_swap_gate_exit(void *arg)
+{
+
+	DQ_UNLOCK((struct dq_queue *)arg);
+}
+
+static void
+dq_resolve_swap_gate(struct dqres_binding *b, struct fdinstall_gate *g)
+{
+
+	g->fg_enter = dq_swap_gate_enter;
+	g->fg_exit = dq_swap_gate_exit;
+	g->fg_arg = b->db_queue;
+}
+
 static const struct dqres_ops dq_resolve_ops = {
 	.dro_hold = dq_binding_hold,
 	.dro_rele = dq_binding_rele,
@@ -487,11 +527,13 @@ static const struct dqres_ops dq_resolve_ops = {
 	.dro_answer_release = dq_resolve_answer_release,
 	.dro_file_ident = dq_resolve_file_ident,
 	.dro_queue_closed = dq_resolve_queue_closed,
+	.dro_owner_gone = dq_queue_owner_gone,
 	.dro_start = dq_resolve_start,
 	.dro_setattr = dq_resolve_setattr,
 	.dro_target = dq_file_target,
 	.dro_file_kind = dq_file_kind,
 	.dro_file_objid = dq_file_objid,
+	.dro_swap_gate = dq_resolve_swap_gate,
 };
 
 void
@@ -859,7 +901,9 @@ dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id, struct dq_data *dd,
 	    rb->drs_op));
 	mode = (int)rb->drs_mode;
 	DQ_UNLOCK(q);
-	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rw)) {
+	/* Everything dq_resolve_reply_validate refuses, before the take. */
+	if (dd->dd_len != sizeof(struct dq_resolve_reply) + sizeof(*rw) ||
+	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_pad0 != 0) {
 		error = EINVAL;
 		goto refused;
 	}

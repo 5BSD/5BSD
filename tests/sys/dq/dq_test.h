@@ -7,8 +7,8 @@
  * objects from memory; requesters are forked children (D86: until RESOLVE
  * installs served descriptors the minted fd reaches a requester by
  * inheritance, and the controller's own process is refused with EDEADLK).
- * The queue is O_CLOFORK (dq_open), so a child holds the object and not
- * the queue.  Results travel back over a pipe.  The oracle is a real
+ * The queue is pinned to the process that opened it (sc-q), so a child
+ * holds the object and never the queue.  Results travel back over a pipe.  The oracle is a real
  * temporary file holding the same bytes, whose identity the object
  * presents (dq_ident_from_stat); the tests compare the two answers field
  * by field.
@@ -295,7 +295,7 @@ bool	dqt_sync_wait(int fd, int ms);
 /*
  * Resolution (1c).  dqt_attach_spawn pdforks a requester, attaches it to
  * the controller's queue before it runs fn (a child that has not exec'd,
- * holding no queue descriptor: dq_open is O_CLOFORK), and returns its
+ * holding no queue descriptor: no child has one), and returns its
  * process descriptor; dqt_attach_wait collects the result and the exit
  * status.  dqt_find_resolve returns the index (from `from`) of the first
  * recorded RESOLVE whose path or second path contains match, of op (0:

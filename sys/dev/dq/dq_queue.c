@@ -95,6 +95,9 @@ dq_queue_create(struct thread *td, struct file *fp)
 	q->q_file = fp;
 	q->q_cred = crhold(td->td_ucred);
 	q->q_pid = td->td_proc->p_pid;
+	/* Unreachable until listed below: the one store of q_owner. */
+	q->q_owner = td->td_proc;
+	q->q_flags = DQ_Q_PINNED;
 	TAILQ_INIT(&q->q_pending);
 	RB_INIT(&q->q_inflight);
 	RB_INIT(&q->q_objects);
@@ -131,7 +134,7 @@ dq_queue_rele(struct dq_queue *q)
 
 	if (!refcount_release(&q->q_refs))
 		return;
-	KASSERT((q->q_flags & DQ_Q_CLOSING) != 0, ("dq: freeing an open queue"));
+	KASSERT((q->q_flags & DQ_Q_DIED) != 0, ("dq: freeing a live queue"));
 	KASSERT(TAILQ_EMPTY(&q->q_pending) && RB_EMPTY(&q->q_inflight),
 	    ("dq: freeing a queue with events"));
 	KASSERT(RB_EMPTY(&q->q_objects), ("dq: freeing a queue with objects"));
@@ -147,18 +150,29 @@ dq_queue_rele(struct dq_queue *q)
 }
 
 /*
- * The controller closed its last descriptor to the queue: fail closed.
- * Every object is revoked, every waiter woken with EIO, every reader and
- * observer told; the controller is waited for by nothing (I11).  Pending
- * page operations are completed with an error by dq_taskq, the deadline
- * callout is drained without q_mtx, and each object's pages are removed
- * after its own completions (B2): dq's own work, the only wait here.  The
- * memory stays until the last object and observer drop their references,
- * so an object fileop that runs afterwards finds DQ_Q_CLOSING and answers
- * EIO.
+ * The queue dies: its controller is gone, fail closed.  Every object is
+ * revoked, every waiter woken with EIO, every reader and observer told; the
+ * controller is waited for by nothing (I11).  Pending page operations are
+ * completed with an error by dq_taskq, the deadline callout is drained
+ * without q_mtx, and each object's pages are removed after its own
+ * completions (B2): dq's own work, the only wait here.  The memory stays
+ * until the last object and observer drop their references, so an object
+ * fileop that runs afterwards finds DQ_Q_CLOSING and answers EIO.
+ *
+ * A queue dies once.  The die is run by whoever comes first: the owner
+ * where it exits, execs or leaves a shared table (dq_queue_owner_gone), or
+ * the cdevpriv destructor at the last close of the file.  Everyone else
+ * waits here until the teardown is finished, so that on return the queue
+ * has died whichever thread did the work; the wait is for dq's own work
+ * only, as the close's always was, and is not interruptible.  The runner
+ * never waits for itself: nothing in the teardown drops a reference to
+ * the queue's own file, so it cannot re-enter through the destructor.
+ *
+ * The queue stays on dq_queues, counted and listed (flagged closing), until
+ * dq_queue_close.
  */
 void
-dq_queue_close(struct dq_queue *q)
+dq_queue_die(struct dq_queue *q)
 {
 	struct dq_event_list freed;
 	struct dq_event_k *ev, *evtmp;
@@ -167,10 +181,30 @@ dq_queue_close(struct dq_queue *q)
 	u_int i, n, nobjs;
 
 	TAILQ_INIT(&freed);
+	mtx_lock(&dq_mtx);
 	DQ_LOCK(q);
-	q->q_flags |= DQ_Q_CLOSING;	/* no mint from here on */
+	if ((q->q_flags & DQ_Q_DEAD) != 0) {
+		mtx_unlock(&dq_mtx);
+		/*
+		 * Died already, or dying in another thread.  The owner that
+		 * ran the die at its exit comes here again from the last
+		 * close of its own table and finds the teardown finished.
+		 */
+		while ((q->q_flags & DQ_Q_DIED) == 0) {
+			KASSERT(q->q_dier != curthread,
+			    ("dq: the die of queue %p waits for itself", q));
+			msleep(&q->q_dier, &q->q_mtx, 0, "dqdie", 0);
+		}
+		DQ_UNLOCK(q);
+		return;
+	}
+	/* No owner and no mint from here on: one section (dq_queue_enter). */
+	q->q_flags |= DQ_Q_DEAD | DQ_Q_CLOSING;
+	q->q_owner = NULL;
+	q->q_dier = curthread;
 	nobjs = q->q_nobjects;
 	DQ_UNLOCK(q);
+	mtx_unlock(&dq_mtx);
 	objs = nobjs != 0 ? malloc(nobjs * sizeof(*objs), M_DQ, M_WAITOK) :
 	    NULL;
 	n = 0;
@@ -214,6 +248,23 @@ dq_queue_close(struct dq_queue *q)
 	}
 	free(objs, M_DQ);
 
+	DQ_LOCK(q);
+	q->q_flags |= DQ_Q_DIED;
+	wakeup(&q->q_dier);
+	DQ_UNLOCK(q);
+}
+
+/*
+ * The last close of the queue's file (the cdevpriv destructor), or an open
+ * that failed after the queue was made: the queue dies if it has not, then
+ * leaves dq_queues and drops the reference it was created with.
+ */
+void
+dq_queue_close(struct dq_queue *q)
+{
+
+	dq_queue_die(q);
+
 	mtx_lock(&dq_mtx);
 	LIST_REMOVE(q, q_all);
 	dq_nqueues--;
@@ -223,6 +274,72 @@ dq_queue_close(struct dq_queue *q)
 	EVENTHANDLER_INVOKE(dq_queue_closed, q->q_gid);
 	SDT_PROBE1(dq, , , queue__close, q);
 	dq_queue_rele(q);
+}
+
+/*
+ * The owner is gone (DQRES_OWNER_GONE): the process exits, execs or leaves
+ * a descriptor table it shares.  Every queue it owns dies now, whoever
+ * else still holds the queue's file; a holder is answered ENXIO from then
+ * on and the last close only unlists the queue.  The process is
+ * single-threaded here, so it has no queue call in flight and can open no
+ * queue meanwhile; each queue found is dead, hence disowned, when
+ * dq_queue_die returns, which ends the loop.  q_owner is compared, never
+ * dereferenced.
+ *
+ * This function and its four call sites are the whole of "the queue dies
+ * with its owner"; without them a queue dies at the last close alone.
+ */
+void
+dq_queue_owner_gone(struct proc *p)
+{
+	struct dq_queue *q;
+
+	for (;;) {
+		mtx_lock(&dq_mtx);
+		LIST_FOREACH(q, &dq_queues, q_all) {
+			if (q->q_owner == p)
+				break;
+		}
+		if (q == NULL) {
+			mtx_unlock(&dq_mtx);
+			return;
+		}
+		dq_queue_hold(q);
+		mtx_unlock(&dq_mtx);
+		dq_queue_die(q);
+		dq_queue_rele(q);
+	}
+}
+
+/*
+ * Entry to the queue's device operations (read, ioctl, poll, kqfilter):
+ * only the process that opened the queue operates it.  One q_mtx section,
+ * in this order: the calling file is the pinned one (it always is; fail
+ * closed if not), EPERM; the queue has died, ENXIO for every caller; the
+ * caller is not the owner (a process sharing the owner's table, an aio
+ * daemon reading for anyone), EPERM.  The owner's own answers follow
+ * unchanged.  "The owner" is the opening process and anything that can run
+ * system calls in it: this makes no claim against its debugger.
+ */
+int
+dq_queue_enter(struct dq_queue *q, struct thread *td)
+{
+	struct file *fp;
+	int error;
+
+	fp = td->td_fpop;
+	DQ_LOCK(q);
+	if ((q->q_flags & DQ_Q_PINNED) != 0 &&
+	    (fp == NULL || (fp->f_flag & FPINNED) == 0))
+		error = EPERM;
+	else if ((q->q_flags & DQ_Q_DEAD) != 0)
+		error = ENXIO;
+	else if (q->q_owner != td->td_proc)
+		error = EPERM;
+	else
+		error = 0;
+	DQ_UNLOCK(q);
+	return (error);
 }
 
 /*

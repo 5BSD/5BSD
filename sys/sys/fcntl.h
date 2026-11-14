@@ -104,6 +104,9 @@ typedef	__pid_t		pid_t;
 #ifdef _KERNEL
 #define	FHASLOCK	0x4000		/* descriptor holds advisory lock */
 #define	FHASOFDLOCK	0x10000000	/* description has used OFD locks */
+#define	FPINNED		0x80000000	/* pinned to its opener's table: every
+					   entry is closed by fork and exec
+					   and cannot be transferred */
 #endif
 
 /* Defined by POSIX 1003.1; BSD default, but must be distinct from O_RDONLY. */

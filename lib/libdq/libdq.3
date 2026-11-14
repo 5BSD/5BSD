@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 8, 2026
+.Dd November 13, 2026
 .Dt LIBDQ 3
 .Os
 .Sh NAME
@@ -339,12 +339,15 @@ opens
 with
 .Dv O_RDWR | O_CLOEXEC | O_CLOFORK
 and returns the queue descriptor.
-One open is one queue.
-The queue is closed on fork so that a child the controller forks inherits
-the minted descriptors and not the queue; a process whose descriptor table
-holds the queue is refused operations on the queue's objects with
-.Er EDEADLK
-.Pq see Xr dq 4 .
+One open is one queue, owned by the calling process: the descriptor is in
+no child and no exec'd image and cannot be sent, whatever its flags say,
+only the calling process operates the queue, and the queue dies when that
+process exits or execs
+.Pq see Xr dq 4 , Sx The queue descriptor and its owner .
+A child the controller forks inherits the minted descriptors and never the
+queue; a process whose descriptor table holds the queue is refused
+operations on the queue's objects with
+.Er EDEADLK .
 Opening fails with
 .Er ENOENT
 when the device is not configured,

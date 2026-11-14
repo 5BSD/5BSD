@@ -45,7 +45,7 @@ int	fdswap_take(struct thread *td, int fd, int flags,
 void	fdswap_release(struct fdswap *sw, struct thread *td);
 int	fdswap_receive(struct thread *td, const struct fdswap *sw);
 int	fdswap_install(struct thread *td, struct fdswap *sw, int fdflags,
-	    int (*check)(void *), void *arg, int *fdp);
+	    const struct fdinstall_gate *gate, int *fdp);
 
 /* The open layer: a swapped file as the result of open(2). */
 int	open_swap_admit(struct file *fp, int oflags,

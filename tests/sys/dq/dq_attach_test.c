@@ -163,9 +163,10 @@ ATF_TC_HEAD(attach_refusals, tc)
 	atf_tc_set_md_var(tc, "descr", "ATTACH refuses: a descriptor that is "
 	    "not a process descriptor, a wrong version, flags, served start "
 	    "fds (EINVAL); itself, a child that exec'd, one already attached "
-	    "(here or to another queue), one holding the queue, one sharing "
-	    "the descriptor table (rfork without RFFDG) (EBUSY); an exited "
-	    "child (ESRCH)");
+	    "(here or to another queue), one sharing the descriptor table "
+	    "(rfork without RFFDG) (EBUSY); an exited child (ESRCH).  A "
+	    "child forked while the queue has a copy without close-on-fork "
+	    "does not hold it and attaches");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(attach_refusals, tc)
@@ -232,11 +233,17 @@ ATF_TC_BODY(attach_refusals, tc)
 	idle_end(&s);
 	(void)close(kq);
 
-	/* A child holding the queue (a copy without close-on-fork). */
+	/*
+	 * No child holds the queue (sc-q): a copy made without close-on-fork
+	 * reads back as such and is still not inherited, so the child that
+	 * was refused EBUSY for holding the queue now attaches.
+	 */
 	qdup = fcntl(c.q, F_DUPFD, 0);
 	ATF_REQUIRE(qdup != -1);
+	ATF_CHECK_EQ(0, fcntl(qdup, F_GETFD));
 	idle_spawn(&s, 0, NULL);
-	REFUSED(dq_attach(c.q, s.pd), EBUSY);
+	ATF_CHECK_EQ_MSG(0, dq_attach(c.q, s.pd), "attach: %s",
+	    strerror(errno));
 	idle_end(&s);
 	(void)close(qdup);
 
@@ -246,7 +253,9 @@ ATF_TC_BODY(attach_refusals, tc)
 	 * the table and the pwddesc, so this case is refused by pd_procs as
 	 * well as by fd_refcnt.  The table-only route is Linux clone(2) with
 	 * CLONE_FILES and without CLONE_FS, which needs the Linux ABI and is
-	 * not tested here.
+	 * not tested here.  The sharer is the one process other than the
+	 * owner that can reach the queue; what it is answered there is
+	 * dq_owner_test's sharer_cannot_operate.
 	 */
 	idle_spawn(&s, RFPROC | RFPROCDESC, NULL);
 	REFUSED(dq_attach(c.q, s.pd), EBUSY);

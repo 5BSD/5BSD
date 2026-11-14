@@ -13,6 +13,7 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/filio.h>
 #include <sys/mman.h>
 #include <sys/procdesc.h>
 #include <sys/stat.h>
@@ -865,6 +866,195 @@ ATF_TC_CLEANUP(capmode_rights, tc)
 		    sizeof(old));
 	if (f != NULL)
 		fclose(f);
+}
+
+/*
+ * The install of an FD answer from a served start (D159): the lowest free
+ * number, close-on-exec and close-on-fork only as the open asked, and the
+ * rights, the fcntl limit and the ioctl list of the start descriptor
+ * intersected with the policy's.  The ioctl list has three cases: a start
+ * with a list, a start with an empty list, a start without CAP_IOCTL.
+ */
+static int
+c_nioctls(int fd, cap_ioctl_t *first)
+{
+	cap_ioctl_t cmds[4];
+	ssize_t n;
+
+	cmds[0] = 0;
+	n = cap_ioctls_get(fd, cmds, nitems(cmds));
+	*first = cmds[0];
+	return (n == CAP_IOCTLS_ALL ? -2 : (int)n);
+}
+
+static void
+c_install_limits(struct srv *s, int *r)
+{
+	cap_rights_t rights, got;
+	cap_ioctl_t cmd, first;
+	uint32_t fcntls;
+	int fd, lo;
+
+	/* The start as minted. */
+	lo = dup(s->sroot);
+	(void)close(lo);
+	fd = openat(s->sroot, "a", O_RDONLY);
+	r[0] = fd == lo;
+	r[1] = fcntl(fd, F_GETFD);
+	(void)cap_rights_get(fd, &got);
+	r[2] = cap_rights_is_set(&got, CAP_IOCTL);
+	r[3] = c_nioctls(fd, &first);
+	fcntls = 0;
+	r[4] = ERR(cap_fcntls_get(fd, &fcntls));
+	r[5] = (int)fcntls;
+	(void)close(fd);
+	fd = openat(s->sroot, "a", O_RDONLY | O_CLOEXEC | O_CLOFORK);
+	r[6] = fcntl(fd, F_GETFD);
+	(void)close(fd);
+
+	/* A start with an fcntl limit and a one-command ioctl list. */
+	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_FSTAT, CAP_FCNTL,
+	    CAP_IOCTL);
+	r[7] = ERR(cap_rights_limit(s->sroot, &rights));
+	r[8] = ERR(cap_fcntls_limit(s->sroot, CAP_FCNTL_GETFL));
+	cmd = FIONREAD;
+	r[9] = ERR(cap_ioctls_limit(s->sroot, &cmd, 1));
+	fd = openat(s->sroot, "a", O_RDONLY);
+	r[10] = ERR(fd);
+	(void)cap_rights_get(fd, &got);
+	r[11] = cap_rights_is_set(&got, CAP_READ);
+	r[12] = cap_rights_is_set(&got, CAP_WRITE);
+	r[13] = cap_rights_is_set(&got, CAP_IOCTL);
+	r[14] = c_nioctls(fd, &first);
+	r[15] = first == FIONREAD;
+	fcntls = 0;
+	(void)cap_fcntls_get(fd, &fcntls);
+	r[16] = (int)fcntls;
+	(void)close(fd);
+
+	/* The start's list emptied. */
+	r[17] = ERR(cap_ioctls_limit(s->sroot, NULL, 0));
+	fd = openat(s->sroot, "a", O_RDONLY);
+	(void)cap_rights_get(fd, &got);
+	r[18] = c_nioctls(fd, &first);
+	r[19] = cap_rights_is_set(&got, CAP_IOCTL);
+	(void)close(fd);
+
+	/* A start with neither CAP_IOCTL nor CAP_FCNTL. */
+	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_FSTAT);
+	r[20] = ERR(cap_rights_limit(s->sroot, &rights));
+	fd = openat(s->sroot, "a", O_RDONLY);
+	(void)cap_rights_get(fd, &got);
+	r[21] = cap_rights_is_set(&got, CAP_IOCTL);
+	r[22] = c_nioctls(fd, &first);
+	r[23] = cap_rights_is_set(&got, CAP_FCNTL);
+	fcntls = 0;
+	r[24] = ERR(cap_fcntls_get(fd, &fcntls));
+	r[25] = (int)fcntls;
+	(void)close(fd);
+}
+
+DQ_TC(fd_install_limits);
+ATF_TC_BODY(fd_install_limits, tc)
+{
+	static const int want[26] = {
+		[0] = 1, [1] = 0, [2] = 1, [3] = -2, [4] = 0,
+		[5] = CAP_FCNTL_ALL, [6] = FD_CLOEXEC | FD_CLOFORK,
+		[7] = 0, [8] = 0, [9] = 0, [10] = 0,
+		[11] = 1, [12] = 0, [13] = 1, [14] = 1, [15] = 1,
+		[16] = CAP_FCNTL_GETFL,
+		[17] = 0, [18] = 0, [19] = 1,
+		[20] = 0, [21] = 0, [22] = 0, [23] = 0, [24] = 0, [25] = 0,
+	};
+	struct srv s;
+	int r[RES_MAX];
+	u_int i;
+
+	srv_start(&s, 0);
+	run_child(&s, c_install_limits, r);
+	for (i = 0; i < nitems(want); i++) {
+		printf("r[%u] = %d\n", i, r[i]);
+		ATF_CHECK_EQ_MSG(want[i], r[i], "r[%u] is %d, expected %d",
+		    i, r[i], want[i]);
+	}
+	srv_stop(&s);
+}
+
+/*
+ * A restricted lookup from a served start is not offered SWAP: the kernel
+ * checks a served answer against the start's presented path (D165) and
+ * has nothing to check a swapped real file against.  The unrestricted
+ * open from the same start is offered it.
+ */
+static int
+h_noswap(struct srv *s, const struct dq_event *ev,
+    const struct dq_resolve_body *rb, const char *path, const void *body,
+    size_t bodylen)
+{
+	int fd, i;
+
+	(void)body; (void)bodylen;
+	if (rb == NULL || rb->drs_op != DQ_ROP_OPEN || strcmp(path, "a") != 0)
+		return (0);
+	i = s->hook_state++;
+	if (i >= 3)
+		return (0);
+	s->hook_err[i] = dq_resolve_accepts(rb, DQ_RESOLVE_SWAP) ? 1 : 0;
+	if (i > 0) {
+		fd = openat(s->rootfd, "a", O_RDONLY | O_CLOEXEC | O_CLOFORK);
+		ATF_REQUIRE(fd >= 0);
+		errno = 0;
+		if (dq_reply_resolve_swap(s->q, ev->de_id, fd, 0) == -1 &&
+		    errno == EINVAL)
+			s->hook_err[i] |= 2;
+		(void)close(fd);
+	}
+	return (0);		/* the tree answers the open */
+}
+
+static void
+c_noswap(struct srv *s, int *r)
+{
+	char b[8];
+	int fd;
+
+	fd = openat(s->sroot, "a", O_RDONLY);
+	r[0] = ERR(fd);
+	(void)close(fd);
+	fd = openat(s->sroot, "a", O_RDONLY | O_RESOLVE_BENEATH);
+	r[1] = ERR(fd);
+	(void)close(fd);
+	r[2] = ERR(cap_enter());
+	fd = openat(s->sroot, "a", O_RDONLY);
+	r[3] = ERR(fd);
+	r[4] = (int)read(fd, b, sizeof(b));
+}
+
+DQ_TC(restricted_no_swap);
+ATF_TC_BODY(restricted_no_swap, tc)
+{
+	struct srv s;
+	int r[RES_MAX], i;
+
+	srv_start(&s, 0);
+	s.hook = h_noswap;
+	run_child(&s, c_noswap, r);
+	CHECK_ERRNO(0, r[0]);
+	CHECK_ERRNO(0, r[1]);
+	CHECK_ERRNO(0, r[2]);
+	CHECK_ERRNO(0, r[3]);
+	ATF_CHECK_EQ(7, r[4]);
+	ATF_CHECK_EQ(3, s.hook_state);
+	/* Offered to the unrestricted open. */
+	ATF_CHECK_EQ(1, s.hook_err[0]);
+	/* Not offered, and refused as a reply, under BENEATH and STRICTREL. */
+	ATF_CHECK_EQ(2, s.hook_err[1]);
+	ATF_CHECK_EQ(2, s.hook_err[2]);
+	i = srv_find_exact(&s, DQ_ROP_OPEN, "a");
+	ATF_REQUIRE(i >= 0);
+	ATF_CHECK((s.seen[i].rflags & DQ_RF_STRICTREL) != 0);
+	ATF_CHECK((s.seen[i].accept & DQ_RACCEPT(DQ_RESOLVE_FD)) != 0);
+	srv_stop(&s);
 }
 
 /*
@@ -1821,6 +2011,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, two_path);
 	ATF_TP_ADD_TC(tp, i8_beneath);
 	ATF_TP_ADD_TC(tp, capmode_rights);
+	ATF_TP_ADD_TC(tp, fd_install_limits);
+	ATF_TP_ADD_TC(tp, restricted_no_swap);
 	ATF_TP_ADD_TC(tp, emptypath);
 	ATF_TP_ADD_TC(tp, symlink_opath);
 	ATF_TP_ADD_TC(tp, readdir_oracle);

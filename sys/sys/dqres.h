@@ -19,6 +19,7 @@
 #include <sys/caprights.h>
 
 struct dqres_binding;
+struct fdinstall_gate;
 struct filedesc;
 struct dq_ident_file;
 struct dq_object;
@@ -282,6 +283,8 @@ struct dqres_ops {
 	int	(*dro_file_ident)(struct file *, struct dq_ident_file *,
 		    uint64_t *, bool *);
 	bool	(*dro_queue_closed)(uint64_t);	/* gone or DQ_Q_CLOSING */
+	/* The queues the process owns die (DQRES_OWNER_GONE). */
+	void	(*dro_owner_gone)(struct proc *);
 	/*
 	 * 1c-iii-b.  start: a served descriptor as a lookup start, its
 	 * kind and id; EACCES when the caller is unattached (the binding
@@ -302,6 +305,14 @@ struct dqres_ops {
 	 */
 	uint32_t (*dro_file_kind)(struct file *);
 	uint64_t (*dro_file_objid)(struct file *);
+	/*
+	 * The install gate of the binding's queue (finstall_refed_gate) for
+	 * a SWAP answer: enter refuses with EIO once the queue has died and
+	 * otherwise holds the queue's mutex, which the death takes first,
+	 * until exit.  Entered and left at once it is the advisory test.
+	 */
+	void	(*dro_swap_gate)(struct dqres_binding *,
+		    struct fdinstall_gate *);
 };
 
 void	dqres_register(const struct dqres_ops *ops);
@@ -599,6 +610,20 @@ int	dqres_kpath_refused(struct thread *td);
 	DQRES_NORESOLVE_LEAVE(_dq_save);				\
 	_dq_ret;							\
 })
+
+/*
+ * A queue dies with the process that opened it.  Called by that process
+ * where it exits, execs or leaves a descriptor table it shares (exit1,
+ * do_execve, fdunshare, fork1's RFCFDG), with no lock held: every queue it
+ * owns fails closed there, whoever else still holds the queue's file.  The
+ * flag is the process's own and is never cleared, so the test needs no
+ * lock; a process that never opened a queue pays for the test alone.
+ */
+#define	DQRES_OWNER_GONE(p) do {					\
+	if (__predict_false(((p)->p_flag2 & P2_DQOWNER) != 0) &&	\
+	    dqres_ops != NULL)						\
+		dqres_ops->dro_owner_gone(p);				\
+} while (0)
 
 #define	DQRES_ATTACHED_TD(td)						\
 	(__predict_false(dqres_ops != NULL && dqres_proc_attached((td)->td_proc)))

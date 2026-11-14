@@ -152,7 +152,7 @@ USERNDI	kern/vfs_syscalls.c	sys_chroot_dqimpl	uap->path	slot0
 MARK	kern/vfs_syscalls.c	sys_chroot	DQ_ROP_CHROOT	DQI_USER	PASS+FD	sys_chroot_dqserved	-
 SLOT	kern/vfs_syscalls.c	sys_chroot	0	uap->path
 VARSEG	kern/vfs_syscalls.c	openatfp_dqimpl	pathseg	slot0
-MARK	kern/vfs_syscalls.c	openatfp	DQ_ROP_OPEN	DQI_USER	PASS+FD+SWAP	openatfp_dqserved	ENXIO+ENODEV
+MARK	kern/vfs_syscalls.c	openatfp	DQ_ROP_OPEN	DQI_USER	PASS+FD+SWAP?	openatfp_dqserved	ENXIO+ENODEV
 SLOT	kern/vfs_syscalls.c	openatfp	0	path
 VARSEG	kern/vfs_syscalls.c	kern_mknodat_dqimpl	pathseg	slot0
 MARK	kern/vfs_syscalls.c	kern_mknodat	DQ_ROP_MKNOD	DQI_USER	PASS+OK	dq_ok_dqserved	ERELOOKUP

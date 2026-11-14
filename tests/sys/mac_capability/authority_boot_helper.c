@@ -936,7 +936,7 @@ dq_legitimacy_pins(int issuer)
 	CHECK(pipe(ready) == 0 && pipe(gate) == 0 && pipe(report) == 0);
 	child = pdfork(&pd, 0); CHECK(child >= 0);
 	if (child == 0) {
-		/* A target holding the queue is refused (EBUSY). */
+		/* No child holds the queue (sc-q): this close is EBADF. */
 		close(q);
 		close(ready[0]); close(gate[1]); close(report[0]);
 		CHECK(write(ready[1], &byte, 1) == 1);

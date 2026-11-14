@@ -83,10 +83,20 @@ answer_swap(int q, const struct dq_event *ev, const struct dq_resolve_body *rb,
 	 * or O_CREAT: the kernel truncates for the command once it has
 	 * checked the command's own permission, and this example hands over
 	 * an existing file.  O_CLOFORK: no child of ours may share it.
+	 *
+	 * O_EXCL is ours to honour: the kernel resolves no name for a swap,
+	 * and the name the command asked to create exclusively is answered
+	 * with a file that exists.
 	 */
+	if (((int)rb->drs_mode & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
+		fprintf(out, "dqswap: #%lu RESOLVE open \"%s\" %s -> errno "
+		    "%d (O_EXCL)\n", nrec, path, who(ev), EEXIST);
+		(void)dq_reply_resolve_errno(q, ev->de_id, EEXIST);
+		return;
+	}
 	fd = open(swap_subst, ((int)rb->drs_mode & (O_ACCMODE | O_EXEC |
 	    O_PATH | O_DIRECTORY | O_APPEND | O_NONBLOCK | O_SYNC | O_DSYNC |
-	    O_DIRECT)) | O_CLOEXEC | O_CLOFORK);
+	    O_DIRECT | O_ASYNC)) | O_CLOEXEC | O_CLOFORK);
 	if (fd == -1) {
 		error = errno;
 		fprintf(out, "dqswap: #%lu RESOLVE open \"%s\" %s -> errno "

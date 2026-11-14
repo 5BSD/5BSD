@@ -171,6 +171,21 @@ static void	filecaps_free_finish(u_long *ioctls);
 static struct pwd *pwd_alloc(void);
 
 /*
+ * PIN: every table entry for a pinned file (FPINNED, set by the
+ * DescriptorQueue device on the file it opens and never cleared) carries
+ * the three locked states, so the file is absent after fork and exec and is
+ * refused on every transfer path.  The states only ever tighten
+ * (sys_capability.c), dup copies them, and _finstall_prop() forces them.
+ */
+#define	FDE_PIN_ASSERT(fde)						\
+	KASSERT(((fde)->fde_file->f_flag & FPINNED) == 0 ||		\
+	    ((fde)->fde_xfer_state == CAP_XFER_NONE &&			\
+	    (fde)->fde_cloexec_state == CAP_CLOEXEC_LOCKED &&		\
+	    (fde)->fde_clofork_state == CAP_CLOFORK_LOCKED),		\
+	    ("%s: pinned file %p without its states", __func__,	\
+	    (fde)->fde_file))
+
+/*
  * Each process has:
  *
  * - An array of open file descriptors (fd_ofiles)
@@ -737,7 +752,8 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_GETFL, &fp);
 		if (error != 0)
 			break;
-		td->td_retval[0] = OFLAGS(fp->f_flag & ~FHASOFDLOCK);
+		td->td_retval[0] = OFLAGS(fp->f_flag &
+		    ~(FHASOFDLOCK | FPINNED));
 		fdrop(fp, td);
 		break;
 
@@ -779,9 +795,12 @@ revert_nonblock:
 			(void)fo_ioctl(fp, FIONBIO, &tmp, td->td_ucred, td);
 		}
 revert_flags:
+		/*
+		 * Undo what this call changed and nothing else: a flag that
+		 * was set before and that the call did not touch stays set.
+		 */
 		do {
 			tmp = flg = fp->f_flag;
-			tmp &= ~FCNTLFLAGS;
 			tmp |= got_cleared;
 			tmp &= ~got_set;
 		} while (atomic_cmpset_int(&fp->f_flag, flg, tmp) == 0);
@@ -1272,6 +1291,12 @@ kern_dup(struct thread *td, u_int mode, int flags, int oldd, int newd)
 	    &newfde->fde_xfer_caps, nxioctls);
 	newfde->fde_flags = (oldfde->fde_flags & ~(UF_EXCLOSE | UF_FOCLOSE)) |
 	    fddup_to_fde_flags(flags);
+	/*
+	 * The states came with fde_copy.  The two flags above are rewritten
+	 * from the dup's own, as for any entry; fork and exec act on the
+	 * states.
+	 */
+	FDE_PIN_ASSERT(newfde);
 #ifdef CAPABILITIES
 	seqc_write_end(&newfde->fde_seqc);
 #endif
@@ -2603,6 +2628,7 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
  * Install a file with optional non-default descriptor propagation states.
  * The entry is initialized while the descriptor table remains exclusively
  * locked, so no fork, exec, or transfer can observe default states first.
+ * A pinned file gets the pinned states whatever the caller asked for.
  */
 void
 _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
@@ -2645,6 +2671,13 @@ _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
 		fde->fde_flags |= prop->fip_fde_flags &
 		    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 	}
+	if (__predict_false((fp->f_flag & FPINNED) != 0)) {
+		fde->fde_xfer_state = CAP_XFER_NONE;
+		fde->fde_cloexec_state = CAP_CLOEXEC_LOCKED;
+		fde->fde_clofork_state = CAP_CLOFORK_LOCKED;
+		fde->fde_flags |= UF_EXCLOSE | UF_FOCLOSE;
+	}
+	FDE_PIN_ASSERT(fde);
 	if (fcaps != NULL)
 		filecaps_move(fcaps, &fde->fde_caps);
 	else
@@ -2668,22 +2701,28 @@ finstall_refed_prop(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps, const struct fdinstall_prop *prop)
 {
 
-	return (finstall_refed_check(td, fp, fd, flags, fcaps, prop, NULL,
-	    NULL));
+	return (finstall_refed_gate(td, fp, fd, flags, fcaps, prop, NULL));
 }
 
 /*
- * As finstall_refed_prop(), with a last check made once a descriptor
- * number is allocated and before the file becomes visible in the table.
- * 'check' is called with the table exclusively locked: it must not sleep
- * and must take no lock.  A non-zero return releases the number and is
- * returned; nothing is installed and, as for an allocation failure, the
- * caller keeps the file reference and 'fcaps'.
+ * As finstall_refed_prop(), through a gate: a last test that stays true
+ * until the file is visible in the table.
+ *
+ * 'fg_enter' is called once, on the installing thread, with its process's
+ * descriptor table exclusively locked and a number allocated.  It may
+ * acquire one non-sleepable mutex and, when it returns 0, leaves it held;
+ * 'fg_exit' is then called exactly once, after the entry is written, and
+ * releases it.  So what 'fg_enter' tested under that mutex cannot change
+ * before the entry exists.  If 'fg_enter' returns non-zero it holds
+ * nothing: the number is released, the value is returned, nothing is
+ * installed and, as for an allocation failure, the caller keeps the file
+ * reference and 'fcaps'.  Neither callback sleeps.  An allocation failure
+ * (EMFILE) comes before the gate.  'gate' NULL is finstall_refed_prop().
  */
 int
-finstall_refed_check(struct thread *td, struct file *fp, int *fd, int flags,
+finstall_refed_gate(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps, const struct fdinstall_prop *prop,
-    int (*check)(void *), void *arg)
+    const struct fdinstall_gate *gate)
 {
 	struct filedesc *fdp = td->td_proc->p_fd;
 	int error;
@@ -2692,16 +2731,17 @@ finstall_refed_check(struct thread *td, struct file *fp, int *fd, int flags,
 
 	FILEDESC_XLOCK(fdp);
 	error = fdalloc(td, 0, fd);
-	if (__predict_true(error == 0)) {
-		if (check != NULL)
-			error = check(arg);
-		if (__predict_true(error == 0)) {
-			_finstall_prop(fdp, fp, *fd, flags, fcaps, prop);
-			SDT_PROBE6(fd, , , install, fp, *fd,
-			    td->td_proc->p_pid, td->td_ucred, fp->f_type,
-			    flags);
-		} else
+	if (error == 0 && gate != NULL) {
+		error = gate->fg_enter(gate->fg_arg);
+		if (error != 0)
 			fdunused(fdp, *fd);
+	}
+	if (__predict_true(error == 0)) {
+		_finstall_prop(fdp, fp, *fd, flags, fcaps, prop);
+		if (gate != NULL)
+			gate->fg_exit(gate->fg_arg);
+		SDT_PROBE6(fd, , , install, fp, *fd, td->td_proc->p_pid,
+		    td->td_ucred, fp->f_type, flags);
 	}
 	FILEDESC_XUNLOCK(fdp);
 	return (error);
@@ -2920,6 +2960,11 @@ fdunshare(struct thread *td)
 	if (refcount_load(&p->p_fd->fd_refcnt) == 1)
 		return;
 
+	/*
+	 * The process leaves a table others keep.  Its queues are pinned to
+	 * that table and the copy omits them: they die here.
+	 */
+	DQRES_OWNER_GONE(p);
 	tmp = fdcopy(p->p_fd, p, false);
 	fdescfree(td);
 	p->p_fd = tmp;
@@ -3122,6 +3167,9 @@ fdcopy_internal(struct filedesc *fdp, struct proc *p1, bool isfork,
 				newfdp->fd_freefile = i;
 			continue;
 		}
+		KASSERT((ofde->fde_file->f_flag & FPINNED) == 0,
+		    ("%s: pinned file %p copied to another table", __func__,
+		    ofde->fde_file));
 		nfde = &newfdp->fd_ofiles[i];
 		*nfde = *ofde;
 		if (fp != NULL)
@@ -3796,7 +3844,8 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct filecaps *fcaps,
  *    transferred (the entry's, limited by its transfer ceiling); it runs
  *    under the table lock, so it must not sleep, and its error is
  *    returned;
- * and only then, with nothing left that can refuse: a reference is taken
+ * and only then, with nothing left that policy can refuse: a reference is
+ * taken
  * (unless the caller came with one), a CAP_XFER_ONCE entry is consumed,
  * and '*fcaps', '*prop' and O_RESOLVE_BENEATH in '*flagsp' describe the
  * entry to install.  No MAC hook runs here: the receive check is the
