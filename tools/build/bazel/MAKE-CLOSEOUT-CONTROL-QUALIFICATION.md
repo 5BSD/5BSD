@@ -1578,3 +1578,14 @@ All original R1 450-package comparisons remain unchanged. Fresh matched-epoch
 archive qualification is pending; no native payload/debug/runtime difference is
 accepted by this fix. Changing Makefile.inc1 invalidates R4's source binding, so
 subsequent native runs require freshly prepared SDK inputs, not an edited receipt.
+
+Fresh SDK R5 verification now passes 8,345 snapshot files, schema 2/count 4.
+Its snapshot is byte-identical to R4; only source provenance needed refreshing
+after the packaging-only Makefile change. The old receipt remains unchanged.
+R5 snapshot digest is 4a2855b47e15dd2fa93d23f03f064ad5001dc105deedb77259bc0d58811309e7.
+Full AMD64 native R8 now selects R5 and adds both native retained-symbol artifact
+tests to the full R7 graph. Its result/cache behavior are pending, not inferred
+from identical SDK bytes. Original Make archive R2 is running with epoch zero
+and PKG_OUTPUT_DIR=qualification-epoch-r2-20261114 under the standard repo; the
+prior reference is preserved. Both runs are concurrent with the live upgrade VM,
+so their timings cannot establish controlled performance acceptance.

@@ -44,7 +44,13 @@ two format-metadata header timestamps is retained as a failed test; those
 headers are independently zero in pkg's buffer writer. Fresh independent Make
 archives with matched epoch inputs are still required. These Makefile changes
 stale the old source-bound SDK receipt; prepare a fresh SDK before further native
-runs, rather than rebinding R4. Normal build-bsd uses the maintained backend
+runs, rather than rebinding R4. Fresh SDK R5 now passes full verification of
+8,345 files and has a byte-identical toolchain snapshot to R4, with new source
+bindings. Full AMD64 R8 is running with that SDK and both retained-symbol tests;
+cache reuse and its final outcome remain unproven until completion. Original
+Make matched-epoch archive rebuild R2 is running in a separate output directory
+under the standard repository, preserving the first 450-package reference.
+Normal build-bsd uses the maintained backend
 changes; no new C option or production backend switch is introduced.
 
 The current original-Make split-debug reference audit passes all 724 kernel/module
