@@ -1,14 +1,20 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 bsd_dtrace_header(
     name = "provider", source = "threadwait_provider.d", output = "threadwait_provider.h",
     flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
-    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = select({"@platforms//cpu:aarch64": "//cddl/usr.sbin/dtrace:bootstrap_aarch64",
+        "//conditions:default": "//cddl/usr.sbin/dtrace:bootstrap"}), cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
     drti = "//cddl/lib/drti:drti",
-    runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    runtime_libraries = select({"@platforms//cpu:aarch64": ["//cddl/usr.sbin/dtrace:bootstrap_aarch64_runtime"],
+        "//conditions:default": ["//cddl/usr.sbin/dtrace:bootstrap_runtime"]}),
     tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = True,
 )
@@ -32,35 +38,41 @@ bsd_configured_version_map(
 
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
 cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
-cc_library(name = "machine_headers", hdrs = ["arch/amd64/include/pthread_md.h"], strip_include_prefix = "arch/amd64/include")
+cc_library(name = "machine_headers", hdrs = select({"@platforms//cpu:aarch64": ["arch/aarch64/include/pthread_md.h"],
+    "//conditions:default": ["arch/amd64/include/pthread_md.h"]}), strip_include_prefix = select({
+    "@platforms//cpu:aarch64": "arch/aarch64/include", "//conditions:default": "arch/amd64/include"}))
 cc_library(name = "private_headers", hdrs = ["thread/thr_private.h", "thread/thr_umtx.h", "thread/threadwait_trace.h"],
     strip_include_prefix = "thread", deps = [":machine_headers", "//lib/libthread_db:thread_db_header"] +
     select({_TRACE: [":provider_headers"], "//conditions:default": []}))
 # Object groups retain the one per-file semantic compiler option.
 _COPTS = ["-fno-stack-protector", "-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0",
-          "-fexceptions", "-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2"]
+          "-fexceptions"] + select({"@platforms//cpu:x86_64": ["-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2"],
+    "//conditions:default": []})
 _DEFINES = ["PTHREAD_KERNEL", "_PTHREAD_FORCED_UNWIND"] + select({
     "//tools/build/bazel/config:pthreads_assertions_enabled": ["_PTHREADS_INVARIANTS"],
     "//conditions:default": [],
 }) + select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []})
 _DEPS = [":private_headers", "//lib/libc/include:thr_headers", "//libexec/rtld-elf:thr_headers"]
 cc_library(name = 'before_rtld',
-    srcs = ['arch/amd64/amd64/thr_machdep.c', 'sys/thr_error.c', 'thread/thr_affinity.c', 'thread/thr_attr.c', 'thread/thr_barrier.c', 'thread/thr_barrierattr.c', 'thread/thr_cancel.c', 'thread/thr_clean.c', 'thread/thr_concurrency.c', 'thread/thr_cond.c', 'thread/thr_condattr.c', 'thread/thr_create.c', 'thread/thr_ctrdtr.c', 'thread/thr_detach.c', 'thread/thr_equal.c', 'thread/thr_event.c', 'thread/thr_exit.c', 'thread/thr_fork.c', 'thread/thr_getprio.c', 'thread/thr_getcpuclockid.c', 'thread/thr_getschedparam.c', 'thread/thr_getthreadid_np.c', 'thread/thr_info.c', 'thread/thr_init.c', 'thread/thr_join.c', 'thread/thr_list.c', 'thread/thr_kern.c', 'thread/thr_kill.c', 'thread/thr_main_np.c', 'thread/thr_malloc.c', 'thread/thr_multi_np.c', 'thread/thr_mutex.c', 'thread/thr_mutexattr.c', 'thread/thr_once.c', 'thread/thr_printf.c', 'thread/thr_pshared.c', 'thread/thr_pspinlock.c', 'thread/thr_resume_np.c'],
+    srcs = select({"@platforms//cpu:x86_64": ["arch/amd64/amd64/thr_machdep.c"],
+        "//conditions:default": []}) + ['sys/thr_error.c', 'thread/thr_affinity.c', 'thread/thr_attr.c', 'thread/thr_barrier.c', 'thread/thr_barrierattr.c', 'thread/thr_cancel.c', 'thread/thr_clean.c', 'thread/thr_concurrency.c', 'thread/thr_cond.c', 'thread/thr_condattr.c', 'thread/thr_create.c', 'thread/thr_ctrdtr.c', 'thread/thr_detach.c', 'thread/thr_equal.c', 'thread/thr_event.c', 'thread/thr_exit.c', 'thread/thr_fork.c', 'thread/thr_getprio.c', 'thread/thr_getcpuclockid.c', 'thread/thr_getschedparam.c', 'thread/thr_getthreadid_np.c', 'thread/thr_info.c', 'thread/thr_init.c', 'thread/thr_join.c', 'thread/thr_list.c', 'thread/thr_kern.c', 'thread/thr_kill.c', 'thread/thr_main_np.c', 'thread/thr_malloc.c', 'thread/thr_multi_np.c', 'thread/thr_mutex.c', 'thread/thr_mutexattr.c', 'thread/thr_once.c', 'thread/thr_printf.c', 'thread/thr_pshared.c', 'thread/thr_pspinlock.c', 'thread/thr_resume_np.c'],
     deps = _DEPS, local_defines = _DEFINES, copts = _COPTS + [],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], linkstatic = True)
+    target_compatible_with = _PLATFORM, linkstatic = True)
 cc_library(name = 'rtld',
     srcs = ['thread/thr_rtld.c'],
     deps = _DEPS, local_defines = _DEFINES, copts = _COPTS + ['-fno-builtin'],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], linkstatic = True)
+    target_compatible_with = _PLATFORM, linkstatic = True)
 cc_library(name = 'after_rtld',
     srcs = ['thread/thr_rwlock.c', 'thread/thr_rwlockattr.c', 'thread/thr_self.c', 'thread/thr_sem.c', 'thread/thr_setprio.c', 'thread/thr_setschedparam.c', 'thread/thr_sig.c', 'thread/thr_sigqueue.c', 'thread/thr_single_np.c', 'thread/thr_sleepq.c', 'thread/thr_spec.c', 'thread/thr_spinlock.c', 'thread/thr_stack.c', 'thread/thr_syscalls.c', 'thread/thr_suspend_np.c', 'thread/thr_switch_np.c', 'thread/thr_symbols.c', 'thread/thr_umtx.c', 'thread/thr_yield.c', '//libexec/rtld-elf:rtld_malloc.c'],
     deps = _DEPS, local_defines = _DEFINES, copts = _COPTS + [],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], linkstatic = True)
+    target_compatible_with = _PLATFORM, linkstatic = True)
 filegroup(name = "compiled_objects", srcs = [":before_rtld", ":rtld", ":after_rtld"], visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object", "bsd_component_archive")
-cc_library(name = "umtx_assembly", srcs = ["//lib/libsys/amd64:_umtx_op_err.S"],
-    copts = _COPTS, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_library(name = "umtx_assembly", srcs = select({"@platforms//cpu:aarch64": ["//lib/libsys:_umtx_op_err.c"],
+        "//conditions:default": ["//lib/libsys/amd64:_umtx_op_err.S"]}),
+    local_defines = _DEFINES,
+    copts = _COPTS, target_compatible_with = _PLATFORM)
 bsd_component_object(name = "umtx_object", group = ":umtx_assembly", out = "_umtx_op_err.o")
 bsd_component_object(name = "umtx_pic_object", group = ":umtx_assembly", pic = True, out = "_umtx_op_err.pico")
 
@@ -88,7 +100,7 @@ cc_shared_library(name = "thr_shared", deps = [":thr"], shared_lib_name = "libth
     user_link_flags = ["-Wl,--version-script=$(location :version_map),--no-undefined-version",
         "-lc", "-lsys", "-Wl,-soname,libthr.so.3", "-Wl,-znodelete,-zinitfirst,--auxiliary,libsys.so.7",
         "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//visibility:public"])
 
 load(":installation.bzl", "library_installation")

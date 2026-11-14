@@ -9,9 +9,11 @@ load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//lib/libc:test_policy.bzl", "libc_test_copts")
 load("//lib/libc:test_runtime.bzl", "LIBC_TEST_RUNTIME")
 
-# libkvm/libjail currently expose AMD64 native interfaces. ARM64 qualification
-# must extend those producers before this test contribution becomes compatible.
-_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+# Both Tier 1 platforms use native library interfaces; root cases run in VMs.
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 _CASES = {
     "jaildesc": ["get_invalid_base_descriptor", "poll_close_race", "poll_remove_wakeup",
         "poll_close_race_get_desc", "curjail_get", "self_destruct", "at_desc_bad_fd"],

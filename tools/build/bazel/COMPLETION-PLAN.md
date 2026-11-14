@@ -14,7 +14,7 @@ is not authorized.
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Full loader/hardening, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Complete libc static/PIC archives and DSO build in optimized-production and portable-debug profiles with exact Make order/non-provider object contracts and shared metadata. Nonshared now matches all 12 Make objects and its install contract; public/shared and static ARM64 clients link, NOSSP matches 1,437 ordered members apart from retained provider differences, all NOSSP probe sites and six loader-extracted objects validate. Native R3 passes the explicit host-only symbol visibility test; no ARM64 client is executed. The refreshed production Make world at 4f0683e6286 and its recorded profile complete, including tests. The earlier R7/startup comparison is dated evidence; refreshed SDK, all ten startup-object contracts and focused loader metadata/install/provider comparisons now pass; raw source-path/provider/debug differences remain recorded. Focused five-library/descriptor builds now pass on ARM64 and AMD64, with 240 original Make install metadata records per architecture matching. Full loader runtime, full DWARF, native world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V stays nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r15-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -95,8 +95,8 @@ Only get_invalid_base_descriptor is selected for ordinary host execution; the
 root cases remain explicit manual/exclusive VM tests. The fresh AMD64 run builds both programs and their partial install archive and passes that one host case. The other 12 cases are declared, not executed by this run. The partial contribution
 does not replace the complete kern Kyuafile or claim full test-suite installation.
 Both AMD64 programs compile; corrected link-order/ELF metadata parity and the safe host case now pass;
-execution of the 12 root cases remains pending. ARM64 also needs libthr, libelf, libkvm, libjail
-and ATF producer support. Evidence: bazel-kernel-tests-gap-review-r1-20261114 and
+execution of the 12 root cases remains pending. The libthr, libelf, libkvm, libjail and ATF producers now build on ARM64;
+complete installed-suite composition and target execution remain open. Evidence: bazel-kernel-tests-gap-review-r1-20261114 and
 bazel-jaildesc-native-candidate-r1-20261114. A fresh maintained ARM64 Make traversal
 with tests enabled discovers 2,094 directories; all 2,094 detailed metadata
 queries pass, with zero failed components. This is a review inventory, not a
@@ -7608,3 +7608,44 @@ remain retained; the twelve root cases remain unexecuted. Evidence:
 Frontend review: existing maintained format-5 target inputs and `bazel-test`
 cover both changes. No new CLI, security-policy, signing, stage-verification,
 hardware or publication interface/default is required. Make remains production.
+
+### Tier 1 pthread and foundation libraries — 2026-11-14
+
+Source-owned ARM64 selections now cover libthr, libelf, libkvm, libjail, ATF-C
+and the existing descriptor programs. The real Make inventories select the
+ARM64 pthread header and generic `_umtx_op_err.c`, omit AMD64 thr_machdep.c,
+and preserve 60 ARM64 / 61 AMD64 pthread archive members. The special umtx
+source receives the same library definitions Make supplies in both languages.
+The initial nested-select declaration failed analysis and is retained as R1;
+R2 builds all 24 targets, then strict installation comparison exposes libelf's
+missing debug-directory package claim. The maintained debug-directory helper
+restores that actual Make claim; the comparison is not weakened.
+
+Final native ARM64 R3 passes 24 targets, captures 93 unique files and passes
+39 Python checks in three host-artifact targets. The AMD64 regression passes
+25 selected targets, captures 95 unique files and passes those checks plus the
+safe descriptor ATF case. All captured test report hashes verify. All five
+archives match Make member order/symbol contracts; all five DSOs match ELF
+metadata/hardening; all 240 component install metadata records per architecture
+match, including numeric IDs, names, modes, tags, flags and actual links.
+Both descriptor programs also match Make ELF metadata and dependency order on
+ARM64. The library batch uses the maintained build-bsd format-5 workflow; no
+CLI/security-policy/signing/hardware/publication interface or default changes.
+
+The complete static archive inventory contains 152 ARM64 / 153 AMD64 members,
+with actual machine IDs checked. Exact allocated/symbol/relocation contracts
+match 95 / 96 respectively. ARM64 raw allocated-byte differences outside the
+provider are source diagnostic strings (including generated libelf source
+paths); raw contracts/relocations remain retained. The pthread providers match
+all fourteen schemas and symbol-relative locations, with companion-object
+relocations and actual patched instruction checks on both architectures. These
+are metadata/site checks, not live registration or firing. No artifact is
+rewritten to manufacture equality; archive/DSO/debug payload hashes still differ.
+Full DWARF, complete tests-enabled payloads, the twelve root cases, ARM64 target
+execution and the other six-gate requirements remain open.
+
+Evidence: bazel-arm64-foundation-native-r3-20261114,
+bazel-amd64-foundation-native-r1-20261114, per-architecture foundation-parity,
+foundation-install-parity, foundation-object-contracts and foundation-literal-review
+records, and per-architecture thr-provider-parity records. Original Make
+references and failed diagnostics remain retained. Make remains production/default.

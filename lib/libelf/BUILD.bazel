@@ -1,4 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load(":sources.bzl", "ELF_SOURCES")
@@ -16,7 +20,7 @@ _GENERATED = ["libelf_fsize", "libelf_msize", "libelf_convert"]
 _SOURCES = ELF_SOURCES + [":" + name for name in _GENERATED]
 cc_library(name = "elf", srcs = _SOURCES,
     deps = ["//contrib/elftoolchain:elf_headers"], implementation_deps = ["//contrib/elftoolchain:elf_internal_headers"],
-    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":elf"], ordered_sources = _SOURCES, visibility = ["//visibility:public"])
 cc_shared_library(name = "elf_shared", deps = [":elf"], shared_lib_name = "libelf.so.2",
     additional_linker_inputs = ["//contrib/elftoolchain:libelf/Version.map"],
@@ -34,12 +38,14 @@ load(":installation.bzl", "elf_installation")
 elf_installation(name = "install_manifest")
 
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_debug_directories")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
     name = "install_archive",
     visibility = ["//lib:__pkg__"],
     manifests = [":install_manifest"],
+    directories = utility_debug_directories("runtime", "/lib"),
     mtree_specs = {
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",

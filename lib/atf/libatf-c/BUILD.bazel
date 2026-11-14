@@ -1,4 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
@@ -13,7 +17,7 @@ cc_library(
 bsd_component_archive(name = "static_archive", groups = [":atf_c"], visibility = ["//visibility:public"])
 cc_shared_library(name = "atf_c_shared", deps = [":atf_c"], shared_lib_name = "libprivateatf-c.so.1",
     user_link_flags = ["-Wl,-soname,libprivateatf-c.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
 load(":installation.bzl", "library_installation")
 library_installation(name = "install_manifest")

@@ -76,8 +76,9 @@ suite's build or payload completeness. Refreshed Make references enable tests.
 The initial native `tests/sys/kern` contribution covers the two descriptor
 programs and 13 cases only; the rest of that directory/suite remains open.
 Root cases require disposable VM execution; skipped root cases are not passes.
-ARM64 also needs the relevant `libkvm`/`libjail` producers. Complete tests-enabled
-selection and Make payload parity remain part of gates 2 and 6.
+Bounded AMD64/ARM64 builds now cover the required `libthr`, `libelf`, `libkvm`,
+`libjail` and ATF producers. Complete tests-enabled selection, Make payload
+parity and target execution remain part of gates 2 and 6.
 
 ## Minimum acceptance matrix
 
