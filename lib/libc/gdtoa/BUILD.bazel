@@ -6,31 +6,42 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # Match the maintained SOURCE_ALIAS inputs before compilation, preserving archive
 # member identity and avoiding basename collisions without renaming ELF outputs.
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
-_NETLIB_OBJECTS_SOURCES = ['//contrib/gdtoa:strtorx.c', '//contrib/gdtoa:dmisc.c', '//contrib/gdtoa:dtoa.c', '//contrib/gdtoa:gdtoa.c', '//contrib/gdtoa:gethex.c', '//contrib/gdtoa:gmisc.c', '//contrib/gdtoa:hd_init.c', '//contrib/gdtoa:hexnan.c', '//contrib/gdtoa:misc.c', '//contrib/gdtoa:smisc.c', '//contrib/gdtoa:strtod.c', '//contrib/gdtoa:strtodg.c', '//contrib/gdtoa:strtof.c', '//contrib/gdtoa:strtord.c', '//contrib/gdtoa:sum.c', '//contrib/gdtoa:ulp.c']
+_NETLIB_COMMON_SOURCES = ['//contrib/gdtoa:dmisc.c', '//contrib/gdtoa:dtoa.c', '//contrib/gdtoa:gdtoa.c', '//contrib/gdtoa:gethex.c', '//contrib/gdtoa:gmisc.c', '//contrib/gdtoa:hd_init.c', '//contrib/gdtoa:hexnan.c', '//contrib/gdtoa:misc.c', '//contrib/gdtoa:smisc.c', '//contrib/gdtoa:strtod.c', '//contrib/gdtoa:strtodg.c', '//contrib/gdtoa:strtof.c', '//contrib/gdtoa:strtord.c', '//contrib/gdtoa:sum.c', '//contrib/gdtoa:ulp.c']
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [],
+    "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 [copy_file(name = "source_alias_" + src.split(":")[-1], src = src,
-    out = "gdtoa_" + src.split(":")[-1], allow_symlink = True) for src in _NETLIB_OBJECTS_SOURCES]
+    out = "gdtoa_" + src.split(":")[-1], allow_symlink = True) for src in _NETLIB_COMMON_SOURCES + ["//contrib/gdtoa:strtorx.c", "//contrib/gdtoa:strtorQ.c"]]
 
 # Preserve per-source aliasing flags only on imported netlib routines.
 cc_library(
     features = LIBC_VARIANT_FEATURES,
     name = 'gdtoa_objects',
-    srcs = ['_hdtoa.c', '_hldtoa.c', '_ldtoa.c', 'glue.c', 'machdep_ldisx.c', '//lib/libc/stdio:floatio.h'],
-    implementation_deps = ["//contrib/gdtoa:headers", "//lib/libc/include:math_headers", "//lib/libc/locale:gdtoa_headers", "//lib/libc/amd64:gdtoa_headers"],
+    srcs = ['_hdtoa.c', '_hldtoa.c', '_ldtoa.c', 'glue.c'] + select({
+        "@platforms//cpu:aarch64": ['machdep_ldisQ.c'],
+        "//conditions:default": ['machdep_ldisx.c'],
+    }) + ['//lib/libc/stdio:floatio.h'],
+    implementation_deps = ["//contrib/gdtoa:headers", "//lib/libc/include:math_headers", "//lib/libc/locale:gdtoa_headers", "//lib/libc/include:gdtoa_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ['-ftls-model=initial-exec'],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
     features = LIBC_VARIANT_FEATURES,
     name = 'netlib_objects',
-    srcs = [":source_alias_" + src.split(":")[-1] for src in _NETLIB_OBJECTS_SOURCES],
-    implementation_deps = ["//contrib/gdtoa:headers", "//lib/libc/include:math_headers", "//lib/libc/locale:gdtoa_headers", "//lib/libc/amd64:gdtoa_headers"],
+    srcs = select({
+        "@platforms//cpu:aarch64": [":source_alias_strtorQ.c"],
+        "//conditions:default": [":source_alias_strtorx.c"],
+    }) + [":source_alias_" + src.split(":")[-1] for src in _NETLIB_COMMON_SOURCES],
+    implementation_deps = ["//contrib/gdtoa:headers", "//lib/libc/include:math_headers", "//lib/libc/locale:gdtoa_headers", "//lib/libc/include:gdtoa_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ['-ftls-model=initial-exec', '-fno-strict-aliasing'],
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "objects_archive", groups = [":gdtoa_objects", ":netlib_objects"])

@@ -158,3 +158,16 @@ and own debug binding pass. Shared section bytes still differ, so full shared-co
 and DWARF equivalence are unproven. The older component SDK/profile does not
 qualify current ARM64 world or runtime. AMD64 retains all 424 install records and
 242 file payloads exactly against full R12, with both syscall runtime tests passing.
+
+## ARM64 libc component closeout (2026-11-14)
+
+Floating-point headers and gdtoa sources now follow the configured AMD64/AArch64
+ABI; AArch64 uses quad precision and generic division while AMD64 keeps its own
+implementations. Unsupported floating-point header ABIs are explicitly
+incompatible. Gdtoa, stdio and stdlib match independent Make allocated ELF,
+symbol and relocation contracts for all 412 regular/PIC object variants per CPU.
+Assertion diagnostics use declared logical source identities at compilation.
+The ARM64 reference still uses its recorded older SDK/profile. Final libc archive
+composition/order, shared linking, DWARF, current full world and runtime remain
+open. The source-identity correction postdates full AMD64 R12 and requires a full
+package refresh; earlier byte-preservation evidence is not final acceptance.

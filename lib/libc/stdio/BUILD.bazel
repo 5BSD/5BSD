@@ -3,7 +3,19 @@ load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 exports_files(["floatio.h"], visibility = ["//lib/libc/gdtoa:__pkg__", "//lib/libc/stdlib:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
+_PLATFORM = ["@platforms//os:freebsd"] + select({
+    "@platforms//cpu:x86_64": [],
+    "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Preserve BSD's logical source identity in assertion diagnostics and DWARF.
+_SOURCE_IDENTITY_COPTS = [
+    "-ffile-prefix-map=" + prefix + "lib/libc/stdio/=/usr/src/lib/libc/stdio/"
+    for prefix in ["", "./"]
+]
+
 cc_library(
     features = LIBC_VARIANT_FEATURES,
     name = "stdio_objects",
@@ -126,11 +138,11 @@ cc_library(
         "printfcommon.h",
         "printflocal.h",
     ],
-    implementation_deps = ["//lib/libc/include:stdio_private_headers", "//lib/libc/locale:stdio_headers", "//contrib/gdtoa:headers", "//lib/libc/amd64:gdtoa_headers"],
+    implementation_deps = ["//lib/libc/include:stdio_private_headers", "//lib/libc/locale:stdio_headers", "//contrib/gdtoa:headers", "//lib/libc/include:gdtoa_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
-    copts = ["-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"] + _SOURCE_IDENTITY_COPTS,
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    target_compatible_with = _PLATFORM,
     visibility = ["//lib/libc:__pkg__"],
 )
 # Raw object qualification; complete libc linkage owns ABI and installation.

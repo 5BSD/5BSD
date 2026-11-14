@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(features = LIBC_VARIANT_FEATURES, name = "math_headers",
+    hdrs = ["_fpmath.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libc/include:__pkg__"])
+cc_library(features = LIBC_VARIANT_FEATURES, name = "gdtoa_headers",
+    hdrs = ["arith.h", "gd_qnan.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libc/include:__pkg__"])
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+exports_files(["gen/_setjmp.S"], visibility = ["//lib/libc:__pkg__"])

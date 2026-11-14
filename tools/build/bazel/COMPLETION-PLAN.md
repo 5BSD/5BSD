@@ -10,11 +10,11 @@ is not authorized.
 | Gate | Current evidence and remaining work |
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. Earlier timeout failures remain retained. |
-| 2. AMD64 parity/configurations | Full R12 passes 30 tests and captures all 450 selected packages, including the compiler-runtime source-identity correction. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 2. AMD64 parity/configurations | Full R12 passes 30 tests and captures all 450 selected packages, including the compiler-runtime source-identity correction. The subsequent stdio/stdlib diagnostic source-identity correction needs a full package refresh. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. SDK R6 is still Make-produced; independent native bootstrap, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R12 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |
-| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
+| 6. ARM64 Tier 1 | Native CSU matches ten installed objects, compiler-runtime R3 matches all 276 members (125 outlined atomics), and libsys R3 matches both 471-member archive contracts plus shared ABI/install/debug-binding checks against the explicit older-seed Make component profile. Gdtoa/stdio/stdlib additionally match 412 regular/PIC object contracts against a fresh original-Make libc component. Libsys shared section bytes differ; full current ARM64 ABI libraries, world/kernel/modules/pkgbase/configurations/runtime remain open. RISC-V continues as nonblocking Tier 2. |
 
 Latest full capture: /usr/obj/usr/src/bazel-closeout-system-native-r12-20261114.
 Runtime failure: /usr/obj/usr/src/bazel-current-upgrade-vm-r2-20261114/result.json.
@@ -32,6 +32,38 @@ until their actual outputs and runtime checks pass. These belong to the existing
 six gates. The normal build-bsd backend remains Make; no frontend option changed.
 
 ## Current closeout execution (2026-11-14)
+
+ARM64 floating-point header selection now uses the ABI's actual _fpmath.h,
+arith.h and gd_qnan.h, quad-precision machdep_ldisQ/strtorQ sources and generic
+C division. AMD64 keeps its extended-precision sources and optional division
+assembly. Unsupported floating-point header ABIs are incompatible rather than
+silently selecting AMD64. The existing standalone ARM64 setjmp filegroup now
+references the new source-owned package boundary explicitly.
+
+Fresh independent Make libc components complete on both CPUs (ARM64 retains the
+recorded older SDK/profile; AMD64 excludes test programs only for this library
+reference). Native gdtoa, stdio and stdlib each pass all original-Make allocated
+ELF, external-symbol and relocation contracts: 21 + 111 + 74 members in both
+regular and PIC variants, 412 comparisons per architecture. Original Make
+compiler dependency records and declared static-only source origins establish
+the compared inventories; allocator/provider objects keep separate ownership.
+The comparison first exposed assertion filename differences in eleven stdio
+routines and rand, now corrected with declared compiler source-prefix maps on
+both CPUs. No object or ELF payload is rewritten. Final evidence is retained in
+/usr/obj/usr/src/bazel-libc-arm64-components-parity-r8-20261114 and
+/usr/obj/usr/src/bazel-libc-amd64-components-parity-r8-20261114.
+
+The earlier AMD64 preservation R2 checks all 588 affected gdtoa/stdio/stdlib/string
+raw object variants against actual full R12 package payloads, but predates the
+intentional diagnostic-source correction; it is not final byte-preservation
+acceptance. Full R12 likewise predates that correction and needs refresh.
+These component contracts do not establish full libc archive composition/order,
+DSO linking, DWARF equivalence, current ARM64 world/hardening or runtime.
+Existing build-bsd format-5 SDK/architecture inputs select these source producers;
+no new C CLI option or backend target is needed. The manual and options document
+are updated with the declarations. Make stays production/default; no host
+installation, publication, upgrade or reboot occurs.
+
 
 Full AMD64 R12 is terminal passed: 30 expanded tests and the full selected
 450-package target, with 1,559 captured files / 647,928,098 bytes. It refreshes

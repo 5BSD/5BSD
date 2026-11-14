@@ -8517,3 +8517,13 @@ thread helpers; WANT_HYPERV and the pkru manual remain x86-specific.
 Existing format-5 architecture and SDK inputs select these declarations without
 new frontend options. Component archive and shared ABI metadata checks do not
 establish complete ARM64 world, DWARF or runtime qualification.
+
+.Pp
+Native libc floating-point headers and conversion sources follow the target ABI:
+AMD64 extended precision and AArch64 quad precision remain separate.
+Architecture-specific optimization selectors apply only to the matching CPU.
+Unsupported floating-point header ABIs are incompatible; they do not inherit
+AMD64 headers. Logical compiler source identities preserve assertion filenames
+without rewriting compiled objects. Existing format-5 architecture/SDK inputs
+select these producers. Component object comparisons do not establish complete
+libc shared linking, DWARF equivalence or ARM64 runtime qualification.
