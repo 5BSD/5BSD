@@ -12,7 +12,10 @@
 
 #include <security/oes/oes.h>
 
-_Static_assert(OES_API_VERSION == 2, "update API version coverage");
+_Static_assert(OES_API_VERSION == 3, "update API version coverage");
+_Static_assert(sizeof(struct oes_jail_scope_args) == 264,
+    "jail scope ioctl layout changed");
+_Static_assert(OES_SCOPE_JAIL == 2, "jail scope value changed");
 _Static_assert(OES_MESSAGE_VERSION == 2,
     "scope API must not silently change the message ABI");
 _Static_assert(sizeof(void *) == 8, "OES is available only on LP64 targets");

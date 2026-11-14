@@ -10,6 +10,7 @@ import stat
 import sys
 import tempfile
 import time
+from construction_records import construction_records
 from pkg_relocated import root_command
 
 
@@ -80,7 +81,8 @@ def main():
     for rows in inventory["packages"].values():
         for row in rows:
             if row["type"] == "dir":directories.setdefault(row["destination"], row)
-    construction = {row["destination"]:row for row in request["construction"]}
+    construction = {row["destination"]:row for row in construction_records(
+        request["construction"], request.get("construction_trees", []))}
     assert construction == inventory["construction"]
     site = {row["destination"]:row for row in request["site"]}
     assert len(site) == len(request["site"]) and set(site) == set(policy["site_operations"])

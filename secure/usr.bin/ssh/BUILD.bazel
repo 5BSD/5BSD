@@ -10,8 +10,8 @@ bsd_install_file(manual = True, name = "config_manual_file", src = ":config_manu
 ssh_program(
     name = "ssh",
     srcs = ["//crypto/openssh:ssh.c", "//crypto/openssh:readconf.c", "//crypto/openssh:clientloop.c", "//crypto/openssh:sshtty.c", "//crypto/openssh:sshconnect.c", "//crypto/openssh:sshconnect2.c", "//crypto/openssh:mux.c", "//crypto/openssh:gss-genr.c"],
-    deps = ["//secure/lib/libcrypto:crypto"] + select({"//tools/build/bazel/config:kerberos_support_enabled": ["//krb5/lib/gssapi:gssapi_krb5"], "//conditions:default": []}),
-    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared"] + select({"//tools/build/bazel/config:kerberos_support_enabled": ["//krb5/lib/gssapi:gssapi_krb5_shared"], "//conditions:default": []}),
+    deps = ["//secure/lib/libssh:ssh"] + select({"//tools/build/bazel/config:kerberos_support_enabled": ["//krb5/lib/gssapi:gssapi_krb5"], "//conditions:default": []}) + ["//secure/lib/libcrypto:crypto"],
+    dynamic_deps = ["//secure/lib/libssh:ssh_shared"] + select({"//tools/build/bazel/config:kerberos_support_enabled": ["//krb5/lib/gssapi:gssapi_krb5_shared"], "//conditions:default": []}) + ["//secure/lib/libcrypto:crypto_shared"],
     aliases = ["slogin"],
     extra_entries = [":client_config", ":config_manual_file"],
     extra_directories = {"/etc/ssh": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},

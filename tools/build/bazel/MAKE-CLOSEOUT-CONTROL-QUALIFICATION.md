@@ -182,3 +182,1210 @@ boundaries, controlled CPU/RAM/disk I/O/retained storage, maintained production
 publication and ARM64 Tier 1 qualification remain required. RISC-V is Tier 2.
 BIP remains excluded. Bundle/repository signatures do not prove Secure Boot or
 protection against compromised root.
+
+## Complete archive comparison (2026-11-13)
+
+Original Make archive creation produced all 450 selected packages under
+`/usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261111`. Both archive commands
+passed. Its receipt, `bazel-closeout-make-packages-r1-20261111/receipt.json`, retains
+`source-changed-review-required`: comparison/test files changed during packaging.
+The separately recorded `bazel-closeout-package-comparison-r1-20261111/make-review.json`
+checks the unchanged bound Make recipes, exact package identities/hashes and
+unchanged repository pointers. That review accepts the archive-command scope;
+it does not turn the original receipt into a source-clean/current-head build.
+No combined repository publication or host installation occurred.
+
+`bazel-closeout-system-native-r1-20261111/receipt.json` now passes the complete
+selected native AMD64 graph and its two selected tests. Its explicit kernel
+revision is `bda201068fe3`. The newer source tree must not be relabeled as that
+captured epoch. `bazel-closeout-package-comparison-r2-20261113/candidate-bindings.json`
+binds all 450 candidate archives to that receipt and its captured output manifest.
+
+The maintained comparator can be run with explicit inputs:
+
+```
+python3.12 tools/build/bazel/package-archive-compare.py \
+    --reference REFERENCE_INDEXED_DIRECTORY \
+    --candidate CANDIDATE_INDEXED_DIRECTORY \
+    --output FRESH_REPORT_DIRECTORY --tar EXPLICIT_BSDTAR \
+    --library EXPLICIT_LIBARCHIVE
+```
+
+Each input directory supplies a format-1 `index.json` with package names and
+SHA-256 hashes. The tool checks package selections, manifests, archive coverage,
+named/numeric owners, modes, flags, links, available timestamps and streamed
+regular-file payload hashes. It captures its source inputs and writes package
+shards and a progress journal. Unsupported ACL/xattr metadata is refused rather
+than silently omitted. A separate hardlink-group diagnostic distinguishes a
+first-stored-link choice from changed payloads; raw differences remain present.
+Neither view simulates final installed inode ownership or establishes runtime
+correctness. Compressed-byte equality is recorded separately.
+
+`bazel-closeout-package-comparison-r2-20261113/comparison/review.json` completes
+all 450 packages with **differences-found**. No package names or nondirectory
+payload paths are missing or extra. Ten directory path claims differ (dq-dev,
+kernel-generic, kernel-generic-dbg and utilities). The logical diagnostic retains
+4,168 payload-hash, 3,239 size, 36,682 mtime, 17 subsecond mtime differences,
+plus manifest differences. These are not waived or accepted as parity.
+There are no logical owner, permission, flag, symlink or hardlink-group differences
+in this comparison. The original R10 negative control remains separate and
+unsuperseded as historical evidence.
+
+Five executable dependency differences were independently confirmed against
+actual Make/native ELF payloads in `bazel-package-link-review-r1-20261111`:
+`jail` directly linked libelf, and gencat/iconv/mkcsmapper/mkesdb directly linked
+libsys. The source declarations now use the public libc ABI boundary for those
+four utilities and omit jail's unnecessary direct libelf edge. Their focused native build now passes, together with both archive test targets:
+`bazel-package-compare-native-r2-20261113/receipt.json`. All five pass the maintained
+ELF checker against actual original Make stage artifacts in
+`bazel-package-link-review-r2-20261113/results.json`: ordered NEEDED dependencies,
+versioned imports/exports, interpreter, PIE/RELRO/immediate binding and unsafe
+segment/search-path checks. Raw bytes and differing sections remain recorded.
+This is selected executable metadata acceptance, not exhaustive binary/runtime
+parity. Broader legacy consumers are not silently declared migrated.
+
+The comparison reader/fixtures pass four archive-reader and eight comparison
+host tests. Both test targets also pass through the maintained build-bsd
+format-5 interface, with explicit SDK tar/libarchive runtime inputs. The first
+attempt refused a stale SDK binding to Makefile after a source merge; the old
+receipt was preserved and the SDK was refreshed through the maintained exporter
+and materializer. This remains a Make-prepared SDK, not native bootstrap.
+No build-bsd C interface change is required for selecting these test labels.
+
+The same maintained ELF checker also passes representative complete-candidate
+accton, ls and sh comparisons against the original Make stage; their raw byte
+and section differences remain recorded under the complete comparison's
+`sample-elf` directory. The first invocation omitted the checker's explicit tool
+arguments and failed before inspection; `results-r2.json` records the corrected
+commands and their successful selected metadata checks. No conclusion about all
+4,168 differing payloads follows from those three samples.
+
+## Package lifecycle and incremental-build follow-up (2026-11-13)
+
+The complete captured-candidate manifest audit is retained in
+`bazel-closeout-package-comparison-r2-20261113/package-script-audit/scripts.json`.
+Seven packages contain lifecycle scripts, with nine distinct script bodies:
+
+| Packages | Required behavior to account for |
+| --- | --- |
+| caroot | certctl trust-store rehash after installation/removal |
+| runtime | account/database creation and migration, services database |
+| utilities | login.conf capability database |
+| otel and otel-dbg | _otel identity, spool ownership/mode |
+| rc | retired IPFW configuration backup, obsolete oracled script removal |
+| switchboard | retired policy-tree removal |
+
+This is a complete script inventory for the bound 450-package snapshot, not
+execution qualification of those scripts or every application. Image construction
+uses INSTALL_AS_USER and suppresses scripts. Existing declared account/database
+construction and flat _otel account entries do not establish certificate-store
+construction, upgrade migration behavior or all final ownership. The rc and
+Switchboard removal scripts describe legacy-state upgrades; a fresh empty stage
+cannot qualify those cases. Use the existing real upgrade tests and add the
+missing state checks where needed, rather than running target scripts against
+host paths during rootless construction.
+
+### Completed AMD64 R3 integration and archive comparison
+
+`/usr/obj/usr/src/bazel-closeout-system-native-r3-20261113/receipt.json` passes
+the selected AMD64 world, GENERIC kernel/modules, 450-package graph and all four
+selected test targets. Its explicit kernel source revision is `83d696e46e20`;
+1,539 unique captured files total 647,111,696 bytes. This candidate precedes the
+certificate construction/fix batch below. It is a prepared-SDK build, not native
+bootstrap, all-option qualification or current-head/installed-system acceptance.
+
+All 450 captured archives were bound through the maintained qualification-artifact
+resolver and compared against the retained independent Make repository. Evidence:
+`/usr/obj/usr/src/bazel-closeout-package-comparison-r3-20261113/comparison/review.json`.
+The two `shlibs_required` differences are gone. No package-name or nondirectory
+payload-path omissions remain; all ten entry-presence differences are directory
+claims. Logical diagnostics retain 4,174 payload hashes, 3,257 sizes, timestamps,
+manifest file/flatsize fields and directory claims. No timestamp, hash or raw
+metadata differences were rewritten or waived; final parity remains unaccepted.
+
+### Certificate construction and declared state
+
+`//secure/caroot:certificate_store` consumes selected trusted/untrusted package
+installation manifests and execution-configured certctl. Its declared tree holds
+generated hash names and the bundle; there is no enumerated hash list or host
+trust discovery. `certificate_store_archive` uses the existing bounded-tree
+serializer with explicit root/wheel installation modes and source mtree policy.
+World construction and image declarations select this archive through the existing
+CAROOT/OPENSSL/CRYPT setting group. The shared adapter accepts typed manifests or
+installation archives; the reader checks distinct untagged regular files and
+bounded canonical paths. Exact world reconciliation still rejects missing,
+changed or unexplained state and conflicting package claims.
+
+The original expanded host r2 control found a real certctl defect: a bundle
+whose parent equals DESTDIR retained its absolute build path in METALOG.
+The one-line boundary fix is applied in source, after the complete AMD64 R3 run
+ended. Normal component Make compilation and all 31 maintained host regression
+cases pass, including dry-run/actual staging-root metadata. The original host
+failure and isolated-fix controls remain under
+`bazel-certificate-construction-host-r2-20261113` and
+`bazel-certificate-root-metadata-fix-20261113`.
+
+The maintained native certificate R1 and R2 attempts failed in the new test
+adapter: directory artifacts appear as leaf aliases in runfiles, and Bazel's
+artifact permissions differ from installation permissions. Both failures remain
+recorded. The adapter now checks aliases against the declared tree execution
+path, inspects producer object types with lstat and compares all file bytes.
+Installation modes are still checked explicitly in METALOG and the actual tar;
+artifact-cache permissions are not used as installed-filesystem evidence.
+
+`/usr/obj/usr/src/bazel-certificate-construction-native-r3-20261113/receipt.json`
+passes all three selected native test targets: ten certificate cases, seven
+construction-input cases and eight world-inventory cases, without skips.
+The certificate cases include complete package corpus/directory-mode equivalence,
+distrust precedence, collisions/addition/removal, repeated construction, empty
+selection, ambient trust isolation, malformed/nonregular refusal, producer METALOG
+and archive contents/ownership/modes. The captured complete world inventory has
+447 world package families and 175 construction files, including all 168 generated
+certificate files. Kernel package families are separate from this world inventory.
+The subsequent complete image run,
+`bazel-certificate-image-native-r1-20261113/receipt.json`, passes the selected full
+package/image graph and both selected tests, including the actual package solver.
+The owned 2 GiB VM `bazel-certificate-vm-r1-20261113/result.json` passes all 15
+checks and normal poweroff in 292.78 seconds: Capsule PID1, ZFS root, all 450
+installed packages, login/PAM, SSH/su positive and negative authentication,
+firstboot account/database proof, and complete installed-tree reconciliation.
+The audit accounts only for independently verified firstboot transitions and
+explicitly selected ZFS archive-bit behavior; it does not silently accept extra
+payload changes. The original backing image and bound runner sources are checked
+unchanged. Sampled QEMU RSS peaks at 2,440,413,184 bytes below the 4 GiB budget;
+maximum observed overlay allocation is 14,598,656 bytes. This is a sampled process
+bound, not an aggregate-memory or comparative disk-I/O benchmark.
+
+The optional maintained certificate runtime policy supplies installed tool paths,
+bundle/local-directory paths, loopback port and deadline. Its four parser/failure
+cases pass natively in `bazel-certificate-runtime-test-native-r1-20261113`.
+The real guest `certificate-proof.json` passes ordinary-user fetch with default
+trust and no insecure flags or CA overrides: rejection of an untrusted local TLS
+server; acceptance after normal local CA installation and certctl rehash;
+rejection after removal and rehash; byte-identical restoration of the original
+bundle. Test keys, server and private state are owned by that guest and removed.
+This proves this installed fresh candidate's selected default TLS/local-CA
+lifecycle, not every application, external public TLS, signed upgrade/rollback
+on this candidate or Secure Boot. The earlier full upgrade/service scenario stays
+separate evidence until repeated against a subsequent candidate.
+
+Existing format-5 build-bsd target inputs support this batch without a new C
+frontend flag. The maintained VM runner, test target and frontend manual describe
+the optional policy; no separate production build backend was introduced.
+Make remains production/default; no host installation occurred.
+
+The refreshed SDK snapshot differs from the previous snapshot in only
+`sys/cap_authority.h` and `sys/proc.h`; exact hashes are retained in
+`bazel-closeout-package-comparison-r2-20261113/sdk-change-review.json`.
+The SDK exporter currently declares the complete system-header tree in
+compile_inputs. The completed R3 full integration run rebuilt a broad closure
+following that change. Review actual compile input discovery and cache
+invalidation before accepting incremental efficiency under gate 3/4. Keeping the
+same Bazel state directory alone does not prove narrow invalidation or cache
+hits. Do not drop declared headers to hide rebuilds: qualify unrelated-header
+reuse, used-header invalidation, newly reachable headers and sandbox availability
+before changing the toolchain input contract.
+
+### Package directory ownership closeout (2026-11-13)
+
+The retained R3 comparison's ten directory-presence differences have three
+source causes: libdq claimed an ABI include directory installed by a different
+component; OpenSSL omitted the utilities-owned CONFSDIR creation; and kernel
+families inferred ancestor ownership despite Make's kernel plist mode omitting
+complete_dirs. The declarations now model these component recipes directly.
+The family boolean controls package ownership only; complete physical stage
+metadata remains required. No pathname/package-name exclusions were added to
+the comparator or package serializer.
+
+`bazel-directory-policy-native-r1-20261113/receipt.json` passes all 450 packages
+and the real-pkg directory, cross-package hardlink and package-solver tests.
+The directory fixture checks inferred and explicit-only ownership, no inferred
+claims for a file-only package and rejection of a non-boolean policy, alongside
+existing invalid-directory/ownership/payload cases. Independent comparison
+`bazel-closeout-package-comparison-r4-20261113/comparison/review.json` processes
+all 450 packages and reduces directory entry-presence differences from ten to
+two; DQ/OpenSSL and inferred kernel ancestors now match. The remaining two are
+kernel/debug roots created by plain mkdir. Their physical declarations now have
+no ownership tags, while the GDB install -d directory retains its explicit
+claim. Native R2 finished the build and all three tests, but its capture rejected
+a changed bsd-build package digest after the manual was edited during the run.
+That attempt is not accepted. With selected sources held unchanged,
+`bazel-directory-policy-native-r3-20261113/receipt.json` passes all 450 packages,
+all three tests and immutable artifact capture. Its inventory retains both
+root-owned 0755 kernel/debug physical directories with empty ownership tags.
+
+The final strict comparison is retained at
+`bazel-closeout-package-comparison-r5-20261113/comparison/review.json`. All 450
+packages are compared; package names, every payload path and every directory
+claim now match. There are no missing/extra entries or directory-manifest
+mismatches. The comparator still returns differences-found: 4,174 payload hash,
+3,257 size, 36,683 mtime and 17 nanosecond timestamp differences, plus manifest
+file/flatsize diagnostics. This closes the observed directory ownership defects,
+not the full package-parity gate.
+
+R4 retains 4,174 payload hash and 3,257 size differences plus raw timestamps
+and manifest diagnostics. Two sampled ncurses text differences are generated
+comments containing absolute Make versus relative Bazel input paths (curses.h
+and the decompressed terminfo manual); no all-payload conclusion follows.
+No bytes, timestamps or metadata have been normalized or waived. Full package
+parity, current-source control reconciliation and the other completion gates
+remain open. The maintained format-5 build-bsd interface needs no new C option;
+its manual documents world versus kernel ownership policy. Production/default
+remains Make.
+
+### Complete indexed ELF review and focused source fixes (2026-11-13)
+
+`package-elf-review.py` replaces reliance on three sampled programs with indexed
+package-wide review. It consumes the verified reference/candidate indexes and
+hash-verified native installation inventory; no filename whitelist selects the
+programs. It streams each package through declared tar, copies selected bytes to
+non-executable hash-named private files, and invokes the maintained ELF/archive
+checker. Debug-tagged artifacts, other regular files, unmodeled paths, unsupported
+ELF types and selection differences remain counted explicitly. It checks input
+hashes again at completion and retains checker source copies and per-package
+results. No payload is executed and no raw byte differences are normalized.
+The scope remains metadata/symbol/section diagnosis, not full ABI/instruction,
+debug-link, kernel/module or runtime qualification.
+
+Review R1 was stopped after a confirmed wait-before-drain deadlock on tar's
+trailing padding. R2 produced all package details but failed its final binding
+check because a string key was passed to a Path-only digest helper. Neither run
+is accepted. R3 completes the frozen 450-package candidate review after those
+tool fixes, with all final input hashes verified:
+`bazel-package-elf-review-r3-20261113/review.json` has status review-required.
+Reference and candidate each contain 1,817 selected non-debug ELF files and 232
+static archives, plus 1,809 debug-tagged regular files explicitly outside this
+review's scope. There are no selection differences or unmodeled regular paths.
+Of 2,049 contracts attempted, 1,231 pass and 818 require review: 734 relocatable
+objects outside the program/shared checker, 40 program metadata differences,
+four shared-library metadata differences, 30 archive order/symbol differences,
+six duplicate-member archives, two unhandled .pico archive spellings, the loader
+without ordinary SONAME/interpreter metadata, and the kernel outside the ordinary
+PIE-program contract. A review-required result is not parity acceptance.
+The frozen candidate predates the three focused corrections below. Library-order
+differences account for 39 program and all four shared-library discrepancies;
+zstream accounts for the remaining program import mismatch. Sampled libc/libsys
+archive inventories have equal member sets but differing order; no conclusion
+about all archives follows. These must not be silently treated as passes.
+
+Four bounded regression cases cover padding larger than a pipe, nonzero trailing
+data, duplicate members and traversal without extraction. Host execution and
+`bazel-package-elf-review-test-native-r2-20261113/receipt.json` pass all four through
+the maintained frontend. The controlled producer in this test is a diagnostic
+pipe fixture, never a substitute for an operating system build or runtime test.
+
+The source Make LIBADD order is now restored for ctfconvert and ctfmerge using
+normal deps/dynamic_deps declarations. `bazel-ctf-link-order-native-r1-20261113`
+passes the focused build and runtime-path regression target. Both captured
+production executables pass the existing ELF checker against payloads extracted
+from the independently verified Make ctf package; exact commands and native and
+reference bindings are in `bazel-ctf-link-order-review-r1-20261113/review.json`.
+
+The Make zstream dependency file selects SPL assert.h followed by the Solaris
+compatibility wrapper. Native zstream omitted that latter header dependency,
+causing an extra imported __assert symbol. Its source header group now declares
+the missing wrapper dependency for both the program and I/O compilation.
+`bazel-zstream-headers-native-r1-20261113/receipt.json` passes the production
+build and all eight maintained queue selftests. Its full existing ELF metadata
+contract now matches the verified Make package payload, including imported and
+exported symbols and ordered dependencies; retained review:
+`bazel-zstream-header-review-r1-20261113/review.json`.
+
+These focused fixes are newer than the frozen complete-package candidate and
+require subsequent complete integration. Other lookup-order/archive discrepancies,
+configuration/ARM64/bootstrap/performance/publication and broader runtime gates
+remain open. The existing format-5 frontend needs no C interface change; its
+manual now describes this diagnostic and its limits. Make stays production/default.
+
+### Utility and RDMA library-order batch (2026-11-13)
+
+The next nine production executables now preserve source link order using normal
+CcInfo deps/dynamic_deps declarations: ncal (including the cal alias), mount,
+ifconfig, ngctl, elfcopy and the mckey/rping/ucmatose/udaddy RDMA examples.
+The component Make recipes supply the order; bsd.libnames.mk moves pthread after
+ordinary libraries, including conditional jail in ngctl. ifconfig keeps wireless
+and jail selection in place and places nv after them. DTrace provider declarations
+and constructor source order are preserved. These are direct dependency fixes,
+not ELF rewriting or package/comparator exclusions.
+
+The four RDMA examples consume one source-owned libraries.bzl list reflecting
+their parent Makefile.inc contract (ibverbs, rdmacm, irdma, mlx4, mlx5, bnxtre,
+cxgb4, pthread), with the shared-target list derived from the same labels. No
+runtime Make query or inferred binary-output ordering enters product actions.
+
+`bazel-utility-link-order-native-r1-20261113/receipt.json` and
+`bazel-rdma-link-order-native-r1-20261113/receipt.json` pass their selected native
+builds and the maintained runtime-path regression target. Independent reviews
+`bazel-utility-link-order-review-r1-20261113/review.json` (five) and
+`bazel-rdma-link-order-review-r1-20261113/review.json` (four) pass every existing
+program ELF contract against payloads from verified Make package archives.
+The reports retain native receipt/output bindings, reference package/member/data
+hashes, exact checker commands and exit statuses. This establishes selected ELF
+identity, hardening, dependency order and dynamic symbol/version metadata, not
+raw byte identity, new runtime/VM acceptance or RDMA hardware operation.
+
+Together with the prior CTF fixes, eleven of the frozen review's 43 library-order
+discrepancies now have focused corrected-source evidence. That historical review
+is unchanged. The remaining 32 and the archive/debug/kernel/loader/configuration,
+ARM64/bootstrap/performance/publication/runtime gates remain open. Full package
+integration of the newer fixes is still required. Existing format-5 build-bsd
+backend inputs cover these declarations; no C interface or production-default
+change is needed. The frontend manual documents the ordering policy.
+
+### Kerberos program and plugin library-order batch (2026-11-13)
+
+Native kadmin, kadmind, kdb5_util, pkinit.so.122 and k5tls.so.122 now use the
+source Make LIBADD dependency order. kadmin's static command-table library stays
+before profile/support, preserving the position of its shared editline provider;
+kadmind and kdb5_util place kdb at their respective source-defined positions.
+The plugin dependency lists preserve crypto/com_err/support order without
+changing version scripts, SONAMEs, source files or security link flags.
+
+`bazel-krb5-link-order-native-r1-20261113/receipt.json` passes all five selected
+product targets and both maintained database_test/kdc_test targets. These use an
+owned temporary database/realm and dynamically selected loopback TCP port, not
+the host's authentication database. Their declared loader runtime includes native
+libraries and SDK base runtime, so this is selected service execution, not a new
+complete installed-image or all-native-bootstrap qualification.
+
+`bazel-krb5-link-order-review-r1-20261113/review.json` records successful independent
+Make ELF contract comparisons for all three production programs and both plugin
+DSOs. It binds native receipts/outputs and verified reference package/member/data
+hashes, exact program checker commands, and the shared checker function/hash.
+Identity, hardening, ordered dependencies and dynamic symbols/versions pass;
+raw byte parity, complete ABI and installed Kerberos integration are not inferred.
+
+Sixteen of the frozen review's 43 order discrepancies now have focused corrected
+source evidence; 27 remain. The frozen all-package review is preserved unchanged,
+and a complete new-candidate package/image qualification is still required after
+the batches. The maintained build-bsd C frontend and existing ordering manual
+already cover these normal deps/dynamic_deps changes; no input schema, new CLI
+switch or production-backend change is needed. All six closeout gates remain.
+
+### ZFS/C++ library-order and zfsd test closure batch (2026-11-13)
+
+The source dependency order is now restored for libzfsbootenv, zfs and ztest.
+Native zfsd places its component/pthread libraries before the C++ runtime, and
+kyua preserves the early Lua math dependency before sqlite/util/conditional jail
+and the C++ runtime. Source src.libnames.mk supplies the lutok -> lua -> m chain;
+no expected ELF order is inferred at build time or postprocessed into outputs.
+All providers remain ordinary declared native deps/dynamic_deps.
+
+R1 built the five products but failed linking the previously unqualified zfsd
+unit target: static GoogleTest pulled non-PIC regex objects into its PIE link.
+The source test recipe's gmock_main -> gmock -> gtest -> regex/pthread shared
+provider chain is now declared in that test's dynamic_deps. PIE stays enabled,
+and installed regex/archive variants are unchanged. R1 is retained as failed,
+not counted as acceptance. `bazel-zfs-cxx-link-order-native-r2-20261113/receipt.json`
+passes all five product targets and the unit target, whose captured report shows
+all 22 cases from six suites passed with no skipped cases.
+
+`bazel-zfs-cxx-link-order-review-r1-20261113/review.json` passes every existing
+independent Make ELF contract for libzfsbootenv.so.1, zfs, ztest, zfsd and kyua.
+Native immutable-output bindings, verified reference archive/member/data hashes,
+checker commands or function/hash, and success statuses are retained. This is
+selected metadata/hardening/symbol-version/dependency-order acceptance and unit
+execution, not raw byte identity, complete ABI, ZFS pool operations or a fresh
+installed-system/upgrade qualification.
+
+Twenty-one of the frozen review's 43 dependency-order discrepancies now have
+focused corrected-source evidence; 22 remain (LLVM/SSH/SystemExtension). New
+complete package/image integration, archive/debug/kernel/loader/configuration,
+ARM64/bootstrap/performance/publication and broader runtime gates remain open.
+The normal build-bsd format-5 backend covers the changed declarations without
+new flags or C interface changes. Its manual documents the C++ and test-runtime
+ordering boundary. Make remains production/default.
+
+### SSH/SystemExtension library-order batch (2026-11-13)
+
+ssh_program now accepts complete ordered deps/dynamic_deps lists, with SSH-only
+defaults. All callers with explicit dependencies declare their full source
+recipe. The macro no longer unconditionally prepends SSH, which had incorrectly
+placed it before crypto for ssh-agent/keygen/keysign/pkcs11-helper. The client
+and daemon preserve selected Kerberos/wrapper/crypto order, and libssh places
+optional ldns before crypto/crypt/z. SFTP and ssh-sk-helper retain their existing
+order. This is an explicit caller-owned contract, without program-name branches.
+BSDExtension places native pthread after its ordinary dependencies, matching the
+source bsd.libnames.mk rule; source policy and DTrace declarations are unchanged.
+
+`bazel-ssh-extension-link-order-native-r1-20261113/receipt.json` passes all ten
+selected products and six expanded test targets. Captured reports record all
+34 cases passing: SSH versions/effective-config/invalid-config and extension
+allowlist/policy/drivers cases. These are selected startup/userland-policy cases;
+network authentication, SYSTEM Device operations and broader installed-provider
+coverage still require their corresponding VM gates.
+
+`bazel-ssh-extension-link-order-review-r1-20261113/review.json` passes independent
+Make ELF contract checks for libprivatessh, ssh, ssh-agent, ssh-keygen, ssh-keysign,
+ssh-pkcs11-helper, sshd, ssh-sk-helper, sftp and BSDExtension. Exact native capture
+and verified reference package/member/data bindings are retained with checker
+commands or shared-checker function/hash. This closes eight recorded order
+differences and checks two unchanged helper orders after the macro interface
+change. Dynamic symbol/version, identity, hardening and ordered-dependency
+contracts pass; raw byte/complete ABI and installed-system acceptance remain open.
+
+Twenty-nine of the 43 frozen-review order differences have focused corrected
+source evidence; fourteen LLVM cases remain. Complete new-candidate integration
+and all other existing gates remain required. build-bsd's existing format-5
+interface covers the changed source declarations and selected feature positions;
+no C/CLI change is needed. Its manual documents the caller-owned SSH order.
+Make remains production/default.
+
+### LLVM program order and executable compiler/linker probes (2026-11-13)
+
+`lib/clang/tool_libraries.bzl` owns the normal LLVM/Clang component lists and
+appends the native pthread/C++ runtime tail. A recipe can pass an explicit
+ordered component list: LLD's source Makefile places execinfo/terminal libraries
+before z/zstd, whereas clang.prog.mk and llvm.prog.mk put compression first.
+The LLVM/Clang utility macros, compiler driver, LLD and llvm-ar use that same
+contract. All link inputs remain native deps/dynamic_deps, and runtime-only
+probe closure and production installation variants remain distinct. Bootstrap
+and static recipes are not silently routed through the shared-library helper.
+
+R1 completed all seven tests but was rejected for two incorrect explicit target
+labels in the qualification request; completed actions were retained in the same
+Bazel state. R2 accepted the corrected selected family/build/tests, while its
+independent ELF review passed 13 products and rejected LLD's component order.
+That mismatch led to the explicit component-list API above. These failures and
+the original outputs remain retained, not rewritten into passing evidence.
+
+`bazel-llvm-link-order-native-r3-20261113/receipt.json` passes the complete selected
+normal installed LLVM family and all fourteen explicit production executable
+targets, plus seven maintained tests: selected-target code generation, native
+C/C++ linking, and full/thin LTO for C/C++. The captured case summary is seven
+passed. These probes use the explicitly prepared SDK/native runtime declarations;
+they do not establish independent native bootstrap, every LLVM option, or ARM64
+world/kernel qualification.
+
+`bazel-llvm-link-order-review-r2-20261113/review.json` passes all fourteen existing
+independent Make ELF metadata contracts: Clang, clang-scan-deps, LLD, and eleven
+LLVM utilities. It retains exact native output bindings, unchanged verified Make
+archive/index/member/data bindings, checker commands and statuses. Source-recipe
+library order, ELF identity, hardening and dynamic symbol/version contracts pass;
+raw section/byte differences remain recorded and full ABI is not inferred.
+
+All 43 library-order discrepancies from the frozen all-package ELF review now
+have focused corrected-source evidence. The historical review is preserved
+unchanged. A new combined world/kernel/module/pkgbase build, archive comparison,
+installed-image/runtime qualification, remaining archive/debug/kernel/loader and
+configuration work, ARM64, native bootstrap/cache/sandbox, resource/performance
+comparison and publication integration remain required. build-bsd's existing
+format-5 source interface covers these normal dependency declarations; no C/CLI
+change is needed. The manual documents explicit LLVM components and runtime order.
+Make remains production/default.
+
+
+## Combined R4 and static libdq variants (2026-11-13)
+
+`bazel-closeout-system-native-r4-20261113/receipt.json` passes the complete
+selected AMD64 world/GENERIC kernel/module/450-package graph at explicit kernel
+revision `4a75f49343bb`, with all seven selected tests passed and 1,542 captured
+files. The R6 independent package archive comparison has no package-name,
+payload-path or directory-claim differences. It retains all content/size,
+timestamp and manifest diagnostics. The SDK is still Make-prepared; this is not
+independent bootstrap, installed runtime, full parity or performance acceptance.
+The separate complete indexed ELF R4 review retains its own source/input bindings.
+
+The remaining libdq archive mismatch was a producer defect: a target-wide
+`-fPIC` affected the ordinary objects installed in `libdq.a`, contrary to
+`lib/libdq/Makefile`. The rule now lets rules_cc compile separate ordinary/PIC
+variants and selects the existing `bsd_small_pic` toolchain feature to match
+Make's shared `PICFLAG=-fpic`. No comparator filters or output rewriting changed.
+`bazel-dq-object-variants-native-r1-20261113/receipt.json` passes the archive,
+shared library and installation archive plus all five selected device-independent
+libdq tests (no skips). `bazel-dq-object-variants-review-r1-20261113/review.json`
+passes member order/full member symbol comparison and shared-library metadata
+against hash-checked Make package payloads. These checks do not establish live
+DescriptorQueue service behavior or all architectures.
+
+Read-only classification of the earlier 17 static archive symbol mismatches
+finds that the other sixteen differ only in `$dtrace<key>.<function>` names.
+`dt_link.c:hash_obj` derives the key from the object path; removing digits alone
+would lose binding information. Their checks remain unaccepted until an explicit
+relationship-preserving comparison verifies definitions/references and retains
+raw names. Thirteen other archive cases have equal member sets/counts but differ
+in order; they remain producer review items. Duplicate-member archives and Make's
+`.pico` member spelling remain explicit checker coverage gaps.
+
+The selected package index also confirms that Bazel itself is not shipped in
+base; it is currently the host's `bazel9` ports package. Gate 5 must include a
+maintained base package, runtime dependency policy and fresh-install usability.
+No C frontend inputs change in this correction: the existing format-5 interface
+builds the declared targets. Make remains production/default and BIP is excluded.
+
+
+## Complete ELF R4 and source-ordered archives (2026-11-13)
+
+`bazel-package-elf-review-r4-20261113/review.json` completes all 450 packages of
+combined system R4 with final input hashes verified and no selection differences.
+It passes 1,275 contracts and retains 774 review-required cases. All 43 prior
+NEEDED-order differences and zstream's imports mismatch are absent. Its remaining
+cases are 734 ET_REL inputs outside the checker scope, seventeen static symbol
+contracts, thirteen archive order contracts, six duplicate-member archives,
+two `.pico` spelling cases, and separate loader/kernel representation contracts.
+This frozen candidate precedes the focused libdq and archive-order corrections.
+
+The installed archive rule now accepts `ordered_sources`: real source target
+outputs determine member order, while exact own-object coverage, uniqueness and
+conflicting ordering declarations are checked during analysis. libnv and libipsec
+share one source list between compilation and archive construction; libelf shares
+its source list and preserves its original GENSRCS order. Generated lex/yacc/m4
+products remain declared native actions. No reference-output inventory is read
+by a production build and no Make subprocess selects the native archive order.
+
+`bazel-source-archive-order-native-r3-20261113/receipt.json` passes all three
+archives, shared libraries and installation archives plus four actual static/
+shared policy/ELF roundtrip tests. Independent review R3 passes all six selected
+archive/shared contracts against verified Make package payloads. Review R2 retains
+the initial libelf generated-member order failure (the other five contracts pass);
+its source recipe correction changes GENSRCS order, without weakening comparison.
+Remaining ten archive ordering cases and other unresolved checks are still open.
+The existing build-bsd format-5 interface covers these declarations; no CLI/C
+change is required. Its manual documents the archive source-order interface.
+Make remains production/default; full migration and ARM64 remain unqualified.
+
+
+## Mixed and generated archive source order (2026-11-13)
+
+The libdwarf source declaration now includes its declared m4-generated targets
+at the original SRCS positions, shared with compilation/archive construction.
+The complete 64-source identity set is unchanged. libpcap likewise places its
+lex/yacc products within its source list, with RDMA selection appended normally.
+libibnetdisc preserves the C++ member between C members while retaining separate
+language compile groups. All three use the existing `ordered_sources` interface
+with exact own-object coverage checks. No production Make subprocess, reference
+archive order lookup, synthetic member or comparator exemption is introduced.
+
+`bazel-mixed-archive-order-native-r1-20261113/receipt.json` passes the three
+static archives, shared libraries and installation archives, and all four
+maintained tests: libdwarf static/shared line-table reading and libpcap static/
+shared offline filtering. Independent review R2 passes all six static-member/
+symbol and shared-metadata contracts against hash-verified Make package payloads.
+Review R1's extraction failure remains retained: the diagnostic selected rdma
+instead of the actual rdma-lib shared-payload owner; built outputs were unchanged.
+Source metadata quote-only cleanup preserves an identical parsed declaration.
+This is selected native host evidence, not hardware/RDMA traffic, live DTrace,
+installed image, ARM64, bootstrap or full ABI/debug acceptance.
+
+Seven original archive order cases remain: libc, libsys, libzpool, libarchive,
+liboes, libncursesw_real and libtinfow. Earlier review results are preserved and
+these focused fixes still require later complete candidate integration. Existing
+build-bsd format-5 inputs cover the changed source declarations; no C/CLI change
+is necessary. The manual's source-order contract applies unchanged. Make remains
+production/default; BIP remains excluded.
+
+
+## libsys ordinary and PIC archive order (2026-11-13)
+
+The libsys declarations now share source-owned groups for memory functions,
+common/architecture/interface implementations, generated syscall stubs and the
+thread wrapper. The IFUNC VDSO source retains its separate sanitizer-free compile
+group and its original position in both installed archives. The existing source
+inventory and generation policy remain intact; exact own-object coverage is
+validated by the maintained archive rule. No runtime Make query or reference
+archive supplies build ordering. Production frontend inputs do not change.
+
+`bazel-libsys-archive-order-native-r1-20261113/receipt.json` passes the ordinary
+archive, PIC archive, shared library, installation archive and both direct syscall
+runtime tests. `bazel-libsys-archive-order-review-r1-20261113/review.json` passes
+all three contracts against hash-verified Make pkgbase payloads: complete member
+order/full symbols for both 477-member archives and shared-library metadata.
+This remains selected AMD64 host/runtime evidence with the explicitly prepared
+SDK, not independent bootstrap, installed-kernel qualification or ARM64 evidence.
+
+The maintained checker now recognizes Make's `.pico` suffix alongside ordinary,
+PIC, PIE and DTrace member spellings. It normalizes only source identity; order,
+full symbols, duplicate identities and collisions are still checked. The existing
+real-artifact test driver exercises `.nopic.o` and `.pico`, including collisions,
+plus missing-member, reordered-member and symbol-drift negatives. All ten cases
+pass in `bazel-archive-pico-checker-r1-20261113/result.json`, with exact argv,
+inputs hashes and stdout/stderr retained. This is host checker qualification;
+no unsupported duplicate-member or DTrace alias comparison is accepted by it.
+
+Six original order cases remain: libc, libzpool, libarchive, liboes,
+libncursesw_real and libtinfow. The previously frozen complete indexed review is
+preserved; later focused results still need complete-candidate integration.
+The existing build-bsd format-5 path covers these source dependencies; no C/CLI
+change is needed. Make stays production/default, BIP excluded.
+
+
+## Ncurses and tinfo archive order (2026-11-13)
+
+Ncurses and tinfo now share one ordered declaration for compilation and installed
+archive membership. Ncurses's generated expanded/lib_gen sources precede normal
+sources. Tinfo's generated codes/fallback/keyname/names/unctrl and capability-table
+sources occupy their original recipe positions. Existing 109/60 source identity
+sets are unchanged and the archive rule requires exact own-object coverage.
+Generated inputs keep their native actions and declared dependencies; no build
+reads Make output or reference archives to select order.
+
+`bazel-curses-archive-order-native-r1-20261113/receipt.json` passes both static
+archives, both shared libraries, normal ncurses installation archive and the
+maintained native public API integration test. That actual noninteractive test
+exercises terminal setup/capability expansion, key naming, wide-character cells,
+panels, menus and forms. Independent review R1 passes all four static-member/
+symbol and shared-library metadata contracts against hash-verified Make packages,
+with comparison-tool digests checked before and after. This is selected host
+API/artifact acceptance, not interactive workstation, ARM64, full ABI/debug or
+whole-system completion. Four original ordering cases remain: libc, libzpool,
+libarchive and liboes. New focused outputs still need combined integration.
+
+The existing build-bsd format-5 interface and documented source-order contract
+cover these declarations; no C/CLI/manual interface changes are needed. Make
+remains production/default and BIP remains excluded.
+
+
+## Libzpool archive order across compile groups (2026-11-13)
+
+The libzpool inventory now has one complete source recipe order. Sources with
+special compression compiler flags remain an explicit subset; the ordinary group
+is derived from that inventory. A declared source filegroup forwards the complete
+order to the installed archive rule. This preserves all 204 source identities,
+per-group compiler flags and exact own-object coverage. A production build does
+not query Make or a reference archive, and no comparison exclusions are added.
+
+`bazel-zpool-archive-order-native-r1-20261113/receipt.json` passes the static
+archive, shared library, installation archive and selected zstream queue test.
+The retained test log explicitly reports all eight queue selftests OK, including
+basic, edge, zero-cost, batching, torture, multi-producer, multi-queue and stress.
+Independent review R1 passes full order/symbol contracts for all 204 archive
+members and shared-library metadata against hash-verified Make payloads, with
+comparison-tool digests checked before/after. These are selected host tests, not
+ZFS filesystem/disk workload, hardware, full ABI/debug or ARM64 qualification.
+
+Three original order cases remain: libc, libarchive and liboes. Later focused
+fixes still require a complete combined candidate and the wider runtime,
+configuration, bootstrap/cache/sandbox, performance, publication and ARM64 gates.
+The existing build-bsd format-5 path and documented archive source-order interface
+cover this declaration change; no C/CLI/manual input change is needed. Make stays
+production/default; BIP stays excluded.
+
+
+## DTrace archive alias symbol relationships (2026-11-13)
+
+DTrace's `hash_obj` derives alias IDs from object paths, so Make and native Bazel
+need not use the same numeric ID. The maintained checker now compares every
+ordinary symbol exactly and maps aliases only using their complete archive
+incidence signature: member identity, original function name and symbol kind at
+every definition/reference. Signatures must establish an unambiguous bijection;
+merged, split, missing, moved or renamed relationships are rejected. Reports keep
+both raw symbol tables plus each explicit ID mapping/incidence. This checks only
+symbol metadata, not address/relocation correctness or live DOF/probe behavior.
+
+`bazel-archive-dtrace-symbols-native-r1-20261113/receipt.json` passes the new
+maintained Bazel test; its retained log reports eleven actual unittest cases.
+They cover consistent remapping, broken/missing references, moved definitions,
+changed symbol kinds/functions/ordinary symbols, merged groups, ambiguous
+mappings and nonnumeric prefixes. The existing real-artifact test driver still
+passes all ten cases in `bazel-archive-pico-checker-r2-20261113/result.json`.
+
+`bazel-archive-dtrace-review-r1-20261113/review.json` freshly extracts/rechecks
+sixteen R4 archives against the preserved complete-review package/payload hashes.
+Fifteen pass complete member/symbol contracts with explicit mappings. PAM remains
+review-required: its merged static module has indistinguishable alias signatures,
+so no mapping is guessed. Actual definition/DOF relocation evidence is still
+required there. The overall report correctly remains review-required. It retains
+fresh artifacts, source copies, raw comparisons and verified input hashes; it is
+not another whole-system build or a waiver of the rejected historical reports.
+
+This checker/test change uses the maintained build-bsd format-5 test interface;
+no C/CLI input changes are required. The manual records symbol-only mapping scope.
+Make remains production/default. All remaining closeout gates remain in force.
+
+
+## Libarchive and liboes provider/member order (2026-11-13)
+
+Libarchive now derives archive member names from its maintained ARCHIVE_SOURCES
+inventory, preserving the hmac source position across the separate warning-flag
+compile group. Its declared provider is appended in normal DTrace mode; disabled
+mode uses ordinary objects. Liboes orders its ordinary sources, generated FIDL
+bindings and declared provider as in the source recipe, with explicit normal,
+disabled and experimental section-archive selections. The existing archive rule
+requires exact object coverage; none of these build selections reads a Make
+reference or rewrites finished output. The existing format-5 frontend is used.
+
+`bazel-provider-archive-order-native-r1-20261113/receipt.json` passes static,
+shared and production installation products for both libraries. Six maintained
+test targets pass, with eleven reported cases: real static/shared libarchive
+roundtrips and OES ownership/path/broker protocol/client cases. OES tests use their
+existing source/mocked client harnesses; this is not live kernel OES, capability
+service deployment or live DTrace qualification. Disabled/experimental selections
+remain declared but are not newly qualified by this normal-mode run.
+
+Independent `bazel-provider-archive-order-review-r1-20261113/review.json` passes
+all four archive-member/full-symbol and shared-metadata contracts against verified
+Make package payloads. DTrace aliases retain raw names and explicit unambiguous
+whole-archive mappings. Comparison tool digests are checked before and after.
+This is selected artifact/host evidence, not full ABI/debug or ARM64 acceptance.
+
+Twelve original archive-order defects now have focused producer corrections;
+libc is the remaining one. PAM's ambiguous alias relationships, other unsupported
+archive/ELF representations, installation/debug/configuration boundaries and
+later complete candidate integration remain open alongside the wider gates.
+No build-bsd C/CLI/manual interface changes are needed for these source-owned
+ordering declarations. Make remains production/default and BIP remains excluded.
+
+
+## Libc configured native archive composition (2026-11-13)
+
+Libc now declares native archive composition in `lib/libc/archive_order.bzl`:
+common source-order sections, selected iconv and locale conversion objects, NIS
+objects, machine-dependent/portable implementations, the selected provider and
+static-only wrappers. This is maintained source recipe metadata, not an order
+read from an installed archive or a build-time Make query. Every selected compiler
+object must occur exactly once. The general archive rule's `member_order` matches
+canonical ordinary object identities across .o/.pic.o/.nopic.o, rejecting missing,
+extra or ambiguous identities. It neither rewrites object files nor changes the
+selected compiler variant. Existing compilation flags and group boundaries stay
+owned by their declared CcInfo producers. Stale order data fails analysis.
+
+`bazel-libc-order-matrix-review-r1-20261113/review.json` independently compares
+the native literal/select declarations with current Make source recipes across
+sixteen iconv/NIS/machine-optimization/DTrace combinations. All 48 static/PIC/NOSSP
+ordering contracts pass, with visited Make-input and specification hashes verified
+unchanged. The reviewer evaluates declarative selections in Python; it is not a
+substitute for configured Bazel builds or runtime across those combinations.
+
+`bazel-libc-archive-order-native-r2-20261113/receipt.json` passes ordinary/PIC/
+NOSSP archives, the shared library, installation archive and all seven tests:
+dynamic/static runtime, actual archive identity/extraction and four real Bazel
+analysis failures (missing, duplicate, conflicting and ambiguous member orders).
+The negative fixtures are analyzed rather than compiled/executed. Native R1 also
+passes its three original runtime/identity tests. These builds use the prepared
+SDK; neither establishes independent native bootstrap or ARM64 acceptance.
+
+`bazel-libc-archive-order-review-r2-20261113/review.json` passes the ordinary
+1,455-member archive and PIC 1,443-member archive order/full-symbol contracts and
+shared-library metadata against verified Make pkgbase payloads. Raw symbols and
+explicit unambiguous DTrace alias mappings are retained. Tool digests are checked
+before/after. NOSSP construction is accepted, but no independent NOSSP Make
+artifact contract is inferred from that. All thirteen original order defects now
+have focused producer corrections; a complete new combined build/review remains
+required. PAM ambiguity, other representation/debug/configuration checks and all
+wider closeout gates remain open. Existing format-5 frontend inputs cover these
+native declarations, with the source-identity contract documented in the manual;
+no C/CLI change is required. Make stays production/default and BIP stays excluded.
+
+
+## Combined R5 and repeated ELF symbols (2026-11-13)
+
+`bazel-closeout-system-native-r5-20261113/receipt.json` passes the combined
+selected current AMD64 world/GENERIC kernel/modules/450-package graph at explicit
+kernel revision `5e12086b5cbd`. All thirteen selected tests pass and 1,545 files
+are captured with verified digests. The private R7 comparison captures all 451
+package/index outputs without advancing repository publication pointers. This
+build still uses a Make-prepared SDK and does not establish complete parity,
+bootstrap, runtime, performance, ARM64 or production-backend acceptance.
+
+Read-only PAM investigation found 1,093 symbols but only 528 unique name/kind
+pairs in each merged static module; repeated local names are legitimate. The
+archive parser's use of a set lost that multiplicity. The retained real ELF
+negative in `bazel-archive-symbol-multiplicity-diagnosis-r1-20261113/diagnosis.json`
+confirms that the prior checker incorrectly accepted an extra repeated local
+FUNC symbol. The parser now preserves every occurrence. Raw symbol counts are
+not waived or filtered, and ordinary and alias contracts retain multiplicity.
+Previous claims of full member-symbol comparison must be read with this former
+limitation; the old records are preserved and not retroactively accepted for it.
+
+`bazel-archive-pico-checker-r3-20261113/result.json` passes all twelve actual
+real-artifact cases, including a fixture with verified counts one versus two and
+rejection of the extra repeated symbol. Native
+`bazel-archive-dtrace-symbols-native-r2-20261113/receipt.json` passes the maintained
+alias-contract test; its retained log reports twelve unittest cases including an
+extra ordinary symbol occurrence. PAM's ambiguous ID mapping remains unaccepted.
+The new complete R5 review must use this corrected checker; earlier results do
+not substitute for it. The normal build-bsd format-5 interface runs the new case,
+with no C/CLI changes required. The manual records count-preserving scope.
+Make remains production/default; all six gates remain open where evidence is
+missing, and BIP remains excluded.
+
+
+## Complete count-preserving ELF R5 review (2026-11-13)
+
+`bazel-package-elf-review-r5-20261113/review.json` completes all 450 combined-R5
+packages with final source/tool/package/index hashes unchanged and no selected
+payload omissions. Of 2,049 non-debug ELF/archive inputs, 1,306 contracts pass.
+The remaining 743 are explicitly classified: 734 ET_REL objects outside the
+ordinary program/shared checker; six archives with repeated member names (absl,
+protobuf, icp, icp_rescue, spl, zfs); PAM's ambiguous alias graph; the loader
+without a normal SONAME/interpreter contract; and the non-PIE kernel. No normal
+program/shared or supported static archive order/full-symbol difference remains
+with counts preserved. Unsupported cases are not accepted as parity, and these
+metadata checks do not establish instruction/full ABI/debug/runtime equivalence.
+
+Strict `bazel-closeout-package-comparison-r7-20261113/comparison/review.json`
+covers all 450 packages without missing/extra package identities, payload paths
+or directory claims. It still retains raw and logical content/size/timestamp and
+manifest differences; complete Make parity remains unaccepted.
+
+## Configured product preflight in the normal frontend (2026-11-13)
+
+The source-configured backend now queries every requested product with public
+Bazel cquery before the main build/test invocation. It preserves the exact source
+settings, platform/toolchain/cache arguments and selected Java environment.
+Test and build-only invocations use the same constructor. Output-only execution
+log/profile/BEP flags are removed from queries, so analysis does not overwrite
+main execution evidence. Main test expansion and cross/kernel host-artifact
+requirements continue independently; subsequent BEP output verification remains
+mandatory. No private Bazel output-cache discovery or compiler fallback is added.
+
+Direct roots use the combined configured inventory. Aliases whose names disappear
+from cquery's actual-target labels receive a single-selector query and a checked
+binding to that combined inventory. Canonical source labels normalize consistently;
+resolved external identities are retained. Missing, duplicate, malformed,
+inconsistent or incompatible requests fail closed. Every combined result must be
+bound. The receipt hashes `target-inventory.json`; query stdout/stderr/commands and
+failed inventory reports are retained. The existing format-5 targets/tests inputs
+cover this behavior; no C/CLI input change is needed and the manual is updated.
+
+`bazel-target-preflight-review-r1-20261113/review.json` accepts the final real R2
+checks: a normal frontend run resolves libc's pic_archive alias to
+shared_objects_archive and passes all 34 inventory unit cases; real nonexistent
+and wrong-platform targets are rejected before main build/test invocation. Both
+negative runs have only cquery commands and no main stdout/stderr, BEP, execution
+log or passed receipt. Their nonzero frontend exits are expected rejection,
+not successful builds. The first missing-target attempt exposed the build-only
+constructor's test-only assumption; that failure is retained and not counted as
+acceptance. The fixed helper has explicit build/test-operation cases.
+
+Public-query probe R2 established actual alias/source/suite label behavior with
+zero actions. Probe R1 lacked the frontend's selected JAVA_HOME and failed local
+JDK detection; it is retained, and production code continues using the exact
+existing selected environment. Positive native R1's 32 cases precede the final
+34-case R2 acceptance. None of this establishes native bootstrap, complete output
+query/reproducibility, cache/sandbox efficiency or comparative performance. Those
+wider gates, special representation checks, runtime/configuration work, production
+publication and ARM64 remain required. Make stays default; BIP remains excluded.
+
+
+## Ordered duplicate archive occurrences (2026-11-13)
+
+`/usr/obj/usr/src/bazel-archive-occurrence-checker-r1-20261113/result.json`
+passes all sixteen real-artifact cases with unchanged input hashes. LLVM ar's
+public xN interface supplies each repeated name occurrence in a private directory;
+ordinal keys bind symbol/alias graphs to each instance. Different spellings that
+normalize to the same identity remain rejected. No new native runtime dependency
+or frontend flag is introduced, so build-bsd.c and format-5 inputs need no change.
+
+`/usr/obj/usr/src/bazel-duplicate-archive-review-r2-20261113/review.json`
+rechecks the six R5 archives against the recorded package and payload digests.
+libprivateabsl, libprivateprotobuf, libicp and libspl pass. libicp_rescue moves
+its specially compiled gcm member to the end; libzfs moves btree/range_tree after
+the architecture group. Both remain review-required producer differences.
+The failed R1 attempt used a nonexistent ./-prefixed package member and is not
+acceptance evidence. This selected check does not establish runtime/DOF/ABI or
+whole-system parity. The earlier complete R5 report remains unchanged.
+
+
+## Duplicate-name producer order fixes (2026-11-13)
+
+`/usr/obj/usr/src/bazel-duplicate-library-order-native-r2-20261113/receipt.json`
+passes both static/shared/installation families and two test targets. The ZFS
+daemon test reports 22 cases; the alias target runs its twelve internal cases
+under one Bazel test report. Selected test reports total 23 passed cases.
+libicp_rescue declares C groups before and after the specially compiled GCM
+source; libzfs declares user, btree, cityhash, range_tree and remaining common
+source groups. Their GCM undefinition/hidden-visibility options and complete
+source inventory remain intact. Both compilation and archive/link composition
+use these native groups; no archived outputs or Make queries select production
+order. OpenZFS exports derive from the same complete native source inventory.
+
+`/usr/obj/usr/src/bazel-duplicate-library-order-review-r1-20261113/review.json`
+passes both complete static member-order/symbol contracts against hash-verified
+Make payloads retained by duplicate archive review R2. Duplicate objects remain
+separate occurrences. Shared products were built; this selected independent review
+only compares the static archives. No full ABI/runtime/filesystem qualification
+is inferred. Native R1's stale source-export load failed product preflight and is
+retained, not counted as acceptance. A preliminary invocation missing --bazel
+failed option validation before qualification started. No build-bsd.c/CLI input
+or backend target changes are required; the maintained format-5 path was used.
+Full combined integration and the other six closeout gates remain required.
+
+
+## Relocatable payload contract integration (2026-11-13)
+
+`/usr/obj/usr/src/bazel-relocatable-review-native-r1-20261113/receipt.json`
+passes three native test targets through build-bsd format 5. Test logs report ten
+ELF32/64 real-object/section-identity cases, four package-stream boundary cases
+and twelve DTrace alias graph cases. Changed real instruction bytes produce a
+review-required comparison. The indexed package reviewer reuses the existing
+`elf_object_contract.py` contract with duplicate section occurrence identities;
+allocated bytes/metadata, external symbols and symbolic relocations remain exact.
+Its source digest is now part of the review bindings, and native consumers declare
+it as runfiles data. No production input option or C frontend change is needed.
+The build-bsd manual records this contract and its debug/runtime limits.
+
+The all-450 frozen R5 package recheck is in
+`/usr/obj/usr/src/bazel-package-elf-review-r6-20261113`. Until that process completes
+and final inputs remain unchanged, its intermediate reports are diagnostic only.
+In particular, a GNU build-ID-only difference remains explicit; nothing silently
+strips build identities or DTrace IDs to accept a module.
+
+
+## Combined R6, indexed R6 and module diagnosis (2026-11-14)
+
+- `/usr/obj/usr/src/bazel-closeout-system-native-r6-20261113/receipt.json`:
+  passed selected current AMD64 world/GENERIC/modules/450-package graph at explicit
+  kernel revision `0bb24324ee7`, fifteen expanded test reports, 1,547 captured files,
+  647,575,911 bytes. Prepared Make SDK and older qualification frontend executable;
+  no bootstrap, publication, current-front-end end-to-end or runtime gate inferred.
+- `/usr/obj/usr/src/bazel-package-elf-review-r6-20261113/review.json`:
+  completed all 450 frozen R5 packages with final unchanged-input hashes; 1,321
+  passed, 728 review-required, no selection differences. This is R5 artifact review,
+  not a comparison of the newly built R6 packages. The two order differences in R5
+  have independent focused fixes incorporated into native R6.
+- `/usr/obj/usr/src/bazel-kernel-relocatable-diagnosis-r3-20261113/diagnosis.json`:
+  incrementally decoded the entire hash-bound kernel report: 721 artifacts,
+  708 build-ID-only modules and twelve with additional allocated/relocation
+  differences, plus the special kernel. No exact comparison was relaxed. Reader R1
+  was stopped because fixed-size decode retries scaled quadratically for large
+  entries; geometric buffering R2/R3 completes with the same comparison results.
+- `/usr/obj/usr/src/bazel-module-rodata-diagnosis-r1-20261113/diagnosis.json`:
+  verifies package/payload hashes before inspecting the twelve modules. Eleven
+  show canonical source paths versus Make's doubled slashes or module/../ paths.
+  mqueuefs has no changed rodata strings; source commits af582cb93ef and b5816432c11
+  postdate Make kernel control d44de404cb7. Further exact resolution needs a
+  current, coherent source/configuration/filename policy control. No source is
+  reverted, output rewritten or path discrepancy silently accepted.
+
+`/usr/obj/usr/src/bazel-review-serialization-check-r1-20261114/result.json`
+checks that streamed JSON encoding reproduces all 648,191 bytes of a real DTrace
+package report. `json.dump` avoids a second full serialized string; this does not
+bound retained per-package metadata or establish measured peak-memory improvement.
+The kernel package report is about 925 MiB, and the review process was observed at
+about 8 GiB RSS; that sample is not a peak/aggregate resource measurement.
+
+The old `/tmp/build-bsd-native-qualification` executable was refreshed by compiling
+the maintained current C source to
+`/usr/obj/usr/src/bazel-closeout-frontend-r1-20261114/build-bsd` with host cc/libmd.
+`/usr/obj/usr/src/bazel-review-writer-native-r2-20261114/receipt.json` passes all four
+package stream regressions through its explicit --target-arch dispatch. R1 passes
+through the older executable and is retained separately. C/CLI inputs need no new
+option for the report writer; backend helper, native data inputs and manual are
+maintained together. This frontend build is a qualification tool, not an installed
+or published base package.
+
+`/usr/obj/usr/src/bazel-current-make-control-request-r1-20261114` contains an explicit
+current-control src.conf derived from the documented comparison profile. The
+fresh frontend's world plan selects /usr/obj, sixteen jobs, production malloc and
+clean buildworld only. It does not install, build hardware or publish repositories.
+
+
+## PAM merged DTrace context resolution (2026-11-14)
+
+`/usr/obj/usr/src/bazel-pam-context-review-r2-20261114/review.json` passes the actual
+captured R6 PAM archive's complete ordered member/full-symbol contract against
+the index-verified original Make package. Package, artifact, checker and parser
+hashes are bound and unchanged. Twenty alias groups map bijectively; nineteen
+merged groups use emitted DOF with 52 resolved probe/function bindings. The
+preliminary R1 compares retained R4 archives and is not current R6 evidence.
+
+The generic fallback is selected by ambiguous symbol incidence, not an archive
+or program pathname. It extracts the relevant defined-member occurrence using
+LLVM ar xN, then reuses the maintained AMD64 DOF resolver. It requires actual
+ELF/user relocation bindings, bounded hidden function definitions and checked
+NOP/RET/XOR probe sites. Cross-input matching preserves member identity, provider
+attributes, complete probe schema/sites, function size/bytes and symbol
+binding/type/visibility. It never matches by arbitrary ID order or uses function
+addresses as cross-input identity. Missing/co-located-unresolved metadata and
+ambiguous contexts remain rejected. This does not establish complete function
+relocation/ABI parity, registration or runtime firing.
+
+`/usr/obj/usr/src/bazel-pam-context-negative-r2-20261114/result.json` proves that
+one real probe-site byte changed from NOP to INT3 is rejected by the DOF validator.
+The test explicitly confirms unchanged archive member order and complete symbol
+inventories, so it cannot pass merely through an unrelated symbol mismatch. R1
+has the same rejection but did not explicitly compare those inventories.
+
+`/usr/obj/usr/src/bazel-pam-context-host-tests-r1-20261114/result.json` passes all
+56 host cases: 22 alias/context cases, 30 existing relocatable DOF cases and four
+package stream cases, with unchanged input hashes. The added independent real
+ELF/DOF fixtures reject code/site/attribute/member drift, absent contexts and
+ambiguous probe/provider matches. An initial fixture call used _read instead of
+the existing read interface; it was corrected before this retained passing run.
+
+Native execution is requested in
+`/usr/obj/usr/src/bazel-pam-context-request-r1-20261114/inputs.json` through the
+fresh current C frontend. The attempt was rejected by its global build lock,
+which the live Make world control holds; no native acceptance is claimed and the
+lock is not bypassed. Run the same request after the Make build finishes. Native
+runfiles now declare the parser and fixture input, and indexed review source
+bindings include the DOF parser. Existing format-5/C frontend inputs need no new
+flag. The build-bsd manual describes this conditional comparison and its limits.
+The older full indexed R6 report remains unchanged and its PAM case is superseded
+only by this selected R6-archive review, not retroactively by a whole-system pass.
+
+
+## Explicit SONAME absence and BASE version identity (2026-11-14)
+
+`/usr/obj/usr/src/bazel-sonameless-dso-review-r3-20261114/review.json` passes the
+captured R6 runtime linker's SONAME-less ET_DYN metadata contract and a named libc
+regression against the same index-verified Make package. Package/actual payloads,
+checker and inspection tools are bound; source hashes are unchanged during review.
+The earlier R1 rejected differing BASE labels as version-definition drift; its
+failure note is retrospective and does not claim a retained original checker hash.
+R2 passes before the later explicit dynamic-flag checks; R3 uses the final checker.
+
+This is a general DSO contract, not a loader-path exception. Default parsing and
+explicit named-library comparison still require the selected SONAME. A missing
+SONAME is allowed only by explicit shared-object selection and must be absent in
+both artifacts. PIE DSOs, duplicate dynamic flag tags, wrong dependencies,
+symbol/version drift and hardening failures remain rejected. The final check also
+compares dynamic FLAGS/FLAGS_1 names, including SYMBOLIC and NODELETE semantics.
+
+The initial version mismatch was a descriptive VER_FLG_BASE label:
+`bazel-out/freebsd-opt/bin/libexec/rtld-elf/librtld.so` versus `ld-elf.so.1.full`.
+The maintained [LLD implementation](../../../contrib/llvm-project/lld/ELF/SyntheticSections.cpp)
+emits that name from getFileDefName: SONAME when present, otherwise its output
+filename, with index 1 and VER_FLG_BASE. The maintained
+[rtld implementation](../../../libexec/rtld-elf/rtld.c) explicitly skips BASE entries
+in rtld_verify_object_versions when constructing its public version table.
+The checker therefore retains BASE separately from public version names. It
+validates the BASE structure, compares presence, and requires a named library's
+BASE label to match its SONAME. For SONAME-less objects it reports both differing
+labels and `version_base_names_equal=false`. Public version names, dynamic symbol
+versions and requirements remain exact. Whole-file/section differences remain
+visible and are not parity acceptance. This changes qualification semantics, not
+linked payloads or the rtld producer rule. Native bootstrap, reproducibility,
+cache/sandbox and full ABI/debug/runtime gates are not established by this check.
+
+`/usr/obj/usr/src/bazel-sonameless-host-tests-r2-20261114/result.json` passes 89 host
+cases with unchanged source bindings: 33 metadata cases, 22 archive/context cases,
+30 DOF cases and four stream cases. Cases cover explicit/default SONAME behavior,
+one-sided names, public version drift, invalid BASE/duplicate version records,
+BASE presence and named identity, hardening, flags, PIE and dependencies. The
+first new hardening test exposed the old parser's first-FLAGS_1-only behavior;
+it now rejects duplicate flag tags and tests valid PIE drift independently.
+R1's 88-case run predates the final explicit dynamic flag comparison.
+
+`/usr/obj/usr/src/bazel-artifact-contract-request-r1-20261114/inputs.json` combines
+all four native test roots for execution through the fresh maintained C frontend
+once the current Make world control releases the global lock. No new C/CLI input
+or native dependency file is required for these existing test roots. The helper
+and build-bsd manual are updated together. Earlier whole-index evidence remains
+unchanged; selected runtime-linker metadata acceptance does not turn the old
+kernel/program contract failure or full package byte diagnostics into a pass.
+
+
+## Current Make control completion and explicit SDK sources (2026-11-14)
+
+`/usr/obj/usr/src/bazel-current-make-world-r1-20261114/result.json` records exit 0
+from the current maintained C frontend's clean production-malloc world build,
+all sixteen CPUs and no installation/publication. The starting head was feed8a35d47;
+helper/docs changes during execution require source review before using the control
+as coherent current parity evidence. The completed world profile is frozen as
+`world.src_opts` with digest 3c05e608cb90419e39d0a0550fe3730defca12aab1e2ff990b634fde17d23313.
+The raw time -l report is retained with its correct per-process/block-operation
+limits. It is not a controlled Make/Bazel or aggregate-memory/physical-I/O comparison.
+
+The SDK preparer now accepts preparation plan format 2, separating explicit
+sdk_root from a complete compiler_tools map. Legacy format 1 remains the Make
+object-root adapter. Format 2 rejects objtop, missing/unknown compiler roles,
+noncanonical/relative inputs and SDK roots outside /usr/obj. Cross SDKs retain
+their independently verified native execution workspace requirement. The mode
+selects inputs; it does not certify their ABI or native build provenance.
+No new qualification/C frontend flag or SDK ABI receipt version is required.
+The normal format-5 consumer receives the generated snapshot as before.
+
+`/usr/obj/usr/src/bazel-sdk-source-host-tests-r1-20261114/result.json` passes all
+thirteen host selection/declaration tests. They include explicit separate compiler
+roots, refusal of hidden/ambiguous selections and generated target declarations.
+`/usr/obj/usr/src/bazel-explicit-sdk-interface-fixture-r2-20261114/result.json`
+passes actual materialization and complete snapshot verification over 8,344 files.
+It has no direct input under the live amd64.amd64 object tree. Its inputs are
+frozen older Make-produced seed bytes: this is an interface fixture, not a fresh
+current-source/native SDK and not stage-two bootstrap evidence. The earlier R1
+materialization exposed stale metadata reporting two freestanding toolchains while
+emitting four. R2 derives/counts all four declarations. This is not four qualified
+world architectures. Receipt source dependencies remain strict; regenerate the
+normal seed with maintained preparation after current builds/helper changes.
+
+`/usr/obj/usr/src/bazel-native-compiler-probe-r2-20261114/result.json` executes the
+actual captured R6 clang --version successfully. Its role is an archive hardlink
+to /usr/bin/c++; direct -xOf of the hardlink emits no bytes, so the initial R1 probe
+failed before execution. R2 resolves the actual regular payload from libarchive
+metadata, verifies its size and binds the package/tool/source hashes. It uses the
+current host ELF interpreter/libraries and proves neither code generation nor a
+native-produced compiler runtime closure. Native SDK assembly must preserve hardlink
+semantics and select actual native runtime libraries before a stage-two claim.
+The package inventory supplies compiler/linker/header/library payloads; fidlc is
+build-only, with native //tools/build/fuchsia/fidlc:fidlc already used by the source
+FIDL rules. Its installed-package absence is not missing userland coverage.
+
+
+## Stable-source controls and SDK schema correction (2026-11-14)
+
+`bazel-current-make-world-r2-20261114/result.json` records successful incremental
+world refresh at unchanged clean head e4d2059c4b4; its frozen world option profile
+and logs are hash-bound. `bazel-current-make-kernel-r1-20261114/result.json`
+records successful clean GENERIC/all-selected-module compilation with CTF at the
+same unchanged source head, sixteen jobs, and no host installation/publication.
+The private NO_ROOT stages in `bazel-current-make-stage-r1-20261114` both pass,
+retaining separate world/kernel results and METALOG/kernel.meta bindings.
+These builds do not establish full package parity or controlled performance.
+
+Fresh SDK R3 stages and verifies 8,345 snapshot files, but artifact-contract native
+R2 rejects it before actions: the prior e4d2059c4b4 change replaced capability
+schema version 2 with declaration count 4. The earlier description of that field
+as a stale count was wrong. Existing receipt consumers and historical schema
+qualification documents correctly define it as a version. Restore schema 2 and
+add independently derived freestanding_toolchain_count. Retain the failed R3
+snapshot/R2 attempt unchanged; regenerate after correcting the preparer. The
+regression passes actual producer metadata to the real source consumer and
+standalone platform selection, in addition to checking emitted declarations.
+The normal frontend/backend remains unchanged; maintained helper/runfiles/tests
+and manual are updated together. Broader six-gate qualification remains open.
+
+
+## Refreshed complete Make archives and native execution exploration (2026-11-14)
+
+`bazel-current-make-packages-r1-20261114/result.json` passes both maintained
+create-packages-world/kernel commands and records all 450 archive hashes under
+`/usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114`. World and kernel
+stages remain bound to the e4d2059c4b4 reference builds. Packaging starts/ends at
+clean df85d19c14e; the record checks unchanged Make/package/staging recipes since
+those builds. Both latest/latest-built symlinks remain unchanged. These are
+unsigned reference archives, not signed combined publication or host installation.
+Concurrent native execution makes these time/block-operation records unsuitable
+for controlled Make/Bazel comparisons.
+
+Corrected `bazel-closeout-sdk-r4-20261114` stages/verifies 8,345 files, with
+freestanding_toolchains schema 2 and separate generated count 4. The current
+maintained C frontend's `bazel-artifact-contract-native-r3-20261114/receipt.json`
+passes all six selected suites: archive aliases, relocatable DOF, package ELF
+review, runtime ELF metadata, SDK source selection and source settings. The
+last two include all 43 host cases and actual producer-to-consumer metadata.
+This fixes the R2 pre-action rejection without editing that attempt's receipt.
+
+`bazel-closeout-system-request-r7-20261114` now selects the full AMD64 graph,
+current package version and exact revision from the reference Make vers.c:
+`dev-n288204-e4d2059c4b4f`. Its native run remains in progress; package comparison
+must wait for the hash-verified completed capture. These documentation-only
+updates are outside the running graph/SDK's bound source inputs.
+
+`bazel-native-execution-closure-r1-20261114/result.json` records an exploratory
+runtime closure from frozen combined R6, not the running R7 or a native SDK.
+The retained driver/request select program roles, library search directories and
+three target triples explicitly. Actual NEEDED entries recursively select logical
+package owners; the captured package index/family catalogue determine archive
+names and hashes. Regular archive payloads resolve hardlink chains instead of
+assuming that the logical compiler name owns data. Logical symlinks stay within
+the selected capture. Ambiguous/missing library roles and RPATH/RUNPATH require
+explicit resolution rather than host fallback. The probe uses eight verified
+packages and eighteen payloads, including native ld-elf.so.1, compiler and linker.
+It disables libmap/hints overrides, clears inherited loader variables, and
+requires every startup trace path to resolve to an extracted native payload.
+
+Both native programs execute --version. Native clang -cc1 compiles a small
+header-free C function for AMD64, ARM64 and RISC-V; native LLD links each object.
+All six ELF machine checks pass. This deliberately does not claim target libc,
+C++/system header/SDK completeness, running cross binaries, independent full
+bootstrap or filesystem isolation. The host kernel is still the execution OS.
+Native stage-two SDK construction and the wider six gates remain required.
+
+`bazel-native-execution-closure-negative-r1-20261114/result.json` repeats the
+loader trace with an empty selected library directory without modifying the
+positive capture. The loader returns success but resolves fifteen host library
+paths; the containment check rejects them. This establishes that successful
+execution or setting LIBRARY_PATH alone cannot qualify the native runtime
+boundary. Neither exploratory driver replaces the maintained build frontend.

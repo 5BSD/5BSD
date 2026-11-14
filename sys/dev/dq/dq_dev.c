@@ -61,6 +61,8 @@ SDT_PROBE_DEFINE2(dq, , , event__interrupt, "struct dq_queue *",
 SDT_PROBE_DEFINE2(dq, , , event__deadline, "struct dq_queue *",
     "struct dq_event_k *");
 SDT_PROBE_DEFINE2(dq, , , reply__late, "struct dq_queue *", "uint64_t");
+SDT_PROBE_DEFINE3(dq, , , swap__refused, "struct dq_queue *", "uint64_t",
+    "int");
 SDT_PROBE_DEFINE2(dq, , , attach, "struct dq_queue *", "pid_t");
 SDT_PROBE_DEFINE2(dq, , , resolve__post, "struct dq_queue *",
     "struct dq_event_k *");

@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Inventory static records and declared execution-expanded installation trees."""
-load(":bsd_install.bzl", "BsdInstallManifestInfo")
+load(":bsd_construction_inputs.bzl", "CONSTRUCTION_PROVIDERS", "construction_inputs")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load(":bsd_install_archive.bzl", "BsdInstallArchiveInfo", "BsdInstallArchiveSetInfo")
 
 def _inventory(ctx):
-    records, construction, trees, metadata, directory_metadata = [], [], [], [], []
-    for target in ctx.attr.construction:
-        construction.extend(target[BsdInstallManifestInfo].records)
+    records, trees, metadata, directory_metadata = [], [], [], []
+    construction = construction_inputs(ctx.attr.construction)
     for target in ctx.attr.archives:
         info = target[BsdInstallArchiveInfo] if BsdInstallArchiveInfo in target else target[BsdInstallArchiveSetInfo]
         records.extend(info.records)
@@ -18,10 +17,10 @@ def _inventory(ctx):
     request = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(request, json.encode(dict(format = 1, records = records,
-        configuration = dict(man = ctx.attr.man[BuildSettingInfo].value), construction = construction, trees = trees, directory_metadata = [file.path for file in directory_metadata], suffix_tags = ctx.attr.suffix_tags)) + "\n")
+        configuration = dict(man = ctx.attr.man[BuildSettingInfo].value), construction = construction.records, construction_trees = construction.trees, trees = trees, directory_metadata = [file.path for file in directory_metadata], suffix_tags = ctx.attr.suffix_tags)) + "\n")
     ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run,
         arguments = ["-B", "-S", ctx.file._driver.path, request.path, output.path],
-        inputs = [request, ctx.file._driver, ctx.file.python_home] + metadata + directory_metadata,
+        inputs = [request, ctx.file._driver, ctx.file._construction_module, ctx.file.python_home] + metadata + directory_metadata + construction.metadata,
         tools = ctx.files.runtime, outputs = [output],
         env = {"PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1", "LC_ALL": "C"},
         use_default_shell_env = False, mnemonic = "BSDWorldPackageInventory")
@@ -29,11 +28,12 @@ def _inventory(ctx):
 
 bsd_world_package_inventory = rule(implementation = _inventory, attrs = {
     "archives": attr.label_list(providers = [[BsdInstallArchiveInfo], [BsdInstallArchiveSetInfo]], mandatory = True),
-    "construction": attr.label_list(providers = [BsdInstallManifestInfo], mandatory = True),
+    "construction": attr.label_list(providers = CONSTRUCTION_PROVIDERS, mandatory = True),
     "suffix_tags": attr.string_list(mandatory = True),
     "man": attr.label(default = Label("//tools/build/bazel/config:man"), providers = [BuildSettingInfo]),
     "python": attr.label(default = "@bsd_sdk//toolchain:extra_python", executable = True, allow_single_file = True, cfg = "exec"),
     "python_home": attr.label(default = "@bsd_sdk//toolchain:python-home/runtime.json", allow_single_file = True, cfg = "exec"),
     "runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib"], allow_files = True, cfg = "exec"),
+    "_construction_module": attr.label(default = Label(":construction_records.py"), allow_single_file = True),
     "_driver": attr.label(default = Label(":world_package_inventory.py"), allow_single_file = True),
 }, doc = "Partition complete world metadata, including generated trees; package creation is a separate gate.")

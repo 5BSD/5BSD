@@ -301,6 +301,15 @@ int	finstall_refed(struct thread *td, struct file *fp, int *resultfd, int flags,
 int	finstall_refed_prop(struct thread *td, struct file *fp, int *resultfd,
 	    int flags, struct filecaps *fcaps,
 	    const struct fdinstall_prop *prop);
+int	finstall_refed_check(struct thread *td, struct file *fp, int *resultfd,
+	    int flags, struct filecaps *fcaps,
+	    const struct fdinstall_prop *prop, int (*check)(void *),
+	    void *arg);
+int	fdxfer_source_locked(struct thread *td, struct filedesc *fdp, int fd,
+	    pid_t srcpid, struct file **fpp, struct filecaps *fcaps,
+	    struct fdinstall_prop *prop, int *flagsp,
+	    int (*admit)(struct file *, const cap_rights_t *, void *),
+	    void *arg);
 int	fdalloc(struct thread *td, int minfd, int *result);
 int	fdallocn(struct thread *td, int minfd, int *fds, int n);
 int	fdroom(struct thread *td, int n);

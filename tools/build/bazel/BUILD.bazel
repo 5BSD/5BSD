@@ -115,7 +115,7 @@ bsd_python_test(
 bsd_python_test(
     name = "source_settings_test",
     src = "source-settings-test.py",
-    data = ["source_graph.py", "userland_sdk.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py", "sdk_copy.py", "sdk_digests.py"],
+    data = ["libmd-stage-tools.py", "python_runtime.py", "source_graph.py", "userland_sdk.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py", "sdk_copy.py", "sdk_digests.py"],
 )
 
 # Input-boundary checks for the isolated native iconv VM fixture assembler.
@@ -265,7 +265,7 @@ copy_file(name = "elf_contract_32", src = "//tools/build/bazel/tests/freestandin
 copy_file(name = "elf_contract_64", src = "//tools/build/bazel/tests/freestanding_boundary:resource_amd64",
     out = "elf_contract_inputs/amd64/resource.o", allow_symlink = True)
 bsd_host_artifact_test(name = "elf_object_contract_test", src = "elf-object-contract-test.py",
-    data = ["elf_object_contract.py", ":elf_contract_32", ":elf_contract_64"],
+    data = ["elf_object_contract.py", "elf-artifact-check.py", "dtrace-dof-inventory.py", "qualification_artifacts.py", ":elf_contract_32", ":elf_contract_64"],
     args = ["--elf32", "$(rlocationpath :elf_contract_32)",
             "--elf64", "$(rlocationpath :elf_contract_64)"], size = "small")
 bsd_host_artifact_test(name = "elf_object_collision_rejected", src = "elf-object-contract-test.py",
@@ -360,11 +360,11 @@ exports_files(["world_installation.bzl"])
 exports_files(["bsd_sed_output.bzl"], visibility = ["//visibility:public"])
 
 bsd_python_test(name = "elf_section_reader_test", src = "elf-section-reader-test.py",
-    data = ["elf-artifact-check.py", "qualification_artifacts.py"],
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
 
 bsd_python_test(name = "elf_runtime_path_test", src = "elf-runtime-path-test.py",
-    data = ["elf-artifact-check.py", "qualification_artifacts.py"],
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "qualification_artifacts.py"],
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
 
 bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-test.py",
@@ -372,7 +372,7 @@ bsd_python_test(name = "installed_atf_check_test", src = "installed-atf-check-te
 
 exports_files(["world_package_inventory.py"], visibility = ["//:__pkg__"])
 
-bsd_python_test(name = "world_package_inventory_test", src = "world-package-inventory-test.py", data = ["world_package_inventory.py"])
+bsd_python_test(name = "world_package_inventory_test", src = "world-package-inventory-test.py", data = ["world_package_inventory.py", "construction_records.py"])
 
 bsd_python_test(name = "world_man_option_test", src = "world-man-option-test.py", data = ["//:world_package_inventory"])
 
@@ -428,8 +428,24 @@ exports_files(["linker_hints.py", "linker-hints-test.py"])
 exports_files(["payload_inventory.py"])
 bsd_python_test(name = "payload_inventory_test", src = "payload-inventory-test.py", data = ["payload_inventory.py"])
 
+load(":bsd_inspection_library.bzl", "bsd_inspection_library")
+bsd_inspection_library(name = "archive_inspection_library", library_name = "libarchive",
+    runtime = ["@bsd_sdk//toolchain:extra_tar_runtime"])
 bsd_python_test(name = "archive_flags_test", src = "archive-flags-test.py",
-    data = ["archive_headers.py", "install_archive.py", "archive_policy.py", "directory_metadata.py"])
+    data = ["archive_headers.py", "install_archive.py", "archive_policy.py", "directory_metadata.py", ":archive_inspection_library"],
+    args = ["--library", "$(rlocationpath :archive_inspection_library)"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_tar_runtime"])
+
+# Independent package comparison consumes indexed inputs; its real archive tests
+# use an explicit tar tool and the selected execution runtime.
+bsd_python_test(name = "package_archive_compare_test", src = "package-archive-compare-test.py",
+    data = ["package-archive-compare.py", "archive_headers.py", "package_index.py", "@bsd_sdk//toolchain:extra_tar", ":archive_inspection_library"],
+    args = ["--tar", "$(rlocationpath @bsd_sdk//toolchain:extra_tar)", "--library", "$(rlocationpath :archive_inspection_library)"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_tar_runtime"])
+
+# Path-derived DTrace IDs require a whole-archive, bijective symbol relationship.
+bsd_python_test(name = "archive_dtrace_symbols_test", src = "archive-dtrace-symbols-test.py",
+    data = ["elf-artifact-check.py", "dtrace-dof-inventory.py", "dtrace-relocatable-inventory-test.py", "elf_object_contract.py", "qualification_artifacts.py"])
 
 exports_files(["pkg_image.py"])
 
@@ -449,3 +465,20 @@ exports_files(["qualification_artifacts.py"], visibility = ["//tools/test/system
 exports_files(["kernel_audit_sources.py"])
 bsd_python_test(name = "kernel_audit_sources_test", src = "kernel-audit-sources-test.py",
     data = ["kernel_audit_sources.py"])
+
+exports_files(["certificate-store-test.py"], visibility = ["//secure/caroot:__pkg__"])
+
+bsd_python_test(
+    name = "construction_records_test",
+    src = "construction-records-test.py",
+    data = ["construction_records.py", "world_package_inventory.py"],
+)
+
+bsd_python_test(name = "package_elf_review_test", src = "package-elf-review-test.py",
+    data = ["package-elf-review.py", "elf-artifact-check.py", "dtrace-dof-inventory.py", "elf_object_contract.py", "package-archive-compare.py",
+            "archive_headers.py", "package_index.py", "qualification_artifacts.py"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], size = "small")
+
+# SDK target roots and execution compilers are separate explicit inputs.
+bsd_python_test(name = "sdk_source_test", src = "sdk-source-test.py",
+    data = ["userland_sdk.py", "libmd-stage-tools.py", "python_runtime.py"], size = "small")

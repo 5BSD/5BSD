@@ -51,8 +51,13 @@ cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_
 cc_library(name = "archive", deps = ["//contrib/libarchive:headers"] + select({
     _TRACE: [":traced"], "//conditions:default": [":objects", ":hmac_objects"],
 }), linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Compiler warning groups must not move archive_hmac out of source order.
+_ARCHIVE_MEMBERS = [source.rsplit("/", 1)[-1][:-2] for source in ARCHIVE_SOURCES]
 bsd_component_archive(name = "static_archive", groups = select({
     _TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects", ":hmac_objects"],
+}), object_order = select({
+    _TRACE: [name + ".nopic.o" for name in _ARCHIVE_MEMBERS] + ["archiveio_provider.nopic.o"],
+    "//conditions:default": [name + ".o" for name in _ARCHIVE_MEMBERS],
 }), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "archive_shared", deps = [":archive"], dynamic_deps = _SHARED,
     shared_lib_name = "libarchive.so.7",

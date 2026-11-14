@@ -2,9 +2,9 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import")
 cc_import(name = "private_profile", static_library = "//krb5/util/profile:static_archive")
 cc_library(name = "pkinit", srcs = ["//crypto/krb5/src/plugins/preauth/pkinit:" + f for f in ['pkinit_accessor.c', 'pkinit_clnt.c', 'pkinit_constants.c', 'pkinit_crypto_openssl.c', 'pkinit_identity.c', 'pkinit_kdf_test.c', 'pkinit_lib.c', 'pkinit_matching.c', 'pkinit_profile.c', 'pkinit_srv.c', 'pkcs11.h', 'pkinit.h', 'pkinit_accessor.h', 'pkinit_crypto.h', 'pkinit_trace.h']],
-    deps = ['//crypto/krb5/src/include:internal_headers', ':private_profile', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/support:krb5support', '//secure/lib/libcrypto:crypto'], linkstatic = True,
+    deps = ['//crypto/krb5/src/include:internal_headers', ':private_profile', '//krb5/lib/krb5:krb5', '//krb5/util/et:com_err', '//krb5/lib/crypto:k5crypto', '//secure/lib/libcrypto:crypto', '//krb5/util/support:krb5support'], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-cc_shared_library(name = "pkinit_shared", deps = [":pkinit"], dynamic_deps = ['//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared', '//secure/lib/libcrypto:crypto_shared'],
+cc_shared_library(name = "pkinit_shared", deps = [":pkinit"], dynamic_deps = ['//krb5/lib/krb5:krb5_shared', '//krb5/util/et:com_err_shared', '//krb5/lib/crypto:k5crypto_shared', '//secure/lib/libcrypto:crypto_shared', '//krb5/util/support:krb5support_shared'],
     shared_lib_name = "pkinit.so.122", additional_linker_inputs = ["version.map"],
     user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,pkinit.so.122"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")

@@ -77,6 +77,68 @@ test_cli_list_options(void)
 	return (0);
 }
 
+/* Run the logger's main() in a child with stderr discarded; exit status. */
+static int
+run_cli(int argc, char **argv)
+{
+	pid_t child;
+	int fd, status;
+
+	child = fork();
+	if (child < 0)
+		return (-1);
+	if (child == 0) {
+		fd = open("/dev/null", O_WRONLY);
+		if (fd >= 0) {
+			dup2(fd, STDERR_FILENO);
+			dup2(fd, STDOUT_FILENO);
+			close(fd);
+		}
+		optind = 1;
+		_exit(oeslogger_program_main(argc, argv));
+	}
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
+/*
+ * Scope options are checked after the option loop, so -l (which exits
+ * inside it) cannot be used to probe the invalid combinations.
+ */
+static int
+test_cli_jail_options(void)
+{
+	char arg0[] = "oeslogger", d[] = "-d", i[] = "-i", j[] = "-j";
+	char bigj[] = "-J", l[] = "-l", one[] = "1", two[] = "2", web[] = "web";
+	char *twice[] = { arg0, j, one, bigj, two, NULL };
+	char *with_d[] = { arg0, d, j, one, NULL };
+	char *lone_i[] = { arg0, i, NULL };
+	char *listing[] = { arg0, j, web, i, l, NULL };
+	int errors;
+
+	errors = 0;
+	if (run_cli(5, twice) != EX_USAGE) {
+		fprintf(stderr, "FAIL: oeslogger accepted -j with -J\n");
+		errors++;
+	}
+	if (run_cli(4, with_d) != EX_USAGE) {
+		fprintf(stderr, "FAIL: oeslogger accepted -d with -j\n");
+		errors++;
+	}
+	if (run_cli(2, lone_i) != EX_USAGE) {
+		fprintf(stderr, "FAIL: oeslogger accepted -i without a jail\n");
+		errors++;
+	}
+	if (run_cli(5, listing) != 0) {
+		fprintf(stderr, "FAIL: oeslogger rejected -j/-i before -l\n");
+		errors++;
+	}
+	if (errors == 0)
+		printf("    PASS: oeslogger checks the jail scope options\n");
+	return (errors);
+}
+
 static int
 test_live_cli_configuration(void)
 {
@@ -250,6 +312,8 @@ main(void)
 	    sizeof(msg->em_thread.et_name));
 	msg->em_process.ep_pid = 123;
 	msg->em_process.ep_flags = EP_FLAG_OES_CLIENT;
+	msg->em_process.ep_jid = 5;
+	msg->em_process.ep_meta_flags = OES_PROC_META_JAIL_FULLNAME;
 	strlcpy(msg->em_process.ep_comm, "actor",
 	    sizeof(msg->em_process.ep_comm));
 	next = sizeof(*msg);
@@ -257,6 +321,10 @@ main(void)
 	    "/usr/bin/actor");
 	msg->em_event_data.open.file.ef_path_off = append_string(&storage, &next,
 	    "/tmp/object");
+	msg->em_process.ep_jailname_off = append_string(&storage, &next,
+	    "host5");
+	msg->em_process.ep_jail_fullname_off = append_string(&storage, &next,
+	    "outer.inner");
 	msg->em_size = OES_MSG_ALIGNED(next);
 
 	json = NULL;
@@ -281,7 +349,12 @@ main(void)
 	errors += require_field(json, "\"path\":\"/tmp/object\"");
 	errors += require_field(json, "\"path_unavailable\":false");
 	errors += require_field(json, "\"is_oes_client\":true");
+	errors += require_field(json, "\"jid\":5");
+	errors += require_field(json, "\"jailname\":\"host5\"");
+	errors += require_field(json,
+	    "\"jail_fullname\":\"outer.inner\"");
 	errors += test_cli_list_options();
+	errors += test_cli_jail_options();
 	errors += test_live_cli_configuration();
 	errors += test_json_escaping();
 	errors += test_exec_offset_overflow();

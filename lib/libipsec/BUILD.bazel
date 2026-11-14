@@ -10,11 +10,12 @@ filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
 bsd_lex(name = "lexer", src = "policy_token.l", output = "policy_token.c", flags = ["-P__libipsecyy"],
     lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
 cc_library(name = "private_headers", hdrs = ["ipsec_strerror.h", ":parser_header"], strip_include_prefix = ".")
-cc_library(name = "ipsec", srcs = ["ipsec_strerror.c", "ipsec_dump_policy.c", "ipsec_get_policylen.c", ":parser_source", ":lexer"],
+_SOURCES = ["ipsec_strerror.c", ":parser_source", ":lexer", "ipsec_dump_policy.c", "ipsec_get_policylen.c"]
+cc_library(name = "ipsec", srcs = _SOURCES,
     deps = [":private_headers"], local_defines = ["IPSEC_DEBUG", "IPSEC"] + select({
         "//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}),
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":ipsec"],
+bsd_component_archive(name = "static_archive", groups = [":ipsec"], ordered_sources = _SOURCES,
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "ipsec_shared", deps = [":ipsec"], shared_lib_name = "libipsec.so.4",
     user_link_flags = ["-Wl,-soname,libipsec.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"],

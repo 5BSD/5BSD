@@ -1,5 +1,362 @@
 # Native Bazel completion plan
 
+## Configuration completion checklist
+
+[BUILD-OPTIONS.md](BUILD-OPTIONS.md) separates source kernel diagnostics from
+debug artifacts and allocator mode, records current native boundaries, and lists
+required Make-option/configuration and ARM64 implementation gaps. GENERIC-NODEBUG,
+custom kernel/module selectors and the documented acceptance matrix remain open
+until their actual outputs and runtime checks pass. These belong to the existing
+six gates. The normal build-bsd backend remains Make; no frontend option changed.
+
+## Current closeout execution (2026-11-14)
+
+The refreshed original Make archive creation now passes all 450 selected packages
+at /usr/obj/usr/src/repo/FreeBSD:16:amd64/16.0.qual.20261114. Its result binds
+both fresh stage results, all archive hashes, commands and unchanged latest and
+latest-built pointers. No catalogue signing/combined publication occurred.
+Fresh corrected SDK R4 verifies 8,345 snapshot files, schema 2 and a separate
+four-declaration count. Artifact-contract native R3 passes all six suites through
+the current C frontend, including actual stager-to-source-consumer metadata.
+Full selected AMD64 native R7 is running, using the exact Make vers.c revision
+dev-n288204-e4d2059c4b4f and matching package version; no final outcome is inferred.
+
+Captured R6 compiler/runtime exploration now passes with a package-derived ELF
+NEEDED closure, native runtime linker and verified loaded paths: eight packages,
+eighteen selected payloads, compiler/linker version checks and six compile/link
+ELF-machine checks over AMD64, ARM64 and RISC-V. The missing-library-directory
+negative reveals actual host fallback and rejects it through loaded-path checks.
+This is an explicitly retained exploratory probe, not a maintained SDK producer,
+independent second-stage world, architecture runtime or sandbox qualification.
+It supplies evidence for the remaining native SDK/runtime boundary work without
+changing source producers or normal build-bsd behavior. These documentation-only
+updates are not source inputs of the running native graph or the SDK receipt.
+
+Stable-head Make world refresh R2 and current GENERIC/CTF kernel/module R1 now
+pass at e4d2059c4b4, with clean unchanged source before/after. Fresh private
+NO_ROOT world and kernel stages also pass. Their original logs, input hashes and
+world option snapshot are retained under /usr/obj/usr/src/bazel-current-make-*.
+This supersedes the earlier clean-world result's source-review limitation for
+the refreshed build scope, not full package/runtime/performance acceptance.
+No host installation, hardware build or repository publication was performed.
+
+Native artifact-contract R2 is rejected before Bazel actions: the preparer confused
+freestanding_toolchains schema version 2 with four generated declarations.
+Restore the schema field and derive a separate freestanding_toolchain_count;
+keep the consumer's rejection strict. A producer-to-consumer regression runs
+actual generated metadata through source SDK/platform validation. Fresh staging
+and native rerun are required; do not repair existing receipts in place.
+
+The maintained SDK preparer now supports explicit preparation format 2: a target
+SDK root and complete execution compiler map, with no objtop or implicit Make
+layout. Existing format 1 remains the declared Make-object adapter. Thirteen host
+selection/declaration cases pass; full explicit-mode fixture R2 materializes and
+verifies 8,344 snapshot files without reading the live Make object tree. That
+fixture deliberately uses frozen older Make-produced seed bytes and is not a
+current or native-produced SDK. The initial count change was incorrect: freestanding_toolchains is schema 2,
+not a count. The corrected producer reports a separate derived count; emitted
+declarations are not architecture qualification. Existing qualification/SDK ABI receipt formats
+and C frontend flags remain unchanged; preparation helpers/tests/manual change
+together. Old source-bound SDK receipts require fresh preparation after these
+helper/live-object changes; they are not rebound to suppress verification failures.
+
+The initial R6 compiler probe R2 executes --version on the host; its package role correctly
+resolves an archive hardlink to c++. This is not independent bootstrap: the thin
+compiler still loads host shared libraries. The indexed native package inventory
+contains the compiler/linker/header/library payloads. fidlc is intentionally
+build-only and already has a native source-owned execution target, so its absence
+from installed packages is not a base packaging omission. Native-produced target
+and compiler-runtime closure, full second-stage builds, cache/sandbox/dependency
+invalidation and controlled aggregate memory/disk I/O remain open.
+SDK invalidation diagnosis R1 compares frozen SDK2/SDK4 metadata: 53 files change,
+including six system headers, but no compiler executables. The current mandatory
+compiler_files closure contains every SDK header. Upstream follow-up R2 rules
+out enabling the experimental include scanner as a production fix: its own
+option contract explicitly excludes full preprocessing semantics. Keep complete
+declarations. After the stable AMD64 run, measure actual used/unused input
+invalidation and evaluate supported compiler-generated .d discovery with declared
+headers/CcCompilationContext, including generated, macro-selected and conditional
+headers. Changing compiler_files_without_includes alone cannot fix this boundary.
+See the hash-bound SDK invalidation diagnosis R1 and R2 records and
+[Bazel 9.3.1 options](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/rules/cpp/CppOptions.java#L828-L866).
+
+The existing resource wrapper measures per-command max RSS and block operations, not parallel
+aggregate RAM or physical disk bytes; it does not close gate 4.
+
+R6's runtime linker now passes a general explicit SONAME-absence DSO metadata
+contract against the index-verified Make package; named libc passes the same
+checker's strict named-library contract. The parser separates descriptive GNU
+VER_FLG_BASE output labels from public symbol versions, following LLD emission
+and rtld's explicit skip of BASE entries. Raw labels/equality, section differences
+and hashes remain reported. Both sides must have the selected SONAME/absence;
+public versions, dependencies, symbols, dynamic flags and hardening remain strict.
+Duplicate dynamic flag tags, malformed version rows and PIE DSOs are rejected.
+All 89 final host cases pass (33 metadata, 22 archive/context, 30 DOF, four stream).
+The combined native request is prepared for execution after the live current
+Make world build releases its global lock. No producer/runtime bytes or frontend
+flags change. The complete previous indexed report is not retroactively upgraded;
+full ABI/debug/runtime, coherent current Make controls and all wider gates remain.
+
+The frozen R6 PAM archive now passes its ordered member/full-symbol contract
+against the index-verified Make package. Its twenty mapped alias groups include
+nineteen merged groups resolved through validated emitted DOF context, rather
+than ID ordering or a filename exception. A real R6 archive with one corrupted
+probe instruction is rejected while its member/symbol inventories remain equal.
+Host regressions pass 22 archive alias/context, 30 relocatable DOF and four package
+stream cases. Native tests are prepared but currently blocked by the maintained
+frontend's global lock held by the fresh Make world build; they are not counted
+as native acceptance. The parser is a declared data/binding input of its consumers.
+No C frontend flag or production build setting changes. Full ABI/debug/runtime,
+current full-review integration and the wider six gates remain open.
+
+Combined native R6 passes the selected AMD64 world/GENERIC kernel/modules and
+450-package graph at explicit kernel revision `0bb24324ee7`, all fifteen selected
+expanded test reports and digest-verified capture of 1,547 files (647,575,911 bytes).
+This integrates the libicp_rescue/libzfs order fixes. It still uses a Make-prepared
+SDK; no bootstrap, runtime, production publication, performance or ARM64 gate is
+closed by this build. R6 used the older qualification frontend executable; a fresh
+current-source C frontend now passes the maintained package-review test via the
+explicit --target-arch path. Wider current-frontend backend qualification remains.
+
+Indexed ELF review R6 finishes all 450 frozen R5 packages with unchanged bindings:
+1,321 contracts pass, 728 remain review-required and no selection differences exist.
+All 734 ET_REL payloads are now covered: eleven pass exactly, 711 have allocated
+GNU-build-ID-only differences (708 in the kernel package), and twelve kernel
+modules have further bytes/relocations to review. The remaining five cases are
+the two later-fixed archive orders, ambiguous PAM aliases and special kernel/loader
+contracts. Raw diagnostics remain strict. The read-only module diagnosis identifies
+canonical versus redundant-slash/../ source strings in eleven modules; mqueuefs
+also has real source fixes after the November 11 Make control. Neither observation
+waives byte/relocation differences. Refresh the coherent current Make baseline
+before treating source-epoch drift as a producer defect or claiming parity.
+
+Large review output now streams JSON encoding without constructing a second full
+serialized string; a real DTrace report remains byte-identical and the current
+frontend's four maintained package-stream cases pass. This is not a measured
+peak-RAM bound: per-package object retention still needs resource work. The kernel
+report itself is about 925 MiB. A current production-malloc Make world control is
+prepared through the freshly compiled frontend, with explicit src.conf, sixteen
+jobs, standard /usr/obj and no installation/publication. The other six-gate work,
+including Bazel in base and ARM64 Tier 1, remains required.
+
+## Current closeout execution (2026-11-13)
+
+The indexed reviewer now applies the existing boot-object ELF contract to ET_REL
+payloads, comparing exact allocated bytes, external symbols and resolved
+relocations with duplicate section occurrences preserved. Build IDs and DTrace
+IDs are not normalized; debug-only contents and module loading remain separate.
+Native relocatable review R1 passes all three selected test targets: ten real
+ELF32/64 object tests, four archive-stream tests and twelve alias-graph cases.
+The complete frozen R5 package recheck is running as indexed ELF review R6;
+no acceptance count is inferred before its final unchanged-input checks pass.
+There is no build-bsd flag/C change; maintained reviewer inputs/runfiles and the
+manual are updated with the same check. Other closeout gates remain required.
+
+Focused duplicate-library order native R2 passes libicp_rescue/libzfs ordinary
+archives, shared-library products and installation archives plus the ZFS daemon
+unit suite (22 cases) and maintained DTrace alias test target. Independent R1
+comparison passes both complete static member-order/symbol contracts, including
+repeated member occurrences. Source groups retain the original GCM undefinition
+and hidden-visibility flags; installed order follows the source recipe across
+those groups. The first native attempt exposed a stale OpenZFS source-export
+consumer; it is corrected and its failed preflight retained. These focused fixes
+are not a new full combined candidate or ARM64 qualification.
+
+Occurrence-aware archive review R2 now checks each repeated member through
+LLVM ar's public xN selector, preserving its ordinal, symbols and multiplicity.
+All sixteen real-artifact regression cases pass, including reordered, extra and
+merged duplicate-member negatives. Four of the six previously unsupported real
+archives pass; libicp_rescue and libzfs expose actual member-order differences
+and remain unaccepted. This refines the prior 743 review-required cases rather
+than retroactively changing R5. The indexed review's failure evidence now uses
+the same occurrence-aware representation. No build-bsd C/CLI input changes are
+needed; its maintained checker/manual are updated. Other six-gate work remains.
+
+The complete count-preserving indexed R5 review finishes all 450 combined-build
+packages with verified final input hashes and no selection differences. It passes
+1,306 ordinary ELF/archive contracts and retains 743 review-required cases:
+734 ET_REL objects outside that contract, six duplicate-member archives, PAM's
+ambiguous alias mapping, and special kernel/loader representations. No ordinary
+program/shared or supported static archive order/symbol differences remain in
+this selected candidate. This is not full ABI/debug/runtime or whole-system parity.
+Strict R7 still retains content/size/timestamp/manifest diagnostics.
+
+The maintained frontend now preflights every explicit product using public cquery
+with the exact selected configuration/environment. It binds aliases to actual
+configured targets, rejects missing/incompatible requests before main build/test
+actions and hashes the resulting inventory into receipts. Final end-to-end R2
+passes a real libc alias plus all 34 inventory tests; missing and wrong-platform
+products are rejected with no main invocation. Earlier prototype failures remain
+recorded. This closes the known late-invalid-product inefficiency, not the wider
+native bootstrap/output-query/cache/sandbox gate. Make remains production/default.
+
+The new complete `bazel-closeout-system-native-r5-20261113` run passes the selected
+current AMD64 world/GENERIC kernel/modules/450-package graph at explicit kernel
+revision `5e12086b5cbd`, all thirteen selected tests and capture of 1,545 verified
+files. It combines all focused ordering fixes. Separate review then reproduced a
+checker defect: repeated ELF local names were collapsed into sets. The parser
+now retains multiplicity; twelve real-artifact cases and twelve native alias
+contract cases pass, including the formerly accepted extra-symbol negative.
+Prior symbol-only reviews did not establish multiplicity and are not upgraded
+retroactively. Fresh complete R5 artifact review with the corrected checker is
+required. PAM's ambiguous ID mapping and all wider closeout gates remain open.
+
+Libc order native R2 passes ordinary/PIC/NOSSP/shared/install products and all seven
+runtime/identity/analysis rejection tests. Independent R2 comparison passes its
+ordinary and PIC archive member/full-symbol contracts and shared metadata against
+verified Make packages. The native configured composition data also matches all
+48 recipe-order checks across sixteen iconv/NIS/machine/DTrace combinations;
+that declarative comparison is not qualification of sixteen configured builds.
+All thirteen identified archive-order defects now have focused producer fixes.
+A fresh complete candidate is still required, as are PAM alias resolution, other
+artifact/debug/configuration checks and the remaining six-gate requirements.
+
+Libarchive/liboes provider-order native R1 passes both archive/shared/installation
+families and six maintained test targets (eleven reported cases). Independent
+review R1 passes both complete archive member/symbol contracts and both shared
+metadata contracts, retaining explicit DTrace ID mappings where needed. Their
+original source inventories/compile-group options remain intact. Twelve of the
+original thirteen order defects are fixed; libc remains. These later focused
+outputs still require complete system integration, and all wider gates stay open.
+
+The maintained archive symbol checker now maps path-derived DTrace IDs only by
+an unambiguous whole-archive member/function/kind incidence graph, preserving raw
+symbols and an explicit bijection. Eleven native adversarial cases and all ten
+existing real-artifact cases pass. Fresh hash-bound rechecks accept fifteen of
+the sixteen previously ID-only archive differences; PAM remains rejected because
+its merged module has ambiguous alias graphs. This is symbol metadata evidence,
+not DOF relocation, registration or live probe acceptance. Raw prior reviews stay
+unchanged; the three outstanding archive-order defects remain separate.
+
+Libzpool focused native R1 now passes archive/shared/installation construction and
+the queue selftest target (all eight selftests reported OK). Independent review
+R1 passes the full 204-member archive order/symbol contract and shared metadata.
+Compression flags remain selected independently from installed member order using
+one maintained source inventory. Ten of the original thirteen archive-order cases
+are fixed; libc, libarchive and liboes remain. Focused later outputs still require
+complete candidate integration and the other six-gate requirements remain open.
+
+Ncurses/tinfo focused native R1 passes both static/shared products, the normal
+installation archive and the maintained API integration test. Independent review
+R1 passes both complete member/symbol and both shared-library metadata contracts.
+Their 109/60 source identity sets are unchanged; generated sources now retain
+original recipe positions through shared compilation/archive declarations.
+Four original archive-order cases remain: libc, libzpool, libarchive and liboes.
+These later focused fixes are not yet a new complete candidate or ARM64 proof.
+
+Focused libsys archive-order native R1 passes ordinary/PIC archives, shared and
+installation outputs and both selected syscall runtime tests. Independent review
+R1 passes all three Make contracts, including the complete 477-member order and
+symbol table for each archive. The checker now handles Make's `.pico` spelling;
+its ten positive/adversarial host cases pass. Six of the original thirteen
+archive-order cases remain. These are later focused results, not another full
+combined system build, native bootstrap or ARM64 acceptance.
+
+Focused mixed-source archive native R1 now passes libdwarf, libpcap and
+libibnetdisc products plus four DWARF/packet-filter tests. Independent review R2
+passes all six archive/shared Make contracts. Generated DWARF/lex/yacc outputs
+and interleaved C/C++ members use declared source order; no runtime Make query or
+reference-output substitution selects the build. Seven of the original thirteen
+archive-order cases remain. This is newer focused evidence, not a fresh complete
+system candidate or RDMA hardware acceptance.
+
+The completed indexed ELF R4 review covers all 450 frozen combined-build packages
+with no selected payload differences: 1,275 contracts pass and 774 remain review
+required (including 734 ET_REL inputs outside the checker contract). All 43 prior
+NEEDED-order defects and zstream's import discrepancy are gone in that combined
+candidate. Subsequent focused libdq ordinary/PIC correction passes its five tests
+and static/shared Make contracts. Source-ordered libnv/libipsec/libelf archives
+then pass all six archive/shared contracts and four roundtrip tests in native R3.
+The original libelf generated-source order failure remains recorded in review R2.
+These later focused fixes are not yet incorporated into a new complete candidate.
+
+The newer `bazel-closeout-system-native-r4-20261113` receipt passes the combined
+selected AMD64 world/GENERIC kernel/modules/450-package graph at explicit kernel
+revision `4a75f49343bb`, including all seven selected tests and digest-verified
+capture of 1,542 unique files. Independent package comparison R6 retains no
+package-name, payload-path or directory-claim differences. It still reports
+content, size, timestamps and manifest differences; complete parity is unaccepted.
+The new indexed ELF/archive review is a separate diagnostic, not implied by build
+success. The SDK is still Make-prepared and the normal backend remains Make.
+
+Bazel itself is not yet a base payload: the host uses the ports package
+`bazel9-9.3.1` at `/usr/local/bin/bazel`, and the selected 450-package index has no
+Bazel package. Shipping and qualifying Bazel in base remains required under gate
+5, including its runtime dependencies and fresh-install build usability. Keep the
+previously agreed OpenJDK build dependency boundary explicit; do not claim that
+using Bazel to build base makes Bazel part of base.
+
+The completed `bazel-closeout-system-native-r3-20261113` receipt passes the
+selected AMD64 world/kernel/module/450-package graph and all four selected tests
+at explicit kernel revision `83d696e46e20`. It captures 1,539 unique files with
+verified output digests. This is the selected source/configuration epoch, not
+native bootstrap or qualification of subsequent changes.
+
+The independent R3 archive comparison covers all 450 packages. No package-name
+or nondirectory payload-path omissions remain, and the two shared-library
+requirements mismatches are gone. That R3 comparison retains byte/size, timestamp
+and directory-claim differences; the later R5 comparison closes the latter.
+Complete package parity is not accepted.
+The subsequent directory-policy native R3 run passes the complete 450-package
+graph and three selected tests, including immutable capture. Independent R5
+comparison now has no package-name, payload-path or directory-claim differences.
+Source-owned DQ/OpenSSL installation declarations and explicit world/kernel
+ancestor policy fix the ten prior directory mismatches; physical directory
+metadata remains enforced. Byte/size/timestamp and manifest-file diagnostics
+remain, so final parity is still unaccepted. Native R2's digest-capture rejection
+is preserved, not counted as acceptance. See the Make closeout record.
+
+A two-header SDK change accompanied broad compile invalidation; keeping the
+same state directory does not establish acceptable incremental efficiency.
+
+After that full run ended, the certctl staging-root METALOG fix was applied and
+passes all 31 maintained host regression cases. Certificate native R3 passes the
+producer/archive test (ten cases), construction-input test (seven) and world
+inventory test (eight), through the maintained frontend. The captured complete
+world inventory now includes all 168 generated certificate files, selected by
+CAROOT/OPENSSL/CRYPT and reconciled from declared tree metadata. Image composition
+uses the same declarations. The complete updated image/package graph now passes
+`bazel-certificate-image-native-r1-20261113`, and its 2 GiB VM passes 15 normal
+boot/authentication/installed-tree/default TLS checks with normal poweroff.
+Ordinary-user fetch rejects an untrusted server, accepts it after normal local-CA
+installation/rehash, rejects it after removal and restores the original bundle.
+This is selected fresh-image acceptance, not a repeat of the full signed-BE
+upgrade/provider/rollback scenario on this candidate. See the Make closeout record
+for retained failures, source bindings and remaining gates.
+
+Close remaining defects in batches against the retained Make control. Reuse the
+Bazel state/cache and test the affected targets before repeating the complete
+integration graph. Do not rebuild the Make control unless its relevant inputs or
+required configuration change. Preserve raw differences and historical failures.
+See MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md for the current comparison and bounds.
+All six gates below remain the completion criteria; Make remains production/default.
+
+The indexed ELF review now covers all 450 frozen candidate packages, accounting
+for 1,817 non-debug ELF files and 232 static archives without selection omissions.
+It passes 1,231 existing contracts and explicitly retains 818 review-required
+cases, including 734 relocatable objects outside its scope. This does not close
+ABI/debug/kernel/module or runtime gates. Focused newer native builds and Make
+ELF comparisons pass ctfconvert/ctfmerge source LIBADD-order corrections and
+zstream's missing Solaris compatibility-header dependency; all eight zstream
+queue selftests and four bounded reviewer regression cases pass. Complete
+integration of those newer fixes and the remaining library/archive discrepancies
+is still required. See the Make closeout record for exact receipts and failures.
+Focused corrected-source batches additionally pass independent ELF comparisons
+for nine utility/RDMA programs, three Kerberos administration programs and two
+plugins, and five ZFS/C++ products. The Kerberos database/KDC tests pass; zfsd's
+newly qualified shared GoogleTest/regex closure passes all 22 unit cases. The
+failed initial non-PIC test link is preserved. SSH/SystemExtension then passes
+ten product comparisons and all 34 selected startup/policy cases. Twenty-nine
+of 43 frozen-review library-order discrepancies then had focused corrections.
+The LLVM batch now passes all fourteen remaining product comparisons and seven
+code-generation/native-link/LTO tests. All 43 recorded library-order discrepancies
+have focused corrected-source evidence; complete new-candidate integration and
+independent archive/runtime comparison remain required. Archive/debug/kernel/loader,
+configuration, ARM64, bootstrap/cache/sandbox, performance, publication and broader
+runtime gates stay open.
+
+
+
 ## Independent Make closeout comparison (2026-11-11)
 
 Fresh original AMD64 buildworld, GENERIC kernel/modules and NO_ROOT staging pass

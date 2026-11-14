@@ -85,6 +85,7 @@
 #include <sys/selinfo.h>
 #include <sys/sx.h>
 #include <sys/tree.h>
+#include <sys/fdswap.h>
 
 #include <dev/dq/dq.h>
 
@@ -95,6 +96,7 @@ SDT_PROBE_DECLARE(dq, , , queue__open);
 SDT_PROBE_DECLARE(dq, , , queue__close);
 SDT_PROBE_DECLARE(dq, , , mint);
 SDT_PROBE_DECLARE(dq, , , revoke);
+SDT_PROBE_DECLARE(dq, , , swap__refused);
 SDT_PROBE_DECLARE(dq, , , object__close);
 SDT_PROBE_DECLARE(dq, , , event__post);
 SDT_PROBE_DECLARE(dq, , , event__deliver);
@@ -188,6 +190,11 @@ struct dq_event_k {
 						   holding its creation reference;
 						   the waiter takes it, else
 						   dq_event_rele retires it */
+	struct fdswap		 ev_rswap;	/* RESOLVE SWAP: the file taken
+						   from the controller at the
+						   reply; the waiter takes it,
+						   else dq_event_rele releases
+						   it */
 	uint64_t		 ev_requester;	/* per-requester quota key */
 	size_t			 ev_size;
 	struct dq_event		 ev_hdr;	/* body follows */
@@ -501,7 +508,8 @@ void	dq_reply_free(struct dq_data *reply);
  */
 int	dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	    size_t bodylen, struct thread *td, sbintime_t deadline,
-	    struct dq_data **replyp, int *errnop, struct dq_object **robjp);
+	    struct dq_data **replyp, int *errnop, struct dq_object **robjp,
+	    struct fdswap *rswapp);
 
 /*
  * Objects created apart from their linking (MINT, and the RESOLVE FD reply
@@ -530,6 +538,8 @@ int	dq_resolve_reply_validate(const struct dq_event_k *ev, int rerrno,
 	    const void *buf, size_t len);
 int	dq_resolve_mint_prepare(struct dq_queue *q, uint64_t id,
 	    struct dq_data *dd, struct dq_object **robjp, uint64_t **objectpp);
+int	dq_resolve_swap_prepare(struct dq_queue *q, uint64_t id,
+	    struct dq_data *dd, struct thread *td, struct fdswap *sw);
 int	dq_queue_attach(struct dq_queue *q, const struct dq_attach_args *args,
 	    struct thread *td);
 

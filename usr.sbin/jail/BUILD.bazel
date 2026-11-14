@@ -34,7 +34,7 @@ bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = 
 cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
 cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + ["//lib/libjail:jail", "//lib/libkvm:kvm", "//lib/libutil:util", ":command_headers"])
 cc_binary(name = "jail", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
-    dynamic_deps = ["//lib/libjail:jail_shared", "//lib/libkvm:kvm_shared", "//lib/libutil:util_shared", "//lib/libelf:elf_shared"],
+    dynamic_deps = ["//lib/libjail:jail_shared", "//lib/libkvm:kvm_shared", "//lib/libutil:util_shared"],
     linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "jail", manual = "jail.8", package = "jail", bindir = "/usr/sbin", man_section = "8", extra_entries = [":config_manual_file"])

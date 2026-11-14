@@ -12,6 +12,53 @@ ARCHITECTURES = {
 }
 
 
+
+COMPILER_TOOLS = ('clang', 'cpp', 'ld.lld', 'llvm-ar', 'llvm-nm', 'llvm-objcopy', 'llvm-strip')
+
+
+def sdk_sources(plan, settings):
+    """Resolve versioned SDK inputs without running Make or selecting host tools.
+
+    Format 1 is the existing Make-object adapter. Format 2 separates the target
+    SDK root from an explicit map of execution compiler tools, including for
+    cross SDKs. An explicit root does not certify how its bytes were produced.
+    """
+    if not isinstance(plan, dict) or not isinstance(settings, dict):
+        raise ValueError('SDK plan and tool settings must be objects')
+    version = plan.get('format')
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError('SDK plan format 1 or 2 required')
+    environment = plan.get('build_environment')
+    if not isinstance(environment, dict):
+        raise ValueError('SDK build environment required')
+
+    def absolute(value, label):
+        if (not isinstance(value, str) or not value or not Path(value).is_absolute()
+                or '..' in Path(value).parts or str(Path(value)) != value
+                or any(ord(c) < 32 for c in value)):
+            raise ValueError('canonical absolute ' + label + ' required')
+        return Path(value)
+
+    if version == 1:
+        if 'sdk_root' in environment or 'compiler_tools' in settings:
+            raise ValueError('explicit SDK roots/compiler maps require plan format 2')
+        root = absolute(environment.get('objtop'), 'Make object root') / 'tmp'
+        compilers = {name: root / 'usr/bin' / name for name in COMPILER_TOOLS}
+        kind = 'make-object-root'
+    else:
+        if 'objtop' in environment:
+            raise ValueError('explicit SDK plan must not also select a Make object root')
+        root = absolute(environment.get('sdk_root'), 'SDK root')
+        values = settings.get('compiler_tools')
+        if not isinstance(values, dict) or set(values) != set(COMPILER_TOOLS):
+            raise ValueError('complete explicit compiler tool map required')
+        compilers = {name: absolute(values[name], 'compiler tool path') for name in COMPILER_TOOLS}
+        kind = 'explicit-sdk-root'
+    if root == Path('/usr/obj') or not root.is_relative_to('/usr/obj'):
+        raise ValueError('SDK root must be below /usr/obj')
+    return root, compilers, kind
+
+
 def architecture(name):
     if name not in ARCHITECTURES:
         raise ValueError('unsupported FreeBSD userland architecture')

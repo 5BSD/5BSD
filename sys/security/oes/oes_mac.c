@@ -13,10 +13,14 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/counter.h>
+#include <sys/jail.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/osd.h>
 #include <sys/proc.h>
 #include <sys/refcount.h>
+#include <sys/rmlock.h>
 #include <sys/vnode.h>
 #include <sys/mount.h>
 #include <sys/mman.h>
@@ -605,6 +609,7 @@ oes_pending_alloc_notify_from_template(const struct oes_pending *src,
 	ep->ep_scope_count = src->ep_scope_count;
 	memcpy(ep->ep_scope_markers, src->ep_scope_markers,
 	    sizeof(ep->ep_scope_markers));
+	/* ep_subject_pr and ep_target_pr stay NULL: clones hold no prison. */
 	bcopy(&src->ep_msg, &ep->ep_msg, src_msg_size);
 
 	/* Override event type and action for the notify copy */
@@ -626,6 +631,9 @@ oes_pending_visible_to_client(const struct oes_pending *ep,
 
 	if (ec->ec_scope == OES_SCOPE_GLOBAL)
 		return (true);
+	if (ec->ec_scope == OES_SCOPE_JAIL)
+		return (oes_jail_scope_match(ec->ec_jail_pr,
+		    ec->ec_jail_flags, ep->ep_subject_pr, ep->ep_target_pr));
 	if (ec->ec_scope != OES_SCOPE_DESCENDANTS)
 		return (false);
 	for (i = 0; i < ep->ep_scope_count; i++) {
@@ -1102,6 +1110,10 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 }
 
 static struct oes_rename_ctx *oes_rename_cache_take(struct thread *);
+static bool oes_jail_unobserved(bool is_auth, bool invalidates,
+    struct proc *target);
+static bool oes_event_unobserved(bool is_auth, bool invalidates,
+    struct proc *target);
 
 /* Match the no-client AUTH policy in oes_generate_vnode_event(). */
 static bool
@@ -1139,7 +1151,8 @@ oes_rename_cache_store(struct thread *td,
 	 * policy and requests a complete lookup retry if a snapshot is needed.
 	 * This applies equally to native and emulated callers.
 	 */
-	if (oes_no_clients_permit_auth()) {
+	if (oes_no_clients_permit_auth() ||
+	    oes_jail_unobserved(true, true, NULL)) {
 		ctx = oes_rename_cache_take(td);
 		if (ctx != NULL)
 			free(ctx, M_OES);
@@ -1845,6 +1858,81 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 }
 
 /*
+ * Jail scopes whose jail has been removed.
+ *
+ * A jail-scoped client must still receive what its jail did before it was
+ * removed, and most of that (exit, fork, signal, socket and other NOSLEEP
+ * events) is not delivered by the thread that generated it but sits on
+ * sc_defer until the delivery task runs.  The last exit of a jail is the
+ * usual case: the exiting thread queues the event and then gives up the
+ * jail's last user reference, which removes the jail from another thread.
+ * So the jail's remove method ends nothing.  It marks the scopes
+ * (EC_JAIL_ENDING) and schedules the delivery task, which claims the marked
+ * scopes before it drains sc_defer and ends them after: every event queued
+ * before the method ran is on sc_defer before the claim and is delivered
+ * while the scope still matches.  The scope keeps its prison reference
+ * until then, so the address it compares against cannot be reused.
+ *
+ * Sleepable events are dispatched by their own thread and need no such
+ * care for a jail that empties: a thread delivers its events before it can
+ * exit.  When jail_remove(2) kills running processes, what they were doing
+ * at that moment may or may not be delivered.
+ */
+static bool
+oes_jail_scopes_claim(void)
+{
+	struct oes_client *ec;
+	bool claimed;
+
+	if (atomic_load_int(&oes_softc.sc_jail_ending) == 0)
+		return (false);
+	claimed = false;
+	OES_LOCK();
+	LIST_FOREACH(ec, &oes_softc.sc_jail_clients, ec_jail_link) {
+		if ((ec->ec_jail_state & EC_JAIL_ENDING) == 0)
+			continue;
+		ec->ec_jail_state = EC_JAIL_FINISHING;
+		atomic_subtract_int(&oes_softc.sc_jail_ending, 1);
+		claimed = true;
+	}
+	OES_UNLOCK();
+	return (claimed);
+}
+
+/*
+ * End the claimed scopes: from here on they match nothing, readers see end
+ * of file once the queue is empty, and the jail is no longer held.
+ */
+static void
+oes_jail_scopes_finish(void)
+{
+	struct oes_client *ec;
+	struct prison *pr;
+
+	for (;;) {
+		OES_LOCK();
+		LIST_FOREACH(ec, &oes_softc.sc_jail_clients, ec_jail_link) {
+			if ((ec->ec_jail_state & EC_JAIL_FINISHING) != 0)
+				break;
+		}
+		if (ec == NULL) {
+			OES_UNLOCK();
+			return;
+		}
+		EC_LOCK(ec);
+		pr = oes_client_jail_detach_locked(ec);
+		ec->ec_jail_flags |= OES_JAIL_SCOPE_DEAD;
+		wakeup(&ec->ec_pending);
+		selwakeup(&ec->ec_selinfo);
+		KNOTE_LOCKED(&ec->ec_selinfo.si_note, 0);
+		EC_UNLOCK(ec);
+		OES_UNLOCK();
+		/* The client may be closed from here on; ec is not used again. */
+		prison_free(pr);
+	}
+}
+
+/*
  * Deferred-delivery task: drain the deferred queue, delivering each event with
  * the blocking path above.  Runs on the system taskqueue thread, so it may
  * sleep/block on the client locks.
@@ -1853,6 +1941,10 @@ void
 oes_defer_task_fn(void *arg __unused, int pending __unused)
 {
 	struct oes_pending *ep;
+	bool ending;
+
+	/* Before the drain; see oes_jail_scopes_claim(). */
+	ending = oes_jail_scopes_claim();
 
 	for (;;) {
 		mtx_lock_spin(&oes_softc.sc_defer_mtx);
@@ -1868,6 +1960,9 @@ oes_defer_task_fn(void *arg __unused, int pending __unused)
 		oes_deliver_notify_locked(ep);
 		oes_pending_rele(ep);
 	}
+
+	if (ending)
+		oes_jail_scopes_finish();
 }
 
 /*
@@ -1904,6 +1999,8 @@ oes_proc_event_fork(void *arg __unused, struct proc *p1,
 	struct oes_pending *ep;
 
 	if (!oes_softc.sc_active)
+		return;
+	if (oes_event_unobserved(false, false, NULL))
 		return;
 
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_FORK, p1);
@@ -1942,6 +2039,9 @@ oes_proc_event_exit(void *arg __unused, struct proc *p)
 
 	oes_rename_cache_purge_pid(p->p_pid);
 
+	if (oes_event_unobserved(false, false, NULL))
+		return;
+
 	PROC_LOCK(p);
 	xexit = p->p_xexit;
 	PROC_UNLOCK(p);
@@ -1971,6 +2071,8 @@ oes_vfs_event_mounted(void *arg __unused, struct mount *mp,
 	if (!oes_softc.sc_active)
 		return;
 	if (td == NULL || td->td_proc == NULL)
+		return;
+	if (oes_event_unobserved(false, false, NULL))
 		return;
 
 	p = td->td_proc;
@@ -2029,6 +2131,8 @@ oes_vfs_event_unmounted(void *arg __unused, struct mount *mp,
 		return;
 	if (td == NULL || td->td_proc == NULL)
 		return;
+	if (oes_event_unobserved(false, false, NULL))
+		return;
 
 	p = td->td_proc;
 	PROC_LOCK(p);
@@ -2081,6 +2185,8 @@ oes_kld_event_unload(void *arg __unused, const char *name, caddr_t addr __unused
 	struct proc *p;
 
 	if (!oes_softc.sc_active)
+		return;
+	if (oes_event_unobserved(false, false, NULL))
 		return;
 
 	p = curthread->td_proc;
@@ -2677,6 +2783,77 @@ oes_event_invalidates_file(oes_event_type_t event)
 }
 
 /*
+ * Can no open client observe an event of the current thread?
+ *
+ * True only when every open client is jail-scoped (sc_nwide == 0) and none
+ * of their jails holds the subject or, for a NOTIFY event aimed at another
+ * process and a client that asked for inbound events, that process.  The
+ * callers then return before allocating, looking up or locking anything.
+ *
+ * Kept on the normal path regardless: an AUTH event while a strict policy
+ * is set, because with no client to consult such an event may have to be
+ * denied; and an event that invalidates cached decisions while a
+ * jail-scoped client has any, because a change made from outside the jail
+ * must still drop them.  All three strict knobs are tested, although
+ * dispatch denies an unconsulted event for the first two only: the third
+ * decides what an allocation failure means, which this must not skip.
+ *
+ * Never sleeps.  Takes only the read side of sc_jail_lock, and nothing
+ * inside it; the caller may hold a process lock.
+ */
+static bool
+oes_jail_unobserved(bool is_auth, bool invalidates, struct proc *target)
+{
+	struct rm_priotracker tracker;
+	struct oes_client *ec;
+	struct prison *spr, *tpr;
+	bool cache_live, wanted;
+
+	/* No client at all is the callers' own, older, fast path. */
+	if (atomic_load_int(&oes_softc.sc_nwide) != 0 ||
+	    atomic_load_int(&oes_softc.sc_nclients) == 0)
+		return (false);
+	if (is_auth && (oes_require_auth_clients || oes_auth_fail_closed ||
+	    oes_default_deadline_miss_mode == OES_DEADLINE_MISS_FAIL_CLOSED))
+		return (false);
+	/* Only clients whose jail is gone are open: they receive nothing. */
+	if (atomic_load_int(&oes_softc.sc_njail) == 0)
+		return (true);
+
+	spr = curthread->td_ucred->cr_prison;
+	tpr = NULL;
+	if (!is_auth && target != NULL && mtx_owned(&target->p_mtx) &&
+	    target->p_ucred != NULL)
+		tpr = target->p_ucred->cr_prison;
+	cache_live = wanted = false;
+	rm_rlock(&oes_softc.sc_jail_lock, &tracker);
+	LIST_FOREACH(ec, &oes_softc.sc_jail_clients, ec_jail_link) {
+		if (oes_jail_scope_match(ec->ec_jail_pr, ec->ec_jail_flags,
+		    spr, tpr)) {
+			wanted = true;
+			break;
+		}
+		if (ec->ec_cache_entries != 0)
+			cache_live = true;
+	}
+	rm_runlock(&oes_softc.sc_jail_lock, &tracker);
+	return (!wanted && !(invalidates && cache_live));
+}
+
+/* As above, and count the event as dropped. */
+static bool
+oes_event_unobserved(bool is_auth, bool invalidates, struct proc *target)
+{
+
+	if (!oes_jail_unobserved(is_auth, invalidates, target))
+		return (false);
+	counter_u64_add(oes_softc.sc_jail_filtered, 1);
+	if (is_auth)
+		counter_u64_add(oes_softc.sc_jail_filtered_auth, 1);
+	return (true);
+}
+
+/*
  * Helper: Generate an event and optionally wait for AUTH response.
  * NOSLEEP hooks (info.nosleep=true) use cache-only authorization.
  */
@@ -2736,6 +2913,18 @@ oes_generate_vnode_event(oes_event_type_t event,
 	    oes_default_deadline_miss_mode != OES_DEADLINE_MISS_FAIL_CLOSED)))
 		return (0);
 
+	/*
+	 * With only jail-scoped clients open, drop the event of a subject
+	 * none of them covers before anything is allocated or looked up.
+	 */
+	if (oes_event_unobserved(OES_EVENT_IS_AUTH(event),
+	    oes_event_invalidates_namespace(event) ||
+	    oes_event_invalidates_file(event) ||
+	    ((event == OES_EVENT_AUTH_MMAP ||
+	    event == OES_EVENT_AUTH_MPROTECT) && (prot & PROT_WRITE) != 0),
+	    target_proc))
+		return (0);
+
 	notify_event = OES_EVENT_IS_AUTH(event) ? oes_auth_to_notify(event) : event;
 
 	/* Allocate pending event */
@@ -2748,6 +2937,13 @@ oes_generate_vnode_event(oes_event_type_t event,
 			    OES_DEADLINE_MISS_FAIL_CLOSED ? EACCES : 0);
 		return (0);
 	}
+
+	/*
+	 * The target of a process-on-process notification, for clients that
+	 * asked for events aimed into their jail.
+	 */
+	if (target_proc != NULL)
+		oes_pending_set_target_prison(ep, target_proc);
 
 	/*
 	 * Fill event-specific data based on event type.
@@ -3223,6 +3419,8 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 		return (0);
 	if (oes_no_clients_permit_auth())
 		return (0);
+	if (oes_event_unobserved(true, false, NULL))
+		return (0);
 
 	notify_event = oes_auth_to_notify(event);
 
@@ -3637,7 +3835,8 @@ oes_mac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 	info.rename_ctx = ctx;
 	if (ctx == NULL) {
 		/* New clients or stricter policy require a fresh source snapshot. */
-		return (oes_no_clients_permit_auth() ? 0 : ERELOOKUP);
+		return (oes_no_clients_permit_auth() ||
+		    oes_event_unobserved(true, true, NULL) ? 0 : ERELOOKUP);
 	}
 
 	error = oes_generate_vnode_event(OES_EVENT_AUTH_RENAME, &info);
@@ -3946,6 +4145,15 @@ oes_mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
 	struct vnode *vp;
 	int error;
 
+	/*
+	 * Decide that nobody can observe this before the map lookup and the
+	 * vnode lock below, which can sleep; the generator's own test comes
+	 * too late for that.  The arguments match the ones it uses.
+	 */
+	if (oes_softc.sc_active &&
+	    oes_event_unobserved(true, (prot & PROT_WRITE) != 0, NULL))
+		return (0);
+
 	vp = NULL;
 	if (p != NULL && p->p_vmspace != NULL)
 		vp = vm_map_lookup_vnode(&p->p_vmspace->vm_map, addr);
@@ -4119,6 +4327,8 @@ oes_mac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	if (oes_event_unobserved(false, false, p))
+		return (0);
 
 	ep = oes_pending_alloc_signal(curp);
 	if (ep == NULL)
@@ -4135,6 +4345,7 @@ oes_mac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 			PROC_LOCK(p);
 		oes_fill_process(&ep->ep_msg.em_event_data.signal.target, p, NULL,
 		    &st, &ep->ep_msg);
+		oes_pending_set_target_prison(ep, p);
 		if (!owned)
 			PROC_UNLOCK(p);
 
@@ -4159,6 +4370,8 @@ oes_mac_cred_check_setuid(struct ucred *cred, uid_t uid)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	if (oes_event_unobserved(false, false, NULL))
+		return (0);
 
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_SETUID, curp);
 	if (ep == NULL)
@@ -4181,6 +4394,8 @@ oes_mac_cred_check_setgid(struct ucred *cred, gid_t gid)
 
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
+		return (0);
+	if (oes_event_unobserved(false, false, NULL))
 		return (0);
 
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_SETGID, curp);
@@ -4209,6 +4424,8 @@ oes_mac_proc_check_debug(struct ucred *cred, struct proc *p)
 	if (!oes_softc.sc_active ||
 	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
+	if (oes_event_unobserved(false, false, p))
+		return (0);
 
 	/* No notification allocation under PROC_LOCK without a consumer. */
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_PTRACE, curp);
@@ -4223,6 +4440,7 @@ oes_mac_proc_check_debug(struct ucred *cred, struct proc *p)
 		st.st_off = ep->ep_msg.em_size;
 		oes_fill_process(&ep->ep_msg.em_event_data.ptrace.target, p, NULL,
 		    &st, &ep->ep_msg);
+		oes_pending_set_target_prison(ep, p);
 		ep->ep_msg.em_size = OES_MSG_ALIGNED(st.st_off);
 	}
 
@@ -4877,6 +5095,45 @@ static struct mac_policy_conf oes_mac_policy_conf = {
 };
 
 /*
+ * Jail remove method: the prison has just become dying.  kern_jail.c calls
+ * this once per prison with allprison_lock exclusively held, so no client
+ * is part way through scoping itself to the prison
+ * (oes_client_set_jail_scope() holds allprison_lock shared from the lookup
+ * to the registration).  Nothing ends here: the scopes on this prison are
+ * marked and the delivery task ends them once it has delivered what the
+ * jail had already generated; see oes_jail_scopes_claim().  Must not sleep
+ * and must return 0.
+ */
+static int
+oes_prison_remove(void *obj, void *data __unused)
+{
+	struct oes_client *ec;
+	struct prison *pr = obj;
+	bool marked;
+
+	if (atomic_load_int(&oes_softc.sc_njail) == 0)
+		return (0);
+	marked = false;
+	OES_LOCK();
+	LIST_FOREACH(ec, &oes_softc.sc_jail_clients, ec_jail_link) {
+		if (ec->ec_jail_pr != pr || ec->ec_jail_state != 0)
+			continue;
+		ec->ec_jail_state = EC_JAIL_ENDING;
+		atomic_add_int(&oes_softc.sc_jail_ending, 1);
+		marked = true;
+	}
+	OES_UNLOCK();
+	if (marked)
+		taskqueue_enqueue(oes_softc.sc_defer_tq,
+		    &oes_softc.sc_defer_task);
+	return (0);
+}
+
+static const osd_method_t oes_prison_methods[PR_MAXMETHOD] = {
+	[PR_METHOD_REMOVE] = oes_prison_remove,
+};
+
+/*
  * Initialize MAC policy
  *
  * Called from oes module load. Registers with MAC framework.
@@ -4896,6 +5153,9 @@ oes_mac_init(void)
 	OES_DEBUG("MAC policy registered");
 
 	oes_rename_cache_init();
+
+	/* Jail scopes end when their jail is removed.  Never deregistered. */
+	(void)osd_jail_register(NULL, oes_prison_methods);
 
 	EVENTHANDLER_REGISTER(process_fork,
 	    oes_proc_event_fork, NULL, EVENTHANDLER_PRI_LAST);

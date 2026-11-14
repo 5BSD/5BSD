@@ -17,6 +17,10 @@ def _project(ctx):
         fail("kernel package configuration differs from its declared source filename")
     records = []
     for record in info.records:
+        # Untagged creation directories remain in the physical directory policy;
+        # they are not installation claims in a kernel package.
+        if record["type"] == "dir" and not record["tags"]:
+            continue
         owners = [tag[8:] for tag in record["tags"] if tag.startswith("package=")]
         if len(owners) != 1 or not owners[0]:
             fail("one explicit package owner required in kernel installation")
@@ -69,6 +73,7 @@ def kernel_pkgbase(name, installation, configuration):
         configuration = configuration, kernconf = kernconf, kind = "world", visibility = ["//visibility:public"])
     bsd_pkg_family(name = name + "_family", family = "kernel-" + kernconf.lower(),
         generator_family = "kernel", flavor_variable = "KERNEL_FLAVOR",
+        include_parent_directories = False,  # Make kernel plists do not use complete_dirs.
         template = "//release/packages:ucl/kernel-all.ucl", subpackages = ["dbg"],
         debug_files = "//tools/build/bazel/config:kernel_debug", sets = ["kernels"],
         ucl_variables = {"KERNEL_NAME": kernconf}, visibility = ["//visibility:public"])

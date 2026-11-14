@@ -43,6 +43,7 @@ bsd_install_archive(
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
 
+load(":archive_order.bzl", "STATIC_MEMBER_ORDER", "SHARED_MEMBER_ORDER", "NOSSP_MEMBER_ORDER")
 load(":composition.bzl", "COMMON_GROUPS", "TRACE_GROUPS", "STATIC_GROUPS", "SHARED_GROUPS", "NOSSP_GROUPS")
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_shared_library")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_cc_objects")
@@ -56,8 +57,8 @@ bsd_dtrace_cc_objects(name = "traced_objects", libraries = TRACE_GROUPS,
 cc_import(name = "provider_link", objects = [":traced_regular_provider"], pic_objects = [":traced_pic_provider"], alwayslink = True)
 cc_import(name = "traced", objects = [":traced_regular_objects"], pic_objects = [":traced_pic_objects"], deps = [":provider_link"])
 _TRACE_LINK = select({"//tools/build/bazel/config:dtrace_enabled": [":traced", ":provider_link"], "//conditions:default": TRACE_GROUPS})
-bsd_component_archive(name = "static_archive", groups = COMMON_GROUPS + STATIC_GROUPS + _TRACE_LINK, visibility = ["//visibility:public"])
-bsd_component_archive(name = "shared_objects_archive", groups = COMMON_GROUPS + SHARED_GROUPS + _TRACE_LINK, pic = True)
+bsd_component_archive(name = "static_archive", groups = COMMON_GROUPS + STATIC_GROUPS + _TRACE_LINK, member_order = STATIC_MEMBER_ORDER, visibility = ["//visibility:public"])
+bsd_component_archive(name = "shared_objects_archive", groups = COMMON_GROUPS + SHARED_GROUPS + _TRACE_LINK, pic = True, member_order = SHARED_MEMBER_ORDER)
 bsd_configured_version_map(name = "version_map",
     symbol_maps = ["//lib/libc/amd64:Symbol.map"] + ["//lib/libc/csu:Symbol.map"] + ["//lib/libc/db:Symbol.map"] + ["//lib/libc/compat-43:Symbol.map"] + ["//lib/libc/gdtoa:Symbol.map"] + ["//lib/libc/gen:Symbol.map"] + ["//lib/libc/gmon:Symbol.map"] + select({"//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/inet:Symbol.map"] + ["//lib/libc/locale:Symbol.map"] + ["//lib/libc/nameser:Symbol.map"] + ["//lib/libc/net:Symbol.map"] + select({"//tools/build/bazel/config:hesiod_enabled": ["//lib/libc/net:Symbol.hesiod.map"], "//conditions:default": []}) + ["//lib/libc/nls:Symbol.map"] + ["//lib/libc/posix1e:Symbol.map"] + ["//lib/libc/regex:Symbol.map"] + ["//lib/libc/resolv:Symbol.map"] + ["//lib/libc/stdbit:Symbol.map"] + ["//lib/libc/stdio:Symbol.map"] + ["//lib/libc/stdlib:Symbol.map"] + ["//lib/libc/stdlib/malloc:Symbol.map"] + ["//lib/libc/stdtime:Symbol.map"] + ["//lib/libc/string:Symbol.map"] + ["//lib/libsys:syscalls.map"] + ["//lib/libsys:Symbol.sys.map"] + ["//lib/libsys/amd64:Symbol.sys.map"] + ["//lib/libc/sys:Symbol.map"] + ["//lib/libc/secure:Symbol.map"] + ["//lib/libc/rpc:Symbol.map"] + ["//lib/libc/uuid:Symbol.map"] + ["//lib/libc/xdr:Symbol.map"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libc/yp:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/capability:Symbol.map"],
     versions = "Versions.def", generator = "//share/mk:version_gen.awk",
@@ -111,7 +112,7 @@ cc_library(name = "shared_abi_interface", deps = [":shared_abi", "//lib/libc_non
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 
 # Legacy implementation-oriented link context. Existing consumers still need
-# migration and ELF validation; packaged clients use shared_abi_interface.
+# migration and ELF validation; public clients should use shared_abi_interface.
 # Shared consumers need the nonshared public wrappers as well as the DSO.
 cc_library(features = LIBC_VARIANT_FEATURES, name = "shared_link_interface", deps = [":shared_link_objects", "//lib/libc_nonshared:nonshared"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
@@ -187,7 +188,7 @@ bsd_install_archive(name = "install_archive",
 
 # Build-only PIC archive used by rtld; never substitute the SSP-enabled archive.
 load(":nossp.bzl", "libc_nossp_variant")
-bsd_component_archive(name = "nossp_objects_archive", groups = COMMON_GROUPS + NOSSP_GROUPS + _TRACE_LINK, pic = True,
+bsd_component_archive(name = "nossp_objects_archive", groups = COMMON_GROUPS + NOSSP_GROUPS + _TRACE_LINK, pic = True, member_order = NOSSP_MEMBER_ORDER,
     visibility = ["//visibility:private"])
 libc_nossp_variant(name = "nossp_pic_archive", dep = ":nossp_objects_archive",
     visibility = ["//libexec/rtld-elf:__pkg__"])

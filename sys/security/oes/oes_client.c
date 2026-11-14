@@ -27,6 +27,7 @@
 #include <sys/mount.h>
 #include <sys/tty.h>
 #include <sys/resourcevar.h>
+#include <sys/rmlock.h>
 #include <sys/time.h>
 #include <sys/sysent.h>
 #include <sys/dqres.h>
@@ -40,6 +41,8 @@
 #endif
 
 MALLOC_DECLARE(M_OES);
+
+CTASSERT(OES_JAIL_NAME_MAX >= MAXHOSTNAMELEN);
 
 /* proctree_lock protects p_pptr, p_pgrp, and related tree fields */
 extern struct sx proctree_lock;
@@ -64,6 +67,217 @@ oes_proc_genid(struct proc *p)
 	return (0);
 }
 
+/*
+ * Jail scope.
+ *
+ * The client holds a reference on the jail it named and events carry the
+ * jail of their subject, so membership is a comparison of prison addresses
+ * (oes_jail_scope_match()) that a reused jid or name can never satisfy.
+ */
+
+/* May the scope still be chosen?  The rules of oes_client_set_scope(). */
+static int
+oes_client_scope_settable_locked(struct oes_client *ec)
+{
+
+	EC_LOCK_ASSERT(ec);
+	if ((ec->ec_flags & (EC_FLAG_MODE_SET | EC_FLAG_SCOPE_SETTING)) != 0 ||
+	    ec->ec_subscriptions[0] != 0 || ec->ec_subscriptions[1] != 0 ||
+	    ec->ec_subscriptions[2] != 0 || ec->ec_subscriptions[3] != 0 ||
+	    !TAILQ_EMPTY(&ec->ec_pending) || !TAILQ_EMPTY(&ec->ec_delivered))
+		return (EBUSY);
+	if (ec->ec_scope != OES_SCOPE_GLOBAL)
+		return (EPERM);
+	return (0);
+}
+
+/*
+ * Take a client whose jail scope has not ended off sc_jail_clients and make
+ * it forget its prison.  Returns the prison; the caller drops the scope's
+ * reference with prison_free() once it has released the OES locks.
+ */
+struct prison *
+oes_client_jail_detach_locked(struct oes_client *ec)
+{
+	struct prison *pr;
+
+	OES_LOCK_ASSERT();
+	EC_LOCK_ASSERT(ec);
+	KASSERT(ec->ec_jail_pr != NULL, ("oes: jail scope already ended"));
+	rm_wlock(&oes_softc.sc_jail_lock);
+	pr = ec->ec_jail_pr;
+	ec->ec_jail_pr = NULL;
+	LIST_REMOVE(ec, ec_jail_link);
+	rm_wunlock(&oes_softc.sc_jail_lock);
+	atomic_subtract_int(&oes_softc.sc_njail, 1);
+	if ((ec->ec_jail_state & EC_JAIL_ENDING) != 0)
+		atomic_subtract_int(&oes_softc.sc_jail_ending, 1);
+	ec->ec_jail_state = 0;
+	return (pr);
+}
+
+int
+oes_client_set_jail_scope(struct oes_client *ec, struct thread *td,
+    const struct oes_jail_scope_args *args)
+{
+	char name[MAXHOSTNAMELEN];
+	struct prison *mypr, *pr;
+	size_t i;
+	uint32_t flags;
+	int error, jid;
+
+	flags = args->ejs_flags;
+	if ((flags & ~OES_JAIL_SCOPE_SETMASK) != 0)
+		return (EINVAL);
+	if ((flags & OES_JAIL_SCOPE_BYNAME) != 0) {
+		/* The length test also proves the name is terminated. */
+		if (args->ejs_jid != 0 || args->ejs_name[0] == '\0' ||
+		    strnlen(args->ejs_name, sizeof(args->ejs_name)) >=
+		    MAXHOSTNAMELEN)
+			return (EINVAL);
+	} else {
+		if (args->ejs_jid < 0)
+			return (EINVAL);
+		for (i = 0; i < sizeof(args->ejs_name); i++) {
+			if (args->ejs_name[i] != '\0')
+				return (EINVAL);
+		}
+	}
+
+	EC_LOCK(ec);
+	error = oes_client_scope_settable_locked(ec);
+	EC_UNLOCK(ec);
+	if (error != 0)
+		return (error);
+
+	/*
+	 * Inbound events show processes outside the jail; a jailed caller
+	 * may not ask for them.  Refused before the lookup so that the
+	 * answer says nothing about which jails exist.
+	 */
+	mypr = td->td_ucred->cr_prison;
+	if ((flags & OES_JAIL_SCOPE_INBOUND) != 0 && jailed(td->td_ucred))
+		return (EPERM);
+
+	/*
+	 * Resolve relative to the caller's jail: only that jail (jid 0) and
+	 * the jails beneath it can be named.  allprison_lock stays held until
+	 * the client is registered; the jail's remove method runs with it
+	 * held exclusively, so the jail cannot start dying in between and
+	 * oes_prison_remove() cannot miss this client.
+	 */
+	sx_slock(&allprison_lock);
+	if ((flags & OES_JAIL_SCOPE_BYNAME) != 0)
+		pr = prison_find_name(mypr, args->ejs_name);
+	else if (args->ejs_jid == 0) {
+		pr = mypr;
+		mtx_lock(&pr->pr_mtx);
+	} else
+		pr = prison_find_child(mypr, args->ejs_jid);
+	if (pr == NULL) {
+		sx_sunlock(&allprison_lock);
+		return (ENOENT);
+	}
+	if (!prison_isalive(pr)) {
+		mtx_unlock(&pr->pr_mtx);
+		sx_sunlock(&allprison_lock);
+		return (ENOENT);
+	}
+	prison_hold(pr);
+	/* What the caller may know: its own jail is 0, as in jail_get(2). */
+	jid = (pr == mypr) ? 0 : pr->pr_id;
+	strlcpy(name, prison_name(mypr, pr), sizeof(name));
+	mtx_unlock(&pr->pr_mtx);
+
+	OES_LOCK();
+	EC_LOCK(ec);
+	error = oes_client_scope_settable_locked(ec);
+	if (error == 0) {
+		ec->ec_jail_jid = jid;
+		ec->ec_jail_set_jailed = jailed(td->td_ucred);
+		strlcpy(ec->ec_jail_name, name, sizeof(ec->ec_jail_name));
+		ec->ec_jail_state = 0;
+		rm_wlock(&oes_softc.sc_jail_lock);
+		ec->ec_jail_pr = pr;
+		ec->ec_jail_flags = flags &
+		    (OES_JAIL_SCOPE_NOCHILDREN | OES_JAIL_SCOPE_INBOUND);
+		LIST_INSERT_HEAD(&oes_softc.sc_jail_clients, ec, ec_jail_link);
+		rm_wunlock(&oes_softc.sc_jail_lock);
+		ec->ec_scope = OES_SCOPE_JAIL;
+		/*
+		 * In this order: a hook that finds no wide client left must
+		 * already find this one on the list.
+		 */
+		atomic_add_int(&oes_softc.sc_njail, 1);
+		atomic_subtract_int(&oes_softc.sc_nwide, 1);
+	}
+	EC_UNLOCK(ec);
+	OES_UNLOCK();
+	sx_sunlock(&allprison_lock);
+	if (error != 0)
+		prison_free(pr);
+	return (error);
+}
+
+int
+oes_client_get_jail_scope(struct oes_client *ec, struct thread *td,
+    struct oes_jail_scope_args *args)
+{
+
+	memset(args, 0, sizeof(*args));
+	EC_LOCK(ec);
+	if (ec->ec_scope != OES_SCOPE_JAIL) {
+		EC_UNLOCK(ec);
+		return (ENOENT);
+	}
+	args->ejs_flags = ec->ec_jail_flags;
+	/*
+	 * The jid and name are as the setter named the jail.  A jailed
+	 * reader is not shown what an unjailed setter recorded: that is the
+	 * host's view of jail IDs and names (compare kern_proc.c, which
+	 * hides a jail's own ID from inside it).
+	 */
+	if (!jailed(td->td_ucred) || ec->ec_jail_set_jailed) {
+		args->ejs_jid = ec->ec_jail_jid;
+		strlcpy(args->ejs_name, ec->ec_jail_name,
+		    sizeof(args->ejs_name));
+	}
+	EC_UNLOCK(ec);
+	return (0);
+}
+
+/*
+ * Process-mute validation for a jail-scoped client: the process must be in
+ * scope now.  Inbound delivery does not widen this, and a scope whose jail
+ * is gone observes nothing.
+ */
+static bool
+oes_client_jail_observes_token(const struct oes_client *ec,
+    const oes_proc_token_t *token)
+{
+	struct prison *pr;
+	struct proc *p;
+	bool observed;
+
+	p = pfind((pid_t)token->ept_id);
+	if (p == NULL)
+		return (false);
+	if (token->ept_genid != 0 && token->ept_genid != oes_proc_genid(p)) {
+		PROC_UNLOCK(p);
+		return (false);
+	}
+	pr = p->p_ucred->cr_prison;
+	prison_hold(pr);
+	/* No OES lock is ever taken under a process lock. */
+	PROC_UNLOCK(p);
+	OES_LOCK();
+	observed = oes_jail_scope_match(ec->ec_jail_pr,
+	    ec->ec_jail_flags & ~OES_JAIL_SCOPE_INBOUND, pr, NULL);
+	OES_UNLOCK();
+	prison_free(pr);
+	return (observed);
+}
+
 bool
 oes_client_observes_token(const struct oes_client *ec,
 	const oes_proc_token_t *token)
@@ -75,6 +289,8 @@ oes_client_observes_token(const struct oes_client *ec,
 		return (true);
 	if (token == NULL || token->ept_id == 0 || token->ept_id > PID_MAX)
 		return (false);
+	if (ec->ec_scope == OES_SCOPE_JAIL)
+		return (oes_client_jail_observes_token(ec, token));
 
 	observed = false;
 	locked_here = !sx_xlocked(&proctree_lock);
@@ -2269,6 +2485,7 @@ void
 oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
     struct oes_strtab *st, void *msg_base)
 {
+	char jail_fullname[MAXHOSTNAMELEN];
 	struct ucred *cred;
 	struct session *sess;
 	struct proc *pptr;
@@ -2375,14 +2592,27 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 		for (i = 0; i < ngroups; i++)
 			ep->ep_groups[i] = cred->cr_groups[i];
 
-		/* Jail info - name goes to string table */
+		/* Jail info - names go to the string table */
 		if (jailed(cred)) {
 			ep->ep_jid = cred->cr_prison->pr_id;
 			ep->ep_flags |= EP_FLAG_JAILED;
-			if (st != NULL && msg_base != NULL)
+			if (st != NULL && msg_base != NULL) {
 				ep->ep_jailname_off = oes_strtab_add(st,
 				    msg_base,
 				    cred->cr_prison->pr_hostname);
+				/*
+				 * jail_set(2) can rename the jail while this
+				 * reads the name without the prison lock:
+				 * take a terminated copy first.
+				 */
+				strlcpy(jail_fullname, cred->cr_prison->pr_name,
+				    sizeof(jail_fullname));
+				ep->ep_jail_fullname_off = oes_strtab_add(st,
+				    msg_base, jail_fullname);
+				if (ep->ep_jail_fullname_off != 0)
+					ep->ep_meta_flags |=
+					    OES_PROC_META_JAIL_FULLNAME;
+			}
 		}
 
 		if (cred->cr_flags & CRED_FLAG_CAPMODE) {

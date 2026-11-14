@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-load(":sources.bzl", "ZFS_SOURCES", "ZFS_HIDDEN_SOURCES")
+load(":sources.bzl", "ZFS_USER_SOURCES", "ZFS_BTREE_SOURCES", "ZFS_CITYHASH_SOURCES", "ZFS_RANGE_TREE_SOURCES", "ZFS_COMMON_SOURCES")
 load(":objects.bzl", "zfs_objects")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 _LIBS = ['//cddl/lib/libavl:avl', '//lib/libexpat:bsdxml', '//secure/lib/libcrypto:crypto', '//lib/libgeom:geom', '//lib/msun:m', '//lib/libmd:md_link', '//cddl/lib/libnvpair:nvpair', '//lib/librt:rt', '//cddl/lib/libumem:umem', '//lib/libutil:util', '//lib/libz:z', '//cddl/lib/libzfs_core:zfs_core', '//cddl/lib/libzutil:zutil']
-zfs_objects(name = "objects", sources = ZFS_SOURCES, flags = [], deps = _LIBS, platform = _PLATFORM)
-zfs_objects(name = "hidden_objects", sources = ZFS_HIDDEN_SOURCES, flags = ["-fvisibility=hidden"], deps = _LIBS, platform = _PLATFORM)
-cc_library(name = "zfs", deps = [":objects", ":hidden_objects"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = [":objects", ":hidden_objects"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+zfs_objects(name = "user_objects", sources = ZFS_USER_SOURCES, flags = [], deps = _LIBS, platform = _PLATFORM)
+zfs_objects(name = "btree_objects", sources = ZFS_BTREE_SOURCES, flags = ["-fvisibility=hidden"], deps = _LIBS, platform = _PLATFORM)
+zfs_objects(name = "cityhash_objects", sources = ZFS_CITYHASH_SOURCES, flags = [], deps = _LIBS, platform = _PLATFORM)
+zfs_objects(name = "range_tree_objects", sources = ZFS_RANGE_TREE_SOURCES, flags = ["-fvisibility=hidden"], deps = _LIBS, platform = _PLATFORM)
+zfs_objects(name = "common_objects", sources = ZFS_COMMON_SOURCES, flags = [], deps = _LIBS, platform = _PLATFORM)
+cc_library(name = "zfs", deps = [":user_objects", ":btree_objects", ":cityhash_objects", ":range_tree_objects", ":common_objects"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":user_objects", ":btree_objects", ":cityhash_objects", ":range_tree_objects", ":common_objects"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 cc_shared_library(name = "zfs_shared", deps = [":zfs"], dynamic_deps = ['//cddl/lib/libavl:avl_shared', '//lib/libexpat:bsdxml_shared', '//secure/lib/libcrypto:crypto_shared', '//lib/libgeom:geom_shared', '//lib/msun:m_shared', '//lib/libmd:md_shared', '//cddl/lib/libnvpair:nvpair_shared', '//lib/librt:rt_shared', '//cddl/lib/libumem:umem_shared', '//lib/libutil:util_shared', '//lib/libz:z_shared', '//cddl/lib/libzfs_core:zfs_core_shared', '//cddl/lib/libzutil:zutil_shared'],
     shared_lib_name = "libzfs.so.4", user_link_flags = ["-Wl,-soname,libzfs.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"],
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

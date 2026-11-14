@@ -305,6 +305,21 @@ int	dq_reply_resolve_attr(int q, uint64_t id,
 int	dq_reply_resolve_link(int q, uint64_t id,
 	    const struct dq_ident_file *ident, const char *target);
 int	dq_reply_resolve_ok(int q, uint64_t id);
+/*
+ * dq_reply_resolve_swap(): answer an open (an event that accepts
+ * DQ_RESOLVE_SWAP) with fd, a descriptor of this process: the kernel
+ * installs that open file as the result of the program's open, and the
+ * program then works on the real file with no further events.  Open fd
+ * afresh for each answer, with the request's access mode and status
+ * flags (drs_mode) but without O_TRUNC, and with O_CLOFORK so that no
+ * child shares it; close it after success.  flags are DQ_SWAP_F_*.
+ * The kernel's errno is returned unchanged: EBADF, EOPNOTSUPP, EFTYPE,
+ * ENOTCAPABLE, EBUSY and EINVAL refuse fd or the reply and leave the
+ * event in flight (answer again); ESRCH means the requester is gone.  fd
+ * stays open in every case.  EBUSY (the open file has another reference,
+ * possibly a transient one of another thread) is retried once.
+ */
+int	dq_reply_resolve_swap(int q, uint64_t id, int fd, uint32_t flags);
 
 /*
  * Served directories and REAL (stage 1c-iii-b).

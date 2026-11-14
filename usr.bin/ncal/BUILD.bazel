@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = 'ncal', srcs = ['ncal.c'],
-    deps = ['//lib/ncurses/tinfo:tinfo', '//lib/libcalendar:calendar'], dynamic_deps = ['//lib/ncurses/tinfo:tinfo_shared', '//lib/libcalendar:calendar_shared'],
+    deps = ['//lib/libcalendar:calendar', '//lib/ncurses/tinfo:tinfo'], dynamic_deps = ['//lib/libcalendar:calendar_shared', '//lib/ncurses/tinfo:tinfo_shared'],
     copts = ["-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")

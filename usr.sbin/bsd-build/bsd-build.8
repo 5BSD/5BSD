@@ -5946,6 +5946,61 @@ candidate remains separate. See
 .Pa tools/build/bazel/CAPRECLAIM-NATIVE-TEST-QUALIFICATION.md
 for original installation/binary/debug controls and host/VM/tracing scope.
 .Pp
+The native component archive rule can derive installed member order from its
+.Dv ordered_sources
+attribute, sharing the source declaration with compilation and including declared
+generated source outputs. The alternative
+.Dv member_order
+attribute declares canonical ordinary object identities across native ordinary,
+PIC and DTrace member spellings. It preserves the selected compiler variant and
+rejects missing, extra or ambiguous identities; libc uses configured source-owned
+composition sections for this interface. The checker recognizes original Make
+.Pa .pico
+member spelling while preserving full symbol and member-order checks.
+Shared-object metadata accepts an explicit SONAME or explicit absence on both
+inputs; ordinary named-library checks still require their declared SONAME.
+Dependencies, imports/exports, public symbol versions, dynamic flags and hardening
+remain checked. Duplicate dynamic flag tags and PIE-marked shared objects are
+rejected. GNU VER_FLG_BASE is a descriptive linker-output identity that rtld skips
+when constructing its symbol-version table. Its raw name and equality are reported
+separately; a named library's base identity must match its SONAME. For SONAME-less
+objects the base labels may differ, with base presence still checked. Section and
+byte differences remain in the report; this metadata contract does not establish
+whole-file, instruction, debug or full ABI parity.
+.Pp
+Relocatable ELF payloads use the maintained boot-object contract: exact allocated
+section bytes and metadata, external symbol fields and symbol-resolved relocation
+records. Repeated section names retain occurrence identities. Debug-only data is
+outside this contract; instruction bytes, relocation addends, GNU build IDs and
+DTrace IDs are never normalized. Differences remain explicit review failures.
+Large package review reports stream JSON encoding while retaining the complete
+comparison evidence. Per-package metadata retention remains outside that writer
+optimization; no peak-memory limit is implied.
+This check does not load kernel modules or qualify their runtime behavior.
+.Pp
+Path-derived DTrace alias IDs are compared by a whole-archive member/function/
+symbol-kind incidence mapping. Reports retain raw IDs and the explicit bijection.
+If merged definitions leave that graph ambiguous, the checker can resolve it from
+co-located emitted AMD64 DOF: actual ELF/user relocations, bounded hidden function
+definitions, patched site bytes, provider attributes, probe schemas and exact
+function bytes. It preserves the member occurrence and complete symbol graph.
+Absent, unresolved or still-ambiguous contexts remain rejected; there is no
+program-name allowlist or ID-order guess. This conditional check does not establish
+full function ABI/relocation parity, runtime registration or live probe firing.
+Repeated local symbol occurrences retain their
+multiplicity in both ordinary and alias contracts. Legal repeated archive member
+names retain distinct ordered occurrences; LLVM ar extracts each repeated
+instance through its public occurrence selector into a private directory.
+Different object spellings that collide after normalization remain rejected.
+This symbol contract does not establish DOF
+relocation correctness, registration or live probe behavior. Analysis rejects duplicate or omitted own objects and
+conflicting explicit order declarations. The libnv, libipsec and libelf archives
+use this interface; the build never reads Make comparison outputs to select order.
+.Pp
+The libicp_rescue and libzfs native source groups preserve source-recipe order
+across GCM-specific and hidden-visibility compilation options, including distinct
+objects with repeated archive member names.
+.Pp
 The source-owned installed static archive orders for libfidl, liblogcmp,
 libnetworkcmp, libnotify, libtimecmp and libtracecmp are compared independently
 with original Make artifacts in both normal DTrace modes. Existing format-5
@@ -6321,6 +6376,19 @@ execution workspace and receipt through
 .Pa tools/build/bazel/libmd-stage-tools.py .
 The composite receipt binds both target and execution closures; stale receipts
 must be replaced by maintained preparation, not rebound.
+.Pp
+The SDK preparer accepts two versioned preparation plans, independently of the
+format-5 qualification input. Preparation format 1 retains the Make object-root
+adapter. Preparation format 2 requires build_environment.sdk_root and a complete
+compiler_tools map in the tool settings for clang, cpp, ld.lld, llvm-ar, llvm-nm,
+llvm-objcopy and llvm-strip. It rejects a simultaneous objtop, relative or
+noncanonical paths and missing or unknown compiler roles. Target headers/libraries
+and execution compiler paths are separate inputs, including for cross SDKs.
+The SDK root must resolve below /usr/obj; all selected files/runtime dependencies
+remain hash-bound. Receipts record sdk_source and derive the freestanding
+registration count from the generated declarations. An explicit root does not
+certify native production, target ABI correctness or independent bootstrap.
+Execution OS/library binding and full native bootstrap remain separate checks.
 Cross userland tests require explicitly declared host artifact inspection and
 never execute foreign programs.
 Kernel profiles select their architecture separately and may use a native
@@ -7450,6 +7518,15 @@ md/crypto dependency order, shell/data fixtures and OpenSSL-controlled SHA2
 installation and Kyua registration. Fixed test suites retain incompatible case
 metadata when optional tests are disabled; incompatible cases are not passes.
 .Pp
+The source-configured backend preflights every explicit product target using
+Bazel's public configured query before main build or test actions execute.
+Queries preserve the selected configuration, platform and Java environment.
+Aliases retain an explicit binding to the configured target; missing or
+incompatible requested products are rejected. The receipt hashes
+.Pa target-inventory.json .
+This validates the selection; subsequent build output capture and verification
+remain required. It does not establish independent native bootstrap.
+.Pp
 The source-configured qualification backend requires every explicit test selector
 to expand to a compatible test. A passing unrelated test cannot hide an empty
 suite, non-test label, unexpanded suite alias or entirely incompatible selector.
@@ -7949,6 +8026,38 @@ NLS aliases are selected by the NLS option.
 This layout comparison and package payload inspection do not establish normal
 startup, actual installation or upgrade qualification.
 .Pp
+Native package families declare whether their payload ancestor directories are
+package-owned.  World families use the complete-directory closure, matching
+Make's complete_dirs plist mode.  Kernel families retain explicit installation
+directory claims only.  Physical directory policy remains required in both cases;
+this choice does not bypass staging metadata or manufacture a directory claim.
+Plain kernel mkdir operations supply physical metadata without package ownership;
+the GDB directory created by install -d remains an explicit package claim.
+The existing format-5 frontend selects these maintained declarations; no additional
+command-line option or pathname-based exclusion is used.
+.Pp
+The maintained package-elf-review.py diagnostic reads verified package indexes
+and a captured native installation inventory. It reviews non-debug programs,
+shared libraries and static archives with the existing ELF contract checker;
+debug-tagged artifacts and unsupported ELF kinds are separately accounted for.
+It never executes installed payloads, extracts member-named paths, rewrites
+outputs or establishes complete ABI, instruction, runtime or debug-file parity.
+Component library order follows its source recipe and the terminal pthread
+ordering defined by bsd.libnames.mk. Conditional libraries retain their selected
+position. RDMA examples share one maintained ordered dependency declaration.
+SSH program declarations supply complete ordered library inputs to their helper;
+SSH-only defaults do not force SSH before other explicitly selected providers.
+ZFS/C++ qualification checks component and pthread dependencies before the
+compiler runtime providers. LLVM/Clang program recipes share an ordered native
+runtime tail and supply explicit component library order where recipes differ,
+including LLD's compression/backtrace ordering.
+The zfsd unit target declares the shared GoogleTest
+and regex provider chain from the source test recipes while retaining PIE.
+Raw archive comparison remains independent. The package_elf_review_test target
+exercises bounded archive streaming, trailing-data and unsafe-path refusal.
+These diagnostics use the existing format-5 qualification interface; the normal
+production backend remains Make.
+.Pp
 The maintained world-pkg-install-fixture.py helper consumes captured native world
 and package outputs plus an explicit fixture plan to prepare disposable VM disks.
 Its native ATF driver tests complete package installation and same-version reinstall
@@ -8097,6 +8206,16 @@ interface and private database/cache, then reconciles the complete staged tree
 against source-derived directory and payload policy before native makefs/mkimg.
 It does not replace normal rc/init or load the filesystem image into memory.
 .Pp
+Fresh native construction selects the certificate store when CAROOT and OpenSSL
+are enabled, including the crypto dependency. Package certificate manifests are
+explicit inputs to execution-configured certctl; generated hash names and the
+bundle are declared tree outputs. World inventory and image composition reconcile
+those files through typed installation metadata, rather than discovering host
+trust or maintaining a list of certificate hashes. Native producer/archive and
+world-inventory tests pass; the updated image and runtime TLS require separate
+qualification. See
+.Pa tools/build/bazel/MAKE-CLOSEOUT-CONTROL-QUALIFICATION.md .
+.Pp
 This is a private qualification fixture with explicit guest test credentials,
 serial/DHCP/SSH configuration and an SDK pkg tool. It is not production media.
 The maintained tools/test/system-pkg-runtime/run.py driver consumes its captured
@@ -8108,6 +8227,17 @@ normal boot requalification pending. Make stays production/default.
 See
 .Pa tools/build/bazel/SYSTEM-IMAGE-BOOT-QUALIFICATION.md .
 
+.Pp
+Runtime plan formats 3 through 5 may also select an explicit certificate_policy.
+The maintained example is
+.Pa tools/test/system-pkg-runtime/certificates.json .
+It specifies installed OpenSSL/certctl/fetch paths, the bundle, local trust
+directory, a guest-loopback port and a bounded phase deadline. After the installed
+tree audit, an owned guest TLS server exercises ordinary-user fetch without
+insecure flags or CA overrides: rejection before trust, acceptance after normal
+local CA installation/rehash, and rejection after removal. The probe restores the
+original bundle bytes and removes its private state. This is selected default TLS
+and local-CA lifecycle coverage, not external-server or every application coverage.
 .Pp
 The normal runtime plan also requires explicit terminal_rows and terminal_columns.
 Its serial driver answers bounded absolute-position/DSR size probes and waits for
@@ -8266,3 +8396,14 @@ The target
 .Li //sys/dev/dq:resolve_ledger_inventory
 exposes the discovered filename inventory and complete source list for immutable
 qualification capture and independent comparison.
+
+.Pp
+The SDK receipt's
+.Li freestanding_toolchains
+field is capability schema version 2, not the number of emitted toolchains.
+The preparer reports that number separately as
+.Li freestanding_toolchain_count .
+Source qualification rejects incompatible schema versions before Bazel actions.
+Regenerate source-bound SDKs after preparer changes; do not modify old receipts
+to bypass validation. Toolchain declarations do not establish architecture
+qualification or independent native bootstrap.

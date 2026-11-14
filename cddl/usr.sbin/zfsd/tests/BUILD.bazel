@@ -7,7 +7,13 @@ _RUNTIME_SHARED = ["//secure/lib/libcrypto:crypto_shared", "//lib/libmd:md_share
 cc_test(name = "unit",
     srcs = ["zfsd_unittest.cc", "libmocks.c", "libmocks.h", "//cddl/usr.sbin/zfsd:test_sources"],
     deps = ZFSD_DEPS + _RUNTIME_DEPS + ["//cddl/usr.sbin/zfsd:headers", "//lib/googletest/gmock_main:gmock_main"],
-    dynamic_deps = ZFSD_DYNAMIC_DEPS + _RUNTIME_SHARED, local_defines = ZFSD_DEFINES,
+    # Match gmock_main -> gmock -> gtest -> regex/pthread from src.libnames.mk.
+    # Selecting the declared shared providers also keeps non-PIC regex archive
+    # objects out of this PIE test's link; product archive variants stay intact.
+    dynamic_deps = ZFSD_DYNAMIC_DEPS + _RUNTIME_SHARED + [
+        "//lib/googletest/gmock_main:gmock_main_shared", "//lib/googletest/gmock:gmock_shared",
+        "//lib/googletest/gtest:gtest_shared", "//lib/libregex:regex_shared"],
+    local_defines = ZFSD_DEFINES,
     copts = ZFSD_COPTS, linkopts = ["-pie", "-pthread"],
     features = ["bsd_test_runtime_paths"], size = "small",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

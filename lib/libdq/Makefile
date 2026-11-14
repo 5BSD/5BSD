@@ -70,6 +70,7 @@ MLINKS+=	libdq.3 dq_open.3 \
 		libdq.3 dq_reply_resolve_attr.3 \
 		libdq.3 dq_reply_resolve_link.3 \
 		libdq.3 dq_reply_resolve_ok.3 \
+		libdq.3 dq_reply_resolve_swap.3 \
 		libdq.3 dq_tree_create.3 \
 		libdq.3 dq_tree_destroy.3 \
 		libdq.3 dq_tree_objects.3 \

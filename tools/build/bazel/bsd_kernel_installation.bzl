@@ -25,11 +25,13 @@ def _directories(ctx):
     if type(enabled) != "bool":
         fail("kernel debug setting must be boolean")
     tags = ["package=" + ctx.attr.package]
-    directories = {base: tags}
+    # kern.post.mk uses plain mkdir for kernel/debug roots. They need physical
+    # metadata, but only INSTALL -d for gdb emits a package-owned METALOG entry.
+    directories = {base: []}
     if enabled:
         debug = (prefix.rstrip("/") + base).rstrip("/") or "/"
         if debug not in directories:
-            directories[debug] = tags + ["dbg"]
+            directories[debug] = []
         directories[debug.rstrip("/") + "/gdb"] = tags + ["dbg"]
     records = [{"type": "dir", "destination": path, "owner": "root", "group": "wheel",
                 "mode": "0755", "tags": directories[path], "flags": ""}

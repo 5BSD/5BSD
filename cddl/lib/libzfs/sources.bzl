@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Explicit default amd64 source inventory; hidden visibility is per source.
-ZFS_SOURCES = [
+# Source recipe sections preserve order across per-source visibility groups.
+ZFS_USER_SOURCES = [
     "//sys/contrib/openzfs:lib/libzfs/libzfs_changelist.c",
     "//sys/contrib/openzfs:lib/libzfs/libzfs_config.c",
     "//sys/contrib/openzfs:lib/libzfs/libzfs_crypto.c",
@@ -20,7 +20,17 @@ ZFS_SOURCES = [
     "//sys/contrib/openzfs:lib/libzfs/os/freebsd/libzfs_share_smb.c",
     "//sys/contrib/openzfs:lib/libzfs/os/freebsd/libzfs_compat.c",
     "//sys/contrib/openzfs:lib/libzfs/os/freebsd/libzfs_zmount.c",
+]
+ZFS_BTREE_SOURCES = [
+    "//sys/contrib/openzfs:module/zfs/btree.c",
+]
+ZFS_CITYHASH_SOURCES = [
     "//sys/contrib/openzfs:module/zcommon/cityhash.c",
+]
+ZFS_RANGE_TREE_SOURCES = [
+    "//sys/contrib/openzfs:module/zfs/range_tree.c",
+]
+ZFS_COMMON_SOURCES = [
     "//sys/contrib/openzfs:module/zcommon/zfeature_common.c",
     "//sys/contrib/openzfs:module/zcommon/zfs_comutil.c",
     "//sys/contrib/openzfs:module/zcommon/zfs_deleg.c",
@@ -36,7 +46,6 @@ ZFS_SOURCES = [
     "//sys/contrib/openzfs:module/zcommon/zfs_fletcher_sse.c",
     "//sys/contrib/openzfs:module/zcommon/zfs_fletcher_avx512.c",
 ]
-ZFS_HIDDEN_SOURCES = [
-    "//sys/contrib/openzfs:module/zfs/btree.c",
-    "//sys/contrib/openzfs:module/zfs/range_tree.c",
-]
+
+# Complete source inventory also drives cross-package source exports.
+ZFS_SOURCES = ZFS_USER_SOURCES + ZFS_BTREE_SOURCES + ZFS_CITYHASH_SOURCES + ZFS_RANGE_TREE_SOURCES + ZFS_COMMON_SOURCES

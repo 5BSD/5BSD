@@ -2285,7 +2285,7 @@ never takes
 .Dv DQ_RESOLVE_PASS .
 .Bl -column "DQ_ROP_REALPATH, DQ_ROP_ACCESS" "FD, OK" -offset indent
 .It Sy Operation Ta Sy Served kinds
-.It Dv DQ_ROP_OPEN Ta FD
+.It Dv DQ_ROP_OPEN Ta FD, SWAP
 .It Dv DQ_ROP_STAT , DQ_ROP_ACCESS , DQ_ROP_REALPATH Ta ATTR
 .It Dv DQ_ROP_READLINK Ta LINK
 .It Dv DQ_ROP_SETATTR , DQ_ROP_TRUNCATE Ta OK, FD
@@ -2390,6 +2390,12 @@ holding an absolute, normalized real path, at most 1040 bytes: the name
 is that path, and the lookup continues there from the real root
 (stage 1c-iii-b,
 .Sx Served directories and starts ) .
+.It Dv DQ_RESOLVE_SWAP
+40 bytes in all: the reply and a
+.Vt struct dq_resolve_swap
+(32) naming a descriptor of the controller, whose open file becomes the
+result of the open
+.Pq Sx Swapped answers .
 .El
 .Pp
 A
@@ -2628,6 +2634,186 @@ from that object
 and takes
 .Dv DQ_RESOLVE_FD
 or an errno: the controller reopens it.
+.Ss Swapped answers
+An open
+.Pq Dv DQ_ROP_OPEN
+that offers
+.Dv DQ_RESOLVE_FD
+also offers
+.Dv DQ_RESOLVE_SWAP :
+the controller answers with a descriptor it holds, and the kernel installs
+that open file in the requester as the result of its
+.Xr open 2 .
+The requester then holds the real open file.
+Nothing it does with the descriptor afterwards posts an event, the
+controller cannot revoke it, and it keeps working when the queue closes.
+Where one of those matters, answer
+.Dv DQ_RESOLVE_FD .
+.Bd -literal -offset indent
+struct dq_resolve_swap {
+	int32_t		drw_fd;		/* a descriptor of the controller */
+	uint32_t	drw_flags;	/* DQ_SWAP_F_* */
+	uint64_t	drw_spare[3];	/* 0 */
+};
+.Ed
+.Pp
+The reply takes the file out of the controller's descriptor table by
+number while it validates; the descriptor itself stays open and the
+controller closes it once the reply has returned 0.
+The kernel resolves no name for a swap and creates nothing: which object
+the requester gets, and whether it exists, is the controller's own
+.Xr open 2 .
+.Pp
+The supplied open file must present as what the requester's open would
+have produced.
+A refusal is the reply's error; it consumes nothing (a
+.Dv CAP_XFER_ONCE
+entry stays usable), the descriptor stays open and the event stays in
+flight, so the controller may answer again:
+.Bl -tag -width "ENOTCAPABLE"
+.It Bq Er EBADF
+.Va drw_fd
+is not open.
+.It Bq Er EOPNOTSUPP
+The file cannot be passed between processes; or it is not a vnode (a
+served descriptor, a socket, a pipe, a shared memory object); or the
+request is a full open and the vnode is neither a regular file nor a
+directory.
+Devices and FIFOs are refused because their open acts in the opener's
+context, which a swap does not run for the requester.
+An
+.Dv O_PATH
+request takes an
+.Dv O_PATH
+file of any vnode.
+.It Bq Er ENOTCAPABLE
+The controller's entry may not be transferred
+.Pq Xr cap_xfer_limit 2 ;
+or the request has
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+and the entry lacks
+.Dv CAP_FLOCK .
+.It Bq Er EBUSY
+The open file has a reference besides the entry: it was duplicated,
+inherited by or passed to another process, is in use by another thread of
+the controller, or was already swapped and not closed.
+The last two can be transient.
+.It Bq Er EFTYPE
+The file's access mode
+.Pq read, write, execute or search, Dv O_PATH
+or one of the status flags
+.Dv O_APPEND , O_NONBLOCK , O_SYNC , O_DSYNC , O_DIRECT , O_ASYNC
+differs from the request's
+.Pq Va drs_mode ;
+or the request has
+.Dv O_DIRECTORY
+and the file is not a directory; or the file is a directory and the
+request opens for writing or truncation.
+.It Bq Er EINVAL
+The reply is not 40 bytes, a spare word or an unknown flag is set, or
+.Dv DQ_SWAP_F_CREATED
+answers a request without
+.Dv O_CREAT .
+.It Bq Er ESRCH
+The requester is no longer waiting.
+.El
+.Pp
+Flags:
+.Bl -tag -width "DQ_SWAP_F_CREATED"
+.It Dv DQ_SWAP_F_NOXFER
+The requester's descriptor is installed
+.Dv CAP_XFER_NONE :
+it cannot be sent over a socket or duplicated into another process.
+This narrows what the descriptor allows; it does not confine the object,
+which the requester can still reopen by name where a lookup is passed.
+Without the flag the descriptor carries the transfer state of the
+controller's entry.
+.It Dv DQ_SWAP_F_CREATED
+The file did not exist and the controller created it for this
+.Dv O_CREAT
+request.
+.Xr open 2
+does not check access to a file it has just created
+.Pq a file created with mode 0444 is returned open for writing ,
+and the completion does the same, and does not truncate, when the file is
+a regular file owned by the requester's effective user with no immutable
+or append-only flag.
+Otherwise the flag is ignored and the file is checked as an existing one.
+.El
+.Pp
+.Sy Completion .
+The requester's thread completes the open under its own credential, in
+the order of
+.Xr open 2 :
+the MAC check for receiving a descriptor; the MAC open check and then
+.Xr VOP_ACCESS 9
+on the vnode with the access the request's flags ask for, so an open the
+requester could not have made of that object itself fails with the errno
+its own open would have returned; the
+.Xr flock 2
+of
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+(interruptible;
+.Er EINTR ,
+never a restart); the truncation of
+.Dv O_TRUNC ;
+then the lowest free descriptor number, with the rights of the
+controller's entry limited by its transfer ceiling and, from a served
+start descriptor, by that descriptor's, and with
+.Dv O_CLOEXEC
+and
+.Dv O_CLOFORK
+as the request asked.
+.Xr VOP_OPEN 9
+is not run again: the file had its one open, in the controller.
+A failure in the completion is the requester's errno
+.Pq Er EMFILE No is the last ;
+the file is dropped and the controller is not told.
+The file keeps the credential of the controller's open
+.Pq Va f_cred .
+.Pp
+.Sy Duties of a swapping controller .
+.Bl -bullet -compact
+.It
+Open the file afresh for each answer, with the request's access mode and
+status flags and with
+.Dv O_CLOFORK ,
+and close the descriptor after the reply succeeds.
+The requester is then the only holder: the offset, the status flags and
+any
+.Xr flock 2
+are its own.
+.It
+Do not open with
+.Dv O_TRUNC :
+the kernel truncates for the requester, after checking the requester's
+permission to write.
+.It
+Hand over only objects the requester's credential may open; create files
+under the requester's user, or give them to it, and declare them with
+.Dv DQ_SWAP_F_CREATED .
+.It
+Decide by the identity of the object opened
+.Pq Xr fstat 2 ,
+not by its name:
+.Dv DQ_RESOLVE_PASS
+and
+.Dv DQ_RESOLVE_REAL
+make the kernel resolve a name again after the decision, which is only
+sound where the attached processes cannot change the directories on the
+way.
+.It
+The path of the supplied file is visible to the requester
+.Pq Dv F_KINFO , Xr procstat 1 ;
+answer an open of that path as any other.
+.It
+Attached processes are not killed when the queue closes: a requester that
+outlives its controller keeps every swapped descriptor.
+.El
 .Ss Served directories and starts
 Stage 1c-iii-b serves directories and symbolic links and lets a served
 directory start lookups.
@@ -3707,6 +3893,13 @@ SDT provider fires:
 .It dq:::reply-late
 .Fa "struct dq_queue *" ,
 .Fa "uint64_t id"
+.It dq:::swap-refused
+.Fa "struct dq_queue *" ,
+.Fa "uint64_t id" ,
+.Fa "int errno"
+(a
+.Dv DQ_RESOLVE_SWAP
+reply refused before the event was answered)
 .It dq:::resolve-served
 .Fa "struct dq_queue *" ,
 .Fa "uint32_t rop" ,

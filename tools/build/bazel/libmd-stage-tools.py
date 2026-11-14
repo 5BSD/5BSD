@@ -67,7 +67,11 @@ def freestanding_toolchains(target, version):
             'toolchain(name=%s, toolchain=%s, toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' %
                 (json.dumps(name+'_registered'), json.dumps(':'+name+'_compiler'), json.dumps(constraints)),
         ]
-    return lines
+    # This capability is a schema version, not a declaration count.
+    return lines, {
+        "freestanding_toolchains": 2,
+        "freestanding_toolchain_count": len(rows),
+    }
 
 
 def inspect_execution_dependencies(origins, inspectors):
@@ -104,7 +108,11 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
     implementation=Path(__file__).resolve(strict=True)
     toolchain_config=implementation.with_name('native_cc_toolchain_config.bzl')
     plan=json.loads(plan_path.read_text()); settings=json.loads(tools_path.read_text())
-    environment=plan['build_environment']; obj=Path(environment['objtop']); sdk=obj/'tmp'
+    sdk, compiler_tools, source_kind = userland_sdk.sdk_sources(plan, settings)
+    environment=plan['build_environment']
+    sdk = sdk.resolve(strict=True)
+    if not sdk.is_dir() or not sdk.is_relative_to('/usr/obj'):
+        raise ValueError('SDK root must resolve to a directory below /usr/obj')
     selected_arch = userland_sdk.target_architecture(environment['target'])
     identity = userland_sdk.architecture(selected_arch)
     userland_sdk.verify_profile(environment['profile_assignments'], selected_arch)
@@ -123,12 +131,12 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
         if host.get('format') != 1:
             raise ValueError('execution SDK must be an independent native snapshot')
     required={'execution_tools','objdump','stdout_redirect_source','readelf','ldd'}
-    if not required<=set(settings) or set(settings)-required-{'additional_execution_tools','python_stdlib'}:
+    if not required<=set(settings) or set(settings)-required-{'additional_execution_tools','python_stdlib','compiler_tools'}:
         raise ValueError('unexpected tool configuration keys')
     if set(settings['execution_tools']) != {'sh','sed','cat','mv','rm','awk'}:
         raise ValueError('explicit generator executable set required')
     origins={name:Path(value).resolve(strict=True) for name,value in settings['execution_tools'].items()}
-    origins.update({name:(sdk/'usr/bin'/name).resolve(strict=True) for name in ('clang','cpp','ld.lld','llvm-ar','llvm-nm','llvm-objcopy','llvm-strip')})
+    origins.update({name:path.resolve(strict=True) for name,path in compiler_tools.items()})
     origins['llvm-objdump']=Path(settings['objdump']).resolve(strict=True)
     additional=settings.get('additional_execution_tools',{})
     if not isinstance(additional,dict) or any(not re.fullmatch('[A-Za-z][A-Za-z0-9_]*',name) for name in additional):
@@ -216,7 +224,8 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
            'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", as_files=":compile_inputs", linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)',
            'toolchain(name="registered", toolchain=":compiler", toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=%s)' % json.dumps(['@platforms//os:freebsd', '@platforms//cpu:' + identity['platform_cpu'], ':selected_sdk', ':userland']),
            'cc_binary(name="stdout_redirect", srcs=["stdout_redirect.c"], linkstatic=True, features=["fully_static_link"])']
-    lines += runtime_groups(tool_dependencies) + action_input_groups() + freestanding_toolchains(target, version)
+    freestanding, freestanding_metadata = freestanding_toolchains(target, version)
+    lines += runtime_groups(tool_dependencies) + action_input_groups() + freestanding
     lines += ['alias(name=%s, actual=%s)'%(json.dumps(name),json.dumps('bin/'+name)) for name in [*settings['execution_tools'],*['extra_'+n for n in additional]]]
     if python_info:
         runtime_labels=[':extra_python_runtime']+[':'+name+'_runtime' for name in python_extensions]
@@ -258,8 +267,10 @@ def materialize(plan_path, tools_path, execution_workspace=None, execution_recei
         if current!=python_files:raise ValueError('Python standard-library inventory changed during staging')
     snapshot={str(path.relative_to(root)):digest(path) for path in tc.rglob('*') if path.is_file()}
     result={'format':1,'scope':'native amd64 candidate SDK snapshot; no Bazel execution or hermeticity claim','inputs':inputs,'execution_host_dependencies':dependencies,'tool_execution_dependencies':tool_dependencies,'dependency_commands':commands,'tool_origins':{k:str(v) for k,v in origins.items()},'snapshot':snapshot,'python_runtime':python_info,'bazel_analyzed':False,'bazel_built':False,'target':target}
+    result['sdk_source'] = {'kind': source_kind, 'root': str(sdk),
+                            'plan_format': plan['format']}
     result['compiler_resource_version'] = version
-    result['freestanding_toolchains'] = 2
+    result.update(freestanding_metadata)
     if host is not None:
         result.update(format=2, scope='explicit target SDK plus independently bound native execution SDK; no world/runtime qualification',
                       execution_target=host['target'], execution_sdk={

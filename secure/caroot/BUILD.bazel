@@ -1,3 +1,44 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//secure:production.bzl", "component_archive")
+load("//tools/build/bazel:bsd_certificate_store.bzl", "bsd_certificate_store", "certificate_store_test")
+load("//tools/build/bazel:bsd_install_tree.bzl", "bsd_install_tree_archive")
 component_archive(name = "production_install_archive", manifests = ["//secure/caroot/trusted:install_manifest", "//secure/caroot/untrusted:install_manifest"])
+
+# Generated trust-store state is a separate construction output from package PEMs.
+_CERTIFICATE_RUNTIME = ["//secure/lib/libcrypto:crypto_shared",
+    "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+    "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7",
+    "@bsd_sdk//toolchain:execution-runtime/lib/libthr.so.3"]
+bsd_certificate_store(name = "certificate_store",
+    trusted = ["//secure/caroot/trusted:install_manifest"],
+    untrusted = ["//secure/caroot/untrusted:install_manifest"],
+    runtime = _CERTIFICATE_RUNTIME, visibility = ["//visibility:public"])
+certificate_store_test(name = "certificate_store_test", store = ":certificate_store",
+    archive = ":certificate_store_archive",
+    trusted = ["//secure/caroot/trusted:install_manifest"],
+    untrusted = ["//secure/caroot/untrusted:install_manifest"],
+    runtime = _CERTIFICATE_RUNTIME + ["//secure/lib/libssl:ssl_shared"])
+
+# Untagged generated state belongs to fresh-system construction, not caroot's
+# package payload. The complete directory policy comes from maintained mtree.
+bsd_install_tree_archive(
+    name = "certificate_store_archive",
+    tree = ":certificate_store",
+    prefix = "/etc/ssl",
+    extra_directories = ["certs", "untrusted"],
+    owner = "root",
+    group = "wheel",
+    file_mode = "0444",
+    directory_mode = "0755",
+    file_tags = [],
+    directory_tags = [],
+    epoch = 0,
+    passwd = "//etc:master.passwd",
+    group_file = "//etc:group",
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/"},
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"],
+)

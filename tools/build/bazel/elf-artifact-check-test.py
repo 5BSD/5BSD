@@ -48,29 +48,86 @@ def main():
     passed.append('archive-identical')
     members = subprocess.run([ar, 't', a.archive], check=True, text=True,
                              stdout=subprocess.PIPE).stdout.split()
-    # Ordinary DTrace objects use .nopic.o; variant spelling must not alter
-    # source identity, order or any member symbol contract.
-    variant_dir = a.work / 'nopic-members'
-    variant_dir.mkdir()
-    variant_members = []
-    for member in members:
-        data = subprocess.run([ar, 'p', a.archive, member], check=True,
+    # DTrace's .nopic.o and Make's .pico share source identity with ordinary
+    # objects. Normalization must preserve order and the complete symbol table.
+    for variant_name, suffix in [('nopic', '.nopic.o'), ('pico', '.pico')]:
+        variant_dir = a.work / (variant_name + '-members')
+        variant_dir.mkdir()
+        variant_members = []
+        for member in members:
+            data = subprocess.run([ar, 'p', a.archive, member], check=True,
+                                  stdout=subprocess.PIPE).stdout
+            target = variant_dir / (m.stem(member) + suffix)
+            target.write_bytes(data)
+            variant_members.append(target)
+        variant = a.work / (variant_name + '-members.a')
+        subprocess.run([ar, 'rcs', variant, *variant_members], check=True)
+        m.compare_archive(nm, ar, variant, a.archive)
+        passed.append('archive-' + variant_name + '-member-spelling')
+        collision_member = variant_dir / (m.stem(members[0]) + '.o')
+        shutil.copyfile(variant_members[0], collision_member)
+        collision = a.work / (variant_name + '-normalized-collision.a')
+        shutil.copyfile(variant, collision)
+        subprocess.run([ar, 'r', collision, collision_member], check=True)
+        expect_failure(lambda: m.compare_archive(nm, ar, collision, a.archive),
+                       'ambiguous normalized archive members')
+        passed.append('archive-' + variant_name + '-normalized-collision-rejected')
+
+    # Real ET_REL objects permit repeated local symbol names. One extra symbol
+    # must be rejected even if its name/kind already occurs in the same member.
+    repeated_archives = []
+    for label, count in [('one', 1), ('two', 2)]:
+        directory = a.work / ('local-symbol-' + label)
+        directory.mkdir()
+        obj = directory / members[0]
+        obj.write_bytes(subprocess.run([ar, 'p', a.archive, members[0]], check=True,
+                                      stdout=subprocess.PIPE).stdout)
+        for unused in range(count):
+            subprocess.run([objcopy, '--add-symbol',
+                '__archive_multiplicity_probe=.text:0,local,function', obj], check=True)
+        text = subprocess.run([nm, '--format=posix', obj], check=True, text=True,
                               stdout=subprocess.PIPE).stdout
-        target = variant_dir / (m.stem(member) + '.nopic.o')
-        target.write_bytes(data)
-        variant_members.append(target)
-    variant = a.work / 'nopic-members.a'
-    subprocess.run([ar, 'rcs', variant, *variant_members], check=True)
-    m.compare_archive(nm, ar, variant, a.archive)
-    passed.append('archive-nopic-member-spelling')
-    collision_member = variant_dir / (m.stem(members[0]) + '.o')
-    shutil.copyfile(variant_members[0], collision_member)
-    collision = a.work / 'normalized-collision.a'
-    shutil.copyfile(variant, collision)
-    subprocess.run([ar, 'r', collision, collision_member], check=True)
-    expect_failure(lambda: m.compare_archive(nm, ar, collision, a.archive),
-                   'ambiguous normalized archive members')
-    passed.append('archive-normalized-collision-rejected')
+        actual = sum(line.split()[0] == '__archive_multiplicity_probe' for line in text.splitlines())
+        if actual != count:
+            raise RuntimeError('duplicate-symbol fixture did not contain the requested count')
+        archive = a.work / ('local-symbol-' + label + '.a')
+        subprocess.run([ar, 'rcs', archive, obj], check=True)
+        repeated_archives.append(archive)
+    m.compare_archive(nm, ar, repeated_archives[0], repeated_archives[0])
+    passed.append('archive-repeated-local-symbol-fixture')
+    expect_failure(lambda: m.compare_archive(nm, ar, repeated_archives[1], repeated_archives[0]),
+                   'member symbols differ')
+    passed.append('archive-extra-repeated-local-symbol-rejected')
+
+    # Repeated basenames are legal. Distinct real symbol tables must remain
+    # attached to their ordered occurrence, including repeated local symbols.
+    duplicate_objects = []
+    for index, archive in enumerate(repeated_archives):
+        directory = a.work / ('duplicate-instance-' + str(index))
+        directory.mkdir()
+        obj = directory / 'same.o'
+        obj.write_bytes(subprocess.run([ar, 'p', archive], check=True,
+                                      stdout=subprocess.PIPE).stdout)
+        duplicate_objects.append(obj)
+    duplicate_archives = []
+    for label, objects in [('ordered', duplicate_objects),
+                           ('reversed', list(reversed(duplicate_objects))),
+                           ('extra', duplicate_objects + duplicate_objects[:1]),
+                           ('merged', duplicate_objects[:1] * 2)]:
+        archive = a.work / ('duplicate-' + label + '.a')
+        subprocess.run([ar, 'qc', archive, *objects], check=True)
+        duplicate_archives.append(archive)
+    duplicate = duplicate_archives[0]
+    record = m.compare_archive(nm, ar, duplicate, duplicate)
+    if record['candidate']['members'] != ['same.o', 'same.o']:
+        raise RuntimeError('fixture did not preserve duplicate member names')
+    passed.append('archive-duplicate-occurrences-identical')
+    for label, archive, message in [
+            ('reordered', duplicate_archives[1], 'member symbols differ'),
+            ('extra', duplicate_archives[2], 'member set or order'),
+            ('merged', duplicate_archives[3], 'member symbols differ')]:
+        expect_failure(lambda: m.compare_archive(nm, ar, archive, duplicate), message)
+        passed.append('archive-duplicate-occurrences-' + label + '-rejected')
 
     missing = a.work / 'missing-member.a'
     shutil.copyfile(a.archive, missing)

@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "openssl": "/usr/bin/openssl",
+  "certctl": "/usr/sbin/certctl",
+  "fetch": "/usr/bin/fetch",
+  "bundle": "/etc/ssl/cert.pem",
+  "local_directory": "/usr/local/share/certs",
+  "port": 24443,
+  "deadline_seconds": 180
+}

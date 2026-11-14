@@ -7,12 +7,12 @@ cc_binary(
         "//tools/build/bazel/config:jail_enabled": ["//contrib/kyua:os/freebsd/execenv_jail.cpp", "//contrib/kyua:os/freebsd/utils/jail.cpp"],
         "//conditions:default": ["//contrib/kyua:os/freebsd/execenv_jail_stub.cpp"],
     }),
-    deps = ["//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", ":configuration", "//contrib/kyua:headers", "//lib/liblutok:lutok_pie", "//lib/libsqlite3:sqlite3", "//lib/libutil:util"] + select({
+    deps = [":configuration", "//contrib/kyua:headers", "//lib/liblutok:lutok_pie", "//lib/msun:m", "//lib/libsqlite3:sqlite3", "//lib/libutil:util"] + select({
         "//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail"], "//conditions:default": [],
-    }),
-    dynamic_deps = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libsqlite3:sqlite3_shared", "//lib/libutil:util_shared"] + select({
+    }) + ["//lib/libc++:cxx", "//lib/libcxxrt:cxxrt"],
+    dynamic_deps = ["//lib/msun:m_shared", "//lib/libsqlite3:sqlite3_shared", "//lib/libutil:util_shared"] + select({
         "//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail_shared"], "//conditions:default": [],
-    }),
+    }) + ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"],
     local_defines = ['HAVE_CONFIG_H', 'GDB=\\"/usr/local/bin/gdb\\"', 'KYUA_ARCHITECTURE=\\"amd64\\"', 'KYUA_PLATFORM=\\"amd64\\"', 'KYUA_CONFDIR=\\"/etc/kyua\\"', 'KYUA_DOCDIR=\\"/usr/share/doc/kyua\\"', 'KYUA_MISCDIR=\\"/usr/share/kyua/misc\\"', 'KYUA_STOREDIR=\\"/usr/share/kyua/store\\"'],
     copts = ["-fPIE", "-nostdinc++"],
     linkopts = ["-pie"],

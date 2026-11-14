@@ -95,6 +95,50 @@ oes_client_create_descendants(void)
 	return (client);
 }
 
+/* Destroy a client that could not be scoped, keeping the scope's errno. */
+static oes_client_t *
+oes_client_scope_failed(oes_client_t *client)
+{
+	int saved;
+
+	saved = errno;
+	oes_client_destroy(client);
+	errno = saved;
+	return (NULL);
+}
+
+/*
+ * oes_client_create_jail - Create a client scoped to a jail, by jail ID
+ */
+oes_client_t *
+oes_client_create_jail(int jid, uint32_t flags)
+{
+	oes_client_t *client;
+
+	client = oes_client_create();
+	if (client == NULL)
+		return (NULL);
+	if (oes_set_jail_scope(client, jid, flags) < 0)
+		return (oes_client_scope_failed(client));
+	return (client);
+}
+
+/*
+ * oes_client_create_jail_name - Create a client scoped to a jail, by name
+ */
+oes_client_t *
+oes_client_create_jail_name(const char *name, uint32_t flags)
+{
+	oes_client_t *client;
+
+	client = oes_client_create();
+	if (client == NULL)
+		return (NULL);
+	if (oes_set_jail_scope_name(client, name, flags) < 0)
+		return (oes_client_scope_failed(client));
+	return (client);
+}
+
 /*
  * oes_client_create_from_fd - Create client from existing fd
  */
@@ -196,6 +240,74 @@ oes_get_scope(oes_client_t *client, uint32_t *scope)
 	if (ioctl(fd, OES_IOC_GET_SCOPE, &args) < 0)
 		return (-1);
 	*scope = args.esa_scope;
+	return (0);
+}
+
+#define OES_JAIL_SCOPE_USERMASK \
+	(OES_JAIL_SCOPE_NOCHILDREN | OES_JAIL_SCOPE_INBOUND)
+
+int
+oes_set_jail_scope(oes_client_t *client, int jid, uint32_t flags)
+{
+	struct oes_jail_scope_args args;
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	if ((flags & ~OES_JAIL_SCOPE_USERMASK) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&args, 0, sizeof(args));
+	args.ejs_flags = flags;
+	args.ejs_jid = jid;
+	return (ioctl(fd, OES_IOC_SET_JAIL_SCOPE, &args));
+}
+
+int
+oes_set_jail_scope_name(oes_client_t *client, const char *name, uint32_t flags)
+{
+	struct oes_jail_scope_args args;
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	if (name == NULL || name[0] == '\0' ||
+	    (flags & ~OES_JAIL_SCOPE_USERMASK) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (strlen(name) >= sizeof(args.ejs_name)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	memset(&args, 0, sizeof(args));
+	args.ejs_flags = flags | OES_JAIL_SCOPE_BYNAME;
+	strlcpy(args.ejs_name, name, sizeof(args.ejs_name));
+	return (ioctl(fd, OES_IOC_SET_JAIL_SCOPE, &args));
+}
+
+int
+oes_get_jail_scope(oes_client_t *client, int *jid, uint32_t *flags,
+    char *name, size_t namelen)
+{
+	struct oes_jail_scope_args args;
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	memset(&args, 0, sizeof(args));
+	if (ioctl(fd, OES_IOC_GET_JAIL_SCOPE, &args) < 0)
+		return (-1);
+	if (jid != NULL)
+		*jid = args.ejs_jid;
+	if (flags != NULL)
+		*flags = args.ejs_flags;
+	if (name != NULL && namelen > 0)
+		strlcpy(name, args.ejs_name, namelen);
 	return (0);
 }
 
@@ -813,6 +925,15 @@ oes_refill(oes_client_t *client, bool blocking)
 	    (size_t)n < sizeof(oes_message_t) ? EIO : 0);
 	if (n < 0)
 		return (-1);
+
+	if (n == 0) {
+		/*
+		 * End of file: the jail of a jail-scoped client was removed
+		 * and everything queued for it has been read.
+		 */
+		errno = ENXIO;
+		return (-1);
+	}
 
 	if ((size_t)n < sizeof(oes_message_t)) {
 		errno = EIO;

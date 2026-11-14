@@ -252,7 +252,7 @@ unexpand_path(const char *path)
 		p++;
 		q++;
 	}
-	return (*q == '\0' && *p == '/' ? p : path);
+	return (*q == '\0' && (*p == '/' || *p == '\0') ? p : path);
 }
 
 /*

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import")
 cc_library(name = "k5tls", srcs = ["//crypto/krb5/src/plugins/tls/k5tls:" + f for f in ['notls.c', 'openssl.c']],
-    deps = ['//crypto/krb5/src/include:internal_headers', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/support:krb5support', '//krb5/util/profile:krb5profile', '//secure/lib/libssl:ssl', '//secure/lib/libcrypto:crypto', '//lib/libsys:sys'], linkstatic = True,
+    deps = ['//crypto/krb5/src/include:internal_headers', '//krb5/lib/krb5:krb5', '//krb5/util/profile:krb5profile', '//krb5/util/support:krb5support', '//secure/lib/libssl:ssl', '//secure/lib/libcrypto:crypto', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//lib/libsys:sys'], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-cc_shared_library(name = "k5tls_shared", deps = [":k5tls"], dynamic_deps = ['//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared', '//secure/lib/libssl:ssl_shared', '//secure/lib/libcrypto:crypto_shared', '//lib/libsys:sys_shared'],
+cc_shared_library(name = "k5tls_shared", deps = [":k5tls"], dynamic_deps = ['//krb5/lib/krb5:krb5_shared', '//krb5/util/support:krb5support_shared', '//secure/lib/libssl:ssl_shared', '//secure/lib/libcrypto:crypto_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//lib/libsys:sys_shared'],
     shared_lib_name = "k5tls.so.122", additional_linker_inputs = ["version.map"],
     user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,k5tls.so.122"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")

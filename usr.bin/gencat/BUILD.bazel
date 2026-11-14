@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = "gencat", srcs = ["gencat.c"], deps = ["//lib/libc:shared_link_interface"],
-    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+cc_binary(name = "gencat", srcs = ["gencat.c"], deps = ["//lib/libc:shared_abi_interface"],
     copts = ["-fPIE"], linkopts = ["-pie", "-nodefaultlibs"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")

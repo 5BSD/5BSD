@@ -639,6 +639,16 @@ dq_event_rele(struct dq_event_k *ev)
 	/* A RESOLVE FD answer nobody took (D171): its id ends here. */
 	if (ev->ev_robj != NULL)
 		dq_object_retire_unbound(ev->ev_robj, NULL);
+	/*
+	 * A RESOLVE SWAP answer nobody took.  The waiter of a REPLIED event
+	 * always takes it (dq_event_post_wait_q), so this is the event whose
+	 * waiter is gone; the drop can be a last close, which may sleep.
+	 */
+	if (ev->ev_rswap.fs_fp != NULL) {
+		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
+		    "dq: releasing a swapped file");
+		fdswap_release(&ev->ev_rswap, curthread);
+	}
 	cv_destroy(&ev->ev_cv);
 	dq_data_rele(ev->ev_reply);
 	if (ev->ev_object != NULL)
@@ -1197,7 +1207,8 @@ dq_event_post_nowait(struct dq_queue *q, struct dq_object *o, uint32_t op,
 int
 dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
     size_t bodylen, struct thread *td, sbintime_t deadline,
-    struct dq_data **replyp, int *errnop, struct dq_object **robjp)
+    struct dq_data **replyp, int *errnop, struct dq_object **robjp,
+    struct fdswap *rswapp)
 {
 	struct dq_event_k *ev;
 	struct dq_requester *rq, *newrq;
@@ -1208,6 +1219,7 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 	*replyp = NULL;
 	*errnop = 0;
 	*robjp = NULL;
+	bzero(rswapp, sizeof(*rswapp));
 	interrupt = drop_list_ref = false;
 	if (dq_caller_holds_queue(q, td))
 		return (EDEADLK);
@@ -1269,8 +1281,10 @@ dq_event_post_wait_q(struct dq_queue *q, uint32_t op, const void *body,
 		*replyp = ev->ev_reply;
 		*errnop = ev->ev_errno;
 		*robjp = ev->ev_robj;	/* state before the wake reason (D91) */
+		*rswapp = ev->ev_rswap;	/* SWAP: the reference moves */
 		ev->ev_reply = NULL;
 		ev->ev_robj = NULL;
+		bzero(&ev->ev_rswap, sizeof(ev->ev_rswap));
 		error = 0;
 		break;
 	case DQ_EV_FAILED:
@@ -1912,7 +1926,8 @@ dq_reply_unmint(struct dq_object *robj, uint64_t *objectp)
  * delivered, check the body against the operation, hand it to the waiter.
  * A RESOLVE reply may be larger than kern.dq.max_io, up to
  * DQ_RESOLVE_REPLY_MAX (D129); its FD answer is minted before the lock
- * (dq_resolve_mint_prepare) and linked under it.
+ * (dq_resolve_mint_prepare) and linked under it, and its SWAP answer's
+ * file is taken before the lock (dq_resolve_swap_prepare) likewise.
  */
 int
 dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
@@ -1921,6 +1936,7 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 	struct dq_object *o, *robj;
 	struct dq_data *dd;
 	struct file *fp;
+	struct fdswap rswap;
 	uint64_t *objectp;
 	size_t len;
 	uint32_t op;
@@ -1955,6 +1971,22 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 		}
 	}
 
+	/*
+	 * A SWAP answer's file is taken out of this process's table before
+	 * the lock (the table lock orders before q_mtx), as the mint is
+	 * made, and linked to the event under it.
+	 */
+	bzero(&rswap, sizeof(rswap));
+	if (r->dr_errno == 0 && len >= sizeof(struct dq_resolve_reply) &&
+	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind ==
+	    DQ_RESOLVE_SWAP) {
+		error = dq_resolve_swap_prepare(q, r->dr_id, dd, td, &rswap);
+		if (error != 0) {
+			dq_data_rele(dd);
+			return (error);
+		}
+	}
+
 	key.ev_hdr.de_id = r->dr_id;
 	DQ_LOCK(q);
 	ev = RB_FIND(dq_inflight_tree, &q->q_inflight, &key);
@@ -1964,6 +1996,7 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 		DQ_UNLOCK(q);
 		dq_data_rele(dd);
 		dq_reply_unmint(robj, objectp);
+		fdswap_release(&rswap, td);
 		return (ESRCH);
 	}
 	KASSERT(ev->ev_state == DQ_EV_DELIVERED, ("dq: inflight event state"));
@@ -1993,12 +2026,20 @@ dq_queue_reply(struct dq_queue *q, const struct dq_reply *r, struct thread *td)
 			SDT_PROBE2(dq, , , mint, q, ev->ev_robj);
 		}
 	}
+	/* A SWAP answer of an event the peek did not see (prepare raced). */
+	if (error == 0 && op == DQ_OP_RESOLVE && r->dr_errno == 0 &&
+	    ((const struct dq_resolve_reply *)dd->dd_bytes)->drr_kind ==
+	    DQ_RESOLVE_SWAP && rswap.fs_fp == NULL)
+		error = EINVAL;
 	if (error != 0) {
 		DQ_UNLOCK(q);
 		dq_data_rele(dd);
 		dq_reply_unmint(robj, objectp);
+		fdswap_release(&rswap, td);
 		return (error);
 	}
+	/* Nothing fails from here: the event owns the taken file. */
+	ev->ev_rswap = rswap;
 	rerrno = r->dr_errno;
 	if (rerrno != 0 && !(op == DQ_OP_RESOLVE ?
 	    dq_resolve_errno_allowed_ev((const struct dq_resolve_body *)

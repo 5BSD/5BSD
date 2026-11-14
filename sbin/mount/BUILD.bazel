@@ -16,15 +16,15 @@ bsd_dtrace_header(
 cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
 
 cc_library(name = "objects", srcs = ["mount.c", "mount_fs.c", "vfslist.c", "extern.h", "pathnames.h", "mountop_trace.h"],
-    deps = ["//lib/libxo/libxo:xo", "//lib/libutil:util"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+    deps = ["//lib/libutil:util", "//lib/libxo/libxo:xo"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
     local_defines = select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}),
     copts = ["-fPIE"], target_compatible_with = _PLATFORM)
 bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider", provider_object = "mountop_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
 [filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
 cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
-cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + ["//lib/libxo/libxo:xo", "//lib/libutil:util"])
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + ["//lib/libutil:util", "//lib/libxo/libxo:xo"])
 cc_binary(name = "mount", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
-    dynamic_deps = ["//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared"],
+    dynamic_deps = ["//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared"],
     linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "mount", manual = "mount.8", package = "runtime", bindir = "/sbin", man_section = "8")

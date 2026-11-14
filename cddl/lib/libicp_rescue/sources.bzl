@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Explicit amd64 rescue inventory; GCM has a per-source undefinition.
-RESCUE_C_SOURCES = [
+RESCUE_C_PREFIX_SOURCES = [
     "//sys/contrib/openzfs:module/icp/spi/kcf_spi.c",
     "//sys/contrib/openzfs:module/icp/api/kcf_ctxops.c",
     "//sys/contrib/openzfs:module/icp/api/kcf_cipher.c",
@@ -17,6 +17,8 @@ RESCUE_C_SOURCES = [
     "//sys/contrib/openzfs:module/icp/algs/modes/modes.c",
     "//sys/contrib/openzfs:module/icp/algs/modes/gcm_generic.c",
     "//sys/contrib/openzfs:module/icp/algs/modes/gcm_pclmulqdq.c",
+]
+RESCUE_C_SUFFIX_SOURCES = [
     "//sys/contrib/openzfs:module/icp/algs/modes/ccm.c",
     "//sys/contrib/openzfs:module/icp/algs/sha2/sha2_generic.c",
     "//sys/contrib/openzfs:module/icp/algs/sha2/sha256_impl.c",

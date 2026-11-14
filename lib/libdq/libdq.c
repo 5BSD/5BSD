@@ -996,6 +996,25 @@ dq_reply_resolve_errno(int q, uint64_t id, int error)
 }
 
 int
+dq_reply_resolve_swap(int q, uint64_t id, int fd, uint32_t flags)
+{
+	struct {
+		struct dq_resolve_reply	rr;
+		struct dq_resolve_swap	rw;
+	} r;
+	int ret;
+
+	memset(&r, 0, sizeof(r));
+	r.rr.drr_kind = DQ_RESOLVE_SWAP;
+	r.rw.drw_fd = fd;
+	r.rw.drw_flags = flags;
+	ret = dq_reply(q, id, 0, &r, sizeof(r));
+	if (ret == -1 && errno == EBUSY)
+		ret = dq_reply(q, id, 0, &r, sizeof(r));
+	return (ret);
+}
+
+int
 dq_resolve_accepts(const struct dq_resolve_body *rb, uint32_t kind)
 {
 

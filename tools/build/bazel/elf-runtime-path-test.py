@@ -144,5 +144,118 @@ class RuntimePathContracts(unittest.TestCase):
             checker.parse_program(_BASE + '0x1d (RUNPATH) broken\n')
 
 
+
+
+class SonameContracts(unittest.TestCase):
+    @staticmethod
+    def shared():
+        return ''.join(line for line in _BASE.splitlines(True)
+                       if 'Requesting program interpreter' not in line).replace('NOW PIE', 'NOW')
+
+    def compare(self, candidate, reference, soname=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            a, b, tool = (root / name for name in ('candidate', 'reference', 'readelf'))
+            for path in (a, b, tool):path.write_bytes(b'inspection fixture')
+            def inspect(args):return candidate if Path(args[-1]) == a else reference
+            with patch.object(checker, 'run', side_effect=inspect), patch.object(checker, 'sections', return_value={}):
+                return checker.compare_shared(tool, 'unused', a, b, soname, root)
+
+    def test_default_still_requires_soname(self):
+        with self.assertRaisesRegex(ValueError, 'one SONAME'):
+            checker.parse_program(self.shared(), program=False)
+
+    def test_explicit_absence_is_accepted(self):
+        result = self.compare(self.shared(), self.shared())
+        self.assertIsNone(result['candidate']['metadata']['soname'])
+        self.assertFalse(result['runtime_qualified'])
+
+    def test_named_library_still_requires_its_name(self):
+        soname = ' 0xe (SONAME) Library soname: [valid.so.1]\n'
+        self.compare(self.shared()+soname, self.shared()+soname, 'valid.so.1')
+        with self.assertRaisesRegex(ValueError, 'one SONAME'):
+            self.compare(self.shared(), self.shared(), 'valid.so.1')
+
+    def test_one_sided_soname_is_rejected(self):
+        named = self.shared()+' 0xe (SONAME) Library soname: [surprise.so]\n'
+        for a, b in [(named,self.shared()),(self.shared(),named)]:
+            with self.subTest(a=a), self.assertRaisesRegex(ValueError, 'incorrect shared-object type or SONAME'):
+                self.compare(a,b)
+
+    def test_duplicate_sonames_rejected(self):
+        wrong = self.shared()+' 0xe (SONAME) Library soname: [one.so]\n'+' 0xe (SONAME) Library soname: [two.so]\n'
+        with self.assertRaisesRegex(ValueError, 'one SONAME'):
+            self.compare(wrong, self.shared())
+
+    def test_selection_is_explicit_and_boolean(self):
+        with self.assertRaisesRegex(ValueError, 'requires a shared object'):
+            checker.parse_program(_BASE, allow_missing_soname=True)
+        with self.assertRaisesRegex(ValueError, 'must be boolean'):
+            checker.parse_program(self.shared(), program=False, allow_missing_soname='yes')
+
+    def test_absent_soname_preserves_hardening_checks(self):
+        good = self.shared()
+        bad = [good.replace('Flags: NOW', 'Flags: NOW PIE'),
+               good+' [Requesting program interpreter: /bad/loader]\n',
+               good.replace('GNU_RELRO', 'OTHER_SEGMENT'),
+               good.replace('(FLAGS) BIND_NOW', '(FLAGS) SYMBOLIC').replace('Flags: NOW', 'Flags: NONE'),
+               good.replace('0x000 0x000 RW 0x10', '0x000 0x000 RWE 0x10')]
+        for wrong in bad:
+            for a,b in [(wrong,good),(good,wrong)]:
+                with self.subTest(wrong=wrong), self.assertRaises(ValueError):self.compare(a,b)
+
+    def test_duplicate_dynamic_flags_rejected(self):
+        for extra in [' 0x1e (FLAGS) SYMBOLIC\n', ' 0x6ffffffb (FLAGS_1) Flags: PIE\n']:
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'ambiguous ELF dynamic flags'):
+                self.compare(self.shared()+extra, self.shared())
+
+    @staticmethod
+    def versions(base, public='API_1.0', index=1):
+        return (' 0x0000: Rev: 1 Flags: BASE Index: '+str(index)+' Cnt: 1 Name: '+base+'\n'
+                ' 0x001c: Rev: 1 Flags: none Index: 2 Cnt: 1 Name: '+public+'\n')
+
+    def test_base_label_is_retained_separately(self):
+        a = self.shared()+self.versions('candidate-output')
+        b = self.shared()+self.versions('reference-output')
+        result = self.compare(a,b)
+        self.assertFalse(result['version_base_names_equal'])
+        self.assertEqual(result['candidate']['metadata']['version_base_definition'], 'candidate-output')
+        self.assertEqual(result['make_reference']['metadata']['version_base_definition'], 'reference-output')
+        self.assertEqual(result['candidate']['metadata']['version_definitions'], ['API_1.0'])
+
+    def test_public_versions_remain_exact(self):
+        with self.assertRaisesRegex(ValueError, 'metadata mismatch: version_definitions'):
+            self.compare(self.shared()+self.versions('one','API_2.0'),
+                         self.shared()+self.versions('two'))
+
+    def test_base_presence_remains_exact(self):
+        with self.assertRaisesRegex(ValueError, 'version base presence'):
+            self.compare(self.shared()+self.versions('one'),
+                         self.shared()+' 0x001c: Rev: 1 Flags: none Index: 2 Cnt: 1 Name: API_1.0\n')
+
+    def test_named_library_base_must_match_soname(self):
+        named = self.shared()+' 0xe (SONAME) Library soname: [valid.so.1]\n'
+        with self.assertRaisesRegex(ValueError, 'base version identity differs'):
+            self.compare(named+self.versions('wrong'),named+self.versions('valid.so.1'),'valid.so.1')
+
+    def test_invalid_base_and_duplicate_public_versions_rejected(self):
+        bad = [self.versions('one',index=3),
+               self.versions('one')+' 0x0038: Rev: 1 Flags: BASE Index: 1 Cnt: 1 Name: two\n',
+               self.versions('one')+' 0x0038: Rev: 1 Flags: none Index: 3 Cnt: 1 Name: API_1.0\n']
+        for rows in bad:
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                self.compare(self.shared()+rows,self.shared())
+
+    def test_other_dynamic_flags_remain_exact(self):
+        for wrong in [self.shared().replace('BIND_NOW', 'BIND_NOW SYMBOLIC'),
+                      self.shared().replace('Flags: NOW', 'Flags: NOW NODELETE')]:
+            with self.subTest(wrong=wrong), self.assertRaisesRegex(ValueError, 'metadata mismatch: dynamic_flags'):
+                self.compare(wrong,self.shared())
+
+    def test_dependencies_remain_exact(self):
+        wrong = self.shared()+' 0x1 (NEEDED) Shared library: [unexpected.so]\n'
+        with self.assertRaisesRegex(ValueError, 'metadata mismatch: needed'):
+            self.compare(wrong,self.shared())
+
 if __name__ == '__main__':
     unittest.main()
