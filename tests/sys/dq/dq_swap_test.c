@@ -1160,6 +1160,166 @@ ATF_TC_BODY(swap_supervisor_gone_before_install, tc)
 }
 
 /*
+ * Case: the same, with the supervisor a process of its own that exits
+ * while a process sharing its descriptor table still holds the queue's
+ * file.  No last close happens: the queue dies of its owner's exit, and
+ * that is enough for the install to be refused.  The program was made
+ * with PD_DAEMON, so nothing but the queue's death reaches it.
+ */
+struct sw_exit_rep {
+	pid_t		 sharer;
+	pid_t		 prog;
+};
+
+static bool
+sw_read_within(int fd, void *buf, size_t len, int ms)
+{
+	struct pollfd pfd;
+
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	if (poll(&pfd, 1, ms) != 1)
+		return (false);
+	return (read(fd, buf, len) == (ssize_t)len);
+}
+
+/* The supervisor process; exits 0 once the program waits in the lock. */
+static void
+sw_exit_supervisor(int rep, int progrep)
+{
+	struct sw_exit_rep er;
+	struct sw_res res;
+	struct stat st;
+	const struct dq_event *ev;
+	const struct dq_resolve_body *rb;
+	const char *path;
+	char *buf, b;
+	ssize_t got;
+	size_t pl;
+	int fd, go[2], keep, pd, q;
+	bool answered;
+
+	buf = malloc(SW_BUFSIZE);
+	q = dq_open();
+	if (buf == NULL || q == -1 || pipe(go) != 0)
+		_exit(20);
+	er.prog = pdfork(&pd, PD_DAEMON);
+	if (er.prog == -1)
+		_exit(21);
+	if (er.prog == 0) {
+		if (read(go[0], &b, 1) != 1)
+			_exit(0);
+		memset(&res, 0, sizeof(res));
+		RR(res.r[1], keep = open("keep", O_RDONLY));
+		RR(res.r[0], fd = open("orig", O_RDONLY | O_EXLOCK));
+		/* What it held before, it keeps; by name, nothing new. */
+		RR(res.r[2], read(keep, res.data, sizeof(res.data) - 1));
+		RR(res.r[3], stat("subst", &st));
+		RR(res.r[5], open("keep", O_RDONLY));
+		(void)write(progrep, &res, sizeof(res));
+		_exit(0);
+	}
+	if (dq_attach(q, pd) != 0)
+		_exit(22);
+	er.sharer = rfork(RFPROC);
+	if (er.sharer == -1)
+		_exit(23);
+	if (er.sharer == 0) {
+		for (;;)
+			(void)pause();
+	}
+	if (write(rep, &er, sizeof(er)) != sizeof(er) ||
+	    write(go[1], "g", 1) != 1)
+		_exit(24);
+	for (answered = false; !answered;) {
+		if (dq_read_events(q, buf, SW_BUFSIZE, &got) != 0 || got <= 0)
+			_exit(25);
+		for (ev = dq_event_first(buf, (size_t)got); ev != NULL;
+		    ev = dq_event_next(buf, (size_t)got, ev)) {
+			if (ev->de_op != DQ_OP_RESOLVE) {
+				if (ev->de_id != 0)
+					(void)dq_reply(q, ev->de_id, EIO,
+					    NULL, 0);
+				continue;
+			}
+			if (dq_event_resolve(ev, &rb, &path, NULL, NULL,
+			    NULL) != 0)
+				_exit(26);
+			pl = strlen(path);
+			if (rb->drs_op != DQ_ROP_OPEN || pl < 4 ||
+			    strcmp(path + pl - 4, "orig") != 0) {
+				(void)dq_reply_resolve_pass(q, ev->de_id);
+				continue;
+			}
+			fd = open("subst", O_RDONLY | O_CLOEXEC | O_CLOFORK);
+			if (fd == -1 ||
+			    dq_reply_resolve_swap(q, ev->de_id, fd, 0) != 0)
+				_exit(27);
+			(void)close(fd);
+			answered = true;
+		}
+	}
+	if (!sw_wait_wmesg(er.prog, "lockf", 30000))
+		_exit(28);
+	_exit(0);
+}
+
+ATF_TC_WITHOUT_HEAD(swap_owner_exit_before_install);
+ATF_TC_BODY(swap_owner_exit_before_install, tc)
+{
+	struct sw_exit_rep er;
+	struct sw_res res;
+	pid_t pid;
+	int lockfd, prep[2], rep[2], status;
+
+	dqt_require_test_access();
+	dqt_require_plane();
+	ATF_REQUIRE_EQ(0, chmod(".", 0755));
+	sw_write_file("orig", "ORIGINAL", 0644);
+	sw_write_file("subst", "SUBSTITUTE", 0644);
+	sw_write_file("keep", "KEPT", 0644);
+	lockfd = open("subst", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(lockfd != -1);
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_EX));
+	ATF_REQUIRE_EQ(0, pipe(rep));
+	ATF_REQUIRE_EQ(0, pipe(prep));
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0)
+		sw_exit_supervisor(rep[1], prep[1]);
+	memset(&er, 0, sizeof(er));
+	ATF_REQUIRE_MSG(sw_read_within(rep[0], &er, sizeof(er), 30000),
+	    "no report from the supervisor");
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "supervisor: status %#x", status);
+
+	/* The owner is gone, its table is not: now let the open finish. */
+	ATF_REQUIRE_EQ(0, flock(lockfd, LOCK_UN));
+	memset(&res, 0, sizeof(res));
+	ATF_REQUIRE_MSG(sw_read_within(prep[0], &res, sizeof(res), 30000),
+	    "no report from the program");
+	ATF_CHECK_MSG(res.r[1].rv >= 0, "open of keep: %s",
+	    strerror(res.r[1].err));
+	ATF_CHECK_EQ_MSG(-1, res.r[0].rv, "the open returned %ld", res.r[0].rv);
+	ATF_CHECK_EQ(EIO, res.r[0].err);
+	ATF_CHECK_EQ(4, res.r[2].rv);
+	ATF_CHECK_EQ(0, memcmp(res.data, "KEPT", 4));
+	ATF_CHECK_EQ(-1, res.r[3].rv);
+	ATF_CHECK_EQ(EIO, res.r[3].err);
+	ATF_CHECK_EQ(-1, res.r[5].rv);
+	ATF_CHECK_EQ(EIO, res.r[5].err);
+	ATF_CHECK_EQ(0, flock(lockfd, LOCK_EX | LOCK_NB));
+	(void)kill(er.sharer, SIGKILL);
+	(void)close(lockfd);
+	(void)close(rep[0]);
+	(void)close(rep[1]);
+	(void)close(prep[0]);
+	(void)close(prep[1]);
+}
+
+/*
  * Case: the same, raced.  The supervisor replies and closes the queue at
  * once, many times.  Each open either returns the working descriptor (it
  * was installed before the queue died) or fails EIO with nothing
@@ -1425,6 +1585,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, swap_program_denied);
 	ATF_TP_ADD_TC(tp, swap_survives_supervisor);
 	ATF_TP_ADD_TC(tp, swap_supervisor_gone_before_install);
+	ATF_TP_ADD_TC(tp, swap_owner_exit_before_install);
 	ATF_TP_ADD_TC(tp, swap_supervisor_gone_race);
 	ATF_TP_ADD_TC(tp, swap_refused_types);
 	ATF_TP_ADD_TC(tp, swap_created);
