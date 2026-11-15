@@ -33,6 +33,7 @@
 #include <sys/mount.h>
 #include <sys/procdesc.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <atf-c.h>
@@ -1346,6 +1347,73 @@ ATF_TC_CLEANUP(restricted_all, tc)
 	(void)jail_remove(jail_getid(CF_JAIL_A));
 }
 
+/*
+ * restricted_capmode_sysctls: the sysctls libdq consults, read in
+ * capability mode (libdq(3): kern.dq.max_io sizes dq_dispatch()'s buffer,
+ * vfs.lookup_cap_dotdot and vfs.lookup_cap_dotdot_nonlocal decide what a
+ * served tree allows under a restricted lookup).  A pin: today none of
+ * them is CTLFLAG_CAPRD, and each read is ECAPMODE.
+ */
+static const char *const cf_sysctls[] = {
+	"kern.dq.max_io",
+	"vfs.lookup_cap_dotdot",
+	"vfs.lookup_cap_dotdot_nonlocal",
+};
+#define	CF_NSYSCTL	nitems(cf_sysctls)
+
+struct cf_sysctl_res {
+	int32_t		rv[CF_NSYSCTL];
+	int32_t		err[CF_NSYSCTL];
+	uint32_t	val[CF_NSYSCTL];
+};
+
+ATF_TC(restricted_capmode_sysctls);
+ATF_TC_HEAD(restricted_capmode_sysctls, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr", "the sysctls libdq reads, read in "
+	    "capability mode (pin)");
+}
+ATF_TC_BODY(restricted_capmode_sysctls, tc)
+{
+	struct cf_sysctl_res res;
+	uint32_t outside[CF_NSYSCTL];
+	size_t i, len;
+	ssize_t n;
+	pid_t pid;
+	int p[2], status;
+
+	for (i = 0; i < CF_NSYSCTL; i++) {
+		len = sizeof(outside[i]);
+		ATF_REQUIRE_MSG(sysctlbyname(cf_sysctls[i], &outside[i], &len,
+		    NULL, 0) == 0, "%s: %s", cf_sysctls[i], strerror(errno));
+	}
+	ATF_REQUIRE_EQ(0, pipe2(p, O_CLOEXEC));
+	pid = fork();
+	ATF_REQUIRE(pid != -1);
+	if (pid == 0) {
+		memset(&res, 0, sizeof(res));
+		if (cap_enter() == -1)
+			_exit(1);
+		for (i = 0; i < CF_NSYSCTL; i++) {
+			len = sizeof(res.val[i]);
+			CF_RR(res.rv[i], res.err[i], sysctlbyname(cf_sysctls[i],
+			    &res.val[i], &len, NULL, 0));
+		}
+		_exit(write(p[1], &res, sizeof(res)) == (ssize_t)sizeof(res) ?
+		    0 : 2);
+	}
+	(void)close(p[1]);
+	n = read(p[0], &res, sizeof(res));
+	(void)close(p[0]);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child status %#x", status);
+	ATF_REQUIRE_EQ((ssize_t)sizeof(res), n);
+	for (i = 0; i < CF_NSYSCTL; i++)
+		CF_CHECK_ERR(cf_sysctls[i], res.rv[i], res.err[i], ECAPMODE);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1353,5 +1421,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, restricted_jail);
 	ATF_TP_ADD_TC(tp, restricted_capmode);
 	ATF_TP_ADD_TC(tp, restricted_all);
+	ATF_TP_ADD_TC(tp, restricted_capmode_sysctls);
 	return (atf_no_error());
 }
