@@ -148,7 +148,7 @@ suites_body()
 			    >&2 2>/dev/null
 			atf_fail "${suite}: results differ under dqpass"
 		fi
-		if grep -q 'unmarked [1-9]' pass.report; then
+		if ! dq_report_zero pass.report unmarked >&2; then
 			cat pass.report >&2
 			atf_fail "${suite}: unmarked user-space lookups (ledger failure)"
 		fi

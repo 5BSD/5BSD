@@ -205,7 +205,7 @@ suites_body()
 		fi
 		# A requester that waited out its deadline: the reference
 		# controller held or lost an event for kern.dq.default_deadline_ms.
-		if ! grep -q ' deadline_misses 0 ' tree.report; then
+		if ! dq_report_zero tree.report deadline_misses >&2; then
 			fail_later "${suite}: a requester waited until its deadline"
 			stalled=yes
 		fi
@@ -213,11 +213,11 @@ suites_body()
 			echo "=== ${suite}: dq(4) waits sampled every 10 s" >&2
 			tail -n 400 stalls >&2
 		fi
-		grep -q 'unmarked 0 failclosed 0 dropped 0 bad_replies 0' \
-		    tree.report ||
+		dq_report_zero tree.report unmarked failclosed dropped \
+		    bad_replies >&2 ||
 		    fail_later "${suite}: unmarked, failed-closed or dropped" \
 		    "consultations, or malformed replies"
-		grep -q 'objects 0$' tree.report ||
+		dq_report_zero tree.report objects >&2 ||
 		    fail_later "${suite}: served objects left live"
 		rm -f plain.db chroot.res tree.res plain.res tree.report \
 		    chroot.all* tree.all* plain.all* stalls

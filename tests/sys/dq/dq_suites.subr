@@ -98,3 +98,33 @@ dq_excluded()
 		    "$(grep "^${c} " "$3" | cut -d ' ' -f 2)"
 	done >&2
 }
+
+# The value after the word KEY in a controller's report ("... key N ..."),
+# wherever the field stands on its line; empty when KEY is not there.
+# usage: dq_report_value REPORT KEY
+dq_report_value()
+{
+
+	awk -v k="$2" '{
+		for (i = 1; i < NF; i++)
+			if ($i == k) { print $(i + 1); exit }
+	}' "$1"
+}
+
+# The report's counters KEY... are all 0; prints the first that is not
+# (or is missing) and returns 1.
+# usage: dq_report_zero REPORT KEY...
+dq_report_zero()
+{
+	local r k v
+
+	r="$1"; shift
+	for k in "$@"; do
+		v=$(dq_report_value "${r}" "${k}")
+		if [ "${v}" != 0 ]; then
+			echo "${k} ${v:-missing}"
+			return 1
+		fi
+	done
+	return 0
+}
