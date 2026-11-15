@@ -114,6 +114,10 @@ int
 svc_exec(struct svc_runtime *svc, int kq)
 {
 
+	if (exec_refuses_started && svc->cleanup.pending) {
+		errno = EBUSY;
+		return (-1);
+	}
 	if (exec_refuses_started &&
 	    (svc->state != SVC_STATE_STOPPED || svc->launch != NULL)) {
 		errno = EALREADY;
@@ -564,6 +568,60 @@ ATF_TC_BODY(restart_timer_for_started_unit, tc)
 	ATF_CHECK_EQ(0, launch_calls);
 	ATF_CHECK_EQ(1234, svc.pid);
 
+	exec_refuses_started = false;
+	switchboard_kq = -1;
+	(void)close(kq);
+}
+
+/*
+ * While a unit's previous coalition is still being torn down, svc_exec()
+ * refuses with EBUSY.  A restart timer that fires then is postponed, not
+ * counted: a slow teardown must not disable a unit that was never exec'd.
+ */
+ATF_TC_WITHOUT_HEAD(restart_waits_for_cleanup);
+ATF_TC_BODY(restart_waits_for_cleanup, tc)
+{
+	struct kevent kev;
+	struct svc_runtime svc;
+	unsigned i;
+	int kq;
+
+	(void)tc;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	exec_refuses_started = true;
+	runtime_init(&svc, "org.test.cleaning", 0, 0);
+	svc.pd_fd = svc.channel_fd = svc.coalition_fd = -1;
+	svc.manifest.max_failures = 3;
+	svc.state = SVC_STATE_STOPPED;
+	svc.restart_count = 1;
+	svc.cleanup.pending = true;
+	launch_calls = 0;
+	schedule_restart(&svc, kq);
+	for (i = 0; i < 2 * svc.manifest.max_failures; i++) {
+		ATF_REQUIRE(svc.restart_pending);
+		memset(&kev, 0, sizeof(kev));
+		kev.ident = svc.timer_ident;
+		kev.filter = EVFILT_TIMER;
+		kev.udata = &svc;
+		supervisor_handle_timer(&kev);
+		ATF_CHECK_EQ(0, launch_calls);
+		ATF_CHECK_EQ(1, svc.restart_count);
+		ATF_CHECK_MSG(svc.restart_pending,
+		    "the postponed restart was not rescheduled");
+	}
+	/* Teardown done: the next firing restarts it. */
+	svc.cleanup.pending = false;
+	memset(&kev, 0, sizeof(kev));
+	kev.ident = svc.timer_ident;
+	kev.filter = EVFILT_TIMER;
+	kev.udata = &svc;
+	supervisor_handle_timer(&kev);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(1, svc.restart_count);
+
+	svc_cancel_restart(&svc, kq);
 	exec_refuses_started = false;
 	switchboard_kq = -1;
 	(void)close(kq);
@@ -1878,6 +1936,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, circuit_breaker_blocks_on_demand_relaunch);
 	ATF_TP_ADD_TC(tp, restart_superseded_by_launch);
 	ATF_TP_ADD_TC(tp, restart_timer_for_started_unit);
+	ATF_TP_ADD_TC(tp, restart_waits_for_cleanup);
 	ATF_TP_ADD_TC(tp, idle_timer_arm_cancel);
 	ATF_TP_ADD_TC(tp, idle_timer_ident_range);
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
