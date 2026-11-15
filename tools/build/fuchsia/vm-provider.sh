@@ -60,6 +60,7 @@
 set -eu
 
 usage() { sed -n '2,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
+die() { echo "vm-provider: $*" >&2; exit 2; }
 [ $# -ge 3 ] && [ $# -le 4 ] || usage
 stage=$1 work=$2 suites=$3 timeout=${4:-10800}
 # First runnable emulator: $QEMU, the local build carrying the X86Access
@@ -88,9 +89,16 @@ else
 fi
 case "$isolation" in 0|1) ;; *) echo "ISOLATION_ENFORCE must be 0 or 1" >&2; exit 64;; esac
 extra_script=${EXTRA_SCRIPT:-}
-[ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
 extra_dir=${EXTRA_DIR:-}
-[ -z "$extra_dir" ] || [ -d "$extra_dir" ] || die "no such EXTRA_DIR: $extra_dir"
+# CAPABILITY_FIXTURES_DIR: a host directory holding the test-only
+# mac_capability fixture modules built for the stage's kernel by
+# build-capability-fixtures.sh (mac_capability_test_keystore.ko,
+# mac_capability_test_kernelstore.ko, mac_capability_test_cleanup.ko).  They
+# are never part of a world or a package; the runner installs them in
+# /boot/kernel of the disposable image and preloads the keystore and
+# kernelstore services, whose cases require them loaded (require.kmods); the
+# cleanup fixture is loaded and unloaded by its own cases.
+fixtures_dir=${CAPABILITY_FIXTURES_DIR:-}
 # LINUX_COMPAT_DIR: a host directory holding compat/linux/... (test data, e.g.
 # the overlay staged by stage-linux-compat.sh); its tree is installed under
 # /compat/linux with its symlinks and modes, and linprocfs and linsysfs are
@@ -109,7 +117,17 @@ fi
 cpus=${CPUS:-4} mem=${MEM_MB:-8192} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
-die() { echo "vm-provider: $*" >&2; exit 2; }
+[ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
+[ -z "$extra_dir" ] || [ -d "$extra_dir" ] || die "no such EXTRA_DIR: $extra_dir"
+if [ -n "$fixtures_dir" ]; then
+	[ -d "$fixtures_dir" ] || die "no such CAPABILITY_FIXTURES_DIR: $fixtures_dir"
+	fixtures_dir=$(cd "$fixtures_dir" && pwd)
+	for k in mac_capability_test_keystore mac_capability_test_kernelstore \
+	    mac_capability_test_cleanup; do
+		[ -f "$fixtures_dir/$k.ko" ] ||
+		    die "CAPABILITY_FIXTURES_DIR lacks $k.ko"
+	done
+fi
 isnum() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -gt 0 ]; }
 for n in "$timeout" "$cpus" "$mem" "$par" "$gate"; do isnum "$n" || die "not a positive integer: $n"; done
 case $suites in *[!A-Za-z0-9_./:\ -]*|'') die "suite list may only contain [A-Za-z0-9_./:-] and spaces";; esac
@@ -186,6 +204,10 @@ if [ "$plane_off" = 1 ]; then
 	    >> "$x/loader.conf"
 	printf 'capability_plane="NO"\n' >> "$x/loader.conf"
 	: > "$x/loader.conf.local"
+fi
+if [ -n "$fixtures_dir" ]; then
+	printf '%s\n' 'mac_capability_test_keystore_load="YES"' \
+	    'mac_capability_test_kernelstore_load="YES"' >> "$x/loader.conf"
 fi
 # LOADER_EXTRA: more loader.conf lines, e.g. if_vxlan_load="YES".
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
@@ -444,6 +466,12 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 			echo "./root/vm-extra.d/$b type=file uname=root gname=wheel mode=0555 contents=$(cd "$extra_dir" && pwd)/$b"
 		done
 	fi
+	if [ -n "$fixtures_dir" ]; then
+		for k in mac_capability_test_keystore \
+		    mac_capability_test_kernelstore mac_capability_test_cleanup; do
+			echo "./boot/kernel/$k.ko type=file uname=root gname=wheel mode=0555 contents=$fixtures_dir/$k.ko"
+		done
+	fi
 	if [ -n "$linux_compat_dir" ]; then
 		# Directories, symlinks and files of the overlay, modes kept;
 		# the mount points for linprocfs and linsysfs.
@@ -586,5 +614,16 @@ echo "qemu_exit=$rc forced=$forced guest_poweroff=$guest_off"
 tr -d '\r' < "$log" | grep -aE '^(PLANEON_GATE|PLANEOFF|KYUA_SUMMARY|PLANEON_PID1|PLANEON_ISOLATION|BSDTIME)' || true
 nskip=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c ' -> ' || true)
 echo "skipped=$nskip (a skip in a plane-on suite is not a pass; see KYUA_SKIPPED_LIST in $log)"
+# Cases that named the tier they belong to: the run is not complete without
+# a run of the same stage and suites in that tier.
+for token in DEFERRED_ENFORCED_TIER DEFERRED_DEVICE_TIER; do
+	ndefer=$(tr -d '\r' < "$log" | sed -n '/^KYUA_SKIPPED_LIST_BEGIN$/,/^KYUA_SKIPPED_LIST_END$/p' | grep -c "$token" || true)
+	[ "$ndefer" -eq 0 ] || case $token in
+	DEFERRED_ENFORCED_TIER)
+		echo "DEFERRED_TO_ENFORCED_TIER=$ndefer (run PLANE_OFF=1 with the same stage and suites; not a pass)";;
+	*)
+		echo "DEFERRED_TO_DEVICE_TIER=$ndefer (run without ISOLATION_ENFORCE=1 with the same stage and suites; not a pass)";;
+	esac
+done
 echo "$verdict"
 [ "$verdict" = VM_CLEAN ]

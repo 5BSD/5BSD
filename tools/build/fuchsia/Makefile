@@ -70,7 +70,7 @@ check-bindings:
 # The guest runner's own checks: shell only, no guest is booted.
 check-runner:
 .for t in vm-provider-extra-status vm-provider-root-metadata \
-    vm-provider-plane-off-enforce
+    vm-provider-plane-off-enforce vm-provider-deferred-tiers
 	sh ${.CURDIR}/tests/${t}.sh
 .endfor
 check: check-bindings check-runner

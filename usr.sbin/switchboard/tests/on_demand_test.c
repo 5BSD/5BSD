@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -904,6 +905,30 @@ ATF_TC_BODY(cleanup_updated_intent, tc)
 	cleanup_mock = false;
 }
 
+/*
+ * The live coalition cases drive /dev/mac_capability themselves.  With the
+ * plane on and the isolation policy enforcing (the production tier) Capsule's
+ * claim refuses the device to them; they run in the plane-on test tier.
+ */
+static int
+open_capability_device(void)
+{
+	size_t len;
+	int enforce, fd;
+
+	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	if (fd == -1 && (errno == EACCES || errno == EPERM)) {
+		len = sizeof(enforce);
+		if (sysctlbyname("kern.mac_capability_isolation.enforce",
+		    &enforce, &len, NULL, 0) == 0 && enforce != 0)
+			atf_tc_skip("DEFERRED_DEVICE_TIER: /dev/mac_capability "
+			    "is claimed by the enforcing plane; this case runs "
+			    "in the plane-on test tier");
+	}
+	ATF_REQUIRE_MSG(fd >= 0, "/dev/mac_capability: %s", strerror(errno));
+	return (fd);
+}
+
 ATF_TC(cleanup_unenlisted_child);
 ATF_TC_HEAD(cleanup_unenlisted_child, tc)
 {
@@ -929,8 +954,7 @@ ATF_TC_BODY(cleanup_unenlisted_child, tc)
 		for (;;)
 			pause();
 	}
-	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE(device >= 0);
+	device = open_capability_device();
 	idle_runtime_init(&svc, "org.test.cleanup.unenlisted");
 	svc.pid = child;
 	svc.pd_fd = pd;
@@ -1093,8 +1117,7 @@ ATF_TC_BODY(cleanup_live_process, tc)
 		for (;;)
 			pause();
 	}
-	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE(device >= 0);
+	device = open_capability_device();
 	idle_runtime_init(&svc, "org.test.cleanup.process");
 	svc.cleanup.fd = -1;
 	svc.coalition_fd = capability_service_connect(device, "coalition");
@@ -1154,8 +1177,7 @@ ATF_TC_BODY(cleanup_live_outcomes, tc)
 
 	(void)tc;
 	cleanup_mock = false;
-	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE(device >= 0);
+	device = open_capability_device();
 	switchboard_kq = kqueue();
 	ATF_REQUIRE(switchboard_kq >= 0);
 	for (fail = 0; fail < 2; fail++) {

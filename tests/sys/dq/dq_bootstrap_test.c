@@ -223,8 +223,25 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	int pair[2], status;
 
 	pin_require_plane();
-	ATF_REQUIRE_MSG(chan_create(pair) == 0, "channel: %s",
-	    strerror(errno));
+	if (chan_create(pair) == -1) {
+		int enforce, error;
+		size_t len;
+
+		/*
+		 * With the policy enforcing (the production tier) Capsule's
+		 * claim refuses /dev/mac_capability to this test; it runs
+		 * in the plane-on test tier.
+		 */
+		error = errno;
+		len = sizeof(enforce);
+		if ((error == EACCES || error == EPERM) &&
+		    sysctlbyname("kern.mac_capability_isolation.enforce",
+		    &enforce, &len, NULL, 0) == 0 && enforce != 0)
+			atf_tc_skip("DEFERRED_DEVICE_TIER: /dev/mac_capability "
+			    "is claimed by the enforcing plane; this case runs "
+			    "in the plane-on test tier");
+		atf_tc_fail("channel: %s", strerror(error));
+	}
 	ATF_REQUIRE_EQ_MSG(0, cap_proc(MAC_CAP_PROCESS_SET, pair[0], NULL),
 	    "MAC_CAP_PROCESS_SET: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, cap_proc(MAC_CAP_PROCESS_INFO, -1, &mine));
