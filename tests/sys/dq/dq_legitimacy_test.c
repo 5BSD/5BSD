@@ -610,59 +610,6 @@ struct bearer_arg {
 	const struct dq_ident_file *ident;
 };
 
-static int
-recv_fd(int sock)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b;
-	int fd;
-
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	if (recvmsg(sock, &msg, 0) != 1 ||
-	    msg.msg_controllen < CMSG_LEN(sizeof(int)) ||
-	    ctl.hdr.cmsg_level != SOL_SOCKET || ctl.hdr.cmsg_type != SCM_RIGHTS)
-		return (-1);
-	memcpy(&fd, CMSG_DATA(&ctl.hdr), sizeof(fd));
-	return (fd);
-}
-
-static int
-send_fd(int sock, int fd)
-{
-	union {
-		struct cmsghdr	hdr;
-		char		buf[CMSG_SPACE(sizeof(int))];
-	} ctl;
-	struct msghdr msg;
-	struct iovec iov;
-	char b = 'q';
-
-	memset(&msg, 0, sizeof(msg));
-	memset(&ctl, 0, sizeof(ctl));
-	iov.iov_base = &b;
-	iov.iov_len = 1;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = ctl.buf;
-	msg.msg_controllen = sizeof(ctl.buf);
-	ctl.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-	ctl.hdr.cmsg_level = SOL_SOCKET;
-	ctl.hdr.cmsg_type = SCM_RIGHTS;
-	memcpy(CMSG_DATA(&ctl.hdr), &fd, sizeof(fd));
-	return (sendmsg(sock, &msg, 0) == 1 ? 0 : -1);
-}
-
 /* Every kind of queue operation, as nobody, on a queue root opened. */
 static void
 child_bearer(void *arg, void *result)
@@ -830,7 +777,7 @@ ATF_TC_BODY(bearer_scm_rights, tc)
 	ATF_REQUIRE_MSG(q != -1, "dq_open: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_DGRAM, 0, sv));
 	errno = 0;
-	ATF_CHECK_EQ(-1, send_fd(sv[0], q));
+	ATF_CHECK_EQ(-1, dqt_send_fd(sv[0], q));
 	ATF_CHECK_EQ_MSG(ENOTCAPABLE, errno, "sendmsg: errno %d", errno);
 	errno = 0;
 	ATF_CHECK_EQ(-1, recv(sv[1], &b, 1, MSG_DONTWAIT));
@@ -1715,7 +1662,7 @@ clean_target_spawn(const atf_tc_t *tc, struct clean_target *t)
 	}
 	(void)close(sv[1]);
 	t->sock = sv[0];
-	t->pd = recv_fd(t->sock);
+	t->pd = dqt_recv_fd(t->sock);
 	ATF_REQUIRE_MSG(t->pd != -1, "%s sent no target", path);
 }
 
