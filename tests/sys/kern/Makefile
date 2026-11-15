@@ -180,6 +180,8 @@ ATF_TESTS_C+=	kern_descrip_test
 # One test modifies the maxfiles limit, which can cause spurious test failures.
 TEST_METADATA.kern_descrip_test+= is_exclusive="true"
 ATF_TESTS_SH+=	kern_file_lock_order_test
+ATF_TESTS_SH+=	kinst_exclusion_test
+TEST_METADATA.kinst_exclusion_test+=	is_exclusive="true"
 PLAIN_TESTS_C+=	execve_overflow
 ATF_TESTS_C+=	exterr_test
 ATF_TESTS_C+=	envfd_test
