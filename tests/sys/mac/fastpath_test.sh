@@ -12,20 +12,21 @@
 # pipe write and close(2).
 #
 
-# hooks_called "command": "hook policy count" lines for the command's
-# process tree.
+# hooks_called "command": "hook policy count" lines for the command
+# (one process; its standard output is a pipe).
 hooks_called()
 {
-	dtrace -q -x bufsize=4m -n '
+	dtrace -q -x bufsize=4m -o hooks.out -n '
 mac_framework:::hook-done
-/progenyof($target)/
+/pid == $target/
 {
 	@[stringof(arg0), stringof(arg1)] = count();
 }
 END
 {
 	printa("%s %s %@d\n", @);
-}' -c "$1" > hooks.out 2> dtrace.err ||
+}' -c "$1" 2> dtrace.err | cat > /dev/null
+	[ -s dtrace.err ] && ! grep -q "^dtrace: pid" dtrace.err &&
 	    atf_fail "dtrace: $(cat dtrace.err)"
 	cat hooks.out
 }
@@ -54,7 +55,7 @@ pin_lookup_walk_head()
 pin_lookup_walk_body()
 {
 	require_dtrace
-	hooks_called "/bin/sh -c 'stat -f %i /etc/passwd >/dev/null'"
+	hooks_called "/usr/bin/stat -f %i /etc/passwd"
 	called vnode_check_lookup oes ||
 	    atf_fail "oes: vnode_check_lookup not reached"
 	called vnode_check_lookup mac_abac ||
@@ -130,7 +131,7 @@ entry_file_read_head()
 entry_file_read_body()
 {
 	entry_check file_check_read \
-	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" \
+	    "/bin/cat /etc/passwd /etc/group" \
 	    $SHARED_IDLE_ENTRY $SHARED_IDLE_ENTRY
 }
 
@@ -145,7 +146,7 @@ entry_pipe_write_head()
 entry_pipe_write_body()
 {
 	entry_check pipe_check_write \
-	    "/bin/sh -c 'echo x | cat >/dev/null'" \
+	    "/bin/cat /etc/passwd /etc/group" \
 	    $SHARED_IDLE_ENTRY $SHARED_IDLE_ENTRY
 }
 
@@ -161,9 +162,9 @@ entry_close_body()
 {
 	# Only OES implements the close hooks.
 	entry_check vnode_check_close \
-	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" $OES_ONLY_IDLE_ENTRY no
+	    "/bin/cat /etc/passwd /etc/group" $OES_ONLY_IDLE_ENTRY no
 	entry_check file_notify_close \
-	    "/bin/sh -c 'cat /etc/passwd >/dev/null'" $OES_ONLY_IDLE_ENTRY no
+	    "/bin/cat /etc/passwd /etc/group" $OES_ONLY_IDLE_ENTRY no
 }
 
 # The security.mac.fastpath snapshot (see mac_framework.c), saved in fp.txt.
