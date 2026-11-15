@@ -204,11 +204,25 @@ abac_context_matches(const struct abac_context *ctx,
 	if (ctx->vc_flags & ABAC_CTX_HAS_TTY) {
 		bool has_tty = false;
 
-		/*
-		 * Access session pointer under process lock to avoid
-		 * race conditions with session changes.
-		 */
-		if (check_proc != NULL) {
+		if (cred == NULL) {
+			/*
+			 * Object context: the caller holds the target's
+			 * process lock (asserted above), which keeps p_pgrp,
+			 * and with it the session, stable.  Locking it again
+			 * here would recurse.  s_ttyp is protected by
+			 * proctree_lock, which these callers do not hold, so
+			 * this is a snapshot, as in fill_kinfo_proc().  A
+			 * process being reaped has left its process group.
+			 */
+			if (proc->p_pgrp != NULL)
+				has_tty = atomic_load_ptr(
+				    &proc->p_pgrp->pg_session->s_ttyp) != NULL;
+		} else {
+			/*
+			 * Subject context: access the session pointer under
+			 * the process lock to avoid races with session
+			 * changes.
+			 */
 			PROC_LOCK(check_proc);
 			if (check_proc->p_session != NULL)
 				has_tty = (check_proc->p_session->s_ttyp != NULL);

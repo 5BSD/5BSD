@@ -338,6 +338,37 @@ ATF_TC_CLEANUP(signal_target_with_tty, tc)
 	cleanup_rule();
 }
 
+
+/*
+ * The object TTY context is read in every process hook while the caller holds
+ * the target's process lock; each operation reaches the check through a
+ * different caller.
+ */
+#define	TTY_TARGET_CASE(name, operation)					\
+ATF_TC_WITH_CLEANUP(name);							\
+ATF_TC_HEAD(name, tc)								\
+{										\
+	atf_tc_set_md_var(tc, "descr",						\
+	    "target controlling TTY context under the held process lock");	\
+	atf_tc_set_md_var(tc, "require.user", "root");				\
+	atf_tc_set_md_var(tc, "require.kmods", "mac_abac");			\
+	atf_tc_set_md_var(tc, "is.exclusive", "true");				\
+	atf_tc_set_md_var(tc, "timeout", "30");					\
+}										\
+ATF_TC_BODY(name, tc)								\
+{										\
+	check_context(tc, operation, 1);					\
+}										\
+ATF_TC_CLEANUP(name, tc)							\
+{										\
+	(void)tc;								\
+	cleanup_rule();								\
+}
+
+TTY_TARGET_CASE(debug_target_with_tty, ABAC_OP_DEBUG);
+TTY_TARGET_CASE(sched_target_with_tty, ABAC_OP_SCHED);
+TTY_TARGET_CASE(wait_target_with_tty, ABAC_OP_WAIT);
+
 ATF_TC_WITH_CLEANUP(signal_reciprocal_subject_tty);
 ATF_TC_HEAD(signal_reciprocal_subject_tty, tc)
 {
@@ -439,5 +470,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, debug_target_context);
 	ATF_TP_ADD_TC(tp, signal_target_without_tty);
 	ATF_TP_ADD_TC(tp, signal_target_with_tty);
+	ATF_TP_ADD_TC(tp, debug_target_with_tty);
+	ATF_TP_ADD_TC(tp, sched_target_with_tty);
+	ATF_TP_ADD_TC(tp, wait_target_with_tty);
 	return (atf_no_error());
 }
