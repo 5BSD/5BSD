@@ -368,9 +368,13 @@ pin_compiled_in(void)
 	printf("    kldunload(file %d): %s; kldload(\"oes\"): %s\n", fileid,
 	    uerr == 0 ? "succeeded" : strerror(uerr),
 	    lerr == 0 ? "succeeded" : strerror(lerr));
-	/* As observed on the kernel before idle gating (2026-11-15). */
-	ASSERT_MSG(uerr == EEXIST, "kldunload: errno %d, expected EEXIST", uerr);
-	ASSERT_MSG(lerr == EEXIST, "kldload: errno %d, expected EEXIST", lerr);
+	/*
+	 * The errnos depend on the policies loaded: EEXIST for both with
+	 * mac_test_hooks preloaded, EBUSY for the unload without it
+	 * (observed 2026-11-15); what is pinned is that both fail.
+	 */
+	ASSERT_MSG(uerr != 0, "kldunload of the file holding oes succeeded");
+	ASSERT_MSG(lerr != 0, "kldload(\"oes\") succeeded");
 	fd = test_open_oes();
 	ASSERT_MSG(fd >= 0, "open /dev/oes: %s", strerror(errno));
 	if (fd >= 0)
