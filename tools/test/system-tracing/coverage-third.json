@@ -688,7 +688,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -709,7 +709,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -730,7 +730,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -752,7 +752,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -772,7 +772,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 8,
+    "line": 9,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -792,7 +792,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 9,
+    "line": 10,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -812,7 +812,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 10,
+    "line": 11,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -833,7 +833,7 @@
       "lib/libc/resolv/res_send.c",
       "lib/libc/net/nsdispatch.c"
     ],
-    "line": 11,
+    "line": 12,
     "call_source_sha256": {
       "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
       "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
@@ -853,7 +853,7 @@
       "lib/libthr/thread/thr_cond.c",
       "lib/libthr/thread/thr_join.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
       "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
@@ -875,7 +875,7 @@
       "lib/libthr/thread/thr_cond.c",
       "lib/libthr/thread/thr_join.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
       "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
@@ -897,7 +897,7 @@
       "lib/libthr/thread/thr_cond.c",
       "lib/libthr/thread/thr_join.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
       "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
@@ -919,7 +919,7 @@
       "lib/libthr/thread/thr_cond.c",
       "lib/libthr/thread/thr_join.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
       "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
@@ -940,7 +940,7 @@
       "lib/libthr/thread/thr_cond.c",
       "lib/libthr/thread/thr_join.c"
     ],
-    "line": 8,
+    "line": 9,
     "call_source_sha256": {
       "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
       "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
@@ -962,7 +962,7 @@
       "lib/libthr/thread/thr_cond.c",
       "lib/libthr/thread/thr_join.c"
     ],
-    "line": 9,
+    "line": 10,
     "call_source_sha256": {
       "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
       "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
@@ -978,11 +978,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "source_sha256": "f95359ffdc8618fec988d7dfb78d31d118e03eb68014e79878e9cb8017ee6404",
     "call_sources": [
       "contrib/openpam/lib/libpam/openpam_dispatch.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
     }
@@ -996,11 +996,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "source_sha256": "f95359ffdc8618fec988d7dfb78d31d118e03eb68014e79878e9cb8017ee6404",
     "call_sources": [
       "contrib/openpam/lib/libpam/openpam_dispatch.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
     }
@@ -1015,11 +1015,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "source_sha256": "f95359ffdc8618fec988d7dfb78d31d118e03eb68014e79878e9cb8017ee6404",
     "call_sources": [
       "contrib/openpam/lib/libpam/openpam_dispatch.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
     }
@@ -1034,11 +1034,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "source_sha256": "f95359ffdc8618fec988d7dfb78d31d118e03eb68014e79878e9cb8017ee6404",
     "call_sources": [
       "contrib/openpam/lib/libpam/openpam_dispatch.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
     }
@@ -1056,7 +1056,7 @@
       "lib/libfetch/http.c",
       "lib/libfetch/common.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
       "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
@@ -1077,7 +1077,7 @@
       "lib/libfetch/http.c",
       "lib/libfetch/common.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
       "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
@@ -1097,7 +1097,7 @@
       "lib/libfetch/http.c",
       "lib/libfetch/common.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
       "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
@@ -1117,7 +1117,7 @@
       "lib/libfetch/http.c",
       "lib/libfetch/common.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
       "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
@@ -1136,7 +1136,7 @@
       "lib/libfetch/http.c",
       "lib/libfetch/common.c"
     ],
-    "line": 8,
+    "line": 9,
     "call_source_sha256": {
       "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
       "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
@@ -1156,7 +1156,7 @@
       "lib/libfetch/http.c",
       "lib/libfetch/common.c"
     ],
-    "line": 9,
+    "line": 10,
     "call_source_sha256": {
       "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
       "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
@@ -1176,7 +1176,7 @@
     "call_sources": [
       "contrib/libarchive/libarchive/archive_virtual.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "contrib/libarchive/libarchive/archive_virtual.c": "5c236123cb557b7128e7d5be2fd0168df714224c9e2b00df480f8428b7c755c3"
     }
@@ -1195,7 +1195,7 @@
     "call_sources": [
       "contrib/libarchive/libarchive/archive_virtual.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "contrib/libarchive/libarchive/archive_virtual.c": "5c236123cb557b7128e7d5be2fd0168df714224c9e2b00df480f8428b7c755c3"
     }
@@ -1209,11 +1209,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "96d807157dba2fed5f258319ad360a1383e3b66fabb8d4f900fb295f2fb6a0bd",
+    "source_sha256": "32890a0514973c075ec7697eebec109556614bd5f0a15bcaf709dcc25b727392",
     "call_sources": [
       "sbin/dhclient/dhclient.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "sbin/dhclient/dhclient.c": "d5ef3b45b2688277d7de55a0d7ce7b89234cf714e1f57d75a33fbe2c71f22f75"
     }
@@ -1226,11 +1226,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "96d807157dba2fed5f258319ad360a1383e3b66fabb8d4f900fb295f2fb6a0bd",
+    "source_sha256": "32890a0514973c075ec7697eebec109556614bd5f0a15bcaf709dcc25b727392",
     "call_sources": [
       "sbin/dhclient/dhclient.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "sbin/dhclient/dhclient.c": "d5ef3b45b2688277d7de55a0d7ce7b89234cf714e1f57d75a33fbe2c71f22f75"
     }
@@ -1244,11 +1244,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "96d807157dba2fed5f258319ad360a1383e3b66fabb8d4f900fb295f2fb6a0bd",
+    "source_sha256": "32890a0514973c075ec7697eebec109556614bd5f0a15bcaf709dcc25b727392",
     "call_sources": [
       "sbin/dhclient/dhclient.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "sbin/dhclient/dhclient.c": "d5ef3b45b2688277d7de55a0d7ce7b89234cf714e1f57d75a33fbe2c71f22f75"
     }
@@ -1261,11 +1261,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "a585c72ef5aeccaa664795738fd04c18c2745378f74f4eb570954d655794ba6d",
+    "source_sha256": "64b9578273ef2ce85ed7324a6a4b39314478b4ada0fa23958222c5b8e3cced43",
     "call_sources": [
       "sbin/fsck_ffs/main.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "sbin/fsck_ffs/main.c": "60d25e0f062cc7bf0dd3fd3ec213e3981907db411605444693853a4f2f1d70fb"
     }
@@ -1278,11 +1278,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "a585c72ef5aeccaa664795738fd04c18c2745378f74f4eb570954d655794ba6d",
+    "source_sha256": "64b9578273ef2ce85ed7324a6a4b39314478b4ada0fa23958222c5b8e3cced43",
     "call_sources": [
       "sbin/fsck_ffs/main.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "sbin/fsck_ffs/main.c": "60d25e0f062cc7bf0dd3fd3ec213e3981907db411605444693853a4f2f1d70fb"
     }
@@ -1295,11 +1295,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "c1763cda6d9bbd6fbf0b78a83fba7c4ec462108abc5c52008a134b8111b5ce0f",
+    "source_sha256": "62f18cea2905c2ba0e976d6a1876e550630dc3a90ae790bef751d3fd3c383246",
     "call_sources": [
       "sbin/fsck_msdosfs/check.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "sbin/fsck_msdosfs/check.c": "583a5473333631eecbc32639651b47cfebf07cba9ea07eb6a2b51b2edfbc9c64"
     }
@@ -1313,11 +1313,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "c1763cda6d9bbd6fbf0b78a83fba7c4ec462108abc5c52008a134b8111b5ce0f",
+    "source_sha256": "62f18cea2905c2ba0e976d6a1876e550630dc3a90ae790bef751d3fd3c383246",
     "call_sources": [
       "sbin/fsck_msdosfs/check.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "sbin/fsck_msdosfs/check.c": "583a5473333631eecbc32639651b47cfebf07cba9ea07eb6a2b51b2edfbc9c64"
     }
@@ -1330,11 +1330,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "28696fbd983d5f40ec8f80d8e7714e0ac285e67ae4e8bfba038da2e08b0f4c9a",
+    "source_sha256": "6ed167029f124d7fce9272ed3e4d5bcfd8bbc65fc7c29a1d2a7e90b1683f5dc0",
     "call_sources": [
       "sbin/mount/mount.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "sbin/mount/mount.c": "54e9883af20e5f29b5693c06a1aea2471abf9cd408699f19d3de4d9d4a3e5353"
     }
@@ -1348,11 +1348,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "28696fbd983d5f40ec8f80d8e7714e0ac285e67ae4e8bfba038da2e08b0f4c9a",
+    "source_sha256": "6ed167029f124d7fce9272ed3e4d5bcfd8bbc65fc7c29a1d2a7e90b1683f5dc0",
     "call_sources": [
       "sbin/mount/mount.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "sbin/mount/mount.c": "54e9883af20e5f29b5693c06a1aea2471abf9cd408699f19d3de4d9d4a3e5353"
     }
@@ -1365,11 +1365,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "9ccbcf5878dd2fc884808687b735e0f35e3649955b48a816f37307c8021a08d2",
+    "source_sha256": "565fe9ea1994dad5777c41db5230d33092283445f8be44c48ec314a00d119fef",
     "call_sources": [
       "sbin/umount/umount.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "sbin/umount/umount.c": "0574df9d922617019df3a68bfa9c8ca1d6cf0bf077dfd5c5a93a333854be3621"
     }
@@ -1383,11 +1383,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "9ccbcf5878dd2fc884808687b735e0f35e3649955b48a816f37307c8021a08d2",
+    "source_sha256": "565fe9ea1994dad5777c41db5230d33092283445f8be44c48ec314a00d119fef",
     "call_sources": [
       "sbin/umount/umount.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "sbin/umount/umount.c": "0574df9d922617019df3a68bfa9c8ca1d6cf0bf077dfd5c5a93a333854be3621"
     }
@@ -1400,11 +1400,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "4d992017a8e372abc43cb55fc9448de42cd1e1bf4808706df54175a67eb70103",
+    "source_sha256": "0005b5c92eef95b9884429e0e429be91e7fec59a891a32f3beffc705ebb65bb9",
     "call_sources": [
       "usr.sbin/mountd/mountd.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "usr.sbin/mountd/mountd.c": "17d5a21f30e480acb32ed0eba9c335d1b9e0ce5cdd17b225908772953ff3e4b9"
     }
@@ -1417,11 +1417,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "4d992017a8e372abc43cb55fc9448de42cd1e1bf4808706df54175a67eb70103",
+    "source_sha256": "0005b5c92eef95b9884429e0e429be91e7fec59a891a32f3beffc705ebb65bb9",
     "call_sources": [
       "usr.sbin/mountd/mountd.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "usr.sbin/mountd/mountd.c": "17d5a21f30e480acb32ed0eba9c335d1b9e0ce5cdd17b225908772953ff3e4b9"
     }
@@ -1434,11 +1434,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "source_sha256": "87beabb366753e846e3b38c426ae618fd76fb2dc7b434cc2752f2d9bc1eba711",
     "call_sources": [
       "usr.sbin/newsyslog/newsyslog.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
     }
@@ -1452,11 +1452,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "source_sha256": "87beabb366753e846e3b38c426ae618fd76fb2dc7b434cc2752f2d9bc1eba711",
     "call_sources": [
       "usr.sbin/newsyslog/newsyslog.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
     }
@@ -1470,11 +1470,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "source_sha256": "87beabb366753e846e3b38c426ae618fd76fb2dc7b434cc2752f2d9bc1eba711",
     "call_sources": [
       "usr.sbin/newsyslog/newsyslog.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
     }
@@ -1490,11 +1490,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "source_sha256": "87beabb366753e846e3b38c426ae618fd76fb2dc7b434cc2752f2d9bc1eba711",
     "call_sources": [
       "usr.sbin/newsyslog/newsyslog.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
     }
@@ -1509,11 +1509,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "source_sha256": "87beabb366753e846e3b38c426ae618fd76fb2dc7b434cc2752f2d9bc1eba711",
     "call_sources": [
       "usr.sbin/newsyslog/newsyslog.c"
     ],
-    "line": 8,
+    "line": 9,
     "call_source_sha256": {
       "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
     }
@@ -1526,12 +1526,12 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "source_sha256": "ec94bebda7a0379174fac9370f2a74ed0a36964ccbd0350ece9b4e95aa7e5328",
     "call_sources": [
       "contrib/ntp/ntpd/ntp_proto.c",
       "contrib/ntp/ntpd/ntp_loopfilter.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
       "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
@@ -1546,12 +1546,12 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "source_sha256": "ec94bebda7a0379174fac9370f2a74ed0a36964ccbd0350ece9b4e95aa7e5328",
     "call_sources": [
       "contrib/ntp/ntpd/ntp_proto.c",
       "contrib/ntp/ntpd/ntp_loopfilter.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
       "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
@@ -1565,12 +1565,12 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "source_sha256": "ec94bebda7a0379174fac9370f2a74ed0a36964ccbd0350ece9b4e95aa7e5328",
     "call_sources": [
       "contrib/ntp/ntpd/ntp_proto.c",
       "contrib/ntp/ntpd/ntp_loopfilter.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
       "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
@@ -1585,12 +1585,12 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "source_sha256": "ec94bebda7a0379174fac9370f2a74ed0a36964ccbd0350ece9b4e95aa7e5328",
     "call_sources": [
       "contrib/ntp/ntpd/ntp_proto.c",
       "contrib/ntp/ntpd/ntp_loopfilter.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
       "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
@@ -1605,12 +1605,12 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "source_sha256": "8652a3106b5dae4f68d30e4e8955a40510c4949124e6fdb8db826da73c3d374e",
     "call_sources": [
       "crypto/openssh/kex.c",
       "crypto/openssh/channels.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
       "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
@@ -1625,12 +1625,12 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "source_sha256": "8652a3106b5dae4f68d30e4e8955a40510c4949124e6fdb8db826da73c3d374e",
     "call_sources": [
       "crypto/openssh/kex.c",
       "crypto/openssh/channels.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
       "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
@@ -1646,12 +1646,12 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "source_sha256": "8652a3106b5dae4f68d30e4e8955a40510c4949124e6fdb8db826da73c3d374e",
     "call_sources": [
       "crypto/openssh/kex.c",
       "crypto/openssh/channels.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
       "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
@@ -1666,12 +1666,12 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "source_sha256": "8652a3106b5dae4f68d30e4e8955a40510c4949124e6fdb8db826da73c3d374e",
     "call_sources": [
       "crypto/openssh/kex.c",
       "crypto/openssh/channels.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
       "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
@@ -1687,12 +1687,12 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "source_sha256": "8652a3106b5dae4f68d30e4e8955a40510c4949124e6fdb8db826da73c3d374e",
     "call_sources": [
       "crypto/openssh/kex.c",
       "crypto/openssh/channels.c"
     ],
-    "line": 8,
+    "line": 9,
     "call_source_sha256": {
       "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
       "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
@@ -1765,11 +1765,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "line": 4,
+    "line": 5,
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     }
@@ -1783,11 +1783,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "line": 5,
+    "line": 6,
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     }
@@ -1800,11 +1800,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "line": 6,
+    "line": 7,
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     }
@@ -1818,11 +1818,11 @@
       "int"
     ],
     "kind": "userspace",
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "line": 7,
+    "line": 8,
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     }
@@ -1835,11 +1835,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "line": 8,
+    "line": 9,
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     }
@@ -1852,11 +1852,11 @@
       "uintptr_t"
     ],
     "kind": "userspace",
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "line": 9,
+    "line": 10,
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     }
@@ -1978,11 +1978,11 @@
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     },
-    "line": 10
+    "line": 11
   },
   {
     "source": "libexec/rtld-elf/rtldtrace_provider.d",
@@ -1998,11 +1998,11 @@
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     },
-    "line": 11
+    "line": 12
   },
   {
     "source": "libexec/rtld-elf/rtldtrace_provider.d",
@@ -2015,11 +2015,11 @@
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     },
-    "line": 12
+    "line": 13
   },
   {
     "source": "libexec/rtld-elf/rtldtrace_provider.d",
@@ -2033,11 +2033,11 @@
     "call_sources": [
       "libexec/rtld-elf/rtld.c"
     ],
-    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "source_sha256": "15dbbce598569b572549ed55e6faefb02e2e7c7c725ec7cb6dc0ca38f4eacf60",
     "call_source_sha256": {
       "libexec/rtld-elf/rtld.c": "1ebcd563632c62f77cdcf847f179b734f7c7e71a32c5cfc7ec4896c044780f72"
     },
-    "line": 13
+    "line": 14
   },
   {
     "source": "sys/kern/sys_process.c",
