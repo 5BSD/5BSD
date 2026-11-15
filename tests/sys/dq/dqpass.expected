@@ -6,17 +6,21 @@
 # and every entry ends in its owner, "# ux-N[ D###]: cause" (the Unix-
 # illusion sub-series that removes it) or "# by-design D###: reason";
 # dq_oracle_test and dq_tree_suites_test fail on an entry without one.
+# Every entry names its program and case, anchored:
+# "^program:case[[:space:]]" (the case part may be an alternation).  A
+# bare word would leave out every case whose name merely contains it and
+# hide real differences there.  Both tests print each case an entry
+# leaves out with the two runs' results.
 
 # I5: no set-user-id or set-group-id transition while attached
 # (P2_NO_NEW_PRIVS), no authority installation.
-setuid  # by-design D137: I5, no set-id transition while attached
-setgid  # by-design D137: I5, no set-id transition while attached
-issetugid  # by-design D137: I5, no set-id transition while attached
-no_new_privs  # by-design D150: ATTACH sets P2_NO_NEW_PRIVS
+^procnet_cred_test:setuid_family_(root|unpriv)[[:space:]]  # by-design D137: I5, no set-id transition while attached
+^procnet_exec_test:(setgid_by_unpriv|setuid_by_root|setuid_by_unpriv|setuid_clears_pdeathsig|setuid_script_ignored)[[:space:]]  # by-design D137: I5, no set-id transition while attached
+^procnet_boundary_test:no_new_privs_fork[[:space:]]  # by-design D150: ATTACH sets P2_NO_NEW_PRIVS
 # P2_NO_NEW_PRIVS (set at ATTACH, D150): execve_nosetid() keeps the old
 # credential, so an exec does not reset the saved ids to the effective
 # ones, as for any no_new_privs process.
-procnet_exec_test:saved_ids_reset[[:space:]]  # by-design D150: execve_nosetid() keeps the credential
+^procnet_exec_test:saved_ids_reset[[:space:]]  # by-design D150: execve_nosetid() keeps the credential
 # The cases of procnet_outside_test that attach a child of the test
 # process are rows of an UNATTACHED actor.  Under dqpass the test process
 # is attached: its child inherits the attachment and DQ_IOC_ATTACH refuses
@@ -24,26 +28,15 @@ procnet_exec_test:saved_ids_reset[[:space:]]  # by-design D150: execve_nosetid()
 # paragraphs; kern_dqres.c, D138), so the cases skip.  Only "passed"
 # (unattached) and "skipped" (attached) are left out: any other result
 # of either run is compared and fails the oracle.
-procnet_outside_test:(probe_attached_target|linux_probe_attached_target|plane_services_procdesc|sigio_group_with_attached|unattached_fork_not_consulted)[[:space:]](passed|skipped)$  # by-design D138: an attached process's child is attached already, DQ_IOC_ATTACH is EBUSY (dq(4))
+^procnet_outside_test:(probe_attached_target|linux_probe_attached_target|plane_services_procdesc|sigio_group_with_attached|unattached_fork_not_consulted)[[:space:]](passed|skipped)$  # by-design D138: an attached process's child is attached already, DQ_IOC_ATTACH is EBUSY (dq(4))
 
-# I5: jail_attach(2), jail(2) with JAIL_ATTACH, and setcred(2) are refused;
-# tests run in a jail (execenv=jail), vnet and jexec tests need them.
-jail  # by-design D137: I5, jail_attach(2) and JAIL_ATTACH refused
-vnet  # by-design D137: I5, vnet tests need jail_attach(2)
-jexec  # by-design D137: I5, jexec needs jail_attach(2)
-setcred  # by-design D137: I5, setcred(2) refused
-
-# The SMR fast path declines for an attached process: the fplookup dtrace
-# probes do not fire.
-fplookup  # by-design D39: the SMR fast path declines for an attached process
-cache_fplookup  # by-design D39: the SMR fast path declines for an attached process
+# I5: jail_attach(2), jail(2) with JAIL_ATTACH, and setcred(2) are refused.
+^procnet_jail_test:(jail_attach_errors|jail_attach_root_escape|jail_attach_threads|jail_set_absolute|jail_set_errors|jail_set_relative)[[:space:]]  # by-design D137: I5, jail_attach(2) and JAIL_ATTACH refused
+^procnet_socket_test:(fdfull_order_jail|jail_noinet)[[:space:]]  # by-design D137: I5, jail_attach(2) and JAIL_ATTACH refused
+^procnet_cred_test:setcred_(root|unpriv)[[:space:]]  # by-design D137: I5, setcred(2) refused
 
 # D153: an attached process dumps no core.
-coredump  # ux-8 D202: an attached process dumps no core (D153)
-core_dump  # ux-8 D202: an attached process dumps no core (D153)
-
-# D153 (as above), the procnet core cases by name.
-procnet_core_test:core_(default_name|existing_file|pattern|sugid|unpriv)[[:space:]]  # ux-8 D202: an attached process dumps no core (D153)
+^procnet_core_test:core_(default_name|existing_file|pattern|sugid|unpriv)[[:space:]]  # ux-8 D202: an attached process dumps no core (D153)
 
 # Design 11: kernel consumers of an attached caller's path.  md(4) looks
 # its vnode up under its own locks and refuses an attached caller
@@ -52,12 +45,12 @@ procnet_core_test:core_(default_name|existing_file|pattern|sugid|unpriv)[[:space
 # fallback to the literal mount-on name (D127 class 2), so its missing
 # name is ENOENT, not EINVAL (also the unmount rows of
 # errno_libc_and_syscall and of ktrace_sysret's KTR_SYSRET records).
-procnet_admin_test:(md_attach_vnode|swap_md_vnode)[[:space:]]  # by-design D127: md(4) looks its vnode up under its locks, dqres_kpath_refused EPERM
-procnet_admin_test:nmount_unterminated[[:space:]]  # ux-8 D207: an unterminated path option is EINVAL for an attached caller
-procnet_admin_test:unmount_fallback[[:space:]]  # ux-8 D207: no literal mount-on fallback for an attached caller
-procnet_syscall_test:(errno_libc_and_syscall|ktrace_sysret)[[:space:]]  # ux-8 D207: their unmount rows, ENOENT not EINVAL
+^procnet_admin_test:(md_attach_vnode|swap_md_vnode)[[:space:]]  # by-design D127: md(4) looks its vnode up under its locks, dqres_kpath_refused EPERM
+^procnet_admin_test:nmount_unterminated[[:space:]]  # ux-8 D207: an unterminated path option is EINVAL for an attached caller
+^procnet_admin_test:unmount_fallback[[:space:]]  # ux-8 D207: no literal mount-on fallback for an attached caller
+^procnet_syscall_test:(errno_libc_and_syscall|ktrace_sysret)[[:space:]]  # ux-8 D207: their unmount rows, ENOENT not EINVAL
 
 # D155: an attached socketpair(2) tests its room for two descriptors
 # before soattach, so with a full table it is EMFILE where the
 # protocol's attach error (raw IP unprivileged: EPERM) came first.
-procnet_socket_test:fdfull_unchanged[[:space:]]  # ux-8 D209: attached socketpair(2) room test before soattach (D155)
+^procnet_socket_test:fdfull_unchanged[[:space:]]  # ux-8 D209: attached socketpair(2) room test before soattach (D155)

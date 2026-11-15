@@ -100,22 +100,17 @@ suites_head()
 }
 suites_body()
 {
-	local suite kf expected tagged nsuites rc
+	local suite kf expected nsuites rc
 
 	require_dq
 	# The fixture without its comments and blank lines (an empty pattern
 	# would match every line).
 	expected=patterns
-	# Every entry names its owner, "# ux-N: cause" or "# by-design
-	# D###: reason": an untagged entry would hide a difference no
-	# sub-series removes.
-	tagged='[^[:space:]][[:space:]]+#[[:space:]]*[^[:space:]:]+[^:]*:'
-	if grep -v -E '^[[:space:]]*(#|$)' \
-	    "$(atf_get_srcdir)/dqpass.expected" | grep -v -E "${tagged}" >&2
-	then
-		atf_fail "dqpass.expected has an entry without a" \
-		    "\"# owner: cause\" tag"
-	fi
+	# Every entry names one program and case and its owner, "# ux-N:
+	# cause" or "# by-design D###: reason": an untagged entry would hide
+	# a difference no sub-series removes, a bare word every case whose
+	# name contains it.
+	dq_check_expected "$(atf_get_srcdir)/dqpass.expected"
 	dq_patterns "${expected}" "$(atf_get_srcdir)/dqpass.expected"
 	: ${DQ_ORACLE_SUITES:="sys/file sys/kern/execve sys/dq_regress"}
 	nsuites=0

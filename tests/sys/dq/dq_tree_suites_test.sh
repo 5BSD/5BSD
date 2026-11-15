@@ -143,13 +143,10 @@ suites_body()
 	expected=patterns
 	tagged_patterns "$(atf_get_srcdir)/dqtree.expected" \
 	    "$(atf_get_srcdir)/dqpass.expected" > tags
-	# Every expected difference has an owner (a sub-series or a design
-	# reference): an untagged entry would hide one without a remover.
-	if awk -F '\t' '$2 == "-" { print "untagged: " $1; bad = 1 }
-	    END { exit !bad }' tags >&2; then
-		atf_fail "dqtree.expected or dqpass.expected has an entry " \
-		    "without a \"# owner: cause\" tag"
-	fi
+	# Every expected difference names one program and case and has an
+	# owner (a sub-series or a design reference).
+	dq_check_expected "$(atf_get_srcdir)/dqtree.expected" \
+	    "$(atf_get_srcdir)/dqpass.expected"
 	cut -f 1 tags > "${expected}"
 	# Every suite runs and reports before the case fails.
 	failed=
