@@ -16,6 +16,7 @@ struct vmmctl_vm_destroy { char name[64]; };
 #define VMMCTL_VM_DESTROY 0x7654UL
 #define VMMCTL_VM_DESTROY_IDENTITY 0x7655UL
 static int fail_destroy, closes, warnings, requests;
+static const char *expected_name = "checkpoint-source";
 
 static size_t
 test_strlcpy(char *dst, const char *src, size_t size)
@@ -36,7 +37,7 @@ test_ioctl(int fd, unsigned long command, void *argument)
     if (command == VMMCTL_VM_DESTROY_IDENTITY) {
         struct vmmctl_vm_destroy_identity *destroy = argument;
         assert(destroy->vmid == 7 && destroy->epoch == 9);
-        assert(strcmp(destroy->name, "checkpoint-source") == 0);
+        assert(strcmp(destroy->name, expected_name) == 0);
         for (size_t i = 0; i < 3; i++) assert(destroy->reserved[i] == 0);
     } else {
         struct vmmctl_vm_destroy *destroy = argument;
@@ -90,9 +91,6 @@ main(void)
     assert(vm_destroy_identity_checked(&vm, 0, 9) == -1 && errno == EINVAL);
     assert(vm_destroy_identity_checked(&vm, HYPERTRACE_MAX_VMS, 9) == -1 && errno == EINVAL);
     assert(vm_destroy_identity_checked(&vm, 7, 0) == -1 && errno == EINVAL);
-    memset(vm.name, 'x', 80); vm.name[80] = 0;
-    assert(vm_destroy_identity_checked(&vm, 7, 9) == -1 && errno == ENAMETOOLONG);
-    strcpy(vm.name, "checkpoint-source");
     assert(requests == 3 && closes == 2);
     fail_destroy = 2;
     assert(vm_destroy_identity_checked(&vm, 7, 9) == -1 && errno == ESTALE);
@@ -131,5 +129,10 @@ main(void)
         assert(vm_destroy_identity_request_checked(&vm, 7, 9) == (failure ? -1 : 0));
         assert(closes == before);
     }
+    /* vm_openf() refuses a longer name; the longest one reaches the kernel whole. */
+    fail_destroy = 0;
+    memset(vm.name, 'x', VM_MAX_NAMELEN); vm.name[VM_MAX_NAMELEN] = 0;
+    expected_name = vm.name;
+    assert(vm_destroy_identity_request_checked(&vm, 7, 9) == 0 && requests == 19);
     puts("PASS: checked VM destroy retains retry authority on ioctl failure");
 }

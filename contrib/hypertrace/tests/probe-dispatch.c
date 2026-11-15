@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#define ASSERT(x) assert(x)
 #define HYPERTRACE_MAX_VMS 1024
 #define DTRACE_SENSIBLE_PROBELIMIT 100000
 typedef int hypertrace_id_t;

@@ -12,7 +12,8 @@ if not out.is_relative_to('/usr/obj'):
 out.mkdir(parents=True, exist_ok=True)
 source = (root / 'sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c').read_text()
 start = source.index('static void\ndtrace_bcopy(')
-end = source.index('\n\n/*\n * Compare strings.', start)
+end = source.index('\n\n/*\n * Copy src to dst using safe memory accesses, up to',
+    start)
 copy_arm = source[start:end]
 start = source.index('static void\ndtrace_strcpy(')
 end = source.index('\n\n/*\n * Copy src to dst', start)
@@ -23,6 +24,7 @@ fixture = r'''
 #include <stdio.h>
 #include <string.h>
 
+#define ASSERT(x) assert(x)
 enum { CPU_DTRACE_BADADDR = 4, CPU_DTRACE_FAULT = CPU_DTRACE_BADADDR };
 static struct { uint16_t cpuc_dtrace_flags; uintptr_t cpuc_dtrace_illval; }
     cpu_core[1];

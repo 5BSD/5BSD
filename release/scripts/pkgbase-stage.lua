@@ -24,17 +24,47 @@ local function select_packages(pkg, media, all_libcompats)
 	-- usr.sbin/bsdinstall/scripts/pkgbase.in.
 	local prefix = os.getenv("PKG_NAME_PREFIX") or "5BSD"
 
-	local kernel_packages = {
-		-- The 5BSD kernel is GENERIC: every 5BSD option is compiled into
-		-- it, so most architectures use this
-		[prefix .. "-kernel-generic"] = true,
-		-- PowerPC uses either of these, depending on platform
-		[prefix .. "-kernel-generic64"] = true,
-		[prefix .. "-kernel-generic64le"] = true,
-	}
+	-- The kernel package is named after the kernel configuration, such as
+	-- GENERIC-NODEBUG for a published generation.  Find it as bsdinstall
+	-- does: a 5BSD-kernel-* package that is not debug symbols or manuals,
+	-- the one named by MEDIA_KERNEL (the release build's KERNCONF) if set.
+	-- The package name is the configuration name in lower case with a
+	-- hyphen for each underscore, as Makefile.inc1 creates it.
+	local media_kernel = os.getenv("MEDIA_KERNEL")
+	if media_kernel == "" then
+		media_kernel = nil
+	end
+	if media_kernel then
+		assert(media_kernel:match("^[A-Za-z0-9_.%-]+$"),
+		    "invalid MEDIA_KERNEL")
+		media_kernel = prefix .. "-kernel-" ..
+		    (media_kernel:lower():gsub("_", "-"))
+	end
+	local rquery = capture(pkg .. "rquery -U -r " .. prefix .. "-base %n")
+	local kernel_pattern = "^" .. prefix:gsub("%-", "%%-") .. "%-kernel%-.+"
+	local kernel_packages = {}
+	local kernels = 0
+	for package in rquery:gmatch("[^\n]+") do
+		if package:match(kernel_pattern) and
+		    not package:match("%-dbg$") and
+		    not package:match("%-man$") and
+		    (not media_kernel or package == media_kernel) then
+			kernel_packages[package] = true
+			kernels = kernels + 1
+		end
+	end
+	if media_kernel then
+		assert(kernels > 0,
+		    "repository has no kernel package " .. media_kernel)
+		assert(kernels == 1,
+		    "repository lists " .. media_kernel .. " more than once")
+	else
+		assert(kernels > 0, "repository has no kernel package")
+		assert(kernels == 1,
+		    "repository has more than one kernel; set KERNCONF")
+	end
 
 	local components = {}
-	local rquery = capture(pkg .. "rquery -U -r " .. prefix .. "-base %n")
 	local set_pattern = "^" .. prefix:gsub("%-", "%%-") .. "%-set%-(.*)$"
 	for package in rquery:gmatch("[^\n]+") do
 		local set = package:match(set_pattern)

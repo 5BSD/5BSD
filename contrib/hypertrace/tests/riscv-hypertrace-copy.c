@@ -9,6 +9,7 @@
 #define PAGE_SIZE 4096
 #define PAGE_MASK (PAGE_SIZE - 1)
 #define VM_PROT_READ 1
+#define VM_PROT_WRITE 2
 #define VM_GP_HYPERTRACE_USER (1 << 6)
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -21,12 +22,13 @@ struct vm_hdl { struct vcpu *vcpu; struct vm_guest_paging *paging; };
 static unsigned char physical[0x5000];
 static size_t holds, releases;
 static int deny_second, deny_translate_second, require_user;
+static int expect_prot = VM_PROT_READ;
 
 static int
 vm_gla2gpa_nofault(struct vcpu *vcpu, struct vm_guest_paging *paging,
     uint64_t gla, int prot, uint64_t *gpa, int *fault)
 {
-	assert(vcpu != NULL && paging != NULL && prot == VM_PROT_READ);
+	assert(vcpu != NULL && paging != NULL && prot == expect_prot);
 	if (require_user)
 		assert((paging->flags & VM_GP_HYPERTRACE_USER) != 0);
 	*fault = 0;
@@ -45,7 +47,7 @@ static void *
 vm_gpa_hold(struct vcpu *vcpu, uint64_t gpa, size_t len, int prot,
     void **cookie)
 {
-	assert(vcpu != NULL && prot == VM_PROT_READ && len > 0 &&
+	assert(vcpu != NULL && prot == expect_prot && len > 0 &&
 	    len <= PAGE_SIZE - (gpa & PAGE_MASK));
 	if (gpa + len > sizeof(physical) || (deny_second && gpa >= 0x4000))
 		return (NULL);
@@ -102,7 +104,18 @@ main(void)
 		assert(result[i] == 0x5a);
 	assert(paging.flags == 0);
 	assert(vmm_priv_guest_user_copyin(&handle, 0x1ff8, result, 9) == EINVAL);
+	expect_prot = VM_PROT_WRITE;
+	unsigned char data[9];
+	memset(data, 0x3c, sizeof(data));
+	assert(vmm_priv_guest_user_copyout(&handle, 0x1ffc, data, 8) == 0);
+	for (size_t i = 0; i < 4; i++)
+		assert(physical[0x2ffc + i] == 0x3c && physical[0x4000 + i] == 0x3c);
+	assert(physical[0x4004] == 0xa5);
+	assert(vmm_priv_guest_user_copyout(&handle, 0x1ffc, data, 9) == EINVAL);
+	assert(vmm_priv_guest_user_copyout(&handle, 0, data, 1) == EINVAL);
+	assert(vmm_priv_guest_user_copyout(&handle, 0x3000, data, 1) == EFAULT);
+	assert(paging.flags == 0);
 	assert(holds == releases);
-	puts("PASS: production RISC-V frozen guest copy");
+	puts("PASS: production RISC-V frozen guest copy and user copyout");
 	return (0);
 }

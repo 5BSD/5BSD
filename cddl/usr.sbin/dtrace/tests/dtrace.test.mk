@@ -18,7 +18,7 @@ TEST_METADATA.t_dtrace_contrib+= required_user="root"
 GENTEST?=	${.CURDIR:H:H}/tools/gentest.sh
 EXCLUDE=	${.CURDIR:H:H}/tools/exclude.sh
 ${TESTWRAPPER}.sh: ${GENTEST} ${EXCLUDE} ${TFILES}
-	env TESTBASE=${TESTBASE:Q} \
+	env TESTBASE=${TESTBASE:Q} MACHINE_CPUARCH=${MACHINE_CPUARCH:Q} \
 	    sh ${GENTEST} -e ${EXCLUDE} ${TESTGROUP} ${TFILES:S/ */ /} > ${.TARGET}
 
 CLEANFILES+=	${TESTWRAPPER}.sh

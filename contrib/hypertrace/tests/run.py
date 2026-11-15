@@ -29,6 +29,10 @@ subprocess.run([sys.executable,str(root/'tests/probe-dispatch.py')],
                check=True,timeout=30)
 subprocess.run([sys.executable,str(root/'tests/amd64-hypercall.py')],
                check=True,timeout=30)
+subprocess.run([sys.executable,str(root/'tests/guest-reg-snapshot.py')],
+               check=True,timeout=30)
+subprocess.run([sys.executable,str(root/'tests/arm64-probe-entry.py')],
+               check=True,timeout=30)
 work=out/'patched';shutil.copytree(root/'upstream',work)
 for name in (root/'patches/series').read_text().splitlines():
  if name and not name.startswith('#'):
@@ -63,7 +67,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
 assert all(r['status']==0 for r in builds),builds
 cmd=['c++','-pthread',*[r['object'] for r in builds],'-lcrypto','-lutil','-o',str(out/'dtraced')]
 r=subprocess.run(cmd,capture_output=True,text=True);(out/'daemon-link.log').write_text(shlex.join(cmd)+'\n'+r.stdout+r.stderr);assert r.returncode==0,r.stderr
-cmd=['c++','-std=c++17','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(source_root/'usr.sbin/dtraced'),'-I'+str(source_root/'sys'),str(root/'tests/protocol.cc'),'-o',str(out/'protocol-test')]
+cmd=['c++','-std=c++17','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(source_root/'usr.sbin/dtraced'),'-I'+str(source_root/'sys'),str(root/'tests/protocol.cc'),'-lcrypto','-o',str(out/'protocol-test')]
 subprocess.run(cmd,check=True);subprocess.run([str(out/'protocol-test')],check=True,timeout=10)
 print('PASS daemon compile/link and sanitized malformed cleanup-frame tests')
 

@@ -191,6 +191,18 @@ fbt_excluded(const char *name)
 #if defined(__aarch64__) || defined(__riscv)
 	if (strcmp(name, "unwind_frame") == 0)
 		return (1);
+
+	/*
+	 * The compiler emits calls to these for copies and zeroing in probe
+	 * context, dtrace_probe() included, where amd64 inlines them.  On
+	 * arm64 memset, memcpy and memmove are ifuncs, so the prefix also
+	 * covers the implementations they resolve to, such as memset_std.
+	 */
+	if (strncmp(name, "memset", 6) == 0 ||
+	    strncmp(name, "memcpy", 6) == 0 ||
+	    strncmp(name, "memmove", 7) == 0 ||
+	    strcmp(name, "memcmp") == 0)
+		return (1);
 #endif
 
 	/*

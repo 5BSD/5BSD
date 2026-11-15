@@ -2,5 +2,5 @@
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "tracing_core_headers", hdrs = ["smccc.h"], includes = [],
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["psci.h", "smccc.h"], includes = [],
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])

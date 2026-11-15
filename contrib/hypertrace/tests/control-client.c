@@ -4,6 +4,13 @@
 static int test_clock_gettime(clockid_t, struct timespec *);
 #define clock_gettime test_clock_gettime
 #define main dtracedctl_main
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <dtraced.h>
+/* dtracedctl connects to the one dtraced socket; aim it at the test's. */
+static char test_sockpath[sizeof(((struct sockaddr_un *)0)->sun_path)];
+#undef DTRACED_SOCKPATH
+#define DTRACED_SOCKPATH test_sockpath
 #include "dtracedctl.c"
 #undef main
 #undef clock_gettime
@@ -135,7 +142,9 @@ int main(void)
         sizeof(address)) == 0 && listen(listener, 1) == 0);
     pthread_t server;
     CHECK(pthread_create(&server, NULL, handshake, &listener) == 0);
-    handle_t connected = open_dtraced(path);
+    CHECK(strlcpy(test_sockpath, path, sizeof(test_sockpath)) <
+        sizeof(test_sockpath));
+    handle_t connected = open_dtraced();
     CHECK(connected.sockfd >= 0);
     close(connected.sockfd);
     CHECK(pthread_join(server, NULL) == 0);
@@ -168,14 +177,21 @@ int main(void)
         CHECK(pthread_join(thread, NULL) == 0);
         close(fds[0]); close(fds[1]);
     }
-    names.n_strs = 4097;
-    handle_t invalid = { .sockfd = -1 };
-    CHECK(send_request(&invalid, &names, DTRACED_MSG_CLEANUP,
-        NULL) == -1 && errno == EINVAL);
-    char long_name[4097]; memset(long_name, 'x', sizeof(long_name)); long_name[4096] = 0;
-    values[0] = long_name; names.n_strs = 1;
-    CHECK(send_request(&invalid, &names, DTRACED_MSG_CLEANUP,
-        NULL) == -1 && errno == EMSGSIZE);
+    /* send_request() relies on the bounds parse_names() enforces. */
+    char many[4097 * 2];
+    for (size_t i = 0; i < sizeof(many); i++)
+        many[i] = i % 2 ? ',' : 'n';
+    many[4096 * 2 - 1] = '\0';
+    CHECK(parse_names(many, &parsed) == 0 && parsed.n_strs == 4096);
+    freenames(&parsed);
+    for (size_t i = 0; i < sizeof(many); i++)
+        many[i] = i % 2 ? ',' : 'n';
+    many[sizeof(many) - 1] = '\0';
+    CHECK(parse_names(many, &parsed) == -1 && errno == EINVAL);
+    oversized_name[4095] = '\0';
+    CHECK(parse_names(oversized_name, &parsed) == 0 && parsed.n_strs == 1 &&
+        strlen(parsed.str[0]) == 4095);
+    freenames(&parsed);
     puts("PASS: cleanup and stats frames, names, deadlines and NAK");
     return (0);
 }

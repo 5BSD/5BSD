@@ -96,10 +96,11 @@ static int dtrace_enabling_match(dtrace_enabling_t *e, int *count)
 	return (match_error);
 }
 static dtrace_probedesc_t *dtrace_enabling_list(dtrace_enabling_t *e,
-    int *count, size_t *size)
+    int *count, size_t *size, int *error)
 {
 	dtrace_probedesc_t *probes;
-	assert(e == &enabling && depth == 2);
+	assert(e == &enabling && depth == 2 && match_count > 0);
+	*error = list_error;
 	if (list_error)
 		return (NULL);
 	*count = match_count;
@@ -211,8 +212,13 @@ main(void)
 	assert(disabled == 2 && destroyed_ecbs == 2 && enabling.destroyed);
 
 	reset(&state);
-	list_error = 1;
+	list_error = ENOMEM;
 	assert(dispatch(&p, &state, &td) == ENOMEM);
+	assert(disabled == 2 && destroyed_ecbs == 2 && enabling.destroyed);
+
+	reset(&state);
+	list_error = ENAMETOOLONG;
+	assert(dispatch(&p, &state, &td) == ENAMETOOLONG);
 	assert(disabled == 2 && destroyed_ecbs == 2 && enabling.destroyed);
 
 	reset(&state);

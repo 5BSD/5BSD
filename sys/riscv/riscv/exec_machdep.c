@@ -58,6 +58,10 @@
 #include <machine/fpe.h>
 #include <machine/kdb.h>
 #include <machine/pcb.h>
+
+#ifdef KDTRACE_HOOKS
+#include <sys/dtrace_bsd.h>
+#endif
 #include <machine/pte.h>
 #include <machine/riscvreg.h>
 #include <machine/sbi.h>
@@ -512,6 +516,10 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	mtx_assert(&psp->ps_mtx, MA_OWNED);
 
 	tf = td->td_frame;
+#ifdef KDTRACE_HOOKS
+	if (dtrace_sendsig_ptr != NULL)
+		dtrace_sendsig_ptr(td, tf);
+#endif
 	onstack = sigonstack(tf->tf_sp);
 
 	CTR4(KTR_SIG, "sendsig: td=%p (%s) catcher=%p sig=%d", td, p->p_comm,

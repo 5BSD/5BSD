@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#define ASSERT(x) assert(x)
 #define DTRACEOPT_STRSIZE 0
 #define CPU_DTRACE_BADADDR 1
 #define CPU_DTRACE_NOSCRATCH 2

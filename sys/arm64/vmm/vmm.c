@@ -41,6 +41,7 @@
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 
 #include <vm/vm.h>
 #include <vm/vm_object.h>
@@ -242,13 +243,13 @@ vm_exitinfo(struct vcpu *vcpu)
 }
 
 static lwpid_t
-vmm_priv_gettid(const void *handle)
+dtrace_vmm_gettid(const void *handle)
 {
 	return (((const struct vm_hdl *)handle)->tid);
 }
 
 static uint16_t
-vmm_priv_getid(const void *handle)
+dtrace_vmm_getid(const void *handle)
 {
 	return (((const struct vm_hdl *)handle)->vcpu->vm->id);
 }
@@ -260,27 +261,74 @@ vmm_priv_getepoch(const void *handle)
 }
 
 static const char *
-vmm_priv_getname(const void *handle)
+dtrace_vmm_getname(const void *handle)
 {
 	return (((const struct vm_hdl *)handle)->vcpu->vm->name);
 }
 
+/* The registers dtrace_guest_reg_name() can name: X0-X29, LR, SP and PC. */
+static const int vm_hypertrace_regs[] = {
+	VM_REG_GUEST_X0, VM_REG_GUEST_X1, VM_REG_GUEST_X2, VM_REG_GUEST_X3,
+	VM_REG_GUEST_X4, VM_REG_GUEST_X5, VM_REG_GUEST_X6, VM_REG_GUEST_X7,
+	VM_REG_GUEST_X8, VM_REG_GUEST_X9, VM_REG_GUEST_X10, VM_REG_GUEST_X11,
+	VM_REG_GUEST_X12, VM_REG_GUEST_X13, VM_REG_GUEST_X14, VM_REG_GUEST_X15,
+	VM_REG_GUEST_X16, VM_REG_GUEST_X17, VM_REG_GUEST_X18, VM_REG_GUEST_X19,
+	VM_REG_GUEST_X20, VM_REG_GUEST_X21, VM_REG_GUEST_X22, VM_REG_GUEST_X23,
+	VM_REG_GUEST_X24, VM_REG_GUEST_X25, VM_REG_GUEST_X26, VM_REG_GUEST_X27,
+	VM_REG_GUEST_X28, VM_REG_GUEST_X29, VM_REG_GUEST_LR, VM_REG_GUEST_SP,
+	VM_REG_GUEST_PC,
+};
+_Static_assert(VM_REG_LAST <= 64, "vm_hdl.regs_valid has a bit per register");
+
+/*
+ * DTrace reads guest registers in probe context, but vm_get_register() and the
+ * backends' getreg are not probe-context safe: fbt can instrument them when
+ * vmm is compiled into the kernel.  Read the registers a probe can name
+ * (dtrace_guest_reg_name()) before entering DTrace, while the vCPU is frozen.
+ * Every guest probe firing pays for these reads, whether or not its actions
+ * use regs[]; a register that cannot be read is left invalid.
+ */
+static void
+vm_hypertrace_snapshot_regs(struct vcpu *vcpu, struct vm_hdl *vhdl)
+{
+	u_int i;
+	int reg;
+
+	vhdl->regs_valid = 0;
+	for (i = 0; i < nitems(vm_hypertrace_regs); i++) {
+		reg = vm_hypertrace_regs[i];
+		if (vm_get_register(vcpu, reg, &vhdl->regs[reg]) == 0)
+			vhdl->regs_valid |= (uint64_t)1 << reg;
+	}
+}
+
 static int
-vmm_priv_getreg(const void *handle, int reg, uint64_t *value)
+dtrace_vmm_getreg(const void *handle, int reg, uint64_t *value)
 {
 	const struct vm_hdl *vhdl = handle;
 
-	if (vhdl == NULL || vhdl->vcpu == NULL || value == NULL ||
-	    reg < 0 || reg >= VM_REG_LAST)
+	if (vhdl == NULL || value == NULL || reg < 0 || reg >= VM_REG_LAST ||
+	    (vhdl->regs_valid & ((uint64_t)1 << reg)) == 0)
 		return (EINVAL);
-	return (vm_get_register(vhdl->vcpu, reg, value));
+	*value = vhdl->regs[reg];
+	return (0);
 }
 
-static int vm_hypertrace_copyin(struct vcpu *, struct vm_guest_paging *,
-    uint64_t, void *, size_t);
+SYSCTL_DECL(_hw_vmm);
 
+static int hypercalls_enabled = 1;
+SYSCTL_INT(_hw_vmm, OID_AUTO, hypercalls_enabled, CTLFLAG_RWTUN,
+    &hypercalls_enabled, 0,
+    "Enable hypercalls on all guests");
+
+/*
+ * The guest memory hooks run in DTrace probe context.  Their dtrace_ names,
+ * like those of the tid, id, name and register accessors, keep fbt off them
+ * when vmm is compiled into the kernel; as a module, vmm depends on dtrace
+ * and fbt instruments none of it.
+ */
 static int
-vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
+dtrace_vmm_guest_copyin(const void *handle, uint64_t gla, void *dst,
     size_t length)
 {
 	const struct vm_hdl *vhdl = handle;
@@ -289,17 +337,17 @@ vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
 	    dst == NULL || length == 0 ||
 	    length > sizeof(struct trapframe))
 		return (EINVAL);
-	return (vm_hypertrace_copyin(vhdl->vcpu, vhdl->paging, gla, dst,
-	    length));
+	/* Probe context: dtrace_vmm_guest_copy() neither blocks nor faults. */
+	return (dtrace_vmm_guest_copy(vhdl->vcpu->cookie, vhdl->paging,
+	    vhdl->pmap, gla, dst, length, VM_PROT_READ));
 }
 
 static int
-vmm_priv_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
+dtrace_vmm_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
     size_t length)
 {
 	const struct vm_hdl *vhdl = handle;
 	struct vm_guest_paging user_paging;
-	struct vm_hdl user_handle;
 
 	if (vhdl == NULL || vhdl->paging == NULL || vhdl->vcpu == NULL ||
 	    dst == NULL || length == 0 || length > sizeof(uint64_t))
@@ -309,21 +357,17 @@ vmm_priv_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
 	user_paging = *vhdl->paging;
 	/* EL0t is zero; preserve the translation registers and MMU flag. */
 	user_paging.flags &= ~VM_GP_M_MASK;
-	user_handle = *vhdl;
-	user_handle.paging = &user_paging;
-	return (vmm_priv_guest_copyin(&user_handle, gla, dst, length));
+	/* The handle is not copied: it carries the register snapshot. */
+	return (dtrace_vmm_guest_copy(vhdl->vcpu->cookie, &user_paging,
+	    vhdl->pmap, gla, dst, length, VM_PROT_READ));
 }
 
 static int
-vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
+dtrace_vmm_guest_user_copyout(const void *handle, uint64_t gla,
     const void *src, size_t length)
 {
 	const struct vm_hdl *vhdl = handle;
 	struct vm_guest_paging user_paging;
-	uint64_t gpa;
-	void *cookie, *hva;
-	size_t done, chunk;
-	int error, fault;
 
 	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
 	    src == NULL || gla == 0 || length == 0 || length > 8 ||
@@ -333,21 +377,8 @@ vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
 		return (EOPNOTSUPP);
 	user_paging = *vhdl->paging;
 	user_paging.flags &= ~VM_GP_M_MASK;
-	for (done = 0; done < length; done += chunk) {
-		error = vm_gla2gpa_nofault(vhdl->vcpu, &user_paging,
-		    gla + done, VM_PROT_WRITE, &gpa, &fault);
-		if (error != 0 || fault != 0)
-			return (EFAULT);
-		chunk = MIN(length - done, PAGE_SIZE - (gpa & PAGE_MASK));
-		cookie = NULL;
-		hva = vm_gpa_hold(vhdl->vcpu, gpa, chunk, VM_PROT_WRITE,
-		    &cookie);
-		if (hva == NULL)
-			return (EFAULT);
-		memcpy(hva, (const uint8_t *)src + done, chunk);
-		vm_gpa_release(cookie);
-	}
-	return (0);
+	return (dtrace_vmm_guest_copy(vhdl->vcpu->cookie, &user_paging,
+	    vhdl->pmap, gla, __DECONST(void *, src), length, VM_PROT_WRITE));
 }
 
 static int
@@ -380,14 +411,14 @@ vmm_modinit(void)
 	error = vmmops_modinit(0);
 	if (error == 0) {
 		dtrace_hypertrace_config_lock();
-		vmm_gettid = vmm_priv_gettid;
-		vmm_getid = vmm_priv_getid;
+		vmm_gettid = dtrace_vmm_gettid;
+		vmm_getid = dtrace_vmm_getid;
 		vmm_getepoch = vmm_priv_getepoch;
-		vmm_getname = vmm_priv_getname;
-		vmm_getreg = vmm_priv_getreg;
-		vmm_guest_copyin = vmm_priv_guest_copyin;
-		vmm_guest_user_copyin = vmm_priv_guest_user_copyin;
-		vmm_guest_user_copyout = vmm_priv_guest_user_copyout;
+		vmm_getname = dtrace_vmm_getname;
+		vmm_getreg = dtrace_vmm_getreg;
+		vmm_guest_copyin = dtrace_vmm_guest_copyin;
+		vmm_guest_user_copyin = dtrace_vmm_guest_user_copyin;
+		vmm_guest_user_copyout = dtrace_vmm_guest_user_copyout;
 		dtrace_hypertrace_config_unlock();
 	}
 	return (error);
@@ -1111,6 +1142,31 @@ vm_hypertrace_copyin(struct vcpu *vcpu, struct vm_guest_paging *paging,
 	return (0);
 }
 
+/*
+ * Fire a guest probe with the VM's stage 2 pmap locked, so that DTrace can
+ * read guest memory in probe context (dtrace_vmm_guest_copy()).  Take and
+ * drop the lock outside probe context, since mutex instrumentation can itself
+ * fire probes, and drop the event rather than wait when the lock is contended.
+ */
+static uint64_t
+vm_hypertrace_probe(struct vcpu *vcpu, struct vm_hdl *handle,
+    hypertrace_id_t id, hypertrace_args_t *args)
+{
+	pmap_t pmap;
+	int error;
+
+	/* Not under the pmap lock, which is held only as long as the probe. */
+	vm_hypertrace_snapshot_regs(vcpu, handle);
+	pmap = vmspace_pmap(vm_vmspace(vcpu->vm));
+	if (!PMAP_TRYLOCK(pmap))
+		return ((uint64_t)-2);
+	handle->pmap = pmap;
+	error = hypertrace_probe(handle, id, args);
+	handle->pmap = NULL;
+	PMAP_UNLOCK(pmap);
+	return (error == 0 ? 0 : (uint64_t)-2);
+}
+
 static int
 vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 {
@@ -1126,7 +1182,7 @@ vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 	if ((hypctx_read_sys_reg(hypctx, HOST_ESR_EL2) & ESR_ELx_ISS_MASK) != 0)
 		return (1);
 	fid = hypctx_read_sys_reg(hypctx, GPR_X(0));
-	if (fid == BHYVE_HYPERTRACE_QUERY) {
+	if (hypercalls_enabled != 0 && fid == BHYVE_HYPERTRACE_QUERY) {
 		error = vm_set_register(vcpu, VM_REG_GUEST_X0,
 		    BHYVE_HYPERTRACE_VERSION);
 		KASSERT(error == 0, ("%s: query result: %d", __func__, error));
@@ -1136,7 +1192,7 @@ vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 		*retu = false;
 		return (0);
 	}
-	if (fid == BHYVE_HYPERTRACE_PROBE) {
+	if (hypercalls_enabled != 0 && fid == BHYVE_HYPERTRACE_PROBE) {
 		id = hypctx_read_sys_reg(hypctx, GPR_X(1));
 		argptr = hypctx_read_sys_reg(hypctx, GPR_X(2));
 		tid = hypctx_read_sys_reg(hypctx, GPR_X(3));
@@ -1158,9 +1214,9 @@ vm_handle_smccc_call(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 						handle.vcpu = vcpu;
 						handle.paging = &paging;
 						handle.tid = tid;
-						result = hypertrace_probe(&handle,
-						    (hypertrace_id_t)id, &args) == 0 ?
-						    0 : (uint64_t)-2;
+						result = vm_hypertrace_probe(vcpu,
+						    &handle, (hypertrace_id_t)id,
+						    &args);
 					}
 				}
 			}
@@ -1195,6 +1251,9 @@ vm_handle_wfi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 			break;
 
 		if (vcpu_should_yield(vcpu))
+			break;
+
+		if (vcpu_debugged(vcpu))
 			break;
 
 		vcpu_require_state_locked(vcpu, VCPU_SLEEPING);
