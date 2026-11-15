@@ -138,7 +138,7 @@ ATF_TC_BODY(kernel_path_refused, tc)
 	int n0, status;
 
 	if (access("/dev/" MDCTL_NAME, F_OK) != 0)
-		atf_tc_skip("md(4) is not loaded");
+		atf_tc_fail("md(4) is not loaded");
 	ts_make_tree("t");
 	ts_start(&s, "t", 0);
 	memset(&r, 0, sizeof(r));

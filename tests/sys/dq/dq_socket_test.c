@@ -367,7 +367,7 @@ ATF_TC_BODY(mac_denial_no_event, tc)
 	if (kldfind(MAC_HOOKS) == -1) {
 		/* The capability plane refuses a module load this late. */
 		if (kldload(MAC_HOOKS) == -1)
-			atf_tc_skip("%s is not loaded and cannot be loaded "
+			atf_tc_fail("%s is not loaded and cannot be loaded "
 			    "now (%s); preload it", MAC_HOOKS, strerror(errno));
 		/* Loaded here, so the cleanup unloads it. */
 		fd = open(MAC_HOOKS_LOADED, O_CREAT | O_WRONLY, 0600);
@@ -377,7 +377,7 @@ ATF_TC_BODY(mac_denial_no_event, tc)
 	len = sizeof(before);
 	if (sysctlbyname(MAC_CREATE_COUNT, &before, &len, NULL, 0) != 0) {
 		if (errno == ENOENT)
-			atf_tc_skip("this kernel's %s has no "
+			atf_tc_fail("this kernel's %s has no "
 			    "socket_check_create hook", MAC_HOOKS);
 		atf_tc_fail("%s: %s", MAC_CREATE_COUNT, strerror(errno));
 	}
@@ -755,10 +755,10 @@ ATF_TC_BODY(dead_controller_probe, tc)
 
 	why[0] = '\0';
 	if (access(DTRACE, X_OK) != 0)
-		atf_tc_skip("no %s", DTRACE);
+		atf_tc_fail("no %s", DTRACE);
 	n = dead_controller(&delta, true, why, sizeof(why));
 	if (n == -1)
-		atf_tc_skip("dtrace: %s", why[0] != '\0' ? why :
+		atf_tc_fail("dtrace: %s", why[0] != '\0' ? why :
 		    "printed no count");
 	ATF_CHECK_EQ_MSG(4, n, "resolve-failclosed fired %ld times", n);
 }
@@ -1062,7 +1062,7 @@ ATF_TC_BODY(jail_af_before_consult, tc)
 	jid = jail_setv(JAIL_CREATE, "path", "/", "name", JAILNAME,
 	    "ip4", "disable", "persist", NULL, NULL);
 	if (jid < 0)
-		atf_tc_skip("jail_setv: %s", jail_errmsg);
+		atf_tc_fail("jail_setv: %s", jail_errmsg);
 
 	/* The oracle: the same jail, unattached. */
 	spawn_jailed(NULL, &ch, jid, child_jail_inet);
@@ -1142,9 +1142,9 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 	u_int v;
 
 	if (!dqt_sysctl_get_uint(TUNPORT, &v))
-		atf_tc_skip("no " TUNPORT);
+		atf_tc_fail("no " TUNPORT);
 	if (v != 0)
-		atf_tc_skip(TUNPORT " is in use (%u)", v);
+		atf_tc_fail(TUNPORT " is in use (%u)", v);
 	/* What the cleanup restores; without the file it touches nothing. */
 	f = fopen(TUNPORT_SAVED, "w");
 	ATF_REQUIRE(f != NULL);
@@ -1156,7 +1156,7 @@ ATF_TC_BODY(kernel_socreate_not_consulted, tc)
 	dqt_attach_collect(&ch, &r, sizeof(r));
 	if (r.r[0].rv == -1 && r.r[0].err == EADDRINUSE) {
 		dqt_fini(&c);
-		atf_tc_skip("UDP port %d is in use", TUNPORT_VALUE);
+		atf_tc_fail("UDP port %d is in use", TUNPORT_VALUE);
 	}
 	ATF_CHECK_EQ_MSG(0, r.r[0].rv, TUNPORT ": %s", strerror(r.r[0].err));
 	ATF_CHECK(dqt_sysctl_get_uint(TUNPORT, &v) && v == TUNPORT_VALUE);

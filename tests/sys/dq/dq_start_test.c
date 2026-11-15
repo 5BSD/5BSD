@@ -145,8 +145,6 @@ srv_start(struct srv *s, uint32_t flags)
 	char cwd[PATH_MAX];
 	int fd;
 
-	if (access("/dev/dq", F_OK) != 0)
-		atf_tc_skip("no /dev/dq");
 	memset(s, 0, sizeof(*s));
 	pthread_mutex_init(&s->mtx, NULL);
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
@@ -165,8 +163,7 @@ srv_start(struct srv *s, uint32_t flags)
 	(void)mkfifo("backing/p", 0644);
 	s->rootfd = open(s->backing, O_DIRECTORY | O_RDONLY);
 	ATF_REQUIRE(s->rootfd >= 0);
-	s->q = dq_open();
-	ATF_REQUIRE_MSG(s->q >= 0, "dq_open: %s", strerror(errno));
+	s->q = dqt_open_queue();
 	s->tree = dq_tree_create(s->q, s->rootfd, s->prefix,
 	    DQ_TREE_F_SERVED | flags);
 	ATF_REQUIRE(s->tree != NULL);
@@ -841,7 +838,7 @@ ATF_TC_BODY(capmode_rights, tc)
 	zero = 0;
 	if (sysctlbyname("vfs.lookup_cap_dotdot", NULL, NULL, &zero,
 	    sizeof(zero)) != 0)
-		atf_tc_skip("vfs.lookup_cap_dotdot: %s", strerror(errno));
+		atf_tc_fail("vfs.lookup_cap_dotdot: %s", strerror(errno));
 	srv_start(&s, 0);
 	run_child(&s, c_capmode, r);
 	(void)sysctlbyname("vfs.lookup_cap_dotdot", NULL, NULL, &old,
@@ -1623,8 +1620,7 @@ ATF_TC_BODY(vnodeless_slot1, tc)
 	srv_start(&s, DQ_TREE_F_WRITE);
 	ATF_REQUIRE(close(open("realsrc", O_CREAT | O_RDWR, 0644)) == 0);
 	/* Another queue's served directory, and a served file of ours. */
-	other_q = dq_open();
-	ATF_REQUIRE(other_q >= 0);
+	other_q = dqt_open_queue();
 	id = calloc(1, sizeof(*id));
 	ATF_REQUIRE(dq_ident_from_lstat(id, s.backing, s.rootfd, "d") == 0);
 	strlcpy(id->di_statfs.ds_mntonname, "/",
@@ -1976,7 +1972,7 @@ ATF_TC_BODY(round4_rows, tc)
 	zero = 0;
 	if (sysctlbyname("vfs.lookup_cap_dotdot_nonlocal", NULL, NULL, &zero,
 	    sizeof(zero)) != 0)
-		atf_tc_skip("vfs.lookup_cap_dotdot_nonlocal: %s",
+		atf_tc_fail("vfs.lookup_cap_dotdot_nonlocal: %s",
 		    strerror(errno));
 	srv_start(&s, DQ_TREE_F_WRITE);
 	ATF_REQUIRE(mkdir("backing/d/sub", 0755) == 0);

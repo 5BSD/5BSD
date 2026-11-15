@@ -8,10 +8,19 @@
  * installs served descriptors the minted fd reaches a requester by
  * inheritance, and the controller's own process is refused with EDEADLK).
  * The queue is pinned to the process that opened it (sc-q), so a child
- * holds the object and never the queue.  Results travel back over a pipe.  The oracle is a real
- * temporary file holding the same bytes, whose identity the object
- * presents (dq_ident_from_stat); the tests compare the two answers field
- * by field.
+ * holds the object and never the queue.  Results travel back over a pipe.
+ *
+ * One skip policy: these suites run in plane-on guests where the device,
+ * the preloaded modules (linux64, dtraceall, mac_test_hooks, ...) and the
+ * programs they need are present, and a skip there is not a pass.  A
+ * missing prerequisite fails.  The only skips are by architecture
+ * (require.arch) and "race not exercised" on a one-CPU machine, taken
+ * before any check (atf_tc_skip after a failed ATF_CHECK reports the case
+ * skipped and hides the failure).
+ *
+ * The oracle is a real temporary file holding the same bytes, whose
+ * identity the object presents (dq_ident_from_stat); the tests compare the
+ * two answers field by field.
  */
 
 #ifndef _DQ_TEST_H_
@@ -25,6 +34,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <atf-c.h>
 #include <libdq.h>
 
 #define	DQT_MAX_OBJECTS		8
@@ -330,6 +340,13 @@ bool	dqt_wait_wmesg(pid_t pid, const char *wmesg, int ms);
 typedef bool (*dqt_stats_pred)(const struct dq_stats *st, uintptr_t arg);
 bool	dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg,
 	    int ms);
+
+/*
+ * Copy a program installed beside the tests (srcdir: the foreign-ABI
+ * programs the Makefile builds) into the work directory as name, mode
+ * 0755.  A missing program is a failure.
+ */
+void	dqt_copy_helper(const atf_tc_t *tc, const char *prog, const char *name);
 
 /*
  * A private fdescfs instance at DQT_FDESC_DIR in the test's work directory

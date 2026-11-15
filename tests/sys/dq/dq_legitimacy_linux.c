@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * dq_legitimacy_test's Linux half: a freestanding amd64 Linux program,
- * built by the test with
+ * built at buildworld time (Makefile) with
  *   clang --target=x86_64-linux-gnu -fuse-ld=lld -nostdlib -static ...
  * It opens /dev/dq, finds a queue the test opened as descriptor 9, and
  * writes the raw result of each call (a descriptor, 0, or a negated Linux
@@ -13,14 +13,11 @@
  * read encoding.  The Linux ioctl entry looks at the low 16 bits only.
  */
 
+#include "dq_linux.h"
+
 #define	QUEUE_FD		9
 #define	NRES			11
 
-#define	LINUX_SYS_read		0
-#define	LINUX_SYS_write		1
-#define	LINUX_SYS_open		2
-#define	LINUX_SYS_ioctl		16
-#define	LINUX_SYS_exit_group	231
 #define	LINUX_O_RDWR		2
 #define	LINUX_FIONBIO		0x5421
 
@@ -29,19 +26,6 @@
 #define	J7_FREEBSD_READ		0x40086a07UL
 
 void	_start(void);
-
-static long
-linux_syscall(long n, long a, long b, long c, long d, long e, long f)
-{
-	register long r10 __asm__("r10") = d;
-	register long r8 __asm__("r8") = e;
-	register long r9 __asm__("r9") = f;
-	long ret;
-
-	__asm__ volatile("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b),
-	    "d"(c), "r"(r10), "r"(r8), "r"(r9) : "rcx", "r11", "memory");
-	return (ret);
-}
 
 static long
 lx_ioctl(long fd, unsigned long request, void *arg)

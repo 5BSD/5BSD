@@ -44,26 +44,6 @@
 
 #include "dq_test.h"
 
-/*
- * A pin does not skip: the plane and the queue device are there.  Without
- * this, dqt_open_queue() would turn a missing /dev/dq into a skip.
- */
-static void
-pin_require_plane(void)
-{
-	struct kinfo_proc kp;
-	size_t len;
-	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 1 };
-
-	len = sizeof(kp);
-	ATF_REQUIRE_EQ(0, sysctl(mib, nitems(mib), &kp, &len, NULL, 0));
-	ATF_REQUIRE_MSG(strcmp(kp.ki_comm, "capsule") == 0, "the capability "
-	    "plane is off (PID 1 is %s): this pin runs with it on",
-	    kp.ki_comm);
-	ATF_REQUIRE_MSG(access("/dev/dq", F_OK) == 0, "/dev/dq: %s",
-	    strerror(errno));
-}
-
 #define	NA	(-9999)		/* a step that was not reached */
 #define	ERRNO_OF(call)	((call) == -1 ? errno : 0)
 
@@ -222,7 +202,7 @@ ATF_TC_BODY(route_slot_inherited, tc)
 	char tag_a[] = "attached", tag_u[] = "unattached";
 	int pair[2];
 
-	pin_require_plane();
+	dqt_require_plane();
 	ATF_REQUIRE_MSG(chan_create(pair) == 0, "channel: %s",
 	    strerror(errno));
 	ATF_REQUIRE_EQ_MSG(0, cap_proc(MAC_CAP_PROCESS_SET, pair[0], NULL),
@@ -385,7 +365,7 @@ ATF_TC_HEAD(public_lookup, tc)
 ATF_TC_BODY(public_lookup, tc)
 {
 
-	pin_require_plane();
+	dqt_require_plane();
 	lookup_pair(false);
 }
 
@@ -404,7 +384,7 @@ ATF_TC_HEAD(cleared_lookup, tc)
 ATF_TC_BODY(cleared_lookup, tc)
 {
 
-	pin_require_plane();
+	dqt_require_plane();
 	lookup_pair(true);
 }
 

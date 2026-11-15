@@ -2300,9 +2300,6 @@ ATF_TC_BODY(inspect_vs_close, tc)
  * The Linux ABI (L8)
  */
 
-#define	LINUX_CC	"clang --target=x86_64-linux-gnu -fuse-ld=lld "	\
-	"-nostdlib -static -fno-stack-protector -fno-builtin -O2 -Wall "	\
-	"-Wextra -Werror -o dq_owner_linux %s/dq_owner_linux.c"
 #define	LX_NRES		10
 #define	LINUX_EPERM	1
 #define	LINUX_EAGAIN	11
@@ -2315,15 +2312,12 @@ run_owner_linux(const atf_tc_t *tc, long mode, long pid, long qfd, long plain,
 {
 	char *const argv[] = { __DECONST(char *, "dq_owner_linux"), NULL };
 	char *const envp[] = { NULL };
-	char cmd[PATH_MAX + 512];
 	long in[4] = { mode, pid, qfd, plain };
 	pid_t child;
 	int image, ip[2], op[2], status;
 
-	snprintf(cmd, sizeof(cmd), LINUX_CC,
-	    atf_tc_get_config_var(tc, "srcdir"));
-	/* Not a skip: without the compiler the row is not taken. */
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	/* Built with the tests (Makefile); missing, the row fails. */
+	dqt_copy_helper(tc, "dq_owner_linux", "dq_owner_linux");
 	image = open("dq_owner_linux", O_RDONLY);
 	ATF_REQUIRE(image != -1);
 	ATF_REQUIRE_EQ(0, pipe(ip));

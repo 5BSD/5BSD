@@ -310,8 +310,6 @@ ATF_TC_BODY(tree_oracle, tc)
 	pid_t pid;
 	char c;
 
-	if (access("/dev/dq", F_OK) != 0)
-		atf_tc_skip("no /dev/dq");
 	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
 	snprintf(bpath, sizeof(bpath), "%s/backing", cwd);
 	snprintf(prefix, sizeof(prefix), "%s/served", cwd);
@@ -321,8 +319,7 @@ ATF_TC_BODY(tree_oracle, tc)
 	ofd = make_tree("oracle", &ls1);
 	bfd = make_tree(bpath, &ls2);
 	memset(&s, 0, sizeof(s));
-	s.q = dq_open();
-	ATF_REQUIRE(s.q >= 0);
+	s.q = dqt_open_queue();
 	s.tree = dq_tree_create(s.q, bfd, prefix,
 	    DQ_TREE_F_SERVED | DQ_TREE_F_WRITE);
 	ATF_REQUIRE(s.tree != NULL);

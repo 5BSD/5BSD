@@ -176,8 +176,7 @@ srv_start(struct srv *s, uint32_t flags)
 	(void)symlink("a", "backing/l");
 	s->rootfd = open(s->backing, O_DIRECTORY | O_RDONLY);
 	ATF_REQUIRE(s->rootfd >= 0);
-	s->q = dq_open();
-	ATF_REQUIRE_MSG(s->q >= 0, "dq_open: %s", strerror(errno));
+	s->q = dqt_open_queue();
 	s->tree = dq_tree_create(s->q, s->rootfd, s->prefix, flags);
 	ATF_REQUIRE(s->tree != NULL);
 	ATF_REQUIRE(pthread_create(&s->thr, NULL, srv_main, s) == 0);
@@ -1355,8 +1354,6 @@ ATF_TC_BODY(opath_as_vnode, tc)
 	struct srv s;
 	int i, served[RES_MAX], vnode[RES_MAX];
 
-	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
-		atf_tc_skip("pre1c: the kernel has no served directories");
 	srv_start(&s, 0);
 	dqt_mount_fdesc(NULL);
 	opath_served = false;
@@ -1432,8 +1429,6 @@ ATF_TC_BODY(served_fexecve_aio_fsync, tc)
 	size_t len;
 	int r[RES_MAX], unsafe;
 
-	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
-		atf_tc_skip("pre1c: the kernel has no served directories");
 	len = sizeof(unsafe);
 	ATF_REQUIRE_EQ(0, sysctlbyname("vfs.aio.enable_unsafe", &unsafe, &len,
 	    NULL, 0));
@@ -1489,23 +1484,15 @@ ATF_TC(opath_linux);
 ATF_TC_HEAD(opath_linux, tc)
 {
 	atf_tc_set_md_var(tc, "require.arch", "amd64");
-	atf_tc_set_md_var(tc, "require.progs", "clang");
-	atf_tc_set_md_var(tc, "require.kmods", "linux64");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(opath_linux, tc)
 {
 	struct srv s;
-	char cmd[PATH_MAX + 256];
 	int r[RES_MAX];
 
-	if (atf_tc_get_config_var_as_bool_wd(tc, "pre1c", false))
-		atf_tc_skip("pre1c: the kernel has no served directories");
-	snprintf(cmd, sizeof(cmd), "clang --target=x86_64-linux-gnu "
-	    "-fuse-ld=lld -nostdlib -static -fno-stack-protector "
-	    "-fno-builtin -O2 -Wall -Wextra -Werror -o dq_opath_linux "
-	    "%s/dq_opath_linux.c", atf_tc_get_config_var(tc, "srcdir"));
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	/* Built with the tests (Makefile); missing, the row fails. */
+	dqt_copy_helper(tc, "dq_opath_linux", "dq_opath_linux");
 
 	srv_start(&s, 0);
 	opath_served = false;

@@ -1593,7 +1593,7 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 	(void)close(fd);
 	if (run_cmd("mdconfig -a -t vnode -f rt-ahead-swap 2>/dev/null", out,
 	    sizeof(out)) != 0 || strncmp(out, "md", 2) != 0)
-		atf_tc_skip("no md device");
+		atf_tc_fail("no md device");
 	fp = fopen(AH_MD_SAVED, "w");
 	if (fp != NULL) {
 		(void)fprintf(fp, "%s\n", out);
@@ -1670,7 +1670,7 @@ ATF_TC_BODY(unmount_refused, tc)
 
 	ATF_REQUIRE_EQ(0, mkdir("rt-umnt", 0755));
 	if (run_cmd("mount -t tmpfs tmpfs rt-umnt 2>&1", out, sizeof(out)) != 0)
-		atf_tc_skip("no tmpfs: %s", out);
+		atf_tc_fail("no tmpfs: %s", out);
 	dqt_init(&c);
 	(void)strlcpy(c.resolve_fail_match, "rt-umnt",
 	    sizeof(c.resolve_fail_match));

@@ -134,14 +134,11 @@ ts_start(struct ts *s, const char *dir, uint32_t flags)
 {
 
 	memset(s, 0, sizeof(*s));
-	if (access("/dev/dq", F_OK) != 0)
-		atf_tc_skip("no /dev/dq");
 	ATF_REQUIRE(realpath(dir, s->backing) != NULL);
 	s->bfd = open(s->backing, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	ATF_REQUIRE(s->bfd >= 0);
 	pthread_mutex_init(&s->mtx, NULL);
-	s->q = dq_open();
-	ATF_REQUIRE(s->q >= 0);
+	s->q = dqt_open_queue();
 	s->tree = dq_tree_create(s->q, s->bfd, s->backing,
 	    DQ_TREE_F_SERVED | flags);
 	ATF_REQUIRE_MSG(s->tree != NULL, "dq_tree_create: %s",

@@ -41,18 +41,16 @@ child_one_read(void *arg, void *result)
 	r->err = r->rv == -1 ? errno : 0;
 }
 
+/* The observe service is part of the plane: its absence is a failure. */
 static int
-connect_or_skip(void)
+observe_connect(void)
 {
 	int svc;
 
 	svc = dq_observe_connect();
-	if (svc == -1) {
-		if (errno == ENOENT)
-			atf_tc_skip("%s: %s", DQ_MAC_CAPABILITY_DEVICE,
-			    strerror(errno));
-		atf_tc_fail("dq_observe_connect: %s", strerror(errno));
-	}
+	if (svc == -1)
+		atf_tc_fail("dq_observe_connect (%s): %s",
+		    DQ_MAC_CAPABILITY_DEVICE, strerror(errno));
 	return (svc);
 }
 
@@ -99,7 +97,7 @@ ATF_TC_BODY(connect_as_root, tc)
 	int q, svc;
 
 	q = dqt_open_queue();
-	svc = connect_or_skip();
+	svc = observe_connect();
 	ATF_REQUIRE_EQ(0, dq_observe_list_queues(svc, 0, buf, nitems(buf),
 	    &count, &total));
 	ATF_CHECK(total >= 1);
@@ -138,7 +136,7 @@ ATF_TC_BODY(list_queues, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	svc = connect_or_skip();
+	svc = observe_connect();
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	(void)dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	obs = dq_mint_observer(c.q, 0);
@@ -222,7 +220,7 @@ ATF_TC_BODY(list_objects, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	svc = connect_or_skip();
+	svc = observe_connect();
 	o1 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	o2 = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o2->id));
@@ -312,7 +310,7 @@ ATF_TC_BODY(subscribe, tc)
 	oracle = dqt_make_oracle("oracle", data, sizeof(data), oracle_path,
 	    sizeof(oracle_path));
 	dqt_init(&c);
-	svc = connect_or_skip();
+	svc = observe_connect();
 	o = dqt_mint(&c, oracle, oracle_path, data, sizeof(data), NULL);
 	dqt_stats(&c, &st);
 

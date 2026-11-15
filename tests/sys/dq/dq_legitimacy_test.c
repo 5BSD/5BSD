@@ -1345,22 +1345,6 @@ ATF_TC_BODY(constrain_reserved_words, tc)
  * Other ABIs
  */
 
-#define	LINUX_CC	"clang --target=%s -fuse-ld=lld -nostdlib -static "	\
-	"-fno-stack-protector -fno-builtin -O2 -Wall -Wextra -Werror "	\
-	"-o %s %s/%s"
-
-static void
-build_foreign(const atf_tc_t *tc, const char *target, const char *out,
-    const char *src)
-{
-	char cmd[PATH_MAX + 512];
-
-	snprintf(cmd, sizeof(cmd), LINUX_CC, target, out,
-	    atf_tc_get_config_var(tc, "srcdir"), src);
-	/* Not a skip: without the compiler the pin is not taken. */
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
-}
-
 #define	LX_NRES		11
 
 /*
@@ -1432,9 +1416,8 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 	int i, q;
 
 	LG_ROOT();
-	build_foreign(tc, "x86_64-linux-gnu", "dq_legitimacy_linux",
-	    "dq_legitimacy_linux.c");
-	ATF_REQUIRE_EQ(0, chmod("dq_legitimacy_linux", 0755));
+	/* Built with the tests (Makefile); missing, the pin fails. */
+	dqt_copy_helper(tc, "dq_legitimacy_linux", "dq_legitimacy_linux");
 
 	q = raw_open();
 	memset(lr, 0x55, sizeof(lr));
@@ -1445,8 +1428,14 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 		    lr[i]);
 	ATF_CHECK_EQ_MSG(0, lr[4], "FIONBIO: %ld", lr[4]);
 	ATF_CHECK_EQ_MSG(-LINUX_EAGAIN, lr[5], "read: %ld", lr[5]);
+	/*
+	 * That the child had no queue to hand on is checked in run_linux
+	 * before the exec (dup2 of the parent's number is EBADF); LG_QFD is
+	 * then closed, so these rows only pin the Linux ABI's EBADF on a
+	 * closed descriptor for the three calls.
+	 */
 	for (i = 6; i <= 8; i++)
-		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "inherited queue, "
+		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "closed descriptor, "
 		    "call %d: %ld", i, lr[i]);
 	ATF_CHECK_MSG(lr[9] >= 0, "open /dev/null: %ld", lr[9]);
 	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[10], "/dev/null ioctl: %ld",
@@ -1462,7 +1451,7 @@ ATF_TC_BODY(linux_open_ioctl, tc)
 		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "call %d: %ld", i,
 		    lr[i]);
 	for (i = 6; i <= 8; i++)
-		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "inherited queue, "
+		ATF_CHECK_EQ_MSG(-LINUX_EBADF, lr[i], "closed descriptor, "
 		    "call %d: %ld", i, lr[i]);
 	ATF_CHECK_EQ_MSG(-LINUX_EINVAL, lr[10], "/dev/null ioctl: %ld",
 	    lr[10]);
@@ -1669,10 +1658,8 @@ ATF_TC_BODY(ilp32_no_abi, tc)
 	ATF_CHECK_MSG(kldfind("linux64.ko") != -1, "linux64.ko: %s",
 	    strerror(errno));
 
-	build_foreign(tc, "i386-unknown-freebsd", "ilp32_freebsd",
-	    "dq_legitimacy_ilp32.c");
-	build_foreign(tc, "i386-linux-gnu", "ilp32_linux",
-	    "dq_legitimacy_ilp32.c");
+	dqt_copy_helper(tc, "dq_legitimacy_ilp32_freebsd", "ilp32_freebsd");
+	dqt_copy_helper(tc, "dq_legitimacy_ilp32_linux", "ilp32_linux");
 	ATF_CHECK_EQ(100, exec_errno("./ilp32_freebsd"));
 	ATF_CHECK_EQ(100, exec_errno("./ilp32_linux"));
 }

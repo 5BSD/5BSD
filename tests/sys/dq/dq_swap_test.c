@@ -1947,20 +1947,14 @@ ATF_TC(swap_linux);
 ATF_TC_HEAD(swap_linux, tc)
 {
 	atf_tc_set_md_var(tc, "require.arch", "amd64");
-	atf_tc_set_md_var(tc, "require.progs", "clang");
-	atf_tc_set_md_var(tc, "require.kmods", "linux64");
 }
 ATF_TC_BODY(swap_linux, tc)
 {
 	struct sw x;
 	struct sw_res res;
-	char cmd[PATH_MAX + 256];
 
-	snprintf(cmd, sizeof(cmd), "clang --target=x86_64-linux-gnu "
-	    "-fuse-ld=lld -nostdlib -static -fno-stack-protector "
-	    "-fno-builtin -O2 -Wall -Wextra -Werror -o dq_swap_linux "
-	    "%s/dq_swap_linux.c", atf_tc_get_config_var(tc, "srcdir"));
-	ATF_REQUIRE_EQ_MSG(0, system(cmd), "%s", cmd);
+	/* Built with the tests (Makefile); missing, the row fails. */
+	dqt_copy_helper(tc, "dq_swap_linux", "dq_swap_linux");
 	sw_write_file("orig", "ORIGINAL", 0644);
 	sw_write_file("subst", "SUBSTITUTE", 0644);
 	sw_init(&x, "orig", a_regular);

@@ -1262,6 +1262,27 @@ dqt_wait_stats(struct dqt_ctl *c, dqt_stats_pred pred, uintptr_t arg, int ms)
 	}
 }
 
+void
+dqt_copy_helper(const atf_tc_t *tc, const char *prog, const char *name)
+{
+	char buf[8192], path[PATH_MAX];
+	ssize_t n;
+	int in, out;
+
+	ATF_REQUIRE((size_t)snprintf(path, sizeof(path), "%s/%s",
+	    atf_tc_get_config_var(tc, "srcdir"), prog) < sizeof(path));
+	in = open(path, O_RDONLY);
+	ATF_REQUIRE_MSG(in != -1, "%s: %s", path, strerror(errno));
+	out = open(name, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	ATF_REQUIRE_MSG(out != -1, "%s: %s", name, strerror(errno));
+	while ((n = read(in, buf, sizeof(buf))) > 0)
+		ATF_REQUIRE_EQ(n, write(out, buf, (size_t)n));
+	ATF_REQUIRE_MSG(n == 0, "%s: %s", path, strerror(errno));
+	ATF_REQUIRE_EQ(0, close(in));
+	ATF_REQUIRE_EQ(0, fchmod(out, 0755));
+	ATF_REQUIRE_EQ(0, close(out));
+}
+
 /* As tests/sys/file/fsetattr_test.c mount_fdesc(), plus one option. */
 void
 dqt_mount_fdesc(const char *option)
