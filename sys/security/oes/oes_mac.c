@@ -86,15 +86,19 @@ struct oes_scope_meta {
 	uint64_t	esm_markers[OES_SCOPE_MARKERS_MAX];
 };
 
+/*
+ * A credential label is shared by every copy of a credential (crcopy does
+ * not change the identity) and is never modified once shared: exec and a
+ * scope change give the new credential a label of its own.  The fields are
+ * immutable after the label is published.
+ */
 struct oes_cred_label {
+	u_int		ecl_refs;	/* Credentials sharing this label */
 	uint64_t	ecl_exec_id;	/* Execution ID */
 	struct oes_exec_meta *ecl_exec_meta; /* Shared across credential copies */
 	struct oes_scope_meta *ecl_scope_meta; /* Immutable inherited scopes */
 };
 
-struct oes_pipe_label {
-	uint64_t	epl_id;		/* Opaque identifier; never a kernel address */
-};
 
 static int oes_slot;		/* MAC label slot for our data */
 static bool oes_mac_registered;	/* Track if MAC policy is registered */
@@ -135,8 +139,6 @@ static u_int oes_rename_cache_populated;
 
 #define SLOT(l)	((struct oes_cred_label *)mac_label_get((l), oes_slot))
 #define SLOT_SET(l, v) mac_label_set((l), oes_slot, (uintptr_t)(v))
-#define PIPE_SLOT(l) \
-	((struct oes_pipe_label *)mac_label_get((l), oes_slot))
 
 /*
  * Idle gating.
@@ -625,41 +627,64 @@ oes_exec_meta_rele(struct oes_exec_meta *meta)
 		free(meta, M_OES);
 }
 
+/*
+ * A pipe's id is an opaque random 64-bit value, never a kernel address,
+ * and 0 means none.  It is drawn the first time an event needs it, so a
+ * pipe nobody observes costs nothing; it lives in the label slot
+ * itself.  Every pipe hook and a pipe relabel run with the pipe mutex held
+ * (asserted by the framework), so the first draw and every later read of
+ * the slot are serialized: once observed, the id does not change.
+ */
+static uint64_t
+oes_pipe_new_id(void)
+{
+	uint64_t id;
+
+	do {
+		arc4random_buf(&id, sizeof(id));
+	} while (id == 0);
+	return (id);
+}
+
+/* oes.h requires a 64-bit kernel: the slot holds the id. */
+_Static_assert(sizeof(intptr_t) >= sizeof(uint64_t),
+    "a pipe id must fit in a label slot");
+
 static void
 oes_mac_pipe_init_label(struct label *label)
 {
-	struct oes_pipe_label *epl;
 
-	epl = malloc(sizeof(*epl), M_OES, M_NOWAIT | M_ZERO);
-	if (epl != NULL) {
-		do {
-			arc4random_buf(&epl->epl_id, sizeof(epl->epl_id));
-		} while (epl->epl_id == 0);
-	}
-	SLOT_SET(label, epl);
+	SLOT_SET(label, 0);
 }
 
 static void
 oes_mac_pipe_destroy_label(struct label *label)
 {
-	struct oes_pipe_label *epl;
 
-	epl = PIPE_SLOT(label);
-	if (epl != NULL) {
-		free(epl, M_OES);
-		SLOT_SET(label, NULL);
-	}
+	SLOT_SET(label, 0);
 }
 
 static void
 oes_mac_pipe_copy_label(struct label *src, struct label *dst)
 {
-	struct oes_pipe_label *src_epl, *dst_epl;
 
-	src_epl = PIPE_SLOT(src);
-	dst_epl = PIPE_SLOT(dst);
-	if (src_epl != NULL && dst_epl != NULL)
-		dst_epl->epl_id = src_epl->epl_id;
+	SLOT_SET(dst, mac_label_get(src, oes_slot));
+}
+
+static uint64_t
+oes_pipe_id(struct pipepair *pp, struct label *pplabel)
+{
+	uint64_t id;
+
+	if (pplabel == NULL)
+		return (0);
+	mtx_assert(&pp->pp_mtx, MA_OWNED);
+	id = (uint64_t)mac_label_get(pplabel, oes_slot);
+	if (id == 0) {
+		id = oes_pipe_new_id();
+		SLOT_SET(pplabel, id);
+	}
+	return (id);
 }
 
 uint64_t
@@ -5462,14 +5487,12 @@ oes_mac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info;
-	struct oes_pipe_label *epl;
 
 	OES_GATE(OES_H_PIPE_CHECK_READ);
 	info = OES_VNODE_INFO_INIT(cred);
-	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_READ, &info);
@@ -5484,14 +5507,12 @@ oes_mac_pipe_check_write(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info;
-	struct oes_pipe_label *epl;
 
 	OES_GATE(OES_H_PIPE_CHECK_WRITE);
 	info = OES_VNODE_INFO_INIT(cred);
-	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_WRITE, &info);
@@ -5506,14 +5527,12 @@ oes_mac_pipe_check_stat(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info;
-	struct oes_pipe_label *epl;
 
 	OES_GATE(OES_H_PIPE_CHECK_STAT);
 	info = OES_VNODE_INFO_INIT(cred);
-	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_STAT, &info);
@@ -5528,14 +5547,12 @@ oes_mac_pipe_check_poll(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info;
-	struct oes_pipe_label *epl;
 
 	OES_GATE(OES_H_PIPE_CHECK_POLL);
 	info = OES_VNODE_INFO_INIT(cred);
-	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_POLL, &info);
@@ -5550,16 +5567,14 @@ oes_mac_pipe_check_ioctl(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel, unsigned long cmd, void *data)
 {
 	struct oes_vnode_event_info info;
-	struct oes_pipe_label *epl;
 
 	OES_GATE(OES_H_PIPE_CHECK_IOCTL);
 	info = OES_VNODE_INFO_INIT(cred);
-	epl = pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	(void)data;
 
 	info.pipepair = pp;
-	info.pipe_id = epl != NULL ? epl->epl_id : 0;
+	info.pipe_id = oes_pipe_id(pp, pplabel);
 	info.ioctl_cmd = cmd;
 	info.nosleep = true;
 
