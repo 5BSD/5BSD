@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['properties.kshlib', 'zfs_create_011_pos.ksh', 'zfs_create_010_neg.ksh', 'setup.ksh', 'zfs_create_009_neg.ksh', 'zfs_create_004_pos.ksh', 'zfs_create_common.kshlib', 'zfs_create_008_neg.ksh', 'zfs_create_005_pos.ksh', 'zfs_create_001_pos.ksh', 'zfs_create_007_pos.ksh', 'zfs_create_003_pos.ksh', 'zfs_create_012_pos.ksh', 'cleanup.ksh', 'zfs_create_013_pos.ksh', 'zfs_create.cfg', 'zfs_create_006_pos.ksh', 'zfs_create_002_pos.ksh'],
+    tests = {'zfs_create_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

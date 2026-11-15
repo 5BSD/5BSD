@@ -7965,6 +7965,12 @@ This includes the source-owned top-level tests installation candidates;
 that hierarchy remains incomplete and its production aggregate is guarded.
 Integration tests that change kernel or authorization state are built and
 packaged here, but must execute in an isolated qualification VM.
+The
+.Cm //tools/build/bazel/config:zfs_tests
+boolean setting selects the maintained ZFS test hierarchy, corresponding to
+MK_ZFS_TESTS. It defaults to enabled and is effective only with tests and the
+required ZFS components enabled. Its shell tests retain the ksh93 prerequisite;
+building the payload does not execute destructive pool or disk operations.
 It uses the same family and feature selections as world_contributions.
 The normal format-5 targets list selects it; no additional frontend option is
 required. It does not provide finalized manual databases, fresh account state,

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zfs_destroy_001_pos.ksh', 'zfs_destroy.cfg', 'cleanup.ksh', 'zfs_destroy_004_pos.ksh', 'zfs_destroy_005_neg.ksh', 'zfs_destroy_common.kshlib', 'zfs_destroy_002_pos.ksh', 'zfs_destroy_007_neg.ksh', 'zfs_destroy_008_neg.ksh', 'setup.ksh', 'zfs_destroy_003_pos.ksh', 'zfs_destroy_006_neg.ksh'],
+    tests = {'zfs_destroy_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

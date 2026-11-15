@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['online_offline_001_pos.ksh', 'online_offline.cfg', 'cleanup.ksh', 'online_offline_002_neg.ksh'],
+    tests = {'online_offline_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

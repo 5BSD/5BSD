@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['history_005_neg.ksh', 'history_004_pos.ksh', 'history_008_pos.ksh', 'i386.orig_history.txt', 'sparc.orig_history.txt', 'history_common.kshlib', 'history.cfg', 'sparc.migratedpool.DAT.Z', 'history_010_pos.ksh', 'setup.ksh', 'zfs-pool-v4.dat.Z', 'history_009_pos.ksh', 'history_001_pos.ksh', 'history_006_neg.ksh', 'i386.migratedpool.DAT.Z', 'history_003_pos.ksh', 'history_007_pos.ksh', 'history_002_pos.ksh', 'cleanup.ksh'],
+    tests = {'history_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

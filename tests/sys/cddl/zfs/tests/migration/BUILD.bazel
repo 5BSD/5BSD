@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['migration_011_pos.ksh', 'migration_008_pos.ksh', 'migration_004_pos.ksh', 'migration.cfg', 'setup.ksh', 'cleanup.ksh', 'migration_005_pos.ksh', 'migration_001_pos.ksh', 'migration_009_pos.ksh', 'migration_010_pos.ksh', 'migration_007_pos.ksh', 'migration_003_pos.ksh', 'migration_012_pos.ksh', 'migration.kshlib', 'migration_006_pos.ksh', 'migration_002_pos.ksh'],
+    tests = {'migration_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

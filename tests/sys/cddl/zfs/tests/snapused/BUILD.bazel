@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['cleanup.ksh', 'snapused_005_pos.ksh', 'snapused_001_pos.ksh', 'setup.ksh', 'snapused_004_pos.ksh', 'snapused.kshlib', 'snapused.cfg', 'snapused_002_pos.ksh', 'snapused_003_pos.ksh'],
+    tests = {'snapused_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

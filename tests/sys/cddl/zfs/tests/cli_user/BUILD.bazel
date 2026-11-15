@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['setup.ksh', 'cleanup.ksh', 'cli.cfg', 'cli_user.kshlib'],
+    subdirectories = ['zpool_iostat', 'zpool_list', 'zfs_list', 'misc'],
+    child_archives = ['//tests/sys/cddl/zfs/tests/cli_user/zpool_iostat:installation_archives', '//tests/sys/cddl/zfs/tests/cli_user/zpool_list:installation_archives', '//tests/sys/cddl/zfs/tests/cli_user/zfs_list:installation_archives', '//tests/sys/cddl/zfs/tests/cli_user/misc:installation_archives'],
+)

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tests/sys/cddl/zfs:suite.bzl", "zfs_test_suite")
+
+zfs_test_suite(
+    files = ['zfs_rollback_003_neg.ksh', 'zfs_rollback_002_pos.ksh', 'zfs_rollback_common.kshlib', 'cleanup.ksh', 'zfs_rollback_004_neg.ksh', 'zfs_rollback_001_pos.ksh', 'setup.ksh', 'zfs_rollback.cfg'],
+    tests = {'zfs_rollback_test': {'required_user': 'root', 'is_exclusive': True, 'required_programs': 'ksh93'}},
+)

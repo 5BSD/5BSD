@@ -221,6 +221,41 @@ open. The existing format-5 labels/test selectors and maintained world backend
 carry these additions; the frontend C interface, signing/publication policy and
 manual behavior require no new option.
 
+The complete selected CDDL/ZFS hierarchy now passes the world audit endpoint
+(native R9): 113 source owners, 104 ATF/ksh93 wrappers, 27 utility scripts,
+17 compiled helpers, 1,144 data/configuration payloads and 112 Kyuafiles. The
+family macro consumes explicit source-owned BUILD lists; it neither walks the
+filesystem nor queries Make during Bazel actions. Native AWK/sed actions generate
+commands.cfg/default.cfg, and script installation preserves Make's extension
+removal and ksh93 interpreter/prerequisite metadata. Missing file_common.h inputs
+in the first run are fixed with a declared shared header dependency, not broader
+source access or warning suppression.
+
+Independent review checks all 1,421 regular file records, 126 explicit directory
+claims, original script/data/generated configuration bytes and all Kyuafile
+registrations. Every helper passes the maintained Make ELF contract comparator
+(including dependency ordering/imports/exports) and split-debug verifier. Real
+configured queries match Make with defaults, WITHOUT_ZFS_TESTS and WITHOUT_ZFS;
+normal build-bsd construction of both disabled variants proves their parent
+Kyuafiles contain no dangling child references or captured child outputs. The
+new zfs_tests setting defaults on, follows required tests/ZFS selections, and is
+documented in the normal frontend manual; no new C option or signing/publication
+policy is needed. The full R9 capture verifies 4,644 output records and all 12
+selected native test targets. Destructive ZFS cases are not executed on the host.
+
+Evidence under /usr/obj/usr/src: `bazel-zfs-test-payload-inventory-r1-20261115`,
+`bazel-zfs-test-installation-review-r1-20261115`,
+`bazel-zfs-test-selection-review-r1-20261115`,
+`bazel-zfs-test-disabled-variants-r1-20261115`,
+`bazel-installed-tests-world-native-amd64-r9-20261115` and its capture review.
+These are selected hierarchy build/install contracts, not current full-world
+installation, instruction/DWARF equivalence, destructive runtime or ARM64
+qualification. In the existing 239-owner Make review queue, 97 owners still lack
+a local BUILD file; presence elsewhere includes partial suites and does not
+establish completion. Continue those related groups, fixture contract inputs,
+matched whole-system references and actual current image/runtime qualification.
+All six gates and the tests-on production guard remain open; Make stays default.
+
 The concurrent OpenES merge a7d37e2855a changed kernel and test sources during
 R1. R2 incorporated its world dependencies; five archive hashes changed for real
 library/header/manual payload changes. Neither run is a controlled incremental

@@ -27,7 +27,7 @@ _INSTALLATION_CANDIDATES = [
     "//tests/sys/kern:descriptor_install_archive",
     "//tests/sys/netinet/libalias:install_archive",
     "//tests/sys/security:installation_archives",
-]
+] + select({"//tools/build/bazel/config:cddl_enabled": ["//tests/sys/cddl:installation_archives"], "//conditions:default": []})
 bsd_install_archive_set(name = "installation_candidates", archives = _INSTALLATION_CANDIDATES,
     visibility = ["//visibility:public"])
 # Incomplete OS tests must never silently become a production test installation.
