@@ -104,4 +104,7 @@ FIDL_LIBRARY.devicecmp_next=	bsd.device.v1
 FIDL_FLAGS.devicecmp_next=	--available bsd:2
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

@@ -42,4 +42,7 @@ FIDL_SCHEMAS.powercmp=	lib/libpowercmp/powercmp.fidl
 FIDL_LIBRARY.powercmp=	bsd.power.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

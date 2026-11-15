@@ -39,4 +39,7 @@ FIDL_SCHEMAS.sysctlcmp=	lib/libsysctlcmp/sysctlcmp.fidl
 FIDL_LIBRARY.sysctlcmp=	bsd.sysctl.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

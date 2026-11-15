@@ -99,4 +99,7 @@ FIDL_LIBRARY.vmcmp_next=	bsd.vm.v1
 FIDL_FLAGS.vmcmp_next=	--available bsd:2
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

@@ -34,6 +34,7 @@
 #include <fidl/bsd/sync_c.h>
 #include <libservice.h>
 
+#include "freebsd_test_suite/capability_tier.h"
 #include "bsdvm_proto.h"
 #include "bsdvm_test.h"
 
@@ -81,8 +82,7 @@ require_capability_device(void)
 	 */
 	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
-		    "%s", strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 }
 

@@ -37,4 +37,7 @@ FIDL_SCHEMAS.devicecmp=	lib/libfidl/tests/zx.fidl \
 FIDL_LIBRARY.devicecmp=	bsd.device.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+# freebsd_test_suite/capability_tier.h: skips that name their VM tier.
+CFLAGS+=	-I${SRCTOP}/tests
+
 .include <bsd.test.mk>

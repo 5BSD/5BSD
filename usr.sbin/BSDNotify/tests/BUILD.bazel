@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 [cc_binary(name = name + "_test", srcs = [name + "_test.c", "//usr.sbin/BSDNotify:" + name + ".c"],
-    deps = ["//usr.sbin/BSDNotify:test_headers", "//lib/libnotify:notify"] +
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDNotify:test_headers", "//lib/libnotify:notify"] +
         (["//lib/libucl:ucl"] if name == "policy" else ["//lib/libthr:thr", "//lib/libservice:service"]) +
         ["//lib/atf/libatf-c:atf_c"],
     linkopts = ["-static"], linkstatic = True)
@@ -18,7 +18,7 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 
 [cc_binary(name = name + "_test", srcs = [name + "_test.c"] +
         ["//usr.sbin/BSDNotify:" + source + ".c" for source in ["broker", "policy", "transport"]],
-    deps = ["//usr.sbin/BSDNotify:test_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDNotify:test_headers", "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel",
         "//lib/libfidl:fidl"] + (["//lib/liblogcmp:logcmp"] if name != "dispatcher" else []) +
         ["//lib/libnotify:notify", "//lib/libthr:thr", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
     copts = ["-Wno-unused-function"], linkopts = ["-static"], linkstatic = True)
@@ -52,18 +52,18 @@ filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = 
 cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
 # Make links all three generated objects directly into this standalone peer.
 cc_library(name = "next_codec", srcs = [":next_sources"],
-    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    deps = ["//tests:capability_tier", ":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
     copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
 # The newer peer must never inherit the production bsd:1 generated headers.
 cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
-    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    deps = ["//tests:capability_tier", ":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
     linkopts = ["-static"], linkstatic = True)
 
 
 cc_binary(name = "latency_bench",
     srcs = ["latency_bench.c", "latency_bench_server.c", "//lib/libnotify:notify_legacy.c"] +
         ["//usr.sbin/BSDNotify:" + source + ".c" for source in ["broker", "policy", "transport"]],
-    deps = ["//usr.sbin/BSDNotify:test_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/libnotify:test_headers",
+    deps = ["//tests:capability_tier", "//usr.sbin/BSDNotify:test_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/libnotify:test_headers",
         "//lib/libauditcmp:auditcmp", "//lib/libchannel:channel", "//lib/libfidl:fidl", "//lib/liblogcmp:logcmp",
         "//lib/libnotify:notify", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/libthr:thr"],
     dynamic_deps = ["//lib/libauditcmp:auditcmp_shared", "//lib/libchannel:channel_shared", "//lib/libfidl:fidl_shared",

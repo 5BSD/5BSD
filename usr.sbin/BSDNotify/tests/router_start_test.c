@@ -22,6 +22,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "freebsd_test_suite/capability_tier.h"
+
 int bsdnotify_main(void);
 #define main bsdnotify_main
 #define auditcmp_client_open mock_auditcmp_client_open
@@ -63,8 +65,7 @@ require_plane(void)
 	int fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 
 	if (fd < 0)
-		atf_tc_skip("capability plane unavailable: %s",
-		    strerror(errno));
+		capability_plane_skip(errno);
 	close(fd);
 }
 

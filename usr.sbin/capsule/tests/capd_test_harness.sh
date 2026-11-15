@@ -78,8 +78,8 @@ capd_require_device()
 	# kern.mac_capability_isolation.enforce=0, and the skip should name the
 	# real cause.
 	if [ "$(ps -o comm= -p 1 2>/dev/null)" = "capsule" ]; then
-		atf_skip "mac_capability device is claimed by the live plane" \
-		    "(test-local stack; run plane-off)"
+		atf_skip "DEFERRED_PLANEOFF_TIER: mac_capability device is" \
+		    "claimed by the live plane (test-local stack; run plane-off)"
 	fi
 	if [ ! -c /dev/mac_capability ]; then
 		atf_skip "mac_capability device not available"

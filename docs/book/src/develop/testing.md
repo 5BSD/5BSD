@@ -270,7 +270,10 @@ it with those suites (for example `usr.sbin/switchboard usr.sbin/BSDLog
 usr.sbin/BSDNotify sys/dq/dq_bootstrap_test`).  `tests/sys/mac_capability`
 drives the device itself and is not part of it.  A case of a deployed-tier
 suite that needs the device skips with `DEFERRED_DEVICE_TIER`, counted as
-`DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.
+`DEFERRED_TO_DEVICE_TIER=N`: it runs in the plane-on test tier.  Cases that
+start a test-local Capsule and switchboard skip with any plane on as
+`DEFERRED_PLANEOFF_TIER` (`DEFERRED_TO_PLANEOFF_TIER=N`): the deployed suites
+need a `PLANE_OFF=1` run as well.
 The runner's own checks (the tier selection and gate above, the stage root
 metadata preflight, the extra-script status) are shell scripts under
 `tools/build/fuchsia/tests/`; `make -C tools/build/fuchsia check-runner`
