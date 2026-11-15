@@ -28,7 +28,8 @@ def _world_archives(candidates = False):
         "//include:installation_archives", "//usr.bin:production_installation_archives",
         "//usr.sbin:" + variant, "//share:production_installation_archives",
         "//etc:pre_database_installation_archives", ":sys_world_installation_archives",
-    ] + select({"//tools/build/bazel/config:rescue_enabled": ["//rescue:production_installation_archives"], "//conditions:default": []}) +
+    ] + select({"//tools/build/bazel/config:tests_enabled": ["//tests:" + variant], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:rescue_enabled": ["//rescue:production_installation_archives"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:boot_enabled": ["//stand:production_installation_archives"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:cddl_enabled": ["//cddl:" + variant], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:crypt_enabled": ["//secure:" + variant], "//conditions:default": []}) +

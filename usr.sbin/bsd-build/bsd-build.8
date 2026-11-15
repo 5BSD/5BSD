@@ -7961,6 +7961,10 @@ The explicit
 .Cm //:world_installation_candidates
 qualification target composes the selected world installation contributions,
 including currently declared installed tests when the tests setting is enabled.
+This includes the source-owned top-level tests installation candidates;
+that hierarchy remains incomplete and its production aggregate is guarded.
+Integration tests that change kernel or authorization state are built and
+packaged here, but must execute in an isolated qualification VM.
 It uses the same family and feature selections as world_contributions.
 The normal format-5 targets list selects it; no additional frontend option is
 required. It does not provide finalized manual databases, fresh account state,

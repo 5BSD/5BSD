@@ -108,16 +108,69 @@ world/package acceptance. See MODULE-DEBUG-QUALIFICATION.md and
 `bazel-packaged-debug-pair-audit-r4-20261115` under /usr/obj/usr/src. Failed
 diagnostic attempts remain retained; temporary extracted payloads are removed.
 
-### Tests-enabled complete contribution audit in progress
+### Tests-enabled contribution audit and OS test installation gap
 
-The selected AMD64 tests-enabled installation graph now passes configured
-analysis through `//:world_installation_candidates`; its native aggregate build
-is running. This qualification target shares the production family's source-owned
-archive lists and feature selections. It exposes contributions for comparison,
-not finalized construction, pkgbase acceptance or installed-test execution.
-Production guards remain in place. Three selected build-tool test targets pass;
-they do not qualify the installed OS suite. Evidence:
-`bazel-installed-tests-world-native-amd64-r1-20261115` (not yet terminal).
+The previously selected installed-test contribution graph completes native R1
+and final-graph R2 through `//:world_installation_candidates`. R2 captures 4,230
+logical output records (3,633 unique payloads); the capture review verifies them
+and the three build-tool test results (38 nested Python cases plus the hardlink
+target). Configured boundary checks prove the audit root remains available with
+tests on while production guards reject that incomplete profile; with tests off,
+both roots expose identical archive paths. These are contribution/build-tool
+checks, not complete installed-test, finalized-world or pkgbase acceptance.
+Evidence: `bazel-installed-tests-world-native-amd64-r2-20261115`,
+`bazel-installed-tests-world-capture-review-r2-20261115` and
+`bazel-installed-tests-aggregate-boundaries-r1-20261115` under /usr/obj/usr/src.
+
+The whole-endpoint audit found that this graph omitted the top-level `tests/`
+family entirely. A public Bazel loading query joined with the existing completed
+Make inventory finds 239 selected test source owners, only ten with any native
+rules and three installation archives before the new security suite work. Rule
+presence includes partial/non-installed harnesses and is not complete conversion.
+Evidence: `bazel-installed-test-loading-inventory-r1-20261115/review.json`.
+Connect those source-owned archives through the normal world audit root, convert
+missing suites in related groups and compare a matched-profile full Make test
+installation. Keep production guards; never substitute a small root Kyuafile
+that pretends unconverted directories do not exist.
+
+The first connected security-subtree batch now completes native aggregate R4
+through the normal build-bsd format-5 path. All 58 programs are declared: 51 plain
+OES C programs, its ATF C program and ATF shell program, plus four MAC ABAC ATF
+C programs and its ATF shell program. Included example/logger code and the
+reader implementation are explicit dependencies; no source-tree visibility or
+Make action fallback was introduced. The parent security Kyuafile includes both
+complete children; incomplete tests/sys and tests roots do not manufacture a
+complete registration.
+
+The independent review matches all three security Kyuafiles to current original
+Make registrations, checks 117 installed file records and explicit package-owned
+directory claims, and verifies all 56 compiled binary/debug pairs. It does not
+execute integration tests or prove Make/native instruction or DWARF equivalence.
+The final aggregate capture verifies all 4,248 output records and the same three
+build-tool test targets. Real configured boundary checks retain the tests-on
+production rejection and exactly equal 1,284 tests-off archive paths. R3's missing
+included logger source and two reviewer diagnostics remain retained; no input or
+metadata check was waived. Evidence under /usr/obj/usr/src:
+`bazel-installed-tests-world-native-amd64-r4-20261115`,
+`bazel-installed-tests-world-capture-review-r4-20261115`,
+`bazel-security-test-installation-review-r3-20261115` and
+`bazel-installed-tests-aggregate-boundaries-r2-20261115`.
+
+Frontend review: the maintained world backend selects these archives using the
+existing tests setting and format-5 labels; no new C option is needed. The manual
+now states top-level test coverage remains incomplete and kernel/policy-changing
+tests require an isolated VM. Signing/publication helpers are unchanged because
+this batch adds native test payloads, not trust policy or publication semantics.
+The rest of the 239-owner review queue, a matched full Make installation,
+current kernel/modules/image, actual security-suite execution and the six gates
+remain open. Continue related test groups through the complete audit endpoint.
+
+The concurrent OpenES merge a7d37e2855a changed kernel and test sources during
+R1. R2 incorporated its world dependencies; five archive hashes changed for real
+library/header/manual payload changes. Neither run is a controlled incremental
+benchmark or a reproducible snapshot of unchanged source. Refresh current-source
+kernel/modules/image and VM acceptance; the older VM proof remains evidence for
+its recorded snapshot only.
 
 The consolidated AMD64 Make metadata query completes all 2,135 configured
 directories without query failures. The maintained native-presence survey binds

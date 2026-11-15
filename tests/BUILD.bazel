@@ -5,3 +5,19 @@ exports_files(["Kyuafile"], visibility = ["//lib/atf/tests:__pkg__", "//lib/test
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "suite_macros", hdrs = ["freebsd_test_suite/macros.h"], includes = ["."], visibility = ["//lib/libc/tests/nss:__pkg__", "//lib/libcasper/services/cap_fileargs/tests:__pkg__", "//tests/sys/kern:__pkg__"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Audit contributions only. No root Kyuafile claims that these partial suites
+# constitute the complete /usr/tests hierarchy.
+_INSTALLATION_CANDIDATES = [
+    "//tests/sys/common:install_archive",
+    "//tests/sys/kern:descriptor_install_archive",
+    "//tests/sys/netinet/libalias:install_archive",
+    "//tests/sys/security:installation_archives",
+]
+bsd_install_archive_set(name = "installation_candidates", archives = _INSTALLATION_CANDIDATES,
+    visibility = ["//visibility:public"])
+# Incomplete OS tests must never silently become a production test installation.
+bsd_install_archive_set(name = "production_installation_archives", archives = _INSTALLATION_CANDIDATES,
+    target_compatible_with = ["@platforms//:incompatible"],
+    visibility = ["//visibility:public"])

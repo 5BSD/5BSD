@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_test_installation.bzl", "bsd_test_install_archive")
+
+# This parent is complete; higher tests/sys and tests parents remain partial.
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = [], interfaces = {},
+    subdirectories = ["oes", "mac_abac"])
+bsd_install_file(name = "kyuafile_install", src = ":kyuafile", destination = "/usr/tests/sys/security/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":kyuafile_install"])
+bsd_test_install_archive(name = "parent_install_archive", directory = "/usr/tests/sys/security",
+    manifests = [":install_manifest"], visibility = ["//tests/sys/security:__pkg__"])
+bsd_install_archive_set(name = "installation_archives",
+    archives = [":parent_install_archive", "//tests/sys/security/oes:install_archive", "//tests/sys/security/mac_abac:install_archive"],
+    visibility = ["//tests:__pkg__"])
