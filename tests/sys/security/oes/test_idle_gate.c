@@ -532,7 +532,8 @@ g15_passive(void)
 	gate_expect("G-15", open_hook);
 	(void)idle_worker_send(&w, IW_OPEN);
 	ASSERT_MSG(idle_worker_result(&w, 5000) == 0, "worker open");
-	ASSERT_MSG(idle_wait_event(fd, w.iw_pid, ev, work_ino, 5000, NULL) ==
+	/* A PASSIVE client receives the AUTH event as its NOTIFY counterpart. */
+	ASSERT_MSG(idle_wait_event(fd, w.iw_pid, OES_EVENT_NOTIFY_OPEN, work_ino, 5000, NULL) ==
 	    0, "passive open record not delivered");
 	if (fd >= 0)
 		(void)close(fd);

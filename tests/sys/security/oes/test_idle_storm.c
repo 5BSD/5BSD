@@ -106,6 +106,44 @@ static const oes_event_type_t storm_auth[] = {
 	OES_EVENT_AUTH_LOOKUP,
 };
 
+/* One AUTH client: scope, subscribe at random, answer, close. */
+static int
+auth_round(void)
+{
+	oes_event_type_t ev[nitems(storm_auth)];
+	test_msg_buf buf;
+	size_t i, n;
+	int fd, k, errors;
+
+	errors = 0;
+	srandom(getpid());
+	fd = idle_scoped_client(OES_MODE_AUTH, 1000, NULL, 0);
+	if (fd < 0) {
+		fprintf(stderr, "    auth client: %s\n", strerror(errno));
+		return (1);
+	}
+	for (k = 0; k < 4 && !stop; k++) {
+		n = 0;
+		for (i = 0; i < nitems(storm_auth); i++)
+			if (random() % 2)
+				ev[n++] = storm_auth[i];
+		if (n != 0 && test_subscribe(fd, ev, n, OES_SUB_ADD) != 0) {
+			fprintf(stderr, "    auth subscribe: %s\n",
+			    strerror(errno));
+			errors++;
+		}
+		while (test_wait_event(fd, &buf.msg, 1) == 0)
+			if (buf.msg.em_action == OES_ACTION_AUTH)
+				(void)idle_respond(fd, buf.msg.em_id,
+				    OES_AUTH_ALLOW);
+		if (n != 0 && random() % 2 &&
+		    test_subscribe(fd, ev, n, OES_SUB_REMOVE) != 0)
+			errors++;
+	}
+	(void)close(fd);
+	return (errors == 0 ? 0 : 1);
+}
+
 static int
 oes_toggler(int id)
 {
@@ -114,39 +152,48 @@ oes_toggler(int id)
 	size_t n, i;
 	long rounds;
 	int fd, errors, k;
-	bool auth;
 
 	errors = 0;
 	srandom(getpid());
 	for (rounds = 0; !stop; rounds++) {
-		auth = (random() % 3) == 0;
-		if (auth)
-			fd = idle_scoped_client(OES_MODE_AUTH, 1000, NULL, 0);
-		else {
-			fd = test_open_oes();
-			if (fd >= 0 && test_set_mode(fd, OES_MODE_NOTIFY) != 0) {
-				(void)close(fd);
-				fd = -1;
+		if (random() % 3 == 0) {
+			/*
+			 * A descendants scope adds a marker to the caller's
+			 * credential (at most OES_SCOPE_MARKERS_MAX): use a
+			 * child per AUTH client.
+			 */
+			pid_t c = fork();
+			int st = 0;
+
+			if (c == 0)
+				_exit(auth_round());
+			if (c < 0 || waitpid(c, &st, 0) != c ||
+			    !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+				fprintf(stderr, "    auth round: status %#x\n",
+				    st);
+				errors++;
 			}
+			continue;
 		}
-		if (fd < 0) {
+		fd = test_open_oes();
+		if (fd < 0 || test_set_mode(fd, OES_MODE_NOTIFY) != 0) {
+			fprintf(stderr, "    notify client: %s\n", strerror(errno));
+			if (fd >= 0)
+				(void)close(fd);
 			errors++;
 			continue;
 		}
 		for (k = 0; k < 4 && !stop; k++) {
 			n = 0;
-			if (auth) {
-				for (i = 0; i < nitems(storm_auth); i++)
-					if (random() % 2)
-						ev[n++] = storm_auth[i];
-			} else {
-				for (i = 0; i < nitems(storm_events); i++)
-					if (random() % 3 == 0)
-						ev[n++] = storm_events[i];
-			}
+			for (i = 0; i < nitems(storm_events); i++)
+				if (random() % 3 == 0)
+					ev[n++] = storm_events[i];
 			if (n != 0 && test_subscribe(fd, ev, n,
-			    (random() % 2) ? OES_SUB_REPLACE : OES_SUB_ADD) != 0)
+			    (random() % 2) ? OES_SUB_REPLACE : OES_SUB_ADD) != 0) {
+				fprintf(stderr, "    subscribe: %s\n",
+				    strerror(errno));
 				errors++;
+			}
 			while (test_wait_event(fd, &buf.msg, 1) == 0)
 				if (buf.msg.em_action == OES_ACTION_AUTH)
 					(void)idle_respond(fd, buf.msg.em_id,
@@ -182,7 +229,14 @@ abac_toggler(void)
 
 	errors = 0;
 	srandom(getpid());
+	/*
+	 * mac_abac appends every rule at the end of its table and a removal
+	 * leaves a hole, so the table fills after ABAC_MAX_RULES additions:
+	 * clear it now and then (nothing else loads rules during the storm).
+	 */
 	for (rounds = 0; !stop; rounds++) {
+		if (rounds % 512 == 0)
+			(void)mac_syscall("mac_abac", ABAC_SYS_RULE_CLEAR, NULL);
 		memset(&rule, 0, sizeof(rule));
 		rule.vr_action = ABAC_ACTION_DENY;
 		rule.vr_set = 61007;
@@ -197,6 +251,7 @@ abac_toggler(void)
 		memcpy(buf + sizeof(rule), subj, sizeof(subj));
 		memcpy(buf + sizeof(rule) + sizeof(subj), obj, sizeof(obj));
 		if (mac_syscall("mac_abac", ABAC_SYS_RULE_ADD, buf) != 0) {
+			fprintf(stderr, "    rule add: %s\n", strerror(errno));
 			errors++;
 			continue;
 		}
@@ -297,10 +352,13 @@ main(void)
 			(void)signal(SIGALRM, on_alarm);
 			alarm(secs);
 			if (i < NWORKERS)
-				_exit(worker(i));
-			if (i < NWORKERS + NTOGGLERS)
-				_exit(oes_toggler(i - NWORKERS));
-			_exit(abac_toggler());
+				status = worker(i);
+			else if (i < NWORKERS + NTOGGLERS)
+				status = oes_toggler(i - NWORKERS);
+			else
+				status = abac_toggler();
+			fflush(NULL);
+			_exit(status);
 		}
 		if (pids[n] > 0)
 			n++;

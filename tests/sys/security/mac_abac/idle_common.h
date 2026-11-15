@@ -102,9 +102,16 @@ idle_save_state(void)
 	    "mac_abac is locked");
 	ATF_REQUIRE_EQ_MSG(1, idle_sysctl_get("security.mac.mac_abac.enabled"),
 	    "mac_abac is not enabled");
-	ATF_REQUIRE_EQ_MSG(0,
-	    idle_sysctl_get("security.mac.mac_abac.rule_count"),
-	    "rules are loaded; these cases need an empty table");
+	/*
+	 * These cases need an empty table.  Another suite's program may leave
+	 * rules behind (kernel_test does); the guest is disposable and the
+	 * cases exclusive, so start from an empty table.
+	 */
+	if (idle_sysctl_get("security.mac.mac_abac.rule_count") != 0) {
+		printf("note: clearing %d rules left loaded\n",
+		    idle_sysctl_get("security.mac.mac_abac.rule_count"));
+		idle_call(ABAC_SYS_RULE_CLEAR, NULL);
+	}
 	f = fopen(STATE_FILE, "w");
 	ATF_REQUIRE(f != NULL);
 	fprintf(f, "%d %d\n", idle_sysctl_get("security.mac.mac_abac.mode"),
