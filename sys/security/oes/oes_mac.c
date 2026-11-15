@@ -729,45 +729,56 @@ oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags)
 	return (meta->eem_path);
 }
 
-/* MAC hook: allocate label for new credential */
+/* A new label of one reference with a fresh exec id, or NULL. */
+static struct oes_cred_label *
+oes_cred_label_alloc(int flags)
+{
+	struct oes_cred_label *ecl;
+
+	ecl = malloc(sizeof(*ecl), M_OES, flags | M_ZERO);
+	if (ecl != NULL) {
+		refcount_init(&ecl->ecl_refs, 1);
+		ecl->ecl_exec_id = oes_generate_exec_id();
+	}
+	return (ecl);
+}
+
+static void
+oes_cred_label_rele(struct oes_cred_label *ecl)
+{
+
+	if (ecl == NULL || !refcount_release(&ecl->ecl_refs))
+		return;
+	oes_exec_meta_rele(ecl->ecl_exec_meta);
+	oes_scope_meta_rele(ecl->ecl_scope_meta);
+	free(ecl, M_OES);
+}
+
+/*
+ * A new credential has no label until it is copied from another
+ * (crcopy), which shares that credential's label: copying a credential
+ * does not change its identity, so it costs no allocation.  A credential
+ * copied from one without a label (created before OES registered) gets
+ * one of its own with a fresh exec id, as it always did.
+ */
 static void
 oes_mac_cred_init_label(struct label *label)
 {
-	struct oes_cred_label *ecl;
 
-	if (label == NULL)
-		return;
-
-	if (!oes_mac_registered) {
+	if (label != NULL)
 		SLOT_SET(label, NULL);
-		return;
-	}
-
-	ecl = malloc(sizeof(*ecl), M_OES, M_NOWAIT | M_ZERO);
-	if (ecl != NULL)
-		ecl->ecl_exec_id = oes_generate_exec_id();
-	SLOT_SET(label, ecl);
 }
 
-/* MAC hook: free label from credential */
 static void
 oes_mac_cred_destroy_label(struct label *label)
 {
-	struct oes_cred_label *ecl;
 
 	if (label == NULL)
 		return;
-
-	ecl = SLOT(label);
-	if (ecl != NULL) {
-		oes_exec_meta_rele(ecl->ecl_exec_meta);
-		oes_scope_meta_rele(ecl->ecl_scope_meta);
-		free(ecl, M_OES);
-		SLOT_SET(label, NULL);
-	}
+	oes_cred_label_rele(SLOT(label));
+	SLOT_SET(label, NULL);
 }
 
-/* MAC hook: copy label (preserves exec_id across fork) */
 static void
 oes_mac_cred_copy_label(struct label *src, struct label *dst)
 {
@@ -777,17 +788,13 @@ oes_mac_cred_copy_label(struct label *src, struct label *dst)
 		return;
 
 	src_ecl = SLOT(src);
+	if (src_ecl != NULL)
+		refcount_acquire(&src_ecl->ecl_refs);
+	else if (oes_mac_registered)
+		src_ecl = oes_cred_label_alloc(M_NOWAIT);
 	dst_ecl = SLOT(dst);
-
-	if (src_ecl != NULL && dst_ecl != NULL) {
-		oes_exec_meta_hold(src_ecl->ecl_exec_meta);
-		oes_exec_meta_rele(dst_ecl->ecl_exec_meta);
-		dst_ecl->ecl_exec_id = src_ecl->ecl_exec_id;
-		dst_ecl->ecl_exec_meta = src_ecl->ecl_exec_meta;
-		oes_scope_meta_hold(src_ecl->ecl_scope_meta);
-		oes_scope_meta_rele(dst_ecl->ecl_scope_meta);
-		dst_ecl->ecl_scope_meta = src_ecl->ecl_scope_meta;
-	}
+	SLOT_SET(dst, src_ecl);
+	oes_cred_label_rele(dst_ecl);
 }
 
 /*
@@ -798,7 +805,7 @@ oes_mac_cred_copy_label(struct label *src, struct label *dst)
 int
 oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 {
-	struct oes_cred_label *ecl;
+	struct oes_cred_label *ecl, *newecl;
 	struct oes_scope_meta *meta, *oldmeta;
 	struct ucred *newcred, *oldcred;
 	struct proc *p;
@@ -810,6 +817,9 @@ oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 	newcred = crget();
 	meta = malloc(sizeof(*meta), M_OES, M_WAITOK | M_ZERO);
 	meta->esm_refcount = 1;
+	/* The copied credential shares its label: give it its own. */
+	newecl = malloc(sizeof(*newecl), M_OES, M_WAITOK | M_ZERO);
+	refcount_init(&newecl->ecl_refs, 1);
 	PROC_LOCK(p);
 	oldcred = crcopysafe(p, newcred);
 	ecl = SLOT(newcred->cr_label);
@@ -819,6 +829,7 @@ oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 		PROC_UNLOCK(p);
 		crfree(newcred);
 		oes_scope_meta_rele(meta);
+		free(newecl, M_OES);
 		return (ecl == NULL ? ENOMEM : ENOSPC);
 	}
 	do {
@@ -830,8 +841,13 @@ oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
 		    sizeof(meta->esm_markers));
 	}
 	meta->esm_markers[meta->esm_count++] = marker;
-	ecl->ecl_scope_meta = meta;
-	oes_scope_meta_rele(oldmeta);
+	newecl->ecl_exec_id = ecl->ecl_exec_id;
+	oes_exec_meta_hold(ecl->ecl_exec_meta);
+	newecl->ecl_exec_meta = ecl->ecl_exec_meta;
+	newecl->ecl_scope_meta = meta;
+	SLOT_SET(newcred->cr_label, newecl);
+	/* Never the last reference: the old credential still holds it. */
+	oes_cred_label_rele(ecl);
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
@@ -881,8 +897,7 @@ oes_mac_vnode_execve_relabel(struct ucred *old, struct ucred *new,
     struct vnode *vp, struct label *vplabel, struct label *interpvplabel,
     struct image_params *imgp, struct label *execlabel)
 {
-	struct oes_cred_label *ecl;
-	struct oes_exec_meta *new_meta, *old_meta;
+	struct oes_cred_label *ecl, *old_ecl;
 	struct label *label;
 
 	(void)old;
@@ -894,13 +909,26 @@ oes_mac_vnode_execve_relabel(struct ucred *old, struct ucred *new,
 	if (label == NULL)
 		return;
 
-	ecl = SLOT(label);
+	/*
+	 * The new credential still shares the old one's label (crcopy).  Give
+	 * it its own, with a fresh exec id and path and the inherited scopes.
+	 * Under the process lock: no sleeping.  If the allocation fails the
+	 * credential has no identity (exec id 0, no scopes), the failure mode
+	 * the allocation at every credential copy used to have.
+	 */
+	old_ecl = SLOT(label);
+	ecl = oes_cred_label_alloc(M_NOWAIT);
+	if (ecl == NULL)
+		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+	if (ecl != NULL && old_ecl != NULL) {
+		oes_scope_meta_hold(old_ecl->ecl_scope_meta);
+		ecl->ecl_scope_meta = old_ecl->ecl_scope_meta;
+	}
+	SLOT_SET(label, ecl);
+	oes_cred_label_rele(old_ecl);
 	if (ecl != NULL) {
-		new_meta = oes_exec_meta_alloc(imgp != NULL ? imgp->execpath : NULL);
-		old_meta = ecl->ecl_exec_meta;
-		ecl->ecl_exec_meta = new_meta;
-		ecl->ecl_exec_id = oes_generate_exec_id();
-		oes_exec_meta_rele(old_meta);
+		ecl->ecl_exec_meta = oes_exec_meta_alloc(imgp != NULL ?
+		    imgp->execpath : NULL);
 		OES_DEBUG("exec: new exec_id %llu for pid %d",
 		    (unsigned long long)ecl->ecl_exec_id, curproc->p_pid);
 	}
