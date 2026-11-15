@@ -61,19 +61,42 @@ int oes_default_deadline = OES_DEFAULT_DEADLINE_MS;
 SYSCTL_INT(_security_oes, OID_AUTO, default_deadline_ms, CTLFLAG_RW,
     &oes_default_deadline, 0, "Default AUTH deadline in milliseconds");
 
+/*
+ * The strict settings decide whether an AUTH operation nobody answers is
+ * denied, so they decide whether AUTH hooks run with nobody listening: a
+ * write goes through oes_gate_set_strict(), which makes the hooks live
+ * before a value that needs them is visible.  Values are not validated, as
+ * before.
+ */
+static int
+oes_sysctl_strict(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = *(int *)arg1;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	oes_gate_set_strict(arg1, value);
+	return (0);
+}
+
 int oes_default_deadline_miss_mode = OES_DEADLINE_MISS_FAIL_OPEN;
-SYSCTL_INT(_security_oes, OID_AUTO, default_deadline_miss_mode, CTLFLAG_RW,
-    &oes_default_deadline_miss_mode, 0,
+SYSCTL_PROC(_security_oes, OID_AUTO, default_deadline_miss_mode,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &oes_default_deadline_miss_mode, 0, oes_sysctl_strict, "I",
     "Default AUTH deadline miss mode (0=fail open, 1=fail closed)");
 
 int oes_auth_fail_closed = 0;
-SYSCTL_INT(_security_oes, OID_AUTO, auth_fail_closed, CTLFLAG_RW,
-    &oes_auth_fail_closed, 0,
+SYSCTL_PROC(_security_oes, OID_AUTO, auth_fail_closed,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &oes_auth_fail_closed, 0, oes_sysctl_strict, "I",
     "Deny AUTH operations when OES cannot allocate or deliver required state");
 
 int oes_require_auth_clients = 0;
-SYSCTL_INT(_security_oes, OID_AUTO, require_auth_clients, CTLFLAG_RW,
-    &oes_require_auth_clients, 0,
+SYSCTL_PROC(_security_oes, OID_AUTO, require_auth_clients,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &oes_require_auth_clients, 0, oes_sysctl_strict, "I",
     "Deny AUTH operations when no AUTH client is consulted");
 
 int oes_default_queue_size = OES_DEFAULT_QUEUE_SIZE;
@@ -368,6 +391,8 @@ oes_client_dtor(void *data)
 	EC_UNLOCK(ec);
 	atomic_subtract_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
+	/* Hooks only this client needed go idle; nothing waits for them. */
+	oes_gate_reconcile();
 	if (pr != NULL)
 		prison_free(pr);
 	if (setter_pr != NULL)
@@ -1396,6 +1421,17 @@ oes_kqread(struct knote *kn, long hint)
 
 /* The sysctl handler reads the pointers: clear each before it is freed. */
 static void
+oes_gate_free(void)
+{
+
+	if (oes_softc.sc_gate_passes != NULL) {
+		counter_u64_free(oes_softc.sc_gate_passes);
+		oes_softc.sc_gate_passes = NULL;
+	}
+	sx_destroy(&oes_softc.sc_gate_sx);
+}
+
+static void
 oes_jail_counters_free(void)
 {
 	counter_u64_t c;
@@ -1429,6 +1465,10 @@ oes_dev_init(void)
 	oes_softc.sc_jail_filtered = counter_u64_alloc(M_WAITOK);
 	oes_softc.sc_jail_filtered_auth = counter_u64_alloc(M_WAITOK);
 
+	/* Idle gating; oes_mac_init() computes the first liveness. */
+	sx_init(&oes_softc.sc_gate_sx, "oes gate");
+	oes_softc.sc_gate_passes = counter_u64_alloc(M_WAITOK);
+
 	/* Deferred NOSLEEP notify delivery. */
 	mtx_init(&oes_softc.sc_defer_mtx, "oes_defer", NULL, MTX_SPIN);
 	TAILQ_INIT(&oes_softc.sc_defer);
@@ -1453,6 +1493,7 @@ oes_dev_init(void)
 	if (oes_softc.sc_cdev == NULL) {
 		taskqueue_free(oes_softc.sc_defer_tq);
 		mtx_destroy(&oes_softc.sc_defer_mtx);
+		oes_gate_free();
 		oes_jail_counters_free();
 		rm_destroy(&oes_softc.sc_jail_lock);
 		mtx_destroy(&oes_softc.sc_mtx);
@@ -1535,6 +1576,7 @@ oes_dev_uninit(void)
 	}
 	mtx_destroy(&oes_softc.sc_defer_mtx);
 
+	oes_gate_free();
 	oes_jail_counters_free();
 	rm_destroy(&oes_softc.sc_jail_lock);
 	mtx_destroy(&oes_softc.sc_mtx);
@@ -1566,6 +1608,10 @@ oes_modevent(module_t mod, int type, void *data)
 		break;
 
 	case MOD_UNLOAD:
+		/*
+		 * OES never unloads (owner decision 2026-11-15).  Hooks, tables
+		 * and locks are permanent; oes_gate_reconcile() relies on it.
+		 */
 		error = EBUSY;
 		break;
 

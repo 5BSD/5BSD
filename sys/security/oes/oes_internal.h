@@ -81,6 +81,15 @@ struct oes_softc {
 	u_int			sc_jail_setters; /* Clients with ec_jail_setter_pr */
 	counter_u64_t		sc_jail_filtered; /* Dropped before allocation */
 	counter_u64_t		sc_jail_filtered_auth; /* AUTH events of those */
+
+	/*
+	 * Idle gating (oes_mac.c).  sc_gate_sx serializes oes_gate_reconcile(),
+	 * which recomputes from the clients and the strict settings which
+	 * hooks anyone needs; it is taken with no other OES lock held.
+	 */
+	struct sx		sc_gate_sx;
+	counter_u64_t		sc_gate_passes;	/* Hook entries past a gate */
+	uint64_t		sc_gate_reconciles; /* sc_gate_sx */
 };
 
 /* Bound on the deferred queue so a burst cannot exhaust memory. */
@@ -205,6 +214,7 @@ struct oes_client {
 #define EC_FLAG_MUTED_SELF	0x0002	/* Self-muted */
 #define EC_FLAG_MODE_SET	0x0004	/* Mode has been explicitly set */
 #define EC_FLAG_SCOPE_SETTING	0x0008	/* Scope credential update in flight */
+#define EC_FLAG_CACHE_USED	0x0010	/* Has added a cache entry; never cleared */
 
 /*
  * Jail scope teardown (ec_jail_state).  The jail's remove method only marks
@@ -623,6 +633,8 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
  * Function prototypes - oes_mac.c (MAC policy integration)
  */
 int	oes_mac_init(void);
+void	oes_gate_reconcile(void);
+void	oes_gate_set_strict(int *knob, int value);
 uint64_t oes_proc_get_exec_id(struct proc *p);
 const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);
 

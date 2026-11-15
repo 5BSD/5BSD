@@ -76,6 +76,7 @@ PLAIN_TESTS_C=	\
 	test_passive_mode \
 	test_memory_pressure \
 	test_idle_pins \
+	test_idle_gate \
 	test_stress \
 	rename_concurrent \
 	signal_concurrent

@@ -28,6 +28,7 @@
 #include <sys/imgact.h>
 #include <sys/sysctl.h>
 #include <sys/random.h>
+#include <sys/sbuf.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/eventhandler.h>
@@ -136,6 +137,412 @@ static u_int oes_rename_cache_populated;
 #define SLOT_SET(l, v) mac_label_set((l), oes_slot, (uintptr_t)(v))
 #define PIPE_SLOT(l) \
 	((struct oes_pipe_label *)mac_label_get((l), oes_slot))
+
+/*
+ * Idle gating.
+ *
+ * OES is compiled in and never unloads, and costs nothing while nothing
+ * listens.  A hook is live while some open client that is not closing is
+ * subscribed to the AUTH or NOTIFY event it produces; while a strict
+ * setting (require_auth_clients, auth_fail_closed, deadline-miss mode fail
+ * closed) is on, for a hook that produces an AUTH event; and, for a hook
+ * whose event drops cached decisions, while some open client has used its
+ * decision cache.  A hook that is not live returns 0 at its first test,
+ * which is what the rest of the hook would have returned: nobody would
+ * receive or be consulted on its event, no strict setting could deny it,
+ * and no cached decision could be dropped by it.
+ *
+ * The identity hooks (credential and pipe labels, exec relabel) are never
+ * gated: a client that starts later needs the identities of processes and
+ * pipes that already exist.
+ *
+ * Every gated hook with a framework fast-path flag counts toward that flag
+ * only while it is live (MPC_LOADTIME_FLAG_FP_INACTIVE), so with nobody
+ * listening OES makes the framework enter no path on its own account.
+ * oes_gate_reconcile() recomputes liveness from scratch after anything it
+ * depends on changes.  It never waits for threads inside hooks: hooks,
+ * tables and locks are permanent, a hook may run while not live (another
+ * policy holds the flag, or a thread was already past its test), and it
+ * then behaves as if nobody listened.
+ */
+#define	OES_HD_INVALIDATES	0x0001	/* event drops cached decisions */
+
+#define	OA(e)	OES_EVENT_AUTH_ ## e
+#define	ON(e)	OES_EVENT_NOTIFY_ ## e
+#define	OFP(h)	(MAC_FP_HOOK(h), #h)
+#define	ONOFP	(MAC_FP_NONE, "-")
+#define	OES_FP_VALUE(v, n)	v
+#define	OES_FP_NAME(v, n)	n
+#define	OINV	OES_HD_INVALIDATES
+
+/* X(id, auth, notify, notify_alt, flags, (fp, fpname)) */
+#define	OES_HOOK_LIST(X)						\
+	X(CRED_CHECK_SETUID,	0, ON(SETUID), 0, 0, ONOFP)		\
+	X(CRED_CHECK_SETGID,	0, ON(SETGID), 0, 0, ONOFP)		\
+	X(VNODE_CHECK_EXEC,	OA(EXEC), ON(EXEC), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_ACCESS,	OA(ACCESS), ON(ACCESS), 0, 0,		\
+	    OFP(vnode_check_access))					\
+	X(VNODE_CHECK_LOOKUP,	OA(LOOKUP), ON(LOOKUP), 0, 0,		\
+	    OFP(vnode_check_lookup))					\
+	X(VNODE_CHECK_READ,	OA(READ), ON(READ), 0, 0,		\
+	    OFP(vnode_check_read))					\
+	X(VNODE_CHECK_WRITE,	OA(WRITE), ON(WRITE), 0, OINV,		\
+	    OFP(vnode_check_write))					\
+	X(VNODE_CHECK_TRUNCATE,	0, 0, 0, OINV, ONOFP)			\
+	X(VNODE_CHECK_STAT,	OA(STAT), ON(STAT), 0, 0,		\
+	    OFP(vnode_check_stat))					\
+	X(VNODE_CHECK_POLL,	OA(POLL), ON(POLL), 0, 0,		\
+	    OFP(vnode_check_poll))					\
+	X(VNODE_CHECK_READDIR,	OA(READDIR), ON(READDIR), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_READLINK,	OA(READLINK), ON(READLINK), 0, 0,	\
+	    OFP(vnode_check_readlink))					\
+	X(VNODE_CHECK_REVOKE,	OA(REVOKE), ON(REVOKE), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_OPEN,	OA(OPEN), ON(OPEN), 0, 0,		\
+	    OFP(vnode_check_open))					\
+	X(VNODE_CHECK_CLOSE,	0, ON(CLOSE), 0, 0,			\
+	    OFP(vnode_check_close))					\
+	X(FILE_CHECK_READ,	OA(FILE_READ), ON(FILE_READ), 0, 0,	\
+	    OFP(file_check_read))					\
+	X(FILE_CHECK_STAT,	OA(FILE_STAT), ON(FILE_STAT), 0, 0,	\
+	    OFP(file_check_stat))					\
+	X(FILE_NOTIFY_CLOSE,	0, ON(FILE_CLOSE), 0, 0,		\
+	    OFP(file_notify_close))					\
+	X(FILE_NOTIFY_REPLY,	0, ON(DQ_REPLY), 0, 0, ONOFP)		\
+	X(FILE_CHECK_WRITE,	OA(FILE_WRITE), ON(FILE_WRITE), 0, OINV,	\
+	    OFP(file_check_write))					\
+	X(FILE_CHECK_SETATTR,	OA(FILE_SETATTR), ON(FILE_SETATTR), 0,	\
+	    OINV, ONOFP)						\
+	X(FILE_CHECK_FSYNC,	OA(FILE_FSYNC), ON(FILE_FSYNC), 0, 0, ONOFP) \
+	X(FILE_CHECK_LOCK,	OA(FILE_LOCK), ON(FILE_LOCK), 0, 0, ONOFP) \
+	X(FILE_CHECK_IOCTL,	OA(FILE_IOCTL), ON(FILE_IOCTL), 0, 0,	\
+	    OFP(file_check_ioctl))					\
+	X(FILE_CHECK_MMAP,	OA(FILE_MMAP), ON(FILE_MMAP), 0, 0,	\
+	    OFP(file_check_mmap))					\
+	X(VNODE_CHECK_CREATE,	OA(CREATE), ON(CREATE), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_UNLINK,	OA(UNLINK), ON(UNLINK), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_RENAME_FROM, OA(RENAME), ON(RENAME), 0, OINV,	\
+	    OFP(vnode_check_rename_from))				\
+	X(VNODE_CHECK_RENAME_TO, OA(RENAME), ON(RENAME), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_LINK,	OA(LINK), ON(LINK), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_CHDIR,	OA(CHDIR), ON(CHDIR), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_CHROOT,	OA(CHROOT), ON(CHROOT), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_MMAP,	OA(MMAP), ON(MMAP), 0, OINV,		\
+	    OFP(vnode_check_mmap))					\
+	X(VNODE_CHECK_SETEXTATTR, OA(SETEXTATTR), ON(SETEXTATTR), 0, OINV, \
+	    ONOFP)							\
+	X(VNODE_CHECK_GETEXTATTR, OA(GETEXTATTR), ON(GETEXTATTR), 0, 0,	\
+	    ONOFP)							\
+	X(VNODE_CHECK_DELETEEXTATTR, OA(DELETEEXTATTR), ON(DELETEEXTATTR), \
+	    0, OINV, ONOFP)						\
+	X(VNODE_CHECK_LISTEXTATTR, OA(LISTEXTATTR), ON(LISTEXTATTR), 0, 0, \
+	    ONOFP)							\
+	X(VNODE_CHECK_GETACL,	OA(GETACL), ON(GETACL), 0, 0, ONOFP)	\
+	X(VNODE_CHECK_SETACL,	OA(SETACL), ON(SETACL), 0, OINV, ONOFP)	\
+	X(VNODE_CHECK_DELETEACL, OA(DELETEACL), ON(DELETEACL), 0, OINV,	\
+	    ONOFP)							\
+	X(VNODE_CHECK_RELABEL,	OA(RELABEL), ON(RELABEL), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETMODE,	OA(SETMODE), ON(SETMODE), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETOWNER,	OA(SETOWNER), ON(SETOWNER), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETFLAGS,	OA(SETFLAGS), ON(SETFLAGS), 0, OINV, ONOFP) \
+	X(VNODE_CHECK_SETUTIMES, OA(SETUTIMES), ON(SETUTIMES), 0, OINV,	\
+	    ONOFP)							\
+	X(KLD_CHECK_LOAD,	OA(KLDLOAD), ON(KLDLOAD), 0, 0, ONOFP)	\
+	X(PROC_CHECK_MPROTECT,	OA(MPROTECT), ON(MPROTECT), 0, OINV,	\
+	    OFP(proc_check_mprotect))					\
+	X(PROC_CHECK_DEBUG,	0, ON(PTRACE), OA(PTRACE), 0, ONOFP)	\
+	X(PROC_CHECK_SIGNAL,	0, ON(SIGNAL), 0, 0, ONOFP)		\
+	X(SOCKET_CHECK_CONNECT,	0, ON(SOCKET_CONNECT), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_BIND,	0, ON(SOCKET_BIND), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_LISTEN,	0, ON(SOCKET_LISTEN), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_CREATE,	0, ON(SOCKET_CREATE), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_ACCEPT,	0, ON(SOCKET_ACCEPT), 0, 0, ONOFP)	\
+	X(SOCKET_CHECK_SEND,	0, ON(SOCKET_SEND), 0, 0,		\
+	    OFP(socket_check_send))					\
+	X(SOCKET_CHECK_RECEIVE,	0, ON(SOCKET_RECEIVE), 0, 0,		\
+	    OFP(socket_check_receive))					\
+	X(SOCKET_CHECK_STAT,	0, ON(SOCKET_STAT), 0, 0,		\
+	    OFP(socket_check_stat))					\
+	X(SOCKET_CHECK_POLL,	0, ON(SOCKET_POLL), 0, 0,		\
+	    OFP(socket_check_poll))					\
+	X(PIPE_CHECK_READ,	0, ON(PIPE_READ), 0, 0,			\
+	    OFP(pipe_check_read))					\
+	X(PIPE_CHECK_WRITE,	0, ON(PIPE_WRITE), 0, 0,		\
+	    OFP(pipe_check_write))					\
+	X(PIPE_CHECK_STAT,	0, ON(PIPE_STAT), 0, 0,			\
+	    OFP(pipe_check_stat))					\
+	X(PIPE_CHECK_POLL,	0, ON(PIPE_POLL), 0, 0,			\
+	    OFP(pipe_check_poll))					\
+	X(PIPE_CHECK_IOCTL,	0, ON(PIPE_IOCTL), 0, 0, ONOFP)		\
+	X(MOUNT_CHECK_STAT,	0, ON(MOUNT_STAT), 0, 0, ONOFP)		\
+	X(PRIV_CHECK,		0, ON(PRIV_CHECK), 0, 0, OFP(priv_check)) \
+	X(PROC_CHECK_SCHED,	0, ON(PROC_SCHED), 0, 0, ONOFP)		\
+	X(SYSTEM_CHECK_REBOOT,	0, ON(REBOOT), 0, 0, ONOFP)		\
+	X(SYSTEM_CHECK_SYSCTL,	0, ON(SYSCTL), 0, 0, ONOFP)		\
+	X(SYSTEM_CHECK_SWAPON,	OA(SWAPON), ON(SWAPON), 0, 0, ONOFP)	\
+	X(SYSTEM_CHECK_SWAPOFF,	OA(SWAPOFF), ON(SWAPOFF), 0, 0, ONOFP)	\
+	X(KENV_CHECK_SET,	0, ON(KENV), 0, 0, ONOFP)		\
+	X(KENV_CHECK_UNSET,	0, ON(KENV), 0, 0, ONOFP)		\
+	X(EV_FORK,		0, ON(FORK), 0, 0, ONOFP)		\
+	X(EV_EXIT,		0, ON(EXIT), 0, 0, ONOFP)		\
+	X(EV_MOUNTED,		0, ON(MOUNT), OA(MOUNT), 0, ONOFP)	\
+	X(EV_UNMOUNTED,		0, ON(UNMOUNT), 0, 0, ONOFP)		\
+	X(EV_KLDUNLOAD,		0, ON(KLDUNLOAD), 0, 0, ONOFP)
+
+enum oes_hook {
+#define	OES_HOOK_ENUM(id, a, n, alt, f, fp)	OES_H_ ## id,
+	OES_HOOK_LIST(OES_HOOK_ENUM)
+#undef OES_HOOK_ENUM
+	OES_H_COUNT
+};
+
+struct oes_hook_desc {
+	const char	*ohd_name;
+	const char	*ohd_fpname;
+	uint16_t	ohd_auth;	/* AUTH event produced, or 0 */
+	uint16_t	ohd_notify;	/* NOTIFY event or counterpart, or 0 */
+	uint16_t	ohd_notify_alt;	/* another number that wants it, or 0 */
+	uint16_t	ohd_flags;	/* OES_HD_* */
+	u_short		ohd_fp;		/* MAC_FP_HOOK() or MAC_FP_NONE */
+};
+
+static const struct oes_hook_desc oes_hook_desc[OES_H_COUNT] = {
+#define	OES_HOOK_DESC(id, a, n, alt, f, fp)			\
+	[OES_H_ ## id] = { .ohd_name = #id, .ohd_auth = (a),		\
+	    .ohd_notify = (n), .ohd_notify_alt = (alt), .ohd_flags = (f),	\
+	    .ohd_fp = OES_FP_VALUE fp, .ohd_fpname = OES_FP_NAME fp },
+	OES_HOOK_LIST(OES_HOOK_DESC)
+#undef OES_HOOK_DESC
+};
+
+#undef OA
+#undef ON
+#undef OFP
+#undef ONOFP
+#undef OES_FP_VALUE
+#undef OES_FP_NAME
+#undef OINV
+
+#define	OES_GATE_WORDS	howmany(OES_H_COUNT, NBBY * sizeof(u_long))
+
+/* Bit h: hook h is live.  Written only by oes_gate_reconcile(). */
+static u_long oes_hooks_live[OES_GATE_WORDS] __read_mostly;
+
+#define	OES_HOOK_LIVE(h)						\
+	((atomic_load_long(&oes_hooks_live[(h) / (NBBY * sizeof(u_long))]) & \
+	    (1UL << ((h) % (NBBY * sizeof(u_long))))) != 0)
+
+/*
+ * The first statement of every gated hook: nothing that does work may run
+ * before it, a declaration's initialiser included.
+ */
+#define	OES_GATE(h) do {						\
+	if (__predict_true(!OES_HOOK_LIVE(h)))				\
+		return (0);						\
+	counter_u64_add(oes_softc.sc_gate_passes, 1);			\
+} while (0)
+#define	OES_GATE_VOID(h) do {						\
+	if (__predict_true(!OES_HOOK_LIVE(h)))				\
+		return;							\
+	counter_u64_add(oes_softc.sc_gate_passes, 1);			\
+} while (0)
+
+/* Defined, with its operations, at the end of this file. */
+static struct mac_policy_conf oes_mac_policy_conf;
+
+/* False until the fast-path flags follow liveness. */
+static bool oes_gate_fp = false;
+
+/* Is event (AUTH: words 0-1, NOTIFY: words 2-3) in the bitmap sub? */
+static bool
+oes_gate_bit(const uint64_t sub[4], uint16_t event)
+{
+	int base, bit;
+
+	if (event == 0)
+		return (false);
+	base = OES_EVENT_IS_NOTIFY(event) ? 2 : 0;
+	bit = event & 0x0fff;
+	if (bit >= 128)
+		return (false);
+	return ((sub[base + bit / 64] & (1ULL << (bit % 64))) != 0);
+}
+
+static void
+oes_gate_reconcile_locked(bool force_strict)
+{
+	u_long want[OES_GATE_WORDS], old[OES_GATE_WORDS];
+	u_short on[OES_H_COUNT], off[OES_H_COUNT];
+	const struct oes_hook_desc *d;
+	struct oes_client *ec;
+	uint64_t sub[4];
+	u_int non, noff, w;
+	bool cache, strict, was, now;
+	int error, h, i;
+
+	sx_assert(&oes_softc.sc_gate_sx, SA_XLOCKED);
+	strict = force_strict || oes_require_auth_clients != 0 ||
+	    oes_auth_fail_closed != 0 ||
+	    oes_default_deadline_miss_mode == OES_DEADLINE_MISS_FAIL_CLOSED;
+	memset(sub, 0, sizeof(sub));
+	cache = false;
+	OES_LOCK();
+	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+		EC_LOCK(ec);
+		if ((ec->ec_flags & EC_FLAG_CLOSING) == 0) {
+			for (i = 0; i < 4; i++)
+				sub[i] |= ec->ec_subscriptions[i];
+			if ((ec->ec_flags & EC_FLAG_CACHE_USED) != 0)
+				cache = true;
+		}
+		EC_UNLOCK(ec);
+	}
+	OES_UNLOCK();
+
+	memset(want, 0, sizeof(want));
+	for (h = 0; h < OES_H_COUNT; h++) {
+		d = &oes_hook_desc[h];
+		if (oes_gate_bit(sub, d->ohd_auth) ||
+		    oes_gate_bit(sub, d->ohd_notify) ||
+		    oes_gate_bit(sub, d->ohd_notify_alt) ||
+		    (strict && d->ohd_auth != 0) ||
+		    (cache && (d->ohd_flags & OES_HD_INVALIDATES) != 0))
+			want[h / (NBBY * sizeof(u_long))] |=
+			    1UL << (h % (NBBY * sizeof(u_long)));
+	}
+	non = noff = 0;
+	for (w = 0; w < OES_GATE_WORDS; w++)
+		old[w] = oes_hooks_live[w];
+	for (h = 0; h < OES_H_COUNT; h++) {
+		d = &oes_hook_desc[h];
+		if (d->ohd_fp == MAC_FP_NONE)
+			continue;
+		w = h / (NBBY * sizeof(u_long));
+		was = (old[w] & (1UL << (h % (NBBY * sizeof(u_long))))) != 0;
+		now = (want[w] & (1UL << (h % (NBBY * sizeof(u_long))))) != 0;
+		if (now && !was)
+			on[non++] = d->ohd_fp;
+		else if (!now && was)
+			off[noff++] = d->ohd_fp;
+	}
+
+	/*
+	 * Enable before publishing, disable after: a hook about to be
+	 * counted already passes its gate, and a hook keeps passing its gate
+	 * until it is no longer counted.
+	 */
+	for (w = 0; w < OES_GATE_WORDS; w++)
+		atomic_store_long(&oes_hooks_live[w], old[w] | want[w]);
+	if (oes_gate_fp) {
+		error = mac_policy_fastpath_set(&oes_mac_policy_conf, on, non,
+		    true);
+		KASSERT(error == 0, ("oes gate on: %d", error));
+		error = mac_policy_fastpath_set(&oes_mac_policy_conf, off, noff,
+		    false);
+		KASSERT(error == 0, ("oes gate off: %d", error));
+	}
+	for (w = 0; w < OES_GATE_WORDS; w++)
+		atomic_store_long(&oes_hooks_live[w], want[w]);
+	atomic_thread_fence_seq_cst();
+	oes_softc.sc_gate_reconciles++;
+}
+
+/*
+ * Recompute which hooks are live.  Called, with no OES lock held, after
+ * every change of a subscription, of a client's closing or cache-use state,
+ * or of a strict setting; complete before it returns.  Bounded: one walk of
+ * the clients and of the hook table, and one fast-path update.
+ */
+void
+oes_gate_reconcile(void)
+{
+
+	sx_xlock(&oes_softc.sc_gate_sx);
+	oes_gate_reconcile_locked(false);
+	sx_xunlock(&oes_softc.sc_gate_sx);
+}
+
+/*
+ * Store a strict setting.  Turning one on makes every AUTH hook live before
+ * the value is visible, so no operation passes that the new value denies
+ * once anyone can see it; turning one off stores first and then lets the
+ * hooks go.
+ */
+void
+oes_gate_set_strict(int *knob, int value)
+{
+
+	if (!oes_softc.sc_active) {
+		*knob = value;
+		return;
+	}
+	sx_xlock(&oes_softc.sc_gate_sx);
+	if (knob == &oes_default_deadline_miss_mode ?
+	    value == OES_DEADLINE_MISS_FAIL_CLOSED : value != 0)
+		oes_gate_reconcile_locked(true);
+	atomic_store_int(knob, value);
+	oes_gate_reconcile_locked(false);
+	sx_xunlock(&oes_softc.sc_gate_sx);
+}
+
+static int
+oes_sysctl_gate_live(SYSCTL_HANDLER_ARGS)
+{
+	char buf[2 + 2 * sizeof(u_long) * OES_GATE_WORDS + 1];
+	int w, off;
+
+	off = snprintf(buf, sizeof(buf), "0x");
+	for (w = OES_GATE_WORDS - 1; w >= 0; w--)
+		off += snprintf(buf + off, sizeof(buf) - off, "%0*lx",
+		    (int)(2 * sizeof(u_long)), atomic_load_long(&oes_hooks_live[w]));
+	return (sysctl_handle_string(oidp, buf, sizeof(buf), req));
+}
+
+static int
+oes_sysctl_gate_hooks(SYSCTL_HANDLER_ARGS)
+{
+	const struct oes_hook_desc *d;
+	struct sbuf sb;
+	int error, h;
+
+	sbuf_new_for_sysctl(&sb, NULL, 4096, req);
+	for (h = 0; h < OES_H_COUNT; h++) {
+		d = &oes_hook_desc[h];
+		sbuf_printf(&sb, "%d %s auth 0x%04x notify 0x%04x alt 0x%04x "
+		    "invalidates %d fp %s live %d\n", h, d->ohd_name,
+		    d->ohd_auth, d->ohd_notify, d->ohd_notify_alt,
+		    (d->ohd_flags & OES_HD_INVALIDATES) != 0, d->ohd_fpname,
+		    OES_HOOK_LIVE(h));
+	}
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
+}
+
+static int
+oes_sysctl_gate_passes(SYSCTL_HANDLER_ARGS)
+{
+	uint64_t value;
+
+	value = oes_softc.sc_gate_passes != NULL ?
+	    counter_u64_fetch(oes_softc.sc_gate_passes) : 0;
+	return (sysctl_handle_64(oidp, &value, 0, req));
+}
+
+static SYSCTL_NODE(_security_oes, OID_AUTO, gate,
+    CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+    "Idle gating: which OES hooks run while nothing listens");
+SYSCTL_PROC(_security_oes_gate, OID_AUTO, live,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_gate_live, "A", "Live hooks, bit per hook (see hooks)");
+SYSCTL_PROC(_security_oes_gate, OID_AUTO, hooks,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_gate_hooks, "A",
+    "Gated hooks: index, events, fast-path hook, liveness");
+SYSCTL_PROC(_security_oes_gate, OID_AUTO, passes,
+    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    oes_sysctl_gate_passes, "QU", "Hook entries that passed their gate");
+SYSCTL_U64(_security_oes_gate, OID_AUTO, reconciles, CTLFLAG_RD,
+    &oes_softc.sc_gate_reconciles, 0, "Liveness recomputations");
 
 /* Forward declarations for socket helpers */
 static void oes_fill_sockaddr(oes_sockaddr_t *esa, const struct sockaddr *sa);
@@ -5230,6 +5637,9 @@ oes_mac_init(void)
 	    oes_vfs_event_unmounted, NULL, EVENTHANDLER_PRI_LAST);
 	EVENTHANDLER_REGISTER(kld_unload,
 	    oes_kld_event_unload, NULL, EVENTHANDLER_PRI_LAST);
+
+	/* Nothing listens yet: every hook starts idle. */
+	oes_gate_reconcile();
 
 	return (0);
 }

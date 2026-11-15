@@ -395,6 +395,7 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	struct oes_cache_entry *new_entry;
 	struct timespec expires;
 	uint32_t idx;
+	bool first_use;
 
 	if (entry == NULL)
 		return (EINVAL);
@@ -427,6 +428,18 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	if (entry->ece_ttl_ms == 0 ||
 	    entry->ece_ttl_ms > OES_MAX_CACHE_TTL_MS)
 		return (EINVAL);
+
+	/*
+	 * A cached decision must be dropped by any later change of its file,
+	 * whoever makes it, so the hooks of the changing events must run from
+	 * before the first entry can be found.  The flag stays set.
+	 */
+	EC_LOCK(ec);
+	first_use = (ec->ec_flags & EC_FLAG_CACHE_USED) == 0;
+	ec->ec_flags |= EC_FLAG_CACHE_USED;
+	EC_UNLOCK(ec);
+	if (first_use)
+		oes_gate_reconcile();
 
 	oes_cache_make_deadline(&expires, entry->ece_ttl_ms);
 	new_entry = malloc(sizeof(*new_entry), M_OES, M_WAITOK | M_ZERO);
