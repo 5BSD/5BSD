@@ -78,6 +78,7 @@ PLAIN_TESTS_C=	\
 	test_idle_pins \
 	test_idle_gate \
 	test_idle_storm \
+	test_identity_pins \
 	test_stress \
 	rename_concurrent \
 	signal_concurrent

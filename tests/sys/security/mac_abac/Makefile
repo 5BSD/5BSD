@@ -8,6 +8,7 @@ ATF_TESTS_C+=	mprotect_test
 ATF_TESTS_C+=	signal_context_test
 ATF_TESTS_C+=	idle_pin_test
 ATF_TESTS_C+=	idle_test
+ATF_TESTS_C+=	label_pin_test
 
 SRCS.parser_test=	parser_test.c parse_line.c
 .PATH: ${SRCTOP}/usr.sbin/mac_abacd
@@ -41,5 +42,8 @@ TEST_METADATA.idle_test+=	required_user="root"
 TEST_METADATA.idle_test+=	required_kmods="mac_abac"
 TEST_METADATA.idle_test+=	is_exclusive="true"
 LIBADD.idle_test+=	pthread
+TEST_METADATA.label_pin_test+=	required_user="root"
+TEST_METADATA.label_pin_test+=	required_kmods="mac_abac"
+TEST_METADATA.label_pin_test+=	is_exclusive="true"
 
 .include <bsd.test.mk>
