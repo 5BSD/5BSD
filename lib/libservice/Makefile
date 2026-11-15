@@ -45,6 +45,7 @@ MLINKS+=	libservice.3 service_session_call.3
 MLINKS+=	libservice.3 service_session_receive_event.3
 MLINKS+=	libservice.3 service_worker_protect.3
 MLINKS+=	libservice.3 service_worker_drop_inherited_authority.3
+MLINKS+=	libservice.3 service_worker_protect_available.3
 MLINKS+=	libservice.3 service_idle_shutdown.3
 MLINKS+=	libservice.3 service_activation_socket.3
 

@@ -36,6 +36,18 @@ _RLMODULES = {"rltest_a": [], "rldep": [], "rlbase": [], "mac_rltest": [],
     size = "medium", visibility = ["//visibility:public"])
  for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test", "rootload_test"]]
 
+# The running broker's root-load path (plane-on tier; Make: rootload_live_test).
+cc_binary(name = "rootload_live_test", srcs = ["rootload_live_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers",
+        "//lib/libextensioncmp:extensioncmp", "//lib/libextensioncmp:generated_headers",
+        "//lib/libfidl:fidl", "//lib/libservice:service", "//lib/libchannel:channel", "//lib/libthr:thr"],
+    linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "rootload_live_test_run", program = ":rootload_live_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    tags = ["manual", "requires-matching-kernel"], size = "medium", visibility = ["//visibility:public"])
+
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
 bsd_fidl_ir(name = "next_ir", schemas = ["evolution/extensioncmp_next.fidl"], available = "bsd:2",

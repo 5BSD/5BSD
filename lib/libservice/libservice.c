@@ -2649,6 +2649,13 @@ service_worker_protect(uint32_t flags)
 	return (0);
 }
 
+bool
+service_worker_protect_available(void)
+{
+
+	return (capprotect_fd >= 0);
+}
+
 void
 service_worker_drop_inherited_authority(void)
 {
