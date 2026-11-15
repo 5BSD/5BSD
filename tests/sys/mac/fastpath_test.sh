@@ -116,9 +116,15 @@ entry_check()
 # Hooks both implement are reached by both while either counts the flag
 # (an idle policy is still called, and returns at its gate); hooks only OES
 # implements are reached only while OES counts them.
-: ${SHARED_IDLE_ENTRY:=no}
-: ${OES_ONLY_IDLE_ENTRY:=no}
-: ${FP_INACTIVE_POLICIES:=oes mac_abac}
+# Without security.mac.fastpath (a kernel before this work) the answers
+# come from the kyua variables shared_idle_entry and oes_only_idle_entry
+# (default "no", the answer with nobody listening once both are idle).
+idle_entry_defaults()
+{
+	SHARED_IDLE_ENTRY=$(atf_config_get shared_idle_entry no)
+	OES_ONLY_IDLE_ENTRY=$(atf_config_get oes_only_idle_entry no)
+}
+FP_INACTIVE_POLICIES="oes mac_abac"
 
 atf_test_case entry_file_read
 entry_file_read_head()
@@ -130,6 +136,7 @@ entry_file_read_head()
 }
 entry_file_read_body()
 {
+	idle_entry_defaults
 	entry_check file_check_read \
 	    "/bin/cat /etc/passwd /etc/group" \
 	    $SHARED_IDLE_ENTRY $SHARED_IDLE_ENTRY
@@ -145,6 +152,7 @@ entry_pipe_write_head()
 }
 entry_pipe_write_body()
 {
+	idle_entry_defaults
 	entry_check pipe_check_write \
 	    "/bin/cat /etc/passwd /etc/group" \
 	    $SHARED_IDLE_ENTRY $SHARED_IDLE_ENTRY
@@ -160,6 +168,7 @@ entry_close_head()
 }
 entry_close_body()
 {
+	idle_entry_defaults
 	# Only OES implements the close hooks.
 	entry_check vnode_check_close \
 	    "/bin/cat /etc/passwd /etc/group" $OES_ONLY_IDLE_ENTRY no
