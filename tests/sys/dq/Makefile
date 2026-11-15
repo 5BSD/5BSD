@@ -49,6 +49,7 @@ ATF_TESTS_SH+=	dq_dtrace_test
 ATF_TESTS_SH+=	dq_testopen_test
 ATF_TESTS_SH+=	dq_oracle_test
 ATF_TESTS_SH+=	dq_tree_suites_test
+ATF_TESTS_SH+=	dq_dqswap_test
 
 # Every program is a controller: the shared harness is part of each.
 .for _t in ${ATF_TESTS_C}
@@ -108,6 +109,8 @@ TEST_METADATA.dq_owner_test+=	is_exclusive="true"
 TEST_METADATA.dq_start_test+=	is_exclusive="true"
 # Creates jails: run alone.
 TEST_METADATA.dq_confined_test+=	is_exclusive="true"
+# Runs dqswap, which attaches its command: run alone.
+TEST_METADATA.dq_dqswap_test+=	is_exclusive="true"
 # Set kern.chroot_allow_open_directories, mount linprocfs, call acct(2),
 # ktrace(2), swapon(2) and kldload(2): run alone (1c-iii-c).
 TEST_METADATA.dq_cwd_test+=	is_exclusive="true"
@@ -127,6 +130,14 @@ LIBADD.dqpass=	dq
 MAN.dqpass=
 BINDIR.dqpass=	${TESTSDIR}
 ${PACKAGE}FILES+=	dqpass.expected
+
+# dqswap (share/examples/dq): the example supervisor that gives up root
+# after the attach; dq_dqswap_test runs it.
+PROGS+=		dqswap
+SRCS.dqswap=	dqswap.c
+LIBADD.dqswap=	dq jail
+MAN.dqswap=
+BINDIR.dqswap=	${TESTSDIR}
 
 # The served-root controller the suites oracle runs kyua under, and the
 # differences from chroot(8) it expects (stage 1c-iii-c).
