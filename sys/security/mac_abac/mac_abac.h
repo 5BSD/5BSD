@@ -816,6 +816,8 @@ void abac_vnode_destroy_label(struct label *label);
 void abac_vnode_copy_label(struct label *src, struct label *dest);
 void abac_vnode_refresh_label(struct vnode *vp, struct label *vplabel);
 void abac_vnode_lazy_load(struct vnode *vp, struct label *vplabel);
+struct abac_label *abac_vnode_obj_label(struct vnode *vp,
+    struct label *vplabel);
 int abac_vnode_associate_extattr(struct mount *mp, struct label *mplabel,
     struct vnode *vp, struct label *vplabel);
 void abac_vnode_associate_singlelabel(struct mount *mp, struct label *mplabel,

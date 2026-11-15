@@ -102,9 +102,7 @@ abac_kld_check_load(struct ucred *cred, struct vnode *vp,
 
 	/* Use vnode label if available, otherwise system label */
 	if (vplabel != NULL) {
-		obj = SLOT(vplabel);
-		if (obj == NULL)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label(vp, vplabel);
 	} else {
 		abac_system_label_init();
 		obj = &abac_system_label;
@@ -240,9 +238,7 @@ abac_system_check_acct(struct ucred *cred, struct vnode *vp,
 
 	/* Use vnode label if provided, otherwise system label */
 	if (vp != NULL && vplabel != NULL) {
-		obj = SLOT(vplabel);
-		if (obj == NULL)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label(vp, vplabel);
 	} else {
 		abac_system_label_init();
 		obj = &abac_system_label;
@@ -277,9 +273,7 @@ abac_system_check_swapon(struct ucred *cred, struct vnode *vp,
 
 	/* Use vnode label if provided, otherwise system label */
 	if (vp != NULL && vplabel != NULL) {
-		obj = SLOT(vplabel);
-		if (obj == NULL)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label(vp, vplabel);
 	} else {
 		abac_system_label_init();
 		obj = &abac_system_label;
@@ -314,9 +308,7 @@ abac_system_check_swapoff(struct ucred *cred, struct vnode *vp,
 
 	/* Use vnode label if provided, otherwise system label */
 	if (vp != NULL && vplabel != NULL) {
-		obj = SLOT(vplabel);
-		if (obj == NULL)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label(vp, vplabel);
 	} else {
 		abac_system_label_init();
 		obj = &abac_system_label;
@@ -418,9 +410,7 @@ abac_system_check_auditctl(struct ucred *cred, struct vnode *vp,
 
 	/* Use vnode label if provided, otherwise system label */
 	if (vp != NULL && vplabel != NULL) {
-		obj = SLOT(vplabel);
-		if (obj == NULL)
-			obj = &abac_default_object;
+		obj = abac_vnode_obj_label(vp, vplabel);
 	} else {
 		abac_system_label_init();
 		obj = &abac_system_label;
