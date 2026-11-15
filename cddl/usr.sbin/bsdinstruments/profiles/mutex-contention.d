@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Quantize kernel adaptive-mutex wait time by execname.
  * Equivalent of Apple Instruments' Mutex Contention.

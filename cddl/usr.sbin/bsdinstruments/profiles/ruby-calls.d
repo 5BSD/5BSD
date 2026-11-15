@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Trace Ruby method calls via USDT probes.
  * Requires Ruby built with --enable-dtrace.

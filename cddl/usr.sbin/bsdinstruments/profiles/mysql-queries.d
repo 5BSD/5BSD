@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
 /*
  * Trace MySQL/MariaDB queries via USDT probes.
  * Requires MySQL built with -DENABLE_DTRACE=1.

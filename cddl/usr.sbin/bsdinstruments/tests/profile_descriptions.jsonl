@@ -1,0 +1,460 @@
+{"description":"abac policy management. See COVERAGE-TWENTYFIRST for scalar argument meanings.","name":"abac-policy-management","origin":"base"}
+{"description":"Accept latency — time spent blocking in accept(2).","name":"accept-latency","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"affinity-changes","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"ahci-resets","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-EIGHTEENTH for argument semantics.","name":"aio-drain-waits","origin":"base"}
+{"description":"Async I/O latency — aio_read, aio_write, lio_listio timing.","name":"aio-latency","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"archive-pipeline","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"archive-skips","origin":"base"}
+{"description":"ARP activity — address resolution events.","name":"arp-activity","origin":"base"}
+{"description":"PCM xrun detections: direction 0 playback, 1 recording; channel trigger outcomes.","name":"audio-xruns","origin":"base"}
+{"description":"OpenBSM audit control — auditon, auditctl, setaudit, setauid.","name":"audit-control","origin":"base"}
+{"description":"authorization decisions. See COVERAGE-TWENTYFIRST for scalar argument meanings.","name":"authorization-decisions","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-acl-operations","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"base-archive-operations","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-attribute-operations","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-config-affinity","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-elf-headers","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-event-waits","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-file-completion","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-file-metadata","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"base-file-mutations","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"base-inflate-results","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-limits-signals","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"base-link-flags","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-owner-fifo","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-path-walk","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-root-change","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-signal-logging","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-sleep-temporary","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"base-snapshot-latency","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-space-sysctl","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-stream-io","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-supervisor-env","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"base-sync-duration","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FOURTEENTH.","name":"base-system-queries","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TENTH.","name":"base-timeout-resolve","origin":"base"}
+{"description":"Shell command line snoop via readline.","name":"bashreadline","origin":"base"}
+{"description":"bhyve VMM audit — VM lifecycle and I/O activity.","name":"bhyve-audit","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"bhyve-checkpoint-phases","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"bhyve-device-parts","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"bhyve-migration-progress","origin":"base"}
+{"description":"Block I/O snoop — per-event I/O with process, size, and latency.","name":"biosnoop","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"bluetooth-audio-commands","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"bluetooth-discovery-leases","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"bluetooth-iso-lifecycle","origin":"base"}
+{"description":"Live system.Log batching, wakeup, persistence, and flush performance.","name":"bsdlog-performance","origin":"base"}
+{"description":"Buffer-cache space waits, first-pass flush duration and buffer I/O waits.","name":"bufcache-waits","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-EIGHTEENTH for argument semantics.","name":"buffer-write-throttle","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"buffer-write-waits","origin":"base"}
+{"description":"capability daemon admission. Scalar diagnostics; no message or command contents.","name":"capability-daemon-admission","origin":"base"}
+{"description":"Workload and result summary for the capability service providers not covered","name":"capability-services","origin":"base"}
+{"description":"capprotect — process integrity shielding events.","name":"capprotect","origin":"base"}
+{"description":"Capsicum capability mode audit.","name":"capsicum-audit","origin":"base"}
+{"description":"Capsicum capability mode entry tracking.","name":"capsicum-enter","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-THIRD for argument contracts.","name":"capsicum-limits","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"capture-waits","origin":"base"}
+{"description":"Casper/libcasper service audit.","name":"casper-audit","origin":"base"}
+{"description":"Print every chmod / fchmod / lchmod / fchmodat call with path and mode","name":"chmod","origin":"base"}
+{"description":"Close-range audit — closefrom, close_range calls.","name":"close-range","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"coalition-cleanup-waiters","origin":"base"}
+{"description":"Cross-component IPC volume and error summary for capability daemons.","name":"component-ipc","origin":"base"}
+{"description":"Connect failures — failed outbound connections by errno and process.","name":"connect-failures","origin":"base"}
+{"description":"TCP connect latency — time from connect(2) to established.","name":"connect-latency","origin":"base"}
+{"description":"Busiest outbound connectors — connect rate and failures.","name":"connect-top","origin":"base"}
+{"description":"Context switch frequency — off-cpu and preempt counts by process.","name":"context-switch-top","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"copy-durability","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"copy-transfers","origin":"base"}
+{"description":"CPU time distribution — on-CPU duration histogram per process.","name":"cpudist","origin":"base"}
+{"description":"Credential change audit — setuid/setgid/setgroups/setlogin.","name":"credential-change","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"cron-child-results","origin":"base"}
+{"description":"Kernel cryptographic operation audit via opencrypto.","name":"crypto-audit","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"crypto-queue","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"crypto-sessions","origin":"base"}
+{"description":"Database slow query tracer — PostgreSQL queries exceeding threshold.","name":"dbslower","origin":"base"}
+{"description":"Directory cache (namecache) snoop — every lookup event.","name":"dcsnoop","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"dd-transfers","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-THIRD for argument contracts.","name":"debugger-requests","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"descriptor-runtime-waits","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"devd-actions","origin":"base"}
+{"description":"Device attach/detach events via devd.","name":"devd-events","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"device-callbacks","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"device-control-waits","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"device-drains","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"device-recovery","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"dhcp-lifecycle","origin":"base"}
+{"description":"DMA bounce shortages and time from deferral to resource readiness and callback.","name":"dma-waits","origin":"base"}
+{"description":"DNS resolution latency — getaddrinfo/gethostbyname timing.","name":"dns-latency","origin":"base"}
+{"description":"Epoch grace-period waits (preemptible=1) and callback drain duration.","name":"epoch-stalls","origin":"base"}
+{"description":"Print every syscall return that delivered a non-zero errno","name":"errno","origin":"base"}
+{"description":"Aggregate syscall errors by process, syscall, and errno","name":"errno-tracer","origin":"base"}
+{"description":"Exec audit — rich process start/exit with context.","name":"exec-audit","origin":"base"}
+{"description":"Process exec tree — parent/child lineage with command context.","name":"exec-tree","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"fat-pressure","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"fault-traps","origin":"base"}
+{"description":"Print every fchmodat(2) call with path and mode","name":"fchmodat","origin":"base"}
+{"description":"File descriptor activity — open/close/dup/socket/pipe counts.","name":"fd-lifetime","origin":"base"}
+{"description":"File descriptor activity — hottest FDs by syscall count.","name":"fd-top","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"fetch-phases","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"fetch-readiness","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"fetch-transfers","origin":"base"}
+{"description":"FFS allocation retries, softdep worklist/journal duration and cleanup pressure.","name":"ffs-pressure","origin":"base"}
+{"description":"File Activity — Apple Instruments equivalent.","name":"file-activity","origin":"base"}
+{"description":"File operation latency — quantize slow open/read/write/stat/fsync.","name":"file-latency","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"file-lock-operations","origin":"base"}
+{"description":"File mutation audit — create/unlink/rename/chmod/chown/mkdir/rmdir.","name":"file-mutation","origin":"base"}
+{"description":"File creation to deletion lifespan.","name":"filelife","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"filesystem-read-phases","origin":"base"}
+{"description":"Firmware registry hits, module-load errno and binary-load success (1)/failure (0).","name":"firmware-load","origin":"base"}
+{"description":"Kernel stack sampler for flamegraphs.","name":"flame-sample-kernel","origin":"base"}
+{"description":"Fork latency — time spent in fork, vfork, and pdfork.","name":"fork-latency","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"fsck-phases","origin":"base"}
+{"description":"fsync/fdatasync latency — quantize flush-to-disk time.","name":"fsync-latency","origin":"base"}
+{"description":"Measure time spent in a user-space function.","name":"func-time","origin":"base"}
+{"description":"Trace a specific user-space function in a process.","name":"func-trace","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"fuse-answer-waits","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"geom-access","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"geom-device-operations","origin":"base"}
+{"description":"GEOM disk I/O requests — block layer below VFS.","name":"geom-io","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"geom-pressure-rebuild","origin":"base"}
+{"description":"GEOM resource retries and completion results; direct=1 bypasses the up queue.","name":"geom-retries","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"geom-submissions","origin":"base"}
+{"description":"gtaskqueue execution/drain latency; execution pairs use queue, task and sequence.","name":"gtaskqueue-latency","origin":"base"}
+{"description":"Hardware interrupt handler duration.","name":"hardirq-time","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"hid-report-latency","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"hyperv-resource-pressure","origin":"base"}
+{"description":"ICMP send and receive events.","name":"icmp","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"iflib-power-callbacks","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"iflib-resource-pressure","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"iicbus-transfers","origin":"base"}
+{"description":"Embedded image integrity cost, including exec, O_VERIFY, descriptor checks","name":"image-verification","origin":"base"}
+{"description":"Inotify queue outcomes: 0 enqueue, 1 allocation shortage, 2 coalesce, 3 limit.","name":"inotify-loss","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"intel-nic-recovery","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"interface-ioctls","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"interrupt-threads","origin":"base"}
+{"description":"Print every block-I/O start and done event","name":"io","origin":"base"}
+{"description":"Print every block-I/O done event","name":"io-done","origin":"base"}
+{"description":"Block I/O latency — service time histograms by process.","name":"io-latency","origin":"base"}
+{"description":"Read/write spans with their block I/O as child spans.","name":"io-spans","origin":"base"}
+{"description":"Print every block-I/O start event","name":"io-start","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"iommu-latency","origin":"base"}
+{"description":"Print every IP send and receive event","name":"ip","origin":"base"}
+{"description":"Print every ip:::receive event","name":"ip-receive","origin":"base"}
+{"description":"Print every ip:::send event","name":"ip-send","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"ipc-wake-results","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"ipsec-submissions","origin":"base"}
+{"description":"Per-jail syscall activity — aggregate syscalls by jail.","name":"jail-activity","origin":"base"}
+{"description":"Jail audit — jail creation, attachment, and process transitions.","name":"jail-audit","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-ELEVENTH.","name":"kernel-counterfd-io","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-ELEVENTH.","name":"kernel-counterfd-waits","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"kernel-data-waits","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"kernel-device-control","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"kernel-drain-waits","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"kernel-procdesc-operations","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"kernel-resource-decisions","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-ELEVENTH.","name":"kernel-sem-decisions","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-ELEVENTH.","name":"kernel-sem-resources","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-ELEVENTH.","name":"kernel-sem-waits","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-ELEVENTH.","name":"kernel-tunnel-controls","origin":"base"}
+{"description":"Measure time spent in a kernel function.","name":"kfunc-time","origin":"base"}
+{"description":"Trace a kernel function via FBT (function boundary tracing).","name":"kfunc-trace","origin":"base"}
+{"description":"Print every kill(2) syscall with signal number and target pid","name":"kill","origin":"base"}
+{"description":"KINST — trace one instruction inside a kernel function","name":"kinst","origin":"base"}
+{"description":"Kernel module audit — kldload, kldunload, kldfirstmod, modfind, kldstat.","name":"kld-audit","origin":"base"}
+{"description":"kqueue audit — kqueue creation and kevent registration.","name":"kqueue-audit","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"kqueue-dispatch","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SEVENTEENTH for argument meanings.","name":"kqueue-resource-pressure","origin":"base"}
+{"description":"KTLS committed mode changes, software queue latency, async crypto results and drops.","name":"ktls-fallback","origin":"base"}
+{"description":"Print every lchmod(2) call with path and mode","name":"lchmod","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-NINETEENTH for argument meanings.","name":"legacy-device-waits","origin":"base"}
+{"description":"Trace calls to a shared library function across a process.","name":"lib-calls","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-THIRD for argument contracts.","name":"library-loads","origin":"base"}
+{"description":"library validation failures. See COVERAGE-TWENTYFIRST for scalar argument meanings.","name":"library-validation-failures","origin":"base"}
+{"description":"Linuxulator epoll wait duration, returned event counts and control errors.","name":"linux-epoll-waits","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"linux-event-fds","origin":"base"}
+{"description":"Linuxulator futex wait duration and outcomes, keyed by process and address.","name":"linux-futex-waits","origin":"base"}
+{"description":"Linuxulator socket option results and ancillary-data rejection/truncation.","name":"linux-socket-compat","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"linuxkpi-reclaim","origin":"base"}
+{"description":"Busiest listeners — accept rate and listen backlog by process.","name":"listen-top","origin":"base"}
+{"description":"Requested library names and load outcomes; requires rtldtrace support.","name":"loader-libraries","origin":"base"}
+{"description":"Load request counts include already-loaded objects, not unique files.","name":"loader-summary","origin":"base"}
+{"description":"Lock Contention — spin and mutex contention by process.","name":"lock-contention","origin":"base"}
+{"description":"Lock hotspots by stack — most contended locks with context.","name":"lock-hotspots","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"log-rotation","origin":"base"}
+{"description":"MAC Framework comprehensive audit — all denial events.","name":"mac-audit","origin":"base"}
+{"description":"MAC_CAPABILITY framework — connect, send, receive, call events.","name":"mac-capability","origin":"base"}
+{"description":"MAC_CAPABILITY sync call latency — per-service timing histograms.","name":"mac-capability-calls","origin":"base"}
+{"description":"MAC_CAPABILITY error tracking — framework errors and revocations.","name":"mac-capability-errors","origin":"base"}
+{"description":"MAC_CAPABILITY async message flow — send, dispatch, reply, receive.","name":"mac-capability-messages","origin":"base"}
+{"description":"Raw MAC callback argument slots, in mac_policy.h declaration order.","name":"mac-hook-arguments","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-THIRD for argument contracts.","name":"mac-hooks","origin":"base"}
+{"description":"MAC policy module lifecycle — register, unregister, events.","name":"mac-policy","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"mac-policy-control","origin":"base"}
+{"description":"MAC Framework privilege checks — grant/deny decisions.","name":"mac-priv","origin":"base"}
+{"description":"MAC Framework process checks — process control decisions.","name":"mac-process","origin":"base"}
+{"description":"MAC Framework socket checks — network access control decisions.","name":"mac-socket","origin":"base"}
+{"description":"MAC Framework system checks — system-level security decisions.","name":"mac-system","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"mac-verification-work","origin":"base"}
+{"description":"MAC Framework vnode checks — file access control decisions.","name":"mac-vnode","origin":"base"}
+{"description":"Count malloc/realloc/calloc/free calls by size bucket for a process.","name":"malloc-counts","origin":"base"}
+{"description":"Allocation site tracker for leak analysis.","name":"malloc-leaks","origin":"base"}
+{"description":"Trace user-space malloc/free calls for a specific process.","name":"malloc-trace","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"memory-disk-control","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"memory-fragmentation","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"memory-pressure-waits","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"mesh-daemon-runtime","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"mesh-runtime","origin":"base"}
+{"description":"Metadata storm detector — stat/open/close/readdir hotspots.","name":"metadata-storm","origin":"base"}
+{"description":"Mixed CPU profiler — kernel + user stacks in one view.","name":"mixed-cpu-profiler","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"mlx5-health-recovery","origin":"base"}
+{"description":"Memory mapping audit — mmap, munmap, mprotect, madvise.","name":"mmap-audit","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"mmc-requests","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"module-tool-phases","origin":"base"}
+{"description":"Mount audit — mount, unmount, chroot activity.","name":"mount-audit","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"mount-lifecycle","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"move-child-waits","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"move-fallbacks","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SEVENTEENTH for argument meanings.","name":"mqueue-count-pressure","origin":"base"}
+{"description":"Quantize kernel adaptive-mutex wait time by execname.","name":"mutex-contention","origin":"base"}
+{"description":"Trace MySQL/MariaDB queries via USDT probes.","name":"mysql-queries","origin":"base"}
+{"description":"VFS name cache (namei) hit/miss rates.","name":"namecache","origin":"base"}
+{"description":"Print every syscall::nanosleep:entry","name":"nanosleep","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"neighbor-states","origin":"base"}
+{"description":"Netgraph queued items, dispatch types/depths, results and hook disconnections.","name":"netgraph-path","origin":"base"}
+{"description":"Netlink handler outcomes, malformed lengths and dropped reply/notification batches.","name":"netlink-errors","origin":"base"}
+{"description":"Network Activity — Apple Instruments equivalent.","name":"network-activity","origin":"base"}
+{"description":"NFS client cache hit/miss rates.","name":"nfs-cache","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"nfs-recovery","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"nfs-server-latency","origin":"base"}
+{"description":"nginx HTTP request latency via pid provider.","name":"nginx-requests","origin":"base"}
+{"description":"Trace Node.js garbage collection via USDT probes.","name":"node-gc","origin":"base"}
+{"description":"Trace Node.js HTTP server requests via USDT probes.","name":"node-http","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"nss-latency","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"nvme-watchdog-events","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"nvmf-recovery","origin":"base"}
+{"description":"OpenEndpointSecurity AUTH decisions — allow, deny, and timeout.","name":"oes-auth","origin":"base"}
+{"description":"OpenEndpointSecurity decision cache — hit/miss analysis.","name":"oes-cache","origin":"base"}
+{"description":"oes client outcomes. See COVERAGE-TWENTYFIRST for scalar argument meanings.","name":"oes-client-outcomes","origin":"base"}
+{"description":"OpenEndpointSecurity denied operations — security alert stream.","name":"oes-denied","origin":"base"}
+{"description":"OpenEndpointSecurity event dispatch — enqueue and drop rates.","name":"oes-events","origin":"base"}
+{"description":"OpenEndpointSecurity exec monitoring — binary execution control.","name":"oes-exec","origin":"base"}
+{"description":"OpenEndpointSecurity file events — vnode operation checks.","name":"oes-file","origin":"base"}
+{"description":"OpenEndpointSecurity network events — socket operations.","name":"oes-network","origin":"base"}
+{"description":"Off-CPU profiler — blocked/waiting stack analysis.","name":"off-cpu-profiler","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"oom-decisions","origin":"base"}
+{"description":"Print every open(2) and openat(2) call with the path argument","name":"open","origin":"base"}
+{"description":"Open/stat failure hotspots — failed file access by errno and path.","name":"open-failures","origin":"base"}
+{"description":"Print every openat(2) call with the path argument","name":"openat","origin":"base"}
+{"description":"TLS handshake latency via OpenSSL/LibreSSL pid provider.","name":"openssl-handshake","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"pam-chain","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"pci-hotplug-recovery","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"pcm-buffer-waits","origin":"base"}
+{"description":"Permission denied tracker — EACCES/EPERM across all syscalls.","name":"permission-denied","origin":"base"}
+{"description":"pf audit - packet verdicts by interface and direction, and pf","name":"pf-audit","origin":"base"}
+{"description":"pf drop reasons - every REASON_SET site in pf, with the PFRES_* code","name":"pf-drops","origin":"base"}
+{"description":"pf fragment reassembly - reassembly calls by direction and the","name":"pf-frags","origin":"base"}
+{"description":"pf firewall evaluation latency - per-packet timing.","name":"pf-latency","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TWELFTH.","name":"pf-limiter-decisions","origin":"base"}
+{"description":"pf address translation - nat-to/rdr-to/binat-to address selection","name":"pf-nat","origin":"base"}
+{"description":"pfsync traffic - pfsync packets sent and received, and pflow flow","name":"pf-pfsync","origin":"base"}
+{"description":"pf queueing and delay - packets delayed by \"set delay\" rules, by","name":"pf-queues","origin":"base"}
+{"description":"pf ruleset evaluation - pf_test_rule() latency, anchors entered and","name":"pf-rules","origin":"base"}
+{"description":"pf state lifecycle - state creation, insertion, protocol state","name":"pf-states","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"pf-table-cookie-events","origin":"base"}
+{"description":"pf table lookups - lookups and statistics updates per table","name":"pf-tables","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"pfsync-recovery-events","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SEVENTEENTH for argument meanings.","name":"pipe-buffer-pressure","origin":"base"}
+{"description":"Pipe I/O activity — read/write on pipe file descriptors.","name":"pipe-io","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"pipe-operations","origin":"base"}
+{"description":"Event loop blocking — time spent in poll, select, and kevent.","name":"poll-latency","origin":"base"}
+{"description":"Trace PostgreSQL queries via USDT probes.","name":"postgresql-queries","origin":"base"}
+{"description":"Find slow PostgreSQL queries by measuring query duration.","name":"postgresql-slow","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"priority-changes","origin":"base"}
+{"description":"Privilege checks — which processes check which privileges.","name":"priv-check","origin":"base"}
+{"description":"Print every proc::: provider event","name":"proc","origin":"base"}
+{"description":"Print every proc:::create event","name":"proc-create","origin":"base"}
+{"description":"Print every proc:::exec-success and proc:::exec-failure event","name":"proc-exec","origin":"base"}
+{"description":"Print every proc:::exec-failure event with errno","name":"proc-exec-failure","origin":"base"}
+{"description":"Print every proc:::exec-success event","name":"proc-exec-success","origin":"base"}
+{"description":"Print every proc:::exit event with the exit reason","name":"proc-exit","origin":"base"}
+{"description":"Print every proc::: signal-related event","name":"proc-signal","origin":"base"}
+{"description":"Print every proc:::signal-clear event","name":"proc-signal-clear","origin":"base"}
+{"description":"Print every proc:::signal-discard event","name":"proc-signal-discard","origin":"base"}
+{"description":"Print every proc:::signal-send event","name":"proc-signal-send","origin":"base"}
+{"description":"Print every proc lifecycle status event (exec-success, exec-failure, exit)","name":"proc-status","origin":"base"}
+{"description":"Process descriptor audit — pdfork, pdgetpid, pdkill.","name":"procdesc-audit","origin":"base"}
+{"description":"Process Activity — lifecycle event stream.","name":"process-activity","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"pthread-contention","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"pthread-rwlocks","origin":"base"}
+{"description":"Ptrace audit — debugger attach and process control.","name":"ptrace-audit","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-NINETEENTH for argument meanings.","name":"pts-pressure-waits","origin":"base"}
+{"description":"Trace Python function calls via USDT probes.","name":"python-calls","origin":"base"}
+{"description":"Find slow Python functions by measuring call duration.","name":"python-slow","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"quota-decisions","origin":"base"}
+{"description":"Resource accounting (RACCT) activity by process.","name":"racct-top","origin":"base"}
+{"description":"Print every read(2) entry with fd and length","name":"read","origin":"base"}
+{"description":"Print every read(2)/write(2)/pread(2)/pwrite(2) entry with fd and length","name":"read-write","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"reclaim-efficiency","origin":"base"}
+{"description":"Print every recv(2) entry. FreeBSD's libc recv() is a wrapper","name":"recv","origin":"base"}
+{"description":"Print every recvfrom(2) entry","name":"recvfrom","origin":"base"}
+{"description":"Print every recvmsg(2) entry","name":"recvmsg","origin":"base"}
+{"description":"Redis command execution tracing via pid provider.","name":"redis-commands","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"resolver-attempts","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"resource-pressure-waits","origin":"base"}
+{"description":"Bluetooth RFCOMM flow control, credits, drop reasons and closure outcomes.","name":"rfcomm-stalls","origin":"base"}
+{"description":"Route / netlink audit — routing table and interface changes.","name":"route-audit","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"routing-actions","origin":"base"}
+{"description":"Kernel RPC datagram retries, connect attempts and duplicate request cache hits.","name":"rpc-retries","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"rtld-startup","origin":"base"}
+{"description":"Trace Ruby method calls via USDT probes.","name":"ruby-calls","origin":"base"}
+{"description":"Run-queue latency — time spent runnable but not on CPU.","name":"run-queue-latency","origin":"base"}
+{"description":"Print every read/write/pread/pwrite entry with fd and length (alias of read-write)","name":"rw","origin":"base"}
+{"description":"Print every sched::: provider event","name":"sched","origin":"base"}
+{"description":"Print every sched:::change-pri event","name":"sched-change-pri","origin":"base"}
+{"description":"Print sched cpu transition events (off-cpu / on-cpu / remain-cpu)","name":"sched-cpu","origin":"base"}
+{"description":"Print every sched:::dequeue event","name":"sched-dequeue","origin":"base"}
+{"description":"Print every sched:::enqueue event","name":"sched-enqueue","origin":"base"}
+{"description":"Print sched execution transitions (sleep + wakeup) — dwatch parity","name":"sched-exec","origin":"base"}
+{"description":"Print every sched:::lend-pri event","name":"sched-lend-pri","origin":"base"}
+{"description":"Print every sched:::load-change event","name":"sched-load-change","origin":"base"}
+{"description":"Print every sched:::off-cpu event","name":"sched-off-cpu","origin":"base"}
+{"description":"Print every sched:::on-cpu event","name":"sched-on-cpu","origin":"base"}
+{"description":"Print every sched:::preempt event","name":"sched-preempt","origin":"base"}
+{"description":"Print sched priority change events (change-pri + lend-pri)","name":"sched-pri","origin":"base"}
+{"description":"Print sched runqueue events (dequeue + enqueue + load-change)","name":"sched-queue","origin":"base"}
+{"description":"Print every sched:::remain-cpu event","name":"sched-remain-cpu","origin":"base"}
+{"description":"Print every sched:::sleep event","name":"sched-sleep","origin":"base"}
+{"description":"Print every sched:::surrender event","name":"sched-surrender","origin":"base"}
+{"description":"Print every sched:::tick event","name":"sched-tick","origin":"base"}
+{"description":"Print every sched:::wakeup event","name":"sched-wakeup","origin":"base"}
+{"description":"Script launch paths and interpreter exec outcomes; no argv or environments.","name":"script-exec","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"scsi-controller-recovery","origin":"base"}
+{"description":"Print every SCTP send and receive event with IP payload length.","name":"sctp","origin":"base"}
+{"description":"Print every SCTP association state change and its previous state.","name":"sctp-state-change","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"semaphore-parking","origin":"base"}
+{"description":"Print every send(2) entry. FreeBSD's libc send() is a wrapper","name":"send","origin":"base"}
+{"description":"Print every sendmsg(2) entry","name":"sendmsg","origin":"base"}
+{"description":"Print every sendto/sendmsg entry and recvfrom/recvmsg return.","name":"sendrecv","origin":"base"}
+{"description":"Print every sendto(2) entry","name":"sendto","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-NINETEENTH for argument meanings.","name":"serial-configuration","origin":"base"}
+{"description":"service runtime pressure. Scalar diagnostics; no message or command contents.","name":"service-runtime-pressure","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SEVENTEENTH for argument meanings.","name":"shm-largepage-pressure","origin":"base"}
+{"description":"Live libshmring traffic, backpressure, and wake-coalescing summary.","name":"shmring-traffic","origin":"base"}
+{"description":"Shared memory operations — shm_open, shm_unlink, mmap.","name":"shmsnoop","origin":"base"}
+{"description":"Process lifetime — create-to-exit duration by execname.","name":"short-lived-procs","origin":"base"}
+{"description":"Sleep site hotspots — where threads block most often.","name":"sleep-site-top","origin":"base"}
+{"description":"Quantize per-syscall latency to find slow outliers.","name":"slow-syscalls","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-EIGHTEENTH for argument semantics.","name":"socket-accept-waits","origin":"base"}
+{"description":"Socket lifecycle audit — bind/listen/connect/accept events.","name":"socket-bind-audit","origin":"base"}
+{"description":"Contracts/context: tools/test/system-tracing/COVERAGE-SIXTH.","name":"socket-buffer-waits","origin":"base"}
+{"description":"Socket creation audit — track new socket allocations.","name":"socket-create","origin":"base"}
+{"description":"Socket errors — network syscall failures by process and errno.","name":"socket-errors","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-EIGHTEENTH for argument semantics.","name":"socket-resource-failures","origin":"base"}
+{"description":"Socketpair audit — local IPC pipe creation.","name":"socketpair-audit","origin":"base"}
+{"description":"SQLite operation latency via pid-provider.","name":"sqlite-latency","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"ssh-lifecycle","origin":"base"}
+{"description":"SSH authentication event tracing.","name":"sshd-auth","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"stacked-filesystems","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"suspend-phases","origin":"base"}
+{"description":"Swap and paging activity — page-in and page-out events.","name":"swap-activity","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"swap-metadata-pressure","origin":"base"}
+{"description":"Capsule RPC latency. Start before workload; drops invalidate pairing.","name":"switchboard-capsule-latency","origin":"base"}
+{"description":"switchboard capsule transport. Scalar diagnostics; no message or command contents.","name":"switchboard-capsule-transport","origin":"base"}
+{"description":"SX lock (shared-exclusive) contention by process.","name":"sx-contention","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"syncer-writes","origin":"base"}
+{"description":"Count every syscall by name; print the table on END","name":"syscall-counts","origin":"base"}
+{"description":"Syscall errors — aggregate failures by process, syscall, errno.","name":"syscall-errors","origin":"base"}
+{"description":"Top slow syscalls by process and syscall name.","name":"syscall-latency-top","origin":"base"}
+{"description":"Sysctl audit — kernel parameter reads and writes.","name":"sysctl-audit","origin":"base"}
+{"description":"System metrics — the conservative default set behind the otel_dtrace","name":"system-metrics","origin":"base"}
+{"description":"System Trace — full event stream.","name":"system-trace","origin":"base"}
+{"description":"Count syscalls by (execname, probefunc); print the table on END","name":"systop","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SEVENTEENTH for argument meanings.","name":"sysv-ipc-pressure","origin":"base"}
+{"description":"taskqueue execution/drain latency; execution pairs use queue, task and sequence.","name":"taskqueue-latency","origin":"base"}
+{"description":"Print every TCP event — send, receive, and state change","name":"tcp","origin":"base"}
+{"description":"Print every tcp accept event (established + refused)","name":"tcp-accept","origin":"base"}
+{"description":"Print every tcp:::accept-established","name":"tcp-accept-established","origin":"base"}
+{"description":"Print every tcp:::accept-refused","name":"tcp-accept-refused","origin":"base"}
+{"description":"Print every tcp connect lifecycle event (request + established + refused)","name":"tcp-connect","origin":"base"}
+{"description":"Print every tcp:::connect-established","name":"tcp-connect-established","origin":"base"}
+{"description":"Print every tcp:::connect-refused","name":"tcp-connect-refused","origin":"base"}
+{"description":"Print every tcp:::connect-request","name":"tcp-connect-request","origin":"base"}
+{"description":"Print tcp accept-established and connect-established events","name":"tcp-established","origin":"base"}
+{"description":"Print every tcp connection initialization event (accept + connect lifecycle)","name":"tcp-init","origin":"base"}
+{"description":"Print every tcp send and receive event with byte count","name":"tcp-io","origin":"base"}
+{"description":"Print every tcp:::receive event","name":"tcp-receive","origin":"base"}
+{"description":"Print tcp accept-refused and connect-refused events","name":"tcp-refused","origin":"base"}
+{"description":"TCP reset/refused/abort audit.","name":"tcp-reset","origin":"base"}
+{"description":"TCP retransmit timer events.","name":"tcp-retransmit","origin":"base"}
+{"description":"Print every tcp:::send event","name":"tcp-send","origin":"base"}
+{"description":"Print every tcp:::state-change with previous and current state","name":"tcp-state-change","origin":"base"}
+{"description":"TCP state transitions — aggregate by old/new state and process.","name":"tcp-state-top","origin":"base"}
+{"description":"Print every tcp:::state-change (alias of tcp-state-change)","name":"tcp-status","origin":"base"}
+{"description":"TCP window size tracking — send and receive window monitoring.","name":"tcp-window","origin":"base"}
+{"description":"TCP connection lifespan — established to close duration.","name":"tcplife","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-NINETEENTH for argument meanings.","name":"terminal-waits","origin":"base"}
+{"description":"Thread lifetime — first schedule to exit duration by process.","name":"thread-lifetime","origin":"base"}
+{"description":"Thread States — Apple Instruments equivalent.","name":"thread-states","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"time-discipline","origin":"base"}
+{"description":"Time Profiler — sample at 997 Hz, aggregate by user stack","name":"time-profiler","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-FOURTH.","name":"timer-programming","origin":"base"}
+{"description":"Semantic DTrace coverage: see tools/test/system-tracing/COVERAGE-THIRD.","name":"tmpfs-stalls","origin":"base"}
+{"description":"TTY input drops, output flow/watermark changes and carrier notifications.","name":"tty-flow","origin":"base"}
+{"description":"TTY read/write activity for a specific process.","name":"ttysnoop","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"tunnel-terminal-control","origin":"base"}
+{"description":"Print every UDP send and receive with payload length","name":"udp","origin":"base"}
+{"description":"Print every udp:::receive event","name":"udp-receive","origin":"base"}
+{"description":"Print every udp:::send event","name":"udp-send","origin":"base"}
+{"description":"Print every UDP-Lite send and receive event (requires kernel UDP-Lite support)","name":"udplite","origin":"base"}
+{"description":"Print every udplite:::receive event (requires kernel UDP-Lite support)","name":"udplite-receive","origin":"base"}
+{"description":"Print every udplite:::send event (requires kernel UDP-Lite support)","name":"udplite-send","origin":"base"}
+{"description":"UMA (Universal Memory Allocator) activity.","name":"uma-alloc","origin":"base"}
+{"description":"UMA zone limit waits, direct-item allocation failures and reclaim duration.","name":"uma-pressure","origin":"base"}
+{"description":"Userspace mutex contention — _umtx_op syscall tracing.","name":"umtx-contention","origin":"base"}
+{"description":"sendmsg/recvmsg activity by process (IPC monitor).","name":"unix-fd-passing","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"unix-peer-pressure","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"usb-enumeration-latency","origin":"base"}
+{"description":"USB submission to final callback processing, by device, endpoint and USB status.","name":"usb-latency","origin":"base"}
+{"description":"Discover pid-provider (function-level) probes by firing them at runtime.","name":"usdt-list","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-EIGHTH.","name":"userspace-filesystem-requests","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"vfs-copy-phases","origin":"base"}
+{"description":"VFS operation latency — lookup/create/remove/rename timing.","name":"vfs-latency","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"vfs-metadata-reads","origin":"base"}
+{"description":"VFS operation rates — reads, writes, creates, removes per interval.","name":"vfsstat","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"virtio-admin-quiesce","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"virtio-network-reinit","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-NINTH.","name":"virtualnet-control","origin":"base"}
+{"description":"Virtual memory activity: faults, page alloc/free counts.","name":"vm-activity","origin":"base"}
+{"description":"Trace virtual memory page faults via the kernel vm_fault function.","name":"vm-fault","origin":"base"}
+{"description":"VM fault hotspots — faulting processes with stacks.","name":"vm-fault-top","origin":"base"}
+{"description":"Contracts and context restrictions: tools/test/system-tracing/COVERAGE-FIFTH.","name":"vm-object-operations","origin":"base"}
+{"description":"Contracts and exclusions: tools/test/system-tracing/COVERAGE-THIRTEENTH.","name":"vm-operation-phases","origin":"base"}
+{"description":"Count page faults by process — identifies memory-intensive workloads.","name":"vm-pgfault","origin":"base"}
+{"description":"Contracts and limits: tools/test/system-tracing/COVERAGE-SEVENTH.","name":"vmm-snapshot-requests","origin":"base"}
+{"description":"Print every vfs:::vop_create event","name":"vop_create","origin":"base"}
+{"description":"Print every vfs:::vop_lookup event","name":"vop_lookup","origin":"base"}
+{"description":"Print every vfs:::vop_mkdir event","name":"vop_mkdir","origin":"base"}
+{"description":"Print every vfs:::vop_mknod event","name":"vop_mknod","origin":"base"}
+{"description":"Print every vfs:::vop_readdir event","name":"vop_readdir","origin":"base"}
+{"description":"Print every vfs:::vop_remove event","name":"vop_remove","origin":"base"}
+{"description":"Print every vfs:::vop_rename event","name":"vop_rename","origin":"base"}
+{"description":"Print every vfs:::vop_rmdir event","name":"vop_rmdir","origin":"base"}
+{"description":"Print every vfs:::vop_symlink event","name":"vop_symlink","origin":"base"}
+{"description":"Wakeup latency — time from sched:::wakeup to sched:::on-cpu.","name":"wakeup-latency","origin":"base"}
+{"description":"Wireless transition results, association outcomes and driver scan completion.","name":"wifi-state","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"wireguard-resource-pressure","origin":"base"}
+{"description":"See tools/test/system-tracing/COVERAGE-SIXTEENTH for argument semantics.","name":"wireless-recovery","origin":"base"}
+{"description":"Print every write(2) entry with fd and length","name":"write","origin":"base"}
+{"description":"Dirty page writeback and buffer flushing.","name":"writeback","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TWELFTH.","name":"zfs-access-outcomes","origin":"base"}
+{"description":"ZFS ARC activity — cache reads, completions, and evictions.","name":"zfs-arc","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TWELFTH.","name":"zfs-assignment-phases","origin":"base"}
+{"description":"ZFS I/O latency — service time histograms.","name":"zfs-latency","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TWELFTH.","name":"zfs-log-waiters","origin":"base"}
+{"description":"ZFS pool and dataset operations.","name":"zfs-pool","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TWELFTH.","name":"zfs-pressure-waits","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"zfs-rebuild-progress","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-FIFTEENTH.","name":"zfs-scan-progress","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TWELFTH.","name":"zfs-sync-waits","origin":"base"}
+{"description":"Contracts: tools/test/system-tracing/COVERAGE-TWELFTH.","name":"zfs-vnode-io","origin":"base"}
+{"description":"zsh execution. Scalar diagnostics; no message or command contents.","name":"zsh-execution","origin":"base"}
