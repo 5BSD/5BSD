@@ -787,9 +787,11 @@ service_after_fork_child(void)
 	 * anyway: otherwise a later open could reuse one of those numbers and a
 	 * stale component entry could accidentally designate unrelated data.
 	 *
-	 * pdfork(2) does not run pthread_atfork(3) handlers.  Provider workers
-	 * therefore call service_worker_drop_inherited_authority() explicitly after
-	 * applying their protection policy; that function uses this same path.
+	 * libthr interposes pdfork(2) (__thr_pdfork) and runs the pthread_atfork(3)
+	 * handlers, so this path also runs in a pdforked worker; it deliberately
+	 * keeps capprotect_fd (below).  Provider workers then call
+	 * service_worker_drop_inherited_authority() explicitly after applying
+	 * their protection policy; that function uses this same path again.
 	 */
 	if (service_control_channel != NULL)
 		channel_abandon(service_control_channel);
