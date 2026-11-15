@@ -8,7 +8,7 @@ PACKAGE=	dq
 LIB=		dq
 SHLIB_MAJOR=	1
 SRCS=		libdq.c libdq_serve.c libdq_tree.c
-LIBADD=		capability
+LIBADD=		capability pthread
 
 MAN=		libdq.3
 MLINKS+=	libdq.3 dq_open.3 \
@@ -87,8 +87,8 @@ MLINKS+=	libdq.3 dq_open.3 \
 
 # libdq.h installs to /usr/include.  The kernel ABI headers it includes,
 # <dev/dq/dq.h> and <dev/dq/dq_observe_proto.h>, are installed under
-# /usr/include/dev/dq by include/Makefile (LSUBDIRS lists dev/dq), so they
-# are not installed a second time from here.
+# /usr/include/dev/dq by include/Makefile (the DQ INCSGROUP, in the
+# clibs-dev package), so they are not installed a second time from here.
 INCS=		libdq.h
 
 CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libcapability

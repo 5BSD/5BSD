@@ -7,12 +7,12 @@ cc_library(name = "headers", hdrs = ["libdq.h"], deps = ["//sys/dev/dq:headers"]
 # Make installs ordinary objects in libdq.a and uses -fpic for shared objects.
 # Let rules_cc select each variant; target-wide PIC would also change the archive.
 cc_library(name = "dq", srcs = ["libdq.c", "libdq_serve.c", "libdq_tree.c"], features = ["bsd_small_pic"],
-    deps = [":headers", "//lib/libcapability:capability"],
+    deps = [":headers", "//lib/libcapability:capability", "//lib/libthr:thr"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":dq"], target_compatible_with = _PLATFORM,
     visibility = ["//visibility:public"])
 cc_shared_library(name = "dq_shared", deps = [":dq"],
-    dynamic_deps = ["//lib/libcapability:capability_shared"],
+    dynamic_deps = ["//lib/libcapability:capability_shared", "//lib/libthr:thr_shared"],
     shared_lib_name = "libdq.so.1", user_link_flags = ["-Wl,-soname,libdq.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
