@@ -89,7 +89,7 @@ The kernel capability core is the trusted computing base of the 5BSD capability 
 ### Inventory table
 | Item | What it is | Where (paths) | Docs / man pages | Tests | Book coverage today | Status / gaps |
 |---|---|---|---|---|---|---|
-| mac_capability core | Service registry, instance fds, taskqueue dispatch, kernel-stamped credential trailer (uid/gid/jid/nonce), fd passing (<=32/msg, rights preserved), revoke/terminate/mint, kqueue readiness; `kern.mac_capability.service_names/details` | sys/dev/mac_capability/mac_capability_{core,dev,kern}.c, .h, _ioctl.h; sys/modules/mac_capability; test fixtures mac_capability_test_{kernelstore,keystore}.c | mac_capability.4; docs/mac_capability-architecture.md (design + kernel + userspace guides) | tests/sys/mac_capability/mac_capability_test.c (182 cases), run_tests.sh (plane-free) | chapter security/mac-capability.md; architecture.md | shipped, static-mandatory; 22-symbol kernel API |
+| mac_capability core | Service registry, instance fds, taskqueue dispatch, kernel-stamped credential trailer (uid/gid/jid/nonce), fd passing (<=32/msg, rights preserved), revoke/terminate/mint, kqueue readiness; `kern.mac_capability.service_names/details` | sys/dev/mac_capability/mac_capability_{core,dev,kern}.c, .h, _ioctl.h; sys/modules/mac_capability; test fixtures mac_capability_test_{kernelstore,keystore,cleanup} (sys/modules, pkg mac-capability-tests) | mac_capability.4; docs/mac_capability-architecture.md (design + kernel + userspace guides) | tests/sys/mac_capability/mac_capability_test.c (182 cases), kyua in the VM tiers | chapter security/mac-capability.md; architecture.md | shipped, static-mandatory; 22-symbol kernel API |
 | Nonce label policy | MAC policy "credential nonce": 64-bit random per cred, fork-inherited, exec-rotated via new `vnode_execve_relabel` hook; SDT `mac_capability_nonce:::*` | mac_capability_label.[ch] | mac_capability.4, _identity.4 | identity_test.c (15) | mac-capability.md "Process nonces" | shipped |
 | isolation service | File/net/vsock/Bluetooth/jail isolation by nonce: CLAIM/MINT/AUTHORIZE/QUERY/RELEASE per class; ~40 MACF vnode/socket/prison/vsock hooks; claims die with the instance fd; how capsule claims the device itself | mac_capability_isolation.c (3785 lines) | mac_capability_isolation.4; docs/book/src/orientation/what-5bsd-is.md | isolation_test.c (86) | mac-capability.md, capability-bundles.md | shipped; `enforce=0` test mode |
 | system gate service | Gates SYS_GATE_{KLDLOAD,KLDUNLOAD,REBOOT,SWAPON,SWAPOFF,SYSCTL,KENV,KENV_READ,ACCT,AUDIT,SETTIME,JAIL}; "perform" ops (SETTIME/ADJTIME/SYSCTL/KLDLOAD/KLDUNLOAD/JAIL_SET/JAIL_GET) run the privileged op in kernel for born-in-capmode daemons; per-OID sysctl isolation; KLDSTAT gate retired | mac_capability_system.c (1740) | mac_capability_system.4 (regenerated from the proto header in 4b24f728d376: the twelve live gates with masks and MACF hooks, every SYS_OP_* incl. the perform ops, per-OID sysctl scoping, real error set); docs/book/src/capability/system-gates.md | system_test.c (38) | none by name; BSDTime/BSDSysctl chapters touch it | shipped; man page current since 4b24f728d376 |
@@ -162,7 +162,7 @@ BSDTime/libtimecmp source migration now uses FIDL; installed-plane and real-gate
 8. capprotect shields and launcher-applied protection (manifest `protect`).
 9. Capability-mode exec: `SYF_CAPREQUIRED`, `capmode_interp`, why daemons no longer appear as `ld-elf.so.1`.
 10. envfd as the capmode-safe carrier for configuration values.
-11. Testing on a real plane: plane-free boot, run_tests.sh.
+11. Testing on a real plane: plane-on and enforced plane-off VM tiers under kyua.
 12. Doc drift fixed since the baseline (4b24f728d376): mac_capability_system.4 and _capprotect.4 regenerated from the code, libcapsulert.3 added, libcapability.3 covers all six functions. Still open: the capprotect proto header comment (section 14, open finding 3).
 
 ## 2. Security policy modules and MAC framework changes (non-plane)
@@ -926,7 +926,7 @@ This area is everything between `git clone` and a booted 5BSD machine: the build
 | Linuxulator QEMU gate | `qemu-gate.py` boots pre-staged ZFS-root guests, requires complete named case sets (memfd, unshare, xstate, ptrace, cookie, quota, OFD…); ~20 per-topic `qemu-*.py`/`guest-*.sh`/`build-*.sh` pairs | `tools/test/linuxulator/` (62 files) | `tools/test/linuxulator/README.md`; gate doc | — | none | shipped; UFS-root run fails the gate |
 | Capsicum/descriptor rights tests | `cap_confinement` (cap_cloexec/clofork_limit), `cap_xfer`, `capmode_interp` (dynamic exec from capmode, 3 helper variants), `envfd_test` (exclusive), jaildesc/timerfd/readahead/fadvise rights, `cap_pure_test`, `cryptodesc_test`, fdescfs `fdpath_test`, `mac_test_hooks_test` | `tests/sys/kern/`, `tests/sys/capsicum/`, `tests/sys/opencrypto/`, `tests/sys/fs/fdescfs/`, `tests/sys/mac/` | `docs/book/src/develop/testing.md`; `envfd.2` | ~340 cases | none | shipped |
 | DTrace catalog test | compiles the 14 installed `/usr/share/dtrace` security scripts (authwatch, capwatch, denials, privesc, mac_capability-*, vmm-passthru…) against loaded providers | `tests/sys/kern/dtrace_catalog_test.sh` | — | 1 program | none | shipped; root |
-| mac_capability kernel suite | 10 ATF programs (~506 cases): channel, coalition (exhaustion + jail-teardown race), isolation, identity, node, accounting, procdesc, mount, system gates; `run_tests.sh` loads service modules | `tests/sys/mac_capability/` | `docs/mac_capability-architecture.md` | is the tests | none | shipped; pkg `mac-capability-tests`; **plane-off only** |
+| mac_capability kernel suite | 10 ATF programs (~506 cases): channel, coalition (exhaustion + jail-teardown race), isolation, identity, node, accounting, procdesc, mount, system gates; fixture services preloaded by the guest loader | `tests/sys/mac_capability/` | `docs/mac_capability-architecture.md` | is the tests | none | shipped; pkg `mac-capability-tests` (with its fixture modules); plane-on and enforced plane-off VM tiers |
 | TrustedZFS handle suites | zfshandle (10 programs, ~56 cases: rights, derive, pin, pool, mount, verbs, security, hardening) + tzfs config test; 2 BSDFilesystem tests disabled pending fake-service harness | `tests/sys/zfshandle/`, `tests/sys/tzfs/` | `docs/trustedzfs-design.md` | is the tests | none | shipped; TODO in `tzfs/Makefile` |
 | OES suite | 46 PLAIN C tests + contract-matrix ATF + 32-bit rejection sh; open `/dev/oes` | `tests/sys/security/oes/` | `docs/book/src/capability/oes.md` | is the tests | none | shipped; pkg `oes-tests` |
 | mac_abac suite | parser + kernel + smoke (root, kmod, exclusive) | `tests/sys/security/mac_abac/` | — | ~24 cases | none | shipped; pkg `mac-abac-tests` |
@@ -956,7 +956,7 @@ This area is everything between `git clone` and a booted 5BSD machine: the build
 | Component libs + ctl tools | `lib/*/tests`, `usr.sbin/*ctl/tests` | protocol, parser, client API | in-session (root cases skip) | ~40 dirs / ~700 cases |
 | Daemon suites (BSD*) | `usr.sbin/BSD*/tests` | provider policy, sessions, bundles | in-session unprivileged; full = VM plane-on | 15 dirs / ~600 cases |
 | Capsule + switchboard | `usr.sbin/{capsule,switchboard}/tests` | boot, lifecycle, management, rc adoption | VM plane-on (`run_capsule_switchboard_capability_tests.sh`) | 36 programs / ~370 cases |
-| mac_capability | `tests/sys/mac_capability` | kernel capability services | VM plane-off (`capability_plane="NO"`, `run_tests.sh`) | 10 programs / ~506 cases |
+| mac_capability | `tests/sys/mac_capability` | kernel capability services | VM plane-on plus enforced plane-off (`vm-provider.sh`, `PLANE_OFF=1`) | 10 programs / ~506 cases |
 | zfshandle / tzfs | `tests/sys/{zfshandle,tzfs}` | TrustedZFS handles, config | VM plane-off / trustedzfs-qemu | 11 programs / ~66 cases |
 | Capsicum/descriptor rights | `tests/sys/kern`, `tests/sys/capsicum` | new rights + envfd + capmode exec | in-session (root); envfd exclusive | ~10 programs / ~340 cases |
 | Linuxulator | `tests/sys/kern/linux_*` + `tools/test/linuxulator` | Linux ABI, ptrace, rseq… | QEMU gate (ZFS-root guest) | 58 sh programs; 1,146 option runs |
@@ -972,7 +972,7 @@ This area is everything between `git clone` and a booted 5BSD machine: the build
 
 ### Policy points
 - `TEST_METADATA required_user/required_kmods/is_exclusive` -> which cases skip unprivileged or serialize -> each `tests/Makefile`.
-- `capability_plane="NO"` loader knob -> stock init boots so kernel suites can claim `/dev/mac_capability` -> `/boot/loader.conf`; `tests/sys/mac_capability/run_tests.sh`.
+- `capability_plane="NO"` loader knob -> stock init boots so kernel suites can claim `/dev/mac_capability` -> `/boot/loader.conf`; `tools/build/fuchsia/vm-provider.sh PLANE_OFF=1`.
 - `WASPNEST_ALLOW_UNTRUSTED_SOURCE=yes` -> root gates may run from a checkout instead of `/usr/tests` -> `tests/waspnest/waspnest-test.sh`.
 - `PROFILE` (`qualification`, `full-qualification`, `nested-default`, `soak-smoke`) -> which live lanes run -> `waspnest-test run`, `virtio-lab.yaml`.
 - `release-ready` gate -> refuses a pass while any ledger row is pending -> `waspnest-suite.tsv`, `virtio-feature-activation.tsv`.
@@ -984,7 +984,7 @@ This area is everything between `git clone` and a booted 5BSD machine: the build
 - Lane metadata (`quick/kernel/stack/installed/stress/hardware`) -> CI selection -> `docs/book/src/develop/testing.md` (design, partially implemented).
 
 ### Public interfaces a developer would use
-- Kyua entry points: `kyua test -k /usr/tests/Kyuafile sys/kern/envfd_test`; `/usr/tests/sys/mac_capability/run_tests.sh`; `/usr/tests/sys/zfshandle/run_tests.sh`; `/usr/tests/waspnest/waspnest-test`; `/usr/tests/sys/kern/vsock_e2e/virtio-lab`; `usr.sbin/switchboard/tests/run_capsule_switchboard_capability_tests.sh [-o objtop]`.
+- Kyua entry points: `kyua test -k /usr/tests/Kyuafile sys/kern/envfd_test`; `/usr/tests/sys/zfshandle/run_tests.sh`; `/usr/tests/waspnest/waspnest-test`; `/usr/tests/sys/kern/vsock_e2e/virtio-lab`; `usr.sbin/switchboard/tests/run_capsule_switchboard_capability_tests.sh [-o objtop]`.
 - Fixtures: `capd_test_guardian`, `capd_test_harness.sh`, `capd_service_fixture`, `capd_protocol_fixture`, `capd_bootstrap_fixture` (`usr.sbin/{capsule,switchboard}/tests`), `service_probe`, `pty_askpass`, `test_helpers.sh`.
 - Standalone: `tools/test/hardenedbsd/regress.py`, `tools/tools/hardenedbsd/audit.py`, `tools/test/mmc/run_tests.py`.
 - Guest rigs: `tools/test/capability-qemu/run.sh IMG`, `tools/test/{oes,mac-abac}-qemu/run.sh`, `tools/test/capability-containers/{rig/,run-all.sh}`, `tools/test/linuxulator/qemu-gate.py`, `tools/tools/bhyve/kernel-devvm/kernel-devvm`.

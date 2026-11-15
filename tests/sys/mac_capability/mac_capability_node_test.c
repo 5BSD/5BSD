@@ -568,8 +568,8 @@ ATF_TC_BODY(node_stat_child, tc)
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		close(fd);
-		sleep(10);
-		_exit(0);
+		for (;;)
+			pause();
 	}
 
 	memset(&req, 0, sizeof(req));
@@ -670,8 +670,8 @@ ATF_TC_BODY(node_procctl_set_child, tc)
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
 		close(fd);
-		sleep(10);
-		_exit(0);
+		for (;;)
+			pause();
 	}
 
 	memset(&sreq, 0, sizeof(sreq));
@@ -717,7 +717,11 @@ ATF_TC_BODY(node_cred_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_CRED;
@@ -752,7 +756,11 @@ ATF_TC_BODY(node_rusage_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_RUSAGE;
@@ -787,7 +795,11 @@ ATF_TC_BODY(node_nice_set_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set child nice to +5 */
 	memset(&sreq, 0, sizeof(sreq));
@@ -830,7 +842,11 @@ ATF_TC_BODY(node_affinity_get_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_AFFINITY;
@@ -864,7 +880,11 @@ ATF_TC_BODY(node_racct_get_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_RACCT;
@@ -900,7 +920,11 @@ ATF_TC_BODY(node_set_cred_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set child to uid=65534, gid=65534 (nobody) */
 	memset(&sreq, 0, sizeof(sreq));
@@ -953,7 +977,11 @@ ATF_TC_BODY(node_set_cred_groups_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.op = NODE_OP_SET_CRED;
@@ -1072,7 +1100,11 @@ ATF_TC_BODY(node_set_session_remote_rejected, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_SET_SESSION;
@@ -1105,7 +1137,11 @@ ATF_TC_BODY(node_set_pgrp_remote_rejected, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.op = NODE_OP_SET_PGRP;
@@ -1188,7 +1224,11 @@ ATF_TC_BODY(node_set_login_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/*
 	 * Set login name on the child's session.  The child inherits
@@ -1228,7 +1268,11 @@ ATF_TC_BODY(node_rlimit_get_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_RLIMIT;
@@ -1262,7 +1306,11 @@ ATF_TC_BODY(node_nice_get_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_NICE;
@@ -1295,7 +1343,11 @@ ATF_TC_BODY(node_affinity_set_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Get child's current affinity */
 	memset(&greq, 0, sizeof(greq));
@@ -1337,7 +1389,11 @@ ATF_TC_BODY(node_procctl_get_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&req, 0, sizeof(req));
 	req.op = NODE_OP_GET_PROCCTL;
@@ -1371,7 +1427,11 @@ ATF_TC_BODY(node_umask_child, tc)
 	ATF_REQUIRE(fd >= 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Get child's umask */
 	memset(&greq, 0, sizeof(greq));
@@ -1524,7 +1584,11 @@ ATF_TC_BODY(node_nice_boundary, tc)
 	/* Use a child so we don't permanently alter our own priority */
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set nice to 20 (lowest priority) */
 	memset(&sreq, 0, sizeof(sreq));
@@ -1630,7 +1694,11 @@ ATF_TC_BODY(node_cred_ngroups_zero, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set credentials with ngroups=0 (clear supplementary groups) */
 	memset(&sreq, 0, sizeof(sreq));
@@ -1992,7 +2060,11 @@ ATF_TC_BODY(node_pdeathsig_set_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	/* Set pdeathsig=SIGTERM on child */
 	memset(&sreq, 0, sizeof(sreq));
@@ -2062,7 +2134,11 @@ ATF_TC_BODY(node_protect_child, tc)
 
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) { close(fd); sleep(10); _exit(0); }
+	if (pid == 0) {
+		close(fd);
+		for (;;)
+			pause();
+	}
 
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.op = NODE_OP_SET_PROCCTL;
@@ -2396,18 +2472,24 @@ ATF_TC_BODY(node_reap_getpids, tc)
 	/* Fork three children */
 	c1 = fork();
 	ATF_REQUIRE(c1 >= 0);
-	if (c1 == 0) { sleep(60); _exit(0); }
+	if (c1 == 0) {
+		for (;;)
+			pause();
+	}
 
 	c2 = fork();
 	ATF_REQUIRE(c2 >= 0);
-	if (c2 == 0) { sleep(60); _exit(0); }
+	if (c2 == 0) {
+		for (;;)
+			pause();
+	}
 
 	c3 = fork();
 	ATF_REQUIRE(c3 >= 0);
-	if (c3 == 0) { sleep(60); _exit(0); }
-
-	/* Let children start */
-	usleep(50000);
+	if (c3 == 0) {
+		for (;;)
+			pause();
+	}
 
 	/* Get descendant PIDs */
 	memset(&req, 0, sizeof(req));
@@ -2417,7 +2499,7 @@ ATF_TC_BODY(node_reap_getpids, tc)
 	    reply_buf, sizeof(reply_buf)) == 0);
 	gp = (struct node_reap_getpids_reply *)reply_buf;
 	ATF_CHECK_EQ(gp->status, NODE_STATUS_OK);
-	ATF_CHECK(gp->count >= 3);
+	ATF_CHECK_EQ(gp->count, 3);
 
 	/* Verify all three children appear in the list */
 	found1 = found2 = found3 = 0;

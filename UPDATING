@@ -27,6 +27,17 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261115:
+	The capability test fixtures (mac_capability_test_keystore,
+	mac_capability_test_kernelstore, mac_capability_test_cleanup) are
+	built by buildkernel again when tests are enabled and ship in
+	/boot/kernel with the mac-capability-tests package, never with the
+	kernel package; MAC_CAPABILITY_FIXTURE_DIR and the explicit
+	"make fixtures" build are gone.  Test guests preload the keystore and
+	kernelstore fixtures from loader.conf.  The stale plane-free
+	tests/sys/mac_capability/run_tests.sh is retired; the suite runs under
+	kyua in the VM tiers (docs/book/src/develop/testing.md).
+
 20261102:
 	Root loads ("sysextctl load NAME" from a root login shell) now
 	resolve the module's dependencies before anything is loaded and

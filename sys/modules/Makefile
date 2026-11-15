@@ -597,6 +597,10 @@ SUBDIR+=	ktest
 .if ${KERN_OPTS:MMAC} || defined(ALL_MODULES)
 SUBDIR+=	mac_test_hooks
 .endif
+# Test-only capability services, packaged with mac-capability-tests.
+SUBDIR+=	mac_capability_test_cleanup
+SUBDIR+=	mac_capability_test_kernelstore
+SUBDIR+=	mac_capability_test_keystore
 SUBDIR+=	tests
 .endif
 

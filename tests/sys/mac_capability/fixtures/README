@@ -1,14 +1,22 @@
-These fixtures exercise the MAC capability keystore and channel protocols.
-They are not selected by sys/modules, buildkernel, buildworld or test installation.
+Test-only capability services for tests/sys/mac_capability:
 
-In a source checkout, build for the kernel used by the isolated test VM:
-  make -j$(sysctl -n hw.ncpu) -C tests/sys/mac_capability fixtures KERNBUILDDIR=/path/to/kernel/objects
-The normal /usr/obj object root is used. Determine the fixture object root with:
-  make -C tests/sys/mac_capability/fixtures -V .OBJDIR
-Copy its kernelstore/ and keystore/ .ko files to the isolated test VM, preserving
-those subdirectories, and set MAC_CAPABILITY_FIXTURE_DIR to their parent when
-running run_tests.sh. Do not load fixtures on the production capability plane.
-The runner's existing plane-free and root requirements still apply.
+  keystore/     mac_capability_test_keystore    async key-value store
+  kernelstore/  mac_capability_test_kernelstore sync shared key-value store
+  cleanup/      mac_capability_test_cleanup     unload/cleanup ordering probe
+  include/      wire protocols shared with the test programs
 
-The matching protocol headers live in fixtures/include. Tests and fixture
-modules consume the same definitions. Production code does not include them.
+They are built by buildkernel from sys/modules/mac_capability_test_* when
+tests are enabled (MK_TESTS), installed in /boot/kernel and packaged in
+mac-capability-tests, never in a kernel package.  Production code does not
+include their headers.
+
+The keystore and kernelstore cases declare require.kmods; preload both in
+the test guest's /boot/loader.conf:
+
+  mac_capability_test_keystore_load="YES"
+  mac_capability_test_kernelstore_load="YES"
+
+The unload and cleanup cases load and unload mac_capability_test_cleanup
+themselves, so it must not be preloaded.  The fixtures register test
+services; load them only in a disposable test guest, never on a host whose
+capability plane is in production use.

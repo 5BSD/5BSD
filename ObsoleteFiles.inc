@@ -1,3 +1,8 @@
+# 20261115: the stale plane-free runner of tests/sys/mac_capability is
+# retired (the suite runs under kyua in the VM tiers).  Its fixture modules
+# ship in /boot/kernel again, with the mac-capability-tests package.
+OLD_FILES+= usr/tests/sys/mac_capability/run_tests
+
 # 20261029: the local OpenTelemetry agent (Fluent Bit) is no longer part
 # of the base system.
 OLD_FILES+= etc/rc.d/fluentbit
@@ -827,10 +832,6 @@ OLD_FILES+= usr/share/security/lomac-policy.contexts
 # 20261011: Remove syscons-only bsdconfig controls.
 OLD_FILES+=usr/libexec/bsdconfig/080.console/saver
 OLD_FILES+=usr/libexec/bsdconfig/080.console/screenmap
-
-# 20261011: Capability fixtures are no longer shipped as system modules.
-OLD_FILES+=boot/kernel/mac_capability_test_kernelstore.ko
-OLD_FILES+=boot/kernel/mac_capability_test_keystore.ko
 
 # 20261011: Retire syscons, 4BSD scheduling and no-op MAC policies.
 OLD_FILES+=usr/share/syscons/fonts/INDEX.fonts

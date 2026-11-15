@@ -752,9 +752,12 @@ ATF_TC_BODY(reply_token_correlation, tc)
 	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
 	ATF_CHECK_EQ(ra.reply_token, 0xAAAA);
 
+	/* RECVMSG returns flags (RECV_F_STATUS); an input must be 0. */
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = buf;
 	ra.payload_len = sizeof(buf);
-	ra.nfds = 0;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_MSG(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0,
+	    "RECVMSG: %s", strerror(errno));
 	ATF_CHECK_EQ(ra.reply_token, 0xBBBB);
 
 	close(fd);
@@ -4096,55 +4099,67 @@ ATF_TC_BODY(xfer_sendmsg_multi_atomic, tc)
 
 /* ---- RECVMSG xfer state propagation ---- */
 
-ATF_TC(xfer_recvmsg_unlimited_preserved);
-ATF_TC_HEAD(xfer_recvmsg_unlimited_preserved, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "mac_capability RECVMSG: UNLIMITED fd arrives as UNLIMITED");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
-}
-ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
+/*
+ * Pass pass_fd from one end of a channel pair to the other and return the
+ * descriptor the peer received: a channel delivers the sender's descriptors
+ * with their transfer and propagation state (the test keystore never returns
+ * one, which left these cases vacuous).
+ */
+static int
+channel_pass_fd(int pass_fd)
 {
 	struct mac_capability_sendmsg_args sa;
 	struct mac_capability_recvmsg_args ra;
-	struct ks_request req;
-	char buf[64];
-	int fd, pipefd[2], recv_fd;
+	char byte, buf[8];
+	int fd_a, fd_b, recv_fd;
 
-	fd = mac_capability_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(pipe(pipefd) == 0);
-
-	/* pipefd[0] is default UNLIMITED. */
-	req.op = KS_OP_FETCH;
-	req.keyid = mac_capability_missing_key();
+	mac_capability_channel_create(&fd_a, &fd_b);
+	byte = 'f';
 	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
+	sa.payload = &byte;
+	sa.payload_len = sizeof(byte);
+	sa.fds = &pass_fd;
 	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
-
-	/* Receive the reply (keystore echoes fds back). */
+	ATF_REQUIRE_MSG(ioctl(fd_a, MAC_CAPABILITY_SENDMSG, &sa) == 0,
+	    "SENDMSG: %s", strerror(errno));
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = buf;
 	ra.payload_len = sizeof(buf);
 	ra.fds = &recv_fd;
 	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_MSG(ioctl(fd_b, MAC_CAPABILITY_RECVMSG, &ra) == 0,
+	    "RECVMSG: %s", strerror(errno));
+	ATF_REQUIRE_EQ_MSG(ra.nfds, 1, "peer received %u descriptors", ra.nfds);
+	close(fd_a);
+	close(fd_b);
+	return (recv_fd);
+}
 
-	if (ra.nfds == 1) {
-		/*
-		 * Received fd should be UNLIMITED — can tighten to ONCE,
-		 * proving it wasn't degraded.
-		 */
-		ATF_CHECK(cap_xfer_limit(recv_fd, CAP_XFER_ONCE) == 0);
-		close(recv_fd);
-	}
+ATF_TC(xfer_recvmsg_unlimited_preserved);
+ATF_TC_HEAD(xfer_recvmsg_unlimited_preserved, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "mac_capability RECVMSG: UNLIMITED fd arrives as UNLIMITED");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(xfer_recvmsg_unlimited_preserved, tc)
+{
+	int pipefd[2], recv_fd;
+
+	ATF_REQUIRE(pipe(pipefd) == 0);
+
+	/* pipefd[0] is default UNLIMITED. */
+	recv_fd = channel_pass_fd(pipefd[0]);
+
+	/*
+	 * Received fd should be UNLIMITED — can tighten to ONCE,
+	 * proving it wasn't degraded.
+	 */
+	ATF_CHECK(cap_xfer_limit(recv_fd, CAP_XFER_ONCE) == 0);
+	close(recv_fd);
 
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(fd);
 }
 
 ATF_TC(xfer_recvmsg_once_arrives_none);
@@ -4152,79 +4167,56 @@ ATF_TC_HEAD(xfer_recvmsg_once_arrives_none, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability RECVMSG: XFER_ONCE fd arrives as XFER_NONE");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_keystore");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_channel");
 }
 ATF_TC_BODY(xfer_recvmsg_once_arrives_none, tc)
 {
-	struct mac_capability_sendmsg_args sa;
-	struct mac_capability_recvmsg_args ra;
-	struct ks_request req;
-	char buf[64];
-	int fd, pipefd[2], recv_fd;
+	int pipefd[2], recv_fd;
 
-	fd = mac_capability_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 
 	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_ONCE) == 0);
 
-	req.op = KS_OP_FETCH;
-	req.keyid = mac_capability_missing_key();
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
-	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
+	recv_fd = channel_pass_fd(pipefd[0]);
 
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = buf;
-	ra.payload_len = sizeof(buf);
-	ra.fds = &recv_fd;
-	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	/* ONCE was consumed on send — receiver gets NONE. */
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == -1);
+	/* Cannot forward. */
+	{
+		struct msghdr msgh;
+		struct iovec iov;
+		union {
+			struct cmsghdr hdr;
+			char cbuf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		struct cmsghdr *cmsg;
+		char dummy = 'x';
+		int sv[2];
 
-	if (ra.nfds == 1) {
-		/* ONCE was consumed on send — receiver gets NONE. */
-		ATF_CHECK_ERRNO(ENOTCAPABLE,
-		    cap_xfer_limit(recv_fd, CAP_XFER_UNLIMITED) == -1);
-		/* Cannot forward. */
-		{
-			struct msghdr msgh;
-			struct iovec iov;
-			union {
-				struct cmsghdr hdr;
-				char cbuf[CMSG_SPACE(sizeof(int))];
-			} cmsgbuf;
-			struct cmsghdr *cmsg;
-			char dummy = 'x';
-			int sv[2];
-
-			ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0,
-			    sv) == 0);
-			memset(&msgh, 0, sizeof(msgh));
-			iov.iov_base = &dummy;
-			iov.iov_len = 1;
-			msgh.msg_iov = &iov;
-			msgh.msg_iovlen = 1;
-			msgh.msg_control = cmsgbuf.cbuf;
-			msgh.msg_controllen = sizeof(cmsgbuf.cbuf);
-			cmsg = CMSG_FIRSTHDR(&msgh);
-			cmsg->cmsg_level = SOL_SOCKET;
-			cmsg->cmsg_type = SCM_RIGHTS;
-			cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-			memcpy(CMSG_DATA(cmsg), &recv_fd, sizeof(int));
-			ATF_CHECK_MSG(sendmsg(sv[0], &msgh, 0) == -1,
-			    "forwarding NONE fd should fail");
-			close(sv[0]);
-			close(sv[1]);
-		}
-		close(recv_fd);
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0,
+		    sv) == 0);
+		memset(&msgh, 0, sizeof(msgh));
+		iov.iov_base = &dummy;
+		iov.iov_len = 1;
+		msgh.msg_iov = &iov;
+		msgh.msg_iovlen = 1;
+		msgh.msg_control = cmsgbuf.cbuf;
+		msgh.msg_controllen = sizeof(cmsgbuf.cbuf);
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cmsg), &recv_fd, sizeof(int));
+		ATF_CHECK_MSG(sendmsg(sv[0], &msgh, 0) == -1,
+		    "forwarding NONE fd should fail");
+		close(sv[0]);
+		close(sv[1]);
 	}
+	close(recv_fd);
 
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(fd);
 }
 
 ATF_TC(propagation_once_recvmsg_preserved);
@@ -4233,39 +4225,18 @@ ATF_TC_HEAD(propagation_once_recvmsg_preserved, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "mac_capability RECVMSG preserves CLOEXEC_ONCE and CLOFORK_ONCE");
 	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore");
+	    "mac_capability mac_capability_channel");
 }
 ATF_TC_BODY(propagation_once_recvmsg_preserved, tc)
 {
-	struct mac_capability_sendmsg_args sa;
-	struct mac_capability_recvmsg_args ra;
-	struct ks_request req;
-	char buf[64];
-	int fd, pipefd[2], recv_fd, status;
+	int pipefd[2], recv_fd, status;
 	pid_t pid;
 
-	fd = mac_capability_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(pipe(pipefd) == 0);
 	ATF_REQUIRE(cap_cloexec_limit(pipefd[0], CAP_CLOEXEC_ONCE) == 0);
 	ATF_REQUIRE(cap_clofork_limit(pipefd[0], CAP_CLOFORK_ONCE) == 0);
 
-	req.op = KS_OP_FETCH;
-	req.keyid = mac_capability_missing_key();
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
-	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
-
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = buf;
-	ra.payload_len = sizeof(buf);
-	ra.fds = &recv_fd;
-	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
-	ATF_REQUIRE_EQ(ra.nfds, 1);
+	recv_fd = channel_pass_fd(pipefd[0]);
 
 	/* These two checks together prove each exact intermediate state. */
 	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
@@ -4298,7 +4269,6 @@ ATF_TC_BODY(propagation_once_recvmsg_preserved, tc)
 	close(recv_fd);
 	close(pipefd[0]);
 	close(pipefd[1]);
-	close(fd);
 }
 
 /* ---- CALL xfer state propagation ---- */
@@ -7771,7 +7741,21 @@ ATF_TC_BODY(kstore_revoke_member, tc)
 	close(owner_fd);
 }
 
-/* This module is staged only in the isolated lifecycle VM. */
+/*
+ * mac_capability_test_cleanup ships with this suite (mac-capability-tests,
+ * built from sys/modules); these cases load and unload it themselves.
+ */
+#define	CLEANUP_FIXTURE	"/boot/kernel/mac_capability_test_cleanup.ko"
+
+static void
+require_cleanup_fixture(void)
+{
+
+	ATF_REQUIRE_MSG(access(CLEANUP_FIXTURE, R_OK) == 0,
+	    "%s: %s (installed with mac-capability-tests)", CLEANUP_FIXTURE,
+	    strerror(errno));
+}
+
 ATF_TC(unload_waits_for_cleanup_callback);
 ATF_TC_HEAD(unload_waits_for_cleanup_callback, tc)
 {
@@ -7800,9 +7784,8 @@ check_unload_waits_for_cleanup(bool last_close)
 	char go = 1;
 	pid_t terminator, unloader, observed = 0;
 
-	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
-		atf_tc_skip("private VM cleanup fixture is not staged");
-	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	require_cleanup_fixture();
+	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE_MSG(module >= 0, "load cleanup fixture: %s", strerror(errno));
 	fd = mac_capability_connect("test_cleanup");
 	ATF_REQUIRE(fd >= 0);
@@ -7878,7 +7861,7 @@ check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
 
 	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
 	    &before, &len, NULL, 0));
-	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
 	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
 	if (mint) {
@@ -7939,8 +7922,7 @@ ATF_TC_HEAD(unload_waits_for_admission, tc)
 }
 ATF_TC_BODY(unload_waits_for_admission, tc)
 {
-	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
-		atf_tc_skip("private VM cleanup fixture is not staged");
+	require_cleanup_fixture();
 	for (unsigned stage = 1; stage <= 2; stage++)
 		for (unsigned fail = 0; fail <= 1; fail++)
 			for (unsigned mint = 0; mint <= 1; mint++)
@@ -7961,9 +7943,8 @@ ATF_TC_BODY(failed_init_completes_cleanup, tc)
 	unsigned fail = 1, release = 1;
 	int module, fd;
 
-	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
-		atf_tc_skip("private VM cleanup fixture is not staged");
-	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	require_cleanup_fixture();
+	module = kldload(CLEANUP_FIXTURE);
 	ATF_REQUIRE(module >= 0);
 	len = sizeof(before);
 	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",

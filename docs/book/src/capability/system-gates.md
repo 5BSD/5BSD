@@ -246,8 +246,8 @@ op with its `-deny` variant.
 
 `tests/sys/mac_capability/mac_capability_system_test.c` carries 38 ATF
 cases covering claim ownership, token narrowing, per-OID scoping, the
-perform operations and the strict holder test; they run on a plane-free
-boot through `tests/sys/mac_capability/run_tests.sh`. Each gate daemon has
+perform operations and the strict holder test; they run under kyua in the
+VM tiers of `docs/book/src/develop/testing.md`. Each gate daemon has
 its own provider tests, and the sysctl isolation was verified end to end on
 a production plane: a foreign direct write to `kern.maxfiles` is denied,
 the same write through sysctlcmpctl(8) succeeds.
