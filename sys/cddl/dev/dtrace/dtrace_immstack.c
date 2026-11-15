@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
+ * SPDX-License-Identifier: CDDL-1.0
  *
  * Copyright (c) 2026 Kory Heard
  */
