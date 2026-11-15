@@ -106,7 +106,7 @@ pin_enforce()
 	save_policy
 	mac_abac_ctl rule clear > /dev/null || atf_fail "rule clear"
 	mac_abac_ctl default allow > /dev/null || atf_fail "default allow"
-	mac_abac_ctl rule add deny "$1" '*' -> "$PIN_LABEL" > /dev/null ||
+	mac_abac_ctl rule add deny "$1" '*' '->' "$PIN_LABEL" > /dev/null ||
 	    atf_fail "rule add"
 	mac_abac_ctl mode enforcing > /dev/null || atf_fail "mode enforcing"
 }
