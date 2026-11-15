@@ -208,6 +208,7 @@ abac_rule_add_from_arg(struct abac_rule_arg *arg, const char *data)
 
 	/* Check if table is full */
 	if (abac_rule_end >= ABAC_MAX_RULES) {
+		abac_gate_update_locked();
 		rw_wunlock(&abac_rules_lock);
 		abac_rule_free(newrule);
 		return (ENOSPC);
@@ -226,6 +227,7 @@ abac_rule_add_from_arg(struct abac_rule_arg *arg, const char *data)
 	/* Return assigned ID to caller */
 	arg->vr_id = newrule->vr_id;
 
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 
 	/* DTrace: rule added */
@@ -405,6 +407,7 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
 		abac_rebuild_active_sets();
 	}
 
+	abac_gate_update_locked();
 	rw_wunlock(&abac_rules_lock);
 
 	free(old_rules, M_TEMP);

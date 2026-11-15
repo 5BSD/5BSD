@@ -696,6 +696,24 @@ extern int abac_log_level;
 } while (0)
 
 /*
+ * Idle gating (mac_abac.c): the operations whose hooks must evaluate, and
+ * the first statement of every rule-evaluating hook.  An operation outside
+ * abac_live_ops has no rule that could decide it, so the hook returns what
+ * its evaluation would have.
+ */
+extern uint32_t abac_live_ops;
+extern int abac_force_hooks;
+extern struct abac_rule *abac_rules[];
+extern int abac_rule_end;
+extern struct rwlock abac_rules_lock;
+#define	ABAC_CHECK_LIVE(ops)	do {					\
+	if (__predict_true((atomic_load_32(&abac_live_ops) & (ops)) == 0)) \
+		return (0);						\
+} while (0)
+void abac_gate_update_locked(void);
+void abac_gate_store(int *setting, int value);
+
+/*
  * Function prototypes - abac_label.c
  */
 void abac_label_init(void);
