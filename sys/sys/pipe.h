@@ -117,6 +117,7 @@ struct pipe {
 	int	pipe_waiters;		/* pipelock waiters */
 	int	pipe_busy;		/* busy flag, mostly to handle rundown sanely */
 	int	pipe_wgen;		/* writer generation for named pipe */
+	u_int	pipe_files;	/* native anonymous open descriptions, pp_mtx */
 	u_int	pipe_user_size;	/* fixed capacity requested with fcntl */
 	ino_t	pipe_ino;		/* fake inode for stat(2) */
 };

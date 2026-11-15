@@ -1002,3 +1002,26 @@ nodes and request tickets, native vnode growth at most 16, matching hashes,
 `FUSE_TEARDOWN_PASS`, exit zero, healthy ZFS and clean shutdown without kernel
 diagnostics. This samples thread scheduling; it does not prove every
 vnode-insertion failure branch was reached.
+
+### Inherited native pipe descriptions
+
+`build-pipe-reopen.sh` also builds `native-pipe-parent`, a native executable
+that creates a pipe before execing the Linux probe. Include both binaries in
+the disposable guest (`/root/pipe-reopen-linux` and `/root/native-pipe-parent`).
+The guest runner tests inherited flags, reader/writer lifetime, peer closure,
+async ownership, reopen/close churn and owner permissions as root and as an
+unprivileged pipe owner. A synchronization pipe makes the parent close its data
+endpoints before the child starts, so EOF/EPIPE checks do not depend on scheduling.
+
+A native pipe remains bidirectional. Reopening an endpoint creates independent
+file status flags and async ownership; `dup` still shares those properties.
+Its endpoint stays alive until its last open description closes. These cases
+do not assert that a native bidirectional pipe becomes a Linux one-way pipe.
+The existing Linux-created pipe cases must also pass. Kernel build success alone
+is not runtime qualification; run in a disposable guest with matching kernel and
+modules. Do not run the guest shutdown script on a host.
+
+The inherited-pipe change uses the existing `build-bsd kernel` backend and
+standard `/usr/obj` kernel build inputs. It adds no frontend option or change
+to package staging, signing or publication. These runtime tests establish no
+bundle signature, verified-boot or compromised-root protection claim.
