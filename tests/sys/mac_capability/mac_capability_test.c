@@ -4566,6 +4566,59 @@ capprotect_shield(uint32_t flags)
 }
 
 /*
+ * Fork a child that shields itself with flags and then waits for the parent.
+ * Return only once the child has reported that CP_OP_SHIELD succeeded: a
+ * child that could not shield fails the case here, so the foreign probes
+ * never run against an unshielded child or a zombie.
+ */
+static pid_t
+shield_child_start(uint32_t flags, int sv[2])
+{
+	ssize_t n;
+	pid_t pid;
+	char ack;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd;
+
+		close(sv[0]);
+		fd = capprotect_shield(flags);
+		if (fd < 0)
+			_exit(10);
+		if (write(sv[1], "s", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &ack, 1) != 1 || ack != 'g')
+			_exit(12);
+		close(fd);
+		_exit(0);
+	}
+	close(sv[1]);
+	do {
+		n = read(sv[0], &ack, 1);
+	} while (n == -1 && errno == EINTR);
+	ATF_REQUIRE_MSG(n == 1 && ack == 's',
+	    "child %d did not report a successful CP_OP_SHIELD (flags %#x)",
+	    (int)pid, flags);
+	return (pid);
+}
+
+/* Release a shield_child_start() child and require its clean exit. */
+static void
+shield_child_finish(pid_t pid, int sv[2])
+{
+	int status;
+
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
+	close(sv[0]);
+}
+
+/*
  * Launcher-applied protection: shield the process behind procdesc_fd (a
  * pdfork(2) descriptor).  The returned capprotect fd is the protector's
  * authority and is kept open by the caller.
@@ -4593,6 +4646,52 @@ capprotect_protect(int procdesc_fd, uint32_t flags)
 		return (-1);
 	}
 	return (fd);
+}
+
+/*
+ * pdfork a child that does not shield itself and waits for the parent; its
+ * launcher (the test) protects it with CP_OP_PROTECT.
+ */
+static pid_t
+procdesc_child_start(int *pdp, int sv[2])
+{
+	ssize_t n;
+	pid_t pid;
+	char ack;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = pdfork(pdp, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(sv[0]);
+		if (write(sv[1], "r", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &ack, 1) != 1 || ack != 'g')
+			_exit(12);
+		_exit(0);
+	}
+	close(sv[1]);
+	do {
+		n = read(sv[0], &ack, 1);
+	} while (n == -1 && errno == EINTR);
+	ATF_REQUIRE_MSG(n == 1 && ack == 'r', "child %d did not start",
+	    (int)pid);
+	return (pid);
+}
+
+/* Release a procdesc_child_start() child and require its clean exit. */
+static void
+procdesc_child_finish(int pd, int sv[2])
+{
+	int status;
+
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	status = 0;
+	ATF_REQUIRE_EQ(pdwait(pd, &status, WEXITED, NULL, NULL), 0);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "protected child exited abnormally (status %#x)", status);
+	close(pd);
+	close(sv[0]);
 }
 
 ATF_TC(cap_pro_shield_basic);
@@ -4626,20 +4725,8 @@ ATF_TC_BODY(cap_pro_protector_can_act, tc)
 	int sv[2], pd, cfd;
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		close(sv[0]);
-		/* The child does NOT shield itself; its launcher protects it. */
-		write(sv[1], "r", 1);
-		read(sv[1], &buf, 1);
-		close(sv[1]);
-		_exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	/* The child does NOT shield itself; its launcher protects it. */
+	pid = procdesc_child_start(&pd, sv);
 
 	cfd = capprotect_protect(pd, CP_SF_SIGNAL);
 	ATF_REQUIRE(cfd >= 0);
@@ -4649,10 +4736,8 @@ ATF_TC_BODY(cap_pro_protector_can_act, tc)
 	/* A foreign process may not. */
 	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
 
-	write(sv[0], "g", 1);
+	procdesc_child_finish(pd, sv);
 	close(cfd);
-	close(pd);		/* reaps the procdesc-owned child */
-	close(sv[0]);
 }
 
 ATF_TC(cap_pro_selfshield_blocks_parent);
@@ -4666,33 +4751,17 @@ ATF_TC_HEAD(cap_pro_selfshield_blocks_parent, tc)
 }
 ATF_TC_BODY(cap_pro_selfshield_blocks_parent, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGNAL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGNAL, sv);
 
 	/* Parent is not the protector; the shield blocks it too. */
 	errno = 0;
 	ATF_CHECK(kill(pid, 0) == -1);
 	ATF_CHECK_EQ(errno, EACCES);
 
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_protect_via_procdesc);
@@ -4709,18 +4778,7 @@ ATF_TC_BODY(cap_pro_protect_via_procdesc, tc)
 	int sv[2], pd, cfd;
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		close(sv[0]);
-		write(sv[1], "r", 1);
-		read(sv[1], &buf, 1);
-		close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = procdesc_child_start(&pd, sv);
 
 	/* Before protection, a foreign process can ptrace the child. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 1);
@@ -4731,8 +4789,8 @@ ATF_TC_BODY(cap_pro_protect_via_procdesc, tc)
 	/* After launcher protection, the foreign ptrace is blocked. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
-	write(sv[0], "g", 1);
-	close(cfd); close(pd); close(sv[0]);
+	procdesc_child_finish(pd, sv);
+	close(cfd);
 }
 
 ATF_TC(cap_pro_foreign_ptrace_blocked);
@@ -4745,28 +4803,12 @@ ATF_TC_HEAD(cap_pro_foreign_ptrace_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_ptrace_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PTRACE, sv);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_signal_blocked);
@@ -4779,28 +4821,12 @@ ATF_TC_HEAD(cap_pro_foreign_signal_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_signal_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGNAL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGNAL, sv);
 	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_sigkill_blocked);
@@ -4813,28 +4839,12 @@ ATF_TC_HEAD(cap_pro_foreign_sigkill_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_sigkill_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGKILL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGKILL, sv);
 	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 /*
@@ -5194,30 +5204,17 @@ ATF_TC(cap_pro_visible_flag_not_enforced);
 ATF_TC_HEAD(cap_pro_visible_flag_not_enforced, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Shield with SF_VISIBLE hides from foreign process");
+	    "Shield with SF_VISIBLE should hide the process from a foreign "
+	    "one; not enforced, so the hiding check is an expected failure");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(cap_pro_visible_flag_not_enforced, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_VISIBLE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_VISIBLE, sv);
 	/*
 	 * Known gap, documented in mac_capability_capprotect(4): the
 	 * per-process model cannot enforce CP_SF_VISIBLE because
@@ -5230,9 +5227,7 @@ ATF_TC_BODY(cap_pro_visible_flag_not_enforced, tc)
 	    "model; see mac_capability_capprotect(4)");
 	ATF_CHECK_EQ(run_shield_helper("visibility", pid), 0);
 	atf_tc_expect_pass();
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_selective_flags);
@@ -5245,30 +5240,14 @@ ATF_TC_HEAD(cap_pro_selective_flags, tc)
 }
 ATF_TC_BODY(cap_pro_selective_flags, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PTRACE, sv);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 	/* Use signal0 — real signals would kill the unshielded child. */
 	ATF_CHECK_EQ(run_shield_helper("signal0", pid), 1);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_all_flags_blocks_all);
@@ -5281,24 +5260,10 @@ ATF_TC_HEAD(cap_pro_all_flags_blocks_all, tc)
 }
 ATF_TC_BODY(cap_pro_all_flags_blocks_all, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PROTECT);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PROTECT, sv);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
@@ -5309,9 +5274,7 @@ ATF_TC_BODY(cap_pro_all_flags_blocks_all, tc)
 	atf_tc_expect_pass();
 	ATF_CHECK_EQ(run_shield_helper("ktrace", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("suspend", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_close_does_not_unshield);
@@ -5327,32 +5290,42 @@ ATF_TC_BODY(cap_pro_close_does_not_unshield, tc)
 {
 	int sv[2], status;
 	pid_t pid;
+	char buf;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		char buf;
 		int fd;
+
 		close(sv[0]);
 		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
+		if (fd < 0)
+			_exit(10);
+		if (write(sv[1], "s", 1) != 1)
+			_exit(11);
+		if (read(sv[1], &buf, 1) != 1 || buf != 'g')
+			_exit(12);
 		close(fd);		/* closing the fd must NOT unshield */
-		write(sv[1], "u", 1);
-		sleep(5);
-		close(sv[1]); _exit(0);
+		if (write(sv[1], "u", 1) != 1)
+			_exit(13);
+		if (read(sv[1], &buf, 1) != 1 || buf != 'x')
+			_exit(14);
+		_exit(0);
 	}
 	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1);
-	  ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	  write(sv[0], "g", 1);
-	  read(sv[0], &buf, 1); }
+	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 's',
+	    "child did not report a successful CP_OP_SHIELD");
+	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 'u',
+	    "child did not close its shield descriptor");
 	/* Still blocked after the descriptor is closed (exit is the bound). */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
-	kill(pid, SIGKILL);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE(write(sv[0], "x", 1) == 1);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -5561,30 +5534,41 @@ ATF_TC_BODY(cap_pro_fork_not_inherited, tc)
 	child_pid = fork();
 	ATF_REQUIRE(child_pid >= 0);
 	if (child_pid == 0) {
-		int shield_fd;
+		int gcstatus, shield_fd;
 		pid_t gc;
 		char buf;
+
 		close(sv[0]);
 		shield_fd = capprotect_shield(CP_SF_PTRACE);
-		if (shield_fd < 0) _exit(10);
+		if (shield_fd < 0)
+			_exit(10);
 		gc = fork();		/* child born after the parent shielded */
-		if (gc < 0) _exit(11);
-		if (gc == 0) { close(shield_fd); sleep(5); _exit(0); }
-		write(sv[1], &gc, sizeof(gc));
-		read(sv[1], &buf, 1);
-		kill(gc, SIGKILL);
-		waitpid(gc, NULL, 0);
-		close(shield_fd); close(sv[1]); _exit(0);
+		if (gc < 0)
+			_exit(11);
+		if (gc == 0) {
+			for (;;)
+				pause();
+		}
+		if (write(sv[1], &gc, sizeof(gc)) != (ssize_t)sizeof(gc))
+			_exit(12);
+		if (read(sv[1], &buf, 1) != 1 || buf != 'g')
+			_exit(13);
+		if (kill(gc, SIGKILL) != 0 || waitpid(gc, &gcstatus, 0) != gc ||
+		    !WIFSIGNALED(gcstatus) || WTERMSIG(gcstatus) != SIGKILL)
+			_exit(14);
+		_exit(0);
 	}
 	close(sv[1]);
-	ATF_REQUIRE(read(sv[0], &grandchild_pid, sizeof(grandchild_pid))
-	    == (ssize_t)sizeof(grandchild_pid));
-	usleep(200000);
+	ATF_REQUIRE_MSG(read(sv[0], &grandchild_pid, sizeof(grandchild_pid))
+	    == (ssize_t)sizeof(grandchild_pid),
+	    "child did not shield and fork");
 	/* The shielded process is protected; its fork child is NOT. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", child_pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("ptrace", grandchild_pid), 1);
-	write(sv[0], "g", 1);
-	waitpid(child_pid, &status, 0);
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	ATF_REQUIRE_EQ(waitpid(child_pid, &status, 0), child_pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -5598,28 +5582,12 @@ ATF_TC_HEAD(cap_pro_foreign_sched_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_sched_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SCHED);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SCHED, sv);
 	ATF_CHECK_EQ(run_shield_helper("sched", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_wait_blocked);
@@ -5632,30 +5600,15 @@ ATF_TC_HEAD(cap_pro_foreign_wait_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_wait_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
+	pid = shield_child_start(CP_SF_WAIT, sv);
 	atf_tc_expect_fail("waitpid on non-child returns ECHILD before "
 	    "MAC hook is consulted — hook only gates child visibility");
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_WAIT);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
 	ATF_CHECK_EQ(run_shield_helper("wait", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	atf_tc_expect_pass();
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_ktrace_blocked);
@@ -5668,28 +5621,12 @@ ATF_TC_HEAD(cap_pro_foreign_ktrace_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_ktrace_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_KTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_KTRACE, sv);
 	ATF_CHECK_EQ(run_shield_helper("ktrace", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_suspend_blocked);
@@ -5702,28 +5639,12 @@ ATF_TC_HEAD(cap_pro_foreign_suspend_blocked, tc)
 }
 ATF_TC_BODY(cap_pro_foreign_suspend_blocked, tc)
 {
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_SIGNAL);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_SIGNAL, sv);
 	ATF_CHECK_EQ(run_shield_helper("suspend", pid), 0);
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_foreign_core_blocked);
@@ -5752,20 +5673,28 @@ ATF_TC_BODY(cap_pro_foreign_core_blocked, tc)
 		rl.rlim_max = RLIM_INFINITY;
 		setrlimit(RLIMIT_CORE, &rl);
 		fd = capprotect_shield(CP_SF_CORE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
+		if (fd < 0)
+			_exit(10);
+		if (write(sv[1], "s", 1) != 1)
+			_exit(11);
 		/* Wait for parent, then abort to trigger core dump. */
-		read(sv[1], &buf, 1);
+		if (read(sv[1], &buf, 1) != 1)
+			_exit(12);
 		abort();
 	}
 	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	{
+		char buf;
+
+		ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 's',
+		    "child did not report a successful CP_OP_SHIELD");
+	}
 	/*
 	 * Tell child to abort.  The MAC hook should suppress the
 	 * core dump, but the process still dies from SIGABRT.
 	 */
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(WTERMSIG(status), SIGABRT);
 	/* Core flag should NOT be set — dump was suppressed. */
@@ -5785,28 +5714,11 @@ ATF_TC_BODY(cap_pro_authorize_grants_access, tc)
 {
 	struct mac_capability_call_args ca;
 	struct cp_request req;
-	int sv[2], status;
+	int sv[2];
 	pid_t pid;
 	int shield_fd, token_fd, reply_fds[1];
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
-
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-
-	if (pid == 0) {
-		char buf;
-		int fd;
-		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PTRACE);
-		if (fd < 0) _exit(10);
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
-		close(fd); close(sv[1]); _exit(0);
-	}
-
-	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	pid = shield_child_start(CP_SF_PTRACE, sv);
 
 	/* Foreign helper is blocked. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
@@ -5865,9 +5777,7 @@ ATF_TC_BODY(cap_pro_authorize_grants_access, tc)
 	close(token_fd);
 	close(shield_fd);
 
-	write(sv[0], "g", 1);
-	waitpid(pid, &status, 0);
-	close(sv[0]);
+	shield_child_finish(pid, sv);
 }
 
 ATF_TC(cap_pro_token_close_revokes);
@@ -6023,7 +5933,7 @@ ATF_TC_BODY(cap_pro_delegated_access, tc)
 		    "authorize_ptrace", fdstr, pidstr, NULL);
 		_exit(2);
 	}
-	waitpid(helper, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(helper, &status, 0), helper);
 	ATF_REQUIRE(WIFEXITED(status));
 	/* Helper authorized itself and ptrace succeeded. */
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
@@ -6035,8 +5945,10 @@ ATF_TC_BODY(cap_pro_delegated_access, tc)
 	ATF_CHECK_EQ(run_shield_helper("ptrace", target), 0);
 
 	/* Clean up. */
-	write(sv[0], "g", 1);
-	waitpid(target, &status, 0);
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	ATF_REQUIRE_EQ(waitpid(target, &status, 0), target);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded target exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -6053,52 +5965,56 @@ ATF_TC_BODY(cap_pro_multi_fd_close_keeps_shield, tc)
 {
 	int sv[2], status;
 	pid_t pid;
+	char buf;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		char buf;
 		int fd1, fd2;
+
 		close(sv[0]);
 
 		/* Open two shield fds. */
 		fd1 = capprotect_shield(CP_SF_PTRACE);
-		if (fd1 < 0) _exit(10);
+		if (fd1 < 0)
+			_exit(10);
 		fd2 = capprotect_shield(CP_SF_PTRACE);
-		if (fd2 < 0) _exit(11);
+		if (fd2 < 0)
+			_exit(11);
 
-		write(sv[1], "s", 1);
-		read(sv[1], &buf, 1);
+		if (write(sv[1], "s", 1) != 1 || read(sv[1], &buf, 1) != 1)
+			_exit(12);
 
 		/* Close first fd — should still be protected. */
 		close(fd1);
-		write(sv[1], "1", 1);
-		read(sv[1], &buf, 1);
+		if (write(sv[1], "1", 1) != 1 || read(sv[1], &buf, 1) != 1)
+			_exit(13);
 
 		/* Close second fd — still protected until process exit. */
 		close(fd2);
-		write(sv[1], "2", 1);
-
-		sleep(5);
-		close(sv[1]); _exit(0);
+		if (write(sv[1], "2", 1) != 1 || read(sv[1], &buf, 1) != 1 ||
+		    buf != 'x')
+			_exit(14);
+		_exit(0);
 	}
 	close(sv[1]);
-	{ char buf; read(sv[0], &buf, 1); }
+	ATF_REQUIRE_MSG(read(sv[0], &buf, 1) == 1 && buf == 's',
+	    "child did not report two successful CP_OP_SHIELD calls");
 
 	/* Both fds open — blocked. */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
 	/* Tell child to close first fd. */
-	write(sv[0], "g", 1);
-	{ char buf; read(sv[0], &buf, 1); }
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	ATF_REQUIRE(read(sv[0], &buf, 1) == 1 && buf == '1');
 
 	/* Still blocked (refcount > 0). */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
 	/* Tell child to close second fd. */
-	write(sv[0], "g", 1);
-	{ char buf; read(sv[0], &buf, 1); }
+	ATF_REQUIRE(write(sv[0], "g", 1) == 1);
+	ATF_REQUIRE(read(sv[0], &buf, 1) == 1 && buf == '2');
 
 	/*
 	 * Still blocked: a shield is per-process and persists across
@@ -6106,8 +6022,10 @@ ATF_TC_BODY(cap_pro_multi_fd_close_keeps_shield, tc)
 	 */
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
-	kill(pid, SIGKILL);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE(write(sv[0], "x", 1) == 1);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shielded child exited abnormally (status %#x)", status);
 	close(sv[0]);
 }
 
@@ -6238,7 +6156,7 @@ ATF_TC_BODY(cap_pro_noexec_blocks_exec, tc)
 	}
 	close(sv[1]);
 	{ char buf; read(sv[0], &buf, 1); }
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	close(sv[0]);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
@@ -6270,7 +6188,7 @@ ATF_TC_BODY(cap_pro_noexec_survives_close, tc)
 		/* Exec failed; it must have been the shield's EPERM. */
 		_exit(errno == EPERM ? 0 : 1);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -6303,7 +6221,7 @@ ATF_TC_BODY(cap_pro_nosock_blocks_socket, tc)
 		close(fd);
 		_exit(errno == EPERM ? 0 : 2);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -6337,7 +6255,7 @@ ATF_TC_BODY(cap_pro_nosock_survives_close, tc)
 		}
 		_exit(errno == EPERM ? 0 : 2);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -6370,7 +6288,7 @@ ATF_TC_BODY(cap_pro_nosock_socketpair_blocked, tc)
 		close(fd);
 		_exit(errno == EPERM ? 0 : 2);
 	}
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
@@ -7279,7 +7197,9 @@ ATF_TC_BODY(nonce_nonzero, tc)
 	ATF_CHECK_MSG(child_nonce != 0,
 	    "process nonce should be non-zero");
 
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited abnormally (status %#x)", status);
 	close(fd);
 	close(sv[0]);
 }
@@ -7350,7 +7270,9 @@ ATF_TC_BODY(nonce_inherits_fork, tc)
 	    "child nonce 0x%lx should equal parent nonce 0x%lx",
 	    (unsigned long)child_nonce, (unsigned long)parent_nonce);
 
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited abnormally (status %#x)", status);
 	close(fd);
 	close(sv[0]);
 }
@@ -7800,7 +7722,9 @@ ATF_TC_BODY(kstore_multiproc, tc)
 	ATF_CHECK(memcmp(buf, "hello", 5) == 0);
 
 	write(sv[0], "x", 1);
-	waitpid(pid, &status, 0);
+	ATF_REQUIRE_EQ(waitpid(pid, &status, 0), pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited abnormally (status %#x)", status);
 	close(owner_fd);
 	close(sv[0]);
 }
