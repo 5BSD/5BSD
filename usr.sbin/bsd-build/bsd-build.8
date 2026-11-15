@@ -7691,8 +7691,11 @@ qualification interface remains in use; Make stays the default system backend.
 Selected AMD64 general libc tests and execve/spawn children include sixty-seven
 original executables, the test DSO and 143 installed records matching Make.
 The login-record program retains fully static fixed-address linking. The ELF
-comparison helper supports explicit --static-program mode; dynamic PIE checks
-remain the default. All 239 case registrations and metadata match. Thirty-six
+comparison helper supports mutually exclusive --static-program and
+--non-pie-program contracts; dynamic PIE checks remain the default.
+The non-PIE dynamic contract retains interpreter, dependency, RELRO, immediate
+binding and non-executable-stack checks on both compared artifacts.
+These comparison options do not change build or runtime policy. All 239 case registrations and metadata match. Thirty-six
 selected host cases pass and two retain original architecture skips; 201 cases
 remain unexecuted. Spawn fixture copies preserve original bytes and executable
 modes with declared tools. This uses the existing explicit Bazel-input workflow

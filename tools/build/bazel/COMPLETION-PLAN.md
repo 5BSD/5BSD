@@ -73,6 +73,31 @@ in linked reports/history rather than expanding the current gate ledger into a
 conversion diary. No new architecture or BIP scope, host installation, upgrade or
 reboot is authorized. No completion date or percentage is inferred from counts.
 
+### Explicit executable contracts for security test installation
+
+The original audit suite deliberately sets MK_PIE=no because its private audit
+archive is not position independent. The maintained ELF comparison helper now
+supports an explicit non-PIE dynamic contract, mutually exclusive with its static
+contract. Default comparison still requires PIE; both artifacts must satisfy the
+selected type, interpreter, RELRO/NOW, safe segment, dependency order and symbol
+contracts. No path-based exceptions or runtime/build policy changes are added.
+
+All 39 focused regression cases pass through normal build-bsd/Bazel. Independent
+capture review verifies the terminal receipt, payload and test log/XML hashes.
+The contract also accepts all fifteen existing Make audit artifacts in explicit
+self-comparisons and rejects them with the default PIE contract; these checks do
+not establish native audit parity or execute audit operations. Evidence under
+/usr/obj/usr/src: bazel-nonpie-program-contract-r1-20261115,
+bazel-nonpie-program-contract-native-r1-20261115 and
+bazel-nonpie-program-contract-capture-review-r1-20261115.
+
+The normal frontend's existing format-5 test workflow is sufficient; build-bsd.c,
+staging, signing and publication semantics need no new option. The maintained
+manual and helper documentation describe the explicit comparison selection.
+Native security-suite installation and source-owned whole-package contracts for
+deliberate fixtures (including executable-stack helpers) remain open. All six
+system closeout gates remain open, with Make the production default.
+
 ### First consolidated configured inventory
 
 The completed four-query matrix uses the full endpoint's reproducible build
