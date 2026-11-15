@@ -3144,7 +3144,10 @@ no credential.
 .Pp
 What the requester may open is still its own: the completion checks the
 requester's MAC and file permission on the object
-.Pq Sx Descriptor substitution .
+.Pq Sx Descriptor substitution ,
+unless
+.Dv DQ_SWAP_F_CREATED
+is honoured.
 What the file's credential decides afterwards is how the file system
 treats writes through the descriptor:
 .Bl -tag -width "tmpfs" -compact
@@ -3210,7 +3213,14 @@ the requesters need
 for example
 .Dv CAP_READ , CAP_WRITE , CAP_SEEK , CAP_FSTAT , CAP_FCNTL , CAP_FLOCK ,
 .Dv CAP_MMAP_RW
-.Pc .
+.Pc ,
+and
+.Dv CAP_LOOKUP ,
+which the controller's own
+.Xr openat 2
+beneath the directory needs, and
+.Dv CAP_CREATE
+when the controller creates the files it hands over.
 Capability mode does not change the credential.
 .El
 .Pp
@@ -3271,7 +3281,8 @@ Between jails, a directory handed to a requester in another jail with
 another root is installed
 .Dv O_RESOLVE_BENEATH ,
 by the jail of the credential that opened it; a regular file is handed
-over across jails without any test.
+over across jails without a jail test, and a requester on the host gets
+no such limit.
 .Pp
 The controller may run as the requester's user or as a user of its own;
 this page recommends neither.

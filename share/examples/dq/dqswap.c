@@ -15,7 +15,8 @@
  *			reach this program.
  *   -p path		an open of path is answered FD: the kernel mints a
  *			proxy descriptor; every read of it is a READ event
- *			answered here from memory.
+ *			answered here from memory.  path is opened as the -u
+ *			user to make the identity.
  *   anything else	PASS: the command's own lookup proceeds.
  *
  *   -D			pdfork with PD_DAEMON, so the command outlives this
@@ -27,14 +28,18 @@
  *   -l log		the event log (default stderr): one line per record
  *			read from the queue.
  *   -u user		this program and the command run as this user
- *			(default nobody).  The queue is opened and the
- *			command attached as root; then both give up root,
- *			and only then is a substitute opened.  A swapped file
+ *			(default nobody; not root, nor a user whose group is
+ *			wheel).  The queue is opened as root; the command
+ *			gives up root and is then attached by this program,
+ *			still root, which gives up root before the command
+ *			runs and before it opens anything it hands over.
+ *			The command gets USER, LOGNAME and HOME of the user,
+ *			keeps the session's login name and has no
+ *			supplementary groups.  A swapped file
  *			keeps the credential of the open that made it (dq(4),
  *			"The substituted file and the restricted Capability
  *			Broker"): one opened by root would keep set-ID bits
- *			and ignore quotas in the command's hands.  The user
- *			may not be root.
+ *			and ignore quotas in the command's hands.
  *
  * Paths are compared as strings with what the command passed to open(2):
  * give the absolute path and use it in the command.  stat(2) and every
@@ -73,6 +78,7 @@ static unsigned long nrec;
 static const char *jailname;
 static uid_t drop_uid;
 static gid_t drop_gid;
+static char *drop_name, *drop_home;
 
 /* Who asked: the requesting process, its parent and its jail. */
 static const char *
@@ -276,17 +282,24 @@ drain_once(int q, char *buf)
 static int
 drop_privilege(void)
 {
+	uid_t ruid, euid, suid;
+	gid_t rgid, egid, sgid;
 
 	if (setgroups(1, &drop_gid) == -1 || setgid(drop_gid) == -1 ||
 	    setuid(drop_uid) == -1)
 		return (-1);
-	if (getuid() != drop_uid || geteuid() != drop_uid ||
-	    getgid() != drop_gid || getegid() != drop_gid) {
+	/* Real, effective and saved: all of them the user's. */
+	if (getresuid(&ruid, &euid, &suid) == -1 ||
+	    getresgid(&rgid, &egid, &sgid) == -1)
+		return (-1);
+	if (ruid != drop_uid || euid != drop_uid || suid != drop_uid ||
+	    rgid != drop_gid || egid != drop_gid || sgid != drop_gid) {
 		errno = EPERM;
 		return (-1);
 	}
 	/* It must not come back. */
-	if (setuid(0) != -1) {
+	if (setuid(0) != -1 || seteuid(0) != -1 || setgid(0) != -1 ||
+	    setegid(0) != -1) {
 		errno = EPERM;
 		return (-1);
 	}
@@ -356,15 +369,22 @@ main(int argc, char **argv)
 	if (pw == NULL) {
 		errno = 0;
 		ul = strtoul(user, &end, 10);
-		if (*user != '\0' && *end == '\0' && errno == 0)
+		if (*user != '\0' && *end == '\0' && errno == 0 &&
+		    ul <= UID_MAX)
 			pw = getpwuid((uid_t)ul);
 	}
 	if (pw == NULL)
 		errx(2, "-u %s: no such user", user);
 	if (pw->pw_uid == 0)
 		errx(2, "-u %s: the user must not be root", user);
+	if (pw->pw_gid == 0)
+		errx(2, "-u %s: the user's group must not be wheel", user);
 	drop_uid = pw->pw_uid;
 	drop_gid = pw->pw_gid;
+	drop_name = strdup(pw->pw_name);
+	drop_home = strdup(pw->pw_dir);
+	if (drop_name == NULL || drop_home == NULL)
+		err(2, "strdup");
 	proxy_len = (size_t)snprintf(proxy_data, sizeof(proxy_data),
 	    "PROXY CONTENT: these bytes exist only in dqswap (pid %d) memory\n",
 	    getpid());
@@ -415,6 +435,15 @@ main(int argc, char **argv)
 		if (read(go[0], &b, 1) != 1)
 			_exit(126);
 		(void)close(go[0]);
+		/*
+		 * The user's environment, not root's.  The login name stays
+		 * the session's: this process does not lead a session, and
+		 * setlogin(2) here would rename the invoking session.
+		 */
+		if (setenv("USER", drop_name, 1) == -1 ||
+		    setenv("LOGNAME", drop_name, 1) == -1 ||
+		    setenv("HOME", drop_home, 1) == -1)
+			_exit(126);
 		execvp(argv[0], argv);
 		fprintf(stderr, "dqswap: %s: %s\n", argv[0], strerror(errno));
 		_exit(errno == ENOENT ? 127 : 126);
