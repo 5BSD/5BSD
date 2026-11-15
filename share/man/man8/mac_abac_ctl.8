@@ -3,7 +3,7 @@
 .\" Copyright (c) 2026 ABAC Project
 .\" All rights reserved.
 .\"
-.Dd March 9, 2026
+.Dd November 15, 2026
 .Dt ABACCTL 8
 .Os
 .Sh NAME
@@ -130,6 +130,10 @@ Get or set the default policy when no rule matches.
 Display current mode, default policy, and rule count.
 .It Cm stats
 Display access check statistics (checks, allowed, denied).
+Only operations some loaded rule names are checked unless
+.Va security.mac.mac_abac.force_hooks
+is set; see
+.Xr mac_abac 4 .
 .It Cm limits
 Display system limits (max rules, max pairs, max label length).
 .El

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 13, 2026
+.Dd November 15, 2026
 .Dt OES 4
 .Os
 .Sh NAME
@@ -341,6 +341,42 @@ operation, its errno, the object id, the controller's identity nonce and the
 reply length; it never carries reply data.
 Any other descriptor type returns from these hooks at once and produces no
 event.
+.Ss Idle behaviour
+.Nm
+costs nothing while nothing listens.
+A hook is live while some open client subscribes to the AUTH or NOTIFY
+event it produces; while
+.Va security.oes.require_auth_clients ,
+.Va security.oes.auth_fail_closed
+or a fail-closed
+.Va security.oes.default_deadline_miss_mode
+is set, for every hook that produces an AUTH event; and, for a hook whose
+event drops cached decisions, once some client has added a decision-cache
+entry.
+A client that has
+.Pa /dev/oes
+open and subscribes to nothing makes no hook live.
+A hook that is not live returns at its first test, which is what it would
+otherwise have returned, and counts toward none of the MAC framework's
+fast-path flags, so with nothing listening
+.Nm
+makes the framework enter no system call path on its own account; on paths
+another policy keeps hot its hooks are still called and return at once.
+The credential, exec and pipe identities are kept whether or not anything
+listens, so that a client starting later sees them.
+.Pp
+Liveness is recomputed before a subscribe or cache ioctl returns and before
+a write of a strict setting returns: an operation that starts after the
+call returns is delivered, consulted or denied as the new state requires.
+Turning a strict setting on makes the AUTH hooks live before the new value
+takes effect.
+An operation already past its hook's first test when a client subscribes is
+not reported, like one that started just before the subscription.
+Closing the last client of an event makes its hooks idle without waiting
+for threads inside them.
+.Pp
+.Nm
+is compiled into the kernel and cannot be unloaded.
 .Ss DTrace
 The framework defines an
 .Nm
@@ -368,6 +404,20 @@ Number of events discarded before any memory was allocated for them because
 every open client is jail-scoped and none covers the subject.
 .It Va security.oes.jail_filtered_auth
 The AUTH events among them.
+.It Va security.oes.gate.hooks
+One line per gated hook: index, name, the AUTH, NOTIFY and alternate event
+numbers that make it live, whether its event drops cached decisions, its
+MAC fast-path hook, and whether it is live
+.Pq see Sx Idle behaviour .
+.It Va security.oes.gate.live
+The live hooks as a hexadecimal bit string, bit
+.Ar n
+for hook index
+.Ar n .
+.It Va security.oes.gate.passes
+Number of hook entries that passed their first test.
+.It Va security.oes.gate.reconciles
+Number of liveness recomputations.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/oes" -compact
