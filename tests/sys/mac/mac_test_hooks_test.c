@@ -920,7 +920,11 @@ ATF_TC_BODY(channel_attachment_receive_checked, tc)
 			ATF_REQUIRE_ERRNO(EPERM, ioctl(ch[1],
 			    MAC_CAPABILITY_RECVMSG, &ra) == -1);
 			write_deny_value("file_check_receive", 0);
-			ATF_CHECK_EQ(0, ra.nfds);
+			/*
+			 * ioctl(2) copies an argument back only on success,
+			 * so ra.nfds is not reported; the descriptor array
+			 * and the table are the evidence.
+			 */
 			ATF_CHECK_EQ(-1, received);
 			ATF_CHECK_EQ(lowest, lowest_free_fd());
 		}
