@@ -3,6 +3,17 @@
 See [BUILD-OPTIONS.md](BUILD-OPTIONS.md) for GENERIC/NODEBUG, diagnostics versus
 debug symbols, native option boundaries and remaining Make compatibility.
 
+## Capability libraries and FIDL cross builds
+
+Nine capability libraries now build for both Tier 1 targets, matching Make's
+checked archive/shared contracts and 344 complete install records per platform.
+A real FIDL host/target runtime mix is fixed for all 29 IR consumers using one
+compiler-owned execution runtime. Every IR builds and matches across targets;
+Crypto generated files match Make bytes. Five static DTrace providers match
+schemas/sites/patch instructions (65 locations per platform). The AMD64 wire
+runtime test passes. See [CAPABILITY-FIDL-CROSS-QUALIFICATION.md](CAPABILITY-FIDL-CROSS-QUALIFICATION.md)
+for the actual failure, fix, retained evidence and remaining limits.
+
 ## Portable libraries on both Tier 1 architectures
 
 Ten further portable library producers plus libc/libmd installation aggregates
