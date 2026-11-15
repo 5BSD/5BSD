@@ -234,8 +234,27 @@ f2_lockless_lookup_export_body()
 	    atf_fail "fast_lookup_active $active, expected $want"
 }
 
+atf_test_case f3_new_flags
+f3_new_flags_head()
+{
+	atf_set descr "F-3: close, pipe write and socket I/O have fast-path flags"
+	atf_set require.user root
+}
+f3_new_flags_body()
+{
+	local h
+
+	fp_snapshot
+	for h in file_notify_close vnode_check_close pipe_check_write \
+	    socket_check_send socket_check_receive socket_check_poll \
+	    socket_check_stat; do
+		fp_bit $h >/dev/null
+	done
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case f3_new_flags
 	atf_add_test_case f1_snapshot_invariants
 	atf_add_test_case f2_lockless_lookup_export
 	atf_add_test_case pin_lookup_walk

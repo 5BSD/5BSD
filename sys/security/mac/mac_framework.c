@@ -178,6 +178,13 @@ FPFLAG(proc_check_mmap_anon);
 FPFLAG(proc_check_mprotect);
 FPFLAG(proc_check_syscall);
 FPFLAG(system_check_kas_info);
+FPFLAG(file_notify_close);
+FPFLAG(vnode_check_close);
+FPFLAG(pipe_check_write);
+FPFLAG(socket_check_send);
+FPFLAG(socket_check_receive);
+FPFLAG(socket_check_poll);
+FPFLAG(socket_check_stat);
 
 #undef FPFLAG
 #undef FPFLAG_RARE
@@ -495,6 +502,13 @@ struct mac_policy_fastpath_elem mac_policy_fastpath_array[] = {
 	FPE(proc_check_mprotect),
 	FPE(proc_check_syscall),
 	FPE(system_check_kas_info),
+	FPE(file_notify_close),
+	FPE(vnode_check_close),
+	FPE(pipe_check_write),
+	FPE(socket_check_send),
+	FPE(socket_check_receive),
+	FPE(socket_check_poll),
+	FPE(socket_check_stat),
 };
 
 /*
