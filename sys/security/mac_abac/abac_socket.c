@@ -212,19 +212,6 @@ abac_socket_check_connect(struct ucred *cred, struct socket *so,
 }
 
 int
-abac_socket_check_create(struct ucred *cred, int domain, int type,
-    int protocol)
-{
-
-	/*
-	 * Socket creation is always allowed - the socket inherits the
-	 * creator's label. Access control happens at bind/connect/etc.
-	 */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
 abac_socket_check_listen(struct ucred *cred, struct socket *so,
     struct label *solabel)
 {
@@ -321,36 +308,6 @@ abac_socket_check_send(struct ucred *cred, struct socket *so,
 		return (0);
 
 	return (error);
-}
-
-int
-abac_socket_check_stat(struct ucred *cred, struct socket *so,
-    struct label *solabel)
-{
-
-	/* Stat is always allowed - not a security-relevant operation */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
-abac_socket_check_visible(struct ucred *cred, struct socket *so,
-    struct label *solabel)
-{
-
-	/* Visibility is always allowed - enforcing at other operations */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
-abac_socket_check_poll(struct ucred *cred, struct socket *so,
-    struct label *solabel)
-{
-
-	/* Poll is always allowed - not a security-relevant operation */
-	ABAC_CHECK_ENABLED();
-	return (0);
 }
 
 /*

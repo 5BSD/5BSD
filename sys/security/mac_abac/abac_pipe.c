@@ -91,26 +91,6 @@ abac_pipe_create(struct ucred *cred, struct pipepair *pp,
  */
 
 int
-abac_pipe_check_ioctl(struct ucred *cred, struct pipepair *pp,
-    struct label *pplabel, unsigned long cmd, void *data)
-{
-
-	/* ioctl on pipes is always allowed - typically FIONREAD etc. */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
-abac_pipe_check_poll(struct ucred *cred, struct pipepair *pp,
-    struct label *pplabel)
-{
-
-	/* poll is always allowed - no security impact */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
 abac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {

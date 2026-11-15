@@ -71,15 +71,6 @@ abac_posixshm_create(struct ucred *cred, struct shmfd *shmfd,
  */
 
 int
-abac_posixshm_check_create(struct ucred *cred, const char *path)
-{
-
-	/* Creation is always allowed - the shm inherits creator's label */
-	ABAC_CHECK_ENABLED();
-	return (0);
-}
-
-int
 abac_posixshm_check_mmap(struct ucred *cred, struct shmfd *shmfd,
     struct label *shmlabel, int prot, int flags)
 {

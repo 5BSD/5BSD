@@ -304,8 +304,29 @@ f4_inactive_policies_body()
 	done
 }
 
+atf_test_case abac_no_allow_stubs
+abac_no_allow_stubs_head()
+{
+	atf_set descr "mac_abac implements no fast-path hook that allows in"\
+	    "every case"
+	atf_set require.user root
+}
+abac_no_allow_stubs_body()
+{
+	local h impl
+
+	fp_snapshot
+	impl=$(fp_policy_field mac_abac implemented)
+	for h in priv_check priv_grant pipe_check_poll socket_check_poll \
+	    socket_check_stat; do
+		[ $(((impl >> $(fp_bit $h)) & 1)) -eq 0 ] ||
+		    atf_fail "mac_abac implements $h"
+	done
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case abac_no_allow_stubs
 	atf_add_test_case f4_inactive_policies
 	atf_add_test_case f3_new_flags
 	atf_add_test_case f1_snapshot_invariants

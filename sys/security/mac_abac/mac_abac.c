@@ -414,19 +414,6 @@ static struct mac_policy_ops abac_ops = {
 
 	/* Credential checks */
 	.mpo_cred_check_relabel = abac_cred_check_relabel,
-	.mpo_cred_check_setuid = abac_cred_check_setuid,
-	.mpo_cred_check_seteuid = abac_cred_check_seteuid,
-	.mpo_cred_check_setgid = abac_cred_check_setgid,
-	.mpo_cred_check_setegid = abac_cred_check_setegid,
-	.mpo_cred_check_setgroups = abac_cred_check_setgroups,
-	.mpo_cred_check_setreuid = abac_cred_check_setreuid,
-	.mpo_cred_check_setregid = abac_cred_check_setregid,
-	.mpo_cred_check_setresuid = abac_cred_check_setresuid,
-	.mpo_cred_check_setresgid = abac_cred_check_setresgid,
-	.mpo_cred_check_setcred = abac_cred_check_setcred,
-	.mpo_cred_check_setaudit = abac_cred_check_setaudit,
-	.mpo_cred_check_setaudit_addr = abac_cred_check_setaudit_addr,
-	.mpo_cred_check_setauid = abac_cred_check_setauid,
 
 	/* Vnode label lifecycle */
 	.mpo_vnode_init_label = abac_vnode_init_label,
@@ -493,13 +480,9 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_socket_check_accept = abac_socket_check_accept,
 	.mpo_socket_check_bind = abac_socket_check_bind,
 	.mpo_socket_check_connect = abac_socket_check_connect,
-	.mpo_socket_check_create = abac_socket_check_create,
 	.mpo_socket_check_listen = abac_socket_check_listen,
-	.mpo_socket_check_poll = abac_socket_check_poll,
 	.mpo_socket_check_receive = abac_socket_check_receive,
 	.mpo_socket_check_send = abac_socket_check_send,
-	.mpo_socket_check_stat = abac_socket_check_stat,
-	.mpo_socket_check_visible = abac_socket_check_visible,
 	.mpo_socket_check_deliver = abac_socket_check_deliver,
 
 	/* Socketpeer label lifecycle */
@@ -515,8 +498,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_pipe_create = abac_pipe_create,
 
 	/* Pipe checks */
-	.mpo_pipe_check_ioctl = abac_pipe_check_ioctl,
-	.mpo_pipe_check_poll = abac_pipe_check_poll,
 	.mpo_pipe_check_read = abac_pipe_check_read,
 	.mpo_pipe_check_relabel = abac_pipe_check_relabel,
 	.mpo_pipe_check_stat = abac_pipe_check_stat,
@@ -528,7 +509,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_posixshm_create = abac_posixshm_create,
 
 	/* POSIX shm checks */
-	.mpo_posixshm_check_create = abac_posixshm_check_create,
 	.mpo_posixshm_check_mmap = abac_posixshm_check_mmap,
 	.mpo_posixshm_check_open = abac_posixshm_check_open,
 	.mpo_posixshm_check_read = abac_posixshm_check_read,
@@ -547,10 +527,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_file_check_mmap = abac_dq_check_mmap,
 	.mpo_file_check_setattr = abac_dq_check_setattr,
 #endif
-
-	/* Privilege hooks */
-	.mpo_priv_check = abac_priv_check,
-	.mpo_priv_grant = abac_priv_grant,
 
 	/* System-level checks */
 	.mpo_kld_check_load = abac_kld_check_load,
