@@ -192,7 +192,9 @@ ATF_TC_BODY(read_oracle, tc)
 		ATF_CHECK_EQ(0, r.tail_s);
 		ATF_CHECK_EQ(r.tail_o, r.tail_s);
 	}
+	dqt_lock(&f.c);
 	ATF_CHECK(f.c.events[DQ_OP_READ] >= 1);
+	dqt_unlock(&f.c);
 	check_fault_reads(&f.c, DATA_LEN);
 	teardown(&f);
 }
@@ -381,7 +383,9 @@ ATF_TC_BODY(msync_writeback, tc)
 	ATF_CHECK_EQ(0, r.sig);
 	ATF_CHECK_EQ_MSG(0, r.msync_rv, "msync: %s", strerror(r.msync_err));
 	ATF_CHECK(r.seen);
+	dqt_lock(&f.c);
 	ATF_REQUIRE(f.c.events[DQ_OP_WRITE_ASYNC] >= 1);
+	dqt_unlock(&f.c);
 	pthread_mutex_lock(&f.c.mtx);
 	for (i = 0; i < f.c.nwr; i++) {
 		ATF_CHECK_EQ(0, f.c.wr[i].offset % 4096);
@@ -432,7 +436,9 @@ ATF_TC_BODY(msync_refused, tc)
 	dqt_run_child(child_shared_writeback, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.msync_rv);
 	ATF_CHECK_EQ(EIO, r.msync_err);
+	dqt_lock(&c);
 	ATF_CHECK(c.events[DQ_OP_WRITE_ASYNC] >= 1);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -628,15 +634,19 @@ ATF_TC_BODY(fault_survives_signals, tc)
 	dqt_spawn(&ch, child_fault_signals, &f.o->fd);
 	/* The READ was delivered: the child is inside the fault's wait. */
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_OP_READ, f.c.held[0].op);
 	ATF_REQUIRE_EQ(0, f.c.held[0].offset);
+	dqt_unlock(&f.c);
 	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGALRM));
 	ATF_REQUIRE_EQ(0, kill(ch.pid, SIGCHLD));
 	/* A caught signal must not end the fault: no INTERRUPT. */
 	dqt_msleep(200);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, f.c.ninterrupted);
 	ATF_REQUIRE_EQ(0, dq_reply(f.c.q, f.c.held[0].id, 0, data,
 	    MIN(f.c.held[0].len, sizeof(data))));
+	dqt_unlock(&f.c);
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d", r.sig);
 	ATF_CHECK_MSG(r.alarms >= 1, "handlers ran %d times", r.alarms);
@@ -747,7 +757,7 @@ ATF_TC_BODY(invalidate_through_mapping, tc)
 	a.fd = f.o->fd;
 	dqt_spawn(&ch, child_invalidate, &a);
 	ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
-	reads = f.c.events[DQ_OP_READ];
+	reads = dqt_events(&f.c, DQ_OP_READ);
 	nb = (unsigned char)~data[9];
 	ATF_REQUIRE_EQ(1, pwrite(f.backing, &nb, 1, 9));
 	ATF_REQUIRE_MSG(dq_push_invalidate(f.c.q, f.o->id, 0, 0) == 0,
@@ -757,7 +767,9 @@ ATF_TC_BODY(invalidate_through_mapping, tc)
 	ATF_CHECK_EQ(0, r.sig);
 	ATF_CHECK_EQ(data[9], r.before);
 	ATF_CHECK_EQ(nb, r.after);
+	dqt_lock(&f.c);
 	ATF_CHECK(f.c.events[DQ_OP_READ] > reads);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 

@@ -133,7 +133,9 @@ ATF_TC_BODY(sees_events_and_replies, tc)
 	ATF_CHECK_EQ(sizeof(*rb), bodylen);
 	ATF_CHECK_EQ(0, rb->dr_offset);
 	ATF_CHECK_EQ(100, rb->dr_len);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.last_caller.dc_pid, recs[0]->de_caller.dc_pid);
+	dqt_unlock(&c);
 	/* The reply: id, errno and length; the data removed and flagged. */
 	ATF_CHECK_EQ(DQ_OP_REPLY, recs[1]->de_op);
 	ATF_CHECK_EQ(DQ_EVENT_F_OBSERVED | DQ_EVENT_F_NODATA, recs[1]->de_flags);

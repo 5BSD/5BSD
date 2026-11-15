@@ -99,6 +99,7 @@ check_socket_event(struct dqt_ctl *c, int i, uint32_t op, int domain,
 {
 
 	ATF_REQUIRE_MSG(i != -1, "no event of op %u", op);
+	dqt_lock(c);
 	ATF_CHECK_EQ(op, c->rs[i].op);
 	ATF_CHECK_EQ(domain, c->rs[i].domain);
 	ATF_CHECK_EQ_MSG(type, c->rs[i].type, "type %d", c->rs[i].type);
@@ -113,6 +114,7 @@ check_socket_event(struct dqt_ctl *c, int i, uint32_t op, int domain,
 	ATF_CHECK_EQ(op == DQ_ROP_SOCKET ? SYS_socket : SYS_socketpair,
 	    (int)c->rs[i].syscall);
 	ATF_CHECK((c->rs[i].caller_flags & DQ_CALLER_F_ATTACHED) != 0);
+	dqt_unlock(c);
 }
 
 /*
@@ -1241,15 +1243,19 @@ ATF_TC_BODY(abstract_names, tc)
 	}
 	i = dqt_find_resolve(&c, "rt-abs", DQ_ROP_BIND, 0);
 	ATF_REQUIRE(i != -1);
+	dqt_lock(&c);
 	ATF_CHECK_STREQ("rt-abs", c.rs[i].path);
 	ATF_CHECK_EQ(6, c.rs[i].pathlen);
 	ATF_CHECK_EQ(DQ_RF_USER | DQ_RF_ABSTRACT, c.rs[i].rflags);
 	ATF_CHECK_EQ(DQ_START_NONE, c.rs[i].start_kind);
 	ATF_CHECK_EQ(DQ_RCLASS_USER, c.rs[i].cls);
+	dqt_unlock(&c);
 	i = dqt_find_resolve(&c, "rt-abc", DQ_ROP_CONNECT, 0);
 	ATF_REQUIRE(i != -1);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_RF_USER | DQ_RF_ABSTRACT, c.rs[i].rflags);
 	ATF_CHECK_EQ(DQ_START_NONE, c.rs[i].start_kind);
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-abs", DQ_ROP_BIND));
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-abc", DQ_ROP_CONNECT));
 	/* The native protocol's lookup of the empty path is no ledger gap. */

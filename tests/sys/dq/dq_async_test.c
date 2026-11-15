@@ -420,6 +420,7 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 	struct dirty_arg a;
 	struct dirty_res r;
 	struct dq_ident_file *id;
+	uint32_t op;
 	int status;
 
 	setup(&f, 5, DQ_DEADLINE_DEFAULT, 0);
@@ -432,10 +433,15 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 		diag(&f, "nothing held");
 		atf_tc_fail("no event held");
 	}
-	if (f.c.held[0].op != DQ_OP_WRITE_ASYNC)
+	dqt_lock(&f.c);
+	op = f.c.held[0].op;
+	dqt_unlock(&f.c);
+	if (op != DQ_OP_WRITE_ASYNC)
 		diag(&f, "first held");
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(DQ_OP_WRITE_ASYNC, f.c.held[0].op);
 	ATF_CHECK_EQ((NPAGES - 1) * 4096, f.c.held[0].offset);
+	dqt_unlock(&f.c);
 	id = calloc(1, sizeof(*id));
 	ATF_REQUIRE(id != NULL);
 	*id = f.o->ident;
@@ -443,11 +449,15 @@ ATF_TC_BODY(shrink_fails_pending, tc)
 	ATF_REQUIRE_EQ(0, dq_set_ident(f.c.q, f.o->id, id));
 	free(id);
 	errno = 0;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(-1, dq_reply_write(f.c.q, f.c.held[0].id,
 	    f.c.held[0].len, f.c.held[0].offset));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(ESRCH, errno);
 	ATF_CHECK(dqt_wait_interrupts(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(f.c.held[0].id, f.c.interrupted[0]);
+	dqt_unlock(&f.c);
 	dqt_hold(&f.c, false);
 	status = dqt_wait(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.sig, "signal %d in the requester", r.sig);

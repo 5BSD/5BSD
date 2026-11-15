@@ -98,7 +98,9 @@ teardown(struct fixture *f)
 {
 
 	/* Nothing here may have reached the controller. */
+	dqt_lock(&f->c);
 	ATF_CHECK_EQ(0, f->c.records);
+	dqt_unlock(&f->c);
 	dqt_fini(&f->c);
 	(void)close(f->oracle);
 }
@@ -604,7 +606,9 @@ ATF_TC_BODY(locks_are_events, tc)
 	fl.l_whence = SEEK_SET;
 	SAME(fcntl(f.o->fd, F_SETLK, &fl), fcntl(f.oracle, F_SETLK, &fl));
 	FAILS(fcntl(f.o->fd, F_SETLK, &fl), EBADF);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, f.c.records);
+	dqt_unlock(&f.c);
 	/* The controller refuses; the requester sees its word. */
 	f.o->serve_errno = EAGAIN;
 	memset(&r, 0, sizeof(r));
@@ -615,11 +619,13 @@ ATF_TC_BODY(locks_are_events, tc)
 	/* flock(2) reports a conflict as EWOULDBLOCK, which is EAGAIN. */
 	ATF_CHECK_EQ(EAGAIN, r.fl.err);
 	ATF_CHECK(dqt_wait_events(&f.c, DQ_OP_LOCK, 2, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_REQUIRE_EQ(2, f.o->nlocks);
 	ATF_CHECK_EQ(DQ_LOCK_POSIX, f.o->locks[0].dl_kind);
 	ATF_CHECK_EQ(DQ_LOCK_SETLK, f.o->locks[0].dl_op);
 	ATF_CHECK_EQ(F_RDLCK, f.o->locks[0].dl_type);
 	ATF_CHECK_EQ(DQ_LOCK_FLOCK, f.o->locks[1].dl_kind);
+	dqt_unlock(&f.c);
 	dqt_fini(&f.c);
 	(void)close(f.oracle);
 }
@@ -718,12 +724,14 @@ ATF_TC_BODY(writable_served, tc)
 	ATF_CHECK_EQ(0, r.fchmod.rv);
 	ATF_CHECK_EQ(0, r.futimens.rv);
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_WRITE, 3, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(3, c.events[DQ_OP_WRITE]);
 	ATF_CHECK(c.events[DQ_OP_SETATTR] >= 3);
 	ATF_CHECK_EQ(2, c.events[DQ_OP_FSYNC]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_FALLOCATE]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_FSPACECTL]);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	/* The backing file has what the requester wrote, and the served mode. */
 	ATF_REQUIRE_EQ(0, fstat(backing, &bst));
 	ATF_CHECK_EQ(0640, bst.st_mode & ALLPERMS);

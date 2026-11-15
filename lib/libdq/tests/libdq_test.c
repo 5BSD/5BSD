@@ -589,8 +589,10 @@ ATF_TC_BODY(serve_each_op, tc)
 	memset(w, 0, sizeof(w));
 	ATF_REQUIRE_EQ(16, pread(c.backing, got, sizeof(got), 1024 + 496));
 	ATF_CHECK(memcmp(got, w, 16) == 0);
+	pthread_mutex_lock(&c.mtx);
 	ATF_CHECK(c.ops[DQ_OP_GETATTR] >= 1);
 	ATF_CHECK_EQ(2, c.ops[DQ_OP_FSYNC]);
+	pthread_mutex_unlock(&c.mtx);
 	ctl_stop(&c);
 }
 
@@ -686,6 +688,7 @@ ATF_TC_BODY(serve_locks, tc)
 			break;
 		usleep(10000);
 	}
+	ATF_REQUIRE_MSG(b, "no UNLOCK_ALL for the holder's exit in 5 s");
 	memset(&r, 0, sizeof(r));
 	requester(child_try_lock, &fd, &r, sizeof(r));
 	ATF_CHECK_EQ_MSG(0, r.r[0].rv, "after release: %s",
@@ -738,7 +741,9 @@ ATF_TC_BODY(serve_mmap_writeback, tc)
 	ATF_CHECK_EQ(0, r.r[2].rv);
 	ATF_REQUIRE_EQ(1, pread(c.backing, &got, 1, 4096 + 5));
 	ATF_CHECK_EQ(0x77, got);
+	pthread_mutex_lock(&c.mtx);
 	ATF_CHECK(c.ops[DQ_OP_WRITE_ASYNC] >= 1);
+	pthread_mutex_unlock(&c.mtx);
 	ctl_stop(&c);
 }
 

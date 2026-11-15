@@ -81,8 +81,10 @@ static void
 teardown(struct fixture *f)
 {
 
+	dqt_lock(&f->c);
 	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
 	    f->c.last_reply_errno);
+	dqt_unlock(&f->c);
 	dqt_fini(&f->c);
 	(void)close(f->backing);
 	(void)close(f->oracle);
@@ -247,15 +249,18 @@ check_probe(const struct probe_arg *a, const struct probe_res *r)
 
 /* The UNLOCK_ALL records naming owner of kind. */
 static int
-count_unlocks(const struct dqt_object *o, uint32_t kind, uint64_t owner)
+count_unlocks(struct dqt_ctl *c, const struct dqt_object *o, uint32_t kind,
+    uint64_t owner)
 {
 	int i, n;
 
+	dqt_lock(c);
 	for (i = n = 0; i < o->nunlocks; i++) {
 		if (o->unlocks[i].dua_kind == kind &&
 		    o->unlocks[i].dua_owner == owner)
 			n++;
 	}
+	dqt_unlock(c);
 	return (n);
 }
 
@@ -346,6 +351,7 @@ ATF_TC_BODY(posix_oracle, tc)
 	ATF_CHECK_EQ(0, hr.s.rv);
 	ATF_CHECK_EQ(0, hr.o.rv);
 	/* The holder's lock body: kind, owner, pid, range. */
+	dqt_lock(&f.c);
 	ATF_REQUIRE(f.o->nlocks >= 1);
 	ATF_CHECK_EQ(DQ_LOCK_SETLK, f.o->locks[0].dl_op);
 	ATF_CHECK_EQ(DQ_LOCK_POSIX, f.o->locks[0].dl_kind);
@@ -363,14 +369,19 @@ ATF_TC_BODY(posix_oracle, tc)
 		if (f.o->locks[i].dl_type == F_UNLCK)
 			ATF_CHECK_EQ(DQ_LOCK_UNLCK, f.o->locks[i].dl_op);
 	}
+	dqt_unlock(&f.c);
 	/* Exit released the holder's POSIX locks: one UNLOCK_ALL. */
 	ATF_REQUIRE(wait_unlocks(&f.c, f.o, 2));
-	ATF_CHECK_EQ(1, count_unlocks(f.o, DQ_LOCK_POSIX, (uint64_t)hr.pid));
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_POSIX,
+	    (uint64_t)hr.pid));
 	ATF_REQUIRE(wait_unlocks(&f.c, sib, 1));
-	ATF_CHECK_EQ(1, count_unlocks(sib, DQ_LOCK_POSIX, (uint64_t)hr.pid));
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, sib, DQ_LOCK_POSIX,
+	    (uint64_t)hr.pid));
 	ATF_CHECK_EQ(0, sib->nlocks);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, other->nunlocks);
 	ATF_CHECK_EQ(0, other->nlocks);
+	dqt_unlock(&f.c);
 
 	/* The range is free for a third process. */
 	memset(&pa, 0, sizeof(pa));
@@ -444,7 +455,9 @@ ATF_TC_BODY(setlkw_no_deadline, tc)
 	w.cmd = F_SETLKW;
 	dqt_spawn(&wch, child_setlkw, &w);
 	ATF_REQUIRE(dqt_wait_locks(&f.c, f.o, 2, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_LOCK_SETLKW, f.o->locks[1].dl_op);
+	dqt_unlock(&f.c);
 	dqt_msleep(800);	/* four deadlines */
 	ATF_CHECK_EQ(0, waitpid(wch.pid, &status, WNOHANG));
 	dqt_stats2(&f.c, &st);
@@ -546,12 +559,14 @@ ATF_TC_BODY(flock_owners_and_release, tc)
 	holder_release(&h, &ch, &hr);
 	ATF_CHECK_EQ(0, hr.s.rv);
 	ATF_CHECK_EQ(0, hr.o.rv);
+	dqt_lock(&f.c);
 	ATF_REQUIRE(f.o->nlocks >= 1);
 	ATF_CHECK_EQ(DQ_LOCK_FLOCK, f.o->locks[0].dl_kind);
 	ATF_CHECK_EQ(0, f.o->locks[0].dl_start);
 	ATF_CHECK_EQ(0, f.o->locks[0].dl_len);
 	ATF_CHECK_EQ(-1, f.o->locks[0].dl_pid);
 	owner = f.o->locks[0].dl_owner;
+	dqt_unlock(&f.c);
 	/* This process still references both open files: still locked. */
 	memset(&pa, 0, sizeof(pa));
 	pa.sfd = o2->fd;
@@ -561,16 +576,18 @@ ATF_TC_BODY(flock_owners_and_release, tc)
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
 	ATF_CHECK_EQ(EWOULDBLOCK, pr.s[0].err);
+	dqt_lock(&f.c);
 	ATF_REQUIRE(o2->nlocks >= 1);
 	ATF_CHECK(o2->locks[0].dl_owner != owner);	/* another open */
-	ATF_CHECK_EQ(0, count_unlocks(f.o, DQ_LOCK_FLOCK, owner));
+	ATF_CHECK_EQ(0, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
+	dqt_unlock(&f.c);
 	/* The last references go: the locks with them. */
 	(void)close(f.o->fd);
 	f.o->fd = -1;
 	(void)close(f.oracle);
 	f.oracle = open(oracle_path, O_RDWR);
 	ATF_REQUIRE(wait_unlocks(&f.c, f.o, 1));
-	ATF_CHECK_EQ(1, count_unlocks(f.o, DQ_LOCK_FLOCK, owner));
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
 	memset(&pr, 0, sizeof(pr));
 	dqt_run_child(child_probe, &pa, &pr, sizeof(pr));
 	check_probe(&pa, &pr);
@@ -686,7 +703,7 @@ lastclose_round(int how)
 	ATF_REQUIRE(f.o->nlocks >= 1);
 	owner = f.o->locks[0].dl_owner;
 	pthread_mutex_unlock(&f.c.mtx);
-	ATF_CHECK_EQ(1, count_unlocks(f.o, DQ_LOCK_FLOCK, owner));
+	ATF_CHECK_EQ(1, count_unlocks(&f.c, f.o, DQ_LOCK_FLOCK, owner));
 	teardown(&f);
 }
 
@@ -797,6 +814,7 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	ATF_CHECK_EQ(EDEADLK, r.r[0].err);
 	ATF_CHECK_EQ(EINVAL, r.r[2].err);
 	ATF_CHECK_EQ(EOVERFLOW, r.r[3].err);
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(3, o->nlocks);
 	ATF_CHECK_EQ(DATA_LEN - 10, o->locks[0].dl_start);
 	ATF_CHECK_EQ(5, o->locks[0].dl_len);
@@ -804,6 +822,7 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	ATF_CHECK_EQ(20, o->locks[1].dl_len);
 	ATF_CHECK_EQ(10, o->locks[2].dl_start);
 	ATF_CHECK_EQ(0, o->locks[2].dl_len);
+	dqt_unlock(&c);
 	o->serve_errno = EPERM;
 	memset(&r, 0, sizeof(r));
 	dqt_run_child(child_norm, &o->fd, &r, sizeof(r));
@@ -813,7 +832,9 @@ ATF_TC_BODY(normalisation_and_errnos, tc)
 	errno = 0;
 	ATF_CHECK_EQ(-1, fcntl(o->fd, F_SETLK, &fl));
 	ATF_CHECK_EQ(EDEADLK, errno);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(6, o->nlocks);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -964,7 +985,7 @@ ATF_TC_BODY(posix_spans_siblings, tc)
 			    strerror(r.sb.err));
 			ATF_CHECK_EQ(r.ob.rv, r.sb.rv);
 		}
-		ATF_CHECK_EQ(1, count_unlocks(b, DQ_LOCK_POSIX,
+		ATF_CHECK_EQ(1, count_unlocks(&f.c, b, DQ_LOCK_POSIX,
 		    (uint64_t)r.pid));
 		(void)close(ob);
 		teardown(&f);
@@ -1023,9 +1044,11 @@ ATF_TC_BODY(getlk_creates_no_owner, tc)
 	    before, after);
 	ATF_CHECK_EQ(0, dq_serve_state_owners(f.c.lockstate));
 	/* events[] counts every LOCK; locks[] keeps the first DQT_MAX_LOCKS. */
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(100, f.c.events[DQ_OP_LOCK]);
 	ATF_CHECK_EQ(MIN(100, DQT_MAX_LOCKS), f.o->nlocks);
 	ATF_CHECK_EQ(DQ_LOCK_GETLK, f.o->locks[0].dl_op);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 
@@ -1100,7 +1123,8 @@ ATF_TC_BODY(unlock_all_over_depth, tc)
 	dqt_collect(&rch, &r, sizeof(r));
 	ATF_CHECK_EQ(16, r.rv);
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_UNLOCK_ALL, 1, DQT_WAIT_MS));
-	ATF_CHECK_EQ(1, count_unlocks(o, DQ_LOCK_POSIX, (uint64_t)hr.pid));
+	ATF_CHECK_EQ(1, count_unlocks(&c, o, DQ_LOCK_POSIX,
+	    (uint64_t)hr.pid));
 	dqt_fini(&c);
 	(void)close(oracle);
 }

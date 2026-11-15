@@ -86,27 +86,37 @@ ATF_TC_BODY(close_once, tc)
 	a.len = 100;
 	dqt_run_child(child_one_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(100, r.rv);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_msleep(100);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.events[DQ_OP_CLOSE]);
+	dqt_unlock(&c);
 
 	ATF_REQUIRE_EQ(0, close(o->fd));
 	o->fd = -1;
 	ATF_REQUIRE_EQ(0, close(d));
 	dqt_msleep(100);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.events[DQ_OP_CLOSE]);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(0, close(reopen));
 	ATF_CHECK(dqt_wait_events(&c, DQ_OP_CLOSE, 1, DQT_WAIT_MS));
 	dqt_msleep(100);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_CLOSE]);
 	ATF_CHECK_EQ(1, o->closes);
+	dqt_unlock(&c);
 	/*
 	 * Series ii: CLOSE is posted by the deferred destroy task after the
 	 * write-back of any dirty pages, as a kernel caller (pid 0); the
 	 * record needs no answer.
 	 */
+	dqt_lock(&c);
 	ATF_CHECK((c.op_caller[DQ_OP_CLOSE].dc_flags & DQ_CALLER_F_KERNEL) != 0);
 	ATF_CHECK_EQ(0, c.op_caller[DQ_OP_CLOSE].dc_pid);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -212,10 +222,12 @@ ATF_TC_BODY(revoke, tc)
 	dqt_run_child(child_one_read, &a, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EIO, r.err);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);	/* nothing was posted */
 
 	/* Design 9: fstat, F_KINFO, fstatfs, fpathconf keep answering. */
 	ATF_REQUIRE_EQ(0, fstat(o->fd, &after));
+	dqt_unlock(&c);
 	dqt_check_stat_eq(&after, &before);
 	memset(&kif, 0, sizeof(kif));
 	kif.kf_structsize = sizeof(kif);
@@ -294,7 +306,9 @@ ATF_TC_BODY(revoke_wakes_waiter, tc)
 
 	/* The event left the in-flight tree with the revoke. */
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(1, st.ds_late_replies);

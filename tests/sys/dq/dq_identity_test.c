@@ -109,7 +109,9 @@ ATF_TC_BODY(fstat_fields, tc)
 	dqt_check_stat_eq(&st, &snap.st);
 	ATF_CHECK(S_ISREG(st.st_mode));
 	/* No GETATTR event was asked for: the identity answered locally. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.events[DQ_OP_GETATTR]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

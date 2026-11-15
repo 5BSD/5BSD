@@ -187,6 +187,18 @@ void	dqt_stop(struct dqt_ctl *c);		/* join the readers */
 void	dqt_close_queue(struct dqt_ctl *c);	/* readers stopped, queue closed */
 void	dqt_fini(struct dqt_ctl *c);		/* everything */
 
+/*
+ * The recorded state above is written by the reader threads under mtx;
+ * a test reads it between dqt_lock and dqt_unlock, and calls no other
+ * dqt_ routine in between.  An array entry counted under the lock (held[i]
+ * for i < nheld, rs[i] for i < nrs and so on) is complete and never
+ * rewritten, so it may be read after a locked wait or search returned it.
+ */
+void	dqt_lock(struct dqt_ctl *c) __locks_exclusive(c->mtx);
+void	dqt_unlock(struct dqt_ctl *c) __unlocks(c->mtx);
+/* The number of records of op seen, read under the lock. */
+unsigned dqt_events(struct dqt_ctl *c, uint32_t op);
+
 void	dqt_pause(struct dqt_ctl *c);
 void	dqt_resume(struct dqt_ctl *c);
 void	dqt_hold(struct dqt_ctl *c, bool hold);

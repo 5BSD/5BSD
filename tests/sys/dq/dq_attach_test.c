@@ -79,10 +79,12 @@ ATF_TC_BODY(attach_basic, tc)
 	ATF_CHECK_EQ(PROC_NO_NEW_PRIVS_ENABLE, r.nnp);
 	i = dqt_find_resolve(&c, "dqt-probe-basic", DQ_ROP_STAT, 0);
 	ATF_REQUIRE_MSG(i != -1, "no RESOLVE STAT for the probe");
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_RCLASS_USER, c.rs[i].cls);
 	ATF_CHECK((c.rs[i].rflags & DQ_RF_USER) != 0);
 	ATF_CHECK((c.rs[i].caller_flags & DQ_CALLER_F_ATTACHED) != 0);
 	ATF_CHECK_EQ(ch.pid, c.rs[i].pid);
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "dqt-probe-basic", 0));
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(1, st.ds2_attached);
@@ -366,8 +368,10 @@ ATF_TC_BODY(inheritance, tc)
 		ATF_CHECK_MSG(i != -1, "%s: not consulted", inh_tag[k]);
 		if (i == -1)
 			continue;
+		dqt_lock(&c);
 		ATF_CHECK_EQ_MSG(r.pid[k], c.rs[i].pid, "%s: pid", inh_tag[k]);
 		ATF_CHECK((c.rs[i].caller_flags & DQ_CALLER_F_ATTACHED) != 0);
+		dqt_unlock(&c);
 	}
 	dqt_fini(&c);
 }

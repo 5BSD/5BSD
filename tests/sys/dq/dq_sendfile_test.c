@@ -145,7 +145,9 @@ ATF_TC_BODY(oracle_redacted, tc)
 	ATF_CHECK_EQ(no, ns);
 	ATF_CHECK(memcmp(bs, redacted, DATA_LEN) == 0);
 	ATF_CHECK(memcmp(bo, data, DATA_LEN) == 0);
+	dqt_lock(&c);
 	ATF_CHECK(c.events[DQ_OP_READ_ASYNC] >= 1);
+	dqt_unlock(&c);
 	free(bs);
 	free(bo);
 	dqt_fini(&c);
@@ -185,7 +187,9 @@ ATF_TC_BODY(revoke_eio, tc)
 	dqt_spawn(&ch, child_sendfile, &a);
 	(void)close(sv[0]);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_OP_READ_ASYNC, c.held[0].op);
+	dqt_unlock(&c);
 	ATF_REQUIRE_EQ(0, dq_revoke(c.q, o->id));
 	dqt_sync_post(gop[1]);
 	/* Drain whatever was sent before the revoke. */
@@ -206,7 +210,9 @@ ATF_TC_BODY(revoke_eio, tc)
 	ATF_CHECK(r.sbytes < DATA_LEN);
 	/* The late reply finds nothing in flight. */
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 16));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_hold(&c, false);
 	dqt_fini(&c);
@@ -1052,7 +1058,9 @@ ATF_TC_BODY(controller_edeadlk, tc)
 	ATF_CHECK_EQ(-1, sendfile(o->fd, sv[0], 0, 100, NULL, &sbytes, 0));
 	ATF_CHECK_EQ(EDEADLK, errno);
 	ATF_CHECK_EQ(0, sbytes);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	(void)close(sv[0]);
 	(void)close(sv[1]);
 	dqt_fini(&c);

@@ -102,12 +102,18 @@ ATF_TC_BODY(small_deadline_eio, tc)
 	 * and the controller's reply is late.  An event still pending would
 	 * have been withdrawn silently with no record.
 	 */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(1, c.nheld);
+	dqt_unlock(&c);
 	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_INTERRUPT]);
+	dqt_unlock(&c);
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -274,7 +280,9 @@ ATF_TC_BODY(sigkill_breaks_wait, tc)
 	ATF_CHECK(WIFSIGNALED(status));
 	ATF_CHECK_EQ(SIGKILL, WTERMSIG(status));
 	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
+	dqt_unlock(&c);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(1, st.ds_interrupts);
 	ATF_CHECK_EQ(0, st.ds_inflight);

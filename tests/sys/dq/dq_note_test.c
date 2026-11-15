@@ -278,7 +278,9 @@ ATF_TC_BODY(pushed, tc)
 	dqt_stats2(&c, &st);
 	ATF_CHECK_EQ(nitems(each), st.ds2_pushes);
 	/* Nothing reached the controller as an event. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	(void)close(kq);
 	teardown(&c);
 }

@@ -277,8 +277,10 @@ ATF_TC_BODY(families, tc)
 		    expects[k].tag, expects[k].op);
 		if (i == -1)
 			continue;
+		dqt_lock(&c);
 		ATF_CHECK_EQ_MSG(expects[k].cls, c.rs[i].cls,
 		    "step %d (%s): class %u", k, expects[k].tag, c.rs[i].cls);
+		dqt_unlock(&c);
 		if (expects[k].cls == DQ_RCLASS_USER)
 			ATF_CHECK((c.rs[i].rflags & DQ_RF_USER) != 0);
 		else
@@ -289,14 +291,18 @@ ATF_TC_BODY(families, tc)
 	/* RENAME and LINK carry both paths in one event. */
 	i = dqt_find_resolve(&c, "rt-link", DQ_ROP_RENAME, 0);
 	if (i != -1) {
+		dqt_lock(&c);
 		ATF_CHECK(strstr(c.rs[i].path, "rt-link") != NULL);
 		ATF_CHECK(strstr(c.rs[i].path2, "rt-renamed") != NULL);
+		dqt_unlock(&c);
 	}
 	ATF_CHECK_EQ(1, dqt_count_resolve(&c, "rt-renamed", DQ_ROP_RENAME));
 	i = dqt_find_resolve(&c, "rt-link", DQ_ROP_LINK, 0);
 	if (i != -1) {
+		dqt_lock(&c);
 		ATF_CHECK(strstr(c.rs[i].path, "rt-open") != NULL);
 		ATF_CHECK(strstr(c.rs[i].path2, "rt-link") != NULL);
+		dqt_unlock(&c);
 	}
 	/* Lookups resolve to the same objects. */
 	ATF_REQUIRE_EQ(0, stat("/bin/sh", &sb));
@@ -401,7 +407,9 @@ ATF_TC_BODY(reply_validation, tc)
 	dqt_attach_spawn(&c, &ch, child_deny, NULL);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	id = c.held[0].id;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_OP_RESOLVE, c.held[0].op);
+	dqt_unlock(&c);
 	memset(&rr, 0, sizeof(rr));
 	rr.drr_kind = DQ_RESOLVE_FD;	/* 1c-iii */
 	errno = 0;
@@ -491,7 +499,9 @@ ATF_TC_BODY(deadline_eio, tc)
 	ATF_CHECK_EQ(0, r.r[1].rv);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
 	ATF_CHECK(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 }
 ATF_TC_CLEANUP(deadline_eio, tc)
@@ -594,7 +604,9 @@ signal_during(struct dqt_ctl *c, struct dqt_achild *ch, struct sig_arg *a,
 	memset(r, 0, sizeof(*r));
 	dqt_attach_collect(ch, r, sizeof(*r));
 	ATF_CHECK(dqt_wait_interrupts(c, 1, DQT_WAIT_MS));
+	dqt_lock(c);
 	ATF_CHECK_EQ(c->held[0].id, c->interrupted[0]);
+	dqt_unlock(c);
 }
 
 ATF_TC(signal_restart_rules);
@@ -1005,13 +1017,17 @@ ATF_TC_BODY(two_path_calls, tc)
 			    c.rs[i].path2[0] != '\0', "%s: path \"%s\" path2 "
 			    "\"%s\"", two_tag[k], c.rs[i].path, c.rs[i].path2);
 		if (i != -1) {
+			dqt_lock(&c);
 			ATF_CHECK_EQ_MSG(two_start2[k], c.rs[i].start2_kind,
 			    "%s: start2_kind %u want %u", two_tag[k],
 			    c.rs[i].start2_kind, two_start2[k]);
+			dqt_unlock(&c);
 			/* Two real starts: PASS, OK or an errno (D170). */
+			dqt_lock(&c);
 			ATF_CHECK_EQ_MSG(DQ_RACCEPT(DQ_RESOLVE_PASS) |
 			    DQ_RACCEPT(DQ_RESOLVE_OK), c.rs[i].accept,
 			    "%s: drs_accept %#x", two_tag[k], c.rs[i].accept);
+			dqt_unlock(&c);
 		}
 	}
 	dqt_fini(&c);
@@ -1085,7 +1101,9 @@ ATF_TC_BODY(slot_revalidation, tc)
 	    sizeof(c.resolve_hold_match));
 	dqt_attach_spawn(&c, &ch, child_rename_swap, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(DQ_OP_RESOLVE, c.held[0].op);
+	dqt_unlock(&c);
 	/* Rewrite path2 while the event is held, then PASS the old bytes. */
 	dqt_sync_post(a.s.tochild[1]);
 	ATF_REQUIRE(dqt_sync_wait(a.s.toparent[0], DQT_WAIT_MS));
@@ -1096,7 +1114,9 @@ ATF_TC_BODY(slot_revalidation, tc)
 	    sizeof(c.resolve_fail_match));
 	c.resolve_fail_errno = EACCES;
 	pthread_mutex_unlock(&c.mtx);
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
+	dqt_unlock(&c);
 	memset(&r, 0, sizeof(r));
 	dqt_attach_collect(&ch, &r, sizeof(r));
 	i = dqt_find_resolve(&c, "rt-sv-B2", DQ_ROP_RENAME, 0);
@@ -1588,7 +1608,9 @@ ATF_TC_BODY(swapon_consult_ahead, tc)
 		pthread_mutex_lock(&c.mtx);
 		c.resolve_hold_match[0] = '\0';
 		pthread_mutex_unlock(&c.mtx);
+		dqt_lock(&c);
 		ATF_REQUIRE_EQ(0, dq_reply_resolve_pass(c.q, c.held[0].id));
+		dqt_unlock(&c);
 		memset(&r, 0, sizeof(r));
 		dqt_attach_collect(&ch, &r, sizeof(r));
 		ATF_CHECK_EQ_MSG(-1, r.r[0].rv, "%s variant: swapon succeeded",

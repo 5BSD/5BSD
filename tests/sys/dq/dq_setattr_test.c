@@ -73,8 +73,10 @@ static void
 teardown(struct fixture *f)
 {
 
+	dqt_lock(&f->c);
 	ATF_CHECK_EQ_MSG(0, f->c.reply_failures, "reply failures: last %d",
 	    f->c.last_reply_errno);
+	dqt_unlock(&f->c);
 	dqt_fini(&f->c);
 	(void)close(f->backing);
 	(void)close(f->oracle);
@@ -228,7 +230,9 @@ ATF_TC_BODY(root_oracle, tc)
 	ATF_CHECK(r.sst.st_ctim.tv_sec >= before.tv_sec);
 	ATF_CHECK((r.notes & NOTE_ATTRIB) != 0);
 	/* Every call but the empty fchown posted one SETATTR. */
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(9, f.c.events[DQ_OP_SETATTR]);
+	dqt_unlock(&f.c);
 	/* The backing file holds the same as the oracle. */
 	{
 		struct stat bs;
@@ -300,8 +304,10 @@ ATF_TC_BODY(owner_unprivileged, tc)
 	ATF_CHECK_EQ(-1, r.p[7].s.rv);
 	ATF_CHECK_EQ(EOPNOTSUPP, r.p[7].s.err);
 	/* Only the two allowed calls reached the controller. */
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(2, f.c.events[DQ_OP_SETATTR]);
 	ATF_CHECK((f.o->last_setattr.dsa_mask & DQ_SETATTR_F_UTIMES_NULL) != 0);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 
@@ -348,7 +354,9 @@ ATF_TC_BODY(nonowner, tc)
 		check_pair(&r, i, "non-owner");
 	ATF_CHECK_EQ(EPERM, r.p[0].s.err);
 	ATF_CHECK_EQ(0, r.p[3].s.rv);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.events[DQ_OP_SETATTR]);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 
@@ -392,8 +400,10 @@ ATF_TC_BODY(birthtime_pullback, tc)
 	ATF_CHECK_EQ(100, r.sst.st_birthtim.tv_sec);
 	if (r.ost.st_birthtim.tv_sec != -1)	/* a filesystem with one */
 		ATF_CHECK_EQ(r.ost.st_birthtim.tv_sec, r.sst.st_birthtim.tv_sec);
+	dqt_lock(&f.c);
 	ATF_CHECK((f.o->last_setattr.dsa_mask & DQ_SETATTR_BIRTHTIME) != 0);
 	ATF_CHECK_EQ(100, f.o->last_setattr.dsa_birthtime.tv_sec);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 
@@ -441,7 +451,9 @@ ATF_TC_BODY(readonly_object, tc)
 	check_pair(&r, 1, "ftruncate");
 	ATF_CHECK_EQ(0, r.p[0].s.rv);
 	ATF_CHECK_EQ(EINVAL, r.p[1].s.err);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.events[DQ_OP_SETATTR]);
+	dqt_unlock(&f.c);
 	(void)close(ro);
 	teardown(&f);
 }
@@ -486,7 +498,9 @@ ATF_TC_BODY(fdesc_setattr, tc)
 	ATF_CHECK_EQ(os.st_mode, ss.st_mode);
 	ATF_CHECK_EQ(os.st_uid, ss.st_uid);
 	ATF_CHECK_EQ(os.st_mtim.tv_sec, ss.st_mtim.tv_sec);
+	dqt_lock(&f.c);
 	ATF_CHECK(f.c.events[DQ_OP_SETATTR] >= 3);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 ATF_TC_CLEANUP(fdesc_setattr, tc)
@@ -557,7 +571,9 @@ ATF_TC_BODY(snapshot_mode, tc)
 	ATF_CHECK_EQ(EPERM, r.w.err);
 	ATF_CHECK_EQ(EPERM, r.x.err);
 	ATF_CHECK_EQ(EROFS, r.ro.err);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, f.c.events[DQ_OP_SETATTR]);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 
@@ -614,7 +630,9 @@ ATF_TC_BODY(truncate_checks_attributes_first, tc)
 	ATF_CHECK_EQ(-1, r.t.rv);
 	ATF_CHECK_EQ(EPERM, r.t.err);
 	ATF_CHECK_EQ(0, r.xfsz);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, f.c.events[DQ_OP_SETATTR]);
+	dqt_unlock(&f.c);
 	teardown(&f);
 }
 

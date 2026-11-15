@@ -576,45 +576,65 @@ ATF_TC_BODY(reply_errors, tc)
 	a.len = 100;
 	dqt_spawn(&ch, child_one_read, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 1, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_OP_READ, f.c.held[0].op);
+	dqt_unlock(&f.c);
 	errno = 0;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, 0, data, 101));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, EIO, data, 1));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	dqt_stats(&f.c, &st);
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(1, st.ds_inflight);	/* a refused reply changes nothing */
 	ATF_CHECK_EQ(0, dq_reply(f.c.q, f.c.held[0].id, EACCES, NULL, 0));
+	dqt_unlock(&f.c);
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(-1, r.rv);
 	ATF_CHECK_EQ(EACCES, r.err);
 	/* Answered: a second reply is late. */
 	errno = 0;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[0].id, 0, NULL, 0));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(ESRCH, errno);
 
 	/* A GETATTR in flight: exactly one identity that validates. */
 	a.fd = og->fd;
 	dqt_spawn(&ch, child_fstat, &a);
 	ATF_REQUIRE(dqt_wait_held(&f.c, 2, DQT_WAIT_MS));
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(DQ_OP_GETATTR, f.c.held[1].op);
+	dqt_unlock(&f.c);
 	bad = calloc(1, sizeof(*bad));
 	ATF_REQUIRE(bad != NULL);
 	*bad = f.ident;
 	errno = 0;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, bad, 10));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	bad->di_mode = S_IFDIR | 0755;
 	errno = 0;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, 0, bad, sizeof(*bad)));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(-1, dq_reply(f.c.q, f.c.held[1].id, EIO, bad, sizeof(*bad)));
+	dqt_unlock(&f.c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	*bad = f.ident;
 	bad->di_size = 4242;
+	dqt_lock(&f.c);
 	ATF_CHECK_EQ(0, dq_reply(f.c.q, f.c.held[1].id, 0, bad, sizeof(*bad)));
+	dqt_unlock(&f.c);
 	dqt_collect(&ch, &sr, sizeof(sr));
 	ATF_CHECK_EQ(0, sr.rr.rv);
 	ATF_CHECK_EQ(4242, sr.st.st_size);	/* the reply became the identity */

@@ -191,8 +191,10 @@ ATF_TC_BODY(shapes, tc)
 	ATF_CHECK_EQ(r.oracle_setown.rv, r.setown.rv);
 	ATF_CHECK_EQ(r.oracle_setown.err, r.setown.err);
 	/* The bodies the kernel posted: lengths per shape, never a pointer. */
+	dqt_lock(&c);
 	ATF_CHECK(c.events[DQ_OP_IOCTL] >= 9);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 	(void)close(oracle);
@@ -259,33 +261,49 @@ ATF_TC_BODY(reply_rules, tc)
 	a.cmd = DQT_IOC_OUT;
 	dqt_spawn(&ch, child_one_ioctl, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQT_IOC_OUT, o->last_ioctl.dio_cmd);
 	ATF_CHECK_EQ(0, o->last_ioctl.dio_len);
+	dqt_unlock(&c);
 	memset(&out, 0, sizeof(out));
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, 0, &out, 8));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, 0, NULL, 0));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(EINVAL, errno);
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[0].id, ENXIO, &out,
 	    sizeof(out)));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(EINVAL, errno);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[0].id, 0, &out,
 	    sizeof(out)));
+	dqt_unlock(&c);
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(0, r.rv);
 
 	a.cmd = DQT_IOC_IN;
 	dqt_spawn(&ch, child_one_ioctl, &a);
 	ATF_REQUIRE(dqt_wait_held(&c, 2, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQT_IOC_IN, o->last_ioctl.dio_cmd);
 	ATF_CHECK_EQ(sizeof(struct dqt_in), o->last_ioctl.dio_len);
+	dqt_unlock(&c);
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply_ioctl(c.q, c.held[1].id, 0, &out, 8));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(EINVAL, errno);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, dq_reply_ioctl(c.q, c.held[1].id, EPIPE, NULL, 0));
+	dqt_unlock(&c);
 	dqt_collect(&ch, &r, sizeof(r));
 	ATF_CHECK_EQ(EIO, r.err);
 	dqt_hold(&c, false);
@@ -343,7 +361,9 @@ ATF_TC_BODY(deny_and_local, tc)
 	ATF_CHECK_EQ(-1, ioctl(ev->fd, DQT_IOC_IN, &in));
 	ATF_CHECK_EQ(EDEADLK, errno);
 	dqt_msleep(100);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

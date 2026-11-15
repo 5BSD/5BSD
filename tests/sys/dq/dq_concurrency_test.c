@@ -233,8 +233,10 @@ ATF_TC_BODY(threads_replies_reversed, tc)
 		ATF_CHECK_EQ_MSG(digest(data + i * (DATA_LEN / NTHREADS), 4096),
 		    r.hash[i], "thread %d got the wrong bytes", i);
 	}
+	dqt_lock(&c);
 	ATF_CHECK_EQ(NTHREADS, c.events[DQ_OP_READ]);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -271,13 +273,19 @@ ATF_TC_BODY(sigalrm_interrupt, tc)
 	ATF_CHECK_EQ(EINTR, r.rr.err);
 	ATF_CHECK_EQ(1, r.signals);
 	/* The controller had read it, so the abandonment is announced. */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(1, c.nheld);
+	dqt_unlock(&c);
 	ATF_REQUIRE(dqt_wait_interrupts(&c, 1, DQT_WAIT_MS));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(c.held[0].id, c.interrupted[0]);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_INTERRUPT]);
+	dqt_unlock(&c);
 	/* INTERRUPT needs no answer: de_id 0 is never in flight. */
 	errno = 0;
+	dqt_lock(&c);
 	ATF_CHECK_EQ(-1, dq_reply(c.q, c.held[0].id, 0, data, 100));
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(ESRCH, errno);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ(1, st.ds_interrupts);
@@ -335,6 +343,7 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	 * while the waiter withdrew it PENDING).  An EINTR before any copy is
 	 * never seen by the controller.
 	 */
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(ndata + c.reply_failures, c.events[DQ_OP_READ],
 	    "READ %u data %d late %u", c.events[DQ_OP_READ], ndata,
 	    c.reply_failures);
@@ -344,6 +353,7 @@ ATF_TC_BODY(reply_racing_signal, tc)
 	ATF_CHECK_EQ(c.reply_failures, st.ds_late_replies);
 	if (c.reply_failures != 0)
 		ATF_CHECK_EQ(ESRCH, c.last_reply_errno);
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(0, st.ds_inflight);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -410,12 +420,14 @@ ATF_TC_BODY(depth_exhausted, tc)
 	/* One more event makes the gap visible wherever the drop fell. */
 	dqt_run_child(child_one_pread, &a, &r4, sizeof(r4));
 	ATF_CHECK_EQ_MSG(100, r4.rr.rv, "rv %ld errno %d", r4.rr.rv, r4.rr.err);
+	dqt_lock(&c);
 	ATF_CHECK_EQ_MSG(3, c.nseqs, "nseqs %d last_seq %ju", c.nseqs,
 	    (uintmax_t)c.last_seq);
 	ATF_CHECK_EQ_MSG(4, c.last_seq, "nseqs %d last_seq %ju", c.nseqs,
 	    (uintmax_t)c.last_seq);
 	ATF_CHECK_EQ_MSG(1, c.last_seq - (uint64_t)c.nseqs, "nseqs %d last_seq %ju",
 	    c.nseqs, (uintmax_t)c.last_seq);
+	dqt_unlock(&c);
 	dqt_stats(&c, &st);
 	ATF_CHECK_EQ_MSG(1, st.ds_events_dropped, DEPTH_FMT, DEPTH_ARGS);
 	ATF_CHECK_EQ_MSG(2, st.ds_queue_highwater, DEPTH_FMT, DEPTH_ARGS);
@@ -472,7 +484,9 @@ ATF_TC_BODY(edeadlk_controller, tc)
 	ATF_CHECK_EQ(0, close(d));
 	/* Nothing reached the queue. */
 	dqt_msleep(100);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -605,7 +619,9 @@ ATF_TC_BODY(inflight_bound, tc)
 		ATF_CHECK_EQ_MSG(100, r[i].rr.rv, "child %d: %ld errno %d", i,
 		    r[i].rr.rv, r[i].rr.err);
 	}
+	dqt_lock(&c);
 	ATF_CHECK_EQ(3, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 	dqt_sysctl_set_uint(inflight_sysctl, old);
@@ -664,6 +680,7 @@ ATF_TC_BODY(two_readers, tc)
 		ATF_CHECK_EQ(digest(data + i * (DATA_LEN / NTHREADS), 4096),
 		    r.hash[i]);
 	}
+	/* The readers are stopped: their records are read without the lock. */
 	dqt_stop(&c);
 	ATF_CHECK_EQ(NTHREADS * 8, c.events[DQ_OP_READ]);
 	ATF_REQUIRE_EQ(NTHREADS * 8, c.nseqs);

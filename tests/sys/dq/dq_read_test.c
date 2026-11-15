@@ -217,8 +217,10 @@ ATF_TC_BODY(read_oracle, tc)
 	ATF_CHECK_EQ(digest(data, sizeof(data)), served.hash);
 	/* 20000/4096: four full chunks, one short, one at EOF. */
 	ATF_CHECK_EQ(6, served.n);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(6, c.events[DQ_OP_READ]);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -264,7 +266,9 @@ ATF_TC_BODY(pread_oracle, tc)
 	ATF_CHECK_EQ(0, served.rv[6]);
 	/* pread never moves the shared offset. */
 	ATF_CHECK_EQ(0, lseek(o->fd, 0, SEEK_CUR));
+	dqt_lock(&c);
 	ATF_CHECK_EQ(7, c.events[DQ_OP_READ]);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -299,8 +303,10 @@ ATF_TC_BODY(readv_oracle, tc)
 	ATF_CHECK_EQ(11100, served.rv[0]);
 	ATF_CHECK_EQ(digest(data, 11100), served.hash);
 	/* One uio, one event: the iovecs are not visible to the controller. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
 	ATF_CHECK_EQ(11100, c.rd[0].len);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -387,21 +393,27 @@ ATF_TC_BODY(aio_read_oracle, tc)
 		 */
 		ATF_CHECK_EQ(-1, served.rv);
 		ATF_CHECK_EQ(EOPNOTSUPP, served.err);
+		dqt_lock(&c);
 		ATF_CHECK_EQ(0, c.events[DQ_OP_READ]);
+		dqt_unlock(&c);
 	} else {
 		ATF_CHECK_EQ(0, served.rv);
 		ATF_CHECK_EQ(6000, served.ret);
 		ATF_CHECK_EQ(oracle_res.hash, served.hash);
 		ATF_CHECK_EQ(digest(data + 1000, 6000), served.hash);
+		dqt_lock(&c);
 		ATF_CHECK_EQ(1, c.events[DQ_OP_READ]);
+		dqt_unlock(&c);
 		/*
 		 * The aio daemon posted it: a kernel process, so the caller
 		 * is flagged DQ_CALLER_F_KERNEL with pid 0 and carries the
 		 * requester's credential (aio_process_rw swaps td_ucred).
 		 */
+		dqt_lock(&c);
 		ATF_CHECK((c.last_caller.dc_flags & DQ_CALLER_F_KERNEL) != 0);
 		ATF_CHECK_EQ(0, c.last_caller.dc_pid);
 		ATF_CHECK_EQ(getuid(), c.last_caller.dc_uid);
+		dqt_unlock(&c);
 	}
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -444,6 +456,7 @@ ATF_TC_BODY(chunk_boundaries, tc)
 	ATF_CHECK_EQ(0, served.rv[1]);
 	ATF_CHECK_EQ(digest(big, len), served.hash);
 	/* Three chunks for the first read, one zero-length answer for the second. */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(4, c.nrd);
 	ATF_CHECK_EQ(0, c.rd[0].offset);
 	ATF_CHECK_EQ(max_io, c.rd[0].len);
@@ -452,8 +465,11 @@ ATF_TC_BODY(chunk_boundaries, tc)
 	ATF_CHECK_EQ(2 * (uint64_t)max_io, c.rd[2].offset);
 	ATF_CHECK_EQ(100, c.rd[2].len);
 	ATF_CHECK_EQ(len, c.rd[3].offset);
+	dqt_unlock(&c);
 	/* Sequence numbers are consecutive: nothing was dropped. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.gaps);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	free(big);
 	(void)close(oracle);
@@ -489,11 +505,13 @@ ATF_TC_BODY(eof_short_reply, tc)
 	check_same(&served, &oracle_res);
 	ATF_CHECK_EQ(1000, served.rv[0]);
 	ATF_CHECK_EQ(0, served.rv[1]);
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(2, c.nrd);
 	ATF_CHECK_EQ(0, c.rd[0].offset);
 	ATF_CHECK_EQ(2000, c.rd[0].len);
 	ATF_CHECK_EQ(1000, c.rd[1].offset);
 	ATF_CHECK_EQ(2000, c.rd[1].len);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -531,9 +549,11 @@ ATF_TC_BODY(read_zero_and_past_eof, tc)
 	ATF_CHECK_EQ(DATA_LEN + 100, served.rv[1]);
 	ATF_CHECK_EQ(0, served.rv[2]);
 	/* Only the read past the end reached the controller. */
+	dqt_lock(&c);
 	ATF_REQUIRE_EQ(1, c.nrd);
 	ATF_CHECK_EQ(DATA_LEN + 100, c.rd[0].offset);
 	ATF_CHECK_EQ(16, c.rd[0].len);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -597,7 +617,9 @@ ATF_TC_BODY(seek_data_hole, tc)
 	ATF_CHECK_EQ(-1, lseek(o->fd, -1, SEEK_HOLE));
 	ATF_CHECK_EQ(ENXIO, errno);
 	/* Seeking is local: no event reached the controller. */
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -695,6 +717,7 @@ ATF_TC_BODY(shared_offset_two_threads, tc)
 	 * reads that found the end asked at the size and were answered 0.
 	 */
 	n = 0;
+	dqt_lock(&c);
 	for (i = 0; i < c.nrd; i++) {
 		if (c.rd[i].offset >= DATA_LEN) {
 			ATF_CHECK_EQ(DATA_LEN, c.rd[i].offset);
@@ -707,6 +730,7 @@ ATF_TC_BODY(shared_offset_two_threads, tc)
 		if (n < (int)nitems(seen))
 			seen[n++] = c.rd[i].offset;
 	}
+	dqt_unlock(&c);
 	ATF_CHECK_EQ(DATA_LEN / 1000, n);
 	dqt_fini(&c);
 	(void)close(oracle);
@@ -750,8 +774,10 @@ ATF_TC_BODY(two_objects_same_identity, tc)
 	ATF_REQUIRE_EQ(0, fstat(o1->fd, &st1));
 	ATF_REQUIRE_EQ(0, fstat(o2->fd, &st2));
 	dqt_check_stat_eq(&st1, &st2);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(6, o1->reads);
 	ATF_CHECK_EQ(6, o2->reads);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }
@@ -785,7 +811,9 @@ ATF_TC_BODY(read_error_reply, tc)
 	ATF_CHECK_EQ(1, served.n);
 	ATF_CHECK_EQ(-1, served.rv[0]);
 	ATF_CHECK_EQ(EACCES, served.err[0]);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(oracle);
 }

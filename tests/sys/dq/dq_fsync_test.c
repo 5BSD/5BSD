@@ -107,15 +107,19 @@ ATF_TC_BODY(fsync_events, tc)
 		/* aio(4) refuses a descriptor that is not a local vnode. */
 		ATF_CHECK_MSG(r.aio_full.err == EOPNOTSUPP || r.aio_full.err == EINVAL,
 		    "aio_fsync: %s", strerror(r.aio_full.err));
+		dqt_lock(&c);
 		ATF_CHECK_EQ(2, c.events[DQ_OP_FSYNC]);
+		dqt_unlock(&c);
 	} else {
 		ATF_CHECK_EQ(0, r.aio_full.rv);
 		ATF_CHECK_EQ(0, r.aio_data.rv);
 		ATF_CHECK(dqt_wait_events(&c, DQ_OP_FSYNC, 4, DQT_WAIT_MS));
 	}
+	dqt_lock(&c);
 	ATF_CHECK_EQ(DQ_FSYNC_DATA, o->last_fsync.dfs_mode);
 	ATF_CHECK_EQ(0, o->last_fsync.dfs_pad0);
 	ATF_CHECK_EQ(0, c.reply_failures);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 }
@@ -216,7 +220,9 @@ ATF_TC_BODY(write_deny_local, tc)
 	ATF_CHECK_EQ(0, fsync(o->fd));
 	ATF_CHECK_EQ(0, fdatasync(o->fd));
 	dqt_msleep(100);
+	dqt_lock(&c);
 	ATF_CHECK_EQ(0, c.records);
+	dqt_unlock(&c);
 	dqt_fini(&c);
 	(void)close(backing);
 }

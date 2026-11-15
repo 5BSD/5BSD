@@ -600,6 +600,32 @@ dqt_fini(struct dqt_ctl *c)
 }
 
 void
+dqt_lock(struct dqt_ctl *c)
+{
+
+	pthread_mutex_lock(&c->mtx);
+}
+
+void
+dqt_unlock(struct dqt_ctl *c)
+{
+
+	pthread_mutex_unlock(&c->mtx);
+}
+
+unsigned
+dqt_events(struct dqt_ctl *c, uint32_t op)
+{
+	unsigned n;
+
+	ATF_REQUIRE(op <= DQ_OP_REPLY);
+	pthread_mutex_lock(&c->mtx);
+	n = c->events[op];
+	pthread_mutex_unlock(&c->mtx);
+	return (n);
+}
+
+void
 dqt_pause(struct dqt_ctl *c)
 {
 
