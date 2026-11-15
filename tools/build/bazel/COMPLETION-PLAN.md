@@ -47,6 +47,25 @@ Bazel tests and full endpoint checks for routine coverage. Source-owned build
 metadata stays in Bazel: Make remains the independent reference and ports build
 system, never a hidden production action-graph generator or fallback.
 
+Keep the SDK seed stable across the complete endpoint runs. The current full
+installed-test candidate uses SDK R15; the earlier full system R15 capture used
+SDK R6. Those are different seed generations, so the current compilation is not
+an incremental timing comparison. Finish this endpoint and its final source
+review before changing the shared Make object profile. Native package-derived
+SDK construction in gate 3 must remove that mutable Make-floor dependency;
+never edit an old receipt or omit its input checks to reuse it after mutation.
+
+Sandbox setup cost must be measured from the completed profile before tuning.
+Bazel 9.3.1 already defaults to directory reuse; its process-wrapper strategy
+uses the shared symlinked-sandbox implementation. The optional in-memory stash
+can trade extra JVM memory for less directory I/O. Compare it only if profiling
+shows a relevant cost, measuring aggregate RAM and disk I/O as well as CPU/time.
+No performance flag is changed here, and process-wrapper reuse does not provide
+filesystem isolation. Version-bound upstream references:
+[SandboxOptions](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/sandbox/SandboxOptions.java),
+[ProcessWrapperSandboxedSpawnRunner](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/sandbox/ProcessWrapperSandboxedSpawnRunner.java)
+and [SymlinkedSandboxedSpawn](https://github.com/bazelbuild/bazel/blob/9.3.1/src/main/java/com/google/devtools/build/lib/sandbox/SymlinkedSandboxedSpawn.java).
+
 Every implementation group must still review build-bsd and its maintained
 backend/helpers/tests/manual, retain scope-bound evidence, update this short
 current plan and commit incremental changes. Detailed component evidence belongs
@@ -70,12 +89,54 @@ these are a review frontier, not 243 missing or necessarily required programs.
 Dynamic restrictions and propagated ancestors remain separately unclassified.
 Tests-on reports 1,351 incompatible records, with a smaller traversed graph due
 to aggregate guards; fewer records do not mean better coverage. The complete
-Make source/profile inventory is running and will determine which declarations
-are required by the matching configuration. Evidence:
+Make source/profile inventory now completes 2,135 AMD64 and 2,094 ARM64
+directories without query failures. Its recorded configurations determine the
+review queue; they are not a shared Make/Bazel profile or build acceptance. Evidence:
 bazel-closeout-consolidated-bazel-inventory-r2-20261115 and
 bazel-closeout-consolidated-make-inventory-r2-20261115 under /usr/obj/usr/src.
 Earlier missing-loader-input and incorrect metadata CLI diagnostics remain
 retained; no failed query is used for complete inventory counts.
+
+### Complete selected package debug pairing
+
+All 1,803 split-debug pairs in the captured 450-package R15 system now pass the
+current maintained verifier and independent public-payload/path/policy review.
+The original Make reference pairs were rechecked with that verifier, rather
+than accepting its older verifier binding. This closes pair binding for the
+selected snapshot, not full DWARF semantics, source lookup or current-head
+world/package acceptance. See MODULE-DEBUG-QUALIFICATION.md and
+`bazel-packaged-debug-pair-audit-r4-20261115` under /usr/obj/usr/src. Failed
+diagnostic attempts remain retained; temporary extracted payloads are removed.
+
+### Tests-enabled complete contribution audit in progress
+
+The selected AMD64 tests-enabled installation graph now passes configured
+analysis through `//:world_installation_candidates`; its native aggregate build
+is running. This qualification target shares the production family's source-owned
+archive lists and feature selections. It exposes contributions for comparison,
+not finalized construction, pkgbase acceptance or installed-test execution.
+Production guards remain in place. Three selected build-tool test targets pass;
+they do not qualify the installed OS suite. Evidence:
+`bazel-installed-tests-world-native-amd64-r1-20261115` (not yet terminal).
+
+The consolidated AMD64 Make metadata query completes all 2,135 configured
+directories without query failures. The maintained native-presence survey binds
+those records and reports 1,656 local BUILD owners and 479 ancestor-owned
+components. These are directory ownership review counts, not converted program
+counts or installation coverage. ARM64 completes all 2,094 directories without
+query failures: 1,617 local BUILD owners and 477 ancestor-owned components.
+Complete profile-bound Make installation metadata is still required for parity.
+
+The ARM64 literal-constraint frontier is now joined to those completed Make
+owners in `aarch64/constraint-frontier-join.json`. Its 299 declarations comprise
+109 binaries, 57 C/C++ library rules, 70 shared libraries, 47 component archives
+and 16 parent/archive groups across 243 source owners. These are distinct rule
+kinds, not 299 missing programs. Four declarations have no exact owner in the
+recorded Make configuration (mail/update features differ); they remain explicit
+review items, not exclusions. Dynamic constraints and propagated incompatibilities
+remain in the original query's separate queue. The next ARM64 work must review
+real source/header/define selections as well as compatibility: libssl, for example,
+still imports AMD64_DEFINES and cannot be ported by removing its CPU guard alone.
 
 The previous provider-client batch now passes both native builds and all 28
 original Make references: fourteen static/shared-library contracts and 344
@@ -94,7 +155,7 @@ is not authorized.
 | Gate | Current evidence and remaining work |
 | --- | --- |
 | 1. Runtime and upgrade | Fresh R11 VM R3 passes all 34 checks, normal shutdown, signed 450-package upgrade/new kernel, authentication, rollback, shared-file persistence and unused-BE deletion. It checks 13 manifest-derived boot services and six selected ordinary-session operations; all-provider operation coverage is explicitly false and remains open. The fresh Log-enabled superset VM now passes all 34 checks and normal shutdown, including seven ordinary operations (actual Log emit/flush/query), NetworkControl and SystemExtension in all four phases. Its 147 root-operation outputs, source/serial and phase reports independently verify. Complete-provider coverage stays false; authorized Device, Filesystem, Crypto, Trace and Audit delivery remain open. Earlier timeout failures remain retained. |
-| 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. Complete current package/debug/install contracts and required configuration selections remain open. |
+| 2. AMD64 parity/configurations | Full R15 passes 32 selected verification tests and captures 450 packages with tests=false and tests_support=yes; it does not qualify the installed OS test suite. The general-helper identity corrections are included. Its 14 general-helper archives match independently Make-qualified focused AMD64 bytes; native static/shared libc smoke probes pass. Focused kernel matches Make's allocated contracts, loader symbols and CTF; native split-debug binding passes. Seven corrected modules match except reported GNU build-ID digests, with exact CTF. All 1,803 packaged split-debug pairs from that capture now pass current-verifier pairing against the complete original Make path/policy inventory (1,079 world, 724 kernel/module), with all 450 package hashes independently reverified. Complete current package/install contracts, DWARF/source lookup and required configuration selections remain open. |
 | 3. Bootstrap/dependencies/cache/sandbox | Narrow target/execution compiler roles and actual ABI tests pass. Public target-configuration queries resolve alias ambiguity without ignoring duplicates. Actual configured queries now collapse ordinary/NOSSP consumers to one normal host DTrace bootstrap, preserving all 13 selected ARM64 outputs byte-for-byte. Earlier AMD64 R11 and ARM64 R7 snapshots verified all 8,345/16,682 files and actual target/execution ELF roles before the dev header merge; their current source bindings are stale. Fresh AMD64 R12 and ARM64 R8 materializations pass with direct copy bindings; the fresh AMD64 SDK/loader run passes four selected targets (39 Python checks plus one host ATF case), with hash-verified reports and 82 captured files; the fresh ARM64 run also passes three host-artifact targets (39 Python checks) and captures 75 files. Earlier native R3 runs both host-test scripts (25 cases) and preserves all ten startup objects per architecture against independent Make contracts. These are Make-built seeds; independent native bootstrap, copied-payload/source mutation checks, complete invalidation/reproducibility and filesystem isolation remain required. |
 | 4. Resources/performance | A source-owned reaper supervisor now accounts complete private-server descendant CPU/block operations and sampled aggregate RSS; seven real process regressions and maintained AMD64 qualification pass. Normal frontend timings explicitly identify their client-only scope. This qualifies instrumentation, not performance. Command/QEMU observations exist, including R2 staying below its 4 GiB process-RSS and 8 GiB overlay budgets. Controlled clean/incremental CPU, aggregate RAM, disk I/O and retained-footprint comparisons remain required. Full R15 uses an explicit 32 GiB qualification-cache budget; this is not a production default or a performance result. |
 | 5. Production frontend/publication | Maintained format-5 qualification works; Make stays the normal backend. Qualified Bazel world/kernel/pkgbase integration, Make ports coverage, separate hardware identity checks and verified combined publication under /usr/obj/usr/src/repo remain required. |

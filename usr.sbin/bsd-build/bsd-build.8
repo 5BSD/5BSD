@@ -7957,6 +7957,19 @@ update overlay. Current selected AMD64 whole production contribution constructio
 passes; installed authentication, account preservation during upgrades and full
 world/package/runtime/performance qualification remain open. Make remains default.
 .Pp
+The explicit
+.Cm //:world_installation_candidates
+qualification target composes the selected world installation contributions,
+including currently declared installed tests when the tests setting is enabled.
+It uses the same family and feature selections as world_contributions.
+The normal format-5 targets list selects it; no additional frontend option is
+required. It does not provide finalized manual databases, fresh account state,
+world layout, package reconciliation or package archives.
+Successful analysis or construction does not establish that every original Make
+test, fixture or installation record is present, nor does it execute the installed
+OS tests. The normal production roots retain their incomplete-installed-test
+guards until independent complete installation comparison succeeds.
+.Pp
 The native package qualification driver preserves declared file and directory
 flags using standard pkg plist attributes. Temporary build and inspection
 extraction defers flag application; archive flags are validated against declared
